@@ -6522,6 +6522,7 @@ part when they merge.
   seconds after the daemon closed the input of claude. When no event
   comes in that time, the daemon stops the container, and the item is
   free. It does not wait for the quiet limit.
+  Superseded in part by 01M5R0QFM265CCKTADK4T5XREQ.
 - **01M5P26VSA7AA99K1RYG83R8J9** When a build of a wave ends and its
   branch has no pushed commit, the daemon commits each change of the
   clone as a WIP commit on that branch and pushes it. The lead gets one
@@ -6583,6 +6584,11 @@ part when they merge.
   branch passed or ended. A wave that cannot read the required checks
   fails its look, and says why. Supersedes 01M4ZV3B6NKPEZ5FNE27X95GF0 in
   part.
+- **01M5R0QFM265CCKTADK4T5XREQ** While the last background_tasks_changed
+  event of a session of a wave lists one task or more, the daemon uses
+  the quiet limit for it, not the grace (01M5P26VPJA73WCPVZY6CPG9HD).
+  When the list is empty, the grace of 60 seconds counts from the last
+  event. It supersedes 01M5P26VPJA73WCPVZY6CPG9HD in part.
 
 ### The lead, the view and the takeover
 

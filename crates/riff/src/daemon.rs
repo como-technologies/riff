@@ -178,9 +178,15 @@
 //! `claude -p` does not end while one of its background tasks runs. The
 //! end of each task starts a new turn. So a session can stay up after
 //! the close. When no event comes for the quiet limit after the close
-//! ([`QUIET_LIMIT`], or [`EXIT_GRACE`] for a session of a wave), the daemon stops the container, and tells each
+//! ([`QUIET_LIMIT`]), the daemon stops the container, and tells each
 //! `riff` that follows the session why (01M4ZSZX77AJDGWNQMGBPV2QXG). Each
 //! event moves the end of the quiet.
+//!
+//! A session of a wave has the shorter [`EXIT_GRACE`] in place of the
+//! quiet limit, but only while `claude` runs no background task. The
+//! last `background_tasks_changed` event says it ([`background_tasks`]).
+//! While it lists one task or more, the session of a wave has the quiet
+//! limit too (01M5P26VPJA73WCPVZY6CPG9HD, 01M5R0QFM265CCKTADK4T5XREQ).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -189,7 +195,10 @@
 //!     C->>D: result
 //!     D->>C: close the input
 //!     C->>D: background_tasks_changed: one task runs
+//!     Note over D,C: a wave session: the quiet limit, not the grace
 //!     Note over C: the task ends: a new turn
+//!     C->>D: background_tasks_changed: no task
+//!     Note over D,C: a wave session: the grace counts now
 //!     C->>D: init, ..., result
 //!     Note over D,C: no event for the quiet limit
 //!     D->>C: stop the container
@@ -433,9 +442,10 @@ const LOOK_EVERY: Duration = Duration::from_secs(30);
 pub const QUIET_LIMIT: Duration = Duration::from_secs(30 * 60);
 
 /// The grace of a session of a wave: after the input of `claude` closed,
-/// the longest time with no event. Then the daemon stops the container
-/// (01M5P26VPJA73WCPVZY6CPG9HD). A session of a wave leaves no background
-/// task at its end.
+/// the longest time with no event while `claude` runs no background task.
+/// Then the daemon stops the container (01M5P26VPJA73WCPVZY6CPG9HD). A
+/// session of a wave leaves no background task at its end. While a task
+/// runs, the session has the [`QUIET_LIMIT`].
 pub const EXIT_GRACE: Duration = Duration::from_secs(60);
 
 /// How long the daemon keeps the end of a session after the end: its
@@ -1458,7 +1468,8 @@ struct Owned {
     notes: mpsc::UnboundedSender<Note>,
     /// A `riff` asked to stop the container.
     stop: Notify,
-    /// The input of `claude` closed: the quiet limit counts from now.
+    /// The quiet limit of the session moved: the input of `claude`
+    /// closed, or the number of its background tasks changed.
     closing: Notify,
     /// The task of the socket of the session.
     door: Mutex<Option<JoinHandle<()>>>,
@@ -1471,6 +1482,9 @@ struct SessionState {
     seq: u64,
     /// The time of the last event, or of the start of the ownership.
     last: tokio::time::Instant,
+    /// The number of background tasks that `claude` runs, from its last
+    /// `background_tasks_changed` event.
+    tasks: usize,
     log: std::fs::File,
     /// The connections of `riff` that follow the session.
     followers: Vec<Out>,
@@ -1642,6 +1656,13 @@ impl Owned {
         state.seq = seq;
         state.last = tokio::time::Instant::now();
         let event = serde_json::from_str::<Value>(&line).ok();
+        if let Some(tasks) = event.as_ref().and_then(background_tasks)
+            && tasks != state.tasks
+        {
+            // The limit depends on the tasks: the watch counts again.
+            state.tasks = tasks;
+            self.closing.notify_one();
+        }
         if let Some(step) = event
             .as_ref()
             .and_then(|e| crate::run::event_lines(e).pop())
@@ -1806,6 +1827,36 @@ impl Owned {
         drop(out);
         let _ = written.await;
     }
+}
+
+/// The number of background tasks that the event `event` of `claude`
+/// lists, or `None` when it is not a `background_tasks_changed` event.
+///
+/// ```
+/// use riff::daemon::background_tasks;
+/// use serde_json::json;
+///
+/// let one = json!({"type":"system","subtype":"background_tasks_changed",
+///     "tasks":[{"task_id":"b1","task_type":"local_bash","description":"wait for just check"}]});
+/// assert_eq!(background_tasks(&one), Some(1));
+/// let none = json!({"type":"system","subtype":"background_tasks_changed","tasks":[]});
+/// assert_eq!(background_tasks(&none), Some(0));
+/// assert_eq!(background_tasks(&json!({"type":"result"})), None);
+/// ```
+pub fn background_tasks(event: &Value) -> Option<usize> {
+    (event["type"] == "system" && event["subtype"] == "background_tasks_changed")
+        .then(|| event["tasks"].as_array().map_or(0, Vec::len))
+}
+
+/// The number of background tasks in the last `background_tasks_changed`
+/// event of the log `path`: 0 when there is none.
+fn tasks_in(path: &Path) -> usize {
+    std::fs::read_to_string(path).map_or(0, |log| {
+        log.lines()
+            .rev()
+            .find_map(|line| background_tasks(&serde_json::from_str::<Value>(line).ok()?))
+            .unwrap_or(0)
+    })
 }
 
 /// The number of lines of the file `path`: 0 when it is not there.
@@ -2661,14 +2712,14 @@ impl<R: Runtime + 'static> Daemon<R> {
         let events = record.folder.join(EVENTS);
         // The log comes first: a session that cannot log starts no
         // container.
-        let (log, seq) = if again {
+        let (log, seq, tasks) = if again {
             let log = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&events);
-            (log, lines_of(&events))
+            (log, lines_of(&events), tasks_in(&events))
         } else {
-            (std::fs::File::create(&events), 0)
+            (std::fs::File::create(&events), 0, 0)
         };
         let log = log.with_context(|| format!("cannot write {}", events.display()))?;
         private_dir(&self.dir.join(LIVE))?;
@@ -2683,6 +2734,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 record,
                 seq,
                 last: tokio::time::Instant::now(),
+                tasks,
                 log,
                 followers: Vec::new(),
                 relay: None,
@@ -2981,22 +3033,23 @@ impl<R: Runtime + 'static> Daemon<R> {
         stop_on(from, owned);
     }
 
-    /// Waits for the end of the session `owned`: the exit of its relay,
-    /// the end of its container, or, with no `end` of this daemon, the
-    /// end of the relay in a container that does not run. After the
-    /// input of `claude` closed, it stops the container when no event
-    /// comes for the quiet limit, and says why
-    /// (01M4ZSZX77AJDGWNQMGBPV2QXG).
-    /// The quiet limit of the session of `record`: the grace of a session
-    /// of a wave, else [`QUIET_LIMIT`].
-    fn limit_of(&self, record: &Record) -> Duration {
-        if record.job.is_some() {
+    /// The quiet limit of the session of `record`, with `tasks` background
+    /// tasks: the grace of a session of a wave while `claude` runs none,
+    /// else [`QUIET_LIMIT`] (01M5P26VPJA73WCPVZY6CPG9HD, 01M5R0QFM265CCKTADK4T5XREQ).
+    fn limit_of(&self, record: &Record, tasks: usize) -> Duration {
+        if record.job.is_some() && tasks == 0 {
             self.grace
         } else {
             self.quiet
         }
     }
 
+    /// Waits for the end of the session `owned`: the exit of its relay,
+    /// the end of its container, or, with no `end` of this daemon, the
+    /// end of the relay in a container that does not run. After the
+    /// input of `claude` closed, it stops the container when no event
+    /// comes for the quiet limit, and says why
+    /// (01M4ZSZX77AJDGWNQMGBPV2QXG).
     async fn watch(
         self: Arc<Self>,
         owned: Arc<Owned>,
@@ -3014,7 +3067,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             let quiet_at = {
                 let state = owned.lock();
                 (state.record.closed && !state.record.takeover)
-                    .then(|| state.last + self.limit_of(&state.record))
+                    .then(|| state.last + self.limit_of(&state.record, state.tasks))
             };
             tokio::select! {
                 () = owned.closing.notified() => {}
@@ -3023,7 +3076,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 {
                     let (quiet, limit) = {
                         let state = owned.lock();
-                        let limit = self.limit_of(&state.record);
+                        let limit = self.limit_of(&state.record, state.tasks);
                         (state.last.elapsed() >= limit && !state.record.takeover, limit)
                     };
                     if quiet {
@@ -4244,6 +4297,7 @@ mod tests {
         pub(super) fake: Fake,
         quiet: Duration,
         keep_end: Duration,
+        grace: Option<Duration>,
         world: Option<Arc<dyn World>>,
         pub(super) daemon: Arc<Daemon<Fake>>,
         stop: Option<oneshot::Sender<()>>,
@@ -4269,7 +4323,7 @@ mod tests {
     async fn serve_in(
         fake: &Fake,
         dir: &Path,
-        (quiet, keep_end): (Duration, Duration),
+        (quiet, keep_end, grace): (Duration, Duration, Option<Duration>),
         world: Option<Arc<dyn World>>,
     ) -> Served {
         let listener = listen(dir).await.unwrap();
@@ -4282,6 +4336,9 @@ mod tests {
             .with_gcloud(crate::cloud::Gcloud::at(dir.with_file_name("gcloud")));
         if let Some(world) = world {
             daemon = daemon.with_world(world);
+        }
+        if let Some(grace) = grace {
+            daemon = daemon.with_grace(grace);
         }
         let daemon = Arc::new(daemon);
         let (stop, stopped) = oneshot::channel::<()>();
@@ -4318,16 +4375,35 @@ mod tests {
             times: (Duration, Duration),
             world: Option<Arc<dyn World>>,
         ) -> Here {
+            let (quiet, keep_end) = times;
+            Here::with_times(fake, (quiet, keep_end, None), world).await
+        }
+
+        /// A daemon on `fake` with the quiet limit `quiet` and the grace
+        /// `grace` of the sessions of a wave.
+        async fn with_grace(fake: Fake, quiet: Duration, grace: Duration) -> Here {
+            Here::with_times(fake, (quiet, KEEP_END, Some(grace)), None).await
+        }
+
+        /// A daemon on `fake` with the quiet limit, the keep of the end
+        /// of a session and the grace of `times`, and the riff-server of
+        /// `world`.
+        async fn with_times(
+            fake: Fake,
+            times: (Duration, Duration, Option<Duration>),
+            world: Option<Arc<dyn World>>,
+        ) -> Here {
             let root = tempfile::tempdir().unwrap();
             let dir = dir_in(root.path());
             let (daemon, stop, served) = serve_in(&fake, &dir, times, world.clone()).await;
-            let (quiet, keep_end) = times;
+            let (quiet, keep_end, grace) = times;
             Here {
                 root,
                 dir,
                 fake,
                 quiet,
                 keep_end,
+                grace,
                 world,
                 daemon,
                 stop: Some(stop),
@@ -4338,7 +4414,7 @@ mod tests {
         /// Stops the daemon, and starts a new one in the same folder.
         async fn restart(&mut self) {
             self.stop().await;
-            let times = (self.quiet, self.keep_end);
+            let times = (self.quiet, self.keep_end, self.grace);
             let (daemon, stop, served) =
                 serve_in(&self.fake, &self.dir, times, self.world.clone()).await;
             self.daemon = daemon;
@@ -4362,6 +4438,37 @@ mod tests {
                 server: "http://127.0.0.1:1".into(),
                 me: me(name),
                 terminal: false,
+            }
+        }
+
+        /// Starts `start` as the daemon starts the session of a wave: with
+        /// a job. Gives the name of the session, the task that ends with it,
+        /// and what the daemon says, after the line `Started`.
+        async fn launched(
+            &self,
+            start: Start,
+        ) -> (String, JoinHandle<Record>, mpsc::UnboundedReceiver<Say>) {
+            let job = Job {
+                wave: Wave {
+                    repo: "o/r".into(),
+                    main: self.root.path().to_owned(),
+                    server: start.server.clone(),
+                    host: "h".into(),
+                },
+                work: crate::wave::Work::Build { issue: 12 },
+            };
+            let (out, mut said) = Out::keep();
+            let daemon = self.daemon.clone();
+            let task =
+                tokio::spawn(
+                    async move { daemon.launch(start, Some(job), None, None, &out).await },
+                );
+            loop {
+                match said.recv().await {
+                    Some(Say::Started { name, .. }) => return (name, task, said),
+                    Some(Say::Failed { error }) => panic!("{error}"),
+                    other => assert!(other.is_some(), "no start"),
+                }
             }
         }
 
@@ -5025,6 +5132,158 @@ mod tests {
         assert_eq!(here.fake.calls(), [format!("start {name}")]);
     }
 
+    /// An event of `claude`: each background task ended.
+    const NO_TASK: &str = r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#;
+
+    /// Each line of `said` up to the end of the session, as
+    /// [`to_the_end`].
+    async fn to_the_end_of(said: &mut mpsc::UnboundedReceiver<Say>) -> (Vec<Say>, Option<Say>) {
+        let mut lines = Vec::new();
+        while let Some(say) = said.recv().await {
+            match say {
+                Say::Ended(_) | Say::Failed { .. } => return (lines, Some(say)),
+                say => lines.push(say),
+            }
+        }
+        (lines, None)
+    }
+
+    /// The grace of a session of a wave counts only while no background
+    /// task runs: a task that runs holds the container, past the grace,
+    /// until the new turn that its end starts (01M5P26VPJA73WCPVZY6CPG9HD, 01M5R0QFM265CCKTADK4T5XREQ).
+    #[tokio::test]
+    async fn a_wave_session_with_a_background_task_stays_up_past_the_grace_for_its_new_turn() {
+        let grace = Duration::from_millis(400);
+        let here = Here::with_grace(
+            Fake::default().with_image(IMAGE),
+            Duration::from_secs(20),
+            grace,
+        )
+        .await;
+        let (name, task, mut said) = here
+            .launched(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 1, false).await;
+        relay.event(1, TURN[0]).await;
+        relay.event(2, TURN[2]).await;
+        relay.event(3, ONE_TASK).await;
+
+        // Three times the grace with no event, and the task runs on.
+        tokio::time::sleep(grace * 3).await;
+        assert_eq!(here.fake.calls(), [format!("start {name}")]);
+
+        // The task ends. The new turn pushes: its events come at once.
+        relay.event(4, NO_TASK).await;
+        relay.event(5, TURN[0]).await;
+        relay.event(6, TURN[2]).await;
+        assert_eq!(here.fake.calls(), [format!("start {name}")]);
+        relay.exit(7, 0).await;
+        let (lines, end) = to_the_end_of(&mut said).await;
+        assert!(
+            !lines.iter().any(|s| matches!(s, Say::Line { .. })),
+            "{lines:?}"
+        );
+        assert_eq!(
+            end,
+            Some(Say::Ended(Ended {
+                code: Some(0),
+                failed: false
+            }))
+        );
+        assert_eq!(here.fake.calls(), [format!("start {name}")]);
+        task.await.unwrap();
+    }
+
+    /// A background task that never ends holds a session of a wave until
+    /// the quiet limit.
+    #[tokio::test]
+    async fn a_wave_session_with_a_background_task_that_never_ends_stops_at_the_quiet_limit() {
+        let (quiet, grace) = (Duration::from_millis(1500), Duration::from_millis(200));
+        let here = Here::with_grace(Fake::default().with_image(IMAGE), quiet, grace).await;
+        let (name, task, mut said) = here
+            .launched(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 1, false).await;
+        relay.event(1, TURN[0]).await;
+        relay.event(2, TURN[2]).await;
+        let closed = tokio::time::Instant::now();
+        relay.event(3, ONE_TASK).await;
+
+        let (lines, end) = to_the_end_of(&mut said).await;
+        assert!(closed.elapsed() >= quiet, "{:?}", closed.elapsed());
+        assert!(
+            lines.contains(&Say::Line {
+                text: text::daemon_quiet(&name, quiet)
+            }),
+            "{lines:?}"
+        );
+        assert_eq!(
+            end,
+            Some(Say::Ended(Ended {
+                code: None,
+                failed: true
+            }))
+        );
+        assert_eq!(
+            here.fake.calls(),
+            [format!("start {name}"), format!("stop {name}")]
+        );
+        task.await.unwrap();
+    }
+
+    /// The end of the last background task gives the grace back: the
+    /// session of a wave that stays quiet then stops after the grace, not
+    /// after the quiet limit.
+    #[tokio::test]
+    async fn a_wave_session_has_the_grace_again_when_each_background_task_ended() {
+        let (quiet, grace) = (Duration::from_secs(20), Duration::from_millis(300));
+        let here = Here::with_grace(Fake::default().with_image(IMAGE), quiet, grace).await;
+        let (name, task, mut said) = here
+            .launched(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let (mut relay, _) = Relay::connect(&session_dir(&here.dir, &name), 1, false).await;
+        relay.event(1, TURN[0]).await;
+        relay.event(2, TURN[2]).await;
+        relay.event(3, ONE_TASK).await;
+        // The watch has counted the quiet limit past the grace by now.
+        tokio::time::sleep(grace * 2).await;
+        let ended = tokio::time::Instant::now();
+        relay.event(4, NO_TASK).await;
+
+        let (lines, end) = to_the_end_of(&mut said).await;
+        assert!(ended.elapsed() >= grace, "{:?}", ended.elapsed());
+        assert!(ended.elapsed() < quiet, "{:?}", ended.elapsed());
+        assert!(
+            lines.contains(&Say::Line {
+                text: text::daemon_quiet(&name, grace)
+            }),
+            "{lines:?}"
+        );
+        assert!(matches!(end, Some(Say::Ended(_))), "{end:?}");
+        assert_eq!(
+            here.fake.calls(),
+            [format!("start {name}"), format!("stop {name}")]
+        );
+        task.await.unwrap();
+    }
+
+    /// A daemon that takes up a session of a wave knows its background
+    /// tasks from the log: the last event says it.
+    #[test]
+    fn the_background_tasks_of_a_log_are_in_its_last_event_about_them() {
+        let root = tempfile::tempdir().unwrap();
+        let log = root.path().join(EVENTS);
+        assert_eq!(tasks_in(&log), 0);
+        std::fs::write(&log, [TURN[0], ONE_TASK, TURN[2]].join("\n") + "\n").unwrap();
+        assert_eq!(tasks_in(&log), 1);
+        std::fs::write(
+            &log,
+            [TURN[0], ONE_TASK, NO_TASK, TURN[2]].join("\n") + "\n",
+        )
+        .unwrap();
+        assert_eq!(tasks_in(&log), 0);
+    }
+
     #[tokio::test]
     async fn a_session_with_no_image_on_the_machine_does_not_start() {
         let here = Here::new(Fake::default()).await;
@@ -5243,8 +5502,9 @@ mod tests {
         assert!(record_path(&here.dir, &name).exists());
     }
 
-    /// A session of a wave has the grace of 60 s after the result, and
-    /// another session has the quiet limit (01M5P26VPJA73WCPVZY6CPG9HD).
+    /// A session of a wave has the grace of 60 s after the result while no
+    /// background task runs, and another session has the quiet limit
+    /// (01M5P26VPJA73WCPVZY6CPG9HD, 01M5R0QFM265CCKTADK4T5XREQ).
     #[tokio::test]
     async fn a_session_of_a_wave_has_the_grace_in_place_of_the_quiet_limit() {
         let root = tempfile::tempdir().unwrap();
@@ -5272,7 +5532,7 @@ mod tests {
             takeover: false,
             interrupt: false,
         };
-        assert_eq!(daemon.limit_of(&record), QUIET_LIMIT);
+        assert_eq!(daemon.limit_of(&record, 0), QUIET_LIMIT);
         record.job = Some(Job {
             wave: Wave {
                 repo: "o/r".into(),
@@ -5282,7 +5542,9 @@ mod tests {
             },
             work: crate::wave::Work::Build { issue: 1 },
         });
-        assert_eq!(daemon.limit_of(&record), EXIT_GRACE);
+        assert_eq!(daemon.limit_of(&record, 0), EXIT_GRACE);
+        // A background task that runs holds the session: the quiet limit.
+        assert_eq!(daemon.limit_of(&record, 1), QUIET_LIMIT);
         assert_eq!(EXIT_GRACE, Duration::from_secs(60));
     }
 
