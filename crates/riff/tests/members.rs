@@ -8,8 +8,10 @@
 //! through [`Service::members`] and the routes, and never through the
 //! token store.
 
+use crate::book;
 use crate::common;
 
+use std::fs;
 use std::time::Instant;
 
 use riff::text;
@@ -686,6 +688,43 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
     let bob = api.clone().signed_in(Some("b1")).unwrap();
     let (reply, _) = bob.set_riff(&b1, RiffState::Running).await.unwrap();
     assert!(reply.changed && reply.riff.is_none());
+}
+
+/// The book has one how-to for `riff members`: "See the members" in
+/// "Start a Team Riff". No other page has the heading or the command.
+/// The example of the page is what the command prints.
+#[test]
+fn the_book_has_one_how_to_for_riff_members() {
+    let mut headings = Vec::new();
+    let mut commands = Vec::new();
+    for entry in fs::read_dir(book::dir()).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        if !name.ends_with(".md") || name == "requirements.md" {
+            continue;
+        }
+        let page = book::page(&name);
+        for line in page.lines().filter(|l| l.ends_with("See the members")) {
+            headings.push(format!("{name}: {line}"));
+        }
+        if book::commands_in(&page).contains(&"riff members".to_owned()) {
+            commands.push(name);
+        }
+    }
+    assert_eq!(headings, ["start-a-team-riff.md: ## See the members"]);
+    assert_eq!(commands, ["start-a-team-riff.md"]);
+
+    let part = book::part("start-a-team-riff.md", "See the members");
+    let shown = book::commands_in(&part);
+    assert_eq!(shown, ["riff members"]);
+    book::each_is_real(&shown);
+    let list = riff_core::wire::MembersReply {
+        owner: Some("mike@example.com".into()),
+        admins: vec!["ada@example.com".into()],
+        members: vec!["bob@gmail.com".into()],
+        allowed_domains: vec!["example.com".into()],
+    };
+    assert!(part.contains(&members(&list)), "{part}");
+    assert!(part.contains("shows the owner `none`"), "{part}");
 }
 
 /// `riff members` with no color.
