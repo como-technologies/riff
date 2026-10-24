@@ -30,6 +30,7 @@ mod help;
 mod identity;
 mod lead_book;
 mod lead_clone;
+mod lead_container;
 mod lead_move;
 mod lead_notes;
 mod lead_step;

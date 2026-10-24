@@ -666,7 +666,7 @@ pub struct Again {
 pub enum Restart {
     /// It runs the riff on disk: nothing.
     Newest,
-    /// It runs this many sessions, starts that wait and jobs: it starts
+    /// It runs this many sessions, starts that wait, jobs and tests: it starts
     /// again after the last one.
     Later(usize),
     /// It starts again now.
@@ -675,7 +675,7 @@ pub enum Restart {
 
 impl Restart {
     /// The decision for a daemon that runs an old riff or not, and is
-    /// busy with `busy` sessions, starts and jobs.
+    /// busy with `busy` sessions, starts, jobs and tests.
     ///
     /// ```
     /// use riff::daemon::remote::Restart;

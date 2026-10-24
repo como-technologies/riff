@@ -200,6 +200,50 @@ pub fn person_of(me: &riff_core::name::SessionUri) -> riff_core::name::SessionUr
     riff_core::name::SessionUri::new(who, me.place().clone())
 }
 
+/// The `server` calls that a fake daemon got on a session socket
+/// (`ServerCall`), each as JSON with its `call` name.
+pub type Asked = Arc<Mutex<Vec<Value>>>;
+
+/// A socket that answers as the riff daemon does for a session in a
+/// container (#1338). For each `server` ask, `reply` gives the JSON
+/// answer for the call, or the error text of a refusal. The socket logs
+/// each call. The directory holds the socket: keep it until the end of
+/// the test.
+pub fn session_socket(
+    reply: impl Fn(&Value) -> Result<Value, String> + Send + 'static,
+) -> (tempfile::TempDir, String, Asked) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("riff.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let asked = Asked::default();
+    let log = asked.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, Write};
+        for conn in listener.incoming().flatten() {
+            let mut line = String::new();
+            let _ = std::io::BufReader::new(&conn).read_line(&mut line);
+            let ask: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(ask["ask"], "server", "{ask}");
+            log.lock().unwrap().push(ask["call"].clone());
+            let say = match reply(&ask["call"]) {
+                Ok(reply) => json!({"say": "served", "reply": reply}),
+                Err(error) => json!({"say": "failed", "error": error}),
+            };
+            let _ = (&conn).write_all(format!("{say}\n").as_bytes());
+        }
+    });
+    (dir, path.to_string_lossy().into_owned(), asked)
+}
+
+/// The names of the calls that `asked` holds, in order.
+pub fn call_names(asked: &Asked) -> Vec<String> {
+    let asked = asked.lock().unwrap();
+    asked
+        .iter()
+        .map(|c| c["call"].as_str().unwrap().to_owned())
+        .collect()
+}
+
 /// The device key, and the sign-in JSON of each user, of one [`Signed`]
 /// server. [`sign_in`] writes them into the secret files of a `RIFF_HOME`.
 type SignIns = (String, HashMap<String, String>);

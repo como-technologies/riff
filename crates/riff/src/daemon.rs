@@ -311,8 +311,9 @@
 //! replaced, or when its unit names another riff ([`stale`]). Two steps
 //! start it again on the new riff, only when it is idle: it owns no
 //! session but the lead (the new daemon takes the lead up, with its
-//! container, its terminal and its socket), no start of `riff run` waits for room, and no job of a wave
-//! runs ([`Status::busy`]). A start of a wave that waits for room does
+//! container, its terminal and its socket), no start of `riff run` waits for room, no job of a wave
+//! runs, and no real-session test runs ([`Status::busy`],
+//! 01M5QVBTXE8YRY44A1C1VP71QS). A start of a wave that waits for room does
 //! not count, also with the limit 0: the wave is in `waves.json`, so the
 //! new daemon waits for room for it again (01M5MS1Q78AFEY3ZVXNAQXM1FJ).
 //!
@@ -910,9 +911,24 @@ pub enum SessionAsk {
     },
 }
 
-/// A call of [`SessionAsk::Server`]: the reads of `riff wave list` and
-/// `riff release check`, and the resume of the riff after `riff release
-/// check`.
+/// A call of [`SessionAsk::Server`]: the reads of `riff wave list`,
+/// `riff release check`, `riff members`, `riff who`, `riff whoami`,
+/// `riff audit` and `riff session why`, the resume of the riff after
+/// `riff release check`, and the run of an item by the lead (#1338,
+/// 01M5QVX8D3JE51FAYRWXMAYFAY, 01M5QW31TFA1W2GWPGRS2Y65GP,
+/// 01M5QVX8FFG2FPWZEW61A985CF).
+///
+/// ```
+/// use riff::daemon::ServerCall;
+///
+/// let run = ServerCall::Run { item: "issue-12".into() };
+/// assert_eq!(serde_json::to_string(&run)?, r#"{"call":"run","item":"issue-12"}"#);
+/// assert_eq!(serde_json::to_string(&ServerCall::Members)?, r#"{"call":"members"}"#);
+/// assert_eq!(serde_json::to_string(&ServerCall::Ends)?, r#"{"call":"ends"}"#);
+/// let log = ServerCall::Log { repo: "o/r".parse().unwrap() };
+/// assert_eq!(serde_json::to_string(&log)?, r#"{"call":"log","repo":"o/r"}"#);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "call", rename_all = "snake_case")]
 pub enum ServerCall {
@@ -974,6 +990,35 @@ pub enum ServerCall {
         project: String,
         /// The filter of the lines.
         filter: String,
+    },
+    /// What `riff whoami` reads: [`crate::reach::WhoamiFacts`] (#1338).
+    Whoami,
+    /// What `riff who` reads: [`crate::reach::WhoFacts`] (#1338). `all`
+    /// adds the gone sessions.
+    WhoFacts {
+        /// True for the gone sessions too.
+        all: bool,
+    },
+    /// Who may join the riff, as `riff members` reads it
+    /// ([`riff_core::wire::MembersReply`], #1338).
+    Members,
+    /// The records of the repository thread `repo` for `riff audit`
+    /// ([`riff_core::wire::LogReply`], #1338). Only the lead may, and
+    /// riff-server answers only for the owner and the admins.
+    Log {
+        /// The repository thread.
+        repo: riff_core::name::ThreadName,
+    },
+    /// The records of the thread `ends`, oldest first, as `riff session
+    /// why` reads them (a list of [`crate::ends::Record`], #1338).
+    Ends,
+    /// Run the work item `item` as a job of the wave of the repository,
+    /// as `riff run` does on the host (#1338). Only the lead may. The
+    /// answer is the line for the person: the daemon starts the session
+    /// when the host has room.
+    Run {
+        /// The work item, for example `issue-12`.
+        item: String,
     },
 }
 
@@ -1047,7 +1092,26 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
             let reply = remote::ask(&signed()?, &record.me, host, &request, wait).await?;
             Value::String(reply)
         }
+        ServerCall::Whoami => {
+            serde_json::to_value(crate::reach::WhoamiFacts::read(&signed()?, &record.me).await)?
+        }
+        ServerCall::WhoFacts { all } => {
+            let facts = crate::reach::WhoFacts::read(&signed()?, &record.me, *all).await?;
+            serde_json::to_value(facts)?
+        }
+        ServerCall::Members => serde_json::to_value(signed()?.members().await?)?,
+        ServerCall::Log { repo } => {
+            if !record.terminal {
+                bail!(text::DAEMON_AUDIT_ONLY_LEAD);
+            }
+            serde_json::to_value(signed()?.log(repo).await?)?
+        }
+        ServerCall::Ends => {
+            let records = crate::ends::read(&signed()?, &record.me).await?;
+            serde_json::to_value(records)?
+        }
         ServerCall::CloudLog { .. } => bail!("the daemon reads the log itself"),
+        ServerCall::Run { .. } => bail!("the daemon runs the item itself"),
         ServerCall::Status => bail!("the daemon answers the status itself"),
     })
 }
@@ -1078,6 +1142,11 @@ pub struct Status {
     /// end of the steps after its session.
     #[serde(default)]
     pub jobs: usize,
+    /// The real-session test that the daemon runs
+    /// ([`release_test::running`], 01M5QVBTXE8YRY44A1C1VP71QS). An old
+    /// daemon gives none.
+    #[serde(default)]
+    pub test: Option<riff_client::daemons::Test>,
     /// The MCP servers of each new session ([`crate::session_mcp`]).
     /// An old daemon gives none.
     #[serde(default)]
@@ -1091,7 +1160,8 @@ pub struct Status {
 
 impl Status {
     /// The work of the daemon: its sessions but the lead, the starts of
-    /// `riff run` that wait for room, and the jobs of its waves. The
+    /// `riff run` that wait for room, the jobs of its waves, and the
+    /// real-session test that runs (one, 01M5QVBTXE8YRY44A1C1VP71QS). The
     /// lead does not count: a new daemon takes it up with its container,
     /// its terminal and its socket ([`Daemon::recover`]). The daemon starts
     /// again on a new riff only at 0 (01M517BTJ9EV4ZGPYRB6HXJJC9).
@@ -1116,7 +1186,14 @@ impl Status {
     ///     ..status.clone()
     /// };
     /// assert_eq!(wave.busy(), 0);
-    /// assert_eq!(riff::daemon::Status { jobs: 2, ..status }.busy(), 2);
+    /// assert_eq!(riff::daemon::Status { jobs: 2, ..status.clone() }.busy(), 2);
+    /// // A real-session test that runs counts as one.
+    /// let test = riff_client::daemons::Test {
+    ///     tag: "v4.1.1".into(),
+    ///     commit: "90e36bfd".into(),
+    ///     secs: 0,
+    /// };
+    /// assert_eq!(riff::daemon::Status { test: Some(test), ..status }.busy(), 1);
     /// # Ok::<(), serde_json::Error>(())
     /// ```
     pub fn busy(&self) -> usize {
@@ -1127,7 +1204,7 @@ impl Status {
         };
         let runs = self.waiting.iter().filter(|name| !of_a_wave(name)).count();
         let works = self.sessions.iter().filter(|live| !live.lead).count();
-        works + runs + self.jobs
+        works + runs + self.jobs + usize::from(self.test.is_some())
     }
 }
 
@@ -1811,6 +1888,9 @@ pub struct Daemon<R> {
     world: Arc<dyn World>,
     /// The waves that run, by repository.
     waves: Mutex<BTreeMap<String, Running>>,
+    /// The time between two looks of a wave at `main` and the pull requests
+    /// ([`crate::look::LOOK_EVERY`]).
+    look_every: Duration,
     /// A session ended, or a job of a wave ended: the waves look again.
     changed: Notify,
     /// The folders of the sessions: the jobs that run, and one sweep at
@@ -1841,12 +1921,22 @@ struct Running {
     wave: Wave,
     /// The task of its loop.
     task: JoinHandle<()>,
+    /// The task of its look ([`crate::wave::watch`]).
+    look: JoinHandle<()>,
     /// The items of its jobs that the daemon does not own yet.
     taken: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// The starts of each item in this run of the wave.
     starts: crate::wave::Starts,
     /// What it did last.
     word: Arc<Mutex<String>>,
+}
+
+impl Running {
+    /// Ends its loop and its look. Its jobs go on.
+    fn abort(&self) {
+        self.task.abort();
+        self.look.abort();
+    }
 }
 
 /// Binds the control socket in the folder `dir` of the daemon. It
@@ -1886,6 +1976,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             room,
             world: Arc::new(crate::wave::Live::default()),
             waves: Mutex::new(BTreeMap::new()),
+            look_every: crate::look::LOOK_EVERY,
             changed: Notify::new(),
             folders: Arc::default(),
             again: None,
@@ -1950,6 +2041,20 @@ impl<R: Runtime + 'static> Daemon<R> {
     pub fn with_world(mut self, world: Arc<dyn World>) -> Self {
         self.world = world;
         self
+    }
+
+    /// The daemon whose waves look at `main` and the pull requests each
+    /// `every` in place of [`crate::look::LOOK_EVERY`], for a test.
+    #[must_use]
+    pub fn with_look_every(mut self, every: Duration) -> Self {
+        self.look_every = every;
+        self
+    }
+
+    /// The time between two looks of a wave at `main` and the pull
+    /// requests.
+    pub(crate) fn look_every(&self) -> Duration {
+        self.look_every
     }
 
     /// The daemon with a session on riff-server for each repository that
@@ -2223,6 +2328,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         .len()
                 })
                 .sum(),
+            test: release_test::running(),
             mcp: crate::session_mcp::read(&self.dir)
                 .map(|servers| crate::session_mcp::names(&servers))
                 .unwrap_or_default(),
@@ -2307,7 +2413,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 return;
             }
             Some(old) => {
-                old.task.abort();
+                old.abort();
                 old.taken.clone()
             }
             None => Arc::new(Mutex::new(std::collections::BTreeSet::new())),
@@ -2321,11 +2427,13 @@ impl<R: Runtime + 'static> Daemon<R> {
             starts.clone(),
             word.clone(),
         ));
+        let look = tokio::spawn(crate::wave::watch(self.clone(), wave.clone()));
         running.insert(
             wave.repo.clone(),
             Running {
                 wave,
                 task,
+                look,
                 taken,
                 starts,
                 word,
@@ -2341,7 +2449,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         crate::wave::write_waves(&self.dir, &waves)?;
         let running = self.waves_lock().remove(repo);
         if let Some(running) = &running {
-            running.task.abort();
+            running.abort();
         }
         Ok(kept || running.is_some())
     }
@@ -3157,6 +3265,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         project,
                         filter,
                     } => self.cloud_log(&record, &service, &project, &filter).await,
+                    ServerCall::Run { item } => self.run_item(&record, &item),
                     _ => server_call(&record, &call).await,
                 };
                 out.say(match done {
@@ -3286,6 +3395,55 @@ impl<R: Runtime + 'static> Daemon<R> {
                 role_unknown: true,
             },
         }
+    }
+
+    /// `riff run ITEM` in the container of the lead of `record` (#1338).
+    /// The container has no clone, no `gh` token of the host and no
+    /// control socket of the daemon, so the daemon runs the item as a job
+    /// of the wave of the repository ([`crate::wave::job`]): the steps of
+    /// `riff run` on the host, in the room of the limit. The answer is
+    /// the line for the person, at once. A start that fails tells the
+    /// lead. A session that is not the lead gets a refusal.
+    ///
+    /// The job joins the loop of the wave, when it runs, so the loop
+    /// does not pick the item at the same time.
+    pub(crate) fn run_item(self: &Arc<Self>, record: &Record, item: &str) -> Result<Value> {
+        if !record.terminal {
+            bail!(text::DAEMON_RUN_ONLY_LEAD);
+        }
+        let issue = crate::run::issue_of(item)?;
+        let repo = record.me.place().repo_text();
+        let wave = match crate::wave::read_waves(&self.dir)?.remove(&repo) {
+            Some(wave) => wave,
+            None => remote::read_served(&self.dir)?
+                .remove(&repo)
+                .map(|served| served.wave)
+                .ok_or_else(|| anyhow::anyhow!(text::run_no_wave(&repo)))?,
+        };
+        let (taken, starts) = match self.waves_lock().get(&repo) {
+            Some(running) => (running.taken.clone(), running.starts.clone()),
+            None => Default::default(),
+        };
+        let work = crate::wave::Work::Build { issue };
+        let runs = self.records().iter().any(|r| r.live.item == item);
+        let mut taken_now = taken.lock().unwrap_or_else(PoisonError::into_inner);
+        if runs || !taken_now.insert(work.item()) {
+            bail!(text::run_already(item));
+        }
+        drop(taken_now);
+        let daemon = self.clone();
+        tokio::spawn(async move {
+            let slot = daemon
+                .room()
+                .admit(
+                    &text::run_slot(&work.item()),
+                    || daemon.live_count(),
+                    |_| {},
+                )
+                .await;
+            crate::wave::job(daemon.clone(), wave, work, slot, taken, starts, true).await;
+        });
+        Ok(Value::String(text::run_asked(item)))
     }
 
     /// `gcloud logging read` for the lead of `record`, with the `gcloud`
@@ -5798,6 +5956,30 @@ mod tests {
             Box::pin(async {})
         }
 
+        /// The `gh` of the forge, or a `gh` that is not there: no test
+        /// reaches the real forge.
+        fn gh(&self, _: &str) -> Arc<crate::pr::Gh> {
+            let gh = self.gh.clone();
+            Arc::new(gh.unwrap_or_else(|| crate::pr::Gh::at("/nonexistent/gh")))
+        }
+
+        fn claims<'a>(
+            &'a self,
+            _: &'a Wave,
+        ) -> crate::wave::BoxFuture<'a, Result<std::collections::HashSet<String>>> {
+            Box::pin(async { Ok(std::collections::HashSet::new()) })
+        }
+
+        fn post<'a>(
+            &'a self,
+            _: &'a Wave,
+            _: Option<&'a str>,
+            _: &'a str,
+            _: riff_core::wire::Kind,
+        ) -> crate::wave::BoxFuture<'a, Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+
         fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> crate::wave::BoxFuture<'a, ()> {
             Box::pin(async move { self.note(format!("chat {}: {body}", record.live.name)) })
         }
@@ -7104,6 +7286,30 @@ mod tests {
         assert_eq!(units.calls(), ["rewrite", "try-restart"]);
     }
 
+    /// 01M5QVBTXE8YRY44A1C1VP71QS: a real-session test that runs counts
+    /// as one in [`Status::busy`], so `riff update` waits for it. A status
+    /// of an old daemon has no test.
+    #[test]
+    fn a_real_session_test_that_runs_counts_as_one_busy() {
+        let mut json = serde_json::json!({
+            "pid": 7, "build": "4.1.0", "since_ms": 0, "dir": "/d", "sessions": [],
+        });
+        let old: Status = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!((old.test.clone(), old.busy()), (None, 0));
+
+        json["test"] = serde_json::json!({"tag": "v4.1.1", "commit": "90e36bfd", "secs": 60});
+        let testing: Status = serde_json::from_value(json).unwrap();
+        assert_eq!(testing.test.as_ref().map(|t| t.secs), Some(60));
+        assert_eq!(testing.busy(), 1);
+        assert_eq!(
+            remote::Restart::of(true, testing.busy()),
+            remote::Restart::Later(1)
+        );
+
+        let more = Status { jobs: 2, ..testing };
+        assert_eq!(more.busy(), 3);
+    }
+
     /// With the limit 0, a start of a wave waits for room always. `riff
     /// update` and the look of the daemon start the daemon again on the
     /// new riff all the same (01M517BTJ9EV4ZGPYRB6HXJJC9,
@@ -7314,6 +7520,44 @@ mod tests {
         assert_eq!(refused.to_string(), text::DAEMON_RESUME_ONLY_LEAD);
         lead.resume_riff().await.unwrap();
 
+        // #1338: the ends read through the socket, also for a work
+        // session. Only the lead reads the log for an audit and runs an
+        // item. A riff with no sign-in has no members to read: the daemon
+        // gives the answer of riff-server (a signed riff is in
+        // `the_lead_reads_the_members_and_the_log_of_a_riff_with_sign_in`).
+        for reach in [&lead, &worker] {
+            let seen = reach.whoami().await.unwrap();
+            assert!(seen.state.is_ok(), "{:?}", seen.state);
+            assert!(seen.uri.is_some(), "the server knows the session");
+            let facts = reach.who_facts(false).await.unwrap();
+            assert!(
+                facts
+                    .who
+                    .sessions
+                    .iter()
+                    .any(|s| s.uri.who().session() == Some("riff-lead-o-r-session")),
+                "{:?}",
+                facts.who.sessions
+            );
+        }
+        for reach in [&lead, &worker] {
+            assert!(reach.ends().await.unwrap().is_empty());
+            let no_sign_in = reach.members().await.unwrap_err().to_string();
+            assert!(no_sign_in.contains("Nobody is signed in"), "{no_sign_in}");
+        }
+        let repo: riff_core::name::ThreadName = REPO.parse().unwrap();
+        let refused = worker.log(&repo).await.unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_AUDIT_ONLY_LEAD);
+        let refused = worker.run("issue-1").await.unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_RUN_ONLY_LEAD);
+        let refused = lead.run("verify-issue-1").await.unwrap_err();
+        assert_eq!(
+            refused.to_string(),
+            text::run_not_an_issue("verify-issue-1")
+        );
+        let refused = lead.run("issue-1").await.unwrap_err();
+        assert_eq!(refused.to_string(), text::run_no_wave(REPO));
+
         // #1239: a --host request of the lead goes through its socket and
         // riff-server to the daemon of the host. A worker is refused.
         let request = remote::Request::Status;
@@ -7383,6 +7627,89 @@ mod tests {
         // With no riff-server, the error names the server of the session.
         let dead = Reach::Direct("http://127.0.0.1:9".into());
         assert!(dead.build().await.is_err());
+    }
+
+    /// #1338: the lead reads the members and the records of the log
+    /// through the socket of its session, from a riff with sign-in. The
+    /// daemon makes the calls with the sign-in of the person on the
+    /// host. A work session reads the members, and cannot read the log.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_lead_reads_the_members_and_the_log_of_a_riff_with_sign_in() {
+        use crate::reach::Reach;
+        use riff_server::Service;
+        use riff_server::auth::Config;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = format!("http://{}", listener.local_addr().unwrap());
+        riff_client::secrets::mock_store();
+        riff_client::login::logout(&server).unwrap();
+        let service = Service::new(Config {
+            provider: Some(riff_server::oidc::Provider {
+                issuer: "https://accounts.example.com".into(),
+                client_id: "riff".into(),
+                client_secret: None,
+                allowed_domains: Vec::new(),
+            }),
+            ..Config::new(&server)
+        });
+        let router = service.router();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        // The first person to sign in is the owner.
+        let jkt = riff_client::device::key(&server).unwrap().thumbprint();
+        let pair = service.admit("ada@gmail.com", false, &jkt).await.unwrap();
+        riff_client::login::store(
+            &server,
+            &riff_client::login::SignIn {
+                user: pair.user.clone(),
+                access_token: pair.access_token.clone(),
+                refresh_token: pair.refresh_token.clone(),
+                expires_at: u64::MAX,
+                riff_id: service.riff_id(),
+            },
+        )
+        .unwrap();
+        let api = riff_client::api::Api::new(&server).signed_in(None).unwrap();
+        let place = crate::identity::place_from_text(&format!("a/{REPO}")).unwrap();
+        let person = SessionUri::new(
+            riff_core::name::Who::new(&pair.user, None).unwrap(),
+            place.clone(),
+        );
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+
+        let mut sockets = Vec::new();
+        for (name, item, terminal) in [
+            ("riff-lead-o-r", "lead", true),
+            ("riff-issue-1-aaaaaaaa", "issue-1", false),
+        ] {
+            let mut start = here.start(name, item);
+            start.server = server.clone();
+            let who = riff_core::name::Who::new(&pair.user, Some(&start.session)).unwrap();
+            start.me = SessionUri::new(who, place.clone());
+            start.terminal = terminal;
+            let session = api.clone().signed_in(Some(&start.session)).unwrap();
+            session
+                .start(&start.me, riff_core::wire::StartReason::Process, !terminal)
+                .await
+                .unwrap();
+            if terminal {
+                api.lead(&person, &start.session).await.unwrap();
+            }
+            let (client, name) = here.started(start).await;
+            drop(client);
+            sockets.push(Reach::Daemon(session_dir(&here.dir, &name).join(SOCKET)));
+        }
+        let worker = sockets.pop().unwrap();
+        let lead = sockets.pop().unwrap();
+
+        for reach in [&lead, &worker] {
+            let members = reach.members().await.unwrap();
+            assert_eq!(members.owner.as_deref(), Some("ada@gmail.com"));
+        }
+        let repo: riff_core::name::ThreadName = REPO.parse().unwrap();
+        let log = lead.log(&repo).await.unwrap();
+        assert!(!log.records.is_empty());
+        assert_eq!(log.pruned, None);
+        let refused = worker.log(&repo).await.unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_AUDIT_ONLY_LEAD);
     }
 
     /// Waits until `done` is true.

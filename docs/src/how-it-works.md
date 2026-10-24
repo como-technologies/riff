@@ -581,7 +581,7 @@ idle, so no work stops:
 |---|---|---|
 | `riff relay watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
 | `riff chat` | runs the new `riff` in its place | between two lines |
-| The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session, else after its last session |
+| The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session and no real-session test, else after its last session |
 
 You still start `riff-server` again yourself. `riff update` tells you
 when it runs the old build.
@@ -846,6 +846,10 @@ riff     running
 build    v0.7.0  (f45be4d, 2026-09-29)
 ```
 
+The lead runs it in its container too. The riff daemon of the host
+reads riff-server for the session, and `whoami` shows the URI that
+riff-server holds.
+
 ## See who is in the riff
 
 ```sh
@@ -868,6 +872,10 @@ mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6
 mike@thelio:riff#issue-7 (5b1e)    busy     worker    working on #7  4m ago: write the tests
 brett@heron:riff (77e0)            blocked            which of two designs? (1m ago)
 ```
+
+`riff who` works in the container of the lead too, and in the container
+of a worker: the riff daemon of the host reads riff-server for the
+session.
 
 `you` marks your own row. A tag shows the role of a session:
 
@@ -1720,6 +1728,13 @@ the user in the repository: each live session with no claim. Each other
 session sees it at its next read. A verify request is free work: a
 session picks it like any other item.
 
+The wave verifies a pull request from a fork too. The head commit of
+such a pull request is on a branch of the fork, not on a branch of
+`origin`. So the clone of the verify fetches `refs/pull/N/head` from
+`origin`, where GitHub keeps the head of each pull request, and checks
+out the head commit. It checks out the commit, not the ref: a push to
+the pull request after the look does not change what the verify reads.
+
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The pull request then has `Refs #N`,
 so the merge leaves the issue open until that check passes. The rules
@@ -1779,13 +1794,13 @@ see
 
 ### When a pull request stops
 
-A pull request can stop with no sign. The `riff relay mcp` of the lead
-looks at the open pull requests each minute, and sends a message in two
-cases:
+A pull request can stop with no sign. The riff daemon looks at the open
+pull requests of each wave that it runs, each minute, and sends a
+message in two cases (see [Run the wave](development.md#run-the-wave)):
 
 ```mermaid
 flowchart TD
-    L["the look of the lead, each minute"] --> C{"auto-merge on, and a conflict?"}
+    L["the look of the daemon, each minute"] --> C{"auto-merge on, and a conflict?"}
     C -- yes --> H{"a session holds the item?"}
     H -- yes --> M1["message to that session"]
     H -- no --> M2["message to the lead"]
@@ -1802,7 +1817,8 @@ flowchart TD
   verify to a free session, or starts a worker.
 
 Each message comes one time for each pull request, head commit and
-state. A new push that has a conflict again gives a new message. To fix
+state. A new push that has a conflict again gives a new message. After a
+new start of the daemon, a message can come one more time. To fix
 a conflict, rebase in the worktree of the item, and push:
 
 ```sh
@@ -1818,12 +1834,13 @@ Then send a new verify request for the new commit.
 A pull request merges when the Gate of its own head passed, also when
 `main` moved after that. So two pull requests that each pass their
 Gate can break `main` together. Then the Gate of each later pull
-request fails too. The `riff relay mcp` of the lead looks at the Gate of
-the head of `main` each minute:
+request fails too. The riff daemon looks at the Gate of the head of
+`main` of each wave that it runs, each minute (see
+[Run the wave](development.md#run-the-wave)):
 
 ```mermaid
 flowchart TD
-    L["the look of the lead, each minute"] --> G{"the Gate of the head of main"}
+    L["the look of the daemon, each minute"] --> G{"the Gate of the head of main"}
     G -- "failed, a new commit" --> F["riff files the fix item,<br/>or comments on the open one"]
     F --> M["message to the lead: commit, run,<br/>failed jobs, fix item"]
     M --> W["the rollout gives the fix item<br/>to a worker before each other item"]
@@ -2226,16 +2243,16 @@ riff chat
 ```
 
 The chat shows its history first, in less than 1 second, then each
-new line. A person shows
-as `<USER@HOST>`. A lead shows as `[USER's lead]`, and another session
-as `[USER ID]`. A new line prints above the prompt, and what you type
-stays. Your own line shows once, from the server:
+new line. A person shows as `<USER@HOST>`. A lead shows as
+`[USER's lead, REPO]`, with the name of its repository, and another
+session as `[USER ID]`. A new line prints above the prompt, and what
+you type stays. Your own line shows once, from the server:
 
 ```text
 2026-09-28
 14:02 <mike@thelio> is the release out?
 14:03 <brett@heron> not yet. @lead is #207 merged?
-14:03 [brett's lead] yes, #207 is merged.
+14:03 [brett's lead, riff] yes, #207 is merged.
 [riff] >
 ```
 
@@ -2251,8 +2268,9 @@ The chat on a phone is a design, and not built yet: see
 
 ### Ask a lead in the chat
 
-A chat line with no name wakes your lead. A line with `@lead` wakes
-your lead too. A line with `@USER` wakes the lead of USER, and not
+You have one lead in each repository that you work in. A chat line
+with no name wakes each lead of yours. A line with `@lead` wakes each
+of your leads too. A line with `@USER` wakes each lead of USER, and not
 yours. The lead answers in the chat. Type the lines in `riff chat`,
 not in a shell:
 
@@ -2271,6 +2289,36 @@ sequenceDiagram
     S-->>L: wake
     L->>S: post to the thread chat
     S-->>M: yes, take #14
+```
+
+To ask one lead, put a colon and its repository after the name. The
+repository is `OWNER/REPO`, or the name after the slash. `@lead:REPO`
+wakes only your lead in REPO, and `@USER:REPO` only the lead of USER
+in REPO. `@lead` alone wakes each of your leads:
+
+```text
+@lead:strata is #12 done?
+@brett:como-technologies/strata can I take #14?
+```
+
+The chat reads the leads from the riff first. It sends nothing when no
+lead fits the name, or when two leads fit it. It shows the leads that
+it found, and you type the line again with `OWNER/REPO`:
+
+```text
+riff: cannot send the line: mike has 2 leads in a repository with the name strata: acme/strata, como-technologies/strata. Use OWNER/REPO.
+```
+
+```mermaid
+sequenceDiagram
+    participant M as riff chat (mike)
+    participant S as riff-server
+    participant L as lead of brett in strata
+    M->>S: who
+    S-->>M: the leads of the riff
+    M->>S: @brett:strata can I take #14?
+    S-->>L: wake
+    Note over M,S: no lead or two leads fit: nothing is sent
 ```
 
 ### Answer a person in the chat only
@@ -3500,18 +3548,6 @@ On a riff with no sign-in, each message is verified. So each program
 that can reach the riff can send a message as your lead. See
 [A riff with no sign-in](#a-riff-with-no-sign-in).
 
-### Answer your lead from the Claude app
-
-Start your lead with Remote Control. Then you can answer its
-questions from the Claude app on your phone. Start the workers without
-it.
-
-```sh
-claude --remote-control
-```
-
-In a session that runs, type `/rc`.
-
 ## A restart
 
 `riff-server` keeps its state in memory. What a restart keeps depends
@@ -3937,12 +3973,11 @@ Error: cannot reach riff-server at http://127.0.0.1:7878
 
 ### Start the lead
 
-Start the lead with Remote Control (see
-[Answer your lead from the Claude
-app](#answer-your-lead-from-the-claude-app)):
+Start the lead in a container, in your clone of the repository (see
+[Start the lead](development.md#start-the-lead)):
 
 ```sh
-claude --remote-control
+riff lead start
 ```
 
 To watch the repository thread beside the lead, start `riff tail` in

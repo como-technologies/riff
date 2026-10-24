@@ -52,11 +52,11 @@
 //! let to: Vec<(String, bool)> = line.to.iter().map(|t| (t.selector.to_string(), t.all)).collect();
 //! assert_eq!(to, [("repo=o/r".to_owned(), true), ("claim=issue-6".to_owned(), false)]);
 //! assert_eq!(line.action(), Some("waves"));
-//! assert_eq!(line.sender().name, "mike's lead");
+//! assert_eq!(line.sender().name, "mike's lead, r");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use riff_core::name::{NameError, SessionUri, ThreadName, Who};
+use riff_core::name::{NameError, Repo, SessionUri, ThreadName, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, ThreadInfo};
 use serde::{Deserialize, Serialize};
@@ -93,7 +93,8 @@ pub struct To {
 /// The sender of a line, as a chat shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sender {
-    /// A person is `USER@HOST`. A verified lead is `USER's lead`. Each
+    /// A person is `USER@HOST`. A verified lead is `USER's lead, REPO`,
+    /// with the name of its repository (`USER's lead` outside git). Each
     /// other session is `USER` and the first 8 characters of its session
     /// ID. The text is as the sender gave it: the UI makes it safe.
     pub name: String,
@@ -172,10 +173,13 @@ impl Line {
     ///     Line::of(&Checked { message, verified }, &"chat".parse().unwrap())
     /// };
     /// let sender = |name: &str, session| Sender { name: name.into(), session };
-    /// let lead = "riff://mike@thelio/o/r?session=4e54d4e5-c891&lead=true";
+    /// let lead = "riff://mike@thelio/como-technologies/riff?session=4e54d4e5-c891&lead=true";
     /// assert_eq!(line("riff://mike@thelio", true).sender(), sender("mike@thelio", false));
-    /// assert_eq!(line(lead, true).sender(), sender("mike's lead", true));
+    /// assert_eq!(line(lead, true).sender(), sender("mike's lead, riff", true));
     /// assert_eq!(line(lead, false).sender(), sender("mike 4e54d4e5", true));
+    /// // A lead outside git has no repository to show.
+    /// let nowhere = "riff://mike@thelio?session=4e54d4e5-c891&lead=true";
+    /// assert_eq!(line(nowhere, true).sender(), sender("mike's lead", true));
     /// ```
     pub fn sender(&self) -> Sender {
         let user = self.from.who().user();
@@ -186,7 +190,10 @@ impl Line {
                     session: false,
                 };
             }
-            Some(_) if self.lead => format!("{user}'s lead"),
+            Some(_) if self.lead => match self.from.place().repo() {
+                Repo::Git { name, .. } => format!("{user}'s lead, {name}"),
+                Repo::None => format!("{user}'s lead"),
+            },
             Some(id) => format!("{user} {}", id.chars().take(ID_CHARS).collect::<String>()),
         };
         Sender {

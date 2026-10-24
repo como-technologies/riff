@@ -911,6 +911,43 @@ with `--image`:
 riff run issue-12 --image localhost/riff-session:test
 ```
 
+### Run an item from the container of the lead
+
+The lead runs `riff run` in its container too. The container has no
+control socket of the daemon and no main clone of the host. So the lead
+asks the daemon through the socket of its session (see
+[Start the lead](#start-the-lead)). In the container of the lead, run:
+
+```sh
+riff run issue-12
+```
+
+The daemon runs the item as a job of the wave of the repository: it
+does the steps of [What riff run does](#what-riff-run-does), in the
+room of the limit of the host. `riff run` answers at once and shows no
+event. See the session with `riff daemon status`.
+
+```mermaid
+sequenceDiagram
+    participant L as riff run issue-12 (lead container)
+    participant D as riff daemon (host)
+    participant S as riff-server
+    L->>D: run issue-12 (socket of the session)
+    D-->>L: asked
+    D->>S: claim, as a new worker session
+    D->>D: clone, wait for room, run the container
+    D->>S: verify request to the lead, release
+```
+
+- Only the lead can ask. The daemon refuses a worker.
+- `--image` works only on the host. The daemon takes the image that the
+  repository pins.
+- The daemon must know the repository: run `riff lead start` once, or
+  `riff wave run` in the clone on the host.
+- When the job does not start, for example when a hold keeps the item,
+  the riff is paused, or a fact of the host fails, the lead gets a
+  message with the reason. The item stays free.
+
 ### What riff run does
 
 First, riff asks the daemon for the image: the daemon pulls it when
@@ -1064,17 +1101,29 @@ it pushes that work to the branch `riff-kept/ITEM-ID8` of `origin`, for
 example `riff-kept/issue-735-7788e301`. You do nothing.
 
 - The branch has the commits and the changes of tracked files.
+- A commit on another local branch than the one that the clone has
+  checked out goes to a branch of its own,
+  `riff-kept/ITEM-ID8-BRANCH`, for example
+  `riff-kept/issue-735-7788e301-spare`. The daemon pushes each such
+  branch, and then it removes the folder.
 - It never has a file that git does not track: a scratch file or a log
   can hold a secret. These files go with the folder.
 - The daemon never touches the folder of a session that runs, or of an
   item with an open pull request.
 - The daemon deletes each branch `riff-kept/*` after 30 days.
 
-The daemon posts one note to the lead with what it pushed and removed.
+The daemon posts one note to the lead with what it pushed and removed,
+each branch by name. It posts the note one time, not at each sweep.
 `riff daemon sweep` prints it too:
 
 ```text
 riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge. Its work is on the branch riff-kept/issue-735-7788e301 of origin.
+```
+
+With a commit on another local branch, the line names each branch:
+
+```text
+riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge. Its work is on the branches riff-kept/issue-735-7788e301 and riff-kept/issue-735-7788e301-spare of origin.
 ```
 
 ### Get back the work of a removed folder
@@ -1087,12 +1136,15 @@ git log FETCH_HEAD --not origin/main
 git switch -c rescue FETCH_HEAD
 ```
 
+Do the same for each other branch of the note, for example
+`riff-kept/issue-735-7788e301-spare`.
+
 ### When a folder stays
 
 The daemon keeps a folder when the push fails (for example, no network
-or no right to push), when a commit is on a local branch that is not
-`HEAD`, or when git cannot read the clone. `riff daemon sweep` prints
-each such folder with the reason, and the next sweep tries again:
+or no right to push), or when git cannot read the clone.
+`riff daemon sweep` prints each such folder with the reason, and the
+next sweep tries again:
 
 ```text
 riff kept the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge, but riff could not push its work: git push: denied. The next sweep tries again.
@@ -1275,6 +1327,12 @@ The daemon keeps the wave, also over its own restart, until you stop
 it. The rollout of your lead runs it for you: see
 [Let the rollout of the lead run the wave](#let-the-rollout-of-the-lead-run-the-wave).
 
+Each minute the daemon also looks at the forge for the wave. It tells
+your lead when a pull request stops (see
+[When a pull request stops](how-it-works.md#when-a-pull-request-stops))
+or when `main` breaks (see
+[When main breaks](how-it-works.md#when-main-breaks)).
+
 A pull request with auto-merge on can get a conflict with `main` when
 `main` moves. Then it cannot merge, also after its verify passed. The
 wave starts a build session for its item. The session rebases the
@@ -1370,8 +1428,8 @@ To end this rule, give the sessions a token: see
 A session of a wave can end with no open pull request. The daemon then
 leaves one record in the thread `ends` on riff-server: the exit code, or
 the signal, the tool calls that auto mode denied, and the last 50 lines
-of the output. You and your lead read it from any machine, also from a
-container:
+of the output. You read it from any machine. The lead reads it in its
+container: the riff daemon of the host reads riff-server for it.
 
 ```sh
 riff session why issue-1203
@@ -1727,8 +1785,9 @@ To start the daemon again on the new riff after `riff update` there:
 riff daemon restart --host thelio
 ```
 
-The daemon starts again only when it runs no session. Else it says
-that it starts again after its last session. Then `riff daemon status
+The daemon starts again only when it runs no session and no
+real-session test. Else it says that it starts again after its last
+session. Then `riff daemon status
 --host thelio` shows its new pid and build.
 
 riff waits for the reply, prints it, and exits with 1 when the daemon
@@ -2084,7 +2143,8 @@ riff release test v3.3.0 --host thelio
 
 While the test runs, `riff release status` shows
 `real-session test: running`. The line `next:` tells you to wait for
-it. Do not start it again.
+it. Do not start it again. To see it run on the host, see
+[See the test run on a host](#see-the-test-run-on-a-host).
 
 ```mermaid
 flowchart LR
@@ -2139,6 +2199,26 @@ runs, frees the hold, and removes the folder of the session. It also
 cleans up when you press Ctrl-C. A second Ctrl-C stops it at once: then
 stop the daemon of the test yourself, with the process ID that step 5
 shows.
+
+### See the test run on a host
+
+The test runs in the daemon of the host, so it has no session of
+its own. To see it, ask the daemon:
+
+```sh
+riff daemon status --host thelio
+```
+
+While the test runs, the status has a line of its own:
+
+```text
+real-session test of v3.3.0 on 90e36bfd, for 4 min
+```
+
+`riff top`, `riff who` and `riff view` show the same line on the line of
+the host. The daemon counts the test as work: after `riff update`, it
+starts again on the new riff only after the test. The line goes away
+when the test ends. Then `riff release status` shows the result.
 
 ### Which riff-server the test uses
 
@@ -2610,6 +2690,9 @@ riff usage 12 --total
 the sessions followed the flow of a wave. Only the owner or an admin
 can read the log. Run it in your clone. It needs `gh`. Give the number
 of the wave. The name is not necessary.
+The lead runs it in its container too: the riff daemon of the host reads
+the log for the lead, and riff-server still gives the log only to the
+owner and the admins.
 
 ```sh
 riff audit --wave 18

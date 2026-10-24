@@ -57,6 +57,7 @@ use anyhow::Result;
 use riff_client::api::Api;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::Kind;
+use serde::{Deserialize, Serialize};
 
 use crate::daemon::{EVENTS, Ended};
 use crate::run::Scrub;
@@ -203,8 +204,9 @@ pub async fn post(api: &Api, me: &SessionUri, end: &End) -> Result<()> {
     Ok(())
 }
 
-/// One record of the thread [`THREAD`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One record of the thread [`THREAD`]. The daemon gives the records to a
+/// session in a container as JSON (#1338).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     /// The time of the post, in milliseconds since the Unix epoch.
     pub at_ms: u64,

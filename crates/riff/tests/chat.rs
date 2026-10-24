@@ -229,12 +229,162 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
     // color.
     for client in [&mut mike, &mut brett] {
         let line = client.shows("yes, take #14").await;
-        assert!(is_shown(&line, "[mike's lead] yes, take #14"), "{line:?}");
+        assert!(
+            is_shown(&line, "[mike's lead, riff] yes, take #14"),
+            "{line:?}"
+        );
     }
 
     // Neither line named brett: his lead stays asleep.
     let none = tokio::time::timeout(Duration::from_millis(500), brett_wakes.next()).await;
     assert!(none.is_err(), "the lead of brett woke: {none:?}");
+}
+
+/// The lead of `user` in the repository `repo`, on one host.
+fn lead_in(user: &str, repo: &str) -> SessionUri {
+    let id = repo.replace('/', "-");
+    format!("riff://{user}@thelio/{repo}?session={user}-{id}-lead")
+        .parse()
+        .unwrap()
+}
+
+/// The leads of `user` in each of `repos`: registered, and named by the
+/// person. Each comes with a client of its own session.
+async fn named_leads(
+    server: &crate::common::Signed,
+    user: &str,
+    repos: &[&str],
+) -> Vec<(SessionUri, Api)> {
+    let mut leads = Vec::new();
+    for repo in repos {
+        let lead = lead_in(user, repo);
+        let api = crate::common::api_of(server, &lead);
+        api.register(&lead).await.unwrap();
+        crate::common::name_lead(&server.api(user, None), &lead).await;
+        leads.push((lead, api));
+    }
+    leads
+}
+
+#[tokio::test]
+async fn at_lead_with_a_repository_wakes_only_the_lead_of_that_repository() {
+    let server = crate::common::start_signed().await;
+    let leads = named_leads(
+        &server,
+        "mike",
+        &["como-technologies/riff", "como-technologies/strata"],
+    )
+    .await;
+    let mut wakes = Vec::new();
+    for (lead, api) in &leads {
+        wakes.push(Box::pin(api.watch(lead).await.unwrap()));
+    }
+    let [riff_wakes, strata_wakes] = &mut wakes[..] else {
+        unreachable!()
+    };
+    let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
+    let quiet = Duration::from_millis(500);
+
+    // The name after the slash picks one lead.
+    mike.say("@lead:strata is #12 done?").await;
+    let wake = in_time(WAIT, strata_wakes.next())
+        .await
+        .expect("the lead in strata wakes")
+        .unwrap()
+        .unwrap();
+    assert_eq!(wake.from.who().user(), "mike");
+    let none = tokio::time::timeout(quiet, riff_wakes.next()).await;
+    assert!(none.is_err(), "the lead in riff woke: {none:?}");
+
+    // OWNER/REPO picks one lead, and so does @USER:REPO.
+    mike.say("@mike:como-technologies/riff, and you?").await;
+    in_time(WAIT, riff_wakes.next())
+        .await
+        .expect("the lead in riff wakes")
+        .unwrap()
+        .unwrap();
+    let none = tokio::time::timeout(quiet, strata_wakes.next()).await;
+    assert!(none.is_err(), "the lead in strata woke: {none:?}");
+
+    // The line of a lead shows its repository.
+    let (strata, strata_api) = &leads[1];
+    let chat = riff::chat::thread();
+    let post = strata_api.post(strata, Some(&chat), &[], "yes, #12 is done", Kind::Message);
+    post.await.unwrap();
+    let line = mike.shows("yes, #12 is done").await;
+    assert!(
+        is_shown(&line, "[mike's lead, strata] yes, #12 is done"),
+        "{line:?}"
+    );
+
+    // @lead alone, and a line with no name, wake each lead of the user.
+    for line in ["@lead both of you", "and a line with no name"] {
+        mike.say(line).await;
+        for wakes in [&mut *riff_wakes, &mut *strata_wakes] {
+            in_time(WAIT, wakes.next())
+                .await
+                .unwrap_or_else(|_| panic!("a lead did not wake for {line:?}"))
+                .unwrap()
+                .unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_name_that_fits_no_lead_or_two_leads_sends_nothing_and_names_the_leads() {
+    let server = crate::common::start_signed().await;
+    let leads = named_leads(
+        &server,
+        "mike",
+        &["como-technologies/strata", "acme/strata"],
+    )
+    .await;
+    let mut wakes = Vec::new();
+    for (lead, api) in &leads {
+        wakes.push(Box::pin(api.watch(lead).await.unwrap()));
+    }
+    let [como, acme] = &mut wakes[..] else {
+        unreachable!()
+    };
+    let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
+
+    // Two leads fit the name: the chat names them.
+    mike.say("@lead:strata hello").await;
+    let warn = mike.warns("cannot send the line").await;
+    assert!(
+        warn.contains("mike has 2 leads in a repository with the name strata"),
+        "{warn}"
+    );
+    assert!(
+        warn.contains("acme/strata, como-technologies/strata"),
+        "{warn}"
+    );
+
+    // No lead fits the name, or the user has no lead.
+    mike.say("@lead:riff hello").await;
+    let warn = mike.warns("cannot send the line").await;
+    assert!(warn.contains("mike has no lead in riff"), "{warn}");
+    assert!(warn.contains("acme/strata"), "{warn}");
+    mike.say("@brett:riff hello").await;
+    let warn = mike.warns("cannot send the line").await;
+    assert!(warn.contains("brett has no lead."), "{warn}");
+
+    // The chat sent none of these lines: the first line with "hello" is
+    // the one that names the repository in full.
+    mike.say("@lead:acme/strata hello").await;
+    let line = mike.shows("hello").await;
+    assert!(
+        is_line(&line, "mike@thelio", "@lead:acme/strata hello"),
+        "{line:?}"
+    );
+    let wake = in_time(WAIT, acme.next())
+        .await
+        .expect("the lead in acme/strata wakes")
+        .unwrap()
+        .unwrap();
+    assert_eq!(wake.from.who().user(), "mike");
+    let none = tokio::time::timeout(Duration::from_millis(500), como.next()).await;
+    assert!(none.is_err(), "the other lead woke: {none:?}");
 }
 
 #[tokio::test]
@@ -349,7 +499,21 @@ fn the_book_shows_how_to_chat() {
     assert!(part.contains("riff chat --color never"), "{part}");
     assert!(part.contains(PROMPT.trim_end()), "{part}");
     assert!(part.contains("<mike@thelio>"), "{part}");
-    assert!(part.contains("[brett's lead]"), "{part}");
+    assert!(part.contains("[brett's lead, riff]"), "{part}");
+    let ask = part
+        .find("\n### Ask a lead in the chat\n")
+        .expect("the how-to to ask a lead has its own heading");
+    let ask = &part[ask + 1..];
+    let ask = &ask[..ask[3..].find("\n### ").map_or(ask.len(), |end| end + 3)];
+    assert!(
+        ask.contains("```text\n@lead:strata is #12 done?\n"),
+        "{ask}"
+    );
+    assert!(ask.contains("@USER:REPO"), "{ask}");
+    assert!(
+        ask.contains("`@lead` alone wakes each of your leads"),
+        "{ask}"
+    );
     let action = part
         .find("\n### Send an action with /me\n")
         .expect("the /me how-to has its own heading");

@@ -524,6 +524,7 @@ mod tests {
             waiting: vec![],
             waves: vec![],
             jobs: 0,
+            test: None,
             mcp: vec![],
             claude_token: Default::default(),
         }
@@ -582,6 +583,26 @@ mod tests {
         assert!(lines[3].contains("works"), "{lines:#?}");
         assert!(lines[3].contains("> Bash: just check"), "{lines:#?}");
         assert_eq!(lines[7], text::VIEW_KEYS);
+    }
+
+    /// 01M5QVBTXE8YRY44A1C1VP71QS: a real-session test that runs shows
+    /// on the line of the daemon.
+    #[test]
+    fn the_view_shows_a_real_session_test_that_runs_on_the_line_of_the_daemon() {
+        let mut shown = status(vec![]);
+        shown.test = Some(riff_client::daemons::Test {
+            tag: "v4.1.1".into(),
+            commit: "90e36bfd".into(),
+            secs: 185,
+        });
+        let mut screen = Screen::default();
+        screen.set(Ok(shown));
+        let lines = drawn(&screen, 150, 6);
+        assert_eq!(
+            lines[0],
+            "riff daemon 1.3.1 06a0ae03be98, pid 4242, limit 3 sessions and a floor of 8 GB, \
+             0 waiting, real-session test of v4.1.1 on 90e36bfd, for 3 min"
+        );
     }
 
     /// 01M51PD7T7451SR11W7JA7QW3X

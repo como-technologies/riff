@@ -697,3 +697,54 @@ fn the_book_has_the_how_to() {
     assert!(page.contains("\n## Check that a wave followed the rules\n"));
     assert!(book::commands_in(&page).contains(&"riff audit --wave 18".to_owned()));
 }
+
+/// #1338: in the container of the lead, `riff audit` reads the log
+/// through the socket of the session, and `gh` reads the forge. No
+/// riff-server answers at the address of the machine.
+#[tokio::test(flavor = "multi_thread")]
+async fn audit_in_the_lead_container_reads_the_log_through_the_socket() {
+    let machine = Machine::new();
+    // As riff-server gives them: a post has only its mark.
+    let records: Vec<Record> = good()
+        .into_iter()
+        .zip(1..)
+        .map(|(mut r, position)| {
+            r.envelope.position = position;
+            r.for_audit()
+        })
+        .collect();
+    let reply = serde_json::to_value(riff_core::wire::LogReply {
+        records,
+        pruned: None,
+    })
+    .unwrap();
+    let (_dir, socket, asked) = common::session_socket(move |_| Ok(reply.clone()));
+    let path = format!(
+        "{}:{}",
+        machine.bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let mut cmd = machine.env.riff();
+    cmd.args(["audit", "--wave", "Wave 2"])
+        .current_dir(machine.repo.path())
+        .env("RIFF_SOCKET", &socket)
+        .env("RIFF_SESSION", "c1")
+        .env_remove("RIFF_SERVER")
+        .env("RIFF_USER", "mike")
+        .env("RIFF_HOST", "thelio")
+        .env("PATH", path);
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert_eq!(stderr, "");
+    assert!(
+        stdout.ends_with("\nResult: each rule passes.\n"),
+        "{stdout}"
+    );
+    assert_eq!(common::call_names(&asked), ["log"]);
+    let call = asked.lock().unwrap()[0].clone();
+    assert_eq!(call["repo"], "como-technologies/riff");
+}

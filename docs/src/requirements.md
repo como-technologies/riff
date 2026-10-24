@@ -2977,6 +2977,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M49Q31FASDM7CG3JEGPYCZB9** Each message of a pull request that
   stops comes one time for each pull request, head commit and state.
   The `riff mcp` of the lead keeps what it told in memory only.
+  Superseded in part by 01M5QVH3MAEPPJN9PPVDX6N2EY: the daemon keeps it.
 - **01M51QEYKTD7ZEB0YA0C3MQTPN** The look of the lead reads the check
   run `Gate` of the head commit of `main` each minute. When the Gate
   failed (`failure` or `timed_out`) at a commit that the lead did not
@@ -2984,7 +2985,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the run, the failed jobs and the fix item. When `main` was broken at
   an older commit, the lead gets a note. A Gate that runs, a cancelled
   Gate and a head with no Gate give nothing. The `riff mcp` of the lead
-  keeps the last broken commit that it told in memory only.
+  keeps the last broken commit that it told in memory only. Superseded
+  in part by 01M5QVH3MAEPPJN9PPVDX6N2EY: the daemon keeps it.
 - **01M51QEYPGD6W345MZ4F85C38F** When the Gate of `main` fails, riff
   files one fix item: an issue with the label `broken-main` in the
   current wave, with the commit, the run, the failed jobs, a `Needs:`
@@ -3293,6 +3295,15 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   posts to its person only with `user`, `host` and `person` set to true:
   the post wakes no daemon, worker or other agent session. The
   instructions of the riff tools name this selector.
+- **01M5QVH7KDK3R2S4NDFB2V1XY9** A chat line with `@lead:REPO` wakes
+  only the lead of the sender in the repository REPO, and `@USER:REPO`
+  only the lead of USER in REPO. REPO is `OWNER/REPO`, or the name after
+  the slash when one lead of that user has a repository with that name.
+  `riff chat` reads the leads from riff-server. When no lead or more
+  than one lead matches, it sends nothing and names the leads that it
+  found. `@lead`, `@USER` and a line with no name still wake each lead
+  of the user. A chat line shows a lead as `[USER's lead, REPO]`, with
+  the name of its repository.
 
 ## Security
 
@@ -6261,6 +6272,17 @@ part when they merge.
   for work items, --effort-lead and --effort-verify, also with --host.
   riff refuses a level that Claude Code does not know: low, medium,
   high, xhigh and max. A session that runs keeps its effort.
+- **01M5QVCAXF5ANTTT46XHR6SF7H** When the sweep of
+  01M5NVKNGZPK0GG7B7ZWBS0DFE finds a folder whose clone has commits on a
+  local branch that is not HEAD, and no branch of origin has them, it
+  pushes each such branch to the branch riff-kept/ITEM-ID8-BRANCH of
+  origin, with the same rule as for HEAD: the commits and the tracked
+  files, never a file that git does not track. Then it removes the
+  folder. A commit on a local branch that is not HEAD no longer keeps
+  the folder. The daemon tells the lead one time, in the digest note of
+  01M5NVKNS35SC8P514GYDJSRQM, with each branch that it pushed. It posts
+  no note at the next sweep. This supersedes 01M5NVKNGZPK0GG7B7ZWBS0DFE
+  in part.
 
 ### riff relay
 
@@ -6471,6 +6493,23 @@ part when they merge.
   ended session on purpose with riff daemon sweep --remove NAME. It
   first checks that the work of the folder is on a merged branch, or
   that the person gave --force. The lead can run it with --host.
+- **01M5QVARWYFHTQV5THNRB09SZA** The clone of a verify session has the
+  head commit of a pull request from a fork too. After the clone, the
+  daemon fetches refs/pull/N/head from origin, with N the number of the
+  pull request, then checks out the head commit, detached. It checks out
+  the commit, not the ref, so a push to the pull request after the look
+  does not change what the verify reads.
+- **01M5QVH3MAEPPJN9PPVDX6N2EY** The riff daemon runs the look of the
+  repository of each wave that it runs, each minute, until `riff wave
+  stop`: it reads the open pull requests and the Gate of `main` with
+  "gh", and posts as the person. The messages of
+  01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q316RXNATJP587DWGDNCD and
+  01M51QEYKTD7ZEB0YA0C3MQTPN come from this look, and the steps of
+  01M51QEYPGD6W345MZ4F85C38F and 01M51QEYVQN74Q1VDTVHB0445Q too. A
+  message goes to the lead of the person, or to the session that holds
+  the item of a pull request with a conflict. The daemon keeps what it
+  told in memory only. The wave goes on when the look fails: the daemon
+  prints the fault one time until it changes.
 
 ### The lead, the view and the takeover
 
@@ -6648,6 +6687,29 @@ part when they merge.
   of the session, as riff release check does: the roster, the chat line,
   the read of the chat and the pause of the riff go through the riff
   daemon.
+- **01M5QV9STQF1P9GN65P35E0FJH** The lead has no Remote Control. A
+  person answers the lead in riff chat (#1363). The book names no flag
+  or command of Remote Control, and the start of the lead is riff lead
+  start.
+- **01M5QVX8D3JE51FAYRWXMAYFAY** In a container, riff members, riff
+  audit and riff session why read riff-server through the riff daemon on
+  the socket of the session (RIFF_SOCKET), as riff wave list does. They
+  need no RIFF_SERVER and no sign-in in the container. Only the lead can
+  read the log for riff audit, and riff-server still gives it only to
+  the owner and the admins. riff invite, riff remove, riff admin and
+  riff owner stay for a person in a terminal on the host (#1338).
+- **01M5QVX8FFG2FPWZEW61A985CF** In the container of the lead, riff run
+  ITEM asks the riff daemon on the socket of the session to run the item
+  as a job of the wave of the repository: the claim, the clone, the
+  session in the room of the limit, and the steps after its end, as the
+  wave does them. riff run answers at once and does not follow the
+  session. It takes no --image. Only the lead can ask it. When the job
+  does not start, the daemon tells the lead why (#1338).
+- **01M5QW31TFA1W2GWPGRS2Y65GP** In a container, riff who and riff
+  whoami read riff-server through the riff daemon on the socket of the
+  session, as riff members does. Each session can read them. The URI
+  that riff whoami shows is the URI that riff-server holds for the
+  session (#1338).
 - **01M5QVCVXWBBG1BMGRVBQS25W9** In a session with a terminal, the lead
   and a takeover, the relay puts the folder of /opt/riff/riff first on
   the PATH of claude. So a person who types ! riff in the terminal runs
@@ -8429,6 +8491,12 @@ items of Wave C that end riff-server in the Backlog
   test resumes the whole riff on the riff-server of the test with `riff
   resume --riff`: a new riff starts paused and refuses each claim. A
   failed resume fails step 1.
+- **01M5QVBTXE8YRY44A1C1VP71QS** The riff daemon shows the real-session
+  test that it runs, with its tag, its commit and its minutes. `riff
+  daemon status` shows it on a line of its own: "real-session test of
+  TAG on COMMIT, for N min". `riff top`, `riff who` and `riff view` show
+  it on the line of the host. `Status::busy` counts the test as one, so
+  the daemon starts again on a new riff only after the test.
 
 ## The UIs
 
