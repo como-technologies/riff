@@ -197,7 +197,7 @@ pub const WAIT: Duration = Duration::from_secs(600);
 pub const SECRET_VARS: [&str; 3] = ["GH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
 
 /// The name of the MCP server of the riff tools: the tools are
-/// `mcp__riff__NAME`, as in a worker of riff 1.x.
+/// `mcp__riff__NAME`, as in a worker on the host.
 pub const MCP_SERVER: &str = "riff";
 
 /// The stream-json line that interrupts the turn of `claude -p`, as the

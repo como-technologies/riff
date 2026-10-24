@@ -2350,8 +2350,8 @@ pub struct SetIdle {
 }
 
 /// The settings of idle workers (01M3Q5A0TF9K49V8Z1ZY9NDF74). The server
-/// stops no worker for them since riff 4.0: the log and the checkpoint
-/// keep them so that an old record still reads.
+/// stops no worker for them: the log and the checkpoint keep them so
+/// that an old record still reads.
 ///
 /// ```
 /// use riff_core::wire::Idle;

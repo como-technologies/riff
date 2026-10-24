@@ -39,7 +39,7 @@ ci-full:
 
 # ci-full runs these checks with the lock held.
 [private]
-ci-checks: fmt-check lint test doc book reqs wrap
+ci-checks: fmt-check lint test doc book reqs wrap versions
 
 # The Gate is the one full run of each commit (01M49HAZ5BZYGAR9PGC089RM3F).
 # hygiene crates prints the cargo test arguments for the crates of the
@@ -51,21 +51,26 @@ check:
     set -euo pipefail
     . "{{justfile_directory()}}/crates/hygiene/ci-lock.sh"
     ci_lock "$PWD/target"
-    {{just_executable()}} fmt-check lint doc book reqs wrap
+    {{just_executable()}} fmt-check lint doc book reqs wrap versions
     crates=$(cargo run -q -p hygiene -- crates)
     if [ -n "$crates" ]; then
         # shellcheck disable=SC2086 # each word is one argument of cargo test
         {{just_executable()}} cargo-test $crates
     fi
 
-# Run only the checks for text: the book, the requirement IDs, the wrap
-ci-text: book reqs wrap
+# Run only the checks for text: the book, the requirement IDs, the wrap, the version names
+ci-text: book reqs wrap versions
 
 # 01M51K1VMWTNZGD6PT1BYDGWM3: the book.
 # Check the wrap of the book, and that no page has two blank lines in a row
 wrap:
     @cargo run -q -p hygiene -- wrap docs/src
     @cargo run -q -p hygiene -- blank docs/src
+
+# 01M5R2XVGMTB2HC9PRMS85ZWTY: no version name of riff in the code and the book.
+# Check that the code, the tests and the book name no version of riff
+versions:
+    @cargo run -q -p hygiene -- versions
 
 # Check the requirement IDs: no duplicate, and each cited ID exists
 reqs:

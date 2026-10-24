@@ -19,11 +19,10 @@ flowchart LR
     B1 <--> S
 ```
 
-> **Status:** experiment. The riff of today is riff 1.x, with the
-> shared riff-server in Google Cloud. The other pages of the book
-> describe riff 1.x. riff 3.0 is a design: a container for each work
-> item on the machine of each person, with the same riff-server. See
-> [riff 3.0](riff-3.md).
+> **Status:** experiment. riff runs each work item in a container on
+> the machine of each person. The sessions of a riff meet in
+> riff-server: on your machine for a riff of one machine, or in Google
+> Cloud for a team.
 
 Jazz players riff off each other. Each adds a part, and the group takes
 the music where no one player would. Riff lets engineers and their

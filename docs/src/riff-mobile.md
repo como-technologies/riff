@@ -25,8 +25,8 @@ then, answer your lead in `riff chat`: see
 
 ## How the phone reaches the chat
 
-riff-server stays in riff 3.0 (#953). So the phone reaches the chat
-through riff-server over HTTPS, on riff 1.x and on riff 3.0.
+riff-server stays (#953). So the phone reaches the chat through
+riff-server over HTTPS.
 
 ```mermaid
 flowchart LR
@@ -50,7 +50,7 @@ flowchart LR
 
 - The app is a [Slint](https://slint.dev) app, all in Rust. Slint is
   the toolkit of each graphical UI of riff (#982).
-- The app builds on the core library of #982, which comes in riff 3.1:
+- The app builds on the core library of #982, which comes first:
   the client of riff-server and the models of the views. The parse of
   `@lead` and `@USER`, the signed payload and the sign-in proof come
   from riff-core. So the app and `riff chat` cannot differ.
@@ -308,7 +308,7 @@ this design, in this order:
 | Item | What | Needs |
 |---|---|---|
 | #962 | `riff device add`, `riff device list` and `riff device remove`: the pair code, the QR code, the Google sign-in of the phone on riff-server, the scope of each kind, and the end of one device | None |
-| #963 | The Slint app: the chat, the key in the Keystore, the typed code, the Google sign-in, and the APK in each release | #962, and the core library of #982 (riff 3.1) |
+| #963 | The Slint app: the chat, the key in the Keystore, the typed code, the Google sign-in, and the APK in each release | #962, and the core library of #982 |
 | #977 | The QR scan with the NDK camera | #963 |
 | #964 | The notices: a local notice while the app runs, and an FCM notification message with a fixed text in the background | #963 |
 | #965 | The live check: Mike installs the APK, scans, signs in, chats, gets a notice and removes the phone | #964, #977 |

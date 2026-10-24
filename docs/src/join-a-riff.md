@@ -93,18 +93,18 @@ A riff with no bucket forgets each sign-in when it starts again. Then
 sign in again (see
 [After a restart with no bucket, run riff login](how-it-works.md#after-a-restart-with-no-bucket-run-riff-login)).
 
-### Update from riff 3 to riff 4
+### Update from riff 3
 
-The update of riff 3 stops with "riff connect claude failed": riff 4
-has no `riff connect`. The update installed riff 4 before that step,
-so riff 4 can do the rest. See the version of `riff`:
+The update of riff 3 stops with "riff connect claude failed": the new
+riff has no `riff connect`. The update installed the new riff before
+that step, so it can do the rest. See the version of `riff`:
 
 ```sh
 riff --version
 ```
 
-When it shows 4, run the update again. riff 4 does the rest, and the
-riff daemon starts again on riff 4 after its last session:
+When it shows more than 3, run the update again. The new riff does the
+rest, and the riff daemon starts again on it after its last session:
 
 ```sh
 riff update

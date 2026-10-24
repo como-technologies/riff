@@ -1,5 +1,5 @@
 //! The plugin of riff 3 for Claude Code, left on a machine after the
-//! update to riff 4 (01M5JFF7TAVA87TMJXK25HDJ19).
+//! update (01M5JFF7TAVA87TMJXK25HDJ19).
 //!
 //! # Design
 //!
@@ -13,7 +13,7 @@
 //! | `extraKnownMarketplaces.riff` | `riff connect claude`, or the person |
 //! | `statusLine`, with the command `riff statusline` | `riff connect claude` |
 //!
-//! riff 4 has no plugin, and no `riff hook`, `riff statusline` or
+//! riff has no plugin now, and no `riff hook`, `riff statusline` or
 //! `riff mcp`. So each hook of the old plugin fails in each session of
 //! Claude Code on the host. riff removes the folder and each key
 //! ([`Found::remove`]):

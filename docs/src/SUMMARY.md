@@ -1,7 +1,6 @@
 # Summary
 
 [Introduction](introduction.md)
-[riff 3.0](riff-3.md)
 [riff on a phone](riff-mobile.md)
 
 - [Start a Riff](start-a-riff.md)
@@ -14,6 +13,5 @@
 - [Design: the client link](design-link.md)
 - [Design: the plan on the server](design-plan.md)
 - [Design: the UIs of riff](riff-uis.md)
-- [Design: no cloud, a later plan](riff-3-no-cloud.md)
 - [Requirements](requirements.md)
 - [Development](development.md)

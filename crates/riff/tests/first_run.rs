@@ -1,4 +1,4 @@
-//! `riff init`, the first run of riff 3.0 on a machine (#721,
+//! `riff init`, the first run of riff on a machine (#721,
 //! 01M4ZJN6R68YBD3XMM725ZRJ7W).
 //!
 //! The facts of the machine are fakes: `RIFF_ETC` gives `subuid` and
@@ -195,7 +195,7 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
     let uid = machine.uid;
     let settings = machine.settings();
     for line in [
-        "riff checks this machine for riff 3.0:".to_owned(),
+        "riff checks this machine:".to_owned(),
         "  pass  podman: podman version 5.7.0".to_owned(),
         format!(
             "  pass  the init of podman: {}",
@@ -209,7 +209,7 @@ async fn riff_init_installs_the_daemon_and_the_daemon_pulls_the_image() {
         ),
         format!("The riff daemon pulls the image {IMAGE}."),
         format!("This machine has the session image {IMAGE}."),
-        "This machine is ready for riff 3.0. Run one item in a container: riff run ITEM".to_owned(),
+        "This machine is ready. Run one item in a container: riff run ITEM".to_owned(),
     ] {
         assert!(
             stdout.lines().any(|l| l == line),
@@ -585,7 +585,7 @@ async fn riff_init_removes_the_plugin_of_riff_3() {
         r#"{"enabledPlugins":{"riff@riff":true},"extraKnownMarketplaces":{"riff":{}},"statusLine":{"type":"command","command":"riff statusline"},"theme":"auto"}"#,
     );
     let named = format!(
-        "The plugin of riff 3 is still here. riff 4 has no plugin, so each of its hooks fails in \
+        "The plugin of riff 3 is still here. riff has no plugin now, so each of its hooks fails in \
          Claude Code:\n  {}\n  {}: enabledPlugins.riff@riff, extraKnownMarketplaces.riff, \
          statusLine\n",
         plugin.display(),

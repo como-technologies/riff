@@ -340,9 +340,9 @@ async fn top_once_prints_a_row_for_each_session_blocked_first() {
     );
 }
 
-/// A fake riff daemon of riff 1.8 in the folder `daemon`: it answers each
-/// ask with a status that has a session of another daemon of its riff of
-/// peers. It gives the count of the asks.
+/// A fake daemon of the old riff of peers in the folder `daemon`: it
+/// answers each ask with a status that has a session of another daemon
+/// of its riff of peers. It gives the count of the asks.
 async fn old_daemon(daemon: &Path) -> Arc<AtomicUsize> {
     use tokio::io::AsyncWriteExt;
     let listener = riff::daemon::listen(daemon).await.unwrap();
@@ -367,7 +367,7 @@ async fn old_daemon(daemon: &Path) -> Arc<AtomicUsize> {
 
 /// 01M53NGW6F5HP1DZ9QRGP50MGT: `riff top` shows the sessions of
 /// riff-server only. It asks no riff daemon, so a session of another
-/// daemon of a riff of peers of riff 1.6 to 1.8 shows nowhere.
+/// daemon of the old riff of peers shows nowhere.
 #[tokio::test(flavor = "multi_thread")]
 async fn top_shows_no_session_of_another_daemon() {
     let (server, _) = start_server().await;

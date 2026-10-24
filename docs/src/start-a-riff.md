@@ -49,7 +49,7 @@ flowchart TD
 3. In a second terminal, go to your project. Get ready for riff, and
    start your lead. You do not sign in: riff uses the name that you
    log in with on this machine. See
-   [Get ready for riff 3.0](#get-ready-for-riff-30) and
+   [Get this machine ready](#get-this-machine-ready) and
    [Let the lead start the work](#let-the-lead-start-the-work).
 
 ## Use it
@@ -144,7 +144,7 @@ for `riff update --check`.
 
 ### Remove the plugin of riff 3
 
-riff 3 put a plugin in Claude Code. riff 4 has no plugin, so each of
+riff 3 put a plugin in Claude Code. riff has no plugin now, so each of
 its hooks fails in each session of Claude Code on your machine. Run
 this to remove the plugin:
 
@@ -174,12 +174,11 @@ riff release approve v3.3.0
 See [The release cycle](development.md#the-release-cycle) for each
 gate.
 
-## Get ready for riff 3.0
+## Get this machine ready
 
-riff 3 runs each work item in a container of its own on your
-machine: the riff daemon runs it. It is new: see [riff 3.0](riff-3.md).
-To get ready, install podman and catatonit, the init of podman. riff
-starts each container with it. On Ubuntu:
+riff runs each work item in a container of its own on your machine:
+the riff daemon runs it. To get ready, install podman and catatonit,
+the init of podman. riff starts each container with it. On Ubuntu:
 
 ```sh
 sudo apt install podman catatonit

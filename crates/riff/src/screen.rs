@@ -739,7 +739,7 @@ mod tests {
     }
 
     /// 01M53NGW6F5HP1DZ9QRGP50MGT: the view shows no session of another
-    /// daemon, also when the status of a daemon of riff 1.6 to 1.8 has
+    /// daemon, also when the status of a daemon of the old riff of peers has
     /// the sessions of its riff of peers.
     #[test]
     fn the_view_shows_no_session_of_another_daemon() {

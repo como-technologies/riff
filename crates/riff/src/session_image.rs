@@ -3,7 +3,7 @@
 //!
 //! # Design
 //!
-//! riff 3.0 runs each session in a container from the image of its
+//! riff runs each session in a container from the image of its
 //! repository. The repository names that image in its riff config: the
 //! file [`FILE`] at its root, with the key `image` in the table
 //! `[session]` (01M4Z7SP3KSKJYKNRP1MQ70C4Q):

@@ -81,7 +81,7 @@ case "$1 $2" in
   if [ -f "$c/closed" ]; then state=CLOSED; else state=OPEN; fi
   echo "{\"number\":900,\"url\":\"https://github.com/o/r/pull/900\",\"headRefOid\":\"0123abcd\",\"state\":\"$state\"}" ;;
 'pr diff')
-  echo "+++ b/docs/src/riff-3.md"
+  echo "+++ b/docs/src/introduction.md"
   grep '^Real-session test ' "$c/body" | sed 's/^/+/' ;;
 'pr close') touch "$c/closed" ;;
 'run list') echo '[{"databaseId":5,"status":"in_progress"},{"databaseId":6,"status":"completed"}]' ;;

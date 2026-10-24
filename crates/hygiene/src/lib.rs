@@ -1,8 +1,9 @@
 //! Issue hygiene of this repository: the form of a pull request, and of
 //! a commit on `main`. The module [`book`] checks the book, [`wrap`]
 //! checks the wrap of its pages, [`blank`] finds two blank lines in a
-//! row, [`ci`] picks the checks that `just ci` runs, and [`terminal`]
-//! finds the crates of the terminal in the dependencies of a crate.
+//! row, [`versions`] finds the name of a version of riff, [`ci`] picks
+//! the checks that `just ci` runs, and [`terminal`] finds the crates of
+//! the terminal in the dependencies of a crate.
 //!
 //! # Design
 //!
@@ -69,6 +70,7 @@ pub mod book;
 pub mod ci;
 pub mod part;
 pub mod terminal;
+pub mod versions;
 pub mod wrap;
 
 /// A milestone, as `gh --json milestone` gives it.
