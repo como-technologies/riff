@@ -1238,9 +1238,10 @@ enum DaemonCommand {
     },
     /// Start the riff daemon again on the new riff
     ///
-    /// When the daemon runs an old riff and no session, start that
-    /// waits or job of a wave, it starts again on the riff on disk. Else
-    /// it says why not. riff daemon status shows the new pid and build.
+    /// When the daemon runs an old riff and no session but the lead, start
+    /// that waits or job of a wave, it starts again on the riff on disk.
+    /// The lead stays. Else it says why not. riff daemon status shows the
+    /// new pid and build.
     Restart {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this

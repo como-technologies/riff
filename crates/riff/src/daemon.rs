@@ -310,7 +310,8 @@
 //! the old one. The daemon runs an old riff when its binary was
 //! replaced, or when its unit names another riff ([`stale`]). Two steps
 //! start it again on the new riff, only when it is idle: it owns no
-//! session, no start of `riff run` waits for room, and no job of a wave
+//! session but the lead (the new daemon takes the lead up, with its
+//! container, its terminal and its socket), no start of `riff run` waits for room, and no job of a wave
 //! runs ([`Status::busy`]). A start of a wave that waits for room does
 //! not count, also with the limit 0: the wave is in `waves.json`, so the
 //! new daemon waits for room for it again (01M5MS1Q78AFEY3ZVXNAQXM1FJ).
@@ -1073,8 +1074,10 @@ pub struct Status {
 }
 
 impl Status {
-    /// The work of the daemon: its sessions, the starts of `riff run`
-    /// that wait for room, and the jobs of its waves. The daemon starts
+    /// The work of the daemon: its sessions but the lead, the starts of
+    /// `riff run` that wait for room, and the jobs of its waves. The
+    /// lead does not count: a new daemon takes it up with its container,
+    /// its terminal and its socket ([`Daemon::recover`]). The daemon starts
     /// again on a new riff only at 0 (01M517BTJ9EV4ZGPYRB6HXJJC9).
     ///
     /// A start of a wave that waits for room does not count: the wave is
@@ -1107,7 +1110,8 @@ impl Status {
                 .any(|wave| text::wave_slot(&wave.repo) == *name)
         };
         let runs = self.waiting.iter().filter(|name| !of_a_wave(name)).count();
-        self.sessions.len() + runs + self.jobs
+        let works = self.sessions.iter().filter(|live| !live.lead).count();
+        works + runs + self.jobs
     }
 }
 
@@ -2678,6 +2682,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 since_ms: now_ms(),
                 phase: Phase::default(),
                 last: String::new(),
+                lead: terminal,
             },
             folder,
             server,
@@ -4995,6 +5000,7 @@ mod tests {
                 since_ms: 0,
                 phase: Phase::default(),
                 last: String::new(),
+                lead: false,
             },
             folder,
             server: "http://127.0.0.1:1".into(),
@@ -5073,6 +5079,7 @@ mod tests {
                     since_ms: 0,
                     phase: Phase::default(),
                     last: String::new(),
+                    lead: false,
                 },
                 folder: folder.clone(),
                 server: start.server.clone(),
@@ -5192,6 +5199,7 @@ mod tests {
                 since_ms: 0,
                 phase: Phase::default(),
                 last: String::new(),
+                lead: false,
             },
             folder: folder.clone(),
             server: "http://127.0.0.1:1".into(),
@@ -6852,6 +6860,48 @@ mod tests {
             unit.env,
             Units::of(&check).installed().unwrap().unwrap().env
         );
+    }
+
+    /// A lead does not keep the daemon on the old riff: `riff update`
+    /// starts the daemon again at once, and the new daemon takes the lead
+    /// up with its container and its socket (#1324).
+    #[tokio::test]
+    async fn after_an_update_a_daemon_with_only_the_lead_starts_again_and_the_lead_stays() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let mut here = Here::with_world(
+            Fake::default().with_image(IMAGE),
+            QUIET_LIMIT,
+            Some(world.clone()),
+        )
+        .await;
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        let (_client, name) = here.started(start).await;
+        assert!(status(&here.dir).await.unwrap().sessions[0].lead);
+        assert_eq!(status(&here.dir).await.unwrap().busy(), 0);
+
+        let (check, riff) = check_and_new(&here);
+        let units = Units::of(&check);
+        let lines = after_update(&units, &riff, &here.dir).await.unwrap();
+        assert_eq!(
+            lines,
+            [
+                text::daemon_unit_moved(Path::new(UNIT_FILE), &check, &riff),
+                text::DAEMON_STARTS_AGAIN.to_owned()
+            ]
+        );
+        assert_eq!(units.calls(), ["rewrite", "try-restart"]);
+
+        // The restart stops no container: the new daemon takes the lead
+        // up, and the lead answers on its socket.
+        here.restart().await;
+        here.daemon.recover().await;
+        let status = status(&here.dir).await.unwrap();
+        assert_eq!(status.sessions.len(), 1);
+        assert_eq!(status.sessions[0].name, name);
+        assert!(here.fake.running(&name).await.unwrap());
+        assert!(lead_in(&session_dir(&here.dir, &name)).await);
     }
 
     /// While the daemon runs a session, `riff update` writes the unit and

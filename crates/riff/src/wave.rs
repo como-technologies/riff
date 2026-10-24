@@ -2871,6 +2871,7 @@ mod tests {
                     since_ms: 0,
                     phase: Default::default(),
                     last: String::new(),
+                    lead: false,
                 },
                 folder: dir.path().to_owned(),
                 server,

@@ -3811,6 +3811,11 @@ riff checks that:
   `riff who`. The commit and the time of the build of a host do not
   count.
 
+The lead does not keep its host on the old riff. After an update, the
+riff daemon of a host with only the lead starts again on the new riff.
+The lead keeps its container, its terminal (`riff view`), its socket and
+its riff tools.
+
 riff writes the result on the release issue. When each check passes,
 riff closes the release issue and resumes the riff. When a check
 fails, the lead fixes forward with a patch release, or rolls back.

@@ -5556,6 +5556,7 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
 ///     since_ms: 240_000,
 ///     phase: Phase::Works,
 ///     last: "> Bash: just check".into(),
+///     lead: false,
 /// });
 /// status.waiting.push("the wave of o/r".into());
 /// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into() });
