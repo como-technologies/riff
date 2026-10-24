@@ -1337,8 +1337,8 @@ impl Live {
                 commit,
             } => {
                 let (at, commit_at) = (clone.clone(), commit.clone());
-                let main_at = main.clone();
-                blocking(move || clone_at(&main_at, &at, &commit_at)).await?;
+                let (main_at, pull_at) = (main.clone(), *pull);
+                blocking(move || clone_at(&main_at, &at, pull_at, &commit_at)).await?;
                 text::wave_verify_start(&wave.repo, *issue, *pull, commit)
             }
         };
@@ -1387,8 +1387,13 @@ fn failed_verify(pulls: &[rollout::Pull], issue: u64) -> Option<String> {
 }
 
 /// Makes the clone of a verify at `commit`, detached: the head commit of
-/// the pull request.
-fn clone_at(main: &Path, clone: &Path, commit: &str) -> Result<()> {
+/// the pull request `pull`. The clone has the branches of `origin` only,
+/// and the head of a pull request from a fork is on no such branch. So
+/// it fetches `refs/pull/PULL/head` from `origin` first. It checks out
+/// the commit, not the ref: a push to the pull request after the look
+/// does not change what the verify reads
+/// (01M5QVARWYFHTQV5THNRB09SZA).
+fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
     let remote = run::output("git", main, &["remote", "get-url", "origin"])?;
     let top = main.to_string_lossy();
     let path = clone.to_string_lossy();
@@ -1396,6 +1401,11 @@ fn clone_at(main: &Path, clone: &Path, commit: &str) -> Result<()> {
         "git",
         main,
         &["clone", "-q", "--reference", &top, "--", &remote, &path],
+    )?;
+    run::output(
+        "git",
+        clone,
+        &["fetch", "-q", "origin", &format!("refs/pull/{pull}/head")],
     )?;
     run::output(
         "git",
@@ -2966,6 +2976,124 @@ mod tests {
         let text = serde_json::to_string(&job).unwrap();
         assert!(text.contains(r#""kind":"verify""#), "{text}");
         assert_eq!(serde_json::from_str::<Job>(&text).unwrap(), job);
+    }
+
+    /// Runs `git ARGS` in `dir` (with an identity and no signing), and
+    /// gives its output.
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// Commits a change of the file `a` in `dir`, and gives the commit.
+    fn commit_a(dir: &Path, words: &str) -> String {
+        std::fs::write(dir.join("a"), words).unwrap();
+        git_in(dir, &["add", "a"]);
+        git_in(dir, &["commit", "-q", "-m", words]);
+        git_in(dir, &["rev-parse", "HEAD"])
+    }
+
+    /// The git of a test of [`clone_at`]: a bare `origin` that a `file://`
+    /// URL names, as a URL of GitHub does (a path would copy each
+    /// object), a main clone of it, and the head commit of the pull
+    /// request 7 of a fork. `origin` has that commit only on
+    /// `refs/pull/7/head`, as GitHub has it.
+    struct Fork {
+        dir: tempfile::TempDir,
+        main: PathBuf,
+        /// The work tree of the fork.
+        fork: PathBuf,
+        head: String,
+    }
+
+    impl Fork {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let (origin, fork, main) = (
+                dir.path().join("origin.git"),
+                dir.path().join("fork"),
+                dir.path().join("main"),
+            );
+            let url = format!("file://{}", origin.display());
+            std::fs::create_dir(&fork).unwrap();
+            git_in(
+                dir.path(),
+                &["init", "-q", "--bare", "-b", "main", "origin.git"],
+            );
+            git_in(&fork, &["init", "-q", "-b", "main"]);
+            commit_a(&fork, "one");
+            git_in(&fork, &["remote", "add", "origin", &url]);
+            git_in(&fork, &["push", "-q", "origin", "main"]);
+            git_in(dir.path(), &["clone", "-q", "--", &url, "main"]);
+            git_in(&fork, &["switch", "-q", "-c", "patch"]);
+            let head = commit_a(&fork, "two");
+            git_in(&fork, &["push", "-q", "origin", "HEAD:refs/pull/7/head"]);
+            Fork {
+                dir,
+                main,
+                fork,
+                head,
+            }
+        }
+
+        /// Whether the repository `repo` has the commit `commit`.
+        fn has(repo: &Path, commit: &str) -> bool {
+            std::process::Command::new("git")
+                .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
+                .current_dir(repo)
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        }
+    }
+
+    /// 01M5QVARWYFHTQV5THNRB09SZA: the head commit of a pull request
+    /// from a fork is on no branch of `origin`. The clone of the verify
+    /// fetches `refs/pull/N/head` and checks out the commit, detached.
+    #[test]
+    fn the_clone_of_a_verify_has_the_head_commit_of_a_pull_request_from_a_fork() {
+        let fork = Fork::new();
+        assert!(!Fork::has(&fork.main, &fork.head), "origin has no branch");
+        let clone = fork.dir.path().join("verify/clone");
+        clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
+        assert_eq!(git_in(&clone, &["rev-parse", "HEAD"]), fork.head);
+        assert_eq!(git_in(&clone, &["branch", "--show-current"]), "");
+        assert_eq!(std::fs::read_to_string(clone.join("a")).unwrap(), "two");
+    }
+
+    /// 01M5QVARWYFHTQV5THNRB09SZA: a push to the pull request after the
+    /// look moves `refs/pull/N/head`. The clone still has the commit of
+    /// the look.
+    #[test]
+    fn a_push_to_the_pull_request_after_the_look_does_not_change_the_commit_of_the_clone() {
+        let fork = Fork::new();
+        commit_a(&fork.fork, "three");
+        git_in(
+            &fork.fork,
+            &["push", "-q", "origin", "HEAD:refs/pull/7/head"],
+        );
+        let clone = fork.dir.path().join("verify/clone");
+        clone_at(&fork.main, &clone, 7, &fork.head).unwrap();
+        assert_eq!(git_in(&clone, &["rev-parse", "HEAD"]), fork.head);
+        assert_eq!(std::fs::read_to_string(clone.join("a")).unwrap(), "two");
+    }
+
+    /// 01M5QVARWYFHTQV5THNRB09SZA: a pull request that `origin` does not
+    /// have fails, and the error names the ref.
+    #[test]
+    fn the_clone_of_a_verify_fails_with_the_ref_when_origin_does_not_have_it() {
+        let fork = Fork::new();
+        let clone = fork.dir.path().join("verify/clone");
+        let error = clone_at(&fork.main, &clone, 8, &fork.head).unwrap_err();
+        assert!(error.to_string().contains("refs/pull/8/head"), "{error}");
     }
 
     /// The riff of a test of [`after_build`]: a riff-server in this
