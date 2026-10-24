@@ -795,6 +795,11 @@
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.
   Superseded by 4.0 (#1173).
+- **01M5QWJJ94T4M3KJB0R3WTJCQF** riff pr open --base BRANCH opens the
+  pull request against that branch, for example release/1.x, and not
+  against the default branch. The body, the trailers and the auto-merge
+  are the same. The steps for a patch of an older release line use it,
+  not gh pr create.
 
 ## Tokens on GitHub
 
@@ -6523,6 +6528,35 @@ part when they merge.
   the item of a pull request with a conflict. The daemon keeps what it
   told in memory only. The wave goes on when the look fails: the daemon
   prints the fault one time until it changes.
+- **01M5QW2KVAS05Q72630RNW47G0** A pull request whose verify passed can
+  fail a check of its head commit: a check run that ended with failure,
+  timed out or startup failure, or a status in failure or error, except
+  riff/verify. The wave of the daemon reads the rollup of each open pull
+  request at each look. For the item of such a pull request, it starts a
+  build session with the names of the failed checks in the start text.
+  The text tells the session to read the failed run, to fix the work and
+  push to the same pull request, and, for a known flake, to run the job
+  again one time. Each head commit starts one such session in a run of
+  the wave. A pull request with a conflict gets the rebase first. A
+  cancelled or skipped check did not fail.
+- **01M5QW2KYFM4C287D9NMSPH8TA** When a session of a wave for failed
+  checks ends with the same head commit, the daemon sends no verify
+  request. It reads the checks of the pull request. The lead gets a
+  message when a check still fails, and a note when none fails because
+  the session ran the job again.
+- **01M5QW2M1M5QZJXSP0BY6XG118** A pull request whose verify passed and
+  that has auto-merge off never merges. The wave starts no session for
+  it. It tells the lead one time for each head commit, with the reason
+  and the command gh pr merge --auto --squash N.
+- **01M5QW2M4WX53N29SHRV0S32WM** No session builds a release: a pull
+  request on a branch release- or of an issue with the label release. A
+  failed check of a release pull request, at any state of its verify,
+  gets one message to the lead for each head commit, with the names of
+  the checks.
+- **01M5QW2M8FPBMMF4S0D8PC39AB** riff top and riff wave list show an
+  item with no claim whose pull request cannot merge by itself in the
+  group stuck, with the reason: conflict, checks, or auto-merge off. The
+  group comes after verify.
 
 ### The lead, the view and the takeover
 
@@ -6923,6 +6957,11 @@ part when they merge.
   folder of the lead stays between its starts: at each start, riff adds
   each setting and each entry that it lacks. riff writes no `autoMode`
   into the project settings: Claude Code does not read it there.
+- **01M5QWJJBY5VW53F0XAWWDQ79K** A worker session in a container may
+  read the checks of a pull request, read the log of a failed run, and
+  run a failed job again: the session rules Bash(gh pr checks *),
+  Bash(gh run view *) and Bash(gh run rerun *). The start text of a
+  build session for failed checks uses them.
 
 ### The steps of an update
 

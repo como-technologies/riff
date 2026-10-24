@@ -560,9 +560,18 @@ pub fn claimed_issue(claims: &[String]) -> Result<u64> {
 }
 
 /// Opens the pull request of the current branch for issue `issue`, and
-/// turns on auto-merge with a squash (01M3NB6FTGPD0S5JTXXXNGNNDT).
+/// turns on auto-merge with a squash (01M3NB6FTGPD0S5JTXXXNGNNDT). With
+/// `base`, the pull request is against that branch, for example
+/// `release/1.x`, not the default branch (01M5QWJJ94T4M3KJB0R3WTJCQF).
 /// Returns its number and its URL.
-pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Result<(u64, String)> {
+pub fn open(
+    gh: &Gh,
+    title: &str,
+    summary: &str,
+    issue: u64,
+    refs: bool,
+    base: Option<&str>,
+) -> Result<(u64, String)> {
     let n = issue.to_string();
     let found: hygiene::Issue =
         gh.json(&["issue", "view", &n, "--json", "number,state,milestone"])?;
@@ -595,7 +604,7 @@ pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Resu
             lines.join("\n")
         );
     }
-    let args = [
+    let mut args = vec![
         "pr",
         "create",
         "--title",
@@ -605,6 +614,7 @@ pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Resu
         "--body-file",
         "-",
     ];
+    args.extend(base.into_iter().flat_map(|b| ["--base", b]));
     let url = text::forge(gh.run(&args, Some(&body))?.trim());
     let number = url
         .rsplit('/')

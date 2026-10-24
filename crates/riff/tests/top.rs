@@ -674,7 +674,7 @@ async fn an_item_with_no_claim_and_an_open_pull_request_is_in_verify() {
         |n: u64| format!(r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}"#);
     let pull = |n: u64, issue: u64, checks: &str| {
         format!(
-            r#"{{"number": {n}, "headRefName": "worktree-issue-{issue}", "headRefOid": "1a2b3c4d", "isDraft": false, "statusCheckRollup": [{checks}]}}"#
+            r#"{{"number": {n}, "headRefName": "worktree-issue-{issue}", "headRefOid": "1a2b3c4d", "isDraft": false, "autoMergeRequest": {{"mergeMethod": "SQUASH"}}, "statusCheckRollup": [{checks}]}}"#
         )
     };
     let status = |state: &str| format!(r#"{{"context": "riff/verify", "state": "{state}"}}"#);
@@ -707,6 +707,61 @@ async fn an_item_with_no_claim_and_an_open_pull_request_is_in_verify() {
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(
         top.contains("\n\nWave 3 (como-technologies/riff)\n  free: #14 #15\n  verify: #12 #13\n\n"),
+        "{top}"
+    );
+}
+
+/// #279: an item with no claim whose pull request cannot merge by itself
+/// is in `stuck`, with the reason, not in `verify`: a failed check after a
+/// pass, and auto-merge off. A pull request that waits for the merge stays
+/// in `verify`.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_item_whose_pull_request_cannot_merge_by_itself_is_in_stuck() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    let issue =
+        |n: u64| format!(r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}}}"#);
+    let pull = |n: u64, issue: u64, auto: &str, checks: &str| {
+        format!(
+            r#"{{"number": {n}, "headRefName": "worktree-issue-{issue}", "headRefOid": "1a2b3c4d", "isDraft": false, "autoMergeRequest": {auto}, "statusCheckRollup": [{checks}]}}"#
+        )
+    };
+    let on = r#"{"mergeMethod": "SQUASH"}"#;
+    let passed = r#"{"context": "riff/verify", "state": "SUCCESS"}"#;
+    let gate = r#"{"__typename": "CheckRun", "name": "Gate", "conclusion": "FAILURE"}"#;
+    script(
+        bin.path(),
+        "gh",
+        &format!(
+            "case \"$1\" in\n  pr) echo '[{}, {}, {}]' ;;\n  *) echo '[{}, {}, {}, {}]' ;;\nesac",
+            pull(40, 12, on, passed),
+            pull(41, 13, on, &format!("{passed}, {gate}")),
+            pull(42, 14, "null", passed),
+            issue(12),
+            issue(13),
+            issue(14),
+            issue(15),
+        ),
+    );
+    live(&server, "pangolin", "a1").await;
+    name_lead(&server, dir, bin.path(), "a1").await;
+    output(riff(
+        &server,
+        dir,
+        Some("a1"),
+        bin.path(),
+        &["resume", "--riff"],
+    ))
+    .await;
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert!(
+        top.contains(
+            "\n\nWave 3 (como-technologies/riff)\n  free: #15\n  verify: #12\n  stuck: #13 (checks), #14 (auto-merge off)\n\n"
+        ),
         "{top}"
     );
 }

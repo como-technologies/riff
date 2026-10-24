@@ -314,6 +314,7 @@ The session place has these rules of `gh`, by role:
 | Rules | Allow |
 |---|---|
 | `Bash(gh pr create *)`, `Bash(gh pr merge --auto --squash *)`, `Bash(gh pr view *)`, `Bash(gh pr checks *)` | the steps of a pull request |
+| `Bash(gh run view *)`, `Bash(gh run rerun *)` | a worker reads the log of a failed check, and runs a flaky job again |
 | `Bash(gh issue view *)`, `Bash(gh issue list *)`, `Bash(gh issue edit *)` | the steps of an issue |
 
 #### One step in each call

@@ -13,9 +13,10 @@
 //!   waves, the current wave first, and the items in verify.
 //! - [`Board`]: the board of a wave of a repository, from its
 //!   [`Issues`], the claims of the sessions of riff-server and the holds
-//!   of the lead: `free`, `held`, `claimed`, `verify` and `tracker`
-//!   (01M3Z9N6X92KT051P10CKKV7EK, 01M58ATZ1F42DWNNB24C2HJPEY,
-//!   01M5ND16V2SVN8A9K7W90VC6X9).
+//!   of the lead: `free`, `held`, `claimed`, `verify`, `stuck` and
+//!   `tracker` (01M3Z9N6X92KT051P10CKKV7EK, 01M58ATZ1F42DWNNB24C2HJPEY,
+//!   01M5ND16V2SVN8A9K7W90VC6X9). `stuck` holds the items whose pull
+//!   request cannot merge by itself, with the reason (#279).
 //!   `riff top` shows the board of the current wave, `riff wave list`
 //!   the board of each wave (01M58ATZ408RBCX0PM0D0ZCY4B).
 //! - [`is_tracker`]: a tracker issue has no code of its own. No session
@@ -90,6 +91,11 @@ pub struct Issues {
     /// The issues whose pull request waits for a verify or for the
     /// merge (01M3Z9N6X92KT051P10CKKV7EK).
     pub verify: BTreeSet<u64>,
+    /// The issues whose pull request cannot merge by itself, each with
+    /// the reason in a few words, for example `checks` or `conflict`
+    /// (#279). They are in `verify` too.
+    #[serde(default)]
+    pub stuck: BTreeMap<u64, String>,
     /// The tracker issues ([`is_tracker`]).
     #[serde(default)]
     pub trackers: BTreeSet<u64>,
@@ -150,6 +156,7 @@ impl Issues {
             titles: list.into_iter().map(|i| (i.number, i.title)).collect(),
             waves,
             verify: BTreeSet::new(),
+            stuck: BTreeMap::new(),
         }
     }
 
@@ -164,6 +171,14 @@ impl Issues {
     #[must_use]
     pub fn with_verify(mut self, verify: impl IntoIterator<Item = u64>) -> Issues {
         self.verify = verify.into_iter().collect();
+        self
+    }
+
+    /// These issues with `stuck`, the issues whose pull request cannot
+    /// merge by itself, each with the reason (#279).
+    #[must_use]
+    pub fn with_stuck(mut self, stuck: impl IntoIterator<Item = (u64, String)>) -> Issues {
+        self.stuck = stuck.into_iter().collect();
         self
     }
 
@@ -337,6 +352,12 @@ pub struct Board {
     /// pull request waits for a verify or for the merge: they are no
     /// work for a build.
     pub verify: Vec<u64>,
+    /// The items with no claim whose pull request cannot merge by itself,
+    /// each with the reason: `checks`, `conflict` or `auto-merge off`
+    /// (#279). They wait for a session or for the lead, not for the
+    /// merge.
+    #[serde(default)]
+    pub stuck: Vec<(u64, String)>,
     /// The tracker issues with no claim and no pull request in verify
     /// ([`is_tracker`]). They are never free: no session does them.
     #[serde(default)]
@@ -420,6 +441,7 @@ impl Board {
             held: Vec::new(),
             claimed: Vec::new(),
             verify: Vec::new(),
+            stuck: Vec::new(),
             tracker: Vec::new(),
         };
         for &n in items {
@@ -429,9 +451,11 @@ impl Board {
                 .flat_map(|s| s.uri.claims().iter())
                 .filter(|c| issue_of(c) == Some(n))
                 .collect();
-            if claims.iter().any(|c| c.starts_with("verify-"))
-                || (claims.is_empty() && issues.verify.contains(&n))
-            {
+            if claims.iter().any(|c| c.starts_with("verify-")) {
+                board.verify.push(n);
+            } else if let Some(why) = issues.stuck.get(&n).filter(|_| claims.is_empty()) {
+                board.stuck.push((n, why.clone()));
+            } else if claims.is_empty() && issues.verify.contains(&n) {
                 board.verify.push(n);
             } else if !claims.is_empty() {
                 board.claimed.push(n);
@@ -447,10 +471,11 @@ impl Board {
     }
 
     /// One line for each group of the board that is not empty, in the
-    /// order `free`, `held`, `claimed`, `verify`, `tracker`. With `paused`, no
-    /// group `free`: nobody can claim its items
+    /// order `free`, `held`, `claimed`, `verify`, `stuck`, `tracker`. With
+    /// `paused`, no group `free`: nobody can claim its items
     /// (01M588G5K0B58QXD35AA5MTZ6E). The reason of each hold follows its
-    /// items (01M58ATZ1F42DWNNB24C2HJPEY). The reason is text of the
+    /// items (01M58ATZ1F42DWNNB24C2HJPEY), and so does the reason of each
+    /// stuck pull request (#279). The reason of a hold is text of the
     /// lead: the UI makes it safe.
     ///
     /// ```
@@ -463,17 +488,24 @@ impl Board {
     ///     held: vec![(12, "a reading".into()), (13, "a reading".into()), (16, "later".into())],
     ///     claimed: vec![],
     ///     verify: vec![17],
+    ///     stuck: vec![(19, "checks".into()), (20, "auto-merge off".into()), (21, "checks".into())],
     ///     tracker: vec![18],
     /// };
     /// assert_eq!(board.groups(false), [
     ///     "free: #14 #15",
     ///     "held: #12 #13 (a reading), #16 (later)",
     ///     "verify: #17",
+    ///     "stuck: #19 #21 (checks), #20 (auto-merge off)",
     ///     "tracker: #18",
     /// ]);
     /// assert_eq!(
     ///     board.groups(true),
-    ///     ["held: #12 #13 (a reading), #16 (later)", "verify: #17", "tracker: #18"]
+    ///     [
+    ///         "held: #12 #13 (a reading), #16 (later)",
+    ///         "verify: #17",
+    ///         "stuck: #19 #21 (checks), #20 (auto-merge off)",
+    ///         "tracker: #18",
+    ///     ]
     /// );
     /// ```
     pub fn groups(&self, paused: bool) -> Vec<String> {
@@ -481,17 +513,21 @@ impl Board {
             let items: Vec<String> = items.iter().map(|n| format!("#{n}")).collect();
             items.join(" ")
         };
-        let mut reasons: Vec<(&str, Vec<u64>)> = Vec::new();
-        for (n, reason) in &self.held {
-            match reasons.iter_mut().find(|(r, _)| r == reason) {
-                Some((_, items)) => items.push(*n),
-                None => reasons.push((reason, vec![*n])),
+        // The items with the same reason, in the order of the first.
+        let by_reason = |pairs: &[(u64, String)]| {
+            let mut reasons: Vec<(&str, Vec<u64>)> = Vec::new();
+            for (n, reason) in pairs {
+                match reasons.iter_mut().find(|(r, _)| r == reason) {
+                    Some((_, items)) => items.push(*n),
+                    None => reasons.push((reason, vec![*n])),
+                }
             }
-        }
-        let held: Vec<String> = reasons
-            .iter()
-            .map(|(reason, items)| format!("{} ({reason})", list(items)))
-            .collect();
+            let groups: Vec<String> = reasons
+                .iter()
+                .map(|(reason, items)| format!("{} ({reason})", list(items)))
+                .collect();
+            groups.join(", ")
+        };
         [
             (
                 "free",
@@ -501,9 +537,10 @@ impl Board {
                     list(&self.free)
                 },
             ),
-            ("held", held.join(", ")),
+            ("held", by_reason(&self.held)),
             ("claimed", list(&self.claimed)),
             ("verify", list(&self.verify)),
+            ("stuck", by_reason(&self.stuck)),
             ("tracker", list(&self.tracker)),
         ]
         .into_iter()

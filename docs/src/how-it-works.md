@@ -1022,10 +1022,14 @@ The header shows the state of the riff, the owner and the build, as in
 `riff who`. A board comes next for each repository with a live
 session, and for the repository where you run `riff top`: the current
 wave with its repository, one line for the `free` items, one for the
-`held` items, one for the `claimed` items, and one for the items in
-`verify`. An item is in `verify` when a session verifies it, and when
-no session holds it and its pull request waits for a verify or for the
-merge. An item is in `held` when the lead holds it and no session
+`held` items, one for the `claimed` items, one for the items in
+`verify`, and one for the `stuck` items. An item is in `verify` when a
+session verifies it, and when no session holds it and its pull request
+waits for a verify or for the merge. An item is in `stuck` when no
+session holds it and its pull request cannot merge by itself: a
+conflict, a failed check, or auto-merge off (see
+[See a pull request that cannot merge](development.md#see-a-pull-request-that-cannot-merge)).
+An item is in `held` when the lead holds it and no session
 claims it: the reason of the hold follows its items. No worker and no
 wave takes a held item, so it is never in `free` (see
 [Hold an item by hand](#hold-an-item-by-hand)).
@@ -1763,6 +1767,9 @@ GitHub](development.md#check-a-pull-request-on-github). The pull request
 gets the wave of the issue. Then `riff pr open` turns on auto-merge with
 a squash at once. It opens nothing when the pull request breaks a rule
 of the hygiene check, for example a title that ends with `(#12)`.
+Give `--base release/1.x` to open it against the branch of an older
+release line (see [Make a patch of an older
+release](development.md#make-a-patch-of-an-older-release)).
 
 `summary.md` can also hold the link line and the trailers. Then
 `riff pr open` adds only the lines that are missing. It opens nothing
