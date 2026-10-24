@@ -29,7 +29,8 @@ async fn start() -> (Service, Api) {
 }
 
 /// A server with sign-in on `listener`. The keyring holds no sign-in
-/// for its URL.
+/// for its URL. It is not common::start_signed: these tests test the
+/// login flow, so the calls must start with no token.
 async fn start_on(listener: tokio::net::TcpListener) -> (Service, Api) {
     let url = common::fresh_url(&listener);
     let service = Service::new(Config {

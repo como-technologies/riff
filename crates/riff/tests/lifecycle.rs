@@ -15,6 +15,8 @@ use axum::response::Response;
 use riff::lifecycle::PROBE_WAIT;
 use riff_core::build::{Build, HEADER};
 
+use crate::common;
+
 /// A build with another commit.
 fn other() -> Build {
     Build {
@@ -49,15 +51,13 @@ async fn fake_header(header: Option<String>) -> String {
     format!("http://{addr}")
 }
 
-/// A real riff-server of this build, with no sign-in. Its address has
-/// no scheme.
-async fn real() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    addr.to_string()
+/// A real riff-server of this build, with sign-in. Its address has no
+/// scheme. The server must outlive the test.
+async fn real() -> (common::Signed, String) {
+    let server = common::start_signed().await;
+    common::sign_in(&server, &Isolated::shared().riff_home(), "brett");
+    let addr = server.strip_prefix("http://").unwrap().to_owned();
+    (server, addr)
 }
 
 fn riff(args: &[&str]) -> Command {
@@ -123,7 +123,7 @@ fn riff_line() -> String {
 /// is set and the riff of this machine does not answer.
 #[tokio::test]
 async fn server_shows_the_riff_that_riff_uses_from_riff_server_as_a_table() {
-    let addr = real().await;
+    let (_server, addr) = real().await;
     let stdout = answered(|| {
         let mut cmd = riff(&["server"]);
         cmd.env("RIFF_SERVER", format!("http://{addr}"));
@@ -163,17 +163,14 @@ const FACTS: [&str; 8] = [
 /// "Monitoring" of the riff that `riff` uses.
 #[tokio::test]
 async fn server_shows_each_fact_of_the_riff() {
-    let addr = real().await;
+    let (server, addr) = real().await;
     // One call, so that the log has a record and a chunk.
     let me = "riff://mike@pangolin/como-technologies/riff?session=a";
-    let registered = reqwest::Client::new()
-        .post(format!("http://{addr}/v1/register"))
-        .header(HEADER, Build::this().to_string())
-        .json(&serde_json::json!({ "me": me }))
-        .send()
+    server
+        .api("mike", Some("a"))
+        .register(&me.parse().unwrap())
         .await
         .unwrap();
-    assert_eq!(registered.status(), 200);
 
     let stdout = answered(|| {
         let mut cmd = riff(&["server"]);
@@ -219,7 +216,7 @@ async fn server_shows_each_fact_of_the_riff() {
         "1 sessions",
         "cursors",
         "1 threads",
-        "0 live sign-ins",
+        "3 live sign-ins",
     ] {
         assert!(counts.contains(part), "{counts}");
     }
@@ -236,7 +233,7 @@ async fn server_shows_each_fact_of_the_riff() {
 
 #[tokio::test]
 async fn server_takes_host_and_port_with_no_scheme_and_names_the_flag() {
-    let addr = real().await;
+    let (_server, addr) = real().await;
     let stdout = answered(|| riff(&["--server", &addr, "server"])).await;
     assert!(
         stdout.contains(&format!("\nserver      http://{addr}  (from --server)\n")),
@@ -470,7 +467,7 @@ fn update(bin: &Path, cargo_status: u8, server: &str) -> Command {
 #[tokio::test]
 async fn update_installs_both_binaries() {
     let bin = tempfile::tempdir().unwrap();
-    let addr = real().await;
+    let (_server, addr) = real().await;
     let out = run(update(bin.path(), 0, &addr)).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(log(bin.path(), "cargo"), install(&release()));

@@ -16,8 +16,9 @@ use tokio::task::JoinHandle;
 
 const ME: &str = "riff://mike@pangolin/como-technologies/riff?session=a";
 
-/// A riff-server with no sign-in on `addr`. A send on the first value
-/// stops it. The task ends when the port is closed.
+/// A riff-server with no sign-in on `addr` (not common::start_signed:
+/// the test stops it and starts it again on the same port). A send on
+/// the first value stops it. The task ends when the port is closed.
 async fn serve(addr: SocketAddr) -> (oneshot::Sender<()>, JoinHandle<()>, SocketAddr) {
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     let addr = listener.local_addr().unwrap();
