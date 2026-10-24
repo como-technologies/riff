@@ -4457,6 +4457,7 @@ mod tests {
                     main: self.root.path().to_owned(),
                     server: start.server.clone(),
                     host: "h".into(),
+                    branch: "main".into(),
                 },
                 work: crate::wave::Work::Build { issue: 12 },
             };
