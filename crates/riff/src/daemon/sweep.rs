@@ -1745,6 +1745,7 @@ esac
             main: "/src/r".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
+            branch: "main".into(),
         };
         let name = "riff-issue-12-9f8e7d6c";
         let record = Record {

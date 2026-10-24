@@ -443,14 +443,12 @@ impl PullWatch {
     }
 }
 
-/// The default branch whose full check the look watches
-/// (01M51QEYKTD7ZEB0YA0C3MQTPN, 01M5R13DGMTNWPY88A3EG49WWS).
-pub const MAIN: &str = "main";
-
-/// The full check of the head commit of [`MAIN`].
+/// The full check of the head commit of the default branch
+/// (01M51QEYKTD7ZEB0YA0C3MQTPN, 01M5R13DGMTNWPY88A3EG49WWS,
+/// 01M5QYBWPAJ219BE8QKVKG1TWW).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MainGate {
-    /// The head commit of `main`.
+    /// The head commit of the default branch.
     pub commit: String,
     /// The state of its full check ([`full_state`]).
     pub gate: Gate,
@@ -541,16 +539,17 @@ pub fn run_of(job: &str) -> Option<&str> {
     run.contains("/actions/runs/").then_some(run)
 }
 
-/// Reads the full check of the head of [`MAIN`] in `repo` (`OWNER/REPO`)
-/// with `gh`: the checks that the ruleset of the default branch requires
-/// ([`repo_setup::full_check`]), then the check runs of each of them on
-/// [`MAIN`]. `None` when the head has no run of any check yet. It fails
-/// when `gh` cannot read the required checks.
-pub fn read_main(gh: &Gh, repo: &str) -> Result<Option<MainGate>> {
+/// Reads the full check of the head of `branch`, the default branch, in
+/// `repo` (`OWNER/REPO`) with `gh`: the checks that the ruleset of the
+/// default branch requires ([`repo_setup::full_check`]), then the check
+/// runs of each of them on `branch`. `None` when the head has no run of
+/// any check yet. It fails when `gh` cannot read the required checks.
+pub fn read_main(gh: &Gh, repo: &str, branch: &str) -> Result<Option<MainGate>> {
     let checks = repo_setup::full_check(gh, repo)?;
+    let branch = crate::pr::percent(branch);
     let mut runs = Vec::new();
     for check in &checks {
-        runs.push(check_runs(gh, repo, MAIN, check)?);
+        runs.push(check_runs(gh, repo, &branch, check)?);
     }
     Ok(MainGate::of(&runs))
 }
@@ -848,12 +847,13 @@ pub fn main_steps(
     }
 }
 
-/// One look at the full check of `main` of `repo`, with the open `issues` and
-/// `pulls` and the `claims` of this look: it reads the full check, and does
-/// the steps of the forge ([`main_steps`]). It gives the post to the
-/// lead and its kind: a message that wakes the lead, or a note. `watch`
-/// now holds the news: when the post does not go out, the caller sets it
-/// back to what it was, and the next look does it again.
+/// One look at the full check of the default branch `branch` of `repo`,
+/// with the open `issues` and `pulls` and the `claims` of this look: it
+/// reads the full check, and does the steps of the forge
+/// ([`main_steps`]). It gives the post to the lead and its kind: a
+/// message that wakes the lead, or a note. `watch` now holds the news:
+/// when the post does not go out, the caller sets it back to what it
+/// was, and the next look does it again.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -868,8 +868,8 @@ pub fn main_steps(
 ///     "#!/bin/sh\n\
 ///      case \"$1 $2\" in\n\
 ///        api*) case \"$2\" in\n\
-///          repos/o/r) echo '{\"default_branch\":\"main\"}' ;;\n\
-///          */commits/main/check-runs?check_name=Gate) echo '{\"check_runs\":[{\"status\":\"completed\",\"conclusion\":\"failure\",\"head_sha\":\"5103311abc\"}]}' ;;\n\
+///          repos/o/r) echo '{\"default_branch\":\"master\"}' ;;\n\
+///          */commits/master/check-runs?check_name=Gate) echo '{\"check_runs\":[{\"status\":\"completed\",\"conclusion\":\"failure\",\"head_sha\":\"5103311abc\"}]}' ;;\n\
 ///          *) echo '[]' ;;\n\
 ///        esac ;;\n\
 ///        \"issue list\") echo '[]' ;;\n\
@@ -879,15 +879,16 @@ pub fn main_steps(
 /// let gh = Arc::new(Gh::at(gh));
 /// let mut watch = MainWatch::default();
 ///
-/// // The full check failed at a new commit: a message for the lead, with the fix item.
-/// let (body, kind) = main_post(&gh, "o/r", (vec![], vec![]), Default::default(), &mut watch)
+/// // The default branch of the repository is `master`. The full check failed at a
+/// // new commit: a message for the lead, with the fix item.
+/// let (body, kind) = main_post(&gh, "o/r", "master", (vec![], vec![]), Default::default(), &mut watch)
 ///     .await?
 ///     .unwrap();
 /// assert_eq!(kind, Kind::Message);
 /// assert!(body.starts_with("main is broken: the full check failed at commit 5103311."), "{body}");
 /// assert!(body.contains("The fix item is #901"), "{body}");
 /// // The same commit at the next look: nothing.
-/// assert_eq!(main_post(&gh, "o/r", (vec![], vec![]), Default::default(), &mut watch).await?, None);
+/// assert_eq!(main_post(&gh, "o/r", "master", (vec![], vec![]), Default::default(), &mut watch).await?, None);
 /// # Ok::<(), anyhow::Error>(())
 /// # })?;
 /// # Ok::<(), anyhow::Error>(())
@@ -895,13 +896,14 @@ pub fn main_steps(
 pub async fn main_post(
     gh: &Arc<Gh>,
     repo: &str,
+    branch: &str,
     forge: (Vec<Issue>, Vec<Pull>),
     claims: HashSet<String>,
     watch: &mut MainWatch,
 ) -> Result<Option<(String, Kind)>> {
     let main = {
-        let (gh, repo) = (gh.clone(), repo.to_owned());
-        tokio::task::spawn_blocking(move || read_main(&gh, &repo)).await??
+        let (gh, repo, branch) = (gh.clone(), repo.to_owned(), branch.to_owned());
+        tokio::task::spawn_blocking(move || read_main(&gh, &repo, &branch)).await??
     };
     let Some(main) = main else {
         return Ok(None);
@@ -918,19 +920,20 @@ pub async fn main_post(
     Ok(steps.map(|(body, wake)| (body, if wake { Kind::Message } else { Kind::Note })))
 }
 
-/// One look at the full check of `main` of the lead `me` ([`main_post`]): it
-/// posts to the lead. When the post does not go out, `watch` forgets the
-/// news, and the next look does it again.
+/// One look at the full check of the default branch `branch` of the lead
+/// `me` ([`main_post`]): it posts to the lead. When the post does not go
+/// out, `watch` forgets the news, and the next look does it again.
 pub async fn look_at_main(
     api: &Api,
     me: &SessionUri,
     gh: &Arc<Gh>,
+    branch: &str,
     forge: (Vec<Issue>, Vec<Pull>),
     claims: HashSet<String>,
     watch: &mut MainWatch,
 ) -> Result<()> {
     let before = watch.clone();
-    let posted = match main_post(gh, &me.place().repo_text(), forge, claims, watch).await {
+    let posted = match main_post(gh, &me.place().repo_text(), branch, forge, claims, watch).await {
         Ok(Some((body, kind))) => post_as_person(api, me, None, &body, kind).await,
         Ok(None) => Ok(()),
         Err(e) => Err(e),
@@ -974,7 +977,9 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
         }
     }
     let before = watch.main.clone();
-    let posted = match main_post(&gh, &wave.repo, (issues, pulls), claims, &mut watch.main).await {
+    let (repo, branch) = (&wave.repo, &wave.branch);
+    let posted = match main_post(&gh, repo, branch, (issues, pulls), claims, &mut watch.main).await
+    {
         Ok(Some((body, kind))) => world.post(wave, None, &body, kind).await,
         Ok(None) => Ok(()),
         Err(e) => Err(e),
@@ -1251,8 +1256,11 @@ pub fn notification(block: &Unanswered) -> (String, String) {
 /// can read them, and looks at the blocks with the wake time `wake`. It
 /// shows each block that is unanswered now with `notify`, when it has
 /// one. Then it sends the messages of `watch` for the pull requests that
-/// stop ([`PullWatch::news`]), and looks at the full check of `main` with
-/// `main` ([`look_at_main`]). It gives the blocks that are unanswered
+/// stop ([`PullWatch::news`]), and looks at the full check of the default
+/// branch ([`look_at_main`], with the watch `main`). It reads that
+/// branch from the forge ([`crate::pr::default_branch`]): a branch that
+/// does not read gives no look at the full check
+/// (01M5R0J131464KZX180BW2AK98). It gives the blocks that are unanswered
 /// now.
 pub async fn once(
     api: &Api,
@@ -1290,7 +1298,15 @@ pub async fn once(
                 return Err(e);
             }
         }
-        look_at_main(api, me, gh, (issues, pulls), claims, main).await?;
+        // Like a forge that does not answer, a default branch that does not
+        // read stops no look at the blocks, which came first.
+        let branch = {
+            let (gh, repo) = (gh.clone(), me.place().repo_text());
+            tokio::task::spawn_blocking(move || crate::pr::default_branch(&gh, &repo)).await?
+        };
+        if let Ok(branch) = branch {
+            look_at_main(api, me, gh, &branch, (issues, pulls), claims, main).await?;
+        }
     }
     Ok(unanswered)
 }

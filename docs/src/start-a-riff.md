@@ -619,6 +619,19 @@ A repository that has waves and no Backlog gets the Backlog alone:
 gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog
 ```
 
+### Use any default branch
+
+The default branch can have any name: `main`, `master` or `trunk`.
+`riff wave run` reads it from GitHub one time. A verify reads its diff
+against that branch, a rebase starts from it, and the look watches its
+full check. This command shows the branch that riff reads:
+
+```sh
+gh api repos/{owner}/{repo} --jq .default_branch
+```
+
+After you rename the default branch, run `riff wave run` again.
+
 ### Pin an image with another toolchain
 
 The session image of riff has `claude`, `git`, `gh` and Rust. A project

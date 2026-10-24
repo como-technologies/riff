@@ -496,6 +496,83 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     assert!(!top(&[w1]).contains("the lead gave no answer"));
 }
 
+/// 01M5R0J131464KZX180BW2AK98 (#1352): a `gh` that cannot read the
+/// default branch of the repository (offline, no sign-in) gives no look
+/// at the Gate, but the look at the blocks goes on: it wakes the lead
+/// again and shows the notification.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_default_branch_that_does_not_read_stops_no_look_at_the_blocks() {
+    let server = start_server().await;
+    let (al, aw, lead, worker) = riff(&server).await;
+    aw.claim(&worker, &repo(), "issue-12").await.unwrap();
+    let _watch = aw.watch(&worker).await.unwrap();
+    al.inbox(&lead, None, false).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("gh.log");
+    let gh = Arc::new(Gh::at(script(
+        dir.path(),
+        "gh",
+        &format!(
+            "echo \"$*\" >> {}\n\
+             case \"$*\" in\n\
+               'api repos/como-technologies/riff --jq .default_branch') echo 'gh: HTTP 401' >&2; exit 1 ;;\n\
+               *) echo '[]' ;;\n\
+             esac",
+            log.display()
+        ),
+    )));
+    let shown = dir.path().join("shown");
+    let notify = script(
+        dir.path(),
+        "notify-send",
+        &format!("echo \"$@\" >> {}", shown.display()),
+    );
+    let notifier = Notifier { program: notify };
+    let look = || async {
+        let (mut watch, mut main) = (PullWatch::default(), MainWatch::default());
+        look::once(
+            &al,
+            &lead,
+            &gh,
+            Duration::from_secs(1),
+            Some(&notifier),
+            &mut watch,
+            &mut main,
+        )
+        .await
+    };
+    aw.blocked(&worker, "which design?").await.unwrap();
+    al.inbox(&lead, None, false).await.unwrap();
+
+    // The second wake of the lead.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert!(look().await.unwrap().is_empty());
+    let inbox = al.inbox(&lead, None, false).await.unwrap();
+    let bodies: Vec<String> = inbox
+        .into_iter()
+        .flat_map(|i| i.messages)
+        .map(|c| c.message.body)
+        .collect();
+    assert_eq!(
+        bodies,
+        ["blocked: w1 (issue-12) has no answer after 1 minute: which design?"]
+    );
+
+    // The block with no answer: the notification.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert_eq!(look().await.unwrap().len(), 1);
+    let lines = std::fs::read_to_string(&shown).unwrap();
+    assert_eq!(
+        lines,
+        "--app-name=riff riff: the lead gave no answer w1 (issue-12) is blocked: which design?\n"
+    );
+
+    // The look tried to read the default branch, and looked at no Gate.
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(calls.contains("--jq .default_branch"), "{calls}");
+    assert!(!calls.contains("/commits/"), "{calls}");
+}
+
 /// No desktop: no notification, and nothing fails.
 #[test]
 fn a_machine_with_no_desktop_gets_no_notification() {

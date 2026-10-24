@@ -77,12 +77,17 @@
 //!
 //! # A conflict with main
 //!
+//! `main` is the default branch of the repository, also in the start text
+//! of a verify and in the look of the Gate: `riff wave run` reads it one
+//! time ([`Wave::branch`], 01M5QYBWPAJ219BE8QKVKG1TWW), so `master` and
+//! `trunk` work the same.
+//!
 //! A pull request of an item with auto-merge on and a conflict with
 //! `main` ([`rollout::Pull::conflict`]) cannot merge, also after its
 //! verify passed. No session holds the item then: the session of a
 //! wave ends after its pull request. So the wave starts a build session
 //! for the item, with the start text of a rebase
-//! ([`text::wave_rebase_start`]): rebase the branch on `main`, resolve
+//! ([`text::wave_rebase_start`]): rebase the branch on the default branch, resolve
 //! the conflict, run the checks, and push to the same pull request
 //! (01M57FJ3WWMQSDBFRRHXN3SMFQ). A new full check and a new verify of the new
 //! head follow. The verify is a new session, as each verify is.
@@ -301,6 +306,10 @@ pub struct Wave {
     pub server: String,
     /// The name of this host in the URI of a session.
     pub host: String,
+    /// The default branch of the repository on the forge, for example
+    /// `main` or `master`: `riff wave run` reads it one time
+    /// (01M5QYBWPAJ219BE8QKVKG1TWW).
+    pub branch: String,
 }
 
 impl Wave {
@@ -314,6 +323,7 @@ impl Wave {
     ///     main: "/src/r".into(),
     ///     server: "http://127.0.0.1:1".into(),
     ///     host: "thelio".into(),
+    ///     branch: "master".into(),
     /// };
     /// assert_eq!(riff::identity::place_text(&wave.place(Some("issue-12"))?), "thelio/o/r#issue-12");
     /// assert_eq!(wave.thread()?.to_string(), "o/r");
@@ -374,6 +384,11 @@ pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
 /// start a container runs no wave (01M558EYAJFZK7Y822NVWGBS9H). The git
 /// steps of the pin block, so they run on a thread that may block: they
 /// stop no task of `riff mcp`.
+///
+/// It also reads the default branch of the repository from the forge
+/// with `gh`, one time ([`Wave::branch`], [`pr::default_branch`]): a
+/// repository with the default branch `master` or `trunk` runs like one
+/// with `main` (01M5QYBWPAJ219BE8QKVKG1TWW).
 pub async fn ask(dir: &Path, here: &Place, server: &str, show: impl FnMut(&str)) -> Result<String> {
     ask_with(dir, identity::working_dir()?, here, server, show).await
 }
@@ -391,11 +406,16 @@ pub async fn ask_with(
     if here.default_thread().is_none() {
         bail!("{}", text::RUN_NO_REPO);
     }
-    let (main, image, lines) = blocking(move || {
-        let (main, _) = run::main_clone(&work)?;
-        let mut lines = Vec::new();
-        let image = session_image::merged(&main, |line| lines.push(line.to_owned()))?;
-        Ok((main, image.to_string(), lines))
+    let repo = here.repo_text();
+    let (main, image, lines, branch) = blocking({
+        let repo = repo.clone();
+        move || {
+            let (main, _) = run::main_clone(&work)?;
+            let mut lines = Vec::new();
+            let image = session_image::merged(&main, |line| lines.push(line.to_owned()))?;
+            let branch = pr::default_branch(&pr::Gh::for_repo(&repo), &repo)?;
+            Ok((main, image.to_string(), lines, branch))
+        }
     })
     .await?;
     for line in &lines {
@@ -404,12 +424,12 @@ pub async fn ask_with(
     crate::daemon::image(dir, &image, &mut show)
         .await
         .map_err(|e| anyhow!("{}", text::wave_no_container(&format!("{e:#}"))))?;
-    let repo = here.repo_text();
     let wave = Wave {
         repo: repo.clone(),
         main,
         server: server.to_owned(),
         host: here.host().to_owned(),
+        branch,
     };
     crate::daemon::ask_done(dir, crate::daemon::Ask::Wave { wave }, show).await?;
     Ok(repo)
@@ -994,6 +1014,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                         let body = text::wave_stuck(
                             notice.pull,
                             &notice.branch,
+                            &wave.branch,
                             &notice.commit,
                             &notice.stuck,
                         );
@@ -1457,7 +1478,14 @@ async fn after_build(
                 Kind::Message,
             ),
             None => (
-                text::wave_not_rebased(item, pull.number, &branch, &pull.head_ref_oid, session),
+                text::wave_not_rebased(
+                    item,
+                    pull.number,
+                    &branch,
+                    &wave.branch,
+                    &pull.head_ref_oid,
+                    session,
+                ),
                 Kind::Message,
             ),
         },
@@ -1677,7 +1705,14 @@ impl Live {
                 let milestone = milestone.context("a build has a milestone")?;
                 let frame = pr::body(hygiene::Link::Closes(issue), "SUMMARY", &milestone)?;
                 let mut text = text::run_start(
-                    &wave.repo, issue, &branch, session, &frame, &milestone, earlier,
+                    &wave.repo,
+                    &wave.branch,
+                    issue,
+                    &branch,
+                    session,
+                    &frame,
+                    &milestone,
+                    earlier,
                 );
                 if let Some(failed) = failed {
                     text.push_str("\n\n");
@@ -1693,7 +1728,15 @@ impl Live {
                 let branch = branch_of(*issue);
                 let (main, at, on) = (main.clone(), clone.clone(), branch.clone());
                 blocking(move || run::make_clone(&main, &at, &on)).await?;
-                text::wave_rebase_start(&wave.repo, *issue, *pull, commit, &branch, session)
+                text::wave_rebase_start(
+                    &wave.repo,
+                    &wave.branch,
+                    *issue,
+                    *pull,
+                    commit,
+                    &branch,
+                    session,
+                )
             }
             Work::Checks {
                 issue,
@@ -1704,7 +1747,16 @@ impl Live {
                 let branch = branch_of(*issue);
                 let (main, at, on) = (main.clone(), clone.clone(), branch.clone());
                 blocking(move || run::make_clone(&main, &at, &on)).await?;
-                text::wave_checks_start(&wave.repo, *issue, *pull, commit, checks, &branch, session)
+                text::wave_checks_start(
+                    &wave.repo,
+                    &wave.branch,
+                    *issue,
+                    *pull,
+                    commit,
+                    checks,
+                    &branch,
+                    session,
+                )
             }
             Work::Verify {
                 issue,
@@ -1714,7 +1766,7 @@ impl Live {
                 let (at, commit_at) = (clone.clone(), commit.clone());
                 let (main_at, pull_at) = (main.clone(), *pull);
                 blocking(move || clone_at(&main_at, &at, pull_at, &commit_at)).await?;
-                text::wave_verify_start(&wave.repo, *issue, *pull, commit)
+                text::wave_verify_start(&wave.repo, &wave.branch, *issue, *pull, commit)
             }
         };
         let existing = |p: PathBuf| p.exists().then_some(p);
@@ -2903,6 +2955,7 @@ mod tests {
                     main: "/src/r".into(),
                     server: "http://127.0.0.1:1".into(),
                     host: "thelio".into(),
+                    branch: "main".into(),
                 })
                 .unwrap();
         }
@@ -3024,6 +3077,7 @@ mod tests {
             main,
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
+            branch: "main".into(),
         };
         assert_eq!(Live::default().image(&wave).await.unwrap(), pin("0"));
     }
@@ -3296,6 +3350,7 @@ mod tests {
             main: "/src/r".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
+            branch: "main".into(),
         };
         let who = riff_core::name::Who::new("mike", Some("lead1")).unwrap();
         Record {
@@ -3329,6 +3384,7 @@ mod tests {
             main: "/src/r".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
+            branch: "main".into(),
         };
         write_waves(here.daemon.dir(), &[("o/r".to_owned(), wave)].into()).unwrap();
     }
@@ -3388,6 +3444,7 @@ mod tests {
             main: "/src/r".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
+            branch: "main".into(),
         };
         crate::daemon::remote::serve_in_file(here.daemon.dir(), &wave).unwrap();
         here.daemon.run_item(&lead_record(), "issue-5").unwrap();
@@ -3560,7 +3617,7 @@ mod tests {
     /// The message to the lead about the pull request #41 of the item 1
     /// at the head `commit`.
     fn stuck(commit: &str, why: rollout::Stuck) -> String {
-        text::wave_stuck(41, "worktree-issue-1", commit, &why)
+        text::wave_stuck(41, "worktree-issue-1", "main", commit, &why)
     }
 
     /// 01M57FJ3WWMQSDBFRRHXN3SMFQ, #279: the conflict of a pull request
@@ -4139,6 +4196,7 @@ esac
             main: "/src/other".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
+            branch: "main".into(),
         };
         here.daemon.run_wave(other.clone()).unwrap();
         let kept = read_waves(here.daemon.dir()).unwrap();
@@ -4157,6 +4215,7 @@ esac
             main: "/src/r".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
+            branch: "main".into(),
         };
         let waves: BTreeMap<String, Wave> = [("o/r".to_owned(), wave)].into();
         write_waves(dir.path(), &waves).unwrap();
@@ -4212,6 +4271,7 @@ esac
                 main: "/src/r".into(),
                 server: "http://127.0.0.1:1".into(),
                 host: "thelio".into(),
+                branch: "main".into(),
             },
             work: Work::Verify {
                 issue: 12,
@@ -4366,6 +4426,7 @@ esac
                 main: "/src/r".into(),
                 server: server.clone(),
                 host: "thelio".into(),
+                branch: "main".into(),
             };
             let who = |session| riff_core::name::Who::new("mike", Some(session)).unwrap();
             let lead = SessionUri::new(who("lead1"), wave.place(None).unwrap());
@@ -4663,6 +4724,7 @@ esac
             "issue-12",
             40,
             "worktree-issue-12",
+            "main",
             "1a2b3c4d5e",
             "9f8e7d6c",
         );

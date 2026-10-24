@@ -1715,6 +1715,7 @@ mod tests {
                 Role::Worker,
                 text::run_start(
                     "o/r",
+                    "main",
                     12,
                     "worktree-issue-12",
                     "1a2b",
@@ -1729,7 +1730,15 @@ mod tests {
             ),
             (
                 Role::Worker,
-                text::wave_rebase_start("o/r", 12, 40, "1a2b3c4d", "worktree-issue-12", "1a2b"),
+                text::wave_rebase_start(
+                    "o/r",
+                    "main",
+                    12,
+                    40,
+                    "1a2b3c4d",
+                    "worktree-issue-12",
+                    "1a2b",
+                ),
             ),
             // #279: the fix of a failed check reads the failed run, and
             // may run the job again.
@@ -1737,6 +1746,7 @@ mod tests {
                 Role::Worker,
                 text::wave_checks_start(
                     "o/r",
+                    "main",
                     12,
                     40,
                     "1a2b3c4d",
@@ -1747,7 +1757,7 @@ mod tests {
             ),
             (
                 Role::Verifier,
-                text::wave_verify_start("o/r", 12, 40, "1a2b3c4d"),
+                text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d"),
             ),
             (Role::Lead, text::MCP_LEAD.to_owned()),
         ];

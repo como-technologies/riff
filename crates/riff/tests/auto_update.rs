@@ -705,6 +705,7 @@ async fn the_update_of_each_path_on_a_host_tells_the_lead_once() {
             main: machine.repo.path().to_owned(),
             server: machine.server.to_string(),
             host: "pangolin".into(),
+            branch: "main".into(),
         };
         let dir = riff::daemon::dir_in(&machine.env.riff_home());
         std::fs::create_dir_all(&dir).unwrap();
@@ -772,6 +773,7 @@ async fn the_daemon_in_a_dotfiles_home_tells_the_lead_of_the_served_repository()
         main: machine.repo.path().to_owned(),
         server: format!("{}/", machine.server),
         host: "pangolin".into(),
+        branch: "main".into(),
     };
     let dir = riff::daemon::dir_in(&machine.env.riff_home());
     std::fs::create_dir_all(&dir).unwrap();

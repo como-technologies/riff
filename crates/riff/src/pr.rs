@@ -961,6 +961,39 @@ pub fn same_commit(head: &str, tested: &str) -> Result<()> {
     )
 }
 
+/// The default branch of `repo` (`OWNER/REPO`) on the forge, for example
+/// `main`, `master` or `trunk` (01M5QYBWPAJ219BE8QKVKG1TWW). The wave
+/// reads it one time for each `riff wave run`.
+///
+/// ```
+/// use riff::pr::{Gh, default_branch};
+///
+/// let dir = tempfile::tempdir()?;
+/// let gh = Gh::at(isolated::write_program(
+///     dir.path().join("gh"),
+///     "#!/bin/sh\n\
+///      case \"$*\" in\n\
+///        'api repos/o/r --jq .default_branch') echo master ;;\n\
+///        'api repos/o/empty --jq .default_branch') echo null ;;\n\
+///        *) exit 1 ;;\n\
+///      esac\n",
+/// ));
+/// assert_eq!(default_branch(&gh, "o/r")?, "master");
+/// assert!(default_branch(&gh, "o/empty").is_err());
+/// assert!(default_branch(&gh, "o/gone").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn default_branch(gh: &Gh, repo: &str) -> Result<String> {
+    let path = format!("repos/{repo}");
+    let branch = gh.run(&["api", &path, "--jq", ".default_branch"], None)?;
+    match text::forge(branch.trim()) {
+        branch if branch.is_empty() || branch == "null" => {
+            bail!("gh api {path}: the repository has no default branch")
+        }
+        branch => Ok(branch),
+    }
+}
+
 /// The name of the check run of the full test run of a commit in the
 /// repository of riff: the job `Gate` of `.github/workflows/ci.yml`
 /// (01M49HAZ5BZYGAR9PGC089RM3F). It is also the full check of a repository

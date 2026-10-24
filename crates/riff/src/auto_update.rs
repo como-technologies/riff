@@ -402,6 +402,7 @@ fn served() -> Vec<Wave> {
 ///     main: "/src/riff".into(),
 ///     server: server.into(),
 ///     host: "thelio".into(),
+///     branch: "main".into(),
 /// };
 /// let served = [
 ///     wave("acme/beta", "http://other"),

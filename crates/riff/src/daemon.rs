@@ -4165,11 +4165,14 @@ pub async fn ask_serve(
         bail!("{}", text::RUN_NO_REPO);
     }
     let (main, _) = crate::run::main_clone(work)?;
+    // A served lead runs no wave: the branch of `origin/HEAD` is enough.
+    let branch = crate::permissions::Project::of(&main).branch;
     let wave = Wave {
         repo: here.repo_text(),
         main,
         server: server.to_owned(),
         host: here.host().to_owned(),
+        branch,
     };
     ask_done(dir, Ask::Serve { wave }, |line| println!("{line}")).await
 }
@@ -4454,6 +4457,7 @@ mod tests {
                     main: self.root.path().to_owned(),
                     server: start.server.clone(),
                     host: "h".into(),
+                    branch: "main".into(),
                 },
                 work: crate::wave::Work::Build { issue: 12 },
             };
@@ -5539,6 +5543,7 @@ mod tests {
                 main: root.path().to_owned(),
                 server: record.server.clone(),
                 host: "h".into(),
+                branch: "main".into(),
             },
             work: crate::wave::Work::Build { issue: 1 },
         });
@@ -6668,6 +6673,7 @@ mod tests {
             main: dir.join("r"),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
+            branch: "main".into(),
         };
         crate::wave::write_waves(dir, &BTreeMap::from([(wave.repo.clone(), wave)])).unwrap();
         daemon.run_waves();
@@ -6733,6 +6739,7 @@ mod tests {
             main: root.path().join(repo),
             server: server.into(),
             host: "pangolin".into(),
+            branch: "main".into(),
         };
         let waves = [
             ("o/new".to_owned(), wave("o/new", "http://127.0.0.1:1")),
@@ -7698,6 +7705,7 @@ mod tests {
                 main: here.root.path().to_owned(),
                 server: server.clone(),
                 host: host.into(),
+                branch: "main".into(),
             };
             let served = remote::Served {
                 wave,

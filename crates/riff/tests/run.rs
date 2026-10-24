@@ -42,14 +42,19 @@ fn script(path: &Path, body: &str) {
 /// `bin/pr-hold` is there, and the view of the milestone of the issue
 /// while `bin/milestone-hold` is there. For the look of a wave, the open
 /// milestone is Wave 27, no pull request is open, and issue 12 is the
-/// open issue of Wave 27 while `bin/wave-issue` is there. For the look at
-/// `main`, the file `bin/gate` holds the check runs of its head, and
-/// `issue create` files the fix item 901.
+/// open issue of Wave 27 while `bin/wave-issue` is there. The default
+/// branch of the repository is `main`, or the text of the file
+/// `bin/branch`. For the look at the default branch, the file `bin/gate`
+/// holds the check runs of its head, and `issue create` files the fix
+/// item 901.
 fn fake_gh(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "gh $*" >> "$dir/gh.log"
+branch=main
+[ -f "$dir/branch" ] && branch=$(cat "$dir/branch")
 case "$*" in
+  'api repos/como-technologies/riff --jq .default_branch') echo "$branch" ;;
   'auth token') echo GHTOKEN ;;
   'issue view 12 --json number,state,milestone')
     while [ -f "$dir/milestone-hold" ]; do sleep 0.05; done
@@ -63,9 +68,9 @@ case "$*" in
     echo '{"number":40,"url":"https://github.com/como-technologies/riff/pull/40","headRefOid":"1a2b3c4d5e6f","state":"OPEN"}' ;;
   'api repos/como-technologies/riff/milestones?state=open&per_page=100')
     echo '[{"title":"Wave 27"}]' ;;
-  'api repos/como-technologies/riff') echo '{"default_branch":"main"}' ;;
-  'api repos/como-technologies/riff/rules/branches/main?per_page=100') echo '[]' ;;
-  'api repos/como-technologies/riff/commits/main/check-runs?check_name=Gate')
+  'api repos/como-technologies/riff') echo "{\"default_branch\":\"$branch\"}" ;;
+  "api repos/como-technologies/riff/rules/branches/$branch?per_page=100") echo '[]' ;;
+  "api repos/como-technologies/riff/commits/$branch/check-runs?check_name=Gate")
     if [ -f "$dir/gate" ]; then cat "$dir/gate"; else echo '{"check_runs":[]}'; fi ;;
   'label create '*) ;;
   'issue create '*) echo 'https://github.com/como-technologies/riff/issues/901' ;;
@@ -2312,6 +2317,88 @@ async fn the_daemon_tells_the_lead_that_main_is_broken_and_files_the_fix_item() 
         "{log}"
     );
     machine.ok(None, &["wave", "stop"]).await;
+}
+
+/// 01M5QYBWPAJ219BE8QKVKG1TWW (#1352): the default branch of the
+/// repository is `master`. `riff wave run` reads it from the forge one
+/// time and keeps it in the wave. The look reads the full check of
+/// `commits/master`, and never `commits/main`: the fake `gh` has no check
+/// for `main`.
+#[tokio::test]
+async fn the_look_of_a_repository_with_the_default_branch_master_reads_master() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    machine
+        .ok(None, &["daemon", "limit", "--sessions", "0"])
+        .await;
+    let bin = machine.bin.path();
+    std::fs::write(bin.join("branch"), "master\n").unwrap();
+    std::fs::write(
+        bin.join("gate"),
+        r#"{"check_runs":[{"status":"completed","conclusion":"failure","head_sha":"5103311abcdef"}]}"#,
+    )
+    .unwrap();
+    machine.ok(None, &["wave", "run"]).await;
+
+    let waves = machine.env.riff_home().join("daemon/waves.json");
+    let kept = std::fs::read_to_string(&waves).unwrap();
+    assert!(kept.contains(r#""branch": "master""#), "{kept}");
+    let started = Instant::now();
+    let thread = loop {
+        let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+        if thread.contains("main is broken") {
+            break thread;
+        }
+        assert!(started.elapsed() < isolated::HANG, "no message: {thread}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert!(
+        thread.contains("the full check failed at commit 5103311"),
+        "{thread}"
+    );
+    let log = machine.read("gh.log");
+    assert_eq!(
+        log.matches("gh api repos/como-technologies/riff --jq .default_branch")
+            .count(),
+        1,
+        "{log}"
+    );
+    assert!(log.contains("/commits/master/check-runs"), "{log}");
+    assert!(!log.contains("/commits/main/"), "{log}");
+    machine.ok(None, &["wave", "stop"]).await;
+}
+
+/// 01M5QYBWPAJ219BE8QKVKG1TWW (#1352): the start text of a build of a
+/// wave names the default branch of the repository, `master`, in the
+/// rule not to push to it.
+#[tokio::test]
+async fn the_start_text_of_a_build_of_a_repository_with_the_default_branch_master_names_master() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let bin = machine.bin.path();
+    std::fs::write(bin.join("branch"), "master").unwrap();
+    std::fs::write(bin.join("hold"), "").unwrap();
+    std::fs::write(bin.join("wave-issue"), "").unwrap();
+    machine.ok(None, &["wave", "run"]).await;
+
+    wait_for(&bin.join("run.stdin"), "Never push to master.").await;
+    let start = machine.read("run.stdin");
+    assert!(!start.contains("Never push to main"), "{start}");
+    machine.ok(None, &["wave", "stop"]).await;
+    std::fs::remove_file(bin.join("wave-issue")).unwrap();
+    std::fs::remove_file(bin.join("hold")).unwrap();
+    let started = Instant::now();
+    while machine
+        .ok(None, &["daemon", "status"])
+        .await
+        .contains("riff-issue-12-")
+    {
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "the session did not end"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 #[tokio::test]

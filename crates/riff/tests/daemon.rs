@@ -331,6 +331,7 @@ async fn a_wave_that_waits_for_room_with_the_limit_0_does_not_keep_the_daemon_on
         main: here.env.home().join("src/riff"),
         server: "http://127.0.0.1:1".into(),
         host: "thelio".into(),
+        branch: "main".into(),
     };
     let waves = BTreeMap::from([(wave.repo.clone(), wave)]);
     riff::wave::write_waves(&dir, &waves).unwrap();

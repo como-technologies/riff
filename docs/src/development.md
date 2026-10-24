@@ -1323,6 +1323,11 @@ pins. It pulls the image when it is not on the machine. When podman
 does not run, or the pull fails, `riff wave run` says why, and the
 daemon runs no wave.
 
+`riff wave run` also reads the default branch of the repository from
+GitHub, one time. Below, `main` is that branch, also when it has
+another name (see
+[Use any default branch](start-a-riff.md#use-any-default-branch)).
+
 The daemon keeps the wave, also over its own restart, until you stop
 it. The rollout of your lead runs it for you: see
 [Let the rollout of the lead run the wave](#let-the-rollout-of-the-lead-run-the-wave).
