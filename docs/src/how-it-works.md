@@ -1838,16 +1838,20 @@ Then send a new verify request for the new commit.
 
 ### When main breaks
 
-A pull request merges when the Gate of its own head passed, also when
-`main` moved after that. So two pull requests that each pass their
-Gate can break `main` together. Then the Gate of each later pull
-request fails too. The riff daemon looks at the Gate of the head of
-`main` of each wave that it runs, each minute (see
-[Run the wave](development.md#run-the-wave)):
+A pull request merges when the full check of its own head passed, also
+when `main` moved after that. So two pull requests that each pass their
+full check can break `main` together. Then the full check of each later
+pull request fails too. The riff daemon looks at the full check of the
+head of `main` of each wave that it runs, each minute (see
+[Run the wave](development.md#run-the-wave)). It reads the same checks
+as a verify does: each check that the ruleset of the default branch
+requires, but `riff/verify`. When the ruleset requires no other check,
+it reads the check `Gate`. A check that GitHub skipped, or that ended
+`neutral`, passed. `main` is broken when one check failed or timed out.
 
 ```mermaid
 flowchart TD
-    L["the look of the daemon, each minute"] --> G{"the Gate of the head of main"}
+    L["the look of the daemon, each minute"] --> G{"the full check of the head of main"}
     G -- "failed, a new commit" --> F["riff files the fix item,<br/>or comments on the open one"]
     F --> M["message to the lead: commit, run,<br/>failed jobs, fix item"]
     M --> W["the rollout gives the fix item<br/>to a worker before each other item"]
@@ -1857,8 +1861,8 @@ flowchart TD
 
 - **The message.** The lead gets one message when `main` breaks: the
   commit, the run, the failed jobs and the fix item. While `main` stays
-  broken, a failed Gate at a newer commit gives a note, and a comment
-  on the fix item.
+  broken, a failed full check at a newer commit gives a note, and a
+  comment on the fix item.
 - **The fix item.** An issue with the label `broken-main` in the
   current wave. riff files one only when no issue with the label is
   open. The rollout gives it to a worker before each other item, also
@@ -1868,11 +1872,20 @@ flowchart TD
 - **When main passes again.** riff closes each fix item that no session
   claims and that no open pull request names. The lead gets a note.
 
-To see the Gate of the head of `main`:
+To see the checks that riff reads, use the required checks of the
+ruleset of the default branch. The full check is each of them but
+`riff/verify`:
 
 ```sh
-gh api "repos/OWNER/REPO/commits/main/check-runs?check_name=Gate" \
-  --jq '.check_runs[] | .head_sha, .conclusion, .html_url'
+gh api "repos/OWNER/REPO/rules/branches/main" \
+  --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'
+```
+
+To see the check runs of the head of `main`:
+
+```sh
+gh api "repos/OWNER/REPO/commits/main/check-runs" \
+  --jq '.check_runs[] | [.name, .status, .conclusion, .html_url] | @tsv'
 ```
 
 To see the open fix item:
@@ -1884,7 +1897,7 @@ gh issue list --label broken-main
 #### When a pull request already has the fix
 
 Hold the fix item, so that no worker writes the fix a second time.
-When the Gate of `main` passes, riff closes the item:
+When the full check of `main` passes, riff closes the item:
 
 ```sh
 riff plan hold issue-901 the fix is in PR 863
@@ -1892,8 +1905,8 @@ riff plan hold issue-901 the fix is in PR 863
 
 #### When a test fails only some of the time
 
-Run the failed jobs of the run again. When they pass, the Gate of
-`main` passes, and riff closes the fix item. RUN is the number of the
+Run the failed jobs of the run again. When they pass, the full check
+of `main` passes, and riff closes the fix item. RUN is the number of the
 run in the message:
 
 ```sh
@@ -1938,7 +1951,8 @@ for example after a new push of the author, riff reports nothing and
 says why. Test the new head, or tell the author.
 
 A pass needs a success of each check of the full check of the head
-commit. While one of them runs, failed, or has not started,
+commit. A check that GitHub skipped, or that ended `neutral`, counts as
+a success. While one of them runs, failed, or has not started,
 `riff verify pass` reports nothing and prints one line. The line names
 the checks that riff waits for:
 

@@ -63,8 +63,10 @@ case "$*" in
     echo '{"number":40,"url":"https://github.com/como-technologies/riff/pull/40","headRefOid":"1a2b3c4d5e6f","state":"OPEN"}' ;;
   'api repos/como-technologies/riff/milestones?state=open&per_page=100')
     echo '[{"title":"Wave 27"}]' ;;
-  'api repos/como-technologies/riff/commits/main/check-runs?check_name=Gate --jq .check_runs')
-    if [ -f "$dir/gate" ]; then cat "$dir/gate"; else echo '[]'; fi ;;
+  'api repos/como-technologies/riff') echo '{"default_branch":"main"}' ;;
+  'api repos/como-technologies/riff/rules/branches/main?per_page=100') echo '[]' ;;
+  'api repos/como-technologies/riff/commits/main/check-runs?check_name=Gate')
+    if [ -f "$dir/gate" ]; then cat "$dir/gate"; else echo '{"check_runs":[]}'; fi ;;
   'label create '*) ;;
   'issue create '*) echo 'https://github.com/como-technologies/riff/issues/901' ;;
   'pr list --repo como-technologies/riff '*) echo '[]' ;;
@@ -2266,8 +2268,8 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
 }
 
 /// 01M5QVH3MAEPPJN9PPVDX6N2EY, 01M51QEYKTD7ZEB0YA0C3MQTPN,
-/// 01M51QEYPGD6W345MZ4F85C38F (#1351): the daemon looks at the Gate of
-/// `main` of the repository of its wave. The Gate failed at a commit:
+/// 01M51QEYPGD6W345MZ4F85C38F (#1351): the daemon looks at the full check
+/// of `main` of the repository of its wave. It failed at a commit:
 /// the lead gets one message, and riff files the fix item. The limit 0
 /// gives the wave no room, and the look does not wait for it.
 #[tokio::test]
@@ -2282,7 +2284,7 @@ async fn the_daemon_tells_the_lead_that_main_is_broken_and_files_the_fix_item() 
     std::fs::write(
         bin.join("gate"),
         format!(
-            r#"[{{"status":"completed","conclusion":"failure","head_sha":"5103311abcdef","html_url":"{run}/job/1"}}]"#
+            r#"{{"check_runs":[{{"status":"completed","conclusion":"failure","head_sha":"5103311abcdef","html_url":"{run}/job/1"}}]}}"#
         ),
     )
     .unwrap();
@@ -2299,7 +2301,7 @@ async fn the_daemon_tells_the_lead_that_main_is_broken_and_files_the_fix_item() 
     };
     assert!(
         thread.contains(&format!(
-            "main is broken: the Gate failed at commit 5103311 ({run}). "
+            "main is broken: the full check failed at commit 5103311 ({run}). "
         )) && thread.contains("The fix item is #901"),
         "{thread}"
     );

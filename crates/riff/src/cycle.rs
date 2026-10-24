@@ -509,8 +509,12 @@ pub trait Forge {
     fn verify_passed(&self, commit: &str) -> Result<bool>;
     /// The pull request `number`, for its verify.
     fn candidate(&self, number: u64) -> Result<Candidate>;
-    /// The state of the Gate of `commit`.
-    fn gate(&self, commit: &str) -> Result<pr::Gate>;
+    /// The checks of the full check of the repository: each check that the
+    /// ruleset of its default branch requires, but `riff/verify`
+    /// (01M5QYDE41FVFX26EC8K5QGYH4).
+    fn full_check(&self) -> Result<Vec<String>>;
+    /// The state of the full check `checks` of `commit`.
+    fn gate(&self, checks: &[String], commit: &str) -> Result<pr::Gate>;
     /// Sets the status `riff/verify` of `commit` to a success.
     fn pass_verify(&self, commit: &str, description: &str) -> Result<()>;
     /// True when `commit` is on `origin/main`.
@@ -1055,9 +1059,12 @@ pub fn cut(forge: &dyn Forge, new: Semver, skip: Option<&Skip>, why: Option<&str
 /// The verify of the release pull request `number` with no model
 /// session (01M5ND0ZNFFAPT1AWD3DP1Y77N). The pull request is open and
 /// has the label [`LABEL`], the body has the format of [`cut`], the
-/// diff is only [`VERSION_FILES`], and the Gate of the head commit
-/// passed. Then it sets the status `riff/verify` of the head commit.
-/// Else it refuses, and sets nothing. Returns the head commit.
+/// diff is only [`VERSION_FILES`], and the full check of the head commit
+/// passed (each check that the ruleset requires, but `riff/verify`:
+/// [`crate::repo_setup::full_check`], 01M5R13DK401K3TZ91E2QK2DYM). Then it
+/// sets the status `riff/verify` of the head commit. Else it refuses, and
+/// sets nothing. The refusal for the full check names the checks
+/// ([`text::release_gate_not_passed`]). Returns the head commit.
 pub fn verify(forge: &dyn Forge, number: u64) -> Result<String> {
     let refuse = |why: String| {
         anyhow!(
@@ -1102,15 +1109,15 @@ pub fn verify(forge: &dyn Forge, number: u64) -> Result<String> {
             lines.join("\n")
         )));
     }
-    let gate = forge.gate(&pr.head)?;
+    let checks = forge.full_check()?;
+    let gate = forge.gate(&checks, &pr.head)?;
     if gate != pr::Gate::Passed {
-        let short = pr.head.get(..7).unwrap_or(&pr.head);
         bail!(
-            "riff release verify: the Gate of commit {short} is not a success ({gate:?}). Nothing \
-             is reported. next: wait for the Gate, then riff release verify {number}"
+            "{}",
+            text::release_gate_not_passed(number, &pr.head, &checks, &gate)
         );
     }
-    forge.pass_verify(&pr.head, "pass: release pull request, Gate and diff")?;
+    forge.pass_verify(&pr.head, "pass: release pull request, full check and diff")?;
     Ok(pr.head)
 }
 
@@ -2810,9 +2817,12 @@ impl Forge for GitHub {
         })
     }
 
-    fn gate(&self, commit: &str) -> Result<pr::Gate> {
-        let checks = crate::repo_setup::full_check(&self.gh, "{owner}/{repo}")?;
-        pr::gate_of(&self.gh, "{owner}/{repo}", &checks, commit)
+    fn full_check(&self) -> Result<Vec<String>> {
+        crate::repo_setup::full_check(&self.gh, "{owner}/{repo}")
+    }
+
+    fn gate(&self, checks: &[String], commit: &str) -> Result<pr::Gate> {
+        pr::gate_of(&self.gh, "{owner}/{repo}", checks, commit)
     }
 
     fn pass_verify(&self, commit: &str, description: &str) -> Result<()> {
@@ -3170,6 +3180,8 @@ mod tests {
         open_pr: Option<(u64, &'static str)>,
         verify: bool,
         candidate: Candidate,
+        /// The checks of the full check.
+        checks: Vec<String>,
         gate: pr::Gate,
         on_main: bool,
         tags: Vec<String>,
@@ -3192,6 +3204,7 @@ mod tests {
         fn new() -> Self {
             Fake {
                 main: "3.2.0".into(),
+                checks: vec!["Gate".into()],
                 releases: vec!["3.0.0", "3.2.0"],
                 verify: true,
                 on_main: true,
@@ -3267,7 +3280,10 @@ mod tests {
         fn candidate(&self, _number: u64) -> Result<Candidate> {
             Ok(self.candidate.clone())
         }
-        fn gate(&self, _commit: &str) -> Result<pr::Gate> {
+        fn full_check(&self) -> Result<Vec<String>> {
+            Ok(self.checks.clone())
+        }
+        fn gate(&self, _checks: &[String], _commit: &str) -> Result<pr::Gate> {
             Ok(self.gate.clone())
         }
         fn pass_verify(&self, commit: &str, description: &str) -> Result<()> {
@@ -3609,7 +3625,11 @@ mod tests {
             ..Fake::new()
         };
         let e = verify(&forge, 1140).unwrap_err().to_string();
-        assert!(e.contains("Gate") && e.contains("failure"), "{e}");
+        assert!(
+            e.contains("the full check of commit h1 (Gate) ended with failure."),
+            "{e}"
+        );
+        assert!(e.contains("next: wait for the checks, then riff release verify 1140"));
         let mut candidate = release_candidate();
         candidate.labels.clear();
         let forge = Fake {
@@ -3620,6 +3640,34 @@ mod tests {
         let e = verify(&forge, 1140).unwrap_err().to_string();
         assert!(e.contains("no label release"), "{e}");
         assert!(forge.log().is_empty());
+    }
+
+    /// #1393, 01M5R13DK401K3TZ91E2QK2DYM: a repository whose ruleset
+    /// requires `checks / test` and `checks / docs` has no check `Gate`.
+    /// The refusal names these checks, and a pass sets the status.
+    #[test]
+    fn verify_refuses_with_the_names_of_the_checks_of_the_repository() {
+        let checks = vec!["checks / test".to_owned(), "checks / docs".to_owned()];
+        let forge = Fake {
+            candidate: release_candidate(),
+            checks: checks.clone(),
+            gate: pr::Gate::Running,
+            ..Fake::new()
+        };
+        let e = verify(&forge, 1140).unwrap_err().to_string();
+        assert!(
+            e.contains("the full check of commit h1 (checks / test, checks / docs) runs still."),
+            "{e}"
+        );
+        assert!(!e.contains("Gate"), "{e}");
+        assert!(forge.log().is_empty());
+        let forge = Fake {
+            candidate: release_candidate(),
+            checks,
+            gate: pr::Gate::Passed,
+            ..Fake::new()
+        };
+        assert_eq!(verify(&forge, 1140).unwrap(), "h1");
     }
 
     #[test]

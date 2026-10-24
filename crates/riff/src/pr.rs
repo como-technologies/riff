@@ -996,19 +996,34 @@ pub struct CheckRuns {
 /// The state of the full check of a commit, for example of the [`GATE`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Gate {
-    /// Each run of the Gate is completed with `success`.
+    /// Each run of the check is completed with a success ([`is_success`]).
     Passed,
-    /// The commit has no run of the Gate.
+    /// The commit has no run of the check.
     #[default]
     Missing,
-    /// A run of the Gate is not completed.
+    /// A run of the check is not completed.
     Running,
-    /// A run of the Gate is completed with this conclusion, not `success`.
+    /// A run of the check is completed with this conclusion, which is no
+    /// success.
     Ended(String),
 }
 
-/// The state of the Gate from its check runs. A pass needs one run or
-/// more, each completed with `success`.
+/// True when a completed check run with this `conclusion` counts as a
+/// success. GitHub counts `skipped` and `neutral` as a pass for a required
+/// check, so riff does too (01M5R13DE5XRWB13E0BQ17C80F).
+///
+/// ```
+/// use riff::pr::is_success;
+///
+/// assert!(["success", "skipped", "neutral"].into_iter().all(is_success));
+/// assert!(!["failure", "cancelled", "timed_out", "stale", "action_required"].into_iter().any(is_success));
+/// ```
+pub fn is_success(conclusion: &str) -> bool {
+    matches!(conclusion, "success" | "skipped" | "neutral")
+}
+
+/// The state of one check from its check runs. A pass needs one run or
+/// more, each completed with a success ([`is_success`]).
 ///
 /// ```
 /// use riff::pr::{CheckRun, Gate, gate_state};
@@ -1025,6 +1040,13 @@ pub enum Gate {
 ///     gate_state(&[run("completed", Some("success")), run("completed", Some("failure"))]),
 ///     Gate::Ended("failure".into())
 /// );
+/// // A required check that GitHub skipped counts as a pass.
+/// assert_eq!(gate_state(&[run("completed", Some("skipped"))]), Gate::Passed);
+/// assert_eq!(gate_state(&[run("completed", Some("neutral"))]), Gate::Passed);
+/// assert_eq!(
+///     gate_state(&[run("completed", Some("cancelled"))]),
+///     Gate::Ended("cancelled".into())
+/// );
 /// ```
 pub fn gate_state(runs: &[CheckRun]) -> Gate {
     if runs.is_empty() {
@@ -1032,7 +1054,7 @@ pub fn gate_state(runs: &[CheckRun]) -> Gate {
     }
     for run in runs {
         match (run.status.as_str(), run.conclusion.as_deref()) {
-            ("completed", Some("success")) => {}
+            ("completed", Some(conclusion)) if is_success(conclusion) => {}
             ("completed", conclusion) => {
                 return Gate::Ended(conclusion.unwrap_or("none").to_owned());
             }
@@ -1099,16 +1121,22 @@ pub fn percent(name: &str) -> String {
     out
 }
 
+/// The check runs of the check `check` on `commit` in `repo` with `gh`.
+/// `commit` is a commit, or a branch such as `main`.
+pub fn check_runs(gh: &Gh, repo: &str, commit: &str, check: &str) -> Result<Vec<CheckRun>> {
+    let name = percent(check);
+    let path = format!("repos/{repo}/commits/{commit}/check-runs?check_name={name}");
+    let runs: CheckRuns = gh.json(&["api", &path])?;
+    Ok(runs.check_runs)
+}
+
 /// The state of the full check `checks` of `commit` in `repo`
 /// ([`repo_setup::full_check`]): the state of the check runs of each name
 /// ([`gate_state`]), and the state of all of them ([`full_state`]).
 pub fn gate_of(gh: &Gh, repo: &str, checks: &[String], commit: &str) -> Result<Gate> {
     let mut states = Vec::new();
     for check in checks {
-        let name = percent(check);
-        let path = format!("repos/{repo}/commits/{commit}/check-runs?check_name={name}");
-        let runs: CheckRuns = gh.json(&["api", &path])?;
-        states.push(gate_state(&runs.check_runs));
+        states.push(gate_state(&check_runs(gh, repo, commit, check)?));
     }
     Ok(full_state(states))
 }

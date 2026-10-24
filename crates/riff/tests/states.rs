@@ -74,6 +74,10 @@ fn riff_cmd(server: &str, dir: &Path, session: &str) -> assert_cmd::Command {
     cmd
 }
 
+/// The start of a fake `gh` for the look: the default branch is `main`, and
+/// the head of `main` has no check run.
+const MAIN_FACTS: &str = r#"case "$2" in repos/como-technologies/riff) echo '{"default_branch":"main"}'; exit ;; */check-runs*) echo '{"check_runs":[]}'; exit ;; esac;"#;
+
 /// A script `name` in `dir` that runs `body`.
 fn script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
     let path = dir.join(name);
@@ -123,7 +127,7 @@ async fn the_facts_of_the_forge_make_waiting() {
     let gh = script(
         dir.path(),
         "gh",
-        &format!("case \"$1\" in pr) echo '{pulls}' ;; *) echo '[]' ;; esac"),
+        &format!("{MAIN_FACTS} case \"$1\" in pr) echo '{pulls}' ;; *) echo '[]' ;; esac"),
     );
     let gh = Arc::new(Gh::at(gh));
     look::once(
@@ -142,7 +146,11 @@ async fn the_facts_of_the_forge_make_waiting() {
     assert_eq!(w1.waits, Some(Waits::Verify { pull: 418 }));
 
     // The merge: the pull request is gone from the open list.
-    let gh = Arc::new(Gh::at(script(dir.path(), "gh2", "echo '[]'")));
+    let gh = Arc::new(Gh::at(script(
+        dir.path(),
+        "gh2",
+        &format!("{MAIN_FACTS} echo '[]'"),
+    )));
     look::once(
         &al,
         &lead,
@@ -176,7 +184,7 @@ async fn a_need_with_a_merged_in_comment_is_met() {
         let gh = script(
             dir.path(),
             name,
-            &format!("case \"$1\" in issue) echo '{issues}' ;; *) echo '[]' ;; esac"),
+            &format!("{MAIN_FACTS} case \"$1\" in issue) echo '{issues}' ;; *) echo '[]' ;; esac"),
         );
         Arc::new(Gh::at(gh))
     };
@@ -247,7 +255,7 @@ fn forge(dir: &Path, name: &str, pulls: &str) -> Arc<Gh> {
     let gh = script(
         dir,
         name,
-        &format!("case \"$1\" in pr) echo '{pulls}' ;; *) echo '[]' ;; esac"),
+        &format!("{MAIN_FACTS} case \"$1\" in pr) echo '{pulls}' ;; *) echo '[]' ;; esac"),
     );
     Arc::new(Gh::at(gh))
 }
@@ -390,7 +398,11 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     let _watch = aw.watch(&worker).await.unwrap();
     al.inbox(&lead, None, false).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let gh = Arc::new(Gh::at(script(dir.path(), "gh", "echo '[]'")));
+    let gh = Arc::new(Gh::at(script(
+        dir.path(),
+        "gh",
+        &format!("{MAIN_FACTS} echo '[]'"),
+    )));
     let shown = dir.path().join("shown");
     let notify = script(
         dir.path(),

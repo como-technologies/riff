@@ -1304,7 +1304,7 @@ flowchart LR
         D -- "podman run" --> V["container: verify of issue-9"]
     end
     D -- "claim, verify request, result, release" --> S["riff-server"]
-    D -- "free work, Gate, report" --> G["GitHub"]
+    D -- "free work, full check, report" --> G["GitHub"]
     B -- "push, pull request" --> G
 ```
 

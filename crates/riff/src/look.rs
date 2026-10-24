@@ -1,4 +1,4 @@
-//! The look: the pull requests that stop, the Gate of `main`, and (with
+//! The look: the pull requests that stop, the full check of `main`, and (with
 //! no runner now) the facts of the forge and the blocks with no answer.
 //!
 //! # Who runs the look
@@ -14,7 +14,7 @@
 //!     W["riff wave run"] --> D["riff daemon"]
 //!     D --> A["the loop of the wave:<br/>the work"]
 //!     D --> B["the look, each minute"]
-//!     B --> G["gh: the pull requests,<br/>the Gate of main"]
+//!     B --> G["gh: the pull requests,<br/>the full check of main"]
 //!     B --> C["riff-server: the claims"]
 //!     B --> P["post as the person"]
 //!     P --> L["the lead"]
@@ -93,15 +93,20 @@
 //!
 //! # When main breaks
 //!
-//! A pull request merges when the Gate of its own head passed, also
+//! A pull request merges when the full check of its own head passed, also
 //! when `main` moved after that. So two pull requests that each pass
-//! their Gate can break `main` together. The look of the daemon reads the check
-//! run Gate of the head of `main` ([`MainWatch`],
-//! 01M51QEYKTD7ZEB0YA0C3MQTPN):
+//! their full check can break `main` together. The look of the daemon
+//! reads the full check of the head of `main` ([`MainWatch`],
+//! 01M51QEYKTD7ZEB0YA0C3MQTPN, 01M5R13DGMTNWPY88A3EG49WWS): each check
+//! that the ruleset of the default branch requires, but `riff/verify`, and
+//! the check `Gate` when it requires none
+//! ([`crate::repo_setup::full_check`]). It reads the rules at each look,
+//! and the check runs of each check on `main`. A check that ends `skipped`
+//! or `neutral` passed ([`crate::pr::is_success`]).
 //!
 //! ```mermaid
 //! flowchart TD
-//!     L["each look"] --> G{"the Gate of the head of main"}
+//!     L["each look"] --> G{"the full check of the head of main"}
 //!     G -- "runs, or no run" --> N["nothing"]
 //!     G -- failed --> T{"the lead got this commit?"}
 //!     T -- yes --> N
@@ -160,7 +165,8 @@ use riff_core::wire::{ItemFact, Kind, PullFact, PullState, Unanswered};
 use serde::Deserialize;
 
 use crate::cycle::{self, Stage, State};
-use crate::pr::{CheckRun, GATE, Gate, Gh, gate_state};
+use crate::pr::{CheckRun, GATE, Gate, Gh, check_runs, full_state, gate_state, is_success};
+use crate::repo_setup;
 use crate::rollout::{BROKEN_MAIN, Issue, Milestone, Pull, Verify, claims, current_wave, needs};
 use crate::text;
 use crate::wave::{Wave, World};
@@ -437,26 +443,29 @@ impl PullWatch {
     }
 }
 
-/// The default branch whose Gate the look watches
-/// (01M51QEYKTD7ZEB0YA0C3MQTPN).
+/// The default branch whose full check the look watches
+/// (01M51QEYKTD7ZEB0YA0C3MQTPN, 01M5R13DGMTNWPY88A3EG49WWS).
 pub const MAIN: &str = "main";
 
-/// The Gate of the head commit of [`MAIN`].
+/// The full check of the head commit of [`MAIN`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MainGate {
     /// The head commit of `main`.
     pub commit: String,
-    /// The state of its Gate.
+    /// The state of its full check ([`full_state`]).
     pub gate: Gate,
-    /// The page of the run of the Gate, for example
-    /// `https://github.com/o/r/actions/runs/38861280871`.
+    /// The page of the run of the check that did not pass, or of the
+    /// first check, for example `https://github.com/o/r/actions/runs/38861280871`.
     pub run: Option<String>,
 }
 
 impl MainGate {
-    /// The Gate of a commit from its check runs `runs`: `None` when the
-    /// commit has no run of the Gate. The run is the run that did not
-    /// pass, or the first one.
+    /// The full check of a commit from the check runs of each check
+    /// (`checks`, one list for each check of [`repo_setup::full_check`]):
+    /// `None` when the commit has no run of any check. The commit is the
+    /// commit of the first run, and a run of another commit does not
+    /// count: `main` moved between two calls. The run is the run that did
+    /// not pass, or the first one.
     ///
     /// ```
     /// use riff::look::MainGate;
@@ -468,22 +477,39 @@ impl MainGate {
     ///     head_sha: "5103311abc".into(),
     ///     html_url: Some(format!("https://github.com/o/r/actions/runs/{id}/job/7")),
     /// };
-    /// let main = MainGate::of(&[run("success", 1), run("failure", 2)]).unwrap();
+    /// let main = MainGate::of(&[vec![run("success", 1)], vec![run("failure", 2)]]).unwrap();
     /// assert_eq!(main.commit, "5103311abc");
     /// assert_eq!(main.gate, Gate::Ended("failure".into()));
     /// assert_eq!(main.run.as_deref(), Some("https://github.com/o/r/actions/runs/2"));
     /// assert!(main.broken());
-    /// assert_eq!(MainGate::of(&[]), None);
+    /// // A check with no run yet: the full check has not started.
+    /// let waits = MainGate::of(&[vec![run("success", 1)], vec![]]).unwrap();
+    /// assert_eq!(waits.gate, Gate::Missing);
+    /// assert_eq!(MainGate::of(&[vec![], vec![]]), None);
+    /// // A required check that was skipped passed.
+    /// assert_eq!(MainGate::of(&[vec![run("skipped", 3)]]).unwrap().gate, Gate::Passed);
     /// ```
-    pub fn of(runs: &[CheckRun]) -> Option<Self> {
-        let first = runs.first()?;
-        let shown = runs
+    pub fn of(checks: &[Vec<CheckRun>]) -> Option<Self> {
+        let first = checks.iter().flatten().next()?;
+        let commit = first.head_sha.as_str();
+        let at_head: Vec<Vec<CheckRun>> = checks
             .iter()
-            .find(|r| r.conclusion.as_deref().is_some_and(|c| c != "success"))
+            .map(|runs| {
+                runs.iter()
+                    .filter(|r| r.head_sha == commit)
+                    .cloned()
+                    .collect()
+            })
+            .collect();
+        let gate = full_state(at_head.iter().map(|runs| gate_state(runs)));
+        let shown = at_head
+            .iter()
+            .flatten()
+            .find(|r| r.conclusion.as_deref().is_some_and(|c| !is_success(c)))
             .unwrap_or(first);
         Some(Self {
-            commit: first.head_sha.clone(),
-            gate: gate_state(runs),
+            commit: commit.to_owned(),
+            gate,
             run: shown
                 .html_url
                 .as_deref()
@@ -492,8 +518,8 @@ impl MainGate {
         })
     }
 
-    /// True when the Gate failed: it ended with `failure` or
-    /// `timed_out`. A cancelled Gate says nothing about the code.
+    /// True when the full check failed: a check ended with `failure` or
+    /// `timed_out`. A cancelled check says nothing about the code.
     pub fn broken(&self) -> bool {
         matches!(&self.gate, Gate::Ended(c) if c == "failure" || c == "timed_out")
     }
@@ -515,11 +541,17 @@ pub fn run_of(job: &str) -> Option<&str> {
     run.contains("/actions/runs/").then_some(run)
 }
 
-/// Reads the Gate of the head of [`MAIN`] in `repo` with `gh`. `None`
-/// when the head has no run of the Gate yet.
+/// Reads the full check of the head of [`MAIN`] in `repo` (`OWNER/REPO`)
+/// with `gh`: the checks that the ruleset of the default branch requires
+/// ([`repo_setup::full_check`]), then the check runs of each of them on
+/// [`MAIN`]. `None` when the head has no run of any check yet. It fails
+/// when `gh` cannot read the required checks.
 pub fn read_main(gh: &Gh, repo: &str) -> Result<Option<MainGate>> {
-    let path = format!("repos/{repo}/commits/{MAIN}/check-runs?check_name={GATE}");
-    let runs: Vec<CheckRun> = gh.json(&["api", &path, "--jq", ".check_runs"])?;
+    let checks = repo_setup::full_check(gh, repo)?;
+    let mut runs = Vec::new();
+    for check in &checks {
+        runs.push(check_runs(gh, repo, MAIN, check)?);
+    }
     Ok(MainGate::of(&runs))
 }
 
@@ -575,14 +607,14 @@ pub fn read_failed_jobs(gh: &Gh, repo: &str, run: &str) -> Result<Vec<String>> {
     Ok(failed_jobs(&jobs))
 }
 
-/// What the Gate of `main` tells at one look ([`MainWatch::news`]).
+/// What the full check of `main` tells at one look ([`MainWatch::news`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MainNews {
-    /// The Gate of `main` failed at a commit that the lead did not get.
+    /// The full check of `main` failed at a commit that the lead did not get.
     /// `first` is true when `main` passed before: the lead gets a
     /// message. Else `main` was broken at an older commit: a note.
     Broken { main: MainGate, first: bool },
-    /// The Gate of `main` passed. `again` is true when the lead got a
+    /// The full check of `main` passed. `again` is true when the lead got a
     /// broken `main` before.
     Passed { main: MainGate, again: bool },
 }
@@ -596,9 +628,9 @@ pub struct MainWatch {
 }
 
 impl MainWatch {
-    /// The news of `main` at one look. A Gate that runs, a head with no
-    /// Gate and a cancelled Gate give none. A failed Gate gives news one
-    /// time for each commit. A passed Gate gives news at each look: the
+    /// The news of `main` at one look. A full check that runs, a head with no
+    /// run and a cancelled check give none. A failed full check gives news one
+    /// time for each commit. A passed full check gives news at each look: the
     /// look closes the free fix items then.
     ///
     /// ```
@@ -671,7 +703,7 @@ fn open_fix_item(gh: &Gh, repo: &str) -> Result<Option<u64>> {
     Ok(fix_items_of(&open).first().copied())
 }
 
-/// Puts the commit, the run and the failed jobs of a failed Gate of
+/// Puts the commit, the run and the failed jobs of a failed full check of
 /// `main` on the open fix item `number` (01M51QEYPGD6W345MZ4F85C38F).
 fn comment_fix_item(
     gh: &Gh,
@@ -697,7 +729,7 @@ fn comment_fix_item(
     Ok(number)
 }
 
-/// Files the fix item of the failed Gate of `main` in `repo` with `gh`
+/// Files the fix item of the failed full check of `main` in `repo` with `gh`
 /// (01M51QEYPGD6W345MZ4F85C38F): it makes the label [`BROKEN_MAIN`] when
 /// it is missing, and puts the issue in the current wave. It gives the
 /// number of the new issue.
@@ -759,7 +791,7 @@ pub fn file_fix_item(gh: &Gh, repo: &str, main: &MainGate, jobs: &[String]) -> R
 ///   item gets a comment. Else riff reads the label again, and files a
 ///   fix item only when it finds none. A step that fails goes into the
 ///   post: the lead must know that `main` is broken.
-/// - A passed Gate: riff closes each fix item that no session claims
+/// - A passed full check: riff closes each fix item that no session claims
 ///   (`claims`) and that no open pull request names (`pulls`). The post
 ///   comes when `main` was broken, or when riff closed an item.
 pub fn main_steps(
@@ -816,8 +848,8 @@ pub fn main_steps(
     }
 }
 
-/// One look at the Gate of `main` of `repo`, with the open `issues` and
-/// `pulls` and the `claims` of this look: it reads the Gate, and does
+/// One look at the full check of `main` of `repo`, with the open `issues` and
+/// `pulls` and the `claims` of this look: it reads the full check, and does
 /// the steps of the forge ([`main_steps`]). It gives the post to the
 /// lead and its kind: a message that wakes the lead, or a note. `watch`
 /// now holds the news: when the post does not go out, the caller sets it
@@ -836,7 +868,8 @@ pub fn main_steps(
 ///     "#!/bin/sh\n\
 ///      case \"$1 $2\" in\n\
 ///        api*) case \"$2\" in\n\
-///          */commits/main/check-runs*) echo '[{\"status\":\"completed\",\"conclusion\":\"failure\",\"head_sha\":\"5103311abc\"}]' ;;\n\
+///          repos/o/r) echo '{\"default_branch\":\"main\"}' ;;\n\
+///          */commits/main/check-runs?check_name=Gate) echo '{\"check_runs\":[{\"status\":\"completed\",\"conclusion\":\"failure\",\"head_sha\":\"5103311abc\"}]}' ;;\n\
 ///          *) echo '[]' ;;\n\
 ///        esac ;;\n\
 ///        \"issue list\") echo '[]' ;;\n\
@@ -846,12 +879,12 @@ pub fn main_steps(
 /// let gh = Arc::new(Gh::at(gh));
 /// let mut watch = MainWatch::default();
 ///
-/// // The Gate failed at a new commit: a message for the lead, with the fix item.
+/// // The full check failed at a new commit: a message for the lead, with the fix item.
 /// let (body, kind) = main_post(&gh, "o/r", (vec![], vec![]), Default::default(), &mut watch)
 ///     .await?
 ///     .unwrap();
 /// assert_eq!(kind, Kind::Message);
-/// assert!(body.starts_with("main is broken: the Gate failed at commit 5103311."), "{body}");
+/// assert!(body.starts_with("main is broken: the full check failed at commit 5103311."), "{body}");
 /// assert!(body.contains("The fix item is #901"), "{body}");
 /// // The same commit at the next look: nothing.
 /// assert_eq!(main_post(&gh, "o/r", (vec![], vec![]), Default::default(), &mut watch).await?, None);
@@ -885,7 +918,7 @@ pub async fn main_post(
     Ok(steps.map(|(body, wake)| (body, if wake { Kind::Message } else { Kind::Note })))
 }
 
-/// One look at the Gate of `main` of the lead `me` ([`main_post`]): it
+/// One look at the full check of `main` of the lead `me` ([`main_post`]): it
 /// posts to the lead. When the post does not go out, `watch` forgets the
 /// news, and the next look does it again.
 pub async fn look_at_main(
@@ -920,7 +953,7 @@ pub struct Watch {
 /// One look of the daemon at the repository of `wave`
 /// (01M5QVH3MAEPPJN9PPVDX6N2EY): it reads the open issues and pull
 /// requests and the claims, sends the messages for the pull requests
-/// that stop ([`PullWatch::news`]), and looks at the Gate of `main`
+/// that stop ([`PullWatch::news`]), and looks at the full check of `main`
 /// ([`main_post`]). Each post goes through [`World::post`]. When a post
 /// does not go out, `watch` forgets what it did not tell, and the next
 /// look does it again. A forge or a riff-server that does not answer is
@@ -1218,7 +1251,7 @@ pub fn notification(block: &Unanswered) -> (String, String) {
 /// can read them, and looks at the blocks with the wake time `wake`. It
 /// shows each block that is unanswered now with `notify`, when it has
 /// one. Then it sends the messages of `watch` for the pull requests that
-/// stop ([`PullWatch::news`]), and looks at the Gate of `main` with
+/// stop ([`PullWatch::news`]), and looks at the full check of `main` with
 /// `main` ([`look_at_main`]). It gives the blocks that are unanswered
 /// now.
 pub async fn once(
@@ -1402,7 +1435,7 @@ mod tests {
             .unwrap();
         assert!(wake);
         assert!(
-            body.starts_with("main is broken: the Gate failed at commit 5103311.")
+            body.starts_with("main is broken: the full check failed at commit 5103311.")
                 && body.contains("riff could not file the fix item: ")
                 && body.contains("HTTP 403")
                 && body.ends_with("File an issue with the label broken-main."),
@@ -1458,7 +1491,7 @@ mod tests {
         assert!(!wake);
         assert_eq!(
             body,
-            "main passes again: the Gate passed at commit 5103311. riff closed the fix item #7. \
+            "main passes again: the full check passed at commit 5103311. riff closed the fix item #7. \
              The fix items #8, #9 stay open: a session claims each, or a pull request names it."
         );
         let closes = calls(&dir, "issue close");

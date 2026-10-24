@@ -109,6 +109,22 @@ pub fn pr_look_failed(number: u64, error: &str, every_secs: u64) -> String {
     )
 }
 
+/// The state of the full check `checks` of `commit` in a sentence, for
+/// example `the full check of commit 1a2b3c4 (Gate, Hygiene) runs still`.
+fn full_check_state(commit: &str, checks: &[String], gate: &crate::pr::Gate) -> String {
+    use crate::pr::Gate;
+    let short = commit.get(..7).unwrap_or(commit);
+    let state = match gate {
+        Gate::Passed => "passed".to_owned(),
+        // The job Gate starts when its parts ended (01M513W2K3HNRWPQTQNBQPT8MZ).
+        Gate::Missing => "has not started".to_owned(),
+        Gate::Running => "runs still".to_owned(),
+        Gate::Ended(conclusion) => format!("ended with {conclusion}"),
+    };
+    let checks = checks.join(", ");
+    format!("the full check of commit {short} ({checks}) {state}")
+}
+
 /// The line of a `riff verify pass` that the full check `checks` of the
 /// head commit stops (01M49HAZ7P3JMWNCG1SWCMAXQP,
 /// 01M5QYDE41FVFX26EC8K5QGYH4). It names the checks.
@@ -133,19 +149,38 @@ pub fn gate_not_passed(
     checks: &[String],
     gate: &crate::pr::Gate,
 ) -> String {
-    use crate::pr::Gate;
-    let short = commit.get(..7).unwrap_or(commit);
-    let state = match gate {
-        Gate::Passed => "passed".to_owned(),
-        // The job Gate starts when its parts ended (01M513W2K3HNRWPQTQNBQPT8MZ).
-        Gate::Missing => "has not started".to_owned(),
-        Gate::Running => "runs still".to_owned(),
-        Gate::Ended(conclusion) => format!("ended with {conclusion}"),
-    };
-    let checks = checks.join(", ");
+    let state = full_check_state(commit, checks, gate);
     format!(
-        "riff verify pass: the full check of commit {short} ({checks}) {state}. A pass needs a \
-         success of each check of it: see gh pr checks {number}. Nothing is reported."
+        "riff verify pass: {state}. A pass needs a success of each check of it: see gh pr checks \
+         {number}. Nothing is reported."
+    )
+}
+
+/// The line of a `riff release verify` that the full check `checks` of the
+/// head commit stops (01M5R13DK401K3TZ91E2QK2DYM). It names the checks.
+///
+/// ```
+/// use riff::pr::Gate;
+/// let checks = ["Gate".to_owned(), "Hygiene".to_owned()];
+/// assert_eq!(
+///     riff::text::release_gate_not_passed(1140, "1a2b3c4d5e6f", &checks, &Gate::Running),
+///     "riff release verify: the full check of commit 1a2b3c4 (Gate, Hygiene) runs still. \
+///      Nothing is reported. next: wait for the checks, then riff release verify 1140"
+/// );
+/// let one = ["checks / test".to_owned()];
+/// assert!(riff::text::release_gate_not_passed(1140, "1a2b3c4", &one, &Gate::Ended("failure".into()))
+///     .contains("the full check of commit 1a2b3c4 (checks / test) ended with failure."));
+/// ```
+pub fn release_gate_not_passed(
+    number: u64,
+    commit: &str,
+    checks: &[String],
+    gate: &crate::pr::Gate,
+) -> String {
+    let state = full_check_state(commit, checks, gate);
+    format!(
+        "riff release verify: {state}. Nothing is reported. next: wait for the checks, then riff \
+         release verify {number}"
     )
 }
 
@@ -818,7 +853,7 @@ fn short(commit: &str) -> String {
     commit.chars().take(7).collect()
 }
 
-/// The run of a Gate in a sentence: ` (RUN)`, or nothing.
+/// The run of the full check in a sentence: ` (RUN)`, or nothing.
 fn in_run(run: Option<&str>) -> String {
     run.map_or_else(String::new, |run| format!(" ({run})"))
 }
@@ -841,17 +876,17 @@ fn fix_items(items: &[u64]) -> String {
     }
 }
 
-/// The title of the fix item of a failed Gate of `main` at `commit`
+/// The title of the fix item of a failed full check of `main` at `commit`
 /// (01M51QEYPGD6W345MZ4F85C38F).
 ///
 /// ```
-/// assert_eq!(riff::text::fix_item_title("5103311abc"), "main is broken at 5103311: the Gate failed");
+/// assert_eq!(riff::text::fix_item_title("5103311abc"), "main is broken at 5103311: the full check failed");
 /// ```
 pub fn fix_item_title(commit: &str) -> String {
-    format!("main is broken at {}: the Gate failed", short(commit))
+    format!("main is broken at {}: the full check failed", short(commit))
 }
 
-/// The body of the fix item of a failed Gate of `main` at `commit`
+/// The body of the fix item of a failed full check of `main` at `commit`
 /// (01M51QEYPGD6W345MZ4F85C38F): the run, the failed jobs, a `Needs:`
 /// line and a `Done when:` line.
 ///
@@ -861,43 +896,43 @@ pub fn fix_item_title(commit: &str) -> String {
 ///     Some("https://github.com/o/r/actions/runs/7"),
 ///     &["Clippy".into(), "Tests 1/4".into()],
 /// );
-/// assert!(body.starts_with("riff filed this fix item: the Gate of `main` failed at commit 5103311.\n"));
+/// assert!(body.starts_with("riff filed this fix item: the full check of `main` failed at commit 5103311.\n"));
 /// assert!(body.contains("- Run: https://github.com/o/r/actions/runs/7\n- Failed jobs: Clippy, Tests 1/4\n"));
 /// assert!(body.contains("\nNeeds: nothing\n"));
 /// assert!(body.ends_with(
-///     "Done when: the Gate of the pull request passes, with each job that failed at 5103311.\n"
+///     "Done when: the full check of the pull request passes, with each job that failed at 5103311.\n"
 /// ));
 /// ```
 pub fn fix_item_body(commit: &str, run: Option<&str>, jobs: &[String]) -> String {
     let commit = short(commit);
     format!(
-        "riff filed this fix item: the Gate of `main` failed at commit {commit}.\n\n\
+        "riff filed this fix item: the full check of `main` failed at commit {commit}.\n\n\
          - Run: {}\n\
          - Failed jobs: {}\n\n\
          Fix `main` in one pull request. Read the log of each failed job, and find the cause. \
-         The rollout gives this item to a worker before each other item. When the Gate of `main` \
+         The rollout gives this item to a worker before each other item. When the full check of `main` \
          passes before a session claims this item, riff closes it. See \"When main breaks\" in \
          how-it-works.md.\n\n\
          Needs: nothing\n\n\
-         Done when: the Gate of the pull request passes, with each job that failed at {commit}.\n",
+         Done when: the full check of the pull request passes, with each job that failed at {commit}.\n",
         run.unwrap_or("no link"),
         jobs_of(jobs),
     )
 }
 
-/// The comment on an open fix item for a failed Gate of `main` at a new
+/// The comment on an open fix item for a failed full check of `main` at a new
 /// `commit` (01M51QEYPGD6W345MZ4F85C38F).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::fix_item_comment("c0ffee123", Some("https://e.test/runs/8"), &["Checks".into()]),
-///     "The Gate of `main` failed again, at commit c0ffee1.\n\n- Run: https://e.test/runs/8\n- \
+///     "The full check of `main` failed again, at commit c0ffee1.\n\n- Run: https://e.test/runs/8\n- \
 ///      Failed jobs: Checks\n"
 /// );
 /// ```
 pub fn fix_item_comment(commit: &str, run: Option<&str>, jobs: &[String]) -> String {
     format!(
-        "The Gate of `main` failed again, at commit {}.\n\n- Run: {}\n- Failed jobs: {}\n",
+        "The full check of `main` failed again, at commit {}.\n\n- Run: {}\n- Failed jobs: {}\n",
         short(commit),
         run.unwrap_or("no link"),
         jobs_of(jobs),
@@ -910,20 +945,20 @@ pub fn fix_item_comment(commit: &str, run: Option<&str>, jobs: &[String]) -> Str
 /// ```
 /// assert_eq!(
 ///     riff::text::fix_item_closed("c0ffee123", Some("https://e.test/runs/9")),
-///     "The Gate of `main` passed at commit c0ffee1 (https://e.test/runs/9). riff closes this \
+///     "The full check of `main` passed at commit c0ffee1 (https://e.test/runs/9). riff closes this \
 ///      fix item: no session claims it, and no pull request names it."
 /// );
 /// ```
 pub fn fix_item_closed(commit: &str, run: Option<&str>) -> String {
     format!(
-        "The Gate of `main` passed at commit {}{}. riff closes this fix item: no session claims \
+        "The full check of `main` passed at commit {}{}. riff closes this fix item: no session claims \
          it, and no pull request names it.",
         short(commit),
         in_run(run),
     )
 }
 
-/// The post to the lead for a failed Gate of `main` at `commit`
+/// The post to the lead for a failed full check of `main` at `commit`
 /// (01M51QEYKTD7ZEB0YA0C3MQTPN). `fix` is the fix item, or why riff
 /// could not file it or comment on it. `first` is true when `main` passed
 /// before: a message. Else `main` was broken at an older commit: a note.
@@ -935,19 +970,19 @@ pub fn fix_item_closed(commit: &str, run: Option<&str>) -> String {
 /// let jobs = ["Clippy".to_owned(), "Tests 1/4".to_owned()];
 /// assert_eq!(
 ///     main_broken("5103311abc", run, &jobs, &Ok(901), true),
-///     "main is broken: the Gate failed at commit 5103311 \
+///     "main is broken: the full check failed at commit 5103311 \
 ///      (https://github.com/o/r/actions/runs/38861280871). Failed jobs: Clippy, Tests 1/4. The \
 ///      fix item is #901: the rollout gives it to a worker before each other item. When a pull \
 ///      request already has the fix, hold #901."
 /// );
 /// assert_eq!(
 ///     main_broken("c0ffee123", None, &[], &Ok(901), false),
-///     "main is still broken: the Gate failed at commit c0ffee1 too. Failed jobs: see the run. \
+///     "main is still broken: the full check failed at commit c0ffee1 too. Failed jobs: see the run. \
 ///      The fix item #901 has a comment with this run."
 /// );
 /// assert_eq!(
 ///     main_broken("5103311abc", None, &[], &Err("HTTP 403".into()), true),
-///     "main is broken: the Gate failed at commit 5103311. Failed jobs: see the run. riff could \
+///     "main is broken: the full check failed at commit 5103311. Failed jobs: see the run. riff could \
 ///      not file the fix item: HTTP 403. File an issue with the label broken-main."
 /// );
 /// ```
@@ -960,10 +995,12 @@ pub fn main_broken(
 ) -> String {
     let (commit, run, jobs) = (short(commit), in_run(run), jobs_of(jobs));
     let head = if first {
-        format!("main is broken: the Gate failed at commit {commit}{run}. Failed jobs: {jobs}.")
+        format!(
+            "main is broken: the full check failed at commit {commit}{run}. Failed jobs: {jobs}."
+        )
     } else {
         format!(
-            "main is still broken: the Gate failed at commit {commit}{run} too. Failed jobs: \
+            "main is still broken: the full check failed at commit {commit}{run} too. Failed jobs: \
              {jobs}."
         )
     };
@@ -981,7 +1018,7 @@ pub fn main_broken(
     format!("{head} {fix}")
 }
 
-/// The note to the lead when the Gate of `main` passes at `commit`
+/// The note to the lead when the full check of `main` passes at `commit`
 /// (01M51QEYVQN74Q1VDTVHB0445Q): `again` is true after a broken `main`.
 /// riff closed the fix items `closed`. The fix items `kept` stay open.
 ///
@@ -990,17 +1027,17 @@ pub fn main_broken(
 ///
 /// assert_eq!(
 ///     main_passes("c0ffee123", Some("https://e.test/runs/9"), &[901], &[], true),
-///     "main passes again: the Gate passed at commit c0ffee1 (https://e.test/runs/9). riff \
+///     "main passes again: the full check passed at commit c0ffee1 (https://e.test/runs/9). riff \
 ///      closed the fix item #901."
 /// );
 /// assert_eq!(
 ///     main_passes("c0ffee123", None, &[], &[901, 902], true),
-///     "main passes again: the Gate passed at commit c0ffee1. The fix items #901, #902 stay \
+///     "main passes again: the full check passed at commit c0ffee1. The fix items #901, #902 stay \
 ///      open: a session claims each, or a pull request names it."
 /// );
 /// assert_eq!(
 ///     main_passes("c0ffee123", None, &[903], &[], false),
-///     "The Gate of main passed at commit c0ffee1. riff closed the fix item #903."
+///     "The full check of main passed at commit c0ffee1. riff closed the fix item #903."
 /// );
 /// ```
 pub fn main_passes(
@@ -1012,9 +1049,9 @@ pub fn main_passes(
 ) -> String {
     let (commit, run) = (short(commit), in_run(run));
     let mut line = if again {
-        format!("main passes again: the Gate passed at commit {commit}{run}.")
+        format!("main passes again: the full check passed at commit {commit}{run}.")
     } else {
-        format!("The Gate of main passed at commit {commit}{run}.")
+        format!("The full check of main passed at commit {commit}{run}.")
     };
     if !closed.is_empty() {
         line.push_str(&format!(" riff closed the {}.", fix_items(closed)));
