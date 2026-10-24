@@ -511,7 +511,12 @@ enum Command {
     /// (catatonit), /etc/subuid and /etc/subgid give you 65536 IDs or more,
     /// and cgroup v2 gives cpu and memory to your user. It checks
     /// that riff.toml of the repository of this folder pins the session
-    /// image. It writes no rule into your user settings of Claude Code. It
+    /// image. When the remote origin is on GitHub, it also reads the
+    /// repository with gh and checks that it allows auto-merge and squash
+    /// merges, that a ruleset of the default branch requires riff/verify,
+    /// and that it has the milestone Backlog. It names the step of each
+    /// check that fails. It writes no rule into your user settings of
+    /// Claude Code. It
     /// names each allow rule of your user, project and local settings of
     /// Claude Code that is wider than the steps of riff, and asks one
     /// question before it removes them. It prints the fix of each check that fails, and stops. When
@@ -1030,7 +1035,7 @@ enum WaveCommand {
     ///
     /// The title is Wave N, or Wave N: NAME. Give N the last number plus
     /// one. riff refuses a number that an open wave has. riff also makes
-    /// the label tracker when it is missing.
+    /// the label tracker, and the milestone Backlog, when one is missing.
     Make {
         /// The title, for example "Wave 6" or "Wave 6: Cloud".
         #[arg(required = true)]
@@ -1680,7 +1685,13 @@ async fn main() -> Result<()> {
         let line = match command {
             WaveCommand::Make { title } => {
                 let made = riff::waves::make(&gh, &title.join(" "))?;
-                Some(text::waves_made(&made.title))
+                println!("{}", text::waves_made(&made.wave.title));
+                match &made.backlog {
+                    Some(Ok(_)) => println!("{}", text::waves_made_backlog()),
+                    Some(Err(why)) => eprintln!("{}", text::waves_no_new_backlog(why)),
+                    None => {}
+                }
+                return Ok(());
             }
             WaveCommand::Rename { number, name } => {
                 let (old, new) = riff::waves::rename(&gh, *number, &name.join(" "))?;

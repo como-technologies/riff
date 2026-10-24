@@ -380,8 +380,8 @@ pub fn old_plugin(found: &old_plugin::Found, change: bool) -> Step {
 /// use riff::update_steps::{machine, State};
 ///
 /// let checks = [
-///     Check { name: "podman".into(), found: "podman version 5.7.0".into(), fix: None },
-///     Check { name: "the init of podman".into(), found: "no catatonit".into(), fix: Some("sudo apt install catatonit".into()) },
+///     Check { name: "podman".into(), found: "podman version 5.7.0".into(), fix: None, step: None },
+///     Check { name: "the init of podman".into(), found: "no catatonit".into(), fix: Some("sudo apt install catatonit".into()), step: None },
 /// ];
 /// let steps = machine(&checks);
 /// assert_eq!(steps[0].state, State::InStep("podman version 5.7.0".into()));
@@ -760,6 +760,7 @@ mod tests {
                     name: "the init of podman".into(),
                     found: "no catatonit".into(),
                     fix: Some("sudo apt install catatonit".into()),
+                    step: None,
                 }],
                 old_plugin: old_plugin::Found::of(
                     &self.dir.path().join("claude-plugin"),

@@ -183,3 +183,134 @@ fn the_page_has_no_command_of_the_plugin_and_signs_in_nowhere() {
         .collect();
     each_is_real(&riff);
 }
+
+/// The how-to "Add another repository to the riff" of "Start a Riff".
+const HOW_TO: &str = "Add another repository to the riff";
+
+/// 01M5QVF5C3CYJPMQ9CXNZJ8E93: "Start a Riff" has the how-to "Add another
+/// repository to the riff", with a copyable `sh` block for each step.
+#[test]
+fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
+    let how_to = part(PAGE, HOW_TO);
+    let commands = book::commands_in(&how_to);
+    assert!(
+        commands.contains(&"riff init --check".to_owned()),
+        "{commands:?}"
+    );
+    for step in [
+        "### Add riff.toml\n",
+        "#### Add the job Gate\n",
+        "#### Allow auto-merge and squash merge\n",
+        "#### Make the ruleset of the default branch\n",
+        "#### Make the Backlog and the first wave\n",
+        "### Pin an image with another toolchain\n",
+    ] {
+        assert!(how_to.contains(step), "{step}");
+    }
+    for command in [
+        "printf '[session]\\nimage = \"%s\"\\n' \"$IMAGE\" > riff.toml",
+        "git push",
+        "gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_merge=true",
+        "gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'",
+        "riff wave make \"Wave 1\"",
+        "gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog",
+        "podman push --digestfile /tmp/digest \"$IMAGE:node\"",
+        "printf '[session]\\nimage = \"%s@%s\"\\n' \"$IMAGE\" \"$(cat /tmp/digest)\" > riff.toml",
+    ] {
+        assert!(
+            commands.contains(&command.to_owned()),
+            "{command}\nnot in {commands:?}"
+        );
+    }
+    let riff: Vec<String> = commands
+        .into_iter()
+        .filter(|c| c.starts_with("riff "))
+        .collect();
+    each_is_real(&riff);
+}
+
+/// The ruleset of the how-to is the ruleset that the step of `riff init`
+/// makes (01M5QWA0E9A4ZJ8X49EM2MJM5Q), and it requires the checks that
+/// riff reads: the verify and the `Gate` that the wave waits for.
+#[test]
+fn the_ruleset_of_the_how_to_is_the_ruleset_of_the_step() {
+    let how_to = part(PAGE, HOW_TO);
+    let start = how_to.find("<<'JSON'\n").expect("the ruleset") + "<<'JSON'\n".len();
+    let json = &how_to[start..start + how_to[start..].find("\nJSON\n").expect("its end")];
+    let ruleset: serde_json::Value = serde_json::from_str(json).expect("the ruleset is JSON");
+    let step: serde_json::Value = serde_json::from_str(riff::repo_setup::RULESET).unwrap();
+    assert_eq!(ruleset, step);
+    let checks: Vec<&str> = ruleset["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["type"] == "required_status_checks")
+        .flat_map(|r| {
+            r["parameters"]["required_status_checks"]
+                .as_array()
+                .unwrap()
+        })
+        .map(|c| c["context"].as_str().unwrap())
+        .collect();
+    assert_eq!(checks, [riff::pr::GATE, riff::pr::VERIFY_CONTEXT]);
+}
+
+/// The commands of the how-to that write `riff.toml` write a file that
+/// riff reads (01M4Z7SP3KSKJYKNRP1MQ70C4Q), and its `sed` finds the pin of
+/// the `riff.toml` of this repository.
+#[test]
+fn the_riff_toml_of_the_how_to_is_a_file_that_riff_reads() {
+    let how_to = part(PAGE, HOW_TO);
+    let commands = book::commands_in(&how_to);
+    let sh = |line: &str, dir: &std::path::Path, env: &[(&str, &str)]| {
+        let out = std::process::Command::new("sh")
+            .args(["-c", line])
+            .current_dir(dir)
+            .envs(env.iter().copied())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{line}: {out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let pin = riff::session_image::Image::of_repository(&root)
+        .unwrap()
+        .to_string();
+
+    // "Add riff.toml": the pin of riff goes in the new file.
+    let read = commands
+        .iter()
+        .find(|c| c.starts_with("IMAGE=$(gh api repos/como-technologies/riff/contents/riff.toml"))
+        .expect("the read of the image of riff");
+    let sed = read.split(" | ").last().unwrap().trim_end_matches(')');
+    assert_eq!(sh(&format!("{sed} riff.toml"), &root, &[]).trim_end(), pin);
+    let dir = tempfile::tempdir().unwrap();
+    let write = "printf '[session]\\nimage = \"%s\"\\n' \"$IMAGE\" > riff.toml";
+    assert!(commands.contains(&write.to_owned()));
+    sh(write, dir.path(), &[("IMAGE", &pin)]);
+    let image = riff::session_image::Image::of_repository(dir.path()).unwrap();
+    assert_eq!(image.to_string(), pin);
+
+    // "Pin an image with another toolchain": the base is that pin, and the
+    // digest of `podman push` makes a pin that riff reads.
+    let base = commands
+        .iter()
+        .find(|c| c.starts_with("BASE=$(sed "))
+        .expect("the base");
+    assert_eq!(
+        sh(&format!("{base}; printf %s \"$BASE\""), dir.path(), &[]),
+        pin
+    );
+    assert!(commands.contains(&"FROM $BASE".to_owned()) || how_to.contains("\nFROM $BASE\n"));
+    let digest = format!("sha256:{}", "ab".repeat(32));
+    std::fs::write(dir.path().join("digest"), &digest).unwrap();
+    let pin_new =
+        "printf '[session]\\nimage = \"%s@%s\"\\n' \"$IMAGE\" \"$(cat /tmp/digest)\" > riff.toml"
+            .replace(
+                "/tmp/digest",
+                &dir.path().join("digest").display().to_string(),
+            );
+    sh(&pin_new, dir.path(), &[("IMAGE", "ghcr.io/acme/session")]);
+    let image = riff::session_image::Image::of_repository(dir.path()).unwrap();
+    assert_eq!(image.to_string(), format!("ghcr.io/acme/session@{digest}"));
+}

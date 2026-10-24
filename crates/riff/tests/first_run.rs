@@ -628,6 +628,171 @@ async fn riff_init_removes_the_plugin_of_riff_3() {
     );
 }
 
+/// A fake `gh` that logs each call to `bin/gh.log`, and gives the files
+/// `repo.json`, `rules.json` and `milestones.json` of `bin` as the
+/// answers of the three reads of `riff init`. With the file
+/// `bin/no-login`, each call fails: `gh` has no sign-in.
+fn fake_gh(bin: &Path, repo: &str, rules: &str, milestones: &str) {
+    std::fs::write(bin.join("repo.json"), repo).unwrap();
+    std::fs::write(bin.join("rules.json"), rules).unwrap();
+    std::fs::write(bin.join("milestones.json"), milestones).unwrap();
+    let body = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "gh $*" >> "$dir/gh.log"
+if [ -f "$dir/no-login" ]; then
+  echo "To get started with GitHub CLI, please run:  gh auth login" >&2
+  exit 4
+fi
+case "$*" in
+  'api repos/{owner}/{repo}') cat "$dir/repo.json" ;;
+  'api repos/{owner}/{repo}/rules/branches/main?per_page=100') cat "$dir/rules.json" ;;
+  'api repos/{owner}/{repo}/milestones?state=open&per_page=100') cat "$dir/milestones.json" ;;
+  *) echo "gh: no such call: $*" >&2; exit 1 ;;
+esac
+"#;
+    script(&bin.join("gh"), body);
+}
+
+/// A repository with no auto-merge, no ruleset and no `Backlog`.
+const BARE: &str = r#"{"full_name":"acme/app","default_branch":"main","allow_auto_merge":false,"allow_squash_merge":true}"#;
+const SET_UP: &str = r#"{"full_name":"acme/app","default_branch":"main","allow_auto_merge":true,"allow_squash_merge":true}"#;
+const VERIFY_RULE: &str = r#"[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]"#;
+const WAVES_ONLY: &str = r#"[{"number":1,"title":"Wave 1","open_issues":2,"closed_issues":0}]"#;
+const WITH_BACKLOG: &str = r#"[{"number":1,"title":"Wave 1","open_issues":2,"closed_issues":0},{"number":2,"title":"Backlog","open_issues":0,"closed_issues":0}]"#;
+
+impl Machine {
+    /// Gives the repository of the machine a remote `origin` on GitHub.
+    fn add_origin(&self) {
+        let status = self
+            .env
+            .command("git")
+            .args(["-C"])
+            .arg(&self.repo)
+            .args(["remote", "add", "origin", "https://github.com/acme/app.git"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+}
+
+/// 01M5QVF5535YRN1EF3DZAB4W8G: `riff init --check` in a clone of a
+/// repository with no auto-merge, no ruleset that requires `riff/verify`
+/// and no `Backlog` names the three steps, and changes nothing.
+#[tokio::test]
+async fn riff_init_check_names_the_github_step_of_each_fact_that_fails() {
+    let machine = Machine::new();
+    machine.add_origin();
+    fake_gh(&machine.bin, BARE, "[]", WAVES_ONLY);
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{stdout}\n{}",
+        text(&out.stderr)
+    );
+    let failed: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.starts_with("  fail  "))
+        .collect();
+    assert_eq!(
+        failed,
+        [
+            "  fail  auto-merge and squash merge: acme/app allows no auto-merge. Fix: allow \
+             them: gh api -X PATCH repos/acme/app -F allow_auto_merge=true -F \
+             allow_squash_merge=true",
+            "  fail  the ruleset of main: no ruleset of main requires the check riff/verify, \
+             so a merge does not wait for the verify. Fix: make a ruleset of main that \
+             requires a pull request and the checks Gate and riff/verify. See \"Add another \
+             repository to the riff\" in the book",
+            "  fail  the milestone Backlog: acme/app has no open milestone Backlog. Fix: make \
+             it: gh api -X POST repos/acme/app/milestones -f title=Backlog. riff wave make \
+             makes it too, with the next wave",
+        ],
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("3 checks failed. riff installed nothing and pulled nothing."),
+        "{stdout}"
+    );
+    // riff reads the repository, and changes nothing: no write call.
+    let log = machine.read("gh.log");
+    assert_eq!(log.lines().count(), 3, "{log}");
+    assert!(!log.contains(" -X "), "{log}");
+    assert_eq!(machine.read("systemctl.log"), "");
+    assert!(!machine.unit().exists());
+}
+
+#[tokio::test]
+async fn riff_init_check_passes_a_repository_that_is_set_up() {
+    let machine = Machine::new();
+    machine.add_origin();
+    fake_gh(&machine.bin, SET_UP, VERIFY_RULE, WITH_BACKLOG);
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    for line in [
+        "  pass  auto-merge and squash merge: acme/app allows both",
+        "  pass  the ruleset of main: it requires the check riff/verify",
+        "  pass  the milestone Backlog: acme/app has it open",
+    ] {
+        assert!(
+            stdout.lines().any(|l| l == line),
+            "{line}\nnot in\n{stdout}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn riff_init_check_fails_one_check_when_gh_cannot_read_the_repository() {
+    let machine = Machine::new();
+    machine.add_origin();
+    fake_gh(&machine.bin, SET_UP, VERIFY_RULE, WITH_BACKLOG);
+    std::fs::write(machine.bin.join("no-login"), "").unwrap();
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    let failed: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.starts_with("  fail  "))
+        .collect();
+    assert_eq!(failed.len(), 1, "{stdout}");
+    assert!(
+        failed[0]
+            .starts_with("  fail  the repository on GitHub: riff cannot read the repository: "),
+        "{}",
+        failed[0]
+    );
+    assert!(failed[0].contains("gh auth login"), "{}", failed[0]);
+    assert!(stdout.contains("1 check failed."), "{stdout}");
+}
+
+/// A folder with no remote on GitHub has no check of the repository,
+/// and riff calls no `gh`.
+#[tokio::test]
+async fn riff_init_calls_no_gh_in_a_folder_with_no_remote_on_github() {
+    let machine = Machine::new();
+    fake_gh(&machine.bin, BARE, "[]", WAVES_ONLY);
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(!stdout.contains("GitHub"), "{stdout}");
+    assert_eq!(machine.read("gh.log"), "");
+    // A remote on another host is no remote on GitHub.
+    let status = machine
+        .env
+        .command("git")
+        .arg("-C")
+        .arg(&machine.repo)
+        .args(["remote", "add", "origin", "https://gitlab.com/acme/app.git"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(machine.read("gh.log"), "");
+}
+
 #[test]
 fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
     let commands = commands_of("start-a-riff.md");
@@ -642,7 +807,10 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
             "riff init",
             "riff init",
             "riff init --yes",
-            "riff init --check"
+            "riff init --check",
+            // "Add another repository to the riff": check, then pull the image.
+            "riff init --check",
+            "riff init"
         ]
     );
     each_is_real(&init);

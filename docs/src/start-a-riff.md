@@ -209,6 +209,7 @@ flowchart LR
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |
 | The riff binary | It is static, so `riff relay` starts in each session image. |
+| The repository on GitHub | In a clone of a repository on GitHub: auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, and the Backlog is there. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
 
 A line with `fail` also gives the fix. Do each fix, then run
 `riff init` again. When each check passes, `riff init` installs and
@@ -374,6 +375,210 @@ status 1 when a check fails:
 
 ```sh
 riff init --check
+```
+
+## Add another repository to the riff
+
+riff works on other projects too. A new repository needs five parts
+that riff does not make: `riff.toml` with the session image, a job
+`Gate`, the settings of the repository, a ruleset of the default
+branch, and the Backlog. In a clone of the repository, `riff init`
+checks them, and names the step of each check that fails:
+
+```sh
+riff init --check
+```
+
+```mermaid
+flowchart LR
+    T["riff.toml on the<br/>default branch"] --> S["a session:<br/>gh pr merge --auto --squash"]
+    S --> G["your job Gate<br/>passes"]
+    G --> V["riff sets<br/>riff/verify"]
+    V --> R["the ruleset lets<br/>the merge go"]
+    R --> M["GitHub squash-merges"]
+```
+
+| Check of `riff init` | Step |
+|---|---|
+| the session image | [Add riff.toml](#add-rifftoml) |
+| auto-merge and squash merge | [Allow auto-merge and squash merge](#allow-auto-merge-and-squash-merge) |
+| the ruleset of the default branch | [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch) |
+| the Backlog | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
+
+The job `Gate` is a step of your own: `riff init` cannot check it.
+
+### Add riff.toml
+
+Each repository of the riff has the file `riff.toml` at its root, on
+its default branch. Its key `image` pins the session image. Without
+the file, `riff lead start` and the wave cannot start a session. The
+image of riff has `claude`, `git`, `gh` and Rust, so it is good for a
+Rust project. For another toolchain, see
+[Pin an image with another toolchain](#pin-an-image-with-another-toolchain).
+
+This command writes `riff.toml` with the image of riff:
+
+```sh
+IMAGE=$(gh api repos/como-technologies/riff/contents/riff.toml --jq .content | base64 -d | sed -n 's/^image = "\(.*\)"$/\1/p')
+printf '[session]\nimage = "%s"\n' "$IMAGE" > riff.toml
+```
+
+Commit it on the default branch, and push it. Do this before you make
+the ruleset: after the ruleset, each change needs a pull request.
+
+```sh
+git add riff.toml
+git commit -m "Pin the session image of riff"
+git push
+```
+
+### Set up the repository on GitHub
+
+Run each step once, in a clone of the repository, as an admin of the
+repository. `gh` fills `{owner}` and `{repo}` from the remote of the
+clone.
+
+#### Add the job Gate
+
+riff starts the verify of a pull request only when a check run named
+`Gate` passed on its head. Add a workflow with a job of that name.
+Put the command of your tests in place of `make test`. Push the
+workflow to the default branch before you make the ruleset:
+
+```sh
+mkdir -p .github/workflows
+cat > .github/workflows/gate.yml <<'YAML'
+name: Gate
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  Gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test
+YAML
+git add .github/workflows/gate.yml
+git commit -m "Add the job Gate"
+git push
+```
+
+#### Allow auto-merge and squash merge
+
+Each work session runs `gh pr merge --auto --squash`. GitHub refuses
+it until the repository allows both:
+
+```sh
+gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_merge=true
+```
+
+#### Make the ruleset of the default branch
+
+Without a rule, nothing on GitHub makes a merge wait for the verify.
+This ruleset needs a pull request, and the checks `Gate` and
+`riff/verify`. It allows squash merges only, and it lets nobody bypass
+it:
+
+```sh
+gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'
+{
+  "name": "riff",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false,
+        "allowed_merge_methods": ["squash"]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "required_status_checks": [
+          { "context": "Gate" },
+          { "context": "riff/verify" }
+        ]
+      }
+    }
+  ]
+}
+JSON
+```
+
+#### Make the Backlog and the first wave
+
+A wave is a milestone named `Wave N`. The Backlog is the milestone
+`Backlog`: `riff wave move --to Backlog` and
+`riff wave end --move-open-to-backlog` need it. This command makes the
+first wave. It makes the Backlog too, when the repository has none:
+
+```sh
+riff wave make "Wave 1"
+```
+
+A repository that has waves and no Backlog gets the Backlog alone:
+
+```sh
+gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog
+```
+
+### Pin an image with another toolchain
+
+The session image of riff has `claude`, `git`, `gh` and Rust. A project
+with another toolchain needs an image of its own. Start from the image
+that `riff.toml` pins now, and add the toolchain. The base is Debian,
+and a package that you install is there in each session. Do not add
+riff to the image: riff binds its own binary into each session.
+
+```sh
+BASE=$(sed -n 's/^image = "\(.*\)"$/\1/p' riff.toml)
+mkdir -p deploy/session
+cat > deploy/session/Dockerfile <<EOF
+FROM $BASE
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*
+EOF
+```
+
+Build the image, try it, and push it to a registry. Put your owner in
+place of `OWNER`:
+
+```sh
+IMAGE=ghcr.io/OWNER/session
+podman build -t "$IMAGE:node" deploy/session
+podman run --rm "$IMAGE:node" node --version
+podman login ghcr.io
+podman push --digestfile /tmp/digest "$IMAGE:node"
+```
+
+`podman push` writes the digest of the image to `/tmp/digest`. Pin
+that digest in `riff.toml`. riff refuses a tag:
+
+```sh
+printf '[session]\nimage = "%s@%s"\n' "$IMAGE" "$(cat /tmp/digest)" > riff.toml
+```
+
+Merge `riff.toml` into the default branch with a pull request: the
+sessions use only the merged pin (see
+[Only a merged pin counts](development.md#only-a-merged-pin-counts)).
+Make the package public in its settings on GitHub. A private package
+needs `podman login ghcr.io` on each machine of the riff. Then run
+`riff init`. When each check passes, the riff daemon pulls the image:
+
+```sh
+riff init
 ```
 
 To learn more, read [How It Works](how-it-works.md).

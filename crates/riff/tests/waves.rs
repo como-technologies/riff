@@ -263,7 +263,14 @@ fn each_riff_command_of_the_page_is_real() {
 /// answers a POST, a PATCH of a title and another PATCH with a
 /// milestone.
 fn fake_gh(bin: &Path) {
-    let open = r#"[{"number":10,"title":"Backlog","open_issues":61,"closed_issues":4},{"number":33,"title":"Wave 28","open_issues":2,"closed_issues":0},{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}]"#;
+    fake_gh_with(
+        bin,
+        r#"[{"number":10,"title":"Backlog","open_issues":61,"closed_issues":4},{"number":33,"title":"Wave 28","open_issues":2,"closed_issues":0},{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}]"#,
+    );
+}
+
+/// [`fake_gh`] with the list `open` of the open milestones.
+fn fake_gh_with(bin: &Path, open: &str) {
     let made = r#"{"number":34,"title":"Wave 29","open_issues":0,"closed_issues":0}"#;
     let renamed = r#"{"number":33,"title":"Wave 28: 1.x, fixes that slow the work","open_issues":2,"closed_issues":0}"#;
     let ended = r#"{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}"#;
@@ -338,6 +345,34 @@ fn riff_wave_lists_makes_and_ends_the_waves_with_gh() {
         [
             "gh api -X POST repos/{owner}/{repo}/milestones -f title=Wave 29",
             "gh api -X PATCH repos/{owner}/{repo}/milestones/32 -f state=closed",
+        ]
+    );
+}
+
+/// 01M5QVF58KEC9WNHAJ8WTZ18EP: `riff wave make` also makes the milestone
+/// `Backlog` when the repository has none, and says so.
+#[test]
+fn riff_wave_make_also_makes_the_backlog_when_it_is_missing() {
+    let env = Isolated::new();
+    let bin = tempfile::tempdir().unwrap();
+    fake_gh_with(
+        bin.path(),
+        r#"[{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}]"#,
+    );
+    let made = riff_wave(&env, bin.path(), &["make", "Wave", "29"]);
+    assert!(made.status.success(), "{:?}", made);
+    assert_eq!(
+        String::from_utf8_lossy(&made.stdout),
+        "Made the wave Wave 29.\nMade the milestone Backlog: the repository had none. It holds \
+         the items with no wave.\n"
+    );
+    let log = fs::read_to_string(bin.path().join("gh.log")).unwrap();
+    let writes: Vec<&str> = log.lines().filter(|l| l.contains(" -X ")).collect();
+    assert_eq!(
+        writes,
+        [
+            "gh api -X POST repos/{owner}/{repo}/milestones -f title=Wave 29",
+            "gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog",
         ]
     );
 }
