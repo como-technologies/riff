@@ -140,6 +140,15 @@
 //! of [`SECRET_VARS`], and the tokens of the sign-in file of `claude`
 //! ([`secrets`]). It writes no file.
 //!
+//! # The riff command
+//!
+//! A session with a terminal, the lead and a takeover, runs `claude` in
+//! the place of the relay ([`terminal`]). The relay puts the folder of
+//! [`daemon::RELAY_BIN`] first on the `PATH` of `claude`
+//! ([`riff_first`]), so a person who types `! riff who` in the terminal
+//! runs the riff of the container (01M5QVCVXWBBG1BMGRVBQS25W9). The path
+//! `/opt/riff/riff` stays: the permission rules name it.
+//!
 //! # The riff tools
 //!
 //! The relay gives `claude` the riff tools: it adds `--mcp-config` with
@@ -156,6 +165,7 @@
 //! daemon skips the handshake (01M4ZHSZXAY7F7E17B3CMHG562).
 
 use std::collections::{BTreeMap, VecDeque};
+use std::ffi::{OsStr, OsString};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -849,9 +859,37 @@ pub async fn main(command: Vec<String>) -> Result<i32> {
     Ok(code.unwrap_or(1))
 }
 
+/// The `PATH` of a session with a terminal: the folder of
+/// [`daemon::RELAY_BIN`], then `path`, the `PATH` that the container
+/// has (01M5QVCVXWBBG1BMGRVBQS25W9). So `riff` is the riff of the
+/// container, and `RELAY_BIN` itself works as before.
+///
+/// ```
+/// use std::ffi::OsStr;
+///
+/// let path = riff::session_relay::riff_first(Some(OsStr::new("/usr/local/bin:/usr/bin")));
+/// assert_eq!(path, "/opt/riff:/usr/local/bin:/usr/bin");
+/// // No `PATH`, or an empty one: an empty folder would mean the
+/// // current folder.
+/// assert_eq!(riff::session_relay::riff_first(None), "/opt/riff");
+/// assert_eq!(riff::session_relay::riff_first(Some(OsStr::new(""))), "/opt/riff");
+/// ```
+pub fn riff_first(path: Option<&OsStr>) -> OsString {
+    let folder = Path::new(daemon::RELAY_BIN)
+        .parent()
+        .unwrap_or_else(|| Path::new("/"));
+    let mut first = OsString::from(folder);
+    if let Some(path) = path.filter(|p| !p.is_empty()) {
+        first.push(":");
+        first.push(path);
+    }
+    first
+}
+
 /// `riff relay --terminal -- COMMAND`: runs `COMMAND` with the riff
 /// tools in the place of this process, so it keeps the terminal: the
-/// lead, and the `claude` of a takeover (01M4Z60B81RTZT71PN5HV0GZHX). It
+/// lead, and the `claude` of a takeover (01M4Z60B81RTZT71PN5HV0GZHX). Its
+/// `PATH` has the riff of the container first ([`riff_first`]). It
 /// gives an error only when the command does not start.
 pub fn terminal(command: &[String]) -> anyhow::Error {
     use std::os::unix::process::CommandExt;
@@ -866,6 +904,7 @@ pub fn terminal(command: &[String]) -> anyhow::Error {
     let error = std::process::Command::new(program)
         .args(args)
         .env_remove(crate::session_mcp::VAR)
+        .env("PATH", riff_first(std::env::var_os("PATH").as_deref()))
         .exec();
     anyhow!(error).context(text::no_program(program))
 }

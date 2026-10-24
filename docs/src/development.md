@@ -2018,6 +2018,20 @@ It plans the waves with `/opt/riff/riff wave`: see
 and riff tells the old lead. See
 [Name the lead](how-it-works.md#name-the-lead).
 
+#### Run a riff command in the terminal of the lead
+
+In the terminal of the lead, type `!` and a command. Claude Code runs
+the command in the container of the lead. In the container, `riff` is
+the riff of the container, the same riff as `/opt/riff/riff`:
+
+```sh
+! riff who
+```
+
+A takeover of a session in a container has the same `riff`. The
+permission rules of the lead name the path `/opt/riff/riff`, and they
+match as before.
+
 ### Watch the riff
 
 ```sh

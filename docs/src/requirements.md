@@ -6723,6 +6723,11 @@ part when they merge.
   session, as riff members does. Each session can read them. The URI
   that riff whoami shows is the URI that riff-server holds for the
   session (#1338).
+- **01M5QVCVXWBBG1BMGRVBQS25W9** In a session with a terminal, the lead
+  and a takeover, the relay puts the folder of /opt/riff/riff first on
+  the PATH of claude. So a person who types ! riff in the terminal runs
+  the riff of the container. The path /opt/riff/riff stays, and the
+  permission rules that name it still match.
 
 ### The first run
 
