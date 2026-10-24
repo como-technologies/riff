@@ -38,6 +38,13 @@ flowchart TD
     C -- no --> W["verify the work of others,<br/>run checks after the release, or wait"]
 ```
 
+The wave of the riff daemon takes only an issue with a `Done when:` line
+in its body. A session stops at once without that line. For an issue
+with no such line, the lead gets one message, and the wave starts no
+session. When the line comes, the wave will take the issue at its next
+look. See
+[Add a Done when line to an issue](development.md#add-a-done-when-line-to-an-issue).
+
 ## The life of a wave
 
 ```mermaid
@@ -191,6 +198,11 @@ a wave that is not open. Then it moves nothing:
 riff wave move 71 72 --to 7
 riff wave move 73 --to Backlog
 ```
+
+When an item has no `Done when:` line, riff warns, and moves the item.
+The wave takes only an issue with that line: see
+[Add a Done when line to an issue](development.md#add-a-done-when-line-to-an-issue).
+`--to Backlog` gives no warning.
 
 To end a wave that still has open items, move them to the Backlog and
 end the wave in one step:

@@ -72,7 +72,7 @@ case "$*" in
   'pr list --repo como-technologies/riff '*) echo '[]' ;;
   'issue list --repo como-technologies/riff '*)
     if [ -f "$dir/wave-issue" ]; then
-      echo '[{"number":12,"body":"","comments":[],"milestone":{"title":"Wave 27"},"labels":[]}]'
+      echo '[{"number":12,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 27"},"labels":[]}]'
     else echo '[]'; fi ;;
   *) exit 1 ;;
 esac

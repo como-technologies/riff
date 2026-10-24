@@ -20,7 +20,7 @@
 //! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, `label create tracker ... --force` (01M5ND16V2SVN8A9K7W90VC6X9), `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE`, then the same POST with `-f title=Backlog` when the list has no `Backlog` (01M5QVF58KEC9WNHAJ8WTZ18EP) |
 //! | `riff wave rename N NAME` (01M518A0BEQBX9RH9H0CEFYF9Q) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f title=TITLE` |
 //! | `riff wave end N` (01M509TJXE04CTG5D1K751WXJY) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f state=closed` |
-//! | `riff wave move ITEM... --to WAVE` (01M5924014WN63RCHJWGZS4AFZ) | the list, then `issue edit N --milestone TITLE` for each item |
+//! | `riff wave move ITEM... --to WAVE` (01M5924014WN63RCHJWGZS4AFZ) | the list, `issue view N --json number,body` for each item (to a wave only), then `issue edit N --milestone TITLE` for each item |
 //! | `riff wave end N --move-open-to-backlog` (01M592403Q4TNZEDNR76C7NK9M) | the list, `api repos/{owner}/{repo}/issues?milestone=NUMBER&state=open&per_page=100`, `issue edit N --milestone Backlog` for each item, then the PATCH of `riff wave end` |
 //! | `--wave WAVE` of `riff usage` and `riff audit` (01M588K2M7G0CV3RNJ4N074FTG) | `api repos/OWNER/REPO/milestones?state=all&per_page=100` |
 //!
@@ -48,6 +48,11 @@
 //! - `riff wave move` and `--move-open-to-backlog` refuse an item with a
 //!   claim on riff-server before they change any item. The lead needs
 //!   no `gh issue edit` for the waves.
+//! - `riff wave move ITEM... --to WAVE` warns for each item whose body has
+//!   no line that starts with `Done when:`, and moves it
+//!   (01M5R0HERC566W14SEJ3ZCG6V5). The wave of the daemon takes only an
+//!   issue with that line (01M5R0HEP1MXWYY643F1N1DWEM). `--to Backlog`
+//!   reads no body and gives no warning.
 //! - `--wave` takes the number of the wave, `33` or `Wave 33`, as each
 //!   other step does ([`title`]). `gh issue list --milestone` matches
 //!   only the full title, for example `Wave 33: Hosts`, so riff finds
@@ -74,6 +79,7 @@ use serde::Deserialize;
 
 use crate::pr::Gh;
 use crate::reach::Reach;
+use crate::rollout;
 use crate::text;
 
 /// An open milestone, as `gh api .../milestones` gives it: a
@@ -329,9 +335,9 @@ pub fn claimed(who: &[SessionInfo], repo: &str) -> Vec<u64> {
     items
 }
 
-/// Puts the `items` in the milestone `title` with `gh issue edit`. It
-/// refuses an item with a claim, and then it calls nothing.
-fn put(gh: &Gh, items: &[u64], title: &str, claimed: &[u64]) -> Result<()> {
+/// Refuses an item of `items` with a claim in `claimed`, before any
+/// call.
+fn refuse_claimed(items: &[u64], claimed: &[u64]) -> Result<()> {
     let held: Vec<u64> = items
         .iter()
         .copied()
@@ -340,6 +346,11 @@ fn put(gh: &Gh, items: &[u64], title: &str, claimed: &[u64]) -> Result<()> {
     if !held.is_empty() {
         bail!(text::waves_claimed(&held));
     }
+    Ok(())
+}
+
+/// Puts the `items` in the milestone `title` with `gh issue edit`.
+fn put(gh: &Gh, items: &[u64], title: &str) -> Result<()> {
     for n in items {
         gh.run(
             &["issue", "edit", &n.to_string(), "--milestone", title],
@@ -349,14 +360,50 @@ fn put(gh: &Gh, items: &[u64], title: &str, claimed: &[u64]) -> Result<()> {
     Ok(())
 }
 
+/// What `riff wave move` did.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Moved {
+    /// The title of the target.
+    pub title: String,
+    /// The moved items whose body has no line that starts with
+    /// [`rollout::DONE_WHEN`] (01M5R0HERC566W14SEJ3ZCG6V5). The wave takes
+    /// only an issue with that line. Always empty for the Backlog.
+    pub no_done_when: Vec<u64>,
+}
+
 /// Moves the `items` to `to`: a wave by its number, or `Backlog`
 /// (01M5924014WN63RCHJWGZS4AFZ). `claimed` holds the items with a claim.
 /// It refuses an item with a claim, and a target that no open milestone
-/// has. It returns the title of the target.
-pub fn move_items(gh: &Gh, items: &[u64], to: &str, claimed: &[u64]) -> Result<String> {
+/// has. For a wave, it reads the body of each item with `gh issue view`
+/// before it moves any, and names each item with no `Done when:` line
+/// (01M5R0HERC566W14SEJ3ZCG6V5). The move does not wait for the line.
+pub fn move_items(gh: &Gh, items: &[u64], to: &str, claimed: &[u64]) -> Result<Moved> {
     let title = target(&open(gh)?, to)?;
-    put(gh, items, &title, claimed)?;
-    Ok(title)
+    refuse_claimed(items, claimed)?;
+    let no_done_when = if title == BACKLOG {
+        Vec::new()
+    } else {
+        without_done_when(gh, items)?
+    };
+    put(gh, items, &title)?;
+    Ok(Moved {
+        title,
+        no_done_when,
+    })
+}
+
+/// The `items` whose body has no line that starts with
+/// [`rollout::DONE_WHEN`], in order, with `gh issue view`.
+fn without_done_when(gh: &Gh, items: &[u64]) -> Result<Vec<u64>> {
+    let mut bare = Vec::new();
+    for n in items {
+        let issue: rollout::Issue =
+            gh.json(&["issue", "view", &n.to_string(), "--json", "number,body"])?;
+        if !issue.has_done_when() {
+            bare.push(*n);
+        }
+    }
+    Ok(bare)
 }
 
 /// Moves the open items of the open wave `number` to the Backlog, then
@@ -384,7 +431,8 @@ pub fn end_moving_open(gh: &Gh, number: u64, claimed: &[u64]) -> Result<(Milesto
         ),
     ])?;
     let moved: Vec<u64> = open_items.into_iter().map(|i| i.number).collect();
-    put(gh, &moved, &backlog, claimed)?;
+    refuse_claimed(&moved, claimed)?;
+    put(gh, &moved, &backlog)?;
     let ended = milestone(
         gh,
         &[
@@ -601,6 +649,8 @@ mod tests {
              'api -X PATCH '*'-f title='*) printf '%s' '{{\"number\":33,\"title\":\"Wave 28: Fixes\",\"open_issues\":2,\"closed_issues\":0}}' ;;\n\
              'api -X PATCH '*) printf '%s' '{{\"number\":32,\"title\":\"Wave 27: Cloud\",\"open_issues\":0,\"closed_issues\":9}}' ;;\n\
              'api repos/{{owner}}/{{repo}}/issues?milestone=33&state=open&per_page=100') printf '%s' '[{{\"number\":71}},{{\"number\":72}}]' ;;\n\
+             'issue view 72 '*) printf '%s' '{{\"number\":72,\"body\":\"No line.\"}}' ;;\n\
+             'issue view '*) printf '%s' '{{\"number\":71,\"body\":\"Text.\\n\\nDone when: x.\"}}' ;;\n\
              'issue edit '*) ;;\n\
              'label create '*) ;;\n\
              *) exit 1 ;;\nesac\n",
@@ -737,12 +787,16 @@ mod tests {
     #[test]
     fn move_puts_each_item_in_the_wave_by_its_number() {
         let dir = tempfile::tempdir().unwrap();
-        let title = move_items(&fake_gh(dir.path()), &[71, 72], "27", &[]).unwrap();
-        assert_eq!(title, "Wave 27: Cloud");
+        let moved = move_items(&fake_gh(dir.path()), &[71, 72], "27", &[]).unwrap();
+        assert_eq!(moved.title, "Wave 27: Cloud");
+        // 72 has no `Done when:` line: it moves, and riff names it.
+        assert_eq!(moved.no_done_when, [72]);
         assert_eq!(
             calls(dir.path()),
             [
                 LIST,
+                "issue view 71 --json number,body",
+                "issue view 72 --json number,body",
                 "issue edit 71 --milestone Wave 27: Cloud",
                 "issue edit 72 --milestone Wave 27: Cloud"
             ]
@@ -750,14 +804,26 @@ mod tests {
     }
 
     #[test]
-    fn move_puts_the_items_in_the_backlog() {
+    fn move_puts_the_items_in_the_backlog_and_reads_no_body() {
         let dir = tempfile::tempdir().unwrap();
-        let title = move_items(&fake_gh(dir.path()), &[71], "Backlog", &[]).unwrap();
-        assert_eq!(title, "Backlog");
+        let moved = move_items(&fake_gh(dir.path()), &[71, 72], "Backlog", &[]).unwrap();
+        assert_eq!(moved.title, "Backlog");
+        assert!(moved.no_done_when.is_empty());
         assert_eq!(
             calls(dir.path()),
-            [LIST, "issue edit 71 --milestone Backlog"]
+            [
+                LIST,
+                "issue edit 71 --milestone Backlog",
+                "issue edit 72 --milestone Backlog"
+            ]
         );
+    }
+
+    #[test]
+    fn move_of_an_item_with_a_line_names_no_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let moved = move_items(&fake_gh(dir.path()), &[71], "27", &[]).unwrap();
+        assert!(moved.no_done_when.is_empty());
     }
 
     #[test]

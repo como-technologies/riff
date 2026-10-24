@@ -46,6 +46,12 @@
 //! - a held item (01M4ZV3B6M7PZRJ39XTXBZP3ZH);
 //! - a tracker issue, its build or its verify: it has no code of its
 //!   own ([`rollout::Issue::tracker`], 01M5ND16V2SVN8A9K7W90VC6X9);
+//! - a build of an issue whose body has no line that starts with
+//!   `Done when:` ([`rollout::Issue::has_done_when`],
+//!   01M5R0HEP1MXWYY643F1N1DWEM): a session stops at once without it. The
+//!   lead gets one message for each such issue ([`Look::no_done_when`],
+//!   [`text::wave_no_done_when`]). The wave takes the issue at its next
+//!   look after the line comes. A verify and a rebase do not change;
 //! - an item that a session claims, or that a job of the wave runs;
 //! - the verify of an item while a session holds the item: its author
 //!   still works. The verify is a new session: an author never verifies
@@ -656,6 +662,10 @@ pub struct Look {
     pub pulls: BTreeMap<u64, Waiting>,
     /// The pull requests that cannot merge by themselves.
     pub fixes: Fixes,
+    /// The issues that would be free work but for the missing line
+    /// `Done when:` in their body
+    /// ([`rollout::Open::no_done_when`]). The lead hears of each once.
+    pub no_done_when: BTreeSet<u64>,
 }
 
 /// The issue of `verify-issue-N`.
@@ -939,6 +949,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
     let mut told: BTreeSet<String> = BTreeSet::new();
     // The stuck pull requests that the lead heard of ([`Notice::key`]).
     let mut noticed: BTreeSet<String> = BTreeSet::new();
+    // The issues with no `Done when:` line that the lead heard of.
+    let mut bare: BTreeSet<u64> = BTreeSet::new();
     // True while the wave waits for a fact of the host: the lead heard
     // of it.
     let mut waits = false;
@@ -967,6 +979,14 @@ pub(crate) async fn run<R: Runtime + 'static>(
                             .unwrap_or_else(|| text::WAVE_END_UNKNOWN.to_owned());
                         let body = text::wave_spent(&item, STARTS, &reason);
                         world.tell(&wave, &body).await;
+                    }
+                }
+                // An issue that got the line, or left the free work, can come
+                // again.
+                bare.retain(|n| look.no_done_when.contains(n));
+                for n in &look.no_done_when {
+                    if bare.insert(*n) {
+                        world.tell(&wave, &text::wave_no_done_when(*n)).await;
                     }
                 }
                 for notice in &look.fixes.notices {
@@ -1986,6 +2006,7 @@ pub fn look_with(
         pull.reasked = pull.issue().is_some_and(|n| asked.contains(&(n, commit)));
     }
     let (free, fixes) = fixes(&open, open.free_work(&claimed, &held));
+    let no_done_when = open.no_done_when(&claimed, &held).into_iter().collect();
     let pulls = waiting(gh, repo, &free, &open)?;
     Ok(Look {
         paused: false,
@@ -1994,6 +2015,7 @@ pub fn look_with(
         holds,
         pulls,
         fixes,
+        no_done_when,
     })
 }
 
@@ -2469,6 +2491,8 @@ mod tests {
         titles: BTreeMap<u64, String>,
         /// The labels of each item.
         labels: BTreeMap<u64, Vec<String>>,
+        /// The items whose body has no `Done when:` line.
+        bare: BTreeSet<u64>,
         /// Each post of the look: the item whose holder gets it, or `None`
         /// for the lead, the kind, and the body.
         posts: Vec<(Option<String>, Kind, String)>,
@@ -2512,6 +2536,10 @@ mod tests {
                     .get(n)
                     .cloned()
                     .unwrap_or_else(|| format!("item {n}")),
+                body: match self.bare.contains(n) {
+                    true => "No line.".into(),
+                    false => "Done when: it works.".into(),
+                },
                 milestone: Some(wave()),
                 labels: self
                     .labels
@@ -2572,6 +2600,7 @@ mod tests {
                 let open = forge.open();
                 let claims: HashSet<String> = forge.claims.keys().cloned().collect();
                 let (free, fixes) = fixes(&open, open.free_work(&claims, &HashSet::new()));
+                let no_done_when = open.no_done_when(&claims, &HashSet::new());
                 let pulls = match forge.checked {
                     true => waiting(&self.gh, "o/r", &free, &open)?,
                     false => forge
@@ -2594,6 +2623,7 @@ mod tests {
                     holds: forge.holds.clone(),
                     pulls,
                     fixes,
+                    no_done_when: no_done_when.into_iter().collect(),
                 })
             })
         }
@@ -3045,6 +3075,44 @@ mod tests {
         let forge = here.forge();
         let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
         assert_eq!(started, ["issue-4"], "no build and no verify of a tracker");
+    }
+
+    /// 01M5R0HEP1MXWYY643F1N1DWEM: the wave starts no build of an issue
+    /// whose body has no `Done when:` line, and the lead hears of it one
+    /// time, not at each look. A verify is not changed. The wave takes
+    /// the issue at its next look after the line comes.
+    #[tokio::test]
+    async fn an_issue_with_no_done_when_line_is_no_free_work_and_the_lead_hears_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2, 3], 4, free).await;
+        {
+            let mut forge = here.forge();
+            forge.bare.extend([1, 3]);
+            forge.pulls.insert(3, Pr::Asked);
+        }
+        here.run();
+        here.until(4, |h| {
+            h.running("issue-2").is_some() && h.running("verify-issue-3").is_some()
+        })
+        .await;
+        here.idle(4).await;
+        {
+            let forge = here.forge();
+            let mut started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
+            started.sort_unstable();
+            assert_eq!(
+                started,
+                ["issue-2", "verify-issue-3"],
+                "no build of issue-1"
+            );
+            assert_eq!(forge.told, [text::wave_no_done_when(1)], "one message");
+        }
+
+        // The line comes: the same issue is free work at the next look.
+        here.forge().bare.remove(&1);
+        here.until(4, |h| h.running("issue-1").is_some()).await;
+        here.idle(4).await;
+        assert_eq!(here.forge().told.len(), 1, "no more message");
     }
 
     #[tokio::test]

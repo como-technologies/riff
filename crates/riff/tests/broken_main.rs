@@ -61,13 +61,13 @@ esac
 "#;
 
 /// Issue 1 is free, and the pull request of issue 2 waits for a verify.
-const ISSUES: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]}]"#;
+const ISSUES: &str = r#"[{"number":1,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":2,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]}]"#;
 
 /// [`ISSUES`] and the fix item 901.
-const WITH_FIX: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":901,"body":"Needs: nothing","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"broken-main"}]}]"#;
+const WITH_FIX: &str = r#"[{"number":1,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":2,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":901,"body":"Done when: x.\nNeeds: nothing","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"broken-main"}]}]"#;
 
 const PULLS: &str = r#"[{"number":40,"headRefName":"worktree-issue-2","headRefOid":"1a2b3c4d","isDraft":false,"statusCheckRollup":[]}]"#;
 

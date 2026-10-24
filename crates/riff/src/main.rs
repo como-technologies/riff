@@ -1071,6 +1071,9 @@ enum WaveCommand {
     /// riff runs gh issue edit for each item. It refuses an item that a
     /// session claims, and a target that no open milestone has. Then it
     /// moves nothing.
+    ///
+    /// To a wave, riff warns for an item with no "Done when:" line in its
+    /// body, and moves it. The wave takes only an issue with that line.
     Move {
         /// The numbers of the issues, for example 71 72.
         #[arg(required = true)]
@@ -3424,8 +3427,13 @@ async fn wave_move(
     to: &str,
 ) -> Result<()> {
     let claimed = claimed_here(reach, here).await?;
-    let title = riff::waves::move_items(&pr::Gh::default(), items, to, &claimed)?;
-    println!("{}", text::waves_moved(items, &title));
+    let moved = riff::waves::move_items(&pr::Gh::default(), items, to, &claimed)?;
+    println!("{}", text::waves_moved(items, &moved.title));
+    if !moved.no_done_when.is_empty() {
+        let warning = riff::style::WARNING;
+        let text = text::waves_no_done_when(&moved.no_done_when);
+        anstream::eprintln!("{warning}{text}{warning:#}");
+    }
     Ok(())
 }
 

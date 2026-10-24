@@ -38,12 +38,12 @@ esac
 
 /// The issues 1 to 6 of the wave. The issue 5 has the label `release`.
 const ISSUES: &str = r#"[
-{"number":1,"title":"One","body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":2,"title":"Two","body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":3,"title":"Three","body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":4,"title":"Four","body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":5,"title":"Release","body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]},
-{"number":6,"title":"Six","body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]}]"#;
+{"number":1,"title":"One","body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":2,"title":"Two","body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":3,"title":"Three","body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":4,"title":"Four","body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":5,"title":"Release","body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]},
+{"number":6,"title":"Six","body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]}]"#;
 
 /// The status `riff/verify` with `state`.
 fn verify(state: &str) -> String {

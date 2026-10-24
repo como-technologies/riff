@@ -663,6 +663,10 @@
 - **01M5QWA0H5KJ2SRRP50478X3J2** The check of the Backlog in `riff init`
   passes when the repository has the open milestone `Backlog`. Its step
   makes that milestone, as `riff wave make` does.
+- **01M5R0HERC566W14SEJ3ZCG6V5** `riff wave move ITEM... --to WAVE`
+  warns when an issue has no line that starts with `Done when:`, and
+  moves it. The warning says that the wave takes only an issue with that
+  line. `--to Backlog` gives no warning.
 
 ## Issue hygiene on GitHub
 
@@ -6604,6 +6608,11 @@ part when they merge.
   check that runs, a cancelled check and a head with no run of any check
   give nothing. The messages, the fix item and the note say "the full
   check". Supersedes 01M51QEYKTD7ZEB0YA0C3MQTPN in part.
+- **01M5R0HEP1MXWYY643F1N1DWEM** The free work of a wave has no build of
+  an issue whose body has no line that starts with `Done when:`. The
+  wave tells the lead one time for each such issue, with the fix: add
+  the line. The wave takes the issue at its next look after the line
+  comes. A verify and a rebase do not change.
 
 ### The lead, the view and the takeover
 
