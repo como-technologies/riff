@@ -97,7 +97,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use super::Daemon;
@@ -1024,6 +1024,47 @@ impl<R: Runtime + 'static> Daemon<R> {
         }))
     }
 
+    /// Removes the folder `name` of one ended session on purpose
+    /// (01M5P26VW5GBJDQZGEYW9A77Y0): it never removes a session that
+    /// runs. With no `force`, the pull request of its work must have
+    /// merged. The leftover work of the clone goes with the folder.
+    pub async fn remove_one(&self, name: &str, force: bool) -> Result<String> {
+        let _one = self.folders.sweep.lock().await;
+        let Some(item) = item_of_folder(name).filter(|_| !name.contains('/')) else {
+            bail!("{}", text::remove_bad_name(name));
+        };
+        let folder = self.sessions_dir().join(name);
+        if !folder.is_dir() {
+            bail!("{}", text::remove_no_folder(&folder));
+        }
+        if self.runs(&folder, item) {
+            bail!("{}", text::remove_runs(name));
+        }
+        let why = if force {
+            text::REMOVE_FORCED.to_owned()
+        } else {
+            let clone = folder.join("clone");
+            let repo = blocking(move || Ok(repo_of(&clone))).await?;
+            let (Some(repo), Some(issue)) = (repo, issue_of(item)) else {
+                bail!(
+                    "{}",
+                    text::remove_not_merged(name, "it has no repository or issue")
+                );
+            };
+            match self.world.fate(&repo, issue).await? {
+                Fate::Merged { pull, .. } => format!("the pull request #{pull} merged"),
+                other => {
+                    let why = text::swept_why(issue, &other)
+                        .unwrap_or_else(|| "its work is still open".into());
+                    bail!("{}", text::remove_not_merged(name, &why));
+                }
+            }
+        };
+        let gone = folder.clone();
+        blocking(move || remove_folder(&gone)).await?;
+        Ok(text::folder_removed(&folder, &why))
+    }
+
     /// True when the session of the folder `folder` of `item` runs: see
     /// the design. A record names its folder by the path of the host of
     /// `riff run`, so the name `ITEM-ID8` of the folder counts, not its
@@ -1678,6 +1719,60 @@ esac
             .await
             .unwrap();
         assert_eq!(said, [text::SWEPT_NONE]);
+    }
+
+    /// 01M5P26VW5GBJDQZGEYW9A77Y0: `--remove` removes the folder of an
+    /// ended session whose pull request merged, with its leftover work.
+    /// It refuses an open item with no `--force`, and a bad name.
+    #[tokio::test]
+    async fn remove_takes_one_folder_on_purpose_with_a_merged_branch_or_force() {
+        let (here, _) = here(&[
+            (
+                1,
+                Fate::Merged {
+                    pull: 7,
+                    commit: "abc".into(),
+                    refs: false,
+                },
+            ),
+            (4, Fate::Stays),
+        ])
+        .await;
+        let merged = folder(&here, "issue-1-00000001");
+        std::fs::write(merged.join("clone/leftover.md"), "work\n").unwrap();
+        let open = folder(&here, "issue-4-00000004");
+
+        let mut said = Vec::new();
+        let ask = |name: &str, force| Ask::Remove {
+            name: name.into(),
+            force,
+        };
+        ask_done(&here.dir, ask("issue-1-00000001", false), |l| {
+            said.push(l.to_owned())
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            said,
+            [text::folder_removed(&merged, "the pull request #7 merged")]
+        );
+        assert!(!merged.exists());
+
+        let err = ask_done(&here.dir, ask("issue-4-00000004", false), |_| {})
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("--force"), "{err:#}");
+        assert!(open.exists());
+        let err = ask_done(&here.dir, ask("../issue-4-00000004", true), |_| {})
+            .await
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("ITEM-ID8"), "{err:#}");
+        assert!(open.exists());
+
+        ask_done(&here.dir, ask("issue-4-00000004", true), |_| {})
+            .await
+            .unwrap();
+        assert!(!open.exists());
     }
 
     /// The doc test of `hold` checks the lock after the drop. A fork of

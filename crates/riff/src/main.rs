@@ -1214,6 +1214,16 @@ enum DaemonCommand {
     /// stays. It prints each folder that it removed, and each folder that
     /// stays with work in its clone, with the reason.
     Sweep {
+        /// Remove the folder NAME of one ended session, for example
+        /// issue-12-1a2b3c4d. riff removes it when the pull request of its
+        /// work merged, with its leftover work and all. It never removes the
+        /// folder of a session that runs.
+        #[arg(long, value_name = "NAME")]
+        remove: Option<String>,
+        /// With --remove, remove the folder also when its work is not on a
+        /// merged branch. The work in the clone is lost.
+        #[arg(long, requires = "remove")]
+        force: bool,
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this
         /// repository can use --host. The daemon of HOST refuses each
@@ -2244,6 +2254,17 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             );
             Ok(())
         }
+        DaemonCommand::Sweep {
+            remove: Some(name),
+            force,
+            ..
+        } => {
+            let ask = riff::daemon::Ask::Remove {
+                name: name.clone(),
+                force: *force,
+            };
+            riff::daemon::ask_done(&dir, ask, |line| println!("{line}")).await
+        }
         DaemonCommand::Sweep { .. } => riff::daemon::ask_sweep(&dir).await,
         DaemonCommand::End { name, .. } => riff::daemon::ask_end(&dir, name).await,
         DaemonCommand::Restart { .. } => {
@@ -2330,7 +2351,18 @@ fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote
                 clear: *clear,
             },
         ),
-        DaemonCommand::Sweep { host } => (host, Request::Sweep),
+        DaemonCommand::Sweep {
+            host,
+            remove: Some(name),
+            force,
+        } => (
+            host,
+            Request::Remove {
+                name: name.clone(),
+                force: *force,
+            },
+        ),
+        DaemonCommand::Sweep { host, .. } => (host, Request::Sweep),
         DaemonCommand::End { name, host } => (host, Request::End(name.clone())),
         DaemonCommand::Restart { host } => (host, Request::Restart),
         DaemonCommand::Install

@@ -178,7 +178,7 @@
 //! `claude -p` does not end while one of its background tasks runs. The
 //! end of each task starts a new turn. So a session can stay up after
 //! the close. When no event comes for the quiet limit after the close
-//! ([`QUIET_LIMIT`]), the daemon stops the container, and tells each
+//! ([`QUIET_LIMIT`], or [`EXIT_GRACE`] for a session of a wave), the daemon stops the container, and tells each
 //! `riff` that follows the session why (01M4ZSZX77AJDGWNQMGBPV2QXG). Each
 //! event moves the end of the quiet.
 //!
@@ -430,6 +430,12 @@ const LOOK_EVERY: Duration = Duration::from_secs(30);
 /// (01M4ZSZX77AJDGWNQMGBPV2QXG). It is longer than the longest check of
 /// a session: a `just ci` can take 15 minutes.
 pub const QUIET_LIMIT: Duration = Duration::from_secs(30 * 60);
+
+/// The grace of a session of a wave: after the input of `claude` closed,
+/// the longest time with no event. Then the daemon stops the container
+/// (01M5P26VPJA73WCPVZY6CPG9HD). A session of a wave leaves no background
+/// task at its end.
+pub const EXIT_GRACE: Duration = Duration::from_secs(60);
 
 /// How long the daemon keeps the end of a session after the end: its
 /// events, its lines and how it ended (01M57GCZVJAHAMPEYY1T6GA48P). It
@@ -756,6 +762,16 @@ pub enum Ask {
     /// holds no work of its own (01M53NJ5Y2CMY5MWF9328KW7DE,
     /// 01M53S7WAXD46YPN0DR96XSTMG, [`Daemon::sweep`]).
     Sweep,
+    /// `riff daemon sweep --remove NAME`: remove the folder `name` of one
+    /// ended session on purpose, when its work is on a merged branch, or
+    /// with `force` (01M5P26VW5GBJDQZGEYW9A77Y0, [`Daemon::remove_one`]).
+    Remove {
+        /// The name of the folder, `ITEM-ID8`.
+        name: String,
+        /// True to remove it with no check of the forge.
+        #[serde(default)]
+        force: bool,
+    },
     /// `riff daemon end NAME`: free the item of the session in the
     /// container `name` and stop it ([`Daemon::end_session`]).
     End {
@@ -1782,6 +1798,8 @@ pub struct Daemon<R> {
     any_relay: bool,
     /// The quiet limit of each session ([`QUIET_LIMIT`]).
     quiet: Duration,
+    /// The quiet limit of a session of a wave ([`EXIT_GRACE`]).
+    grace: Duration,
     live: Mutex<BTreeMap<String, Arc<Owned>>>,
     /// The end of each session that ended in the last `keep_end`.
     gone: Mutex<BTreeMap<String, Gone>>,
@@ -1861,6 +1879,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             relay_bin: own_binary().unwrap_or_else(|_| PathBuf::from("riff")),
             any_relay: crate::release::takes_dynamic(),
             quiet: quiet_limit(),
+            grace: quiet_limit().min(EXIT_GRACE),
             live: Mutex::new(BTreeMap::new()),
             gone: Mutex::new(BTreeMap::new()),
             keep_end: KEEP_END,
@@ -1883,6 +1902,15 @@ impl<R: Runtime + 'static> Daemon<R> {
     #[must_use]
     pub fn with_quiet(mut self, quiet: Duration) -> Self {
         self.quiet = quiet;
+        self.grace = quiet.min(EXIT_GRACE);
+        self
+    }
+
+    /// The daemon with the grace `grace` of the sessions of a wave in
+    /// place of [`EXIT_GRACE`], for a test.
+    #[must_use]
+    pub fn with_grace(mut self, grace: Duration) -> Self {
+        self.grace = grace;
         self
     }
 
@@ -2423,6 +2451,13 @@ impl<R: Runtime + 'static> Daemon<R> {
                     }
                     say_lines(&out, Ok(swept));
                 }
+                Ok(Ask::Remove { name, force }) => {
+                    let removed = self.remove_one(&name, force).await.map(|line| vec![line]);
+                    if let Ok(lines) = &removed {
+                        lines.iter().for_each(|line| println!("{line}"));
+                    }
+                    say_lines(&out, removed);
+                }
                 Ok(Ask::End { name }) => {
                     let ended = self.end_session(&name).await;
                     if let Ok(lines) = &ended {
@@ -2842,6 +2877,16 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// input of `claude` closed, it stops the container when no event
     /// comes for the quiet limit, and says why
     /// (01M4ZSZX77AJDGWNQMGBPV2QXG).
+    /// The quiet limit of the session of `record`: the grace of a session
+    /// of a wave, else [`QUIET_LIMIT`].
+    fn limit_of(&self, record: &Record) -> Duration {
+        if record.job.is_some() {
+            self.grace
+        } else {
+            self.quiet
+        }
+    }
+
     async fn watch(
         self: Arc<Self>,
         owned: Arc<Owned>,
@@ -2858,20 +2903,22 @@ impl<R: Runtime + 'static> Daemon<R> {
             // task of claude ended is no quiet.
             let quiet_at = {
                 let state = owned.lock();
-                (state.record.closed && !state.record.takeover).then(|| state.last + self.quiet)
+                (state.record.closed && !state.record.takeover)
+                    .then(|| state.last + self.limit_of(&state.record))
             };
             tokio::select! {
                 () = owned.closing.notified() => {}
                 () = tokio::time::sleep_until(quiet_at.unwrap_or_else(tokio::time::Instant::now)),
                     if quiet_at.is_some() && !stopped =>
                 {
-                    let quiet = {
+                    let (quiet, limit) = {
                         let state = owned.lock();
-                        state.last.elapsed() >= self.quiet && !state.record.takeover
+                        let limit = self.limit_of(&state.record);
+                        (state.last.elapsed() >= limit && !state.record.takeover, limit)
                     };
                     if quiet {
                         stopped = true;
-                        let line = text::daemon_quiet(&owned.name, self.quiet);
+                        let line = text::daemon_quiet(&owned.name, limit);
                         println!("{line}");
                         Owned::say_line(&mut owned.lock(), line);
                         let _ = self.runtime.stop(&owned.name).await;
@@ -4979,6 +5026,48 @@ mod tests {
         assert_eq!(here.fake.exit(&name), None);
         // The record stays for the next daemon.
         assert!(record_path(&here.dir, &name).exists());
+    }
+
+    /// A session of a wave has the grace of 60 s after the result, and
+    /// another session has the quiet limit (01M5P26VPJA73WCPVZY6CPG9HD).
+    #[tokio::test]
+    async fn a_session_of_a_wave_has_the_grace_in_place_of_the_quiet_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let daemon = Daemon::new(Fake::default(), dir_in(root.path())).unwrap();
+        let name = "riff-issue-1-aaaaaaaa";
+        let mut record = Record {
+            live: Live {
+                name: name.into(),
+                session: format!("{name}-session"),
+                item: "issue-1".into(),
+                image: IMAGE.into(),
+                since_ms: 0,
+                phase: Phase::default(),
+                last: String::new(),
+            },
+            folder: root.path().to_owned(),
+            server: "http://127.0.0.1:1".into(),
+            me: me(name),
+            inputs: Vec::new(),
+            closed: true,
+            failed: false,
+            job: None,
+            terminal: false,
+            takeover: false,
+            interrupt: false,
+        };
+        assert_eq!(daemon.limit_of(&record), QUIET_LIMIT);
+        record.job = Some(Job {
+            wave: Wave {
+                repo: "o/r".into(),
+                main: root.path().to_owned(),
+                server: record.server.clone(),
+                host: "h".into(),
+            },
+            work: crate::wave::Work::Build { issue: 1 },
+        });
+        assert_eq!(daemon.limit_of(&record), EXIT_GRACE);
+        assert_eq!(EXIT_GRACE, Duration::from_secs(60));
     }
 
     /// When podman cannot say whether the container of a record runs, a

@@ -1035,12 +1035,30 @@ fn branch_of(issue: u64) -> String {
     run::branch(&format!("issue-{issue}"))
 }
 
+/// Saves the work of the clone of `record` when its build pushed nothing:
+/// a WIP commit on the branch of `issue`, pushed ([`crate::leave::save`],
+/// 01M5P26VSA7AA99K1RYG83R8J9). It gives the commit. A fault shows on
+/// stderr.
+async fn save_work(record: &Record, issue: u64) -> Option<String> {
+    let (clone, branch) = (record.folder.join("clone"), branch_of(issue));
+    match blocking(move || crate::leave::save(&clone, &branch)).await {
+        Ok(saved) => saved.map(|(_, commit)| commit),
+        Err(e) => {
+            eprintln!("riff daemon: {}: {e:#}", record.live.name);
+            None
+        }
+    }
+}
+
 /// The steps after the end of a build, with `gh` for the forge: the
 /// verify request for the open pull request of its branch, or a note
 /// that it has none. When the issue has the label
 /// [`rollout::NO_VERIFY`], or a lead holds `verify-ITEM`, the lead gets
 /// a note with the reason in place of the verify request, as `riff run`
 /// does ([`run::no_verify`], 01M51KH0H7J35PEKMHP5KQB84T).
+///
+/// The pair is `(conflict, saved)`: the commit of `saved` is the WIP commit
+/// that riff pushed for a build with no push.
 ///
 /// After a rebase, `conflict` is the head commit that had the conflict.
 /// When the pull request still has that head, the session pushed
@@ -1052,7 +1070,7 @@ async fn after_build(
     record: &Record,
     wave: &Wave,
     issue: u64,
-    conflict: Option<&str>,
+    (conflict, saved): (Option<&str>, Option<&str>),
     ended: Ended,
 ) -> Result<Vec<String>> {
     let branch = branch_of(issue);
@@ -1101,7 +1119,12 @@ async fn after_build(
             ),
         },
         None => (
-            text::wave_no_pull(item, &branch, &record.folder.join("clone")),
+            match saved {
+                Some(commit) => {
+                    text::wave_saved(item, &branch, commit, &record.folder.join("clone"))
+                }
+                None => text::wave_no_pull(item, &branch, &record.folder.join("clone")),
+            },
             Kind::Note,
         ),
     };
@@ -1716,11 +1739,21 @@ impl World for Live {
             let done = match &job.work {
                 Work::Build { issue } => {
                     let gh = pr::Gh::for_repo(&wave.repo);
-                    after_build(gh, &api, record, wave, *issue, None, ended).await
+                    let saved = save_work(record, *issue).await;
+                    after_build(
+                        gh,
+                        &api,
+                        record,
+                        wave,
+                        *issue,
+                        (None, saved.as_deref()),
+                        ended,
+                    )
+                    .await
                 }
                 Work::Rebase { issue, commit, .. } => {
                     let gh = pr::Gh::for_repo(&wave.repo);
-                    after_build(gh, &api, record, wave, *issue, Some(commit), ended).await
+                    after_build(gh, &api, record, wave, *issue, (Some(commit), None), ended).await
                 }
                 Work::Verify { pull, commit, .. } => {
                     after_verify(&api, record, wave, *pull, commit).await
@@ -3048,7 +3081,7 @@ esac
                 &self.record,
                 &self.wave,
                 12,
-                conflict,
+                (conflict, None),
                 Ended {
                     code: Some(1),
                     failed: true,
@@ -3100,6 +3133,39 @@ esac
         );
         let shown = crate::ends::why("issue-12", &records);
         assert!(shown.contains("ended: exit code 1."), "{shown}");
+    }
+
+    /// 01M5P26VSA7AA99K1RYG83R8J9: a build that pushed nothing, and that
+    /// riff saved, gives the lead one note with the branch and the commit.
+    #[tokio::test]
+    async fn a_saved_build_tells_the_lead_the_branch_and_the_commit() {
+        let built = Built::new().await;
+        let gh = pr::Gh::at(isolated::write_program(
+            built.dir.path().join("gh"),
+            "#!/bin/sh\nexit 1\n",
+        ));
+        let ended = Ended {
+            code: Some(0),
+            failed: false,
+        };
+        after_build(
+            gh,
+            &built.api,
+            &built.record,
+            &built.wave,
+            12,
+            (None, Some("1a2b3c4")),
+            ended,
+        )
+        .await
+        .unwrap();
+        let thread = built.wave.thread().unwrap();
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        let [one] = &got[..] else {
+            panic!("one message: {got:?}");
+        };
+        assert!(one.message.body.contains("worktree-issue-12"), "{one:?}");
+        assert!(one.message.body.contains("1a2b3c4"), "{one:?}");
     }
 
     /// 01M5A5HXKZTDP5M5HY2FHCEBZA: a build with an open pull request

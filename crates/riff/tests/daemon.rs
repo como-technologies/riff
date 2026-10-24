@@ -838,6 +838,44 @@ async fn riff_daemon_sweep_removes_the_folders_whose_work_is_over_and_says_why()
     stop(daemon).await;
 }
 
+/// 01M5P26VW5GBJDQZGEYW9A77Y0: `riff daemon sweep --remove NAME` removes
+/// the folder of one ended session when its pull request merged, and
+/// refuses the folder of an open pull request until `--force`.
+#[tokio::test]
+async fn riff_daemon_sweep_remove_takes_one_folder_on_purpose() {
+    let here = Here::new();
+    fake_sweep_gh(here.bin.path());
+    let sessions = here.env.riff_home().join("sessions");
+    let merged = session_folder(&sessions, "issue-1-00000001");
+    std::fs::write(merged.join("clone/leftover.md"), "work\n").unwrap();
+    let open = session_folder(&sessions, "issue-4-00000004");
+    let daemon = here
+        .daemon_with("daemon.out", &[(riff::daemon::sweep::EVERY_VAR, "0")])
+        .await;
+
+    let out = here
+        .run(false, &["daemon", "sweep", "--remove", "issue-1-00000001"])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("the pull request #41 merged"));
+    assert!(!merged.exists());
+
+    let out = here
+        .run(false, &["daemon", "sweep", "--remove", "issue-4-00000004"])
+        .await;
+    assert!(!out.status.success());
+    assert!(open.exists());
+    let out = here
+        .run(
+            false,
+            &["daemon", "sweep", "--remove", "issue-4-00000004", "--force"],
+        )
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(!open.exists());
+    stop(daemon).await;
+}
+
 /// 01M5NVKNGZPK0GG7B7ZWBS0DFE: `riff daemon sweep` pushes the leftover
 /// work of the folder of a closed pull request to `riff-kept/ITEM-ID8`
 /// of `origin`, never an untracked file, and removes the folder.

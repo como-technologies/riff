@@ -6843,6 +6843,21 @@ pub fn wave_no_pull(item: &str, branch: &str, clone: &Path) -> String {
     )
 }
 
+/// A build of a wave ended with no push, and riff saved its work.
+///
+/// ```
+/// let text = riff::text::wave_saved("issue-12", "worktree-issue-12", "1a2b3c4", std::path::Path::new("/c"));
+/// assert!(text.contains("branch worktree-issue-12"));
+/// assert!(text.contains("1a2b3c4"));
+/// ```
+pub fn wave_saved(item: &str, branch: &str, commit: &str, clone: &Path) -> String {
+    format!(
+        "{item}: the session of the wave ended and pushed nothing. riff saved the work of the \
+         clone {} on the branch {branch}, in a WIP commit {commit}. The item is free.",
+        clone.display()
+    )
+}
+
 /// A verify of a wave ended with no verdict.
 pub fn wave_no_result(item: &str, pull: u64) -> String {
     format!(
@@ -7931,6 +7946,55 @@ pub fn run_lead_told(item: &str) -> String {
     )
 }
 
+/// The reason of `riff daemon sweep --remove NAME --force`.
+pub const REMOVE_FORCED: &str = "the person gave --force";
+
+/// `riff daemon sweep --remove` got a name that is no folder name.
+///
+/// ```
+/// assert!(riff::text::remove_bad_name("../x").contains("ITEM-ID8"));
+/// ```
+pub fn remove_bad_name(name: &str) -> String {
+    format!(
+        "{name} is no folder of a session. A folder has the name ITEM-ID8, for example issue-12-1a2b3c4d."
+    )
+}
+
+/// `riff daemon sweep --remove` found no folder.
+pub fn remove_no_folder(folder: &Path) -> String {
+    format!("The folder {} does not exist.", folder.display())
+}
+
+/// `riff daemon sweep --remove` found a session that runs.
+pub fn remove_runs(name: &str) -> String {
+    format!(
+        "The session of {name} runs. riff removes no folder of a session that runs. End it first \
+         with riff daemon end."
+    )
+}
+
+/// `riff daemon sweep --remove` found work that is not on a merged branch.
+///
+/// ```
+/// let text = riff::text::remove_not_merged("issue-12-1a2b3c4d", "the issue #12 is closed");
+/// assert!(text.contains("--force"));
+/// ```
+pub fn remove_not_merged(name: &str, why: &str) -> String {
+    format!(
+        "riff keeps the folder {name}: {why}. The work is not on a merged branch. Push the work, \
+         or run the command again with --force to lose it."
+    )
+}
+
+/// `riff daemon sweep --remove` removed the folder `folder`.
+///
+/// ```
+/// let text = riff::text::folder_removed(std::path::Path::new("/s/issue-12-1a2b3c4d"), "the pull request #5 merged");
+/// assert!(text.starts_with("riff removed the folder /s/issue-12-1a2b3c4d"));
+/// ```
+pub fn folder_removed(folder: &Path, why: &str) -> String {
+    format!("riff removed the folder {}: {why}.", folder.display())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
