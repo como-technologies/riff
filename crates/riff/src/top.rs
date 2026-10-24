@@ -249,43 +249,24 @@ pub fn parse_issues(json: &str) -> Option<Issues> {
     ))
 }
 
-/// `issues` with the open pull requests in the JSON of `gh pr list
-/// --json` with [`crate::rollout::PULL_FIELDS`]: the items in verify.
-/// Other text gives no pull request.
+/// `issues` with the open pull requests `pulls` ([`crate::rollout::pulls`]):
+/// the items in verify.
 ///
 /// ```
+/// use riff::rollout::Pull;
 /// use riff::top::{parse_issues, with_pulls};
 ///
 /// let issues = parse_issues(r#"[{"number": 12, "title": "a", "milestone": null}]"#).unwrap();
-/// let pulls = r#"[
+/// let pulls: Vec<Pull> = serde_json::from_str(r#"[
 ///   {"number": 40, "headRefName": "worktree-issue-12", "isDraft": false, "statusCheckRollup": []},
 ///   {"number": 41, "headRefName": "worktree-issue-13", "isDraft": false,
 ///    "statusCheckRollup": [{"context": "riff/verify", "state": "FAILURE"}]}
-/// ]"#;
-/// assert_eq!(with_pulls(issues.clone(), pulls).verify, [12].into());
-/// assert!(with_pulls(issues, "not json").verify.is_empty());
+/// ]"#).unwrap();
+/// assert_eq!(with_pulls(issues.clone(), &pulls).verify, [12].into());
+/// assert!(with_pulls(issues, &[]).verify.is_empty());
 /// ```
-pub fn with_pulls(issues: Issues, json: &str) -> Issues {
-    let pulls: Vec<crate::rollout::Pull> = serde_json::from_str(json).unwrap_or_default();
-    issues.with_verify(crate::rollout::in_verify(&pulls))
-}
-
-/// The arguments of `gh` for the open pull requests of `repo`.
-pub fn pull_args(repo: &str) -> Vec<String> {
-    [
-        "pr",
-        "list",
-        "--repo",
-        repo,
-        "--state",
-        "open",
-        "--limit",
-        "100",
-        "--json",
-        crate::rollout::PULL_FIELDS,
-    ]
-    .map(String::from)
-    .to_vec()
+pub fn with_pulls(issues: Issues, pulls: &[crate::rollout::Pull]) -> Issues {
+    issues.with_verify(crate::rollout::in_verify(pulls))
 }
 
 /// The open issues of `repo` from `gh`. `None` when `gh` is not there
@@ -298,9 +279,9 @@ pub fn issues_from_gh(gh: &crate::pr::Gh, repo: &str) -> Option<Issues> {
         gh.run(&args, None).ok()
     };
     let issues = parse_issues(&run(issue_args(repo))?)?;
-    Some(match run(pull_args(repo)) {
-        Some(pulls) => with_pulls(issues, &pulls),
-        None => issues,
+    Some(match crate::rollout::pulls(gh, repo) {
+        Ok(pulls) => with_pulls(issues, &pulls),
+        Err(_) => issues,
     })
 }
 
@@ -786,10 +767,11 @@ impl Top<'_> {
     /// )
     /// .unwrap();
     /// // The author of #15 asked for a verify and released the item.
-    /// let issues = with_pulls(
-    ///     issues,
+    /// let pulls: Vec<riff::rollout::Pull> = serde_json::from_str(
     ///     r#"[{"number": 40, "headRefName": "worktree-issue-15", "isDraft": false, "statusCheckRollup": []}]"#,
-    /// );
+    /// )
+    /// .unwrap();
+    /// let issues = with_pulls(issues, &pulls);
     /// let issues = BTreeMap::from([("o/r".to_owned(), issues)]);
     /// // The lead holds #16.
     /// let hold = HoldInfo { reason: "a reading at 19:40 UTC".into(), by: None, at_ms: 0 };
