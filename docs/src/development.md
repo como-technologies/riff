@@ -1844,9 +1844,10 @@ The lead gets the riff tools that talk, and the tools of a lead:
 `hold`, `free`, `notes`, `pause` and `resume`. They act on your
 riff-server (see
 [The riff tools of a session](#the-riff-tools-of-a-session)). It gets
-its wakes from `/opt/riff/riff relay watch --follow`, one watch that
-never ends, in the Monitor tool. The instructions of its riff tools tell
-it to start that watch once. See
+its wakes from `/opt/riff/riff relay watch --follow`, one watch in the
+Monitor tool. Claude Code ends a Monitor after 30 minutes at most. The
+instructions of its riff tools tell it to start the watch again when the
+Monitor ends, and only then. See
 [Wake the lead in a container with no restart](how-it-works.md#wake-the-lead-in-a-container-with-no-restart).
 It plans the waves with `/opt/riff/riff wave`: see
 [Waves](waves.md). `riff lead start` names it the lead of your user,

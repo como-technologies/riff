@@ -3105,6 +3105,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M5NJAYMYF50B9WXH5RF9W737** When the lead changes, riff-server
   sends the old lead a direct message: it is not the lead now, and the
   session that is. A gone old lead gets none.
+- **01M5P1XN4YA3S1CWTN939DQCWW** A session in a container starts `riff
+  relay watch --follow` again when its Monitor ends, and only then. The
+  instructions `text::MCP_LEAD` and `text::lead_start` say so.
+- **01M5P1XN9EX680KQNKRHWGRWJT** A new watch does not wake a session for
+  a message that a `read` returned, also a `read` with `all` and
+  `after`. Such a read keeps the cursor.
 
 ## Threads
 

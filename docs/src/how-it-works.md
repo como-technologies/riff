@@ -2411,11 +2411,13 @@ watch (see below).
 
 ### Wake the lead in a container with no restart
 
-The lead in a container does not start its watch again. It starts one
-watch that never ends, with the Monitor tool of Claude Code. The watch
-prints one line for each wake. Monitor turns each line into a
-notification, so the lead wakes. The lead starts the watch once, at the
-start of its session. The riff daemon sends each wake once, also two
+The lead in a container does not start its watch for each wake. It
+starts one watch with the Monitor tool of Claude Code. The watch prints
+one line for each wake. Monitor turns each line into a notification, so
+the lead wakes. Claude Code ends a Monitor after 30 minutes at most.
+When the Monitor ends, the lead starts the watch again, and only then.
+A new watch does not wake the lead for a message that it read, also
+with `all` and `after`. The riff daemon sends each wake once, also two
 messages in a row.
 
 ```mermaid
@@ -2424,7 +2426,7 @@ sequenceDiagram
     participant W as riff relay watch --follow
     participant D as riff daemon
     participant E as riff-server
-    L->>W: start once
+    L->>W: start (and again when the Monitor ends)
     W->>D: follow
     E-->>D: message 417
     D-->>W: one line
