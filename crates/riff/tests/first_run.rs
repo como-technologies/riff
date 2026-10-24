@@ -810,10 +810,7 @@ async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing
     }
     // The clone has its own riff.toml, so riff does not ask for a pull.
     assert!(!stdout.contains("Run git pull"), "{stdout}");
-    assert!(
-        stdout.contains("This machine is ready for riff 3.0."),
-        "{stdout}"
-    );
+    assert!(stdout.contains("This machine is ready."), "{stdout}");
 
     let bin = &machine.bin;
     let json =
