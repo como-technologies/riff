@@ -1282,7 +1282,6 @@ issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). 
 To start the rebase of the same commit again, see
 [Start a spent item again](#start-a-spent-item-again).
 
-<<<<<<< HEAD
 ### Answer a failed verify with a new request
 
 A verify can fail only on the body of the pull request, for example
@@ -1296,7 +1295,8 @@ follows as always.
 
 ```sh
 riff post --to lead=true "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4"
-=======
+```
+
 ### When a session of the wave ends with no push
 
 A session of the wave must commit and push before its end, and must
@@ -1320,7 +1320,6 @@ flowchart LR
 
 ```text
 issue-12: the session of the wave ended and pushed nothing. riff saved the work of the clone /home/mike/.local/share/riff/sessions/issue-12-1a2b3c4d/clone on the branch worktree-issue-12, in a WIP commit 1a2b3c4. The item is free.
->>>>>>> 4a6f8b9a (A wave session has 60 s after its result, the daemon saves a build with no push, sweep --remove)
 ```
 
 ### When the sign-in of claude ends soon

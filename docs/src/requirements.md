@@ -6427,12 +6427,10 @@ part when they merge.
   free work of the rollout of the lead. `riff wave list` and `riff top`
   show it in the group `tracker`, never in `free`. `riff wave make`
   makes the label `tracker` when it is missing.
-<<<<<<< HEAD
 - **01M5P20DPK4GAQRDEKC1E6V718** A verify request for a head commit, in
   the thread after the last verify result for it, answers a failed
   verify of that head: the wave starts a verify of the head, not a
   build, when its Gate and Hygiene pass.
-=======
 - **01M5P26VPJA73WCPVZY6CPG9HD** A session of a wave has a grace of 60
   seconds after the daemon closed the input of claude. When no event
   comes in that time, the daemon stops the container, and the item is
@@ -6445,7 +6443,6 @@ part when they merge.
   ended session on purpose with riff daemon sweep --remove NAME. It
   first checks that the work of the folder is on a merged branch, or
   that the person gave --force. The lead can run it with --host.
->>>>>>> 4a6f8b9a (A wave session has 60 s after its result, the daemon saves a build with no push, sweep --remove)
 
 ### The lead, the view and the takeover
 
