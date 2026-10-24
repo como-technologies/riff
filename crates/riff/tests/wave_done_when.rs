@@ -13,12 +13,15 @@ use riff::wave::{self, Work};
 const REPO: &str = "o/r";
 
 /// A fake `gh`: the milestones, the file `pulls` for `pr list`, the file
-/// `issues` for `issue list`, and a passed Gate for each commit.
+/// `issues` for `issue list`, the default branch with no rule (so the
+/// full check is `Gate`), and a passed Gate for each commit.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 case "$1 $2" in
   api*)
     case "$2" in
+      repos/o/r) echo '{"default_branch":"main"}' ;;
+      */rules/branches/main*) echo '[]' ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
       */check-runs*) echo '{"check_runs":[{"status":"completed","conclusion":"success","head_sha":"x"}]}' ;;
       *) exit 1 ;;
