@@ -1888,6 +1888,9 @@ pub struct Daemon<R> {
     world: Arc<dyn World>,
     /// The waves that run, by repository.
     waves: Mutex<BTreeMap<String, Running>>,
+    /// The time between two looks of a wave at `main` and the pull requests
+    /// ([`crate::look::LOOK_EVERY`]).
+    look_every: Duration,
     /// A session ended, or a job of a wave ended: the waves look again.
     changed: Notify,
     /// The folders of the sessions: the jobs that run, and one sweep at
@@ -1918,12 +1921,22 @@ struct Running {
     wave: Wave,
     /// The task of its loop.
     task: JoinHandle<()>,
+    /// The task of its look ([`crate::wave::watch`]).
+    look: JoinHandle<()>,
     /// The items of its jobs that the daemon does not own yet.
     taken: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// The starts of each item in this run of the wave.
     starts: crate::wave::Starts,
     /// What it did last.
     word: Arc<Mutex<String>>,
+}
+
+impl Running {
+    /// Ends its loop and its look. Its jobs go on.
+    fn abort(&self) {
+        self.task.abort();
+        self.look.abort();
+    }
 }
 
 /// Binds the control socket in the folder `dir` of the daemon. It
@@ -1963,6 +1976,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             room,
             world: Arc::new(crate::wave::Live::default()),
             waves: Mutex::new(BTreeMap::new()),
+            look_every: crate::look::LOOK_EVERY,
             changed: Notify::new(),
             folders: Arc::default(),
             again: None,
@@ -2027,6 +2041,20 @@ impl<R: Runtime + 'static> Daemon<R> {
     pub fn with_world(mut self, world: Arc<dyn World>) -> Self {
         self.world = world;
         self
+    }
+
+    /// The daemon whose waves look at `main` and the pull requests each
+    /// `every` in place of [`crate::look::LOOK_EVERY`], for a test.
+    #[must_use]
+    pub fn with_look_every(mut self, every: Duration) -> Self {
+        self.look_every = every;
+        self
+    }
+
+    /// The time between two looks of a wave at `main` and the pull
+    /// requests.
+    pub(crate) fn look_every(&self) -> Duration {
+        self.look_every
     }
 
     /// The daemon with a session on riff-server for each repository that
@@ -2385,7 +2413,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 return;
             }
             Some(old) => {
-                old.task.abort();
+                old.abort();
                 old.taken.clone()
             }
             None => Arc::new(Mutex::new(std::collections::BTreeSet::new())),
@@ -2399,11 +2427,13 @@ impl<R: Runtime + 'static> Daemon<R> {
             starts.clone(),
             word.clone(),
         ));
+        let look = tokio::spawn(crate::wave::watch(self.clone(), wave.clone()));
         running.insert(
             wave.repo.clone(),
             Running {
                 wave,
                 task,
+                look,
                 taken,
                 starts,
                 word,
@@ -2419,7 +2449,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         crate::wave::write_waves(&self.dir, &waves)?;
         let running = self.waves_lock().remove(repo);
         if let Some(running) = &running {
-            running.task.abort();
+            running.abort();
         }
         Ok(kept || running.is_some())
     }
@@ -5924,6 +5954,30 @@ mod tests {
 
         fn tell<'a>(&'a self, _: &'a Wave, _: &'a str) -> crate::wave::BoxFuture<'a, ()> {
             Box::pin(async {})
+        }
+
+        /// The `gh` of the forge, or a `gh` that is not there: no test
+        /// reaches the real forge.
+        fn gh(&self, _: &str) -> Arc<crate::pr::Gh> {
+            let gh = self.gh.clone();
+            Arc::new(gh.unwrap_or_else(|| crate::pr::Gh::at("/nonexistent/gh")))
+        }
+
+        fn claims<'a>(
+            &'a self,
+            _: &'a Wave,
+        ) -> crate::wave::BoxFuture<'a, Result<std::collections::HashSet<String>>> {
+            Box::pin(async { Ok(std::collections::HashSet::new()) })
+        }
+
+        fn post<'a>(
+            &'a self,
+            _: &'a Wave,
+            _: Option<&'a str>,
+            _: &'a str,
+            _: riff_core::wire::Kind,
+        ) -> crate::wave::BoxFuture<'a, Result<()>> {
+            Box::pin(async { Ok(()) })
         }
 
         fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> crate::wave::BoxFuture<'a, ()> {

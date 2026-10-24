@@ -1,23 +1,50 @@
-//! The look of the lead: the facts of the forge, and the blocks with no
-//! answer.
+//! The look: the pull requests that stop, the Gate of `main`, and (with
+//! no runner now) the facts of the forge and the blocks with no answer.
 //!
-//! # Design
+//! # Who runs the look
 //!
-//! The server has no credential of the forge (01M41FZP2C4Z4J6WKRXZ5B31EH).
-//! So the clients tell it what they see: `riff pr open`, `riff verify`
-//! and `riff pr wait` send the fact of their item, and the `riff mcp` of
-//! the lead sends the facts of each open item once each [`LOOK_EVERY`].
-//! The server makes `waiting` from them (01M41FZP9A50CH4A2VX344DW49).
+//! The riff daemon runs the look of the repository of each wave that it
+//! runs, once each [`LOOK_EVERY`], until `riff wave stop`
+//! (`crate::wave::watch`, 01M5QVH3MAEPPJN9PPVDX6N2EY). It reads the
+//! forge with the `gh` of the person, and posts as the person: to the
+//! lead, or to the session that holds an item.
 //!
-//! The same look checks the blocks of the sessions of the user. The
-//! time is the setting `lead.wake` of the machine of the lead
+//! ```mermaid
+//! flowchart LR
+//!     W["riff wave run"] --> D["riff daemon"]
+//!     D --> A["the loop of the wave:<br/>the work"]
+//!     D --> B["the look, each minute"]
+//!     B --> G["gh: the pull requests,<br/>the Gate of main"]
+//!     B --> C["riff-server: the claims"]
+//!     B --> P["post as the person"]
+//!     P --> L["the lead"]
+//!     P --> H["the session that holds an item"]
+//! ```
+//!
+//! The daemon sends the messages for a pull request that stops (see "A
+//! pull request that stops"), and does the steps for a broken `main`
+//! (see "When main breaks"). It keeps what it told in memory
+//! ([`Watch`]): after a new start of the daemon, a message can come one
+//! more time. A look that fails shows its fault on stderr one time until
+//! the fault changes, and the wave goes on.
+//!
+//! The rest of this module has no runner since 4.0 removed the `riff
+//! mcp` of a session on the host (#1200): [`once`] and [`run`] send the
+//! facts of the items, look at the blocks and at the release cycle for
+//! a lead session. The server makes `waiting` from the facts of the
+//! clients (01M41FZP2C4Z4J6WKRXZ5B31EH, 01M41FZP9A50CH4A2VX344DW49).
+//!
+//! # The blocks
+//!
+//! [`once`] checks the blocks of the sessions of the user. The time is
+//! the setting `lead.wake` of the machine of the lead
 //! ([`crate::settings::lead_wake`]):
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant W as blocked session
 //!     participant S as riff-server
-//!     participant L as riff mcp of the lead
+//!     participant L as the look of a lead session
 //!     participant P as the person
 //!     W->>S: blocked REASON, and "blocked: REASON" to the lead (wake 1)
 //!     loop each look
@@ -45,7 +72,7 @@
 //!
 //! A pull request can stop on its way to the merge with no sign: a
 //! conflict with the default branch, or a verify request that no session
-//! takes. The same look sees the open pull requests, and the claims of
+//! takes. The look of the daemon sees the open pull requests, and the claims of
 //! `who` ([`PullWatch`]):
 //!
 //! ```mermaid
@@ -60,15 +87,15 @@
 //! ```
 //!
 //! Each message comes one time for each pull request, head commit and
-//! state (01M49Q31FASDM7CG3JEGPYCZB9). The `riff mcp` of the lead keeps
-//! what it told in memory. So after a new start of it, a state can come
+//! state (01M49Q31FASDM7CG3JEGPYCZB9). The daemon keeps what it told in
+//! memory ([`Watch`]). So after a new start of it, a state can come
 //! one more time, and the wait of 30 minutes starts again.
 //!
 //! # When main breaks
 //!
 //! A pull request merges when the Gate of its own head passed, also
 //! when `main` moved after that. So two pull requests that each pass
-//! their Gate can break `main` together. The same look reads the check
+//! their Gate can break `main` together. The look of the daemon reads the check
 //! run Gate of the head of `main` ([`MainWatch`],
 //! 01M51QEYKTD7ZEB0YA0C3MQTPN):
 //!
@@ -95,14 +122,14 @@
 //!   of the failed jobs again passed. A fix item that a session claims,
 //!   or that an open pull request names, stays open.
 //!
-//! The `riff mcp` of the lead keeps the last broken commit that it told
-//! in memory, as for the pull requests. When `main` is still broken at a
+//! The daemon keeps the last broken commit that it told in memory
+//! ([`Watch`]), as for the pull requests. When `main` is still broken at a
 //! new start of it, the lead gets the message again, and the open fix
 //! item gets a comment.
 //!
 //! # The release cycle
 //!
-//! In a clone with `deploy/release-check.sh`, the look reads the state
+//! In a clone with `deploy/release-check.sh`, [`run`] reads the state
 //! of the current release each [`RELEASE_EVERY`] ([`ReleaseWatch`],
 //! 01M58KMMHH70JEMBX3EYT9H3WM): the merge of the release pull
 //! request, a result of the real-session test, a run that waits, the
@@ -136,6 +163,7 @@ use crate::cycle::{self, Stage, State};
 use crate::pr::{CheckRun, GATE, Gate, Gh, gate_state};
 use crate::rollout::{BROKEN_MAIN, Issue, Milestone, Pull, Verify, claims, current_wave, needs};
 use crate::text;
+use crate::wave::{Wave, World};
 use riff_client::api::Api;
 
 /// The time between two looks.
@@ -788,11 +816,78 @@ pub fn main_steps(
     }
 }
 
-/// One look at the Gate of `main` of the lead `me`, with the open
-/// `issues` and `pulls` and the `claims` of this look: it reads the
-/// Gate, does the steps of the forge ([`main_steps`]) and posts to the
-/// lead. When the post does not go out, `watch` forgets the news, and
-/// the next look does it again.
+/// One look at the Gate of `main` of `repo`, with the open `issues` and
+/// `pulls` and the `claims` of this look: it reads the Gate, and does
+/// the steps of the forge ([`main_steps`]). It gives the post to the
+/// lead and its kind: a message that wakes the lead, or a note. `watch`
+/// now holds the news: when the post does not go out, the caller sets it
+/// back to what it was, and the next look does it again.
+///
+/// ```
+/// use std::sync::Arc;
+/// use riff::look::{MainWatch, main_post};
+/// use riff::pr::Gh;
+/// use riff_core::wire::Kind;
+///
+/// # tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+/// let dir = tempfile::tempdir()?;
+/// let gh = isolated::write_program(
+///     dir.path().join("gh"),
+///     "#!/bin/sh\n\
+///      case \"$1 $2\" in\n\
+///        api*) case \"$2\" in\n\
+///          */commits/main/check-runs*) echo '[{\"status\":\"completed\",\"conclusion\":\"failure\",\"head_sha\":\"5103311abc\"}]' ;;\n\
+///          *) echo '[]' ;;\n\
+///        esac ;;\n\
+///        \"issue list\") echo '[]' ;;\n\
+///        \"issue create\") echo https://github.com/o/r/issues/901 ;;\n\
+///      esac\n",
+/// );
+/// let gh = Arc::new(Gh::at(gh));
+/// let mut watch = MainWatch::default();
+///
+/// // The Gate failed at a new commit: a message for the lead, with the fix item.
+/// let (body, kind) = main_post(&gh, "o/r", (vec![], vec![]), Default::default(), &mut watch)
+///     .await?
+///     .unwrap();
+/// assert_eq!(kind, Kind::Message);
+/// assert!(body.starts_with("main is broken: the Gate failed at commit 5103311."), "{body}");
+/// assert!(body.contains("The fix item is #901"), "{body}");
+/// // The same commit at the next look: nothing.
+/// assert_eq!(main_post(&gh, "o/r", (vec![], vec![]), Default::default(), &mut watch).await?, None);
+/// # Ok::<(), anyhow::Error>(())
+/// # })?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub async fn main_post(
+    gh: &Arc<Gh>,
+    repo: &str,
+    forge: (Vec<Issue>, Vec<Pull>),
+    claims: HashSet<String>,
+    watch: &mut MainWatch,
+) -> Result<Option<(String, Kind)>> {
+    let main = {
+        let (gh, repo) = (gh.clone(), repo.to_owned());
+        tokio::task::spawn_blocking(move || read_main(&gh, &repo)).await??
+    };
+    let Some(main) = main else {
+        return Ok(None);
+    };
+    let Some(news) = watch.news(&main) else {
+        return Ok(None);
+    };
+    let (gh, repo) = (gh.clone(), repo.to_owned());
+    let steps = tokio::task::spawn_blocking(move || {
+        let (issues, pulls) = forge;
+        main_steps(&gh, &repo, &issues, &pulls, &claims, &news)
+    })
+    .await??;
+    Ok(steps.map(|(body, wake)| (body, if wake { Kind::Message } else { Kind::Note })))
+}
+
+/// One look at the Gate of `main` of the lead `me` ([`main_post`]): it
+/// posts to the lead. When the post does not go out, `watch` forgets the
+/// news, and the next look does it again.
 pub async fn look_at_main(
     api: &Api,
     me: &SessionUri,
@@ -801,34 +896,58 @@ pub async fn look_at_main(
     claims: HashSet<String>,
     watch: &mut MainWatch,
 ) -> Result<()> {
-    let repo = me.place().repo_text();
-    let main = {
-        let (gh, repo) = (gh.clone(), repo.clone());
-        tokio::task::spawn_blocking(move || read_main(&gh, &repo)).await??
-    };
-    let Some(main) = main else {
-        return Ok(());
-    };
     let before = watch.clone();
-    let Some(news) = watch.news(&main) else {
-        return Ok(());
-    };
-    let gh = gh.clone();
-    let steps = tokio::task::spawn_blocking(move || {
-        let (issues, pulls) = forge;
-        main_steps(&gh, &repo, &issues, &pulls, &claims, &news)
-    })
-    .await?;
-    let posted = match steps {
-        Ok(Some((body, wake))) => {
-            let kind = if wake { Kind::Message } else { Kind::Note };
-            post_as_person(api, me, None, &body, kind).await
-        }
+    let posted = match main_post(gh, &me.place().repo_text(), forge, claims, watch).await {
+        Ok(Some((body, kind))) => post_as_person(api, me, None, &body, kind).await,
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };
     if posted.is_err() {
         *watch = before;
+    }
+    posted
+}
+
+/// What the look of the daemon keeps between two looks of one wave:
+/// what it told of the pull requests and of `main`
+/// (01M5QVH3MAEPPJN9PPVDX6N2EY). It is in memory only.
+#[derive(Debug, Default)]
+pub struct Watch {
+    pulls: PullWatch,
+    main: MainWatch,
+}
+
+/// One look of the daemon at the repository of `wave`
+/// (01M5QVH3MAEPPJN9PPVDX6N2EY): it reads the open issues and pull
+/// requests and the claims, sends the messages for the pull requests
+/// that stop ([`PullWatch::news`]), and looks at the Gate of `main`
+/// ([`main_post`]). Each post goes through [`World::post`]. When a post
+/// does not go out, `watch` forgets what it did not tell, and the next
+/// look does it again. A forge or a riff-server that does not answer is
+/// the error.
+pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Result<()> {
+    let gh = world.gh(&wave.repo);
+    let (issues, pulls) = {
+        let (gh, repo) = (gh.clone(), wave.repo.clone());
+        tokio::task::spawn_blocking(move || read_forge(&gh, &repo)).await??
+    };
+    let claims = world.claims(wave).await?;
+    let news = watch.pulls.news(&pulls, &claims, Instant::now());
+    for (at, one) in news.iter().enumerate() {
+        let item = one.to.as_deref();
+        if let Err(e) = world.post(wave, item, &one.body, Kind::Message).await {
+            news[at..].iter().for_each(|rest| watch.pulls.untell(rest));
+            return Err(e);
+        }
+    }
+    let before = watch.main.clone();
+    let posted = match main_post(&gh, &wave.repo, (issues, pulls), claims, &mut watch.main).await {
+        Ok(Some((body, kind))) => world.post(wave, None, &body, kind).await,
+        Ok(None) => Ok(()),
+        Err(e) => Err(e),
+    };
+    if posted.is_err() {
+        watch.main = before;
     }
     posted
 }

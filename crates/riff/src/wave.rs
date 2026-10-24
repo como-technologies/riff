@@ -96,6 +96,23 @@
 //! the conflict, the lead gets a message in place of the verify request
 //! (01M57FJ3Z8AFDY9G0KTAYZJESY).
 //!
+//! # The look
+//!
+//! Beside its loop, each wave has a look ([`crate::look::look_wave`],
+//! 01M5QVH3MAEPPJN9PPVDX6N2EY). It takes no room, so a host that is
+//! full still sees a broken `main`. Each minute it reads the open issues
+//! and pull requests with `gh` and the claims on riff-server, and posts
+//! as the person ([`World::gh`], [`World::claims`], [`World::post`]):
+//!
+//! ```mermaid
+//! flowchart LR
+//!     S["riff wave run"] --> L["the loop: the work"]
+//!     S --> W["the look, each minute"]
+//!     W --> P["a pull request that stops:<br/>a message to its holder or the lead"]
+//!     W --> M["the Gate of main:<br/>a message, the fix item, a note"]
+//!     X["riff wave stop"] --> E["the loop and the look end"]
+//! ```
+//!
 //! # A job
 //!
 //! A job does the steps of the host of `riff run` itself
@@ -177,7 +194,7 @@ use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
-use crate::{identity, pr, rollout, session_image, text, usage};
+use crate::{identity, look, pr, rollout, session_image, text, usage};
 use riff_client::api::{self, Api};
 
 /// The file of the waves that the daemon runs, in its folder.
@@ -661,6 +678,24 @@ pub trait World: Send + Sync {
     /// Tells the lead of the wave `body`, as a message.
     fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, ()>;
 
+    /// The `gh` of the repository `repo` for the look
+    /// ([`crate::look::look_wave`]).
+    fn gh(&self, repo: &str) -> Arc<pr::Gh>;
+
+    /// The items that a session of the repository of `wave` claims now.
+    fn claims<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<HashSet<String>>>;
+
+    /// Posts `body` of `kind` as the person of the wave: to the session
+    /// that claims `item`, or to the lead of the person when `item` is
+    /// `None`. The error is a post that did not go out.
+    fn post<'a>(
+        &'a self,
+        wave: &'a Wave,
+        item: Option<&'a str>,
+        body: &'a str,
+        kind: Kind,
+    ) -> BoxFuture<'a, Result<()>>;
+
     /// Writes `body` in riff chat as the person of the lead of `record`,
     /// and wakes no session: the lead cannot act on it
     /// (01M5NJ87YEHHGJBANM7CRYV56Z).
@@ -804,6 +839,30 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 }
             }
         }
+    }
+}
+
+/// The look of the wave `wave` in `daemon`, until the daemon stops it
+/// (01M5QVH3MAEPPJN9PPVDX6N2EY): [`crate::look::look_wave`] at once, then
+/// each [`Daemon::look_every`]. It takes no room: a host that is full
+/// still sees a broken `main`. A look that fails prints its fault one
+/// time until the fault changes.
+pub(crate) async fn watch<R: Runtime + 'static>(daemon: Arc<Daemon<R>>, wave: Wave) {
+    let mut watch = look::Watch::default();
+    let mut last_error = None;
+    loop {
+        let world = daemon.world();
+        match look::look_wave(&*world, &wave, &mut watch).await {
+            Ok(()) => last_error = None,
+            Err(e) => {
+                let e = format!("{e:#}");
+                if last_error.as_ref() != Some(&e) {
+                    eprintln!("riff daemon: {}: {}", wave.repo, text::wave_no_look(&e));
+                }
+                last_error = Some(e);
+            }
+        }
+        tokio::time::sleep(daemon.look_every()).await;
     }
 }
 
@@ -1038,6 +1097,23 @@ pub struct Live {
     /// The last text that the lead of each wave got: a text goes one
     /// time in a row.
     told: Mutex<HashMap<String, String>>,
+    /// The `gh` of the look of each repository: its calls share one token
+    /// (01M54510SFK1Z9VPFYBYYSV10F).
+    ghs: Mutex<HashMap<String, Arc<pr::Gh>>>,
+}
+
+/// Posts `body` of `kind` as the person of `wave`: to the session that
+/// claims `item`, or to the lead of the person.
+async fn post_as_person(wave: &Wave, item: Option<&str>, body: &str, kind: Kind) -> Result<()> {
+    let person = identity::person(&wave.place(None)?, &wave.server)?;
+    let api = Api::new(&wave.server).signed_in(None)?;
+    let to = match item {
+        Some(item) => format!("claim={item},repo={}", wave.repo).parse()?,
+        None => riff_core::selector::Selector::lead(person.who().user(), &wave.repo),
+    };
+    api.post(&person, Some(&wave.thread()?), &[to], body, kind)
+        .await?;
+    Ok(())
 }
 
 /// Runs `work` on a thread that may block: `gh` and git.
@@ -1917,24 +1993,40 @@ impl World for Live {
             if lock(&self.told).get(&wave.repo).is_some_and(|t| t == body) {
                 return;
             }
-            let posted = async {
-                let person = identity::person(&wave.place(None)?, &wave.server)?;
-                let api = Api::new(&wave.server).signed_in(None)?;
-                let to = [riff_core::selector::Selector::lead(
-                    person.who().user(),
-                    &wave.repo,
-                )];
-                api.post(&person, Some(&wave.thread()?), &to, body, Kind::Message)
-                    .await?;
-                Ok::<(), anyhow::Error>(())
-            };
-            match posted.await {
+            match post_as_person(wave, None, body, Kind::Message).await {
                 Ok(()) => {
                     lock(&self.told).insert(wave.repo.clone(), body.to_owned());
                 }
                 Err(e) => eprintln!("riff daemon: {}: {e:#}", wave.repo),
             }
         })
+    }
+
+    fn gh(&self, repo: &str) -> Arc<pr::Gh> {
+        lock(&self.ghs)
+            .entry(repo.to_owned())
+            .or_insert_with(|| Arc::new(sweep::gh(repo).with_one_token()))
+            .clone()
+    }
+
+    fn claims<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<HashSet<String>>> {
+        Box::pin(async move {
+            let person = identity::person(&wave.place(None)?, &wave.server)?;
+            let api = Api::new(&wave.server).signed_in(None)?;
+            let mut sessions = api.who(&person, false).await?;
+            sessions.retain(|s| s.uri.place().repo_text() == wave.repo);
+            Ok(rollout::claims(&sessions))
+        })
+    }
+
+    fn post<'a>(
+        &'a self,
+        wave: &'a Wave,
+        item: Option<&'a str>,
+        body: &'a str,
+        kind: Kind,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(post_as_person(wave, item, body, kind))
     }
 
     fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()> {
@@ -2042,6 +2134,11 @@ mod tests {
         titles: BTreeMap<u64, String>,
         /// The labels of each item.
         labels: BTreeMap<u64, Vec<String>>,
+        /// Each post of the look: the item whose holder gets it, or `None`
+        /// for the lead, the kind, and the body.
+        posts: Vec<(Option<String>, Kind, String)>,
+        /// The number of the next posts of the look that fail.
+        post_fails: usize,
     }
 
     impl Forge {
@@ -2117,6 +2214,8 @@ mod tests {
     struct Fakes {
         root: PathBuf,
         forge: Mutex<Forge>,
+        /// The fake `gh` of the look ([`FAKE_GH`]).
+        gh: Arc<pr::Gh>,
     }
 
     impl World for Fakes {
@@ -2292,6 +2391,35 @@ mod tests {
             Box::pin(async move { lock(&self.forge).told.push(body.to_owned()) })
         }
 
+        fn gh(&self, _: &str) -> Arc<pr::Gh> {
+            self.gh.clone()
+        }
+
+        fn claims<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<HashSet<String>>> {
+            let claims = lock(&self.forge).claims.keys().cloned().collect();
+            Box::pin(async move { Ok(claims) })
+        }
+
+        fn post<'a>(
+            &'a self,
+            _: &'a Wave,
+            item: Option<&'a str>,
+            body: &'a str,
+            kind: Kind,
+        ) -> BoxFuture<'a, Result<()>> {
+            Box::pin(async move {
+                let mut forge = lock(&self.forge);
+                if forge.post_fails > 0 {
+                    forge.post_fails -= 1;
+                    bail!("riff-server does not answer");
+                }
+                forge
+                    .posts
+                    .push((item.map(str::to_owned), kind, body.to_owned()));
+                Ok(())
+            })
+        }
+
         fn chat<'a>(&'a self, _: &'a Record, _: &'a str) -> BoxFuture<'a, ()> {
             Box::pin(async {})
         }
@@ -2330,15 +2458,30 @@ mod tests {
         /// The wave of the open `items`, with the limit `sessions` and
         /// a floor of 8 GB, and the free memory of `free` in GB.
         async fn new(items: &[u64], sessions: u32, free: Arc<AtomicU64>) -> Here {
+            Here::new_looking(items, sessions, free, crate::look::LOOK_EVERY).await
+        }
+
+        /// [`Here::new`] with a look at `main` and the pull requests each
+        /// `every`.
+        async fn new_looking(
+            items: &[u64],
+            sessions: u32,
+            free: Arc<AtomicU64>,
+            every: Duration,
+        ) -> Here {
             let root = tempfile::tempdir().unwrap();
             let dir = dir_in(root.path());
             let fake = Fake::default().with_image(IMAGE);
+            let bin = root.path().join("bin");
+            std::fs::create_dir(&bin).unwrap();
+            let gh = pr::Gh::at(isolated::write_program(bin.join("gh"), FAKE_GH));
             let world = Arc::new(Fakes {
                 root: root.path().to_owned(),
                 forge: Mutex::new(Forge {
                     items: items.to_vec(),
                     ..Forge::default()
                 }),
+                gh: Arc::new(gh),
             });
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
@@ -2348,6 +2491,7 @@ mod tests {
                 .unwrap()
                 .with_memory(memory)
                 .with_world(world.clone())
+                .with_look_every(every)
                 .with_relay(crate::release::fake_riff(&relay, None));
             Limit {
                 sessions,
@@ -3068,6 +3212,224 @@ mod tests {
         here.idle(1).await;
         assert_eq!(here.forge().starts.len(), 1);
         assert!(!here.daemon.stop_wave("o/r").unwrap());
+    }
+
+    /// The run of the Gate in the fake forge.
+    const RUN: &str = "https://github.com/o/r/actions/runs/38861280871";
+
+    /// A fake `gh` for the look: it logs each call to `gh.log` on one
+    /// line. The file `gate` holds the check runs of the head of
+    /// `main`, `jobs` the jobs of its run, `pulls` the open pull
+    /// requests, and `issues` the open issues. `issue list` gives the file
+    /// `with-fix` after `issue create` and before `issue close`. A file
+    /// that is missing gives `[]`: no Gate, no pull request.
+    const FAKE_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+printf '%s' "$*" | tr '\n' ' ' >> "$dir/gh.log"
+printf '\n' >> "$dir/gh.log"
+show() { if [ -e "$dir/$1" ]; then cat "$dir/$1"; else echo '[]'; fi; }
+case "$1 $2" in
+  api*)
+    case "$2" in
+      */commits/main/check-runs*) show gate ;;
+      */actions/runs/*/jobs*) show jobs ;;
+      */milestones*) echo '[{"title":"Wave 1"}]' ;;
+      *) exit 1 ;;
+    esac ;;
+  "pr list") show pulls ;;
+  "issue list")
+    if [ -e "$dir/created" ] && [ ! -e "$dir/closed" ]; then show with-fix; else show issues; fi ;;
+  "label create") ;;
+  "issue create") touch "$dir/created"; echo "https://github.com/o/r/issues/901" ;;
+  "issue comment") ;;
+  "issue close") touch "$dir/closed" ;;
+  *) exit 1 ;;
+esac
+"#;
+
+    /// The open issues of the fake forge, and the same with the fix item.
+    const ISSUES: &str =
+        r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]}]"#;
+    const WITH_FIX: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":901,"body":"Needs: nothing","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"broken-main"}]}]"#;
+
+    /// The failed jobs of the run.
+    const JOBS: &str =
+        r#"[{"name":"Clippy","conclusion":"failure"},{"name":"Gate","conclusion":"failure"}]"#;
+
+    /// The Gate of the head `commit` of `main` ended with `conclusion`.
+    fn gate(commit: &str, conclusion: &str) -> String {
+        format!(
+            r#"[{{"status":"completed","conclusion":"{conclusion}","head_sha":"{commit}","html_url":"{RUN}/job/1"}}]"#
+        )
+    }
+
+    /// The pull request of issue 12 with auto-merge on and a conflict, at
+    /// the head `head`.
+    fn conflicting(head: &str) -> String {
+        format!(
+            r#"[{{"number":52,"headRefName":"worktree-issue-12","headRefOid":"{head}","isDraft":false,"statusCheckRollup":[],"mergeable":"CONFLICTING","autoMergeRequest":{{"enabledAt":"2026-10-24T00:00:00Z"}},"body":"Closes #12\n"}}]"#
+        )
+    }
+
+    impl Here {
+        /// A look each 20 ms, with the fake forge of `gh` and no work.
+        async fn looking() -> Here {
+            let free = Arc::new(AtomicU64::new(64));
+            let here = Here::new_looking(&[], 1, free, Duration::from_millis(20)).await;
+            here.put("issues", ISSUES);
+            here.put("with-fix", WITH_FIX);
+            here.put("jobs", JOBS);
+            here
+        }
+
+        /// Sets the file `name` of the fake forge.
+        fn put(&self, name: &str, text: &str) {
+            std::fs::write(self.world.root.join("bin").join(name), text).unwrap();
+        }
+
+        /// The calls of the fake `gh` that contain `call`.
+        fn calls(&self, call: &str) -> Vec<String> {
+            std::fs::read_to_string(self.world.root.join("bin/gh.log"))
+                .unwrap_or_default()
+                .lines()
+                .filter(|line| line.contains(call))
+                .map(str::to_owned)
+                .collect()
+        }
+
+        /// The number of looks at the Gate of `main` so far.
+        fn looks(&self) -> usize {
+            self.calls("/commits/main/check-runs").len()
+        }
+
+        /// Waits for `n` more looks.
+        async fn looks_more(&self, n: usize) {
+            let end = self.looks() + n;
+            self.until(0, |h| h.looks() >= end).await;
+        }
+
+        /// Each post of the look.
+        fn posts(&self) -> Vec<(Option<String>, Kind, String)> {
+            self.forge().posts.clone()
+        }
+    }
+
+    /// The look of the daemon at `main` (#1351, 01M5QVH3MAEPPJN9PPVDX6N2EY,
+    /// 01M51QEYKTD7ZEB0YA0C3MQTPN, 01M51QEYPGD6W345MZ4F85C38F,
+    /// 01M51QEYVQN74Q1VDTVHB0445Q): the Gate of the head of `main` fails
+    /// at a new commit, and the lead gets one message and riff files the
+    /// fix item. It passes again, and riff closes the item.
+    #[tokio::test]
+    async fn the_daemon_tells_the_lead_when_main_breaks_and_closes_the_fix_item_when_it_passes() {
+        let here = Here::looking().await;
+        here.put("gate", &gate("c0ffee1234", "success"));
+        here.run();
+        here.looks_more(3).await;
+        assert!(here.posts().is_empty());
+
+        here.put("gate", &gate("5103311abcdef", "failure"));
+        here.until(0, |h| h.posts().len() == 1).await;
+        let (to, kind, body) = here.posts().remove(0);
+        assert_eq!((to, kind), (None, Kind::Message));
+        assert_eq!(
+            body,
+            format!(
+                "main is broken: the Gate failed at commit 5103311 ({RUN}). Failed jobs: Clippy. \
+                 The fix item is #901: the rollout gives it to a worker before each other item. \
+                 When a pull request already has the fix, hold #901."
+            )
+        );
+        let created = here.calls("issue create");
+        assert_eq!(created.len(), 1, "{created:?}");
+        assert!(
+            created[0].contains("--label broken-main") && created[0].contains("--milestone Wave 1"),
+            "{created:?}"
+        );
+
+        // The same Gate at the next looks: no message, no second fix item.
+        here.looks_more(3).await;
+        assert_eq!(here.posts().len(), 1);
+        assert_eq!(here.calls("issue create").len(), 1);
+        assert!(here.calls("issue comment").is_empty());
+
+        // The fix merges, and the Gate passes: riff closes the fix item.
+        here.put("gate", &gate("d00d1234", "success"));
+        here.until(0, |h| h.posts().len() == 2).await;
+        let (to, kind, body) = here.posts().remove(1);
+        assert_eq!((to, kind), (None, Kind::Note));
+        assert_eq!(
+            body,
+            format!(
+                "main passes again: the Gate passed at commit d00d123 ({RUN}). riff closed the \
+                 fix item #901."
+            )
+        );
+        assert_eq!(here.calls("issue close 901").len(), 1);
+        here.looks_more(3).await;
+        assert_eq!(here.posts().len(), 2);
+        assert_eq!(here.calls("issue close").len(), 1);
+    }
+
+    /// A post that does not go out comes again at the next look, and
+    /// riff files no second fix item for it (01M51QEYPGD6W345MZ4F85C38F).
+    #[tokio::test]
+    async fn a_message_that_did_not_go_out_comes_at_the_next_look_with_one_fix_item() {
+        let here = Here::looking().await;
+        here.forge().post_fails = 1;
+        here.put("gate", &gate("5103311abcdef", "failure"));
+        here.run();
+        here.until(0, |h| h.posts().len() == 1).await;
+        assert!(here.posts()[0].2.contains("The fix item is #901"));
+        assert_eq!(here.calls("issue create").len(), 1);
+        assert_eq!(here.calls("issue comment 901").len(), 1);
+        here.looks_more(3).await;
+        assert_eq!(here.posts().len(), 1);
+    }
+
+    /// A pull request with a conflict gives one message for each head:
+    /// to the session that holds the item, else to the lead
+    /// (01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q31FASDM7CG3JEGPYCZB9).
+    #[tokio::test]
+    async fn the_daemon_tells_the_holder_or_the_lead_of_a_conflict_once_for_each_head() {
+        let here = Here::looking().await;
+        here.forge()
+            .claims
+            .insert("issue-12".into(), "1a2b3c4d".into());
+        here.put("pulls", &conflicting("1a2b3c4d5e"));
+        here.run();
+        here.until(0, |h| h.posts().len() == 1).await;
+        let (to, kind, body) = here.posts().remove(0);
+        assert_eq!((to.as_deref(), kind), (Some("issue-12"), Kind::Message));
+        assert!(
+            body.contains("Pull request #52 of issue-12 has a conflict")
+                && body.contains("at commit 1a2b3c4,"),
+            "{body}"
+        );
+        here.looks_more(3).await;
+        assert_eq!(here.posts().len(), 1);
+
+        // A new head with a conflict, and no holder: the lead.
+        here.forge().claims.clear();
+        here.put("pulls", &conflicting("5e6f7a8b9c"));
+        here.until(0, |h| h.posts().len() == 2).await;
+        let (to, _, body) = here.posts().remove(1);
+        assert_eq!(to, None);
+        assert!(body.contains("No session holds issue-12"), "{body}");
+    }
+
+    /// `riff wave stop` ends the look with the loop of the wave.
+    #[tokio::test]
+    async fn a_stop_of_the_wave_ends_its_look() {
+        let here = Here::looking().await;
+        here.run();
+        here.looks_more(2).await;
+        assert!(here.daemon.stop_wave("o/r").unwrap());
+        // A call in flight can still end.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let looks = here.looks();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(here.looks(), looks);
     }
 
     #[tokio::test]

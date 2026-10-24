@@ -2977,6 +2977,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M49Q31FASDM7CG3JEGPYCZB9** Each message of a pull request that
   stops comes one time for each pull request, head commit and state.
   The `riff mcp` of the lead keeps what it told in memory only.
+  Superseded in part by 01M5QVH3MAEPPJN9PPVDX6N2EY: the daemon keeps it.
 - **01M51QEYKTD7ZEB0YA0C3MQTPN** The look of the lead reads the check
   run `Gate` of the head commit of `main` each minute. When the Gate
   failed (`failure` or `timed_out`) at a commit that the lead did not
@@ -2984,7 +2985,8 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the run, the failed jobs and the fix item. When `main` was broken at
   an older commit, the lead gets a note. A Gate that runs, a cancelled
   Gate and a head with no Gate give nothing. The `riff mcp` of the lead
-  keeps the last broken commit that it told in memory only.
+  keeps the last broken commit that it told in memory only. Superseded
+  in part by 01M5QVH3MAEPPJN9PPVDX6N2EY: the daemon keeps it.
 - **01M51QEYPGD6W345MZ4F85C38F** When the Gate of `main` fails, riff
   files one fix item: an issue with the label `broken-main` in the
   current wave, with the commit, the run, the failed jobs, a `Needs:`
@@ -6497,6 +6499,17 @@ part when they merge.
   pull request, then checks out the head commit, detached. It checks out
   the commit, not the ref, so a push to the pull request after the look
   does not change what the verify reads.
+- **01M5QVH3MAEPPJN9PPVDX6N2EY** The riff daemon runs the look of the
+  repository of each wave that it runs, each minute, until `riff wave
+  stop`: it reads the open pull requests and the Gate of `main` with
+  "gh", and posts as the person. The messages of
+  01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q316RXNATJP587DWGDNCD and
+  01M51QEYKTD7ZEB0YA0C3MQTPN come from this look, and the steps of
+  01M51QEYPGD6W345MZ4F85C38F and 01M51QEYVQN74Q1VDTVHB0445Q too. A
+  message goes to the lead of the person, or to the session that holds
+  the item of a pull request with a conflict. The daemon keeps what it
+  told in memory only. The wave goes on when the look fails: the daemon
+  prints the fault one time until it changes.
 
 ### The lead, the view and the takeover
 

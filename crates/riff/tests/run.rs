@@ -42,7 +42,9 @@ fn script(path: &Path, body: &str) {
 /// `bin/pr-hold` is there, and the view of the milestone of the issue
 /// while `bin/milestone-hold` is there. For the look of a wave, the open
 /// milestone is Wave 27, no pull request is open, and issue 12 is the
-/// open issue of Wave 27 while `bin/wave-issue` is there.
+/// open issue of Wave 27 while `bin/wave-issue` is there. For the look at
+/// `main`, the file `bin/gate` holds the check runs of its head, and
+/// `issue create` files the fix item 901.
 fn fake_gh(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -61,6 +63,10 @@ case "$*" in
     echo '{"number":40,"url":"https://github.com/como-technologies/riff/pull/40","headRefOid":"1a2b3c4d5e6f","state":"OPEN"}' ;;
   'api repos/como-technologies/riff/milestones?state=open&per_page=100')
     echo '[{"title":"Wave 27"}]' ;;
+  'api repos/como-technologies/riff/commits/main/check-runs?check_name=Gate --jq .check_runs')
+    if [ -f "$dir/gate" ]; then cat "$dir/gate"; else echo '[]'; fi ;;
+  'label create '*) ;;
+  'issue create '*) echo 'https://github.com/como-technologies/riff/issues/901' ;;
   'pr list --repo como-technologies/riff '*) echo '[]' ;;
   'issue list --repo como-technologies/riff '*)
     if [ -f "$dir/wave-issue" ]; then
@@ -2206,6 +2212,53 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
     assert!(
         !thread.contains("could not start issue-12"),
         "the lead got a message: {thread}"
+    );
+    machine.ok(None, &["wave", "stop"]).await;
+}
+
+/// 01M5QVH3MAEPPJN9PPVDX6N2EY, 01M51QEYKTD7ZEB0YA0C3MQTPN,
+/// 01M51QEYPGD6W345MZ4F85C38F (#1351): the daemon looks at the Gate of
+/// `main` of the repository of its wave. The Gate failed at a commit:
+/// the lead gets one message, and riff files the fix item. The limit 0
+/// gives the wave no room, and the look does not wait for it.
+#[tokio::test]
+async fn the_daemon_tells_the_lead_that_main_is_broken_and_files_the_fix_item() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    machine
+        .ok(None, &["daemon", "limit", "--sessions", "0"])
+        .await;
+    let bin = machine.bin.path();
+    let run = "https://github.com/como-technologies/riff/actions/runs/38861280871";
+    std::fs::write(
+        bin.join("gate"),
+        format!(
+            r#"[{{"status":"completed","conclusion":"failure","head_sha":"5103311abcdef","html_url":"{run}/job/1"}}]"#
+        ),
+    )
+    .unwrap();
+    machine.ok(None, &["wave", "run"]).await;
+
+    let started = Instant::now();
+    let thread = loop {
+        let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+        if thread.contains("main is broken") {
+            break thread;
+        }
+        assert!(started.elapsed() < isolated::HANG, "no message: {thread}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert!(
+        thread.contains(&format!(
+            "main is broken: the Gate failed at commit 5103311 ({run}). "
+        )) && thread.contains("The fix item is #901"),
+        "{thread}"
+    );
+    let log = machine.read("gh.log");
+    assert_eq!(log.matches("gh issue create ").count(), 1, "{log}");
+    assert!(
+        log.contains("--label broken-main") && log.contains("--milestone Wave 27"),
+        "{log}"
     );
     machine.ok(None, &["wave", "stop"]).await;
 }

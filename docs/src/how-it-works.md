@@ -1794,13 +1794,13 @@ see
 
 ### When a pull request stops
 
-A pull request can stop with no sign. The `riff relay mcp` of the lead
-looks at the open pull requests each minute, and sends a message in two
-cases:
+A pull request can stop with no sign. The riff daemon looks at the open
+pull requests of each wave that it runs, each minute, and sends a
+message in two cases (see [Run the wave](development.md#run-the-wave)):
 
 ```mermaid
 flowchart TD
-    L["the look of the lead, each minute"] --> C{"auto-merge on, and a conflict?"}
+    L["the look of the daemon, each minute"] --> C{"auto-merge on, and a conflict?"}
     C -- yes --> H{"a session holds the item?"}
     H -- yes --> M1["message to that session"]
     H -- no --> M2["message to the lead"]
@@ -1817,7 +1817,8 @@ flowchart TD
   verify to a free session, or starts a worker.
 
 Each message comes one time for each pull request, head commit and
-state. A new push that has a conflict again gives a new message. To fix
+state. A new push that has a conflict again gives a new message. After a
+new start of the daemon, a message can come one more time. To fix
 a conflict, rebase in the worktree of the item, and push:
 
 ```sh
@@ -1833,12 +1834,13 @@ Then send a new verify request for the new commit.
 A pull request merges when the Gate of its own head passed, also when
 `main` moved after that. So two pull requests that each pass their
 Gate can break `main` together. Then the Gate of each later pull
-request fails too. The `riff relay mcp` of the lead looks at the Gate of
-the head of `main` each minute:
+request fails too. The riff daemon looks at the Gate of the head of
+`main` of each wave that it runs, each minute (see
+[Run the wave](development.md#run-the-wave)):
 
 ```mermaid
 flowchart TD
-    L["the look of the lead, each minute"] --> G{"the Gate of the head of main"}
+    L["the look of the daemon, each minute"] --> G{"the Gate of the head of main"}
     G -- "failed, a new commit" --> F["riff files the fix item,<br/>or comments on the open one"]
     F --> M["message to the lead: commit, run,<br/>failed jobs, fix item"]
     M --> W["the rollout gives the fix item<br/>to a worker before each other item"]
