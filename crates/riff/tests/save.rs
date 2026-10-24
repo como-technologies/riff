@@ -33,6 +33,8 @@ fn a_clone_with_changes_and_no_pushed_commit_gets_a_wip_commit_on_its_branch() {
         root.path(),
         &["clone", "-q", origin.to_str().unwrap(), "clone"],
     );
+    git(&clone, &["config", "user.name", "riff test"]);
+    git(&clone, &["config", "user.email", "test@example.com"]);
     git(&clone, &["commit", "-q", "--allow-empty", "-m", "start"]);
     git(&clone, &["push", "-q", "origin", "HEAD:main"]);
     git(&clone, &["remote", "set-head", "origin", "main"]);
