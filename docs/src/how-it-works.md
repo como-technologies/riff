@@ -2141,6 +2141,11 @@ riff: 10 messages of the break are lost. The server keeps only the last messages
 riff read --all
 ```
 
+A session that joins a thread finds the messages from before its join
+read. Only the messages after the join are unread. `--all` shows the
+older ones. A new lead takes the read marks of the old lead: see
+[What a new lead reads](#what-a-new-lead-reads).
+
 The server keeps the last 200 messages of each thread. Nobody can read
 an older message. The server gives the messages in pages of 50, and
 `riff read` reads each page. The `read` tool of an agent session gives
@@ -3431,6 +3436,37 @@ flowchart TD
     W -- no --> L[the lead]
     L --> O[the old lead gets a message]
     S[a session registers or starts] --> N[not the lead]
+```
+
+### What a new lead reads
+
+A new lead does not find the kept history of each thread unread. It
+takes the read marks of the lead before it, in each thread that both
+joined. So its unread messages are the messages that the old lead did
+not read. This holds after each `riff lead start`, and after each
+`riff lead --session ID`.
+
+```mermaid
+sequenceDiagram
+    participant A as old lead
+    participant E as riff-server
+    participant B as new lead
+    A->>E: read the thread up to message 3
+    Note over E: messages 4 and 5 come
+    B->>E: start: joins the thread at message 5
+    B->>E: named the lead
+    Note over E: B takes the mark of A: message 3
+    B->>E: read
+    E->>B: messages 4 and 5
+```
+
+A thread that the new lead joins after it is the lead starts at its
+newest message, as for each session: see
+[Read each kept message](#read-each-kept-message). To read the older
+messages too:
+
+```sh
+riff read --all
 ```
 
 ### When you have no lead

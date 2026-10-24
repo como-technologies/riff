@@ -548,10 +548,11 @@ impl State {
         let mut seen = BTreeMap::new();
         let mut saved = None;
         if let Some(snapshot) = snapshot {
-            let (riff, presence, seen_ms, calls) = snapshot.into_parts();
+            let (riff, mut presence, seen_ms, calls) = snapshot.into_parts();
             state.pending = riff.clone();
             state.written = riff;
             state.calls = calls.restore();
+            presence.restore_cursors(&mut state.presence);
             saved = Some(presence);
             seen = seen_ms;
             seen.retain(|_, ms| *ms > 0);
@@ -661,8 +662,9 @@ impl State {
     ///   [`CLAIM_GRACE`], and `who --all` shows it.
     /// - A session that called after the import stays as it is.
     /// - A cursor counts only for a session and a thread that the
-    ///   written copy has. A cursor after the last message of its
-    ///   thread moves back to that message.
+    ///   written copy has. It replaces the cursor that the join of the
+    ///   import made (01M5QVD3B1GT7STHBQS7NK4DR0). A cursor after the last
+    ///   message of its thread moves back to that message.
     ///
     /// ```
     /// use std::time::Instant;
@@ -703,7 +705,7 @@ impl State {
             let threads = self.written.threads();
             if self.presence.knows(&who) && threads.has(&thread) {
                 let seq = seq.min(threads.last_seq(&thread));
-                self.presence.cursors.entry((who, thread)).or_insert(seq);
+                self.presence.cursors.insert((who, thread), seq);
             }
         }
     }
@@ -796,8 +798,17 @@ impl State {
             }
             _ => None,
         };
+        let replaced = match &record.change {
+            Change::LeadSet(member) => {
+                let who = member.session.who();
+                let key = (who.user().to_owned(), member.thread.clone());
+                self.written.work().leads.get(&key).cloned()
+            }
+            _ => None,
+        };
         apply(&mut self.written, record);
-        self.presence.applied(record, &self.written, at);
+        self.presence
+            .applied(record, &self.written, replaced.as_ref(), at);
         let who = cleared.filter(|who| !self.must_clear(who))?;
         let wake = self.missed(&who)?;
         Some((who, wake))
@@ -2076,6 +2087,41 @@ impl State {
     /// assert_eq!(refused.reason, LEAD_BY_PERSON);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
+    ///
+    /// The new lead takes the read cursors of the old lead
+    /// (01M5QVD3B1GT7STHBQS7NK4DR0). It finds unread only what the old
+    /// lead did not read, not the kept history of the thread:
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::Post;
+    /// use riff_state::state::State;
+    ///
+    /// let old: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
+    /// let new: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=b2".parse()?;
+    /// let brett: SessionUri = "riff://brett@kadomony/como-technologies/riff?session=c3".parse()?;
+    /// let thread = old.default_thread().unwrap();
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// state.register(&old, now);
+    /// state.lead(&old, now).unwrap();
+    /// for body in ["one", "two", "three"] {
+    ///     state.post(Post::new(&brett, Some(thread.clone()), vec![], body), now, 0).unwrap();
+    /// }
+    /// // The old lead reads the three messages. Then a fourth comes.
+    /// assert_eq!(state.read(&old, &thread, false, now).unwrap().len(), 3);
+    /// state.post(Post::new(&brett, Some(thread.clone()), vec![], "four"), now, 0).unwrap();
+    ///
+    /// // The new session starts after the four messages.
+    /// state.register(&new, now);
+    /// assert!(state.read(&new, &thread, false, now).unwrap().is_empty());
+    /// state.lead(&new, now).unwrap();
+    /// // As the lead, it reads what the old lead did not read.
+    /// let unread = state.read(&new, &thread, false, now).unwrap();
+    /// assert_eq!(unread.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(), ["four"]);
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
     pub fn lead(&mut self, session: &SessionUri, now: Instant) -> Result<LeadReply, String> {
         let id = session
             .who()
@@ -2537,6 +2583,9 @@ impl State {
     /// let bob: SessionUri = "riff://bob@kite/acme/app?session=b1".parse()?;
     /// let now = Instant::now();
     /// let mut state = State::default();
+    /// // Bob joins before the messages. A session that joins later finds
+    /// // the earlier messages not unread.
+    /// state.register(&bob, now);
     /// let thread = ann.default_thread().unwrap();
     /// for body in ["one", "two", "three"] {
     ///     state.post(Post::new(&ann, Some(thread.clone()), vec![], body), now, 0).unwrap();
@@ -2564,6 +2613,7 @@ impl State {
     /// # let bob: SessionUri = "riff://bob@kite/acme/app?session=b1".parse()?;
     /// # let now = Instant::now();
     /// # let mut state = State::default();
+    /// # state.register(&bob, now);
     /// # let thread = ann.default_thread().unwrap();
     /// for body in ["one", "two", "three"] {
     ///     state.post(Post::new(&ann, Some(thread.clone()), vec![], body), now, 0).unwrap();
@@ -3290,6 +3340,8 @@ mod tests {
         let now = Instant::now();
         let mut state = setup(now);
         let b = tests().who().clone();
+        // A session that joined an empty thread finds each message unread.
+        state.join(&tests(), &thread("chat"), now);
         for n in 0..200 {
             post(&mut state, &api(), "chat", &[], &format!("old {n}"));
         }
@@ -4213,6 +4265,163 @@ mod tests {
         let unread = loaded.read(&tests(), &design, false, now).unwrap();
         assert_eq!(unread.len(), 1);
         assert_eq!(unread[0].body, "two");
+    }
+
+    /// A new session of mike in the repository of [`api`]: it starts
+    /// after the old messages of the repository thread.
+    fn next() -> SessionUri {
+        uri("riff://mike@pangolin/como-technologies/riff?session=d4#next")
+    }
+
+    fn unread_in(state: &State, me: &SessionUri, thread: &ThreadName, now: Instant) -> usize {
+        state
+            .threads_of(me.who(), now)
+            .iter()
+            .find(|t| &t.thread == thread)
+            .map_or(0, |t| t.unread)
+    }
+
+    /// Brett posts five messages in the repository thread, and the lead
+    /// `api` reads the first three of them.
+    fn five_messages_the_lead_read_three_of(state: &mut State, now: Instant) {
+        for body in ["m1", "m2", "m3"] {
+            post(state, &tests(), "como-technologies/riff", &[], body);
+        }
+        assert_eq!(state.read(&api(), &repo(), false, now).unwrap().len(), 3);
+        for body in ["m4", "m5"] {
+            post(state, &tests(), "como-technologies/riff", &[], body);
+        }
+    }
+
+    /// 01M5QVD3B1GT7STHBQS7NK4DR0: the lead A reads the thread T to the
+    /// message N. The session B becomes the lead. B finds only the
+    /// messages after N unread.
+    #[test]
+    fn a_new_lead_finds_only_the_messages_after_the_ones_the_lead_before_it_read_unread() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        five_messages_the_lead_read_three_of(&mut state, now);
+        assert_eq!(unread_in(&state, &api(), &repo(), now), 2);
+
+        // B starts after the five messages: it finds none unread.
+        state.register(&next(), now);
+        assert_eq!(unread_in(&state, &next(), &repo(), now), 0);
+
+        // B becomes the lead: it takes the cursor of A.
+        let reply = state.lead(&next(), now).unwrap();
+        assert_eq!(reply.replaced.unwrap().who(), api().who());
+        assert_eq!(unread_in(&state, &next(), &repo(), now), 2);
+        let unread = state.read(&next(), &repo(), false, now).unwrap();
+        let bodies: Vec<&str> = unread.iter().map(|m| m.body.as_str()).collect();
+        assert_eq!(bodies, ["m4", "m5"]);
+        assert_eq!(unread_in(&state, &next(), &repo(), now), 0);
+        // The cursor of A did not move.
+        assert_eq!(state.presence.cursor(api().who(), &repo()), 3);
+    }
+
+    /// The new lead takes the cursors only of the threads that both
+    /// joined. It takes none of another lead.
+    #[test]
+    fn a_new_lead_takes_only_the_cursors_of_the_threads_that_both_joined() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let (design, chat) = (thread("design"), thread("chat"));
+        for name in ["design", "chat"] {
+            post(&mut state, &tests(), name, &["session=a1"], "one");
+            post(&mut state, &tests(), name, &["session=a1"], "two");
+            assert_eq!(
+                state.read(&api(), &thread(name), false, now).unwrap().len(),
+                2
+            );
+        }
+        post(&mut state, &tests(), "design", &["session=a1"], "three");
+        state.register(&next(), now);
+        state.join(&next(), &design, now);
+        state.lead(&next(), now).unwrap();
+        // Both joined `design`: B takes the cursor 2 of A.
+        assert_eq!(state.presence.cursor(next().who(), &design), 2);
+        // B joined no `chat`: it has no cursor there.
+        assert_eq!(state.presence.cursor(next().who(), &chat), 0);
+    }
+
+    /// A lead with no lead before it keeps the cursors that it has.
+    #[test]
+    fn the_first_lead_keeps_its_own_cursors() {
+        let now = Instant::now();
+        let mut state = State::default();
+        state.register(&api(), now);
+        post(&mut state, &tests(), "como-technologies/riff", &[], "m1");
+        post(&mut state, &tests(), "como-technologies/riff", &[], "m2");
+        state.register(&docs(), now);
+        assert_eq!(unread_in(&state, &docs(), &repo(), now), 0);
+        let reply = state.lead(&docs(), now).unwrap();
+        assert!(reply.replaced.is_none());
+        assert_eq!(unread_in(&state, &docs(), &repo(), now), 0);
+    }
+
+    #[test]
+    fn a_new_worker_finds_no_message_from_before_its_join_unread() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        five_messages_the_lead_read_three_of(&mut state, now);
+        post(&mut state, &tests(), "design", &[], "a plan");
+
+        state.worker(&next(), true, now);
+        assert_eq!(unread_in(&state, &next(), &repo(), now), 0);
+        assert!(state.read(&next(), &repo(), false, now).unwrap().is_empty());
+        // A thread that the worker joins later starts at its newest
+        // message too.
+        let design = thread("design");
+        state.join(&next(), &design, now);
+        assert_eq!(unread_in(&state, &next(), &design, now), 0);
+
+        // A message after the join is unread, and a read of all shows
+        // the messages from before it.
+        post(&mut state, &tests(), "como-technologies/riff", &[], "m6");
+        post(&mut state, &tests(), "design", &[], "a second plan");
+        assert_eq!(unread_in(&state, &next(), &repo(), now), 1);
+        assert_eq!(unread_in(&state, &next(), &design, now), 1);
+        let all = state.read(&next(), &repo(), true, now).unwrap();
+        assert_eq!(all.len(), 6);
+    }
+
+    /// A message to a session that is no member of the thread yet wakes
+    /// it: the join comes first, and the message is unread.
+    #[test]
+    fn a_message_to_a_new_member_is_unread_and_the_history_is_not() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        post(&mut state, &api(), "design", &[], "old 1");
+        post(&mut state, &api(), "design", &[], "old 2");
+        post(&mut state, &api(), "design", &["session=b2"], "for you");
+        let design = thread("design");
+        assert_eq!(unread_in(&state, &tests(), &design, now), 1);
+        assert_eq!(state.missed(tests().who()).unwrap().seq, 3);
+    }
+
+    /// The server starts from a checkpoint and the records after it: a
+    /// join and a new lead in those records change the cursors as they
+    /// did live. The checkpoint holds the cursor of the lead before.
+    #[test]
+    fn a_start_from_a_checkpoint_gives_a_new_lead_the_cursors_of_the_lead_before_it() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        five_messages_the_lead_read_three_of(&mut state, now);
+        let before = state.take_queue();
+        let checkpoint = through_json(&state, now);
+        state.register(&next(), now);
+        state.lead(&next(), now).unwrap();
+        let after = state.take_queue();
+
+        let loaded = State::load(Some(checkpoint), after.clone(), now, T0);
+        assert_eq!(unread_in(&loaded, &next(), &repo(), now), 2);
+        assert_eq!(unread_in(&loaded, &api(), &repo(), now), 2);
+
+        // The log holds no read. In a full replay the lead before has no
+        // cursor to give, and B keeps the cursor of its join.
+        let replayed = State::replay(before.into_iter().chain(after), now, T0);
+        assert_eq!(unread_in(&replayed, &api(), &repo(), now), 5);
+        assert_eq!(unread_in(&replayed, &next(), &repo(), now), 0);
     }
 
     #[test]

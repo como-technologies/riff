@@ -3304,6 +3304,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   found. `@lead`, `@USER` and a line with no name still wake each lead
   of the user. A chat line shows a lead as `[USER's lead, REPO]`, with
   the name of its repository.
+- **01M5QVD3B1GT7STHBQS7NK4DR0** A session starts each thread that it
+  joins at the newest message of the thread: the messages before its
+  join are not unread, and `read` with `all` shows them. A session that
+  becomes the lead of its user in a repository takes the read cursors of
+  the lead before it, in each thread that both joined. So its unread
+  messages in those threads are the messages that the lead before it did
+  not read.
 
 ## Security
 
