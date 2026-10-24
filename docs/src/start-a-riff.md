@@ -531,9 +531,11 @@ A repository whose ruleset of the default branch requires checks
 already needs no job `Gate`. riff reads the required checks of that
 ruleset. The full check is each of them but `riff/verify`. riff starts
 the verify of a pull request when each of them passed or ended on its
-head. A pass of `riff verify pass` needs a success of each of them.
-riff reads the rulesets of GitHub, and not the branch protection of
-the old kind.
+head. A pass of `riff verify pass` needs a success of each of them. A
+check that GitHub skipped, or that ended `neutral`, counts as a success.
+The daemon watches `main` with the same checks: see
+[When main breaks](how-it-works.md#when-main-breaks). riff reads the
+rulesets of GitHub, and not the branch protection of the old kind.
 
 To see the checks that riff waits for:
 

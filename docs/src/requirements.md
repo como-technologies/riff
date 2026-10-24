@@ -810,6 +810,12 @@
   name. A pass, and the start of a verify, need each check to be done:
   the pass needs a `success` of each. The line of a refused pass names
   the checks. Supersedes 01M49HAZ7P3JMWNCG1SWCMAXQP in part.
+- **01M5R13DE5XRWB13E0BQ17C80F** A check of the full check that ends
+  `skipped` or `neutral` counts as a success, as on GitHub: `riff verify
+  pass`, `riff release verify`, the verify of the wave and the look at
+  `main` use one rule. A conclusion of `failure`, `timed_out`,
+  `cancelled`, `stale` or `action_required` is no success. Supersedes
+  01M5QYDE41FVFX26EC8K5QGYH4 in part.
 
 ## Tokens on GitHub
 
@@ -6589,6 +6595,15 @@ part when they merge.
   the quiet limit for it, not the grace (01M5P26VPJA73WCPVZY6CPG9HD).
   When the list is empty, the grace of 60 seconds counts from the last
   event. It supersedes 01M5P26VPJA73WCPVZY6CPG9HD in part.
+- **01M5R13DGMTNWPY88A3EG49WWS** The look of the daemon watches the head
+  commit of `main` with the full check of the repository
+  (01M5QYDE41FVFX26EC8K5QGYH4), not with the check run `Gate`. It reads
+  the required checks of the default branch at each look, and the check
+  runs of each of them on `main`. `main` is broken when a check ended
+  with `failure` or `timed_out`, and passed when each check passed. A
+  check that runs, a cancelled check and a head with no run of any check
+  give nothing. The messages, the fix item and the note say "the full
+  check". Supersedes 01M51QEYKTD7ZEB0YA0C3MQTPN in part.
 
 ### The lead, the view and the takeover
 
@@ -8364,6 +8379,11 @@ items of Wave C that end riff-server in the Backlog
   `don't` does not approve. A message of the owner or of an admin with
   `stop` or `wait` after the approval cancels it, and the lead stops
   before the next step.
+- **01M5R13DK401K3TZ91E2QK2DYM** The refusal of `riff release verify`
+  for the full check of the head commit names the commit, the checks of
+  the full check and their state, as the line of `riff verify pass`
+  does. The full check is the same as for 01M5QYDE41FVFX26EC8K5QGYH4.
+  Supersedes 01M5ND0ZNFFAPT1AWD3DP1Y77N in part.
 
 ### The release cycle
 

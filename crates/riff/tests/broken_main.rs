@@ -1,9 +1,9 @@
 //! riff finds a broken `main` at once (#874): the look of the lead reads
-//! the Gate of `main` from a fake `gh`, against a real server
+//! the full check of `main` from a fake `gh`, against a real server
 //! (01M51QEYKTD7ZEB0YA0C3MQTPN to 01M51QEYVQN74Q1VDTVHB0445Q). A failed
-//! Gate gives one message to the lead with the run and the failed jobs,
+//! full check gives one message to the lead with the run and the failed jobs,
 //! and riff files one fix item. The rollout gives the fix item first.
-//! When the Gate passes again, riff closes the fix item.
+//! When the full check passes again, riff closes the fix item.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -32,6 +32,8 @@ printf '\n' >> "$dir/gh.log"
 case "$1 $2" in
   api*)
     case "$2" in
+      repos/como-technologies/riff) echo '{"default_branch":"main"}' ;;
+      */rules/branches/main*) echo '[]' ;;
       */commits/main/check-runs*) cat "$dir/gate" ;;
       */actions/runs/38861280871/jobs*) cat "$dir/jobs" ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
@@ -117,10 +119,10 @@ fn forge(dir: &Path) -> Arc<Gh> {
     Arc::new(Gh::at(path))
 }
 
-/// The Gate of the head `commit` of `main` ended with `conclusion`.
+/// The full check of the head `commit` of `main` ended with `conclusion`.
 fn gate(dir: &Path, commit: &str, conclusion: &str) {
     let json = format!(
-        r#"[{{"status":"completed","conclusion":"{conclusion}","head_sha":"{commit}","html_url":"{RUN}/job/1"}}]"#
+        r#"{{"check_runs":[{{"status":"completed","conclusion":"{conclusion}","head_sha":"{commit}","html_url":"{RUN}/job/1"}}]}}"#
     );
     std::fs::write(dir.join("gate"), json).unwrap();
 }
@@ -166,9 +168,9 @@ fn free_work(gh: &Gh) -> Vec<String> {
     riff::rollout::free_work(gh, REPO, &HashSet::new(), &HashSet::new()).unwrap()
 }
 
-/// A failed Gate of a commit of `main` gives one message to the lead with
+/// A failed full check of a commit of `main` gives one message to the lead with
 /// the run and the failed jobs, and riff files one fix item. The rollout
-/// gives the fix item first, before a verify. When the Gate passes
+/// gives the fix item first, before a verify. When the full check passes
 /// again, riff closes the free fix item and tells the lead in a note
 /// (01M51QEYKTD7ZEB0YA0C3MQTPN, 01M51QEYPGD6W345MZ4F85C38F,
 /// 01M51QEYS538XA58KDRY844T52, 01M51QEYVQN74Q1VDTVHB0445Q).
@@ -187,7 +189,7 @@ async fn a_failed_gate_of_main_tells_the_lead_once_and_the_rollout_gives_the_fix
         [(
             Kind::Message,
             format!(
-                "main is broken: the Gate failed at commit 5103311 ({RUN}). Failed jobs: Clippy, \
+                "main is broken: the full check failed at commit 5103311 ({RUN}). Failed jobs: Clippy, \
                  Tests 1/4. The fix item is #901: the rollout gives it to a worker before each \
                  other item. When a pull request already has the fix, hold #901."
             )
@@ -197,7 +199,7 @@ async fn a_failed_gate_of_main_tells_the_lead_once_and_the_rollout_gives_the_fix
     let created = calls(dir.path(), "issue create");
     assert_eq!(created.len(), 1, "{created:?}");
     assert!(
-        created[0].contains("--title main is broken at 5103311: the Gate failed")
+        created[0].contains("--title main is broken at 5103311: the full check failed")
             && created[0].contains("--label broken-main")
             && created[0].contains("--milestone Wave 1"),
         "{created:?}"
@@ -210,7 +212,7 @@ async fn a_failed_gate_of_main_tells_the_lead_once_and_the_rollout_gives_the_fix
         "{body}"
     );
 
-    // The same Gate at the next look: no message, and no second fix item.
+    // The same failure at the next look: no message, and no second fix item.
     look_at(&api, &lead, &gh, &mut pulls, &mut main).await;
     assert!(posts(&api, &lead).await.is_empty());
     assert_eq!(calls(dir.path(), "issue create").len(), 1);
@@ -219,7 +221,7 @@ async fn a_failed_gate_of_main_tells_the_lead_once_and_the_rollout_gives_the_fix
     // The rollout gives the fix item first.
     assert_eq!(free_work(&gh), ["issue-901", "verify-issue-2", "issue-1"]);
 
-    // The fix merges, and the Gate of main passes.
+    // The fix merges, and the full check of main passes.
     gate(dir.path(), "c0ffee1234", "success");
     look_at(&api, &lead, &gh, &mut pulls, &mut main).await;
     assert_eq!(
@@ -227,7 +229,7 @@ async fn a_failed_gate_of_main_tells_the_lead_once_and_the_rollout_gives_the_fix
         [(
             Kind::Note,
             format!(
-                "main passes again: the Gate passed at commit c0ffee1 ({RUN}). riff closed the \
+                "main passes again: the full check passed at commit c0ffee1 ({RUN}). riff closed the \
                  fix item #901."
             )
         )]
@@ -241,9 +243,9 @@ async fn a_failed_gate_of_main_tells_the_lead_once_and_the_rollout_gives_the_fix
     assert!(posts(&api, &lead).await.is_empty());
 }
 
-/// While main stays broken, a failed Gate at a newer commit gives a note
+/// While main stays broken, a failed full check at a newer commit gives a note
 /// and a comment on the open fix item, not a second item. A fix item that
-/// a session claims stays open when the Gate passes again
+/// a session claims stays open when the full check passes again
 /// (01M51QEYKTD7ZEB0YA0C3MQTPN, 01M51QEYPGD6W345MZ4F85C38F,
 /// 01M51QEYVQN74Q1VDTVHB0445Q).
 #[tokio::test(flavor = "multi_thread")]
@@ -258,10 +260,10 @@ async fn a_newer_failed_gate_comments_on_the_fix_item_and_a_claimed_fix_item_sta
     assert_eq!(first.len(), 1, "{first:?}");
     assert_eq!(first[0].0, Kind::Message);
 
-    // A Gate that runs at the new head: nothing.
+    // A full check that runs at the new head: nothing.
     std::fs::write(
         dir.path().join("gate"),
-        r#"[{"status":"in_progress","conclusion":null,"head_sha":"c0ffee1234"}]"#,
+        r#"{"check_runs":[{"status":"in_progress","conclusion":null,"head_sha":"c0ffee1234"}]}"#,
     )
     .unwrap();
     look_at(&api, &lead, &gh, &mut pulls, &mut main).await;
@@ -274,7 +276,7 @@ async fn a_newer_failed_gate_comments_on_the_fix_item_and_a_claimed_fix_item_sta
         [(
             Kind::Note,
             format!(
-                "main is still broken: the Gate failed at commit c0ffee1 ({RUN}) too. Failed \
+                "main is still broken: the full check failed at commit c0ffee1 ({RUN}) too. Failed \
                  jobs: Clippy, Tests 1/4. The fix item #901 has a comment with this run."
             )
         )]
@@ -284,7 +286,7 @@ async fn a_newer_failed_gate_comments_on_the_fix_item_and_a_claimed_fix_item_sta
     assert!(comments[0].contains("at commit c0ffee1"), "{comments:?}");
     assert_eq!(calls(dir.path(), "issue create").len(), 1);
 
-    // A worker claims the fix item. Then the Gate passes: the item stays.
+    // A worker claims the fix item. Then the full check passes: the item stays.
     let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1#issue-901"
         .parse()
         .unwrap();
@@ -297,7 +299,7 @@ async fn a_newer_failed_gate_comments_on_the_fix_item_and_a_claimed_fix_item_sta
         [(
             Kind::Note,
             format!(
-                "main passes again: the Gate passed at commit d00d123 ({RUN}). The fix item #901 \
+                "main passes again: the full check passed at commit d00d123 ({RUN}). The fix item #901 \
                  stays open: a session claims it, or a pull request names it."
             )
         )]

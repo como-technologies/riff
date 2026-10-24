@@ -21,7 +21,7 @@
 //! ```mermaid
 //! flowchart TD
 //!     A["wait for room (crate::room)"] --> S["sweep: the clone of each item whose work is over goes"]
-//!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the Gate of each waiting pull request"]
+//!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the full check of each waiting pull request"]
 //!     L --> P{"pick"}
 //!     P -- "an item, and a fact of the host fails" --> W
 //!     P -- "no work" --> W["give the room back; wait for an end, or LOOK_EVERY"] --> A
@@ -78,13 +78,13 @@
 //! for the item, with the start text of a rebase
 //! ([`text::wave_rebase_start`]): rebase the branch on `main`, resolve
 //! the conflict, run the checks, and push to the same pull request
-//! (01M57FJ3WWMQSDBFRRHXN3SMFQ). A new Gate and a new verify of the new
+//! (01M57FJ3WWMQSDBFRRHXN3SMFQ). A new full check and a new verify of the new
 //! head follow. The verify is a new session, as each verify is.
 //!
 //! ```mermaid
 //! flowchart LR
 //!     C["auto-merge on, CONFLICTING,<br/>no failed verify"] --> R["a build: Work::Rebase<br/>at the head commit"]
-//!     R -- "a push" --> V["a new head: a new Gate, then a new verify"]
+//!     R -- "a push" --> V["a new head: a new full check, then a new verify"]
 //!     R -- "no push" --> L["a message to the lead"]
 //! ```
 //!
@@ -117,7 +117,7 @@
 //!     S["riff wave run"] --> L["the loop: the work"]
 //!     S --> W["the look, each minute"]
 //!     W --> P["a pull request that stops:<br/>a message to its holder or the lead"]
-//!     W --> M["the Gate of main:<br/>a message, the fix item, a note"]
+//!     W --> M["the full check of main:<br/>a message, the fix item, a note"]
 //!     X["riff wave stop"] --> E["the loop and the look end"]
 //! ```
 //!
@@ -135,7 +135,7 @@
 //!     C -- "no" --> A{"auto-merge off?"}
 //!     A -- "yes" --> N["a message to the lead,<br/>with the command gh pr merge --auto --squash N"]
 //!     A -- "no" --> W["it merges by itself"]
-//!     B -- "a push" --> V["a new Gate and a new verify of the new head"]
+//!     B -- "a push" --> V["a new full check and a new verify of the new head"]
 //!     B -- "no push, the check still failed" --> L["a message to the lead"]
 //!     B -- "no push, the check runs again" --> T["a note to the lead"]
 //! ```
@@ -3753,12 +3753,13 @@ dir=$(dirname "$0")
 printf '%s' "$*" | tr '\n' ' ' >> "$dir/gh.log"
 printf '\n' >> "$dir/gh.log"
 show() { if [ -e "$dir/$1" ]; then cat "$dir/$1"; else echo '[]'; fi; }
+runs() { if [ -e "$dir/$1" ]; then cat "$dir/$1"; else echo '{"check_runs":[]}'; fi; }
 case "$1 $2" in
   api*)
     case "$2" in
       repos/o/r) echo '{"default_branch":"main"}' ;;
       */rules/branches/main*) show rules ;;
-      */commits/main/check-runs*) show gate ;;
+      */commits/main/check-runs*) runs gate ;;
       *check_name=Gate) echo '{"check_runs":[]}' ;;
       *check_name=checks%20%2F%20docs) show docs ;;
       *check_name=checks%20%2F%20*) echo '{"check_runs":[{"status":"completed","conclusion":"success"}]}' ;;
@@ -3790,7 +3791,7 @@ esac
     /// The Gate of the head `commit` of `main` ended with `conclusion`.
     fn gate(commit: &str, conclusion: &str) -> String {
         format!(
-            r#"[{{"status":"completed","conclusion":"{conclusion}","head_sha":"{commit}","html_url":"{RUN}/job/1"}}]"#
+            r#"{{"check_runs":[{{"status":"completed","conclusion":"{conclusion}","head_sha":"{commit}","html_url":"{RUN}/job/1"}}]}}"#
         )
     }
 
@@ -3889,12 +3890,9 @@ esac
             commit: "c1".into(),
         };
         assert_eq!(here.forge().works, [verify]);
-        // The watch of `main` reads its own Gate: the head of the pull
-        // request has no such call.
-        assert!(
-            here.calls("/commits/c1/check-runs?check_name=Gate")
-                .is_empty()
-        );
+        // Neither the pull request nor the watch of `main` asks for the
+        // check `Gate`: both read the required checks.
+        assert!(here.calls("check_name=Gate").is_empty());
         assert!(!here.calls("/rules/branches/main").is_empty());
     }
 
@@ -3918,7 +3916,7 @@ esac
         assert_eq!(
             body,
             format!(
-                "main is broken: the Gate failed at commit 5103311 ({RUN}). Failed jobs: Clippy. \
+                "main is broken: the full check failed at commit 5103311 ({RUN}). Failed jobs: Clippy. \
                  The fix item is #901: the rollout gives it to a worker before each other item. \
                  When a pull request already has the fix, hold #901."
             )
@@ -3944,7 +3942,7 @@ esac
         assert_eq!(
             body,
             format!(
-                "main passes again: the Gate passed at commit d00d123 ({RUN}). riff closed the \
+                "main passes again: the full check passed at commit d00d123 ({RUN}). riff closed the \
                  fix item #901."
             )
         );
@@ -3952,6 +3950,54 @@ esac
         here.looks_more(3).await;
         assert_eq!(here.posts().len(), 2);
         assert_eq!(here.calls("issue close").len(), 1);
+    }
+
+    /// #1393, 01M5R13DGMTNWPY88A3EG49WWS: the repository has no check
+    /// named `Gate`. Its ruleset requires `checks / test`. A failure of
+    /// `checks / test` on the head of `main` tells the lead one time and
+    /// files the fix item, and the daemon never asks for the check `Gate`.
+    #[tokio::test]
+    async fn the_daemon_watches_main_with_the_required_checks_and_not_the_gate() {
+        let here = Here::looking().await;
+        here.put(
+            "rules",
+            r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[
+                {"context":"checks / test"},{"context":"riff/verify"}]}}]"#,
+        );
+        here.put(
+            "jobs",
+            r#"[{"name":"checks / test","conclusion":"failure"}]"#,
+        );
+        here.put("gate", &gate("5103311abcdef", "failure"));
+        here.run();
+        here.until(0, |h| h.posts().len() == 1).await;
+        let (to, kind, body) = here.posts().remove(0);
+        assert_eq!((to, kind), (None, Kind::Message));
+        assert_eq!(
+            body,
+            format!(
+                "main is broken: the full check failed at commit 5103311 ({RUN}). Failed jobs: \
+                 checks / test. The fix item is #901: the rollout gives it to a worker before \
+                 each other item. When a pull request already has the fix, hold #901."
+            )
+        );
+        let created = here.calls("issue create");
+        assert_eq!(created.len(), 1, "{created:?}");
+        assert!(
+            created[0].contains("--title main is broken at 5103311: the full check failed"),
+            "{created:?}"
+        );
+
+        // The same failure at the next looks: no message, no second fix item.
+        here.looks_more(3).await;
+        assert_eq!(here.posts().len(), 1);
+        assert_eq!(here.calls("issue create").len(), 1);
+        assert!(
+            !here
+                .calls("/commits/main/check-runs?check_name=checks%20%2F%20test")
+                .is_empty()
+        );
+        assert!(here.calls("check_name=Gate").is_empty());
     }
 
     /// A post that does not go out comes again at the next look, and

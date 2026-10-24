@@ -603,6 +603,34 @@ async fn verify_pass_needs_the_required_checks_of_a_repository_with_no_gate() {
     );
 }
 
+/// #1393, 01M5R13DE5XRWB13E0BQ17C80F: a required check that ends
+/// `skipped` or `neutral` counts as a pass on GitHub, so it counts for
+/// `riff verify pass` too.
+#[tokio::test]
+async fn verify_pass_counts_a_skipped_or_neutral_required_check_as_a_pass() {
+    let fake = without_gate(|name| {
+        let conclusion = match name {
+            "checks / docs" => r#""skipped""#,
+            "checks / the lowest Rust version" => r#""neutral""#,
+            _ => r#""success""#,
+        };
+        check_run(name, "completed", conclusion)
+    });
+    let machine = Machine::new(&fake).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let pass = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.ok("verifier", &pass).await;
+    assert!(out.contains("Woke mike@thelio:"), "{out}");
+    let calls = log(machine.bin.path());
+    assert!(
+        calls.contains("statuses/1a2b3c4d -f state=success"),
+        "{calls}"
+    );
+}
+
 /// A required check that runs or failed stops the pass, and
 /// the line names the four checks. A fail needs none of them.
 #[tokio::test]
