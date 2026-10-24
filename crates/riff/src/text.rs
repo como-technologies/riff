@@ -6812,6 +6812,23 @@ pub fn wave_no_verify(
     )
 }
 
+/// A build of a wave ended, and the head commit of its pull request is a
+/// WIP commit, for example at a pause. The daemon sends no verify request.
+///
+/// ```
+/// let body = riff::text::wave_wip_head("issue-12", 40, "worktree-issue-12", "1a2b3c4d5e", "9f8e7d6c");
+/// assert!(body.contains("sends no verify request"), "{body}");
+/// assert!(body.contains("WIP commit"), "{body}");
+/// ```
+pub fn wave_wip_head(item: &str, number: u64, branch: &str, commit: &str, session: &str) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "{item}: the session of the wave ended, and the item is free. The head of PR #{number}, \
+         branch {branch}, is the WIP commit {commit} (session {session}). The riff daemon sends \
+         no verify request. The item goes back to a build when the riff runs again."
+    )
+}
+
 /// A build of a wave ended with no open pull request.
 pub fn wave_no_pull(item: &str, branch: &str, clone: &Path) -> String {
     format!(
