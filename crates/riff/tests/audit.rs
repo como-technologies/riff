@@ -16,16 +16,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use isolated::Isolated;
-use riff_client::api::Api;
-use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::record::{
     By, Change, Claimed, Envelope, Member, PauseSet, Posted, Record, Released, Scope,
     SessionStarted,
 };
 use riff_core::wire::{Message, RiffState, StartReason};
-use riff_server::Service;
-use riff_server::auth::Config;
 use riff_state::log::{self, chunk_name};
 use riff_state::store::{Memory, Store};
 use serde_json::json;
@@ -175,47 +171,31 @@ fn with(records: Vec<Record>) -> Vec<Record> {
 }
 
 /// A real server of this build that loads `records` as its log, with
-/// sign-in. Its owner is mike, signed in with the files of `home`.
-async fn server(records: Vec<Record>, home: &Isolated) -> (Service, String) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let service = serve(records, home, listener, &url).await;
-    (service, url)
+/// sign-in ([`common::start_signed_at`]). Its owner is brett. The
+/// commands of mike are signed in by [`Machine`].
+async fn server(records: Vec<Record>) -> common::Signed {
+    let (listener, url) = common::listen().await;
+    serve_split(records, 0, listener, &url).await.0
 }
 
 /// As [`server`], for a server whose public address is `public`, for
-/// example a proxy in front of it. It gives the address that it listens
-/// on.
-async fn server_at(records: Vec<Record>, home: &Isolated, public: &str) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let service = serve(records, home, listener, public).await;
-    // The service lives as long as the test.
-    std::mem::forget(service);
-    url
-}
-
-/// Loads `records` as the log of a real server with sign-in, serves it
-/// on `listener`, and signs in mike as its owner. `url` is the public
-/// address of the server.
-async fn serve(
+/// example a proxy in front of it, and that listens on `listener`.
+async fn server_at(
     records: Vec<Record>,
-    home: &Isolated,
     listener: tokio::net::TcpListener,
-    url: &str,
-) -> Service {
-    serve_split(records, 0, home, listener, url).await.0
+    public: &str,
+) -> common::Signed {
+    serve_split(records, 0, listener, public).await.0
 }
 
-/// As [`serve`], with the log in two chunks when `split` is not 0: the
+/// As [`server`], with the log in two chunks when `split` is not 0: the
 /// first `split` records, and the rest. It gives the store too.
 async fn serve_split(
     records: Vec<Record>,
     split: usize,
-    home: &Isolated,
     listener: tokio::net::TcpListener,
     url: &str,
-) -> (Service, Memory) {
+) -> (common::Signed, Memory) {
     let store = Memory::default();
     let records: Vec<Record> = records
         .into_iter()
@@ -231,51 +211,16 @@ async fn serve_split(
             .await
             .unwrap();
     }
-    let config = Config {
-        require_sign_in: true,
-        lease: riff_server::lease::Timing {
-            wait: Duration::from_millis(50),
-            read_every: Duration::from_millis(50),
-            valid_for: Duration::from_millis(500),
-            exit_after: Duration::from_secs(1),
-            ..Default::default()
-        },
-        ..Config::new(url)
+    let lease = riff_server::lease::Timing {
+        wait: Duration::from_millis(50),
+        read_every: Duration::from_millis(50),
+        valid_for: Duration::from_millis(500),
+        exit_after: Duration::from_secs(1),
+        ..Default::default()
     };
-    let service = Service::load(config, Arc::new(store.clone()))
-        .await
-        .unwrap();
-    let router = service.router();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    sign_in(&service, url, home, "mike@comotechnologies.io", false).await;
-    (service, store)
-}
-
-/// Signs in `email` with a new device key, and keeps both in the
-/// secret files of the `RIFF_HOME` of `home`. With `allowed`, the
-/// email is of an allowed domain, so a person who is no member joins.
-async fn sign_in(service: &Service, url: &str, home: &Isolated, email: &str, allowed: bool) {
-    let dir = home.riff_home().join("secrets");
-    let key = Key::generate();
-    riff_client::secrets::file_set(
-        &dir,
-        &riff_client::device::secret_name(url),
-        &key.to_secret(),
-    )
-    .unwrap();
-    let pair = service
-        .admit(email, allowed, &key.thumbprint())
-        .await
-        .unwrap();
-    let sign_in = riff_client::login::SignIn {
-        user: pair.user,
-        access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
-        expires_at: u64::MAX,
-        riff_id: service.riff_id(),
-    };
-    let json = serde_json::to_string(&sign_in).unwrap();
-    riff_client::secrets::file_set(&dir, &riff_client::login::secret_name(url), &json).unwrap();
+    let loaded = (Arc::new(store.clone()) as Arc<dyn Store>, lease);
+    let server = common::start_signed_at(listener, url, Some(loaded)).await;
+    (server, store)
 }
 
 /// A clone of `como-technologies/riff`, and the fake `gh` with the
@@ -284,6 +229,8 @@ async fn sign_in(service: &Service, url: &str, home: &Isolated, email: &str, all
 /// 41 are merged at 30 s and 60 s, each with a pass.
 struct Machine {
     env: Isolated,
+    /// Who the commands sign in as: a person of [`common::PEOPLE`].
+    login: &'static str,
     bin: tempfile::TempDir,
     repo: tempfile::TempDir,
 }
@@ -331,6 +278,7 @@ impl Machine {
         write("statuses-bbb.json", pass);
         Machine {
             env: Isolated::new(),
+            login: "mike",
             bin,
             repo: repo(),
         }
@@ -338,6 +286,7 @@ impl Machine {
 
     /// `riff ARGS` against `server`, with the fake `gh` first in `PATH`.
     fn riff(&self, server: &str, args: &[&str]) -> Command {
+        common::sign_in(server, &self.env.riff_home(), self.login);
         let path = format!(
             "{}:{}",
             self.bin.path().display(),
@@ -363,7 +312,7 @@ impl Machine {
     /// `riff audit --wave "Wave 2"` on a server that loads `records`:
     /// whether it exits with 0, and its stdout.
     async fn audit(&self, records: Vec<Record>) -> (bool, String) {
-        let (_service, url) = server(records, &self.env).await;
+        let url = server(records).await;
         let out = self.run(&url, &["audit", "--wave", "Wave 2"]).await;
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(stderr.is_empty(), "{stderr}");
@@ -438,7 +387,7 @@ async fn the_number_finds_a_wave_with_a_name() {
             .replace("\"Wave 2\"", "\"Wave 2: Hosts\"");
         std::fs::write(&path, named).unwrap();
     }
-    let (_service, url) = server(good(), &machine.env).await;
+    let url = server(good()).await;
     for wave in ["Wave 2", "2", "Wave 2: Hosts"] {
         let out = machine.run(&url, &["audit", "--wave", wave]).await;
         let text = String::from_utf8(out.stdout).unwrap();
@@ -478,7 +427,9 @@ async fn a_record_of_a_later_kind_in_the_log_reply_is_skipped() {
     // puts a record of a later kind in the reply of the log.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy = format!("http://{}", listener.local_addr().unwrap());
-    let real = server_at(good(), &machine.env, &proxy).await;
+    let behind = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let real = format!("http://{}", behind.local_addr().unwrap());
+    let _server = server_at(good(), behind, &proxy).await;
     let later = json!({"position": 2, "written_at_ms": BASE + 10_500, "command": "plan",
         "change": {"plan_set": {"thread": "como-technologies/riff", "items": []}}});
     let forward = move |request: axum::extract::Request| {
@@ -629,10 +580,9 @@ async fn rule_7_fails_a_request_that_is_not_from_the_lead() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn only_the_owner_and_the_admins_read_the_log() {
-    let owner = Machine::new();
-    let (service, url) = server(good(), &owner.env).await;
-    let member = Machine::new();
-    sign_in(&service, &url, &member.env, "bob@comotechnologies.io", true).await;
+    let url = server(good()).await;
+    let mut member = Machine::new();
+    member.login = "bob";
     let out = member.run(&url, &["audit", "--wave", "Wave 2"]).await;
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -645,7 +595,6 @@ async fn only_the_owner_and_the_admins_read_the_log() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_log_has_only_the_records_of_the_repository_and_no_body() {
     common::mock_keyring();
-    let home = Isolated::new();
     let mut records = good();
     // A claim in another repository.
     records.push(record(
@@ -657,21 +606,8 @@ async fn the_log_has_only_the_records_of_the_repository_and_no_body() {
             item: "issue-1".into(),
         }),
     ));
-    let (service, url) = server(records, &home).await;
-    let jkt = riff_client::device::key(&url).unwrap().thumbprint();
-    let pair = service
-        .admit("mike@comotechnologies.io", false, &jkt)
-        .await
-        .unwrap();
-    let sign_in = riff_client::login::SignIn {
-        user: pair.user,
-        access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
-        expires_at: u64::MAX,
-        riff_id: service.riff_id(),
-    };
-    riff_client::login::store(&url, &sign_in).unwrap();
-    let api = Api::new(&url).signed_in(None).unwrap();
+    let url = server(records).await;
+    let api = url.api("mike", None);
     let log = api.log(&thread()).await.unwrap();
     assert_eq!(log.records.len(), good().len());
     let bodies: Vec<&str> = log
@@ -688,15 +624,9 @@ async fn the_log_has_only_the_records_of_the_repository_and_no_body() {
 /// A server whose log is in two chunks: the first `split` records of
 /// `records`, and the rest. With `prune`, the checkpoint rule removed the
 /// first chunk after the start, so the oldest chunk starts after 1.
-async fn split_server(
-    records: Vec<Record>,
-    split: usize,
-    home: &Isolated,
-) -> (Service, String, Memory) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let (service, store) = serve_split(records, split, home, listener, &url).await;
-    (service, url, store)
+async fn split_server(records: Vec<Record>, split: usize) -> (common::Signed, Memory) {
+    let (listener, url) = common::listen().await;
+    serve_split(records, split, listener, &url).await
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -704,7 +634,7 @@ async fn after_a_prune_the_audit_reads_the_kept_log_and_says_what_it_does_not_se
     let machine = Machine::new();
     // The records 1 to 4 are gone: the oldest kept record is the claim
     // of issue-7 at 14 s, after the start of the span at 5 s.
-    let (_service, url, store) = split_server(good(), 4, &machine.env).await;
+    let (url, store) = split_server(good(), 4).await;
     store.delete(&chunk_name(1)).await.unwrap();
     assert_eq!(log::chunks(&store).await.unwrap()[0].0, 5);
 
@@ -743,7 +673,7 @@ async fn after_a_prune_the_audit_reads_the_kept_log_and_says_what_it_does_not_se
 #[tokio::test(flavor = "multi_thread")]
 async fn a_log_that_does_not_read_gives_the_client_no_fix_that_deletes_the_store() {
     let machine = Machine::new();
-    let (_service, url, store) = split_server(good(), 0, &machine.env).await;
+    let (url, store) = split_server(good(), 0).await;
     let broken = chunk_name(1000);
     store.save(&broken, b"[]".to_vec(), None).await.unwrap();
 

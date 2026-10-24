@@ -286,14 +286,39 @@ pub const PEOPLE: &[&str] = &["brett", "mike", "bob"];
 /// Starts a [`Signed`] server on a free port.
 pub async fn start_signed() -> Signed {
     let (listener, url) = listen().await;
-    let service = riff_server::Service::new(riff_server::auth::Config {
+    start_signed_at(listener, &url, None).await
+}
+
+/// The store that a server loads, and the timing of its lease.
+pub type Loaded = (
+    Arc<dyn riff_state::store::Store>,
+    riff_server::lease::Timing,
+);
+
+/// As [`start_signed`], for a server that listens on `listener` and whose
+/// public address is `url`, for example a proxy in front of it. With
+/// `loaded`, the server loads that store.
+pub async fn start_signed_at(
+    listener: tokio::net::TcpListener,
+    url: &str,
+    loaded: Option<Loaded>,
+) -> Signed {
+    let url = url.to_owned();
+    let mut config = riff_server::auth::Config {
         require_sign_in: true,
         admins: PEOPLE[..2]
             .iter()
             .map(|user| format!("{user}@comotechnologies.io"))
             .collect(),
         ..riff_server::auth::Config::new(&url)
-    });
+    };
+    let service = match loaded {
+        Some((store, lease)) => {
+            config.lease = lease;
+            riff_server::Service::load(config, store).await.unwrap()
+        }
+        None => riff_server::Service::new(config),
+    };
     let calls = Calls::default();
     let refused = Calls::default();
     let (seen, noted) = (calls.clone(), refused.clone());

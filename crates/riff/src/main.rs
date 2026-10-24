@@ -1803,6 +1803,7 @@ async fn main() -> Result<()> {
     {
         let thread = thread_or_default(thread.clone(), &here)?;
         let me = person(&api)?;
+        let api = api.signed_in(None)?;
         let file = command
             .as_ref()
             .map(|NotesCommand::Edit { file }| file.as_deref());

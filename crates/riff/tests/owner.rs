@@ -51,6 +51,8 @@ fn config(url: &str, timing: Timing) -> Config {
 /// A server with these times of the owner role. ada is the owner. bob
 /// and carol are admins. Each of them has a live lead session in the
 /// repository.
+// Not `common::start_signed`: it needs the owner timing and its own people (ada, bob, carol), and
+// sessions that register with no token.
 async fn start(timing: Timing) -> (Service, Api, Vec<TokenReply>) {
     let (listener, url) = common::listen().await;
     let service = Service::new(config(&url, timing));

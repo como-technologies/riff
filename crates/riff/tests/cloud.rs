@@ -14,7 +14,6 @@ use std::process::{Command, Output};
 use crate::book;
 
 use isolated::Isolated;
-use riff_client::api::Api;
 use riff_core::name::{SessionUri, Who};
 
 /// The folder of the settings files of the repository.
@@ -1338,35 +1337,32 @@ fn a_worker_runs_the_reads() {
     }
 }
 
-/// A riff-server on a free port of this machine.
-async fn start_server() -> Api {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    Api::new(&format!("http://{addr}"))
-}
-
 /// In an agent session, only the lead of its user runs a write. A
 /// session that is not the lead gets a refusal, and riff calls no
 /// `gcloud` (01M558C4VZ2PSMEYPAZBRYW1VV).
 #[tokio::test(flavor = "multi_thread")]
 async fn each_write_refuses_in_a_session_that_is_not_the_lead() {
-    let api = start_server().await;
+    let server = crate::common::start_signed().await;
     let cloud = Cloud::new().found(&["run services describe riff-stage "]);
     let dir = fs::canonicalize(cloud.top.path()).unwrap();
     let place = riff::identity::place_in(&dir, "pangolin").unwrap();
     for id in ["a1", "a2"] {
         let who = Who::new("mike", Some(id)).unwrap();
-        api.register(&SessionUri::new(who, place.clone()))
+        let me = SessionUri::new(who, place.clone());
+        crate::common::api_of(&server, &me)
+            .register(&me)
             .await
             .unwrap();
     }
     let a1 = SessionUri::new(Who::new("mike", Some("a1")).unwrap(), place.clone());
-    crate::common::name_lead(&api, &a1).await;
+    crate::common::name_lead(
+        &crate::common::api_of(&server, &crate::common::person_of(&a1)),
+        &a1,
+    )
+    .await;
+    crate::common::sign_in(&server, &cloud.env.riff_home(), "mike");
     let cloud = cloud
-        .var("RIFF_SERVER", api.base())
+        .var("RIFF_SERVER", &server)
         .var("RIFF_HOST", "pangolin")
         .var("RIFF_SESSION", "a2");
     let before = cloud.text("stage.env");

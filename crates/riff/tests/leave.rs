@@ -13,20 +13,13 @@ use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
 use serde_json::json;
 
-async fn start_server() -> Api {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    Api::new(&format!("http://{addr}"))
-}
+use crate::common;
 
 /// Registers `me` in a running riff, and connects an MCP client to
 /// `tools`.
 async fn connect(api: &Api, tools: Tools, me: &SessionUri) -> RunningService<RoleClient, ()> {
     api.register(me).await.unwrap();
-    crate::common::name_lead(api, me).await;
+    common::name_lead(&common::api_of(api.base(), &common::person_of(me)), me).await;
     api.set_riff(me, riff_core::wire::RiffState::Running)
         .await
         .unwrap();
@@ -123,14 +116,16 @@ async fn a_leave_pushes_the_work_frees_the_claims_and_a_join_comes_back() {
     let root = tempfile::tempdir().unwrap();
     let run = tempfile::tempdir().unwrap();
     let work = clone_on(root.path(), "worktree-issue-12");
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let mike: SessionUri = MIKE.parse().unwrap();
+    let api = common::api_of(&server, &mike);
     let brett: SessionUri = BRETT.parse().unwrap();
     let tools = Tools::new(api.clone(), mike.clone())
         .in_local(run.path())
         .in_dir(work.clone());
     let m = connect(&api, tools, &mike).await;
-    let b = connect(&api, Tools::new(api.clone(), brett.clone()), &brett).await;
+    let api_b = common::api_of(&server, &brett);
+    let b = connect(&api_b, Tools::new(api_b.clone(), brett.clone()), &brett).await;
 
     let (claimed, _) = call(&m, "claim", json!({ "item": "issue-12" })).await;
     assert!(claimed.contains("You hold issue-12"), "{claimed}");
@@ -224,8 +219,9 @@ done
         gh: riff::pr::Gh::at(&gh),
     };
     let work = clone_on(root.path(), "worktree-issue-12");
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let mike: SessionUri = MIKE.parse().unwrap();
+    let api = common::api_of(&server, &mike);
     let tools = Tools::new(api.clone(), mike.clone())
         .in_local(run.path())
         .in_dir(work)
@@ -262,8 +258,9 @@ done
 async fn a_leave_on_the_default_branch_keeps_the_claims() {
     let root = tempfile::tempdir().unwrap();
     let work = clone_on(root.path(), "main");
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let mike: SessionUri = MIKE.parse().unwrap();
+    let api = common::api_of(&server, &mike);
     let m = connect(
         &api,
         Tools::new(api.clone(), mike.clone()).in_dir(work.clone()),
@@ -290,8 +287,9 @@ async fn a_leave_in_a_dir_below_the_top_of_a_repository_commits_nothing() {
     std::fs::create_dir(&sub).unwrap();
     std::fs::write(sub.join("scratch"), "test data").unwrap();
     let before = git(&work, &["rev-parse", "HEAD"]);
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let mike: SessionUri = MIKE.parse().unwrap();
+    let api = common::api_of(&server, &mike);
     let m = connect(
         &api,
         Tools::new(api.clone(), mike.clone()).in_dir(sub.clone()),
@@ -313,8 +311,9 @@ async fn a_leave_in_a_dir_below_the_top_of_a_repository_commits_nothing() {
 async fn a_leave_with_no_claim_pushes_nothing() {
     let not_git = isolated::outside_git();
     let run = tempfile::tempdir().unwrap();
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let mike: SessionUri = MIKE.parse().unwrap();
+    let api = common::api_of(&server, &mike);
     let m = connect(
         &api,
         Tools::new(api.clone(), mike.clone())
@@ -334,12 +333,14 @@ async fn a_leave_with_no_claim_pushes_nothing() {
 #[tokio::test]
 async fn a_leave_holds_for_new_tools() {
     let run = tempfile::tempdir().unwrap();
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let mike: SessionUri = MIKE.parse().unwrap();
+    let api = common::api_of(&server, &mike);
     let brett: SessionUri = BRETT.parse().unwrap();
     let old = Tools::new(api.clone(), mike.clone()).in_local(run.path());
     let m = connect(&api, old, &mike).await;
-    let b = connect(&api, Tools::new(api.clone(), brett.clone()), &brett).await;
+    let api_b = common::api_of(&server, &brett);
+    let b = connect(&api_b, Tools::new(api_b.clone(), brett.clone()), &brett).await;
     let (left, error) = call(&m, "leave", json!({})).await;
     assert!(!error, "{left}");
     // The agent tool stops the old `riff mcp`, and starts a new one.
@@ -354,7 +355,7 @@ async fn a_leave_holds_for_new_tools() {
     let (who, _) = call(&b, "who", json!({})).await;
     assert!(!lists(&who, "a1"), "{who}");
 
-    let fresh = Tools::new(api, brett).in_local(run.path());
+    let fresh = Tools::new(common::api_of(&server, &brett), brett).in_local(run.path());
     assert!(!fresh.left(), "a new session joins as usual");
 }
 
@@ -363,8 +364,9 @@ async fn a_leave_holds_for_new_tools() {
 #[tokio::test]
 async fn a_leave_that_riff_cannot_keep_is_refused() {
     let not_git = isolated::outside_git();
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let mike: SessionUri = MIKE.parse().unwrap();
+    let api = common::api_of(&server, &mike);
     let tools = Tools::new(api.clone(), mike.clone()).in_dir(not_git.path().to_owned());
     let m = connect(&api, tools, &mike).await;
     let (text, error) = call(&m, "leave", json!({})).await;
