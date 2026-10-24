@@ -3293,6 +3293,15 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   posts to its person only with `user`, `host` and `person` set to true:
   the post wakes no daemon, worker or other agent session. The
   instructions of the riff tools name this selector.
+- **01M5QVH7KDK3R2S4NDFB2V1XY9** A chat line with `@lead:REPO` wakes
+  only the lead of the sender in the repository REPO, and `@USER:REPO`
+  only the lead of USER in REPO. REPO is `OWNER/REPO`, or the name after
+  the slash when one lead of that user has a repository with that name.
+  `riff chat` reads the leads from riff-server. When no lead or more
+  than one lead matches, it sends nothing and names the leads that it
+  found. `@lead`, `@USER` and a line with no name still wake each lead
+  of the user. A chat line shows a lead as `[USER's lead, REPO]`, with
+  the name of its repository.
 
 ## Security
 

@@ -156,9 +156,11 @@ enum Command {
     /// Chat with the people of the riff
     ///
     /// It works in the style of IRC. It shows the chat and each new line,
-    /// and sends each line that you type. A line wakes your lead. A line
-    /// with @USER wakes the lead of USER, and not yours, unless it has
-    /// @lead too. /me TEXT sends an action. /quit or Ctrl-C exits.
+    /// and sends each line that you type. A line wakes each lead of yours.
+    /// A line with @USER wakes each lead of USER, and not yours, unless it
+    /// has @lead too. @lead:REPO or @USER:REPO wakes only the lead in the
+    /// repository REPO (OWNER/REPO, or the name after the slash). /me TEXT
+    /// sends an action. /quit or Ctrl-C exits.
     Chat {
         /// The last line that the chat showed before an update. Only
         /// riff gives it (01M3NT6WXGCNKW3EQ7MBJDQTR4).
