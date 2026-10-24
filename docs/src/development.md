@@ -160,6 +160,12 @@ The rules of `main` need only the check `Gate`. So a fail of each job
 fails the Gate. While the other jobs run, `gh pr checks` shows no
 `Gate`.
 
+### Keep the actions up to date
+
+Dependabot checks the actions of `.github/workflows` each week
+(`.github/dependabot.yml`). When an action has a newer version, it
+opens a pull request. Merge it like any other pull request.
+
 ### Run one part of the tests
 
 The Gate runs the tests in 4 parts. Each part lists each test of the

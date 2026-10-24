@@ -43,7 +43,7 @@ jobs:
     env:
       IMAGE: ghcr.io/como-technologies/riff-session
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The tag is the git tree of the folder. The same folder gives the
       # same tag, also after the squash merge.

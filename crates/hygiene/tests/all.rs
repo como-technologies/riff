@@ -5,6 +5,7 @@ mod book;
 mod ci;
 mod ci_lock;
 mod cli;
+mod dependabot;
 mod gate;
 mod part;
 mod stress;
