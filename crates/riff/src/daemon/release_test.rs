@@ -28,7 +28,11 @@
 //! ```
 //!
 //! The daemon replies when the test starts, not when it ends: a test
-//! takes longer than a reply waits. It runs one test at a time. The
+//! takes longer than a reply waits. It runs one test at a time, and
+//! [`running`] gives it: its tag, its commit and its seconds
+//! (01M5QVBTXE8YRY44A1C1VP71QS). [`Status`](super::Status) holds it, so
+//! `riff daemon status`, `riff view`, `riff top` and `riff who` show it,
+//! and [`Status::busy`](super::Status::busy) counts it as one. The
 //! clone is in [`FOLDER`] of its folder; the output of the test is in
 //! `FOLDER/COMMIT.log`. After the run, the daemon sets the status
 //! `riff/real-session` of the commit: `success` for exit 0, else
@@ -53,9 +57,11 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
+use riff_client::daemons::Test;
 
 use super::remote::Served;
 use crate::cycle::{TestState, status_args};
@@ -66,8 +72,41 @@ pub const FOLDER: &str = "real-session";
 /// The program that the daemon runs in place of `just real-session`.
 pub const RUN_VAR: &str = "RIFF_REAL_SESSION_RUN";
 
-/// The commit of the test that runs now.
-static RUNNING: Mutex<Option<String>> = Mutex::new(None);
+/// The test that runs now.
+struct Started {
+    tag: String,
+    commit: String,
+    at: Instant,
+}
+
+impl Started {
+    /// The test as the status of the daemon shows it.
+    fn shown(&self) -> Test {
+        Test {
+            tag: self.tag.clone(),
+            commit: self.commit.clone(),
+            secs: self.at.elapsed().as_secs(),
+        }
+    }
+}
+
+/// The test that runs now: the daemon runs one at a time.
+static RUNNING: Mutex<Option<Started>> = Mutex::new(None);
+
+fn running_lock() -> MutexGuard<'static, Option<Started>> {
+    RUNNING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The test that runs now, or `None`. [`Status`](super::Status) shows
+/// it, and [`Status::busy`](super::Status::busy) counts it as one
+/// (01M5QVBTXE8YRY44A1C1VP71QS).
+///
+/// ```
+/// assert_eq!(riff::daemon::release_test::running(), None);
+/// ```
+pub fn running() -> Option<Test> {
+    running_lock().as_ref().map(Started::shown)
+}
 
 /// True when `text` is a commit ID: 7 to 40 hex digits.
 ///
@@ -114,23 +153,27 @@ pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<Str
     if !is_commit(commit) {
         bail!("\"{commit}\" is not a commit ID");
     }
-    crate::cycle::tag_version(tag)?;
+    let tag = crate::cycle::tag(crate::cycle::tag_version(tag)?);
     {
-        let mut running = RUNNING.lock().unwrap();
+        let mut running = running_lock();
         if let Some(other) = running.as_ref() {
-            bail!("the real-session test runs on {other} already");
+            bail!("the real-session test runs on {} already", other.commit);
         }
-        *running = Some(commit.to_owned());
+        *running = Some(Started {
+            tag: tag.clone(),
+            commit: commit.to_owned(),
+            at: Instant::now(),
+        });
     }
     let started = prepare(dir, served, commit);
     match started {
         Ok(clone) => {
-            let (owned, tag) = (commit.to_owned(), tag.to_owned());
+            let owned = commit.to_owned();
             let log = clone.with_extension("log");
             let server = served.wave.server.clone();
             std::thread::spawn(move || {
                 finish(&clone, &log, (&owned, &tag), &server);
-                *RUNNING.lock().unwrap() = None;
+                *running_lock() = None;
             });
             Ok(format!(
                 "The real-session test started on {commit}. It sets the status {} of the \
@@ -139,7 +182,7 @@ pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<Str
             ))
         }
         Err(e) => {
-            *RUNNING.lock().unwrap() = None;
+            *running_lock() = None;
             Err(e)
         }
     }
@@ -392,6 +435,23 @@ fn run_test(clone: &Path, log: &Path, server: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 01M5QVBTXE8YRY44A1C1VP71QS: the status shows the tag, the commit
+    /// and the seconds of the test.
+    #[test]
+    fn a_started_test_shows_its_tag_its_commit_and_its_seconds() {
+        let started = Started {
+            tag: "v4.1.1".into(),
+            commit: "90e36bfd".into(),
+            at: Instant::now() - std::time::Duration::from_secs(185),
+        };
+        let test = started.shown();
+        assert_eq!(
+            (test.tag.as_str(), test.commit.as_str()),
+            ("v4.1.1", "90e36bfd")
+        );
+        assert!((185..190).contains(&test.secs), "{}", test.secs);
+    }
 
     /// 01M5MR8CM887EFGMKZM5BQA9JJ: the test runs with `RIFF_SERVER` of
     /// the repository, not the one of the daemon.

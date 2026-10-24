@@ -8424,6 +8424,12 @@ items of Wave C that end riff-server in the Backlog
   test resumes the whole riff on the riff-server of the test with `riff
   resume --riff`: a new riff starts paused and refuses each claim. A
   failed resume fails step 1.
+- **01M5QVBTXE8YRY44A1C1VP71QS** The riff daemon shows the real-session
+  test that it runs, with its tag, its commit and its minutes. `riff
+  daemon status` shows it on a line of its own: "real-session test of
+  TAG on COMMIT, for N min". `riff top`, `riff who` and `riff view` show
+  it on the line of the host. `Status::busy` counts the test as one, so
+  the daemon starts again on a new riff only after the test.
 
 ## The UIs
 

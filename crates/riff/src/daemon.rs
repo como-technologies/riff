@@ -311,8 +311,9 @@
 //! replaced, or when its unit names another riff ([`stale`]). Two steps
 //! start it again on the new riff, only when it is idle: it owns no
 //! session but the lead (the new daemon takes the lead up, with its
-//! container, its terminal and its socket), no start of `riff run` waits for room, and no job of a wave
-//! runs ([`Status::busy`]). A start of a wave that waits for room does
+//! container, its terminal and its socket), no start of `riff run` waits for room, no job of a wave
+//! runs, and no real-session test runs ([`Status::busy`],
+//! 01M5QVBTXE8YRY44A1C1VP71QS). A start of a wave that waits for room does
 //! not count, also with the limit 0: the wave is in `waves.json`, so the
 //! new daemon waits for room for it again (01M5MS1Q78AFEY3ZVXNAQXM1FJ).
 //!
@@ -1078,6 +1079,11 @@ pub struct Status {
     /// end of the steps after its session.
     #[serde(default)]
     pub jobs: usize,
+    /// The real-session test that the daemon runs
+    /// ([`release_test::running`], 01M5QVBTXE8YRY44A1C1VP71QS). An old
+    /// daemon gives none.
+    #[serde(default)]
+    pub test: Option<riff_client::daemons::Test>,
     /// The MCP servers of each new session ([`crate::session_mcp`]).
     /// An old daemon gives none.
     #[serde(default)]
@@ -1091,7 +1097,8 @@ pub struct Status {
 
 impl Status {
     /// The work of the daemon: its sessions but the lead, the starts of
-    /// `riff run` that wait for room, and the jobs of its waves. The
+    /// `riff run` that wait for room, the jobs of its waves, and the
+    /// real-session test that runs (one, 01M5QVBTXE8YRY44A1C1VP71QS). The
     /// lead does not count: a new daemon takes it up with its container,
     /// its terminal and its socket ([`Daemon::recover`]). The daemon starts
     /// again on a new riff only at 0 (01M517BTJ9EV4ZGPYRB6HXJJC9).
@@ -1116,7 +1123,14 @@ impl Status {
     ///     ..status.clone()
     /// };
     /// assert_eq!(wave.busy(), 0);
-    /// assert_eq!(riff::daemon::Status { jobs: 2, ..status }.busy(), 2);
+    /// assert_eq!(riff::daemon::Status { jobs: 2, ..status.clone() }.busy(), 2);
+    /// // A real-session test that runs counts as one.
+    /// let test = riff_client::daemons::Test {
+    ///     tag: "v4.1.1".into(),
+    ///     commit: "90e36bfd".into(),
+    ///     secs: 0,
+    /// };
+    /// assert_eq!(riff::daemon::Status { test: Some(test), ..status }.busy(), 1);
     /// # Ok::<(), serde_json::Error>(())
     /// ```
     pub fn busy(&self) -> usize {
@@ -1127,7 +1141,7 @@ impl Status {
         };
         let runs = self.waiting.iter().filter(|name| !of_a_wave(name)).count();
         let works = self.sessions.iter().filter(|live| !live.lead).count();
-        works + runs + self.jobs
+        works + runs + self.jobs + usize::from(self.test.is_some())
     }
 }
 
@@ -2223,6 +2237,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         .len()
                 })
                 .sum(),
+            test: release_test::running(),
             mcp: crate::session_mcp::read(&self.dir)
                 .map(|servers| crate::session_mcp::names(&servers))
                 .unwrap_or_default(),
@@ -7102,6 +7117,30 @@ mod tests {
             .expect("the end of the session looks")
             .unwrap();
         assert_eq!(units.calls(), ["rewrite", "try-restart"]);
+    }
+
+    /// 01M5QVBTXE8YRY44A1C1VP71QS: a real-session test that runs counts
+    /// as one in [`Status::busy`], so `riff update` waits for it. A status
+    /// of an old daemon has no test.
+    #[test]
+    fn a_real_session_test_that_runs_counts_as_one_busy() {
+        let mut json = serde_json::json!({
+            "pid": 7, "build": "4.1.0", "since_ms": 0, "dir": "/d", "sessions": [],
+        });
+        let old: Status = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!((old.test.clone(), old.busy()), (None, 0));
+
+        json["test"] = serde_json::json!({"tag": "v4.1.1", "commit": "90e36bfd", "secs": 60});
+        let testing: Status = serde_json::from_value(json).unwrap();
+        assert_eq!(testing.test.as_ref().map(|t| t.secs), Some(60));
+        assert_eq!(testing.busy(), 1);
+        assert_eq!(
+            remote::Restart::of(true, testing.busy()),
+            remote::Restart::Later(1)
+        );
+
+        let more = Status { jobs: 2, ..testing };
+        assert_eq!(more.busy(), 3);
     }
 
     /// With the limit 0, a start of a wave waits for room always. `riff

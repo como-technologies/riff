@@ -581,7 +581,7 @@ idle, so no work stops:
 |---|---|---|
 | `riff relay watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
 | `riff chat` | runs the new `riff` in its place | between two lines |
-| The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session, else after its last session |
+| The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session and no real-session test, else after its last session |
 
 You still start `riff-server` again yourself. `riff update` tells you
 when it runs the old build.

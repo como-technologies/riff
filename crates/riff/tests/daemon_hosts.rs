@@ -714,8 +714,9 @@ async fn the_replies_of_a_daemon_go_only_to_the_person_and_the_lead() {
 }
 
 /// A `gh` that logs its arguments in `log`, and a test that writes its
-/// `RIFF_SERVER` in `dir/server` and ends with the code in `code`, in
-/// `dir`. Gives the variables for a host.
+/// `RIFF_SERVER` in `dir/server`, waits while the file `dir/hold`
+/// exists, and ends with the code in `code`, in `dir`. Gives the
+/// variables for a host.
 fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String)> {
     let script = |name: &str, body: String| {
         isolated::write_program(dir.join(name), format!("#!/bin/sh\n{body}\n"))
@@ -734,8 +735,9 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
     let run = script(
         "run",
         format!(
-            "printf %s \"$RIFF_SERVER\" > {}\necho \"a line\"\necho \"GH_TOKEN=ghp_secret1\"\necho \"real-session: FAIL at step 6 of 10, run the item: exit 1\" >&2\nexit $(cat {})",
+            "printf %s \"$RIFF_SERVER\" > {}\necho \"a line\"\necho \"GH_TOKEN=ghp_secret1\"\necho \"real-session: FAIL at step 6 of 10, run the item: exit 1\" >&2\nwhile [ -e {} ]; do sleep 0.1; done\nexit $(cat {})",
             dir.join("server").display(),
+            dir.join("hold").display(),
             code.display()
         ),
     );
@@ -789,8 +791,10 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     );
     let commit = git(&r.main, &["rev-parse", "HEAD"]);
 
+    let hold = tmp.path().join("hold");
     for (host, exit, state) in [("a", "0", "success"), ("b", "1", "failure")] {
         std::fs::write(&code, exit).unwrap();
+        std::fs::write(&hold, "").unwrap();
         let asked = remote::Request::ReleaseTest {
             commit: commit.clone(),
             tag: TAG.to_owned(),
@@ -805,11 +809,31 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         .await
         .unwrap();
         assert!(reply.contains("started on"), "{reply}");
+        // 01M5QVBTXE8YRY44A1C1VP71QS: the status of the daemon shows the test
+        // while it runs, and not after it ended.
+        let line = format!(
+            "real-session test of {TAG} on {}, for 0 min\n",
+            &commit[..8]
+        );
+        let shown = || async {
+            let asked = remote::Request::Status;
+            let wait = Duration::from_secs(30);
+            remote::ask(&r.api(&r.lead), &r.lead, host, &asked, wait)
+                .await
+                .unwrap()
+        };
+        let status = shown().await;
+        assert!(status.contains(&line), "{status}");
+        std::fs::remove_file(&hold).unwrap();
         let want = format!("state={state}");
         until("the final status", || async {
             std::fs::read_to_string(&log)
                 .ok()
                 .filter(|l| l.contains(&want))
+        })
+        .await;
+        until("the end of the test in the status", || async {
+            (!shown().await.contains("real-session test")).then_some(())
         })
         .await;
         let seen = std::fs::read_to_string(&log).unwrap();
