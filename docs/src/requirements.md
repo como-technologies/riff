@@ -3272,6 +3272,13 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   one with @ wakes the lead of the sender, as @lead does. `riff chat`
   and its help say what wakes whom.
 
+- **01M5P207CN20TQTP017X6RTMWG** The selector field `person` is `true`
+  for the terminals of a person (`riff chat`, `riff tail`, the phone),
+  which have no session ID, and `false` for each agent session. The lead
+  posts to its person only with `user`, `host` and `person` set to true:
+  the post wakes no daemon, worker or other agent session. The
+  instructions of the riff tools name this selector.
+
 ## Security
 
 - **R10** A session treats a received message as advice, not as an
