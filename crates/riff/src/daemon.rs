@@ -916,6 +916,23 @@ pub enum ServerCall {
     /// Resume the whole riff. Only the lead may. The answer is the line
     /// for the person.
     ResumeRiff,
+    /// Pause the whole riff, for `riff release approve`. Only the lead
+    /// may. The answer is the line for the person.
+    PauseRiff,
+    /// The user of the session, the owner and the people of the riff, as
+    /// [`crate::reach::Roster`], for `riff release cut`, `publish` and
+    /// `approve`.
+    Roster,
+    /// Post `body` in the thread `chat`. The daemon picks the sessions
+    /// that the line wakes ([`crate::chat::wakes`]). The answer is
+    /// `null`.
+    ChatPost {
+        /// The line.
+        body: String,
+    },
+    /// Each kept message of the thread `chat`, as a list of
+    /// [`crate::cycle::ChatLine`].
+    ChatRead,
     /// The [`Status`] of this daemon, for `riff daemon status` in a
     /// container (#1239). A session that is not the lead may ask it.
     Status,
@@ -968,6 +985,39 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
                 .set_pause(&record.me, &PauseScope::Riff, state)
                 .await?;
             Value::String(text::riff_set(None, state, &reply, &posted))
+        }
+        ServerCall::PauseRiff => {
+            if !record.terminal {
+                bail!(text::DAEMON_PAUSE_ONLY_LEAD);
+            }
+            let state = riff_core::wire::RiffState::Paused;
+            let (reply, posted) = signed()?
+                .set_pause(&record.me, &PauseScope::Riff, state)
+                .await?;
+            Value::String(text::riff_set(None, state, &reply, &posted))
+        }
+        ServerCall::Roster => {
+            let reply = signed()?.roster(&record.me, false).await?;
+            serde_json::to_value(crate::reach::Roster {
+                user: record.me.who().user().to_owned(),
+                owner: reply.owner,
+                people: reply.people,
+            })?
+        }
+        ServerCall::ChatPost { body } => {
+            let to = crate::chat::wakes(body, record.me.who().user());
+            let thread = crate::chat::thread();
+            let kind = riff_core::wire::Kind::Message;
+            signed()?
+                .post(&record.me, Some(&thread), &to, body, kind)
+                .await?;
+            Value::Null
+        }
+        ServerCall::ChatRead => {
+            let lines = signed()?
+                .read(&record.me, &crate::chat::thread(), true)
+                .await?;
+            serde_json::to_value(crate::cycle::chat_lines(lines))?
         }
         ServerCall::Host { host, request } => {
             if !record.terminal {

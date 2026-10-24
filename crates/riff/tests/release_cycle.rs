@@ -176,7 +176,11 @@ impl Machine {
             if *key == riff::daemon::SOCKET_VAR {
                 test_socket(value);
             }
-            cmd.env(key, value);
+            if *key == "RIFF_SERVER" && value.is_empty() {
+                cmd.env_remove(key);
+            } else {
+                cmd.env(key, value);
+            }
         }
         let stdin = stdin.to_owned();
         tokio::task::spawn_blocking(move || {
@@ -1460,4 +1464,139 @@ async fn the_lead_stops_at_a_stop_of_the_owner_after_the_approval() {
     let out = machine.lead_approves().await;
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(machine.log(), before, "gh ran");
+}
+
+/// What a fake daemon of a lead container saw: the `call` of each
+/// `server` ask, with its fields.
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
+
+/// A socket that answers as the daemon does for the lead container
+/// (#1319): `caller` is the lead of the owner, and each `server` call
+/// has the reply that `reply` gives for its name. It logs the calls.
+fn lead_daemon(
+    reply: impl Fn(&str) -> serde_json::Value + Send + 'static,
+) -> (tempfile::TempDir, String, Seen) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("riff.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let seen = Seen::default();
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, Write};
+        for conn in listener.incoming().flatten() {
+            let mut line = String::new();
+            let _ = std::io::BufReader::new(&conn).read_line(&mut line);
+            let ask: serde_json::Value = serde_json::from_str(&line).unwrap();
+            let say = if ask["ask"] == "server" {
+                log.lock().unwrap().push(ask["call"].clone());
+                let name = ask["call"]["call"].as_str().unwrap();
+                serde_json::json!({"say": "served", "reply": reply(name)})
+            } else {
+                serde_json::json!({"say": "caller", "lead": true, "role": null, "role_unknown": false})
+            };
+            let _ = (&conn).write_all(format!("{say}\n").as_bytes());
+        }
+    });
+    (dir, path.to_string_lossy().into_owned(), seen)
+}
+
+fn roster() -> serde_json::Value {
+    serde_json::json!({
+        "user": "mike",
+        "owner": {"kind": "owner", "user": "mike", "email": "mike@example.com"},
+        "people": [],
+    })
+}
+
+/// The names of the calls, in order.
+fn names(seen: &Seen) -> Vec<String> {
+    let seen = seen.lock().unwrap();
+    seen.iter()
+        .map(|c| c["call"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// The vars of the lead container: the socket, and no `RIFF_SERVER`, so
+/// that riff-server is not at hand but through the socket.
+fn lead_vars(socket: &str) -> [(&str, &str); 3] {
+    [
+        ("RIFF_SOCKET", socket),
+        ("RIFF_SESSION", "c1"),
+        ("RIFF_SERVER", ""),
+    ]
+}
+
+#[tokio::test]
+async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
+    let machine = Machine::new().await;
+    let (_dir, socket, seen) = lead_daemon(|call| match call {
+        "roster" => roster(),
+        _ => serde_json::Value::Null,
+    });
+    let out = machine
+        .run(&lead_vars(&socket), &["release", "cut", "3.3.0"], "")
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(names(&seen), ["roster", "chat_post"]);
+    let body = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
+    assert!(body.contains("riff release v3.3.0 is cut"), "{body}");
+}
+
+#[tokio::test]
+async fn publish_in_the_lead_container_tells_the_chat_through_the_socket() {
+    let (machine, _) = merged_release().await;
+    let (_dir, socket, seen) = lead_daemon(|call| match call {
+        "roster" => roster(),
+        _ => serde_json::Value::Null,
+    });
+    let out = machine
+        .run(&lead_vars(&socket), &["release", "publish", "v3.3.0"], "")
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("riff told the owner mike in riff chat."),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(names(&seen), ["roster", "chat_post"]);
+    let body = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
+    assert!(body.contains("riff release v3.3.0 is published"), "{body}");
+}
+
+#[tokio::test]
+async fn approve_in_the_lead_container_reads_and_pauses_through_the_socket() {
+    let machine = Machine::new().await;
+    machine.fake_gh(WAITS);
+    let line = |seq: u64, user: &str, session: bool, body: &str| {
+        serde_json::json!({
+            "seq": seq, "user": user, "session": session, "verified": true, "body": body,
+        })
+    };
+    let chat = serde_json::json!([
+        line(
+            1,
+            "mike",
+            true,
+            "riff release v3.3.0 is cut. Say approve 3.3.0"
+        ),
+        line(2, "mike", false, "approve 3.3.0"),
+    ]);
+    let (_dir, socket, seen) = lead_daemon(move |call| match call {
+        "roster" => roster(),
+        "chat_read" => chat.clone(),
+        "pause_riff" => serde_json::json!("The riff is paused now."),
+        other => panic!("{other}"),
+    });
+    let out = machine
+        .run(&lead_vars(&socket), &["release", "approve", "v3.3.0"], "")
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("The riff is paused now.\nApproved with message 2"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(names(&seen), ["roster", "chat_read", "pause_riff"]);
+    assert!(machine.log().contains("pending_deployments"));
 }

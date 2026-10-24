@@ -5243,6 +5243,10 @@ pub fn daemon_protocol(theirs: u32, ours: u32) -> String {
     )
 }
 
+/// A session that is not the lead asks the daemon to pause the riff.
+pub const DAEMON_PAUSE_ONLY_LEAD: &str =
+    "Only the lead can pause the riff through the riff daemon.";
+
 /// A session that is not the lead asks the daemon to resume the riff.
 pub const DAEMON_RESUME_ONLY_LEAD: &str =
     "Only the lead can resume the riff through the riff daemon.";

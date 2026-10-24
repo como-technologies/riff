@@ -2713,18 +2713,12 @@ async fn release_caller(server: &str, ask_role: bool) -> riff::cycle::Caller {
     caller
 }
 
-/// The riff of `server` and the sender of this process: the agent
-/// session with its session ID, else the person on this machine.
-fn release_me(server: &str) -> Result<(Api, SessionUri, Place)> {
-    let place = identity::place(&identity::working_dir()?)?;
-    let id = identity::session_id();
-    let base = Api::new(server);
-    let me = match id.as_deref() {
-        Some(id) => identity::agent(&place, id, base.base())?,
-        None => identity::person(&place, base.base())?,
-    };
-    let api = base.signed_in(id.as_deref())?;
-    Ok((api, me, place))
+/// The USER of the owner of the riff, or an empty text when it has none.
+async fn release_owner(reach: &Reach) -> Result<String> {
+    Ok(match reach.roster().await?.owner {
+        riff_core::wire::RiffOwner::Owner { user, .. } => user,
+        _ => String::new(),
+    })
 }
 
 /// The log of the Cloud Run service of the shared riff, from the cloud
@@ -2827,15 +2821,9 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 cut.number, cut.issue, cut.url
             );
             let told = async {
-                let (api, me, _) = release_me(server)?;
-                let owner = match api.roster(&me, false).await?.owner {
-                    riff_core::wire::RiffOwner::Owner { user, .. } => user,
-                    _ => String::new(),
-                };
+                let owner = release_owner(reach).await?;
                 let line = cycle::cut_line(&owner, &cycle::tag(version));
-                let to = riff::chat::wakes(&line, me.who().user());
-                api.post(&me, Some(&riff::chat::thread()), &to, &line, Kind::Message)
-                    .await?;
+                reach.chat_post(&line).await?;
                 anyhow::Ok(())
             };
             if let Err(e) = told.await {
@@ -2866,15 +2854,9 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 None => println!("GitHub shows no CI run of the tag yet."),
             }
             let told = async {
-                let (api, me, _) = release_me(server)?;
-                let owner = match api.roster(&me, false).await?.owner {
-                    riff_core::wire::RiffOwner::Owner { user, .. } => user,
-                    _ => String::new(),
-                };
+                let owner = release_owner(reach).await?;
                 let line = cycle::publish_line(&owner, tag, done.run.as_deref());
-                let to = riff::chat::wakes(&line, me.who().user());
-                api.post(&me, Some(&riff::chat::thread()), &to, &line, Kind::Message)
-                    .await?;
+                reach.chat_post(&line).await?;
                 anyhow::Ok(owner)
             };
             match told.await {
@@ -2910,10 +2892,10 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     }
                     Some(_) => refuse("approve", cycle::Refusal::Agent),
                 }
-                let (api, me, place) = release_me(server)?;
-                let roster = api.roster(&me, false).await?;
+                let roster = reach.roster().await?;
+                let me = roster.user.clone();
                 let owner_or_admin = |user: &str| match &roster.owner {
-                    riff_core::wire::RiffOwner::NoSignIn => user == me.who().user(),
+                    riff_core::wire::RiffOwner::NoSignIn => user == me,
                     owner => {
                         owner.is(user)
                             || roster.people.iter().any(|p| {
@@ -2921,18 +2903,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                             })
                     }
                 };
-                let lines: Vec<cycle::ChatLine> = api
-                    .read(&me, &riff::chat::thread(), true)
-                    .await?
-                    .into_iter()
-                    .map(|c| cycle::ChatLine {
-                        seq: c.message.seq,
-                        user: c.message.from.who().user().to_owned(),
-                        session: c.message.from.who().session().is_some(),
-                        verified: c.verified,
-                        body: c.message.body,
-                    })
-                    .collect();
+                let lines = reach.chat_read().await?;
                 let tag = cycle::tag(cycle::tag_version(tag)?);
                 let Some(seq) = cycle::owner_said(&lines, &tag, &owner_or_admin) else {
                     refuse("approve", cycle::Refusal::OwnerSilent);
@@ -2944,7 +2915,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     );
                     return Ok(());
                 };
-                pause(&api, &me, &place, PauseScope::Riff, RiffState::Paused).await?;
+                println!("{}", reach.pause_riff().await?);
                 cycle::approve_run_said(&forge, &run, seq).with_context(|| {
                     format!(
                         "riff release approve: the approval of {} failed, and the riff stays \
@@ -2972,8 +2943,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 Approved::Yes(run) => {
                     // The pause is only for the deploy, and it tells each
                     // other lead (01M58KMM3NFGJRW4CCV50KJQB2).
-                    let (api, me, place) = release_me(server)?;
-                    pause(&api, &me, &place, PauseScope::Riff, RiffState::Paused).await?;
+                    println!("{}", reach.pause_riff().await?);
                     cycle::approve_run(&forge, &run).with_context(|| {
                         format!(
                             "riff release approve: the approval of {} failed, and the riff stays \
