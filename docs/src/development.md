@@ -1290,6 +1290,12 @@ The daemon keeps the wave, also over its own restart, until you stop
 it. The rollout of your lead runs it for you: see
 [Let the rollout of the lead run the wave](#let-the-rollout-of-the-lead-run-the-wave).
 
+Each minute the daemon also looks at the forge for the wave. It tells
+your lead when a pull request stops (see
+[When a pull request stops](how-it-works.md#when-a-pull-request-stops))
+or when `main` breaks (see
+[When main breaks](how-it-works.md#when-main-breaks)).
+
 A pull request with auto-merge on can get a conflict with `main` when
 `main` moves. Then it cannot merge, also after its verify passed. The
 wave starts a build session for its item. The session rebases the
