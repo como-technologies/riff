@@ -15,14 +15,7 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::{Kind, RiffState};
 
-async fn start_server() -> Api {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    Api::new(&format!("http://{addr}"))
-}
+use crate::common;
 
 fn uri(text: &str) -> SessionUri {
     text.parse().unwrap()
@@ -115,7 +108,7 @@ const MUST_WAKE: &[&str] = &[
 ];
 
 struct Riff {
-    api: Api,
+    server: common::Signed,
     lead: SessionUri,
     a: SessionUri,
     b: SessionUri,
@@ -123,6 +116,11 @@ struct Riff {
 }
 
 impl Riff {
+    /// A client that sends the token of the session `me`.
+    fn api(&self, me: &SessionUri) -> Api {
+        common::api_of(&self.server, me)
+    }
+
     fn from(&self, from: From) -> &SessionUri {
         match from {
             From::Lead => &self.lead,
@@ -133,20 +131,20 @@ impl Riff {
 }
 
 async fn riff() -> Riff {
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let riff = Riff {
         lead: uri("riff://mike@pangolin/como-technologies/riff?session=l1"),
         a: uri("riff://mike@pangolin/como-technologies/riff?session=a1#issue-10"),
         b: uri("riff://mike@thelio/como-technologies/riff?session=b2#issue-11"),
         w: uri("riff://mike@thelio/como-technologies/riff?session=w3#issue-12"),
-        api,
+        server,
     };
     // The person of mike names the lead (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
     for me in [&riff.lead, &riff.a, &riff.b, &riff.w] {
-        riff.api.register(me).await.unwrap();
+        riff.api(me).register(me).await.unwrap();
     }
-    crate::common::name_lead(&riff.api, &riff.lead).await;
-    riff.api
+    common::name_lead(&riff.api(&common::person_of(&riff.lead)), &riff.lead).await;
+    riff.api(&riff.lead)
         .set_riff(&riff.lead, RiffState::Running)
         .await
         .unwrap();
@@ -155,7 +153,7 @@ async fn riff() -> Riff {
         (&riff.b, "issue-11"),
         (&riff.w, "issue-12"),
     ] {
-        riff.api.claim(me, &repo(), item).await.unwrap();
+        riff.api(me).claim(me, &repo(), item).await.unwrap();
     }
     riff
 }
@@ -187,7 +185,7 @@ async fn replay(riff: &Riff, skill: bool) -> Vec<&'static str> {
             (true, To::Worker) => (None, &worker[..], Kind::Message),
         };
         let posted = riff
-            .api
+            .api(me)
             .post(me, thread.as_ref(), to, body, kind)
             .await
             .unwrap();
@@ -216,10 +214,10 @@ async fn the_skill_halves_the_wakes_of_a_worker() {
 #[tokio::test]
 async fn the_worker_reads_each_note() {
     let riff = riff().await;
-    riff.api.inbox(&riff.w, None, false).await.unwrap();
+    riff.api(&riff.w).inbox(&riff.w, None, false).await.unwrap();
     replay(&riff, true).await;
     let seen: Vec<(Kind, String)> = riff
-        .api
+        .api(&riff.w)
         .inbox(&riff.w, None, false)
         .await
         .unwrap()
@@ -241,7 +239,7 @@ async fn the_worker_reads_each_note() {
 /// does, and returns the sessions that woke.
 async fn verify_request(riff: &Riff) -> Vec<SessionUri> {
     let lead = [selector("user=mike,repo=como-technologies/riff,lead=true")];
-    riff.api
+    riff.api(&riff.a)
         .post(
             &riff.a,
             Some(&repo()),
@@ -266,8 +264,8 @@ async fn a_verify_request_wakes_only_a_live_lead() {
 async fn a_verify_request_with_no_live_lead_wakes_a_free_session() {
     let riff = riff().await;
     let free = uri("riff://mike@thelio/como-technologies/riff?session=f4");
-    riff.api.register(&free).await.unwrap();
-    riff.api.end(&riff.lead).await.unwrap();
+    riff.api(&free).register(&free).await.unwrap();
+    riff.api(&riff.lead).end(&riff.lead).await.unwrap();
     let woken = verify_request(&riff).await;
     let woken: Vec<_> = woken.iter().map(SessionUri::who).collect();
     assert_eq!(woken, [free.who()], "only the session with no claim wakes");
@@ -278,9 +276,9 @@ async fn a_verify_request_with_no_live_lead_wakes_a_free_session() {
 async fn a_lead_that_posts_to_its_own_lead_wakes_no_free_session() {
     let riff = riff().await;
     let free = uri("riff://mike@thelio/como-technologies/riff?session=f4");
-    riff.api.register(&free).await.unwrap();
+    riff.api(&free).register(&free).await.unwrap();
     let posted = riff
-        .api
+        .api(&riff.lead)
         .post(
             &riff.lead,
             Some(&repo()),
@@ -300,14 +298,14 @@ async fn a_lead_that_posts_to_its_own_lead_wakes_no_free_session() {
 async fn a_post_to_person_true_wakes_the_person_and_no_agent_session() {
     let riff = riff().await;
     let person = crate::common::person_of(&riff.lead);
-    riff.api.register(&person).await.unwrap();
+    riff.api(&person).register(&person).await.unwrap();
     let daemon = uri("riff://mike@pangolin/como-technologies/riff?session=d0");
-    riff.api.register(&daemon).await.unwrap();
+    riff.api(&daemon).register(&daemon).await.unwrap();
     let post = |to: &str| {
         let to = [selector(to)];
         let riff = &riff;
         async move {
-            riff.api
+            riff.api(&riff.lead)
                 .post(&riff.lead, Some(&repo()), &to, "an answer", Kind::Message)
                 .await
                 .unwrap()

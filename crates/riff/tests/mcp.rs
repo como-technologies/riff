@@ -7,25 +7,26 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
 
-async fn start_server() -> Api {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    Api::new(&format!("http://{addr}"))
+async fn start_server() -> crate::common::Signed {
+    crate::common::start_signed().await
+}
+
+/// A client of the session `me` (or of the person, when `me` has no session).
+fn of(server: &crate::common::Signed, me: impl std::fmt::Display) -> Api {
+    crate::common::api_of(server, &me.to_string().parse().unwrap())
 }
 
 /// Connects an MCP client to the tools of `me`. The person names [`MIKE`]
 /// and [`BRETT`] the lead.
-async fn connect(api: &Api, me: &str) -> RunningService<RoleClient, ()> {
+async fn connect(server: &crate::common::Signed, me: &str) -> RunningService<RoleClient, ()> {
     let me: SessionUri = me.parse().unwrap();
+    let api = of(server, &me);
     api.register(&me).await.unwrap();
     if [MIKE, BRETT].contains(&me.to_string().as_str()) {
-        crate::common::name_lead(api, &me).await;
+        crate::common::name_lead(&server.api(me.who().user(), None), &me).await;
     }
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
-    let tools = Tools::new(api.clone(), me);
+    let tools = Tools::new(api, me);
     tokio::spawn(async move {
         tools
             .serve(server_io)
@@ -246,7 +247,7 @@ async fn a_worker_asks_the_lead_and_gets_the_answer() {
     let e5: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=e5"
         .parse()
         .unwrap();
-    crate::common::name_lead(&api, &e5).await;
+    crate::common::name_lead(&api.api("mike", None), &e5).await;
     let ask = serde_json::json!({ "session": "lead", "body": "and now?" });
     let (sent, _) = call(&worker, "tell", ask).await;
     assert!(sent.ends_with("Woke mike@pangolin:riff (e5)."), "{sent}");
@@ -274,7 +275,8 @@ async fn a_tell_to_a_new_worker_stays_unread_until_a_read_shows_it() {
     let repo = lead_uri.default_thread().unwrap();
     for n in 1..=PAGE + 10 {
         let body = format!("history {n}");
-        api.post(&lead_uri, Some(&repo), &[], &body, Default::default())
+        of(&api, &lead_uri)
+            .post(&lead_uri, Some(&repo), &[], &body, Default::default())
             .await
             .unwrap();
     }
@@ -341,7 +343,8 @@ async fn the_first_read_shows_the_direct_message_at_the_top() {
     let repo = lead_uri.default_thread().unwrap();
     for n in 1..=60 {
         let body = format!("history {n}");
-        api.post(&lead_uri, Some(&repo), &[], &body, Default::default())
+        of(&api, &lead_uri)
+            .post(&lead_uri, Some(&repo), &[], &body, Default::default())
             .await
             .unwrap();
     }
@@ -453,7 +456,8 @@ async fn a_status_request_gets_an_answer_with_the_status_tool() {
     // riff is paused: paused wins, with the step it stopped at
     // (01M3QB6CJ1XCQG5B1BVR8AF3B4).
     let uri: riff_core::name::SessionUri = BRETT_LEAD.parse().unwrap();
-    let _watch = api.watch(&uri).await.unwrap();
+    let watcher = of(&api, &uri);
+    let _watch = watcher.watch(&uri).await.unwrap();
     let (who, _) = call(&mike, "who", serde_json::json!({})).await;
     assert!(who.contains("(b2) paused lead  "), "{who}");
     assert!(
@@ -489,15 +493,22 @@ async fn move_changes_the_place_and_keeps_the_claims() {
     let (me, _) = call(&mike, "whoami", serde_json::json!({})).await;
     assert!(me.contains("session=a1&claim=issue-6#notes"), "{me}");
     assert_eq!(
-        api.who(&MIKE.parse().unwrap(), false).await.unwrap().len(),
+        of(&api, MIKE)
+            .who(&MIKE.parse().unwrap(), false)
+            .await
+            .unwrap()
+            .len(),
         1
     );
 
     // A keep-alive and a status keep the claim (01M517N7FRG389BETVWA1SX5YD).
-    api.alive(&MIKE.parse().unwrap()).await.unwrap();
+    of(&api, MIKE).alive(&MIKE.parse().unwrap()).await.unwrap();
     let (text, is_error) = call(&mike, "status", serde_json::json!({ "step": "tests" })).await;
     assert!(!is_error, "{text}");
-    let who = api.who(&MIKE.parse().unwrap(), false).await.unwrap();
+    let who = of(&api, MIKE)
+        .who(&MIKE.parse().unwrap(), false)
+        .await
+        .unwrap();
     assert_eq!(who[0].uri.claims(), ["issue-6"], "{:?}", who[0].uri);
 
     let (text, is_error) = call(&mike, "move", serde_json::json!({ "path": "/no/such/dir" })).await;
@@ -535,7 +546,7 @@ async fn a_session_in_a_container_gets_only_the_tools_that_talk() {
     assert_eq!(claimed, "You hold issue-12 in como-technologies/riff.");
 
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
-    let tools = Tools::new(api.clone(), MIKE.parse().unwrap()).in_container();
+    let tools = Tools::new(of(&api, MIKE), MIKE.parse().unwrap()).in_container();
     tokio::spawn(async move {
         tools
             .serve(server_io)
@@ -660,9 +671,12 @@ async fn the_lead_holds_an_item_and_a_worker_cannot_claim_it() {
     let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1#w1"
         .parse()
         .unwrap();
-    api.register_as(&worker, true).await.unwrap();
+    of(&api, &worker).register_as(&worker, true).await.unwrap();
     let thread = worker.default_thread().unwrap();
-    let refused = api.claim(&worker, &thread, "issue-12").await.unwrap();
+    let refused = of(&api, &worker)
+        .claim(&worker, &thread, "issue-12")
+        .await
+        .unwrap();
     assert!(!refused.granted);
     let text = refused.held.unwrap();
     assert!(
@@ -673,10 +687,12 @@ async fn the_lead_holds_an_item_and_a_worker_cannot_claim_it() {
         text.ends_with(&format!("{reason}. Pick another item.")),
         "{text}"
     );
-    let error = api.hold(&worker, &thread, "issue-13", "mine").await;
+    let error = of(&api, &worker)
+        .hold(&worker, &thread, "issue-13", "mine")
+        .await;
     let error = format!("{:#}", error.unwrap_err());
     assert!(error.contains("a worker cannot hold an item"), "{error}");
-    let error = api.free(&worker, &thread, "issue-12").await;
+    let error = of(&api, &worker).free(&worker, &thread, "issue-12").await;
     let error = format!("{:#}", error.unwrap_err());
     assert!(error.contains("a worker cannot free an item"), "{error}");
 
@@ -698,7 +714,10 @@ async fn the_lead_holds_an_item_and_a_worker_cannot_claim_it() {
     assert!(freed.contains("is free of its hold"), "{freed}");
     let (twice, _) = call(&mike, "free", free).await;
     assert!(twice.contains("was not on hold"), "{twice}");
-    let claimed = api.claim(&worker, &thread, "issue-12").await.unwrap();
+    let claimed = of(&api, &worker)
+        .claim(&worker, &thread, "issue-12")
+        .await
+        .unwrap();
     assert!(claimed.granted && claimed.warning.is_none());
 }
 
@@ -716,7 +735,7 @@ async fn a_lead_with_no_memory_gets_its_state_from_the_notes() {
     call(&host, "resume", serde_json::json!({ "riff": true })).await;
 
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
-    let tools = Tools::new(api.clone(), MIKE.parse().unwrap()).in_lead_container();
+    let tools = Tools::new(of(&api, MIKE), MIKE.parse().unwrap()).in_lead_container();
     tokio::spawn(async move {
         tools
             .serve(server_io)
@@ -785,16 +804,18 @@ async fn a_lead_with_no_memory_gets_its_state_from_the_notes() {
     // Another user does not read the notes of mike. A worker cannot
     // write them.
     let brett: SessionUri = BRETT.parse().unwrap();
-    api.register(&brett).await.unwrap();
+    of(&api, &brett).register(&brett).await.unwrap();
     let thread = brett.default_thread().unwrap();
-    let error = api.notes_show(&brett, &thread, Some("mike"), false).await;
+    let error = of(&api, &brett)
+        .notes_show(&brett, &thread, Some("mike"), false)
+        .await;
     let error = format!("{:#}", error.unwrap_err());
     assert!(error.contains("only mike and the owner"), "{error}");
     let worker: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=w1#w1"
         .parse()
         .unwrap();
-    api.register_as(&worker, true).await.unwrap();
-    let error = api.notes_set(&worker, &thread, "x").await;
+    of(&api, &worker).register_as(&worker, true).await.unwrap();
+    let error = of(&api, &worker).notes_set(&worker, &thread, "x").await;
     let error = format!("{:#}", error.unwrap_err());
     assert!(
         error.contains("a worker cannot write the notes of the lead"),
@@ -826,9 +847,9 @@ async fn the_tools_of_a_container_session_and_of_the_lead_are_as_before() {
         ),
     ] {
         let me: SessionUri = me.parse().unwrap();
-        api.register(&me).await.unwrap();
+        of(&api, &me).register(&me).await.unwrap();
         let (server_io, client_io) = tokio::io::duplex(64 * 1024);
-        let tools = Tools::new(api.clone(), me);
+        let tools = Tools::new(of(&api, &me), me);
         let tools = if lead {
             tools.in_lead_container()
         } else {

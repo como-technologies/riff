@@ -16,13 +16,8 @@ use riff_client::sessions::Sessions;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{RiffOwner, RiffState, SessionInfo, SessionState, Waits};
 
-async fn start_server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    format!("http://{addr}")
+async fn start_server() -> crate::common::Signed {
+    crate::common::start_signed().await
 }
 
 fn uri(text: &str) -> SessionUri {
@@ -33,21 +28,40 @@ fn repo() -> ThreadName {
     "como-technologies/riff".parse().unwrap()
 }
 
+/// A server with no sign-in, for the looks that post as the person: `look::once`
+/// takes one client, and a token acts as one caller only.
+async fn start_open() -> (String, (Api, Api, SessionUri, SessionUri)) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, riff_server::router()).await.unwrap();
+    });
+    let api = Api::new(&url);
+    let seeded = seed(api.clone(), api.clone(), api).await;
+    (url, seeded)
+}
+
 /// The lead of mike and one worker of mike, in a running riff.
-async fn riff(server: &str) -> (Api, SessionUri, SessionUri) {
-    let api = Api::new(server);
+async fn riff(server: &crate::common::Signed) -> (Api, Api, SessionUri, SessionUri) {
+    let al = server.api("mike", Some("l1"));
+    let aw = server.api("mike", Some("w1"));
+    let ap = server.api("mike", None);
+    seed(al, aw, ap).await
+}
+
+async fn seed(al: Api, aw: Api, ap: Api) -> (Api, Api, SessionUri, SessionUri) {
     let lead = uri("riff://mike@pangolin/como-technologies/riff?session=l1");
     let worker = uri("riff://mike@pangolin/como-technologies/riff?session=w1#issue-12");
-    for me in [&lead, &worker] {
-        api.register(me).await.unwrap();
-    }
-    crate::common::name_lead(&api, &lead).await;
-    api.set_riff(&lead, RiffState::Running).await.unwrap();
-    (api, lead, worker)
+    al.register(&lead).await.unwrap();
+    aw.register(&worker).await.unwrap();
+    crate::common::name_lead(&ap, &lead).await;
+    al.set_riff(&lead, RiffState::Running).await.unwrap();
+    (al, aw, lead, worker)
 }
 
 /// `riff` in `dir` with this server.
 fn riff_cmd(server: &str, dir: &Path, session: &str) -> assert_cmd::Command {
+    crate::common::sign_in(server, dir, "mike");
     let mut cmd = Isolated::shared().assert_riff();
     cmd.current_dir(dir)
         .env("RIFF_SERVER", server)
@@ -67,8 +81,8 @@ fn script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
     path
 }
 
-async fn info(api: &Api, lead: &SessionUri, me: &SessionUri) -> SessionInfo {
-    let sessions = api.who(lead, false).await.unwrap();
+async fn info(al: &Api, lead: &SessionUri, me: &SessionUri) -> SessionInfo {
+    let sessions = al.who(lead, false).await.unwrap();
     sessions
         .into_iter()
         .find(|s| s.uri.who() == me.who())
@@ -101,9 +115,9 @@ fn top(sessions: &[SessionInfo]) -> String {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_facts_of_the_forge_make_waiting() {
     let server = start_server().await;
-    let (api, lead, worker) = riff(&server).await;
-    api.claim(&worker, &repo(), "issue-12").await.unwrap();
-    let _watch = api.watch(&worker).await.unwrap();
+    let (al, aw, lead, worker) = riff(&server).await;
+    aw.claim(&worker, &repo(), "issue-12").await.unwrap();
+    let _watch = aw.watch(&worker).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let pulls = r#"[{"number":418,"headRefName":"worktree-issue-12","headRefOid":"1a2b","isDraft":false,"statusCheckRollup":[]}]"#;
     let gh = script(
@@ -113,7 +127,7 @@ async fn the_facts_of_the_forge_make_waiting() {
     );
     let gh = Arc::new(Gh::at(gh));
     look::once(
-        &api,
+        &al,
         &lead,
         &gh,
         Duration::from_secs(600),
@@ -123,14 +137,14 @@ async fn the_facts_of_the_forge_make_waiting() {
     )
     .await
     .unwrap();
-    let w1 = info(&api, &lead, &worker).await;
+    let w1 = info(&al, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Waiting));
     assert_eq!(w1.waits, Some(Waits::Verify { pull: 418 }));
 
     // The merge: the pull request is gone from the open list.
     let gh = Arc::new(Gh::at(script(dir.path(), "gh2", "echo '[]'")));
     look::once(
-        &api,
+        &al,
         &lead,
         &gh,
         Duration::from_secs(600),
@@ -141,7 +155,7 @@ async fn the_facts_of_the_forge_make_waiting() {
     .await
     .unwrap();
     assert_eq!(
-        info(&api, &lead, &worker).await.state,
+        info(&al, &lead, &worker).await.state,
         Some(SessionState::Busy)
     );
 }
@@ -152,9 +166,9 @@ async fn the_facts_of_the_forge_make_waiting() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_need_with_a_merged_in_comment_is_met() {
     let server = start_server().await;
-    let (api, lead, worker) = riff(&server).await;
-    api.claim(&worker, &repo(), "issue-12").await.unwrap();
-    let _watch = api.watch(&worker).await.unwrap();
+    let (al, aw, lead, worker) = riff(&server).await;
+    aw.claim(&worker, &repo(), "issue-12").await.unwrap();
+    let _watch = aw.watch(&worker).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     // #12 needs #9 (closed: not in the open list), #10 (open, merged)
     // and #11 (open, with no comment).
@@ -173,7 +187,7 @@ async fn a_need_with_a_merged_in_comment_is_met() {
             {"number":11,"body":"","comments":[{"author":{"login":"m"},"body":"Not merged in #518."}]}]"#,
     );
     look::once(
-        &api,
+        &al,
         &lead,
         &gh,
         Duration::from_secs(600),
@@ -183,7 +197,7 @@ async fn a_need_with_a_merged_in_comment_is_met() {
     )
     .await
     .unwrap();
-    let w1 = info(&api, &lead, &worker).await;
+    let w1 = info(&al, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Waiting));
     assert_eq!(w1.waits, Some(Waits::Needs { issues: vec![11] }));
 
@@ -195,7 +209,7 @@ async fn a_need_with_a_merged_in_comment_is_met() {
             {"number":11,"body":"","comments":[{"body":"  Merged in #518 (1a2b3c4)"}]}]"#,
     );
     look::once(
-        &api,
+        &al,
         &lead,
         &gh,
         Duration::from_secs(600),
@@ -205,15 +219,15 @@ async fn a_need_with_a_merged_in_comment_is_met() {
     )
     .await
     .unwrap();
-    let w1 = info(&api, &lead, &worker).await;
+    let w1 = info(&al, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Busy));
     assert_eq!(w1.waits, None);
 }
 
 /// Each unread message of `me` that the person posted, as `TO: BODY`.
 /// The look posts as the person, so the lead sees it too.
-async fn unread(api: &Api, me: &SessionUri) -> Vec<String> {
-    api.inbox(me, None, false)
+async fn unread(al: &Api, me: &SessionUri) -> Vec<String> {
+    al.inbox(me, None, false)
         .await
         .unwrap()
         .into_iter()
@@ -239,9 +253,9 @@ fn forge(dir: &Path, name: &str, pulls: &str) -> Arc<Gh> {
 }
 
 /// One look of the lead with `gh` and `watch`.
-async fn look_at(api: &Api, lead: &SessionUri, gh: &Arc<Gh>, watch: &mut PullWatch) {
+async fn look_at(al: &Api, lead: &SessionUri, gh: &Arc<Gh>, watch: &mut PullWatch) {
     look::once(
-        api,
+        al,
         lead,
         gh,
         Duration::from_secs(600),
@@ -258,10 +272,9 @@ async fn look_at(api: &Api, lead: &SessionUri, gh: &Arc<Gh>, watch: &mut PullWat
 /// for each head (01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q31FASDM7CG3JEGPYCZB9).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pull_request_with_a_conflict_tells_its_holder_or_the_lead_once() {
-    let server = start_server().await;
-    let (api, lead, worker) = riff(&server).await;
-    api.claim(&worker, &repo(), "issue-12").await.unwrap();
-    api.inbox(&lead, None, false).await.unwrap();
+    let (_server, (al, aw, lead, worker)) = start_open().await;
+    aw.claim(&worker, &repo(), "issue-12").await.unwrap();
+    al.inbox(&lead, None, false).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     // Each verify passed, so no pull request waits for a verify. #42 has
     // no auto-merge, and #43 is mergeable.
@@ -294,9 +307,9 @@ async fn a_pull_request_with_a_conflict_tells_its_holder_or_the_lead_once() {
     let gh = forge(dir.path(), "gh", &pulls("1a2b3c4d5e"));
     let mut watch = PullWatch::default();
 
-    look_at(&api, &lead, &gh, &mut watch).await;
+    look_at(&al, &lead, &gh, &mut watch).await;
     assert_eq!(
-        unread(&api, &lead).await,
+        unread(&al, &lead).await,
         [
             "repo=como-technologies/riff,claim=issue-12: Pull request #40 of issue-12 has a \
              conflict with the default branch at commit 1a2b3c4, so it cannot merge. Rebase it on \
@@ -307,20 +320,20 @@ async fn a_pull_request_with_a_conflict_tells_its_holder_or_the_lead_once() {
         ]
     );
     // The holder reads its message.
-    let mine = unread(&api, &worker).await;
+    let mine = unread(&aw, &worker).await;
     assert!(
         mine.iter().any(|m| m.contains("#40 of issue-12")),
         "{mine:?}"
     );
 
     // The same state again: no message.
-    look_at(&api, &lead, &gh, &mut watch).await;
-    assert!(unread(&api, &lead).await.is_empty());
+    look_at(&al, &lead, &gh, &mut watch).await;
+    assert!(unread(&al, &lead).await.is_empty());
 
     // A new push that has a conflict again is a new state.
     let gh = forge(dir.path(), "gh2", &pulls("9d8c7b6a5f"));
-    look_at(&api, &lead, &gh, &mut watch).await;
-    let again = unread(&api, &lead).await;
+    look_at(&al, &lead, &gh, &mut watch).await;
+    let again = unread(&al, &lead).await;
     assert_eq!(again.len(), 1, "{again:?}");
     assert!(
         again[0].starts_with("repo=como-technologies/riff,claim=issue-12: ")
@@ -334,12 +347,9 @@ async fn a_pull_request_with_a_conflict_tells_its_holder_or_the_lead_once() {
 /// (01M49Q316RXNATJP587DWGDNCD, 01M49Q31FASDM7CG3JEGPYCZB9).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pull_request_with_no_verify_claim_tells_the_lead_once() {
-    let server = start_server().await;
-    let (api, lead, worker) = riff(&server).await;
-    api.claim(&worker, &repo(), "verify-issue-13")
-        .await
-        .unwrap();
-    api.inbox(&lead, None, false).await.unwrap();
+    let (_server, (al, aw, lead, worker)) = start_open().await;
+    aw.claim(&worker, &repo(), "verify-issue-13").await.unwrap();
+    al.inbox(&lead, None, false).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let gh = forge(
         dir.path(),
@@ -350,20 +360,20 @@ async fn a_pull_request_with_no_verify_claim_tells_the_lead_once() {
     let mut watch = PullWatch::new(Duration::from_secs(1));
 
     // Not yet the wait: no message.
-    look_at(&api, &lead, &gh, &mut watch).await;
-    assert!(unread(&api, &lead).await.is_empty());
+    look_at(&al, &lead, &gh, &mut watch).await;
+    assert!(unread(&al, &lead).await.is_empty());
 
     tokio::time::sleep(Duration::from_millis(1100)).await;
-    look_at(&api, &lead, &gh, &mut watch).await;
+    look_at(&al, &lead, &gh, &mut watch).await;
     assert_eq!(
-        unread(&api, &lead).await,
+        unread(&al, &lead).await,
         [
             "session=l1: Pull request #40 of issue-12 waits for a verify of commit 1a2b3c4 for 1 \
           minute, and no session claims verify-issue-12. Give the verify to a free session."
         ]
     );
-    look_at(&api, &lead, &gh, &mut watch).await;
-    assert!(unread(&api, &lead).await.is_empty(), "one time");
+    look_at(&al, &lead, &gh, &mut watch).await;
+    assert!(unread(&al, &lead).await.is_empty(), "one time");
 }
 
 /// A block wakes the lead, then wakes it again, then `riff top` shows
@@ -375,10 +385,10 @@ async fn a_pull_request_with_no_verify_claim_tells_the_lead_once() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     let server = start_server().await;
-    let (api, lead, worker) = riff(&server).await;
-    api.claim(&worker, &repo(), "issue-12").await.unwrap();
-    let _watch = api.watch(&worker).await.unwrap();
-    api.inbox(&lead, None, false).await.unwrap();
+    let (al, aw, lead, worker) = riff(&server).await;
+    aw.claim(&worker, &repo(), "issue-12").await.unwrap();
+    let _watch = aw.watch(&worker).await.unwrap();
+    al.inbox(&lead, None, false).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let gh = Arc::new(Gh::at(script(dir.path(), "gh", "echo '[]'")));
     let shown = dir.path().join("shown");
@@ -392,7 +402,7 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     let look = || async {
         let (mut watch, mut main) = (PullWatch::default(), MainWatch::default());
         look::once(
-            &api,
+            &al,
             &lead,
             &gh,
             wake,
@@ -412,20 +422,20 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
 
     // One command: the block, and the first wake of the lead.
     assert_eq!(
-        api.blocked(&worker, "which design?").await.unwrap(),
+        aw.blocked(&worker, "which design?").await.unwrap(),
         riff_client::api::Told::Lead
     );
-    let first = bodies(api.inbox(&lead, None, false).await.unwrap());
+    let first = bodies(al.inbox(&lead, None, false).await.unwrap());
     assert_eq!(first, ["blocked: which design?"]);
     assert_eq!(
-        info(&api, &lead, &worker).await.state,
+        info(&al, &lead, &worker).await.state,
         Some(SessionState::Blocked)
     );
 
     // No answer for the wake time: the second wake of the lead.
     tokio::time::sleep(Duration::from_millis(1100)).await;
     assert!(look().await.unwrap().is_empty());
-    let second = bodies(api.inbox(&lead, None, false).await.unwrap());
+    let second = bodies(al.inbox(&lead, None, false).await.unwrap());
     assert_eq!(
         second,
         ["blocked: w1 (issue-12) has no answer after 1 minute: which design?"]
@@ -436,7 +446,7 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
     tokio::time::sleep(Duration::from_millis(1100)).await;
     let unanswered = look().await.unwrap();
     assert_eq!(unanswered.len(), 1);
-    let sessions = api.who(&lead, false).await.unwrap();
+    let sessions = al.who(&lead, false).await.unwrap();
     let board = top(&sessions);
     let line = board
         .lines()
@@ -455,8 +465,8 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
 
     // The answer ends the line at once, before the next work. The
     // session stays blocked until that work.
-    api.tell(&lead, "w1", "take the first one").await.unwrap();
-    let w1 = info(&api, &lead, &worker).await;
+    al.tell(&lead, "w1", "take the first one").await.unwrap();
+    let w1 = info(&al, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Blocked));
     let board = top(&[w1]);
     assert!(board.contains("blocked  w1 issue-12, "), "{board}");
@@ -468,8 +478,8 @@ async fn a_block_with_no_answer_wakes_the_lead_again_then_tells_the_person() {
         turn: true,
         secs: 0,
     };
-    api.alive_with(&worker, Some(work), None).await.unwrap();
-    let w1 = info(&api, &lead, &worker).await;
+    aw.alive_with(&worker, Some(work), None).await.unwrap();
+    let w1 = info(&al, &lead, &worker).await;
     assert_eq!(w1.state, Some(SessionState::Busy));
     assert!(!top(&[w1]).contains("the lead gave no answer"));
 }
@@ -488,8 +498,8 @@ fn a_machine_with_no_desktop_gets_no_notification() {
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_blocked_sets_the_block_and_tells_the_lead() {
     let server = start_server().await;
-    let (api, lead, worker) = riff(&server).await;
-    api.inbox(&lead, None, false).await.unwrap();
+    let (al, _, lead, worker) = riff(&server).await;
+    al.inbox(&lead, None, false).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let git = |args: &[&str]| {
         let status = std::process::Command::new("git")
@@ -516,9 +526,9 @@ async fn riff_blocked_sets_the_block_and_tells_the_lead() {
         said,
         "You are blocked: which design? The lead has the reason.\n"
     );
-    let block = info(&api, &lead, &worker).await.blocked.unwrap();
+    let block = info(&al, &lead, &worker).await.blocked.unwrap();
     assert_eq!(block.reason, "which design?");
-    let inbox = api.inbox(&lead, None, false).await.unwrap();
+    let inbox = al.inbox(&lead, None, false).await.unwrap();
     let bodies: Vec<String> = inbox
         .into_iter()
         .flat_map(|i| i.messages)

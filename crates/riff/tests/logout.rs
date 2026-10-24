@@ -33,7 +33,8 @@ async fn start(admins: &[&str]) -> (Service, Api) {
     .await
 }
 
-/// A server with the config that `config` makes from its URL.
+/// A server with the config that `config` makes from its URL. It is not
+/// common::start_signed: these tests test the sign-in and the logout calls.
 async fn serve(config: impl FnOnce(&str) -> Config) -> (Service, Api) {
     let (listener, url) = common::listen().await;
     let service = Service::new(config(&url));

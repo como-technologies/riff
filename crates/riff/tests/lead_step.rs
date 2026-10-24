@@ -15,13 +15,10 @@ use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
 
-async fn start_server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    format!("http://{addr}")
+use crate::common;
+
+async fn start_server() -> common::Signed {
+    common::start_signed().await
 }
 
 /// A git repository with a GitHub origin, so `riff who` runs in
@@ -87,6 +84,7 @@ async fn refused(client: &RunningService<RoleClient, ()>, tool: &str, args: serd
 /// The row of the session `id` in `riff who`, as the person mike sees
 /// it in a shell.
 async fn who_row(server: &str, dir: &Path, id: &str) -> String {
+    common::sign_in(server, dir, "mike");
     let mut cmd = Isolated::shared().assert_riff();
     cmd.arg("who")
         .current_dir(dir)
@@ -108,7 +106,7 @@ async fn who_row(server: &str, dir: &Path, id: &str) -> String {
 
 /// A running riff with the lead `a1` and the session `b2`, each live.
 struct Riff {
-    server: String,
+    server: common::Signed,
     dir: tempfile::TempDir,
     lead: RunningService<RoleClient, ()>,
     other: RunningService<RoleClient, ()>,
@@ -130,15 +128,18 @@ async fn watch(api: &Api, id: &str) {
 impl Riff {
     async fn start() -> Riff {
         let server = start_server().await;
-        let api = Api::new(&server);
+        let (api_a1, api_b2) = (
+            server.api("mike", Some("a1")),
+            server.api("mike", Some("b2")),
+        );
         // The person of mike names a1 the lead.
-        let lead = connect(&api, "a1").await;
-        crate::common::name_lead(&api, &uri("a1")).await;
-        let other = connect(&api, "b2").await;
+        let lead = connect(&api_a1, "a1").await;
+        common::name_lead(&server.api("mike", None), &uri("a1")).await;
+        let other = connect(&api_b2, "b2").await;
         // A paused riff hides the current step.
         call(&lead, "resume", serde_json::json!({ "riff": true })).await;
-        watch(&api, "a1").await;
-        watch(&api, "b2").await;
+        watch(&api_a1, "a1").await;
+        watch(&api_b2, "b2").await;
         Riff {
             server,
             dir: repo(),

@@ -8,13 +8,10 @@ use std::process::{Command, Output, Stdio};
 
 const THREAD: &str = "como-technologies/riff";
 
-async fn start_server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    format!("http://{addr}")
+use crate::common;
+
+async fn start_server() -> common::Signed {
+    common::start_signed().await
 }
 
 /// A git repository with a GitHub origin, so the place of each session
@@ -43,6 +40,7 @@ fn repo() -> tempfile::TempDir {
 /// mike, or as the person mike. Each test has its own environment, so
 /// its settings are its own.
 fn riff(env: &Isolated, server: &str, dir: &Path, session: Option<&str>, args: &[&str]) -> Command {
+    common::sign_in(server, &env.riff_home(), "mike");
     let mut cmd = env.riff();
     cmd.args(args)
         .args(["--color", "never"])
@@ -174,13 +172,13 @@ async fn who_is_a_table_and_long_shows_the_uri() {
     let out = stdout(riff(&env, &server, dir, Some("a6cf2205-1"), &["who"])).await;
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines[0], "riff   paused by the server", "{out}");
-    assert_eq!(lines[2], "", "{out}");
+    assert_eq!(lines[3], "", "{out}");
     assert_eq!(
-        lines[3], "SESSION                        STATE   ROLE      DETAIL",
+        lines[4], "SESSION                        STATE   ROLE      DETAIL",
         "{out}"
     );
     assert_eq!(
-        lines[4], "mike@pangolin:riff (a6cf2205)  paused  you lead  stopped at: write the tests",
+        lines[5], "mike@pangolin:riff (a6cf2205)  paused  you lead  stopped at: write the tests",
         "{out}"
     );
     assert!(!out.contains("riff://"), "{out}");

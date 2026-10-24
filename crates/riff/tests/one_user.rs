@@ -16,15 +16,6 @@ fn uri(text: &str) -> SessionUri {
     text.parse().unwrap()
 }
 
-async fn start_server() -> Api {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    Api::new(&format!("http://{addr}"))
-}
-
 /// A sign-in of mike at `server` in the mock keyring, and a keyring
 /// that fails on the next read of it. Another process wrote the
 /// sign-in, so this process keeps no value of it
@@ -103,28 +94,31 @@ fn riff_user_stands_in_when_it_cannot_open_the_keyring() {
 
 #[tokio::test]
 async fn the_server_refuses_a_known_session_under_a_new_user() {
-    let api = start_server().await;
+    let server = common::start_signed().await;
+    let api = server.api("mike", Some("a1"));
     let thread = "como-technologies/riff".parse().unwrap();
     let mike = uri("riff://mike@pangolin/como-technologies/riff?session=a1#issue-7");
-    let other = uri("riff://sandman@pangolin/como-technologies/riff?session=a1");
+    let other = uri("riff://bob@pangolin/como-technologies/riff?session=a1");
     api.register(&mike).await.unwrap();
     // The person of mike names it the lead, so it can resume the riff.
-    crate::common::name_lead(&api, &mike).await;
+    common::name_lead(&server.api("mike", None), &mike).await;
     api.set_riff(&mike, riff_core::wire::RiffState::Running)
         .await
         .unwrap();
     assert!(api.claim(&mike, &thread, "issue-7").await.unwrap().granted);
 
-    let error = api.register(&other).await.unwrap_err().to_string();
+    let bob = server.api("bob", Some("a1"));
+    let error = bob.register(&other).await.unwrap_err().to_string();
     assert!(error.contains("409"), "{error}");
     assert!(error.contains("known as user mike"), "{error}");
-    let error = match api.watch(&other).await {
+    let error = match bob.watch(&other).await {
         Ok(_) => panic!("the watch must fail"),
         Err(e) => e.to_string(),
     };
     assert!(error.contains("known as user mike"), "{error}");
-    assert!(api.claim(&other, &thread, "issue-8").await.is_err());
+    assert!(bob.claim(&other, &thread, "issue-8").await.is_err());
 
+    let api = server.api("mike", Some("a1"));
     let who = api.who(&mike, false).await.unwrap();
     assert_eq!(who.len(), 1, "one entry for the session");
     assert_eq!(who[0].uri.who(), mike.who());

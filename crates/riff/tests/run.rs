@@ -314,12 +314,9 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     text(&out.stdout).trim().to_owned()
 }
 
-/// A real riff-server of this build, with no sign-in.
-async fn server() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
-    format!("http://{addr}")
+/// A real riff-server of this build, that needs a sign-in.
+async fn server() -> Arc<crate::common::Signed> {
+    Arc::new(crate::common::start_signed().await)
 }
 
 /// Each path in `dir`, below it, with the size of each file.
@@ -351,6 +348,8 @@ struct Machine {
     _origin: tempfile::TempDir,
     main: PathBuf,
     server: String,
+    /// The signed server of `server`: it fails the test at a call with no token.
+    _signed: Option<Arc<crate::common::Signed>>,
     daemon: Option<std::process::Child>,
     /// The quiet limit of the daemon, when the test sets one.
     quiet: Option<Duration>,
@@ -377,9 +376,27 @@ impl Machine {
         Machine::with_server(quiet, server().await).await
     }
 
+    /// A machine with a riff-server that needs no sign-in. The proxy of
+    /// [`Proxy`] has another URL than the server. A token binds to the
+    /// URL of the server (DPoP), so a signed call through the proxy fails.
+    async fn open() -> Machine {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
+        Machine::build(None, url, None).await
+    }
+
     /// A machine whose daemon has the quiet limit `quiet`, with the
     /// riff-server `server`.
-    async fn with_server(quiet: Option<Duration>, server: String) -> Machine {
+    async fn with_server(quiet: Option<Duration>, signed: Arc<crate::common::Signed>) -> Machine {
+        Machine::build(quiet, signed.to_string(), Some(signed)).await
+    }
+
+    async fn build(
+        quiet: Option<Duration>,
+        server: String,
+        signed: Option<Arc<crate::common::Signed>>,
+    ) -> Machine {
         let env = Isolated::new();
         let bin = tempfile::tempdir().unwrap();
         fake_gh(bin.path());
@@ -432,6 +449,7 @@ impl Machine {
             _origin: origin,
             main,
             server,
+            _signed: signed,
             daemon: None,
             quiet,
             host: "thelio",
@@ -507,6 +525,7 @@ impl Machine {
             self.bin.path().display(),
             std::env::var("PATH").unwrap()
         );
+        crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
         let mut cmd = self.env.riff();
         cmd.args(args)
             .current_dir(&self.main)
@@ -1599,7 +1618,7 @@ async fn pass(client: TcpStream, target: String, away: Arc<AtomicBool>, held: He
 /// the release when the server answers again.
 #[tokio::test]
 async fn riff_run_sends_the_verify_request_and_the_release_when_the_server_answers_again() {
-    let machine = Machine::new().await;
+    let machine = Machine::open().await;
     machine.lead().await;
     let proxy = Proxy::new(&machine.server).await;
     let hold = machine.bin.path().join("hold");
@@ -1699,7 +1718,7 @@ async fn still_held(machine: &Machine) {
 async fn a_sigint_stops_the_wait_of_the_verify_request() {
     use riff::text::{RUN_END, RUN_RELEASE, RUN_VERIFY_REQUEST, run_not_sent};
 
-    let machine = Machine::new().await;
+    let machine = Machine::open().await;
     // The verify request first reads the holds (01M5157TYDEHZHDXSC1AHCRDRN).
     let (out, took) =
         a_signal_in_the_end_steps(&machine, "/v1/plan/show", nix::sys::signal::Signal::SIGINT)
@@ -1722,7 +1741,7 @@ async fn a_sigint_stops_the_wait_of_the_verify_request() {
 async fn a_sigterm_stops_the_wait_of_the_release() {
     use riff::text::{RUN_END, RUN_RELEASE, run_not_sent};
 
-    let machine = Machine::new().await;
+    let machine = Machine::open().await;
     // With no pull request, the release is the first end step.
     std::fs::write(machine.bin.path().join("no-pr"), "").unwrap();
     let (out, took) =

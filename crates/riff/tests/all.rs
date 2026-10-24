@@ -62,6 +62,7 @@ mod session;
 mod session_image;
 mod setup;
 mod signed;
+mod signed_server;
 mod smoke;
 mod start_a_riff;
 mod states;

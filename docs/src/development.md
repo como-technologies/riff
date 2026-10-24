@@ -255,6 +255,24 @@ share, keep the load low, and stop the command when you have the fail.
 A test runs `riff` and `riff-server` only through the crate
 `isolated`. It waits for the fact that it checks.
 
+### Use a riff-server with a sign-in
+
+An integration test of a command that calls riff-server starts
+`common::start_signed()` (in `crates/riff/tests/common/mod.rs`). The
+server needs a sign-in. A command that forgets `Api::signed_in` sends
+no token, the server refuses it with 401, and the test fails when it
+ends, even when the command hides the error.
+
+Sign in the command with `common::sign_in(&server, home, user)`. For a
+client in the test process, use `common::api(&server, user, session)`.
+The users are `brett` (owner), `mike` (admin) and `bob` (member).
+
+```rust,ignore
+let server = common::start_signed().await;
+common::sign_in(&server, &home, "brett");
+let api = common::api(&server, "mike", Some("a1"));
+```
+
 ### Write a fake program
 
 A test that runs a fake program, for example a fake `gh` or `podman`,

@@ -8,28 +8,17 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use riff_client::api::Api;
+use crate::common;
 use riff_core::name::SessionUri;
 use riff_core::wire::{RiffBinary, StartReason};
 
 /// The path of each call that the server gets.
 type Calls = Arc<Mutex<Vec<String>>>;
 
-async fn start_server() -> (String, Calls) {
-    let calls = Calls::default();
-    let seen = calls.clone();
-    let router = riff_server::router().layer(axum::middleware::map_request(
-        move |r: axum::extract::Request| {
-            seen.lock().unwrap().push(r.uri().path().to_owned());
-            async move { r }
-        },
-    ));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
-    (format!("http://{addr}"), calls)
+async fn start_server() -> (common::Signed, Calls) {
+    let server = common::start_signed().await;
+    let calls = server.calls();
+    (server, calls)
 }
 
 /// A git repository with a GitHub origin, so the place of each session
@@ -96,41 +85,14 @@ fn wave_gh(dir: &Path, numbers: &[u64]) {
     );
 }
 
-/// A riff-server that needs a sign-in, and the sign-in of its owner,
-/// the person brett, in the secret files of the `RIFF_HOME` `home`.
-async fn start_server_with_sign_in(home: &Path) -> (riff_server::Service, String) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let service = riff_server::Service::new(riff_server::auth::Config {
-        require_sign_in: true,
-        ..riff_server::auth::Config::new(&url)
-    });
-    let router = service.router();
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let secrets = home.join("secrets");
-    let key = riff_core::dpop::Key::generate();
-    let name = riff_client::device::secret_name(&url);
-    riff_client::secrets::file_set(&secrets, &name, &key.to_secret()).unwrap();
-    let pair = service
-        .admit("brett@comotechnologies.io", false, &key.thumbprint())
-        .await
-        .unwrap();
-    let sign_in = riff_client::login::SignIn {
-        user: pair.user,
-        access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
-        expires_at: u64::MAX,
-        riff_id: service.riff_id(),
-    };
-    let name = riff_client::login::secret_name(&url);
-    let json = serde_json::to_string(&sign_in).unwrap();
-    riff_client::secrets::file_set(&secrets, &name, &json).unwrap();
-    (service, url)
-}
-
 /// `riff ARGS` in `dir` through a pipe, as the agent session `session`
 /// of mike, or as the person brett, with `path` as `PATH`.
 fn riff(server: &str, dir: &Path, session: Option<&str>, path: &Path, args: &[&str]) -> Command {
+    common::sign_in(
+        server,
+        dir,
+        if session.is_some() { "mike" } else { "brett" },
+    );
     let mut cmd = Isolated::shared().riff();
     cmd.args(args)
         .current_dir(dir)
@@ -183,7 +145,7 @@ async fn live(server: &str, host: &str, id: &str) {
 /// Opens a watch for the session `uri`, so that the session is live
 /// until the test ends.
 async fn live_at(server: &str, uri: SessionUri) {
-    let api = Api::new(server);
+    let api = common::api_of(server, &uri);
     let (open, opened) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let _watch = api.watch(&uri).await.unwrap();
@@ -202,7 +164,10 @@ async fn three_sessions(server: &str, dir: &Path, path: &Path) {
     let b2: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2"
         .parse()
         .unwrap();
-    Api::new(server).register_as(&b2, true).await.unwrap();
+    common::api_of(server, &b2)
+        .register_as(&b2, true)
+        .await
+        .unwrap();
     for (id, args) in [
         ("b2", &["claim", "issue-12"][..]),
         ("b2", &["status", "tests"][..]),
@@ -235,7 +200,7 @@ async fn session_of(server: &str, who: &str, place: &str, id: &str, item: Option
     let uri: SessionUri = format!("riff://{who}/{repo}?session={id}{fragment}")
         .parse()
         .unwrap();
-    let api = Api::new(server);
+    let api = common::api_of(server, &uri);
     api.register(&uri).await.unwrap();
     if let Some(item) = item {
         let thread = uri.default_thread().unwrap();
@@ -250,7 +215,7 @@ async fn clear_b2(server: &str) {
     let b2: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2"
         .parse()
         .unwrap();
-    let api = Api::new(server);
+    let api = common::api_of(server, &b2);
     api.start(&b2, StartReason::Clear, true).await.unwrap();
 }
 
@@ -281,13 +246,16 @@ fn secs(line: &str) -> String {
 }
 
 /// The lines of the tree, after the header and the board, with each
-/// time in seconds as `Ns`.
+/// time in seconds as `Ns`. The roles of
+/// the owner brett and of the admin mike, and the offline row of brett,
+/// are left out: the server needs a sign-in, and it knows them.
 fn rows(top: &str) -> Vec<String> {
     top.rsplit("\n\n")
         .next()
         .unwrap()
         .lines()
-        .map(secs)
+        .filter(|line| *line != "brett  owner  offline")
+        .map(|line| secs(&line.replacen("  owner", "", 1).replacen("  admin", "", 1)))
         .collect()
 }
 
@@ -420,7 +388,7 @@ async fn top_shows_no_session_of_another_daemon() {
         rows(&top).iter().any(|row| row.contains("a1  lead")),
         "{top}"
     );
-    for other in ["brett", "kadomony", "77e0aaaa", "issue-14"] {
+    for other in ["kadomony", "77e0aaaa", "issue-14"] {
         assert!(!top.contains(other), "{other}: {top}");
     }
     assert_eq!(asks.load(Ordering::SeqCst), 0);
@@ -481,20 +449,29 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     ))
     .await;
     live(&server, "pangolin", "a1").await;
-    let api = Api::new(&server);
+    let api = |me: &SessionUri| common::api_of(&server, me);
     let uri = |id: &str| -> SessionUri {
         format!("riff://mike@thelio/como-technologies/riff?session={id}")
             .parse()
             .unwrap()
     };
     let w1 = uri("w1");
-    api.register_as(&w1, true).await.unwrap();
+    api(&w1).register_as(&w1, true).await.unwrap();
     live_at(&server, w1).await;
     let c1 = uri("c1#issue-12");
-    api.start(&c1, StartReason::Process, true).await.unwrap();
+    api(&c1)
+        .start(&c1, StartReason::Process, true)
+        .await
+        .unwrap();
     let thread = c1.default_thread().unwrap();
-    assert!(api.claim(&c1, &thread, "issue-12").await.unwrap().granted);
-    api.alive_in_container(&c1).await.unwrap();
+    assert!(
+        api(&c1)
+            .claim(&c1, &thread, "issue-12")
+            .await
+            .unwrap()
+            .granted
+    );
+    api(&c1).alive_in_container(&c1).await.unwrap();
     // The host never registers: its watch makes it known.
     let h1 = uri("h1");
     live_at(&server, h1.clone()).await;
@@ -509,12 +486,13 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
         workers: vec![],
     };
     let step = riff_core::wire::Status { step: host.line() };
-    api.status(&h1, &step).await.unwrap();
+    api(&h1).status(&h1, &step).await.unwrap();
     // The daemon says so in its status (01M589HH6HCWYJP1ZC7MRAXZ6E).
     let d1 = uri("d1");
     live_at(&server, d1.clone()).await;
     let step = riff::daemon::remote::status_line(812, "3.2.0", 0);
-    api.status(&d1, &riff_core::wire::Status { step })
+    api(&d1)
+        .status(&d1, &riff_core::wire::Status { step })
         .await
         .unwrap();
 
@@ -568,7 +546,7 @@ async fn each_kind_of_session_has_its_tag_and_the_host_line_counts_them() {
     assert!(line("h1").contains("  hosts workers for "), "{who}");
 
     // The daemon ends the session at the end of its container: gone.
-    api.end(&c1).await.unwrap();
+    api(&c1).end(&c1).await.unwrap();
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
     assert!(!top.contains("─ c1  "), "{top}");
@@ -598,7 +576,7 @@ async fn a_session_that_runs_an_old_riff_has_the_mark_and_the_host_line_counts_i
     ))
     .await;
     live(&server, "pangolin", "a1").await;
-    let api = Api::new(&server);
+    let api = |me: &SessionUri| common::api_of(&server, me);
     let binary = |build: &str, replaced| RiffBinary {
         build: build.into(),
         replaced,
@@ -614,12 +592,12 @@ async fn a_session_that_runs_an_old_riff_has_the_mark_and_the_host_line_counts_i
         let uri: SessionUri = format!("riff://mike@thelio/como-technologies/riff?session={id}")
             .parse()
             .unwrap();
-        api.register_as(&uri, true).await.unwrap();
+        api(&uri).register_as(&uri, true).await.unwrap();
         live_at(&server, uri.clone()).await;
         match binary {
-            Some(binary) => api.alive_as(&uri, binary).await.unwrap(),
+            Some(binary) => api(&uri).alive_as(&uri, binary).await.unwrap(),
             // An older riff: its keep-alive names no riff.
-            None => api.alive(&uri).await.unwrap(),
+            None => api(&uri).alive(&uri).await.unwrap(),
         };
     }
 
@@ -824,13 +802,14 @@ async fn riff_wave_list_in_a_container_reads_riff_server_through_the_socket() {
     ] {
         output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
     }
-    let api = Api::new(&server);
+    let api = |me: &SessionUri| common::api_of(&server, me);
     let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"
         .parse()
         .unwrap();
     let thread = "como-technologies/riff".parse().unwrap();
-    let who = serde_json::to_value(api.who(&me, false).await.unwrap()).unwrap();
-    let holds = serde_json::to_value(api.plan_show(&me, &thread).await.unwrap().holds).unwrap();
+    let who = serde_json::to_value(api(&me).who(&me, false).await.unwrap()).unwrap();
+    let holds =
+        serde_json::to_value(api(&me).plan_show(&me, &thread).await.unwrap().holds).unwrap();
 
     let sockets = tempfile::tempdir().unwrap();
     let socket = sockets.path().join("riff.sock");
@@ -887,11 +866,11 @@ async fn riff_wave_move_in_a_container_reads_the_claims_through_the_socket() {
     for args in [&["resume", "--riff"][..], &["claim", "issue-12"]] {
         output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
     }
-    let api = Api::new(&server);
+    let api = |me: &SessionUri| common::api_of(&server, me);
     let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"
         .parse()
         .unwrap();
-    let who = serde_json::to_value(api.who(&me, false).await.unwrap()).unwrap();
+    let who = serde_json::to_value(api(&me).who(&me, false).await.unwrap()).unwrap();
 
     let sockets = tempfile::tempdir().unwrap();
     let socket = sockets.path().join("riff.sock");
@@ -944,7 +923,7 @@ async fn riff_wave_move_in_a_container_reads_the_claims_through_the_socket() {
 async fn riff_wave_list_signs_in_to_a_riff_server_that_needs_a_sign_in() {
     let dir = repo();
     let dir = dir.path();
-    let (_service, server) = start_server_with_sign_in(dir).await;
+    let (server, _) = start_server().await;
     let bin = bin(false);
     wave_gh(bin.path(), &[12]);
 
@@ -1045,7 +1024,15 @@ async fn top_makes_only_read_calls() {
         "{calls:?}"
     );
     // The holds of the boards are a read too (01M58ATZ1F42DWNNB24C2HJPEY).
-    let reads = ["/v1/riff", "/v1/who", "/v1/plan/show", "/v1/tail"];
+    // The sign-in and the token swap read and write no state.
+    let reads = [
+        "/v1/riff",
+        "/v1/who",
+        "/v1/plan/show",
+        "/v1/tail",
+        "/v1/sign-in",
+        "/v1/token",
+    ];
     for call in &calls {
         assert!(reads.contains(&call.as_str()), "{call} in {calls:?}");
     }
@@ -1249,7 +1236,7 @@ async fn sessions_of_two_repositories_show_their_repository_and_worktree() {
     let d4: SessionUri = format!("riff://mike@pangolin/{strata}?session=d4")
         .parse()
         .unwrap();
-    crate::common::name_lead(&Api::new(&server), &d4).await;
+    crate::common::name_lead(&common::api(&server, "mike", None), &d4).await;
     session_at(
         &server,
         &format!("{strata}#issue-88"),
@@ -1396,7 +1383,7 @@ async fn two_owners_show_the_owner_of_each_repository() {
     let d4: SessionUri = "riff://mike@pangolin/acme/strata?session=d4#issue-88"
         .parse()
         .unwrap();
-    crate::common::name_lead(&Api::new(&server), &d4).await;
+    crate::common::name_lead(&common::api(&server, "mike", None), &d4).await;
 
     let top = ["top", "--once"];
     let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
@@ -1495,7 +1482,7 @@ async fn top_shows_the_state_of_a_lead_and_its_long_step() {
         .parse()
         .unwrap();
     live_at(&server, a1.clone()).await;
-    let api = Api::new(&server);
+    let api = |me: &SessionUri| common::api_of(&server, me);
     let top = || async { output(riff(&server, dir, None, bin.path(), &["top", "--once"])).await };
     let state = |top: &str| {
         session(top, "a1")[0]
@@ -1510,7 +1497,7 @@ async fn top_shows_the_state_of_a_lead_and_its_long_step() {
         turn: true,
         secs: 0,
     };
-    api.alive_with(&a1, Some(tool), None).await.unwrap();
+    api(&a1).alive_with(&a1, Some(tool), None).await.unwrap();
     let step = ["step", "start", "live window"];
     output(riff(&server, dir, Some("a1"), bin.path(), &step)).await;
     let busy = top().await;
@@ -1543,7 +1530,10 @@ async fn top_shows_the_state_of_a_lead_and_its_long_step() {
         turn: false,
         secs: 0,
     };
-    api.alive_with(&a1, Some(ended), Some(0)).await.unwrap();
+    api(&a1)
+        .alive_with(&a1, Some(ended), Some(0))
+        .await
+        .unwrap();
     output(riff(
         &server,
         dir,
@@ -1588,7 +1578,7 @@ async fn twelve_sessions_fit_in_80_columns() {
         let uri: SessionUri = format!("riff://mike@thelio/como-technologies/riff?session={id}")
             .parse()
             .unwrap();
-        Api::new(&server)
+        common::api_of(&server, &uri)
             .register_as(&uri, n % 2 == 0)
             .await
             .unwrap();

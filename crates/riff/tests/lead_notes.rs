@@ -8,14 +8,7 @@ use std::process::{Command as Git, Output};
 
 use isolated::Isolated;
 
-async fn start_server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    format!("http://{addr}")
-}
+use crate::common;
 
 /// A git repository with a GitHub origin, so `riff` runs in
 /// `como-technologies/riff`.
@@ -38,6 +31,7 @@ fn repo() -> tempfile::TempDir {
 
 /// Runs `riff` as the person `user`, with `editor` as `$EDITOR`.
 async fn riff(server: &str, dir: &Path, user: &str, editor: &str, args: &[&str]) -> Output {
+    common::sign_in(server, dir, user);
     let mut cmd = Isolated::shared().riff();
     cmd.args(args)
         .current_dir(dir)
@@ -63,7 +57,7 @@ fn text(out: &[u8]) -> String {
 /// refused. Another user cannot show the notes.
 #[tokio::test]
 async fn the_person_shows_and_edits_the_notes_of_the_lead() {
-    let server = start_server().await;
+    let server = common::start_signed().await;
     let repo = repo();
     let dir = repo.path();
 

@@ -92,6 +92,7 @@ fn summary(mut times: Vec<Duration>) -> String {
 async fn a_status_and_a_claim_while_8_sessions_post() {
     let mut config = Config::default();
     config.lease.wait = Duration::from_millis(10);
+    // Not `common::start_signed`: the server needs the `Slow` store, and the measure is of the store.
     let service = Service::load(config, Arc::new(Slow::default()))
         .await
         .unwrap();

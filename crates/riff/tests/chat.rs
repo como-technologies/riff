@@ -25,7 +25,10 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 /// hangs.
 const WAIT: Duration = Duration::from_secs(30);
 
-async fn start_server() -> Api {
+/// A riff-server with no sign-in, for the tests that go through the
+/// [`Proxy`]: a token binds to the URL of the server (DPoP), so a signed
+/// call through the proxy would fail.
+async fn start_open() -> Api {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -46,14 +49,15 @@ struct Client {
 impl Client {
     /// Starts `riff chat ARGS` as `user` on `host`, and waits until it
     /// is ready: it prints its hint on stderr.
-    async fn start(api: &Api, user: &str, host: &str, args: &[&str]) -> Client {
+    async fn start(url: &str, user: &str, host: &str, args: &[&str]) -> Client {
         let dir = tempfile::tempdir().unwrap();
+        crate::common::sign_in(url, dir.path(), user);
         let mut child = Isolated::shared()
             .tokio_riff()
             .arg("chat")
             .args(args)
             .current_dir(dir.path())
-            .env("RIFF_SERVER", api.base())
+            .env("RIFF_SERVER", url)
             .env("RIFF_USER", user)
             .env("RIFF_HOST", host)
             .env("RIFF_HOME", dir.path())
@@ -144,9 +148,9 @@ fn is_shown(line: &str, rest: &str) -> bool {
 
 #[tokio::test]
 async fn a_line_of_one_person_shows_at_the_other() {
-    let api = start_server().await;
-    let mut mike = Client::start(&api, "mike", "thelio", &[]).await;
-    let mut brett = Client::start(&api, "brett", "heron", &[]).await;
+    let server = crate::common::start_signed().await;
+    let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
 
     mike.say("hello brett").await;
     let line = brett.shows("hello brett").await;
@@ -155,7 +159,7 @@ async fn a_line_of_one_person_shows_at_the_other() {
     assert!(is_line(&own, "mike@thelio", "hello brett"), "{own:?}");
 
     // A later client shows the history first.
-    let mut late = Client::start(&api, "ann", "wren", &[]).await;
+    let mut late = Client::start(&server, "bob", "wren", &[]).await;
     let line = late.shows("hello brett").await;
     assert!(is_line(&line, "mike@thelio", "hello brett"), "{line:?}");
 
@@ -166,17 +170,22 @@ async fn a_line_of_one_person_shows_at_the_other() {
 
 #[tokio::test]
 async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
-    let api = start_server().await;
+    let server = crate::common::start_signed().await;
     let (mike_lead, brett_lead) = (lead_of("mike"), lead_of("brett"));
-    // The person of each user names its lead.
-    api.register(&mike_lead).await.unwrap();
-    api.register(&brett_lead).await.unwrap();
-    crate::common::name_lead(&api, &mike_lead).await;
-    crate::common::name_lead(&api, &brett_lead).await;
-    let mut mike_wakes = Box::pin(api.watch(&mike_lead).await.unwrap());
-    let mut brett_wakes = Box::pin(api.watch(&brett_lead).await.unwrap());
-    let mut mike = Client::start(&api, "mike", "thelio", &[]).await;
-    let mut brett = Client::start(&api, "brett", "heron", &[]).await;
+    // The person of each user names its lead. A client of one process
+    // has one sign-in per server, so each call has its own client.
+    let common = |user| crate::common::api(&server, user, None);
+    let session = |lead| crate::common::api_of(&server, lead);
+    session(&mike_lead).register(&mike_lead).await.unwrap();
+    crate::common::name_lead(&common("mike"), &mike_lead).await;
+    let mike_api = session(&mike_lead);
+    let mut mike_wakes = Box::pin(mike_api.watch(&mike_lead).await.unwrap());
+    session(&brett_lead).register(&brett_lead).await.unwrap();
+    crate::common::name_lead(&common("brett"), &brett_lead).await;
+    let brett_api = session(&brett_lead);
+    let mut brett_wakes = Box::pin(brett_api.watch(&brett_lead).await.unwrap());
+    let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
 
     // @lead wakes the lead of the sender.
     mike.say("@lead is #12 done?").await;
@@ -198,7 +207,7 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
     assert_eq!(wake.from.who().user(), "brett");
 
     // The lead reads the line, and answers in the chat.
-    let read = api
+    let read = session(&mike_lead)
         .read(&mike_lead, &riff::chat::thread(), false)
         .await
         .unwrap();
@@ -206,15 +215,16 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
         read.iter()
             .any(|c| c.message.body == "@mike: can I take #14?")
     );
-    api.post(
-        &mike_lead,
-        Some(&riff::chat::thread()),
-        &[],
-        "yes, take #14",
-        Kind::Message,
-    )
-    .await
-    .unwrap();
+    session(&mike_lead)
+        .post(
+            &mike_lead,
+            Some(&riff::chat::thread()),
+            &[],
+            "yes, take #14",
+            Kind::Message,
+        )
+        .await
+        .unwrap();
     // The lead line looks different from a person line, also with no
     // color.
     for client in [&mut mike, &mut brett] {
@@ -229,12 +239,14 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
 
 #[tokio::test]
 async fn a_line_with_no_at_wakes_the_lead_of_the_sender() {
-    let api = start_server().await;
+    let server = crate::common::start_signed().await;
     let lead = lead_of("brett");
+    let api = crate::common::api_of(&server, &lead_of("brett"));
     api.register(&lead).await.unwrap();
-    crate::common::name_lead(&api, &lead).await;
+    crate::common::name_lead(&crate::common::api(&server, "brett", None), &lead).await;
+    let api = crate::common::api_of(&server, &lead);
     let mut wakes = Box::pin(api.watch(&lead).await.unwrap());
-    let mut brett = Client::start(&api, "brett", "heron", &[]).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
 
     brett
         .say("is the running riff in the way of my release?")
@@ -250,21 +262,22 @@ async fn a_line_with_no_at_wakes_the_lead_of_the_sender() {
 
 #[tokio::test]
 async fn never_and_a_pipe_print_no_escape_codes() {
-    let api = start_server().await;
+    let server = crate::common::start_signed().await;
     for args in [&[][..], &["--color", "never"][..]] {
-        let mut mike = Client::start(&api, "mike", "thelio", args).await;
+        let mut mike = Client::start(&server, "mike", "thelio", args).await;
         mike.say("plain \x1b]0;owned\x07text").await;
         let line = mike.shows("plain").await;
         assert!(!line.contains('\x1b'), "{args:?}: {line:?}");
         assert!(line.ends_with("plain text"), "{line:?}");
     }
-    let mut always = Client::start(&api, "mike", "thelio", &["--color", "always"]).await;
+    let mut always = Client::start(&server, "mike", "thelio", &["--color", "always"]).await;
     always.say("in color").await;
     assert!(always.shows("in color").await.contains("\x1b["));
 }
 
 #[tokio::test]
 async fn a_person_who_is_not_a_member_cannot_read_or_post_the_chat() {
+    // This server has its own sign-in flow: it admits a member and refuses a stranger.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let service = Service::new(Config {
@@ -380,12 +393,13 @@ impl Client {
 }
 
 /// `riff tail chat --color never` as `user`, and its stdout.
-fn tail(api: &Api, user: &str, dir: &std::path::Path) -> (Child, Lines<BufReader<ChildStdout>>) {
+fn tail(url: &str, user: &str, dir: &std::path::Path) -> (Child, Lines<BufReader<ChildStdout>>) {
+    crate::common::sign_in(url, dir, user);
     let mut child = Isolated::shared()
         .tokio_riff()
         .args(["tail", "chat", "--color", "never"])
         .current_dir(dir)
-        .env("RIFF_SERVER", api.base())
+        .env("RIFF_SERVER", url)
         .env("RIFF_USER", user)
         .env("RIFF_HOST", "wren")
         .env("RIFF_HOME", dir)
@@ -423,11 +437,12 @@ async fn connected(api: &Api, tailed: &mut Lines<BufReader<ChildStdout>>) {
 
 #[tokio::test]
 async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
-    let api = start_server().await;
-    let mut brett = Client::start(&api, "brett", "heron", &["--color", "never"]).await;
-    let mut mike = Client::start(&api, "mike", "thelio", &[]).await;
+    let server = crate::common::start_signed().await;
+    let api = crate::common::api_of(&server, &lead_of("mike"));
+    let mut brett = Client::start(&server, "brett", "heron", &["--color", "never"]).await;
+    let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
     let dir = tempfile::tempdir().unwrap();
-    let (_tail, mut tailed) = tail(&api, "ann", dir.path());
+    let (_tail, mut tailed) = tail(&server, "bob", dir.path());
     connected(&api, &mut tailed).await;
 
     brett.say("/me waves").await;
@@ -450,20 +465,24 @@ async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
 
     // The read tool of a session shows it as plain text.
     let thread = riff::chat::thread();
-    let read = api.read(&lead_of("ann"), &thread, true).await.unwrap();
+    let api = crate::common::api_of(&server, &lead_of("bob"));
+    let read = api.read(&lead_of("bob"), &thread, true).await.unwrap();
     let action = read.iter().find(|c| c.message.body == "/me waves").unwrap();
     let shown = riff::text::message(&riff_client::threads::Line::of(action, &thread));
     assert!(shown.ends_with(": * brett@heron waves"), "{shown}");
 
     // On the wire, an action is a plain message: no new kind and no new
     // field. So a riff of the release before reads it, and shows the
-    // body `/me waves`.
+    // body `/me waves`. The signature of the
+    // signed server is the one addition.
+
     let wire = serde_json::to_value(&action.message).unwrap();
     let mut fields: Vec<&str> = wire
         .as_object()
         .unwrap()
         .keys()
         .map(String::as_str)
+        .filter(|key| !["sig", "payload"].contains(key))
         .collect();
     fields.sort_unstable();
     assert_eq!(fields, ["at_ms", "body", "from", "seq", "to"], "{wire}");
@@ -472,10 +491,11 @@ async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
 
 #[tokio::test]
 async fn me_with_at_lead_wakes_the_lead_of_the_sender() {
-    let api = start_server().await;
+    let server = crate::common::start_signed().await;
     let lead = lead_of("brett");
+    let api = crate::common::api_of(&server, &lead_of("brett"));
     let mut wakes = Box::pin(api.watch(&lead).await.unwrap());
-    let mut brett = Client::start(&api, "brett", "heron", &[]).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
 
     brett.say("/me asks @lead to look").await;
     let wake = in_time(WAIT, wakes.next())
@@ -489,8 +509,8 @@ async fn me_with_at_lead_wakes_the_lead_of_the_sender() {
 
 #[tokio::test]
 async fn an_unknown_command_is_not_sent_and_a_double_slash_sends_a_slash() {
-    let api = start_server().await;
-    let mut mike = Client::start(&api, "mike", "thelio", &[]).await;
+    let server = crate::common::start_signed().await;
+    let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
 
     mike.say("/foo bar").await;
     let warned = mike.warns("unknown command").await;
@@ -500,6 +520,7 @@ async fn an_unknown_command_is_not_sent_and_a_double_slash_sends_a_slash() {
     assert!(is_line(&line, "mike@thelio", "/foo bar"), "{line:?}");
 
     // The chat holds only the line with //.
+    let api = crate::common::api_of(&server, &lead_of("mike"));
     let read = api
         .read(&lead_of("mike"), &riff::chat::thread(), true)
         .await
@@ -524,13 +545,13 @@ impl Tty {
 
     /// Starts `riff chat` as `user` in a new pseudo-terminal, and waits
     /// for its prompt.
-    async fn start(api: &Api, user: &str, host: &str) -> Tty {
-        Self::start_with(api, user, host, Isolated::shared().tokio_riff()).await
+    async fn start(url: &str, user: &str, host: &str) -> Tty {
+        Self::start_with(url, user, host, Isolated::shared().tokio_riff()).await
     }
 
     /// [`Tty::start`] with `riff`, a command of a riff binary.
     async fn start_with(
-        api: &Api,
+        url: &str,
         user: &str,
         host: &str,
         mut riff: tokio::process::Command,
@@ -543,11 +564,12 @@ impl Tty {
         };
         let pty = nix::pty::openpty(Some(&size), None).unwrap();
         let dir = tempfile::tempdir().unwrap();
+        crate::common::sign_in(url, dir.path(), user);
         let slave = std::fs::File::from(pty.slave);
         let child = riff
             .arg("chat")
             .current_dir(dir.path())
-            .env("RIFF_SERVER", api.base())
+            .env("RIFF_SERVER", url)
             .env("RIFF_USER", user)
             .env("RIFF_HOST", host)
             .env("RIFF_HOME", dir.path())
@@ -625,8 +647,8 @@ impl Tty {
 
 #[tokio::test]
 async fn in_a_terminal_your_line_shows_once_and_the_prompt_comes_back() {
-    let api = start_server().await;
-    let mut mike = Tty::start(&api, "mike", "thelio").await;
+    let server = crate::common::start_signed().await;
+    let mut mike = Tty::start(&server, "mike", "thelio").await;
 
     mike.keys("hello all\r").await;
     let rows = mike
@@ -652,9 +674,9 @@ async fn in_a_terminal_your_line_shows_once_and_the_prompt_comes_back() {
 
 #[tokio::test]
 async fn in_a_terminal_a_new_line_prints_above_what_you_type() {
-    let api = start_server().await;
-    let mut mike = Tty::start(&api, "mike", "thelio").await;
-    let mut brett = Client::start(&api, "brett", "heron", &[]).await;
+    let server = crate::common::start_signed().await;
+    let mut mike = Tty::start(&server, "mike", "thelio").await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
 
     mike.keys("half a li").await;
     mike.shows(|rows| rows.last().is_some_and(|row| row.ends_with("> half a li")))
@@ -695,14 +717,14 @@ fn install(from: &std::path::Path, to: &std::path::Path) {
 /// comes back (01M3NT6WXGCNKW3EQ7MBJDQTR4).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_chat_runs_the_new_binary_and_shows_the_next_line_once() {
-    let api = start_server().await;
+    let server = crate::common::start_signed().await;
     let bin = tempfile::tempdir().unwrap();
     let binary = bin.path().join("riff");
     let riff = Isolated::shared().riff_path();
     install(&riff, &binary);
     let command = tokio::process::Command::from(Isolated::shared().command(&binary));
-    let mut mike = Tty::start_with(&api, "mike", "thelio", command).await;
-    let mut brett = Client::start(&api, "brett", "heron", &[]).await;
+    let mut mike = Tty::start_with(&server, "mike", "thelio", command).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
     brett.say("before the update").await;
     mike.shows(|rows| rows.iter().any(|row| row.contains("before the update")))
         .await;
@@ -799,10 +821,10 @@ impl Proxy {
 /// each (01M3NK7VHXB0PAR8VH8GQQA06K, 01M3NK7VM1J5DDB0PECNZ28P4E).
 #[tokio::test]
 async fn a_cut_stream_shows_no_error_and_loses_no_line() {
-    let api = start_server().await;
+    let api = start_open().await;
     let proxy = Proxy::start(api.base()).await;
     let behind = Api::new(&proxy.url);
-    let mut mike = Client::start(&behind, "mike", "thelio", &[]).await;
+    let mut mike = Client::start(behind.base(), "mike", "thelio", &[]).await;
     let lead = lead_of("mike");
     let chat = riff::chat::thread();
     let post = |body: &'static str| {
@@ -852,7 +874,7 @@ async fn a_cut_stream_shows_no_error_and_loses_no_line() {
 /// (01M3NK7VHXB0PAR8VH8GQQA06K).
 #[tokio::test]
 async fn a_cut_stream_shows_no_error_in_tail() {
-    let api = start_server().await;
+    let api = start_open().await;
     let proxy = Proxy::start(api.base()).await;
     let dir = tempfile::tempdir().unwrap();
     let mut child = Isolated::shared()
@@ -950,7 +972,7 @@ async fn a_front_end_error_with_no_build_is_no_version_error() {
             down.store(false, Ordering::SeqCst);
         })
     };
-    let mut mike = Client::start(&behind, "mike", "thelio", &[]).await;
+    let mut mike = Client::start(behind.base(), "mike", "thelio", &[]).await;
     up.await.unwrap();
     let (lead, chat) = (lead_of("mike"), riff::chat::thread());
     direct
@@ -1054,7 +1076,7 @@ async fn marked_until(
 /// order, and then the live messages (01M49Z4E8QB1QDXVCPE6MX5JX2).
 #[tokio::test]
 async fn tail_shows_each_message_of_a_break_once_in_order() {
-    let api = start_server().await;
+    let api = start_open().await;
     let proxy = Proxy::start(api.base()).await;
     let dir = tempfile::tempdir().unwrap();
     let (mut child, mut out, _err) = tail_with_errors(&proxy.url, dir.path()).await;
@@ -1097,7 +1119,7 @@ async fn tail_shows_each_message_of_a_break_once_in_order() {
 /// order, and no line shows two times (01M49Z4E8QB1QDXVCPE6MX5JX2).
 #[tokio::test]
 async fn chat_shows_each_line_of_a_break_once_in_order() {
-    let api = start_server().await;
+    let api = start_open().await;
     let proxy = Proxy::start(api.base()).await;
     let behind = Api::new(&proxy.url);
     let (lead, chat) = (lead_of("mike"), riff::chat::thread());
@@ -1110,7 +1132,7 @@ async fn chat_shows_each_line_of_a_break_once_in_order() {
         }
     };
     post("break-0 history".into()).await;
-    let mut mike = Client::start(&behind, "mike", "thelio", &[]).await;
+    let mut mike = Client::start(behind.base(), "mike", "thelio", &[]).await;
     let history = marked_until(&mut mike.stdout, "break-", "break-0").await;
     assert_eq!(history.len(), 1);
 
@@ -1152,7 +1174,7 @@ async fn chat_shows_each_line_of_a_break_once_in_order() {
 /// (01M49Z4EB7T972BHEP6T92P574).
 #[tokio::test]
 async fn a_break_longer_than_the_kept_messages_shows_the_lost_number() {
-    let api = start_server().await;
+    let api = start_open().await;
     let proxy = Proxy::start(api.base()).await;
     let dir = tempfile::tempdir().unwrap();
     let (mut child, mut out, mut err) = tail_with_errors(&proxy.url, dir.path()).await;

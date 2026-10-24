@@ -3,7 +3,7 @@
 //! release (01M3N7JJEKZMN1E5NJQRK2QYVB, 01M3N7JJH0SXXQYYBAHWPCNQGX), and
 //! the message to the lead (01M3N7JJKBME6VSNTHD8VPN3K9).
 //!
-//! A real `riff-server` with no sign-in stands in for the riff. Each of
+//! A real `riff-server` with sign-in stands in for the riff. Each of
 //! its replies names a newer release. The update runs a fake `cargo`, a
 //! fake `riff` for `riff connect` and a fake `riff-server` that log their
 //! arguments. Each test is one machine: one [`Isolated`] environment.
@@ -36,19 +36,17 @@ fn this_tag() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
-/// A real riff-server of this build, with no sign-in. Each reply names
+/// A real riff-server of this build, with sign-in. Each reply names
 /// the build `build`.
-async fn server_of(build: Build) -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+async fn server_of(build: Build) -> crate::common::Signed {
     let value = HeaderValue::from_str(&build.to_string()).unwrap();
-    let router =
-        riff_server::router().layer(axum::middleware::map_response(move |mut r: Response| {
+    crate::common::start_signed_with(move |router| {
+        router.layer(axum::middleware::map_response(move |mut r: Response| {
             r.headers_mut().insert(HEADER, value.clone());
             std::future::ready(r)
-        }));
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    format!("http://{addr}")
+        }))
+    })
+    .await
 }
 
 /// A git repository with a GitHub origin, so the place of each session
@@ -90,7 +88,7 @@ struct Machine {
     env: Isolated,
     bin: tempfile::TempDir,
     repo: tempfile::TempDir,
-    server: String,
+    server: crate::common::Signed,
 }
 
 impl Machine {
@@ -133,10 +131,11 @@ impl Machine {
             self.bin.path().display(),
             std::env::var("PATH").unwrap()
         );
+        crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
         let mut cmd = self.env.command(riff);
         cmd.args(args)
             .current_dir(self.repo.path())
-            .env("RIFF_SERVER", &self.server)
+            .env("RIFF_SERVER", &*self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "pangolin")
             .env("RIFF_SESSION", session)
@@ -704,7 +703,7 @@ async fn the_update_of_each_path_on_a_host_tells_the_lead_once() {
         let wave = riff::wave::Wave {
             repo: "como-technologies/riff".into(),
             main: machine.repo.path().to_owned(),
-            server: machine.server.clone(),
+            server: machine.server.to_string(),
             host: "pangolin".into(),
         };
         let dir = riff::daemon::dir_in(&machine.env.riff_home());

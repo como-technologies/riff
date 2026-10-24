@@ -161,7 +161,9 @@ fn uri(text: &str) -> SessionUri {
 
 #[tokio::test]
 async fn a_session_of_each_machine_sees_the_others_in_riff_who() {
-    // The owner starts a riff with sign-in, with the owner named.
+    // The owner starts a riff with sign-in, with the owner named. This
+    // test has its own server, not common::start_signed: it tests the
+    // sign-in itself, through the fake provider.
     let provider = FakeProvider::start("ada@example.com", None).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap().to_string();

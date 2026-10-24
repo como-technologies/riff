@@ -6,13 +6,10 @@ use isolated::Isolated;
 use std::path::Path;
 use std::process::Command as Git;
 
-async fn start_server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    format!("http://{addr}")
+use crate::common;
+
+async fn start_server() -> common::Signed {
+    common::start_signed().await
 }
 
 /// A git repository with a GitHub origin, so the default thread is
@@ -64,6 +61,7 @@ async fn run(
     session: Option<&str>,
     args: &[&str],
 ) -> (String, i32) {
+    common::sign_in(server, dir, user);
     let mut cmd = Isolated::shared().assert_riff();
     cmd.args(args)
         .current_dir(dir)
@@ -367,7 +365,7 @@ async fn read_shows_the_direct_messages_first() {
     let dir = repo();
     let dir = dir.path();
     agent(&server, dir, "brett", "b2", &["read"]).await;
-    let api = riff_client::api::Api::new(&server);
+    let api = server.api("mike", Some("a1"));
     let mike: riff_core::name::SessionUri =
         "riff://mike@pangolin/como-technologies/riff?session=a1"
             .parse()
@@ -472,7 +470,7 @@ async fn tell_sends_a_direct_message_to_a_session() {
     assert!(out.contains("and now?"), "{out}");
     assert_eq!(code, 0);
     // Another session has no such direct thread.
-    let (out, code) = agent(&server, dir, "ann", "c3", &again).await;
+    let (out, code) = agent(&server, dir, "bob", "c3", &again).await;
     assert!(!out.contains("and now?"), "{out}");
     assert_ne!(code, 0);
 
@@ -637,15 +635,18 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
 
     // With a watch, each session is live, so who shows its state and
     // its step (01M3QB6CJ1XCQG5B1BVR8AF3B4).
-    let api = riff_client::api::Api::new(&server);
+    let (api_a1, api_b2) = (
+        server.api("mike", Some("a1")),
+        server.api("mike", Some("b2")),
+    );
     let uri = |id: &str| -> riff_core::name::SessionUri {
         format!("riff://mike@pangolin/como-technologies/riff?session={id}")
             .parse()
             .unwrap()
     };
     let (a1, b2) = (uri("a1"), uri("b2"));
-    let _a1 = api.watch(&a1).await.unwrap();
-    let _b2 = api.watch(&b2).await.unwrap();
+    let _a1 = api_a1.watch(&a1).await.unwrap();
+    let _b2 = api_b2.watch(&b2).await.unwrap();
     let (out, _) = riff(&server, dir, "mike", &["who"]).await;
     // The age of a step is the time since the session set it. The test
     // checks that the age is there, not its number: a machine under

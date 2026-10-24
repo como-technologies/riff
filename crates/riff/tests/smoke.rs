@@ -13,6 +13,7 @@ use riff_server::auth::Config;
 use riff_server::oidc::{DEFAULT_DOMAIN, Provider};
 
 /// A server with sign-in, whose provider signs in Ada, and its URL.
+/// It stays apart from `common::start_signed`: the test signs in through the provider.
 async fn start() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = common::fresh_url(&listener);

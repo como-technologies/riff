@@ -53,7 +53,10 @@ struct Gate {
 }
 
 impl Gate {
-    /// A real riff-server with no sign-in, and an open gate to it.
+    /// A real riff-server with no sign-in, and an open gate to it. It
+    /// is not common::start_signed: the proof of each token call names
+    /// the URL of the server, and the gate has its own URL, while the
+    /// tests call the server direct when the gate is closed.
     async fn start() -> Gate {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let server = listener.local_addr().unwrap();

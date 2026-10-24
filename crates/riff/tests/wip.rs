@@ -8,20 +8,12 @@ use isolated::Isolated;
 use std::path::{Path, PathBuf};
 
 use riff::tools::Tools;
-use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use riff_core::wire::RiffState;
 use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 
-async fn start_server() -> Api {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    Api::new(&format!("http://{addr}"))
-}
+use crate::common;
 
 /// `cmd` with no git settings of the user or the machine.
 fn alone(cmd: &mut std::process::Command) -> &mut std::process::Command {
@@ -95,29 +87,31 @@ fn session(host: &str, id: &str) -> SessionUri {
 }
 
 /// A running riff with a lead.
-async fn running_riff() -> Api {
-    let api = start_server().await;
+async fn running_riff() -> common::Signed {
+    let server = common::start_signed().await;
     let lead = session("pangolin", "l1");
+    let api = common::api_of(&server, &lead);
     api.register(&lead).await.unwrap();
-    crate::common::name_lead(&api, &lead).await;
+    common::name_lead(&common::api_of(&server, &common::person_of(&lead)), &lead).await;
     api.set_riff(&lead, RiffState::Running).await.unwrap();
-    api
+    server
 }
 
 /// Runs `riff claim ITEM` as the agent session `id` on `host` in `dir`.
 /// Returns stdout and the exit code.
 async fn claim(
-    api: &Api,
+    server: &common::Signed,
     home: &Path,
     dir: &Path,
     host: &str,
     id: &str,
     item: &str,
 ) -> (String, i32) {
+    common::sign_in(server, home, "mike");
     let mut cmd = Isolated::shared().assert_riff();
     cmd.args(["claim", item])
         .current_dir(dir)
-        .env("RIFF_SERVER", api.base())
+        .env("RIFF_SERVER", &**server)
         .env("RIFF_USER", "mike")
         .env("RIFF_HOST", host)
         .env("RIFF_HOME", home)
@@ -134,7 +128,7 @@ async fn claim(
 
 #[tokio::test]
 async fn a_claim_names_the_worktree_of_an_earlier_session_and_its_files() {
-    let api = running_riff().await;
+    let server = running_riff().await;
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
     std::fs::create_dir(&home).unwrap();
@@ -144,7 +138,7 @@ async fn a_claim_names_the_worktree_of_an_earlier_session_and_its_files() {
     std::fs::write(work.join("work.txt"), "not committed\n").unwrap();
     worktree(&pangolin, "issue-123");
 
-    let (out, code) = claim(&api, &home, &pangolin, "pangolin", "b2", "issue-12").await;
+    let (out, code) = claim(&server, &home, &pangolin, "pangolin", "b2", "issue-12").await;
     assert_eq!(code, 0, "{out}");
     assert!(
         out.contains(&format!(
@@ -156,12 +150,20 @@ async fn a_claim_names_the_worktree_of_an_earlier_session_and_its_files() {
     assert!(!out.contains("issue-123"), "{out}");
 
     // An item with no earlier work, and a verify claim, get no line.
-    let (out, code) = claim(&api, &home, &pangolin, "pangolin", "b2", "issue-7").await;
+    let (out, code) = claim(&server, &home, &pangolin, "pangolin", "b2", "issue-7").await;
     assert_eq!(
         (out.as_str(), code),
         ("You hold issue-7 in como-technologies/riff.\n", 0)
     );
-    let (out, code) = claim(&api, &home, &pangolin, "pangolin", "c3", "verify-issue-12").await;
+    let (out, code) = claim(
+        &server,
+        &home,
+        &pangolin,
+        "pangolin",
+        "c3",
+        "verify-issue-12",
+    )
+    .await;
     assert_eq!(code, 0);
     assert_eq!(out, "You hold verify-issue-12 in como-technologies/riff.\n");
 }
@@ -193,7 +195,7 @@ async fn claim_tool(tools: Tools, item: &str) -> String {
 
 #[tokio::test]
 async fn the_claim_tool_names_the_earlier_work() {
-    let api = running_riff().await;
+    let server = running_riff().await;
     let root = tempfile::tempdir().unwrap();
     origin(root.path());
     let pangolin = clone(root.path(), "pangolin");
@@ -201,10 +203,13 @@ async fn the_claim_tool_names_the_earlier_work() {
     std::fs::write(work.join("work.txt"), "not committed\n").unwrap();
     let tools = |id: &str| {
         let me = session("pangolin", id);
-        Tools::new(api.clone(), me).in_dir(pangolin.clone())
+        Tools::new(common::api_of(&server, &me), me).in_dir(pangolin.clone())
     };
     for id in ["b2", "c3"] {
-        api.register(&session("pangolin", id)).await.unwrap();
+        common::api_of(&server, &session("pangolin", id))
+            .register(&session("pangolin", id))
+            .await
+            .unwrap();
     }
 
     let out = claim_tool(tools("b2").with_earlier_work(), "issue-12").await;

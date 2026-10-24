@@ -9,19 +9,12 @@
 //! wakes only the sessions of that repository.
 
 use riff::text;
-use riff_client::api::{Api, PauseScope};
+use riff_client::api::PauseScope;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::record::By;
 use riff_core::wire::{Posted, RiffState};
 
-async fn start_server() -> Api {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    Api::new(&format!("http://{addr}"))
-}
+use crate::common;
 
 fn uri(text: &str) -> SessionUri {
     text.parse().unwrap()
@@ -42,28 +35,53 @@ fn sessions() -> (SessionUri, SessionUri, SessionUri) {
 
 #[tokio::test]
 async fn a_new_riff_is_paused_until_the_lead_resumes_it() {
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let (lead, worker, _) = sessions();
-    api.register(&lead).await.unwrap();
-    api.register(&worker).await.unwrap();
-    crate::common::name_lead(&api, &lead).await;
+    common::api_of(&server, &lead)
+        .register(&lead)
+        .await
+        .unwrap();
+    common::api_of(&server, &worker)
+        .register(&worker)
+        .await
+        .unwrap();
+    common::name_lead(&common::api_of(&server, &common::person_of(&lead)), &lead).await;
 
-    assert_eq!(api.riff(&worker).await.unwrap(), RiffState::Paused);
-    let error = api.claim(&worker, &repo(), "issue-12").await.unwrap_err();
+    assert_eq!(
+        common::api_of(&server, &worker)
+            .riff(&worker)
+            .await
+            .unwrap(),
+        RiffState::Paused
+    );
+    let error = common::api_of(&server, &worker)
+        .claim(&worker, &repo(), "issue-12")
+        .await
+        .unwrap_err();
     assert!(format!("{error:#}").contains("the riff is paused"));
-    let error = api.set_riff(&worker, RiffState::Running).await.unwrap_err();
+    let error = common::api_of(&server, &worker)
+        .set_riff(&worker, RiffState::Running)
+        .await
+        .unwrap_err();
     assert!(format!("{error:#}").contains("403"), "{error:#}");
 
-    let (reply, posted) = api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let (reply, posted) = common::api_of(&server, &lead)
+        .set_riff(&lead, RiffState::Running)
+        .await
+        .unwrap();
     assert!(reply.changed);
     let woken: Vec<_> = posted.iter().flat_map(|p| &p.woken).collect();
     assert_eq!(woken.len(), 1);
     assert_eq!(woken[0].who(), worker.who());
     // The waiting session reads the news, then claims a free item.
-    let news = api.read(&worker, &repo(), false).await.unwrap();
+    let news = common::api_of(&server, &worker)
+        .read(&worker, &repo(), false)
+        .await
+        .unwrap();
     assert!(news[0].message.body.contains("running again"), "{news:?}");
     assert!(
-        api.claim(&worker, &repo(), "issue-12")
+        common::api_of(&server, &worker)
+            .claim(&worker, &repo(), "issue-12")
             .await
             .unwrap()
             .granted
@@ -72,22 +90,29 @@ async fn a_new_riff_is_paused_until_the_lead_resumes_it() {
 
 #[tokio::test]
 async fn a_pause_wakes_each_session_and_keeps_its_claims() {
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let (lead, worker, mike) = sessions();
     let other = uri("riff://brett@heron/other/repo?session=b1");
     for me in [&lead, &worker, &other] {
-        api.register(me).await.unwrap();
+        common::api_of(&server, me).register(me).await.unwrap();
     }
-    crate::common::name_lead(&api, &lead).await;
-    api.set_riff(&mike, RiffState::Running).await.unwrap();
+    common::name_lead(&common::api_of(&server, &common::person_of(&lead)), &lead).await;
+    common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Running)
+        .await
+        .unwrap();
     assert!(
-        api.claim(&worker, &repo(), "issue-12")
+        common::api_of(&server, &worker)
+            .claim(&worker, &repo(), "issue-12")
             .await
             .unwrap()
             .granted
     );
 
-    let (reply, posted) = api.set_riff(&mike, RiffState::Paused).await.unwrap();
+    let (reply, posted) = common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Paused)
+        .await
+        .unwrap();
     assert!(reply.changed);
     let mut woken: Vec<_> = posted
         .iter()
@@ -97,19 +122,34 @@ async fn a_pause_wakes_each_session_and_keeps_its_claims() {
     woken.sort();
     assert_eq!(woken, ["b1", "l1", "w1"], "each repository gets the news");
 
-    let who = api.who(&lead, false).await.unwrap();
+    let who = common::api_of(&server, &lead)
+        .who(&lead, false)
+        .await
+        .unwrap();
     let held = who.iter().find(|s| s.uri.who() == worker.who()).unwrap();
     assert_eq!(held.uri.claims(), ["issue-12"], "the claim stays");
-    assert!(api.claim(&lead, &repo(), "issue-13").await.is_err());
+    assert!(
+        common::api_of(&server, &lead)
+            .claim(&lead, &repo(), "issue-13")
+            .await
+            .is_err()
+    );
     // Messages still flow while the riff is paused.
-    api.tell(&worker, "lead", "paused at: tests of issue-12")
+    common::api_of(&server, &worker)
+        .tell(&worker, "lead", "paused at: tests of issue-12")
         .await
         .unwrap();
 
-    let (again, posted) = api.set_riff(&mike, RiffState::Paused).await.unwrap();
+    let (again, posted) = common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Paused)
+        .await
+        .unwrap();
     assert!(!again.changed);
     assert!(posted.is_empty(), "no change wakes nobody");
-    api.release(&worker, &repo(), "issue-12").await.unwrap();
+    common::api_of(&server, &worker)
+        .release(&worker, &repo(), "issue-12")
+        .await
+        .unwrap();
 }
 
 fn strata() -> ThreadName {
@@ -143,23 +183,27 @@ fn woken(posted: &[Posted]) -> Vec<String> {
 /// the other repository works.
 #[tokio::test]
 async fn a_pause_of_one_repository_stops_and_wakes_only_its_sessions() {
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let (lead, worker, mike) = sessions();
     let (strata_lead, strata_worker) = strata_sessions();
     for me in [&lead, &worker, &strata_lead, &strata_worker] {
-        api.register(me).await.unwrap();
+        common::api_of(&server, me).register(me).await.unwrap();
     }
     for me in [&lead, &strata_lead] {
-        crate::common::name_lead(&api, me).await;
+        common::name_lead(&common::api_of(&server, &common::person_of(me)), me).await;
     }
-    api.set_riff(&mike, RiffState::Running).await.unwrap();
+    common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Running)
+        .await
+        .unwrap();
     for me in [&worker, &strata_worker] {
-        api.read(me, &me.default_thread().unwrap(), false)
+        common::api_of(&server, me)
+            .read(me, &me.default_thread().unwrap(), false)
             .await
             .unwrap();
     }
 
-    let (reply, posted) = api
+    let (reply, posted) = common::api_of(&server, &strata_lead)
         .set_pause(&strata_lead, &PauseScope::Here, RiffState::Paused)
         .await
         .unwrap();
@@ -173,16 +217,32 @@ async fn a_pause_of_one_repository_stops_and_wakes_only_its_sessions() {
     assert_eq!(posted[0].thread, strata());
 
     // The other repository goes on, and no news comes to it.
-    assert_eq!(api.riff(&worker).await.unwrap(), RiffState::Running);
-    assert!(api.read(&worker, &repo(), false).await.unwrap().is_empty());
+    assert_eq!(
+        common::api_of(&server, &worker)
+            .riff(&worker)
+            .await
+            .unwrap(),
+        RiffState::Running
+    );
     assert!(
-        api.claim(&worker, &repo(), "issue-12")
+        common::api_of(&server, &worker)
+            .read(&worker, &repo(), false)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        common::api_of(&server, &worker)
+            .claim(&worker, &repo(), "issue-12")
             .await
             .unwrap()
             .granted
     );
     // It sees the pause of strata, and who set it.
-    let seen = api.pauses(&worker).await.unwrap();
+    let seen = common::api_of(&server, &worker)
+        .pauses(&worker)
+        .await
+        .unwrap();
     assert_eq!(
         text::riff_state(&seen, Some(&repo())),
         "The riff is running.\n\
@@ -191,8 +251,14 @@ async fn a_pause_of_one_repository_stops_and_wakes_only_its_sessions() {
 
     // The sessions of strata are paused, and the refusal says by which
     // pause, and who ends it.
-    assert_eq!(api.riff(&strata_worker).await.unwrap(), RiffState::Paused);
-    let error = api
+    assert_eq!(
+        common::api_of(&server, &strata_worker)
+            .riff(&strata_worker)
+            .await
+            .unwrap(),
+        RiffState::Paused
+    );
+    let error = common::api_of(&server, &strata_worker)
         .claim(&strata_worker, &strata(), "issue-7")
         .await
         .unwrap_err();
@@ -204,14 +270,17 @@ async fn a_pause_of_one_repository_stops_and_wakes_only_its_sessions() {
         ),
         "{error}"
     );
-    let news = api.read(&strata_worker, &strata(), false).await.unwrap();
+    let news = common::api_of(&server, &strata_worker)
+        .read(&strata_worker, &strata(), false)
+        .await
+        .unwrap();
     assert_eq!(
         news[0].message.body,
         riff_client::text::riff_news(Some(&strata()), RiffState::Paused)
     );
 
     // The resume wakes the same sessions, and the claim works.
-    let (reply, posted) = api
+    let (reply, posted) = common::api_of(&server, &strata_lead)
         .set_pause(&strata_lead, &PauseScope::Here, RiffState::Running)
         .await
         .unwrap();
@@ -219,7 +288,8 @@ async fn a_pause_of_one_repository_stops_and_wakes_only_its_sessions() {
     assert_eq!(reply.state, RiffState::Running);
     assert_eq!(woken(&posted), ["b2"]);
     assert!(
-        api.claim(&strata_worker, &strata(), "issue-7")
+        common::api_of(&server, &strata_worker)
+            .claim(&strata_worker, &strata(), "issue-7")
             .await
             .unwrap()
             .granted
@@ -230,20 +300,35 @@ async fn a_pause_of_one_repository_stops_and_wakes_only_its_sessions() {
 /// person can (01M3XAHZDSQR263QZVB41CK0MX).
 #[tokio::test]
 async fn a_worker_cannot_pause_its_repository_and_a_person_can() {
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let (lead, worker, mike) = sessions();
-    api.register(&lead).await.unwrap();
-    api.register(&worker).await.unwrap();
-    api.set_riff(&mike, RiffState::Running).await.unwrap();
+    common::api_of(&server, &lead)
+        .register(&lead)
+        .await
+        .unwrap();
+    common::api_of(&server, &worker)
+        .register(&worker)
+        .await
+        .unwrap();
+    common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Running)
+        .await
+        .unwrap();
 
-    let error = api
+    let error = common::api_of(&server, &worker)
         .set_pause(&worker, &PauseScope::Here, RiffState::Paused)
         .await
         .unwrap_err();
     assert!(format!("{error:#}").contains("403"), "{error:#}");
-    assert_eq!(api.riff(&worker).await.unwrap(), RiffState::Running);
+    assert_eq!(
+        common::api_of(&server, &worker)
+            .riff(&worker)
+            .await
+            .unwrap(),
+        RiffState::Running
+    );
 
-    let (reply, posted) = api
+    let (reply, posted) = common::api_of(&server, &mike)
         .set_pause(&mike, &PauseScope::Here, RiffState::Paused)
         .await
         .unwrap();
@@ -259,17 +344,20 @@ async fn a_worker_cannot_pause_its_repository_and_a_person_can() {
 /// still paused (01M3XAHZSJ5914BRQBZ2G4ZBSA).
 #[tokio::test]
 async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let (lead, worker, mike) = sessions();
     let (strata_lead, strata_worker) = strata_sessions();
     for me in [&lead, &worker, &strata_lead, &strata_worker] {
-        api.register(me).await.unwrap();
+        common::api_of(&server, me).register(me).await.unwrap();
     }
     for me in [&lead, &strata_lead] {
-        crate::common::name_lead(&api, me).await;
+        common::name_lead(&common::api_of(&server, &common::person_of(me)), me).await;
     }
-    api.set_riff(&mike, RiffState::Running).await.unwrap();
-    let (_, posted) = api
+    common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Running)
+        .await
+        .unwrap();
+    let (_, posted) = common::api_of(&server, &lead)
         .set_pause(&lead, &PauseScope::Here, RiffState::Paused)
         .await
         .unwrap();
@@ -277,11 +365,14 @@ async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
 
     // The pause of the riff wakes only the sessions that it stops: the
     // repository of mike is paused already.
-    let (reply, posted) = api.set_riff(&mike, RiffState::Paused).await.unwrap();
+    let (reply, posted) = common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Paused)
+        .await
+        .unwrap();
     assert!(reply.changed && reply.riff.is_some());
     assert_eq!(woken(&posted), ["b1", "b2"]);
 
-    let (reply, posted) = api
+    let (reply, posted) = common::api_of(&server, &lead)
         .set_pause(&lead, &PauseScope::Here, RiffState::Running)
         .await
         .unwrap();
@@ -294,7 +385,10 @@ async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
         "The repository como-technologies/riff is running now. No other session woke. The \
          whole riff is still paused: the owner or an admin resumes it with `riff resume --riff`."
     );
-    let error = api.claim(&worker, &repo(), "issue-12").await.unwrap_err();
+    let error = common::api_of(&server, &worker)
+        .claim(&worker, &repo(), "issue-12")
+        .await
+        .unwrap_err();
     let error = format!("{error:#}");
     assert!(
         error.contains("the riff is paused by the person mike"),
@@ -303,7 +397,10 @@ async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
 
     // The resume of the riff wakes each session: no repository has a
     // pause of its own now.
-    let (_, posted) = api.set_riff(&mike, RiffState::Running).await.unwrap();
+    let (_, posted) = common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Running)
+        .await
+        .unwrap();
     assert_eq!(woken(&posted), ["b1", "b2", "l1", "w1"]);
 }
 
@@ -311,22 +408,32 @@ async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
 /// repository that has a pause of its own, and the answer names it.
 #[tokio::test]
 async fn a_resume_of_the_riff_leaves_a_paused_repository_paused() {
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let (lead, worker, mike) = sessions();
     let (strata_lead, strata_worker) = strata_sessions();
     for me in [&lead, &worker, &strata_lead, &strata_worker] {
-        api.register(me).await.unwrap();
+        common::api_of(&server, me).register(me).await.unwrap();
     }
     for me in [&lead, &strata_lead] {
-        crate::common::name_lead(&api, me).await;
+        common::name_lead(&common::api_of(&server, &common::person_of(me)), me).await;
     }
-    api.set_riff(&mike, RiffState::Running).await.unwrap();
-    api.set_pause(&strata_lead, &PauseScope::Here, RiffState::Paused)
+    common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Running)
         .await
         .unwrap();
-    api.set_riff(&mike, RiffState::Paused).await.unwrap();
+    common::api_of(&server, &strata_lead)
+        .set_pause(&strata_lead, &PauseScope::Here, RiffState::Paused)
+        .await
+        .unwrap();
+    common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Paused)
+        .await
+        .unwrap();
 
-    let (reply, posted) = api.set_riff(&mike, RiffState::Running).await.unwrap();
+    let (reply, posted) = common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Running)
+        .await
+        .unwrap();
     assert_eq!(woken(&posted), ["l1", "w1"], "strata stays paused");
     let answer = text::riff_set(None, RiffState::Running, &reply, &posted);
     assert!(
@@ -336,8 +443,20 @@ async fn a_resume_of_the_riff_leaves_a_paused_repository_paused() {
         ),
         "{answer}"
     );
-    assert_eq!(api.riff(&strata_worker).await.unwrap(), RiffState::Paused);
-    assert_eq!(api.riff(&worker).await.unwrap(), RiffState::Running);
+    assert_eq!(
+        common::api_of(&server, &strata_worker)
+            .riff(&strata_worker)
+            .await
+            .unwrap(),
+        RiffState::Paused
+    );
+    assert_eq!(
+        common::api_of(&server, &worker)
+            .riff(&worker)
+            .await
+            .unwrap(),
+        RiffState::Running
+    );
 }
 
 /// mike has live sessions on hosts `a` and `b`. A resume on `b` gives
@@ -345,22 +464,29 @@ async fn a_resume_of_the_riff_leaves_a_paused_repository_paused() {
 /// from `mike@a` (01M3MWW8KYJ3ZV91X22RBSAF33).
 #[tokio::test]
 async fn a_pause_names_the_host_where_it_ran() {
-    let api = start_server().await;
+    let server = common::start_signed().await;
     let on_a = uri("riff://mike@a/como-technologies/riff?session=s1");
     let on_b = uri("riff://mike@b/como-technologies/riff?session=s2");
     for me in [&on_a, &on_b] {
-        api.register(me).await.unwrap();
+        common::api_of(&server, me).register(me).await.unwrap();
     }
     let person_on_b = uri("riff://mike@b/como-technologies/riff");
-    api.set_riff(&person_on_b, RiffState::Running)
+    common::api_of(&server, &person_on_b)
+        .set_riff(&person_on_b, RiffState::Running)
         .await
         .unwrap();
 
     let person_on_a = uri("riff://mike@a/como-technologies/riff");
-    let (reply, _) = api.set_riff(&person_on_a, RiffState::Paused).await.unwrap();
+    let (reply, _) = common::api_of(&server, &person_on_a)
+        .set_riff(&person_on_a, RiffState::Paused)
+        .await
+        .unwrap();
     assert!(reply.changed);
 
-    let news = api.read(&on_b, &repo(), false).await.unwrap();
+    let news = common::api_of(&server, &on_b)
+        .read(&on_b, &repo(), false)
+        .await
+        .unwrap();
     let senders: Vec<String> = news.iter().map(|m| m.message.from.short()).collect();
     assert_eq!(senders, ["mike@b:riff", "mike@a:riff"], "{news:?}");
     assert!(news[1].message.body.contains("paused"), "{news:?}");

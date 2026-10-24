@@ -25,6 +25,7 @@ fn uri(s: &str) -> SessionUri {
 /// A server with a sign-in provider or with none. It does not need a
 /// sign-in, so the sessions of the test post with no signature.
 async fn start(sign_in: bool) -> Api {
+    // Not `common::start_signed`: the test is about posts with no token and no signature.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let provider = sign_in.then(|| Provider {

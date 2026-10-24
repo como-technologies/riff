@@ -74,6 +74,7 @@ const JOBS: &str = r#"[{"name":"Clippy","conclusion":"failure"},
 {"name":"Checks","conclusion":"success"},
 {"name":"Gate","conclusion":"failure"}]"#;
 
+// Unsigned on purpose: `look::once` posts as the person with the api of the lead session, so no one token can make its calls.
 async fn start_server() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

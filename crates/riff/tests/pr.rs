@@ -5,7 +5,7 @@
 //!
 //! A fake `gh` on `PATH` logs each call, and the body that it gets on
 //! stdin, and answers from a `case` of the test. A real `riff-server`
-//! with no sign-in holds the claims and the posts.
+//! with sign-in holds the claims and the posts.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -37,14 +37,6 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
-/// A real riff-server of this build, with no sign-in.
-async fn server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
-    format!("http://{addr}")
-}
-
 /// A git repository with a GitHub origin, so the place of each session
 /// is `como-technologies/riff`.
 fn repo() -> tempfile::TempDir {
@@ -72,7 +64,7 @@ struct Machine {
     env: Isolated,
     bin: tempfile::TempDir,
     repo: tempfile::TempDir,
-    server: String,
+    server: crate::common::Signed,
 }
 
 impl Machine {
@@ -83,7 +75,7 @@ impl Machine {
             env: Isolated::new(),
             bin,
             repo: repo(),
-            server: server().await,
+            server: crate::common::start_signed().await,
         }
     }
 
@@ -95,10 +87,11 @@ impl Machine {
             self.bin.path().display(),
             std::env::var("PATH").unwrap()
         );
+        crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
         let mut cmd = self.env.riff();
         cmd.args(args)
             .current_dir(self.repo.path())
-            .env("RIFF_SERVER", &self.server)
+            .env("RIFF_SERVER", &*self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "thelio")
             .env("RIFF_SESSION", session)
