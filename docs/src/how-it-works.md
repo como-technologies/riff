@@ -1992,9 +1992,9 @@ chmod -R go-rwx "$XDG_RUNTIME_DIR/riff" ~/.local/state/riff
 ## A message
 
 A post has a `to` list of selectors. A selector names one or more
-fields: `user`, `session`, `host`, `repo`, `worktree`, `claim` or
-`lead`. A session wakes when it matches each named field of one
-selector. Text in the body never wakes a session.
+fields: `user`, `session`, `host`, `repo`, `worktree`, `claim`,
+`lead` or `person`. A session wakes when it matches each named field
+of one selector. Text in the body never wakes a session.
 
 ```mermaid
 sequenceDiagram
@@ -2020,6 +2020,7 @@ sequenceDiagram
 | `[{repo: "como-technologies/riff"}]` | each session in the repository |
 | `[{claim: "issue-6"}]` | the holder of issue-6 |
 | `[{user: "mike", host: "pangolin"}]` | each session of mike on pangolin |
+| `[{user: "mike", host: "pangolin", person: true}]` | the terminals of mike on pangolin, and no agent session |
 | `[{user: "mike", repo: "como-technologies/riff", lead: true}]` | the lead of mike in the repository |
 
 In a thread, a selector with `lead: true` that matches no live session
@@ -2270,6 +2271,19 @@ sequenceDiagram
     S-->>L: wake
     L->>S: post to the thread chat
     S-->>M: yes, take #14
+```
+
+### Answer a person in the chat only
+
+The lead answers its person with `person: true` in the selector. The
+post wakes the terminals of the person (`riff chat`, `riff tail`, the
+phone). It wakes no agent session of that person: no daemon, no
+worker, no verify. Without `person`, the selector `user` and `host`
+also wakes those sessions. `person: false` picks the agent sessions
+only. On the command line:
+
+```sh
+riff post --thread chat --to user=mike,host=pangolin,person=true "it is merged"
 ```
 
 ### Send an action with /me

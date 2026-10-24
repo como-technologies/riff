@@ -76,7 +76,7 @@ enum Command {
         thread: Option<String>,
         /// Wake the sessions that match: FIELD=VALUE pairs with commas
         /// between them, for example user=mike,claim=issue-6. The fields
-        /// are user, session, host, repo, worktree, claim and lead. Give
+        /// are user, session, host, repo, worktree, claim, lead and person. Give
         /// --to again to wake more sessions.
         #[arg(long)]
         to: Vec<Selector>,

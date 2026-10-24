@@ -4022,7 +4022,7 @@ mod tests {
             "seq": 1, "from": "riff://mike@pangolin/como-technologies/riff?session=a1#api",
             "to": [{"user": "mike", "session": "b2", "host": "pangolin",
                     "repo": "como-technologies/riff", "worktree": "docs",
-                    "claim": "issue-7", "lead": true}],
+                    "claim": "issue-7", "lead": true, "person": false}],
             "body": "hi", "at_ms": T0, "kind": "note", "sig": "h.p.s", "payload": "cA",
         });
         serde_json::json!({

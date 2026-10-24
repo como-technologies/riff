@@ -18,6 +18,7 @@
 //! | `worktree` | The worktree. The main worktree has none. |
 //! | `claim` | One of the claims that the session holds. |
 //! | `lead` | `true`: the lead of its user in its repository. `false`: each other session. |
+//! | `person` | `true`: the terminals of a person (`riff chat`, `riff tail`, the phone), which have no session ID. `false`: each agent session. |
 //!
 //! On the command line, a selector is `FIELD=VALUE` pairs with commas
 //! between them.
@@ -115,6 +116,11 @@ pub struct Selector {
     /// `user` and `repo`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lead: Option<bool>,
+    /// True picks the terminals of a person: they have no session ID.
+    /// False picks the agent sessions. Use `user=USER,person=true` to
+    /// reach a person and no agent session of that person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person: Option<bool>,
     /// The JSON of a selector that this build does not know, as it
     /// came. Each field above is then empty, and the selector matches
     /// no session.
@@ -179,7 +185,10 @@ impl Selector {
 
     /// True when the selector names no field.
     pub fn is_empty(&self) -> bool {
-        self.lead.is_none() && !self.is_other() && self.fields().iter().all(|(_, v)| v.is_none())
+        self.lead.is_none()
+            && self.person.is_none()
+            && !self.is_other()
+            && self.fields().iter().all(|(_, v)| v.is_none())
     }
 
     /// True when each named field matches the session. A selector
@@ -199,6 +208,7 @@ impl Selector {
             && eq(&self.worktree, place.worktree())
             && self.claim.as_ref().is_none_or(|c| uri.claims().contains(c))
             && self.lead.is_none_or(|l| l == uri.lead())
+            && self.person.is_none_or(|p| p == who.session().is_none())
     }
 
     fn fields(&self) -> [(&'static str, &Option<String>); 6] {
@@ -224,6 +234,7 @@ impl fmt::Display for Selector {
             .iter()
             .filter_map(|(k, v)| v.as_ref().map(|v| format!("{k}={v}")))
             .chain(self.lead.map(|l| format!("lead={l}")))
+            .chain(self.person.map(|p| format!("person={p}")))
             .collect();
         f.write_str(&pairs.join(","))
     }
@@ -241,7 +252,10 @@ impl FromStr for Selector {
     /// assert_eq!(s.to_string(), "user=mike,claim=issue-6");
     /// let lead: Selector = "user=mike,lead=true".parse()?;
     /// assert_eq!(lead.lead, Some(true));
+    /// let person: Selector = "user=mike,person=true".parse()?;
+    /// assert_eq!(person.person, Some(true));
     /// assert!("lead=yes".parse::<Selector>().is_err());
+    /// assert!("person=yes".parse::<Selector>().is_err());
     /// assert!("".parse::<Selector>().is_err());
     /// assert!("colour=blue".parse::<Selector>().is_err());
     /// # Ok::<(), riff_core::name::NameError>(())
@@ -253,11 +267,15 @@ impl FromStr for Selector {
                 .split_once('=')
                 .filter(|(_, v)| !v.is_empty())
                 .ok_or_else(|| NameError::new(format!("not FIELD=VALUE: {pair}")))?;
-            if key == "lead" {
-                let lead = value
+            if key == "lead" || key == "person" {
+                let flag = value
                     .parse()
-                    .map_err(|_| NameError::new(format!("lead is true or false, not {value}")))?;
-                out.lead = Some(lead);
+                    .map_err(|_| NameError::new(format!("{key} is true or false, not {value}")))?;
+                if key == "lead" {
+                    out.lead = Some(flag);
+                } else {
+                    out.person = Some(flag);
+                }
                 continue;
             }
             let field = match key {
@@ -269,7 +287,7 @@ impl FromStr for Selector {
                 "claim" => &mut out.claim,
                 _ => {
                     return Err(NameError::new(format!(
-                        "no field named {key}. Use user, session, host, repo, worktree, claim or lead."
+                        "no field named {key}. Use user, session, host, repo, worktree, claim, lead or person."
                     )));
                 }
             };
@@ -337,6 +355,19 @@ mod tests {
             serde_json::to_string(&s).unwrap(),
             r#"{"user":"mike","repo":"como-technologies/riff","lead":true}"#
         );
+    }
+
+    #[test]
+    fn person_selects_the_terminals_or_the_agent_sessions() {
+        let agent = uri("riff://mike@pangolin/como-technologies/riff?session=a6cf");
+        let person = uri("riff://mike@pangolin");
+        let to_person = sel("user=mike,host=pangolin,person=true");
+        assert!(to_person.matches(&person));
+        assert!(!to_person.matches(&agent));
+        assert!(!to_person.matches(&agent.clone().with_lead(true)));
+        assert!(sel("person=false").matches(&agent));
+        assert!(!sel("person=false").matches(&person));
+        assert_eq!(to_person.to_string(), "user=mike,host=pangolin,person=true");
     }
 
     #[test]
@@ -430,7 +461,7 @@ mod tests {
         assert_eq!(
             fields,
             [
-                "claim", "host", "lead", "repo", "session", "user", "worktree"
+                "claim", "host", "lead", "person", "repo", "session", "user", "worktree"
             ]
         );
     }
