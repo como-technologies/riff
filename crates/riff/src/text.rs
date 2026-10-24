@@ -4782,6 +4782,24 @@ pub fn image_no_origin_head(main: &Path) -> String {
     )
 }
 
+/// The default branch `head` of `origin` has no `riff.toml`, so the main
+/// clone has no merged pin (01M5QY976MTPRX5J4N1MKXAGDK).
+///
+/// ```
+/// let text = riff::text::image_no_config("origin/main");
+/// assert!(text.starts_with("riff.toml is not on origin/main"), "{text}");
+/// assert!(text.contains("[session]"), "{text}");
+/// assert!(text.contains("Add another repository to the riff"), "{text}");
+/// ```
+pub fn image_no_config(head: &str) -> String {
+    format!(
+        "riff.toml is not on {head}, the default branch of origin, so riff cannot find the \
+         session image. Fix: add riff.toml at the root of the repository, with the key image in \
+         the table [session], and merge it into the default branch. See \"Add another \
+         repository to the riff\" in the book."
+    )
+}
+
 /// riff cannot fetch the default branch `head` for the merged pin, so it
 /// reads the branch that the clone has (01M51STPPWYFKQ1ESCNA6V3WV2).
 pub fn image_no_fetch(head: &str, error: &str) -> String {

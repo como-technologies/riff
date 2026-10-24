@@ -162,8 +162,10 @@ impl Image {
 /// one line (01M51STPPWYFKQ1ESCNA6V3WV2). When [`FILE`] in the working
 /// tree pins another image, or no good image, it gives `say` one line
 /// (01M51STPMEM62Z8B26YM2CH6QH). The working tree never changes the
-/// image. An error when the clone has no `origin/HEAD`, or when the
-/// merged [`FILE`] pins no good image.
+/// image. An error when the clone has no `origin/HEAD`, when that branch
+/// has no [`FILE`] (the error names the file, the branch and the fix,
+/// 01M5QY976MTPRX5J4N1MKXAGDK), or when the merged [`FILE`] pins no good
+/// image.
 ///
 /// ```
 /// use std::path::Path;
@@ -204,6 +206,14 @@ impl Image {
 /// assert_eq!(merged(&main, |line| lines.push(line.to_owned()))?, image);
 /// assert_eq!(lines.len(), 1);
 /// assert!(lines[0].contains("riff uses the merged pin"), "{}", lines[0]);
+///
+/// // A branch with no riff.toml: the error names the file, the branch and the fix.
+/// git(&main, &["rm", "-q", "-f", FILE]);
+/// git(&main, &["commit", "-q", "-m", "no pin"]);
+/// git(&main, &["push", "-q", "origin", "main"]);
+/// let error = merged(&main, |_| {}).unwrap_err().to_string();
+/// assert!(error.starts_with("riff.toml is not on origin/main"), "{error}");
+/// assert!(error.contains("Fix: add riff.toml"), "{error}");
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
@@ -216,7 +226,11 @@ pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
     if let Err(e) = git(main, &["fetch", "--quiet", "origin", branch]) {
         say(&text::image_no_fetch(&head, &format!("{e:#}")));
     }
-    let config = git(main, &["show", &format!("{head}:{FILE}")])?;
+    let config = match git(main, &["show", &format!("{head}:{FILE}")]) {
+        Ok(config) => config,
+        Err(_) if lacks_config(main, &head) => bail!("{}", text::image_no_config(&head)),
+        Err(e) => return Err(e),
+    };
     let image = Image::of_config(&config, &format!("{FILE} of {head}"))?;
     match Image::of_repository(main) {
         Ok(local) if local == image => {}
@@ -233,6 +247,12 @@ pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
         )),
     }
     Ok(image)
+}
+
+/// True when the branch `head` is there, and has no [`FILE`].
+fn lacks_config(main: &Path, head: &str) -> bool {
+    let has = |spec: String| git(main, &["rev-parse", "--verify", "--quiet", &spec]).is_ok();
+    has(format!("{head}^{{commit}}")) && !has(format!("{head}:{FILE}"))
 }
 
 /// Runs `git ARGS` in `dir` with no prompt, and gives its stdout. An
@@ -488,6 +508,56 @@ mod tests {
         let error = format!("{:#}", merged_lines(&main).0.unwrap_err());
         assert_eq!(error, text::image_no_origin_head(&main));
         assert!(error.ends_with("remote set-head origin --auto"), "{error}");
+    }
+
+    /// 01M5QY976MTPRX5J4N1MKXAGDK: an `origin` with no `riff.toml` on its
+    /// default branch has no merged pin. The error names the file, the
+    /// branch and the fix, not the error of git. A `riff.toml` in the
+    /// working tree that is not merged does not help.
+    #[test]
+    fn an_origin_with_no_riff_toml_gives_the_error_with_the_fix() {
+        let (_dir, main, _origin) = test_clone(&config("0"));
+        test_git(&main, &["rm", "-q", FILE]);
+        test_git(&main, &["commit", "-q", "-m", "no pin"]);
+        test_git(&main, &["push", "-q", "origin", "main"]);
+        std::fs::write(main.join(FILE), config("1")).unwrap();
+
+        let (image, lines) = merged_lines(&main);
+        let error = format!("{:#}", image.unwrap_err());
+        assert_eq!(error, text::image_no_config("origin/main"));
+        assert!(
+            error.starts_with("riff.toml is not on origin/main"),
+            "{error}"
+        );
+        assert!(error.contains("[session]"), "{error}");
+        assert!(
+            error.contains("Add another repository to the riff"),
+            "{error}"
+        );
+        assert!(!error.contains("git show"), "{error}");
+        assert!(!error.contains("fatal"), "{error}");
+        assert!(lines.is_empty(), "{lines:?}");
+    }
+
+    /// 01M5QY976MTPRX5J4N1MKXAGDK: a branch that git cannot find is no
+    /// branch with no `riff.toml`: the error stays the error of git.
+    #[test]
+    fn a_branch_that_is_not_there_keeps_the_error_of_git() {
+        let (_dir, main, _origin) = test_clone(&config("0"));
+        test_git(
+            &main,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/nope",
+            ],
+        );
+        let (image, _) = merged_lines(&main);
+        let error = format!("{:#}", image.unwrap_err());
+        assert!(
+            error.starts_with("git show origin/nope:riff.toml: "),
+            "{error}"
+        );
     }
 
     /// 01M51STPMEM62Z8B26YM2CH6QH: a working tree with no riff config or

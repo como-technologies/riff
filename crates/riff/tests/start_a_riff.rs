@@ -229,6 +229,17 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
     each_is_real(&riff);
 }
 
+/// 01M5QY976MTPRX5J4N1MKXAGDK: the step "Add riff.toml" says the error of
+/// `riff lead start` with no `riff.toml`, and the error names the how-to.
+#[test]
+fn the_step_add_riff_toml_says_the_error_of_a_repository_with_no_riff_toml() {
+    let how_to = part(PAGE, HOW_TO);
+    let error = riff::text::image_no_config("origin/main");
+    let first = error.split(',').next().unwrap();
+    assert!(how_to.contains(&format!("`{first}`")), "{first}");
+    assert!(error.contains(&format!("\"{HOW_TO}\"")), "{error}");
+}
+
 /// The ruleset of the how-to is the ruleset that the step of `riff init`
 /// makes (01M5QWA0E9A4ZJ8X49EM2MJM5Q), and it requires the checks that
 /// riff reads: the verify and the `Gate` that the wave waits for.

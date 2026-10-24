@@ -1980,6 +1980,41 @@ async fn riff_lead_start_refuses_a_host_with_no_claude_token() {
     );
 }
 
+/// 01M5QY976MTPRX5J4N1MKXAGDK: a repository with no `riff.toml` on the
+/// default branch of `origin` has no merged pin. `riff lead start` starts
+/// no lead and asks no wave, prints no line that the lead starts, and
+/// the error names the file, the branch and the fix.
+#[tokio::test]
+async fn riff_lead_start_in_a_repository_with_no_riff_toml_says_the_fix_and_starts_nothing() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    machine.claude_token();
+    git(&machine.main, &["rm", "-q", "riff.toml"]);
+    git(&machine.main, &["commit", "-q", "-m", "no pin"]);
+    git(&machine.main, &["push", "-q", "origin", "main"]);
+
+    let out = machine.run(None, &["lead", "start"]).await;
+    assert!(!out.status.success(), "{out:?}");
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(
+        stderr.contains(&riff::text::image_no_config("origin/main")),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("fatal"), "{stderr}");
+    for line in [&stdout, &stderr] {
+        assert!(!line.contains("The lead starts"), "{line}");
+        assert!(!line.contains("starts in the container"), "{line}");
+        assert!(!line.contains("does not run the wave"), "{line}");
+    }
+    assert!(machine.read("run.args").is_empty());
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains("Waves:"), "{status}");
+    assert!(
+        !status.contains("riff-lead-como-technologies-riff"),
+        "{status}"
+    );
+}
+
 /// 01M51PD7Q24N252V66NFEHY49N: the person types `/exit` in the lead, so
 /// its container ends in the attach. `riff lead start` says that the
 /// lead ended, not that the person left its terminal.
