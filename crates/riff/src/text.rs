@@ -7018,6 +7018,113 @@ pub fn swept(folder: &Path, why: &str) -> String {
     format!("riff removed the folder {}: {why}.", folder.display())
 }
 
+/// The sweep pushed the leftover work of the folder `folder` to the
+/// branch `branch` of `origin`, and removed the folder, for the reason
+/// `why`. `lost` counts the files that git does not track: they went
+/// with the folder.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let folder = Path::new("/s/issue-12-1a2b3c4d");
+/// assert_eq!(
+///     riff::text::swept_pushed(folder, "the pull request #40 merged", "riff-kept/issue-12-1a2b3c4d", 0),
+///     "riff removed the folder /s/issue-12-1a2b3c4d: the pull request #40 merged. Its work is on the branch riff-kept/issue-12-1a2b3c4d of origin."
+/// );
+/// assert!(riff::text::swept_pushed(folder, "x", "riff-kept/b", 2).ends_with("2 files that git do not track went with the folder."));
+/// ```
+pub fn swept_pushed(folder: &Path, over: &str, branch: &str, lost: usize) -> String {
+    let mut line = format!(
+        "riff removed the folder {}: {over}. Its work is on the branch {branch} of origin.",
+        folder.display()
+    );
+    if lost > 0 {
+        let files = if lost == 1 { "file" } else { "files" };
+        let verb = if lost == 1 { "does" } else { "do" };
+        line.push_str(&format!(
+            " {lost} {files} that git {verb} not track went with the folder."
+        ));
+    }
+    line
+}
+
+/// The sweep removed the folder `folder`, for the reason `why`. Its
+/// clone had only `lost` files that git does not track: nothing went to
+/// `origin`.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let folder = Path::new("/s/issue-12-1a2b3c4d");
+/// assert_eq!(
+///     riff::text::swept_untracked(folder, "the pull request #40 merged", 1),
+///     "riff removed the folder /s/issue-12-1a2b3c4d: the pull request #40 merged. 1 file that git does not track went with the folder."
+/// );
+/// ```
+pub fn swept_untracked(folder: &Path, over: &str, lost: usize) -> String {
+    let (files, verb) = if lost == 1 {
+        ("file", "does")
+    } else {
+        ("files", "do")
+    };
+    format!(
+        "riff removed the folder {}: {over}. {lost} {files} that git {verb} not track went with \
+         the folder.",
+        folder.display()
+    )
+}
+
+/// The sweep could not push the work of the folder `folder` for the
+/// reason `why`, so it kept the folder (`over` is why the work is over).
+///
+/// ```
+/// use std::path::Path;
+///
+/// let folder = Path::new("/s/issue-12-1a2b3c4d");
+/// assert_eq!(
+///     riff::text::swept_push_failed(folder, "the pull request #40 merged", "git push: denied"),
+///     "riff kept the folder /s/issue-12-1a2b3c4d: the pull request #40 merged, but riff could not push its work: git push: denied. The next sweep tries again."
+/// );
+/// ```
+pub fn swept_push_failed(folder: &Path, over: &str, why: &str) -> String {
+    let why = why.trim_end().trim_end_matches('.');
+    format!(
+        "riff kept the folder {}: {over}, but riff could not push its work: {why}. The next \
+         sweep tries again.",
+        folder.display()
+    )
+}
+
+/// The one note to the lead after a sweep: `lines` says what the sweep
+/// pushed, removed and deleted. `None` for no line.
+///
+/// ```
+/// let note = riff::text::daemon_kept_digest(&["a.".into(), "b.".into()]).unwrap();
+/// assert_eq!(note, "riff daemon: the sweep moved the leftover work of kept folders.\na.\nb.");
+/// assert_eq!(riff::text::daemon_kept_digest(&[]), None);
+/// ```
+pub fn daemon_kept_digest(lines: &[String]) -> Option<String> {
+    (!lines.is_empty()).then(|| {
+        format!(
+            "riff daemon: the sweep moved the leftover work of kept folders.\n{}",
+            lines.join("\n")
+        )
+    })
+}
+
+/// The sweep deleted the branch `branch` of `origin`, older than
+/// `days` days.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::swept_branch_deleted("riff-kept/issue-12-1a2b3c4d", 30),
+///     "riff deleted the branch riff-kept/issue-12-1a2b3c4d of origin: it is older than 30 days."
+/// );
+/// ```
+pub fn swept_branch_deleted(branch: &str, days: u64) -> String {
+    format!("riff deleted the branch {branch} of origin: it is older than {days} days.")
+}
+
 /// Why the sweep removes the folder of a session of the issue `issue`
 /// with the fate `fate`. `None` when the folder stays.
 ///

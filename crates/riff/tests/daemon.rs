@@ -838,21 +838,25 @@ async fn riff_daemon_sweep_removes_the_folders_whose_work_is_over_and_says_why()
     stop(daemon).await;
 }
 
-/// 01M53S7WAXD46YPN0DR96XSTMG: `riff daemon sweep` keeps the folder of a
-/// closed pull request while its clone has a commit that no branch of
-/// `origin` has, and says why. After the push, it removes the folder.
+/// 01M5NVKNGZPK0GG7B7ZWBS0DFE: `riff daemon sweep` pushes the leftover
+/// work of the folder of a closed pull request to `riff-kept/ITEM-ID8`
+/// of `origin`, never an untracked file, and removes the folder.
 #[tokio::test]
-async fn riff_daemon_sweep_keeps_a_folder_with_a_commit_that_is_not_pushed() {
+async fn riff_daemon_sweep_pushes_the_leftover_work_and_removes_the_folder() {
     let here = Here::new();
     fake_sweep_gh(here.bin.path());
     let sessions = here.env.riff_home().join("sessions");
     let ahead = session_folder(&sessions, "issue-6-00000006");
     let clone = ahead.join("clone");
+    let bare = here.bin.path().join("origin.git");
+    git(here.bin.path(), &["init", "-q", "--bare", "origin.git"]);
+    let key = format!("url.{}.pushInsteadOf", bare.display());
+    git(&clone, &["config", &key, "https://github.com/o/r.git"]);
     git(&clone, &["switch", "-q", "-c", "worktree-issue-6"]);
-    git(
-        &clone,
-        &["commit", "-q", "--allow-empty", "-m", "not pushed"],
-    );
+    std::fs::write(clone.join("work.md"), "work").unwrap();
+    git(&clone, &["add", "work.md"]);
+    git(&clone, &["commit", "-q", "-m", "not pushed"]);
+    std::fs::write(clone.join("scratch.log"), "token").unwrap();
     let daemon = here
         .daemon_with("daemon.out", &[(riff::daemon::sweep::EVERY_VAR, "0")])
         .await;
@@ -862,26 +866,18 @@ async fn riff_daemon_sweep_keeps_a_folder_with_a_commit_that_is_not_pushed() {
     assert_eq!(
         text(&out.stdout),
         format!(
-            "riff kept the folder {}: the pull request #46 closed with no merge, but its clone \
-             has 1 commit that is not pushed. Push the work, or remove the folder.\n",
-            ahead.display()
-        )
-    );
-    assert!(ahead.exists());
-
-    git(
-        &clone,
-        &["update-ref", "refs/remotes/origin/worktree-issue-6", "HEAD"],
-    );
-    let out = here.run(false, &["daemon", "sweep"]).await;
-    assert_eq!(
-        text(&out.stdout),
-        format!(
-            "riff removed the folder {}: the pull request #46 closed with no merge.\n",
+            "riff removed the folder {}: the pull request #46 closed with no merge. Its work is \
+             on the branch riff-kept/issue-6-00000006 of origin. 1 file that git does not track \
+             went with the folder.\n",
             ahead.display()
         )
     );
     assert!(!ahead.exists());
+    let files = git(
+        &bare,
+        &["ls-tree", "-r", "--name-only", "riff-kept/issue-6-00000006"],
+    );
+    assert_eq!(files, "work.md");
     stop(daemon).await;
 }
 
