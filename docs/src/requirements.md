@@ -6584,6 +6584,11 @@ part when they merge.
   the person that the sign-in of the lead is stale, with the step to fix
   it and to start the lead again: at each attach of riff lead start and
   riff view, and once in riff chat from the daemon.
+- **01M5P21M7MSP503125GD2PJGRE** In the container of the lead, riff
+  release cut, publish and approve reach riff-server through the socket
+  of the session, as riff release check does: the roster, the chat line,
+  the read of the chat and the pause of the riff go through the riff
+  daemon.
 
 ### The first run
 

@@ -8,7 +8,8 @@
 //! of the host is not there. So `http://127.0.0.1:7878`, the default, does
 //! not answer in the container. The riff tools already go through the
 //! socket. [`Reach`] makes `riff wave list`, `riff wave move`, `riff wave end
-//! --move-open-to-backlog` and `riff release check` go
+//! --move-open-to-backlog`, `riff release check` and the chat and pause
+//! steps of `riff release cut`, `publish` and `approve` go
 //! the same way: the daemon makes the call on the riff-server of the
 //! session, with the sign-in of the person on the host
 //! ([`crate::daemon::ServerCall`]).
@@ -39,13 +40,25 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{HoldInfo, RiffState, SessionInfo};
+use riff_core::wire::{HoldInfo, Kind, Person, RiffOwner, RiffState, SessionInfo};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::daemon::ServerCall;
 use crate::lifecycle::Source;
 use crate::{identity, session_relay, text};
 use riff_client::api::{Api, PauseScope};
+
+/// What `riff release cut`, `publish` and `approve` read of the riff.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Roster {
+    /// The USER of this session.
+    pub user: String,
+    /// The owner of the riff.
+    pub owner: RiffOwner,
+    /// Each member of the riff.
+    pub people: Vec<Person>,
+}
 
 /// The way of a riff command to riff-server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,6 +181,69 @@ impl Reach {
             request: request.to_string(),
         };
         ask(socket, &call).await
+    }
+
+    /// The user of this session, and the owner and the people of the
+    /// riff.
+    pub async fn roster(&self) -> Result<Roster> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                let reply = api.roster(&me, false).await?;
+                Ok(Roster {
+                    user: me.who().user().to_owned(),
+                    owner: reply.owner,
+                    people: reply.people,
+                })
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::Roster).await,
+        }
+    }
+
+    /// Posts `body` in riff chat. It wakes the leads that it names.
+    pub async fn chat_post(&self, body: &str) -> Result<()> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                let to = crate::chat::wakes(body, me.who().user());
+                let thread = crate::chat::thread();
+                api.post(&me, Some(&thread), &to, body, Kind::Message)
+                    .await?;
+                Ok(())
+            }
+            Reach::Daemon(socket) => {
+                let call = ServerCall::ChatPost {
+                    body: body.to_owned(),
+                };
+                let _: serde_json::Value = ask(socket, &call).await?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Each kept message of riff chat.
+    pub async fn chat_read(&self) -> Result<Vec<crate::cycle::ChatLine>> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                let read = api.read(&me, &crate::chat::thread(), true).await?;
+                Ok(crate::cycle::chat_lines(read))
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::ChatRead).await,
+        }
+    }
+
+    /// Pauses the whole riff, and gives the line for the person.
+    pub async fn pause_riff(&self) -> Result<String> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                let state = RiffState::Paused;
+                let (reply, posted) = api.set_pause(&me, &PauseScope::Riff, state).await?;
+                Ok(text::riff_set(None, state, &reply, &posted))
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::PauseRiff).await,
+        }
     }
 
     /// Resumes the whole riff, and gives the line for the person.

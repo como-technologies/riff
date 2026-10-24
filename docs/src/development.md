@@ -4258,6 +4258,11 @@ message of a session, of another version, from before the cut, or from a
 member. It also refuses a worker, a work session in a container and a
 session that is not the lead.
 
+The lead runs these commands in its container. `cut` and `publish`
+write their line in riff chat, and `approve` reads the roster and the
+chat and pauses the riff, all through the riff daemon of the host. The
+container needs no `--server` and no sign-in.
+
 When the auto mode checker blocks a release command, `riff denials`
 has a record. The lead files an issue for it.
 
