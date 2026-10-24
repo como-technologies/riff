@@ -21,8 +21,9 @@ const REPO: &str = "como-technologies/riff";
 const RUN: &str = "https://github.com/como-technologies/riff/actions/runs/38861280871";
 
 /// A fake `gh` that logs each call to `gh.log` on one line. The file
-/// `gate` holds the check runs of the head of the default branch `master`, and `jobs` the
-/// jobs of the run. The file `pulls` holds the open pull requests.
+/// `gate` holds the check runs of the head of the default branch, which
+/// is `master`, and `jobs` the jobs of the run. The file `pulls` holds the
+/// open pull requests.
 /// `issue list` gives the file `issues`, and the file `with-fix` after
 /// `issue create` and before `issue close`.
 const FAKE_GH: &str = r#"#!/bin/sh
@@ -32,7 +33,11 @@ printf '\n' >> "$dir/gh.log"
 case "$1 $2" in
   api*)
     case "$2" in
-      repos/como-technologies/riff) echo '{"default_branch":"master"}' ;;
+      repos/como-technologies/riff)
+        case "$*" in
+          *--jq*) echo master ;;
+          *) echo '{"default_branch":"master"}' ;;
+        esac ;;
       */rules/branches/master*) echo '[]' ;;
       */commits/master/check-runs*) cat "$dir/gate" ;;
       */actions/runs/38861280871/jobs*) cat "$dir/jobs" ;;
@@ -145,19 +150,9 @@ async fn look_at(
     pulls: &mut PullWatch,
     main: &mut MainWatch,
 ) {
-    // The default branch of the repository is `master`, not `main`.
-    look::once(
-        api,
-        lead,
-        gh,
-        "master",
-        Duration::from_secs(600),
-        None,
-        pulls,
-        main,
-    )
-    .await
-    .unwrap();
+    look::once(api, lead, gh, Duration::from_secs(600), None, pulls, main)
+        .await
+        .unwrap();
 }
 
 /// Each unread post of the person to the lead, with its kind.

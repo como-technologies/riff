@@ -6621,6 +6621,11 @@ part when they merge.
   BRANCH". The look reads the full check of the head of that branch
   (01M5R13DGMTNWPY88A3EG49WWS). `riff run` names the branch of
   `origin/HEAD` of its clone.
+- **01M5R0J131464KZX180BW2AK98** A default branch that does not read
+  stops no look at the blocks. The look of the lead reads the default
+  branch of the repository at each look, after the look at the blocks,
+  and a failed read gives no look at the full check, like a forge that
+  does not answer. Refs 01M5QYBWPAJ219BE8QKVKG1TWW.
 
 ### The lead, the view and the takeover
 

@@ -1257,14 +1257,15 @@ pub fn notification(block: &Unanswered) -> (String, String) {
 /// shows each block that is unanswered now with `notify`, when it has
 /// one. Then it sends the messages of `watch` for the pull requests that
 /// stop ([`PullWatch::news`]), and looks at the full check of the default
-/// branch `branch` ([`look_at_main`], with the watch `main`). It gives
-/// the blocks that are unanswered now.
-#[allow(clippy::too_many_arguments)]
+/// branch ([`look_at_main`], with the watch `main`). It reads that
+/// branch from the forge ([`crate::pr::default_branch`]): a branch that
+/// does not read gives no look at the full check
+/// (01M5R0J131464KZX180BW2AK98). It gives the blocks that are unanswered
+/// now.
 pub async fn once(
     api: &Api,
     me: &SessionUri,
     gh: &Arc<Gh>,
-    branch: &str,
     wake: Duration,
     notify: Option<&Notifier>,
     watch: &mut PullWatch,
@@ -1297,7 +1298,15 @@ pub async fn once(
                 return Err(e);
             }
         }
-        look_at_main(api, me, gh, branch, (issues, pulls), claims, main).await?;
+        // Like a forge that does not answer, a default branch that does not
+        // read stops no look at the blocks, which came first.
+        let branch = {
+            let (gh, repo) = (gh.clone(), me.place().repo_text());
+            tokio::task::spawn_blocking(move || crate::pr::default_branch(&gh, &repo)).await?
+        };
+        if let Ok(branch) = branch {
+            look_at_main(api, me, gh, &branch, (issues, pulls), claims, main).await?;
+        }
     }
     Ok(unanswered)
 }
@@ -1331,11 +1340,7 @@ pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf
             let (wake, notify) = read_settings(settings.as_deref());
             // A machine with no desktop gets no notification.
             let notify = (notify && notifier.here()).then_some(&notifier);
-            let branch = {
-                let (gh, repo) = (gh.clone(), me.place().repo_text());
-                tokio::task::spawn_blocking(move || crate::pr::default_branch(&gh, &repo)).await??
-            };
-            once(&api, &me, &gh, &branch, wake, notify, &mut watch, &mut main).await?;
+            once(&api, &me, &gh, wake, notify, &mut watch, &mut main).await?;
             let due = release_at.is_none_or(|at| at.elapsed() >= RELEASE_EVERY);
             if let Some(clone) = clone.as_deref().filter(|_| due) {
                 release_at = Some(Instant::now());
