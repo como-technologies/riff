@@ -2667,7 +2667,9 @@ impl<R: Runtime + 'static> Daemon<R> {
             me,
             terminal,
         } = start;
-        self.room.limit().caps(&mut spec);
+        let limit = self.room.limit();
+        limit.caps(&mut spec);
+        limit.effort(&mut spec, &item);
         crate::compile_cache::Setting::read(&self.dir)
             .unwrap_or_default()
             .apply(&mut spec);
@@ -4364,6 +4366,51 @@ mod tests {
         assert_eq!(caps(&spec), (8, vec!["8"], "8g"));
     }
 
+    /// The claude command of the lead, of a work item and of a verify has
+    /// `--effort xhigh` by default, and the level that `riff daemon limit`
+    /// set for its role. A session that runs keeps its effort.
+    #[tokio::test]
+    async fn each_new_session_gets_the_effort_of_its_role() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let effort = |spec: &SessionSpec| {
+            let at = spec.command.iter().position(|a| a == "--effort").unwrap();
+            assert_eq!(spec.command[at - 1], "claude");
+            spec.command[at + 1].clone()
+        };
+        let mut first = Vec::new();
+        for (name, item) in [
+            ("riff-lead-o-r", "lead"),
+            ("riff-issue-12-1a2b3c4d", "issue-12"),
+            ("riff-verify-issue-12-1a2b3c4d", "verify-issue-12"),
+        ] {
+            let (_c, id) = here.started(here.start(name, item)).await;
+            first.push(id);
+        }
+        for id in &first {
+            assert_eq!(effort(&here.fake.spec(id).unwrap()), "xhigh");
+        }
+
+        let change = crate::room::Change {
+            sessions: Some(9),
+            effort: Some(crate::room::Effort::High),
+            effort_lead: Some(crate::room::Effort::Max),
+            effort_verify: Some(crate::room::Effort::Low),
+            ..crate::room::Change::default()
+        };
+        crate::room::set(&here.dir, change).unwrap();
+        let mut levels = Vec::new();
+        for (name, item) in [
+            ("riff-lead-o-x", "lead"),
+            ("riff-issue-13-2b3c4d5e", "issue-13"),
+            ("riff-verify-issue-13-2b3c4d5e", "verify-issue-13"),
+        ] {
+            let (_c, id) = here.started(here.start(name, item)).await;
+            levels.push(effort(&here.fake.spec(&id).unwrap()));
+        }
+        assert_eq!(levels, ["max", "high", "low"]);
+        assert_eq!(effort(&here.fake.spec(&first[0]).unwrap()), "xhigh");
+    }
+
     /// 01M57840K7SNPS243CYMYNYVFX, 01M57840R2HNXGP9B2ENSKTWD3.
     #[tokio::test]
     async fn an_added_mcp_server_is_in_the_mcp_config_of_each_new_session() {
@@ -4461,7 +4508,17 @@ mod tests {
         // write, and the command of the spec after it. The riff of the
         // test daemon is a static fake.
         let spec = here.fake.spec(&name).unwrap();
-        assert_eq!(spec.command, ["/opt/riff/riff", "relay", "--", "claude"]);
+        assert_eq!(
+            spec.command,
+            [
+                "/opt/riff/riff",
+                "relay",
+                "--",
+                "claude",
+                "--effort",
+                "xhigh"
+            ]
+        );
         assert!(spec.binds.contains(&Bind {
             source: Source::Path(static_riff(&here.dir)),
             target: RELAY_BIN.into(),
@@ -5965,7 +6022,15 @@ mod tests {
         let spec = here.fake.spec(&name).unwrap();
         assert_eq!(
             spec.command,
-            ["/opt/riff/riff", "relay", "--terminal", "--", "claude"]
+            [
+                "/opt/riff/riff",
+                "relay",
+                "--terminal",
+                "--",
+                "claude",
+                "--effort",
+                "xhigh"
+            ]
         );
         // It counts in no limit, and keeps its session alive.
         assert_eq!(here.daemon.live_count(), 0);

@@ -6205,14 +6205,23 @@ pub fn daemon_no_start(name: &str) -> String {
 /// assert_eq!(
 ///     riff::text::daemon_limit(&Limit::default()),
 ///     "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start.\n\
-///      Each new container: 8 CPUs and 8 build jobs, and 8 GB of memory."
+///      Each new container: 8 CPUs and 8 build jobs, and 8 GB of memory.\n\
+///      Effort of the lead xhigh, of a work item xhigh, of a verify xhigh."
 /// );
 /// ```
 pub fn daemon_limit(limit: &crate::room::Limit) -> String {
     format!(
         "The limit of this host: {} live sessions, and {} GB of free memory or more for a start.\n\
-         Each new container: {} CPUs and {} build jobs, and {} GB of memory.",
-        limit.sessions, limit.floor_gb, limit.cpus, limit.cpus, limit.memory_gb
+         Each new container: {} CPUs and {} build jobs, and {} GB of memory.\n\
+         Effort of the lead {}, of a work item {}, of a verify {}.",
+        limit.sessions,
+        limit.floor_gb,
+        limit.cpus,
+        limit.cpus,
+        limit.memory_gb,
+        limit.effort_lead,
+        limit.effort,
+        limit.effort_verify
     )
 }
 

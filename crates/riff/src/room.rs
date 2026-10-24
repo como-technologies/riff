@@ -82,10 +82,93 @@ pub const LOOK_EVERY: Duration = Duration::from_secs(5);
 /// One GB: 2^30 bytes, as `MemAvailable` counts.
 const GB: u64 = 1 << 30;
 
+/// The effort of a Claude Code session: the levels of `claude --effort`.
+/// The default is `xhigh`.
+///
+/// ```
+/// use riff::room::Effort;
+///
+/// assert_eq!("xhigh".parse(), Ok(Effort::Xhigh));
+/// assert_eq!(Effort::default().to_string(), "xhigh");
+/// let e = "huge".parse::<Effort>().unwrap_err();
+/// assert!(e.contains("low, medium, high, xhigh or max"), "{e}");
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    #[default]
+    Xhigh,
+    Max,
+}
+
+impl std::fmt::Display for Effort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::Xhigh => "xhigh",
+            Effort::Max => "max",
+        })
+    }
+}
+
+impl std::str::FromStr for Effort {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "low" => Effort::Low,
+            "medium" => Effort::Medium,
+            "high" => Effort::High,
+            "xhigh" => Effort::Xhigh,
+            "max" => Effort::Max,
+            _ => {
+                return Err(format!(
+                    "riff does not know the effort {s}: Claude Code has low, medium, high, xhigh or max"
+                ));
+            }
+        })
+    }
+}
+
+/// The role of a session for its effort. The item of the session tells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Lead,
+    Verify,
+    Work,
+}
+
+impl Role {
+    /// The role of the session of `item`: `lead`, `verify-issue-N` or
+    /// any other item.
+    ///
+    /// ```
+    /// use riff::room::Role;
+    /// assert_eq!(Role::of("lead"), Role::Lead);
+    /// assert_eq!(Role::of("verify-issue-7"), Role::Verify);
+    /// assert_eq!(Role::of("issue-7"), Role::Work);
+    /// ```
+    pub fn of(item: &str) -> Role {
+        match item {
+            "lead" => Role::Lead,
+            _ if item.starts_with("verify-") => Role::Verify,
+            _ => Role::Work,
+        }
+    }
+}
+
 /// The limit of the host: at most `sessions` live sessions, and no start
 /// while the free memory is below `floor_gb`. Each new container gets
-/// `cpus` CPUs and build jobs, and `memory_gb` GB of memory. A value that
-/// the file does not have is the default.
+/// `cpus` CPUs and build jobs, and `memory_gb` GB of memory. It also
+/// holds the effort of the three roles: the daemon starts each new
+/// session with `claude --effort LEVEL` ([`Limit::effort`]), `xhigh` by
+/// default (a requirement of the book). A session that runs keeps its
+/// effort. A value that the file does not have is the default.
 ///
 /// ```
 /// use riff::room::Limit;
@@ -94,7 +177,7 @@ const GB: u64 = 1 << 30;
 /// assert_eq!((limit.sessions, limit.floor_gb, limit.cpus, limit.memory_gb), (3, 8, 8, 8));
 /// assert_eq!(
 ///     serde_json::to_string(&limit).unwrap(),
-///     r#"{"sessions":3,"floor_gb":8,"cpus":8,"memory_gb":8}"#
+///     r#"{"sessions":3,"floor_gb":8,"cpus":8,"memory_gb":8,"effort":"xhigh","effort_lead":"xhigh","effort_verify":"xhigh"}"#
 /// );
 /// let old: Limit = serde_json::from_str(r#"{"sessions":2,"floor_gb":4}"#).unwrap();
 /// assert_eq!(old, Limit { sessions: 2, floor_gb: 4, ..Limit::default() });
@@ -110,6 +193,12 @@ pub struct Limit {
     pub cpus: u32,
     /// The memory cap of each new container, in GB.
     pub memory_gb: u64,
+    /// The effort of a work item.
+    pub effort: Effort,
+    /// The effort of the lead.
+    pub effort_lead: Effort,
+    /// The effort of a verify.
+    pub effort_verify: Effort,
 }
 
 impl Default for Limit {
@@ -119,6 +208,9 @@ impl Default for Limit {
             floor_gb: FLOOR_GB,
             cpus: CPUS,
             memory_gb: MEMORY_GB,
+            effort: Effort::default(),
+            effort_lead: Effort::default(),
+            effort_verify: Effort::default(),
         }
     }
 }
@@ -134,6 +226,12 @@ pub struct Change {
     pub cpus: Option<u32>,
     /// `--memory`, in GB.
     pub memory_gb: Option<u64>,
+    /// `--effort`: the effort of work items.
+    pub effort: Option<Effort>,
+    /// `--effort-lead`.
+    pub effort_lead: Option<Effort>,
+    /// `--effort-verify`.
+    pub effort_verify: Option<Effort>,
 }
 
 /// Why a host has no room now.
@@ -201,6 +299,46 @@ impl Limit {
             .push(Env::Value(JOBS_VAR.into(), self.cpus.to_string()));
     }
 
+    /// The effort of a session of `role`.
+    ///
+    /// ```
+    /// use riff::room::{Effort, Limit, Role};
+    ///
+    /// let limit = Limit { effort_lead: Effort::Max, ..Limit::default() };
+    /// assert_eq!(limit.effort_of(Role::Lead), Effort::Max);
+    /// assert_eq!(limit.effort_of(Role::Work), Effort::Xhigh);
+    /// ```
+    pub fn effort_of(&self, role: Role) -> Effort {
+        match role {
+            Role::Lead => self.effort_lead,
+            Role::Verify => self.effort_verify,
+            Role::Work => self.effort,
+        }
+    }
+
+    /// Puts `--effort LEVEL` after `claude` in the command of `spec`, for
+    /// the session of `item`. A command with no `claude` stays as it is.
+    ///
+    /// ```
+    /// use riff::room::{Effort, Limit};
+    /// use riff::runtime::SessionSpec;
+    ///
+    /// let mut spec = SessionSpec {
+    ///     name: "s".into(), image: "i".into(), home: "/h".into(), workdir: "/w".into(),
+    ///     binds: vec![], env: vec![], memory: "8g".into(), cpus: 8,
+    ///     command: vec!["claude".into(), "-p".into()],
+    /// };
+    /// Limit { effort_verify: Effort::Max, ..Limit::default() }.effort(&mut spec, "verify-issue-7");
+    /// assert_eq!(spec.command, ["claude", "--effort", "max", "-p"]);
+    /// ```
+    pub fn effort(&self, spec: &mut SessionSpec, item: &str) {
+        if let Some(at) = spec.command.iter().position(|a| a == "claude") {
+            let level = self.effort_of(Role::of(item)).to_string();
+            spec.command
+                .splice(at + 1..at + 1, ["--effort".to_owned(), level]);
+        }
+    }
+
     /// Has the host room for one more session, with `live` sessions and
     /// slots, and `free` bytes of free memory? With no number for the
     /// free memory, only the sessions count.
@@ -240,7 +378,7 @@ impl Limit {
 /// refuses 0 CPUs and 0 GB of memory.
 ///
 /// ```
-/// use riff::room::{Change, Limit, set};
+/// use riff::room::{Change, Effort, Limit, set};
 ///
 /// let dir = tempfile::tempdir()?;
 /// let limit = set(dir.path(), Change::default())?;
@@ -252,6 +390,8 @@ impl Limit {
 /// assert_eq!((limit.sessions, limit.cpus, limit.memory_gb), (5, 6, 12));
 /// assert!(set(dir.path(), Change { cpus: Some(0), ..Change::default() }).is_err());
 /// assert!(set(dir.path(), Change { memory_gb: Some(0), ..Change::default() }).is_err());
+/// let max = Change { effort_lead: Some(Effort::Max), ..Change::default() };
+/// assert_eq!(set(dir.path(), max)?.effort_lead, Effort::Max);
 /// assert_eq!(Limit::read(dir.path())?.cpus, 6);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
@@ -271,11 +411,17 @@ pub fn set(dir: &Path, change: Change) -> Result<Limit> {
         floor_gb,
         cpus,
         memory_gb,
+        effort,
+        effort_lead,
+        effort_verify,
     } = change;
     limit.sessions = sessions.unwrap_or(limit.sessions);
     limit.floor_gb = floor_gb.unwrap_or(limit.floor_gb);
     limit.cpus = cpus.unwrap_or(limit.cpus);
     limit.memory_gb = memory_gb.unwrap_or(limit.memory_gb);
+    limit.effort = effort.unwrap_or(limit.effort);
+    limit.effort_lead = effort_lead.unwrap_or(limit.effort_lead);
+    limit.effort_verify = effort_verify.unwrap_or(limit.effort_verify);
     limit.write(dir)?;
     Ok(limit)
 }

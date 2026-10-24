@@ -686,6 +686,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "relay",
         "--",
         "claude",
+        "--effort",
+        "xhigh",
         "-p",
         "--input-format",
         "stream-json",
@@ -708,9 +710,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         .lines()
         .map(String::from)
         .collect();
-    assert_eq!(claude_args[..10], want[want.len() - 10..]);
-    assert_eq!(claude_args[10], "--mcp-config");
-    let config: Value = serde_json::from_str(&claude_args[11]).unwrap();
+    assert_eq!(claude_args[..12], want[want.len() - 12..]);
+    assert_eq!(claude_args[12], "--mcp-config");
+    let config: Value = serde_json::from_str(&claude_args[13]).unwrap();
     assert_eq!(
         config,
         serde_json::json!({"mcpServers": {"riff": {

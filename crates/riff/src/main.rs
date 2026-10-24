@@ -1162,6 +1162,11 @@ enum DaemonCommand {
     /// The limit also holds the caps of each new container: its CPUs,
     /// which are also its build jobs, and its memory. The default is 8
     /// CPUs and 8 GB. A session that runs keeps its caps.
+    ///
+    /// It also holds the effort of the sessions: the daemon starts the
+    /// lead, each work item and each verify with `claude --effort`. The
+    /// default is xhigh for the three roles. A session that runs keeps
+    /// its effort.
     Limit {
         /// The most live sessions.
         #[arg(long)]
@@ -1175,6 +1180,17 @@ enum DaemonCommand {
         /// The memory cap of each new container, in GB, 1 or more.
         #[arg(long, value_name = "GB")]
         memory: Option<u64>,
+        /// The effort of each new work item: low, medium, high, xhigh
+        /// or max.
+        #[arg(long, value_name = "LEVEL")]
+        effort: Option<riff::room::Effort>,
+        /// The effort of the lead: low, medium, high, xhigh or max.
+        #[arg(long, value_name = "LEVEL")]
+        effort_lead: Option<riff::room::Effort>,
+        /// The effort of each new verify: low, medium, high, xhigh or
+        /// max.
+        #[arg(long, value_name = "LEVEL")]
+        effort_verify: Option<riff::room::Effort>,
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this
         /// repository can use --host. The daemon of HOST refuses each
@@ -2301,6 +2317,9 @@ fn limit_change(command: &DaemonCommand) -> Option<riff::room::Change> {
         floor,
         cpus,
         memory,
+        effort,
+        effort_lead,
+        effort_verify,
         ..
     } = command
     else {
@@ -2311,6 +2330,9 @@ fn limit_change(command: &DaemonCommand) -> Option<riff::room::Change> {
         floor_gb: *floor,
         cpus: *cpus,
         memory_gb: *memory,
+        effort: *effort,
+        effort_lead: *effort_lead,
+        effort_verify: *effort_verify,
     })
 }
 
