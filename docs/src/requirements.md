@@ -8299,6 +8299,10 @@ items of Wave C that end riff-server in the Backlog
   whatever RIFF_SERVER of the person says. The clean-up stops that
   server last. So a release of a new major line passes while the shared
   riff-server runs the line before.
+- **01M5NNQ24F2PX74859CV7SMFBZ** At the end of step 1, the real-session
+  test resumes the whole riff on the riff-server of the test with `riff
+  resume --riff`: a new riff starts paused and refuses each claim. A
+  failed resume fails step 1.
 
 ## The UIs
 
