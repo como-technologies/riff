@@ -648,6 +648,15 @@
   merged (its close, or its first comment `Merged in #`, the earlier
   one), each pull request of the milestone with its `Issue:` trailer
   and its merge, and the last status `riff/verify` of the head of each.
+- **01M5QDWWSYK0J3N24GF8J123JQ** The read of the open pull requests with
+  `gh pr list --limit 100 --json` names no field that `gh` expands to a
+  nested connection (`commits`, `comments`, `reviews`, `files`,
+  `labels`). GitHub refuses a query of more than 500,000 possible nodes,
+  and `commits` with the authors of each commit counts 1,000,000. The
+  WIP check reads the head commit of a pull request that waits for its
+  verify, and no other commit, with `gh api
+  repos/OWNER/REPO/commits/SHA`. A fault of that read is no WIP. A test
+  fails when the fields name such a connection.
 
 ## Issue hygiene on GitHub
 

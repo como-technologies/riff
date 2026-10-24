@@ -1097,7 +1097,7 @@ async fn after_build(
             text::wave_not_rebased(item, pull.number, &branch, &pull.head_ref_oid, session),
             Kind::Message,
         ),
-        Some(pull) if wip_head(&gh, &branch).await => (
+        Some(pull) if wip_head(&gh, &wave.repo, &pull.head_ref_oid).await => (
             text::wave_wip_head(item, pull.number, &branch, &pull.head_ref_oid, session),
             Kind::Note,
         ),
@@ -1151,17 +1151,13 @@ async fn after_build(
     Ok(lines)
 }
 
-/// True when the head commit of `branch` is a WIP commit ([`rollout::wip`]).
-/// A fault of `gh` is no WIP.
-async fn wip_head(gh: &pr::Gh, branch: &str) -> bool {
-    #[derive(serde::Deserialize)]
-    struct Commits {
-        commits: Vec<rollout::Commit>,
-    }
-    let (gh, branch) = (gh.clone(), branch.to_owned());
-    blocking(move || gh.json::<Commits>(&["pr", "view", &branch, "--json", "commits"]))
+/// True when the head commit `sha` of the repository `repo` is a WIP
+/// commit ([`rollout::head_wip`]). A fault of `gh` is no WIP.
+async fn wip_head(gh: &pr::Gh, repo: &str, sha: &str) -> bool {
+    let (gh, repo, sha) = (gh.clone(), repo.to_owned(), sha.to_owned());
+    blocking(move || Ok(rollout::head_wip(&gh, &repo, &sha)))
         .await
-        .is_ok_and(|c| rollout::wip(&c.commits))
+        .unwrap_or(false)
 }
 
 /// [`run::no_verify`] now: the labels of the issue with `gh`, then the
@@ -3210,8 +3206,8 @@ esac
 case "$*" in
 "pr view worktree-issue-12 --json number,url,headRefOid,state")
     echo '{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"1a2b3c4d5e","state":"OPEN"}' ;;
-"pr view worktree-issue-12 --json commits")
-    echo '{"commits":[{"messageHeadline":"Add it"},{"messageHeadline":"WIP: the riff is paused"}]}' ;;
+"api repos/o/r/commits/1a2b3c4d5e --jq .commit.message")
+    printf 'WIP: the riff is paused\n\nThe session left the riff.\n' ;;
 *) exit 1 ;;
 esac
 "#;

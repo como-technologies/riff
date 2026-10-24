@@ -496,7 +496,7 @@ fn free_of(
 /// let mut issues: Vec<u64> = in_verify(&pulls).into_iter().collect();
 /// issues.sort_unstable();
 /// // A WIP head is a build again.
-/// let wip = Pull { commits: vec![riff::rollout::Commit { headline: "WIP: paused".into() }], ..pull("worktree-issue-17", vec![]) };
+/// let wip = Pull { wip: true, ..pull("worktree-issue-17", vec![]) };
 /// assert!(in_verify(&[wip]).is_empty());
 /// assert_eq!(issues, [12, 13, 16]);
 /// ```
@@ -508,8 +508,38 @@ pub fn in_verify(pulls: &[Pull]) -> HashSet<u64> {
         .collect()
 }
 
-/// The fields of `gh pr list --json` that [`Pull`] reads.
-pub const PULL_FIELDS: &str = "number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,autoMergeRequest,body,commits";
+/// The fields of `gh pr list --json` that [`Pull`] reads. It names no
+/// field of [`CONNECTIONS`]: GitHub refuses a query of more than 500,000
+/// possible nodes (01M5QDWWSYK0J3N24GF8J123JQ). The WIP check reads the
+/// head commit alone ([`head_wip`]).
+///
+/// ```
+/// use riff::rollout::{CONNECTIONS, PULL_FIELDS};
+///
+/// assert!(PULL_FIELDS.split(',').all(|f| !CONNECTIONS.contains(&f)));
+/// ```
+pub const PULL_FIELDS: &str =
+    "number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,autoMergeRequest,body";
+
+/// The fields of `gh pr list --json` that `gh` expands to a nested
+/// connection of 100 nodes. `gh pr list --limit 100` asks for 100 pull
+/// requests at a time, so `commits` with the authors of each commit
+/// counts 100 x 100 x 100 = 1,000,000 possible nodes, and GitHub refuses
+/// the query. `statusCheckRollup` is not here: `gh` asks for the last
+/// commit only.
+pub const CONNECTIONS: &[&str] = &[
+    "assignees",
+    "comments",
+    "commits",
+    "files",
+    "labels",
+    "latestReviews",
+    "projectCards",
+    "projectItems",
+    "reactionGroups",
+    "reviewRequests",
+    "reviews",
+];
 
 /// An open pull request, as `gh pr list --json` with [`PULL_FIELDS`]
 /// gives it.
@@ -529,9 +559,11 @@ pub struct Pull {
     pub draft: bool,
     #[serde(rename = "statusCheckRollup", default)]
     pub checks: Vec<Check>,
-    /// The commits of the branch, the head last.
-    #[serde(default)]
-    pub commits: Vec<Commit>,
+    /// True when the head commit is a WIP commit ([`wip`]). `gh pr list`
+    /// does not tell it: [`pulls`] reads the head of a pull request that
+    /// waits for a verify ([`head_wip`]).
+    #[serde(skip)]
+    pub wip: bool,
     /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`: GitHub finds it after a
     /// push, so it can be `UNKNOWN` for a short time.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
@@ -551,30 +583,33 @@ pub struct Pull {
     pub reasked: bool,
 }
 
-/// A commit of a pull request, as `gh` gives it.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct Commit {
-    /// The first line of its message.
-    #[serde(rename = "messageHeadline", default)]
-    pub headline: String,
+/// True when the first line of the commit message `message` starts with
+/// `WIP`. A session pushes such a commit at a pause or when it leaves.
+/// The work is not done, so the item has no verify.
+///
+/// ```
+/// use riff::rollout::wip;
+///
+/// assert!(wip("WIP: the riff is paused"));
+/// assert!(wip("WIP: x\n\nAdd it"));
+/// assert!(!wip("Add it\n\nWIP: one"));
+/// assert!(!wip(""));
+/// ```
+pub fn wip(message: &str) -> bool {
+    message.starts_with("WIP")
 }
 
-/// True when the head (the last) of `commits` is a WIP commit: its
-/// first line starts with `WIP`. A session pushes one at a pause or when
-/// it leaves. The work is not done, so the item has no verify.
-///
-/// ```
-/// use riff::rollout::{Commit, wip};
-///
-/// let commit = |h: &str| Commit { headline: h.into() };
-/// assert!(wip(&[commit("Add it"), commit("WIP: the riff is paused")]));
-/// assert!(!wip(&[commit("WIP: one"), commit("Add it")]));
-/// assert!(!wip(&[]));
-/// ```
-pub fn wip(commits: &[Commit]) -> bool {
-    commits
-        .last()
-        .is_some_and(|c| c.headline.starts_with("WIP"))
+/// True when the head commit `sha` of the repository `repo`
+/// (`OWNER/REPO`) is a WIP commit ([`wip`]). It reads that one commit with
+/// `gh api`, and no other (01M5QDWWSYK0J3N24GF8J123JQ). A fault of `gh` is
+/// no WIP.
+pub fn head_wip(gh: &Gh, repo: &str, sha: &str) -> bool {
+    if sha.is_empty() {
+        return false;
+    }
+    let path = format!("repos/{repo}/commits/{sha}");
+    gh.run(&["api", &path, "--jq", ".commit.message"], None)
+        .is_ok_and(|message| wip(&message))
 }
 
 /// True for a value that is not `null`.
@@ -682,7 +717,7 @@ impl Pull {
     /// ```
     pub fn verify(&self) -> Option<Verify> {
         // A WIP head is a build again, not a verify.
-        if self.draft || wip(&self.commits) {
+        if self.draft || self.wip {
             return None;
         }
         self.issue()?;
@@ -887,9 +922,11 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 }
 
 /// The open pull requests of the repository `repo` (`OWNER/REPO`),
-/// with `gh`.
+/// with `gh`. The head commit of a pull request that waits for a verify
+/// ([`Verify::Asked`]) is read one more time, for [`Pull::wip`]
+/// ([`head_wip`]).
 pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
-    gh.json(&[
+    let mut pulls: Vec<Pull> = gh.json(&[
         "pr",
         "list",
         "--repo",
@@ -900,7 +937,11 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
         "100",
         "--json",
         PULL_FIELDS,
-    ])
+    ])?;
+    for pull in &mut pulls {
+        pull.wip = pull.verify() == Some(Verify::Asked) && head_wip(gh, repo, &pull.head);
+    }
+    Ok(pulls)
 }
 
 /// The open milestones, issues and pull requests of a repository: the
@@ -1553,5 +1594,47 @@ mod tests {
         assert_eq!(work(&["issue-13"]), ["verify-issue-13", "issue-12"]);
         assert_eq!(work(&["verify-issue-13"]), ["issue-12"]);
         assert!(work(&["issue-12", "verify-issue-13"]).is_empty());
+    }
+
+    /// `gh pr list --limit 100` with `commits` asks GitHub for 1,000,000
+    /// possible nodes, and GitHub refuses the whole query
+    /// (01M5QDWWSYK0J3N24GF8J123JQ, #1355). So the fields name no nested
+    /// connection of `gh`.
+    #[test]
+    fn the_pull_fields_name_no_nested_connection() {
+        let names = |fields: &str| -> Vec<String> {
+            fields
+                .split(',')
+                .filter(|f| CONNECTIONS.contains(f))
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(names(PULL_FIELDS), Vec::<String>::new());
+        // The check sees the field of 4.1.0.
+        assert_eq!(names("number,body,commits"), ["commits"]);
+        for field in ["commits", "comments", "reviews", "files", "labels"] {
+            assert!(CONNECTIONS.contains(&field), "{field}");
+        }
+        // The fields that `Pull` reads are all there.
+        for field in ["headRefOid", "statusCheckRollup", "autoMergeRequest"] {
+            assert!(PULL_FIELDS.split(',').any(|f| f == field), "{field}");
+        }
+    }
+
+    /// A WIP head is the first line of the message of the head commit.
+    #[test]
+    fn a_wip_head_has_wip_in_the_first_line() {
+        assert!(wip("WIP: x"));
+        assert!(wip("WIP\n\nAdd it"));
+        assert!(!wip("Add WIP"));
+        assert!(!wip("Add it\n\nWIP: x"));
+        let mut pull = Pull {
+            number: 40,
+            branch: "worktree-issue-12".into(),
+            ..Pull::default()
+        };
+        assert_eq!(pull.verify(), Some(Verify::Asked));
+        pull.wip = true;
+        assert_eq!(pull.verify(), None);
     }
 }
