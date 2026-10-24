@@ -412,9 +412,10 @@ The job `Gate` is a step of your own: `riff init` cannot check it.
 
 Each repository of the riff has the file `riff.toml` at its root, on
 its default branch. Its key `image` pins the session image. Without
-the file, `riff lead start` and the wave cannot start a session. The
-image of riff has `claude`, `git`, `gh` and Rust, so it is good for a
-Rust project. For another toolchain, see
+the file on the default branch of `origin`, `riff lead start` stops
+with the error `riff.toml is not on origin/main`. It starts no lead and
+no wave. The image of riff has `claude`, `git`, `gh` and Rust, so it is
+good for a Rust project. For another toolchain, see
 [Pin an image with another toolchain](#pin-an-image-with-another-toolchain).
 
 This command writes `riff.toml` with the image of riff:

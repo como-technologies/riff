@@ -372,13 +372,20 @@ pub async fn start_with(
     let repo = here.repo_text();
     let name = name_of(&repo);
     let status = daemon::status(dir).await?;
+    // A lead with no merged pin does not start (01M5QY976MTPRX5J4N1MKXAGDK):
+    // the wave says nothing of it, and no line says that the lead starts.
+    let clone = if runs(&status, &name) {
+        None
+    } else {
+        let (main, common) = run::main_clone(&identity::working_dir()?)?;
+        session_image::merged(&main, |_| {})?;
+        Some((main, common))
+    };
     wave(dir, &status, here, server).await;
-    if runs(&status, &name) {
+    let Some((main, common)) = clone else {
         println!("{}", text::lead_runs(&repo, &name));
         return attach_here(runtime, &name).await;
-    }
-    let work = identity::working_dir()?;
-    let (main, common) = run::main_clone(&work)?;
+    };
     let start = text::lead_start(&repo);
     launch(dir, api, here, server, (&main, &common), &start).await?;
     attach_here(runtime, &name).await

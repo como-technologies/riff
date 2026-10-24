@@ -5890,6 +5890,14 @@ part when they merge.
   person, and cgroup v2 gives `cpu` and `memory` to the user. It reads
   `user@UID.service/cgroup.controllers`, not `podman info`. It names the
   fix of each check that fails.
+- **01M5QY976MTPRX5J4N1MKXAGDK** A main clone whose default branch of
+  `origin` has no `riff.toml` has no merged pin: riff stops, and the
+  error names `riff.toml`, the branch and the fix. The fix adds
+  `riff.toml` with the key `image` in the table `[session]`, and points
+  to the how-to "Add another repository to the riff". `riff lead start`
+  checks the merged pin before it asks the wave and before it prints
+  that the lead starts: with no merged pin, it prints no line that the
+  lead starts.
 
 ### Sessions
 
