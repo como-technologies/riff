@@ -19,7 +19,7 @@
 //! | `riff usage` | Shows the tokens and the models of an issue, of a wave, or of the sessions of this machine. See [`usage`]. |
 //! | `riff audit` | Checks from the log and from `gh` that a wave followed the rules. See [`audit`]. |
 //! | `riff cloud` | Makes and runs riff-server instances on Cloud Run, with `gcloud`. See [`cloud`]. |
-//! | `riff init` | The first run of riff 3.0 on a machine: checks rootless podman and the repository on GitHub, installs the daemon and pulls the session image. See [`first_run`], [`repo_setup`]. |
+//! | `riff init` | The first run of riff 3.0 on a machine: checks rootless podman and the repository on GitHub, sets the repository up for riff, installs the daemon and pulls the session image. See [`first_run`], [`repo_setup`]. |
 //! | `riff image` | Prints the session image that the riff config of the repository pins. See [`session_image`]. |
 //! | `riff run` | Runs one work item in a rootless podman container: the host claims, the container works. See [`run`]. |
 //!
