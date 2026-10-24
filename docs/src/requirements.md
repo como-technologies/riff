@@ -5152,6 +5152,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   (the line before), and refuses riff 1. riff 4 refuses a server of the
   line 3 or 1. The bridge tests know the line 4 and fail on each later
   major with no rule.
+- **01M5P1VAX6WNM9DX16NS4Z0SWC** The actions of the pipeline stay on a
+  version that GitHub supports. Dependabot opens a pull request each
+  week for an action with a newer version.
 
 ## Code
 

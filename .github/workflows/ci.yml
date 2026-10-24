@@ -48,7 +48,7 @@ jobs:
     if: github.event_name != 'schedule' && github.ref_type != 'tag'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # rust-toolchain.toml pins the toolchain; rustup reads it.
       - run: rustup show
@@ -80,10 +80,10 @@ jobs:
       RIFF_ENGINE: docker
       CARGO_INCREMENTAL: 0
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Cache the build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: target/session
           key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock') }}
@@ -96,7 +96,7 @@ jobs:
     if: github.event_name != 'schedule' && github.ref_type != 'tag'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - run: rustup show
 
@@ -148,13 +148,13 @@ jobs:
       PROFILE: ${{ github.ref_type == 'tag' && 'release' || 'dev' }}
     steps:
       # build-id.sh reads the last commit that changed the code.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Cache the build
         if: github.ref_type != 'tag'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             target/static
@@ -185,7 +185,7 @@ jobs:
           sha256sum -- riff-x86_64-unknown-linux-musl riff-server-x86_64-unknown-linux-musl > SHA256SUMS
           cat SHA256SUMS
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.ref_type == 'tag'
         with:
           name: static-riff
@@ -207,7 +207,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: static-riff
           path: dist
@@ -234,7 +234,7 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check the release tag
         run: deploy/release-check.sh "$GITHUB_REF_NAME"
@@ -272,7 +272,7 @@ jobs:
     env:
       TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ env.TAG }}
           fetch-depth: 0
@@ -348,7 +348,7 @@ jobs:
     env:
       COMMIT: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -403,7 +403,7 @@ jobs:
     name: Crate audit
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - run: rustup show
 
