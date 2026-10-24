@@ -223,7 +223,9 @@ wave of the repository. The daemon runs each free item and each verify
 in a container, in the limit of the machine. The lead gets a note.
 
 To run your lead in a container too, run this in your clone of the
-project. It also starts the wave of the repository, when none runs:
+project. It also starts the wave of the repository, when none runs.
+The lead needs the claude token of this machine: see
+[Start the lead](development.md#start-the-lead).
 
 ```sh
 riff lead start

@@ -410,6 +410,28 @@ impl Runtime for Podman {
             .with_context(|| text::no_program(PODMAN))?;
         Ok(status.into())
     }
+
+    /// `podman exec NAME stat -c %h PATH`.
+    async fn links(&self, name: &str, path: &Path) -> Result<u64> {
+        let out = podman()
+            .args(["exec", name, "stat", "-c", "%h"])
+            .arg(path)
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .with_context(|| text::no_program(PODMAN))?;
+        if !out.status.success() {
+            bail!(
+                "podman exec {name} stat: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        let shown = String::from_utf8_lossy(&out.stdout);
+        shown
+            .trim()
+            .parse()
+            .with_context(|| format!("podman exec {name} stat: {}", shown.trim()))
+    }
 }
 
 #[cfg(test)]

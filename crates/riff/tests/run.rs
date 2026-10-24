@@ -98,7 +98,11 @@ case "$1" in
   pull) echo "podman $*" >> "$dir/podman.log"; [ -f "$dir/no-pull" ] && exit 125
     rm -f "$dir/no-image"; exit 0 ;;
   stop) echo "podman $*" >> "$dir/podman.log"; kill "$(cat "$dir/run.pid")"; exit 0 ;;
-  attach|exec) echo "podman $*" >> "$dir/podman.log"
+  # The count of the links of a file in the container: the file `links`
+  # holds it.
+  exec) if [ "$3" = stat ]; then cat "$dir/links" 2>/dev/null; exit; fi
+    echo "podman $*" >> "$dir/podman.log"; exit 0 ;;
+  attach) echo "podman $*" >> "$dir/podman.log"
     # The person types /exit in the lead: its container ends.
     if [ "$1" = attach ] && [ -f "$dir/exit-in-attach" ]; then
       kill "$(cat "$dir/run.pid")"
@@ -485,6 +489,14 @@ impl Machine {
             "expiresAt": now + minutes * 60_000,
         }});
         std::fs::write(home.join(".claude/.credentials.json"), file.to_string()).unwrap();
+    }
+
+    /// The token of `riff claude-token` on this machine: the lead needs
+    /// it (01M5NJ87NXF6077Y9W32840BR8).
+    fn claude_token(&self) {
+        let secrets = self.env.riff_home().join("secrets");
+        riff_client::secrets::file_set(&secrets, riff::claude_token::NAME, "sk-ant-oat01-FAKElead")
+            .unwrap();
     }
 
     /// `riff ARGS` in the main clone, with the fakes first in `PATH`. A
@@ -1057,6 +1069,7 @@ async fn only_the_merged_pin_counts_and_a_local_pin_gives_one_line() {
     std::fs::write(&config, format!("[session]\nimage = \"{IMAGE}\"\n")).unwrap();
     std::fs::write(machine.bin.path().join("hold"), "").unwrap();
     std::fs::write(machine.bin.path().join("no-image"), "").unwrap();
+    machine.claude_token();
     let out = machine.ok(None, &["lead", "start"]).await;
     let line = out
         .lines()
@@ -1831,6 +1844,7 @@ async fn riff_wave_run_and_stop_ask_the_daemon() {
 async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     let machine = Machine::new().await;
     machine.lead().await;
+    machine.claude_token();
     // The fake claude of the lead waits until the test ends it.
     std::fs::write(machine.bin.path().join("hold"), "").unwrap();
     let name = "riff-lead-como-technologies-riff";
@@ -1882,12 +1896,23 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     let clone = folder.join("clone").display().to_string();
     assert_eq!(json["projects"][&clone]["hasTrustDialogAccepted"], true);
 
+    assert!(
+        !out.contains(&riff::text::lead_sign_in_stale(name)),
+        "{out}"
+    );
     // The daemon shows it, and a second start attaches again.
     let status = machine.ok(None, &["daemon", "status"]).await;
     assert!(status.contains(name), "{status}");
+    // 01M5NJ87YEHHGJBANM7CRYV56Z: the host replaced the sign-in file that
+    // the lead holds: the attach says so first.
+    std::fs::write(machine.bin.path().join("links"), "0\n").unwrap();
     let again = machine.ok(None, &["lead", "start"]).await;
     assert!(
         again.contains(&riff::text::lead_runs("como-technologies/riff", name)),
+        "{again}"
+    );
+    assert!(
+        again.contains(&riff::text::lead_sign_in_stale(name)),
         "{again}"
     );
     assert_eq!(
@@ -1909,6 +1934,24 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     }
 }
 
+/// 01M5NJ87NXF6077Y9W32840BR8: with no claude token, `riff lead start`
+/// starts no lead, and names the step.
+#[tokio::test]
+async fn riff_lead_start_refuses_a_host_with_no_claude_token() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let out = machine.run(None, &["lead", "start"]).await;
+    assert!(!out.status.success(), "{out:?}");
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains(riff::text::LEAD_NEEDS_TOKEN), "{stderr}");
+    assert!(machine.read("run.args").is_empty());
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(
+        !status.contains("riff-lead-como-technologies-riff"),
+        "{status}"
+    );
+}
+
 /// 01M51PD7Q24N252V66NFEHY49N: the person types `/exit` in the lead, so
 /// its container ends in the attach. `riff lead start` says that the
 /// lead ended, not that the person left its terminal.
@@ -1916,6 +1959,7 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
 async fn riff_lead_start_says_that_the_lead_ended_when_it_ends_in_the_attach() {
     let machine = Machine::new().await;
     machine.lead().await;
+    machine.claude_token();
     std::fs::write(machine.bin.path().join("hold"), "").unwrap();
     std::fs::write(machine.bin.path().join("exit-in-attach"), "").unwrap();
     let name = "riff-lead-como-technologies-riff";
@@ -1937,6 +1981,7 @@ async fn riff_lead_start_says_that_the_lead_ended_when_it_ends_in_the_attach() {
 async fn riff_lead_start_keeps_a_clone_that_git_cannot_fast_forward_and_starts_the_lead() {
     let machine = Machine::new().await;
     machine.lead().await;
+    machine.claude_token();
     let name = "riff-lead-como-technologies-riff";
     let until_the_lead_ends = || async {
         let started = Instant::now();
@@ -1989,6 +2034,7 @@ async fn riff_lead_start_keeps_a_clone_that_git_cannot_fast_forward_and_starts_t
 async fn riff_lead_start_starts_the_wave_when_none_runs_and_none_when_one_runs() {
     let machine = Machine::new().await;
     machine.lead().await;
+    machine.claude_token();
     std::fs::write(machine.bin.path().join("hold"), "").unwrap();
     let (repo, name) = ("como-technologies/riff", "riff-lead-como-technologies-riff");
 

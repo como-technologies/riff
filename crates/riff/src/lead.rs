@@ -39,6 +39,7 @@
 //! | The wakes | `/opt/riff/riff relay watch --follow` in the Monitor tool, started once | 01M501PA04NP79RJQEDP4D7YTM, 01M59235BBXEKPZBRH23C39574 |
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |
+//! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M5NJ87NXF6077Y9W32840BR8, 01M5NJ87YEHHGJBANM7CRYV56Z |
 //! | The wave | the wave of the repository on the daemon, when none runs: the lead in a container has no rollout ([`crate::wave::ask`]); a failed ask stops no lead | 01M53NGVE839TRH7XB7CDPQNZE, 01M5515CJ7QDJ639VGR7SJTE08 |
 //!
 //! The clone and the Claude folder stay between the starts of the lead:
@@ -260,14 +261,61 @@ impl Left {
     }
 }
 
+/// Refuses a lead with the sign-in file of `claude` of the host
+/// (01M5NJ87NXF6077Y9W32840BR8): the lead runs for hours, and the next
+/// sign-in of `claude` on the host replaces that file. Only the token of
+/// `riff claude-token` lives as long as the lead.
+///
+/// ```
+/// use riff::run::ClaudeSignIn;
+///
+/// assert!(riff::lead::needs_token(&ClaudeSignIn::Token).is_ok());
+/// let file = ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into());
+/// let refused = riff::lead::needs_token(&file).unwrap_err().to_string();
+/// assert_eq!(refused, riff::text::LEAD_NEEDS_TOKEN);
+/// ```
+pub fn needs_token(sign_in: &run::ClaudeSignIn) -> Result<()> {
+    match sign_in {
+        run::ClaudeSignIn::Token => Ok(()),
+        run::ClaudeSignIn::File(_) => bail!("{}", text::LEAD_NEEDS_TOKEN),
+    }
+}
+
+/// The sign-in file of `claude` in a session with the home `home`: the
+/// target of the bind of [`run::ClaudeSignIn::File`].
+///
+/// ```
+/// let path = riff::lead::credentials_of(std::path::Path::new("/home/mike"));
+/// assert_eq!(path, std::path::Path::new("/home/mike/.claude/.credentials.json"));
+/// ```
+pub fn credentials_of(home: &Path) -> PathBuf {
+    home.join(".claude").join(".credentials.json")
+}
+
+/// True when the lead `name` holds a sign-in file of `claude` that the
+/// host replaced (01M5NJ87YEHHGJBANM7CRYV56Z): in the container, the
+/// file of the bind has no link. `home` is the home of the person, and
+/// of the container. A lead with the token has no such bind: the file
+/// is in its Claude folder, with a link, or is not there.
+pub async fn stale(runtime: &impl Runtime, name: &str, home: &Path) -> bool {
+    matches!(runtime.links(name, &credentials_of(home)).await, Ok(0))
+}
+
 /// Attaches the terminal of this process to the lead `name` with
-/// `runtime`, until a detach or the end of the lead. First it asks the
+/// `runtime`, until a detach or the end of the lead. A lead with a
+/// stale sign-in gets the line of [`text::lead_sign_in_stale`] first
+/// ([`stale`]). Then it asks the
 /// runtime to make the lead draw its terminal again
 /// (01M51PD7M04HZR2PVVJA4WCBK5). When that fails, it prints why, and
 /// attaches. After the attach, a lead whose container does not run
 /// ended (01M51PD7Q24N252V66NFEHY49N). When the runtime cannot say, it
 /// counts as a detach.
 pub async fn attach(runtime: &impl Runtime, name: &str) -> Result<Left> {
+    if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty())
+        && stale(runtime, name, Path::new(&home)).await
+    {
+        println!("{}", text::lead_sign_in_stale(name));
+    }
     println!("{}", text::LEAD_DETACH);
     if let Err(e) = runtime.redraw(name).await {
         println!("{}", text::lead_no_redraw(&format!("{e:#}")));
@@ -344,9 +392,14 @@ async fn launch(
     start: &str,
 ) -> Result<String> {
     let repo = here.repo_text();
+    // With no token, a sign-in file that ends soon is no token either.
+    let host = run::host_facts(main).map_err(|fault| match fault {
+        run::HostFault::SignInEnds(_) => anyhow::anyhow!("{}", text::LEAD_NEEDS_TOKEN),
+        fault => fault.into(),
+    })?;
+    needs_token(&host.claude.sign_in())?;
     let image = session_image::merged(main, |line| println!("{line}"))?.to_string();
     daemon::image(dir, &image, |line| println!("{line}")).await?;
-    let host = run::host_facts(main)?;
     let folder = folder_of(&run::data_dir()?, &repo);
     let clone = folder.join("clone");
     let claude = folder.join("claude");
@@ -694,6 +747,71 @@ mod tests {
         let fake = Fake::default().with_image("img").with_no_answer();
         let _end = lead(&fake).await;
         assert_eq!(attach(&fake, NAME).await.unwrap(), Left::Detached);
+    }
+
+    /// The fake runs the lead `NAME` with a bind of the sign-in file of
+    /// the host in `home`, as a lead with no token of an older riff.
+    async fn lead_with_file(fake: &Fake, home: &Path) -> (End, PathBuf) {
+        let host = home.join(".claude");
+        std::fs::create_dir_all(&host).unwrap();
+        let file = host.join(".credentials.json");
+        std::fs::write(&file, "old").unwrap();
+        let facts = Facts {
+            session: "1a2b3c4d-0000-4000-8000-000000000000".into(),
+            item: ITEM.into(),
+            image: "img".into(),
+            home: home.to_owned(),
+            user: "mike".into(),
+            clone: home.join("clone"),
+            objects: home.join("objects"),
+            claude: home.join("lead-claude"),
+            sign_in: run::ClaudeSignIn::File(file.clone()),
+            gitconfig: None,
+            gh_config: None,
+        };
+        let spec = spec(&facts, "como-technologies/riff", "start");
+        let values = [("GH_TOKEN".to_owned(), "gho_x".to_owned())];
+        (fake.start_terminal(&spec, &values).await.unwrap(), file)
+    }
+
+    /// 01M5NJ87YEHHGJBANM7CRYV56Z
+    #[tokio::test]
+    async fn a_lead_is_stale_when_the_host_replaced_its_sign_in_file() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = Fake::default().with_image("img");
+        let (_end, file) = lead_with_file(&fake, home.path()).await;
+        assert!(!stale(&fake, NAME, home.path()).await);
+        // A write in place keeps the file of the bind.
+        std::fs::write(&file, "refreshed in place").unwrap();
+        assert!(!stale(&fake, NAME, home.path()).await);
+        // claude on the host writes a new file in its place.
+        let new = file.with_extension("new");
+        std::fs::write(&new, "new").unwrap();
+        std::fs::rename(&new, &file).unwrap();
+        assert!(stale(&fake, NAME, home.path()).await);
+    }
+
+    /// 01M5NJ87YEHHGJBANM7CRYV56Z
+    #[tokio::test]
+    async fn a_lead_with_the_token_or_that_does_not_run_is_not_stale() {
+        let home = tempfile::tempdir().unwrap();
+        let fake = Fake::default().with_image("img");
+        assert!(!stale(&fake, NAME, home.path()).await);
+        let _end = lead(&fake).await;
+        assert!(!stale(&fake, NAME, home.path()).await);
+    }
+
+    /// 01M5NJ87NXF6077Y9W32840BR8
+    #[test]
+    fn a_lead_needs_the_token_of_the_host() {
+        assert!(needs_token(&run::ClaudeSignIn::Token).is_ok());
+        let file = run::ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into());
+        let refused = needs_token(&file).unwrap_err().to_string();
+        assert!(refused.contains("claude token: not set"), "{refused}");
+        assert!(
+            refused.contains("claude setup-token, then riff claude-token"),
+            "{refused}"
+        );
     }
 
     #[tokio::test]

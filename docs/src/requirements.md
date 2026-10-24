@@ -6519,6 +6519,14 @@ part when they merge.
   session was the lead before; that session is not the lead any more. In
   a lead container, `whoami` says in its first line when the session is
   not the lead, and names the lead (#1301).
+- **01M5NJ87NXF6077Y9W32840BR8** riff lead start refuses to start the
+  lead on a host with no claude token of riff claude-token. It names the
+  step: claude setup-token, then riff claude-token, on that host.
+- **01M5NJ87YEHHGJBANM7CRYV56Z** When the lead runs with the sign-in
+  file of claude of the host and the host replaced that file, riff tells
+  the person that the sign-in of the lead is stale, with the step to fix
+  it and to start the lead again: at each attach of riff lead start and
+  riff view, and once in riff chat from the daemon.
 
 ### The first run
 

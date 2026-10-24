@@ -653,6 +653,11 @@ pub trait World: Send + Sync {
     /// Tells the lead of the wave `body`, as a message.
     fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, ()>;
 
+    /// Writes `body` in riff chat as the person of the lead of `record`,
+    /// and wakes no session: the lead cannot act on it
+    /// (01M5NJ87YEHHGJBANM7CRYV56Z).
+    fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()>;
+
     /// Ends the session of `record` on riff-server, and stops its
     /// keep-alive: the end of the lead.
     fn leave<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, ()>;
@@ -1767,6 +1772,27 @@ impl World for Live {
             }
         })
     }
+
+    fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let posted = async {
+                let person = identity::person(record.me.place(), &record.server)?;
+                let api = Api::new(&record.server).signed_in(None)?;
+                api.post(
+                    &person,
+                    Some(&crate::chat::thread()),
+                    &[],
+                    body,
+                    Kind::Message,
+                )
+                .await?;
+                Ok::<(), anyhow::Error>(())
+            };
+            if let Err(e) = posted.await {
+                eprintln!("riff daemon: {}: {e:#}", record.live.name);
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -2094,6 +2120,10 @@ mod tests {
 
         fn tell<'a>(&'a self, _: &'a Wave, body: &'a str) -> BoxFuture<'a, ()> {
             Box::pin(async move { lock(&self.forge).told.push(body.to_owned()) })
+        }
+
+        fn chat<'a>(&'a self, _: &'a Record, _: &'a str) -> BoxFuture<'a, ()> {
+            Box::pin(async {})
         }
 
         fn leave<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, ()> {

@@ -7624,6 +7624,39 @@ pub fn lead_starts(repo: &str, name: &str, session: &str) -> String {
     format!("The lead of {repo} starts in the container {name}: session {session}.")
 }
 
+/// `riff lead start` on a host with no claude token: it starts no lead
+/// (01M5NJ87NXF6077Y9W32840BR8).
+///
+/// ```
+/// let text = riff::text::LEAD_NEEDS_TOKEN;
+/// assert!(text.contains("claude token: not set"), "{text}");
+/// assert!(text.contains("claude setup-token, then riff claude-token"), "{text}");
+/// ```
+pub const LEAD_NEEDS_TOKEN: &str = "riff lead start needs the claude token of this machine: riff \
+     daemon status says \"claude token: not set\". The lead runs for hours, and the next sign-in \
+     of claude on this machine stops it. Run claude setup-token, then riff claude-token, on this \
+     machine. Then run riff lead start again.";
+
+/// The sign-in of `claude` in the lead `name` is stale: the host
+/// replaced the sign-in file that the lead holds
+/// (01M5NJ87YEHHGJBANM7CRYV56Z).
+///
+/// ```
+/// let text = riff::text::lead_sign_in_stale("riff-lead-o-r");
+/// assert!(text.contains("riff-lead-o-r") && text.contains("stale"), "{text}");
+/// assert!(text.contains("claude setup-token, then riff claude-token"), "{text}");
+/// assert!(text.ends_with("riff lead start"), "{text}");
+/// ```
+pub fn lead_sign_in_stale(name: &str) -> String {
+    format!(
+        "The sign-in of claude in the lead {name} is stale: claude on this machine signed in \
+         again, and the lead holds the old sign-in file. The lead will fail with \"OAuth token \
+         revoked\", and /login in it cannot save. Type /exit in the lead. Then run claude \
+         setup-token, then riff claude-token, on this machine, and start the lead again: riff \
+         lead start"
+    )
+}
+
 /// `riff lead start` and `riff view`: how to detach.
 pub const LEAD_DETACH: &str =
     "Ctrl-P Ctrl-Q detaches: the lead runs on. riff view or riff lead start attaches again.";
