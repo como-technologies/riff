@@ -4655,6 +4655,73 @@ pub const RUN_NO_REPO: &str = "riff run works only in a git clone.";
 /// `riff run` with no sign-in of `gh`.
 pub const RUN_NO_GH: &str = "riff needs the sign-in of gh. Run: gh auth login";
 
+/// `riff run --image` in a container (#1338): the image is a name on the
+/// host, and the daemon picks the image of the repository.
+pub const RUN_IMAGE_ON_HOST: &str = "riff run --image works only on the host. In a container, the daemon picks the image that \
+     the repository pins.";
+
+/// The lead asks `riff run` in its container for a repository whose wave
+/// and lead the daemon does not know (#1338).
+pub fn run_no_wave(repo: &str) -> String {
+    format!(
+        "The riff daemon does not serve {repo} yet, so it has no clone to run an item in. Run \
+         riff wave run in the clone of {repo} on the host."
+    )
+}
+
+/// The name of the start of `riff run ITEM` in the container of the lead
+/// while it waits for room (#1338).
+pub fn run_slot(item: &str) -> String {
+    format!("the run of {item}")
+}
+
+/// The lead asks `riff run ITEM` in its container while a job of the
+/// daemon runs the item (#1338).
+pub fn run_already(item: &str) -> String {
+    format!("The riff daemon already runs {item} as a job. See it: riff daemon status")
+}
+
+/// The answer to `riff run ITEM` in the container of the lead (#1338).
+///
+/// ```
+/// let line = riff::text::run_asked("issue-12");
+/// assert!(line.starts_with("The riff daemon runs issue-12"), "{line}");
+/// assert!(line.ends_with("See it: riff daemon status"), "{line}");
+/// ```
+pub fn run_asked(item: &str) -> String {
+    format!(
+        "The riff daemon runs {item} as a job of the wave, when the host has room. It sends \
+         the verify request to you at the end, as the wave does. When it cannot start the \
+         session, it tells you why. See it: riff daemon status"
+    )
+}
+
+/// The job that the lead asked for found the item held, or held by
+/// another session (#1338).
+pub const RUN_NOT_CLAIMED: &str = "another session holds the item, or a hold keeps it";
+
+/// The job that the lead asked for met a pause (#1338).
+pub const RUN_PAUSED: &str = "the riff or the repository is paused";
+
+/// The note to the lead: the job that it asked for with `riff run`
+/// started no session, for the reason `why` (#1338).
+///
+/// ```
+/// let note = riff::text::run_job_failed("issue-12", "the riff or the repository is paused.");
+/// assert_eq!(
+///     note,
+///     "The riff daemon started no session for issue-12: the riff or the repository is paused. \
+///      Run riff run issue-12 again when you fixed the cause."
+/// );
+/// ```
+pub fn run_job_failed(item: &str, why: &str) -> String {
+    let why = why.trim_end_matches('.');
+    format!(
+        "The riff daemon started no session for {item}: {why}. Run riff run {item} again when \
+         you fixed the cause."
+    )
+}
+
 /// `riff run` with an item that is not an issue.
 pub fn run_not_an_issue(item: &str) -> String {
     format!("riff run takes an issue, for example issue-12, not {item}.")
@@ -5265,6 +5332,15 @@ pub const DAEMON_HOST_ONLY_LEAD: &str =
 /// log.
 pub const DAEMON_LOG_ONLY_LEAD: &str =
     "Only the lead can read the Cloud Run log through the riff daemon.";
+
+/// A session that is not the lead asks the daemon for the log of the
+/// repository, for `riff audit` (#1338).
+pub const DAEMON_AUDIT_ONLY_LEAD: &str =
+    "Only the lead can read the log for riff audit through the riff daemon.";
+
+/// A session that is not the lead asks the daemon to run an item
+/// (#1338).
+pub const DAEMON_RUN_ONLY_LEAD: &str = "Only the lead can run an item through the riff daemon.";
 
 /// The daemon runs on a host with no `gcloud`. [`crate::reach::DaemonLog`]
 /// knows the text.

@@ -793,7 +793,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 *lock(&starts).entry(work.key()).or_default() += 1;
                 lock(&taken).insert(work.item());
                 let (taken, starts) = (taken.clone(), starts.clone());
-                tokio::spawn(job(daemon.clone(), wave.clone(), work, slot, taken, starts));
+                let (daemon, wave) = (daemon.clone(), wave.clone());
+                tokio::spawn(job(daemon, wave, work, slot, taken, starts, false));
             }
             None => {
                 drop(slot);
@@ -831,39 +832,57 @@ fn take_back(starts: &Starts, work: &Work) {
 /// `starts`, and tells the lead nothing (01M558EYCXPFW8CJV3XJ7HK3NR). So
 /// does a fault of the host that came after the look of the loop
 /// (01M57A7A1W2K9440WZA1QZ3M9T): the next look waits for it.
-async fn job<R: Runtime + 'static>(
+///
+/// A job that the lead asked for (`asked`: `riff run` in the container
+/// of the lead, #1338) has no next look. So each case that stops its
+/// start tells the lead why.
+pub(crate) async fn job<R: Runtime + 'static>(
     daemon: Arc<Daemon<R>>,
     wave: Wave,
     work: Work,
     slot: Slot,
     taken: Arc<Mutex<BTreeSet<String>>>,
     starts: Starts,
+    asked: bool,
 ) {
     let item = work.item();
     let held = daemon.in_job(&item);
-    match start_job(&daemon, &wave, &work, slot).await {
+    let no_start = match start_job(&daemon, &wave, &work, slot).await {
         Ok(Some((record, ended))) => {
             finish(daemon.clone(), record, ended, held).await;
+            None
         }
-        Ok(None) => println!("{}", text::wave_not_claimed(&wave.repo, &item)),
+        Ok(None) => {
+            println!("{}", text::wave_not_claimed(&wave.repo, &item));
+            Some(text::RUN_NOT_CLAIMED.to_owned())
+        }
         Err(e) if paused(&e) => {
             println!("{}", text::wave_claim_paused(&wave.repo, &item));
             take_back(&starts, &work);
+            Some(text::RUN_PAUSED.to_owned())
         }
         Err(ref e) if let Some(fault) = e.downcast_ref::<run::HostFault>() => {
             let why = fault.wave_text();
             println!("{}", text::wave_host_fault(&wave.repo, &item, &why));
             take_back(&starts, &work);
+            Some(why)
         }
         Err(e) => {
             let error = format!("{e:#}");
             eprintln!("riff daemon: {}: {item}: {error}", wave.repo);
             daemon.note_end(&item, text::wave_no_start(&error));
-            daemon
-                .world()
-                .tell(&wave, &text::wave_job_failed(&item, &error))
-                .await;
+            if !asked {
+                let body = text::wave_job_failed(&item, &error);
+                daemon.world().tell(&wave, &body).await;
+            }
+            Some(error)
         }
+    };
+    if let (true, Some(why)) = (asked, no_start) {
+        daemon
+            .world()
+            .tell(&wave, &text::run_job_failed(&item, &why))
+            .await;
     }
     lock(&taken).remove(&item);
     daemon.tell_changed();
@@ -2698,6 +2717,174 @@ mod tests {
         assert_eq!(forge.refused, vec!["issue-1"; faults]);
         assert_eq!(forge.starts.len(), 1);
         assert!(forge.told.is_empty(), "{:?}", forge.told);
+    }
+
+    /// The lead of `o/r` on this host, as the record of its session.
+    fn lead_record() -> Record {
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        let who = riff_core::name::Who::new("mike", Some("lead1")).unwrap();
+        Record {
+            live: riff_client::sessions::Live {
+                name: "riff-lead-o-r".into(),
+                session: "lead1".into(),
+                item: "lead".into(),
+                image: IMAGE.into(),
+                since_ms: 0,
+                phase: Default::default(),
+                last: String::new(),
+                lead: true,
+            },
+            folder: PathBuf::new(),
+            server: wave.server.clone(),
+            me: SessionUri::new(who, wave.place(None).unwrap()),
+            inputs: Vec::new(),
+            closed: false,
+            failed: false,
+            job: None,
+            terminal: true,
+            takeover: false,
+            interrupt: false,
+        }
+    }
+
+    /// The wave of `o/r` in the file of the daemon, with no loop.
+    fn keep_wave(here: &Here) {
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        write_waves(here.daemon.dir(), &[("o/r".to_owned(), wave)].into()).unwrap();
+    }
+
+    /// #1338: `riff run ITEM` in the container of the lead. The daemon
+    /// runs the item as a job of the wave, with no loop of the wave:
+    /// the claim, the session and the steps after its end. The answer
+    /// comes at once.
+    #[tokio::test]
+    async fn the_lead_runs_an_item_as_a_job_with_no_loop_of_the_wave() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 2, free).await;
+        keep_wave(&here);
+        let line = here.daemon.run_item(&lead_record(), "issue-5").unwrap();
+        assert_eq!(line, serde_json::json!(text::run_asked("issue-5")));
+        here.until(2, |h| h.running("issue-5").is_some()).await;
+        assert_eq!(here.forge().works, [Work::Build { issue: 5 }]);
+        // The item runs: a second ask is refused.
+        let again = here.daemon.run_item(&lead_record(), "issue-5");
+        assert_eq!(again.unwrap_err().to_string(), text::run_already("issue-5"));
+        here.end("issue-5").await;
+        here.until(2, |h| h.forge().finished == ["issue-5"]).await;
+        assert_eq!(here.forge().pulls.get(&5), Some(&Pr::Asked));
+        assert!(here.forge().told.is_empty(), "{:?}", here.forge().told);
+    }
+
+    /// #1338: the daemon refuses a session that is not the lead, an item
+    /// that is not an issue, and a repository with no wave.
+    #[tokio::test]
+    async fn the_daemon_refuses_the_run_of_a_work_session_and_of_an_unknown_repository() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 2, free).await;
+        let mut worker = lead_record();
+        worker.terminal = false;
+        let refused = here.daemon.run_item(&worker, "issue-5").unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_RUN_ONLY_LEAD);
+        let lead = lead_record();
+        let refused = here.daemon.run_item(&lead, "verify-issue-5").unwrap_err();
+        assert_eq!(
+            refused.to_string(),
+            text::run_not_an_issue("verify-issue-5")
+        );
+        let refused = here.daemon.run_item(&lead, "issue-5").unwrap_err();
+        assert_eq!(refused.to_string(), text::run_no_wave("o/r"));
+        assert!(here.forge().starts.is_empty());
+    }
+
+    /// #1338: the daemon serves the repository of the lead, and the wave
+    /// is not on: the job uses the wave of the file of the repositories
+    /// that it serves.
+    #[tokio::test]
+    async fn a_run_uses_the_repository_that_the_daemon_serves_when_no_wave_runs() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 2, free).await;
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        crate::daemon::remote::serve_in_file(here.daemon.dir(), &wave).unwrap();
+        here.daemon.run_item(&lead_record(), "issue-5").unwrap();
+        here.until(2, |h| h.running("issue-5").is_some()).await;
+    }
+
+    /// #1338: a job that the lead asked for has no next look of a loop.
+    /// So each case that stops its start tells the lead why: a hold or
+    /// another claim, a pause, a fault of the host, and an error. The
+    /// start of the loop of a wave tells less.
+    #[tokio::test]
+    async fn the_lead_hears_why_the_run_of_an_item_did_not_start() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 2, free).await;
+        keep_wave(&here);
+        let lead = lead_record();
+        let told = |n: usize| {
+            let here = &here;
+            async move {
+                here.until(2, |h| h.forge().told.len() == n).await;
+                here.forge().told[n - 1].clone()
+            }
+        };
+
+        here.forge().holds.insert("issue-5".to_owned());
+        here.daemon.run_item(&lead, "issue-5").unwrap();
+        let body = told(1).await;
+        assert_eq!(body, text::run_job_failed("issue-5", text::RUN_NOT_CLAIMED));
+        here.forge().holds.clear();
+
+        here.forge().refusals = vec!["paused".into()];
+        here.daemon.run_item(&lead, "issue-5").unwrap();
+        let body = told(2).await;
+        assert_eq!(body, text::run_job_failed("issue-5", text::RUN_PAUSED));
+
+        here.forge().late_faults = 1;
+        here.daemon.run_item(&lead, "issue-6").unwrap();
+        let body = told(3).await;
+        let fault = run::HostFault::SignInEnds(42).wave_text();
+        assert_eq!(body, text::run_job_failed("issue-6", &fault));
+
+        here.forge().refusals = vec!["not_allowed".into()];
+        here.daemon.run_item(&lead, "issue-7").unwrap();
+        let body = told(4).await;
+        assert!(
+            body.starts_with("The riff daemon started no session for issue-7: ")
+                && body.contains("not_allowed"),
+            "{body}"
+        );
+        // None of them started a session, and none counted.
+        assert!(here.forge().starts.is_empty());
+    }
+
+    /// #1338: when the loop of the wave runs, the job of a run joins its
+    /// items, so the loop does not pick the item and a second ask meets
+    /// the first at once.
+    #[tokio::test]
+    async fn a_run_joins_the_items_of_the_loop_of_the_wave() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 2, free).await;
+        here.run();
+        let lead = lead_record();
+        here.daemon.run_item(&lead, "issue-5").unwrap();
+        let again = here.daemon.run_item(&lead, "issue-5").unwrap_err();
+        assert_eq!(again.to_string(), text::run_already("issue-5"));
+        here.until(2, |h| h.running("issue-5").is_some()).await;
+        assert_eq!(here.forge().starts.len(), 1);
     }
 
     /// 01M57A7A48A70Y7PTD95A3MBYC: a spent item starts again after a

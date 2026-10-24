@@ -911,6 +911,43 @@ with `--image`:
 riff run issue-12 --image localhost/riff-session:test
 ```
 
+### Run an item from the container of the lead
+
+The lead runs `riff run` in its container too. The container has no
+control socket of the daemon and no main clone of the host. So the lead
+asks the daemon through the socket of its session (see
+[Start the lead](#start-the-lead)). In the container of the lead, run:
+
+```sh
+riff run issue-12
+```
+
+The daemon runs the item as a job of the wave of the repository: it
+does the steps of [What riff run does](#what-riff-run-does), in the
+room of the limit of the host. `riff run` answers at once and shows no
+event. See the session with `riff daemon status`.
+
+```mermaid
+sequenceDiagram
+    participant L as riff run issue-12 (lead container)
+    participant D as riff daemon (host)
+    participant S as riff-server
+    L->>D: run issue-12 (socket of the session)
+    D-->>L: asked
+    D->>S: claim, as a new worker session
+    D->>D: clone, wait for room, run the container
+    D->>S: verify request to the lead, release
+```
+
+- Only the lead can ask. The daemon refuses a worker.
+- `--image` works only on the host. The daemon takes the image that the
+  repository pins.
+- The daemon must know the repository: run `riff lead start` once, or
+  `riff wave run` in the clone on the host.
+- When the job does not start, for example when a hold keeps the item,
+  the riff is paused, or a fact of the host fails, the lead gets a
+  message with the reason. The item stays free.
+
 ### What riff run does
 
 First, riff asks the daemon for the image: the daemon pulls it when
@@ -1385,8 +1422,8 @@ To end this rule, give the sessions a token: see
 A session of a wave can end with no open pull request. The daemon then
 leaves one record in the thread `ends` on riff-server: the exit code, or
 the signal, the tool calls that auto mode denied, and the last 50 lines
-of the output. You and your lead read it from any machine, also from a
-container:
+of the output. You read it from any machine. The lead reads it in its
+container: the riff daemon of the host reads riff-server for it.
 
 ```sh
 riff session why issue-1203
@@ -2611,6 +2648,9 @@ riff usage 12 --total
 the sessions followed the flow of a wave. Only the owner or an admin
 can read the log. Run it in your clone. It needs `gh`. Give the number
 of the wave. The name is not necessary.
+The lead runs it in its container too: the riff daemon of the host reads
+the log for the lead, and riff-server still gives the log only to the
+owner and the admins.
 
 ```sh
 riff audit --wave 18

@@ -12,7 +12,12 @@
 //! steps of `riff release cut`, `publish` and `approve` go
 //! the same way: the daemon makes the call on the riff-server of the
 //! session, with the sign-in of the person on the host
-//! ([`crate::daemon::ServerCall`]).
+//! ([`crate::daemon::ServerCall`]). So do `riff members`, `riff audit`,
+//! `riff session why`, `riff who` and `riff whoami` (#1338,
+//! 01M5QVX8D3JE51FAYRWXMAYFAY, 01M5QW31TFA1W2GWPGRS2Y65GP), and `riff run`
+//! of the lead (01M5QVX8FFG2FPWZEW61A985CF): the daemon runs the item as a
+//! job of the wave, because the container has no control socket of the
+//! daemon.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -32,15 +37,20 @@
 //! | no | yes | [`Reach::Daemon`]: through the socket |
 //!
 //! Through the socket, each session can read the build of riff-server,
-//! the sessions and the holds of a thread. Only the lead can resume the
-//! whole riff: the daemon knows by the socket which session asks.
+//! the sessions, the holds of a thread, the members, the state of `riff who`
+//! and `riff whoami`, and the records of the thread `ends`. Only the lead
+//! can resume the whole riff, read the log for an audit and run an item:
+//! the daemon knows by the socket which session asks.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{HoldInfo, Kind, Person, RiffOwner, RiffState, SessionInfo};
+use riff_core::wire::{
+    HoldInfo, Kind, LogReply, MembersReply, Person, RiffOwner, RiffReply, RiffState, SessionInfo,
+    WhoReply,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +68,49 @@ pub struct Roster {
     pub owner: RiffOwner,
     /// Each member of the riff.
     pub people: Vec<Person>,
+}
+
+/// What `riff whoami` reads of the riff: the state of the pauses, or why
+/// riff cannot read it, and the URI that the server holds for the
+/// session (#1338, 01M5QW31TFA1W2GWPGRS2Y65GP).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhoamiFacts {
+    /// The state of the riff for the place of the caller.
+    pub state: std::result::Result<RiffReply, String>,
+    /// The URI of the session as the server holds it (its claims and
+    /// its lead), or `None` when the server does not know the session.
+    pub uri: Option<SessionUri>,
+}
+
+impl WhoamiFacts {
+    /// Reads the facts as `me` with `api`. A fault of one read is in the
+    /// facts, and fails no other.
+    pub async fn read(api: &Api, me: &SessionUri) -> WhoamiFacts {
+        WhoamiFacts {
+            state: api.pauses(me).await.map_err(|e| format!("{e:#}")),
+            uri: api.me(me).await.ok().and_then(|r| r.session).map(|s| s.uri),
+        }
+    }
+}
+
+/// What `riff who` reads of the riff: the state of the pauses, the owner
+/// and the sessions (#1338, 01M5QW31TFA1W2GWPGRS2Y65GP).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhoFacts {
+    /// The state of the riff for the place of the caller.
+    pub pauses: RiffReply,
+    /// The owner and the sessions.
+    pub who: WhoReply,
+}
+
+impl WhoFacts {
+    /// Reads the facts as `me` with `api`. `all` adds the gone sessions.
+    pub async fn read(api: &Api, me: &SessionUri, all: bool) -> Result<WhoFacts> {
+        Ok(WhoFacts {
+            pauses: api.pauses(me).await?,
+            who: api.roster(me, all).await?,
+        })
+    }
 }
 
 /// The way of a riff command to riff-server.
@@ -231,6 +284,73 @@ impl Reach {
             }
             Reach::Daemon(socket) => ask(socket, &ServerCall::ChatRead).await,
         }
+    }
+
+    /// What `riff whoami` reads, through the socket of the session. On a
+    /// host, `riff whoami` reads straight with [`WhoamiFacts::read`].
+    pub async fn whoami(&self) -> Result<WhoamiFacts> {
+        let Reach::Daemon(socket) = self else {
+            anyhow::bail!("this riff has no socket of a session");
+        };
+        ask(socket, &ServerCall::Whoami).await
+    }
+
+    /// What `riff who` reads, through the socket of the session. `all`
+    /// adds the gone sessions. On a host, `riff who` reads straight with
+    /// [`WhoFacts::read`].
+    pub async fn who_facts(&self, all: bool) -> Result<WhoFacts> {
+        let Reach::Daemon(socket) = self else {
+            anyhow::bail!("this riff has no socket of a session");
+        };
+        ask(socket, &ServerCall::WhoFacts { all }).await
+    }
+
+    /// Who may join the riff, for `riff members`. Straight, it reads
+    /// with the sign-in of the person on this machine (#1338).
+    pub async fn members(&self) -> Result<MembersReply> {
+        match self {
+            Reach::Direct(server) => Api::new(server).signed_in(None)?.members().await,
+            Reach::Daemon(socket) => ask(socket, &ServerCall::Members).await,
+        }
+    }
+
+    /// The records of the repository thread `repo`, for `riff audit`.
+    /// Only the owner and the admins can read them; through the socket,
+    /// only the lead can ask (#1338).
+    pub async fn log(&self, repo: &ThreadName) -> Result<LogReply> {
+        match self {
+            Reach::Direct(server) => Api::new(server).signed_in(None)?.log(repo).await,
+            Reach::Daemon(socket) => {
+                let call = ServerCall::Log { repo: repo.clone() };
+                ask(socket, &call).await
+            }
+        }
+    }
+
+    /// The records of the thread `ends`, oldest first, for `riff session
+    /// why` (#1338).
+    pub async fn ends(&self) -> Result<Vec<crate::ends::Record>> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                crate::ends::read(&api, &me).await
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::Ends).await,
+        }
+    }
+
+    /// Asks the daemon to run the item `item` as a job of the wave of the
+    /// repository, and gives the line for the person (#1338). Only the
+    /// lead may. On the host, `riff run` talks to the daemon on its own
+    /// control socket.
+    pub async fn run(&self, item: &str) -> Result<String> {
+        let Reach::Daemon(socket) = self else {
+            anyhow::bail!("this riff has no socket of a session");
+        };
+        let call = ServerCall::Run {
+            item: item.to_owned(),
+        };
+        ask(socket, &call).await
     }
 
     /// Pauses the whole riff, and gives the line for the person.

@@ -144,6 +144,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud list",
             "riff login",
             "riff invite EMAIL",
+            "riff members",
             "riff tail",
             "riff owner --take",
             "riff owner EMAIL",

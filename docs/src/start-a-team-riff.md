@@ -213,7 +213,22 @@ riff invite EMAIL
 The command prints the address of the riff and the lines that the
 person runs to join. Send the lines to the person. The lines hold no
 secret. The person follows [Join a Riff](join-a-riff.md). To see the
-members of the riff, run `riff members`.
+members of the riff, see [See the members](#see-the-members).
+
+## See the members
+
+To see the owner, the admins, the members and the allowed domains of
+the riff, run:
+
+```sh
+riff members
+```
+
+The lead runs it in its container too. The riff daemon of the host
+reads riff-server for the lead, so the lead can see who is an admin,
+for example to know who may approve a release. `riff invite`,
+`riff remove`, `riff admin` and `riff owner` change the members. A
+person runs these in a terminal on the host.
 
 ## See each change of the members
 
