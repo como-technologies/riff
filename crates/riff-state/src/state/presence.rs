@@ -6,6 +6,10 @@
 //! keeps. A start of the server loses the rest. The worker mark is not
 //! here: it is in the log (01M3X9X9M079WGFPJZHNXH9VEP).
 //!
+//! A session that joins a thread starts its cursor at the newest
+//! message, and a new lead takes the cursors of the lead before it
+//! (01M5QVD3B1GT7STHBQS7NK4DR0). See `Presence::applied`.
+//!
 //! The presence also holds what the sessions show by facts, not by a
 //! record (01M41FZRF5HEZCDS515CP7DYCV): the newest fact of the hooks of
 //! each session, its block, and the facts of the items that clients saw
@@ -25,6 +29,7 @@ use riff_core::record::{Change, Record, Scope};
 use riff_core::wire::{Activity, ItemFact, Kind, RiffBinary, Status, StepChange};
 use serde::{Deserialize, Serialize};
 
+use super::command::CommandKind;
 use super::riff::Riff;
 use super::{CLAIM_GRACE, GONE};
 
@@ -57,6 +62,7 @@ use super::{CLAIM_GRACE, GONE};
 pub struct Presence {
     pub(super) sessions: BTreeMap<Who, Session>,
     /// The last sequence number that each session read in each thread.
+    /// A thread that a session joins starts at its newest message.
     pub(super) cursors: BTreeMap<(Who, ThreadName), u64>,
     /// The newest message after the page of a read that woke the
     /// session, and that the read showed, by session and thread
@@ -376,10 +382,16 @@ impl Presence {
     }
 
     /// What a record changes in memory. The caller applies the record to
-    /// `riff` first. `at` is the time of the call that made the record.
-    /// A replay gives `None`, and sets no time: it makes each session
-    /// after its last record.
+    /// `riff` first. `replaced` is the lead that a `lead_set` record
+    /// replaces, as `riff` had it before the record. `at` is the time of
+    /// the call that made the record. A replay gives `None`, and sets no
+    /// time: it makes each session after its last record.
     ///
+    /// - `joined_thread`: a session starts its read cursor of the thread
+    ///   at the newest message, when it has none (01M5QVD3B1GT7STHBQS7NK4DR0).
+    ///   So a new session finds no old message unread.
+    /// - `lead_set`: the new lead takes the read cursors of `replaced`,
+    ///   in each thread that both joined (01M5QVD3B1GT7STHBQS7NK4DR0).
     /// - `claimed` and `released`: the time of the last change of the
     ///   claims of the session (01M3Q551WCMPQRCNJ8FXQEBFY4). A session
     ///   whose item another session takes has a `released` record of
@@ -397,7 +409,13 @@ impl Presence {
     /// - `claimed`, `released` and `session_started` end the block of
     ///   the session: a change of its claims is work, and a new start
     ///   is a new context.
-    pub(super) fn applied(&mut self, record: &Record, riff: &Riff, at: Option<Instant>) {
+    pub(super) fn applied(
+        &mut self,
+        record: &Record,
+        riff: &Riff,
+        replaced: Option<&Who>,
+        at: Option<Instant>,
+    ) {
         match &record.change {
             Change::Claimed(claimed) => self.claims_changed(claimed.session.who(), at),
             Change::Released(released) => self.claims_changed(released.session.who(), at),
@@ -437,9 +455,25 @@ impl Presence {
                 self.cursors.retain(kept);
                 self.shown.retain(kept);
             }
-            Change::JoinedThread(_)
-            | Change::LeftThread(_)
-            | Change::LeadSet(_)
+            Change::JoinedThread(member) => {
+                let who = member.session.who();
+                let newest = riff.threads().last_seq(&member.thread);
+                // The import copies the memberships of the old server. A
+                // session that never read a thread there has no cursor
+                // in its memory ([`State::imported`](super::State::imported)).
+                let import =
+                    record.envelope.command.as_deref() == Some(CommandKind::Import.as_str());
+                if who.session().is_some() && newest > 0 && !import {
+                    let key = (who.clone(), member.thread.clone());
+                    self.cursors.entry(key).or_insert(newest);
+                }
+            }
+            Change::LeadSet(member) => {
+                if let Some(old) = replaced {
+                    self.handed_over(old, member.session.who(), riff);
+                }
+            }
+            Change::LeftThread(_)
             | Change::SettingChanged(_)
             | Change::RiffMade(_)
             | Change::PersonJoined(_)
@@ -510,6 +544,24 @@ impl Presence {
             }
         }
         (again, unanswered)
+    }
+
+    /// The lead `to` takes the read cursor of the lead `from` in each
+    /// thread that `to` joined and that `from` read. It replaces the
+    /// cursor that `to` had.
+    fn handed_over(&mut self, from: &Who, to: &Who, riff: &Riff) {
+        if from == to {
+            return;
+        }
+        let taken: Vec<(ThreadName, u64)> = self
+            .cursors
+            .iter()
+            .filter(|((who, thread), _)| who == from && riff.threads().member(to, thread))
+            .map(|((_, thread), seq)| (thread.clone(), *seq))
+            .collect();
+        for (thread, seq) in taken {
+            self.cursors.insert((to.clone(), thread), seq);
+        }
     }
 
     /// The last sequence number that `who` read in `thread`.
@@ -660,15 +712,12 @@ struct SavedCursor {
 }
 
 impl Saved {
-    /// Puts the read cursors, the statuses and the long steps of a
-    /// checkpoint in `presence`, at the load `now`. A status and a step
-    /// go only to a session that the presence knows. A status keeps its
-    /// age, at least 1 ms: it is from before the load, so it is stale. A
-    /// step keeps the time of its start or its failure, so its age goes
-    /// on from the first start.
-    pub(super) fn restore(self, presence: &mut Presence, now: Instant, now_ms: u64) {
-        let Saved { cursors, statuses } = self;
-        presence.cursors = cursors
+    /// Puts the read cursors of a checkpoint in `presence`. The load
+    /// does it before it applies the records after the checkpoint, so
+    /// that a join or a new lead in those records changes the cursors
+    /// as it did live (01M5QVD3B1GT7STHBQS7NK4DR0).
+    pub(super) fn restore_cursors(&mut self, presence: &mut Presence) {
+        presence.cursors = std::mem::take(&mut self.cursors)
             .into_iter()
             .map(
                 |SavedCursor {
@@ -678,6 +727,20 @@ impl Saved {
                  }| ((session, thread), seq),
             )
             .collect();
+    }
+
+    /// Puts the statuses and the long steps of a checkpoint in
+    /// `presence`, at the load `now`. A status and a step go only to a
+    /// session that the presence knows. A status keeps its age, at least
+    /// 1 ms: it is from before the load, so it is stale. A step keeps
+    /// the time of its start or its failure, so its age goes on from the
+    /// first start. The read cursors go first: see
+    /// [`Saved::restore_cursors`].
+    pub(super) fn restore(self, presence: &mut Presence, now: Instant, now_ms: u64) {
+        let Saved {
+            cursors: _,
+            statuses,
+        } = self;
         for SavedSession {
             session: who,
             signals,
@@ -895,8 +958,8 @@ mod tests {
     use std::time::Duration;
 
     use riff_core::name::SessionUri;
-    use riff_core::record::{Claimed, Forgotten, Member, PauseSet, Released};
-    use riff_core::wire::RiffState;
+    use riff_core::record::{Claimed, Forgotten, Member, PauseSet, Posted, Released};
+    use riff_core::wire::{Message, RiffState};
 
     use super::super::riff::apply;
     use super::*;
@@ -966,7 +1029,7 @@ mod tests {
         let at = since + Duration::from_secs(9);
         let mut presence = presence(since);
         let record = record(Change::Claimed(claim_of(&bob())));
-        presence.applied(&record, &Riff::default(), Some(at));
+        presence.applied(&record, &Riff::default(), None, Some(at));
         assert_eq!(claims_changed(&presence, &bob()), at);
         assert_eq!(claims_changed(&presence, &ann()), since);
     }
@@ -977,7 +1040,7 @@ mod tests {
         let at = since + Duration::from_secs(9);
         let mut presence = presence(since);
         let record = record(Change::Released(Released::of(claim_of(&ann()))));
-        presence.applied(&record, &Riff::default(), Some(at));
+        presence.applied(&record, &Riff::default(), None, Some(at));
         assert_eq!(claims_changed(&presence, &ann()), at);
         assert_eq!(claims_changed(&presence, &bob()), since);
     }
@@ -995,17 +1058,17 @@ mod tests {
         };
         let mut presence = presence(since);
         let of_repo = set(Scope::Repository(repo.clone()));
-        presence.applied(&of_repo, &Riff::default(), Some(at));
+        presence.applied(&of_repo, &Riff::default(), None, Some(at));
         assert_eq!(presence.repository_changed.get(&repo), Some(&at));
         assert_eq!(presence.riff_changed, None);
-        presence.applied(&set(Scope::Other), &Riff::default(), Some(at));
+        presence.applied(&set(Scope::Other), &Riff::default(), None, Some(at));
         assert_eq!(presence.riff_changed, None);
-        presence.applied(&set(Scope::Riff), &Riff::default(), Some(at));
+        presence.applied(&set(Scope::Riff), &Riff::default(), None, Some(at));
         assert_eq!(presence.riff_changed, Some(at));
         // A replay sets no time.
         let other: ThreadName = "acme/lib".parse().unwrap();
         let replayed = set(Scope::Repository(other.clone()));
-        presence.applied(&replayed, &Riff::default(), None);
+        presence.applied(&replayed, &Riff::default(), None, None);
         assert_eq!(presence.repository_changed.get(&other), None);
     }
 
@@ -1023,7 +1086,7 @@ mod tests {
             }),
         ];
         for change in changes {
-            presence.applied(&record(change), &Riff::default(), None);
+            presence.applied(&record(change), &Riff::default(), None, None);
         }
         assert_eq!(claims_changed(&presence, &ann()), since);
         assert_eq!(claims_changed(&presence, &bob()), since);
@@ -1043,7 +1106,7 @@ mod tests {
         let mut riff = Riff::default();
         apply(&mut riff, &record(joined(&bob(), &repo())));
         let forgotten = record(Change::SessionForgotten(Forgotten { session: ann() }));
-        presence.applied(&forgotten, &riff, Some(now));
+        presence.applied(&forgotten, &riff, None, Some(now));
         assert!(!presence.sessions.contains_key(ann().who()));
         assert!(presence.sessions.contains_key(bob().who()));
         let cursors: Vec<_> = presence.cursors.keys().cloned().collect();
@@ -1061,12 +1124,99 @@ mod tests {
         presence.applied(
             &record(joined(&ann(), &design())),
             &Riff::default(),
+            None,
             Some(at),
         );
         assert_eq!(presence.sessions.len(), 2);
         assert_eq!(claims_changed(&presence, &ann()), since);
         assert_eq!(presence.riff_changed, None);
         assert_eq!(presence.cursor(ann().who(), &repo()), 3);
+    }
+
+    /// The messages `from` to `to` of `thread` in `riff`.
+    fn post_to(riff: &mut Riff, thread: &ThreadName, from: u64, to: u64) {
+        for seq in from..=to {
+            let message = Message {
+                seq,
+                from: ann(),
+                to: Vec::new(),
+                body: format!("m{seq}"),
+                at_ms: 0,
+                kind: Kind::Message,
+                sig: None,
+                payload: None,
+            };
+            let posted = Posted {
+                thread: thread.clone(),
+                message,
+                woken: Default::default(),
+            };
+            apply(riff, &record(Change::Posted(Box::new(posted))));
+        }
+    }
+
+    /// The record of a join, applied to `riff` and then to `presence`.
+    fn join(presence: &mut Presence, riff: &mut Riff, me: &SessionUri, thread: &ThreadName) {
+        let join = record(joined(me, thread));
+        apply(riff, &join);
+        presence.applied(&join, riff, None, None);
+    }
+
+    #[test]
+    fn a_joined_record_starts_the_cursor_of_a_session_at_the_newest_message() {
+        let mut presence = presence(Instant::now());
+        let mut riff = Riff::default();
+        post_to(&mut riff, &repo(), 1, 3);
+        join(&mut presence, &mut riff, &bob(), &repo());
+        assert_eq!(presence.cursor(bob().who(), &repo()), 3);
+
+        // A session that has a cursor keeps it.
+        post_to(&mut riff, &repo(), 4, 5);
+        join(&mut presence, &mut riff, &bob(), &repo());
+        assert_eq!(presence.cursor(bob().who(), &repo()), 3);
+
+        // A thread with no message needs no cursor.
+        join(&mut presence, &mut riff, &bob(), &design());
+        assert!(
+            !presence
+                .cursors
+                .contains_key(&(bob().who().clone(), design()))
+        );
+
+        // A person, with no session ID, starts at no cursor.
+        let carl: SessionUri = "riff://carl@kite/acme/app".parse().unwrap();
+        join(&mut presence, &mut riff, &carl, &repo());
+        assert_eq!(presence.cursor(carl.who(), &repo()), 0);
+    }
+
+    #[test]
+    fn a_lead_set_record_gives_the_new_lead_the_cursors_of_the_old_lead_in_the_threads_that_both_joined()
+     {
+        let mut presence = presence(Instant::now());
+        let mut riff = Riff::default();
+        post_to(&mut riff, &repo(), 1, 5);
+        join(&mut presence, &mut riff, &bob(), &repo());
+        for (me, thread, seq) in [(ann(), repo(), 3), (ann(), design(), 2)] {
+            presence.cursors.insert((me.who().clone(), thread), seq);
+        }
+        let set = record(Change::LeadSet(Member {
+            session: bob(),
+            thread: repo(),
+        }));
+
+        // No lead before: bob keeps its cursor. Nor does a lead that
+        // replaces itself change it.
+        presence.applied(&set, &riff, None, None);
+        presence.applied(&set, &riff, Some(bob().who()), None);
+        assert_eq!(presence.cursor(bob().who(), &repo()), 5);
+
+        // Bob joined the repository thread, and not `design`.
+        presence.applied(&set, &riff, Some(ann().who()), None);
+        assert_eq!(presence.cursor(bob().who(), &repo()), 3);
+        assert_eq!(presence.cursor(bob().who(), &design()), 0);
+        // The cursors of the old lead stay.
+        assert_eq!(presence.cursor(ann().who(), &repo()), 3);
+        assert_eq!(presence.cursor(ann().who(), &design()), 2);
     }
 
     fn step(name: &str, set_ms: u64, failed: Option<&str>) -> LongStep {

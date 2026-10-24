@@ -19,7 +19,9 @@
 //!   riff and a pause of a repository.
 //! - `checkpoint.json`: the checkpoint of a live state. It is the full
 //!   replay, and then a session reads two threads. So it has read
-//!   cursors, which no record gives.
+//!   cursors, which no record of the release gave. A build after the
+//!   release gives a cursor with each join (01M5QVD3B1GT7STHBQS7NK4DR0):
+//!   the tests leave those out.
 //! - `later.jsonl`: one chunk of a later build. Each record has a value
 //!   that this build does not know: a scope and a class of a caller, as
 //!   a text and as an object, a reason of a start as a text, an
@@ -227,6 +229,20 @@ fn the_fixture_log_has_a_record_of_each_kind() {
     );
 }
 
+/// `checkpoint` as JSON with the cursors that `keep` accepts. A replay
+/// gives the cursors that the joins start
+/// (01M5QVD3B1GT7STHBQS7NK4DR0), and no checkpoint of the release has
+/// them: its cursors come from reads, which no record holds.
+fn json_with_cursors(
+    checkpoint: &[u8],
+    keep: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let mut json: serde_json::Value = serde_json::from_slice(checkpoint).unwrap();
+    let cursors = json["state"]["cursors"].as_array_mut().unwrap();
+    cursors.retain(keep);
+    json
+}
+
 #[test]
 fn this_build_writes_the_bytes_of_the_log_and_the_checkpoint_of_the_release() {
     assert_eq!(log::encode(&records("log.jsonl")), bytes("log.jsonl"));
@@ -239,7 +255,12 @@ fn a_replay_of_the_fixture_log_gives_the_state_of_the_release() {
     let state = State::replay(records("log.jsonl"), Instant::now(), 0);
     let expected = checkpoint::decode(&bytes("replayed.json")).unwrap();
     assert_eq!(state.position(), expected.state.position);
-    assert_eq!(written(&state, &expected), bytes("replayed.json"));
+    // The replay gives the cursors of the joins: the release has none.
+    let replayed = json_with_cursors(&written(&state, &expected), |_| false);
+    assert_eq!(
+        replayed,
+        json_with_cursors(&bytes("replayed.json"), |_| true)
+    );
 }
 
 /// The time of the checkpoint of the live state.
@@ -274,7 +295,13 @@ fn a_checkpoint_of_a_live_state_keeps_the_read_cursors() {
     let now = Instant::now();
     let state = live(now);
     assert_eq!(state.position(), expected.state.position);
-    assert_eq!(encode(&state, now), bytes("checkpoint.json"));
+    // The replay gives the cursors of the joins. The two reads are the
+    // cursors of the release.
+    let read = |cursor: &serde_json::Value| cursor["session"]["session"] == "a1";
+    assert_eq!(
+        json_with_cursors(&encode(&state, now), read),
+        json_with_cursors(&bytes("checkpoint.json"), read)
+    );
 
     let loaded = State::load(Some(expected.state.clone()), [], now, LIVE_MS);
     assert!(loaded.same_log_state(&state));

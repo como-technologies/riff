@@ -529,6 +529,40 @@ async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
     assert_eq!(code, 0);
 }
 
+/// A new lead finds only the messages unread that the lead before it did
+/// not read, and a new session finds the messages from before its join
+/// read (01M5QVD3B1GT7STHBQS7NK4DR0).
+#[tokio::test]
+async fn a_new_lead_reads_only_what_the_lead_before_it_did_not_read() {
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+
+    // The lead a1 reads the first three messages.
+    lead(&server, dir, "mike", "a1").await;
+    for body in ["old-1", "old-2", "old-3"] {
+        riff(&server, dir, "brett", &["post", body]).await;
+    }
+    let (out, _) = agent(&server, dir, "mike", "a1", &["read"]).await;
+    assert!(out.contains("old-3"), "{out}");
+    for body in ["new-4", "new-5"] {
+        riff(&server, dir, "brett", &["post", body]).await;
+    }
+
+    // The new session b2 finds the five messages read.
+    let (out, _) = agent(&server, dir, "mike", "b2", &["read"]).await;
+    assert_eq!(out, "No unread messages.\n");
+
+    // As the new lead, b2 finds the two messages that a1 did not read.
+    lead(&server, dir, "mike", "b2").await;
+    let (out, code) = agent(&server, dir, "mike", "b2", &["read"]).await;
+    assert_eq!(code, 0);
+    assert!(out.contains("new-4") && out.contains("new-5"), "{out}");
+    assert!(!out.contains("old-"), "{out}");
+    let (out, _) = agent(&server, dir, "mike", "b2", &["read"]).await;
+    assert_eq!(out, "No unread messages.\n");
+}
+
 /// The lead frees the claim of another session of its user, and the
 /// next session claims the item. A note of the server in the thread
 /// names the lead, the item and the holder. A session that is not the
