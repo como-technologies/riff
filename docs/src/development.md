@@ -1255,6 +1255,21 @@ issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). 
 To start the rebase of the same commit again, see
 [Start a spent item again](#start-a-spent-item-again).
 
+### Answer a failed verify with a new request
+
+A verify can fail only on the body of the pull request, for example
+Hygiene refuses the first line. The fix is a new body, with no new
+commit. The status `riff/verify` of the head stays `failure`. After the
+fix, the session sends a new verify request for the same commit. The
+wave then starts a verify of that commit, not a build, when the Gate
+and Hygiene of the head pass. With no new request, a failed verify is
+free work as a build. A push makes a new head, and a new verify
+follows as always.
+
+```sh
+riff post --to lead=true "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4"
+```
+
 ### When the sign-in of claude ends soon
 
 With no token of `riff claude-token`, a session needs the sign-in of

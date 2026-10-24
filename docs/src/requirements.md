@@ -6403,6 +6403,10 @@ part when they merge.
   free work of the rollout of the lead. `riff wave list` and `riff top`
   show it in the group `tracker`, never in `free`. `riff wave make`
   makes the label `tracker` when it is missing.
+- **01M5P20DPK4GAQRDEKC1E6V718** A verify request for a head commit, in
+  the thread after the last verify result for it, answers a failed
+  verify of that head: the wave starts a verify of the head, not a
+  build, when its Gate and Hygiene pass.
 
 ### The lead, the view and the takeover
 

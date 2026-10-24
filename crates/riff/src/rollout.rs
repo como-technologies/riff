@@ -538,6 +538,12 @@ pub struct Pull {
     /// one. Else the issue of its line `Closes #N`. riff keeps only the number, not the text of the body.
     #[serde(rename = "body", default, deserialize_with = "trailer")]
     pub trailer: Option<u64>,
+    /// True when a verify request for the head came after the last
+    /// verify result for it ([`crate::wave::reasked`]): the failed
+    /// verify of the head is answered, so the pull request waits for
+    /// a verify again ([`Pull::verify`]). The wave sets it.
+    #[serde(skip)]
+    pub reasked: bool,
 }
 
 /// True for a value that is not `null`.
@@ -593,7 +599,9 @@ pub enum Verify {
     Asked,
     /// The verify passed: the pull request waits for the merge.
     Passed,
-    /// The verify failed: the item is free, with its earlier work.
+    /// The verify failed: the item is free, with its earlier work. A
+    /// new verify request for the same head ([`Pull::reasked`]) makes
+    /// it [`Verify::Asked`] again.
     Failed,
 }
 
@@ -635,6 +643,9 @@ impl Pull {
     /// assert_eq!(pull(vec![Check::verify("SUCCESS")]).verify(), Some(Verify::Passed));
     /// assert_eq!(pull(vec![Check::verify("FAILURE")]).verify(), Some(Verify::Failed));
     /// assert_eq!(pull(vec![Check::verify("ERROR")]).verify(), Some(Verify::Failed));
+    /// // A new verify request for the failed head: it waits for a verify again.
+    /// let again = Pull { reasked: true, ..pull(vec![Check::verify("FAILURE")]) };
+    /// assert_eq!(again.verify(), Some(Verify::Asked));
     /// assert_eq!(Pull { draft: true, ..pull(vec![]) }.verify(), None);
     /// assert_eq!(Pull { branch: "main".into(), ..pull(vec![]) }.verify(), None);
     /// ```
@@ -646,6 +657,7 @@ impl Pull {
         Some(match self.verify_status() {
             None => Verify::Asked,
             Some(check) => match check.state.as_deref() {
+                Some("FAILURE" | "ERROR") if self.reasked => Verify::Asked,
                 Some("FAILURE" | "ERROR") => Verify::Failed,
                 _ => Verify::Passed,
             },
