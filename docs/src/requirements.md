@@ -6153,7 +6153,8 @@ part when they merge.
 - **01M57D3FEJPHD962GW0H82N8E6** When a sweep of the daemon keeps a
   folder whose work is over, because its clone holds work that is not
   on `origin`, the daemon posts one note to the lead of its repository.
-  It posts a new note only when the reason changes.
+  It posts a new note only when the reason changes. Superseded in part
+  by 01M5NVKNS35SC8P514GYDJSRQM.
 - **01M57D3FGV57W96A7SWTEFRCGW** The facts give the minutes left of the
   sign-in of `claude`. The sign-ins of riff and `gh` refresh or have no
   end: the facts say `on` or `off` for each, or `?` when riff cannot
@@ -6181,6 +6182,33 @@ part when they merge.
   and the new daemon waits for room for it again, also with the limit 0.
   A start of `riff run` that waits for room keeps the daemon on the old
   riff, as a session and a job of a wave do.
+- **01M5NVKNGZPK0GG7B7ZWBS0DFE** When the sweep of
+  01M53NJ5V27BCHDNHK2THQQZZQ finds a folder whose work is over, and its
+  clone holds work that is not on origin, it pushes that work to the
+  branch riff-kept/ITEM-ID8 of origin and then removes the folder. It
+  removes a folder with files of the container with podman unshare. The
+  push has the commits of HEAD that origin has not, and the changes of
+  the tracked files (git add -u). It never has a file that git does not
+  track. A clone with only such files pushes nothing. When the push
+  fails, or a commit is on a local branch that is not HEAD, or git
+  cannot read the clone, the folder stays and riff daemon sweep says
+  why. This supersedes 01M53S7WAXD46YPN0DR96XSTMG in part.
+- **01M5NVKNKN3PTCWB45BV03M1TW** The sweep never pushes or removes the
+  folder of a session that runs, of a job of the daemon, or of an item
+  whose pull request is open or whose issue is open with no pull
+  request. The folder of an open item stays.
+- **01M5NVKNPD938ASWY4TD5BGK67** The sweep deletes each branch
+  riff-kept/* of origin whose tip commit is older than 30 days, for each
+  repository of the folders that it looked at.
+- **01M5NVKNS35SC8P514GYDJSRQM** After a sweep that pushed work, removed
+  a folder with files that git does not track, or deleted a riff-kept
+  branch, the daemon posts one digest note to the lead of the
+  repository. It posts no note at each start for a folder that it
+  already pushed and removed. This supersedes 01M57D3FEJPHD962GW0H82N8E6
+  for folders whose work the sweep can push.
+- **01M5NVKNVTVR722EA148V5127M** The book says where the kept work goes,
+  riff-kept/ITEM-ID8 of origin, and how to get it back with git fetch
+  origin riff-kept/ITEM-ID8.
 
 ### riff relay
 
@@ -6808,7 +6836,7 @@ part when they merge.
   when git cannot read the clone, the folder stays. `riff daemon sweep`
   prints each folder that stays for this reason, with the reason. The
   log of the daemon gets that line one time, and again when the reason
-  changes.
+  changes. Superseded in part by 01M5NVKNGZPK0GG7B7ZWBS0DFE.
 - **01M53S7WDPQ2GWHJWJ6SZXZ5PN** A job of the daemon keeps each folder
   of its item from before the clone of its session to the end of its
   last step after the end. The steps after the end read the folder, for

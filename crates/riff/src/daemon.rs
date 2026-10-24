@@ -5376,6 +5376,8 @@ mod tests {
         said: Mutex<Vec<String>>,
         fates: BTreeMap<u64, sweep::Fate>,
         comments: Mutex<Vec<(String, u64, u64, String)>>,
+        /// The branches `riff-kept/*` of the forge ([`World::delete_old_kept`]).
+        kept: Mutex<Vec<sweep::KeptBranch>>,
         gh: Option<crate::pr::Gh>,
         gate: Option<Arc<tokio::sync::Semaphore>>,
         watches: Mutex<Vec<mpsc::UnboundedSender<Wake>>>,
@@ -5392,6 +5394,20 @@ mod tests {
                 fates: fates.iter().cloned().collect(),
                 ..Server::default()
             }
+        }
+
+        /// The same forge, with the branches `riff-kept/*` `kept`.
+        pub(super) fn with_kept(self, kept: Vec<sweep::KeptBranch>) -> Server {
+            Server {
+                kept: Mutex::new(kept),
+                ..self
+            }
+        }
+
+        /// The names of the branches `riff-kept/*` that are left.
+        pub(super) fn kept_left(&self) -> Vec<String> {
+            let kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+            kept.iter().map(|b| b.name.clone()).collect()
         }
 
         /// The forge of `gh`.
@@ -5544,6 +5560,17 @@ mod tests {
                 .cloned()
                 .unwrap_or(sweep::Fate::Stays);
             Box::pin(async move { Ok(fate) })
+        }
+
+        fn delete_old_kept<'a>(
+            &'a self,
+            _: &'a str,
+        ) -> crate::wave::BoxFuture<'a, Result<Vec<String>>> {
+            let now = sweep::date_seconds("2026-10-24T12:00:00Z").unwrap_or(0);
+            let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+            let old = sweep::old_kept(&kept, now);
+            kept.retain(|b| !old.contains(&b.name));
+            Box::pin(async move { Ok(old) })
         }
 
         fn merged_in<'a>(

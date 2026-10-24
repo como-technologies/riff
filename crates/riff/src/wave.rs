@@ -640,6 +640,12 @@ pub trait World: Send + Sync {
     /// repository `repo`, from the forge ([`Fate::of`]).
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>>;
 
+    /// Deletes each branch `riff-kept/*` of `repo` that is older than 30
+    /// days, and gives their names ([`crate::daemon::sweep::delete_old_kept_on`]).
+    fn delete_old_kept<'a>(&'a self, _repo: &'a str) -> BoxFuture<'a, Result<Vec<String>>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
     /// Adds the comment `Merged in #PULL (COMMIT)` to the issue `issue` of
     /// `repo`, when it has none ([`crate::daemon::sweep`]).
     fn merged_in<'a>(
@@ -1644,6 +1650,11 @@ impl World for Live {
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>> {
         let gh = sweep::gh(repo);
         Box::pin(blocking(move || sweep::fate_on(&gh, issue)))
+    }
+
+    fn delete_old_kept<'a>(&'a self, repo: &'a str) -> BoxFuture<'a, Result<Vec<String>>> {
+        let (gh, repo) = (sweep::gh(repo), repo.to_owned());
+        Box::pin(blocking(move || sweep::delete_old_kept_on(&gh, &repo)))
     }
 
     fn merged_in<'a>(

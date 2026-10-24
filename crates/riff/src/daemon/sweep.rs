@@ -34,13 +34,22 @@
 //!
 //! The fate looks only at the forge. So before riff removes a folder, it
 //! looks at the clone too
-//! ([`Local::of`], 01M53S7WAXD46YPN0DR96XSTMG). The folder stays when the
-//! clone has a file that is not committed, or a commit that no branch of
-//! `origin` has: a session that ended before it pushed its work, on a
-//! branch with an older merged or closed pull request. The folder also
-//! stays when git cannot read the clone. riff says why in
-//! `riff daemon sweep`, and one time in the log of the daemon
-//! ([`Daemon::sweep_news`]).
+//! ([`Local::of`], 01M53S7WAXD46YPN0DR96XSTMG). The clone can hold work
+//! that `origin` has not: a session that ended before it pushed its work,
+//! on a branch with an older merged or closed pull request. riff pushes
+//! that work to the branch `riff-kept/ITEM-ID8` of `origin`, then removes
+//! the folder ([`push_kept`], 01M5NVKNGZPK0GG7B7ZWBS0DFE). The push has
+//! the commits of `HEAD` that `origin` has not, and the changes of the
+//! tracked files in one more commit. It never has a file that git does
+//! not track. The folder stays when the push fails, when a commit is on a
+//! local branch that is not `HEAD`, or when git cannot read the clone.
+//! riff says why in `riff daemon sweep`, and one time in the log of the
+//! daemon ([`Daemon::sweep_news`]).
+//!
+//! After each sweep the daemon posts one digest note to the lead of the
+//! repository: what it pushed, and what it removed
+//! (01M5NVKNS35SC8P514GYDJSRQM). It deletes each branch `riff-kept/*`
+//! whose tip is older than [`KEPT_DAYS`] days (01M5NVKNPD938ASWY4TD5BGK67).
 //!
 //! A session runs, and its folder stays, while one of these is true:
 //!
@@ -63,8 +72,11 @@
 //!     O --> T{"the fate on the forge"}
 //!     T -- "an open pull request, or an open issue" --> K
 //!     T -- "no answer of gh in GH_LIMIT" --> S["it stays, and riff says why"]
-//!     T -- "merged, closed, or the issue closed" --> C{"its clone: a file not committed,<br/>or a commit on no branch of origin?"}
-//!     C -- "yes, or git cannot say" --> S
+//!     T -- "merged, closed, or the issue closed" --> C{"its clone: a tracked change,<br/>or a commit on no branch of origin?"}
+//!     C -- "git cannot say" --> S
+//!     C -- yes --> P["riff pushes riff-kept/ITEM-ID8"]
+//!     P -- "the push fails" --> S
+//!     P --> D
 //!     C -- no --> D["riff removes the folder and its lock, and says why"]
 //! ```
 //!
@@ -79,7 +91,7 @@
 //! [`World::fate`]: crate::wave::World::fate
 //! [`World::merged_in`]: crate::wave::World::merged_in
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -520,6 +532,222 @@ fn repo_of(clone: &Path) -> Option<String> {
     Some(format!("{owner}/{name}"))
 }
 
+/// The prefix of the branches of `origin` that hold the leftover work of
+/// the kept folders (01M5NVKNGZPK0GG7B7ZWBS0DFE).
+pub const KEPT_PREFIX: &str = "riff-kept/";
+
+/// The days after which the sweep deletes a branch of [`KEPT_PREFIX`].
+pub const KEPT_DAYS: u64 = 30;
+
+/// The branch of `origin` for the leftover work of the folder `folder`:
+/// `riff-kept/ITEM-ID8`.
+///
+/// ```
+/// use std::path::Path;
+///
+/// let folder = Path::new("/s/issue-12-1a2b3c4d");
+/// assert_eq!(riff::daemon::sweep::kept_branch(folder), "riff-kept/issue-12-1a2b3c4d");
+/// ```
+pub fn kept_branch(folder: &Path) -> String {
+    let name = folder.file_name().unwrap_or_default().to_string_lossy();
+    format!("{KEPT_PREFIX}{name}")
+}
+
+/// What [`push_kept`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pushed {
+    /// The branch of `origin` that got the work, or `None` when the clone
+    /// had nothing to push.
+    pub branch: Option<String>,
+    /// The files that git does not track: they go with the folder.
+    pub lost: usize,
+}
+
+/// Pushes the leftover work of the clone `clone` to the branch `branch`
+/// of `origin`: the commits of `HEAD` that `origin` has not, and the
+/// changes of the tracked files (`git add -u`) in one more commit. It
+/// never pushes a file that git does not track: a scratch file or a log
+/// can hold a secret. A clone with only such files pushes nothing. A
+/// commit on another local branch than `HEAD` is an error: the folder
+/// stays.
+pub fn push_kept(clone: &Path, branch: &str) -> Result<Pushed> {
+    let git = |args: &[&str]| run::output("git", clone, args);
+    let count = |args: &[&str]| -> Result<usize> {
+        let n = git(args)?;
+        n.parse().map_err(|_| anyhow!("git rev-list gave {n:?}"))
+    };
+    let other = count(&[
+        "rev-list",
+        "--count",
+        "--branches",
+        "--not",
+        "HEAD",
+        "--remotes=origin",
+    ])?;
+    if other > 0 {
+        return Err(anyhow!(
+            "{other} {} on a local branch that is not HEAD",
+            if other == 1 {
+                "commit is"
+            } else {
+                "commits are"
+            }
+        ));
+    }
+    let ahead = count(&["rev-list", "--count", "HEAD", "--not", "--remotes=origin"])?;
+    let all = git(&["status", "--porcelain"])?.lines().count();
+    let tracked = git(&["status", "--porcelain", "--untracked-files=no"])?
+        .lines()
+        .count();
+    let lost = all - tracked;
+    if ahead == 0 && tracked == 0 {
+        return Ok(Pushed { branch: None, lost });
+    }
+    git(&["add", "-u"])?;
+    let who = ["-c", "user.name=riff", "-c", "user.email=riff@localhost"];
+    let message = format!("riff kept the work of {branch}");
+    git(&[
+        &who[..],
+        &["commit", "--no-verify", "--allow-empty", "-m", &message],
+    ]
+    .concat())?;
+    let target = format!("+HEAD:refs/heads/{branch}");
+    git(&["push", "--no-verify", "origin", &target])?;
+    Ok(Pushed {
+        branch: Some(branch.to_owned()),
+        lost,
+    })
+}
+
+/// Removes the folder `folder` of a session and its lock. A file of the
+/// container belongs to another user of the user namespace: riff removes
+/// it with `podman unshare` ([`crate::compile_cache::clear`]).
+fn remove_folder(folder: &Path) -> Result<()> {
+    if std::fs::remove_dir_all(folder).is_err() {
+        crate::compile_cache::clear(folder)?;
+        std::fs::remove_dir(folder)
+            .with_context(|| format!("cannot remove {}", folder.display()))?;
+    }
+    let _ = std::fs::remove_file(lock_of(folder));
+    Ok(())
+}
+
+/// A branch of [`KEPT_PREFIX`] of `origin` with the date of its tip, as
+/// seconds since 1970.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptBranch {
+    /// The name, `riff-kept/ITEM-ID8`.
+    pub name: String,
+    /// The date of the commit at its tip.
+    pub at: i64,
+}
+
+/// The branches of `branches` that are older than [`KEPT_DAYS`] at `now`.
+///
+/// ```
+/// use riff::daemon::sweep::{KeptBranch, old_kept};
+///
+/// let day = 86_400;
+/// let branches = [
+///     KeptBranch { name: "riff-kept/issue-1-00000001".into(), at: 0 },
+///     KeptBranch { name: "riff-kept/issue-2-00000002".into(), at: 31 * day },
+///     KeptBranch { name: "other/x".into(), at: 0 },
+/// ];
+/// let old = old_kept(&branches, 61 * day);
+/// assert_eq!(old, ["riff-kept/issue-1-00000001"]);
+/// ```
+pub fn old_kept(branches: &[KeptBranch], now: i64) -> Vec<String> {
+    let limit = now - (KEPT_DAYS as i64) * 86_400;
+    branches
+        .iter()
+        .filter(|b| b.name.starts_with(KEPT_PREFIX) && b.at < limit)
+        .map(|b| b.name.clone())
+        .collect()
+}
+
+/// The branches of [`KEPT_PREFIX`] of the repository `repo` with `gh`,
+/// each with the date of its tip.
+pub fn kept_branches_on(gh: &pr::Gh, repo: &str) -> Result<Vec<KeptBranch>> {
+    let refs = gh.run(
+        &[
+            "api",
+            &format!("repos/{repo}/git/matching-refs/heads/{KEPT_PREFIX}"),
+            "--paginate",
+            "--jq",
+            r#".[] | .ref + " " + .object.sha"#,
+        ],
+        None,
+    )?;
+    let mut all = Vec::new();
+    for line in refs.lines() {
+        let Some((name, sha)) = line.split_once(' ') else {
+            continue;
+        };
+        let date = gh.run(
+            &[
+                "api",
+                &format!("repos/{repo}/commits/{sha}"),
+                "--jq",
+                ".commit.committer.date",
+            ],
+            None,
+        )?;
+        let at = date_seconds(date.trim())
+            .ok_or_else(|| anyhow!("gh api repos/{repo}/commits/{sha}: bad date {date:?}"))?;
+        all.push(KeptBranch {
+            name: name.trim_start_matches("refs/heads/").to_owned(),
+            at,
+        });
+    }
+    Ok(all)
+}
+
+/// Seconds since 1970 of a UTC date `YYYY-MM-DDTHH:MM:SSZ`.
+///
+/// ```
+/// use riff::daemon::sweep::date_seconds;
+///
+/// assert_eq!(date_seconds("1970-01-02T00:00:01Z"), Some(86_401));
+/// assert_eq!(date_seconds("2026-10-24T12:00:00Z"), Some(1_792_843_200));
+/// assert_eq!(date_seconds("later"), None);
+/// ```
+pub fn date_seconds(date: &str) -> Option<i64> {
+    let (day, time) = date.strip_suffix('Z')?.split_once('T')?;
+    let mut d = day.split('-').map(|n| n.parse::<i64>().ok());
+    let (y, m, d) = (d.next()??, d.next()??, d.next()??);
+    let mut t = time.split(':').map(|n| n.parse::<i64>().ok());
+    let (h, mi, s) = (t.next()??, t.next()??, t.next()??);
+    // Days from civil, after Howard Hinnant.
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + h * 3600 + mi * 60 + s)
+}
+
+/// Deletes each branch of [`KEPT_PREFIX`] of `repo` that is older than
+/// [`KEPT_DAYS`] with `gh`, and gives their names.
+pub fn delete_old_kept_on(gh: &pr::Gh, repo: &str) -> Result<Vec<String>> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let old = old_kept(&kept_branches_on(gh, repo)?, now);
+    for name in &old {
+        gh.run(
+            &[
+                "api",
+                "-X",
+                "DELETE",
+                &format!("repos/{repo}/git/refs/heads/{name}"),
+            ],
+            None,
+        )?;
+    }
+    Ok(old)
+}
+
 /// Runs `work` on a thread for blocking work: git, `gh` and the removal
 /// of a folder.
 async fn blocking<T: Send + 'static>(
@@ -586,6 +814,10 @@ pub struct Swept {
     /// holds work that is not on `origin`: the lead gets a note
     /// (01M57D3FEJPHD962GW0H82N8E6).
     pub work: Option<String>,
+    /// The repository whose lead gets this line in its digest: the folder
+    /// went with leftover work (pushed, or files that git does not
+    /// track), or the sweep deleted an old `riff-kept` branch.
+    pub digest: Option<String>,
 }
 
 impl<R: Runtime + 'static> Daemon<R> {
@@ -626,11 +858,38 @@ impl<R: Runtime + 'static> Daemon<R> {
             .collect();
         folders.sort();
         let mut swept = Vec::new();
+        let mut repos = BTreeSet::new();
         for folder in folders {
-            match self.sweep_folder(&folder, repo).await {
+            match self.sweep_folder(&folder, repo, &mut repos).await {
                 Ok(Some(line)) => swept.push(line),
                 Ok(None) => {}
                 Err(e) => eprintln!("riff daemon: {e:#}"),
+            }
+        }
+        for repo in repos {
+            match self.world.delete_old_kept(&repo).await {
+                Ok(names) => swept.extend(names.into_iter().map(|name| Swept {
+                    line: text::swept_branch_deleted(&name, KEPT_DAYS),
+                    folder: PathBuf::from(name),
+                    kept: false,
+                    work: None,
+                    digest: Some(repo.clone()),
+                })),
+                Err(e) => eprintln!("riff daemon: {repo}: {e:#}"),
+            }
+        }
+        let mut digests: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for swept in &swept {
+            if let Some(repo) = &swept.digest {
+                digests
+                    .entry(repo.clone())
+                    .or_default()
+                    .push(swept.line.clone());
+            }
+        }
+        for (repo, lines) in digests {
+            if let Some(note) = text::daemon_kept_digest(&lines) {
+                self.news.push(&repo, note);
             }
         }
         swept
@@ -666,7 +925,12 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// Sweeps the folder `folder`: why it went, or why it stays when its
     /// work is over. `None` when it stays and its work is not over.
-    async fn sweep_folder(&self, folder: &Path, only: Option<&str>) -> Result<Option<Swept>> {
+    async fn sweep_folder(
+        &self,
+        folder: &Path,
+        only: Option<&str>,
+        repos: &mut BTreeSet<String>,
+    ) -> Result<Option<Swept>> {
         let Some(item) = folder
             .file_name()
             .and_then(|n| n.to_str())
@@ -687,12 +951,14 @@ impl<R: Runtime + 'static> Daemon<R> {
         if only.is_some_and(|only| only != repo) {
             return Ok(None);
         }
+        repos.insert(repo.clone());
         let kept = |line: String, work: Option<String>| {
             Some(Swept {
                 folder: folder.to_owned(),
                 line,
                 kept: true,
                 work,
+                digest: None,
             })
         };
         // A fault of the forge, for example a `gh` with no answer in
@@ -720,22 +986,41 @@ impl<R: Runtime + 'static> Daemon<R> {
             return Ok(None);
         };
         let clone = folder.join("clone");
-        if let Some(why) = blocking(move || Ok(Local::of(&clone).why())).await? {
-            return Ok(kept(text::swept_kept(folder, &over, &why), Some(repo)));
+        let local = blocking(move || Ok(Local::of(&clone))).await?;
+        let mut line = text::swept(folder, &over);
+        let mut digest = None;
+        match local {
+            Local::None => {}
+            Local::Unknown(_) => {
+                let why = local.why().unwrap_or_default();
+                return Ok(kept(text::swept_kept(folder, &over, &why), Some(repo)));
+            }
+            Local::Work { .. } => {
+                let (clone, name) = (folder.join("clone"), kept_branch(folder));
+                match blocking(move || push_kept(&clone, &name)).await {
+                    Ok(Pushed {
+                        branch: Some(branch),
+                        lost,
+                    }) => line = text::swept_pushed(folder, &over, &branch, lost),
+                    Ok(Pushed { branch: None, lost }) => {
+                        line = text::swept_untracked(folder, &over, lost);
+                    }
+                    Err(e) => {
+                        let line = text::swept_push_failed(folder, &over, &format!("{e:#}"));
+                        return Ok(kept(line, Some(repo)));
+                    }
+                }
+                digest = Some(repo);
+            }
         }
         let gone = folder.to_owned();
-        blocking(move || {
-            std::fs::remove_dir_all(&gone)
-                .with_context(|| format!("cannot remove {}", gone.display()))?;
-            let _ = std::fs::remove_file(lock_of(&gone));
-            Ok(())
-        })
-        .await?;
+        blocking(move || remove_folder(&gone)).await?;
         Ok(Some(Swept {
             folder: folder.to_owned(),
-            line: text::swept(folder, &over),
+            line,
             kept: false,
             work: None,
+            digest,
         }))
     }
 
@@ -799,7 +1084,45 @@ pub(crate) mod tests {
     fn folder(here: &Here, name: &str) -> PathBuf {
         let folder = here.daemon.sessions_dir().join(name);
         origin(&folder.join("clone"), "https://github.com/o/r.git");
+        // The push goes to a bare repository in place of GitHub.
+        let key = format!("url.{}.pushInsteadOf", bare(here).display());
+        git(
+            &folder.join("clone"),
+            &["config", &key, "https://github.com/o/r.git"],
+        );
         folder
+    }
+
+    /// The bare repository that plays `origin` for the pushes of the sweep.
+    fn bare(here: &Here) -> PathBuf {
+        let bare = here.root.path().join("origin.git");
+        if !bare.exists() {
+            git(here.root.path(), &["init", "-q", "--bare", "origin.git"]);
+        }
+        bare
+    }
+
+    /// The branch `name` of the bare repository: its files, or `None`
+    /// when it has no such branch.
+    fn pushed(here: &Here, name: &str) -> Option<Vec<String>> {
+        let bare = bare(here);
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&bare)
+            .args([
+                "ls-tree",
+                "-r",
+                "--name-only",
+                &format!("refs/heads/{name}"),
+            ])
+            .output()
+            .unwrap();
+        out.status.success().then(|| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        })
     }
 
     /// Runs git in `dir` with no config of the person, and gives its
@@ -910,12 +1233,13 @@ pub(crate) mod tests {
         assert!(runs.exists() && open.exists());
     }
 
-    /// 01M53S7WAXD46YPN0DR96XSTMG: a folder whose work is over stays
-    /// while its clone has a file that is not committed, or a commit that
-    /// no branch of `origin` has, or when git cannot read the clone.
+    /// 01M5NVKNGZPK0GG7B7ZWBS0DFE: a folder whose work is over goes with
+    /// its leftover work on the branch `riff-kept/ITEM-ID8` of `origin`:
+    /// commits and changes of tracked files, never an untracked file.
+    /// A clone that riff cannot push or read stays, and
     /// `riff daemon sweep` says why.
     #[tokio::test]
-    async fn a_clone_with_work_that_is_not_pushed_stays_and_riff_daemon_sweep_says_why() {
+    async fn the_leftover_work_of_a_folder_goes_to_a_branch_and_the_folder_goes() {
         let merged = Fate::Merged {
             pull: 43,
             commit: "c43".into(),
@@ -928,76 +1252,102 @@ pub(crate) mod tests {
             (4, Fate::IssueClosed),
             (5, Fate::Closed { pull: 45 }),
             (6, Fate::Closed { pull: 46 }),
+            (7, Fate::Closed { pull: 47 }),
+            (8, Fate::Stays),
         ])
         .await;
-        // Each file committed, and each commit on origin: it goes.
-        let pushed = folder(&here, "issue-1-00000001");
-        // A file that is not committed.
-        let changed = folder(&here, "issue-2-00000002");
-        std::fs::write(changed.join("clone/notes.md"), "not committed").unwrap();
-        // A commit on the branch of the item that the session did not
-        // push, on a branch with an older merged pull request.
-        let ahead = folder(&here, "issue-3-00000003");
+        // Each file committed, and each commit on origin: it goes, with
+        // no branch.
+        let clean = folder(&here, "issue-1-00000001");
+        // Only a file that git does not track: it goes, with no branch.
+        let untracked = folder(&here, "issue-2-00000002");
+        std::fs::write(untracked.join("clone/notes.md"), "scratch").unwrap();
+        // A change of a tracked file, and a file that git does not track.
+        let changed = folder(&here, "issue-3-00000003");
+        let clone = changed.join("clone");
+        std::fs::write(clone.join("tracked.md"), "one").unwrap();
+        git(&clone, &["add", "tracked.md"]);
+        git(&clone, &["commit", "-q", "-m", "track"]);
+        git(&clone, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        std::fs::write(clone.join("tracked.md"), "two").unwrap();
+        std::fs::write(clone.join("secret.log"), "token").unwrap();
+        // Two commits that origin has not, on the branch of the item.
+        let ahead = folder(&here, "issue-4-00000004");
         let clone = ahead.join("clone");
-        git(&clone, &["switch", "-q", "-c", "worktree-issue-3"]);
-        git(&clone, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(&clone, &["switch", "-q", "-c", "worktree-issue-4"]);
+        std::fs::write(clone.join("work.md"), "work").unwrap();
+        git(&clone, &["add", "work.md"]);
+        git(&clone, &["commit", "-q", "-m", "one"]);
         git(&clone, &["commit", "-q", "--allow-empty", "-m", "two"]);
-        // A commit on another local branch.
-        let other = folder(&here, "issue-4-00000004");
+        // A commit on another local branch than HEAD: the folder stays.
+        let other = folder(&here, "issue-5-00000005");
         let clone = other.join("clone");
         git(&clone, &["switch", "-q", "-c", "spare"]);
         git(&clone, &["commit", "-q", "--allow-empty", "-m", "spare"]);
         git(&clone, &["switch", "-q", "main"]);
-        // The session pushed its branch: origin has each commit.
-        let branch = folder(&here, "issue-5-00000005");
-        let clone = branch.join("clone");
-        git(&clone, &["switch", "-q", "-c", "worktree-issue-5"]);
-        git(&clone, &["commit", "-q", "--allow-empty", "-m", "work"]);
-        git(
-            &clone,
-            &["update-ref", "refs/remotes/origin/worktree-issue-5", "HEAD"],
-        );
         // git cannot read the clone: a bad index.
         let broken = folder(&here, "issue-6-00000006");
         std::fs::write(broken.join("clone/.git/index"), "not an index").unwrap();
+        // The push fails: no such remote path.
+        let denied = folder(&here, "issue-7-00000007");
+        let section = format!("url.{}", bare(&here).display());
+        git(
+            &denied.join("clone"),
+            &["config", "--remove-section", &section],
+        );
+        git(
+            &denied.join("clone"),
+            &["commit", "-q", "--allow-empty", "-m", "x"],
+        );
+        git(
+            &denied.join("clone"),
+            &[
+                "config",
+                "url.file:///nowhere/x.pushInsteadOf",
+                "https://github.com/o/r.git",
+            ],
+        );
+        // The item is open: the folder stays, with its work.
+        let open = folder(&here, "issue-8-00000008");
+        std::fs::write(open.join("clone/notes.md"), "scratch").unwrap();
 
         let mut said = Vec::new();
         ask_done(&here.dir, Ask::Sweep, |line| said.push(line.to_owned()))
             .await
             .unwrap();
 
-        assert!(!pushed.exists() && !branch.exists());
-        for kept in [&changed, &ahead, &other, &broken] {
+        for gone in [&clean, &untracked, &changed, &ahead] {
+            assert!(!gone.exists(), "{}", gone.display());
+        }
+        for kept in [&other, &broken, &denied, &open] {
             assert!(kept.exists(), "{}", kept.display());
         }
         let closed = |n: u64| format!("the pull request #{n} closed with no merge");
-        assert_eq!(said.len(), 6, "{said:#?}");
-        assert_eq!(said[0], text::swept(&pushed, &closed(41)));
-        assert_eq!(
-            said[1],
-            text::swept_kept(
-                &changed,
-                &closed(42),
-                "its clone has 1 file that is not committed"
-            )
-        );
+        assert_eq!(said.len(), 7, "{said:#?}");
+        assert_eq!(said[0], text::swept(&clean, &closed(41)));
+        assert_eq!(said[1], text::swept_untracked(&untracked, &closed(42), 1));
         assert_eq!(
             said[2],
-            text::swept_kept(
-                &ahead,
+            text::swept_pushed(
+                &changed,
                 "the pull request #43 merged",
-                "its clone has 2 commits that are not pushed"
+                "riff-kept/issue-3-00000003",
+                1
             )
         );
+        let over = "the issue #4 is closed, and its branch has no pull request";
         assert_eq!(
             said[3],
-            text::swept_kept(
+            text::swept_pushed(&ahead, over, "riff-kept/issue-4-00000004", 0)
+        );
+        assert_eq!(
+            said[4],
+            text::swept_push_failed(
                 &other,
-                "the issue #4 is closed, and its branch has no pull request",
-                "its clone has 1 commit that is not pushed"
+                &closed(45),
+                "1 commit is on a local branch that is not HEAD"
             )
         );
-        assert_eq!(said[4], text::swept(&branch, &closed(45)));
         let unread = format!(
             "riff kept the folder {}: {}, but riff cannot read the work of its clone: git status \
              --porcelain: ",
@@ -1005,40 +1355,97 @@ pub(crate) mod tests {
             closed(46)
         );
         assert!(said[5].starts_with(&unread), "{}", said[5]);
-        // The issue of a merged pull request gets its comment, also when
-        // the folder stays: the item is not free work again.
+        assert!(
+            said[6].starts_with(&text::swept_push_failed(&denied, &closed(47), "git push")[..60]),
+            "{}",
+            said[6]
+        );
+        assert!(
+            said[6].contains("could not push its work: git push"),
+            "{}",
+            said[6]
+        );
+
+        // The branches have the commits and the tracked changes, and no
+        // file that git does not track.
+        assert_eq!(pushed(&here, "riff-kept/issue-1-00000001"), None);
+        assert_eq!(pushed(&here, "riff-kept/issue-2-00000002"), None);
+        assert_eq!(
+            pushed(&here, "riff-kept/issue-3-00000003").unwrap(),
+            ["tracked.md"]
+        );
+        let bare = bare(&here);
+        assert_eq!(
+            git(
+                &bare,
+                &["show", "refs/heads/riff-kept/issue-3-00000003:tracked.md"]
+            ),
+            "two"
+        );
+        assert!(
+            pushed(&here, "riff-kept/issue-4-00000004")
+                .unwrap()
+                .contains(&"work.md".to_owned())
+        );
+        // The issue of a merged pull request gets its comment.
         assert_eq!(
             server.comments(),
             [("o/r".to_owned(), 3, 43, "c43".to_owned())]
         );
-
-        // The session of issue-3 pushed after all: the next sweep removes
-        // its folder.
-        let clone = ahead.join("clone");
-        git(
-            &clone,
-            &["update-ref", "refs/remotes/origin/worktree-issue-3", "HEAD"],
-        );
-        let swept = here.daemon.sweep(None).await;
-        assert!(!ahead.exists());
-        assert!(
-            swept
-                .iter()
-                .any(|s| !s.kept && s.line == text::swept(&ahead, "the pull request #43 merged")),
-            "{swept:#?}"
-        );
+        // The lead gets one digest of what the sweep pushed and removed.
+        let note = here.daemon.news.take("o/r");
+        assert_eq!(note.len(), 1, "{note:#?}");
+        assert!(note[0].starts_with("riff daemon: the sweep moved the leftover work"));
+        assert_eq!(note[0].lines().count(), 1 + 3, "{}", note[0]);
     }
 
-    /// The log of the daemon gets the line of a kept folder one time,
-    /// and again when the reason changes (01M53S7WAXD46YPN0DR96XSTMG).
+    /// The sweep never touches the folder of a session that runs.
+    #[tokio::test]
+    async fn the_sweep_does_not_push_the_work_of_a_session_that_runs() {
+        let (here, _) = here(&[
+            (1, Fate::Closed { pull: 41 }),
+            (2, Fate::Closed { pull: 42 }),
+        ])
+        .await;
+        let in_job = folder(&here, "issue-1-00000001");
+        std::fs::write(in_job.join("clone/notes.md"), "scratch").unwrap();
+        git(
+            &in_job.join("clone"),
+            &["commit", "-q", "--allow-empty", "-m", "x"],
+        );
+        let job = here.daemon.in_job("issue-1");
+        let locked = folder(&here, "issue-2-00000002");
+        git(
+            &locked.join("clone"),
+            &["commit", "-q", "--allow-empty", "-m", "x"],
+        );
+        let lock = hold(&locked).unwrap();
+
+        assert!(here.daemon.sweep(None).await.is_empty());
+
+        assert!(in_job.exists() && locked.exists());
+        assert_eq!(pushed(&here, "riff-kept/issue-1-00000001"), None);
+        assert_eq!(pushed(&here, "riff-kept/issue-2-00000002"), None);
+        assert!(here.daemon.news.take("o/r").is_empty());
+        drop((job, lock));
+    }
+
+    /// The log gets the line of a kept folder one time, and again when
+    /// the reason changes (01M53S7WAXD46YPN0DR96XSTMG).
     #[tokio::test]
     async fn the_log_gets_the_line_of_a_kept_folder_one_time() {
         let (here, _) = here(&[(1, Fate::Closed { pull: 41 })]).await;
         let kept = folder(&here, "issue-1-00000001");
         let clone = kept.join("clone");
+        git(&clone, &["switch", "-q", "-c", "spare"]);
         git(&clone, &["commit", "-q", "--allow-empty", "-m", "one"]);
+        git(&clone, &["switch", "-q", "main"]);
         let over = "the pull request #41 closed with no merge";
-        let one = text::swept_kept(&kept, over, "its clone has 1 commit that is not pushed");
+        let one = text::swept_push_failed(
+            &kept,
+            over,
+            "1 commit is on a local branch that is not HEAD",
+        );
 
         assert_eq!(
             here.daemon.sweep_news(None).await,
@@ -1057,16 +1464,50 @@ pub(crate) mod tests {
             "riff daemon sweep says it each time"
         );
 
+        git(&clone, &["switch", "-q", "spare"]);
         git(&clone, &["commit", "-q", "--allow-empty", "-m", "two"]);
-        let two = text::swept_kept(&kept, over, "its clone has 2 commits that are not pushed");
+        git(&clone, &["switch", "-q", "main"]);
+        let two = text::swept_push_failed(
+            &kept,
+            over,
+            "2 commits are on a local branch that is not HEAD",
+        );
         assert_eq!(here.daemon.sweep_news(None).await, [two]);
 
-        git(&clone, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&clone, &["update-ref", "refs/remotes/origin/main", "spare"]);
         assert_eq!(
             here.daemon.sweep_news(None).await,
             [text::swept(&kept, over)]
         );
         assert!(!kept.exists());
+    }
+
+    /// 01M5NVKNPD938ASWY4TD5BGK67: the sweep deletes each branch
+    /// `riff-kept/*` older than 30 days, and tells the lead.
+    #[tokio::test]
+    async fn the_sweep_deletes_the_kept_branches_older_than_30_days() {
+        let day = 86_400;
+        let now = date_seconds("2026-10-24T12:00:00Z").unwrap();
+        let kept = |name: &str, days: i64| KeptBranch {
+            name: name.to_owned(),
+            at: now - days * day,
+        };
+        let server = Server::with_fates(&[(1, Fate::Closed { pull: 41 })]).with_kept(vec![
+            kept("riff-kept/issue-7-00000007", 31),
+            kept("riff-kept/issue-8-00000008", 29),
+        ]);
+        let (here, server) = with(server).await;
+        folder(&here, "issue-1-00000001");
+
+        let swept = here.daemon.sweep(None).await;
+
+        assert_eq!(server.kept_left(), ["riff-kept/issue-8-00000008"]);
+        assert_eq!(
+            swept.last().unwrap().line,
+            text::swept_branch_deleted("riff-kept/issue-7-00000007", 30)
+        );
+        let note = here.daemon.sweep_news(None).await;
+        assert!(note.is_empty(), "{note:?}");
     }
 
     /// 01M53S7WGM9DQV2DXFHBRSMTP8: a `gh` that gives no answer stops at
@@ -1104,12 +1545,14 @@ esac
                     line: text::swept_forge_failed(&hangs, &text::gh_no_answer(call, limit)),
                     kept: true,
                     work: None,
+                    digest: None,
                 },
                 Swept {
                     folder: closed.clone(),
                     line: text::swept(&closed, "the pull request #42 closed with no merge"),
                     kept: false,
                     work: None,
+                    digest: None,
                 },
             ]
         );

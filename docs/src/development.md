@@ -1031,41 +1031,54 @@ It prints each folder that the daemon removed, with the reason:
 riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge.
 ```
 
-### When a folder with work in its clone stays
+### Where the work of a removed folder goes
 
-The daemon does not remove a folder when its clone holds work that is
-only there:
+A folder can hold work that `origin` has not: a commit that no branch
+of `origin` has, or a change of a tracked file. For example, the
+session ended before it pushed. Before the daemon removes the folder,
+it pushes that work to the branch `riff-kept/ITEM-ID8` of `origin`, for
+example `riff-kept/issue-735-7788e301`. You do nothing.
 
-- a file that is not committed, or
-- a commit that no branch of `origin` has. For example, the session
-  ended before it pushed, and an older pull request of its branch
-  merged.
+- The branch has the commits and the changes of tracked files.
+- It never has a file that git does not track: a scratch file or a log
+  can hold a secret. These files go with the folder.
+- The daemon never touches the folder of a session that runs, or of an
+  item with an open pull request.
+- The daemon deletes each branch `riff-kept/*` after 30 days.
 
-`riff daemon sweep` prints each folder that stays for this reason, and
-the log of the daemon prints it one time:
+The daemon posts one note to the lead with what it pushed and removed.
+`riff daemon sweep` prints it too:
 
 ```text
-riff kept the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge, but its clone has 1 commit that is not pushed. Push the work, or remove the folder.
+riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge. Its work is on the branch riff-kept/issue-735-7788e301 of origin.
 ```
 
-Look at the work in the clone:
+### Get back the work of a removed folder
+
+Fetch the branch within 30 days, and look at it:
+
+```sh
+git fetch origin riff-kept/issue-735-7788e301
+git log FETCH_HEAD --not origin/main
+git switch -c rescue FETCH_HEAD
+```
+
+### When a folder stays
+
+The daemon keeps a folder when the push fails (for example, no network
+or no right to push), when a commit is on a local branch that is not
+`HEAD`, or when git cannot read the clone. `riff daemon sweep` prints
+each such folder with the reason, and the next sweep tries again:
+
+```text
+riff kept the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge, but riff could not push its work: git push: denied. The next sweep tries again.
+```
+
+Look at the work in the clone, and push it by hand:
 
 ```sh
 git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone status
-git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone log --branches --not --remotes=origin
-```
-
-To keep the work, commit it and push its branch. The next sweep then
-removes the folder:
-
-```sh
 git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone push -u origin HEAD
-```
-
-To drop the work, remove the folder:
-
-```sh
-rm -rf ~/.local/share/riff/sessions/issue-735-7788e301
 ```
 
 ### What the container gets
