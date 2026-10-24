@@ -6261,6 +6261,17 @@ part when they merge.
   for work items, --effort-lead and --effort-verify, also with --host.
   riff refuses a level that Claude Code does not know: low, medium,
   high, xhigh and max. A session that runs keeps its effort.
+- **01M5QVCAXF5ANTTT46XHR6SF7H** When the sweep of
+  01M5NVKNGZPK0GG7B7ZWBS0DFE finds a folder whose clone has commits on a
+  local branch that is not HEAD, and no branch of origin has them, it
+  pushes each such branch to the branch riff-kept/ITEM-ID8-BRANCH of
+  origin, with the same rule as for HEAD: the commits and the tracked
+  files, never a file that git does not track. Then it removes the
+  folder. A commit on a local branch that is not HEAD no longer keeps
+  the folder. The daemon tells the lead one time, in the digest note of
+  01M5NVKNS35SC8P514GYDJSRQM, with each branch that it pushed. It posts
+  no note at the next sweep. This supersedes 01M5NVKNGZPK0GG7B7ZWBS0DFE
+  in part.
 
 ### riff relay
 

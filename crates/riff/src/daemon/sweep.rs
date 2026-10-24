@@ -41,13 +41,14 @@
 //! the folder ([`push_kept`], 01M5NVKNGZPK0GG7B7ZWBS0DFE). The push has
 //! the commits of `HEAD` that `origin` has not, and the changes of the
 //! tracked files in one more commit. It never has a file that git does
-//! not track. The folder stays when the push fails, when a commit is on a
-//! local branch that is not `HEAD`, or when git cannot read the clone.
-//! riff says why in `riff daemon sweep`, and one time in the log of the
-//! daemon ([`Daemon::sweep_news`]).
+//! not track. A commit on another local branch than `HEAD` goes to the
+//! branch `riff-kept/ITEM-ID8-BRANCH`, one for each such branch
+//! (01M5QVCAXF5ANTTT46XHR6SF7H). The folder stays when the push fails, or
+//! when git cannot read the clone. riff says why in `riff daemon sweep`,
+//! and one time in the log of the daemon ([`Daemon::sweep_news`]).
 //!
 //! After each sweep the daemon posts one digest note to the lead of the
-//! repository: what it pushed, and what it removed
+//! repository: what it pushed, with each branch, and what it removed
 //! (01M5NVKNS35SC8P514GYDJSRQM). It deletes each branch `riff-kept/*`
 //! whose tip is older than [`KEPT_DAYS`] days (01M5NVKNPD938ASWY4TD5BGK67).
 //!
@@ -74,7 +75,7 @@
 //!     T -- "no answer of gh in GH_LIMIT" --> S["it stays, and riff says why"]
 //!     T -- "merged, closed, or the issue closed" --> C{"its clone: a tracked change,<br/>or a commit on no branch of origin?"}
 //!     C -- "git cannot say" --> S
-//!     C -- yes --> P["riff pushes riff-kept/ITEM-ID8"]
+//!     C -- yes --> P["riff pushes riff-kept/ITEM-ID8<br/>and riff-kept/ITEM-ID8-BRANCH<br/>for each other local branch"]
 //!     P -- "the push fails" --> S
 //!     P --> D
 //!     C -- no --> D["riff removes the folder and its lock, and says why"]
@@ -556,67 +557,115 @@ pub fn kept_branch(folder: &Path) -> String {
 /// What [`push_kept`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pushed {
-    /// The branch of `origin` that got the work, or `None` when the clone
+    /// The branches of `origin` that got the work: the one of `HEAD`
+    /// first, then one for each other local branch. Empty when the clone
     /// had nothing to push.
-    pub branch: Option<String>,
+    pub branches: Vec<String>,
     /// The files that git does not track: they go with the folder.
     pub lost: usize,
 }
 
-/// Pushes the leftover work of the clone `clone` to the branch `branch`
-/// of `origin`: the commits of `HEAD` that `origin` has not, and the
-/// changes of the tracked files (`git add -u`) in one more commit. It
-/// never pushes a file that git does not track: a scratch file or a log
-/// can hold a secret. A clone with only such files pushes nothing. A
-/// commit on another local branch than `HEAD` is an error: the folder
-/// stays.
+/// The local branches of the clone `clone` with commits that neither
+/// `HEAD` nor a branch of `origin` has, as `refs/heads/NAME`.
+fn other_branches(clone: &Path) -> Result<Vec<String>> {
+    let git = |args: &[&str]| run::output("git", clone, args);
+    let mut other = Vec::new();
+    for name in git(&["for-each-ref", "--format=%(refname)", "refs/heads"])?.lines() {
+        let n = git(&[
+            "rev-list",
+            "--count",
+            name,
+            "--not",
+            "HEAD",
+            "--remotes=origin",
+        ])?;
+        let n: usize = n.parse().map_err(|_| anyhow!("git rev-list gave {n:?}"))?;
+        if n > 0 {
+            other.push(name.to_owned());
+        }
+    }
+    Ok(other)
+}
+
+/// Pushes the leftover work of the clone `clone` to `origin`. `HEAD`
+/// goes to the branch `branch`: its commits that `origin` has not, and the
+/// changes of the tracked files (`git add -u`) in one more commit. Each
+/// other local branch with commits that `origin` has not goes to
+/// `BRANCH-NAME`, for example `riff-kept/issue-12-1a2b3c4d-spare`
+/// (01M5QVCAXF5ANTTT46XHR6SF7H). It never pushes a file that git does not
+/// track: a scratch file or a log can hold a secret. A clone with only
+/// such files pushes nothing.
+///
+/// ```
+/// use riff::daemon::sweep::{Pushed, push_kept};
+///
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let mut git = std::process::Command::new("git");
+///     git.arg("-C").arg(dir).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null");
+///     for (key, value) in [("NAME", "t"), ("EMAIL", "t@t")] {
+///         git.env(format!("GIT_AUTHOR_{key}"), value).env(format!("GIT_COMMITTER_{key}"), value);
+///     }
+///     let out = git.output().unwrap();
+///     assert!(out.status.success(), "git {args:?}: {out:?}");
+/// };
+/// let root = tempfile::tempdir()?;
+/// let (origin, clone) = (root.path().join("origin"), root.path().join("clone"));
+/// git(root.path(), &["init", "-q", "--bare", origin.to_str().unwrap()]);
+/// git(root.path(), &["clone", "-q", origin.to_str().unwrap(), clone.to_str().unwrap()]);
+/// git(&clone, &["commit", "-q", "--allow-empty", "-m", "first"]);
+/// git(&clone, &["push", "-q", "origin", "HEAD:refs/heads/main"]);
+/// git(&clone, &["fetch", "-q", "origin"]);
+/// // A commit on a branch that is not HEAD.
+/// git(&clone, &["switch", "-q", "-c", "spare"]);
+/// git(&clone, &["commit", "-q", "--allow-empty", "-m", "spare"]);
+/// git(&clone, &["switch", "-q", "-C", "main", "origin/main"]);
+/// let pushed = push_kept(&clone, "riff-kept/issue-12-1a2b3c4d")?;
+/// assert_eq!(pushed, Pushed { branches: vec!["riff-kept/issue-12-1a2b3c4d-spare".into()], lost: 0 });
+/// // The next call finds nothing: `origin` has the commit.
+/// assert_eq!(push_kept(&clone, "riff-kept/issue-12-1a2b3c4d")?.branches, Vec::<String>::new());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 pub fn push_kept(clone: &Path, branch: &str) -> Result<Pushed> {
     let git = |args: &[&str]| run::output("git", clone, args);
     let count = |args: &[&str]| -> Result<usize> {
         let n = git(args)?;
         n.parse().map_err(|_| anyhow!("git rev-list gave {n:?}"))
     };
-    let other = count(&[
-        "rev-list",
-        "--count",
-        "--branches",
-        "--not",
-        "HEAD",
-        "--remotes=origin",
-    ])?;
-    if other > 0 {
-        return Err(anyhow!(
-            "{other} {} on a local branch that is not HEAD",
-            if other == 1 {
-                "commit is"
-            } else {
-                "commits are"
-            }
-        ));
-    }
+    let other = other_branches(clone)?;
     let ahead = count(&["rev-list", "--count", "HEAD", "--not", "--remotes=origin"])?;
     let all = git(&["status", "--porcelain"])?.lines().count();
     let tracked = git(&["status", "--porcelain", "--untracked-files=no"])?
         .lines()
         .count();
     let lost = all - tracked;
-    if ahead == 0 && tracked == 0 {
-        return Ok(Pushed { branch: None, lost });
+    let mut branches = Vec::new();
+    let mut targets = Vec::new();
+    if ahead > 0 || tracked > 0 {
+        git(&["add", "-u"])?;
+        let who = ["-c", "user.name=riff", "-c", "user.email=riff@localhost"];
+        let message = format!("riff kept the work of {branch}");
+        git(&[
+            &who[..],
+            &["commit", "--no-verify", "--allow-empty", "-m", &message],
+        ]
+        .concat())?;
+        targets.push(format!("+HEAD:refs/heads/{branch}"));
+        branches.push(branch.to_owned());
     }
-    git(&["add", "-u"])?;
-    let who = ["-c", "user.name=riff", "-c", "user.email=riff@localhost"];
-    let message = format!("riff kept the work of {branch}");
-    git(&[
-        &who[..],
-        &["commit", "--no-verify", "--allow-empty", "-m", &message],
-    ]
-    .concat())?;
-    let target = format!("+HEAD:refs/heads/{branch}");
-    git(&["push", "--no-verify", "origin", &target])?;
-    Ok(Pushed {
-        branch: Some(branch.to_owned()),
-        lost,
-    })
+    for name in &other {
+        let name = name.trim_start_matches("refs/heads/");
+        let kept = format!("{branch}-{name}");
+        targets.push(format!("+refs/heads/{name}:refs/heads/{kept}"));
+        branches.push(kept);
+    }
+    if !targets.is_empty() {
+        let args = ["push", "--no-verify", "origin"]
+            .into_iter()
+            .chain(targets.iter().map(String::as_str))
+            .collect::<Vec<_>>();
+        git(&args)?;
+    }
+    Ok(Pushed { branches, lost })
 }
 
 /// Removes the folder `folder` of a session and its lock. A file of the
@@ -998,12 +1047,11 @@ impl<R: Runtime + 'static> Daemon<R> {
             Local::Work { .. } => {
                 let (clone, name) = (folder.join("clone"), kept_branch(folder));
                 match blocking(move || push_kept(&clone, &name)).await {
-                    Ok(Pushed {
-                        branch: Some(branch),
-                        lost,
-                    }) => line = text::swept_pushed(folder, &over, &branch, lost),
-                    Ok(Pushed { branch: None, lost }) => {
+                    Ok(Pushed { branches, lost }) if branches.is_empty() => {
                         line = text::swept_untracked(folder, &over, lost);
+                    }
+                    Ok(Pushed { branches, lost }) => {
+                        line = text::swept_pushed(folder, &over, &branches, lost);
                     }
                     Err(e) => {
                         let line = text::swept_push_failed(folder, &over, &format!("{e:#}"));
@@ -1320,11 +1368,14 @@ pub(crate) mod tests {
         git(&clone, &["add", "work.md"]);
         git(&clone, &["commit", "-q", "-m", "one"]);
         git(&clone, &["commit", "-q", "--allow-empty", "-m", "two"]);
-        // A commit on another local branch than HEAD: the folder stays.
+        // A commit on another local branch than HEAD: it goes to a branch
+        // of its own, and the folder goes.
         let other = folder(&here, "issue-5-00000005");
         let clone = other.join("clone");
         git(&clone, &["switch", "-q", "-c", "spare"]);
-        git(&clone, &["commit", "-q", "--allow-empty", "-m", "spare"]);
+        std::fs::write(clone.join("spare.md"), "spare").unwrap();
+        git(&clone, &["add", "spare.md"]);
+        git(&clone, &["commit", "-q", "-m", "spare"]);
         git(&clone, &["switch", "-q", "main"]);
         // git cannot read the clone: a bad index.
         let broken = folder(&here, "issue-6-00000006");
@@ -1357,10 +1408,10 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        for gone in [&clean, &untracked, &changed, &ahead] {
+        for gone in [&clean, &untracked, &changed, &ahead, &other] {
             assert!(!gone.exists(), "{}", gone.display());
         }
-        for kept in [&other, &broken, &denied, &open] {
+        for kept in [&broken, &denied, &open] {
             assert!(kept.exists(), "{}", kept.display());
         }
         let closed = |n: u64| format!("the pull request #{n} closed with no merge");
@@ -1372,21 +1423,22 @@ pub(crate) mod tests {
             text::swept_pushed(
                 &changed,
                 "the pull request #43 merged",
-                "riff-kept/issue-3-00000003",
+                &["riff-kept/issue-3-00000003".into()],
                 1
             )
         );
         let over = "the issue #4 is closed, and its branch has no pull request";
         assert_eq!(
             said[3],
-            text::swept_pushed(&ahead, over, "riff-kept/issue-4-00000004", 0)
+            text::swept_pushed(&ahead, over, &["riff-kept/issue-4-00000004".into()], 0)
         );
         assert_eq!(
             said[4],
-            text::swept_push_failed(
+            text::swept_pushed(
                 &other,
                 &closed(45),
-                "1 commit is on a local branch that is not HEAD"
+                &["riff-kept/issue-5-00000005-spare".into()],
+                0
             )
         );
         let unread = format!(
@@ -1428,6 +1480,13 @@ pub(crate) mod tests {
                 .unwrap()
                 .contains(&"work.md".to_owned())
         );
+        // The commit of another local branch has a branch of its own, and
+        // HEAD had no work: no branch for it.
+        assert_eq!(pushed(&here, "riff-kept/issue-5-00000005"), None);
+        assert_eq!(
+            pushed(&here, "riff-kept/issue-5-00000005-spare").unwrap(),
+            ["spare.md"]
+        );
         // The issue of a merged pull request gets its comment.
         assert_eq!(
             server.comments(),
@@ -1437,7 +1496,7 @@ pub(crate) mod tests {
         let note = here.daemon.news.take("o/r");
         assert_eq!(note.len(), 1, "{note:#?}");
         assert!(note[0].starts_with("riff daemon: the sweep moved the leftover work"));
-        assert_eq!(note[0].lines().count(), 1 + 3, "{}", note[0]);
+        assert_eq!(note[0].lines().count(), 1 + 4, "{}", note[0]);
     }
 
     /// The sweep never touches the folder of a session that runs.
@@ -1478,22 +1537,30 @@ pub(crate) mod tests {
         let (here, _) = here(&[(1, Fate::Closed { pull: 41 })]).await;
         let kept = folder(&here, "issue-1-00000001");
         let clone = kept.join("clone");
-        git(&clone, &["switch", "-q", "-c", "spare"]);
         git(&clone, &["commit", "-q", "--allow-empty", "-m", "one"]);
-        git(&clone, &["switch", "-q", "main"]);
+        // The push fails: no such remote path.
+        let section = format!("url.{}", bare(&here).display());
+        git(&clone, &["config", "--remove-section", &section]);
+        let nowhere = |path: &str| {
+            let key = format!("url.file:///nowhere/{path}.pushInsteadOf");
+            git(&clone, &["config", &key, "https://github.com/o/r.git"]);
+        };
+        nowhere("one");
         let over = "the pull request #41 closed with no merge";
-        let one = text::swept_push_failed(
-            &kept,
-            over,
-            "1 commit is on a local branch that is not HEAD",
-        );
 
-        assert_eq!(
-            here.daemon.sweep_news(None).await,
-            std::slice::from_ref(&one)
+        let one = here.daemon.sweep_news(None).await;
+        assert_eq!(one.len(), 1, "{one:#?}");
+        let head = format!(
+            "riff kept the folder {}: {over}, but riff could not push its work: git push",
+            kept.display()
         );
+        assert!(one[0].starts_with(&head), "{}", one[0]);
+        assert!(one[0].contains("/nowhere/one"), "{}", one[0]);
         // One note for the lead of the repository (01M57D3FEJPHD962GW0H82N8E6).
-        assert_eq!(here.daemon.news.take("o/r"), [text::daemon_kept_work(&one)]);
+        assert_eq!(
+            here.daemon.news.take("o/r"),
+            [text::daemon_kept_work(&one[0])]
+        );
         assert!(here.daemon.sweep_news(None).await.is_empty());
         assert!(
             here.daemon.news.take("o/r").is_empty(),
@@ -1501,26 +1568,90 @@ pub(crate) mod tests {
         );
         assert_eq!(
             lines(here.daemon.sweep(None).await),
-            [one],
+            one,
             "riff daemon sweep says it each time"
         );
 
-        git(&clone, &["switch", "-q", "spare"]);
-        git(&clone, &["commit", "-q", "--allow-empty", "-m", "two"]);
-        git(&clone, &["switch", "-q", "main"]);
-        let two = text::swept_push_failed(
-            &kept,
-            over,
-            "2 commits are on a local branch that is not HEAD",
+        git(
+            &clone,
+            &["config", "--remove-section", "url.file:///nowhere/one"],
         );
-        assert_eq!(here.daemon.sweep_news(None).await, [two]);
+        nowhere("two");
+        let two = here.daemon.sweep_news(None).await;
+        assert_eq!(two.len(), 1, "{two:#?}");
+        assert!(two[0].contains("/nowhere/two"), "{}", two[0]);
 
-        git(&clone, &["update-ref", "refs/remotes/origin/main", "spare"]);
+        git(
+            &clone,
+            &["config", "--remove-section", "url.file:///nowhere/two"],
+        );
+        let key = format!("url.{}.pushInsteadOf", bare(&here).display());
+        git(&clone, &["config", &key, "https://github.com/o/r.git"]);
+        let branch = ["riff-kept/issue-1-00000001".to_owned()];
         assert_eq!(
             here.daemon.sweep_news(None).await,
-            [text::swept(&kept, over)]
+            [text::swept_pushed(&kept, over, &branch, 0)]
         );
         assert!(!kept.exists());
+    }
+
+    /// 01M5QVCAXF5ANTTT46XHR6SF7H: the commits of each local branch that
+    /// is not HEAD go to `riff-kept/ITEM-ID8-BRANCH`, and the folder goes.
+    /// The lead gets one note with each branch, and no note at the next
+    /// sweep.
+    #[tokio::test]
+    async fn the_commits_of_other_local_branches_go_to_branches_and_the_folder_goes() {
+        let (here, _) = here(&[(1, Fate::Closed { pull: 41 })]).await;
+        let kept = folder(&here, "issue-1-00000001");
+        let clone = kept.join("clone");
+        let commit = |file: &str| {
+            std::fs::write(clone.join(file), file).unwrap();
+            git(&clone, &["add", file]);
+            git(&clone, &["commit", "-q", "-m", file]);
+        };
+        // Work on HEAD, the branch of the item.
+        git(&clone, &["switch", "-q", "-c", "worktree-issue-1"]);
+        commit("head.md");
+        // Two branches with commits that origin has not. A name can have a slash.
+        for (branch, file) in [("spare", "spare.md"), ("feature/x", "feature.md")] {
+            git(&clone, &["switch", "-q", "-c", branch, "main"]);
+            commit(file);
+        }
+        // A branch that HEAD has, and a branch that origin has: nothing to push.
+        git(&clone, &["branch", "behind", "main"]);
+        git(&clone, &["branch", "merged", "worktree-issue-1"]);
+        git(&clone, &["switch", "-q", "worktree-issue-1"]);
+
+        let swept = here.daemon.sweep_news(None).await;
+
+        assert!(!kept.exists(), "{swept:#?}");
+        let kept_at = |suffix: &str| format!("riff-kept/issue-1-00000001{suffix}");
+        let over = "the pull request #41 closed with no merge";
+        let branches = [kept_at(""), kept_at("-feature/x"), kept_at("-spare")];
+        assert_eq!(swept, [text::swept_pushed(&kept, over, &branches, 0)]);
+        assert!(swept[0].contains(
+            "Its work is on the branches riff-kept/issue-1-00000001, \
+             riff-kept/issue-1-00000001-feature/x and riff-kept/issue-1-00000001-spare of origin."
+        ));
+        assert_eq!(pushed(&here, &kept_at("")).unwrap(), ["head.md"]);
+        assert_eq!(pushed(&here, &kept_at("-spare")).unwrap(), ["spare.md"]);
+        assert_eq!(
+            pushed(&here, &kept_at("-feature/x")).unwrap(),
+            ["feature.md"]
+        );
+        for none in ["-behind", "-merged", "-main", "-worktree-issue-1"] {
+            assert_eq!(pushed(&here, &kept_at(none)), None, "{none}");
+        }
+        // One note for the lead, with each branch.
+        let note = here.daemon.news.take("o/r");
+        assert_eq!(note.len(), 1, "{note:#?}");
+        assert!(note[0].starts_with("riff daemon: the sweep moved the leftover work"));
+        assert!(note[0].contains(&kept_at("-spare")) && note[0].contains(&kept_at("-feature/x")));
+        assert!(here.daemon.sweep_news(None).await.is_empty());
+        assert!(
+            here.daemon.news.take("o/r").is_empty(),
+            "one note, not one at each sweep"
+        );
     }
 
     /// 01M5NVKNPD938ASWY4TD5BGK67: the sweep deletes each branch
