@@ -1470,7 +1470,12 @@ leave no background task. The daemon helps in two cases:
 
 ```mermaid
 flowchart LR
-    R["result of the session"] --> G{"an event within 60 s?"}
+    R["result of the session"] --> T{"does a background task run?"}
+    T -- "yes" --> Q{"an event within 30 min?"}
+    T -- "no" --> G{"an event within 60 s?"}
+    Q -- "yes" --> T
+    G -- "yes" --> T
+    Q -- "no" --> S
     G -- "no" --> S["the daemon stops the container, the item is free"]
     S --> P{"the branch is on origin?"}
     P -- "no, the clone has work" --> W["a WIP commit, pushed, one message to your lead"]
@@ -1480,6 +1485,13 @@ flowchart LR
 - After the result, the container has 60 seconds. When no event comes
   in that time, the daemon stops it, and frees the item. It does not
   wait 30 minutes.
+- A running background task holds the container. While `claude` has one
+  task or more, for example a `just check` in the background, the
+  container has 30 minutes, as for each other session. The end of the
+  task starts a new turn, and that turn can push. When the last task
+  ends, the 60 seconds start. A task that never ends costs the 30
+  minutes, and the session then has no push: the next case saves the
+  work.
 - When the branch of the item is not on `origin` and the clone has work,
   the daemon commits each change as a WIP commit, pushes the branch,
   and tells your lead the branch and the commit:
