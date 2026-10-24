@@ -292,7 +292,7 @@ pub async fn start_signed() -> Signed {
 /// a layer that the test needs, for example a header on each reply.
 pub async fn start_signed_with(wrap: impl FnOnce(axum::Router) -> axum::Router) -> Signed {
     let (listener, url) = listen().await;
-    start_signed_at(listener, &url, None).await
+    start_signed_at(listener, &url, None, wrap).await
 }
 
 /// The store that a server loads, and the timing of its lease.
@@ -308,6 +308,7 @@ pub async fn start_signed_at(
     listener: tokio::net::TcpListener,
     url: &str,
     loaded: Option<Loaded>,
+    wrap: impl FnOnce(axum::Router) -> axum::Router,
 ) -> Signed {
     let url = url.to_owned();
     let mut config = riff_server::auth::Config {
@@ -328,7 +329,7 @@ pub async fn start_signed_at(
     let calls = Calls::default();
     let refused = Calls::default();
     let (seen, noted) = (calls.clone(), refused.clone());
-    let router = service.router().layer(axum::middleware::from_fn(
+    let router = wrap(service.router()).layer(axum::middleware::from_fn(
         move |request: axum::extract::Request, next: axum::middleware::Next| {
             let (seen, noted) = (seen.clone(), noted.clone());
             async move {
@@ -343,8 +344,10 @@ pub async fn start_signed_at(
             }
         },
     ));
-    let router = wrap(router);
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    tokio::spawn(async move {
+        let service = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
+        axum::serve(listener, service).await.unwrap()
+    });
     let key = riff_client::device::key(&url).unwrap();
     let mut people = HashMap::new();
     for user in PEOPLE {

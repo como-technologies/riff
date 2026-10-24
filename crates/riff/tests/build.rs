@@ -77,16 +77,17 @@ async fn serve(router: axum::Router) -> String {
 }
 
 /// A real riff-server that names `build` in its replies.
-async fn real(build: Build) -> String {
-    serve(real_router(build)).await
+async fn real(build: Build) -> crate::common::Signed {
+    crate::common::start_signed_with(move |router| real_router(router, build)).await
 }
 
 /// The router of [`real`].
-fn real_router(build: Build) -> axum::Router {
-    riff_server::router().layer(axum::middleware::map_response(stamp(Some(build))))
+fn real_router(router: axum::Router, build: Build) -> axum::Router {
+    router.layer(axum::middleware::map_response(stamp(Some(build))))
 }
 
 fn riff_at(binary: &Path, server: &str, dir: &Path, args: &[&str]) -> Command {
+    crate::common::sign_in(server, dir, "brett");
     let mut cmd = Isolated::shared().command(binary);
     cmd.args(args)
         .current_dir(dir)
@@ -191,10 +192,11 @@ async fn a_server_with_no_build_is_refused() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_same_build_works_and_who_and_whoami_show_it() {
-    let url = real(Build::this()).await;
+    let server = real(Build::this()).await;
+    let url = &*server;
     let dir = tempfile::tempdir().unwrap();
     for args in [&["whoami"][..], &["who"]] {
-        let out = run(riff(&url, dir.path(), args)).await;
+        let out = run(riff(url, dir.path(), args)).await;
         assert!(out.status.success(), "{args:?}: {}", text(&out.stderr));
         let line = format!("  v{}  (", env!("CARGO_PKG_VERSION"));
         assert!(text(&out.stdout).contains(&line), "{}", text(&out.stdout));
@@ -210,9 +212,10 @@ async fn the_same_build_works_and_who_and_whoami_show_it() {
 /// Runs `riff who` against a real server that names `theirs`. It
 /// works, and prints `note` once.
 async fn works_and_notes_once(theirs: Build, note: &str) {
-    let url = real(theirs.clone()).await;
+    let server = real(theirs.clone()).await;
+    let url = &*server;
     let dir = tempfile::tempdir().unwrap();
-    let out = run(riff(&url, dir.path(), &["who"])).await;
+    let out = run(riff(url, dir.path(), &["who"])).await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stderr}");
     assert_eq!(stderr.matches(note).count(), 1, "{stderr}");
@@ -305,8 +308,12 @@ fn by_child(cmd: &mut Command) {
 #[tokio::test(flavor = "multi_thread")]
 async fn top_runs_the_new_binary() {
     let asked = Arc::new(AtomicBool::new(false));
-    let url = serve(marked(real_router(Build::this()), asked.clone())).await;
-    runs_the_new_binary(&url, &asked, &["top"]).await;
+    let server = crate::common::start_signed_with({
+        let asked = asked.clone();
+        move |router| marked(real_router(router, Build::this()), asked)
+    })
+    .await;
+    runs_the_new_binary(&server, &asked, &["top"]).await;
 }
 
 /// Puts a new binary in place of `binary`, as `cargo install` does: a
@@ -382,11 +389,12 @@ async fn runs_the_new_binary(url: &str, asked: &AtomicBool, args: &[&str]) {
 /// (01M3NJGD6H8DNVHHHG80F9YFCE).
 #[tokio::test(flavor = "multi_thread")]
 async fn the_error_names_a_removed_working_directory() {
-    let url = real(Build::this()).await;
+    let server = real(Build::this()).await;
+    let url = &*server;
     let root = tempfile::tempdir().unwrap();
     let gone = root.path().join("issue-12");
     std::fs::create_dir(&gone).unwrap();
-    let mut cmd = riff_at(Path::new("sh"), &url, root.path(), &["-c"]);
+    let mut cmd = riff_at(Path::new("sh"), url, root.path(), &["-c"]);
     cmd.arg("cd \"$0\" && rmdir \"$0\" && exec \"$1\" whoami")
         .arg(&gone)
         .arg(Isolated::shared().riff_path());
@@ -515,23 +523,25 @@ const NO_INSTANCE: &str = "The request was aborted because there was no availabl
 /// calls with `status`, the text of Cloud Run and no build header, as
 /// Cloud Run does while it moves an instance
 /// (01M3QCMJ9F1GRTRRSB4AW9TC3D).
-async fn behind_a_front_end(fails: usize, status: axum::http::StatusCode) -> String {
+async fn behind_a_front_end(fails: usize, status: axum::http::StatusCode) -> crate::common::Signed {
     let left = Arc::new(std::sync::atomic::AtomicUsize::new(fails));
-    let router = riff_server::router().layer(axum::middleware::from_fn(
-        move |request: axum::extract::Request, next: axum::middleware::Next| {
-            let fail = left
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-                .is_ok();
-            async move {
-                if fail {
-                    (status, NO_INSTANCE).into_response()
-                } else {
-                    next.run(request).await
+    crate::common::start_signed_with(move |router| {
+        router.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let fail = left
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                    .is_ok();
+                async move {
+                    if fail {
+                        (status, NO_INSTANCE).into_response()
+                    } else {
+                        next.run(request).await
+                    }
                 }
-            }
-        },
-    ));
-    serve(router).await
+            },
+        ))
+    })
+    .await
 }
 
 /// A 5xx or 429 of the front end with no build is an outage, not a
@@ -547,9 +557,10 @@ async fn a_front_end_error_with_no_build_is_tried_again() {
         StatusCode::GATEWAY_TIMEOUT,
         StatusCode::TOO_MANY_REQUESTS,
     ] {
-        let url = behind_a_front_end(3, status).await;
+        let server = behind_a_front_end(3, status).await;
+        let url = &*server;
         let dir = tempfile::tempdir().unwrap();
-        let out = run(riff(&url, dir.path(), &["who"])).await;
+        let out = run(riff(url, dir.path(), &["who"])).await;
         let err = text(&out.stderr);
         assert!(out.status.success(), "{status}: {err}");
         assert!(!err.contains("do not match"), "{status}: {err}");
@@ -567,13 +578,14 @@ async fn the_probe_takes_a_front_end_error_as_an_outage() {
         StatusCode::INTERNAL_SERVER_ERROR,
         StatusCode::TOO_MANY_REQUESTS,
     ] {
-        let url = behind_a_front_end(2, status).await;
-        let api = riff_client::api::Api::new(&url);
+        let server = behind_a_front_end(2, status).await;
+        let url = &*server;
+        let api = riff_client::api::Api::new(url);
         let error = api.probe(Duration::from_secs(3)).await.unwrap_err();
         let outage = error.downcast_ref::<riff_client::api::Outage>();
         assert!(outage.is_some_and(|o| o.status == status), "{error:#}");
         assert!(riff_client::api::passes(&error), "{error:#}");
-        let error = riff::lifecycle::server_release(&url).await.unwrap_err();
+        let error = riff::lifecycle::server_release(url).await.unwrap_err();
         assert!(
             format!("{error:#}").contains("riff update --tag"),
             "{error:#}"

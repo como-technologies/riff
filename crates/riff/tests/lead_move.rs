@@ -16,16 +16,12 @@ use riff_core::wire::{Kind, StartReason, Status};
 const WAIT: Duration = Duration::from_secs(20);
 
 struct World {
-    api: Api,
+    server: crate::common::Signed,
     dir: tempfile::TempDir,
 }
 
 async fn world() -> World {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
+    let server = crate::common::start_signed().await;
     let dir = tempfile::tempdir().unwrap();
     for args in [
         &["init", "-q"][..],
@@ -45,13 +41,15 @@ async fn world() -> World {
                 .success()
         );
     }
-    World {
-        api: Api::new(&format!("http://{addr}")),
-        dir,
-    }
+    World { server, dir }
 }
 
 impl World {
+    /// A client of mike: of the session `session`, or of the person.
+    fn api(&self, session: Option<&str>) -> Api {
+        self.server.api("mike", session)
+    }
+
     fn uri(&self, user: &str, host: &str, session: Option<&str>) -> SessionUri {
         let place = riff::identity::place_in(self.dir.path(), host).unwrap();
         SessionUri::new(Who::new(user, session).unwrap(), place)
@@ -60,17 +58,17 @@ impl World {
     /// A registered session of mike, the lead when `lead`.
     async fn session(&self, host: &str, id: &str, lead: bool) -> SessionUri {
         let me = self.uri("mike", host, Some(id));
-        self.api.register(&me).await.unwrap();
+        self.api(Some(id)).register(&me).await.unwrap();
         if lead {
             let person = self.uri("mike", host, None);
-            self.api.lead(&person, id).await.unwrap();
+            self.api(None).lead(&person, id).await.unwrap();
         }
         me
     }
 
     /// The session IDs of the leads in `who`.
     async fn leads(&self, me: &SessionUri) -> Vec<String> {
-        let who = self.api.who(me, false).await.unwrap();
+        let who = self.api(me.who().session()).who(me, false).await.unwrap();
         who.iter()
             .filter(|s| s.uri.lead())
             .filter_map(|s| s.uri.who().session().map(str::to_owned))
@@ -81,7 +79,7 @@ impl World {
     /// It gives the texts that it got.
     fn old_lead(&self, me: SessionUri, silent: bool) -> Arc<Mutex<Vec<String>>> {
         let got = Arc::new(Mutex::new(Vec::new()));
-        let (api, seen) = (self.api.clone(), got.clone());
+        let (api, seen) = (self.api(me.who().session()), got.clone());
         let thread = me.default_thread().unwrap();
         tokio::spawn(async move {
             loop {
@@ -106,13 +104,12 @@ impl World {
     /// session `n1` as the new lead.
     async fn daemon(&self, host: &str) {
         let me = self.uri("mike", host, Some("d1"));
-        self.api
-            .start(&me, StartReason::Process, false)
-            .await
-            .unwrap();
+        let api = self.api(Some("d1"));
+        api.start(&me, StartReason::Process, false).await.unwrap();
         let step = format!("{PREFIX} pid 1, build test, 0 sessions");
-        self.api.status(&me, &Status { step }).await.unwrap();
-        let (api, host) = (self.api.clone(), host.to_owned());
+        api.status(&me, &Status { step }).await.unwrap();
+        let (person_api, n1_api) = (self.api(None), self.api(Some("n1")));
+        let host = host.to_owned();
         let (ready, opened) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             // An open watch makes the daemon live.
@@ -129,10 +126,13 @@ impl World {
                             Who::new("mike", Some("n1")).unwrap(),
                             new.place().clone(),
                         );
-                        api.start(&new, StartReason::Process, false).await.unwrap();
+                        n1_api
+                            .start(&new, StartReason::Process, false)
+                            .await
+                            .unwrap();
                         let person =
                             SessionUri::new(Who::new("mike", None).unwrap(), new.place().clone());
-                        api.lead(&person, "n1").await.unwrap();
+                        person_api.lead(&person, "n1").await.unwrap();
                         let text = riff::text::lead_taken(
                             "como-technologies/riff",
                             &host,
@@ -177,14 +177,14 @@ async fn the_move_makes_the_new_session_the_lead_and_tells_the_old_lead() {
     w.daemon("thelio").await;
     let person = w.uri("mike", "pangolin", None);
 
-    let session = riff::lead::move_to(&w.api, &person, "thelio", WAIT)
+    let session = riff::lead::move_to(&w.api(None), &person, "thelio", WAIT)
         .await
         .unwrap();
 
     assert_eq!(session, "n1");
     assert_eq!(w.leads(&person).await, ["n1"]);
     let notes = w
-        .api
+        .api(None)
         .notes_show(&person, &person.default_thread().unwrap(), None, false)
         .await
         .unwrap();
@@ -208,7 +208,7 @@ async fn the_lead_moves_itself_and_asks_nobody_for_a_handover() {
     let old = w.session("pangolin", "l1", true).await;
     w.daemon("thelio").await;
 
-    let session = riff::lead::move_to(&w.api, &old, "thelio", WAIT)
+    let session = riff::lead::move_to(&w.api(old.who().session()), &old, "thelio", WAIT)
         .await
         .unwrap();
 
@@ -224,7 +224,7 @@ async fn a_session_that_is_not_the_lead_cannot_move_the_lead() {
     let worker = w.session("pangolin", "w1", false).await;
     w.daemon("thelio").await;
 
-    let err = riff::lead::move_to(&w.api, &worker, "thelio", WAIT)
+    let err = riff::lead::move_to(&w.api(worker.who().session()), &worker, "thelio", WAIT)
         .await
         .unwrap_err();
 
@@ -241,7 +241,7 @@ async fn a_lead_that_writes_no_handover_in_time_is_moved_with_the_notes_as_they_
     w.daemon("thelio").await;
     let person = w.uri("mike", "pangolin", None);
 
-    let session = riff::lead::move_to(&w.api, &person, "thelio", Duration::from_millis(600))
+    let session = riff::lead::move_to(&w.api(None), &person, "thelio", Duration::from_millis(600))
         .await
         .unwrap();
 
@@ -258,14 +258,14 @@ async fn a_host_with_no_daemon_or_the_same_host_fails_and_the_old_lead_stays() {
     let got = w.old_lead(old, false);
     let person = w.uri("mike", "pangolin", None);
 
-    let err = riff::lead::move_to(&w.api, &person, "thelio", WAIT)
+    let err = riff::lead::move_to(&w.api(None), &person, "thelio", WAIT)
         .await
         .unwrap_err();
     assert_eq!(
         format!("{err:#}"),
         riff::text::no_daemon_host("thelio", "como-technologies/riff")
     );
-    let err = riff::lead::move_to(&w.api, &person, "pangolin", WAIT)
+    let err = riff::lead::move_to(&w.api(None), &person, "pangolin", WAIT)
         .await
         .unwrap_err();
     assert_eq!(

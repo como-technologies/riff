@@ -219,7 +219,7 @@ async fn serve_split(
         ..Default::default()
     };
     let loaded = (Arc::new(store.clone()) as Arc<dyn Store>, lease);
-    let server = common::start_signed_at(listener, url, Some(loaded)).await;
+    let server = common::start_signed_at(listener, url, Some(loaded), |router| router).await;
     (server, store)
 }
 
