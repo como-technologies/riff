@@ -52,7 +52,7 @@ async fn whoami(api: &Api, id: &str) -> String {
 async fn whoami_of_a_lead_container_that_is_not_the_lead_says_so_first() {
     let api = Api::new(&start_server().await);
     api.register(&uri("94adc2ec")).await.unwrap();
-    api.lead(&uri("94adc2ec")).await.unwrap();
+    api.lead(&person(), "94adc2ec").await.unwrap();
     api.register(&uri("a17678d3")).await.unwrap();
     let text = whoami(&api, "a17678d3").await;
     let first = text.lines().next().unwrap();
@@ -64,11 +64,18 @@ async fn whoami_of_a_lead_container_that_is_not_the_lead_says_so_first() {
 async fn whoami_of_the_lead_container_that_is_the_lead_has_no_such_line() {
     let api = Api::new(&start_server().await);
     api.register(&uri("94adc2ec")).await.unwrap();
-    api.lead(&uri("94adc2ec")).await.unwrap();
+    api.lead(&person(), "94adc2ec").await.unwrap();
     api.register(&uri("a17678d3")).await.unwrap();
     // What `riff lead start` does after the start of the session.
-    let reply = api.lead(&uri("a17678d3")).await.unwrap();
+    let reply = api.lead(&person(), "a17678d3").await.unwrap();
     assert!(reply.replaced.is_some());
     let text = whoami(&api, "a17678d3").await;
     assert!(!text.contains("not the lead"), "{text}");
+}
+
+/// The person: the name of the user with no session ID.
+fn person() -> SessionUri {
+    "riff://mike@pangolin/como-technologies/riff"
+        .parse()
+        .unwrap()
 }

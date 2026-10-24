@@ -420,7 +420,8 @@ async fn launch(
     let person = api.clone().signed_in(None)?;
     let api = api.signed_in(Some(&session))?;
     api.start(&me, StartReason::Process, false).await?;
-    let led = match api.lead(&me).await {
+    let named = identity::person(&place, server)?;
+    let led = match person.lead(&named, &session).await {
         Ok(reply) => reply,
         Err(e) => {
             let _ = api.end(&me).await;
@@ -459,8 +460,6 @@ async fn launch(
         let _ = api.end(&me).await;
         return Err(e);
     }
-    let named = identity::person(&place, server)?;
-    person.lead(&named, &session).await?;
     Ok(session)
 }
 
