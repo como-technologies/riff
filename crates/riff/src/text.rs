@@ -4866,6 +4866,9 @@ pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &
 /// assert!(text.contains("gh pr create --title \"TITLE\" --milestone \"Wave 3\" --body-file FILE"));
 /// assert!(text.contains(frame));
 /// assert!(text.contains("Leave no background task at the end of your work"));
+/// assert!(text.contains("Never end a turn while a background task runs"));
+/// assert!(text.contains("Run each check in the foreground"));
+/// assert!(text.contains("Commit and push the branch before the end of your work"));
 /// assert!(!text.contains("earlier session"));
 /// let again = riff::text::run_start("o/r", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", true);
 /// assert!(again.contains("earlier session"));
@@ -4895,8 +4898,10 @@ pub fn run_start(
          2. Read CLAUDE.md, and obey its rules. To add a requirement, run just req SECTION \"text\". Never edit requirements.md by hand to add one.\n\
          3. Do the work on the branch {branch}. Give each commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n\
-         4. Before each push, run the checks that CLAUDE.md names.\n\
-         5. Push the branch: git push -u origin {branch}\n   \
+         4. Before each push, run the checks that CLAUDE.md names. Run each check in the \
+         foreground, and wait for its end.\n\
+         5. Commit and push the branch before the end of your work, even when the work is not \
+         done: git push -u origin {branch}\n   \
          Never push to main.\n\
          6. Write the body of the pull request to a file. Put your summary in place of \
          SUMMARY. Keep each other line:\n\n{frame}\n\
@@ -4905,8 +4910,8 @@ pub fn run_start(
          gh pr merge --auto --squash NUMBER\n   \
          Do not end the title with (#{issue}).\n\
          8. Stop each background task that you started, for example a Monitor or a command \
-         in the background. Leave no background task at the end of your work: while one runs, \
-         your session does not end.\n\
+         in the background. Never end a turn while a background task runs: a session does not \
+         continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
          Do not print the environment or a token."
     )
@@ -6852,6 +6857,21 @@ pub fn wave_no_pull(item: &str, branch: &str, clone: &Path) -> String {
     )
 }
 
+/// A build of a wave ended with no push, and riff saved its work.
+///
+/// ```
+/// let text = riff::text::wave_saved("issue-12", "worktree-issue-12", "1a2b3c4", std::path::Path::new("/c"));
+/// assert!(text.contains("branch worktree-issue-12"));
+/// assert!(text.contains("1a2b3c4"));
+/// ```
+pub fn wave_saved(item: &str, branch: &str, commit: &str, clone: &Path) -> String {
+    format!(
+        "{item}: the session of the wave ended and pushed nothing. riff saved the work of the \
+         clone {} on the branch {branch}, in a WIP commit {commit}. The item is free.",
+        clone.display()
+    )
+}
+
 /// A verify of a wave ended with no verdict.
 pub fn wave_no_result(item: &str, pull: u64) -> String {
     format!(
@@ -6929,16 +6949,16 @@ pub fn wave_rebase_start(
          4. Resolve each conflict. Keep the work of the pull request and the new work of main. \
          Add the files, and run git rebase --continue. Give each new commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n\
-         5. Run the checks that CLAUDE.md names before a push, for example just check. Fix each \
-         fault of the rebase.\n\
-         6. Push to the same pull request:\n   \
+         5. Run the checks that CLAUDE.md names before a push, for example just check. Run \
+         each check in the foreground, and wait for its end. Fix each fault of the rebase.\n\
+         6. Commit and push before the end of your work, to the same pull request:\n   \
          git push --force-with-lease origin {branch}\n   \
          Never push to main. Do not open a second pull request.\n\
          7. A new Gate and a new verify of the new commit follow. Another session does the \
          verify: do not verify your own work.\n\
          8. Stop each background task that you started, for example a Monitor or a command \
-         in the background. Leave no background task at the end of your work: while one runs, \
-         your session does not end.\n\
+         in the background. Never end a turn while a background task runs: a session does not \
+         continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
          Do not print the environment or a token."
     )
@@ -6985,6 +7005,8 @@ pub fn wave_not_rebased(
 /// assert!(text.contains("commit 1a2b3c4d5e6f"));
 /// assert!(text.contains("The first line is PASS or FAIL"));
 /// assert!(text.contains("Verify of the release pull request"));
+/// assert!(text.contains("Run each test in the foreground"));
+/// assert!(text.contains("Never end a turn while a background task runs"));
 /// ```
 pub fn wave_verify_start(repo: &str, issue: u64, pull: u64, commit: &str) -> String {
     format!(
@@ -7007,7 +7029,9 @@ pub fn wave_verify_start(repo: &str, issue: u64, pull: u64, commit: &str) -> Str
          5. Check each criterion: review the code and its fit with the design, read the test \
          of each criterion, and run that test by its name when you must. Read the book, the \
          rustdoc and the requirements.\n\
-         6. Do not commit, do not push, and do not change the pull request.\n\
+         6. Do not commit, do not push, and do not change the pull request. Run each test in \
+         the foreground, and wait for its end. Never end a turn while a background task runs: \
+         a session does not continue after its result.\n\
          7. Your last reply is the result, in markdown, and nothing else. The first line is \
          PASS or FAIL. Then each criterion: for a pass, what you did to check it; for a fail, \
          the steps to see the failure. The result is public: it holds no secret and no security \
@@ -7942,6 +7966,55 @@ pub fn run_lead_told(item: &str) -> String {
     )
 }
 
+/// The reason of `riff daemon sweep --remove NAME --force`.
+pub const REMOVE_FORCED: &str = "the person gave --force";
+
+/// `riff daemon sweep --remove` got a name that is no folder name.
+///
+/// ```
+/// assert!(riff::text::remove_bad_name("../x").contains("ITEM-ID8"));
+/// ```
+pub fn remove_bad_name(name: &str) -> String {
+    format!(
+        "{name} is no folder of a session. A folder has the name ITEM-ID8, for example issue-12-1a2b3c4d."
+    )
+}
+
+/// `riff daemon sweep --remove` found no folder.
+pub fn remove_no_folder(folder: &Path) -> String {
+    format!("The folder {} does not exist.", folder.display())
+}
+
+/// `riff daemon sweep --remove` found a session that runs.
+pub fn remove_runs(name: &str) -> String {
+    format!(
+        "The session of {name} runs. riff removes no folder of a session that runs. End it first \
+         with riff daemon end."
+    )
+}
+
+/// `riff daemon sweep --remove` found work that is not on a merged branch.
+///
+/// ```
+/// let text = riff::text::remove_not_merged("issue-12-1a2b3c4d", "the issue #12 is closed");
+/// assert!(text.contains("--force"));
+/// ```
+pub fn remove_not_merged(name: &str, why: &str) -> String {
+    format!(
+        "riff keeps the folder {name}: {why}. The work is not on a merged branch. Push the work, \
+         or run the command again with --force to lose it."
+    )
+}
+
+/// `riff daemon sweep --remove` removed the folder `folder`.
+///
+/// ```
+/// let text = riff::text::folder_removed(std::path::Path::new("/s/issue-12-1a2b3c4d"), "the pull request #5 merged");
+/// assert!(text.starts_with("riff removed the folder /s/issue-12-1a2b3c4d"));
+/// ```
+pub fn folder_removed(folder: &Path, why: &str) -> String {
+    format!("riff removed the folder {}: {why}.", folder.display())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

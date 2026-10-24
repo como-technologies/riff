@@ -56,6 +56,7 @@ mod release;
 mod release_cycle;
 mod restart;
 mod run;
+mod save;
 mod secrets;
 mod session;
 mod session_image;

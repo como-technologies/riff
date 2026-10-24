@@ -1087,6 +1087,27 @@ git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone status
 git -C ~/.local/share/riff/sessions/issue-735-7788e301/clone push -u origin HEAD
 ```
 
+### Remove one folder on purpose
+
+The sweep keeps a folder when it cannot push the work. To remove one
+folder of an ended session yourself, give its name:
+
+```sh
+riff daemon sweep --remove issue-1136-5fcf04cb
+```
+
+riff removes the folder when the pull request of its work merged. The
+leftover work of the clone goes with it. When the work is not on a
+merged branch, riff keeps the folder and says so. To lose that work on
+purpose:
+
+```sh
+riff daemon sweep --remove issue-1136-5fcf04cb --force
+```
+
+riff never removes the folder of a session that runs. For a folder on
+another host, add `--host thelio`.
+
 ### What the container gets
 
 - The clone of the session, with write. The objects of your main clone,
@@ -1274,6 +1295,31 @@ follows as always.
 
 ```sh
 riff post --to lead=true "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4"
+```
+
+### When a session of the wave ends with no push
+
+A session of the wave must commit and push before its end, and must
+leave no background task. The daemon helps in two cases:
+
+```mermaid
+flowchart LR
+    R["result of the session"] --> G{"an event within 60 s?"}
+    G -- "no" --> S["the daemon stops the container, the item is free"]
+    S --> P{"the branch is on origin?"}
+    P -- "no, the clone has work" --> W["a WIP commit, pushed, one message to your lead"]
+    P -- "yes" --> N["the usual steps"]
+```
+
+- After the result, the container has 60 seconds. When no event comes
+  in that time, the daemon stops it, and frees the item. It does not
+  wait 30 minutes.
+- When the branch of the item is not on `origin` and the clone has work,
+  the daemon commits each change as a WIP commit, pushes the branch,
+  and tells your lead the branch and the commit:
+
+```text
+issue-12: the session of the wave ended and pushed nothing. riff saved the work of the clone /home/mike/.local/share/riff/sessions/issue-12-1a2b3c4d/clone on the branch worktree-issue-12, in a WIP commit 1a2b3c4. The item is free.
 ```
 
 ### When the sign-in of claude ends soon

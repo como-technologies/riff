@@ -105,6 +105,32 @@ pub fn wip(dir: &Path) -> Result<String> {
     Ok(branch)
 }
 
+/// Saves the work of an ended build in `dir` on `branch` when `origin`
+/// has no such branch (01M5P26VSA7AA99K1RYG83R8J9): [`wip`], then the
+/// commit that it pushed. It gives `None` when `origin` has the branch,
+/// or when the clone has no change and no commit after `origin/main`.
+///
+/// ```
+/// let dir = isolated::outside_git();
+/// assert!(riff::leave::save(dir.path(), "worktree-issue-1").is_err());
+/// ```
+pub fn save(dir: &Path, branch: &str) -> Result<Option<(String, String)>> {
+    if !git(dir, &["ls-remote", "--heads", "origin", branch])?.is_empty() {
+        return Ok(None);
+    }
+    let base = git(
+        dir,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .unwrap_or_else(|_| "origin/main".into());
+    let ahead = git(dir, &["rev-list", "--count", &format!("{base}..HEAD")])?;
+    if ahead == "0" && git(dir, &["status", "--porcelain"])?.is_empty() {
+        return Ok(None);
+    }
+    let pushed = wip(dir)?;
+    Ok(Some((pushed, git(dir, &["rev-parse", "--short", "HEAD"])?)))
+}
+
 /// Runs git in `dir`, and gives its output with no space at the ends.
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let out = Command::new("git")

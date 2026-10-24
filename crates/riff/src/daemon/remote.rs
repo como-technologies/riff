@@ -221,6 +221,8 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 ///     "daemon events riff-issue-12-1a2b3c4d --after 7",
 ///     "daemon events riff-issue-12-1a2b3c4d --after 7 --notes 1",
 ///     "daemon sweep",
+///     "daemon sweep --remove issue-12-1a2b3c4d",
+///     "daemon sweep --remove issue-12-1a2b3c4d --force",
 ///     "daemon end riff-issue-12-1a2b3c4d",
 ///     "daemon restart",
 ///     "wave run",
@@ -273,6 +275,13 @@ pub enum Request {
     },
     /// `riff daemon sweep`.
     Sweep,
+    /// `riff daemon sweep --remove NAME`, with `--force` when `force`.
+    Remove {
+        /// The name of the folder.
+        name: String,
+        /// True for `--force`.
+        force: bool,
+    },
     /// `riff daemon end NAME`.
     End(String),
     /// `riff daemon restart`.
@@ -333,6 +342,14 @@ impl FromStr for Request {
                 notes: notes.parse().map_err(|_| ())?,
             }),
             ["daemon", "sweep"] => Ok(Request::Sweep),
+            ["daemon", "sweep", "--remove", name] => Ok(Request::Remove {
+                name: name.to_owned(),
+                force: false,
+            }),
+            ["daemon", "sweep", "--remove", name, "--force"] => Ok(Request::Remove {
+                name: name.to_owned(),
+                force: true,
+            }),
             ["daemon", "end", name] => Ok(Request::End(name.to_owned())),
             ["daemon", "restart"] => Ok(Request::Restart),
             ["wave", "run"] => Ok(Request::WaveRun),
@@ -422,6 +439,10 @@ impl fmt::Display for Request {
                 write!(f, "daemon events {name} --after {after} --notes {notes}")
             }
             Request::Sweep => write!(f, "daemon sweep"),
+            Request::Remove { name, force: false } => write!(f, "daemon sweep --remove {name}"),
+            Request::Remove { name, force: true } => {
+                write!(f, "daemon sweep --remove {name} --force")
+            }
             Request::End(name) => write!(f, "daemon end {name}"),
             Request::Restart => write!(f, "daemon restart"),
             Request::WaveRun => write!(f, "wave run"),
@@ -698,6 +719,16 @@ pub async fn answer(
             .await
             .map(|page| page.to_string()),
         Request::Sweep => lines_of(dir, Ask::Sweep).await,
+        Request::Remove { name, force } => {
+            lines_of(
+                dir,
+                Ask::Remove {
+                    name: name.clone(),
+                    force: *force,
+                },
+            )
+            .await
+        }
         Request::End(name) => lines_of(dir, Ask::End { name: name.clone() }).await,
         Request::Restart => lines_of(dir, Ask::Restart).await,
         Request::WaveRun => wave_run(dir, &served.wave).await,

@@ -6445,6 +6445,18 @@ part when they merge.
   the thread after the last verify result for it, answers a failed
   verify of that head: the wave starts a verify of the head, not a
   build, when its Gate and Hygiene pass.
+- **01M5P26VPJA73WCPVZY6CPG9HD** A session of a wave has a grace of 60
+  seconds after the daemon closed the input of claude. When no event
+  comes in that time, the daemon stops the container, and the item is
+  free. It does not wait for the quiet limit.
+- **01M5P26VSA7AA99K1RYG83R8J9** When a build of a wave ends and its
+  branch has no pushed commit, the daemon commits each change of the
+  clone as a WIP commit on that branch and pushes it. The lead gets one
+  message with the branch and the commit.
+- **01M5P26VW5GBJDQZGEYW9A77Y0** The daemon removes the folder of one
+  ended session on purpose with riff daemon sweep --remove NAME. It
+  first checks that the work of the folder is on a merged branch, or
+  that the person gave --force. The lead can run it with --host.
 
 ### The lead, the view and the takeover
 
