@@ -298,14 +298,14 @@ async fn a_lead_that_posts_to_its_own_lead_wakes_no_free_session() {
 async fn a_post_to_person_true_wakes_the_person_and_no_agent_session() {
     let riff = riff().await;
     let person = crate::common::person_of(&riff.lead);
-    riff.api.register(&person).await.unwrap();
+    riff.api(&person).register(&person).await.unwrap();
     let daemon = uri("riff://mike@pangolin/como-technologies/riff?session=d0");
-    riff.api.register(&daemon).await.unwrap();
+    riff.api(&daemon).register(&daemon).await.unwrap();
     let post = |to: &str| {
         let to = [selector(to)];
         let riff = &riff;
         async move {
-            riff.api
+            riff.api(&riff.lead)
                 .post(&riff.lead, Some(&repo()), &to, "an answer", Kind::Message)
                 .await
                 .unwrap()

@@ -118,23 +118,25 @@ async fn a_new_watch_has_no_wake_for_a_message_that_a_read_returned() {
     for skip in [false, true] {
         let (server, _seen) = start_server().await;
         let lead: SessionUri = "riff://mike@a/local/riff?session=l1".parse().unwrap();
-        server.register(&lead).await.unwrap();
-        crate::common::name_lead(&server, &lead).await;
-        server.set_riff(&lead, RiffState::Running).await.unwrap();
+        let (lead_api, person_api) = (server.api("mike", Some("l1")), server.api("mike", None));
+        lead_api.register(&lead).await.unwrap();
+        crate::common::name_lead(&person_api, &lead).await;
+        lead_api.set_riff(&lead, RiffState::Running).await.unwrap();
         let me: SessionUri = "riff://mike@b/local/riff?session=h1".parse().unwrap();
-        server.register(&me).await.unwrap();
+        let me_api = server.api("mike", Some("h1"));
+        me_api.register(&me).await.unwrap();
 
         let thread: ThreadName = "chat".parse().unwrap();
         let to = [Selector::session("h1")];
         for body in ["one", "two"] {
-            server
+            lead_api
                 .post(&lead, Some(&thread), &to, body, Kind::Message)
                 .await
                 .unwrap();
         }
         // The read shows the messages. With `skip`, it reads all after 1
         // and keeps the cursor.
-        let (shown, _) = server
+        let (shown, _) = me_api
             .read_page(&me, &thread, skip, skip.then_some(1))
             .await
             .unwrap();
@@ -142,10 +144,10 @@ async fn a_new_watch_has_no_wake_for_a_message_that_a_read_returned() {
 
         // The watch is `riff relay watch --follow`: it prints a line for
         // each wake.
-        let mut wakes = Box::pin(follow(|| server.watch(&me), Duration::from_secs(5)));
+        let mut wakes = Box::pin(follow(|| me_api.watch(&me), Duration::from_secs(5)));
         let none = isolated::in_time(Duration::from_secs(2), wakes.next()).await;
         assert!(none.is_err(), "skip {skip}: a wake for a read message");
-        server
+        lead_api
             .post(&lead, Some(&thread), &to, "three", Kind::Message)
             .await
             .unwrap();
