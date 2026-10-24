@@ -36,6 +36,7 @@
 //! | `hooks-path` | `riff run` sets `core.hooksPath` in the git config of the other clone and of the clone of the test |
 //! | `hook-changed` | `riff run` writes to the hook `pre-push` of the other clone, which is there already |
 //! | `server-fails` | `riff-server` ends with 1 at once |
+//! | `resume-fails` | `riff resume --riff` ends with 1 |
 //! | `no-pull` | `gh pr view` finds no pull request |
 //! | `no-gate` | the head commit has no check run |
 
@@ -119,6 +120,9 @@ echo "${RIFF_DATA:-none}" >> "$c/data"
 echo "${RIFF_SERVER:-none}" >> "$c/server"
 case "$1" in
 image) echo "ghcr.io/o/riff-session@sha256:00ff" ;;
+resume)
+  if [ -f "$c/resume-fails" ]; then echo "riff: the fake riff is still paused" >&2; exit 1; fi
+  echo "The riff is running now. No other session woke." ;;
 plan)
   if [ "$2" = hold ] && [ -f "$c/hold-fails" ]; then
     echo "riff: a worker cannot hold an item. Tell the lead." >&2; exit 1
@@ -429,6 +433,7 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
         "podman info --format {{.Host.Security.Rootless}}",
         "gh auth status",
         "riff image",
+        "riff resume --riff",
         "gh issue create --title Real-session test ",
         "gh label create no-verify --description riff offers no verify of this item --color \
          ededed --force",
@@ -888,6 +893,7 @@ fn each_riff_of_the_test_uses_the_riff_server_of_the_test() {
     let log = fake.log();
     let start = find(&log, "riff-server --listen 127.0.0.1:0");
     assert!(start.is_some(), "{log:#?}");
+    assert!(start < find(&log, "riff resume --riff"), "{log:#?}");
     assert!(start < find(&log, "riff plan hold"), "{log:#?}");
     assert!(start < find(&log, "riff daemon"), "{log:#?}");
     assert_clean(&fake);
@@ -908,6 +914,28 @@ fn a_server_that_ends_before_it_listens_fails_step_1() {
     );
     let log = fake.log();
     assert!(find(&log, "gh issue create").is_none(), "{log:#?}");
+}
+
+/// A new riff starts paused, and a paused riff refuses each claim. So
+/// step 1 resumes the riff of the server of the test, and a failed resume
+/// fails step 1 before the test makes the scratch item (#1312).
+#[test]
+fn a_failed_resume_of_the_riff_of_the_test_fails_step_1() {
+    let fake = Fake::new();
+    fake.set("resume-fails");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("FAIL at step 1 of 10, check the host: ")
+            && stderr.contains(
+                "resume --riff ended with exit status: 1: riff: the fake riff is still paused"
+            ),
+        "{stderr}"
+    );
+    let log = fake.log();
+    assert!(find(&log, "gh issue create").is_none(), "{log:#?}");
+    assert!(find(&log, "TERM riff-server").is_some(), "{log:#?}");
 }
 
 #[test]

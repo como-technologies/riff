@@ -2013,8 +2013,10 @@ stops with "this riff and its riff-server do not match". So at the end
 of step 1, the test starts the `riff-server` that `just static dev`
 built beside the static riff (`target/static/debug/riff-server`). It
 runs in memory, on a free port of `127.0.0.1`. The test gives its
-address to the daemon of the test and to each `riff` of the test. The
-clean-up stops it. Nothing runs by hand:
+address to the daemon of the test and to each `riff` of the test. A
+new riff starts paused, so the test then runs `riff resume --riff` on
+it; with no resume, step 6 cannot claim the scratch item. The clean-up
+stops the server. Nothing runs by hand:
 
 ```sh
 just real-session

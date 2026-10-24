@@ -40,7 +40,7 @@
 //!
 //! | Step | Passes when |
 //! |---|---|
-//! | 1. check the host | podman runs rootless, `gh` has a sign-in, `riff image` names the image of the tree, and the riff-server of the tree listens on a free port (see below) |
+//! | 1. check the host | podman runs rootless, `gh` has a sign-in, `riff image` names the image of the tree, and the riff-server of the tree listens on a free port and runs: the test resumes its new riff (see below) |
 //! | 2. list the home | always |
 //! | 3. make the scratch item | `gh issue create` prints the URL of an issue |
 //! | 4. keep its verify from the workers | the issue has the label [`NO_VERIFY`]; a failed hold is a warning |
@@ -102,6 +102,12 @@
 //! ([`SERVER_VAR`]) to each `riff` of the test ([`Riff`]), and so to the
 //! daemon of the test. The clean-up stops the server last. A
 //! `RIFF_SERVER` of the person does not count.
+//!
+//! A new riff starts paused (01M3JCFTWCR72HQB8CBTQKXJNF), and a paused
+//! riff refuses each claim. So step 1 ends with `riff resume --riff` on
+//! the server of the test ([`RESUME`], 01M5NNQ24F2PX74859CV7SMFBZ). The
+//! server has no sign-in, so the resume needs no role. A failed resume
+//! fails step 1.
 //!
 //! ```mermaid
 //! flowchart LR
@@ -1794,8 +1800,18 @@ fn host(
     let top = PathBuf::from(output("git", &["rev-parse", "--show-toplevel"], stop)?);
     println!("  image {image}");
     let address = start_server(&riff, stop, server)?;
+    let resumed = output_of(riff.with_server(&address).command(&RESUME), stop)?;
+    println!("  {resumed}");
     Ok((env, image, vec![main, top], address))
 }
+
+/// The arguments of the `riff` that resumes the new riff of the server
+/// of the test at the end of step 1: a new riff starts paused.
+///
+/// ```
+/// assert_eq!(real_session::RESUME, ["resume", "--riff"]);
+/// ```
+pub const RESUME: [&str; 2] = ["resume", "--riff"];
 
 /// The riff-server of the tree: the file `riff-server` in the folder of
 /// the riff binary `riff`.
