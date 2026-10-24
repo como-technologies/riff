@@ -279,6 +279,36 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(out.trim_end().to_owned())
 }
 
+/// The riff config of riff at the commit of this build.
+const OF_RELEASE: &str = include_str!("../../../riff.toml");
+
+/// The session image that the release of riff that runs uses
+/// (01M5R1675HZ6TJPMQ6536X37T5): the pin of the [`FILE`] of riff at the
+/// commit of the build. `riff init` pins it in a repository that has no
+/// [`FILE`].
+///
+/// ```
+/// let image = riff::session_image::of_release();
+/// assert!(image.name().ends_with("/riff-session"), "{image}");
+/// assert!(image.digest().starts_with("sha256:"), "{image}");
+/// ```
+pub fn of_release() -> Image {
+    Image::of_config(OF_RELEASE, "the riff.toml of riff")
+        .expect("the riff.toml of riff pins an image")
+}
+
+/// The text of a [`FILE`] that pins `image`: the file that the how-to
+/// "Add another repository to the riff" writes.
+///
+/// ```
+/// let image = riff::session_image::of_release();
+/// let text = riff::session_image::config_of(&image);
+/// assert_eq!(text, format!("[session]\nimage = \"{image}\"\n"));
+/// ```
+pub fn config_of(image: &Image) -> String {
+    format!("[session]\nimage = \"{image}\"\n")
+}
+
 /// The image that the riff config of the repository of the folder `dir`
 /// pins: the file [`FILE`] at the top of its git work tree.
 ///

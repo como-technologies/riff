@@ -1,0 +1,98 @@
+#!/bin/sh
+# A fake forge for the tests of riff init (01M5R1672NF56P15VD0JEX51K4): a
+# fake gh for the repository acme/app that keeps its state in the files of
+# its own folder. It logs each call to the file calls.
+#
+# The state, one file each:
+#   auto_merge      the repository allows auto-merge (squash is always on)
+#   not_admin       the person is not an admin
+#   no_login        each call fails: gh has no sign-in
+#   files           the files at the root of main, one on a line
+#   milestones      the titles of the open milestones, one on a line
+#   static_rules    the JSON of the rules of main before the ruleset riff
+#   ruleset         the body of the ruleset riff, when it is made
+#   prior_pulls     the JSON list of the pull requests of main, latest first
+#   checks_SHA      the JSON of the check runs of the commit SHA
+#   late            the number of answers that say "no check run yet" for
+#                   the head of the pull request of riff.toml
+#   busy            the number of merges that say 405 before one works
+#   fail            a text: a call that has it fails with a 403
+#   branch          the branch riff-setup is there
+#   open_pulls      the JSON list of the open pull requests
+dir=$(dirname "$0")
+echo "$*" >> "$dir/calls"
+flag() { [ -f "$dir/$1" ]; }
+reply() { printf 'HTTP/2.0 %s\r\n\r\n%s' "$1" "$2"; }
+if flag no_login; then
+  echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4
+fi
+if flag fail; then
+  case "$*" in
+    *"$(cat "$dir/fail")"*) echo 'gh: Must have admin rights to Repository. (HTTP 403)' >&2; exit 1 ;;
+  esac
+fi
+for last; do :; done
+pull='{"number":7,"html_url":"https://github.com/acme/app/pull/7","head":{"ref":"riff-setup","sha":"5e7a777"},"base":{"ref":"main"}}'
+case "$*" in
+  'api repos/{owner}/{repo}')
+    printf '{"full_name":"acme/app","default_branch":"main","allow_auto_merge":%s,"allow_squash_merge":true,"permissions":{"admin":%s}}' \
+      "$(flag auto_merge && echo true || echo false)" "$(flag not_admin && echo false || echo true)" ;;
+  'api repos/{owner}/{repo}/rules/branches/main?per_page=100')
+    if flag ruleset; then
+      ctx=$(grep -o '"context":"[^"]*"' "$dir/ruleset" | sed 's/^"context"://; s/.*/{"context":&}/' | paste -sd, -)
+      printf '[{"type":"required_status_checks","parameters":{"required_status_checks":[%s]}}]' "$ctx"
+    elif flag static_rules; then cat "$dir/static_rules"
+    else printf '[]'; fi ;;
+  'api repos/{owner}/{repo}/milestones?state=open&per_page=100')
+    n=0; sep=''; printf '['
+    while IFS= read -r title; do
+      [ -n "$title" ] || continue
+      n=$((n + 1))
+      printf '%s{"number":%s,"title":"%s","open_issues":0,"closed_issues":0}' "$sep" "$n" "$title"; sep=','
+    done < "$dir/milestones"
+    printf ']' ;;
+  'api repos/{owner}/{repo}/contents?ref=main')
+    sep=''; printf '['
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      printf '%s{"name":"%s","type":"file"}' "$sep" "$name"; sep=','
+    done < "$dir/files"
+    printf ']' ;;
+  'api repos/{owner}/{repo}/pulls?state=all&base=main&per_page=5')
+    if flag prior_pulls; then cat "$dir/prior_pulls"; else printf '[]'; fi ;;
+  'api repos/{owner}/{repo}/commits/'*'/check-runs?per_page=100')
+    sha=$(echo "$2" | sed 's|.*/commits/\([^/]*\)/.*|\1|')
+    if flag late && [ "$sha" = 5e7a777 ] && [ "$(cat "$dir/late")" -gt 0 ]; then
+      echo $(($(cat "$dir/late") - 1)) > "$dir/late"; printf '{"check_runs":[]}'
+    elif flag "checks_$sha"; then cat "$dir/checks_$sha"
+    else printf '{"check_runs":[]}'; fi ;;
+  'api repos/{owner}/{repo}/pulls?state=open&per_page=100')
+    if flag open_pulls; then cat "$dir/open_pulls"; else printf '[]'; fi ;;
+  'api repos/{owner}/{repo}/git/ref/heads/main') printf '{"object":{"sha":"ba5e111"}}' ;;
+  'api repos/{owner}/{repo}/git/ref/heads/riff-setup')
+    flag branch || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+    printf '{"object":{"sha":"01d2222"}}' ;;
+  'api -X POST repos/{owner}/{repo}/git/refs --include --input '*) touch "$dir/branch"; reply '201 Created' '{}' ;;
+  'api -X PATCH repos/{owner}/{repo}/git/refs/heads/riff-setup --include --input '*) reply '200 OK' '{}' ;;
+  'api -X PUT repos/{owner}/{repo}/contents/riff.toml --include --input '*)
+    cp "$last" "$dir/config.json"; reply '201 Created' '{}' ;;
+  'api -X POST repos/{owner}/{repo}/pulls --include --input '*)
+    cp "$last" "$dir/pull.json"; printf '[%s]' "$pull" > "$dir/open_pulls"; reply '201 Created' "$pull" ;;
+  'api -X PUT repos/{owner}/{repo}/pulls/7/merge --include --input '*)
+    if flag busy && [ "$(cat "$dir/busy")" -gt 0 ]; then
+      echo $(($(cat "$dir/busy") - 1)) > "$dir/busy"
+      echo 'gh: Pull Request is not mergeable (HTTP 405)' >&2; exit 1
+    fi
+    cp "$last" "$dir/merge.json"; echo riff.toml >> "$dir/files"; rm -f "$dir/open_pulls"; reply '200 OK' '{"merged":true}' ;;
+  'api -X DELETE repos/{owner}/{repo}/git/refs/heads/riff-setup') rm -f "$dir/branch" ;;
+  'api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_merge=true') touch "$dir/auto_merge" ;;
+  'api repos/{owner}/{repo}/rulesets?per_page=100')
+    if flag ruleset; then printf '[{"id":77,"name":"riff"}]'; else printf '[]'; fi ;;
+  'api -X POST repos/{owner}/{repo}/rulesets --include --input '*|'api -X PUT repos/{owner}/{repo}/rulesets/77 --include --input '*)
+    cp "$last" "$dir/ruleset"; reply '201 Created' '{}' ;;
+  'api -X POST repos/{owner}/{repo}/milestones -f title='*)
+    echo "${last#title=}" >> "$dir/milestones"
+    printf '{"number":9,"title":"%s","open_issues":0,"closed_issues":0}' "${last#title=}" ;;
+  'label create '*) ;;
+  *) echo "gh: no such call: $*" >&2; exit 1 ;;
+esac

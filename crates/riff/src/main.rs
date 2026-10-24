@@ -514,23 +514,30 @@ enum Command {
     /// and cgroup v2 gives cpu and memory to your user. It checks
     /// that riff.toml of the repository of this folder pins the session
     /// image. When the remote origin is on GitHub, it also reads the
-    /// repository with gh and checks that it allows auto-merge and squash
-    /// merges, that a ruleset of the default branch requires riff/verify,
-    /// and that it has the milestone Backlog. It names the step of each
-    /// check that fails. It writes no rule into your user settings of
-    /// Claude Code. It
-    /// names each allow rule of your user, project and local settings of
-    /// Claude Code that is wider than the steps of riff, and asks one
-    /// question before it removes them. It prints the fix of each check that fails, and stops. When
-    /// each check passes, it installs and starts the riff daemon, as riff
-    /// daemon install does, and the daemon pulls the session image. A
-    /// daemon that answers stays: riff init does not start it again.
+    /// repository with gh and checks that it has riff.toml on the default
+    /// branch, allows auto-merge and squash merges, has a ruleset of the
+    /// default branch that requires riff/verify, has the milestone Backlog
+    /// and an open wave, has a CI check that a pull request runs, and has a
+    /// CLAUDE.md. It names the fix of each check that fails. For the first
+    /// five checks, riff init does the fix itself: it asks one question,
+    /// and then it makes riff.toml with a pull request that it merges,
+    /// allows auto-merge and squash merges, makes the Backlog and Wave 1,
+    /// and makes the ruleset riff. It needs the rights of an admin of the
+    /// repository, and a second run changes nothing. It writes no rule into
+    /// your user settings of Claude Code. It names each allow rule of your
+    /// user, project and local settings of Claude Code that is wider than
+    /// the steps of riff, and asks one question before it removes them. It
+    /// prints the fix of each check that still fails, and stops. When each
+    /// check passes, it installs and starts the riff daemon, as riff daemon
+    /// install does, and the daemon pulls the session image. A daemon that
+    /// answers stays: riff init does not start it again.
     Init {
         /// Change nothing. Print the fix of each check that fails, and
         /// each wide allow rule. Exit with status 1 when a check fails.
         #[arg(long, conflicts_with = "yes")]
         check: bool,
-        /// Ask no question. It removes no wide rule.
+        /// Ask no question. It sets up the repository on GitHub, and it
+        /// removes no wide rule.
         #[arg(long)]
         yes: bool,
     },

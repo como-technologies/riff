@@ -6857,8 +6857,8 @@ part when they merge.
   auto-merge and squash merge, make the ruleset `riff` that requires a
   pull request and the checks `Gate` and `riff/verify`, and make the
   Backlog. A step is safe to do again. The how-to makes the same
-  ruleset: a test compares the two. `riff init` names each step and does
-  none.
+  ruleset: a test compares the two. `riff init` does the steps after a
+  question (01M5R1672NF56P15VD0JEX51K4).
 - **01M5QZ01Y14Z76RC220RT7YTX7** The how-to "Add another repository to
   the riff" has a step "Use the checks that you have" with a copyable
   `sh` block that lists the checks that riff waits for: the required
@@ -6867,6 +6867,31 @@ part when they merge.
   the check `Gate`, and that a repository with checks already needs no
   job `Gate`. The verifier of the wave gets the same rule in its start
   text.
+- **01M5R1672NF56P15VD0JEX51K4** In a clone of a repository on GitHub
+  that is not set up for riff, `riff init` does the setup of the
+  repository after one question, `Question::Setup`, with `[y/N]`: only a
+  `y` in a terminal does it. `riff init --yes` does it with no question.
+  `riff init --check` names each step and changes nothing. A step is one
+  of these, in this order: allow auto-merge and squash merge; make
+  `riff.toml` on the default branch of `origin` (the branch
+  `riff-setup`, the pull request "Set up riff", a squash merge); make
+  the open `Backlog`; make the open wave `Wave 1`; make the
+  ruleset `riff`. Each step uses `gh` and the API of GitHub, never the
+  working tree of the clone. A second run of `riff init` in a repository
+  that is set up asks nothing and makes no call that changes GitHub.
+- **01M5R1675HZ6TJPMQ6536X37T5** The `riff.toml` that `riff init` makes
+  pins the session image of the release of riff that runs
+  (`riff::session_image::of_release`): the `riff.toml` of riff at the
+  commit of the build. The ruleset `riff` that `riff init` makes
+  requires `riff/verify` and the checks that the CI runs on a pull
+  request: the check runs of the head of the latest pull request of the
+  default branch that has some. A repository with no such check run gets
+  `Gate`. When the setup pull request is the only one, riff waits for
+  its check runs. `riff init` also checks that the repository has a CI
+  check and a `CLAUDE.md` on the default branch. It has no step for
+  either: the check names the fix. A person who is not an admin of the
+  repository gets each step named, and riff changes nothing. A step that
+  fails prints why and its fix, and the next steps run.
 
 ### The permission rules
 

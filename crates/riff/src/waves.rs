@@ -168,8 +168,16 @@ pub fn make(gh: &Gh, title: &str) -> Result<Made> {
     if let Some(there) = open.iter().find(|m| wave_number(&m.title) == Some(number)) {
         bail!(text::waves_is_there(&there.title));
     }
-    // A label that is there needs no change, and no label is no reason
-    // to refuse the wave.
+    make_tracker_label(gh);
+    let wave = new_milestone(gh, title)?;
+    let backlog = (!open.iter().any(|m| m.title == BACKLOG))
+        .then(|| new_milestone(gh, BACKLOG).map_err(|e| format!("{e:#}")));
+    Ok(Made { wave, backlog })
+}
+
+/// Makes the label [`TRACKER`]. A label that is there needs no change,
+/// and no label is no reason to refuse a wave.
+fn make_tracker_label(gh: &Gh) {
     let _ = gh.run(
         &[
             "label",
@@ -183,10 +191,18 @@ pub fn make(gh: &Gh, title: &str) -> Result<Made> {
         ],
         None,
     );
-    let wave = new_milestone(gh, title)?;
-    let backlog = (!open.iter().any(|m| m.title == BACKLOG))
-        .then(|| new_milestone(gh, BACKLOG).map_err(|e| format!("{e:#}")));
-    Ok(Made { wave, backlog })
+}
+
+/// The title of the first wave of a repository: `riff init` makes it
+/// (01M5R1672NF56P15VD0JEX51K4).
+pub const FIRST_WAVE: &str = "Wave 1";
+
+/// Makes the first wave [`FIRST_WAVE`], and the label [`TRACKER`], for
+/// a repository with no open wave. It makes no Backlog: that is a
+/// step of its own.
+pub fn make_first(gh: &Gh) -> Result<Milestone> {
+    make_tracker_label(gh);
+    new_milestone(gh, FIRST_WAVE)
 }
 
 /// Makes the open milestone [`BACKLOG`]

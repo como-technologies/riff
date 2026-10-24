@@ -628,37 +628,65 @@ async fn riff_init_removes_the_plugin_of_riff_3() {
     );
 }
 
-/// A fake `gh` that logs each call to `bin/gh.log`, and gives the files
-/// `repo.json`, `rules.json` and `milestones.json` of `bin` as the
-/// answers of the three reads of `riff init`. With the file
-/// `bin/no-login`, each call fails: `gh` has no sign-in.
-fn fake_gh(bin: &Path, repo: &str, rules: &str, milestones: &str) {
-    std::fs::write(bin.join("repo.json"), repo).unwrap();
-    std::fs::write(bin.join("rules.json"), rules).unwrap();
-    std::fs::write(bin.join("milestones.json"), milestones).unwrap();
-    let body = r#"#!/bin/sh
-dir=$(dirname "$0")
-echo "gh $*" >> "$dir/gh.log"
-if [ -f "$dir/no-login" ]; then
-  echo "To get started with GitHub CLI, please run:  gh auth login" >&2
-  exit 4
-fi
-case "$*" in
-  'api repos/{owner}/{repo}') cat "$dir/repo.json" ;;
-  'api repos/{owner}/{repo}/rules/branches/main?per_page=100') cat "$dir/rules.json" ;;
-  'api repos/{owner}/{repo}/milestones?state=open&per_page=100') cat "$dir/milestones.json" ;;
-  *) echo "gh: no such call: $*" >&2; exit 1 ;;
-esac
-"#;
-    script(&bin.join("gh"), body);
+/// The fake forge `tests/fake/forge` as the `gh` of the machine: it
+/// keeps its state in the files of `bin`, and logs each call to
+/// `bin/calls`. The `state` files give the repository; the files
+/// `bin/not_admin` and `bin/no_login` change the person.
+fn fake_forge(bin: &Path, state: &[(&str, &str)]) {
+    script(&bin.join("gh"), include_str!("fake/forge"));
+    for (name, text) in state {
+        std::fs::write(bin.join(name), text).unwrap();
+    }
 }
 
-/// A repository with no auto-merge, no ruleset and no `Backlog`.
-const BARE: &str = r#"{"full_name":"acme/app","default_branch":"main","allow_auto_merge":false,"allow_squash_merge":true}"#;
-const SET_UP: &str = r#"{"full_name":"acme/app","default_branch":"main","allow_auto_merge":true,"allow_squash_merge":true}"#;
-const VERIFY_RULE: &str = r#"[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]"#;
-const WAVES_ONLY: &str = r#"[{"number":1,"title":"Wave 1","open_issues":2,"closed_issues":0}]"#;
-const WITH_BACKLOG: &str = r#"[{"number":1,"title":"Wave 1","open_issues":2,"closed_issues":0},{"number":2,"title":"Backlog","open_issues":0,"closed_issues":0}]"#;
+/// A pull request that ran the checks of `names`, as the files of the
+/// fake forge give it.
+fn ci(names: &str) -> [(&'static str, String); 2] {
+    [
+        (
+            "prior_pulls",
+            r#"[{"number":3,"html_url":"https://github.com/acme/app/pull/3","head":{"ref":"feature","sha":"abc1234"},"base":{"ref":"main"}}]"#.to_owned(),
+        ),
+        (
+            "checks_abc1234",
+            format!(r#"{{"check_runs":[{names}]}}"#),
+        ),
+    ]
+}
+
+/// A repository with no `riff.toml`, no auto-merge, no ruleset and no
+/// milestone, whose latest pull request ran two checks.
+fn bare(bin: &Path) {
+    let [pulls, checks] = ci(r#"{"name":"checks / lint"},{"name":"checks / test"}"#);
+    fake_forge(
+        bin,
+        &[
+            ("files", "CLAUDE.md\n"),
+            ("milestones", ""),
+            (pulls.0, &pulls.1),
+            (checks.0, &checks.1),
+        ],
+    );
+}
+
+/// A repository that is set up for riff.
+fn set_up(bin: &Path) {
+    let [pulls, checks] = ci(r#"{"name":"Gate"}"#);
+    fake_forge(
+        bin,
+        &[
+            ("files", "riff.toml\nCLAUDE.md\n"),
+            ("milestones", "Wave 1\nBacklog\n"),
+            ("auto_merge", ""),
+            (
+                "ruleset",
+                r#"{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]}"#,
+            ),
+            (pulls.0, &pulls.1),
+            (checks.0, &checks.1),
+        ],
+    );
+}
 
 impl Machine {
     /// Gives the repository of the machine a remote `origin` on GitHub.
@@ -673,16 +701,34 @@ impl Machine {
             .unwrap();
         assert!(status.success());
     }
+
+    /// The calls of the fake forge that change it.
+    fn forge_changes(&self) -> Vec<String> {
+        self.read("calls")
+            .lines()
+            .filter(|l| l.contains(" -X ") || l.starts_with("label "))
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
-/// 01M5QVF5535YRN1EF3DZAB4W8G: `riff init --check` in a clone of a
-/// repository with no auto-merge, no ruleset that requires `riff/verify`
-/// and no `Backlog` names the three steps, and changes nothing.
+/// The lines of `stdout` that start with `fail  `.
+fn failed_lines(stdout: &str) -> Vec<&str> {
+    stdout
+        .lines()
+        .filter(|l| l.starts_with("  fail  "))
+        .collect()
+}
+
+/// 01M5QVF5535YRN1EF3DZAB4W8G, 01M5R1672NF56P15VD0JEX51K4: `riff init
+/// --check` in a clone of a repository with no `riff.toml`, no
+/// auto-merge, no ruleset that requires `riff/verify`, no `Backlog` and no
+/// wave names the five steps, and changes nothing.
 #[tokio::test]
 async fn riff_init_check_names_the_github_step_of_each_fact_that_fails() {
     let machine = Machine::new();
     machine.add_origin();
-    fake_gh(&machine.bin, BARE, "[]", WAVES_ONLY);
+    bare(&machine.bin);
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert_eq!(
@@ -691,13 +737,12 @@ async fn riff_init_check_names_the_github_step_of_each_fact_that_fails() {
         "{stdout}\n{}",
         text(&out.stderr)
     );
-    let failed: Vec<&str> = stdout
-        .lines()
-        .filter(|l| l.starts_with("  fail  "))
-        .collect();
     assert_eq!(
-        failed,
+        failed_lines(&stdout),
         [
+            "  fail  riff.toml on main: main of acme/app has no riff.toml, so riff lead start \
+             stops. Fix: put riff.toml with the session image on main. See \"Add another \
+             repository to the riff\" in the book",
             "  fail  auto-merge and squash merge: acme/app allows no auto-merge. Fix: allow \
              them: gh api -X PATCH repos/acme/app -F allow_auto_merge=true -F \
              allow_squash_merge=true",
@@ -708,33 +753,188 @@ async fn riff_init_check_names_the_github_step_of_each_fact_that_fails() {
             "  fail  the milestone Backlog: acme/app has no open milestone Backlog. Fix: make \
              it: gh api -X POST repos/acme/app/milestones -f title=Backlog. riff wave make \
              makes it too, with the next wave",
+            "  fail  the first wave: acme/app has no open wave. Fix: make it: riff wave make \
+             \"Wave 1\"",
         ],
         "{stdout}"
     );
     assert!(
-        stdout.contains("3 checks failed. riff installed nothing and pulled nothing."),
+        stdout.contains("5 checks failed. riff installed nothing and pulled nothing."),
         "{stdout}"
     );
+    assert!(!stdout.contains("These steps change GitHub"), "{stdout}");
     // riff reads the repository, and changes nothing: no write call.
-    let log = machine.read("gh.log");
-    assert_eq!(log.lines().count(), 3, "{log}");
-    assert!(!log.contains(" -X "), "{log}");
+    assert!(
+        machine.forge_changes().is_empty(),
+        "{}",
+        machine.read("calls")
+    );
     assert_eq!(machine.read("systemctl.log"), "");
     assert!(!machine.unit().exists());
+}
+
+/// 01M5R1672NF56P15VD0JEX51K4: `riff init --yes` in a clone of a
+/// repository with no `riff.toml`, no auto-merge, no ruleset and no
+/// milestone makes the pull request with `riff.toml` and merges it,
+/// allows auto-merge and squash merge, makes the ruleset with
+/// `riff/verify` and the checks of the CI, and makes the two milestones.
+/// A second run makes no call that changes the forge, and asks nothing.
+#[tokio::test]
+async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing() {
+    let machine = Machine::new();
+    machine.add_origin();
+    bare(&machine.bin);
+    std::fs::write(machine.bin.join("no-image"), "").unwrap();
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    for line in [
+        "riff can set up acme/app for riff. These steps change GitHub:",
+        "  allow auto-merge and squash merge",
+        "  make riff.toml on main with a pull request",
+        "  make the milestone Backlog",
+        "  make the milestone Wave 1",
+        "  make the ruleset riff on main",
+        "  done  allow auto-merge and squash merge: allowed both",
+        "  done  make riff.toml on main with a pull request: opened \
+         https://github.com/acme/app/pull/7 and merged it",
+        "  done  make the milestone Backlog: made Backlog",
+        "  done  make the milestone Wave 1: made Wave 1",
+        "  done  make the ruleset riff on main: requires checks / lint and checks / test and \
+         riff/verify",
+    ] {
+        assert!(
+            stdout.lines().any(|l| l == line),
+            "{line}\nnot in\n{stdout}"
+        );
+    }
+    // The clone has its own riff.toml, so riff does not ask for a pull.
+    assert!(!stdout.contains("Run git pull"), "{stdout}");
+    assert!(
+        stdout.contains("This machine is ready for riff 3.0."),
+        "{stdout}"
+    );
+
+    let bin = &machine.bin;
+    let json =
+        |name: &str| -> serde_json::Value { serde_json::from_str(&machine.read(name)).unwrap() };
+    assert_eq!(json("pull.json")["title"], "Set up riff");
+    assert_eq!(json("pull.json")["head"], "riff-setup");
+    assert_eq!(json("merge.json")["merge_method"], "squash");
+    let config = json("config.json");
+    assert_eq!(config["branch"], "riff-setup");
+    assert!(bin.join("auto_merge").exists());
+    assert_eq!(machine.read("milestones"), "Backlog\nWave 1\n");
+    let rules = machine.read("ruleset");
+    for context in ["checks / lint", "checks / test", "riff/verify"] {
+        assert!(
+            rules.contains(&format!(r#""context":"{context}""#)),
+            "{rules}"
+        );
+    }
+    assert!(machine.read("files").lines().any(|l| l == "riff.toml"));
+    let changes = machine.forge_changes();
+    assert!(changes.len() >= 8, "{changes:?}");
+
+    // A second run: the checks pass, nothing changes, and nothing is asked.
+    let out = machine.init(&machine.repo, &[]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(!stdout.contains("fail  "), "{stdout}");
+    assert!(!stdout.contains("These steps change GitHub"), "{stdout}");
+    assert!(!stdout.contains("Do them?"), "{stdout}");
+    assert_eq!(machine.forge_changes(), changes);
+}
+
+/// 01M5R1672NF56P15VD0JEX51K4: with no `--yes` and no terminal, riff
+/// names the steps, asks nothing, does none and says how to do them.
+#[tokio::test]
+async fn riff_init_without_a_terminal_names_the_steps_and_does_none() {
+    let machine = Machine::new();
+    machine.add_origin();
+    bare(&machine.bin);
+    let out = machine.init(&machine.repo, &[]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.contains("These steps change GitHub:\n  allow auto-merge and squash merge\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "riff did no step. To do them, run riff init in a terminal and answer y, or run \
+             riff init --yes."
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("5 checks failed."), "{stdout}");
+    assert!(machine.forge_changes().is_empty());
+    assert_eq!(machine.read("systemctl.log"), "");
+}
+
+/// 01M5R1672NF56P15VD0JEX51K4: a person who is not an admin gets the
+/// steps named, and riff changes nothing, also with `--yes`.
+#[tokio::test]
+async fn a_person_who_is_not_an_admin_gets_the_steps_named_and_riff_changes_nothing() {
+    let machine = Machine::new();
+    machine.add_origin();
+    bare(&machine.bin);
+    std::fs::write(machine.bin.join("not_admin"), "").unwrap();
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert_eq!(failed_lines(&stdout).len(), 5, "{stdout}");
+    assert!(
+        stdout.contains(
+            "You are not an admin of acme/app, so riff changes nothing there. Ask an admin to \
+             run riff init, or do the fix of each failed check."
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("These steps change GitHub"), "{stdout}");
+    assert!(machine.forge_changes().is_empty());
+}
+
+/// A clone with no `riff.toml` of its own gets the new file as the image
+/// of the run, and riff says to pull.
+#[tokio::test]
+async fn a_clone_with_no_riff_toml_gets_the_new_image_and_a_line_to_pull() {
+    let machine = Machine::new();
+    machine.add_origin();
+    bare(&machine.bin);
+    std::fs::remove_file(machine.repo.join("riff.toml")).unwrap();
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains(
+            "riff.toml is on the default branch now. Run git pull in this clone to get it."
+        ),
+        "{stdout}"
+    );
+    let release = riff::session_image::of_release().to_string();
+    assert!(
+        stdout.contains(&format!("This machine has the session image {release}.")),
+        "{stdout}"
+    );
 }
 
 #[tokio::test]
 async fn riff_init_check_passes_a_repository_that_is_set_up() {
     let machine = Machine::new();
     machine.add_origin();
-    fake_gh(&machine.bin, SET_UP, VERIFY_RULE, WITH_BACKLOG);
+    set_up(&machine.bin);
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     for line in [
+        "  pass  riff.toml on main: main of acme/app has it",
         "  pass  auto-merge and squash merge: acme/app allows both",
         "  pass  the ruleset of main: it requires the check riff/verify",
         "  pass  the milestone Backlog: acme/app has it open",
+        "  pass  the first wave: acme/app has the open wave Wave 1",
+        "  pass  the checks of a pull request: the full check is Gate",
+        "  pass  CLAUDE.md: main of acme/app has it",
     ] {
         assert!(
             stdout.lines().any(|l| l == line),
@@ -743,19 +943,48 @@ async fn riff_init_check_passes_a_repository_that_is_set_up() {
     }
 }
 
+/// The checks of the CI and of `CLAUDE.md` have no step: riff names the
+/// fix, and does nothing for them.
+#[tokio::test]
+async fn riff_init_names_the_fix_of_a_missing_ci_check_and_a_missing_claude_md() {
+    let machine = Machine::new();
+    machine.add_origin();
+    set_up(&machine.bin);
+    std::fs::write(machine.bin.join("files"), "riff.toml\n").unwrap();
+    std::fs::remove_file(machine.bin.join("prior_pulls")).unwrap();
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    let failed = failed_lines(&stdout);
+    assert_eq!(failed.len(), 2, "{stdout}");
+    assert!(
+        failed[0].starts_with("  fail  the checks of a pull request: no pull request of acme/app ran a check named Gate"),
+        "{}",
+        failed[0]
+    );
+    assert!(
+        failed[0].contains("add a workflow that runs on pull_request"),
+        "{}",
+        failed[0]
+    );
+    assert!(
+        failed[1].starts_with("  fail  CLAUDE.md: main of acme/app has no CLAUDE.md"),
+        "{}",
+        failed[1]
+    );
+    assert!(machine.forge_changes().is_empty());
+}
+
 #[tokio::test]
 async fn riff_init_check_fails_one_check_when_gh_cannot_read_the_repository() {
     let machine = Machine::new();
     machine.add_origin();
-    fake_gh(&machine.bin, SET_UP, VERIFY_RULE, WITH_BACKLOG);
-    std::fs::write(machine.bin.join("no-login"), "").unwrap();
+    set_up(&machine.bin);
+    std::fs::write(machine.bin.join("no_login"), "").unwrap();
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{stdout}");
-    let failed: Vec<&str> = stdout
-        .lines()
-        .filter(|l| l.starts_with("  fail  "))
-        .collect();
+    let failed = failed_lines(&stdout);
     assert_eq!(failed.len(), 1, "{stdout}");
     assert!(
         failed[0]
@@ -772,12 +1001,12 @@ async fn riff_init_check_fails_one_check_when_gh_cannot_read_the_repository() {
 #[tokio::test]
 async fn riff_init_calls_no_gh_in_a_folder_with_no_remote_on_github() {
     let machine = Machine::new();
-    fake_gh(&machine.bin, BARE, "[]", WAVES_ONLY);
+    bare(&machine.bin);
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     assert!(!stdout.contains("GitHub"), "{stdout}");
-    assert_eq!(machine.read("gh.log"), "");
+    assert_eq!(machine.read("calls"), "");
     // A remote on another host is no remote on GitHub.
     let status = machine
         .env
@@ -790,7 +1019,7 @@ async fn riff_init_calls_no_gh_in_a_folder_with_no_remote_on_github() {
     assert!(status.success());
     let out = machine.init(&machine.repo, &["--check"]).await;
     assert!(out.status.success(), "{}", text(&out.stdout));
-    assert_eq!(machine.read("gh.log"), "");
+    assert_eq!(machine.read("calls"), "");
 }
 
 #[test]
@@ -808,7 +1037,8 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
             "riff init",
             "riff init --yes",
             "riff init --check",
-            // "Add another repository to the riff": check, then pull the image.
+            // "Add another repository to the riff": set it up, check, then pull the image.
+            "riff init",
             "riff init --check",
             "riff init"
         ]

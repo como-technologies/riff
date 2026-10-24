@@ -194,8 +194,9 @@ riff init
 ```mermaid
 flowchart LR
     C["check this machine"] --> R["ask to remove<br/>wide rules"]
-    R -- "each check passes" --> D["install and start<br/>the riff daemon"]
-    R -- "a check fails" --> F["print the fix"]
+    R --> S["ask to set up the<br/>repository on GitHub"]
+    S -- "each check passes" --> D["install and start<br/>the riff daemon"]
+    S -- "a check fails" --> F["print the fix"]
     D --> I["get the session image<br/>of the project"]
 ```
 
@@ -209,7 +210,7 @@ flowchart LR
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |
 | The riff binary | It is static, so `riff relay` starts in each session image. |
-| The repository on GitHub | In a clone of a repository on GitHub: auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, and the Backlog is there. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
+| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, a pull request runs a CI check, and `CLAUDE.md` is there. `riff init` does the first five itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
 
 A line with `fail` also gives the fix. Do each fix, then run
 `riff init` again. When each check passes, `riff init` installs and
@@ -362,7 +363,9 @@ A rule of another tool, for example `Read`, is never wide.
 
 ### Run riff init with no question
 
-This command asks no question. It removes no wide rule:
+This command asks no question. It sets up the repository on GitHub: see
+[Add another repository to the
+riff](#add-another-repository-to-the-riff). It removes no wide rule:
 
 ```sh
 riff init --yes
@@ -380,11 +383,59 @@ riff init --check
 
 ## Add another repository to the riff
 
-riff works on other projects too. A new repository needs five parts
-that riff does not make: `riff.toml` with the session image, a full
-check, the settings of the repository, a ruleset of the default
-branch, and the Backlog. In a clone of the repository, `riff init`
-checks them, and names the step of each check that fails:
+riff works on other projects too. In a clone of the repository, run
+`riff init`. On a repository that is not set up for riff, it shows
+each step and asks one question. Answer `y`. You must be an admin of
+the repository:
+
+```sh
+riff init
+```
+
+`riff init` sets up the repository with `gh`, in this order. It skips
+each step that is done already:
+
+| Step | What `riff init` does |
+|---|---|
+| Merge settings | It allows auto-merge and squash merge. |
+| `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins the session image of the riff that you run. |
+| The Backlog | It makes the `Backlog`. |
+| The first wave | When the repository has no open wave, it makes `Wave 1`. |
+| The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks `riff/verify` and the checks that your CI runs on a pull request. A repository whose CI has no check yet gets the check `Gate`. |
+
+```mermaid
+flowchart LR
+    I["riff init<br/>in a clone"] --> C["checks the<br/>repository"]
+    C -- "a step to do" --> Q["one question<br/>y, or --yes"]
+    Q --> S["the steps, with gh"]
+    S --> D["the daemon and<br/>the session image"]
+    C -- "all done" --> D
+```
+
+`riff init` makes `riff.toml` on the default branch of `origin`, not in
+your clone. Run `git pull` in your clone to get it. A second run of
+`riff init` changes nothing on GitHub and asks nothing.
+
+Two parts are your own work. `riff init` has no step for them, and it
+names the fix of each:
+
+- A CI check that a pull request runs. riff waits for the full check
+  before it starts a verify. See [Add the job Gate](#add-the-job-gate)
+  and [Use the checks that you have](#use-the-checks-that-you-have).
+- A `CLAUDE.md` at the root of the default branch. Each session reads
+  it for the rules of the repository: how to run the checks before a
+  push, and what a pull request needs. Write it, push it, and run
+  `riff init` again.
+
+To do the steps with no question, run `riff init --yes`. To see the
+steps and change nothing, run `riff init --check`. A person who is not
+an admin of the repository gets the fix of each check, and riff changes
+nothing: ask an admin to run `riff init`.
+
+### Do the steps by hand
+
+You can do each step yourself. `riff init --check` names the step of
+each check that fails:
 
 ```sh
 riff init --check
@@ -401,13 +452,15 @@ flowchart LR
 
 | Check of `riff init` | Step |
 |---|---|
-| the session image | [Add riff.toml](#add-rifftoml) |
+| `riff.toml` on the default branch | [Add riff.toml](#add-rifftoml) |
 | auto-merge and squash merge | [Allow auto-merge and squash merge](#allow-auto-merge-and-squash-merge) |
 | the ruleset of the default branch | [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch) |
-| the Backlog | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
+| the Backlog, the first wave | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
+| the checks of a pull request | [Add the job Gate](#add-the-job-gate) |
+| `CLAUDE.md` | Write it at the root of the repository. |
 
-The full check is a step of your own: `riff init` cannot check it.
-Your repository may have one already: see
+The full check is a step of your own. Your repository may have one
+already: see
 [Use the checks that you have](#use-the-checks-that-you-have).
 
 ### Add riff.toml

@@ -230,6 +230,64 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
     each_is_real(&riff);
 }
 
+/// 01M5R1672NF56P15VD0JEX51K4: the how-to starts with `riff init` in a
+/// copyable `sh` block, lists what it sets up in the order of the steps
+/// (`riff::repo_setup::Step`), and names `--yes` and `--check`.
+#[test]
+fn the_how_to_starts_with_riff_init_and_lists_what_it_sets_up() {
+    let how_to = part(PAGE, HOW_TO);
+    let commands = book::commands_in(&how_to);
+    assert_eq!(commands[0], "riff init");
+    // Nothing but prose comes before the first block.
+    let before = how_to.split("```").next().unwrap();
+    assert!(!before.contains("###"), "{before}");
+    let table = how_to
+        .split("| Step | What `riff init` does |")
+        .nth(1)
+        .expect("the table");
+    let table = table.split("\n\n").next().unwrap();
+    let rows: Vec<&str> = table.lines().skip(2).collect();
+    assert_eq!(rows.len(), 5, "{rows:?}");
+    // The order of the table is the order of the steps in the code.
+    let order = [
+        "allows auto-merge and squash merge",
+        "riff.toml",
+        "makes the `Backlog`",
+        "makes `Wave 1`",
+        "ruleset `riff`",
+    ];
+    for (row, word) in rows.iter().zip(order) {
+        assert!(
+            row.to_lowercase().contains(&word.to_lowercase()),
+            "{word}: {row}"
+        );
+    }
+    let steps = [
+        riff::repo_setup::Step::Merge,
+        riff::repo_setup::Step::Config,
+        riff::repo_setup::Step::Backlog,
+        riff::repo_setup::Step::Wave,
+        riff::repo_setup::Step::Ruleset,
+    ];
+    assert!(steps.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(
+        table.contains(&format!("`{}`", riff::repo_setup::SETUP_BRANCH)),
+        "{table}"
+    );
+    assert!(
+        table.contains(&format!("\"{}\"", riff::repo_setup::SETUP_TITLE)),
+        "{table}"
+    );
+    for word in [
+        "`riff init --yes`",
+        "`riff init --check`",
+        "`CLAUDE.md`",
+        "`git pull`",
+    ] {
+        assert!(how_to.contains(word), "{word}");
+    }
+}
+
 /// 01M5QY976MTPRX5J4N1MKXAGDK: the step "Add riff.toml" says the error of
 /// `riff lead start` with no `riff.toml`, and the error names the how-to.
 #[test]

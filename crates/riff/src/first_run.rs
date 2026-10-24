@@ -10,8 +10,11 @@
 //! flowchart LR
 //!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the riff binary,<br/>the repository on GitHub"] --> X{"wide<br/>rules?"}
 //!     X -- "one question:<br/>y in a terminal" --> V["remove them"]
-//!     X -- "no" --> E{"each check<br/>passed?"}
-//!     V --> E
+//!     X -- "no" --> G{"steps of the<br/>repository?"}
+//!     V --> G
+//!     G -- "one question:<br/>y in a terminal, or --yes" --> T["set up the<br/>repository on GitHub"]
+//!     G -- "none, or no" --> E{"each check<br/>passed?"}
+//!     T --> E
 //!     E -- "no" --> F["a fix line for each,<br/>exit 1"]
 //!     E -- "yes" --> D["the daemon<br/>riff.service"]
 //!     D --> I["the session image<br/>the daemon pulls it"]
@@ -33,13 +36,22 @@
 //!    its keys in the settings of Claude Code are left, riff names them
 //!    and removes them, with no question: each of its hooks fails in
 //!    Claude Code. `--check` removes nothing (01M5JFF7TAVA87TMJXK25HDJ19).
-//! 4. When a check still fails, riff installs nothing, pulls nothing, and
+//! 4. The setup of the repository (01M5R1672NF56P15VD0JEX51K4).
+//!    When a check of the repository on GitHub failed and has a step
+//!    ([`crate::repo_setup::Step`]), and the person is an admin of the
+//!    repository, riff names the steps and asks one question
+//!    ([`Question::Setup`]). Only a `y` in a terminal does them. `--yes`
+//!    does them with no question. `--check` does none. After the steps,
+//!    riff checks again: a step that worked passes its check, and a new
+//!    `riff.toml` is the session image of this run. A person who is not an
+//!    admin gets the fix of each check, and riff changes nothing there.
+//! 5. When a check still fails, riff installs nothing, pulls nothing, and
 //!    exits with 1. `--check` stops here (01M4ZJN6WR0JJ891R9JMQNPKGD).
-//! 5. The daemon. When a riff daemon answers, riff keeps it: it does
+//! 6. The daemon. When a riff daemon answers, riff keeps it: it does
 //!    not start it again. When no daemon answers, riff installs it as
 //!    `riff daemon install` does ([`crate::daemon::install`],
 //!    01M4ZJN6Z1DGD43CKZ19QPN2NK).
-//! 6. The image. riff asks the daemon for the session image that
+//! 7. The image. riff asks the daemon for the session image that
 //!    `riff.toml` pins. The daemon pulls it when podman does not have
 //!    it (01M4ZJN718EF1PC9YY9GFD0EJ2).
 //!
@@ -54,16 +66,24 @@
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
 //! | the session image | `riff.toml` of the repository of the current folder ([`crate::session_image::of_folder`]) | it pins an image by its digest |
 //! | the riff binary | the ELF of the riff of this process ([`crate::release::check_file`]) | it has no interpreter, so `riff relay` starts in each session image. The fix is `riff update` (01M510NW68CTZBHHW7ZYFV7Q3X) |
-//! | auto-merge and squash merge | `allow_auto_merge` and `allow_squash_merge` of the repository on GitHub ([`crate::repo_setup`], 01M5QVF5535YRN1EF3DZAB4W8G) | both are on |
+//! | `riff.toml` on the default branch | the files at the root of the default branch ([`crate::repo_setup`], 01M5QVF5535YRN1EF3DZAB4W8G) | it is there |
+//! | auto-merge and squash merge | `allow_auto_merge` and `allow_squash_merge` of the repository on GitHub | both are on |
 //! | the ruleset of the default branch | the active rules of the default branch | one requires the check `riff/verify` |
 //! | the milestone `Backlog` | the open milestones | one has that title |
+//! | the first wave | the open milestones | one is a wave |
+//! | the checks of a pull request | the required checks and the check runs of the latest pull requests | the full check can end |
+//! | `CLAUDE.md` | the files at the root of the default branch | it is there |
+//!
+//! The first five checks of the repository have a step that `riff init`
+//! can do. The last two have none: their fix is the work of the person.
 //!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
 //!
-//! The last three checks run only in a folder whose remote `origin` is on
+//! The last seven checks run only in a folder whose remote `origin` is on
 //! GitHub, with the `gh` of the machine. They read the repository and
-//! change nothing, also without `--check`. When `gh` cannot read the
+//! change nothing, also without `--check`; only the steps of the setup
+//! change it. When `gh` cannot read the
 //! repository, one check fails and its fix is `gh auth login`
 //! ([`crate::repo_setup`]).
 //!
@@ -127,8 +147,9 @@ use anyhow::Result;
 use riff_core::build::Build;
 
 use crate::permissions::{self, Rules};
+use crate::repo_setup::{self, Forge};
 use crate::service::{ServiceManager, Unit};
-use crate::{daemon, text};
+use crate::{daemon, session_image, text};
 
 /// The IDs that `/etc/subuid` and `/etc/subgid` must each give the
 /// person: the size of the range that `useradd` gives.
@@ -608,9 +629,11 @@ pub fn machine_checks(facts: &Facts) -> Vec<Check> {
 pub enum Mode {
     /// `--check`: riff changes nothing and asks nothing.
     Check,
-    /// riff asks one question before it removes the wide rules.
+    /// riff asks one question before it removes the wide rules, and one
+    /// before it sets up the repository on GitHub.
     Ask,
-    /// `--yes`: riff changes what it may, with no question.
+    /// `--yes`: riff sets up the repository on GitHub with no question.
+    /// It removes no wide rule.
     Yes,
 }
 
@@ -619,6 +642,9 @@ pub enum Mode {
 pub enum Question {
     /// Remove the wide allow rules (01M51JCW2EKF8H8QFQYSVRSPET).
     Remove,
+    /// Do the steps that set up the repository on GitHub
+    /// (01M5R1672NF56P15VD0JEX51K4).
+    Setup,
 }
 
 impl Question {
@@ -626,6 +652,7 @@ impl Question {
     pub fn text(&self) -> String {
         match self {
             Question::Remove => text::INIT_ASK_WIDE.to_owned(),
+            Question::Setup => text::INIT_ASK_SETUP.to_owned(),
         }
     }
 }
@@ -675,10 +702,14 @@ pub fn ask(
 /// The first run on `facts`, with the daemon in the folder `dir`. It
 /// prints each step, and gives the exit code: 1 when a check failed.
 /// When settings have wide rules, it names them, and in [`Mode::Ask`]
-/// asks `ask` the question [`Question::Remove`]. With
-/// [`Mode::Check`], it stops after the checks. When no daemon answers,
-/// it installs `unit` with `manager`, and waits up to `wait` for the
-/// daemon.
+/// asks `ask` the question [`Question::Remove`]. When a check of the
+/// repository on GitHub failed and has a step, and the person is an admin,
+/// it names the steps and does them in the `forge`: after the question
+/// [`Question::Setup`] in [`Mode::Ask`], and with no question in
+/// [`Mode::Yes`] (01M5R1672NF56P15VD0JEX51K4). With [`Mode::Check`], it
+/// stops after the checks. When no daemon answers, it installs `unit` with
+/// `manager`, and waits up to `wait` for the daemon.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     facts: &Facts,
     mode: Mode,
@@ -687,10 +718,11 @@ pub async fn run(
     manager: &impl ServiceManager,
     unit: &Unit,
     wait: Duration,
+    forge: &Forge,
 ) -> Result<i32> {
     println!("{}", text::INIT_CHECKS);
-    let checks = checks(facts);
-    for check in &checks {
+    let mut list = checks(facts);
+    for check in &list {
         println!("  {}", check.line());
     }
     if !facts.wide.is_empty() {
@@ -713,7 +745,16 @@ pub async fn run(
             println!("{}", text::OLD_PLUGIN_REMOVED);
         }
     }
-    let failed = checks.iter().filter(|c| !c.passed()).count();
+    let after = if mode == Mode::Check {
+        None
+    } else {
+        set_up(facts, &list, mode, &mut ask, forge)?
+    };
+    let facts = after.as_ref().unwrap_or(facts);
+    if after.is_some() {
+        list = checks(facts);
+    }
+    let failed = list.iter().filter(|c| !c.passed()).count();
     if failed > 0 {
         println!("{}", text::init_failed(failed));
         return Ok(1);
@@ -738,6 +779,58 @@ pub async fn run(
     Ok(0)
 }
 
+/// The steps of the failed checks `list` that set up the repository on
+/// GitHub (01M5R1672NF56P15VD0JEX51K4). It names them, and does them
+/// in `forge` when the person is an admin, and says yes: always in
+/// [`Mode::Yes`], else after the question [`Question::Setup`]. It
+/// returns the facts after the steps, or `None` when it did no step.
+/// The facts after the steps have the new `riff.toml` as the session
+/// image, when the folder had none.
+fn set_up(
+    facts: &Facts,
+    list: &[Check],
+    mode: Mode,
+    ask: &mut impl FnMut(Question) -> Result<bool>,
+    forge: &Forge,
+) -> Result<Option<Facts>> {
+    let Some(Ok(github)) = &facts.github else {
+        return Ok(None);
+    };
+    let steps = repo_setup::steps_of(list);
+    if steps.is_empty() {
+        return Ok(None);
+    }
+    if !github.admin {
+        println!("{}", text::init_not_admin(&github.repo));
+        return Ok(None);
+    }
+    let titles: Vec<String> = steps.iter().map(|s| s.title(github)).collect();
+    println!("{}", text::init_setup(&github.repo, &titles));
+    if mode != Mode::Yes && !ask(Question::Setup)? {
+        println!("{}", text::INIT_SETUP_KEPT);
+        return Ok(None);
+    }
+    let mut after = github.clone();
+    for (step, done) in repo_setup::setup(forge, &steps, &mut after) {
+        let title = step.title(github);
+        println!(
+            "  {}",
+            match done {
+                Ok(what) => text::init_step_done(&title, &what),
+                Err(why) => text::init_step_failed(&title, &why),
+            }
+        );
+    }
+    let mut facts = facts.clone();
+    if facts.image.is_err() && after.files.len() > github.files.len() {
+        // The new riff.toml is on the default branch, not yet in this clone.
+        facts.image = Ok(session_image::of_release().to_string());
+        println!("{}", text::INIT_PULL);
+    }
+    facts.github = Some(Ok(after));
+    Ok(Some(facts))
+}
+
 /// `riff init`: the first run on this machine, with the repository of
 /// the current folder and the daemon of this machine. It asks its
 /// question on the terminal. It gives the exit code. On a host that is
@@ -760,8 +853,11 @@ pub async fn init(mode: Mode) -> Result<i32> {
                 &mut std::io::stdout(),
             )
         };
+        let forge = crate::identity::github_origin(&here)
+            .map(|repo| Forge::of(&repo))
+            .unwrap_or_default();
         let dir = daemon::dir()?;
-        run(&facts, mode, question, &dir, &manager, &unit, WAIT).await
+        run(&facts, mode, question, &dir, &manager, &unit, WAIT, &forge).await
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -951,6 +1047,9 @@ mod tests {
             squash_merge: true,
             required: vec!["Gate".into(), "riff/verify".into()],
             milestones: vec!["Backlog".into(), "Wave 1".into()],
+            admin: true,
+            files: vec!["riff.toml".into(), "CLAUDE.md".into()],
+            ci: vec!["Gate".into()],
         }
     }
 
@@ -958,7 +1057,7 @@ mod tests {
     /// the checks of the machine, and only for a folder with a remote on
     /// GitHub.
     #[test]
-    fn the_repository_on_github_has_three_checks_after_the_machine() {
+    fn the_repository_on_github_has_seven_checks_after_the_machine() {
         let names = |facts: &Facts| {
             checks(facts)
                 .into_iter()
@@ -974,9 +1073,13 @@ mod tests {
         assert_eq!(
             names(&with)[7..],
             [
+                "riff.toml on main",
                 "auto-merge and squash merge",
                 "the ruleset of main",
-                "the milestone Backlog"
+                "the milestone Backlog",
+                "the first wave",
+                "the checks of a pull request",
+                "CLAUDE.md"
             ]
         );
         let none = Facts {
@@ -988,7 +1091,7 @@ mod tests {
             })),
             ..ready()
         };
-        assert_eq!(failed(&none).len(), 3);
+        assert_eq!(failed(&none).len(), 4);
         let unread = Facts {
             github: Some(Err("gh: not logged in".into())),
             ..ready()
@@ -1110,6 +1213,7 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
+            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1137,9 +1241,18 @@ mod tests {
                 ..ready()
             };
             let dir = dir_in(root.path());
-            let code = run(&facts, mode, no_question, &dir, &manager, &unit(), WAIT)
-                .await
-                .unwrap();
+            let code = run(
+                &facts,
+                mode,
+                no_question,
+                &dir,
+                &manager,
+                &unit(),
+                WAIT,
+                &Forge::default(),
+            )
+            .await
+            .unwrap();
             assert_eq!(code, 1, "{mode:?}");
             assert_eq!(plugin.exists(), kept, "{mode:?}");
             assert_eq!(found().is_empty(), !kept, "{mode:?}");
@@ -1163,6 +1276,7 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
+            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1198,9 +1312,18 @@ mod tests {
         for mode in [Mode::Ask, Mode::Yes, Mode::Check] {
             let manager = Manager::default();
             let dir = dir_in(root.path());
-            let code = run(&facts, mode, |_| Ok(true), &dir, &manager, &unit(), WAIT)
-                .await
-                .unwrap();
+            let code = run(
+                &facts,
+                mode,
+                |_| Ok(true),
+                &dir,
+                &manager,
+                &unit(),
+                WAIT,
+                &Forge::default(),
+            )
+            .await
+            .unwrap();
             assert_eq!(code, 1);
             assert_eq!(std::fs::read_to_string(&there).unwrap(), text);
             assert!(!absent.exists());
@@ -1232,6 +1355,7 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
+            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1249,6 +1373,7 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
+            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1375,9 +1500,18 @@ mod tests {
         };
         let manager = Manager::default();
         let dir = dir_in(root.path());
-        let code = run(&facts, Mode::Ask, question, &dir, &manager, &unit(), WAIT)
-            .await
-            .unwrap();
+        let code = run(
+            &facts,
+            Mode::Ask,
+            question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+            &Forge::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(code, 1);
         assert_eq!(asked, [text::INIT_ASK_WIDE]);
 
@@ -1427,6 +1561,7 @@ mod tests {
             &Manager::default(),
             &unit(),
             WAIT,
+            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1456,6 +1591,7 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
+            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1472,6 +1608,7 @@ mod tests {
             &manager,
             &unit(),
             WAIT,
+            &Forge::default(),
         )
         .await
         .unwrap();
@@ -1501,6 +1638,7 @@ mod tests {
             &Manager::default(),
             &unit(),
             WAIT,
+            &Forge::default(),
         )
         .await
         .unwrap_err();
@@ -1508,5 +1646,249 @@ mod tests {
 
         let _ = stop.send(());
         served.await.unwrap().unwrap();
+    }
+
+    /// The fake forge of the tests of `riff init` (`tests/fake/forge`),
+    /// in a folder of its own.
+    struct Forged {
+        dir: tempfile::TempDir,
+    }
+
+    impl Forged {
+        /// A bare repository: a `CLAUDE.md`, a pull request that ran two
+        /// checks, no `riff.toml`, no auto-merge, no ruleset, no milestone.
+        fn bare() -> Forged {
+            let dir = tempfile::tempdir().unwrap();
+            let files = [
+                ("files", "CLAUDE.md\n"),
+                ("milestones", ""),
+                (
+                    "prior_pulls",
+                    r#"[{"number":3,"html_url":"https://github.com/acme/app/pull/3","head":{"ref":"feature","sha":"abc1234"},"base":{"ref":"main"}}]"#,
+                ),
+                (
+                    "checks_abc1234",
+                    r#"{"check_runs":[{"name":"checks / lint"},{"name":"checks / test"}]}"#,
+                ),
+            ];
+            for (name, text) in files {
+                std::fs::write(dir.path().join(name), text).unwrap();
+            }
+            isolated::write_program(dir.path().join("gh"), include_str!("../tests/fake/forge"));
+            Forged { dir }
+        }
+
+        fn forge(&self) -> Forge {
+            Forge {
+                gh: crate::pr::Gh::at(self.dir.path().join("gh")),
+                waits: repo_setup::Waits::NONE,
+            }
+        }
+
+        /// The facts of the machine, with the facts that riff reads from
+        /// the forge now. The clone has no `riff.toml` when `image` is
+        /// `None`.
+        fn facts(&self, image: Option<&str>) -> Facts {
+            Facts {
+                image: image
+                    .map(str::to_owned)
+                    .ok_or("no riff.toml in this clone".into()),
+                github: Some(repo_setup::read(&self.forge().gh)),
+                ..ready()
+            }
+        }
+
+        /// The calls that change the forge.
+        fn changes(&self) -> Vec<String> {
+            std::fs::read_to_string(self.dir.path().join("calls"))
+                .unwrap_or_default()
+                .lines()
+                .filter(|c| c.contains(" -X ") || c.starts_with("label "))
+                .map(Into::into)
+                .collect()
+        }
+
+        fn has(&self, name: &str) -> bool {
+            self.dir.path().join(name).exists()
+        }
+    }
+
+    /// `run` with a podman that fails: it does the setup and the checks,
+    /// and stops before the daemon.
+    async fn run_stopped(forged: &Forged, facts: &Facts, mode: Mode, yes: bool) -> (i32, usize) {
+        let root = tempfile::tempdir().unwrap();
+        let facts = Facts {
+            podman: Err(text::INIT_NO_PODMAN.into()),
+            ..facts.clone()
+        };
+        let asked = std::cell::Cell::new(0);
+        let question = |q: Question| {
+            assert_eq!(q, Question::Setup, "riff asked: {}", q.text());
+            asked.set(asked.get() + 1);
+            Ok(yes)
+        };
+        let code = run(
+            &facts,
+            mode,
+            question,
+            &dir_in(root.path()),
+            &Manager::default(),
+            &unit(),
+            WAIT,
+            &forged.forge(),
+        )
+        .await
+        .unwrap();
+        (code, asked.get())
+    }
+
+    /// 01M5R1672NF56P15VD0JEX51K4: `riff init --yes` sets up a bare
+    /// repository with no question; the second run changes nothing and
+    /// asks nothing.
+    #[tokio::test]
+    async fn yes_sets_up_a_bare_repository_and_pulls_the_new_image_and_a_second_run_changes_nothing()
+     {
+        let forged = Forged::bare();
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let release = session_image::of_release().to_string();
+        let fake = Fake::default().with_registry(&release);
+        let listener = listen(&dir).await.unwrap();
+        riff_client::secrets::mock_store();
+        let daemon = Arc::new(Daemon::new(fake.clone(), dir.clone()).unwrap());
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let served = tokio::spawn(daemon.serve(listener, async {
+            let _ = stopped.await;
+        }));
+
+        // The clone has no riff.toml: the new file is the image of the run.
+        let manager = Manager::default();
+        let code = run(
+            &forged.facts(None),
+            Mode::Yes,
+            no_question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+            &forged.forge(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(fake.calls(), [format!("pull {release}")]);
+        let changes = forged.changes().len();
+        assert!(changes >= 8, "{:?}", forged.changes());
+        for name in ["auto_merge", "ruleset", "config.json", "merge.json"] {
+            assert!(forged.has(name), "{name}");
+        }
+        let milestones = std::fs::read_to_string(forged.dir.path().join("milestones")).unwrap();
+        assert_eq!(milestones, "Backlog\nWave 1\n");
+
+        // The clone pulled the new file: a second run changes nothing.
+        let code = run(
+            &forged.facts(Some(&release)),
+            Mode::Yes,
+            no_question,
+            &dir,
+            &manager,
+            &unit(),
+            WAIT,
+            &forged.forge(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(
+            forged.changes().len(),
+            changes,
+            "a second run changes the forge"
+        );
+        assert_eq!(fake.calls(), [format!("pull {release}")]);
+
+        let _ = stop.send(());
+        served.await.unwrap().unwrap();
+    }
+
+    /// 01M5R1672NF56P15VD0JEX51K4: in `Mode::Ask`, the steps wait for one
+    /// question. A no does none, and a yes does each.
+    #[tokio::test]
+    async fn the_steps_wait_for_one_question_and_a_no_changes_nothing() {
+        let forged = Forged::bare();
+        let facts = forged.facts(Some(IMAGE));
+        let (code, asked) = run_stopped(&forged, &facts, Mode::Ask, false).await;
+        assert_eq!((code, asked), (1, 1));
+        assert!(forged.changes().is_empty(), "{:?}", forged.changes());
+
+        let (code, asked) = run_stopped(&forged, &facts, Mode::Ask, true).await;
+        // podman fails, so a check still fails; the steps are done.
+        assert_eq!((code, asked), (1, 1));
+        assert!(forged.has("ruleset") && forged.has("config.json"));
+
+        // Set up: no question at all.
+        let facts = forged.facts(Some(IMAGE));
+        assert!(
+            failed(&Facts {
+                podman: Ok("podman".into()),
+                ..facts.clone()
+            })
+            .is_empty()
+        );
+        let (_, asked) = run_stopped(&forged, &facts, Mode::Ask, true).await;
+        assert_eq!(asked, 0);
+    }
+
+    /// 01M5R1672NF56P15VD0JEX51K4: `--check` makes no call that changes the
+    /// forge, and asks nothing.
+    #[tokio::test]
+    async fn check_names_the_steps_and_changes_nothing() {
+        let forged = Forged::bare();
+        let facts = forged.facts(Some(IMAGE));
+        let (code, asked) = run_stopped(&forged, &facts, Mode::Check, true).await;
+        assert_eq!((code, asked), (1, 0));
+        assert!(forged.changes().is_empty(), "{:?}", forged.changes());
+        assert!(!forged.has("ruleset"));
+    }
+
+    /// 01M5R1672NF56P15VD0JEX51K4: a person who is not an admin gets the
+    /// steps named. riff asks nothing and changes nothing.
+    #[tokio::test]
+    async fn a_person_who_is_not_an_admin_gets_no_question_and_no_change() {
+        let forged = Forged::bare();
+        std::fs::write(forged.dir.path().join("not_admin"), "").unwrap();
+        let facts = forged.facts(Some(IMAGE));
+        assert!(!facts.github.as_ref().unwrap().as_ref().unwrap().admin);
+        for mode in [Mode::Ask, Mode::Yes] {
+            let (code, asked) = run_stopped(&forged, &facts, mode, true).await;
+            assert_eq!((code, asked), (1, 0), "{mode:?}");
+        }
+        assert!(forged.changes().is_empty(), "{:?}", forged.changes());
+    }
+
+    /// A step that fails fails the run, and the next steps run.
+    #[tokio::test]
+    async fn a_step_that_fails_fails_the_run_and_the_next_steps_run() {
+        let forged = Forged::bare();
+        std::fs::write(forged.dir.path().join("fail"), "rulesets").unwrap();
+        let facts = forged.facts(Some(IMAGE));
+        let (code, _) = run_stopped(&forged, &facts, Mode::Yes, true).await;
+        assert_eq!(code, 1);
+        assert!(forged.has("auto_merge") && forged.has("config.json"));
+        assert!(!forged.has("ruleset"));
+        let milestones = std::fs::read_to_string(forged.dir.path().join("milestones")).unwrap();
+        assert_eq!(milestones, "Backlog\nWave 1\n");
+    }
+
+    #[test]
+    fn the_question_of_the_setup_is_a_yes_or_no() {
+        let mut out = Vec::new();
+        assert!(ask(Question::Setup, true, &mut &b"y\n"[..], &mut out).unwrap());
+        assert!(!ask(Question::Setup, true, &mut &b"\n"[..], &mut out).unwrap());
+        assert!(
+            String::from_utf8(out)
+                .unwrap()
+                .starts_with("Do them? [y/N] ")
+        );
+        assert!(!ask(Question::Setup, false, &mut &b"y\n"[..], &mut Vec::new()).unwrap());
     }
 }

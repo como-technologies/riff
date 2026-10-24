@@ -6124,8 +6124,9 @@ pub const INIT_FIX_DELEGATE: &str = "let systemd give them to your user: sudo mk
 
 /// The fix when the repository pins no session image.
 pub const INIT_FIX_IMAGE: &str = "run riff init in a clone of a repository whose riff.toml pins \
-     the session image. A repository with no riff.toml needs one on its default branch: see \
-     \"Add another repository to the riff\" in the book";
+     the session image. When the default branch has the file, pull it. When it has none, riff \
+     init makes it: answer y, or run riff init --yes. See \"Add another repository to the \
+     riff\" in the book";
 
 /// The name of the check of the riff binary (01M510NW68CTZBHHW7ZYFV7Q3X).
 pub const INIT_RIFF: &str = "the riff binary";
@@ -6272,6 +6273,246 @@ pub fn init_fix_backlog(repo: &str) -> String {
         "make it: gh api -X POST repos/{repo}/milestones -f title=Backlog. riff wave make makes \
          it too, with the next wave"
     )
+}
+
+/// The name of the check of `riff.toml` on `branch`, the default branch
+/// (01M5R1672NF56P15VD0JEX51K4).
+///
+/// ```
+/// assert_eq!(riff::text::init_config("main"), "riff.toml on main");
+/// ```
+pub fn init_config(branch: &str) -> String {
+    format!("riff.toml on {branch}")
+}
+
+/// The branch `branch` of the repository `repo` has `riff.toml`.
+///
+/// ```
+/// assert_eq!(riff::text::init_config_on("o/r", "main"), "main of o/r has it");
+/// ```
+pub fn init_config_on(repo: &str, branch: &str) -> String {
+    format!("{branch} of {repo} has it")
+}
+
+/// The branch `branch` of the repository `repo` has no `riff.toml`:
+/// `riff lead start` stops.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_config_off("o/r", "main"),
+///     "main of o/r has no riff.toml, so riff lead start stops"
+/// );
+/// ```
+pub fn init_config_off(repo: &str, branch: &str) -> String {
+    format!("{branch} of {repo} has no riff.toml, so riff lead start stops")
+}
+
+/// The fix when `branch` has no `riff.toml`.
+///
+/// ```
+/// let fix = riff::text::init_fix_config("main");
+/// assert!(fix.starts_with("put riff.toml with the session image on main."), "{fix}");
+/// ```
+pub fn init_fix_config(branch: &str) -> String {
+    format!(
+        "put riff.toml with the session image on {branch}. See \"Add another repository to the \
+         riff\" in the book"
+    )
+}
+
+/// The name of the check of the first wave.
+pub const INIT_WAVE: &str = "the first wave";
+
+/// The repository `repo` has an open wave.
+///
+/// ```
+/// assert_eq!(riff::text::init_wave_on("o/r", "Wave 3"), "o/r has the open wave Wave 3");
+/// ```
+pub fn init_wave_on(repo: &str, wave: &str) -> String {
+    format!("{repo} has the open wave {wave}")
+}
+
+/// The repository `repo` has no open wave: the lead has no wave to plan.
+///
+/// ```
+/// assert_eq!(riff::text::init_wave_off("o/r"), "o/r has no open wave");
+/// ```
+pub fn init_wave_off(repo: &str) -> String {
+    format!("{repo} has no open wave")
+}
+
+/// The fix when the repository has no open wave.
+pub const INIT_FIX_WAVE: &str = "make it: riff wave make \"Wave 1\"";
+
+/// The name of the check of the CI of a pull request.
+pub const INIT_CI: &str = "the checks of a pull request";
+
+/// The full check of the repository is `checks`, and a pull request
+/// runs it or the rules require it.
+///
+/// ```
+/// assert_eq!(riff::text::init_ci_on(&["Gate".into()]), "the full check is Gate");
+/// assert_eq!(
+///     riff::text::init_ci_on(&["checks / docs".into(), "checks / test".into()]),
+///     "the full check is checks / docs and checks / test"
+/// );
+/// ```
+pub fn init_ci_on(checks: &[String]) -> String {
+    format!("the full check is {}", checks.join(" and "))
+}
+
+/// No pull request of the repository `repo` ran the check `gate`, and no
+/// rule requires another one: the full check never ends.
+///
+/// ```
+/// let found = riff::text::init_ci_off("o/r", "Gate");
+/// assert_eq!(found, "no pull request of o/r ran a check named Gate, and no rule requires another check, so the full check never ends");
+/// ```
+pub fn init_ci_off(repo: &str, gate: &str) -> String {
+    format!(
+        "no pull request of {repo} ran a check named {gate}, and no rule requires another check, \
+         so the full check never ends"
+    )
+}
+
+/// The fix when the repository has no CI check of a pull request.
+///
+/// ```
+/// let fix = riff::text::init_fix_ci("Gate");
+/// assert!(fix.starts_with("add a workflow that runs on pull_request, with a job named Gate."), "{fix}");
+/// ```
+pub fn init_fix_ci(gate: &str) -> String {
+    format!(
+        "add a workflow that runs on pull_request, with a job named {gate}. See \"Add the job \
+         Gate\" in the book. Then run riff init again"
+    )
+}
+
+/// No rule requires a check yet, and the pull requests ran `checks`: the
+/// ruleset that `riff init` makes requires them.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_ci_will(&["lint".into(), "test".into()]),
+///     "pull requests ran lint and test, and the ruleset that riff makes requires them"
+/// );
+/// ```
+pub fn init_ci_will(checks: &[String]) -> String {
+    format!(
+        "pull requests ran {}, and the ruleset that riff makes requires them",
+        checks.join(" and ")
+    )
+}
+
+/// GitHub did not merge the pull request `url` of the step `riff.toml`.
+///
+/// ```
+/// let said = riff::text::init_pull_not_merged("https://github.com/o/r/pull/7");
+/// assert_eq!(said, "riff opened https://github.com/o/r/pull/7, but GitHub did not merge it. Merge it yourself, then run riff init again");
+/// ```
+pub fn init_pull_not_merged(url: &str) -> String {
+    format!(
+        "riff opened {url}, but GitHub did not merge it. Merge it yourself, then run riff init \
+         again"
+    )
+}
+
+/// The name of the check of `CLAUDE.md`.
+pub const INIT_CLAUDE: &str = "CLAUDE.md";
+
+/// The branch `branch` of the repository `repo` has `CLAUDE.md`.
+///
+/// ```
+/// assert_eq!(riff::text::init_claude_on("o/r", "main"), "main of o/r has it");
+/// ```
+pub fn init_claude_on(repo: &str, branch: &str) -> String {
+    format!("{branch} of {repo} has it")
+}
+
+/// The branch `branch` of the repository `repo` has no `CLAUDE.md`: a
+/// session has no rules of the repository.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_claude_off("o/r", "main"),
+///     "main of o/r has no CLAUDE.md, so a session has no rules of the repository"
+/// );
+/// ```
+pub fn init_claude_off(repo: &str, branch: &str) -> String {
+    format!("{branch} of {repo} has no CLAUDE.md, so a session has no rules of the repository")
+}
+
+/// The fix when the repository has no `CLAUDE.md`.
+pub const INIT_FIX_CLAUDE: &str = "write CLAUDE.md at the root of the repository: how to run its \
+     checks before a push, and its rules for a pull request. See \"Add another repository to \
+     the riff\" in the book";
+
+/// The steps that `riff init` can do in the repository `repo`, one for
+/// each line.
+///
+/// ```
+/// let list = riff::text::init_setup(
+///     "o/r",
+///     &["allow auto-merge and squash merge".into(), "make the ruleset riff".into()],
+/// );
+/// assert_eq!(
+///     list,
+///     "riff can set up o/r for riff. These steps change GitHub:\n  \
+///      allow auto-merge and squash merge\n  make the ruleset riff"
+/// );
+/// ```
+pub fn init_setup(repo: &str, steps: &[String]) -> String {
+    format!(
+        "riff can set up {repo} for riff. These steps change GitHub:\n  {}",
+        steps.join("\n  ")
+    )
+}
+
+/// The question of `riff init` about the steps (01M5R1672NF56P15VD0JEX51K4).
+pub const INIT_ASK_SETUP: &str = "Do them? [y/N] ";
+
+/// `riff init` did no step: no `y`, or no terminal.
+pub const INIT_SETUP_KEPT: &str = "riff did no step. To do them, run riff init in a terminal and \
+     answer y, or run riff init --yes.";
+
+/// `riff init` made `riff.toml` on the default branch, and this clone does
+/// not have it yet.
+pub const INIT_PULL: &str =
+    "riff.toml is on the default branch now. Run git pull in this clone to get it.";
+
+/// The person is not an admin of the repository `repo`: riff changes
+/// nothing there.
+///
+/// ```
+/// let line = riff::text::init_not_admin("o/r");
+/// assert!(line.starts_with("You are not an admin of o/r, so riff changes nothing there."), "{line}");
+/// ```
+pub fn init_not_admin(repo: &str) -> String {
+    format!(
+        "You are not an admin of {repo}, so riff changes nothing there. Ask an admin to run riff \
+         init, or do the fix of each failed check."
+    )
+}
+
+/// A step of `riff init` is done: `what` says what riff did.
+///
+/// ```
+/// assert_eq!(riff::text::init_step_done("make the milestone Backlog", "made it"), "done  make the milestone Backlog: made it");
+/// ```
+pub fn init_step_done(step: &str, what: &str) -> String {
+    format!("done  {step}: {what}")
+}
+
+/// A step of `riff init` failed: `why` is the error.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_step_failed("make the ruleset riff", "HTTP 403"),
+///     "fail  make the ruleset riff: HTTP 403"
+/// );
+/// ```
+pub fn init_step_failed(step: &str, why: &str) -> String {
+    format!("fail  {step}: {why}")
 }
 
 /// The name of the check when riff cannot read the repository on GitHub.
