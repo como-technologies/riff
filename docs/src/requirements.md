@@ -790,7 +790,8 @@
   has a conclusion that is not `success`, it makes no comment, no
   status and no post. It exits with status 1 and one line that names
   the commit, the state of the Gate and `gh pr checks N`.
-  `riff verify fail N` needs no Gate.
+  `riff verify fail N` needs no Gate. Superseded in part by
+  01M5QYDE41FVFX26EC8K5QGYH4 for the checks that it reads.
 - **01M3NB6G132QG4TAEJ5QPRJNAE** The skill names one `riff` command
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.
@@ -800,6 +801,15 @@
   against the default branch. The body, the trailers and the auto-merge
   are the same. The steps for a patch of an older release line use it,
   not gh pr create.
+- **01M5QYDE41FVFX26EC8K5QGYH4** The full check of a commit is each
+  check that the ruleset of the default branch requires, but
+  `riff/verify`: riff reads it with `gh api
+  repos/OWNER/REPO/rules/branches/BRANCH`. When the ruleset requires no
+  other check, the full check is the check run `Gate`. `riff verify pass
+  N` and the verify of the wave read the check runs of the full check by
+  name. A pass, and the start of a verify, need each check to be done:
+  the pass needs a `success` of each. The line of a refused pass names
+  the checks. Supersedes 01M49HAZ7P3JMWNCG1SWCMAXQP in part.
 
 ## Tokens on GitHub
 
@@ -6461,7 +6471,8 @@ part when they merge.
 - **01M4ZV3B6NKPEZ5FNE27X95GF0** A wave starts the verify of an item
   only when no session holds the item, and the Gate of the head commit
   of its pull request is done. The verify is a new session, so an
-  author never verifies its own item.
+  author never verifies its own item. Superseded in part by
+  01M5QYDHN27RC5SRHAB56PFKK0 for the checks that it waits for.
 - **01M4ZV3B6PSRH40EYQEVYH2MBA** A wave starts one item at most 3 times
   in a run of the wave. Then the lead of the person gets one message,
   and the wave leaves the item.
@@ -6565,6 +6576,13 @@ part when they merge.
   item with no claim whose pull request cannot merge by itself in the
   group stuck, with the reason: conflict, checks, or auto-merge off. The
   group comes after verify.
+- **01M5QYDHN27RC5SRHAB56PFKK0** A wave starts the verify of an item
+  when the full check of the head commit of its pull request is done
+  (01M5QYDE41FVFX26EC8K5QGYH4). A repository whose full check is not
+  named `Gate` gets its verify when each required check of the default
+  branch passed or ended. A wave that cannot read the required checks
+  fails its look, and says why. Supersedes 01M4ZV3B6NKPEZ5FNE27X95GF0 in
+  part.
 
 ### The lead, the view and the takeover
 
@@ -6835,6 +6853,14 @@ part when they merge.
   Backlog. A step is safe to do again. The how-to makes the same
   ruleset: a test compares the two. `riff init` names each step and does
   none.
+- **01M5QZ01Y14Z76RC220RT7YTX7** The how-to "Add another repository to
+  the riff" has a step "Use the checks that you have" with a copyable
+  `sh` block that lists the checks that riff waits for: the required
+  checks of the ruleset of the default branch, but `riff/verify`
+  (01M5QYDE41FVFX26EC8K5QGYH4). The step says that an empty list means
+  the check `Gate`, and that a repository with checks already needs no
+  job `Gate`. The verifier of the wave gets the same rule in its start
+  text.
 
 ### The permission rules
 

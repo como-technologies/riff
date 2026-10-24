@@ -76,6 +76,7 @@ mod top_fault;
 mod trusted_riff;
 mod usage;
 mod wakes;
+mod wave_checks;
 mod wave_conflict;
 mod wave_stuck;
 mod waves;

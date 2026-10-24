@@ -29,9 +29,31 @@
 //! | the ruleset of the default branch | the rules that apply to the `default_branch` of the repository ([`rules_path`]) | a `required_status_checks` rule has the check [`VERIFY_CONTEXT`]: without it, nothing on GitHub makes a merge wait for the verify |
 //! | the milestone `Backlog` | the open milestones ([`crate::waves::open`]) | one has the title [`BACKLOG`]: `riff wave move --to Backlog` and `riff wave end --move-open-to-backlog` need it |
 //!
-//! The fix of the ruleset names the checks [`GATE`] and [`VERIFY_CONTEXT`]:
-//! the wave starts a verify only when a check run named [`GATE`] passed
-//! on the head of the pull request ([`crate::pr::gate_of`]).
+//! The fix of the ruleset names the checks [`GATE`] and [`VERIFY_CONTEXT`].
+//!
+//! The same rules tell riff which check is the full check of the
+//! repository ([`full_check`], 01M5QYDE41FVFX26EC8K5QGYH4): each check
+//! that the rules of the default branch require, but [`VERIFY_CONTEXT`].
+//! The wave starts a verify only when each of them is done on the head of
+//! the pull request, and `riff verify pass` needs a success of each
+//! ([`crate::pr::gate_of`]). A repository whose rules require no other
+//! check has [`GATE`] as its full check.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     B["gh api repos/OWNER/REPO<br/>default_branch"] --> R["gh api .../rules/branches/BRANCH<br/>required_status_checks"]
+//!     R --> F["the full check:<br/>the required checks but riff/verify,<br/>or Gate when there are none"]
+//!     F --> C["gh api .../commits/COMMIT/check-runs?check_name=NAME<br/>for each NAME"]
+//!     C --> S["pass, running, ended or missing"]
+//! ```
+//!
+//! ```
+//! use riff::repo_setup::full_check_of;
+//!
+//! let required = ["checks / lint and test".to_owned(), "riff/verify".to_owned()];
+//! assert_eq!(full_check_of(&required), ["checks / lint and test"]);
+//! assert_eq!(full_check_of(&["riff/verify".to_owned()]), ["Gate"]);
+//! ```
 //!
 //! A folder with no remote `origin` on GitHub has no such check
 //! ([`crate::identity::github_origin`]). When `gh` cannot read the
@@ -234,25 +256,63 @@ impl Rule {
     }
 }
 
-/// The path of the rules that apply to `branch`: GitHub gives the active
-/// rules of each ruleset, with no other detail. A name goes into the path
-/// with each byte but a letter, a digit and `-_.` as `%XX`.
+/// The path of the rules that apply to `branch` of `repo`: GitHub gives
+/// the active rules of each ruleset, with no other detail. `repo` is
+/// `OWNER/REPO`, or `{owner}/{repo}` for the repository of `gh`. A name
+/// goes into the path with each byte but a letter, a digit and `-_.` as
+/// `%XX` ([`crate::pr::percent`]).
 ///
 /// ```
 /// use riff::repo_setup::rules_path;
 ///
-/// assert_eq!(rules_path("main"), "repos/{owner}/{repo}/rules/branches/main?per_page=100");
-/// assert_eq!(rules_path("release/2.x"), "repos/{owner}/{repo}/rules/branches/release%2F2.x?per_page=100");
+/// assert_eq!(rules_path("{owner}/{repo}", "main"), "repos/{owner}/{repo}/rules/branches/main?per_page=100");
+/// assert_eq!(rules_path("acme/app", "release/2.x"), "repos/acme/app/rules/branches/release%2F2.x?per_page=100");
 /// ```
-pub fn rules_path(branch: &str) -> String {
-    let mut name = String::new();
-    for byte in branch.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => name.push(byte as char),
-            other => name.push_str(&format!("%{other:02X}")),
+pub fn rules_path(repo: &str, branch: &str) -> String {
+    format!(
+        "repos/{repo}/rules/branches/{}?per_page=100",
+        crate::pr::percent(branch)
+    )
+}
+
+/// The checks that the active rules of the default branch of `repo`
+/// (`OWNER/REPO`) require, with two calls of `gh`.
+pub fn required(gh: &Gh, repo: &str) -> anyhow::Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Branch {
+        #[serde(deserialize_with = "crate::text::forge_de")]
+        default_branch: String,
+    }
+    let branch: Branch = gh.json(&["api", &format!("repos/{repo}")])?;
+    let rules: Vec<Rule> = gh.json(&["api", &rules_path(repo, &branch.default_branch)])?;
+    Ok(rules.iter().flat_map(Rule::required).collect())
+}
+
+/// The full check from the checks `required` by the default branch
+/// (01M5QYDE41FVFX26EC8K5QGYH4): each of them but [`VERIFY_CONTEXT`], once,
+/// in order. It is [`GATE`] when there is none.
+pub fn full_check_of(required: &[String]) -> Vec<String> {
+    let mut checks: Vec<String> = Vec::new();
+    for name in required {
+        if name != VERIFY_CONTEXT && !checks.contains(name) {
+            checks.push(name.clone());
         }
     }
-    format!("repos/{{owner}}/{{repo}}/rules/branches/{name}?per_page=100")
+    if checks.is_empty() {
+        checks.push(GATE.to_owned());
+    }
+    checks
+}
+
+/// The full check of `repo` (`OWNER/REPO`): [`full_check_of`] the checks
+/// that the rules of its default branch require ([`required`]). It fails
+/// when `gh` cannot read them.
+pub fn full_check(gh: &Gh, repo: &str) -> anyhow::Result<Vec<String>> {
+    use anyhow::Context;
+    let names = required(gh, repo).with_context(|| {
+        format!("riff cannot read the required checks of the default branch of {repo}")
+    })?;
+    Ok(full_check_of(&names))
 }
 
 /// Reads the facts of the repository of `gh` with three calls, or says
@@ -261,7 +321,7 @@ pub fn read(gh: &Gh) -> Result<Github, String> {
     let why = |e: anyhow::Error| format!("{e:#}");
     let repo: Repository = gh.json(&["api", "repos/{owner}/{repo}"]).map_err(why)?;
     let rules: Vec<Rule> = gh
-        .json(&["api", &rules_path(&repo.default_branch)])
+        .json(&["api", &rules_path("{owner}/{repo}", &repo.default_branch)])
         .map_err(why)?;
     let milestones = waves::open(gh).map_err(why)?;
     Ok(Github {
@@ -513,6 +573,59 @@ esac
             ..ready()
         };
         assert!(checks(&github).iter().all(Check::passed));
+    }
+
+    #[test]
+    fn the_full_check_is_each_required_check_but_the_verify_and_else_the_gate() {
+        let names = |list: &[&str]| -> Vec<String> { list.iter().map(|c| (*c).into()).collect() };
+        // The ruleset of riff: its checks, and the check of the verify.
+        assert_eq!(
+            full_check_of(&names(&["Gate", "Hygiene", "riff/verify"])),
+            ["Gate", "Hygiene"]
+        );
+        // The four checks of a repository with no job Gate (#698).
+        let four = [
+            "checks / lint and test",
+            "checks / docs",
+            "checks / the lowest Rust version",
+            "checks / build x86_64-unknown-linux-musl",
+        ];
+        let mut required = names(&four);
+        required.push("riff/verify".into());
+        assert_eq!(full_check_of(&required), four);
+        // A check that two rulesets require counts one time.
+        assert_eq!(full_check_of(&names(&["A", "B", "A"])), ["A", "B"]);
+        // No other check: the Gate.
+        assert_eq!(full_check_of(&names(&["riff/verify"])), [GATE]);
+        assert_eq!(full_check_of(&[]), [GATE]);
+    }
+
+    #[test]
+    fn the_required_checks_come_from_the_default_branch_of_the_named_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = r#"#!/bin/sh
+echo "$*" >> "$(dirname "$0")/calls"
+case "$*" in
+  'api repos/acme/app') printf '%s' '{"default_branch":"release/2.x"}' ;;
+  'api repos/acme/app/rules/branches/release%2F2.x?per_page=100')
+    printf '%s' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"checks / docs"},{"context":"riff/verify"}]}}]' ;;
+  *) echo "gh: no such call: $*" >&2; exit 1 ;;
+esac
+"#;
+        let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+        assert_eq!(
+            required(&gh, "acme/app").unwrap(),
+            ["checks / docs", "riff/verify"]
+        );
+        assert_eq!(full_check(&gh, "acme/app").unwrap(), ["checks / docs"]);
+        let why = format!("{:#}", full_check(&gh, "acme/other").unwrap_err());
+        assert!(
+            why.starts_with(
+                "riff cannot read the required checks of the default branch of acme/other: "
+            ),
+            "{why}"
+        );
+        assert!(why.contains("no such call"), "{why}");
     }
 
     #[test]

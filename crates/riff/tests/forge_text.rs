@@ -31,6 +31,11 @@ case "$1 $2" in
     printf '%s' '[{"title":"Wave 4: CloBADud"}]' ;;
 'issue list') printf '%s' '[{"number":7,"title":"Release v1.2.3","milestone":{"title":"Wave 4: NBADew"}}]' ;;
 'issue view') printf '%s' '{"number":7,"state":"OPEN","milestone":{"title":"Wave 4: NBADew"}}' ;;
+'api repos/acme/app') printf '%s' '{"default_branch":"main"}' ;;
+'api repos/acme/app/rules/branches/main?per_page=100')
+    printf '%s' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"LintBAD"},{"context":"riff/verify"}]}}]' ;;
+'api repos/acme/app/commits/'*'/check-runs?check_name=Lint'*)
+    printf '%s' '{"check_runs":[{"status":"completed","conclusion":"success"}]}' ;;
 'api repos/acme/app/commits/ended/check-runs?check_name=Gate')
     printf '%s' '{"check_runs":[{"status":"completed","conclusion":"failBADure"}]}' ;;
 'api repos/acme/app/commits/'*'/check-runs?check_name=Gate')
@@ -100,10 +105,16 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
     let merged = riff::pr::wait(&gh, 40, std::time::Duration::ZERO).unwrap();
     assert_eq!(merged, "9f8e  7d6c");
 
-    // `riff verify pass`: the conclusion of the Gate goes into the
-    // line of a refusal.
-    let gate = riff::pr::gate_of(&gh, "acme/app", "ended").unwrap();
+    // `riff verify pass`: the names of the required checks and the
+    // conclusion of the Gate go into the line of a refusal.
+    let full = riff::repo_setup::full_check(&gh, "acme/app").unwrap();
+    assert_eq!(full.len(), 2, "{full:?}");
+    assert_eq!(full[0], "Gate");
+    assert!(full[1].starts_with("Lint"), "{full:?}");
+    full.iter().for_each(|name| clean(name));
+    let gate = riff::pr::gate_of(&gh, "acme/app", &full, "ended").unwrap();
     assert_eq!(gate, riff::pr::Gate::Ended("fail  ure".into()));
+    clean(&riff::text::gate_not_passed(40, "ended", &full, &gate));
 
     // `riff verify`: the commit and the URL go into the result.
     let reported = riff::pr::report(&gh, "acme/app", 40, "abc1234", Verdict::Pass, "ok").unwrap();

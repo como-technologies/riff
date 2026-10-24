@@ -24,6 +24,8 @@ dir=$(dirname "$0")
 case "$1 $2" in
   api*)
     case "$2" in
+      repos/o/r) echo '{"default_branch":"main"}' ;;
+      */rules/branches/main*) echo '[]' ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
       */check-runs*) echo '{"check_runs":[{"status":"completed","conclusion":"success","head_sha":"x"}]}' ;;
       *) exit 1 ;;

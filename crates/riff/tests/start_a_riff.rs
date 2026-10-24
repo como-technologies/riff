@@ -200,6 +200,7 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
     for step in [
         "### Add riff.toml\n",
         "#### Add the job Gate\n",
+        "#### Use the checks that you have\n",
         "#### Allow auto-merge and squash merge\n",
         "#### Make the ruleset of the default branch\n",
         "#### Make the Backlog and the first wave\n",
@@ -238,6 +239,31 @@ fn the_step_add_riff_toml_says_the_error_of_a_repository_with_no_riff_toml() {
     let first = error.split(',').next().unwrap();
     assert!(how_to.contains(&format!("`{first}`")), "{first}");
     assert!(error.contains(&format!("\"{HOW_TO}\"")), "{error}");
+}
+
+/// 01M5QZ01Y14Z76RC220RT7YTX7: the step "Use the checks that you have" has
+/// a copyable `sh` block that lists the checks that riff waits for, as
+/// `riff::repo_setup::full_check_of` does: the required checks of the
+/// ruleset of the default branch, but the verify. An empty list is `Gate`.
+#[test]
+fn the_how_to_lists_the_checks_that_riff_waits_for() {
+    let how_to = part(PAGE, HOW_TO);
+    let step = how_to
+        .split("#### Use the checks that you have\n")
+        .nth(1)
+        .expect("the step");
+    let step = step.split("\n#### ").next().unwrap();
+    let commands = book::commands_in(step);
+    assert_eq!(commands.len(), 2, "{commands:?}");
+    assert_eq!(
+        commands[0],
+        "BRANCH=$(gh api repos/{owner}/{repo} --jq .default_branch)"
+    );
+    assert!(commands[1].starts_with(r#"gh api "repos/{owner}/{repo}/rules/branches/$BRANCH""#));
+    assert!(commands[1].contains(r#"select(.type == "required_status_checks")"#));
+    assert!(commands[1].ends_with(&format!(r#"- ["{}"]'"#, riff::pr::VERIFY_CONTEXT)));
+    assert!(step.contains("An empty list\nmeans that riff waits for a check run named `Gate`"));
+    assert_eq!(riff::repo_setup::full_check_of(&[]), [riff::pr::GATE]);
 }
 
 /// The ruleset of the how-to is the ruleset that the step of `riff init`

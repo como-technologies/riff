@@ -469,7 +469,9 @@ enum Command {
     /// It uses the gh of this machine. It comments the result on the pull
     /// request, sets the status riff/verify of its head commit, and posts
     /// the result to the session that holds its issue. A pass needs a
-    /// success of the check Gate of the head commit.
+    /// success of the full check of the head commit: each check that the
+    /// ruleset of the default branch requires, but riff/verify, or the
+    /// check Gate when the ruleset requires none.
     Verify {
         /// pass sets the status success, fail sets failure.
         verdict: VerdictArg,
@@ -866,9 +868,9 @@ enum ReleaseCommand {
     ///
     /// For a pull request with the label release. It checks that the
     /// diff is only Cargo.toml and Cargo.lock, that the body has the
-    /// format of riff release cut, and that the Gate of the head commit
-    /// passed. Then it sets the status riff/verify. Else it refuses and
-    /// sets nothing.
+    /// format of riff release cut, and that the full check of the head
+    /// commit passed (see riff verify). Then it sets the status
+    /// riff/verify. Else it refuses and sets nothing.
     Verify {
         /// The number of the release pull request.
         number: u64,

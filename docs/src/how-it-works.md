@@ -1902,9 +1902,12 @@ gh run rerun RUN --failed
 
 ### Report a verify
 
-The Gate on GitHub is the one full test run of each commit. A verifier
-does not run `just ci` again. First see that the Gate of the head
-commit passed:
+The full check on GitHub is the one full test run of each commit. In
+this repository it is the job `Gate` and the check `Hygiene`. In another
+repository it is each check that the ruleset of the default branch
+requires, but `riff/verify`: `Gate` when the ruleset requires none. A
+verifier does not run `just ci` again. First see that the checks of the
+head commit passed:
 
 ```sh
 gh pr checks 40
@@ -1934,15 +1937,21 @@ its commit. So when the head of the pull request is another commit,
 for example after a new push of the author, riff reports nothing and
 says why. Test the new head, or tell the author.
 
-A pass needs a success of the Gate of the head commit. While the Gate
-runs, failed, or has not started, `riff verify pass` reports nothing
-and prints one line:
+A pass needs a success of each check of the full check of the head
+commit. While one of them runs, failed, or has not started,
+`riff verify pass` reports nothing and prints one line. The line names
+the checks that riff waits for:
 
 ```text
-riff verify pass: the Gate of commit 1a2b3c4 runs still. A pass needs a Gate success: see gh pr checks 40. Nothing is reported.
+riff verify pass: the full check of commit 1a2b3c4 (Gate, Hygiene) runs still. A pass needs a success of each check of it: see gh pr checks 40. Nothing is reported.
 ```
 
-Wait for the Gate, then report again. A fail needs no Gate.
+Wait for the checks, then report again. A fail needs no full check.
+
+The wave starts the verify of a pull request in the same way: it waits
+until each check of the full check passed or ended on the head commit.
+To see the checks of another repository, see
+[Use the checks that you have](start-a-riff.md#use-the-checks-that-you-have).
 
 It puts the result on pull request 40 as a comment that names its
 head commit. It sets the status `riff/verify` of that commit:
