@@ -1857,8 +1857,11 @@ async fn work(
         text::run_started(item, session, &clone, image, &spec.name)
     );
     let frame = pr::body(hygiene::Link::Closes(issue), "SUMMARY", &checked.milestone)?;
+    // The clone has the `origin/HEAD` of the forge: its branch is the default branch.
+    let base = crate::permissions::Project::of(&clone).branch;
     let start = text::run_start(
         &repo,
+        &base,
         issue,
         &branch,
         session,

@@ -249,7 +249,13 @@ fn a_verified_pull_request_with_auto_merge_off_is_a_notice_for_the_lead() {
     assert!(look.fixes.failed.is_empty());
     assert_eq!(look.free, ["verify-issue-2", "issue-6"]);
     // Each notice is a message with the reason and the command.
-    let body = riff::text::wave_stuck(41, "worktree-issue-1", "aaaa111", &Stuck::AutoMergeOff);
+    let body = riff::text::wave_stuck(
+        41,
+        "worktree-issue-1",
+        "main",
+        "aaaa111",
+        &Stuck::AutoMergeOff,
+    );
     assert!(body.contains("auto-merge is off"), "{body}");
     assert!(body.ends_with("gh pr merge --auto --squash 41"), "{body}");
     // One key for each pull request, head and reason.

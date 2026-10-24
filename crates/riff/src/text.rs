@@ -5041,9 +5041,10 @@ pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &
 ///
 /// ```
 /// let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
-/// let text = riff::text::run_start("o/r", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", false);
+/// let text = riff::text::run_start("o/r", "master", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", false);
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("git push -u origin worktree-issue-12"));
+/// assert!(text.contains("Never push to master."));
 /// assert!(text.contains("--trailer \"Riff-Session: 1a2b\""));
 /// assert!(text.contains("gh pr create --title \"TITLE\" --milestone \"Wave 3\" --body-file FILE"));
 /// assert!(text.contains(frame));
@@ -5052,11 +5053,13 @@ pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &
 /// assert!(text.contains("Run each check in the foreground"));
 /// assert!(text.contains("Commit and push the branch before the end of your work"));
 /// assert!(!text.contains("earlier session"));
-/// let again = riff::text::run_start("o/r", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", true);
+/// let again = riff::text::run_start("o/r", "master", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", true);
 /// assert!(again.contains("earlier session"));
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub fn run_start(
     repo: &str,
+    base: &str,
     issue: u64,
     branch: &str,
     session: &str,
@@ -5084,7 +5087,7 @@ pub fn run_start(
          foreground, and wait for its end.\n\
          5. Commit and push the branch before the end of your work, even when the work is not \
          done: git push -u origin {branch}\n   \
-         Never push to main.\n\
+         Never push to {base}.\n\
          6. Write the body of the pull request to a file. Put your summary in place of \
          SUMMARY. Keep each other line:\n\n{frame}\n\
          7. Open the pull request, and turn on auto-merge at once:\n   \
@@ -7537,15 +7540,18 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 }
 
 /// The start text of a build session of a wave that rebases the pull
-/// request `pull` of `issue` on `main`: its head `commit` has a conflict
-/// with `main` (01M57FJ3WWMQSDBFRRHXN3SMFQ).
+/// request `pull` of `issue` on the default branch `base`: its head
+/// `commit` has a conflict with `base` (01M57FJ3WWMQSDBFRRHXN3SMFQ,
+/// 01M5QYBWPAJ219BE8QKVKG1TWW).
 ///
 /// ```
-/// let text = riff::text::wave_rebase_start("o/r", 12, 40, "1a2b3c4d5e", "worktree-issue-12", "9f8e");
+/// let text = riff::text::wave_rebase_start("o/r", "master", 12, 40, "1a2b3c4d5e", "worktree-issue-12", "9f8e");
 /// assert!(text.contains("on the branch worktree-issue-12 of pull request #40"));
-/// assert!(text.contains("a conflict with main at commit 1a2b3c4"));
+/// assert!(text.contains("a conflict with master at commit 1a2b3c4"));
 /// assert!(text.contains("gh issue view 12 --comments"));
-/// assert!(text.contains("git rebase origin/main"));
+/// assert!(text.contains("git fetch -q origin master"));
+/// assert!(text.contains("git rebase origin/master"));
+/// assert!(!text.contains("main"));
 /// assert!(text.contains("Resolve each conflict"));
 /// assert!(text.contains("just check"));
 /// assert!(text.contains("git push --force-with-lease origin worktree-issue-12"));
@@ -7556,6 +7562,7 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// ```
 pub fn wave_rebase_start(
     repo: &str,
+    base: &str,
     issue: u64,
     pull: u64,
     commit: &str,
@@ -7565,24 +7572,24 @@ pub fn wave_rebase_start(
     let commit = commit.get(..7).unwrap_or(commit);
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
-         branch {branch} of pull request #{pull}. The pull request has a conflict with main at \
-         commit {commit}, so it cannot merge. Rebase it on main, then stop. riff does the \
+         branch {branch} of pull request #{pull}. The pull request has a conflict with {base} at \
+         commit {commit}, so it cannot merge. Rebase it on {base}, then stop. riff does the \
          claim, the release and the verify request for you. Your riff tools only talk: whoami, \
          who, threads, read, post, tell, status and blocked.\n\n\
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
          Read the pull request: gh pr view {pull} --comments\n\
          2. Read CLAUDE.md, and obey its rules.\n\
-         3. Rebase the branch on main:\n   \
-         git fetch -q origin main\n   \
-         git rebase origin/main\n\
-         4. Resolve each conflict. Keep the work of the pull request and the new work of main. \
+         3. Rebase the branch on {base}:\n   \
+         git fetch -q origin {base}\n   \
+         git rebase origin/{base}\n\
+         4. Resolve each conflict. Keep the work of the pull request and the new work of {base}. \
          Add the files, and run git rebase --continue. Give each new commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n\
          5. Run the checks that CLAUDE.md names before a push, for example just check. Run \
          each check in the foreground, and wait for its end. Fix each fault of the rebase.\n\
          6. Commit and push before the end of your work, to the same pull request:\n   \
          git push --force-with-lease origin {branch}\n   \
-         Never push to main. Do not open a second pull request.\n\
+         Never push to {base}. Do not open a second pull request.\n\
          7. A new Gate and a new verify of the new commit follow. Another session does the \
          verify: do not verify your own work.\n\
          8. Stop each background task that you started, for example a Monitor or a command \
@@ -7595,11 +7602,12 @@ pub fn wave_rebase_start(
 
 /// The message to the lead when the rebase session of `item` ended and
 /// its pull request still has the head `commit` with the conflict: the
-/// session pushed nothing (01M57FJ3Z8AFDY9G0KTAYZJESY).
+/// session pushed nothing (01M57FJ3Z8AFDY9G0KTAYZJESY). `base` is the
+/// default branch of the conflict.
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::wave_not_rebased("issue-12", 40, "worktree-issue-12", "1a2b3c4d5e", "9f8e7d6c"),
+///     riff::text::wave_not_rebased("issue-12", 40, "worktree-issue-12", "main", "1a2b3c4d5e", "9f8e7d6c"),
 ///     "issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). PR #40, \
 ///      branch worktree-issue-12, still has the head commit 1a2b3c4 with the conflict with \
 ///      main. The riff daemon sends no verify request, and the wave starts no second session \
@@ -7611,6 +7619,7 @@ pub fn wave_not_rebased(
     item: &str,
     number: u64,
     branch: &str,
+    base: &str,
     commit: &str,
     session: &str,
 ) -> String {
@@ -7618,7 +7627,7 @@ pub fn wave_not_rebased(
     format!(
         "{item}: the rebase session of the wave ended with no push (session {session}). PR \
          #{number}, branch {branch}, still has the head commit {commit} with the conflict with \
-         main. The riff daemon sends no verify request, and the wave starts no second session \
+         {base}. The riff daemon sends no verify request, and the wave starts no second session \
          for this commit. Give the item to a session to rebase, or run riff wave run to start \
          the rebase again. The item is free."
     )
@@ -7639,11 +7648,14 @@ fn check_names(checks: &[String]) -> String {
 /// The start text of a build session of a wave that fixes the failed
 /// `checks` of the pull request `pull` of `issue`: its verify passed, and
 /// the checks failed at its head `commit` (#279). For a known flake it
-/// allows one run of the job again.
+/// allows one run of the job again. `base` is the default branch of the
+/// repository (01M5QYBWPAJ219BE8QKVKG1TWW).
 ///
 /// ```
 /// let checks = ["Gate".to_owned()];
-/// let text = riff::text::wave_checks_start("o/r", 12, 40, "1a2b3c4d5e", &checks, "worktree-issue-12", "9f8e");
+/// let text = riff::text::wave_checks_start("o/r", "master", 12, 40, "1a2b3c4d5e", &checks, "worktree-issue-12", "9f8e");
+/// assert!(text.contains("Never push to master."));
+/// assert!(!text.contains("main"));
 /// assert!(text.contains("on the branch worktree-issue-12 of pull request #40"));
 /// assert!(text.contains("The verify of the pull request passed"));
 /// assert!(text.contains("the check Gate failed at commit 1a2b3c4"));
@@ -7657,11 +7669,13 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
 /// let two = ["Gate".to_owned(), "Hygiene".to_owned()];
-/// let text = riff::text::wave_checks_start("o/r", 12, 40, "1a2b3c4d5e", &two, "b", "9f8e");
+/// let text = riff::text::wave_checks_start("o/r", "main", 12, 40, "1a2b3c4d5e", &two, "b", "9f8e");
 /// assert!(text.contains("the checks Gate, Hygiene failed at commit 1a2b3c4"));
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub fn wave_checks_start(
     repo: &str,
+    base: &str,
     issue: u64,
     pull: u64,
     commit: &str,
@@ -7690,7 +7704,7 @@ pub fn wave_checks_start(
          git commit --trailer \"Riff-Session: {session}\"\n   \
          Commit and push before the end of your work, to the same pull request:\n   \
          git push origin {branch}\n   \
-         Never push to main. Do not open a second pull request. A new Gate and a new verify of \
+         Never push to {base}. Do not open a second pull request. A new Gate and a new verify of \
          the new commit follow. Another session does the verify: do not verify your own work.\n\
          5. A known flake: the failed test has no link to the diff, and the issue, the pull \
          request or an earlier run shows that it failed before. Run the job again one time:\n   \
@@ -7706,28 +7720,34 @@ pub fn wave_checks_start(
 }
 
 /// The message to the lead about a pull request that cannot merge, and
-/// that no session fixes (#279): `reason` is why. Each pull request,
-/// head and reason comes one time.
+/// that no session fixes (#279): `reason` is why. `base` is the default
+/// branch of the repository, for a conflict (01M5QYBWPAJ219BE8QKVKG1TWW).
+/// Each pull request, head and reason comes one time.
 ///
 /// ```
 /// use riff::rollout::Stuck;
 ///
 /// assert_eq!(
-///     riff::text::wave_stuck(40, "worktree-issue-12", "1a2b3c4d5e", &Stuck::AutoMergeOff),
+///     riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::AutoMergeOff),
 ///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but auto-merge is \
 ///      off, so it never merges. Turn it on: gh pr merge --auto --squash 40"
 /// );
 /// let checks = Stuck::Checks(vec!["Hygiene".into(), "Gate".into()]);
-/// let text = riff::text::wave_stuck(298, "release-v0.8.0", "5e6f7a8b9c", &checks);
+/// let text = riff::text::wave_stuck(298, "release-v0.8.0", "main", "5e6f7a8b9c", &checks);
 /// assert!(text.starts_with("PR #298, branch release-v0.8.0, has failed checks Hygiene, Gate at commit 5e6f7a8."));
 /// assert!(text.contains("No session fixes it, so it waits for you."));
 /// assert!(text.contains("gh pr checks 298"));
 /// assert!(text.contains("gh pr edit 298"));
 /// assert!(text.contains("a push to release-v0.8.0"));
+/// let text = riff::text::wave_stuck(41, "worktree-issue-1", "master", "aaaa111bbb", &Stuck::Conflict);
+/// assert!(text.contains("has a conflict with master at commit aaaa111."));
+/// assert!(text.contains("Rebase it on master, and push to worktree-issue-1."));
+/// assert!(!text.contains("main"));
 /// ```
 pub fn wave_stuck(
     number: u64,
     branch: &str,
+    base: &str,
     commit: &str,
     reason: &crate::rollout::Stuck,
 ) -> String {
@@ -7751,8 +7771,8 @@ pub fn wave_stuck(
             )
         }
         Stuck::Conflict => format!(
-            "PR #{number}, branch {branch}, has a conflict with main at commit {commit}. No \
-             session rebases it, so it waits for you. Rebase it on main, and push to {branch}."
+            "PR #{number}, branch {branch}, has a conflict with {base} at commit {commit}. No \
+             session rebases it, so it waits for you. Rebase it on {base}, and push to {branch}."
         ),
     }
 }
@@ -7821,10 +7841,13 @@ pub fn wave_checks_rerun(
 }
 
 /// The start text of a verify session of a wave
-/// (01M4ZV3B6R4WSEJXYT7QPRWT6X).
+/// (01M4ZV3B6R4WSEJXYT7QPRWT6X). It reads the diff against the default
+/// branch `base` (01M5QYBWPAJ219BE8QKVKG1TWW).
 ///
 /// ```
-/// let text = riff::text::wave_verify_start("o/r", 12, 40, "1a2b3c4d5e6f");
+/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f");
+/// assert!(text.contains("git diff origin/master...HEAD"));
+/// assert!(!text.contains("origin/main"));
 /// assert!(text.contains("pull request #40"));
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("commit 1a2b3c4d5e6f"));
@@ -7834,7 +7857,7 @@ pub fn wave_checks_rerun(
 /// assert!(text.contains("Run each test in the foreground"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
 /// ```
-pub fn wave_verify_start(repo: &str, issue: u64, pull: u64, commit: &str) -> String {
+pub fn wave_verify_start(repo: &str, base: &str, issue: u64, pull: u64, commit: &str) -> String {
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
@@ -7848,7 +7871,7 @@ pub fn wave_verify_start(repo: &str, issue: u64, pull: u64, commit: &str) -> Str
          release is not published before the merge.\n\
          2. Read CLAUDE.md, and obey its rules for a verify.\n\
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
-         origin/main...HEAD\n\
+         origin/{base}...HEAD\n\
          4. See the checks of the commit: gh pr checks {pull}\n   \
          The full check is each check that the ruleset of its default branch requires, but \
          `riff/verify`: the check `Gate` when the ruleset requires none. The wave started you \

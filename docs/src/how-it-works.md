@@ -1830,7 +1830,7 @@ a conflict, rebase in the worktree of the item, and push:
 
 ```sh
 git fetch -q origin
-git rebase origin/main
+git rebase origin/HEAD
 git push --force-with-lease --force-if-includes
 ```
 
@@ -1843,11 +1843,13 @@ when `main` moved after that. So two pull requests that each pass their
 full check can break `main` together. Then the full check of each later
 pull request fails too. The riff daemon looks at the full check of the
 head of `main` of each wave that it runs, each minute (see
-[Run the wave](development.md#run-the-wave)). It reads the same checks
-as a verify does: each check that the ruleset of the default branch
-requires, but `riff/verify`. When the ruleset requires no other check,
-it reads the check `Gate`. A check that GitHub skipped, or that ended
-`neutral`, passed. `main` is broken when one check failed or timed out.
+[Run the wave](development.md#run-the-wave)). Here `main` is the
+default branch of the repository, also when it has another name, for
+example `master`. The daemon reads the same checks as a verify does:
+each check that the ruleset of the default branch requires, but
+`riff/verify`. When the ruleset requires no other check, it reads the
+check `Gate`. A check that GitHub skipped, or that ended `neutral`,
+passed. `main` is broken when one check failed or timed out.
 
 ```mermaid
 flowchart TD
@@ -1874,17 +1876,17 @@ flowchart TD
 
 To see the checks that riff reads, use the required checks of the
 ruleset of the default branch. The full check is each of them but
-`riff/verify`:
+`riff/verify`. BRANCH is the default branch of the repository:
 
 ```sh
-gh api "repos/OWNER/REPO/rules/branches/main" \
+gh api "repos/OWNER/REPO/rules/branches/BRANCH" \
   --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'
 ```
 
-To see the check runs of the head of `main`:
+To see the check runs of the head of the default branch:
 
 ```sh
-gh api "repos/OWNER/REPO/commits/main/check-runs" \
+gh api "repos/OWNER/REPO/commits/BRANCH/check-runs" \
   --jq '.check_runs[] | [.name, .status, .conclusion, .html_url] | @tsv'
 ```
 

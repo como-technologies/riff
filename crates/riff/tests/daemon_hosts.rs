@@ -907,7 +907,7 @@ async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
     std::fs::create_dir_all(a.dir()).unwrap();
     let repo = lead.place().repo_text();
     let waves = serde_json::json!({repo.clone(): {
-        "repo": repo, "main": main, "server": &*server, "host": "a",
+        "repo": repo, "main": main, "server": &*server, "host": "a", "branch": "main",
     }});
     std::fs::write(a.dir().join("waves.json"), waves.to_string()).unwrap();
     assert!(!a.dir().join("served.json").exists());
