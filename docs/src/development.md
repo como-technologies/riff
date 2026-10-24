@@ -1064,17 +1064,29 @@ it pushes that work to the branch `riff-kept/ITEM-ID8` of `origin`, for
 example `riff-kept/issue-735-7788e301`. You do nothing.
 
 - The branch has the commits and the changes of tracked files.
+- A commit on another local branch than the one that the clone has
+  checked out goes to a branch of its own,
+  `riff-kept/ITEM-ID8-BRANCH`, for example
+  `riff-kept/issue-735-7788e301-spare`. The daemon pushes each such
+  branch, and then it removes the folder.
 - It never has a file that git does not track: a scratch file or a log
   can hold a secret. These files go with the folder.
 - The daemon never touches the folder of a session that runs, or of an
   item with an open pull request.
 - The daemon deletes each branch `riff-kept/*` after 30 days.
 
-The daemon posts one note to the lead with what it pushed and removed.
+The daemon posts one note to the lead with what it pushed and removed,
+each branch by name. It posts the note one time, not at each sweep.
 `riff daemon sweep` prints it too:
 
 ```text
 riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge. Its work is on the branch riff-kept/issue-735-7788e301 of origin.
+```
+
+With a commit on another local branch, the line names each branch:
+
+```text
+riff removed the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge. Its work is on the branches riff-kept/issue-735-7788e301 and riff-kept/issue-735-7788e301-spare of origin.
 ```
 
 ### Get back the work of a removed folder
@@ -1087,12 +1099,15 @@ git log FETCH_HEAD --not origin/main
 git switch -c rescue FETCH_HEAD
 ```
 
+Do the same for each other branch of the note, for example
+`riff-kept/issue-735-7788e301-spare`.
+
 ### When a folder stays
 
 The daemon keeps a folder when the push fails (for example, no network
-or no right to push), when a commit is on a local branch that is not
-`HEAD`, or when git cannot read the clone. `riff daemon sweep` prints
-each such folder with the reason, and the next sweep tries again:
+or no right to push), or when git cannot read the clone.
+`riff daemon sweep` prints each such folder with the reason, and the
+next sweep tries again:
 
 ```text
 riff kept the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge, but riff could not push its work: git push: denied. The next sweep tries again.

@@ -963,6 +963,53 @@ async fn riff_daemon_sweep_pushes_the_leftover_work_and_removes_the_folder() {
     stop(daemon).await;
 }
 
+/// 01M5QVCAXF5ANTTT46XHR6SF7H: `riff daemon sweep` also pushes the commits
+/// of a local branch that is not `HEAD` to `riff-kept/ITEM-ID8-BRANCH`,
+/// and removes the folder. It says each branch in one line.
+#[tokio::test]
+async fn riff_daemon_sweep_pushes_the_commits_of_another_local_branch_and_removes_the_folder() {
+    let here = Here::new();
+    fake_sweep_gh(here.bin.path());
+    let sessions = here.env.riff_home().join("sessions");
+    let folder = session_folder(&sessions, "issue-6-00000006");
+    let clone = folder.join("clone");
+    let bare = here.bin.path().join("origin.git");
+    git(here.bin.path(), &["init", "-q", "--bare", "origin.git"]);
+    let key = format!("url.{}.pushInsteadOf", bare.display());
+    git(&clone, &["config", &key, "https://github.com/o/r.git"]);
+    git(&clone, &["switch", "-q", "-c", "spare"]);
+    std::fs::write(clone.join("spare.md"), "spare").unwrap();
+    git(&clone, &["add", "spare.md"]);
+    git(&clone, &["commit", "-q", "-m", "on a spare branch"]);
+    git(&clone, &["switch", "-q", "main"]);
+    let daemon = here
+        .daemon_with("daemon.out", &[(riff::daemon::sweep::EVERY_VAR, "0")])
+        .await;
+
+    let out = here.run(false, &["daemon", "sweep"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        format!(
+            "riff removed the folder {}: the pull request #46 closed with no merge. Its work is \
+             on the branch riff-kept/issue-6-00000006-spare of origin.\n",
+            folder.display()
+        )
+    );
+    assert!(!folder.exists());
+    let files = git(
+        &bare,
+        &[
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "riff-kept/issue-6-00000006-spare",
+        ],
+    );
+    assert_eq!(files, "spare.md");
+    stop(daemon).await;
+}
+
 /// 01M53NJ5V27BCHDNHK2THQQZZQ: the daemon sweeps by itself at its start,
 /// with no wave and no step of a person.
 #[tokio::test]

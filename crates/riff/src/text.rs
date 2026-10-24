@@ -7074,23 +7074,33 @@ pub fn swept(folder: &Path, why: &str) -> String {
 }
 
 /// The sweep pushed the leftover work of the folder `folder` to the
-/// branch `branch` of `origin`, and removed the folder, for the reason
-/// `why`. `lost` counts the files that git does not track: they went
-/// with the folder.
+/// branches `branches` of `origin`, and removed the folder, for the
+/// reason `over`. `lost` counts the files that git does not track: they
+/// went with the folder.
 ///
 /// ```
 /// use std::path::Path;
 ///
 /// let folder = Path::new("/s/issue-12-1a2b3c4d");
+/// let one = ["riff-kept/issue-12-1a2b3c4d".to_owned()];
 /// assert_eq!(
-///     riff::text::swept_pushed(folder, "the pull request #40 merged", "riff-kept/issue-12-1a2b3c4d", 0),
+///     riff::text::swept_pushed(folder, "the pull request #40 merged", &one, 0),
 ///     "riff removed the folder /s/issue-12-1a2b3c4d: the pull request #40 merged. Its work is on the branch riff-kept/issue-12-1a2b3c4d of origin."
 /// );
-/// assert!(riff::text::swept_pushed(folder, "x", "riff-kept/b", 2).ends_with("2 files that git do not track went with the folder."));
+/// assert!(riff::text::swept_pushed(folder, "x", &one, 2).ends_with("2 files that git do not track went with the folder."));
+/// let three = ["riff-kept/a".to_owned(), "riff-kept/a-b".to_owned(), "riff-kept/a-c/d".to_owned()];
+/// assert!(riff::text::swept_pushed(folder, "x", &three, 0).ends_with(
+///     "Its work is on the branches riff-kept/a, riff-kept/a-b and riff-kept/a-c/d of origin."
+/// ));
 /// ```
-pub fn swept_pushed(folder: &Path, over: &str, branch: &str, lost: usize) -> String {
+pub fn swept_pushed(folder: &Path, over: &str, branches: &[String], lost: usize) -> String {
+    let names = match branches {
+        [] => "no branch".to_owned(),
+        [one] => format!("the branch {one}"),
+        [first @ .., last] => format!("the branches {} and {last}", first.join(", ")),
+    };
     let mut line = format!(
-        "riff removed the folder {}: {over}. Its work is on the branch {branch} of origin.",
+        "riff removed the folder {}: {over}. Its work is on {names} of origin.",
         folder.display()
     );
     if lost > 0 {
