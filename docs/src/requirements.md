@@ -3221,10 +3221,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   time and `USER@HOST`, and posts each line that the person types.
   `--color` works as in `riff tail`. `/quit` or Ctrl-C exits. The
   chat has no private channels, no nick changes and no files.
-- **01M3NB5N0D99JB5CE6RB4VEYPF** A chat line wakes no session, unless
-  it names a lead: `@lead` wakes the lead of the sender, and `@USER`
-  wakes the lead of USER. The skill tells a lead to answer a chat line
-  with a post to the thread `chat`.
+- **01M3NB5N0D99JB5CE6RB4VEYPF** A chat line wakes the lead of the
+  sender, unless it names a lead: `@lead` wakes the lead of the sender,
+  and `@USER` wakes the lead of USER. The skill tells a lead to
+  answer a chat line with a post to the thread `chat`.
 - **01M3NJD39JVJHY5G71CD79JBY3** In a terminal, `riff chat` has a
   prompt line at the bottom. A new line prints above the prompt, and
   the typed text stays. After Enter, the typed line goes away, so the
@@ -3265,6 +3265,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3Q59CAA46C316BD4D1ED7C6** When the first connect after a stream
   ends fails, riff tries once more at once, and shows nothing for it.
   Only when that try fails too does it show `(reconnecting…)`.
+- **01M5P1V9SZP9EF475MK3G9WK5E** A chat line of a person that names no
+  one with @ wakes the lead of the sender, as @lead does. `riff chat`
+  and its help say what wakes whom.
 
 ## Security
 

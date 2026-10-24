@@ -25,9 +25,10 @@
 //! `/me TEXT` (01M3NJD37CNQX580YC24S7K6ES), so an older riff reads it
 //! too. It shows as `* USER@HOST TEXT`.
 //!
-//! A line wakes no session, unless it names a lead (01M3NB5N0D99JB5CE6RB4VEYPF):
-//! `@lead` wakes the lead of the sender, and `@USER` wakes the lead of
-//! USER. A lead answers with a post to the chat thread.
+//! A line wakes the lead of the sender, unless it names a lead
+//! (01M3NB5N0D99JB5CE6RB4VEYPF): `@lead` wakes the lead of the sender,
+//! and `@USER` wakes the lead of USER. A lead answers with a post to the
+//! chat thread.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -91,8 +92,8 @@ pub fn thread() -> ThreadName {
 
 /// The sessions that a chat line of `sender` wakes: the lead of each
 /// user that the line names with `@USER`, and the lead of the sender for
-/// `@lead`. Punctuation after the name does not count. A line with no
-/// `@` wakes no session.
+/// `@lead`. Punctuation after the name does not count. A line that names
+/// no one wakes the lead of the sender, so a question never waits unseen.
 ///
 /// ```
 /// use riff::chat::wakes;
@@ -101,8 +102,8 @@ pub fn thread() -> ThreadName {
 /// assert_eq!(wakes("@lead: is #12 done?", "mike"), [lead("mike")]);
 /// assert_eq!(wakes("ask @brett, and @lead", "mike"), [lead("brett"), lead("mike")]);
 /// assert_eq!(wakes("@mike @lead", "mike"), [lead("mike")]);
-/// assert!(wakes("mail mike@thelio about it", "brett").is_empty());
-/// assert!(wakes("no names here", "brett").is_empty());
+/// assert_eq!(wakes("mail mike@thelio about it", "brett"), [lead("brett")]);
+/// assert_eq!(wakes("no names here", "brett"), [lead("brett")]);
 /// ```
 pub fn wakes(line: &str, sender: &str) -> Vec<Selector> {
     let mut users: Vec<&str> = Vec::new();
@@ -115,6 +116,9 @@ pub fn wakes(line: &str, sender: &str) -> Vec<Selector> {
         if !user.is_empty() && !users.contains(&user) {
             users.push(user);
         }
+    }
+    if users.is_empty() {
+        users.push(sender);
     }
     users
         .into_iter()
@@ -303,7 +307,7 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     if after.is_none() {
         anstream::eprintln!(
             "riff: chat as {}@{}. Type a line and press Enter. /me TEXT sends an action. \
-             @lead wakes your lead. {QUIT} or Ctrl-C exits.",
+             A line wakes your lead; @USER wakes the lead of USER. {QUIT} or Ctrl-C exits.",
             me.who().user(),
             me.place().host()
         );

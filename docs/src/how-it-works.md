@@ -2250,11 +2250,13 @@ The chat on a phone is a design, and not built yet: see
 
 ### Ask a lead in the chat
 
-A chat line wakes no session. A line with `@lead` wakes your lead.
-A line with `@USER` wakes the lead of USER. The lead answers in the
-chat. Type the lines in `riff chat`, not in a shell:
+A chat line with no name wakes your lead. A line with `@lead` wakes
+your lead too. A line with `@USER` wakes the lead of USER, and not
+yours. The lead answers in the chat. Type the lines in `riff chat`,
+not in a shell:
 
 ```text
+is #12 done?
 @lead is #12 done?
 @brett can I take #14?
 ```
