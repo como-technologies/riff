@@ -948,6 +948,9 @@
   tells the session to call `whoami`. Superseded by 4.0 (#1173).
 - **01M3JCG4AV80MHFP73CWDY5E3M** `riff who`, `riff whoami` and the
   `whoami` tool show the state of the riff.
+- **01M5P1XQ6WTGFHW0P5M114P535** The riff daemon sends no verify request
+  for a pull request whose head commit is a WIP commit. The item goes
+  back to a build.
 
 ## Service
 

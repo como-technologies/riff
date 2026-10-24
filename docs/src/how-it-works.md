@@ -2730,6 +2730,16 @@ is paused. While a session is paused:
 - A session with work stops at its next step. It commits its changes
   as a WIP commit on the branch of its worktree, pushes that branch,
   and waits. It pushes nothing to the default branch.
+- A container session of `riff daemon` ends after its WIP push. The
+  daemon sends no verify request for a WIP head. The lead gets this
+  note:
+
+  ```text
+  issue-12: the session of the wave ended, and the item is free. The head of PR #40, branch worktree-issue-12, is the WIP commit 1a2b3c4 (session 9f8e7d6c). The riff daemon sends no verify request. The item goes back to a build when the riff runs again.
+  ```
+
+  At the resume, the daemon starts a new build of the item. The build
+  has the start text of a resume and goes on from the WIP commit.
 - Messages still flow. The sessions answer a status request and the
   lead.
 
