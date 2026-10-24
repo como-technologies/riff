@@ -11,15 +11,12 @@ use std::time::Duration;
 use riff::style;
 use riff_core::name::SessionUri;
 
+use crate::common;
+
 const THREAD: &str = "como-technologies/riff";
 
-async fn start_server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, riff_server::router()).await.unwrap();
-    });
-    format!("http://{addr}")
+async fn start_server() -> common::Signed {
+    common::start_signed().await
 }
 
 /// A git repository with a GitHub origin, so the place of each session
@@ -47,6 +44,11 @@ fn repo() -> tempfile::TempDir {
 /// `riff ARGS` in `dir` through a pipe, as the agent session `session`
 /// of mike, or as the person brett.
 fn riff(server: &str, dir: &Path, session: Option<&str>, args: &[&str]) -> Command {
+    common::sign_in(
+        server,
+        dir,
+        if session.is_some() { "mike" } else { "brett" },
+    );
     let mut cmd = Isolated::shared().riff();
     cmd.args(args)
         .current_dir(dir)
@@ -58,7 +60,7 @@ fn riff(server: &str, dir: &Path, session: Option<&str>, args: &[&str]) -> Comma
         .env_remove("NO_COLOR")
         .env_remove("CLICOLOR_FORCE")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     match session {
         Some(id) => cmd.env("RIFF_USER", "mike").env("RIFF_SESSION", id),
         None => cmd.env("RIFF_USER", "brett"),
@@ -168,7 +170,7 @@ async fn a_blocked_session_is_red() {
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     output(riff(&server, dir, Some("b2"), &blocked)).await;
     // A watch makes b2 live, so its state is blocked.
-    let api = riff_client::api::Api::new(&server);
+    let api = server.api("mike", Some("b2"));
     let b2 = uri("b2");
     let _watch = api.watch(&b2).await.unwrap();
 
@@ -240,7 +242,7 @@ async fn the_state_of_a_lead_comes_from_its_facts() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
-    let api = riff_client::api::Api::new(&server);
+    let api = server.api("mike", Some("a1"));
     let a1 = uri("a1");
     output(riff(&server, dir, Some("a1"), &["whoami"])).await;
     output(riff(&server, dir, Some(""), &["lead", "--session", "a1"])).await;
@@ -297,13 +299,16 @@ async fn a_long_step_shows_and_a_failed_step_wakes_the_lead() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
-    let api = riff_client::api::Api::new(&server);
+    let (api_a1, api_b2) = (
+        server.api("mike", Some("a1")),
+        server.api("mike", Some("b2")),
+    );
     output(riff(&server, dir, Some("a1"), &["whoami"])).await;
     output(riff(&server, dir, Some(""), &["lead", "--session", "a1"])).await;
     output(riff(&server, dir, Some("a1"), &["resume", "--riff"])).await;
     let (a1, b2) = (uri("a1"), uri("b2"));
-    let _watch = api.watch(&b2).await.unwrap();
-    let mut wakes = Box::pin(api.watch(&a1).await.unwrap());
+    let _watch = api_b2.watch(&b2).await.unwrap();
+    let mut wakes = Box::pin(api_a1.watch(&a1).await.unwrap());
 
     let said = output(riff(
         &server,

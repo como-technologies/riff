@@ -5295,6 +5295,11 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   the wire, the checkpoint or the state cannot hold an invalid state.
   For example, a saved session has a status, a step, or both: an
   enum, not two options.
+- **01M5P2CWS1ENC30XNENRX11MY3** An integration test of a command that
+  calls riff-server uses a riff-server that needs a sign-in
+  (`common::start_signed`), and signs in the command with
+  `common::sign_in`. The server notes each call with no token, and the
+  test fails when it ends.
 
 ## The phone app
 

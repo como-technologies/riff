@@ -1627,7 +1627,9 @@ async fn main() -> Result<()> {
         let api = Api::new(&server);
         let me =
             identity::here(cli.place.as_ref()).and_then(|here| identity::me(&here, api.base()));
-        if let (Ok(me), Ok(issue)) = (me, pr::issue_of(&pr::Gh::default(), *number)) {
+        if let (Ok(me), Ok(issue)) = (me, pr::issue_of(&pr::Gh::default(), *number))
+            && let Ok(api) = api.signed_in(me.who().session())
+        {
             riff::look::tell_fact(&api, &me, issue, *number, PullState::Merged).await;
         }
         // The merge is done: the total never fails the wait.

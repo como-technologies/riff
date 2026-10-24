@@ -5,7 +5,7 @@
 //! 01M3Y1YP4KVHK1DTZ85YNGDG0T).
 //!
 //! A fake `gh` on `PATH` keeps the comments of each issue in a file, as
-//! GitHub does. A real `riff-server` with no sign-in holds the claims.
+//! GitHub does. A real `riff-server` with sign-in holds the claims of the commands; the tools test uses one with no sign-in.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -109,7 +109,7 @@ fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-/// A real riff-server of this build, with no sign-in.
+/// A real riff-server of this build, with no sign-in. It holds the claims of the tools.
 async fn server() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -144,7 +144,7 @@ struct Machine {
     env: Isolated,
     bin: tempfile::TempDir,
     repo: tempfile::TempDir,
-    server: String,
+    server: crate::common::Signed,
 }
 
 impl Machine {
@@ -156,7 +156,7 @@ impl Machine {
             env: Isolated::new(),
             bin,
             repo: repo(),
-            server: server().await,
+            server: crate::common::start_signed().await,
         }
     }
 
@@ -168,10 +168,11 @@ impl Machine {
             self.bin.path().display(),
             std::env::var("PATH").unwrap()
         );
+        crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
         let mut cmd = self.env.riff();
         cmd.args(args)
             .current_dir(self.repo.path())
-            .env("RIFF_SERVER", &self.server)
+            .env("RIFF_SERVER", &*self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "thelio")
             .env("RIFF_SESSION", session)

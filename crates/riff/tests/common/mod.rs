@@ -199,3 +199,180 @@ pub fn person_of(me: &riff_core::name::SessionUri) -> riff_core::name::SessionUr
     let who = riff_core::name::Who::new(me.who().user(), None).unwrap();
     riff_core::name::SessionUri::new(who, me.place().clone())
 }
+
+/// The device key, and the sign-in JSON of each user, of one [`Signed`]
+/// server. [`sign_in`] writes them into the secret files of a `RIFF_HOME`.
+type SignIns = (String, HashMap<String, String>);
+
+fn sign_ins() -> &'static Mutex<HashMap<String, SignIns>> {
+    static SIGN_INS: std::sync::OnceLock<Mutex<HashMap<String, SignIns>>> =
+        std::sync::OnceLock::new();
+    SIGN_INS.get_or_init(Mutex::default)
+}
+
+/// The paths of the calls that a [`Signed`] server got.
+pub type Calls = Arc<Mutex<Vec<String>>>;
+
+/// A real riff-server that needs a sign-in (`require_sign_in: true`),
+/// for the integration tests of each command that calls it
+/// (01M5P2CWS1ENC30XNENRX11MY3). A command that forgets
+/// [`riff_client::api::Api::signed_in`] sends no token, and the server
+/// refuses it with 401. The server notes each such call, and the test
+/// fails when it ends, even when the command hides the error.
+///
+/// The server derefs to its URL. Call [`sign_in`] with the URL and the
+/// `RIFF_HOME` of the command, so that the command is signed in as the
+/// person brett.
+pub struct Signed {
+    /// The service of the server.
+    pub service: riff_server::Service,
+    url: String,
+    calls: Calls,
+    refused: Calls,
+}
+
+impl Signed {
+    /// Each path that the server got, in order.
+    pub fn calls(&self) -> Calls {
+        self.calls.clone()
+    }
+
+    /// The paths of the calls that came with no token, and got 401.
+    pub fn unsigned(&self) -> Vec<String> {
+        self.refused.lock().unwrap().clone()
+    }
+
+    /// The paths of [`Signed::unsigned`], and forgets them: the test
+    /// means to send a call with no token.
+    pub fn take_unsigned(&self) -> Vec<String> {
+        std::mem::take(&mut self.refused.lock().unwrap())
+    }
+
+    /// [`api`] for this server.
+    pub fn api(&self, user: &str, session: Option<&str>) -> riff_client::api::Api {
+        api(&self.url, user, session)
+    }
+}
+
+impl std::ops::Deref for Signed {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.url
+    }
+}
+
+impl std::fmt::Display for Signed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.url)
+    }
+}
+
+impl Drop for Signed {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            let refused = self.unsigned();
+            assert!(
+                refused.is_empty(),
+                "a command sent these calls with no token: {refused:?}"
+            );
+        }
+    }
+}
+
+/// The people that a [`Signed`] server signs in: the person of a command (the
+/// owner), the user of an agent session (an admin), and a member.
+pub const PEOPLE: &[&str] = &["brett", "mike", "bob"];
+
+/// Starts a [`Signed`] server on a free port.
+pub async fn start_signed() -> Signed {
+    let (listener, url) = listen().await;
+    let service = riff_server::Service::new(riff_server::auth::Config {
+        require_sign_in: true,
+        admins: PEOPLE[..2]
+            .iter()
+            .map(|user| format!("{user}@comotechnologies.io"))
+            .collect(),
+        ..riff_server::auth::Config::new(&url)
+    });
+    let calls = Calls::default();
+    let refused = Calls::default();
+    let (seen, noted) = (calls.clone(), refused.clone());
+    let router = service.router().layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let (seen, noted) = (seen.clone(), noted.clone());
+            async move {
+                let path = request.uri().path().to_owned();
+                let bare = !request.headers().contains_key("authorization");
+                seen.lock().unwrap().push(path.clone());
+                let response = next.run(request).await;
+                if bare && response.status() == StatusCode::UNAUTHORIZED {
+                    noted.lock().unwrap().push(path);
+                }
+                response
+            }
+        },
+    ));
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let key = riff_client::device::key(&url).unwrap();
+    let mut people = HashMap::new();
+    for user in PEOPLE {
+        let email = format!("{user}@comotechnologies.io");
+        let pair = service
+            .admit(&email, true, &key.thumbprint())
+            .await
+            .unwrap();
+        let sign_in = riff_client::login::SignIn {
+            user: pair.user,
+            access_token: pair.access_token,
+            refresh_token: pair.refresh_token,
+            expires_at: u64::MAX,
+            riff_id: service.riff_id(),
+        };
+        people.insert((*user).to_owned(), serde_json::to_string(&sign_in).unwrap());
+    }
+    sign_ins()
+        .lock()
+        .unwrap()
+        .insert(url.clone(), (key.to_secret(), people));
+    Signed {
+        service,
+        url,
+        calls,
+        refused,
+    }
+}
+
+/// Signs in the commands with the `RIFF_HOME` `home` to the [`Signed`]
+/// server at `url`, as the person `user` ([`PEOPLE`]). It does nothing for another
+/// server.
+pub fn sign_in(url: &str, home: &std::path::Path, user: &str) {
+    let Some((key, people)) = sign_ins().lock().unwrap().get(url).cloned() else {
+        return;
+    };
+    let sign_in = people
+        .get(user)
+        .unwrap_or_else(|| panic!("no sign-in for {user}"));
+    let secrets = home.join("secrets");
+    riff_client::secrets::file_set(&secrets, &riff_client::device::secret_name(url), &key).unwrap();
+    riff_client::secrets::file_set(&secrets, &riff_client::login::secret_name(url), sign_in)
+        .unwrap();
+}
+
+/// A client of this process for the [`Signed`] server at `url`: it
+/// sends the token of `user`, or of the session `session` of `user`. It
+/// replaces the sign-in of this process at the server, so build the
+/// client of the next user after the use of this one.
+pub fn api(url: &str, user: &str, session: Option<&str>) -> riff_client::api::Api {
+    let people = sign_ins().lock().unwrap().get(url).cloned();
+    let (_, people) = people.unwrap_or_else(|| panic!("{url} is not a signed server"));
+    let sign_in = people
+        .get(user)
+        .unwrap_or_else(|| panic!("no sign-in for {user}"));
+    riff_client::login::store(url, &serde_json::from_str(sign_in).unwrap()).unwrap();
+    riff_client::api::Api::new(url).signed_in(session).unwrap()
+}
+
+/// [`api`] for the session `me` of the [`Signed`] server at `url`.
+pub fn api_of(url: &str, me: &riff_core::name::SessionUri) -> riff_client::api::Api {
+    api(url, me.who().user(), me.who().session())
+}
