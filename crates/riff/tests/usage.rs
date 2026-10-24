@@ -5,7 +5,7 @@
 //! 01M3Y1YP4KVHK1DTZ85YNGDG0T).
 //!
 //! A fake `gh` on `PATH` keeps the comments of each issue in a file, as
-//! GitHub does. A real `riff-server` with sign-in holds the claims of the commands; the tools test uses one with no sign-in.
+//! GitHub does. A real `riff-server` with sign-in holds the claims of the commands and of the tools.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,6 @@ use isolated::Isolated;
 use riff::pr::Gh;
 use riff::tools::Tools;
 use riff::usage::Meter;
-use riff_client::api::Api;
 use riff_core::name::SessionUri;
 use rmcp::model::CallToolRequestParams;
 use rmcp::{ServiceExt, service::RunningService};
@@ -107,14 +106,6 @@ fn reply(at: &str, id: &str, model: &str, tokens: [u64; 4]) -> String {
 /// The time now, as a transcript has it.
 fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
-
-/// A real riff-server of this build, with no sign-in. It holds the claims of the tools.
-async fn server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
-    format!("http://{addr}")
 }
 
 /// A git repository with a GitHub origin, so the place of each session
@@ -822,12 +813,15 @@ fn meter(bin: &Path, marks: &Path) -> Meter {
 #[tokio::test]
 async fn the_release_tool_puts_the_tokens_of_its_claim_on_the_issue() {
     let (bin, marks) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
-    let api = Api::new(&server().await);
+    let server = crate::common::start_signed().await;
     let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1#issue-12"
         .parse()
         .unwrap();
+    let api = crate::common::api_of(&server, &me);
     api.register(&me).await.unwrap();
-    crate::common::name_lead(&api, &me).await;
+    let owner = crate::common::api(&server, "mike", None);
+    crate::common::name_lead(&owner, &me).await;
+    let api = crate::common::api_of(&server, &me);
     api.set_riff(&me, riff_core::wire::RiffState::Running)
         .await
         .unwrap();
