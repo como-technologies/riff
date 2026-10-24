@@ -7326,7 +7326,8 @@ pub const LEAD_RULES: [(&str, &str); 18] = [
 /// ```
 /// let text = riff::text::MCP_LEAD;
 /// assert!(text.contains("`/opt/riff/riff relay watch --follow`"));
-/// assert!(!text.contains("start it again at once"));
+/// assert!(text.contains("start the watch again when the Monitor ends, and only then"));
+/// assert!(!text.contains("Do not start it again"));
 /// assert!(text.contains("`/opt/riff/riff wave list`"));
 /// assert!(text.contains("`/opt/riff/riff wave move ITEM --to WAVE`"));
 /// assert!(text.contains("`/opt/riff/riff wave end NUMBER --move-open-to-backlog`"));
@@ -7340,7 +7341,7 @@ pub const MCP_LEAD: &str = concat!(
 people. You are the lead of your user, in a container with a terminal. The riff daemon of this \
 machine runs the sessions of the wave: one container for each item and each verify. Do not claim \
 work. Your riff tools act on riff-server: `whoami`, `who`, `threads`, `read`, `post`, `tell`, \
-`status` and `blocked`, and the lead tools `hold`, `free`, `notes`, `pause` and `resume`. To get your wakes, start `/opt/riff/riff relay watch --follow` once with the Monitor tool, at the start of your session. It never ends: it prints one line for each wake, and each line wakes you. When a line comes, call `read` with no thread. Do not start it again. You plan the waves of the repository. To see them, run \
+`status` and `blocked`, and the lead tools `hold`, `free`, `notes`, `pause` and `resume`. To get your wakes, start `/opt/riff/riff relay watch --follow` with the Monitor tool, at the start of your session. It prints one line for each wake, and each line wakes you. When a line comes, call `read` with no thread. Claude Code ends a Monitor after 30 minutes at most: start the watch again when the Monitor ends, and only then. A new watch does not wake you for a message that you read. You plan the waves of the repository. To see them, run \
 `/opt/riff/riff wave list`. To make, rename or end a wave, run `/opt/riff/riff wave make`, \
 `/opt/riff/riff wave rename` or `/opt/riff/riff wave end`. To move items to a wave or to the \
 Backlog, run `/opt/riff/riff wave move ITEM --to WAVE`; to end a wave with open items, run \
@@ -7379,6 +7380,7 @@ pub fn not_in_the_lead_container(tool: &str) -> String {
 /// assert!(text.contains("You are the lead of o/r"));
 /// assert!(text.contains("/opt/riff/riff relay watch --follow"));
 /// assert!(text.contains("the riff tools whoami, notes and read"));
+/// assert!(text.contains("When the Monitor ends, start it again."));
 /// assert!(text.contains("at each start, after each resume and after each compaction"));
 /// assert!(text.contains("never only in the Claude memory of the host"));
 /// ```
@@ -7392,8 +7394,8 @@ pub fn lead_start(repo: &str) -> String {
          your context. Your rules are in the instructions of the riff tools. Keep the running \
          state in the notes and on GitHub, never only in the Claude memory of the host: that \
          memory is not there on another host or after a crash. Write each change of state to the \
-         notes when it happens. Then start /opt/riff/riff relay watch --follow once with the Monitor \
-         tool, as the instructions of the riff tools say. Then tell your person in two lines what the \
+         notes when it happens. Then start /opt/riff/riff relay watch --follow with the Monitor \
+         tool. When the Monitor ends, start it again. Then tell your person in two lines what the \
          thread says, and wait for the person."
     )
 }

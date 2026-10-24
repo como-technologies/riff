@@ -1301,7 +1301,7 @@ enum RelayCommand {
     ///
     /// Without a flag, it ends at the next wake. With --follow, it never ends: it
     /// prints one line for each wake, so the Monitor tool of Claude Code wakes
-    /// the session at each line. The lead runs that once.
+    /// the session at each line. The lead runs that again when the Monitor ends.
     Watch {
         /// Print one line for each wake, and keep running.
         #[arg(long)]

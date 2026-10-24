@@ -2673,16 +2673,32 @@ impl State {
                 .collect(),
             _ => Vec::new(),
         };
-        let read = t
-            .messages
-            .back()
-            .filter(|_| !skips)
-            .map(|last| Signal::Read {
-                thread: thread.clone(),
-                seq: next.unwrap_or(last.message.seq),
-                all,
-                woken: woken.last().map_or(0, |m| m.seq),
-            });
+        // A skipping read keeps the cursor, but it still shows its
+        // messages: the newest of them that woke the reader counts as seen.
+        let read = t.messages.back().map(|last| {
+            if skips {
+                let shown = t
+                    .messages
+                    .iter()
+                    .rfind(|m| {
+                        m.woken.contains(who) && messages.iter().any(|r| r.seq == m.message.seq)
+                    })
+                    .map_or(0, |m| m.message.seq);
+                Signal::Read {
+                    thread: thread.clone(),
+                    seq: 0,
+                    all: true,
+                    woken: shown,
+                }
+            } else {
+                Signal::Read {
+                    thread: thread.clone(),
+                    seq: next.unwrap_or(last.message.seq),
+                    all,
+                    woken: woken.last().map_or(0, |m| m.seq),
+                }
+            }
+        });
         Ok((
             Page {
                 messages,
@@ -3299,6 +3315,24 @@ mod tests {
             .read_page(&tests(), &thread("chat"), true, Some(0), PAGE, now)
             .unwrap();
         assert!(all.woken.is_empty());
+    }
+
+    #[test]
+    fn a_read_of_all_after_a_number_leaves_no_wake_for_a_new_watch() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let b = tests().who().clone();
+        post(&mut state, &api(), "chat", &[], "old");
+        post(&mut state, &api(), "chat", &["session=b2"], "for you");
+        assert_eq!(state.missed(&b).unwrap().seq, 2);
+        // The read skips the unread message 1 and keeps the cursor.
+        state
+            .read_page(&tests(), &thread("chat"), true, Some(1), PAGE, now)
+            .unwrap();
+        assert!(state.missed(&b).is_none());
+        // A new addressed message wakes the watch again.
+        post(&mut state, &api(), "chat", &["session=b2"], "again");
+        assert_eq!(state.missed(&b).unwrap().seq, 3);
     }
 
     #[test]
