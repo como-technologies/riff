@@ -85,6 +85,16 @@ async fn run(
     )
 }
 
+/// The person `user` names the session `id` the lead, in a shell, after
+/// a first call of the session (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+async fn lead(server: &str, dir: &Path, user: &str, id: &str) -> String {
+    let (out, code) = agent(server, dir, user, id, &["whoami"]).await;
+    assert_eq!(code, 0, "{out}");
+    let (out, code) = riff(server, dir, user, &["lead", "--session", id]).await;
+    assert_eq!(code, 0, "{out}");
+    out
+}
+
 /// Resumes the new riff as the person mike, in a shell.
 async fn resume(server: &str, dir: &Path) {
     let (out, code) = run(server, dir, "mike", None, &["resume", "--riff"]).await;
@@ -124,9 +134,9 @@ async fn a_new_riff_is_paused_and_refuses_each_claim() {
     let (_, code) = riff(&server, dir, "mike", &["claim", "issue-12"]).await;
     assert_eq!(code, 0);
 
-    // The first session of brett is its lead. A second session of brett
+    // brett names the first session the lead. A second session of brett
     // is not, so it cannot pause the riff.
-    agent(&server, dir, "brett", "first", &["who"]).await;
+    lead(&server, dir, "brett", "first").await;
     let (_, code) = agent(&server, dir, "brett", "second", &["pause"]).await;
     assert_ne!(code, 0, "only a person or a lead can pause");
     let (out, _) = run(&server, dir, "mike", None, &["whoami"]).await;
@@ -153,8 +163,8 @@ async fn pause_and_resume_name_the_repository_of_the_directory() {
     let (here, strata) = (repo(), repo_named("strata"));
     let (here, strata) = (here.path(), strata.path());
     resume(&server, here).await;
-    agent(&server, here, "mike", "a1", &["lead"]).await;
-    agent(&server, strata, "brett", "b1", &["lead"]).await;
+    lead(&server, here, "mike", "a1").await;
+    lead(&server, strata, "brett", "b1").await;
 
     let (out, code) = agent(&server, strata, "brett", "b1", &["pause"]).await;
     assert_eq!(code, 0, "{out}");
@@ -482,19 +492,36 @@ async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
     let dir = repo();
     let dir = dir.path();
 
-    agent(&server, dir, "mike", "a1", &["lead"]).await;
+    // No session is the lead by itself (01M5NJAY3FTR005TDJJY1TMGNX).
+    agent(&server, dir, "mike", "a1", &["read"]).await;
+    let (out, _) = riff(&server, dir, "mike", &["who", "--long"]).await;
+    assert!(!out.contains("lead=true"), "{out}");
+    lead(&server, dir, "mike", "a1").await;
     agent(&server, dir, "mike", "b2", &["read"]).await;
     let (out, _) = riff(&server, dir, "mike", &["who", "--long"]).await;
     assert!(out.contains("?session=a1&lead=true  "), "{out}");
     assert!(out.contains("?session=b2  "), "{out}");
 
-    let (out, code) = agent(&server, dir, "mike", "b2", &["lead"]).await;
+    // A session cannot take the lead role (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+    for (id, args) in [
+        ("b2", &["lead", "--session", "b2"]),
+        ("a1", &["lead", "--session", "b2"]),
+    ] {
+        let (out, code) = agent(&server, dir, "mike", id, args).await;
+        assert_ne!(code, 0, "{id}: {out}");
+    }
+    let (_, code) = riff(&server, dir, "mike", &["lead"]).await;
+    assert_ne!(code, 0, "riff lead names a session");
+
+    let out = lead(&server, dir, "mike", "b2").await;
     assert_eq!(
         out,
-        "You are the lead of mike in como-technologies/riff. \
+        "mike@pangolin:riff (b2) is the lead of mike in como-technologies/riff. \
          mike@pangolin:riff (a1) is not the lead now.\n"
     );
-    assert_eq!(code, 0);
+    // The old lead has a message (01M5NJAYMYF50B9WXH5RF9W737).
+    let (out, _) = agent(&server, dir, "mike", "a1", &["read"]).await;
+    assert!(out.contains("lead: you are not the lead now"), "{out}");
 
     let (out, code) = agent(&server, dir, "mike", "a1", &["tell", "lead", "merge?"]).await;
     assert_eq!(
@@ -502,9 +529,6 @@ async fn lead_marks_the_lead_and_tell_lead_reaches_it() {
         "Posted message 1 to a direct thread. Woke mike@pangolin:riff (b2).\n"
     );
     assert_eq!(code, 0);
-
-    let (_, code) = riff(&server, dir, "mike", &["lead"]).await;
-    assert_ne!(code, 0, "a person with no session ID cannot be the lead");
 }
 
 /// The lead frees the claim of another session of its user, and the
@@ -517,8 +541,8 @@ async fn the_lead_releases_the_claim_of_another_session() {
     let server = start_server().await;
     let dir = repo();
     let dir = dir.path();
-    agent(&server, dir, "mike", "lead1", &["lead"]).await;
-    agent(&server, dir, "brett", "b1", &["lead"]).await;
+    lead(&server, dir, "mike", "lead1").await;
+    lead(&server, dir, "brett", "b1").await;
     resume(&server, dir).await;
     let (out, code) = agent(&server, dir, "mike", "work1", &["claim", "issue-12"]).await;
     assert_eq!(code, 0, "{out}");
@@ -570,7 +594,7 @@ async fn a_person_asks_for_status_and_who_shows_each_answer() {
     let dir = repo();
     let dir = dir.path();
 
-    agent(&server, dir, "mike", "a1", &["lead"]).await;
+    lead(&server, dir, "mike", "a1").await;
     agent(&server, dir, "mike", "b2", &["read"]).await;
     let ask = [
         "post",

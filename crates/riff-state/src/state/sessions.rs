@@ -48,9 +48,8 @@
 //!   mark of the call is not the mark of the riff. [`Arrive`] keeps the
 //!   mark of the riff: a session that the riff does not know is not a
 //!   worker.
-//! - Only a [`Register`] or a [`Start`] makes the first lead of a user
-//!   in a repository, and never for a worker
-//!   (01M3X9XA3H6YF0QCYSNB2P0CT2). [`Arrive`] makes no lead.
+//! - No [`Register`], [`Start`] or [`Arrive`] makes a lead
+//!   (01M5NJAY3FTR005TDJJY1TMGNX).
 //! - A person has no session ID and no life cycle.
 
 use std::collections::BTreeMap;
@@ -313,11 +312,9 @@ impl View<'_> {
     /// - A session gets a `session_started` record with the reason
     ///   `join` when the riff does not know it, or when its worker mark
     ///   changes (01M3X9X9M079WGFPJZHNXH9VEP). `worker` is the mark of
-    ///   the call. `None` keeps the mark of the riff, and makes no lead.
-    /// - With a mark that is false, it becomes the lead when it is the
-    ///   first session of its user in the repository
-    ///   (01M3X9XA3H6YF0QCYSNB2P0CT2).
-    fn comes(&self, me: &SessionUri, worker: Option<bool>, now: Now) -> Vec<Change> {
+    ///   the call. `None` keeps the mark of the riff.
+    /// - It never becomes the lead (01M5NJAY3FTR005TDJJY1TMGNX).
+    fn comes(&self, me: &SessionUri, worker: Option<bool>) -> Vec<Change> {
         let (who, place) = (me.who(), me.place());
         let sessions = self.riff.sessions();
         let old = sessions.worker(who);
@@ -340,18 +337,13 @@ impl View<'_> {
                 worker: mark,
             }));
         }
-        if worker == Some(false)
-            && let Some(thread) = &thread
-        {
-            changes.extend(self.lead_if_first(who, place, thread, now.at));
-        }
         changes
     }
 }
 
 /// A session registers: it says where it works, and if it is a worker.
-/// It joins the thread of its repository, and becomes the lead when it
-/// is the first and not a worker. Its signal sets the place
+/// It joins the thread of its repository. It never becomes the lead
+/// (01M5NJAY3FTR005TDJJY1TMGNX). Its signal sets the place
 /// (01M3WRD97EZJK3AABXECXEY133). The worker mark goes to the log: see
 /// the module docs.
 impl Command for Register {
@@ -363,9 +355,9 @@ impl Command for Register {
         &self,
         _caller: &Caller,
         view: &View<'_>,
-        now: Now,
+        _: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
-        Ok((view.comes(&self.me, Some(self.worker), now), ()))
+        Ok((view.comes(&self.me, Some(self.worker)), ()))
     }
 
     fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
@@ -379,9 +371,9 @@ impl Command for Register {
 
 /// The `register` that the engine runs first for a call of a caller
 /// that the state does not know. Its kind is `register`. It keeps the
-/// worker mark of the riff, and it makes no lead: only a [`Register`]
-/// or a [`Start`] that the session sends makes the first lead
-/// (01M3X9XA3H6YF0QCYSNB2P0CT2).
+/// worker mark of the riff. It makes no lead, as no [`Register`] and
+/// no [`Start`] does
+/// (01M5NJAY3FTR005TDJJY1TMGNX).
 ///
 /// ```
 /// use std::time::Instant;
@@ -399,9 +391,9 @@ impl Command for Register {
 /// assert_eq!(made[1].envelope.command.as_deref(), Some("register"));
 /// assert!(!state.uri(mike.who(), now).lead());
 ///
-/// // A register of the session makes it the lead.
+/// // A register of the session makes no lead either.
 /// state.register(&mike, now);
-/// assert!(state.uri(mike.who(), now).lead());
+/// assert!(!state.uri(mike.who(), now).lead());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 #[derive(Clone, Debug)]
@@ -418,9 +410,9 @@ impl Command for Arrive {
         &self,
         _caller: &Caller,
         view: &View<'_>,
-        now: Now,
+        _: Now,
     ) -> Result<(Vec<Change>, ()), Refused> {
-        Ok((view.comes(&self.me, None, now), ()))
+        Ok((view.comes(&self.me, None), ()))
     }
 
     fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
@@ -460,9 +452,8 @@ fn freed_by<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Vec<Freed> {
 /// names them. It makes one `released` record for each claim, then the
 /// `session_started` record with the reason and the worker mark of the
 /// call (01M3X9X9M079WGFPJZHNXH9VEP). A start with a fresh context ends
-/// MustClear. The session becomes the lead when it is the first of its
-/// user in its repository and not a worker
-/// (01M3X9XA3H6YF0QCYSNB2P0CT2). When the start freed a claim, a direct
+/// MustClear. The session never becomes the lead
+/// (01M5NJAY3FTR005TDJJY1TMGNX). When the start freed a claim, a direct
 /// message of the server names each claim and the reason, and wakes
 /// the session: so a process of the session that still works hears of
 /// it (01M51JBEQRWWZKKP3GWW8QX96C).
@@ -478,6 +469,7 @@ fn freed_by<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Vec<Freed> {
 /// let now = Instant::now();
 /// let mut state = State::default();
 /// state.register(&mike, now);
+/// state.lead(&mike, now).unwrap();
 /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
 /// let thread = mike.default_thread().unwrap();
 /// state.claim(&mike, &thread, "issue-12", now).unwrap();
@@ -510,7 +502,6 @@ impl Command for Start {
             return Err("a start needs the reason process, resume or clear".into());
         }
         let who = caller.who();
-        let place = view.place(who);
         let mut changes = view.released_all(who);
         let freed = freed_by(&changes);
         changes.push(Change::SessionStarted(SessionStarted {
@@ -518,11 +509,6 @@ impl Command for Start {
             reason: self.reason,
             worker: self.worker,
         }));
-        if !self.worker
-            && let Some(thread) = place.default_thread()
-        {
-            changes.extend(view.lead_if_first(who, &place, &thread, now.at));
-        }
         changes.extend(view.tell_dropped(who, &freed, &Dropped::Start(self.reason), now));
         Ok((changes, ()))
     }

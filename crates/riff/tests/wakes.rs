@@ -141,10 +141,11 @@ async fn riff() -> Riff {
         w: uri("riff://mike@thelio/como-technologies/riff?session=w3#issue-12"),
         api,
     };
-    // The first session of mike is the lead (R176).
+    // The person of mike names the lead (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
     for me in [&riff.lead, &riff.a, &riff.b, &riff.w] {
         riff.api.register(me).await.unwrap();
     }
+    crate::common::name_lead(&riff.api, &riff.lead).await;
     riff.api
         .set_riff(&riff.lead, RiffState::Running)
         .await

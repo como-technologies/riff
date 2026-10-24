@@ -271,13 +271,21 @@ enum Command {
         #[command(subcommand)]
         command: SessionCommand,
     },
-    /// Make this session the lead of your user
+    /// Name the lead of your user: riff lead --session ID
     ///
     /// Each person has one lead in each repository. The other sessions of
-    /// your user send their questions to the lead. It replaces the old
-    /// lead. Run it in the agent session, for example `! riff lead` in
-    /// Claude Code.
+    /// your user send their questions to the lead. `riff lead --session
+    /// ID` makes the session ID the lead of your user in the repository
+    /// of this directory. It replaces the old lead, and riff tells the old
+    /// lead. Run it in a terminal with no session, not in an agent
+    /// session: a session cannot name the lead, also not itself. `riff
+    /// lead start` names its new lead too.
+    #[command(args_conflicts_with_subcommands = true)]
     Lead {
+        /// The session ID of the new lead, or its start: at least 4
+        /// characters. `riff who` shows it.
+        #[arg(long)]
+        session: Option<String>,
         #[command(subcommand)]
         command: Option<LeadCommand>,
     },
@@ -1757,6 +1765,7 @@ async fn main() -> Result<()> {
     }
     if let Command::Lead {
         command: Some(LeadCommand::Start),
+        ..
     } = &cli.command
     {
         let server = api.base().to_owned();
@@ -1764,6 +1773,7 @@ async fn main() -> Result<()> {
     }
     if let Command::Lead {
         command: Some(LeadCommand::Move { host }),
+        ..
     } = &cli.command
     {
         let (api, me) = daemon_asker(&here, api.base())?;
@@ -1786,6 +1796,7 @@ async fn main() -> Result<()> {
                 history,
                 user,
             }),
+        ..
     } = &cli.command
     {
         let thread = thread_or_default(thread.clone(), &here)?;
@@ -2011,7 +2022,21 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Command::Lead { command: None } => println!("{}", text::led(&api.lead(&me).await?)),
+        Command::Lead {
+            command: None,
+            session,
+        } => {
+            let Some(session) = session else {
+                anyhow::bail!(text::LEAD_NAME_SESSION);
+            };
+            // A session sends its own URI: riff-server refuses it
+            // (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). A person sends the repository.
+            let me = match me.who().session() {
+                Some(_) => me,
+                None => identity::person(&here, api.base())?,
+            };
+            println!("{}", text::led(&api.lead(&me, &session).await?));
+        }
         Command::Pr {
             command:
                 Pr::Open {
@@ -2105,6 +2130,7 @@ async fn main() -> Result<()> {
         | Command::Relay { .. }
         | Command::Lead {
             command: Some(LeadCommand::Start | LeadCommand::Notes { .. } | LeadCommand::Move { .. }),
+            ..
         }
         | Command::View { .. }
         | Command::Takeover { .. }

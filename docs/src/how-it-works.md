@@ -3135,7 +3135,6 @@ mike@thelio:riff (4e54)  idle   lead  monitoring work for 2m  12s ago: told 075f
 | `post` with kind `status` | `asked for status` |
 | `pause`, `resume` | `paused the repository`, `resumed the repository` |
 | `pause`, `resume` of the whole riff | `paused the riff`, `resumed the riff` |
-| `lead` | `became the lead` |
 
 The step of a post shows the message in one line of at most 80
 characters. A direct message is private to its two sessions, and each
@@ -3282,11 +3281,10 @@ flowchart TB
 
 - Each person has at most one lead in each repository, on all
   machines together.
-- The first session of the person in the repository becomes the lead,
-  when it starts. The person does nothing. A later session does not
-  become the lead. A worker never becomes the lead: see
-  [When your only session is a
-  worker](#when-your-only-session-is-a-worker).
+- No session becomes the lead by itself, also the first. You name the
+  lead: see [Name the lead](#name-the-lead). A session cannot make
+  itself the lead. A worker is never the lead: see [When you have no
+  lead](#when-you-have-no-lead).
 - The URI of the lead has `lead=true`. `riff who` shows it.
 - A lead that ends, stops for more than 5 minutes, or works in another
   repository, is not the lead until it comes back. A lead that leaves
@@ -3324,48 +3322,56 @@ sequenceDiagram
     Note over S: continues, with no input at its own terminal
 ```
 
-### Make a session the lead
+### Name the lead
 
-Run this in the session that you want as the lead. In Claude Code,
-type it in the prompt with `!` in front. It replaces the old lead.
-
-```sh
-riff lead
-```
-
-You can also ask the session: *"Be my lead in riff."*
-
-### When your only session is a worker
-
-A worker is never the lead. So when each of your sessions in a
-repository is a worker, you have no lead there. This is what you see:
-
-- `riff who` shows no session of you with the tag `lead`.
-- A `tell` to `lead` fails, and says to ask your own user. So a worker
-  asks you in its own terminal.
-- A verify request goes to each of your live sessions with no claim.
-- No session of you can pause or resume the riff. You can, from a
-  terminal.
-- `riff lead` in a worker fails: `a worker cannot be the lead. Make
-  another session the lead.`
-
-To get a lead, start a session that is not a worker in the repository.
-It becomes the lead when it starts:
+Only you name your lead. `riff lead start` starts a lead in a
+container and names it the lead: see
+[Start the lead](development.md#start-the-lead). To name another
+session the lead, for example a session on the host when the lead
+container ended, find its session ID:
 
 ```sh
-cd ~/src/riff
-claude
-riff who
+riff who --long
 ```
+
+Then run this in a terminal in the repository, not in an agent
+session. Use the session ID, or its first 4 characters or more:
+
+```sh
+riff lead --session 77e0a1b2
+```
+
+The new lead replaces the old lead. riff sends the old lead a message:
+it is not the lead now. In an agent session, `riff lead` fails: `a
+session cannot name the lead, also not itself.` A worker cannot be the
+lead: `a worker cannot be the lead. Make another session the lead.`
 
 ```mermaid
 flowchart TD
-    S[a session registers or starts] --> W{a worker?}
-    W -- yes --> N[not the lead]
-    W -- no --> F{another session of the person holds in the repository?}
-    F -- yes --> N
-    F -- no --> L[the lead]
+    C[a call names the lead] --> P{from a person, with no session ID?}
+    P -- no --> R[refused]
+    P -- yes --> W{the named session is a worker?}
+    W -- yes --> R
+    W -- no --> L[the lead]
+    L --> O[the old lead gets a message]
+    S[a session registers or starts] --> N[not the lead]
 ```
+
+### When you have no lead
+
+When you name no lead in a repository, or each of your sessions there
+is a worker, you have no lead there. This is what you see:
+
+- `riff who` shows no session of you with the tag `lead`.
+- A `tell` to `lead` fails, and says to ask your own user. So a
+  session asks you in its own terminal.
+- A verify request goes to each of your live sessions with no claim.
+- No session of you can pause or resume the riff. You can, from a
+  terminal.
+
+To get a lead, start one with `riff lead start`, or name a session
+that is not a worker with `riff lead --session ID`. See
+[Name the lead](#name-the-lead).
 
 ### Ask the lead
 

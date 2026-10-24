@@ -10,12 +10,12 @@
 //!   `session_forgotten` record: see [`super::riff`].
 //! - Checkpoint: `Saved`, the fields `claims` and `leads`.
 //! - The rules of a lead for `handle`: `View::lead_of`,
-//!   `View::is_lead` and `View::lead_if_first`.
+//!   `View::is_lead` and `View::new_lead`.
 
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use riff_core::name::{Place, SessionUri, ThreadName, Who, check};
+use riff_core::name::{SessionUri, ThreadName, Who, check};
 use riff_core::record::{Change, Claimed, Member, Released, Scope};
 use riff_core::selector::Selector;
 use riff_core::wire::{
@@ -187,39 +187,6 @@ impl View<'_> {
             == Some(who)
     }
 
-    /// The lead change that makes `who` the lead, when it arrives at
-    /// `place` in the repository thread `thread`, its user has no lead
-    /// there, and no other session of the user there holds (R176). A
-    /// lead that arrives again stays the lead.
-    pub(super) fn lead_if_first(
-        &self,
-        who: &Who,
-        place: &Place,
-        thread: &ThreadName,
-        now: Instant,
-    ) -> Option<Change> {
-        who.session()?;
-        let sessions = &self.presence.sessions;
-        let key = (who.user().to_owned(), thread.clone());
-        let lead = self.riff.work().leads.get(&key);
-        if lead == Some(who) || self.lead_of(&key, now).is_some() {
-            return None;
-        }
-        let others = sessions.iter().any(|(other, s)| {
-            other != who
-                && other.user() == who.user()
-                && other.session().is_some()
-                && s.place.default_thread().as_ref() == Some(thread)
-                && self.holds(other, now)
-        });
-        (!others).then(|| {
-            Change::LeadSet(Member {
-                session: SessionUri::new(who.clone(), place.clone()),
-                thread: key.1,
-            })
-        })
-    }
-
     /// The direct message of the server that tells `holder` that the
     /// step `why` ended its claims `freed` (01M51JBEQRWWZKKP3GWW8QX96C).
     /// It is a message, so it wakes the holder. A holder that is gone,
@@ -231,10 +198,21 @@ impl View<'_> {
         why: &Dropped,
         now: Now,
     ) -> Vec<Change> {
-        let Some(id) = holder.session() else {
+        if freed.is_empty() {
+            return Vec::new();
+        }
+        self.tell(holder, dropped(why, freed), now)
+    }
+
+    /// The direct message `body` of the server to the session `who`. It
+    /// is a message, so it wakes the session. A session that is gone,
+    /// or a caller with no session ID, gets none: no session waits for
+    /// it.
+    fn tell(&self, who: &Who, body: String, now: Now) -> Vec<Change> {
+        let Some(id) = who.session() else {
             return Vec::new();
         };
-        if freed.is_empty() || self.gone(holder, now.at) {
+        if self.gone(who, now.at) {
             return Vec::new();
         }
         let server = crate::owner::server_uri();
@@ -242,13 +220,13 @@ impl View<'_> {
             seq: 0,
             from: server.clone(),
             to: vec![Selector::session(id)],
-            body: dropped(why, freed),
+            body,
             at_ms: now.ms,
             kind: Kind::Message,
             sig: None,
             payload: None,
         };
-        let thread = ThreadName::direct(server.who(), holder);
+        let thread = ThreadName::direct(server.who(), who);
         self.put(server.who(), thread, message, now.at).0
     }
 
@@ -538,10 +516,11 @@ impl Command for ReleaseFor {
     }
 }
 
-/// Makes the session the lead of its user in its repository. It
-/// replaces the old lead (R177). The note is the old lead, if another
-/// session was the lead. [`permits`](super::permits) refuses a person
-/// and a worker.
+/// The person names the session `session` the lead of the user in its
+/// repository (01M5NJAXTQ0YKN7Q7XN0A7ZMPF). It replaces the old lead,
+/// and tells it (01M5NJAYMYF50B9WXH5RF9W737). The note is the old lead,
+/// if another session was the lead. [`permits`](super::permits)
+/// refuses a session, and `handle` refuses a worker.
 impl Command for Lead {
     const KIND: CommandKind = CommandKind::Lead;
     type Reply = LeadReply;
@@ -553,20 +532,25 @@ impl Command for Lead {
         view: &View<'_>,
         now: Now,
     ) -> Result<(Vec<Change>, Option<Who>), Refused> {
-        let who = caller.who();
-        let thread = view
-            .place(who)
+        let thread = caller
+            .me()
+            .place()
             .default_thread()
             .ok_or("the lead needs a git repository. Run it in a repository.")?;
+        let who = view.new_lead(caller.who().user(), &thread, &self.session)?;
         let key = (who.user().to_owned(), thread.clone());
         let lead = view.lead_of(&key, now.at);
-        let old = lead.filter(|old| *old != who).cloned();
+        let old = lead.filter(|old| **old != who).cloned();
         let mut changes = Vec::new();
-        if lead != Some(who) {
+        if lead != Some(&who) {
             changes.push(Change::LeadSet(Member {
-                session: view.plain(who),
+                session: view.plain(&who),
                 thread,
             }));
+        }
+        // The old lead hears of it (01M5NJAYMYF50B9WXH5RF9W737).
+        if let Some(old) = &old {
+            changes.extend(view.tell(old, not_lead(&view.uri(&who, now.at)), now));
         }
         Ok((changes, old))
     }
@@ -579,11 +563,79 @@ impl Command for Lead {
         old: Option<Who>,
         now: Now,
     ) -> LeadReply {
+        let lead = caller.me().place().default_thread().and_then(|thread| {
+            view.new_lead(caller.who().user(), &thread, &self.session)
+                .ok()
+        });
         LeadReply {
-            lead: view.uri(caller.who(), now.at),
+            lead: view.uri(lead.as_ref().unwrap_or(caller.who()), now.at),
             replaced: old.map(|old| view.uri(&old, now.at)),
         }
     }
+}
+
+impl View<'_> {
+    /// The session of `user` in `thread` that the session ID `id`, or
+    /// its start, names: the new lead of a [`Lead`]. A worker cannot be
+    /// the lead.
+    fn new_lead(&self, user: &str, thread: &ThreadName, id: &str) -> Result<Who, Refused> {
+        let found: Vec<&Who> = self
+            .presence
+            .sessions
+            .iter()
+            .filter(|(who, s)| {
+                who.user() == user
+                    && who.session().is_some_and(|s| names(id, s))
+                    && s.place.default_thread().as_ref() == Some(thread)
+            })
+            .map(|(who, _)| who)
+            .collect();
+        let who = match found[..] {
+            [who] => who.clone(),
+            [] => {
+                return Err(Refused::new(
+                    Code::BadRequest,
+                    format!("{user} has no session {id} in {thread}. Run riff who."),
+                ));
+            }
+            _ => {
+                return Err(Refused::new(
+                    Code::BadRequest,
+                    format!("more than one session of {user} starts with {id}. Give more of it."),
+                ));
+            }
+        };
+        if self.riff.sessions().worker(&who) {
+            return Err(Refused::new(
+                Code::NotAllowed,
+                "a worker cannot be the lead. Make another session the lead.",
+            ));
+        }
+        Ok(who)
+    }
+}
+
+/// The text of the message to an old lead: the person made `lead` the
+/// lead.
+///
+/// ```
+/// use riff_core::name::SessionUri;
+/// use riff_state::state::not_lead;
+///
+/// let lead: SessionUri = "riff://mike@thelio/como-technologies/riff?session=b2c3d4e5-ffff".parse()?;
+/// assert_eq!(
+///     not_lead(&lead),
+///     "lead: you are not the lead now. Your person made the session mike@thelio:riff \
+///      (b2c3d4e5) the lead. Stop the work of the lead, and tell your person."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn not_lead(lead: &SessionUri) -> String {
+    format!(
+        "lead: you are not the lead now. Your person made the session {} the lead. Stop the \
+         work of the lead, and tell your person.",
+        label(lead)
+    )
 }
 
 /// The name of a session for people: its short form, and the start of

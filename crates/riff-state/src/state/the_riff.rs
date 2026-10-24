@@ -61,12 +61,14 @@ use super::{GONE, SESSION_EXPIRY};
 /// let mut state = State::default();
 /// // A new riff is paused.
 /// assert_eq!(state.pauses().check(&riff).unwrap().0, Scope::Riff);
-/// // The first session of its user that registers is the lead.
+/// // The person of each user names its lead.
 /// state.register(&mike, now);
+/// state.lead(&mike, now).unwrap();
 /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
 /// assert!(state.pauses().check(&riff).is_none());
 ///
 /// // The lead pauses its repository. The other repository goes on.
+/// state.lead(&mike, now).unwrap();
 /// state.pause_repository(&mike, RiffState::Paused, now).unwrap();
 /// let (scope, pause) = state.pauses().check(&riff).unwrap();
 /// assert_eq!(scope, Scope::Repository(riff));

@@ -215,6 +215,7 @@ async fn riff_env(a_minutes: i64, b_minutes: i64, extra: &[(String, String)]) ->
     let main = repository(root.path());
     let lead = session(&main, "mike", "a", "l1");
     api.register(&lead).await.unwrap();
+    crate::common::name_lead(&api, &lead).await;
     api.set_riff(&lead, RiffState::Running).await.unwrap();
     let mut a = Host::new("a", api.base());
     let mut b = Host::new("b", api.base());
@@ -838,6 +839,7 @@ async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
     let main = repository(root.path());
     let lead = session(&main, "mike", "a", "l1");
     api.register(&lead).await.unwrap();
+    crate::common::name_lead(&api, &lead).await;
     api.set_riff(&lead, RiffState::Running).await.unwrap();
     let mut a = Host::new("a", api.base());
     a.claude_ends_in(300);

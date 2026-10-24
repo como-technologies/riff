@@ -2008,16 +2008,20 @@ pub struct ReleaseFor {
     pub session: String,
 }
 
-/// `POST /v1/lead`: makes `me` the lead of its user in its repository.
-/// It replaces the old lead.
+/// `POST /v1/lead`: the person `me` makes the session `session` the
+/// lead of the user in the repository of `me`. It replaces the old
+/// lead. A session cannot send it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Lead {
     pub me: SessionUri,
+    /// The session ID of the new lead, or its start: at least 4
+    /// characters.
+    pub session: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LeadReply {
-    /// The URI of `me` now, with `lead=true`.
+    /// The URI of the new lead now, with `lead=true`.
     pub lead: SessionUri,
     /// The old lead, when another session was the lead.
     #[serde(default)]

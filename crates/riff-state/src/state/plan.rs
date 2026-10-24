@@ -132,8 +132,9 @@ impl Part {
 /// let thread: ThreadName = "como-technologies/riff".parse()?;
 /// let now = Instant::now();
 /// let mut state = State::default();
-/// // The first session of its user that registers is the lead.
+/// // The person of each user names its lead.
 /// state.register(&mike, now);
+/// state.lead(&mike, now).unwrap();
 /// state.riff(&mike, Some(RiffState::Running), now).unwrap();
 ///
 /// let reason = "waits for the word of Mike".to_owned();

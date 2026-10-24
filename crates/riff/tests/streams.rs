@@ -60,6 +60,7 @@ async fn a_watch_has_a_connection_of_its_own() {
     let (server, seen) = start_server().await;
     let lead: SessionUri = "riff://mike@a/local/riff?session=l1".parse().unwrap();
     server.register(&lead).await.unwrap();
+    crate::common::name_lead(&server, &lead).await;
     server.set_riff(&lead, RiffState::Running).await.unwrap();
 
     // The host: a client of its own, with a status call first, as `riff

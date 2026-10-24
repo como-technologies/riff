@@ -699,7 +699,10 @@ mod tests {
             item: text("issue-7"),
             session: text("s2"),
         });
-        c.trip(&Lead { me: me() });
+        c.trip(&Lead {
+            me: me(),
+            session: text("s2"),
+        });
         c.trip(&LeadReply {
             lead: me(),
             replaced: Some(me()),

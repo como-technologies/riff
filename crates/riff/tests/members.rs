@@ -444,6 +444,8 @@ async fn who_shows_the_owner() {
     let a1 = session("ada", "a1");
     let ada = api.clone().signed_in(Some("a1")).unwrap();
     ada.register(&a1).await.unwrap();
+    let namer = api.clone().signed_in(None).unwrap();
+    crate::common::name_lead(&namer, &a1).await;
 
     let shown = who(&ada, &a1).await;
     assert_eq!(
@@ -479,6 +481,8 @@ async fn who_shows_the_owner() {
     let b1 = session("bob", "b1");
     let bob = api.clone().signed_in(Some("b1")).unwrap();
     bob.register(&b1).await.unwrap();
+    let namer = api.clone().signed_in(None).unwrap();
+    crate::common::name_lead(&namer, &b1).await;
     let shown = who(&bob, &b1).await;
     let line = line_of(&shown, "b1");
     assert!(line.contains("  you lead"), "{shown}");
@@ -548,6 +552,8 @@ async fn the_who_tool_shows_the_owner() {
     let a1 = session("ada", "a1");
     let ada = api.clone().signed_in(Some("a1")).unwrap();
     ada.register(&a1).await.unwrap();
+    let namer = api.clone().signed_in(None).unwrap();
+    crate::common::name_lead(&namer, &a1).await;
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let tools = Tools::new(ada, a1);
     tokio::spawn(async move {
@@ -608,6 +614,8 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
     let a1 = session("ada", "a1");
     let ada = api.clone().signed_in(Some("a1")).unwrap();
     ada.register(&a1).await.unwrap();
+    let namer = api.clone().signed_in(None).unwrap();
+    crate::common::name_lead(&namer, &a1).await;
     // The owner resumes the new riff, as its lead.
     let (reply, _) = ada.set_riff(&a1, RiffState::Running).await.unwrap();
     assert!(reply.changed);
@@ -624,6 +632,8 @@ async fn only_the_owner_and_the_admins_pause_the_whole_riff() {
         .unwrap();
     let bob = api.clone().signed_in(Some("b1")).unwrap();
     bob.register(&b1).await.unwrap();
+    let namer = api.clone().signed_in(None).unwrap();
+    crate::common::name_lead(&namer, &b1).await;
     for scope in [PauseScope::Riff, PauseScope::Repository(repo())] {
         for state in [RiffState::Paused, RiffState::Running] {
             let error = bob.set_pause(&b1, &scope, state).await.unwrap_err();

@@ -62,7 +62,8 @@ impl World {
         let me = self.uri("mike", host, Some(id));
         self.api.register(&me).await.unwrap();
         if lead {
-            self.api.lead(&me).await.unwrap();
+            let person = self.uri("mike", host, None);
+            self.api.lead(&person, id).await.unwrap();
         }
         me
     }
@@ -129,7 +130,9 @@ impl World {
                             new.place().clone(),
                         );
                         api.start(&new, StartReason::Process, false).await.unwrap();
-                        api.lead(&new).await.unwrap();
+                        let person =
+                            SessionUri::new(Who::new("mike", None).unwrap(), new.place().clone());
+                        api.lead(&person, "n1").await.unwrap();
                         let text = riff::text::lead_taken(
                             "como-technologies/riff",
                             &host,

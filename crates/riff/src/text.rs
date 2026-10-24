@@ -423,7 +423,12 @@ pub fn claimed(reply: &Claimed, thread: &ThreadName, item: &str) -> String {
     }
 }
 
-/// The answer to `lead`. It names the old lead when there was one.
+/// The refusal of `riff lead` with no session to name.
+pub const LEAD_NAME_SESSION: &str = "riff: name the new lead: riff lead --session ID. riff who \
+    shows the session IDs. To start a lead in a container, run riff lead start.";
+
+/// The answer to `riff lead --session`: the new lead, and the old lead
+/// when there was one.
 ///
 /// ```
 /// use riff_core::wire::LeadReply;
@@ -434,7 +439,7 @@ pub fn claimed(reply: &Claimed, thread: &ThreadName, item: &str) -> String {
 /// };
 /// assert_eq!(
 ///     riff::text::led(&reply),
-///     "You are the lead of mike in como-technologies/riff. \
+///     "mike@pangolin:riff#api (b2) is the lead of mike in como-technologies/riff. \
 ///      mike@pangolin:riff (a1) is not the lead now."
 /// );
 /// # Ok::<(), riff_core::name::NameError>(())
@@ -442,7 +447,8 @@ pub fn claimed(reply: &Claimed, thread: &ThreadName, item: &str) -> String {
 pub fn led(reply: &LeadReply) -> String {
     let lead = &reply.lead;
     let mut out = format!(
-        "You are the lead of {} in {}.",
+        "{} is the lead of {} in {}.",
+        name(lead),
         lead.who().user(),
         lead.place().repo_text()
     );
@@ -3039,10 +3045,6 @@ pub fn riff_step(whole: bool, state: RiffState) -> &'static str {
         (false, RiffState::Running) => "resumed the repository",
     }
 }
-
-/// The automatic step of the lead after the `lead` tool
-/// (01M3W8AYDFPZNZ898WAJS7JEZA).
-pub const LEAD_STEP: &str = "became the lead";
 
 /// A time in seconds, short, in its largest whole unit: `12s`, `2m`,
 /// `3h` or `5d`.
@@ -7209,7 +7211,7 @@ pub const MCP_LEAD: &str = concat!(
 people. You are the lead of your user, in a container with a terminal. The riff daemon of this \
 machine runs the sessions of the wave: one container for each item and each verify. Do not claim \
 work. Your riff tools act on riff-server: `whoami`, `who`, `threads`, `read`, `post`, `tell`, \
-`status` and `blocked`, and the lead tools `lead`, `hold`, `free`, `notes`, `pause` and `resume`. To get your wakes, start `/opt/riff/riff relay watch --follow` once with the Monitor tool, at the start of your session. It never ends: it prints one line for each wake, and each line wakes you. When a line comes, call `read` with no thread. Do not start it again. You plan the waves of the repository. To see them, run \
+`status` and `blocked`, and the lead tools `hold`, `free`, `notes`, `pause` and `resume`. To get your wakes, start `/opt/riff/riff relay watch --follow` once with the Monitor tool, at the start of your session. It never ends: it prints one line for each wake, and each line wakes you. When a line comes, call `read` with no thread. Do not start it again. You plan the waves of the repository. To see them, run \
 `/opt/riff/riff wave list`. To make, rename or end a wave, run `/opt/riff/riff wave make`, \
 `/opt/riff/riff wave rename` or `/opt/riff/riff wave end`. To move items to a wave or to the \
 Backlog, run `/opt/riff/riff wave move ITEM --to WAVE`; to end a wave with open items, run \

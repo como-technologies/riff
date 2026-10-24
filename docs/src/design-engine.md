@@ -211,7 +211,7 @@ of the caller.
 | `join`, `leave`, `post` | a person, a session | member |
 | `claim`, `release` | a person, a session | member |
 | `release_for` | a session | member |
-| `lead` | a session that is not a worker | member |
+| `lead` | a person; the new lead is a session that is not a worker | member |
 | `pause`, `resume` of a repository | a person, a session | member |
 | `pause`, `resume` of the riff | a person, a session | admin |
 | `revoke` of the own sign-ins | a person | member |
@@ -240,12 +240,10 @@ pauses only when it is a lead, a worker in MustClear cannot
 claim, a caller releases only what it holds. See "The moves that
 `handle` refuses".
 
-A worker is
-never the lead: the rule for the first session of a user in a
-repository skips a worker. Only an explicit `register` or `start`
-makes the first lead. When the only session of a person in a
-repository is a worker, that person has no lead there: `tell lead`
-fails, and the worker asks in its own terminal.
+No session is the lead by itself, and a session cannot send
+`lead`: only a person names the lead. A worker is never the lead.
+When a person names no lead in a repository, that person has no lead
+there: `tell lead` fails, and each session asks in its own terminal.
 
 ### What stays outside
 
@@ -600,7 +598,8 @@ stateDiagram-v2
 | `pause`, `resume` of a repository | The caller is a session that is not a lead of that repository, and not an admin. | `not_allowed` |
 | `register` | The session ID is known under another user. | `other_user` |
 
-`permits` refuses a `lead` of a person or of a worker, before `handle`.
+`permits` refuses a `lead` of a session, before `handle`. `handle`
+refuses a worker as the new lead.
 
 ### The clear of a worker
 
@@ -818,7 +817,7 @@ log line share it, so a new field gets to each path.
 | `left_thread` | `session`, `thread` | `leave` |
 | `claimed` | `session`, `thread`, `item` | `claim` |
 | `released` | `session`, `thread`, `item`, `must_clear` | `release`, `release_for`, `start`, `end`, `claim`, `forget` |
-| `lead_set` | `session`, `thread` | `lead`, `register`, `start` |
+| `lead_set` | `session`, `thread` | `lead` |
 | `session_started` | `session`, `reason`, `worker` | `register`, `start` |
 | `session_forgotten` | `session` | `forget` |
 | `pause_set` | `scope`, `state` | `pause`, `resume`, `make_riff`, `import` |

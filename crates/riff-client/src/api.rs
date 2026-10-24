@@ -1726,10 +1726,17 @@ impl Api {
         self.call(&request).await
     }
 
-    /// Makes `me` the lead of its user in its repository. It replaces
-    /// the old lead (R177).
-    pub async fn lead(&self, me: &SessionUri) -> Result<LeadReply> {
-        self.call(&Lead { me: me.clone() }).await
+    /// The person `me` makes the session `session` (its ID, or the start
+    /// of it) the lead of the user in the repository of `me`. It replaces
+    /// the old lead, and riff-server tells the old lead
+    /// (01M5NJAXTQ0YKN7Q7XN0A7ZMPF, 01M5NJAYMYF50B9WXH5RF9W737). riff-server
+    /// refuses a `me` with a session ID.
+    pub async fn lead(&self, me: &SessionUri, session: &str) -> Result<LeadReply> {
+        let lead = Lead {
+            me: me.clone(),
+            session: session.to_owned(),
+        };
+        self.call(&lead).await
     }
 
     /// The state of the riff for the place of `me`: paused when the

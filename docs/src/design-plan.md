@@ -245,7 +245,7 @@ and its replay. The test of the kinds takes the union of the lists.
 ### Who can send each command
 
 `permits` gives each command to a person or a session with the role
-member and no worker mark (as for `lead`). A worker gets
+member and no worker mark. A worker gets
 `not_allowed`, also a worker of the owner. `handle` then checks the
 rest, because "the lead of this thread" needs the state:
 

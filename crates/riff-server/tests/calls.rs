@@ -9,8 +9,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use riff_core::name::SessionUri;
 use riff_core::record::{By, Envelope, Record, one_of_each};
 use riff_core::wire::{
-    CALL_HEADER, Claim, Post, REPEAT_HEADER, Read, ReadReply, Register, Release, ReleaseReply,
-    Resume,
+    CALL_HEADER, Claim, Lead, Post, REPEAT_HEADER, Read, ReadReply, Register, Release,
+    ReleaseReply, Resume,
 };
 use riff_server::engine::{Authenticated, Engine, Failed, Open, Replied, Routed};
 use riff_state::checkpoint;
@@ -105,6 +105,17 @@ fn lead() -> SessionUri {
         .unwrap()
 }
 
+/// The person mike names the session `lead` the lead
+/// (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+fn named() -> Lead {
+    Lead {
+        me: "riff://mike@pangolin/como-technologies/riff"
+            .parse()
+            .unwrap(),
+        session: "lead".into(),
+    }
+}
+
 fn worker() -> SessionUri {
     "riff://mike@pangolin/como-technologies/riff?session=w1"
         .parse()
@@ -138,6 +149,7 @@ async fn worker_holds() -> Writer {
         worker: false,
     };
     w.run(w.call(register, "r1")).await.unwrap();
+    w.run(w.call(named(), "l1")).await.unwrap();
     w.run(w.call(Resume::whole(lead), "r2")).await.unwrap();
     let register = Register {
         me: worker.clone(),
@@ -252,6 +264,7 @@ async fn a_refused_call_keeps_no_key_and_a_second_try_runs_handle() {
     };
     assert_eq!(refused.code, Code::Paused);
 
+    w.run(w.call(named(), "l1")).await.unwrap();
     w.run(w.call(Resume::whole(lead.clone()), "r2"))
         .await
         .unwrap();

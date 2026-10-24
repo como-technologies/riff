@@ -1764,10 +1764,12 @@ riff lead start
 ```
 
 The daemon starts the lead of the repository in the container
-`riff-lead-OWNER-REPO`, and riff attaches your terminal to it. When the
-lead runs already, riff only attaches. At each attach, `claude` draws
-its screen at once: riff first gives the terminal of the container
-another size, and the attach gives it the size of your terminal again.
+`riff-lead-OWNER-REPO`, and riff attaches your terminal to it. A new
+lead is the lead of your user at once: `riff lead start` names it, and
+riff tells the old lead. When the lead runs already, riff only
+attaches. At each attach, `claude` draws its screen at once: riff
+first gives the terminal of the container another size, and the
+attach gives it the size of your terminal again.
 When riff cannot change the size, it says why. Then change the size of
 your terminal to see the lead.
 
@@ -1826,7 +1828,7 @@ git -C ~/.local/share/riff/leads/OWNER-REPO/clone status
 ```
 
 The lead gets the riff tools that talk, and the tools of a lead:
-`lead`, `hold`, `free`, `pause` and `resume`. They act on your
+`hold`, `free`, `notes`, `pause` and `resume`. They act on your
 riff-server (see
 [The riff tools of a session](#the-riff-tools-of-a-session)). It gets
 its wakes from `/opt/riff/riff relay watch --follow`, one watch that
@@ -1834,8 +1836,9 @@ never ends, in the Monitor tool. The instructions of its riff tools tell
 it to start that watch once. See
 [Wake the lead in a container with no restart](how-it-works.md#wake-the-lead-in-a-container-with-no-restart).
 It plans the waves with `/opt/riff/riff wave`: see
-[Waves](waves.md). To make it the lead of your user, tell it to call the
-riff tool `lead`.
+[Waves](waves.md). `riff lead start` names it the lead of your user,
+and riff tells the old lead. See
+[Name the lead](how-it-works.md#name-the-lead).
 
 ### Watch the riff
 
@@ -4766,7 +4769,8 @@ In the terminal of `ann`, in `~/stage/ann/app`:
 
 ```sh
 cd ~/stage/ann/app
-RIFF_SESSION=ann-lead riff lead
+RIFF_SESSION=ann-lead riff whoami
+riff lead --session ann-lead
 RIFF_SESSION=ann-lead riff post --kind status --to user=ann
 RIFF_SESSION=ann-lead riff post --to user=bob "a message that bob does not read"
 cd ~/stage/ann/web

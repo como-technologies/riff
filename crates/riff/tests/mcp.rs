@@ -16,10 +16,14 @@ async fn start_server() -> Api {
     Api::new(&format!("http://{addr}"))
 }
 
-/// Connects an MCP client to the tools of one session.
+/// Connects an MCP client to the tools of `me`. The person names [`MIKE`]
+/// and [`BRETT`] the lead.
 async fn connect(api: &Api, me: &str) -> RunningService<RoleClient, ()> {
     let me: SessionUri = me.parse().unwrap();
     api.register(&me).await.unwrap();
+    if [MIKE, BRETT].contains(&me.to_string().as_str()) {
+        crate::common::name_lead(api, &me).await;
+    }
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let tools = Tools::new(api.clone(), me);
     tokio::spawn(async move {
@@ -53,7 +57,7 @@ async fn call(
 
 const MIKE: &str = "riff://mike@pangolin/como-technologies/riff?session=a1#api";
 const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=b2#tests";
-// Each is the first session of its user, so each is its lead.
+// The person of each user names it the lead in [`connect`].
 const MIKE_LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=a1&lead=true#api";
 const BRETT_LEAD: &str = "riff://brett@heron/como-technologies/riff?session=b2&lead=true#tests";
 
@@ -75,7 +79,6 @@ async fn the_tools_carry_a_conversation() {
             "hold",
             "join",
             "join_thread",
-            "lead",
             "leave",
             "leave_thread",
             "move",
@@ -213,7 +216,7 @@ async fn a_worker_asks_the_lead_and_gets_the_answer() {
     )
     .await;
 
-    // The first session is the lead with no action. The others are not.
+    // The person named the first session the lead. The others are not.
     let (me, _) = call(&first, "whoami", serde_json::json!({})).await;
     assert!(me.contains(&format!("\n{MIKE_LEAD}\n")), "{me}");
     for session in [&worker, &third] {
@@ -239,14 +242,11 @@ async fn a_worker_asks_the_lead_and_gets_the_answer() {
     let (read, _) = call(&worker, "read", serde_json::json!({})).await;
     assert!(read.contains("yes, merge"), "{read}");
 
-    // The person marks another lead. It replaces the first.
-    let (led, is_error) = call(&third, "lead", serde_json::json!({})).await;
-    assert!(!is_error, "{led}");
-    assert_eq!(
-        led,
-        "You are the lead of mike in como-technologies/riff. \
-         mike@pangolin:riff#api (a1) is not the lead now."
-    );
+    // The person names another lead. It replaces the first.
+    let e5: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=e5"
+        .parse()
+        .unwrap();
+    crate::common::name_lead(&api, &e5).await;
     let ask = serde_json::json!({ "session": "lead", "body": "and now?" });
     let (sent, _) = call(&worker, "tell", ask).await;
     assert!(sent.ends_with("Woke mike@pangolin:riff (e5)."), "{sent}");
@@ -567,7 +567,6 @@ async fn a_session_in_a_container_gets_only_the_tools_that_talk() {
         ("release", serde_json::json!({ "item": "issue-12" })),
         ("leave", serde_json::json!({})),
         ("move", serde_json::json!({ "path": "/" })),
-        ("lead", serde_json::json!({})),
         ("pause", serde_json::json!({})),
         (
             "hold",
@@ -821,8 +820,8 @@ async fn the_tools_of_a_container_session_and_of_the_lead_are_as_before() {
             BRETT,
             true,
             &[
-                "blocked", "free", "hold", "lead", "notes", "pause", "post", "read", "resume",
-                "status", "tell", "threads", "who", "whoami",
+                "blocked", "free", "hold", "notes", "pause", "post", "read", "resume", "status",
+                "tell", "threads", "who", "whoami",
             ][..],
         ),
     ] {

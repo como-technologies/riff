@@ -35,12 +35,13 @@ async fn fixture(api: &Api) -> SessionUri {
     let (reader, lead, worker) = (uri(READER), uri(LEAD), uri(WORKER));
     let repo: ThreadName = "como-technologies/riff".parse().unwrap();
     let docs: ThreadName = "como-technologies/docs".parse().unwrap();
-    // The first session of the user is the lead.
+    // The person of the user names the lead.
     for me in [&lead, &reader, &worker] {
         api.register(me).await.unwrap();
         api.join(me, &repo).await.unwrap();
         api.join(me, &docs).await.unwrap();
     }
+    crate::common::name_lead(api, &lead).await;
     api.set_riff(&lead, RiffState::Running).await.unwrap();
     api.claim(&reader, &repo, "issue-73").await.unwrap();
     api.claim(&worker, &repo, "issue-80").await.unwrap();

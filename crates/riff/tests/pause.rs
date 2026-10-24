@@ -46,6 +46,7 @@ async fn a_new_riff_is_paused_until_the_lead_resumes_it() {
     let (lead, worker, _) = sessions();
     api.register(&lead).await.unwrap();
     api.register(&worker).await.unwrap();
+    crate::common::name_lead(&api, &lead).await;
 
     assert_eq!(api.riff(&worker).await.unwrap(), RiffState::Paused);
     let error = api.claim(&worker, &repo(), "issue-12").await.unwrap_err();
@@ -77,6 +78,7 @@ async fn a_pause_wakes_each_session_and_keeps_its_claims() {
     for me in [&lead, &worker, &other] {
         api.register(me).await.unwrap();
     }
+    crate::common::name_lead(&api, &lead).await;
     api.set_riff(&mike, RiffState::Running).await.unwrap();
     assert!(
         api.claim(&worker, &repo(), "issue-12")
@@ -146,6 +148,9 @@ async fn a_pause_of_one_repository_stops_and_wakes_only_its_sessions() {
     let (strata_lead, strata_worker) = strata_sessions();
     for me in [&lead, &worker, &strata_lead, &strata_worker] {
         api.register(me).await.unwrap();
+    }
+    for me in [&lead, &strata_lead] {
+        crate::common::name_lead(&api, me).await;
     }
     api.set_riff(&mike, RiffState::Running).await.unwrap();
     for me in [&worker, &strata_worker] {
@@ -260,6 +265,9 @@ async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
     for me in [&lead, &worker, &strata_lead, &strata_worker] {
         api.register(me).await.unwrap();
     }
+    for me in [&lead, &strata_lead] {
+        crate::common::name_lead(&api, me).await;
+    }
     api.set_riff(&mike, RiffState::Running).await.unwrap();
     let (_, posted) = api
         .set_pause(&lead, &PauseScope::Here, RiffState::Paused)
@@ -308,6 +316,9 @@ async fn a_resume_of_the_riff_leaves_a_paused_repository_paused() {
     let (strata_lead, strata_worker) = strata_sessions();
     for me in [&lead, &worker, &strata_lead, &strata_worker] {
         api.register(me).await.unwrap();
+    }
+    for me in [&lead, &strata_lead] {
+        crate::common::name_lead(&api, me).await;
     }
     api.set_riff(&mike, RiffState::Running).await.unwrap();
     api.set_pause(&strata_lead, &PauseScope::Here, RiffState::Paused)

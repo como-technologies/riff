@@ -48,6 +48,7 @@ async fn ask_and_answer(api: &Api) -> String {
     let (lead, worker) = (uri(LEAD), uri(WORKER));
     api.register(&lead).await.unwrap();
     api.register(&worker).await.unwrap();
+    crate::common::name_lead(api, &lead).await;
     let repo: ThreadName = REPO.parse().unwrap();
     api.post(&lead, Some(&repo), &[], "hello", Default::default())
         .await

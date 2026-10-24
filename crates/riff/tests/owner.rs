@@ -76,7 +76,9 @@ async fn people(service: &Service, api: &Api) -> Vec<TokenReply> {
         pairs.push(sign_in(service, api, admin).await);
     }
     for user in ["ada", "bob", "carol"] {
-        Api::new(api.base()).register(&lead(user)).await.unwrap();
+        let api = Api::new(api.base());
+        api.register(&lead(user)).await.unwrap();
+        common::name_lead(&api, &lead(user)).await;
     }
     pairs
 }

@@ -131,8 +131,9 @@ impl Riff {
     async fn start() -> Riff {
         let server = start_server().await;
         let api = Api::new(&server);
-        // The first session of mike is the lead.
+        // The person of mike names a1 the lead.
         let lead = connect(&api, "a1").await;
+        crate::common::name_lead(&api, &uri("a1")).await;
         let other = connect(&api, "b2").await;
         // A paused riff hides the current step.
         call(&lead, "resume", serde_json::json!({ "riff": true })).await;
@@ -228,14 +229,6 @@ async fn a_status_call_of_the_lead_replaces_the_automatic_step() {
     call(&riff.lead, "tell", tell).await;
     let row = riff.row("a1").await;
     assert!(row.ends_with(" ago: told b2"), "{row}");
-}
-
-#[tokio::test]
-async fn a_new_lead_shows_that_it_became_the_lead() {
-    let riff = Riff::start().await;
-    call(&riff.other, "lead", serde_json::json!({})).await;
-    let row = riff.row("b2").await;
-    assert!(row.ends_with(" ago: became the lead"), "{row}");
 }
 
 /// 01M3WKCYM623M66ATHCH3QGMKP: a direct thread is private to its two

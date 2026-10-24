@@ -381,8 +381,9 @@ pub async fn start_with(
 /// Starts the lead of the repository of `here` on the daemon in the
 /// folder `dir`, from the main clone `main` with the git dir `common`,
 /// with the first prompt `start`. It waits until the container runs,
-/// and gives the session ID of the lead. A failed start ends the new
-/// session.
+/// and makes the new session the lead as the person, with no session
+/// ID (01M5NJAYC7MXS13TA3VJB4N6RP). It gives the session ID of the
+/// lead. A failed start ends the new session.
 async fn launch(
     dir: &Path,
     api: Api,
@@ -416,6 +417,7 @@ async fn launch(
     let session = identity::new_session_id();
     let place = Place::new(here.host(), here.repo().clone(), None)?;
     let me: SessionUri = identity::agent(&place, &session, server)?;
+    let person = api.clone().signed_in(None)?;
     let api = api.signed_in(Some(&session))?;
     api.start(&me, StartReason::Process, false).await?;
     let led = match api.lead(&me).await {
@@ -457,13 +459,16 @@ async fn launch(
         let _ = api.end(&me).await;
         return Err(e);
     }
+    let named = identity::person(&place, server)?;
+    person.lead(&named, &session).await?;
     Ok(session)
 }
 
 /// What the daemon in the folder `dir` does for `riff lead move`
 /// (#1163): it starts the lead of the repository of `wave` when none
 /// runs, with the first prompt [`text::lead_moved`], and makes it the
-/// lead (R177). It gives the reply for the caller, with the session ID
+/// lead as the person, with no session ID (01M5NJAYC7MXS13TA3VJB4N6RP).
+/// It gives the reply for the caller, with the session ID
 /// ([`session_of`]).
 pub async fn take(dir: &Path, wave: &crate::wave::Wave) -> Result<String> {
     let here = wave.place(None)?;
@@ -480,9 +485,9 @@ pub async fn take(dir: &Path, wave: &crate::wave::Wave) -> Result<String> {
         }
     };
     let place = Place::new(here.host(), here.repo().clone(), None)?;
-    let me = identity::agent(&place, &session, &wave.server)?;
-    let api = Api::new(&wave.server).signed_in(Some(&session))?;
-    api.lead(&me).await?;
+    let me = identity::person(&place, &wave.server)?;
+    let api = Api::new(&wave.server).signed_in(None)?;
+    api.lead(&me, &session).await?;
     Ok(text::lead_taken(&repo, here.host(), &name, &session))
 }
 

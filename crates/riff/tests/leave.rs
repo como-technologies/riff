@@ -26,6 +26,7 @@ async fn start_server() -> Api {
 /// `tools`.
 async fn connect(api: &Api, tools: Tools, me: &SessionUri) -> RunningService<RoleClient, ()> {
     api.register(me).await.unwrap();
+    crate::common::name_lead(api, me).await;
     api.set_riff(me, riff_core::wire::RiffState::Running)
         .await
         .unwrap();

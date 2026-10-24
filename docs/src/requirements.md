@@ -1478,7 +1478,8 @@
 - **01M3X9XA3H6YF0QCYSNB2P0CT2** Only a `register` or a `start` that
   the session sends makes the first lead of a user in a repository
   (R176), and never for a worker. The `register` that the engine runs
-  first makes no lead. `lead` refuses a worker.
+  first makes no lead. `lead` refuses a worker. Superseded by
+  01M5NJAY3FTR005TDJJY1TMGNX.
 - **01M3X9XAK1KPZZVM1AJR2H8DSS** A worker that frees its last claim
   with its own `release` is in MustClear: the `released` record has
   `must_clear`. `apply` only stores it. A `session_started` record with
@@ -2345,10 +2346,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   lead, with no action. It is first when no other session of the
   person in that repository holds (R9). A later session does not
   become the lead. A worker never becomes the lead
-  (01M3X9XA3H6YF0QCYSNB2P0CT2).
+  (01M3X9XA3H6YF0QCYSNB2P0CT2). Superseded by
+  01M5NJAY3FTR005TDJJY1TMGNX.
 - **R177** `riff lead` and the `lead` tool make the session the lead
   of its person in its repository. It replaces the old lead. Only an
-  agent session in a repository can be the lead.
+  agent session in a repository can be the lead. Superseded by
+  01M5NJAXTQ0YKN7Q7XN0A7ZMPF.
 - **R228** The lead conducts the other sessions of its person in its
   repository. It never sends a request to a session of another person.
   The people of a repository agree among themselves: riff picks no
@@ -3085,6 +3088,23 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   repository also serves --host for it with no riff daemon host. At its
   start it writes served.json from waves.json for each repository that
   is missing there, with the server of the wave.
+- **01M5NJAXTQ0YKN7Q7XN0A7ZMPF** Only a person names the lead: the
+  command `lead` of a person names the session ID of the new lead, or
+  its start. riff-server refuses `lead` from a session, also for itself,
+  so `riff lead` in a session fails, and the riff tools have no `lead`
+  tool. A worker cannot be the lead. Supersedes R177.
+- **01M5NJAY3FTR005TDJJY1TMGNX** No session becomes the lead by itself:
+  a `register` or a `start` never makes a lead, also for the first
+  session of a person in a repository. Supersedes R176 and
+  01M3X9XA3H6YF0QCYSNB2P0CT2.
+- **01M5NJAYC7MXS13TA3VJB4N6RP** `riff lead start` and the daemon for
+  `lead move` make the new session the lead as the person, with no
+  session ID. A person in a terminal with no session ID names a lead
+  with `riff lead --session ID`, for example a session on the host when
+  the lead container ended.
+- **01M5NJAYMYF50B9WXH5RF9W737** When the lead changes, riff-server
+  sends the old lead a direct message: it is not the lead now, and the
+  session that is. A gone old lead gets none.
 
 ## Threads
 
