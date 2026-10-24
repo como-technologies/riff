@@ -214,7 +214,12 @@ async fn a_call_with_no_reply_ends_after_its_budget() {
     );
     let tries = seen.ids.lock().unwrap().len();
     assert!(tries >= 2, "{tries} tries");
-    assert_eq!(seen.accepts.load(Ordering::SeqCst), tries);
+    let accepts = seen.accepts.load(Ordering::SeqCst);
+    // The last try can end between the accept and the read.
+    assert!(
+        accepts == tries || accepts == tries + 1,
+        "{accepts} accepts, {tries} tries"
+    );
 }
 
 /// The status line makes one try: a fault ends its call.
