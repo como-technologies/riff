@@ -1,6 +1,6 @@
 //! `riff chat` over real HTTP (01M3NB5MY93KV9RKZGGSMZW00D,
 //! 01M3NB5N0D99JB5CE6RB4VEYPF): two people chat, a line with `@lead`
-//! wakes a lead, a line with no `@` wakes no session, the answer of a
+//! wakes a lead, a line with no `@` wakes the lead of the sender, the answer of a
 //! lead shows in each client, and a person who is not a member cannot
 //! read or post the chat. `/me` sends an action line
 //! (01M3NJD37CNQX580YC24S7K6ES). In a pseudo-terminal, the chat has a
@@ -228,16 +228,24 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
 }
 
 #[tokio::test]
-async fn a_line_with_no_at_wakes_no_session() {
+async fn a_line_with_no_at_wakes_the_lead_of_the_sender() {
     let api = start_server().await;
-    let lead = lead_of("mike");
+    let lead = lead_of("brett");
+    api.register(&lead).await.unwrap();
+    crate::common::name_lead(&api, &lead).await;
     let mut wakes = Box::pin(api.watch(&lead).await.unwrap());
     let mut brett = Client::start(&api, "brett", "heron", &[]).await;
 
-    brett.say("mail mike@thelio about the lead").await;
-    brett.shows("mail mike@thelio").await;
-    let none = tokio::time::timeout(Duration::from_millis(500), wakes.next()).await;
-    assert!(none.is_err(), "a session woke: {none:?}");
+    brett
+        .say("is the running riff in the way of my release?")
+        .await;
+    brett.shows("my release").await;
+    let wake = in_time(WAIT, wakes.next())
+        .await
+        .expect("the lead of brett wakes")
+        .unwrap()
+        .unwrap();
+    assert_eq!(wake.from.who().user(), "brett");
 }
 
 #[tokio::test]

@@ -1992,9 +1992,9 @@ chmod -R go-rwx "$XDG_RUNTIME_DIR/riff" ~/.local/state/riff
 ## A message
 
 A post has a `to` list of selectors. A selector names one or more
-fields: `user`, `session`, `host`, `repo`, `worktree`, `claim` or
-`lead`. A session wakes when it matches each named field of one
-selector. Text in the body never wakes a session.
+fields: `user`, `session`, `host`, `repo`, `worktree`, `claim`,
+`lead` or `person`. A session wakes when it matches each named field
+of one selector. Text in the body never wakes a session.
 
 ```mermaid
 sequenceDiagram
@@ -2020,6 +2020,7 @@ sequenceDiagram
 | `[{repo: "como-technologies/riff"}]` | each session in the repository |
 | `[{claim: "issue-6"}]` | the holder of issue-6 |
 | `[{user: "mike", host: "pangolin"}]` | each session of mike on pangolin |
+| `[{user: "mike", host: "pangolin", person: true}]` | the terminals of mike on pangolin, and no agent session |
 | `[{user: "mike", repo: "como-technologies/riff", lead: true}]` | the lead of mike in the repository |
 
 In a thread, a selector with `lead: true` that matches no live session
@@ -2250,11 +2251,13 @@ The chat on a phone is a design, and not built yet: see
 
 ### Ask a lead in the chat
 
-A chat line wakes no session. A line with `@lead` wakes your lead.
-A line with `@USER` wakes the lead of USER. The lead answers in the
-chat. Type the lines in `riff chat`, not in a shell:
+A chat line with no name wakes your lead. A line with `@lead` wakes
+your lead too. A line with `@USER` wakes the lead of USER, and not
+yours. The lead answers in the chat. Type the lines in `riff chat`,
+not in a shell:
 
 ```text
+is #12 done?
 @lead is #12 done?
 @brett can I take #14?
 ```
@@ -2268,6 +2271,19 @@ sequenceDiagram
     S-->>L: wake
     L->>S: post to the thread chat
     S-->>M: yes, take #14
+```
+
+### Answer a person in the chat only
+
+The lead answers its person with `person: true` in the selector. The
+post wakes the terminals of the person (`riff chat`, `riff tail`, the
+phone). It wakes no agent session of that person: no daemon, no
+worker, no verify. Without `person`, the selector `user` and `host`
+also wakes those sessions. `person: false` picks the agent sessions
+only. On the command line:
+
+```sh
+riff post --thread chat --to user=mike,host=pangolin,person=true "it is merged"
 ```
 
 ### Send an action with /me
@@ -2411,11 +2427,13 @@ watch (see below).
 
 ### Wake the lead in a container with no restart
 
-The lead in a container does not start its watch again. It starts one
-watch that never ends, with the Monitor tool of Claude Code. The watch
-prints one line for each wake. Monitor turns each line into a
-notification, so the lead wakes. The lead starts the watch once, at the
-start of its session. The riff daemon sends each wake once, also two
+The lead in a container does not start its watch for each wake. It
+starts one watch with the Monitor tool of Claude Code. The watch prints
+one line for each wake. Monitor turns each line into a notification, so
+the lead wakes. Claude Code ends a Monitor after 30 minutes at most.
+When the Monitor ends, the lead starts the watch again, and only then.
+A new watch does not wake the lead for a message that it read, also
+with `all` and `after`. The riff daemon sends each wake once, also two
 messages in a row.
 
 ```mermaid
@@ -2424,7 +2442,7 @@ sequenceDiagram
     participant W as riff relay watch --follow
     participant D as riff daemon
     participant E as riff-server
-    L->>W: start once
+    L->>W: start (and again when the Monitor ends)
     W->>D: follow
     E-->>D: message 417
     D-->>W: one line
@@ -2730,6 +2748,16 @@ is paused. While a session is paused:
 - A session with work stops at its next step. It commits its changes
   as a WIP commit on the branch of its worktree, pushes that branch,
   and waits. It pushes nothing to the default branch.
+- A container session of `riff daemon` ends after its WIP push. The
+  daemon sends no verify request for a WIP head. The lead gets this
+  note:
+
+  ```text
+  issue-12: the session of the wave ended, and the item is free. The head of PR #40, branch worktree-issue-12, is the WIP commit 1a2b3c4 (session 9f8e7d6c). The riff daemon sends no verify request. The item goes back to a build when the riff runs again.
+  ```
+
+  At the resume, the daemon starts a new build of the item. The build
+  has the start text of a resume and goes on from the WIP commit.
 - Messages still flow. The sessions answer a status request and the
   lead.
 

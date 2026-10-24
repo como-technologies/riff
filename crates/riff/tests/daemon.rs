@@ -601,7 +601,8 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
     assert_eq!(
         text(&out.stdout),
         "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start.\n\
-         Each new container: 8 CPUs and 8 build jobs, and 8 GB of memory.\n"
+         Each new container: 8 CPUs and 8 build jobs, and 8 GB of memory.\n\
+         Effort of the lead xhigh, of a work item xhigh, of a verify xhigh.\n"
     );
     let file = here.env.riff_home().join("daemon/limit.json");
     assert!(!file.exists());
@@ -615,7 +616,10 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
         "The limit of this host: 5 live sessions, and 4 GB of free memory or more for a start.";
     assert_eq!(
         text(&out.stdout),
-        format!("{set}\nEach new container: 8 CPUs and 8 build jobs, and 8 GB of memory.\n")
+        format!(
+            "{set}\nEach new container: 8 CPUs and 8 build jobs, and 8 GB of memory.\n\
+             Effort of the lead xhigh, of a work item xhigh, of a verify xhigh.\n"
+        )
     );
     let out = here.run(false, &["daemon", "limit", "--floor", "6"]).await;
     assert!(text(&out.stdout).contains("5 live sessions, and 6 GB"));
@@ -634,6 +638,46 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
         assert!(text(&out.stderr).contains(&format!("riff refuses {} 0", zero[0])));
     }
     assert_eq!(std::fs::read_to_string(&file).unwrap(), saved);
+
+    // riff refuses a level that Claude Code does not know.
+    let out = here
+        .run(false, &["daemon", "limit", "--effort", "huge"])
+        .await;
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stderr).contains("low, medium, high, xhigh or max"),
+        "{}",
+        text(&out.stderr)
+    );
+    let out = here
+        .run(
+            false,
+            &[
+                "daemon",
+                "limit",
+                "--effort",
+                "high",
+                "--effort-verify",
+                "max",
+            ],
+        )
+        .await;
+    let efforts = "Effort of the lead xhigh, of a work item high, of a verify max.";
+    assert!(text(&out.stdout).contains(efforts), "{}", text(&out.stdout));
+    let out = here
+        .run(
+            false,
+            &[
+                "daemon",
+                "limit",
+                "--effort",
+                "xhigh",
+                "--effort-verify",
+                "xhigh",
+            ],
+        )
+        .await;
+    assert!(out.status.success());
 
     let mut daemon = here.daemon("daemon.out").await;
     let out = here.run(false, &["daemon", "status"]).await;

@@ -76,7 +76,7 @@ enum Command {
         thread: Option<String>,
         /// Wake the sessions that match: FIELD=VALUE pairs with commas
         /// between them, for example user=mike,claim=issue-6. The fields
-        /// are user, session, host, repo, worktree, claim and lead. Give
+        /// are user, session, host, repo, worktree, claim, lead and person. Give
         /// --to again to wake more sessions.
         #[arg(long)]
         to: Vec<Selector>,
@@ -156,9 +156,9 @@ enum Command {
     /// Chat with the people of the riff
     ///
     /// It works in the style of IRC. It shows the chat and each new line,
-    /// and sends each line that you type. A line with @lead wakes your
-    /// lead, and @USER wakes the lead of USER. Other lines wake no
-    /// session. /me TEXT sends an action. /quit or Ctrl-C exits.
+    /// and sends each line that you type. A line wakes your lead. A line
+    /// with @USER wakes the lead of USER, and not yours, unless it has
+    /// @lead too. /me TEXT sends an action. /quit or Ctrl-C exits.
     Chat {
         /// The last line that the chat showed before an update. Only
         /// riff gives it (01M3NT6WXGCNKW3EQ7MBJDQTR4).
@@ -1162,6 +1162,11 @@ enum DaemonCommand {
     /// The limit also holds the caps of each new container: its CPUs,
     /// which are also its build jobs, and its memory. The default is 8
     /// CPUs and 8 GB. A session that runs keeps its caps.
+    ///
+    /// It also holds the effort of the sessions: the daemon starts the
+    /// lead, each work item and each verify with `claude --effort`. The
+    /// default is xhigh for the three roles. A session that runs keeps
+    /// its effort.
     Limit {
         /// The most live sessions.
         #[arg(long)]
@@ -1175,6 +1180,17 @@ enum DaemonCommand {
         /// The memory cap of each new container, in GB, 1 or more.
         #[arg(long, value_name = "GB")]
         memory: Option<u64>,
+        /// The effort of each new work item: low, medium, high, xhigh
+        /// or max.
+        #[arg(long, value_name = "LEVEL")]
+        effort: Option<riff::room::Effort>,
+        /// The effort of the lead: low, medium, high, xhigh or max.
+        #[arg(long, value_name = "LEVEL")]
+        effort_lead: Option<riff::room::Effort>,
+        /// The effort of each new verify: low, medium, high, xhigh or
+        /// max.
+        #[arg(long, value_name = "LEVEL")]
+        effort_verify: Option<riff::room::Effort>,
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this
         /// repository can use --host. The daemon of HOST refuses each
@@ -1238,9 +1254,10 @@ enum DaemonCommand {
     },
     /// Start the riff daemon again on the new riff
     ///
-    /// When the daemon runs an old riff and no session, start that
-    /// waits or job of a wave, it starts again on the riff on disk. Else
-    /// it says why not. riff daemon status shows the new pid and build.
+    /// When the daemon runs an old riff and no session but the lead, start
+    /// that waits or job of a wave, it starts again on the riff on disk.
+    /// The lead stays. Else it says why not. riff daemon status shows the
+    /// new pid and build.
     Restart {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this
@@ -1300,7 +1317,7 @@ enum RelayCommand {
     ///
     /// Without a flag, it ends at the next wake. With --follow, it never ends: it
     /// prints one line for each wake, so the Monitor tool of Claude Code wakes
-    /// the session at each line. The lead runs that once.
+    /// the session at each line. The lead runs that again when the Monitor ends.
     Watch {
         /// Print one line for each wake, and keep running.
         #[arg(long)]
@@ -2303,6 +2320,9 @@ fn limit_change(command: &DaemonCommand) -> Option<riff::room::Change> {
         floor,
         cpus,
         memory,
+        effort,
+        effort_lead,
+        effort_verify,
         ..
     } = command
     else {
@@ -2313,6 +2333,9 @@ fn limit_change(command: &DaemonCommand) -> Option<riff::room::Change> {
         floor_gb: *floor,
         cpus: *cpus,
         memory_gb: *memory,
+        effort: *effort,
+        effort_lead: *effort_lead,
+        effort_verify: *effort_verify,
     })
 }
 
@@ -2716,18 +2739,12 @@ async fn release_caller(server: &str, ask_role: bool) -> riff::cycle::Caller {
     caller
 }
 
-/// The riff of `server` and the sender of this process: the agent
-/// session with its session ID, else the person on this machine.
-fn release_me(server: &str) -> Result<(Api, SessionUri, Place)> {
-    let place = identity::place(&identity::working_dir()?)?;
-    let id = identity::session_id();
-    let base = Api::new(server);
-    let me = match id.as_deref() {
-        Some(id) => identity::agent(&place, id, base.base())?,
-        None => identity::person(&place, base.base())?,
-    };
-    let api = base.signed_in(id.as_deref())?;
-    Ok((api, me, place))
+/// The USER of the owner of the riff, or an empty text when it has none.
+async fn release_owner(reach: &Reach) -> Result<String> {
+    Ok(match reach.roster().await?.owner {
+        riff_core::wire::RiffOwner::Owner { user, .. } => user,
+        _ => String::new(),
+    })
 }
 
 /// The log of the Cloud Run service of the shared riff, from the cloud
@@ -2830,15 +2847,9 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 cut.number, cut.issue, cut.url
             );
             let told = async {
-                let (api, me, _) = release_me(server)?;
-                let owner = match api.roster(&me, false).await?.owner {
-                    riff_core::wire::RiffOwner::Owner { user, .. } => user,
-                    _ => String::new(),
-                };
+                let owner = release_owner(reach).await?;
                 let line = cycle::cut_line(&owner, &cycle::tag(version));
-                let to = riff::chat::wakes(&line, me.who().user());
-                api.post(&me, Some(&riff::chat::thread()), &to, &line, Kind::Message)
-                    .await?;
+                reach.chat_post(&line).await?;
                 anyhow::Ok(())
             };
             if let Err(e) = told.await {
@@ -2869,15 +2880,9 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 None => println!("GitHub shows no CI run of the tag yet."),
             }
             let told = async {
-                let (api, me, _) = release_me(server)?;
-                let owner = match api.roster(&me, false).await?.owner {
-                    riff_core::wire::RiffOwner::Owner { user, .. } => user,
-                    _ => String::new(),
-                };
+                let owner = release_owner(reach).await?;
                 let line = cycle::publish_line(&owner, tag, done.run.as_deref());
-                let to = riff::chat::wakes(&line, me.who().user());
-                api.post(&me, Some(&riff::chat::thread()), &to, &line, Kind::Message)
-                    .await?;
+                reach.chat_post(&line).await?;
                 anyhow::Ok(owner)
             };
             match told.await {
@@ -2913,10 +2918,10 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     }
                     Some(_) => refuse("approve", cycle::Refusal::Agent),
                 }
-                let (api, me, place) = release_me(server)?;
-                let roster = api.roster(&me, false).await?;
+                let roster = reach.roster().await?;
+                let me = roster.user.clone();
                 let owner_or_admin = |user: &str| match &roster.owner {
-                    riff_core::wire::RiffOwner::NoSignIn => user == me.who().user(),
+                    riff_core::wire::RiffOwner::NoSignIn => user == me,
                     owner => {
                         owner.is(user)
                             || roster.people.iter().any(|p| {
@@ -2924,18 +2929,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                             })
                     }
                 };
-                let lines: Vec<cycle::ChatLine> = api
-                    .read(&me, &riff::chat::thread(), true)
-                    .await?
-                    .into_iter()
-                    .map(|c| cycle::ChatLine {
-                        seq: c.message.seq,
-                        user: c.message.from.who().user().to_owned(),
-                        session: c.message.from.who().session().is_some(),
-                        verified: c.verified,
-                        body: c.message.body,
-                    })
-                    .collect();
+                let lines = reach.chat_read().await?;
                 let tag = cycle::tag(cycle::tag_version(tag)?);
                 let Some(seq) = cycle::owner_said(&lines, &tag, &owner_or_admin) else {
                     refuse("approve", cycle::Refusal::OwnerSilent);
@@ -2947,7 +2941,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     );
                     return Ok(());
                 };
-                pause(&api, &me, &place, PauseScope::Riff, RiffState::Paused).await?;
+                println!("{}", reach.pause_riff().await?);
                 cycle::approve_run_said(&forge, &run, seq).with_context(|| {
                     format!(
                         "riff release approve: the approval of {} failed, and the riff stays \
@@ -2975,8 +2969,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 Approved::Yes(run) => {
                     // The pause is only for the deploy, and it tells each
                     // other lead (01M58KMM3NFGJRW4CCV50KJQB2).
-                    let (api, me, place) = release_me(server)?;
-                    pause(&api, &me, &place, PauseScope::Riff, RiffState::Paused).await?;
+                    println!("{}", reach.pause_riff().await?);
                     cycle::approve_run(&forge, &run).with_context(|| {
                         format!(
                             "riff release approve: the approval of {} failed, and the riff stays \

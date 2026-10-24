@@ -332,6 +332,17 @@ async fn each_daemon_command_with_host_reaches_the_daemon_of_that_host() {
             "{saved}"
         );
 
+        let out = r
+            .lead(&["daemon", "limit", "--effort-lead", "max"], name)
+            .await;
+        assert!(out.status.success(), "{out:?}");
+        assert!(
+            text(&out.stdout).contains("Effort of the lead max"),
+            "{out:?}"
+        );
+        let saved = std::fs::read_to_string(host.dir().join("limit.json")).unwrap();
+        assert!(saved.contains("\"effort_lead\":\"max\""), "{saved}");
+
         let out = r.lead(&["daemon", "sweep"], name).await;
         assert!(out.status.success(), "{out:?}");
         assert!(text(&out.stdout).contains("removed no folder"), "{out:?}");

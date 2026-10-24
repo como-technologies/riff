@@ -291,6 +291,7 @@ mod tests {
             worktree: Some(text("issue-7")),
             claim: Some(text("issue-7")),
             lead: Some(true),
+            person: Some(true),
             other: None,
         }
     }

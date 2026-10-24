@@ -84,7 +84,9 @@
 //! of a broken `main`, before each other item. The wave starts no
 //! verify of a head with a conflict: a pass counts only for its commit,
 //! and the rebase makes a new one. A pull request whose verify failed is
-//! free work as a build already, with the failed result.
+//! free work as a build already, with the failed result, until a new
+//! verify request for the same head comes ([`reasked`], #1157): then it
+//! waits for a verify again.
 //!
 //! Each head commit with a conflict starts one session in a run of the
 //! wave: [`Work::key`] names the rebase by the item and the head. A pause
@@ -1077,6 +1079,10 @@ async fn after_build(
             text::wave_not_rebased(item, pull.number, &branch, &pull.head_ref_oid, session),
             Kind::Message,
         ),
+        Some(pull) if wip_head(&gh, &branch).await => (
+            text::wave_wip_head(item, pull.number, &branch, &pull.head_ref_oid, session),
+            Kind::Note,
+        ),
         Some(pull) => match no_verify(api, me, &thread, gh, item, issue).await? {
             Some(why) => (
                 text::wave_no_verify(
@@ -1120,6 +1126,19 @@ async fn after_build(
     }
     api.post(me, Some(&thread), &to, &body, kind).await?;
     Ok(lines)
+}
+
+/// True when the head commit of `branch` is a WIP commit ([`rollout::wip`]).
+/// A fault of `gh` is no WIP.
+async fn wip_head(gh: &pr::Gh, branch: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Commits {
+        commits: Vec<rollout::Commit>,
+    }
+    let (gh, branch) = (gh.clone(), branch.to_owned());
+    blocking(move || gh.json::<Commits>(&["pr", "view", &branch, "--json", "commits"]))
+        .await
+        .is_ok_and(|c| rollout::wip(&c.commits))
 }
 
 /// [`run::no_verify`] now: the labels of the issue with `gh`, then the
@@ -1456,6 +1475,58 @@ pub fn rebases(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, BTreeMa
     (free, conflicts)
 }
 
+/// The verify requests that answer a failed verify: the pairs of an
+/// issue and a commit (7 characters) whose last verify request in
+/// `bodies`, the bodies of the messages of the thread, oldest first,
+/// came after the last verify result for them (#1157). A fix of the
+/// body of a pull request makes no new commit, so the failed status
+/// of the head stays. The new request is the sign that the fail is
+/// answered.
+///
+/// ```
+/// use riff::wave::reasked;
+///
+/// let request = "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4, from the riff daemon (session 65f510d7).";
+/// let result = "verify result: FAIL for issue-12, PR #40, commit 1a2b3c4. PR comment https://c, riff/verify failure set.";
+/// assert!(reasked(&[request, result]).is_empty());
+/// assert!(reasked(&[request, result, request]).contains(&(12, "1a2b3c4".into())));
+/// assert!(reasked(&[request, result, request, result]).is_empty());
+/// // A result names the full commit.
+/// let full = "verify result: FAIL for issue-12, PR #40, commit 1a2b3c4d5e6f7a8b9c0d. PR comment https://c.";
+/// assert!(reasked(&[request, full]).is_empty());
+/// ```
+pub fn reasked(bodies: &[&str]) -> HashSet<(u64, String)> {
+    // `issue-N, PR #P, ... commit ABCDEFG`.
+    let key = |rest: &str| -> Option<(u64, String)> {
+        let issue = rest.strip_prefix("issue-")?;
+        let issue = issue
+            .split(|c: char| !c.is_ascii_digit())
+            .next()?
+            .parse()
+            .ok()?;
+        let commit = rest.split_once("commit ")?.1;
+        let commit: String = commit
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .take(7)
+            .collect();
+        Some((issue, commit))
+    };
+    let mut asked = HashSet::new();
+    for body in bodies {
+        if let Some(rest) = body.strip_prefix("verify request: ") {
+            asked.extend(key(rest));
+        } else if let Some(found) = body
+            .strip_prefix("verify result: ")
+            .and_then(|r| r.split_once(" for "))
+            .and_then(|(_, rest)| key(rest))
+        {
+            asked.remove(&found);
+        }
+    }
+    asked
+}
+
 /// The facts of the wave of the repository `repo` from the forge, with
 /// `gh`, and the items that a session claims (`claims`) and the held
 /// items (`holds`): the free work with the rebases ([`rebases`]), and
@@ -1466,9 +1537,26 @@ pub fn look_on(
     claims: BTreeSet<String>,
     holds: BTreeSet<String>,
 ) -> Result<Look> {
+    look_with(gh, repo, claims, holds, &HashSet::new())
+}
+
+/// [`look_on`] with the verify requests `asked` that answer a failed
+/// verify ([`reasked`]): a pull request with a failed verify whose
+/// head is in it waits for a verify again.
+pub fn look_with(
+    gh: &pr::Gh,
+    repo: &str,
+    claims: BTreeSet<String>,
+    holds: BTreeSet<String>,
+    asked: &HashSet<(u64, String)>,
+) -> Result<Look> {
     let claimed: HashSet<String> = claims.iter().cloned().collect();
     let held: HashSet<String> = holds.iter().cloned().collect();
-    let open = rollout::Open::of(gh, repo)?;
+    let mut open = rollout::Open::of(gh, repo)?;
+    for pull in &mut open.pulls {
+        let commit: String = pull.head.chars().take(7).collect();
+        pull.reasked = pull.issue().is_some_and(|n| asked.contains(&(n, commit)));
+    }
     let (free, conflicts) = rebases(&open, open.free_work(&claimed, &held));
     let mut pulls = BTreeMap::new();
     for issue in free.iter().filter_map(|item| verify_issue(item)) {
@@ -1520,8 +1608,15 @@ impl World for Live {
                 .holds
                 .into_keys()
                 .collect();
+            let bodies: Vec<String> = api
+                .read(&person, &thread, true)
+                .await
+                .map(|all| all.into_iter().map(|m| m.message.body).collect())
+                .unwrap_or_default();
+            let asked = reasked(&bodies.iter().map(String::as_str).collect::<Vec<_>>());
             let repo = wave.repo.clone();
-            blocking(move || look_on(&pr::Gh::for_repo(&repo), &repo, claims, holds)).await
+            blocking(move || look_with(&pr::Gh::for_repo(&repo), &repo, claims, holds, &asked))
+                .await
         })
     }
 
@@ -1826,6 +1921,10 @@ mod tests {
         Asked,
         /// The verify passed.
         Passed,
+        /// The verify failed.
+        Failed,
+        /// The verify failed, and a new verify request for the head came.
+        Reasked,
     }
 
     /// The forge and the riff of a test.
@@ -1937,12 +2036,14 @@ mod tests {
                 checks: match pr {
                     Pr::Asked => Vec::new(),
                     Pr::Passed => vec![rollout::Check::verify("SUCCESS")],
+                    Pr::Failed | Pr::Reasked => vec![rollout::Check::verify("FAILURE")],
                 },
                 mergeable: Some(match self.conflicting.contains(n) {
                     true => "CONFLICTING".into(),
                     false => "MERGEABLE".into(),
                 }),
                 auto_merge: !self.manual.contains(n),
+                reasked: *pr == Pr::Reasked,
                 ..rollout::Pull::default()
             });
             rollout::Open {
@@ -2635,6 +2736,31 @@ mod tests {
         assert_eq!(here.forge().works, [rebase("c1"), rebase("c1b")]);
     }
 
+    /// #1157: a FAIL for the head C, then a new verify request for C: the
+    /// next start is a verify, not a build. With no new request, the
+    /// item is free for a build.
+    #[tokio::test]
+    async fn a_new_verify_request_after_a_fail_starts_a_verify_not_a_build() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free.clone()).await;
+        here.forge().pulls.insert(1, Pr::Reasked);
+        here.run();
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1".into(),
+        };
+        assert_eq!(here.forge().works, [verify]);
+
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().pulls.insert(1, Pr::Failed);
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [Work::Build { issue: 1 }]);
+    }
+
     /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: the conflict of a pull request with
     /// auto-merge off gets no rebase: no merge waits for it.
     #[tokio::test]
@@ -2854,6 +2980,7 @@ mod tests {
                     since_ms: 0,
                     phase: Default::default(),
                     last: String::new(),
+                    lead: false,
                 },
                 folder: dir.path().to_owned(),
                 server,
@@ -3005,6 +3132,33 @@ esac
                 )
             )]
         );
+    }
+
+    /// The head commit of the pull request is a WIP commit of a pause: the
+    /// lead gets a note, and no verify request. "Pause the riff" in the book
+    /// shows the same note.
+    #[tokio::test]
+    async fn a_build_that_ends_with_a_wip_head_sends_no_verify_request() {
+        let riff = Built::new().await;
+        let script = r#"#!/bin/sh
+case "$*" in
+"pr view worktree-issue-12 --json number,url,headRefOid,state")
+    echo '{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"1a2b3c4d5e","state":"OPEN"}' ;;
+"pr view worktree-issue-12 --json commits")
+    echo '{"commits":[{"messageHeadline":"Add it"},{"messageHeadline":"WIP: the riff is paused"}]}' ;;
+*) exit 1 ;;
+esac
+"#;
+        let gh = pr::Gh::at(isolated::write_program(riff.dir.path().join("gh"), script));
+        let got = riff.after_build(gh).await;
+        let note = text::wave_wip_head("issue-12", 40, "worktree-issue-12", "1a2b3c4", "9f8e7d6c");
+        assert_eq!(got, [(Kind::Note, note.clone())]);
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/how-it-works.md"
+        ))
+        .unwrap();
+        assert!(book.contains(&note), "{note}");
     }
 
     /// A lead holds the verify of the item: the lead gets a note with the

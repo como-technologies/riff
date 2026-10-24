@@ -310,7 +310,8 @@
 //! the old one. The daemon runs an old riff when its binary was
 //! replaced, or when its unit names another riff ([`stale`]). Two steps
 //! start it again on the new riff, only when it is idle: it owns no
-//! session, no start of `riff run` waits for room, and no job of a wave
+//! session but the lead (the new daemon takes the lead up, with its
+//! container, its terminal and its socket), no start of `riff run` waits for room, and no job of a wave
 //! runs ([`Status::busy`]). A start of a wave that waits for room does
 //! not count, also with the limit 0: the wave is in `waves.json`, so the
 //! new daemon waits for room for it again (01M5MS1Q78AFEY3ZVXNAQXM1FJ).
@@ -916,6 +917,23 @@ pub enum ServerCall {
     /// Resume the whole riff. Only the lead may. The answer is the line
     /// for the person.
     ResumeRiff,
+    /// Pause the whole riff, for `riff release approve`. Only the lead
+    /// may. The answer is the line for the person.
+    PauseRiff,
+    /// The user of the session, the owner and the people of the riff, as
+    /// [`crate::reach::Roster`], for `riff release cut`, `publish` and
+    /// `approve`.
+    Roster,
+    /// Post `body` in the thread `chat`. The daemon picks the sessions
+    /// that the line wakes ([`crate::chat::wakes`]). The answer is
+    /// `null`.
+    ChatPost {
+        /// The line.
+        body: String,
+    },
+    /// Each kept message of the thread `chat`, as a list of
+    /// [`crate::cycle::ChatLine`].
+    ChatRead,
     /// The [`Status`] of this daemon, for `riff daemon status` in a
     /// container (#1239). A session that is not the lead may ask it.
     Status,
@@ -968,6 +986,39 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
                 .set_pause(&record.me, &PauseScope::Riff, state)
                 .await?;
             Value::String(text::riff_set(None, state, &reply, &posted))
+        }
+        ServerCall::PauseRiff => {
+            if !record.terminal {
+                bail!(text::DAEMON_PAUSE_ONLY_LEAD);
+            }
+            let state = riff_core::wire::RiffState::Paused;
+            let (reply, posted) = signed()?
+                .set_pause(&record.me, &PauseScope::Riff, state)
+                .await?;
+            Value::String(text::riff_set(None, state, &reply, &posted))
+        }
+        ServerCall::Roster => {
+            let reply = signed()?.roster(&record.me, false).await?;
+            serde_json::to_value(crate::reach::Roster {
+                user: record.me.who().user().to_owned(),
+                owner: reply.owner,
+                people: reply.people,
+            })?
+        }
+        ServerCall::ChatPost { body } => {
+            let to = crate::chat::wakes(body, record.me.who().user());
+            let thread = crate::chat::thread();
+            let kind = riff_core::wire::Kind::Message;
+            signed()?
+                .post(&record.me, Some(&thread), &to, body, kind)
+                .await?;
+            Value::Null
+        }
+        ServerCall::ChatRead => {
+            let lines = signed()?
+                .read(&record.me, &crate::chat::thread(), true)
+                .await?;
+            serde_json::to_value(crate::cycle::chat_lines(lines))?
         }
         ServerCall::Host { host, request } => {
             if !record.terminal {
@@ -1023,8 +1074,10 @@ pub struct Status {
 }
 
 impl Status {
-    /// The work of the daemon: its sessions, the starts of `riff run`
-    /// that wait for room, and the jobs of its waves. The daemon starts
+    /// The work of the daemon: its sessions but the lead, the starts of
+    /// `riff run` that wait for room, and the jobs of its waves. The
+    /// lead does not count: a new daemon takes it up with its container,
+    /// its terminal and its socket ([`Daemon::recover`]). The daemon starts
     /// again on a new riff only at 0 (01M517BTJ9EV4ZGPYRB6HXJJC9).
     ///
     /// A start of a wave that waits for room does not count: the wave is
@@ -1057,7 +1110,8 @@ impl Status {
                 .any(|wave| text::wave_slot(&wave.repo) == *name)
         };
         let runs = self.waiting.iter().filter(|name| !of_a_wave(name)).count();
-        self.sessions.len() + runs + self.jobs
+        let works = self.sessions.iter().filter(|live| !live.lead).count();
+        works + runs + self.jobs
     }
 }
 
@@ -2613,7 +2667,9 @@ impl<R: Runtime + 'static> Daemon<R> {
             me,
             terminal,
         } = start;
-        self.room.limit().caps(&mut spec);
+        let limit = self.room.limit();
+        limit.caps(&mut spec);
+        limit.effort(&mut spec, &item);
         crate::compile_cache::Setting::read(&self.dir)
             .unwrap_or_default()
             .apply(&mut spec);
@@ -2628,6 +2684,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 since_ms: now_ms(),
                 phase: Phase::default(),
                 last: String::new(),
+                lead: terminal,
             },
             folder,
             server,
@@ -4309,6 +4366,51 @@ mod tests {
         assert_eq!(caps(&spec), (8, vec!["8"], "8g"));
     }
 
+    /// The claude command of the lead, of a work item and of a verify has
+    /// `--effort xhigh` by default, and the level that `riff daemon limit`
+    /// set for its role. A session that runs keeps its effort.
+    #[tokio::test]
+    async fn each_new_session_gets_the_effort_of_its_role() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let effort = |spec: &SessionSpec| {
+            let at = spec.command.iter().position(|a| a == "--effort").unwrap();
+            assert_eq!(spec.command[at - 1], "claude");
+            spec.command[at + 1].clone()
+        };
+        let mut first = Vec::new();
+        for (name, item) in [
+            ("riff-lead-o-r", "lead"),
+            ("riff-issue-12-1a2b3c4d", "issue-12"),
+            ("riff-verify-issue-12-1a2b3c4d", "verify-issue-12"),
+        ] {
+            let (_c, id) = here.started(here.start(name, item)).await;
+            first.push(id);
+        }
+        for id in &first {
+            assert_eq!(effort(&here.fake.spec(id).unwrap()), "xhigh");
+        }
+
+        let change = crate::room::Change {
+            sessions: Some(9),
+            effort: Some(crate::room::Effort::High),
+            effort_lead: Some(crate::room::Effort::Max),
+            effort_verify: Some(crate::room::Effort::Low),
+            ..crate::room::Change::default()
+        };
+        crate::room::set(&here.dir, change).unwrap();
+        let mut levels = Vec::new();
+        for (name, item) in [
+            ("riff-lead-o-x", "lead"),
+            ("riff-issue-13-2b3c4d5e", "issue-13"),
+            ("riff-verify-issue-13-2b3c4d5e", "verify-issue-13"),
+        ] {
+            let (_c, id) = here.started(here.start(name, item)).await;
+            levels.push(effort(&here.fake.spec(&id).unwrap()));
+        }
+        assert_eq!(levels, ["max", "high", "low"]);
+        assert_eq!(effort(&here.fake.spec(&first[0]).unwrap()), "xhigh");
+    }
+
     /// 01M57840K7SNPS243CYMYNYVFX, 01M57840R2HNXGP9B2ENSKTWD3.
     #[tokio::test]
     async fn an_added_mcp_server_is_in_the_mcp_config_of_each_new_session() {
@@ -4406,7 +4508,17 @@ mod tests {
         // write, and the command of the spec after it. The riff of the
         // test daemon is a static fake.
         let spec = here.fake.spec(&name).unwrap();
-        assert_eq!(spec.command, ["/opt/riff/riff", "relay", "--", "claude"]);
+        assert_eq!(
+            spec.command,
+            [
+                "/opt/riff/riff",
+                "relay",
+                "--",
+                "claude",
+                "--effort",
+                "xhigh"
+            ]
+        );
         assert!(spec.binds.contains(&Bind {
             source: Source::Path(static_riff(&here.dir)),
             target: RELAY_BIN.into(),
@@ -4945,6 +5057,7 @@ mod tests {
                 since_ms: 0,
                 phase: Phase::default(),
                 last: String::new(),
+                lead: false,
             },
             folder,
             server: "http://127.0.0.1:1".into(),
@@ -5023,6 +5136,7 @@ mod tests {
                     since_ms: 0,
                     phase: Phase::default(),
                     last: String::new(),
+                    lead: false,
                 },
                 folder: folder.clone(),
                 server: start.server.clone(),
@@ -5142,6 +5256,7 @@ mod tests {
                 since_ms: 0,
                 phase: Phase::default(),
                 last: String::new(),
+                lead: false,
             },
             folder: folder.clone(),
             server: "http://127.0.0.1:1".into(),
@@ -5907,7 +6022,15 @@ mod tests {
         let spec = here.fake.spec(&name).unwrap();
         assert_eq!(
             spec.command,
-            ["/opt/riff/riff", "relay", "--terminal", "--", "claude"]
+            [
+                "/opt/riff/riff",
+                "relay",
+                "--terminal",
+                "--",
+                "claude",
+                "--effort",
+                "xhigh"
+            ]
         );
         // It counts in no limit, and keeps its session alive.
         assert_eq!(here.daemon.live_count(), 0);
@@ -6802,6 +6925,48 @@ mod tests {
             unit.env,
             Units::of(&check).installed().unwrap().unwrap().env
         );
+    }
+
+    /// A lead does not keep the daemon on the old riff: `riff update`
+    /// starts the daemon again at once, and the new daemon takes the lead
+    /// up with its container and its socket (#1324).
+    #[tokio::test]
+    async fn after_an_update_a_daemon_with_only_the_lead_starts_again_and_the_lead_stays() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let mut here = Here::with_world(
+            Fake::default().with_image(IMAGE),
+            QUIET_LIMIT,
+            Some(world.clone()),
+        )
+        .await;
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        let (_client, name) = here.started(start).await;
+        assert!(status(&here.dir).await.unwrap().sessions[0].lead);
+        assert_eq!(status(&here.dir).await.unwrap().busy(), 0);
+
+        let (check, riff) = check_and_new(&here);
+        let units = Units::of(&check);
+        let lines = after_update(&units, &riff, &here.dir).await.unwrap();
+        assert_eq!(
+            lines,
+            [
+                text::daemon_unit_moved(Path::new(UNIT_FILE), &check, &riff),
+                text::DAEMON_STARTS_AGAIN.to_owned()
+            ]
+        );
+        assert_eq!(units.calls(), ["rewrite", "try-restart"]);
+
+        // The restart stops no container: the new daemon takes the lead
+        // up, and the lead answers on its socket.
+        here.restart().await;
+        here.daemon.recover().await;
+        let status = status(&here.dir).await.unwrap();
+        assert_eq!(status.sessions.len(), 1);
+        assert_eq!(status.sessions[0].name, name);
+        assert!(here.fake.running(&name).await.unwrap());
+        assert!(lead_in(&session_dir(&here.dir, &name)).await);
     }
 
     /// While the daemon runs a session, `riff update` writes the unit and

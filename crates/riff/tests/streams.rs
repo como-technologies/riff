@@ -105,3 +105,51 @@ async fn a_watch_has_a_connection_of_its_own() {
     assert!(on_the_watch.is_empty(), "{on_the_watch:?}");
     drop(wakes);
 }
+
+/// A new watch prints no line for a message that a `read` returned: a
+/// plain `read`, and a `read` of `all` after a number. A new addressed
+/// message still wakes the watch.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_watch_has_no_wake_for_a_message_that_a_read_returned() {
+    use riff_core::name::ThreadName;
+    use riff_core::selector::Selector;
+    use riff_core::wire::Kind;
+
+    for skip in [false, true] {
+        let (server, _seen) = start_server().await;
+        let lead: SessionUri = "riff://mike@a/local/riff?session=l1".parse().unwrap();
+        server.register(&lead).await.unwrap();
+        crate::common::name_lead(&server, &lead).await;
+        server.set_riff(&lead, RiffState::Running).await.unwrap();
+        let me: SessionUri = "riff://mike@b/local/riff?session=h1".parse().unwrap();
+        server.register(&me).await.unwrap();
+
+        let thread: ThreadName = "chat".parse().unwrap();
+        let to = [Selector::session("h1")];
+        for body in ["one", "two"] {
+            server
+                .post(&lead, Some(&thread), &to, body, Kind::Message)
+                .await
+                .unwrap();
+        }
+        // The read shows the messages. With `skip`, it reads all after 1
+        // and keeps the cursor.
+        let (shown, _) = server
+            .read_page(&me, &thread, skip, skip.then_some(1))
+            .await
+            .unwrap();
+        assert!(!shown.is_empty());
+
+        // The watch is `riff relay watch --follow`: it prints a line for
+        // each wake.
+        let mut wakes = Box::pin(follow(|| server.watch(&me), Duration::from_secs(5)));
+        let none = isolated::in_time(Duration::from_secs(2), wakes.next()).await;
+        assert!(none.is_err(), "skip {skip}: a wake for a read message");
+        server
+            .post(&lead, Some(&thread), &to, "three", Kind::Message)
+            .await
+            .unwrap();
+        let wake = isolated::in_time(Duration::from_secs(30), wakes.next()).await;
+        assert!(matches!(wake, Ok(Some(Ok(_)))), "skip {skip}: no wake");
+    }
+}

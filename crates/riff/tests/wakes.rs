@@ -291,3 +291,31 @@ async fn a_lead_that_posts_to_its_own_lead_wakes_no_free_session() {
     assert!(posted.woken.is_empty(), "woke {:?}", posted.woken);
     assert!(posted.unmatched.is_empty(), "{:?}", posted.unmatched);
 }
+
+/// The lead posts to its person only: `person=true` wakes the
+/// terminals of the person, and no daemon, worker or other session.
+#[tokio::test]
+async fn a_post_to_person_true_wakes_the_person_and_no_agent_session() {
+    let riff = riff().await;
+    let person = crate::common::person_of(&riff.lead);
+    riff.api.register(&person).await.unwrap();
+    let daemon = uri("riff://mike@pangolin/como-technologies/riff?session=d0");
+    riff.api.register(&daemon).await.unwrap();
+    let post = |to: &str| {
+        let to = [selector(to)];
+        let riff = &riff;
+        async move {
+            riff.api
+                .post(&riff.lead, Some(&repo()), &to, "an answer", Kind::Message)
+                .await
+                .unwrap()
+        }
+    };
+    let posted = post("user=mike,host=pangolin,person=true").await;
+    let woken: Vec<_> = posted.woken.iter().map(SessionUri::who).collect();
+    assert_eq!(woken, [person.who()], "woke {:?}", posted.woken);
+    assert!(posted.unmatched.is_empty(), "{:?}", posted.unmatched);
+    // Without the field, the same selector wakes the sessions too.
+    let posted = post("user=mike,host=pangolin").await;
+    assert!(posted.woken.len() > 1, "woke {:?}", posted.woken);
+}

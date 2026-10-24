@@ -495,6 +495,9 @@ fn free_of(
 /// ];
 /// let mut issues: Vec<u64> = in_verify(&pulls).into_iter().collect();
 /// issues.sort_unstable();
+/// // A WIP head is a build again.
+/// let wip = Pull { commits: vec![riff::rollout::Commit { headline: "WIP: paused".into() }], ..pull("worktree-issue-17", vec![]) };
+/// assert!(in_verify(&[wip]).is_empty());
 /// assert_eq!(issues, [12, 13, 16]);
 /// ```
 pub fn in_verify(pulls: &[Pull]) -> HashSet<u64> {
@@ -506,8 +509,7 @@ pub fn in_verify(pulls: &[Pull]) -> HashSet<u64> {
 }
 
 /// The fields of `gh pr list --json` that [`Pull`] reads.
-pub const PULL_FIELDS: &str =
-    "number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,autoMergeRequest,body";
+pub const PULL_FIELDS: &str = "number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,autoMergeRequest,body,commits";
 
 /// An open pull request, as `gh pr list --json` with [`PULL_FIELDS`]
 /// gives it.
@@ -527,6 +529,9 @@ pub struct Pull {
     pub draft: bool,
     #[serde(rename = "statusCheckRollup", default)]
     pub checks: Vec<Check>,
+    /// The commits of the branch, the head last.
+    #[serde(default)]
+    pub commits: Vec<Commit>,
     /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`: GitHub finds it after a
     /// push, so it can be `UNKNOWN` for a short time.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
@@ -538,6 +543,38 @@ pub struct Pull {
     /// one. Else the issue of its line `Closes #N`. riff keeps only the number, not the text of the body.
     #[serde(rename = "body", default, deserialize_with = "trailer")]
     pub trailer: Option<u64>,
+    /// True when a verify request for the head came after the last
+    /// verify result for it ([`crate::wave::reasked`]): the failed
+    /// verify of the head is answered, so the pull request waits for
+    /// a verify again ([`Pull::verify`]). The wave sets it.
+    #[serde(skip)]
+    pub reasked: bool,
+}
+
+/// A commit of a pull request, as `gh` gives it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Commit {
+    /// The first line of its message.
+    #[serde(rename = "messageHeadline", default)]
+    pub headline: String,
+}
+
+/// True when the head (the last) of `commits` is a WIP commit: its
+/// first line starts with `WIP`. A session pushes one at a pause or when
+/// it leaves. The work is not done, so the item has no verify.
+///
+/// ```
+/// use riff::rollout::{Commit, wip};
+///
+/// let commit = |h: &str| Commit { headline: h.into() };
+/// assert!(wip(&[commit("Add it"), commit("WIP: the riff is paused")]));
+/// assert!(!wip(&[commit("WIP: one"), commit("Add it")]));
+/// assert!(!wip(&[]));
+/// ```
+pub fn wip(commits: &[Commit]) -> bool {
+    commits
+        .last()
+        .is_some_and(|c| c.headline.starts_with("WIP"))
 }
 
 /// True for a value that is not `null`.
@@ -593,7 +630,9 @@ pub enum Verify {
     Asked,
     /// The verify passed: the pull request waits for the merge.
     Passed,
-    /// The verify failed: the item is free, with its earlier work.
+    /// The verify failed: the item is free, with its earlier work. A
+    /// new verify request for the same head ([`Pull::reasked`]) makes
+    /// it [`Verify::Asked`] again.
     Failed,
 }
 
@@ -635,17 +674,22 @@ impl Pull {
     /// assert_eq!(pull(vec![Check::verify("SUCCESS")]).verify(), Some(Verify::Passed));
     /// assert_eq!(pull(vec![Check::verify("FAILURE")]).verify(), Some(Verify::Failed));
     /// assert_eq!(pull(vec![Check::verify("ERROR")]).verify(), Some(Verify::Failed));
+    /// // A new verify request for the failed head: it waits for a verify again.
+    /// let again = Pull { reasked: true, ..pull(vec![Check::verify("FAILURE")]) };
+    /// assert_eq!(again.verify(), Some(Verify::Asked));
     /// assert_eq!(Pull { draft: true, ..pull(vec![]) }.verify(), None);
     /// assert_eq!(Pull { branch: "main".into(), ..pull(vec![]) }.verify(), None);
     /// ```
     pub fn verify(&self) -> Option<Verify> {
-        if self.draft {
+        // A WIP head is a build again, not a verify.
+        if self.draft || wip(&self.commits) {
             return None;
         }
         self.issue()?;
         Some(match self.verify_status() {
             None => Verify::Asked,
             Some(check) => match check.state.as_deref() {
+                Some("FAILURE" | "ERROR") if self.reasked => Verify::Asked,
                 Some("FAILURE" | "ERROR") => Verify::Failed,
                 _ => Verify::Passed,
             },

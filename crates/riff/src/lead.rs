@@ -169,6 +169,7 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 ///     since_ms: 0,
 ///     phase: Phase::Terminal,
 ///     last: String::new(),
+///     lead: true,
 /// };
 /// let status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![live],

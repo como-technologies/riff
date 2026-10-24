@@ -948,6 +948,9 @@
   tells the session to call `whoami`. Superseded by 4.0 (#1173).
 - **01M3JCG4AV80MHFP73CWDY5E3M** `riff who`, `riff whoami` and the
   `whoami` tool show the state of the riff.
+- **01M5P1XQ6WTGFHW0P5M114P535** The riff daemon sends no verify request
+  for a pull request whose head commit is a WIP commit. The item goes
+  back to a build.
 
 ## Service
 
@@ -3105,6 +3108,12 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M5NJAYMYF50B9WXH5RF9W737** When the lead changes, riff-server
   sends the old lead a direct message: it is not the lead now, and the
   session that is. A gone old lead gets none.
+- **01M5P1XN4YA3S1CWTN939DQCWW** A session in a container starts `riff
+  relay watch --follow` again when its Monitor ends, and only then. The
+  instructions `text::MCP_LEAD` and `text::lead_start` say so.
+- **01M5P1XN9EX680KQNKRHWGRWJT** A new watch does not wake a session for
+  a message that a `read` returned, also a `read` with `all` and
+  `after`. Such a read keeps the cursor.
 
 ## Threads
 
@@ -3221,10 +3230,10 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   time and `USER@HOST`, and posts each line that the person types.
   `--color` works as in `riff tail`. `/quit` or Ctrl-C exits. The
   chat has no private channels, no nick changes and no files.
-- **01M3NB5N0D99JB5CE6RB4VEYPF** A chat line wakes no session, unless
-  it names a lead: `@lead` wakes the lead of the sender, and `@USER`
-  wakes the lead of USER. The skill tells a lead to answer a chat line
-  with a post to the thread `chat`.
+- **01M3NB5N0D99JB5CE6RB4VEYPF** A chat line wakes the lead of the
+  sender, unless it names a lead: `@lead` wakes the lead of the sender,
+  and `@USER` wakes the lead of USER. The skill tells a lead to
+  answer a chat line with a post to the thread `chat`.
 - **01M3NJD39JVJHY5G71CD79JBY3** In a terminal, `riff chat` has a
   prompt line at the bottom. A new line prints above the prompt, and
   the typed text stays. After Enter, the typed line goes away, so the
@@ -3265,6 +3274,16 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M3Q59CAA46C316BD4D1ED7C6** When the first connect after a stream
   ends fails, riff tries once more at once, and shows nothing for it.
   Only when that try fails too does it show `(reconnecting…)`.
+- **01M5P1V9SZP9EF475MK3G9WK5E** A chat line of a person that names no
+  one with @ wakes the lead of the sender, as @lead does. `riff chat`
+  and its help say what wakes whom.
+
+- **01M5P207CN20TQTP017X6RTMWG** The selector field `person` is `true`
+  for the terminals of a person (`riff chat`, `riff tail`, the phone),
+  which have no session ID, and `false` for each agent session. The lead
+  posts to its person only with `user`, `host` and `person` set to true:
+  the post wakes no daemon, worker or other agent session. The
+  instructions of the riff tools name this selector.
 
 ## Security
 
@@ -5152,6 +5171,9 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   (the line before), and refuses riff 1. riff 4 refuses a server of the
   line 3 or 1. The bridge tests know the line 4 and fail on each later
   major with no rule.
+- **01M5P1VAX6WNM9DX16NS4Z0SWC** The actions of the pipeline stay on a
+  version that GitHub supports. Dependabot opens a pull request each
+  week for an action with a newer version.
 
 ## Code
 
@@ -6214,6 +6236,22 @@ part when they merge.
 - **01M5NVKNVTVR722EA148V5127M** The book says where the kept work goes,
   riff-kept/ITEM-ID8 of origin, and how to get it back with git fetch
   origin riff-kept/ITEM-ID8.
+- **01M5P1XBJ6ZX3Q8ZVHR1EJFMFF** The lead does not keep the daemon of
+  its host on an old riff. The daemon counts no lead (a session with a
+  terminal) as work: with only the lead, `riff update` and the look of
+  the daemon start the daemon again on the new riff
+  (01M517BTJ9EV4ZGPYRB6HXJJC9). The new daemon takes the lead up with
+  its container, its terminal and its socket
+  (01M4ZDTW00B7N6T9P3MK066KA7), so `riff release check` passes "each
+  host takes the build" while the lead runs.
+
+- **01M5P2MG28EE75PPGYAWHTY2S1** The daemon starts the lead, each work
+  item and each verify with claude --effort LEVEL. The effort of the
+  three roles is xhigh by default. The limit of the host holds the three
+  levels in limit.json, and riff daemon limit sets them with --effort
+  for work items, --effort-lead and --effort-verify, also with --host.
+  riff refuses a level that Claude Code does not know: low, medium,
+  high, xhigh and max. A session that runs keeps its effort.
 
 ### riff relay
 
@@ -6408,6 +6446,10 @@ part when they merge.
   free work of the rollout of the lead. `riff wave list` and `riff top`
   show it in the group `tracker`, never in `free`. `riff wave make`
   makes the label `tracker` when it is missing.
+- **01M5P20DPK4GAQRDEKC1E6V718** A verify request for a head commit, in
+  the thread after the last verify result for it, answers a failed
+  verify of that head: the wave starts a verify of the head, not a
+  build, when its Gate and Hygiene pass.
 
 ### The lead, the view and the takeover
 
@@ -6580,6 +6622,11 @@ part when they merge.
   the person that the sign-in of the lead is stale, with the step to fix
   it and to start the lead again: at each attach of riff lead start and
   riff view, and once in riff chat from the daemon.
+- **01M5P21M7MSP503125GD2PJGRE** In the container of the lead, riff
+  release cut, publish and approve reach riff-server through the socket
+  of the session, as riff release check does: the roster, the chat line,
+  the read of the chat and the pause of the riff go through the riff
+  daemon.
 
 ### The first run
 

@@ -1213,7 +1213,7 @@ pub fn one_of_each() -> Vec<Change> {
             message: Message {
                 seq: 1,
                 from: uri(),
-                to: vec!["user=ann,session=s1,host=heron,repo=acme/app,worktree=issue-7,claim=issue-7,lead=true".parse().unwrap()],
+                to: vec!["user=ann,session=s1,host=heron,repo=acme/app,worktree=issue-7,claim=issue-7,lead=true,person=false".parse().unwrap()],
                 body: "hi".into(),
                 at_ms: 5,
                 kind: crate::wire::Kind::Status,

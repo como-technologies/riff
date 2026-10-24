@@ -1403,8 +1403,21 @@ pub fn waiting_run(forge: &dyn Forge, tag_text: &str) -> Result<Option<Waiting>>
     Ok(forge.waiting()?.into_iter().find(|w| w.tag == tag))
 }
 
+/// The messages of the thread `chat` as [`ChatLine`]s.
+pub fn chat_lines(read: Vec<riff_client::api::Checked>) -> Vec<ChatLine> {
+    read.into_iter()
+        .map(|c| ChatLine {
+            seq: c.message.seq,
+            user: c.message.from.who().user().to_owned(),
+            session: c.message.from.who().session().is_some(),
+            verified: c.verified,
+            body: c.message.body,
+        })
+        .collect()
+}
+
 /// One message of the thread `chat`, as [`owner_said`] reads it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChatLine {
     /// The number of the message in the thread.
     pub seq: u64,

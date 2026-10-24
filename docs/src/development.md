@@ -160,6 +160,12 @@ The rules of `main` need only the check `Gate`. So a fail of each job
 fails the Gate. While the other jobs run, `gh pr checks` shows no
 `Gate`.
 
+### Keep the actions up to date
+
+Dependabot checks the actions of `.github/workflows` each week
+(`.github/dependabot.yml`). When an action has a newer version, it
+opens a pull request. Merge it like any other pull request.
+
 ### Run one part of the tests
 
 The Gate runs the tests in 4 parts. Each part lists each test of the
@@ -1273,6 +1279,21 @@ issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). 
 To start the rebase of the same commit again, see
 [Start a spent item again](#start-a-spent-item-again).
 
+### Answer a failed verify with a new request
+
+A verify can fail only on the body of the pull request, for example
+Hygiene refuses the first line. The fix is a new body, with no new
+commit. The status `riff/verify` of the head stays `failure`. After the
+fix, the session sends a new verify request for the same commit. The
+wave then starts a verify of that commit, not a build, when the Gate
+and Hygiene of the head pass. With no new request, a failed verify is
+free work as a build. A push makes a new head, and a new verify
+follows as always.
+
+```sh
+riff post --to lead=true "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4"
+```
+
 ### When the sign-in of claude ends soon
 
 With no token of `riff claude-token`, a session needs the sign-in of
@@ -1498,6 +1519,26 @@ riff daemon limit --cpus 12 --memory 16
 
 The values go in `limit.json` with the limit. A new session gets them
 at its start. A session that runs keeps its caps. riff refuses 0.
+
+### Set the effort of the sessions
+
+The daemon starts the lead, each work item and each verify with
+`claude --effort LEVEL`. The levels are `low`, `medium`, `high`,
+`xhigh` and `max`. The default is `xhigh` for the three roles. The
+levels go in `limit.json` with the limit. To set them:
+
+```sh
+riff daemon limit --effort high
+riff daemon limit --effort-verify max
+riff daemon limit --effort-lead xhigh
+riff daemon limit
+```
+
+`--effort` sets work items. With no flag, the command shows the limit
+and the three levels. `riff daemon status` shows them too. A new session
+gets the levels at its start. A session that runs keeps its effort: in
+the lead, use `/effort` to change it. riff refuses a level that Claude
+Code does not know. Add `--host HOST` to set the levels on another host.
 
 ### Set or empty the compile cache of the container sessions
 
@@ -1862,9 +1903,10 @@ The lead gets the riff tools that talk, and the tools of a lead:
 `hold`, `free`, `notes`, `pause` and `resume`. They act on your
 riff-server (see
 [The riff tools of a session](#the-riff-tools-of-a-session)). It gets
-its wakes from `/opt/riff/riff relay watch --follow`, one watch that
-never ends, in the Monitor tool. The instructions of its riff tools tell
-it to start that watch once. See
+its wakes from `/opt/riff/riff relay watch --follow`, one watch in the
+Monitor tool. Claude Code ends a Monitor after 30 minutes at most. The
+instructions of its riff tools tell it to start the watch again when the
+Monitor ends, and only then. See
 [Wake the lead in a container with no restart](how-it-works.md#wake-the-lead-in-a-container-with-no-restart).
 It plans the waves with `/opt/riff/riff wave`: see
 [Waves](waves.md). `riff lead start` names it the lead of your user,
@@ -3823,6 +3865,11 @@ riff checks that:
   `riff who`. The commit and the time of the build of a host do not
   count.
 
+The lead does not keep its host on the old riff. After an update, the
+riff daemon of a host with only the lead starts again on the new riff.
+The lead keeps its container, its terminal (`riff view`), its socket and
+its riff tools.
+
 riff writes the result on the release issue. When each check passes,
 riff closes the release issue and resumes the riff. When a check
 fails, the lead fixes forward with a patch release, or rolls back.
@@ -4269,6 +4316,11 @@ approve` refuses, and `gh` does not run, when no such message exists: a
 message of a session, of another version, from before the cut, or from a
 member. It also refuses a worker, a work session in a container and a
 session that is not the lead.
+
+The lead runs these commands in its container. `cut` and `publish`
+write their line in riff chat, and `approve` reads the roster and the
+chat and pauses the riff, all through the riff daemon of the host. The
+container needs no `--server` and no sign-in.
 
 When the auto mode checker blocks a release command, `riff denials`
 has a record. The lead files an issue for it.
