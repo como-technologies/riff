@@ -6678,6 +6678,25 @@ part when they merge.
   person answers the lead in riff chat (#1363). The book names no flag
   or command of Remote Control, and the start of the lead is riff lead
   start.
+- **01M5QVX8D3JE51FAYRWXMAYFAY** In a container, riff members, riff
+  audit and riff session why read riff-server through the riff daemon on
+  the socket of the session (RIFF_SOCKET), as riff wave list does. They
+  need no RIFF_SERVER and no sign-in in the container. Only the lead can
+  read the log for riff audit, and riff-server still gives it only to
+  the owner and the admins. riff invite, riff remove, riff admin and
+  riff owner stay for a person in a terminal on the host (#1338).
+- **01M5QVX8FFG2FPWZEW61A985CF** In the container of the lead, riff run
+  ITEM asks the riff daemon on the socket of the session to run the item
+  as a job of the wave of the repository: the claim, the clone, the
+  session in the room of the limit, and the steps after its end, as the
+  wave does them. riff run answers at once and does not follow the
+  session. It takes no --image. Only the lead can ask it. When the job
+  does not start, the daemon tells the lead why (#1338).
+- **01M5QW31TFA1W2GWPGRS2Y65GP** In a container, riff who and riff
+  whoami read riff-server through the riff daemon on the socket of the
+  session, as riff members does. Each session can read them. The URI
+  that riff whoami shows is the URI that riff-server holds for the
+  session (#1338).
 
 ### The first run
 

@@ -846,6 +846,10 @@ riff     running
 build    v0.7.0  (f45be4d, 2026-09-29)
 ```
 
+The lead runs it in its container too. The riff daemon of the host
+reads riff-server for the session, and `whoami` shows the URI that
+riff-server holds.
+
 ## See who is in the riff
 
 ```sh
@@ -868,6 +872,10 @@ mike@pangolin:riff#issue-6 (a6cf)  busy     you lead  working on #6
 mike@thelio:riff#issue-7 (5b1e)    busy     worker    working on #7  4m ago: write the tests
 brett@heron:riff (77e0)            blocked            which of two designs? (1m ago)
 ```
+
+`riff who` works in the container of the lead too, and in the container
+of a worker: the riff daemon of the host reads riff-server for the
+session.
 
 `you` marks your own row. A tag shows the role of a session:
 

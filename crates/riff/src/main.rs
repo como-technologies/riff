@@ -55,12 +55,14 @@ enum Command {
     Login,
     /// Show your URI and the state of the riff
     ///
-    /// Inside Claude Code, it is the URI of the session.
+    /// Inside Claude Code, it is the URI of the session. In a container, the
+    /// riff daemon of the host reads riff-server for the session.
     Whoami,
     /// List the sessions of the riff
     ///
     /// It shows the state of the riff too. A session that ended, or
-    /// stopped for 3 minutes, is gone and not listed.
+    /// stopped for 3 minutes, is gone and not listed. In a container, the
+    /// riff daemon of the host reads riff-server for the session.
     Who {
         /// List gone sessions too.
         #[arg(long)]
@@ -355,7 +357,7 @@ enum Command {
     /// List who may join this riff
     ///
     /// It lists the owner, the admins, the members and the allowed domains
-    /// of the riff of riff-server.
+    /// of the riff of riff-server. The lead runs it in its container too.
     Members,
     /// Make a person an admin, or a member again
     ///
@@ -535,6 +537,10 @@ enum Command {
     /// session. At the end, it sends a verify request for the pull
     /// request of the branch, releases ITEM, and keeps the clone until
     /// the merge. Ctrl-C stops the container.
+    ///
+    /// In the container of the lead, it asks the daemon on the socket of the
+    /// session to run ITEM as a job of the wave, and answers at once. There
+    /// it takes no --image.
     Run {
         /// The work item: an issue, for example issue-12.
         item: String,
@@ -626,7 +632,8 @@ enum Command {
     /// riff, and the issues and pull requests of the wave with gh. It
     /// prints each rule with pass, fail or not checked, and the records
     /// that show it. It exits with 1 when a rule fails. Only the owner or
-    /// an admin can.
+    /// an admin can. The lead runs it in its container too: the riff daemon
+    /// of the host reads the log for it.
     Audit {
         /// The wave: its number, for example 3 or "Wave 3". The name of
         /// the wave is not necessary.
@@ -1388,7 +1395,7 @@ enum SessionCommand {
     /// The riff daemon leaves one record in the thread ends when a
     /// session of a wave ends with no open pull request: its exit code or
     /// signal, the tool calls that auto mode denied, and the last 50
-    /// lines of its output. The lead reads it here, also in a container.
+    /// lines of its output. The lead reads it here, also in its container.
     Why {
         /// The item, for example issue-1203.
         item: String,
@@ -1736,7 +1743,14 @@ async fn main() -> Result<()> {
             return riff::chat::run(&api.signed_in(None)?, &me, *after).await;
         }
         Command::Members => {
-            anstream::print!("{}", view::members(&api.signed_in(None)?.members().await?));
+            anstream::print!("{}", view::members(&reach.members().await?));
+            return Ok(());
+        }
+        Command::Session {
+            command: SessionCommand::Why { item },
+        } => {
+            let records = reach.ends().await?;
+            println!("{}", riff::ends::why(item, &records));
             return Ok(());
         }
         Command::Audit { wave } => {
@@ -1744,7 +1758,7 @@ async fn main() -> Result<()> {
             let repo = audit::repo_of(&here)?;
             let gh = pr::Gh::default();
             let wave = riff::waves::title(&gh, &here.repo_text(), wave)?;
-            let log = api.signed_in(None)?.log(&repo).await?;
+            let log = reach.log(&repo).await?;
             let forge = audit::Forge::read(&gh, &here.repo_text(), &wave)?;
             let report = audit::audit(&wave, &log.records, log.pruned, &forge, audit::now_ms())?;
             print!("{}", audit::render(&report, &here.repo_text()));
@@ -1784,6 +1798,16 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         _ => {}
+    }
+    // In a container, the control socket of the daemon is not there: the
+    // daemon runs the item as a job of the wave, through the socket of the
+    // session (#1338). Only the lead may.
+    if let (Command::Run { item, image }, Reach::Daemon(_)) = (&cli.command, &reach) {
+        if image.is_some() {
+            anyhow::bail!("{}", text::RUN_IMAGE_ON_HOST);
+        }
+        println!("{}", reach.run(item).await?);
+        return Ok(());
     }
     let here = identity::here(cli.place.as_ref())?;
     riff::auto_update::remember(&here);
@@ -1874,18 +1898,22 @@ async fn main() -> Result<()> {
     let api = api.signed_in(me.who().session())?;
     match cli.command {
         Command::Whoami => {
-            let pauses = api.pauses(&me).await.map_err(|e| format!("{e:#}"));
+            // In a container, the daemon reads for the session (#1338).
+            let seen = match &reach {
+                Reach::Daemon(_) => reach.whoami().await?,
+                Reach::Direct(_) => riff::reach::WhoamiFacts::read(&api, &me).await,
+            };
             // The URI of the server holds the claims and the lead
             // (01M517N7ANC06S4GTEEZHAB255).
-            let shown = match api.me(&me).await {
-                Ok(reply) => reply.session.map_or(me, |s| s.uri),
-                Err(_) => me,
-            };
-            anstream::print!("{}", view::whoami(&shown, pauses));
+            let shown = seen.uri.unwrap_or(me);
+            anstream::print!("{}", view::whoami(&shown, seen.state));
         }
         Command::Who { all, long } => {
-            let pauses = api.pauses(&me).await?;
-            let mut who = api.roster(&me, all).await?;
+            let seen = match &reach {
+                Reach::Daemon(_) => reach.who_facts(all).await?,
+                Reach::Direct(_) => riff::reach::WhoFacts::read(&api, &me, all).await?,
+            };
+            let (pauses, mut who) = (seen.pauses, seen.who);
             riff::state::fill(&mut who.sessions, pauses.state);
             anstream::print!(
                 "{}",
@@ -1966,12 +1994,6 @@ async fn main() -> Result<()> {
             };
             let inbox = api.inbox(&me, thread.as_ref(), all).await?;
             println!("{}", text::inbox(&inbox, &me).trim_end());
-        }
-        Command::Session {
-            command: SessionCommand::Why { item },
-        } => {
-            let records = riff::ends::read(&api, &me).await?;
-            println!("{}", riff::ends::why(&item, &records));
         }
         Command::Denials { since, format } => {
             let span = since.as_deref().map(riff::denied::since).transpose()?;
@@ -2174,6 +2196,7 @@ async fn main() -> Result<()> {
         | Command::Invite { .. }
         | Command::Remove { .. }
         | Command::Members
+        | Command::Session { .. }
         | Command::Audit { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
