@@ -65,7 +65,8 @@ fn script(dir: &Path, name: &str, body: &str) {
 }
 
 /// A fake `gh` in `dir`: the open milestone Wave 3 with 1 closed issue,
-/// its open issues `numbers`, and no pull request.
+/// its open issues `numbers`, and no pull request. `issue view` gives a
+/// body with a `Done when:` line.
 fn wave_gh(dir: &Path, numbers: &[u64]) {
     let issues: Vec<String> = numbers
         .iter()
@@ -79,7 +80,7 @@ fn wave_gh(dir: &Path, numbers: &[u64]) {
         dir,
         "gh",
         &format!(
-            "case \"$1\" in\n  api) echo '{wave}' ;;\n  pr) echo '[]' ;;\n  *) echo '[{}]' ;;\nesac",
+            "case \"$1 $2\" in\n  api*) echo '{wave}' ;;\n  pr*) echo '[]' ;;\n  'issue view') echo '{{\"number\":0,\"body\":\"Done when: x.\"}}' ;;\n  *) echo '[{}]' ;;\nesac",
             issues.join(", "),
         ),
     );
@@ -1672,7 +1673,8 @@ async fn twelve_sessions_fit_in_80_columns() {
 /// 01M5924014WN63RCHJWGZS4AFZ, 01M592403Q4TNZEDNR76C7NK9M: `riff wave
 /// move` and `riff wave end --move-open-to-backlog` change the milestone
 /// of the items with `gh issue edit`, and refuse an item that a session
-/// claims.
+/// claims. `wave move --to WAVE` warns for an item with no `Done when:`
+/// line (01M5R0HERC566W14SEJ3ZCG6V5).
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_wave_move_and_end_move_the_items_and_refuse_a_claimed_item() {
     let (server, _) = start_server().await;
@@ -1688,6 +1690,8 @@ case "$*" in
     echo '[{"number":2,"title":"Backlog","open_issues":9,"closed_issues":0},{"number":3,"title":"Wave 3","open_issues":2,"closed_issues":1},{"number":4,"title":"Wave 4: Next","open_issues":0,"closed_issues":0}]' ;;
   'api repos/{owner}/{repo}/issues?milestone=3&state=open&per_page=100') echo '[{"number":13},{"number":14}]' ;;
   'api -X PATCH '*) echo '{"number":3,"title":"Wave 3","open_issues":0,"closed_issues":3}' ;;
+  'issue view 14 '*) echo '{"number":14,"body":"No line."}' ;;
+  'issue view '*) echo '{"number":13,"body":"Done when: x."}' ;;
   'issue edit '*) ;;
   *) exit 1 ;;
 esac"#
@@ -1717,10 +1721,29 @@ esac"#
 
     let (ok, said) = run(&["wave", "move", "13", "14", "--to", "4"]).await;
     assert!(ok, "{said}");
-    assert_eq!(said, "Moved #13 #14 to Wave 4: Next.\n");
+    // 14 has no `Done when:` line (01M5R0HERC566W14SEJ3ZCG6V5): the warning
+    // follows the answer, and the move is done.
+    assert_eq!(
+        said,
+        "Moved #13 #14 to Wave 4: Next.\n#14 has no \"Done when:\" line. The wave takes only an \
+         issue with that line: add it to the body of the issue.\n"
+    );
     let (ok, said) = run(&["wave", "move", "13", "--to", "Backlog"]).await;
     assert!(ok, "{said}");
     assert_eq!(said, "Moved #13 to Backlog.\n");
+    // The Backlog reads no body.
+    let views: Vec<String> = log()
+        .lines()
+        .filter(|l| l.starts_with("gh issue view "))
+        .map(Into::into)
+        .collect();
+    assert_eq!(
+        views,
+        [
+            "gh issue view 13 --json number,body",
+            "gh issue view 14 --json number,body"
+        ]
+    );
     let edits: Vec<String> = log()
         .lines()
         .filter(|l| l.starts_with("gh issue edit "))

@@ -1486,6 +1486,25 @@ fn numbers(items: &[u64]) -> String {
         .join(" ")
 }
 
+/// The warning of `riff wave move` for items with no `Done when:` line
+/// (01M5R0HERC566W14SEJ3ZCG6V5). The items moved.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_no_done_when(&[71]),
+///     "#71 has no \"Done when:\" line. The wave takes only an issue with that line: add it to the body of the issue."
+/// );
+/// assert!(riff::text::waves_no_done_when(&[71, 72]).starts_with("#71 #72 have no \"Done when:\" line."));
+/// ```
+pub fn waves_no_done_when(items: &[u64]) -> String {
+    let verb = if items.len() == 1 { "has" } else { "have" };
+    format!(
+        "{} {verb} no \"Done when:\" line. The wave takes only an issue with that line: add it to \
+         the body of the issue.",
+        numbers(items)
+    )
+}
+
 /// The refusal of `riff wave move` and `--move-open-to-backlog` for an
 /// item with a claim (01M5924014WN63RCHJWGZS4AFZ).
 ///
@@ -7324,6 +7343,23 @@ pub fn wave_spent(item: &str, starts: u32, reason: &str) -> String {
         "The riff daemon started {item} {starts} times for the wave, and it is still free work. \
          The last session ended: {reason}. It starts no more session for it until riff wave run \
          again. Read why: riff session why {item}"
+    )
+}
+
+/// The message to the lead for an issue whose body has no `Done when:`
+/// line: the wave starts no build of it (01M5R0HEP1MXWYY643F1N1DWEM).
+///
+/// ```
+/// let text = riff::text::wave_no_done_when(12);
+/// assert!(text.starts_with("The riff daemon did not start issue-12:"));
+/// assert!(text.contains("no \"Done when:\" line"));
+/// assert!(text.ends_with("The wave will take the issue at its next look."));
+/// ```
+pub fn wave_no_done_when(issue: u64) -> String {
+    format!(
+        "The riff daemon did not start issue-{issue}: the body of the issue has no \"Done when:\" \
+         line, and a session stops at once without it. Add the line to the body of the issue. \
+         The wave will take the issue at its next look."
     )
 }
 

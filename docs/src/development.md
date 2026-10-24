@@ -1559,6 +1559,36 @@ sessions that run go on. The rebase of a pull request with a conflict
 starts again too, also for the same commit (see
 [Run the wave](#run-the-wave)).
 
+### Add a Done when line to an issue
+
+The wave starts a build only for an issue whose body has a line that
+starts with `Done when:`. A session stops at once without that line.
+For an issue with no such line, the wave starts nothing, and your lead
+gets one message for it.
+
+```mermaid
+flowchart LR
+    I["an issue of the current wave"] --> Q{"a line that starts<br/>with Done when:?"}
+    Q -- yes --> S["the wave starts a session"]
+    Q -- no --> M["one message to your lead"]
+    M --> A["you add the line"]
+    A --> S
+```
+
+Add the line at the end of the body. This keeps the old text of the
+body:
+
+```sh
+gh issue view 1264 --json body --jq .body > body.md
+printf '\nDone when: riff who shows the wave of each claim.\n' >> body.md
+gh issue edit 1264 --body-file body.md
+```
+
+The wave will take the issue at its next look. A verify of a pull
+request and a rebase need no such line. `riff wave move ITEM --to WAVE`
+warns when an item has no line (see
+[Move items to another wave](waves.md#move-items-to-another-wave)).
+
 ### Let the rollout of the lead run the wave
 
 You need no command for this. When the current wave has free work, the
@@ -1957,7 +1987,8 @@ first free work:
    conflict with `main` (see [Run the wave](#run-the-wave)), then the
    pull requests that wait for a verify, then the free items of the
    current wave. It takes the free work as the rollout of the lead
-   does.
+   does. A free item has a `Done when:` line in its body (see
+   [Add a Done when line to an issue](#add-a-done-when-line-to-an-issue)).
 2. It starts nothing while the riff or the repository is paused. It
    never starts a held item, or an item that a session claims.
 3. It starts the verify of an item only when no session holds the

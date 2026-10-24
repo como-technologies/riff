@@ -29,12 +29,16 @@
 //! - **Free work** ([`free_items`], [`waiting_verifies`],
 //!   01M3Q5QE2EWGKVD57Y6YCWA4BR). The current wave is the open milestone
 //!   `Wave N` with the lowest N. A free item is an open issue of it that
-//!   no session claims, that has no comment `Merged in #`, and whose
-//!   `Needs:` issues are all closed. A pull request waits for a verify
-//!   when it names an issue ([`Pull::issue`]), it is not a draft, its
-//!   head has no status `riff/verify`, and no session claims
-//!   `verify-issue-N` for it. The pull request of an issue with the
-//!   label [`NO_VERIFY`] is no work (01M5157V0P92EBHF4M7N9K0RGR).
+//!   no session claims, that has no comment `Merged in #`, whose
+//!   `Needs:` issues are all closed, and whose body has a line that
+//!   starts with `Done when:` ([`Issue::has_done_when`],
+//!   01M5R0HEP1MXWYY643F1N1DWEM). An issue with no such line is no build:
+//!   a session stops at once without it ([`no_done_when_of`]). A pull
+//!   request waits for a verify when it names an issue ([`Pull::issue`]),
+//!   it is not a draft, its head has no status `riff/verify`, and no
+//!   session claims `verify-issue-N` for it. The pull request of an
+//!   issue with the label [`NO_VERIFY`] is no work
+//!   (01M5157V0P92EBHF4M7N9K0RGR).
 //! - **The issue of a pull request** ([`Pull::issue`],
 //!   01M51BF5S2YKB8JG10DF6YVT42). Its trailer `Issue: #N` names it, as
 //!   for `riff verify`. With no trailer, its branch names it
@@ -275,6 +279,10 @@ pub const NO_VERIFY: &str = "no-verify";
 /// before each other item ([`free_work_of`], 01M51QEYS538XA58KDRY844T52).
 pub const BROKEN_MAIN: &str = "broken-main";
 
+/// The start of the line that the body of an issue needs for a build
+/// (R172): the acceptance criteria.
+pub const DONE_WHEN: &str = "Done when:";
+
 /// An open issue, as `gh issue list --json
 /// number,title,body,comments,milestone,labels` gives it.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -318,6 +326,25 @@ impl Issue {
     /// (01M5157V0P92EBHF4M7N9K0RGR).
     pub fn no_verify(&self) -> bool {
         self.labels.iter().any(|l| l.name == NO_VERIFY)
+    }
+
+    /// True when the body has a line that starts with [`DONE_WHEN`]
+    /// (01M5R0HEP1MXWYY643F1N1DWEM). A session stops at once without it,
+    /// so the wave starts no build of an issue without it.
+    ///
+    /// ```
+    /// use riff::rollout::Issue;
+    ///
+    /// let issue = |body: &str| Issue { body: body.into(), ..Issue::default() };
+    /// assert!(issue("Text.\n\nDone when: it works.\n").has_done_when());
+    /// assert!(issue("  Done when:\n- it works").has_done_when());
+    /// assert!(!issue("It is done when it works.").has_done_when());
+    /// assert!(!issue("").has_done_when());
+    /// ```
+    pub fn has_done_when(&self) -> bool {
+        self.body
+            .lines()
+            .any(|l| l.trim_start().starts_with(DONE_WHEN))
     }
 
     /// True when the issue is the release issue of a release: it has
@@ -375,7 +402,7 @@ pub fn needs(body: &str) -> Vec<u64> {
 ///
 /// let issue = |number, wave: &str, body: &str, merged| Issue {
 ///     number,
-///     body: body.into(),
+///     body: format!("Done when: x.\n{body}"),
 ///     comments: if merged { vec![Comment { body: "Merged in #9 (abc)".into() }] } else { vec![] },
 ///     milestone: Some(Milestone { title: wave.into() }),
 ///     labels: vec![],
@@ -395,6 +422,11 @@ pub fn needs(body: &str) -> Vec<u64> {
 /// let claims: HashSet<String> = ["issue-5".to_owned()].into();
 /// // 99 is closed. 2 is merged but open. 50 is open outside the wave.
 /// assert_eq!(free_items(&open, "Wave 2", &claims, &[]), [1, 4]);
+///
+/// // An issue with no `Done when:` line is no free work.
+/// let bare = Issue { body: "Text.".into(), ..issue(8, "Wave 2", "", false) };
+/// let more = [open.to_vec(), vec![bare]].concat();
+/// assert_eq!(free_items(&more, "Wave 2", &claims, &[]), [1, 4]);
 ///
 /// // The author of 1 asked for a verify and released the item. The
 /// // verify of 4 failed.
@@ -422,7 +454,7 @@ pub fn free_items(
     claims: &HashSet<String>,
     pulls: &[Pull],
 ) -> Vec<u64> {
-    free_of(open, claims, pulls, |i| {
+    free_of(open, claims, pulls, true, |i| {
         i.milestone.as_ref().is_some_and(|m| m.title == wave)
     })
 }
@@ -437,6 +469,7 @@ pub fn free_items(
 ///
 /// let issue = |number, wave: Option<&str>, label: &str| Issue {
 ///     number,
+///     body: "Done when: x.".into(),
 ///     milestone: wave.map(|title| Milestone { title: title.into() }),
 ///     labels: vec![Label { name: label.into() }],
 ///     ..Issue::default()
@@ -451,17 +484,20 @@ pub fn free_items(
 /// assert_eq!(fix_items(&open, &claims, &[]), [9, 10]);
 /// ```
 pub fn fix_items(open: &[Issue], claims: &HashSet<String>, pulls: &[Pull]) -> Vec<u64> {
-    free_of(open, claims, pulls, Issue::broken_main)
+    free_of(open, claims, pulls, true, Issue::broken_main)
 }
 
 /// The issues of `open` that `pick` takes and that are free: no
 /// tracker ([`Issue::tracker`]), no claim, no comment `Merged in #`, no
 /// pull request that waits for a verify or for the merge, and no open
-/// need.
+/// need. With `line` true, the issues that have the line [`DONE_WHEN`]
+/// (the free work); with `line` false, the issues that are free but for
+/// that line ([`no_done_when_of`]).
 fn free_of(
     open: &[Issue],
     claims: &HashSet<String>,
     pulls: &[Pull],
+    line: bool,
     pick: impl Fn(&Issue) -> bool,
 ) -> Vec<u64> {
     let numbers: HashSet<u64> = open.iter().map(|i| i.number).collect();
@@ -473,6 +509,7 @@ fn free_of(
         .filter(|i| !claims.contains(&format!("issue-{}", i.number)))
         .filter(|i| !in_verify.contains(&i.number))
         .filter(|i| needs(&i.body).iter().all(|n| !numbers.contains(n)))
+        .filter(|i| i.has_done_when() == line)
         .map(|i| i.number)
         .collect()
 }
@@ -1195,6 +1232,11 @@ impl Open {
         free_work_of(&self.milestones, &self.issues, &self.pulls, claims, holds)
     }
 
+    /// [`no_done_when_of`] with these facts.
+    pub fn no_done_when(&self, claims: &HashSet<String>, holds: &HashSet<String>) -> Vec<u64> {
+        no_done_when_of(&self.milestones, &self.issues, &self.pulls, claims, holds)
+    }
+
     /// Each open pull request that cannot merge by itself, with the
     /// reason ([`Pull::stuck`], #279). A pull request of a release issue
     /// (the label `release`) is a release.
@@ -1276,6 +1318,7 @@ pub fn free_work(
 ///
 /// let issue = |number, wave: &str, labels: &[&str]| Issue {
 ///     number,
+///     body: "Done when: x.".into(),
 ///     milestone: Some(Milestone { title: wave.into() }),
 ///     labels: labels.iter().map(|l| Label { name: l.to_string() }).collect(),
 ///     ..Issue::default()
@@ -1318,6 +1361,13 @@ pub fn free_work(
 /// let pulls = [pull(40, 5), pull(41, 6)];
 /// assert_eq!(free_work_of(&open, &issues, &pulls, &none, &none), ["issue-1"]);
 /// assert_eq!(free_work_of(&open, &issues, &[], &none, &none), ["issue-1"]);
+///
+/// // An issue with no `Done when:` line is no build (01M5R0HEP1MXWYY643F1N1DWEM).
+/// // Its verify stays: a verify is not changed.
+/// let bare = |number| Issue { body: "No line.".into(), ..issue(number, "Wave 2", &[]) };
+/// let issues = [issue(1, "Wave 2", &[]), bare(3), bare(4)];
+/// let pulls = [pull(40, 4)];
+/// assert_eq!(free_work_of(&open, &issues, &pulls, &none, &none), ["verify-issue-4", "issue-1"]);
 /// ```
 pub fn free_work_of(
     open: &[Milestone],
@@ -1358,6 +1408,60 @@ pub fn free_work_of(
     // A stable sort: the fix items first, each in its order of above.
     work.sort_by_key(|item| !usage::issue_of(item).is_some_and(|(n, _)| fixes.contains(&n)));
     work
+}
+
+/// The issues that [`free_work_of`] would give as `issue-N` but for the
+/// missing line [`DONE_WHEN`] in their body
+/// (01M5R0HEP1MXWYY643F1N1DWEM): an open issue of the current wave, or a
+/// fix item, that no session claims, with no open need and no pull
+/// request that waits. The wave tells the lead of each, once. A held
+/// `issue-N` is not one: the lead holds it.
+///
+/// ```
+/// use std::collections::HashSet;
+/// use riff::rollout::{Issue, Label, Milestone, Pull, no_done_when_of};
+///
+/// let issue = |number, wave: &str, body: &str| Issue {
+///     number,
+///     body: body.into(),
+///     milestone: Some(Milestone { title: wave.into() }),
+///     ..Issue::default()
+/// };
+/// let open = [Milestone { title: "Wave 2".into() }];
+/// let fix = Issue { labels: vec![Label { name: "broken-main".into() }], ..issue(9, "Backlog", "No line.") };
+/// let issues = [
+///     issue(1, "Wave 2", "Done when: x."),
+///     issue(2, "Wave 2", "No line."),
+///     issue(3, "Wave 2", "Needs: #2\nNo line."),
+///     issue(4, "Wave 2", "No line."),
+///     issue(5, "Backlog", "No line."),
+///     issue(6, "Wave 2", "No line."),
+///     fix,
+/// ];
+/// let claims: HashSet<String> = ["issue-4".to_owned()].into();
+/// let holds: HashSet<String> = ["issue-6".to_owned()].into();
+/// // 1 has the line. 3 waits for 2. 4 has a claim. 5 is in the backlog. 6 is held.
+/// assert_eq!(no_done_when_of(&open, &issues, &[], &claims, &holds), [2, 9]);
+///
+/// // The issue gets the line: it is free work, and the lead hears no more of it.
+/// let issues = [issue(2, "Wave 2", "No line.\n\nDone when: x.")];
+/// let none = HashSet::new();
+/// assert!(no_done_when_of(&open, &issues, &[], &none, &none).is_empty());
+/// ```
+pub fn no_done_when_of(
+    open: &[Milestone],
+    issues: &[Issue],
+    pulls: &[Pull],
+    claims: &HashSet<String>,
+    holds: &HashSet<String>,
+) -> Vec<u64> {
+    let wave = current_wave(open);
+    free_of(issues, claims, pulls, false, |i| {
+        i.broken_main() || wave.is_some_and(|w| i.milestone.as_ref().is_some_and(|m| m.title == w))
+    })
+    .into_iter()
+    .filter(|n| !holds.contains(&format!("issue-{n}")))
+    .collect()
 }
 
 /// The real world of the rollout: the riff, `gh` and the riff daemon.
@@ -1721,9 +1825,9 @@ mod tests {
     #[test]
     fn the_json_of_gh_parses() {
         let issues: Vec<Issue> = serde_json::from_str(
-            r#"[{"number":266,"body":"Needs: #259","comments":[],"milestone":{"number":14,"title":"Wave 13","description":"","dueOn":null}},
-                {"number":259,"body":"","comments":[{"author":{"login":"m"},"body":"Merged in #270 (abc)"}],"milestone":{"number":14,"title":"Wave 13","description":"","dueOn":null}},
-                {"number":265,"body":"Needs: nothing","comments":[],"milestone":{"number":14,"title":"Wave 13","description":"","dueOn":null}},
+            r#"[{"number":266,"body":"Done when: x.\nNeeds: #259","comments":[],"milestone":{"number":14,"title":"Wave 13","description":"","dueOn":null}},
+                {"number":259,"body":"Done when: x.","comments":[{"author":{"login":"m"},"body":"Merged in #270 (abc)"}],"milestone":{"number":14,"title":"Wave 13","description":"","dueOn":null}},
+                {"number":265,"body":"Done when: x.\nNeeds: nothing","comments":[],"milestone":{"number":14,"title":"Wave 13","description":"","dueOn":null}},
                 {"number":210,"body":"","comments":[],"milestone":null}]"#,
         )
         .unwrap();
@@ -1750,7 +1854,7 @@ mod tests {
     #[test]
     fn an_item_with_an_open_pull_request_and_no_claim_counts_one_time() {
         let issues: Vec<Issue> = serde_json::from_str(
-            r#"[{"number":12,"body":"","comments":[],"milestone":{"title":"Wave 3"}}]"#,
+            r#"[{"number":12,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 3"}}]"#,
         )
         .unwrap();
         let heads = [
@@ -1809,7 +1913,7 @@ mod tests {
     #[test]
     fn a_pull_request_that_closes_the_item_on_another_branch_counts() {
         let issues: Vec<Issue> = serde_json::from_str(
-            r#"[{"number":12,"body":"","comments":[],"milestone":{"title":"Wave 3"}}]"#,
+            r#"[{"number":12,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 3"}}]"#,
         )
         .unwrap();
         let pulls: Vec<Pull> = serde_json::from_str(
@@ -1831,8 +1935,8 @@ mod tests {
             title: "Wave 3".into(),
         }];
         let issues: Vec<Issue> = serde_json::from_str(
-            r#"[{"number":12,"body":"","comments":[],"milestone":{"title":"Wave 3"}},
-                {"number":13,"body":"","comments":[],"milestone":{"title":"Wave 3"}}]"#,
+            r#"[{"number":12,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 3"}},
+                {"number":13,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 3"}}]"#,
         )
         .unwrap();
         // The pull request of 13 waits for a verify.

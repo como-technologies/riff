@@ -34,11 +34,11 @@ esac
 
 /// The issues 1 to 5 of the wave.
 const ISSUES: &str = r#"[
-{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":3,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":4,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":5,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]}]"#;
+{"number":1,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":2,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":3,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":4,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":5,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]}]"#;
 
 /// The pull request of `issue` at `head`, with the status `verify` of
 /// `riff/verify` (or none), the state `mergeable`, and auto-merge on when
@@ -192,10 +192,10 @@ fn the_look_of_the_wave_leaves_out_the_release_issue() {
     std::fs::write(
         dir.path().join("issues"),
         r#"[
-{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
-{"number":2,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]},
-{"number":3,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]},
-{"number":4,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]}]"#,
+{"number":1,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
+{"number":2,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]},
+{"number":3,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]},
+{"number":4,"body":"Done when: x.","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"release"}]}]"#,
     )
     .unwrap();
     let look = look(&gh);
