@@ -6648,6 +6648,11 @@ part when they merge.
   of the session, as riff release check does: the roster, the chat line,
   the read of the chat and the pause of the riff go through the riff
   daemon.
+- **01M5QVCVXWBBG1BMGRVBQS25W9** In a session with a terminal, the lead
+  and a takeover, the relay puts the folder of /opt/riff/riff first on
+  the PATH of claude. So a person who types ! riff in the terminal runs
+  the riff of the container. The path /opt/riff/riff stays, and the
+  permission rules that name it still match.
 
 ### The first run
 

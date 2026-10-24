@@ -36,6 +36,7 @@
 //! | The command | `claude --session-id ID --dangerously-skip-permissions START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
 //! | The riff commands | `RIFF_SOCKET` and no `RIFF_SERVER`: `riff wave list` and `riff release check` reach riff-server through the daemon ([`crate::reach`]) | 01M5GVPNAKAPA596K9361HSAAV |
+//! | The riff command | `riff` is the riff of the container: the relay puts `/opt/riff` first on the `PATH` of `claude` ([`crate::session_relay::riff_first`]), so `! riff who` works in the terminal of the lead. The spec sets no `PATH` of its own, and `/opt/riff/riff` stays for the permission rules | 01M5QVCVXWBBG1BMGRVBQS25W9 |
 //! | The wakes | `/opt/riff/riff relay watch --follow` in the Monitor tool, started once | 01M501PA04NP79RJQEDP4D7YTM, 01M59235BBXEKPZBRH23C39574 |
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |
@@ -135,6 +136,10 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// assert!(!spec.command.iter().any(|a| a == "--permission-mode"));
 /// assert!(!spec.command.iter().any(|a| a == "-p"));
 /// assert!(spec.env.iter().any(|e| matches!(e, riff::runtime::Env::Value(n, v) if n == "RIFF_CHECK" && v == "/home/mike/.riff-check")));
+/// // 01M5QVCVXWBBG1BMGRVBQS25W9: the spec leaves the `PATH` of the image
+/// // as it is. The relay puts `/opt/riff` first on it, so `! riff` in the
+/// // lead runs the riff of the container.
+/// assert!(!spec.env.iter().any(|e| matches!(e, riff::runtime::Env::Value(n, _) if n == "PATH")));
 /// ```
 pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
     let mut spec = run::spec(facts);

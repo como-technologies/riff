@@ -157,8 +157,8 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
     script(&bin.join("podman"), body);
 }
 
-/// A fake `claude` in the container. It logs its arguments, takes the
-/// start text, waits while `bin/hold` is there, and prints
+/// A fake `claude` in the container. It logs its arguments and its `PATH`,
+/// takes the start text, waits while `bin/hold` is there, and prints
 /// `bin/events`. When `bin/tools` is there, it first sends its lines to
 /// the riff tools, through the `riff relay mcp` of its MCP config, and
 /// logs the answers to `bin/mcp.out` until it has one for each request.
@@ -170,6 +170,7 @@ exec env RIFF_SOCKET="$socket" "$relay" "$@"
 fn fake_claude(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
+printf '%s\n' "$PATH" > "$dir/claude.path"
 printf '%s\n' "$@" > "$dir/claude.args"
 IFS= read -r line
 printf '%s\n' "$line" > "$dir/run.stdin"
@@ -1894,6 +1895,19 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
         ["/opt/riff/riff", "relay", "--terminal", "--", "claude"]
     );
     wait_for(&machine.bin.path().join("claude.args"), "--mcp-config").await;
+    // 01M5QVCVXWBBG1BMGRVBQS25W9: `! riff` in the terminal of the lead
+    // runs the riff of the container. Its folder is first on the PATH of
+    // claude, and the PATH of the container follows.
+    let path = machine.read("claude.path");
+    let path = path.trim_end();
+    let (first, rest) = path.split_once(':').unwrap();
+    assert_eq!(first, "/opt/riff", "{path}");
+    // The fake claude is in the PATH that follows.
+    let bin = machine.bin.path();
+    assert!(
+        rest.split(':').any(|folder| Path::new(folder) == bin),
+        "{path}"
+    );
     let claude = machine.read("claude.args");
     // 01M5GG2X5F1HXCQJ2JJWV6305K: the lead skips the permission checks,
     // and has no permission mode.
