@@ -626,11 +626,18 @@ fn trailer<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Err
 }
 
 /// A status or a check of the head of a pull request. Only a status has
-/// a context and a state.
+/// a context and a state. Only a check run has a name and a conclusion.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Check {
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub context: Option<String>,
+    /// The name of a check run, for example `Gate`.
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+    pub name: Option<String>,
+    /// The conclusion of a check run: `SUCCESS`, `FAILURE`, `TIMED_OUT`,
+    /// `CANCELLED`, `SKIPPED` and others. It is empty while the run goes.
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+    pub conclusion: Option<String>,
     /// The state of a status: `SUCCESS`, `FAILURE`, `ERROR`, `PENDING`
     /// or `EXPECTED`.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
@@ -651,8 +658,61 @@ impl Check {
         Self {
             context: Some(crate::pr::VERIFY_CONTEXT.into()),
             state: Some(state.into()),
-            url: None,
+            ..Self::default()
         }
+    }
+
+    /// The check run `name` with `conclusion`, as GitHub gives it.
+    ///
+    /// ```
+    /// use riff::rollout::Check;
+    ///
+    /// assert!(Check::run("Gate", "FAILURE").failed());
+    /// assert!(!Check::run("Gate", "SUCCESS").failed());
+    /// ```
+    pub fn run(name: &str, conclusion: &str) -> Self {
+        Self {
+            name: Some(name.into()),
+            conclusion: Some(conclusion.into()),
+            ..Self::default()
+        }
+    }
+
+    /// The name of the check: the context of a status, or the name of a
+    /// check run.
+    pub fn title(&self) -> Option<&str> {
+        self.context.as_deref().or(self.name.as_deref())
+    }
+
+    /// True when the check failed: a check run that ended with
+    /// `FAILURE`, `TIMED_OUT` or `STARTUP_FAILURE`, or a status in the
+    /// state `FAILURE` or `ERROR`. A check that was cancelled or skipped,
+    /// one that goes still, and one that needs a person did not fail. The
+    /// status `riff/verify` is the verify, not a check
+    /// ([`Pull::verify`]).
+    ///
+    /// ```
+    /// use riff::rollout::Check;
+    ///
+    /// let status = |state: &str| Check { context: Some("ci/x".into()), state: Some(state.into()), ..Check::default() };
+    /// assert!(Check::run("Gate", "TIMED_OUT").failed());
+    /// assert!(Check::run("Gate", "STARTUP_FAILURE").failed());
+    /// assert!(status("ERROR").failed());
+    /// assert!(status("FAILURE").failed());
+    /// assert!(!status("PENDING").failed());
+    /// assert!(!Check::run("Gate", "CANCELLED").failed());
+    /// assert!(!Check::run("Gate", "SKIPPED").failed());
+    /// assert!(!Check::run("Gate", "").failed(), "it goes still");
+    /// assert!(!Check::verify("FAILURE").failed(), "the verify is no check");
+    /// ```
+    pub fn failed(&self) -> bool {
+        if self.context.as_deref() == Some(crate::pr::VERIFY_CONTEXT) {
+            return false;
+        }
+        matches!(
+            self.conclusion.as_deref(),
+            Some("FAILURE" | "TIMED_OUT" | "STARTUP_FAILURE")
+        ) || matches!(self.state.as_deref(), Some("FAILURE" | "ERROR"))
     }
 }
 
@@ -669,6 +729,38 @@ pub enum Verify {
     /// new verify request for the same head ([`Pull::reasked`]) makes
     /// it [`Verify::Asked`] again.
     Failed,
+}
+
+/// Why an open pull request cannot merge by itself (#279). The wave
+/// starts a session for it, or tells the lead ([`crate::wave`]), and
+/// `riff top` shows the item in the group `stuck`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stuck {
+    /// Auto-merge is on and the head has a conflict with `main`.
+    Conflict,
+    /// The verify passed, and these checks of the head failed.
+    Checks(Vec<String>),
+    /// The verify passed, and auto-merge is off: nothing merges it.
+    AutoMergeOff,
+}
+
+impl Stuck {
+    /// The words for the reason, in `riff top` and `riff wave list`.
+    ///
+    /// ```
+    /// use riff::rollout::Stuck;
+    ///
+    /// assert_eq!(Stuck::Conflict.word(), "conflict");
+    /// assert_eq!(Stuck::Checks(vec!["Gate".into()]).word(), "checks");
+    /// assert_eq!(Stuck::AutoMergeOff.word(), "auto-merge off");
+    /// ```
+    pub fn word(&self) -> &'static str {
+        match self {
+            Stuck::Conflict => "conflict",
+            Stuck::Checks(_) => "checks",
+            Stuck::AutoMergeOff => "auto-merge off",
+        }
+    }
 }
 
 impl Pull {
@@ -763,6 +855,123 @@ impl Pull {
         self.auto_merge
             && self.mergeable.as_deref() == Some("CONFLICTING")
             && self.verify().is_some()
+    }
+
+    /// The names of the checks of the head that failed ([`Check::failed`]),
+    /// each one time, in order. The rollup of `gh` does not say which
+    /// check a rule requires, so each failed check counts.
+    ///
+    /// ```
+    /// use riff::rollout::{Check, Pull};
+    ///
+    /// let pull = Pull {
+    ///     checks: vec![
+    ///         Check::run("Gate", "FAILURE"),
+    ///         Check::run("Hygiene", "SUCCESS"),
+    ///         Check::run("Gate", "FAILURE"),
+    ///         Check::verify("FAILURE"),
+    ///     ],
+    ///     ..Pull::default()
+    /// };
+    /// assert_eq!(pull.failed_checks(), ["Gate"]);
+    /// ```
+    pub fn failed_checks(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for name in self
+            .checks
+            .iter()
+            .filter(|c| c.failed())
+            .map(|c| c.title().unwrap_or("a check"))
+        {
+            if !names.iter().any(|n| n == name) {
+                names.push(name.to_owned());
+            }
+        }
+        names
+    }
+
+    /// Why this pull request cannot merge by itself, when it cannot
+    /// (#279). A draft, a WIP head, and a failed verify are none: a failed
+    /// verify is free work as a build already. In this order:
+    ///
+    /// 1. A release with a failed check: [`Stuck::Checks`], with its
+    ///    verify in any state. `release` says that its issue has the label
+    ///    of a release; a branch `release-…`, as `riff release cut` names
+    ///    it, is one too. No session builds a release, so the lead hears
+    ///    of it.
+    /// 2. A conflict with `main` with auto-merge on, and a verify that did
+    ///    not fail: [`Stuck::Conflict`]. A release has none: the wave
+    ///    rebases no release.
+    /// 3. A passed verify and a failed check: [`Stuck::Checks`].
+    /// 4. A passed verify and auto-merge off: [`Stuck::AutoMergeOff`].
+    ///
+    /// ```
+    /// use riff::rollout::{Check, Pull, Stuck};
+    ///
+    /// let pull = |checks, mergeable: &str, auto_merge| Pull {
+    ///     number: 40,
+    ///     branch: "worktree-issue-12".into(),
+    ///     checks,
+    ///     mergeable: Some(mergeable.into()),
+    ///     auto_merge,
+    ///     ..Pull::default()
+    /// };
+    /// let passed = || Check::verify("SUCCESS");
+    /// let gate = |conclusion| Check::run("Gate", conclusion);
+    /// // The verify passed, nothing else is wrong.
+    /// assert_eq!(pull(vec![passed()], "MERGEABLE", true).stuck(false), None);
+    /// assert_eq!(pull(vec![passed()], "MERGEABLE", false).stuck(false), Some(Stuck::AutoMergeOff));
+    /// assert_eq!(
+    ///     pull(vec![passed(), gate("FAILURE")], "MERGEABLE", true).stuck(false),
+    ///     Some(Stuck::Checks(vec!["Gate".into()]))
+    /// );
+    /// // A failed check comes before the auto-merge, and a conflict before both.
+    /// assert_eq!(
+    ///     pull(vec![passed(), gate("FAILURE")], "MERGEABLE", false).stuck(false),
+    ///     Some(Stuck::Checks(vec!["Gate".into()]))
+    /// );
+    /// assert_eq!(
+    ///     pull(vec![passed(), gate("FAILURE")], "CONFLICTING", true).stuck(false),
+    ///     Some(Stuck::Conflict)
+    /// );
+    /// // A conflict with auto-merge off is a pull request that nothing merges.
+    /// assert_eq!(pull(vec![passed()], "CONFLICTING", false).stuck(false), Some(Stuck::AutoMergeOff));
+    /// // No verify yet: a conflict only. A failed verify: free work.
+    /// assert_eq!(pull(vec![gate("FAILURE")], "MERGEABLE", true).stuck(false), None);
+    /// assert_eq!(pull(vec![], "CONFLICTING", true).stuck(false), Some(Stuck::Conflict));
+    /// assert_eq!(pull(vec![Check::verify("FAILURE")], "CONFLICTING", true).stuck(false), None);
+    /// // A release hears of a failed check at any verify, and has no rebase.
+    /// assert_eq!(
+    ///     pull(vec![gate("FAILURE")], "MERGEABLE", true).stuck(true),
+    ///     Some(Stuck::Checks(vec!["Gate".into()]))
+    /// );
+    /// assert_eq!(pull(vec![], "CONFLICTING", true).stuck(true), None);
+    /// let draft = Pull { draft: true, ..pull(vec![passed()], "MERGEABLE", false) };
+    /// assert_eq!(draft.stuck(false), None);
+    /// ```
+    pub fn stuck(&self, release: bool) -> Option<Stuck> {
+        if self.draft {
+            return None;
+        }
+        let release = release || self.branch.starts_with("release-");
+        let failed = self.failed_checks();
+        if release && !failed.is_empty() {
+            return Some(Stuck::Checks(failed));
+        }
+        let verify = self.verify()?;
+        if verify == Verify::Failed {
+            return None;
+        }
+        if self.conflict() {
+            return (!release).then_some(Stuck::Conflict);
+        }
+        if verify != Verify::Passed {
+            return None;
+        }
+        if !failed.is_empty() {
+            return Some(Stuck::Checks(failed));
+        }
+        (!self.auto_merge).then_some(Stuck::AutoMergeOff)
     }
 }
 
@@ -984,6 +1193,53 @@ impl Open {
     /// [`free_work_of`] with these facts.
     pub fn free_work(&self, claims: &HashSet<String>, holds: &HashSet<String>) -> Vec<String> {
         free_work_of(&self.milestones, &self.issues, &self.pulls, claims, holds)
+    }
+
+    /// Each open pull request that cannot merge by itself, with the
+    /// reason ([`Pull::stuck`], #279). A pull request of a release issue
+    /// (the label `release`) is a release.
+    ///
+    /// ```
+    /// use riff::rollout::{Check, Issue, Label, Open, Pull, Stuck};
+    ///
+    /// let pull = |number, branch: &str, trailer, checks| Pull {
+    ///     number,
+    ///     branch: branch.into(),
+    ///     trailer,
+    ///     checks,
+    ///     mergeable: Some("MERGEABLE".into()),
+    ///     auto_merge: true,
+    ///     ..Pull::default()
+    /// };
+    /// let gate = || Check::run("Gate", "FAILURE");
+    /// let open = Open {
+    ///     issues: vec![Issue { number: 7, labels: vec![Label { name: "release".into() }], ..Issue::default() }],
+    ///     pulls: vec![
+    ///         pull(40, "worktree-issue-12", None, vec![Check::verify("SUCCESS"), gate()]),
+    ///         // The issue of the pull request has the label `release`.
+    ///         pull(41, "ship-it", Some(7), vec![gate()]),
+    ///         pull(42, "worktree-issue-13", None, vec![Check::verify("SUCCESS")]),
+    ///     ],
+    ///     ..Open::default()
+    /// };
+    /// let stuck: Vec<(u64, Stuck)> = open.stuck().into_iter().map(|(p, s)| (p.number, s)).collect();
+    /// let checks = || Stuck::Checks(vec!["Gate".into()]);
+    /// assert_eq!(stuck, [(40, checks()), (41, checks())]);
+    /// ```
+    pub fn stuck(&self) -> Vec<(&Pull, Stuck)> {
+        let releases: HashSet<u64> = self
+            .issues
+            .iter()
+            .filter(|i| i.release())
+            .map(|i| i.number)
+            .collect();
+        self.pulls
+            .iter()
+            .filter_map(|p| {
+                let release = p.issue().is_some_and(|n| releases.contains(&n));
+                Some((p, p.stuck(release)?))
+            })
+            .collect()
     }
 }
 

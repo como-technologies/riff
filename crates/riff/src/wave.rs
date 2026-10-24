@@ -1,7 +1,9 @@
 //! Let riff run the wave (#719): the riff daemon starts one session for
 //! each free item of the current wave, one for each pull request that
-//! waits for a verify (decisions 8 and 34 of #699), and one to rebase
-//! each pull request with a conflict with `main` (#1082).
+//! waits for a verify (decisions 8 and 34 of #699), one to rebase
+//! each pull request with a conflict with `main` (#1082), and one to fix
+//! each pull request with a failed check. It tells the lead of a pull
+//! request that no session can fix (#279).
 //!
 //! # Design
 //!
@@ -31,12 +33,14 @@
 //!
 //! [`pick`] takes the first item of the free work of the look
 //! ([`look_on`]): the free work of the rollout of the lead
-//! ([`crate::rollout::free_work`]) with the rebases ([`rebases`]). A fix
+//! ([`crate::rollout::free_work`]) with the fixes ([`fixes`]). A fix
 //! item of a broken `main` first
 //! ([`crate::rollout::BROKEN_MAIN`], 01M51QEYS538XA58KDRY844T52), then
 //! the rebase of each pull request with a conflict (see "A conflict with
-//! main"), then the pull requests that wait for a verify, then the free
-//! items of the current wave. It never starts:
+//! main"), then the fix of each pull request with a failed check (see
+//! "A pull request that cannot merge"), then the pull requests that wait
+//! for a verify, then the free items of the current wave. It never
+//! starts:
 //!
 //! - an item while the riff or the repository is paused;
 //! - a held item (01M4ZV3B6M7PZRJ39XTXBZP3ZH);
@@ -54,6 +58,8 @@
 //!   (01M57A7A48A70Y7PTD95A3MBYC);
 //! - the rebase of a head commit that started one time in this run of
 //!   the wave ([`REBASES`], 01M57FJ3WWMQSDBFRRHXN3SMFQ);
+//! - the fix of the failed checks of a head commit that started one time
+//!   in this run of the wave ([`CHECKS`]);
 //! - any item while a fact of the host fails ([`World::host`]): the
 //!   sign-in of `gh`, or the sign-in of `claude` with less than
 //!   [`run::MIN_MINUTES`] left. No item can start then, so no start
@@ -80,7 +86,7 @@
 //!     R -- "no push" --> L["a message to the lead"]
 //! ```
 //!
-//! [`rebases`] puts each such item in the free work after the fix items
+//! [`fixes`] puts each such item in the free work after the fix items
 //! of a broken `main`, before each other item. The wave starts no
 //! verify of a head with a conflict: a pass counts only for its commit,
 //! and the rebase makes a new one. A pull request whose verify failed is
@@ -112,6 +118,67 @@
 //!     W --> M["the Gate of main:<br/>a message, the fix item, a note"]
 //!     X["riff wave stop"] --> E["the loop and the look end"]
 //! ```
+//!
+//! # A pull request that cannot merge
+//!
+//! A conflict is one reason that a pull request cannot merge by itself
+//! ([`rollout::Stuck`], #279). The wave reads two more from `gh` at each
+//! look, and nobody has to remember to check:
+//!
+//! ```mermaid
+//! flowchart TD
+//!     P["an open pull request,<br/>the verify passed"] --> C{"a check of the head failed?<br/>(statusCheckRollup)"}
+//!     C -- "yes, an item" --> B["a build: Work::Checks at the head commit,<br/>with the names of the checks"]
+//!     C -- "yes, a release" --> M["a message to the lead, with the checks"]
+//!     C -- "no" --> A{"auto-merge off?"}
+//!     A -- "yes" --> N["a message to the lead,<br/>with the command gh pr merge --auto --squash N"]
+//!     A -- "no" --> W["it merges by itself"]
+//!     B -- "a push" --> V["a new Gate and a new verify of the new head"]
+//!     B -- "no push, the check still failed" --> L["a message to the lead"]
+//!     B -- "no push, the check runs again" --> T["a note to the lead"]
+//! ```
+//!
+//! - **A failed check after a pass** (01M5QW2KVAS05Q72630RNW47G0).
+//!   [`rollout::Pull::verify`] reads only the status `riff/verify`. A
+//!   check of the rollup that failed ([`rollout::Check::failed`]), for
+//!   example the `Gate`, is no free work: the item has a passed verify.
+//!   The wave starts a build session for the item with the start text
+//!   [`text::wave_checks_start`]: it names the checks, tells to read the
+//!   failed run, and to fix the code and push to the same pull request.
+//!   For a known flake it allows one run of the job again. The rollup
+//!   does not say which check a rule requires, so each failed check
+//!   counts. A check that was cancelled or skipped did not fail.
+//! - **Auto-merge off** (01M5QW2M1M5QZJXSP0BY6XG118). A pull request
+//!   whose verify passed and that has no auto-merge never merges: nothing
+//!   turns it on. A conflict gets no rebase then
+//!   ([`rollout::Pull::conflict`] needs auto-merge). The lead gets one
+//!   message with the reason and the command
+//!   (`gh pr merge --auto --squash N`).
+//! - **A release** (01M5QW2M4WX53N29SHRV0S32WM). No session builds a
+//!   release (the label `release`, or a branch `release-…`). A failed
+//!   check of a release pull request gets a message to the lead, with the
+//!   names of the checks, at any state of its verify.
+//!
+//! Each stuck state comes one time. A message is keyed by the pull
+//! request, its head commit and its reason; the build of a failed check
+//! by the item and the head ([`Work::key`]). So a new head is a new
+//! state. A message is not repeated while the wave runs. A build of a
+//! failed check runs one time for a head in a run of the wave
+//! ([`CHECKS`]), and `riff wave run` clears the starts. When a pull
+//! request has a conflict and a failed check, the rebase comes first:
+//! the new head has new checks.
+//!
+//! The session may not push: for a flake it runs the job again
+//! (01M5QW2KYFM4C287D9NMSPH8TA). After its end the daemon reads the pull
+//! request. When the head is the same and a check still failed, the lead
+//! gets a message ([`text::wave_checks_not_fixed`]); else the lead gets a
+//! note ([`text::wave_checks_rerun`]). A push gets the verify request of
+//! the new head, as each build does.
+//!
+//! `riff top` and `riff wave list` show the item of a stuck pull request
+//! in the group `stuck`, with the reason, for example
+//! `stuck: #250 (checks)`, while no session claims it
+//! ([`riff_client::waves::Board`], 01M5QW2M8FPBMMF4S0D8PC39AB).
 //!
 //! # A job
 //!
@@ -209,6 +276,10 @@ pub const STARTS: u32 = 3;
 /// The most starts of the rebase of one head commit in one run of a
 /// wave (01M57FJ3WWMQSDBFRRHXN3SMFQ).
 pub const REBASES: u32 = 1;
+
+/// The most starts of the fix of the failed checks of one head commit in
+/// one run of a wave (#279).
+pub const CHECKS: u32 = 1;
 
 /// A wave that the daemon runs: a repository, and where it is on this
 /// machine.
@@ -395,11 +466,24 @@ pub enum Work {
         /// The head commit with the conflict.
         commit: String,
     },
+    /// A build that fixes the failed checks of the pull request `pull`
+    /// of the issue: its verify passed, and the checks `checks` of its
+    /// head `commit` failed (#279).
+    Checks {
+        /// The issue.
+        issue: u64,
+        /// The pull request.
+        pull: u64,
+        /// The head commit with the failed checks.
+        commit: String,
+        /// The names of the checks that failed.
+        checks: Vec<String>,
+    },
 }
 
 impl Work {
-    /// The work item: `issue-N` or `verify-issue-N`. A rebase is a
-    /// build: its item is `issue-N`.
+    /// The work item: `issue-N` or `verify-issue-N`. A rebase and a fix
+    /// of checks are builds: their item is `issue-N`.
     ///
     /// ```
     /// use riff::wave::Work;
@@ -409,10 +493,14 @@ impl Work {
     /// assert_eq!(verify.item(), "verify-issue-12");
     /// let rebase = Work::Rebase { issue: 12, pull: 40, commit: "1a2b".into() };
     /// assert_eq!(rebase.item(), "issue-12");
+    /// let checks = Work::Checks { issue: 12, pull: 40, commit: "1a2b".into(), checks: vec!["Gate".into()] };
+    /// assert_eq!(checks.item(), "issue-12");
     /// ```
     pub fn item(&self) -> String {
         match self {
-            Work::Build { issue } | Work::Rebase { issue, .. } => format!("issue-{issue}"),
+            Work::Build { issue } | Work::Rebase { issue, .. } | Work::Checks { issue, .. } => {
+                format!("issue-{issue}")
+            }
             Work::Verify { issue, .. } => format!("verify-issue-{issue}"),
         }
     }
@@ -420,15 +508,18 @@ impl Work {
     /// The issue.
     pub fn issue(&self) -> u64 {
         match self {
-            Work::Build { issue } | Work::Verify { issue, .. } | Work::Rebase { issue, .. } => {
-                *issue
-            }
+            Work::Build { issue }
+            | Work::Verify { issue, .. }
+            | Work::Rebase { issue, .. }
+            | Work::Checks { issue, .. } => *issue,
         }
     }
 
     /// The name of the starts of this work in a run of the wave: its
     /// item. A rebase counts for its head commit, so that each conflict
-    /// starts one session (01M57FJ3WWMQSDBFRRHXN3SMFQ).
+    /// starts one session (01M57FJ3WWMQSDBFRRHXN3SMFQ). The fix of checks
+    /// counts for its head commit too, apart from the rebase of the same
+    /// head (#279).
     ///
     /// ```
     /// use riff::wave::Work;
@@ -437,19 +528,24 @@ impl Work {
     /// let rebase = |commit: &str| Work::Rebase { issue: 12, pull: 40, commit: commit.into() };
     /// assert_eq!(rebase("1a2b").key(), "issue-12@1a2b");
     /// assert_ne!(rebase("1a2b").key(), rebase("5e6f").key());
+    /// let checks = Work::Checks { issue: 12, pull: 40, commit: "1a2b".into(), checks: vec![] };
+    /// assert_eq!(checks.key(), "issue-12@1a2b:checks");
+    /// assert_ne!(checks.key(), rebase("1a2b").key());
     /// ```
     pub fn key(&self) -> String {
         match self {
             Work::Rebase { commit, .. } => format!("{}@{commit}", self.item()),
+            Work::Checks { commit, .. } => format!("{}@{commit}:checks", self.item()),
             _ => self.item(),
         }
     }
 
-    /// The most starts of this work in a run of the wave: [`STARTS`], or
-    /// [`REBASES`] for a rebase.
+    /// The most starts of this work in a run of the wave: [`STARTS`],
+    /// [`REBASES`] for a rebase, or [`CHECKS`] for a fix of checks.
     pub fn most(&self) -> u32 {
         match self {
             Work::Rebase { .. } => REBASES,
+            Work::Checks { .. } => CHECKS,
             _ => STARTS,
         }
     }
@@ -485,13 +581,70 @@ pub struct Conflict {
     pub commit: String,
 }
 
+/// A pull request of an item whose verify passed and whose checks
+/// failed (#279).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failed {
+    /// The pull request.
+    pub pull: u64,
+    /// Its head commit, whose checks failed.
+    pub commit: String,
+    /// The names of the checks that failed.
+    pub checks: Vec<String>,
+}
+
+/// A pull request that no session can fix: the lead gets one message
+/// for it (#279).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    /// The pull request.
+    pub pull: u64,
+    /// Its branch.
+    pub branch: String,
+    /// Its head commit.
+    pub commit: String,
+    /// Why it cannot merge.
+    pub stuck: rollout::Stuck,
+}
+
+impl Notice {
+    /// The key of the message: the pull request, its head and its
+    /// reason. A message with the same key goes one time.
+    ///
+    /// ```
+    /// use riff::rollout::Stuck;
+    /// use riff::wave::Notice;
+    ///
+    /// let notice = |commit: &str, stuck| Notice { pull: 40, branch: "b".into(), commit: commit.into(), stuck };
+    /// assert_eq!(notice("1a2b", Stuck::AutoMergeOff).key(), "#40@1a2b:auto-merge off");
+    /// assert_ne!(notice("1a2b", Stuck::AutoMergeOff).key(), notice("5e6f", Stuck::AutoMergeOff).key());
+    /// ```
+    pub fn key(&self) -> String {
+        format!("#{}@{}:{}", self.pull, self.commit, self.stuck.word())
+    }
+}
+
+/// The pull requests that cannot merge by themselves, by what the wave
+/// does for them (#279).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Fixes {
+    /// The pull requests to rebase, by issue.
+    pub conflicts: BTreeMap<u64, Conflict>,
+    /// The pull requests whose checks failed after a pass, by issue:
+    /// a build for each.
+    pub failed: BTreeMap<u64, Failed>,
+    /// The pull requests that the lead hears of.
+    pub notices: Vec<Notice>,
+}
+
 /// The facts of a wave at one look.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Look {
     /// True when the riff or the repository is paused.
     pub paused: bool,
-    /// The free work, in order ([`rebases`]): `verify-issue-N` and
-    /// `issue-N`. An `issue-N` in `conflicts` is a rebase.
+    /// The free work, in order ([`fixes`]): `verify-issue-N` and
+    /// `issue-N`. An `issue-N` in `fixes.conflicts` is a rebase, and one
+    /// in `fixes.failed` the fix of its checks.
     pub free: Vec<String>,
     /// The items of the repository that a session claims.
     pub claims: BTreeSet<String>,
@@ -499,8 +652,8 @@ pub struct Look {
     pub holds: BTreeSet<String>,
     /// The pull requests that wait for a verify, by issue.
     pub pulls: BTreeMap<u64, Waiting>,
-    /// The pull requests to rebase, by issue.
-    pub conflicts: BTreeMap<u64, Conflict>,
+    /// The pull requests that cannot merge by themselves.
+    pub fixes: Fixes,
 }
 
 /// The issue of `verify-issue-N`.
@@ -514,7 +667,7 @@ fn verify_issue(item: &str) -> Option<u64> {
 ///
 /// ```
 /// use std::collections::{BTreeMap, BTreeSet};
-/// use riff::wave::{Conflict, Look, Waiting, Work, pick};
+/// use riff::wave::{Conflict, Failed, Fixes, Look, Waiting, Work, pick};
 ///
 /// let look = Look {
 ///     free: vec!["verify-issue-9".into(), "issue-12".into(), "issue-13".into()],
@@ -535,12 +688,19 @@ fn verify_issue(item: &str) -> Option<u64> {
 ///
 /// // The pull request of 14 has a conflict: one rebase for its head.
 /// let conflict = Conflict { pull: 54, commit: "5e6f".into() };
-/// let look = Look { free: vec!["issue-14".into()], conflicts: [(14, conflict)].into(), ..Look::default() };
+/// let look = Look { free: vec!["issue-14".into()], fixes: Fixes { conflicts: [(14, conflict)].into(), ..Fixes::default() }, ..Look::default() };
 /// let rebase = Work::Rebase { issue: 14, pull: 54, commit: "5e6f".into() };
 /// assert_eq!(pick(&look, &none, &BTreeMap::new()), Some(rebase.clone()));
 /// assert_eq!(pick(&look, &none, &[(rebase.key(), 1)].into()), None);
 /// // The starts of the build do not stop the rebase.
 /// assert_eq!(pick(&look, &none, &[("issue-14".to_owned(), 3)].into()), Some(rebase));
+///
+/// // The checks of the pull request of 15 failed after a pass: one fix for its head.
+/// let failed = Failed { pull: 55, commit: "7a8b".into(), checks: vec!["Gate".into()] };
+/// let look = Look { free: vec!["issue-15".into()], fixes: Fixes { failed: [(15, failed)].into(), ..Fixes::default() }, ..Look::default() };
+/// let fix = Work::Checks { issue: 15, pull: 55, commit: "7a8b".into(), checks: vec!["Gate".into()] };
+/// assert_eq!(pick(&look, &none, &BTreeMap::new()), Some(fix.clone()));
+/// assert_eq!(pick(&look, &none, &[(fix.key(), 1)].into()), None);
 /// ```
 pub fn pick(
     look: &Look,
@@ -568,35 +728,47 @@ pub fn pick(
             }
         } else {
             let issue = item.strip_prefix("issue-")?.parse().ok()?;
-            match look.conflicts.get(&issue) {
-                Some(conflict) => Work::Rebase {
+            match (
+                look.fixes.conflicts.get(&issue),
+                look.fixes.failed.get(&issue),
+            ) {
+                (Some(conflict), _) => Work::Rebase {
                     issue,
                     pull: conflict.pull,
                     commit: conflict.commit.clone(),
                 },
-                None => Work::Build { issue },
+                (None, Some(failed)) => Work::Checks {
+                    issue,
+                    pull: failed.pull,
+                    commit: failed.commit.clone(),
+                    checks: failed.checks.clone(),
+                },
+                (None, None) => Work::Build { issue },
             }
         };
         (starts.get(&work.key()).copied().unwrap_or(0) < work.most()).then_some(work)
     })
 }
 
-/// True when the item `issue-N` of the free work of `look` is a rebase.
-fn rebase_of(look: &Look, item: &str) -> bool {
+/// True when the item `issue-N` of the free work of `look` is a fix of
+/// a pull request: a rebase, or the fix of its checks.
+fn fix_of(look: &Look, item: &str) -> bool {
     item.strip_prefix("issue-")
         .and_then(|n| n.parse().ok())
-        .is_some_and(|n| look.conflicts.contains_key(&n))
+        .is_some_and(|n| {
+            look.fixes.conflicts.contains_key(&n) || look.fixes.failed.contains_key(&n)
+        })
 }
 
-/// The items of the free work of `look` that reached [`STARTS`]. A
-/// rebase is not one: it starts one time for each head.
+/// The items of the free work of `look` that reached [`STARTS`]. A fix
+/// of a pull request is not one: it starts one time for each head.
 fn spent<'a>(
     look: &'a Look,
     starts: &'a BTreeMap<String, u32>,
 ) -> impl Iterator<Item = &'a String> {
     look.free
         .iter()
-        .filter(|item| !rebase_of(look, item))
+        .filter(|item| !fix_of(look, item))
         .filter(|item| starts.get(*item).copied().unwrap_or(0) >= STARTS)
 }
 
@@ -763,6 +935,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
     let say = |text: String| *lock(&word) = text;
     // The spent items that the lead heard of.
     let mut told: BTreeSet<String> = BTreeSet::new();
+    // The stuck pull requests that the lead heard of ([`Notice::key`]).
+    let mut noticed: BTreeSet<String> = BTreeSet::new();
     // True while the wave waits for a fact of the host: the lead heard
     // of it.
     let mut waits = false;
@@ -790,6 +964,17 @@ pub(crate) async fn run<R: Runtime + 'static>(
                             .last_end(&item)
                             .unwrap_or_else(|| text::WAVE_END_UNKNOWN.to_owned());
                         let body = text::wave_spent(&item, STARTS, &reason);
+                        world.tell(&wave, &body).await;
+                    }
+                }
+                for notice in &look.fixes.notices {
+                    if noticed.insert(notice.key()) {
+                        let body = text::wave_stuck(
+                            notice.pull,
+                            &notice.branch,
+                            &notice.commit,
+                            &notice.stuck,
+                        );
                         world.tell(&wave, &body).await;
                     }
                 }
@@ -1145,6 +1330,36 @@ async fn save_work(record: &Record, issue: u64) -> Option<String> {
     }
 }
 
+/// What a build fixed on a pull request. When the pull request still
+/// has the head commit, the session pushed nothing.
+#[derive(Debug, Clone, Copy)]
+enum Fix<'a> {
+    /// A rebase of the head commit that had the conflict.
+    Rebase(&'a str),
+    /// The fix of the checks `names` that failed at the head commit.
+    Checks(&'a str, &'a [String]),
+}
+
+impl Fix<'_> {
+    /// The head commit that the build started from.
+    fn commit(&self) -> &str {
+        match self {
+            Fix::Rebase(commit) | Fix::Checks(commit, _) => commit,
+        }
+    }
+}
+
+/// The names of the checks of pull request `number` that failed now,
+/// with `gh`.
+async fn still_failed(gh: pr::Gh, number: u64) -> Result<Vec<String>> {
+    blocking(move || {
+        let n = number.to_string();
+        let pull: rollout::Pull = gh.json(&["pr", "view", &n, "--json", rollout::PULL_FIELDS])?;
+        Ok(pull.failed_checks())
+    })
+    .await
+}
+
 /// The steps after the end of a build, with `gh` for the forge: the
 /// verify request for the open pull request of its branch, or a note
 /// that it has none. When the issue has the label
@@ -1152,20 +1367,25 @@ async fn save_work(record: &Record, issue: u64) -> Option<String> {
 /// a note with the reason in place of the verify request, as `riff run`
 /// does ([`run::no_verify`], 01M51KH0H7J35PEKMHP5KQB84T).
 ///
-/// The pair is `(conflict, saved)`: the commit of `saved` is the WIP commit
+/// The pair is `(fix, saved)`: the commit of `saved` is the WIP commit
 /// that riff pushed for a build with no push.
 ///
-/// After a rebase, `conflict` is the head commit that had the conflict.
-/// When the pull request still has that head, the session pushed
-/// nothing: the lead gets a message in place of the verify request
+/// After a rebase, `fix` is the head commit that had the conflict. When
+/// the pull request still has that head, the session pushed nothing: the
+/// lead gets a message in place of the verify request
 /// (01M57FJ3Z8AFDY9G0KTAYZJESY).
+///
+/// After the fix of failed checks, `fix` is the head commit whose checks
+/// failed. A session that pushed nothing may have run the job again.
+/// So riff reads the checks of the pull request: when one still failed,
+/// the lead gets a message, and else a note (#279).
 async fn after_build(
     gh: pr::Gh,
     api: &Api,
     record: &Record,
     wave: &Wave,
     issue: u64,
-    (conflict, saved): (Option<&str>, Option<&str>),
+    (fix, saved): (Option<Fix<'_>>, Option<&str>),
     ended: Ended,
 ) -> Result<Vec<String>> {
     let branch = branch_of(issue);
@@ -1186,12 +1406,39 @@ async fn after_build(
     let item = &record.live.item;
     let session = run::short(&record.live.session);
     let mut lines = Vec::new();
-    let same = |pull: &run::Pull| conflict == Some(pull.head_ref_oid.as_str());
-    let (body, kind) = match &pull {
-        Some(pull) if same(pull) => (
-            text::wave_not_rebased(item, pull.number, &branch, &pull.head_ref_oid, session),
-            Kind::Message,
+    let same = |pull: &run::Pull| fix.is_some_and(|f| f.commit() == pull.head_ref_oid);
+    // The checks of the pull request that still failed, after a fix of
+    // checks that pushed nothing.
+    let still = match (&pull, fix) {
+        (Some(pull), Some(Fix::Checks(_, names))) if same(pull) => Some(
+            still_failed(gh.clone(), pull.number)
+                .await
+                .unwrap_or_else(|_| names.to_vec()),
         ),
+        _ => None,
+    };
+    let (body, kind) = match &pull {
+        Some(pull) if same(pull) => match &still {
+            Some(checks) if checks.is_empty() => (
+                text::wave_checks_rerun(item, pull.number, &branch, &pull.head_ref_oid, session),
+                Kind::Note,
+            ),
+            Some(checks) => (
+                text::wave_checks_not_fixed(
+                    item,
+                    pull.number,
+                    &branch,
+                    &pull.head_ref_oid,
+                    session,
+                    checks,
+                ),
+                Kind::Message,
+            ),
+            None => (
+                text::wave_not_rebased(item, pull.number, &branch, &pull.head_ref_oid, session),
+                Kind::Message,
+            ),
+        },
         Some(pull) if wip_head(&gh, &wave.repo, &pull.head_ref_oid).await => (
             text::wave_wip_head(item, pull.number, &branch, &pull.head_ref_oid, session),
             Kind::Note,
@@ -1227,7 +1474,7 @@ async fn after_build(
         Some(pull) => {
             lines.push(text::run_pull(pull.number, &pull.url));
             lines.push(match kind {
-                _ if same(pull) => text::run_lead_told(item),
+                Kind::Message if same(pull) => text::run_lead_told(item),
                 Kind::Message => text::run_verify_sent(item, pull.number),
                 _ => text::run_lead_noted(item),
             });
@@ -1426,6 +1673,17 @@ impl Live {
                 blocking(move || run::make_clone(&main, &at, &on)).await?;
                 text::wave_rebase_start(&wave.repo, *issue, *pull, commit, &branch, session)
             }
+            Work::Checks {
+                issue,
+                pull,
+                commit,
+                checks,
+            } => {
+                let branch = branch_of(*issue);
+                let (main, at, on) = (main.clone(), clone.clone(), branch.clone());
+                blocking(move || run::make_clone(&main, &at, &on)).await?;
+                text::wave_checks_start(&wave.repo, *issue, *pull, commit, checks, &branch, session)
+            }
             Work::Verify {
                 issue,
                 pull,
@@ -1517,20 +1775,31 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
     Ok(())
 }
 
-/// The free work of a wave with the rebases, from the free work `free`
-/// of the facts `open` ([`rollout::Open::free_work`]), and the pull
-/// request to rebase of each issue (01M57FJ3WWMQSDBFRRHXN3SMFQ). A pull
-/// request to rebase is an open pull request of an item with auto-merge
-/// on and a conflict with `main` ([`rollout::Pull::conflict`]) whose
-/// verify did not fail: a failed verify is free work as a build already.
-/// Its item `issue-N` comes after the fix items of a broken `main`
-/// (01M51QEYS538XA58KDRY844T52), before each other item. The free work
-/// has no verify of a head with a conflict. [`pick`] skips a held or a
-/// claimed rebase, as each item.
+/// The free work of a wave with the fixes of the pull requests that
+/// cannot merge by themselves, from the free work `free` of the facts
+/// `open` ([`rollout::Open::free_work`]) (01M57FJ3WWMQSDBFRRHXN3SMFQ,
+/// #279). They are [`Fixes`]:
+///
+/// - A pull request to rebase is an open pull request of an item with
+///   auto-merge on and a conflict with `main` ([`rollout::Pull::conflict`])
+///   whose verify did not fail: a failed verify is free work as a build
+///   already. The free work has no verify of a head with a conflict.
+/// - A pull request with failed checks is one whose verify passed and
+///   whose head has a failed check ([`rollout::Stuck::Checks`]). It is a
+///   build, with the names of the checks.
+/// - A pull request that no session can fix gets a notice for the lead:
+///   one with auto-merge off after a pass ([`rollout::Stuck::AutoMergeOff`]),
+///   and a release or a tracker with a failed check. No session builds
+///   a release (the label `release`) or a tracker.
+///
+/// The items `issue-N` of the rebases come after the fix items of a
+/// broken `main` (01M51QEYS538XA58KDRY844T52), before each other item,
+/// then the items of the failed checks. [`pick`] skips a held or a
+/// claimed item, as each item.
 ///
 /// ```
-/// use riff::rollout::{Check, Issue, Label, Open, Pull};
-/// use riff::wave::{Conflict, rebases};
+/// use riff::rollout::{Check, Issue, Label, Open, Pull, Stuck};
+/// use riff::wave::{Conflict, Failed, Notice, fixes};
 ///
 /// let pull = |number, issue: u64, state: Option<&str>, mergeable: &str| Pull {
 ///     number,
@@ -1541,62 +1810,94 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///     auto_merge: true,
 ///     ..Pull::default()
 /// };
+/// let gate = |pull: Pull| Pull { checks: [pull.checks, vec![Check::run("Gate", "FAILURE")]].concat(), ..pull };
 /// let open = Open {
-///     issues: vec![Issue { number: 9, labels: vec![Label { name: "broken-main".into() }], ..Issue::default() }],
+///     issues: vec![
+///         Issue { number: 9, labels: vec![Label { name: "broken-main".into() }], ..Issue::default() },
+///         Issue { number: 8, labels: vec![Label { name: "release".into() }], ..Issue::default() },
+///     ],
 ///     pulls: vec![
 ///         pull(41, 1, Some("SUCCESS"), "CONFLICTING"),
 ///         pull(42, 2, None, "CONFLICTING"),
 ///         pull(43, 3, Some("FAILURE"), "CONFLICTING"),
 ///         pull(44, 4, Some("SUCCESS"), "MERGEABLE"),
 ///         Pull { auto_merge: false, ..pull(45, 5, Some("SUCCESS"), "CONFLICTING") },
+///         gate(pull(46, 6, Some("SUCCESS"), "MERGEABLE")),
+///         gate(pull(47, 8, None, "MERGEABLE")),
 ///     ],
 ///     ..Open::default()
 /// };
 /// let free = ["issue-9", "verify-issue-2", "issue-3", "issue-7"].map(String::from).to_vec();
-/// let (free, conflicts) = rebases(&open, free);
-/// assert_eq!(free, ["issue-9", "issue-1", "issue-2", "issue-3", "issue-7"]);
-/// assert_eq!(conflicts.keys().copied().collect::<Vec<_>>(), [1, 2]);
-/// assert_eq!(conflicts[&1], Conflict { pull: 41, commit: "c1".into() });
+/// let (free, fixes) = fixes(&open, free);
+/// // The rebases of 1 and 2, the fix of the checks of 6.
+/// assert_eq!(free, ["issue-9", "issue-1", "issue-2", "issue-6", "issue-3", "issue-7"]);
+/// assert_eq!(fixes.conflicts.keys().copied().collect::<Vec<_>>(), [1, 2]);
+/// assert_eq!(fixes.conflicts[&1], Conflict { pull: 41, commit: "c1".into() });
+/// assert_eq!(fixes.failed[&6], Failed { pull: 46, commit: "c6".into(), checks: vec!["Gate".into()] });
+/// // The lead hears of 5 (auto-merge off) and of the release 8.
+/// let told: Vec<(u64, Stuck)> = fixes.notices.iter().map(|n| (n.pull, n.stuck.clone())).collect();
+/// assert_eq!(told, [(45, Stuck::AutoMergeOff), (47, Stuck::Checks(vec!["Gate".into()]))]);
+/// assert_eq!(fixes.notices[0], Notice { pull: 45, branch: "worktree-issue-5".into(), commit: "c5".into(), stuck: Stuck::AutoMergeOff });
 /// ```
-pub fn rebases(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, BTreeMap<u64, Conflict>) {
-    let releases: HashSet<u64> = open
+pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
+    // No session builds a release or a tracker.
+    let no_build: HashSet<u64> = open
         .issues
         .iter()
-        .filter(|i| i.release())
+        .filter(|i| i.release() || i.tracker())
         .map(|i| i.number)
         .collect();
-    let conflicts: BTreeMap<u64, Conflict> = open
-        .pulls
-        .iter()
-        .filter(|p| p.conflict() && p.verify() != Some(rollout::Verify::Failed))
-        .filter_map(|p| {
-            let conflict = Conflict {
+    let mut found = Fixes::default();
+    for (p, stuck) in open.stuck() {
+        let item = p.issue().filter(|n| !no_build.contains(n));
+        match (stuck, item) {
+            // A conflict has an issue: its verify is not `None`.
+            (rollout::Stuck::Conflict, _) => {
+                if let Some(n) = p.issue() {
+                    let conflict = Conflict {
+                        pull: p.number,
+                        commit: p.head.clone(),
+                    };
+                    found.conflicts.insert(n, conflict);
+                }
+            }
+            (rollout::Stuck::Checks(checks), Some(n)) => {
+                let failed = Failed {
+                    pull: p.number,
+                    commit: p.head.clone(),
+                    checks,
+                };
+                found.failed.insert(n, failed);
+            }
+            (stuck, _) => found.notices.push(Notice {
                 pull: p.number,
+                branch: p.branch.clone(),
                 commit: p.head.clone(),
-            };
-            Some((p.issue()?, conflict))
-        })
-        .filter(|(n, _)| !releases.contains(n))
-        .collect();
-    let fixes: HashSet<u64> = open
+                stuck,
+            }),
+        }
+    }
+    let fix_items: HashSet<u64> = open
         .issues
         .iter()
         .filter(|i| i.broken_main())
         .map(|i| i.number)
         .collect();
-    let fix = |item: &String| usage::issue_of(item).is_some_and(|(n, _)| fixes.contains(&n));
+    let fix = |item: &String| usage::issue_of(item).is_some_and(|(n, _)| fix_items.contains(&n));
     let mut free: Vec<String> = free
         .into_iter()
-        .filter(|item| verify_issue(item).is_none_or(|n| !conflicts.contains_key(&n)))
+        .filter(|item| verify_issue(item).is_none_or(|n| !found.conflicts.contains_key(&n)))
         .collect();
     let at = free.iter().take_while(|item| fix(item)).count();
-    let new: Vec<String> = conflicts
+    let new: Vec<String> = found
+        .conflicts
         .keys()
+        .chain(found.failed.keys())
         .map(|n| format!("issue-{n}"))
         .filter(|item| !free.contains(item))
         .collect();
     free.splice(at..at, new);
-    (free, conflicts)
+    (free, found)
 }
 
 /// The verify requests that answer a failed verify: the pairs of an
@@ -1653,7 +1954,7 @@ pub fn reasked(bodies: &[&str]) -> HashSet<(u64, String)> {
 
 /// The facts of the wave of the repository `repo` from the forge, with
 /// `gh`, and the items that a session claims (`claims`) and the held
-/// items (`holds`): the free work with the rebases ([`rebases`]), and
+/// items (`holds`): the free work with the fixes ([`fixes`]), and
 /// the pull request of each verify among it, with the Gate of its head.
 pub fn look_on(
     gh: &pr::Gh,
@@ -1681,7 +1982,7 @@ pub fn look_with(
         let commit: String = pull.head.chars().take(7).collect();
         pull.reasked = pull.issue().is_some_and(|n| asked.contains(&(n, commit)));
     }
-    let (free, conflicts) = rebases(&open, open.free_work(&claimed, &held));
+    let (free, fixes) = fixes(&open, open.free_work(&claimed, &held));
     let mut pulls = BTreeMap::new();
     for issue in free.iter().filter_map(|item| verify_issue(item)) {
         let Some(pull) = open.pulls.iter().find(|p| p.issue() == Some(issue)) else {
@@ -1703,7 +2004,7 @@ pub fn look_with(
         claims,
         holds,
         pulls,
-        conflicts,
+        fixes,
     })
 }
 
@@ -1776,7 +2077,7 @@ impl World for Live {
                     let (repo, issue) = (wave.repo.clone(), *issue);
                     Some(blocking(move || run::milestone(&pr::Gh::for_repo(&repo), issue)).await?)
                 }
-                Work::Verify { .. } | Work::Rebase { .. } => None,
+                Work::Verify { .. } | Work::Rebase { .. } | Work::Checks { .. } => None,
             };
             let session = identity::new_session_id();
             let place = wave.place(Some(&item))?;
@@ -1854,7 +2155,18 @@ impl World for Live {
                 }
                 Work::Rebase { issue, commit, .. } => {
                     let gh = pr::Gh::for_repo(&wave.repo);
-                    after_build(gh, &api, record, wave, *issue, (Some(commit), None), ended).await
+                    let fix = Some(Fix::Rebase(commit));
+                    after_build(gh, &api, record, wave, *issue, (fix, None), ended).await
+                }
+                Work::Checks {
+                    issue,
+                    commit,
+                    checks,
+                    ..
+                } => {
+                    let gh = pr::Gh::for_repo(&wave.repo);
+                    let fix = Some(Fix::Checks(commit, checks));
+                    after_build(gh, &api, record, wave, *issue, (fix, None), ended).await
                 }
                 Work::Verify { pull, commit, .. } => {
                     after_verify(&api, record, wave, *pull, commit).await
@@ -2126,7 +2438,9 @@ mod tests {
         conflicting: BTreeSet<u64>,
         /// The issues whose pull request has auto-merge off.
         manual: BTreeSet<u64>,
-        /// A rebase ends with no push.
+        /// The issues whose pull request has a failed check `Gate`.
+        failing: BTreeSet<u64>,
+        /// A rebase and a fix of checks end with no push.
         no_push: bool,
         /// The work of each claim of a session, in order.
         works: Vec<Work>,
@@ -2192,7 +2506,14 @@ mod tests {
                     Pr::Asked => Vec::new(),
                     Pr::Passed => vec![rollout::Check::verify("SUCCESS")],
                     Pr::Failed | Pr::Reasked => vec![rollout::Check::verify("FAILURE")],
-                },
+                }
+                .into_iter()
+                .chain(
+                    self.failing
+                        .contains(n)
+                        .then(|| rollout::Check::run("Gate", "FAILURE")),
+                )
+                .collect(),
                 mergeable: Some(match self.conflicting.contains(n) {
                     true => "CONFLICTING".into(),
                     false => "MERGEABLE".into(),
@@ -2226,7 +2547,7 @@ mod tests {
                 // pick skips a held item.
                 let open = forge.open();
                 let claims: HashSet<String> = forge.claims.keys().cloned().collect();
-                let (free, conflicts) = rebases(&open, open.free_work(&claims, &HashSet::new()));
+                let (free, fixes) = fixes(&open, open.free_work(&claims, &HashSet::new()));
                 Ok(Look {
                     paused: false,
                     free,
@@ -2244,7 +2565,7 @@ mod tests {
                             (*n, waiting)
                         })
                         .collect(),
-                    conflicts,
+                    fixes,
                 })
             })
         }
@@ -2363,6 +2684,15 @@ mod tests {
                         let head = format!("{}r", forge.head(issue));
                         forge.heads.insert(issue, head);
                         forge.conflicting.remove(&issue);
+                        forge.pulls.insert(issue, Pr::Asked)
+                    }
+                    Work::Checks { .. } if forge.no_push => None,
+                    // The push of the fix: a new head with no failed check
+                    // and no verify.
+                    Work::Checks { issue, .. } => {
+                        let head = format!("{}f", forge.head(issue));
+                        forge.heads.insert(issue, head);
+                        forge.failing.remove(&issue);
                         forge.pulls.insert(issue, Pr::Asked)
                     }
                 };
@@ -3131,8 +3461,15 @@ mod tests {
         assert_eq!(here.forge().works, [Work::Build { issue: 1 }]);
     }
 
-    /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: the conflict of a pull request with
-    /// auto-merge off gets no rebase: no merge waits for it.
+    /// The message to the lead about the pull request #41 of the item 1
+    /// at the head `commit`.
+    fn stuck(commit: &str, why: rollout::Stuck) -> String {
+        text::wave_stuck(41, "worktree-issue-1", commit, &why)
+    }
+
+    /// 01M57FJ3WWMQSDBFRRHXN3SMFQ, #279: the conflict of a pull request
+    /// with auto-merge off gets no rebase: no merge waits for it. The lead
+    /// hears of the auto-merge, one time.
     #[tokio::test]
     async fn a_pull_request_with_auto_merge_off_gets_no_rebase() {
         let here = conflict(Pr::Passed).await;
@@ -3141,6 +3478,162 @@ mod tests {
         here.idle(3).await;
         let forge = here.forge();
         assert!(forge.works.is_empty(), "{forge:?}");
+        assert_eq!(forge.told, [stuck("c1", rollout::Stuck::AutoMergeOff)]);
+    }
+
+    /// #279: a pull request with a passed verify and auto-merge off never
+    /// merges. The wave starts no session, and tells the lead one time for
+    /// each head, with the reason and the command. A pull request with
+    /// auto-merge on gets no message.
+    #[tokio::test]
+    async fn a_verified_pull_request_with_auto_merge_off_tells_the_lead_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge.pulls.insert(2, Pr::Passed);
+            forge.manual.insert(1);
+        }
+        here.run();
+        here.idle(3).await;
+        let message = stuck("c1", rollout::Stuck::AutoMergeOff);
+        assert!(
+            message.ends_with("gh pr merge --auto --squash 41"),
+            "{message}"
+        );
+        assert_eq!(
+            here.forge().told,
+            std::slice::from_ref(&message),
+            "once, for 1 only"
+        );
+        assert!(here.forge().works.is_empty());
+
+        // A new head is a new state.
+        here.forge().heads.insert(1, "c1b".into());
+        here.idle(3).await;
+        let second = stuck("c1b", rollout::Stuck::AutoMergeOff);
+        assert_eq!(here.forge().told, [message, second]);
+        assert!(here.forge().works.is_empty());
+    }
+
+    fn checks(commit: &str) -> Work {
+        Work::Checks {
+            issue: 1,
+            pull: 41,
+            commit: commit.into(),
+            checks: vec!["Gate".into()],
+        }
+    }
+
+    /// #279: a pull request with a passed verify and a failed check gets
+    /// one build session for each head, with the name of the check. The
+    /// same head gets no second session, and no message: the pull request
+    /// is in the group `stuck`. A new head with a failed check is a new
+    /// state.
+    #[tokio::test]
+    async fn a_failed_check_after_a_pass_gets_one_build_for_each_head() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge.failing.insert(1);
+            forge.no_push = true;
+        }
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [checks("c1")]);
+        here.end("issue-1").await;
+        here.until(3, |h| h.forge().finished == ["issue-1"]).await;
+        here.idle(3).await;
+        {
+            let forge = here.forge();
+            assert_eq!(
+                forge.works,
+                [checks("c1")],
+                "the same head: no second session"
+            );
+            assert!(forge.told.is_empty(), "{:?}", forge.told);
+        }
+        // A person pushed a new head, and its Gate failed too.
+        here.forge().heads.insert(1, "c1b".into());
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [checks("c1"), checks("c1b")]);
+    }
+
+    /// #279: the fix pushes a new head with no failed check: the new head
+    /// waits for its verify, and a new session verifies it.
+    #[tokio::test]
+    async fn the_fix_of_a_failed_check_is_verified_by_a_new_session() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().pulls.insert(1, Pr::Passed);
+        here.forge().failing.insert(1);
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.end("issue-1").await;
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1f".into(),
+        };
+        assert_eq!(here.forge().works, [checks("c1"), verify]);
+    }
+
+    /// #279: a pull request with a conflict and a failed check gets the
+    /// rebase first. A held item gets no fix of its checks. A failed
+    /// check with no verify yet, and a failed verify, are no fix of checks.
+    #[tokio::test]
+    async fn a_conflict_comes_before_the_failed_check_and_a_hold_stops_the_fix() {
+        let here = conflict(Pr::Passed).await;
+        here.forge().failing.insert(1);
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [rebase("c1")]);
+
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2, 3], 3, free).await;
+        {
+            let mut forge = here.forge();
+            for n in 1..=3 {
+                forge.failing.insert(n);
+            }
+            forge.pulls.insert(1, Pr::Passed);
+            forge.pulls.insert(2, Pr::Asked);
+            forge.pulls.insert(3, Pr::Failed);
+            forge.holds.insert("issue-1".into());
+            forge.items.retain(|n| *n != 3);
+        }
+        here.run();
+        here.until(3, |h| h.running("verify-issue-2").is_some())
+            .await;
+        here.idle(3).await;
+        let forge = here.forge();
+        let started: Vec<String> = forge.works.iter().map(Work::item).collect();
+        assert_eq!(started, ["verify-issue-2"], "{:?}", forge.works);
+    }
+
+    /// #279: no session builds a release. A failed check of a release
+    /// pull request tells the lead, one time, at any state of its verify.
+    #[tokio::test]
+    async fn a_failed_check_of_a_release_tells_the_lead_and_starts_no_session() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.labels.insert(1, vec!["release".into()]);
+            forge.pulls.insert(1, Pr::Asked);
+            forge.failing.insert(1);
+        }
+        here.run();
+        here.idle(3).await;
+        let forge = here.forge();
+        assert!(forge.works.is_empty(), "{forge:?}");
+        let checks = rollout::Stuck::Checks(vec!["Gate".into()]);
+        assert_eq!(forge.told, [stuck("c1", checks)]);
     }
 
     /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: a pull request that waits for a verify
@@ -3741,12 +4234,12 @@ esac
             self.after(gh, None).await.1
         }
 
-        /// [`Built::after_build`] after the rebase of the head commit
-        /// `conflict`, with the line of each step.
+        /// [`Built::after_build`] after the fix `fix`, with the line of
+        /// each step.
         async fn after(
             &self,
             gh: pr::Gh,
-            conflict: Option<&str>,
+            fix: Option<Fix<'_>>,
         ) -> (Vec<String>, Vec<(Kind, String)>) {
             let lines = after_build(
                 gh,
@@ -3754,7 +4247,7 @@ esac
                 &self.record,
                 &self.wave,
                 12,
-                (conflict, None),
+                (fix, None),
                 Ended {
                     code: Some(1),
                     failed: true,
@@ -3958,7 +4451,9 @@ esac
     #[tokio::test]
     async fn a_rebase_with_no_push_tells_the_lead_and_sends_no_verify_request() {
         let riff = Built::new().await;
-        let (lines, got) = riff.after(riff.gh(false), Some("1a2b3c4d5e")).await;
+        let (lines, got) = riff
+            .after(riff.gh(false), Some(Fix::Rebase("1a2b3c4d5e")))
+            .await;
         assert_eq!(lines[1], text::run_lead_told("issue-12"));
         let message = text::wave_not_rebased(
             "issue-12",
@@ -3984,12 +4479,129 @@ esac
         );
     }
 
+    /// A fake `gh` for the fix of checks: the pull request #40 of the
+    /// branch of issue 12 has the head `1a2b3c4d5e`, and the rollup of its
+    /// checks is `rollup`.
+    fn gh_with_rollup(riff: &Built, rollup: &str) -> pr::Gh {
+        let script = format!(
+            r#"#!/bin/sh
+case "$*" in
+"pr view worktree-issue-12 --json number,url,headRefOid,state")
+    echo '{{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"1a2b3c4d5e","state":"OPEN"}}' ;;
+"pr view 40 --json {fields}")
+    echo '{{"number":40,"headRefName":"worktree-issue-12","headRefOid":"1a2b3c4d5e","isDraft":false,"statusCheckRollup":{rollup}}}' ;;
+"issue view 12 --json number,labels")
+    echo '{{"number":12,"labels":[]}}' ;;
+*) echo "the fake gh has no reply for: $*" >&2; exit 1 ;;
+esac
+"#,
+            fields = rollout::PULL_FIELDS
+        );
+        pr::Gh::at(isolated::write_program(riff.dir.path().join("gh"), script))
+    }
+
+    /// #279: the session that fixed a failed check pushed nothing, and the
+    /// check still fails at the head: the lead gets a message, and no
+    /// verify request. "Run the wave" in the book shows the same message.
+    #[tokio::test]
+    async fn a_fix_of_checks_with_no_push_and_a_failed_check_tells_the_lead() {
+        let riff = Built::new().await;
+        let gh = gh_with_rollup(
+            &riff,
+            r#"[{"name":"Gate","conclusion":"FAILURE"},{"context":"riff/verify","state":"SUCCESS"}]"#,
+        );
+        let checks = ["Gate".to_owned()];
+        let (lines, got) = riff
+            .after(gh, Some(Fix::Checks("1a2b3c4d5e", &checks)))
+            .await;
+        assert_eq!(lines[1], text::run_lead_told("issue-12"));
+        let message = text::wave_checks_not_fixed(
+            "issue-12",
+            40,
+            "worktree-issue-12",
+            "1a2b3c4d5e",
+            "9f8e7d6c",
+            &checks,
+        );
+        assert_eq!(got, [(Kind::Message, message.clone())]);
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/development.md"
+        ))
+        .unwrap();
+        assert!(book.contains(&format!("\n{message}\n")), "{message}");
+    }
+
+    /// #279: the session ran the job again and pushed nothing: no check
+    /// fails now (the new run goes). The lead gets a note, not a message,
+    /// and no verify request: the verify of the head passed.
+    #[tokio::test]
+    async fn a_fix_of_checks_that_ran_the_job_again_gives_the_lead_a_note() {
+        let riff = Built::new().await;
+        let gh = gh_with_rollup(
+            &riff,
+            r#"[{"name":"Gate","conclusion":""},{"context":"riff/verify","state":"SUCCESS"}]"#,
+        );
+        let checks = ["Gate".to_owned()];
+        let (lines, got) = riff
+            .after(gh, Some(Fix::Checks("1a2b3c4d5e", &checks)))
+            .await;
+        assert_eq!(lines[1], text::run_lead_noted("issue-12"));
+        let note = text::wave_checks_rerun(
+            "issue-12",
+            40,
+            "worktree-issue-12",
+            "1a2b3c4d5e",
+            "9f8e7d6c",
+        );
+        assert_eq!(got, [(Kind::Note, note.clone())]);
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/development.md"
+        ))
+        .unwrap();
+        assert!(book.contains(&format!("\n{note}\n")), "{note}");
+    }
+
+    /// #279: when `gh` cannot read the checks, the lead gets the message:
+    /// riff does not call a fix good when it cannot see it.
+    #[tokio::test]
+    async fn a_fix_of_checks_with_no_read_of_the_checks_tells_the_lead() {
+        let riff = Built::new().await;
+        let checks = ["Gate".to_owned()];
+        let (_, got) = riff
+            .after(riff.gh(false), Some(Fix::Checks("1a2b3c4d5e", &checks)))
+            .await;
+        let [(kind, body)] = &got[..] else {
+            panic!("{got:?}");
+        };
+        assert_eq!(*kind, Kind::Message);
+        assert!(body.contains("the check Gate still fails"), "{body}");
+    }
+
+    /// #279: the fix pushed a new head: the lead gets the verify request
+    /// of the new head.
+    #[tokio::test]
+    async fn a_fix_of_checks_that_pushed_sends_the_verify_request_of_the_new_head() {
+        let riff = Built::new().await;
+        let checks = ["Gate".to_owned()];
+        let (lines, got) = riff
+            .after(riff.gh(false), Some(Fix::Checks("0ld0ld0ld0", &checks)))
+            .await;
+        assert_eq!(lines[1], text::run_verify_sent("issue-12", 40));
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, Kind::Message);
+        assert!(got[0].1.starts_with("verify request:"), "{got:?}");
+    }
+
     /// 01M57FJ3Z8AFDY9G0KTAYZJESY: the rebase pushed a new head: the lead
     /// gets the verify request of the new head.
     #[tokio::test]
     async fn a_rebase_that_pushed_sends_the_verify_request_of_the_new_head() {
         let riff = Built::new().await;
-        let (lines, got) = riff.after(riff.gh(false), Some("0ld0ld0ld0")).await;
+        let (lines, got) = riff
+            .after(riff.gh(false), Some(Fix::Rebase("0ld0ld0ld0")))
+            .await;
         assert_eq!(lines[1], text::run_verify_sent("issue-12", 40));
         assert_eq!(
             got,

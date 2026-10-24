@@ -85,7 +85,9 @@
 //! | `Bash(gh pr merge --auto --squash *)` | allow | worker | project, session | turn on auto-merge |
 //! | `Bash(gh pr comment *)` | allow | worker, verifier | project | write a comment on a pull request |
 //! | `Bash(gh pr view *)` | allow | lead, worker, verifier | project, session | read a pull request |
-//! | `Bash(gh pr checks *)` | allow | verifier | session | see the checks of a pull request |
+//! | `Bash(gh pr checks *)` | allow | worker, verifier | session | see the checks of a pull request |
+//! | `Bash(gh run view *)` | allow | worker | session | read the log of a failed run of a check, to fix it (01M5QWJJBY5VW53F0XAWWDQ79K) |
+//! | `Bash(gh run rerun *)` | allow | worker | session | run a job again that failed for a known flake (01M5QWJJBY5VW53F0XAWWDQ79K) |
 //! | `Bash(gh issue view *)` | allow | lead, worker, verifier | session | read an issue |
 //! | `Bash(gh issue list *)` | allow | lead, worker, verifier | session | find the items of a wave |
 //! | `Bash(gh issue edit *)` | allow | lead, worker, verifier | session | write the `Done when:` line of an item |
@@ -332,7 +334,9 @@ pub const TABLE: &[Row] = {
         ),
         allow("Bash(gh pr comment *)", &[Worker, Verifier], &[Project]),
         allow("Bash(gh pr view *)", ALL, &[Project, Session]),
-        allow("Bash(gh pr checks *)", &[Verifier], &[Session]),
+        allow("Bash(gh pr checks *)", &[Worker, Verifier], &[Session]),
+        allow("Bash(gh run view *)", &[Worker], &[Session]),
+        allow("Bash(gh run rerun *)", &[Worker], &[Session]),
         allow("Bash(gh issue view *)", ALL, &[Session]),
         allow("Bash(gh issue list *)", ALL, &[Session]),
         allow("Bash(gh issue edit *)", ALL, &[Session]),
@@ -1722,6 +1726,24 @@ mod tests {
             (
                 Role::Worker,
                 text::wave_failed_verify(40, "1a2b3c4d", "https://c"),
+            ),
+            (
+                Role::Worker,
+                text::wave_rebase_start("o/r", 12, 40, "1a2b3c4d", "worktree-issue-12", "1a2b"),
+            ),
+            // #279: the fix of a failed check reads the failed run, and
+            // may run the job again.
+            (
+                Role::Worker,
+                text::wave_checks_start(
+                    "o/r",
+                    12,
+                    40,
+                    "1a2b3c4d",
+                    &["Gate".to_owned()],
+                    "worktree-issue-12",
+                    "1a2b",
+                ),
             ),
             (
                 Role::Verifier,

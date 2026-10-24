@@ -1358,6 +1358,96 @@ issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). 
 To start the rebase of the same commit again, see
 [Start a spent item again](#start-a-spent-item-again).
 
+### See a pull request that cannot merge
+
+A pull request can stop on its way to the merge after its verify
+passed. At each look, the wave reads each open pull request of an item
+and acts for it, one time for each head commit. You do not have to
+check them.
+
+```mermaid
+flowchart TD
+    P["open pull request of an item"] --> C{"a conflict with main,<br/>auto-merge on?"}
+    C -- yes --> R["a session rebases the branch"]
+    C -- no --> F{"verify passed,<br/>a check failed?"}
+    F -- yes --> B["a session fixes the check"]
+    F -- no --> A{"verify passed,<br/>auto-merge off?"}
+    A -- yes --> M["a message to your lead"]
+    A -- no --> OK["it merges by itself"]
+```
+
+| The pull request | What the wave does | In `riff top` |
+|---|---|---|
+| A conflict, auto-merge on | A session rebases it (see [Run the wave](#run-the-wave)) | `stuck: #12 (conflict)` |
+| The verify passed, a check failed | A session fixes the check | `stuck: #12 (checks)` |
+| The verify passed, auto-merge off | Your lead gets one message. No session starts | `stuck: #12 (auto-merge off)` |
+| A release, a check failed | Your lead gets one message. No session builds a release | `stuck: #7 (checks)` |
+
+A check failed when its run ended with `failure`, `timed_out` or
+`startup_failure`, or when its status is `failure` or `error`. The
+status `riff/verify` is the verify, not a check. A cancelled or skipped
+check did not fail. GitHub does not tell riff which check a rule
+requires, so each failed check counts. A pull request with a conflict
+gets the rebase first: its new head has new checks.
+
+The session for a failed check gets the names of the checks. It reads
+the log of the failed run, fixes the work, and pushes to the same pull
+request. A new Gate and a new verify of the new commit follow. For a
+known flake, it runs the job again one time and pushes nothing. Each
+head commit starts one such session in a run of the wave.
+
+When that session ends with the same head commit, the daemon reads the
+checks of the pull request. It sends no verify request: the verify of
+this commit passed. Your lead gets a message when a check still fails:
+
+```text
+issue-12: the session of the wave for the failed checks of PR #40 ended with no push (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, and the check Gate still fails. The riff daemon sends no verify request, and the wave starts no second session for this commit. Give the item to a session to fix, or run riff wave run to start the fix again. The item is free.
+```
+
+Your lead gets a note when no check fails because the session ran the
+job again:
+
+```text
+issue-12: the session of the wave for the failed checks of PR #40 pushed nothing (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, and no check fails now: the job runs again. The riff daemon sends no verify request: the verify of this commit passed. The pull request merges when its checks pass. When a check fails again, the wave starts no second session for this commit, and riff top shows stuck for the item. Run riff wave run to start the fix again.
+```
+
+To see the stuck pull requests of the current wave, in your clone of
+the repository:
+
+```sh
+riff wave list
+```
+
+```text
+Wave 40  current  runs on thelio  4 open, 0 closed
+  claimed: #11
+  stuck: #12 (checks), #13 (auto-merge off)
+```
+
+An item with a session is in `claimed`, not in `stuck`.
+
+#### Turn on auto-merge for a pull request
+
+A pull request whose verify passed and that has auto-merge off never
+merges, and nothing turns it on. Your lead gets one message for each
+head commit:
+
+```text
+PR #41, branch worktree-issue-13, passed its verify at commit 1a2b3c4, but auto-merge is off, so it never merges. Turn it on: gh pr merge --auto --squash 41
+```
+
+Turn it on with the command of the message:
+
+```sh
+gh pr merge --auto --squash 41
+```
+
+A conflict gets the rebase at the next look. A release pull request
+with a failed check gets a message of the same form: it names the
+checks, and says that no session fixes it. Read the checks with
+`gh pr checks 298`. Fix a check of the text of the pull request with
+`gh pr edit 298`. Fix a check of the code with a push to the branch.
+
 ### Answer a failed verify with a new request
 
 A verify can fail only on the body of the pull request, for example
@@ -1526,9 +1616,11 @@ riff wave list
 The current wave has the mark `current`, and `runs on HOST` for each
 host whose daemon runs its loop. Under each wave come its open items
 in the groups of the board of `riff top`: `free`, `held`, `claimed`,
-`verify` and `tracker`. A held item has the reason of the lead, and
-the wave does not start it. The wave never starts a tracker (see
-[Track a group of items](waves.md#track-a-group-of-items)):
+`verify`, `stuck` and `tracker`. A held item has the reason of the lead,
+and the wave does not start it. The wave never starts a tracker (see
+[Track a group of items](waves.md#track-a-group-of-items)). A stuck item
+has a pull request that cannot merge by itself (see
+[See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)):
 
 ```text
 Wave 33: Hosts  current  runs on thelio  4 open, 21 closed
@@ -1541,7 +1633,7 @@ Backlog  61 open, 4 closed
 ```
 
 When the wave says "no free work now" while items are open, look at
-the groups: the items are held, claimed, in verify or trackers.
+the groups: the items are held, claimed, in verify, stuck or trackers.
 
 The lead runs the same command in its container. There, riff reads
 the sessions and the holds through the riff daemon of the host.
@@ -4053,13 +4145,15 @@ riff release cut 3.3.0
 riff makes the branch `release-v3.3.0` from `origin/main`. It sets the
 version in `Cargo.toml` and in
 `Cargo.lock`, and runs `deploy/release-check.sh`. Then it opens the
-pull request "Release v3.3.0" with the label `release` and auto-merge
-on. The release notes leave out the pull requests with this label. The
-body has the level line, the list "Waves in this release", and the
-items of each wave since the last release. The body says `Part of #N`
-for the release issue, never `Closes #N`: the release issue closes
-only when the checks after the deploy pass. riff makes the release
-issue in the current wave when there is none.
+pull request "Release v3.3.0" with the label `release`, the wave
+of the release, and auto-merge on. Do not open a release pull request
+with `gh pr create`: `Hygiene` refuses a pull request with no
+wave. The release notes leave out the pull requests with this
+label. The body has the level line, the list "Waves in this release",
+and the items of each wave since the last release. The body says
+`Part of #N` for the release issue, never `Closes #N`: the release
+issue closes only when the checks after the deploy pass. riff makes the
+release issue in the current wave when there is none.
 
 To add the reason of the level to the level line, in plain words that
 a person understands (ASD-STE100):
@@ -4072,6 +4166,10 @@ riff refuses a version that is not newer than the last release. It
 refuses while a deploy waits for the approval of `production`. It
 also refuses while the version on `origin/main` has no published
 release: publish that release first.
+
+When a check of the release pull request fails, for example `Hygiene`,
+the wave tells your lead once with the names of the checks: see [See a
+pull request that cannot merge](#see-a-pull-request-that-cannot-merge).
 
 #### Verify the release pull request
 
@@ -4293,14 +4391,17 @@ just github
 Each change goes in by a pull request to the branch, as on `main`.
 The pull request waits for its verify, as one to `main` does: it
 merges only when the checks `Gate`, `Hygiene` and `riff/verify` pass.
-Turn on auto-merge at once:
+Open it with `riff pr open`, not with `gh pr create`: it sets the
+wave and the trailers that `Hygiene` needs, and turns on
+auto-merge at once. `--base` names the branch. `--issue` names the
+issue of the change; a session with the claim `issue-N` needs no
+`--issue`:
 
 ```sh
 git fetch origin
 git switch --no-track -c my-fix origin/release/1.x
 git push -u origin HEAD
-gh pr create --base release/1.x --title "My fix" --body-file pr.md
-gh pr merge --auto --squash
+riff pr open --base release/1.x --title "My fix" --file summary.md --issue 1203
 ```
 
 `just check` compares your branch with the last release tag of the
@@ -4318,8 +4419,14 @@ sed -i 's/^version = ".*"/version = "1.3.1"/' Cargo.toml
 cargo update --workspace
 git commit -am "Release v1.3.1"
 git push -u origin HEAD
-gh pr create --base release/1.x --title "Release v1.3.1" --label release --body-file pr.md
+riff pr open --base release/1.x --title "Release v1.3.1" --file pr.md --issue 1203 --refs
+gh pr edit --add-label release
 ```
+
+The release pull request has the issue and the wave of the patch, as
+each pull request has. `--refs` links with `Refs`, so the merge leaves
+the issue open. The label `release` keeps the pull request out of the
+notes.
 
 After the merge, write the notes in `notes.md`: the level line of the
 pull request. Tag the merge commit on the branch. Name the last

@@ -250,7 +250,8 @@ pub fn parse_issues(json: &str) -> Option<Issues> {
 }
 
 /// `issues` with the open pull requests `pulls` ([`crate::rollout::pulls`]):
-/// the items in verify.
+/// the items in verify, and the items whose pull request cannot merge by
+/// itself ([`crate::rollout::Pull::stuck`], #279).
 ///
 /// ```
 /// use riff::rollout::Pull;
@@ -263,10 +264,28 @@ pub fn parse_issues(json: &str) -> Option<Issues> {
 ///    "statusCheckRollup": [{"context": "riff/verify", "state": "FAILURE"}]}
 /// ]"#).unwrap();
 /// assert_eq!(with_pulls(issues.clone(), &pulls).verify, [12].into());
-/// assert!(with_pulls(issues, &[]).verify.is_empty());
+/// assert!(with_pulls(issues.clone(), &pulls).stuck.is_empty());
+/// assert!(with_pulls(issues.clone(), &[]).verify.is_empty());
+///
+/// // The verify of 14 passed, and its Gate failed. The verify of 15 passed, and auto-merge is off.
+/// let pulls: Vec<Pull> = serde_json::from_str(r#"[
+///   {"number": 44, "headRefName": "worktree-issue-14", "isDraft": false, "autoMergeRequest": {"mergeMethod": "SQUASH"},
+///    "statusCheckRollup": [{"context": "riff/verify", "state": "SUCCESS"},
+///                          {"__typename": "CheckRun", "name": "Gate", "conclusion": "FAILURE"}]},
+///   {"number": 45, "headRefName": "worktree-issue-15", "isDraft": false, "autoMergeRequest": null,
+///    "statusCheckRollup": [{"context": "riff/verify", "state": "SUCCESS"}]}
+/// ]"#).unwrap();
+/// let stuck = with_pulls(issues, &pulls).stuck;
+/// assert_eq!(stuck[&14], "checks");
+/// assert_eq!(stuck[&15], "auto-merge off");
 /// ```
 pub fn with_pulls(issues: Issues, pulls: &[crate::rollout::Pull]) -> Issues {
-    issues.with_verify(crate::rollout::in_verify(pulls))
+    let stuck = pulls
+        .iter()
+        .filter_map(|p| Some((p.issue()?, p.stuck(false)?.word().to_owned())));
+    issues
+        .with_verify(crate::rollout::in_verify(pulls))
+        .with_stuck(stuck)
 }
 
 /// The open issues of `repo` from `gh`. `None` when `gh` is not there

@@ -97,7 +97,7 @@ fn the_look_of_the_wave_rebases_each_pull_request_with_auto_merge_and_a_conflict
         commit: commit.into(),
     };
     assert_eq!(
-        look.conflicts,
+        look.fixes.conflicts,
         BTreeMap::from([(1, conflict(41, "aaaa111")), (2, conflict(42, "bbbb222"))])
     );
 
@@ -146,7 +146,7 @@ fn a_new_head_with_no_conflict_waits_for_its_verify() {
         look.free,
         ["verify-issue-1", "issue-2", "issue-3", "issue-4", "issue-5"]
     );
-    assert!(look.conflicts.is_empty());
+    assert!(look.fixes.conflicts.is_empty());
     assert_eq!(
         wave::pick(&look, &BTreeSet::new(), &BTreeMap::new()),
         Some(Work::Verify {
@@ -167,7 +167,7 @@ fn a_failed_verify_with_a_conflict_is_a_build() {
         &[pull(1, "aaaa111", Some("FAILURE"), "CONFLICTING", true)],
     );
     let look = look(&gh);
-    assert!(look.conflicts.is_empty());
+    assert!(look.fixes.conflicts.is_empty());
     assert_eq!(
         wave::pick(&look, &BTreeSet::new(), &BTreeMap::new()),
         Some(Work::Build { issue: 1 })
@@ -198,7 +198,11 @@ fn the_look_of_the_wave_leaves_out_the_release_issue() {
     .unwrap();
     let look = look(&gh);
     assert_eq!(look.free, ["issue-1"]);
-    assert!(look.conflicts.is_empty(), "{:?}", look.conflicts);
+    assert!(
+        look.fixes.conflicts.is_empty(),
+        "{:?}",
+        look.fixes.conflicts
+    );
     let none = BTreeSet::new();
     assert_eq!(
         wave::pick(&look, &none, &BTreeMap::new()),

@@ -982,6 +982,10 @@ enum Pr {
         /// The issue. The default is the claim issue-N of this session.
         #[arg(long)]
         issue: Option<u64>,
+        /// The branch to merge into, for example release/1.x. The default
+        /// is the default branch of the repository.
+        #[arg(long)]
+        base: Option<String>,
     },
     /// Wait for the merge of a pull request
     ///
@@ -2098,6 +2102,7 @@ async fn main() -> Result<()> {
                     file,
                     refs,
                     issue,
+                    base,
                 },
         } => {
             let issue = match issue {
@@ -2113,7 +2118,14 @@ async fn main() -> Result<()> {
                     .with_context(|| format!("cannot read {}", file.display()))?,
                 None => String::new(),
             };
-            let (number, url) = pr::open(&pr::Gh::default(), &title, &summary, issue, refs)?;
+            let (number, url) = pr::open(
+                &pr::Gh::default(),
+                &title,
+                &summary,
+                issue,
+                refs,
+                base.as_deref(),
+            )?;
             println!("{}", text::pr_opened(number, &url));
             riff::look::tell_fact(&api, &me, issue, number, PullState::Asked).await;
         }
