@@ -1319,6 +1319,37 @@ pub fn waves_made(title: &str) -> String {
     format!("Made the wave {title}.")
 }
 
+/// The line of `riff wave make` when it also made the milestone `Backlog`
+/// (01M5QVF58KEC9WNHAJ8WTZ18EP).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_made_backlog(),
+///     "Made the milestone Backlog: the repository had none. It holds the items with no wave."
+/// );
+/// ```
+pub fn waves_made_backlog() -> String {
+    "Made the milestone Backlog: the repository had none. It holds the items with no wave."
+        .to_owned()
+}
+
+/// The line of `riff wave make` when it could not make the milestone
+/// `Backlog`: `why` is the answer of `gh`. The wave stays made.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::waves_no_new_backlog("gh api: already_exists"),
+///     "riff: cannot make the milestone Backlog: gh api: already_exists. The wave is made. \
+///      Make the milestone Backlog by hand, or open a closed one."
+/// );
+/// ```
+pub fn waves_no_new_backlog(why: &str) -> String {
+    format!(
+        "riff: cannot make the milestone Backlog: {why}. The wave is made. Make \
+         the milestone Backlog by hand, or open a closed one."
+    )
+}
+
 /// The answer to `riff wave rename` (01M518A0BEQBX9RH9H0CEFYF9Q).
 ///
 /// ```
@@ -5938,7 +5969,8 @@ pub const INIT_FIX_DELEGATE: &str = "let systemd give them to your user: sudo mk
 
 /// The fix when the repository pins no session image.
 pub const INIT_FIX_IMAGE: &str = "run riff init in a clone of a repository whose riff.toml pins \
-     the session image. See \"Change the session image\" in the book";
+     the session image. A repository with no riff.toml needs one on its default branch: see \
+     \"Add another repository to the riff\" in the book";
 
 /// The name of the check of the riff binary (01M510NW68CTZBHHW7ZYFV7Q3X).
 pub const INIT_RIFF: &str = "the riff binary";
@@ -5966,6 +5998,133 @@ pub fn init_riff_not_static(path: &Path, why: &str) -> String {
 /// The fix of a riff binary that is not static.
 pub const INIT_FIX_RIFF: &str = "run riff update. It installs the static riff and riff-server of \
      the release, so riff relay starts in each session image";
+
+/// The name of the check of the merge settings of the repository on
+/// GitHub (01M5QVF5535YRN1EF3DZAB4W8G).
+pub const INIT_MERGE: &str = "auto-merge and squash merge";
+
+/// The repository `repo` allows auto-merge and squash merge.
+///
+/// ```
+/// assert_eq!(riff::text::init_merge_on("o/r"), "o/r allows both");
+/// ```
+pub fn init_merge_on(repo: &str) -> String {
+    format!("{repo} allows both")
+}
+
+/// The repository `repo` does not allow what the work sessions need:
+/// `auto_merge` and `squash_merge` say what it allows.
+///
+/// ```
+/// assert_eq!(riff::text::init_merge_off("o/r", false, true), "o/r allows no auto-merge");
+/// assert_eq!(riff::text::init_merge_off("o/r", true, false), "o/r allows no squash merge");
+/// assert_eq!(riff::text::init_merge_off("o/r", false, false), "o/r allows no auto-merge and no squash merge");
+/// ```
+pub fn init_merge_off(repo: &str, auto_merge: bool, squash_merge: bool) -> String {
+    let missing: Vec<&str> = [(auto_merge, "auto-merge"), (squash_merge, "squash merge")]
+        .into_iter()
+        .filter(|(on, _)| !on)
+        .map(|(_, name)| name)
+        .collect();
+    format!("{repo} allows no {}", missing.join(" and no "))
+}
+
+/// The fix when the repository `repo` allows no auto-merge or no squash
+/// merge: the work sessions run `gh pr merge --auto --squash`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_fix_merge("o/r"),
+///     "allow them: gh api -X PATCH repos/o/r -F allow_auto_merge=true -F allow_squash_merge=true"
+/// );
+/// ```
+pub fn init_fix_merge(repo: &str) -> String {
+    format!(
+        "allow them: gh api -X PATCH repos/{repo} -F allow_auto_merge=true -F \
+         allow_squash_merge=true"
+    )
+}
+
+/// The name of the check of the ruleset of `branch`, the default branch.
+pub fn init_ruleset(branch: &str) -> String {
+    format!("the ruleset of {branch}")
+}
+
+/// A ruleset of `branch` requires the check `check`.
+///
+/// ```
+/// assert_eq!(riff::text::init_ruleset_on("riff/verify"), "it requires the check riff/verify");
+/// ```
+pub fn init_ruleset_on(check: &str) -> String {
+    format!("it requires the check {check}")
+}
+
+/// No ruleset of `branch` requires the check `check`: nothing on GitHub
+/// makes a merge wait for the verify.
+pub fn init_ruleset_off(branch: &str, check: &str) -> String {
+    format!(
+        "no ruleset of {branch} requires the check {check}, so a merge does not wait for the verify"
+    )
+}
+
+/// The fix when no ruleset of `branch` requires the verify: a ruleset
+/// with a pull request and the checks `gate` and `verify`.
+///
+/// ```
+/// let fix = riff::text::init_fix_ruleset("main", "Gate", "riff/verify");
+/// assert!(fix.starts_with("make a ruleset of main that requires a pull request and the checks Gate and riff/verify."), "{fix}");
+/// assert!(fix.ends_with("See \"Add another repository to the riff\" in the book"), "{fix}");
+/// ```
+pub fn init_fix_ruleset(branch: &str, gate: &str, verify: &str) -> String {
+    format!(
+        "make a ruleset of {branch} that requires a pull request and the checks {gate} and \
+         {verify}. See \"Add another repository to the riff\" in the book"
+    )
+}
+
+/// The name of the check of the milestone `Backlog`.
+pub const INIT_BACKLOG: &str = "the milestone Backlog";
+
+/// The repository `repo` has the open milestone `Backlog`.
+///
+/// ```
+/// assert_eq!(riff::text::init_backlog_on("o/r"), "o/r has it open");
+/// ```
+pub fn init_backlog_on(repo: &str) -> String {
+    format!("{repo} has it open")
+}
+
+/// The repository `repo` has no open milestone `Backlog`: `riff wave
+/// move --to Backlog` refuses.
+///
+/// ```
+/// assert_eq!(riff::text::init_backlog_off("o/r"), "o/r has no open milestone Backlog");
+/// ```
+pub fn init_backlog_off(repo: &str) -> String {
+    format!("{repo} has no open milestone Backlog")
+}
+
+/// The fix when the repository `repo` has no open milestone `Backlog`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_fix_backlog("o/r"),
+///     "make it: gh api -X POST repos/o/r/milestones -f title=Backlog. riff wave make makes it too, with the next wave"
+/// );
+/// ```
+pub fn init_fix_backlog(repo: &str) -> String {
+    format!(
+        "make it: gh api -X POST repos/{repo}/milestones -f title=Backlog. riff wave make makes \
+         it too, with the next wave"
+    )
+}
+
+/// The name of the check when riff cannot read the repository on GitHub.
+pub const INIT_GITHUB: &str = "the repository on GitHub";
+
+/// The fix when `gh` cannot read the repository.
+pub const INIT_FIX_GITHUB: &str = "sign in to GitHub with gh auth login. The account needs write \
+     access to the repository: riff needs gh for the pull requests and the waves";
 
 /// The allow rules of Claude Code that are wider than the steps of riff,
 /// with their files (01M51JCW04FAHZDQ144KDNCCPX).

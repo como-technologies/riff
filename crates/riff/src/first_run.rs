@@ -8,7 +8,7 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the riff binary"] --> X{"wide<br/>rules?"}
+//!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the riff binary,<br/>the repository on GitHub"] --> X{"wide<br/>rules?"}
 //!     X -- "one question:<br/>y in a terminal" --> V["remove them"]
 //!     X -- "no" --> E{"each check<br/>passed?"}
 //!     V --> E
@@ -54,9 +54,18 @@
 //! | cgroup v2 | `/sys/fs/cgroup/cgroup.controllers`, and `cgroup.controllers` of `user@UID.service` | the file is there, and the controllers of the user have `cpu` and `memory` |
 //! | the session image | `riff.toml` of the repository of the current folder ([`crate::session_image::of_folder`]) | it pins an image by its digest |
 //! | the riff binary | the ELF of the riff of this process ([`crate::release::check_file`]) | it has no interpreter, so `riff relay` starts in each session image. The fix is `riff update` (01M510NW68CTZBHHW7ZYFV7Q3X) |
+//! | auto-merge and squash merge | `allow_auto_merge` and `allow_squash_merge` of the repository on GitHub ([`crate::repo_setup`], 01M5QVF5535YRN1EF3DZAB4W8G) | both are on |
+//! | the ruleset of the default branch | the active rules of the default branch | one requires the check `riff/verify` |
+//! | the milestone `Backlog` | the open milestones | one has that title |
 //!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
+//!
+//! The last three checks run only in a folder whose remote `origin` is on
+//! GitHub, with the `gh` of the machine. They read the repository and
+//! change nothing, also without `--check`. When `gh` cannot read the
+//! repository, one check fails and its fix is `gh auth login`
+//! ([`crate::repo_setup`]).
 //!
 //! riff reads the controllers of `user@UID.service`, not `podman info`:
 //! a process in a scope that gives no `cpu` to its children still gets
@@ -78,6 +87,7 @@
 //!     wide: vec![],
 //!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
 //!     old_plugin: Default::default(),
+//!     github: None,
 //! };
 //! assert!(checks(&facts).iter().all(|c| c.passed()));
 //!
@@ -188,6 +198,10 @@ pub struct Facts {
     pub riff: Result<String, String>,
     /// What is left of the plugin of riff 3 ([`crate::old_plugin`]).
     pub old_plugin: crate::old_plugin::Found,
+    /// The facts of the repository on GitHub that riff reads
+    /// ([`crate::repo_setup`]), or why it cannot. `None` when the folder
+    /// has no remote `origin` on GitHub: riff checks nothing there.
+    pub github: Option<Result<crate::repo_setup::Github, String>>,
 }
 
 /// The home of the person who runs riff.
@@ -343,6 +357,7 @@ impl Facts {
             wide: Wide::here(dir),
             riff: riff_binary(),
             old_plugin: crate::old_plugin::Found::here(Some(dir)),
+            github: crate::repo_setup::here(dir),
         }
     }
 }
@@ -438,22 +453,35 @@ pub struct Check {
     pub found: String,
     /// The fix, when the check failed.
     pub fix: Option<String>,
+    /// The step that does the fix, when the check failed and riff has the
+    /// code of the step ([`crate::repo_setup::Step`]).
+    pub step: Option<crate::repo_setup::Step>,
 }
 
 impl Check {
-    fn pass(name: &str, found: String) -> Check {
+    pub(crate) fn pass(name: &str, found: String) -> Check {
         Check {
             name: name.into(),
             found,
             fix: None,
+            step: None,
         }
     }
 
-    fn fail(name: &str, found: String, fix: String) -> Check {
+    pub(crate) fn fail(name: &str, found: String, fix: String) -> Check {
         Check {
             name: name.into(),
             found,
             fix: Some(fix),
+            step: None,
+        }
+    }
+
+    /// The same check, with the step that does its fix.
+    pub(crate) fn with_step(self, step: crate::repo_setup::Step) -> Check {
+        Check {
+            step: Some(step),
+            ..self
         }
     }
 
@@ -542,6 +570,7 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
     };
     let mut checks = machine_checks(facts);
     checks.extend([image, riff]);
+    checks.extend(facts.github.iter().flat_map(crate::repo_setup::checks_of));
     checks
 }
 
@@ -767,6 +796,7 @@ mod tests {
             wide: vec![],
             riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
             old_plugin: Default::default(),
+            github: None,
         }
     }
 
@@ -910,6 +940,62 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), fixes.len(), "{fixes:#?}");
+    }
+
+    /// A repository on GitHub with each part.
+    fn github() -> crate::repo_setup::Github {
+        crate::repo_setup::Github {
+            repo: "acme/app".into(),
+            default_branch: "main".into(),
+            auto_merge: true,
+            squash_merge: true,
+            required: vec!["Gate".into(), "riff/verify".into()],
+            milestones: vec!["Backlog".into(), "Wave 1".into()],
+        }
+    }
+
+    /// 01M5QVF5535YRN1EF3DZAB4W8G: the checks of the repository come after
+    /// the checks of the machine, and only for a folder with a remote on
+    /// GitHub.
+    #[test]
+    fn the_repository_on_github_has_three_checks_after_the_machine() {
+        let names = |facts: &Facts| {
+            checks(facts)
+                .into_iter()
+                .map(|c| c.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&ready()).len(), 7, "no remote on GitHub: no check");
+        let with = Facts {
+            github: Some(Ok(github())),
+            ..ready()
+        };
+        assert!(checks(&with).iter().all(Check::passed));
+        assert_eq!(
+            names(&with)[7..],
+            [
+                "auto-merge and squash merge",
+                "the ruleset of main",
+                "the milestone Backlog"
+            ]
+        );
+        let none = Facts {
+            github: Some(Ok(crate::repo_setup::Github {
+                auto_merge: false,
+                required: vec![],
+                milestones: vec![],
+                ..github()
+            })),
+            ..ready()
+        };
+        assert_eq!(failed(&none).len(), 3);
+        let unread = Facts {
+            github: Some(Err("gh: not logged in".into())),
+            ..ready()
+        };
+        let failed = failed(&unread);
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0].name, "the repository on GitHub");
     }
 
     #[test]

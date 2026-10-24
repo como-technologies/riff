@@ -17,7 +17,7 @@
 //! | Command | `gh` calls |
 //! |---|---|
 //! | `riff wave list` (01M509TJRBE2J7HYKKHRJ1ZFR0) | `api repos/{owner}/{repo}/milestones?state=open&per_page=100`, then `issue list` and `pr list` for the items ([`items`]) |
-//! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, `label create tracker ... --force` (01M5ND16V2SVN8A9K7W90VC6X9), then `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE` |
+//! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, `label create tracker ... --force` (01M5ND16V2SVN8A9K7W90VC6X9), `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE`, then the same POST with `-f title=Backlog` when the list has no `Backlog` (01M5QVF58KEC9WNHAJ8WTZ18EP) |
 //! | `riff wave rename N NAME` (01M518A0BEQBX9RH9H0CEFYF9Q) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f title=TITLE` |
 //! | `riff wave end N` (01M509TJXE04CTG5D1K751WXJY) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f state=closed` |
 //! | `riff wave move ITEM... --to WAVE` (01M5924014WN63RCHJWGZS4AFZ) | the list, then `issue edit N --milestone TITLE` for each item |
@@ -33,7 +33,10 @@
 //!   milestones, and one line on stderr says why
 //!   (01M58ATZ6FA5PJMD3D848CEWBJ).
 //! - `riff wave make` makes only a wave: its title is `Wave N`, with an
-//!   optional `: NAME`. It refuses a number that an open wave has.
+//!   optional `: NAME`. It refuses a number that an open wave has. When
+//!   the repository has no open milestone `Backlog`, it makes that too,
+//!   so `riff wave move --to Backlog` and `--move-open-to-backlog` have a
+//!   target. A failure to make `Backlog` leaves the wave made ([`Made`]).
 //! - `riff wave rename N NAME` gives the open wave N the title
 //!   `Wave N: NAME`. The number stays: it is the wave. The trailer
 //!   `Milestone: Wave N` of a pull request names the wave by its number,
@@ -127,6 +130,9 @@ pub fn in_order(mut milestones: Vec<Milestone>) -> Vec<Milestone> {
     milestones
 }
 
+/// The title of the milestone for the items with no wave.
+pub const BACKLOG: &str = "Backlog";
+
 /// The open milestones of the repository, in the order of
 /// [`in_order`] (01M509TJRBE2J7HYKKHRJ1ZFR0).
 pub fn open(gh: &Gh) -> Result<Vec<Milestone>> {
@@ -137,18 +143,29 @@ pub fn open(gh: &Gh) -> Result<Vec<Milestone>> {
     Ok(in_order(open.into_iter().map(Milestone::from).collect()))
 }
 
+/// What `riff wave make` made.
+#[derive(Debug)]
+pub struct Made {
+    /// The new wave.
+    pub wave: Milestone,
+    /// The milestone [`BACKLOG`]: `None` when the repository has it
+    /// open, else the new milestone, or why riff could not make it. A
+    /// closed milestone of that title is one reason.
+    pub backlog: Option<Result<Milestone, String>>,
+}
+
 /// Makes the wave `title` (01M509TJTV7TC32EKXW0TEQ5NZ). It refuses a
 /// title that is not a wave title, and a number that an open wave has.
 /// It makes the label [`TRACKER`] when it is missing
-/// (01M5ND16V2SVN8A9K7W90VC6X9).
-pub fn make(gh: &Gh, title: &str) -> Result<Milestone> {
+/// (01M5ND16V2SVN8A9K7W90VC6X9). After the wave, it makes the milestone
+/// [`BACKLOG`] when no open milestone has that title
+/// (01M5QVF58KEC9WNHAJ8WTZ18EP). The wave stays made when that fails.
+pub fn make(gh: &Gh, title: &str) -> Result<Made> {
     let Some(number) = wave_number(title) else {
         bail!(text::waves_bad_title(title));
     };
-    if let Some(there) = open(gh)?
-        .into_iter()
-        .find(|m| wave_number(&m.title) == Some(number))
-    {
+    let open = open(gh)?;
+    if let Some(there) = open.iter().find(|m| wave_number(&m.title) == Some(number)) {
         bail!(text::waves_is_there(&there.title));
     }
     // A label that is there needs no change, and no label is no reason
@@ -166,6 +183,20 @@ pub fn make(gh: &Gh, title: &str) -> Result<Milestone> {
         ],
         None,
     );
+    let wave = new_milestone(gh, title)?;
+    let backlog = (!open.iter().any(|m| m.title == BACKLOG))
+        .then(|| new_milestone(gh, BACKLOG).map_err(|e| format!("{e:#}")));
+    Ok(Made { wave, backlog })
+}
+
+/// Makes the open milestone [`BACKLOG`]
+/// (01M5QVF58KEC9WNHAJ8WTZ18EP).
+pub fn make_backlog(gh: &Gh) -> Result<Milestone> {
+    new_milestone(gh, BACKLOG)
+}
+
+/// Makes the open milestone `title`.
+fn new_milestone(gh: &Gh, title: &str) -> Result<Milestone> {
     milestone(
         gh,
         &[
@@ -253,7 +284,7 @@ pub fn end(gh: &Gh, number: u64) -> Result<Milestone> {
 pub fn target(open: &[Milestone], to: &str) -> Result<String> {
     let to = to.trim();
     if to.eq_ignore_ascii_case("backlog") {
-        return match open.iter().find(|m| m.title == "Backlog") {
+        return match open.iter().find(|m| m.title == BACKLOG) {
             Some(m) => Ok(m.title.clone()),
             None => bail!(text::waves_no_backlog()),
         };
@@ -324,7 +355,7 @@ pub fn end_moving_open(gh: &Gh, number: u64, claimed: &[u64]) -> Result<(Milesto
     else {
         bail!(text::waves_not_open(number));
     };
-    let backlog = target(&milestones, "Backlog")?;
+    let backlog = target(&milestones, BACKLOG)?;
     #[derive(Deserialize)]
     struct Item {
         number: u64,
@@ -537,11 +568,19 @@ mod tests {
     /// fd, the run of the fake fails with `ETXTBSY`
     /// (01M513N34NJ2G3TK3EH91M10FJ).
     fn fake_gh(dir: &Path) -> Gh {
+        fake_gh_with(dir, OPEN)
+    }
+
+    /// [`fake_gh`] with the list `open` of the open milestones. A POST
+    /// with `title=Backlog` answers the milestone Backlog, and fails when
+    /// the file `dir/refuse-backlog` is there.
+    fn fake_gh_with(dir: &Path, open: &str) -> Gh {
         let path = dir.join("gh");
         let script = format!(
             "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/calls\"\ncase \"$*\" in\n\
              'api repos/{{owner}}/{{repo}}/milestones?state=open&per_page=100') printf '%s' '{}' ;;\n\
              'api repos/o/r/milestones?state=all&per_page=100') printf '%s' '{}' ;;\n\
+             'api -X POST '*'title=Backlog') if [ -f \"$(dirname \"$0\")/refuse-backlog\" ]; then echo 'Validation Failed: already_exists' >&2; exit 1; fi; printf '%s' '{{\"number\":35,\"title\":\"Backlog\",\"open_issues\":0,\"closed_issues\":0}}' ;;\n\
              'api -X POST '*) printf '%s' '{{\"number\":34,\"title\":\"Wave 29\",\"open_issues\":0,\"closed_issues\":0}}' ;;\n\
              'api -X PATCH '*'-f title='*) printf '%s' '{{\"number\":33,\"title\":\"Wave 28: Fixes\",\"open_issues\":2,\"closed_issues\":0}}' ;;\n\
              'api -X PATCH '*) printf '%s' '{{\"number\":32,\"title\":\"Wave 27: Cloud\",\"open_issues\":0,\"closed_issues\":9}}' ;;\n\
@@ -549,7 +588,7 @@ mod tests {
              'issue edit '*) ;;\n\
              'label create '*) ;;\n\
              *) exit 1 ;;\nesac\n",
-            OPEN.replace('\n', ""),
+            open.replace('\n', ""),
             ALL.replace('\n', "")
         );
         let out = std::process::Command::new("sh")
@@ -585,7 +624,9 @@ mod tests {
     fn make_posts_the_title_after_the_list() {
         let dir = tempfile::tempdir().unwrap();
         let made = make(&fake_gh(dir.path()), "Wave 29: The view").unwrap();
-        assert_eq!(made.number, 34);
+        assert_eq!(made.wave.number, 34);
+        // The list has the Backlog: riff makes no second one.
+        assert!(made.backlog.is_none());
         assert_eq!(
             calls(dir.path()),
             [
@@ -597,6 +638,38 @@ mod tests {
                 "api -X POST repos/{owner}/{repo}/milestones -f title=Wave 29: The view"
             ]
         );
+    }
+
+    /// The list of the open milestones with no Backlog.
+    const NO_BACKLOG: &str =
+        r#"[{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}]"#;
+
+    #[test]
+    fn make_also_makes_the_backlog_when_the_repository_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let made = make(&fake_gh_with(dir.path(), NO_BACKLOG), "Wave 28").unwrap();
+        assert_eq!(made.wave.number, 34);
+        let backlog = made.backlog.expect("riff made the Backlog").unwrap();
+        assert_eq!((backlog.number, backlog.title.as_str()), (35, BACKLOG));
+        let log = calls(dir.path());
+        assert_eq!(
+            &log[log.len() - 2..],
+            [
+                "api -X POST repos/{owner}/{repo}/milestones -f title=Wave 28",
+                "api -X POST repos/{owner}/{repo}/milestones -f title=Backlog"
+            ]
+        );
+    }
+
+    #[test]
+    fn make_keeps_the_wave_when_it_cannot_make_the_backlog() {
+        let dir = tempfile::tempdir().unwrap();
+        // A closed milestone with the title makes the POST fail.
+        std::fs::write(dir.path().join("refuse-backlog"), "").unwrap();
+        let made = make(&fake_gh_with(dir.path(), NO_BACKLOG), "Wave 28").unwrap();
+        assert_eq!(made.wave.title, "Wave 29");
+        let why = made.backlog.expect("riff tried").unwrap_err();
+        assert!(why.contains("Validation Failed: already_exists"), "{why}");
     }
 
     #[test]

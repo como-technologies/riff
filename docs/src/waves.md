@@ -150,7 +150,8 @@ riff wave list
 Give the new wave the last number plus one. A name can follow the
 number. riff refuses a number that an open wave has. riff also makes
 the label `tracker` when it is missing (see
-[Track a group of items](#track-a-group-of-items)):
+[Track a group of items](#track-a-group-of-items)), and the milestone
+`Backlog` when the repository has none:
 
 ```sh
 riff wave make "Wave 6: Cloud"

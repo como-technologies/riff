@@ -431,6 +431,43 @@ pub fn parse_remote(url: &str) -> Option<(String, String)> {
     Some((owner.to_owned(), name.to_owned()))
 }
 
+/// OWNER and REPO from a remote URL of a repository on GitHub, in each
+/// form that git takes: `https://github.com/O/R.git`,
+/// `git@github.com:O/R.git` or `ssh://git@github.com/O/R`. A URL of
+/// another host gives `None`, so does a path of a folder.
+///
+/// ```
+/// use riff::identity::parse_github_remote;
+///
+/// let expected = Some(("como-technologies".to_owned(), "riff".to_owned()));
+/// assert_eq!(parse_github_remote("https://github.com/como-technologies/riff.git"), expected);
+/// assert_eq!(parse_github_remote("git@github.com:como-technologies/riff.git"), expected);
+/// assert_eq!(parse_github_remote("ssh://git@github.com/como-technologies/riff"), expected);
+/// assert_eq!(parse_github_remote("https://gitlab.com/como-technologies/riff.git"), None);
+/// assert_eq!(parse_github_remote("/home/mike/github.com/riff"), None);
+/// assert_eq!(parse_github_remote("../riff"), None);
+/// ```
+pub fn parse_github_remote(url: &str) -> Option<(String, String)> {
+    let host = "github.com";
+    let start = url.find(host)?;
+    let (before, after) = (&url[..start], &url[start + host.len()..]);
+    let named = before.ends_with("//") || before.ends_with('@');
+    if named && after.starts_with(['/', ':']) {
+        parse_remote(url)
+    } else {
+        None
+    }
+}
+
+/// `OWNER/REPO` of the remote `origin` of `dir`, when it is a repository
+/// on GitHub ([`parse_github_remote`]). `None` outside git, with no
+/// remote `origin`, and with a remote on another host.
+pub fn github_origin(dir: &Path) -> Option<String> {
+    let url = git(dir, &["remote", "get-url", "origin"])?;
+    let (owner, name) = parse_github_remote(&url)?;
+    Some(format!("{owner}/{name}"))
+}
+
 fn base_name(path: &str) -> String {
     Path::new(path)
         .file_name()

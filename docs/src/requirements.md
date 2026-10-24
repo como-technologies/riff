@@ -657,6 +657,12 @@
   verify, and no other commit, with `gh api
   repos/OWNER/REPO/commits/SHA`. A fault of that read is no WIP. A test
   fails when the fields name such a connection.
+- **01M5QVF58KEC9WNHAJ8WTZ18EP** `riff wave make` also makes the open
+  milestone `Backlog` when the repository has none, and says so. When it
+  cannot make it, it says why on stderr, and the wave stays made.
+- **01M5QWA0H5KJ2SRRP50478X3J2** The check of the Backlog in `riff init`
+  passes when the repository has the open milestone `Backlog`. Its step
+  makes that milestone, as `riff wave make` does.
 
 ## Issue hygiene on GitHub
 
@@ -6690,6 +6696,29 @@ part when they merge.
 - **01M4ZJN718EF1PC9YY9GFD0EJ2** Then `riff init` asks the daemon for
   the session image. The daemon pulls it when podman does not have it.
   The last line says that the machine is ready for `riff run`.
+- **01M5QVF5535YRN1EF3DZAB4W8G** `riff init` also checks the repository
+  of the current folder on GitHub, with the `gh` of the machine, when
+  the remote `origin` of the folder names one. It prints one line for
+  each check: the repository allows auto-merge and squash merge; a
+  ruleset of its default branch requires the check `riff/verify`; the
+  repository has the open Backlog. Each failed check names its step,
+  and each step has its own fix. A folder with no remote `origin` has
+  no such check. When `gh` cannot read the repository, one check fails,
+  and its fix is `gh auth login`. `riff init --check` only reads.
+- **01M5QVF5C3CYJPMQ9CXNZJ8E93** The book page "Start a Riff" has the
+  how-to "Add another repository to the riff": the checks of `riff
+  init`, `riff.toml` with the session image on the default branch, the
+  settings of the repository, the ruleset of the default branch, the
+  Backlog and the first wave, and a session image with another
+  toolchain, built from the session image of riff. Each step has a
+  copyable `sh` block.
+- **01M5QWA0E9A4ZJ8X49EM2MJM5Q** Each failed check of the repository on
+  GitHub carries its step in code (`riff::repo_setup::Step`): allow
+  auto-merge and squash merge, make the ruleset `riff` that requires a
+  pull request and the checks `Gate` and `riff/verify`, and make the
+  Backlog. A step is safe to do again. The how-to makes the same
+  ruleset: a test compares the two. `riff init` names each step and does
+  none.
 
 ### The permission rules
 
