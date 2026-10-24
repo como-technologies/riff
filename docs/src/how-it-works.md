@@ -1720,6 +1720,13 @@ the user in the repository: each live session with no claim. Each other
 session sees it at its next read. A verify request is free work: a
 session picks it like any other item.
 
+The wave verifies a pull request from a fork too. The head commit of
+such a pull request is on a branch of the fork, not on a branch of
+`origin`. So the clone of the verify fetches `refs/pull/N/head` from
+`origin`, where GitHub keeps the head of each pull request, and checks
+out the head commit. It checks out the commit, not the ref: a push to
+the pull request after the look does not change what the verify reads.
+
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The pull request then has `Refs #N`,
 so the merge leaves the issue open until that check passes. The rules

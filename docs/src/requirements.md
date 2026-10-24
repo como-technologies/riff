@@ -6482,6 +6482,12 @@ part when they merge.
   ended session on purpose with riff daemon sweep --remove NAME. It
   first checks that the work of the folder is on a merged branch, or
   that the person gave --force. The lead can run it with --host.
+- **01M5QVARWYFHTQV5THNRB09SZA** The clone of a verify session has the
+  head commit of a pull request from a fork too. After the clone, the
+  daemon fetches refs/pull/N/head from origin, with N the number of the
+  pull request, then checks out the head commit, detached. It checks out
+  the commit, not the ref, so a push to the pull request after the look
+  does not change what the verify reads.
 
 ### The lead, the view and the takeover
 
