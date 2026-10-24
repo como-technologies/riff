@@ -2226,16 +2226,16 @@ riff chat
 ```
 
 The chat shows its history first, in less than 1 second, then each
-new line. A person shows
-as `<USER@HOST>`. A lead shows as `[USER's lead]`, and another session
-as `[USER ID]`. A new line prints above the prompt, and what you type
-stays. Your own line shows once, from the server:
+new line. A person shows as `<USER@HOST>`. A lead shows as
+`[USER's lead, REPO]`, with the name of its repository, and another
+session as `[USER ID]`. A new line prints above the prompt, and what
+you type stays. Your own line shows once, from the server:
 
 ```text
 2026-09-28
 14:02 <mike@thelio> is the release out?
 14:03 <brett@heron> not yet. @lead is #207 merged?
-14:03 [brett's lead] yes, #207 is merged.
+14:03 [brett's lead, riff] yes, #207 is merged.
 [riff] >
 ```
 
@@ -2251,8 +2251,9 @@ The chat on a phone is a design, and not built yet: see
 
 ### Ask a lead in the chat
 
-A chat line with no name wakes your lead. A line with `@lead` wakes
-your lead too. A line with `@USER` wakes the lead of USER, and not
+You have one lead in each repository that you work in. A chat line
+with no name wakes each lead of yours. A line with `@lead` wakes each
+of your leads too. A line with `@USER` wakes each lead of USER, and not
 yours. The lead answers in the chat. Type the lines in `riff chat`,
 not in a shell:
 
@@ -2271,6 +2272,36 @@ sequenceDiagram
     S-->>L: wake
     L->>S: post to the thread chat
     S-->>M: yes, take #14
+```
+
+To ask one lead, put a colon and its repository after the name. The
+repository is `OWNER/REPO`, or the name after the slash. `@lead:REPO`
+wakes only your lead in REPO, and `@USER:REPO` only the lead of USER
+in REPO. `@lead` alone wakes each of your leads:
+
+```text
+@lead:strata is #12 done?
+@brett:como-technologies/strata can I take #14?
+```
+
+The chat reads the leads from the riff first. It sends nothing when no
+lead fits the name, or when two leads fit it. It shows the leads that
+it found, and you type the line again with `OWNER/REPO`:
+
+```text
+riff: cannot send the line: mike has 2 leads in a repository with the name strata: acme/strata, como-technologies/strata. Use OWNER/REPO.
+```
+
+```mermaid
+sequenceDiagram
+    participant M as riff chat (mike)
+    participant S as riff-server
+    participant L as lead of brett in strata
+    M->>S: who
+    S-->>M: the leads of the riff
+    M->>S: @brett:strata can I take #14?
+    S-->>L: wake
+    Note over M,S: no lead or two leads fit: nothing is sent
 ```
 
 ### Answer a person in the chat only
