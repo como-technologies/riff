@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use isolated::Isolated;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use crate::run::{fake_systemctl, git, wait_for};
 
@@ -1199,4 +1200,49 @@ async fn the_daemon_makes_no_key_and_no_riff_and_leaves_the_state_of_the_riff_of
     assert_eq!(peer_state(), before);
     let calls = std::fs::read_to_string(&git).unwrap_or_default();
     assert!(!calls.contains("ls-remote"), "{calls}");
+}
+
+/// 01M5QVBTXE8YRY44A1C1VP71QS: `riff daemon status` shows the
+/// real-session test that the daemon runs, on a line of its own, though
+/// the daemon has no session. A fake daemon on the control socket says
+/// the status. An old daemon says no test, and `riff daemon status` shows
+/// no line.
+#[tokio::test]
+async fn riff_daemon_status_shows_the_real_session_test_that_runs() {
+    let here = Here::new();
+    let dir = here.daemon_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = tokio::net::UnixListener::bind(riff::daemon::socket(&dir)).unwrap();
+
+    let mut shown = Vec::new();
+    for test in [
+        Some(serde_json::json!({"tag": "v4.1.1", "commit": "90e36bfd", "secs": 185})),
+        None,
+    ] {
+        let mut status = serde_json::json!({
+            "say": "status", "pid": 7, "build": "4.1.1", "since_ms": 0,
+            "dir": dir, "sessions": [],
+        });
+        if let Some(test) = test {
+            status["test"] = test;
+        }
+        let fake = {
+            let (accept, line) = (listener.accept(), format!("{status}\n"));
+            async move {
+                let (conn, _) = accept.await.unwrap();
+                let (read, mut write) = conn.into_split();
+                let mut lines = tokio::io::BufReader::new(read).lines();
+                lines.next_line().await.unwrap().unwrap();
+                write.write_all(line.as_bytes()).await.unwrap();
+            }
+        };
+        let (_, out) = tokio::join!(fake, here.run(false, &["daemon", "status"]));
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        shown.push(text(&out.stdout));
+    }
+
+    let line = "real-session test of v4.1.1 on 90e36bfd, for 3 min";
+    assert!(shown[0].lines().any(|l| l == line), "{}", shown[0]);
+    assert!(shown[0].contains("Sessions: none."), "{}", shown[0]);
+    assert!(!shown[1].contains("real-session"), "{}", shown[1]);
 }

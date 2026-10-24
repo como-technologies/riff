@@ -196,6 +196,17 @@ pub struct Wave {
     pub word: String,
 }
 
+/// The real-session test that the daemon runs (01M5QVBTXE8YRY44A1C1VP71QS).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Test {
+    /// The tag of the release under test.
+    pub tag: String,
+    /// The commit that the test runs on.
+    pub commit: String,
+    /// The seconds that the test has run, at the time of the status.
+    pub secs: u64,
+}
+
 /// The session image of a repository that the daemon serves.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Image {
@@ -226,6 +237,9 @@ pub struct Facts {
     /// The waves that the daemon runs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub waves: Vec<Wave>,
+    /// The real-session test that the daemon runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<Test>,
     /// The hardware threads, the memory and the load of the host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<Machine>,
@@ -406,6 +420,11 @@ mod tests {
                 repo: "o/r".into(),
                 word: "started issue-12".into(),
             }],
+            test: Some(Test {
+                tag: "v4.1.1".into(),
+                commit: "90e36bfd".into(),
+                secs: 185,
+            }),
             machine: Some(Machine {
                 threads: 16,
                 mhz: 4500,

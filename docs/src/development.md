@@ -1742,8 +1742,9 @@ To start the daemon again on the new riff after `riff update` there:
 riff daemon restart --host thelio
 ```
 
-The daemon starts again only when it runs no session. Else it says
-that it starts again after its last session. Then `riff daemon status
+The daemon starts again only when it runs no session and no
+real-session test. Else it says that it starts again after its last
+session. Then `riff daemon status
 --host thelio` shows its new pid and build.
 
 riff waits for the reply, prints it, and exits with 1 when the daemon
@@ -2085,7 +2086,8 @@ riff release test v3.3.0 --host thelio
 
 While the test runs, `riff release status` shows
 `real-session test: running`. The line `next:` tells you to wait for
-it. Do not start it again.
+it. Do not start it again. To see it run on the host, see
+[See the test run on a host](#see-the-test-run-on-a-host).
 
 ```mermaid
 flowchart LR
@@ -2140,6 +2142,26 @@ runs, frees the hold, and removes the folder of the session. It also
 cleans up when you press Ctrl-C. A second Ctrl-C stops it at once: then
 stop the daemon of the test yourself, with the process ID that step 5
 shows.
+
+### See the test run on a host
+
+The test runs in the daemon of the host, so it has no session of
+its own. To see it, ask the daemon:
+
+```sh
+riff daemon status --host thelio
+```
+
+While the test runs, the status has a line of its own:
+
+```text
+real-session test of v3.3.0 on 90e36bfd, for 4 min
+```
+
+`riff top`, `riff who` and `riff view` show the same line on the line of
+the host. The daemon counts the test as work: after `riff update`, it
+starts again on the new riff only after the test. The line goes away
+when the test ends. Then `riff release status` shows the result.
 
 ### Which riff-server the test uses
 

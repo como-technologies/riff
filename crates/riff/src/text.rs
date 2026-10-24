@@ -5440,13 +5440,19 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 /// let bare = riff::text::daemon_facts(&Facts { build: "3.1.0".into(), ..Facts::default() });
 /// let words: Vec<&str> = bare[1..3].iter().flatten().map(|(t, _)| t.as_str()).collect();
 /// assert_eq!(words, ["no podman", "no session image", "riff ?", "gh ?", "claude ?", "claude token ?"]);
+/// // A real-session test that runs shows on the first line of the host
+/// // (01M5QVBTXE8YRY44A1C1VP71QS).
+/// let test = riff_client::daemons::Test { tag: "v4.1.1".into(), commit: "90e36bfd".into(), secs: 185 };
+/// let testing = riff::text::daemon_facts(&Facts { test: Some(test), ..facts });
+/// let first: Vec<&str> = testing[0].iter().map(|(t, _)| t.as_str()).collect();
+/// assert_eq!(first[3], "real-session test of v4.1.1 on 90e36bfd, for 3 min");
 /// ```
 pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, anstyle::Style)>> {
     let plain = anstyle::Style::new;
     let warn = |over: bool| if over { WARNING } else { plain() };
     // The version and the commit of the build, with no time.
     let build: Vec<&str> = facts.build.split_whitespace().take(2).collect();
-    let head = vec![
+    let mut head = vec![
         (format!("daemon {}", safe(&build.join(" "))), plain()),
         (
             format!("sessions {}/{}", facts.runs(), facts.limit),
@@ -5454,6 +5460,9 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
         ),
         (format!("floor {}GB", facts.floor_gb), plain()),
     ];
+    if let Some(test) = &facts.test {
+        head.push((real_session_test(test), plain()));
+    }
     let mut host = Vec::new();
     if let Some(m) = &facts.machine {
         host.push(load_part(m));
@@ -5520,6 +5529,32 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
     lines
 }
 
+/// The real-session test that a daemon runs, on one line
+/// (01M5QVBTXE8YRY44A1C1VP71QS): `riff daemon status`, `riff view`,
+/// `riff top` and `riff who` show it. The commit has at most 8
+/// characters, and the minutes are whole.
+///
+/// ```
+/// use riff_client::daemons::Test;
+///
+/// let test = Test { tag: "v4.1.1".into(), commit: "90e36bfd1c2b".into(), secs: 185 };
+/// assert_eq!(
+///     riff::text::real_session_test(&test),
+///     "real-session test of v4.1.1 on 90e36bfd, for 3 min"
+/// );
+/// let new = Test { secs: 59, ..test };
+/// assert!(riff::text::real_session_test(&new).ends_with(", for 0 min"));
+/// ```
+pub fn real_session_test(test: &riff_client::daemons::Test) -> String {
+    let commit: String = test.commit.chars().take(8).collect();
+    format!(
+        "real-session test of {} on {}, for {} min",
+        safe(&test.tag),
+        safe(&commit),
+        test.secs / 60
+    )
+}
+
 /// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S,
 /// 01M501PADKZNRHBZD9XPMJGW06).
 ///
@@ -5538,12 +5573,14 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
 ///     waiting: vec![],
 ///     waves: vec![],
 ///     jobs: 0,
+///     test: None,
 ///     mcp: vec![],
 ///     claude_token: riff_client::daemons::Token::NotSet,
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
 /// assert!(text.contains("Sessions: none.\n"));
+/// assert!(!text.contains("real-session"), "{text}");
 /// // No key, no riff of peers and no peer link (01M53NGW6F5HP1DZ9QRGP50MGT).
 /// assert!(!text.contains("key") && !text.contains("Its riff") && !text.contains("peer"), "{text}");
 /// // An old daemon does not say its MCP servers.
@@ -5574,6 +5611,17 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
 /// assert!(text.contains("claude token: set.\n"), "{text}");
+/// // A real-session test that runs has a line of its own, before the sessions
+/// // (01M5QVBTXE8YRY44A1C1VP71QS).
+/// status.test = Some(riff_client::daemons::Test {
+///     tag: "v4.1.1".into(),
+///     commit: "90e36bfd".into(),
+///     secs: 190,
+/// });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// let line = "real-session test of v4.1.1 on 90e36bfd, for 3 min\n";
+/// assert!(text.contains(line), "{text}");
+/// assert!(text.find(line) < text.find("Sessions:\n"), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -5593,6 +5641,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     if !status.mcp.is_empty() {
         let _ = writeln!(out, "{}", session_mcp(&status.mcp));
+    }
+    if let Some(test) = &status.test {
+        let _ = writeln!(out, "{}", real_session_test(test));
     }
     if status.sessions.is_empty() {
         out.push_str("Sessions: none.\n");
@@ -6125,6 +6176,7 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     waiting: vec![],
 ///     waves: vec![],
 ///     jobs: 0,
+///     test: None,
 ///     mcp: vec![],
 ///     claude_token: Default::default(),
 /// };
@@ -7895,7 +7947,25 @@ pub fn view_no_daemon(error: &str) -> String {
     format!("No riff daemon answers: {error}. Start it: riff daemon install")
 }
 
-/// `riff view`: the line of the daemon.
+/// `riff view`: the line of the daemon. A real-session test that runs
+/// ends it (01M5QVBTXE8YRY44A1C1VP71QS).
+///
+/// ```
+/// let mut status: riff::daemon::Status = serde_json::from_value(serde_json::json!({
+///     "pid": 7, "build": "b", "since_ms": 0, "dir": "/d", "sessions": [],
+/// }))?;
+/// assert_eq!(riff::text::view_daemon(&status), "riff daemon b, pid 7, 0 waiting");
+/// status.test = Some(riff_client::daemons::Test {
+///     tag: "v4.1.1".into(),
+///     commit: "90e36bfd".into(),
+///     secs: 120,
+/// });
+/// assert_eq!(
+///     riff::text::view_daemon(&status),
+///     "riff daemon b, pid 7, 0 waiting, real-session test of v4.1.1 on 90e36bfd, for 2 min"
+/// );
+/// # Ok::<(), serde_json::Error>(())
+/// ```
 pub fn view_daemon(status: &crate::daemon::Status) -> String {
     let limit = status.limit.map_or_else(String::new, |l| {
         format!(
@@ -7903,8 +7973,12 @@ pub fn view_daemon(status: &crate::daemon::Status) -> String {
             l.sessions, l.floor_gb
         )
     });
+    let test = status
+        .test
+        .as_ref()
+        .map_or_else(String::new, |t| format!(", {}", real_session_test(t)));
     format!(
-        "riff daemon {}, pid {}{limit}, {} waiting",
+        "riff daemon {}, pid {}{limit}, {} waiting{test}",
         safe(&status.build),
         status.pid,
         status.waiting.len()
