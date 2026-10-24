@@ -2811,7 +2811,8 @@ impl Forge for GitHub {
     }
 
     fn gate(&self, commit: &str) -> Result<pr::Gate> {
-        pr::gate_of(&self.gh, "{owner}/{repo}", commit)
+        let checks = crate::repo_setup::full_check(&self.gh, "{owner}/{repo}")?;
+        pr::gate_of(&self.gh, "{owner}/{repo}", &checks, commit)
     }
 
     fn pass_verify(&self, commit: &str, description: &str) -> Result<()> {

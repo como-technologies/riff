@@ -381,8 +381,8 @@ riff init --check
 ## Add another repository to the riff
 
 riff works on other projects too. A new repository needs five parts
-that riff does not make: `riff.toml` with the session image, a job
-`Gate`, the settings of the repository, a ruleset of the default
+that riff does not make: `riff.toml` with the session image, a full
+check, the settings of the repository, a ruleset of the default
 branch, and the Backlog. In a clone of the repository, `riff init`
 checks them, and names the step of each check that fails:
 
@@ -393,7 +393,7 @@ riff init --check
 ```mermaid
 flowchart LR
     T["riff.toml on the<br/>default branch"] --> S["a session:<br/>gh pr merge --auto --squash"]
-    S --> G["your job Gate<br/>passes"]
+    S --> G["your full check<br/>passes"]
     G --> V["riff sets<br/>riff/verify"]
     V --> R["the ruleset lets<br/>the merge go"]
     R --> M["GitHub squash-merges"]
@@ -406,7 +406,9 @@ flowchart LR
 | the ruleset of the default branch | [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch) |
 | the Backlog | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
 
-The job `Gate` is a step of your own: `riff init` cannot check it.
+The full check is a step of your own: `riff init` cannot check it.
+Your repository may have one already: see
+[Use the checks that you have](#use-the-checks-that-you-have).
 
 ### Add riff.toml
 
@@ -442,10 +444,13 @@ clone.
 
 #### Add the job Gate
 
-riff starts the verify of a pull request only when a check run named
-`Gate` passed on its head. Add a workflow with a job of that name.
-Put the command of your tests in place of `make test`. Push the
-workflow to the default branch before you make the ruleset:
+riff starts the verify of a pull request only when the full check of
+its head is done. A repository whose ruleset requires no check but
+`riff/verify` has a full check named `Gate`. Add a workflow with a job
+of that name. Put the command of your tests in place of `make test`.
+Push the workflow to the default branch before you make the ruleset.
+A repository with checks already needs no job `Gate`: skip this step,
+and see [Use the checks that you have](#use-the-checks-that-you-have).
 
 ```sh
 mkdir -p .github/workflows
@@ -467,6 +472,28 @@ git commit -m "Add the job Gate"
 git push
 ```
 
+#### Use the checks that you have
+
+A repository whose ruleset of the default branch requires checks
+already needs no job `Gate`. riff reads the required checks of that
+ruleset. The full check is each of them but `riff/verify`. riff starts
+the verify of a pull request when each of them passed or ended on its
+head. A pass of `riff verify pass` needs a success of each of them.
+riff reads the rulesets of GitHub, and not the branch protection of
+the old kind.
+
+To see the checks that riff waits for:
+
+```sh
+BRANCH=$(gh api repos/{owner}/{repo} --jq .default_branch)
+gh api "repos/{owner}/{repo}/rules/branches/$BRANCH" --jq '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] - ["riff/verify"]'
+```
+
+The answer is a list, for example `["checks / docs"]`. An empty list
+means that riff waits for a check run named `Gate`. When your full
+check has other names, put them in the ruleset in place of `Gate`: see
+[Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch).
+
 #### Allow auto-merge and squash merge
 
 Each work session runs `gh pr merge --auto --squash`. GitHub refuses
@@ -481,7 +508,7 @@ gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_me
 Without a rule, nothing on GitHub makes a merge wait for the verify.
 This ruleset needs a pull request, and the checks `Gate` and
 `riff/verify`. It allows squash merges only, and it lets nobody bypass
-it:
+it. When your full check has other names, put them in place of `Gate`:
 
 ```sh
 gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'

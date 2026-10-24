@@ -12,7 +12,7 @@
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
 //! | `riff pr wait N` | `pr view`, `pr checks --required`, again each `--every` seconds. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
-//! | `riff verify pass\|fail N` | `pr view`, `api …/commits/COMMIT/check-runs` (a pass), `pr comment`, `api …/statuses/COMMIT` |
+//! | `riff verify pass\|fail N` | `pr view`, `api …/rules/branches/BRANCH` and `api …/commits/COMMIT/check-runs` (a pass), `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
@@ -39,11 +39,15 @@
 //! that the verifier tested, `HEAD` of its worktree or `--commit`
 //! ([`same_commit`]).
 //!
-//! The job `Gate` of GitHub is the one full test run of each commit
-//! (01M49HAZ5BZYGAR9PGC089RM3F). The verifier does not run the tests
-//! again: it reviews. So `riff verify pass` reports nothing while the
-//! [`GATE`] of the head commit has no success ([`gate_state`],
-//! 01M49HAZ7P3JMWNCG1SWCMAXQP). A fail needs no Gate.
+//! The full check of a commit is its one full test run
+//! (01M49HAZ5BZYGAR9PGC089RM3F). In the repository of riff it is the job
+//! `Gate`. In another repository it is each check that the ruleset of the
+//! default branch requires, but `riff/verify`: `Gate` when it requires
+//! none ([`repo_setup::full_check`], 01M5QYDE41FVFX26EC8K5QGYH4). The
+//! verifier does not run the tests again: it reviews. So
+//! `riff verify pass` reports nothing while the full check of the head
+//! commit has no success ([`gate_of`], 01M49HAZ7P3JMWNCG1SWCMAXQP). A fail
+//! needs no Gate.
 //!
 //! The author of a pull request releases its item at the verify
 //! request. So the issue can have no holder. Then the result wakes the
@@ -78,6 +82,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use zeroize::Zeroizing;
 
+use crate::repo_setup;
 use crate::text;
 
 /// The status code in the first line of a reply that `gh api --include`
@@ -956,8 +961,11 @@ pub fn same_commit(head: &str, tested: &str) -> Result<()> {
     )
 }
 
-/// The name of the check run of the full test run of a commit: the job
-/// `Gate` of `.github/workflows/ci.yml` (01M49HAZ5BZYGAR9PGC089RM3F).
+/// The name of the check run of the full test run of a commit in the
+/// repository of riff: the job `Gate` of `.github/workflows/ci.yml`
+/// (01M49HAZ5BZYGAR9PGC089RM3F). It is also the full check of a repository
+/// whose ruleset requires no check but [`VERIFY_CONTEXT`]
+/// ([`repo_setup::full_check_of`]).
 pub const GATE: &str = "Gate";
 
 /// A check run, as `gh api repos/R/commits/C/check-runs` gives it.
@@ -985,7 +993,7 @@ pub struct CheckRuns {
     pub check_runs: Vec<CheckRun>,
 }
 
-/// The state of the [`GATE`] of a commit.
+/// The state of the full check of a commit, for example of the [`GATE`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Gate {
     /// Each run of the Gate is completed with `success`.
@@ -1034,19 +1042,84 @@ pub fn gate_state(runs: &[CheckRun]) -> Gate {
     Gate::Passed
 }
 
-/// The state of the [`GATE`] of `commit` in `repo`.
-pub fn gate_of(gh: &Gh, repo: &str, commit: &str) -> Result<Gate> {
-    let path = format!("repos/{repo}/commits/{commit}/check-runs?check_name={GATE}");
-    let runs: CheckRuns = gh.json(&["api", &path])?;
-    Ok(gate_state(&runs.check_runs))
+/// The state of the full check of a commit from the state of each of its
+/// checks. A check that runs makes it run. Else a check that ended with no
+/// success gives its conclusion. Else a check with no run makes it missing.
+///
+/// ```
+/// use riff::pr::{Gate, full_state};
+///
+/// assert_eq!(full_state([Gate::Passed, Gate::Passed]), Gate::Passed);
+/// assert_eq!(full_state([Gate::Passed, Gate::Missing]), Gate::Missing);
+/// assert_eq!(full_state([Gate::Missing, Gate::Running]), Gate::Running);
+/// let failed = Gate::Ended("failure".into());
+/// assert_eq!(full_state([failed.clone(), Gate::Missing]), failed);
+/// assert_eq!(full_state([failed.clone(), Gate::Running]), Gate::Running);
+/// assert_eq!(full_state([]), Gate::Passed);
+/// ```
+pub fn full_state(states: impl IntoIterator<Item = Gate>) -> Gate {
+    let mut ended = None;
+    let mut missing = false;
+    for state in states {
+        match state {
+            Gate::Passed => {}
+            Gate::Running => return Gate::Running,
+            Gate::Ended(conclusion) => {
+                ended.get_or_insert(conclusion);
+            }
+            Gate::Missing => missing = true,
+        }
+    }
+    match (ended, missing) {
+        (Some(conclusion), _) => Gate::Ended(conclusion),
+        (None, true) => Gate::Missing,
+        (None, false) => Gate::Passed,
+    }
+}
+
+/// A name in a GitHub path, with each byte but a letter, a digit and
+/// `-_.` as `%XX`: the check `checks / lint and test` has spaces and a
+/// slash.
+///
+/// ```
+/// assert_eq!(riff::pr::percent("Gate"), "Gate");
+/// assert_eq!(
+///     riff::pr::percent("checks / lint and test"),
+///     "checks%20%2F%20lint%20and%20test"
+/// );
+/// ```
+pub fn percent(name: &str) -> String {
+    let mut out = String::new();
+    for byte in name.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(byte as char),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
+/// The state of the full check `checks` of `commit` in `repo`
+/// ([`repo_setup::full_check`]): the state of the check runs of each name
+/// ([`gate_state`]), and the state of all of them ([`full_state`]).
+pub fn gate_of(gh: &Gh, repo: &str, checks: &[String], commit: &str) -> Result<Gate> {
+    let mut states = Vec::new();
+    for check in checks {
+        let name = percent(check);
+        let path = format!("repos/{repo}/commits/{commit}/check-runs?check_name={name}");
+        let runs: CheckRuns = gh.json(&["api", &path])?;
+        states.push(gate_state(&runs.check_runs));
+    }
+    Ok(full_state(states))
 }
 
 /// Puts the result on pull request `number` as a comment, and sets the
 /// status `riff/verify` of its head commit in `repo`
 /// (01M3NB6FYXXKX80VHEVA5CV6RY). It reports nothing when the head is
-/// not the commit `tested` ([`same_commit`]), and no pass while the
-/// [`GATE`] of the head has no success (01M49HAZ7P3JMWNCG1SWCMAXQP). The
-/// caller posts it to the holder of the issue.
+/// not the commit `tested` ([`same_commit`]), and no pass while the full
+/// check of the head has no success (01M49HAZ7P3JMWNCG1SWCMAXQP,
+/// 01M5QYDE41FVFX26EC8K5QGYH4). The caller posts it to the holder of the
+/// issue.
 pub fn report(
     gh: &Gh,
     repo: &str,
@@ -1063,9 +1136,10 @@ pub fn report(
     };
     let commit = head.head_ref_oid;
     if verdict == Verdict::Pass {
-        let gate = gate_of(gh, repo, &commit)?;
+        let checks = repo_setup::full_check(gh, repo)?;
+        let gate = gate_of(gh, repo, &checks, &commit)?;
         if gate != Gate::Passed {
-            bail!("{}", text::gate_not_passed(number, &commit, &gate));
+            bail!("{}", text::gate_not_passed(number, &commit, &checks, &gate));
         }
     }
     let text = comment(verdict, issue, &commit, result);

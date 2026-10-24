@@ -109,22 +109,30 @@ pub fn pr_look_failed(number: u64, error: &str, every_secs: u64) -> String {
     )
 }
 
-/// The line of a `riff verify pass` that the [`Gate`](crate::pr::GATE)
-/// of the head commit stops (01M49HAZ7P3JMWNCG1SWCMAXQP).
+/// The line of a `riff verify pass` that the full check `checks` of the
+/// head commit stops (01M49HAZ7P3JMWNCG1SWCMAXQP,
+/// 01M5QYDE41FVFX26EC8K5QGYH4). It names the checks.
 ///
 /// ```
 /// use riff::pr::Gate;
+/// let gate = ["Gate".to_owned()];
 /// assert_eq!(
-///     riff::text::gate_not_passed(40, "1a2b3c4d5e6f", &Gate::Running),
-///     "riff verify pass: the Gate of commit 1a2b3c4 runs still. A pass needs a Gate success: \
-///      see gh pr checks 40. Nothing is reported."
+///     riff::text::gate_not_passed(40, "1a2b3c4d5e6f", &gate, &Gate::Running),
+///     "riff verify pass: the full check of commit 1a2b3c4 (Gate) runs still. A pass needs a \
+///      success of each check of it: see gh pr checks 40. Nothing is reported."
 /// );
-/// assert!(riff::text::gate_not_passed(40, "1a2b3c4", &Gate::Ended("failure".into()))
-///     .contains("the Gate of commit 1a2b3c4 ended with failure."));
-/// assert!(riff::text::gate_not_passed(40, "1a2b3c4", &Gate::Missing)
-///     .contains("the Gate of commit 1a2b3c4 has not started."));
+/// assert!(riff::text::gate_not_passed(40, "1a2b3c4", &gate, &Gate::Ended("failure".into()))
+///     .contains("the full check of commit 1a2b3c4 (Gate) ended with failure."));
+/// let two = ["checks / docs".to_owned(), "checks / lint".to_owned()];
+/// assert!(riff::text::gate_not_passed(40, "1a2b3c4", &two, &Gate::Missing)
+///     .contains("the full check of commit 1a2b3c4 (checks / docs, checks / lint) has not started."));
 /// ```
-pub fn gate_not_passed(number: u64, commit: &str, gate: &crate::pr::Gate) -> String {
+pub fn gate_not_passed(
+    number: u64,
+    commit: &str,
+    checks: &[String],
+    gate: &crate::pr::Gate,
+) -> String {
     use crate::pr::Gate;
     let short = commit.get(..7).unwrap_or(commit);
     let state = match gate {
@@ -134,9 +142,10 @@ pub fn gate_not_passed(number: u64, commit: &str, gate: &crate::pr::Gate) -> Str
         Gate::Running => "runs still".to_owned(),
         Gate::Ended(conclusion) => format!("ended with {conclusion}"),
     };
+    let checks = checks.join(", ");
     format!(
-        "riff verify pass: the Gate of commit {short} {state}. A pass needs a Gate success: see \
-         gh pr checks {number}. Nothing is reported."
+        "riff verify pass: the full check of commit {short} ({checks}) {state}. A pass needs a \
+         success of each check of it: see gh pr checks {number}. Nothing is reported."
     )
 }
 
@@ -7083,7 +7092,7 @@ pub fn session_why(item: &str, count: usize, last: &crate::ends::Record) -> Stri
 ///     body,
 ///     "verify request: issue-12, PR #40, branch worktree-issue-12, commit 1a2b3c4, from the \
 ///      riff daemon (session 9f8e7d6c). The session ended, and the item is free. The wave starts \
-///      the verify when the Gate is done."
+///      the verify when the full check is done."
 /// );
 /// ```
 pub fn wave_verify_request(
@@ -7097,7 +7106,7 @@ pub fn wave_verify_request(
     format!(
         "verify request: {item}, PR #{number}, branch {branch}, commit {commit}, from the riff \
          daemon (session {session}). The session ended, and the item is free. The wave starts \
-         the verify when the Gate is done."
+         the verify when the full check is done."
     )
 }
 
@@ -7507,6 +7516,7 @@ pub fn wave_checks_rerun(
 /// assert!(text.contains("commit 1a2b3c4d5e6f"));
 /// assert!(text.contains("The first line is PASS or FAIL"));
 /// assert!(text.contains("Verify of the release pull request"));
+/// assert!(text.contains("each check that the ruleset of its default branch requires, but `riff/verify`"));
 /// assert!(text.contains("Run each test in the foreground"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
 /// ```
@@ -7526,8 +7536,10 @@ pub fn wave_verify_start(repo: &str, issue: u64, pull: u64, commit: &str) -> Str
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
          origin/main...HEAD\n\
          4. See the checks of the commit: gh pr checks {pull}\n   \
-         The Gate is the full check: do not run it again. When the Gate failed, the verify \
-         fails: name the step that failed.\n\
+         The full check is each check that the ruleset of its default branch requires, but \
+         `riff/verify`: the check `Gate` when the ruleset requires none. The wave started you \
+         when each of them was done. Do not run it again. When one failed, the verify fails: \
+         name the step that failed.\n\
          5. Check each criterion: review the code and its fit with the design, read the test \
          of each criterion, and run that test by its name when you must. Read the book, the \
          rustdoc and the requirements.\n\

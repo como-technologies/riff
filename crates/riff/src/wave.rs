@@ -50,7 +50,9 @@
 //! - the verify of an item while a session holds the item: its author
 //!   still works. The verify is a new session: an author never verifies
 //!   its own item (01M4ZV3B6NKPEZ5FNE27X95GF0);
-//! - a verify before the Gate of the head commit is done;
+//! - a verify before the full check of the head commit is done: each
+//!   check that the rules of the default branch require, but `riff/verify`
+//!   ([`repo_setup::full_check`], 01M5QYDHN27RC5SRHAB56PFKK0);
 //! - an item that started [`STARTS`] times in this run of the wave. The
 //!   lead gets one message for it. A start whose claim riff-server
 //!   refused for a pause does not count (01M558EYCXPFW8CJV3XJ7HK3NR).
@@ -261,7 +263,7 @@ use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
-use crate::{identity, look, pr, rollout, session_image, text, usage};
+use crate::{identity, look, pr, repo_setup, rollout, session_image, text, usage};
 use riff_client::api::{self, Api};
 
 /// The file of the waves that the daemon runs, in its folder.
@@ -568,7 +570,7 @@ pub struct Waiting {
     pub pull: u64,
     /// Its head commit.
     pub commit: String,
-    /// True when the Gate of the head is done: passed, or ended.
+    /// True when the full check of the head is done: passed, or ended.
     pub gate_done: bool,
 }
 
@@ -1955,7 +1957,8 @@ pub fn reasked(bodies: &[&str]) -> HashSet<(u64, String)> {
 /// The facts of the wave of the repository `repo` from the forge, with
 /// `gh`, and the items that a session claims (`claims`) and the held
 /// items (`holds`): the free work with the fixes ([`fixes`]), and
-/// the pull request of each verify among it, with the Gate of its head.
+/// the pull request of each verify among it, with the full check of its
+/// head ([`repo_setup::full_check`]).
 pub fn look_on(
     gh: &pr::Gh,
     repo: &str,
@@ -1983,12 +1986,37 @@ pub fn look_with(
         pull.reasked = pull.issue().is_some_and(|n| asked.contains(&(n, commit)));
     }
     let (free, fixes) = fixes(&open, open.free_work(&claimed, &held));
+    let pulls = waiting(gh, repo, &free, &open)?;
+    Ok(Look {
+        paused: false,
+        free,
+        claims,
+        holds,
+        pulls,
+        fixes,
+    })
+}
+
+/// The pull request of each verify among the free work `free` of `open`,
+/// with the full check of its head (01M5QYDHN27RC5SRHAB56PFKK0). The wave
+/// reads the full check of the repository one time, and only when a
+/// verify waits ([`repo_setup::full_check`]).
+fn waiting(
+    gh: &pr::Gh,
+    repo: &str,
+    free: &[String],
+    open: &rollout::Open,
+) -> Result<BTreeMap<u64, Waiting>> {
     let mut pulls = BTreeMap::new();
+    let mut checks: Option<Vec<String>> = None;
     for issue in free.iter().filter_map(|item| verify_issue(item)) {
         let Some(pull) = open.pulls.iter().find(|p| p.issue() == Some(issue)) else {
             continue;
         };
-        let gate = pr::gate_of(gh, repo, &pull.head)?;
+        if checks.is_none() {
+            checks = Some(repo_setup::full_check(gh, repo)?);
+        }
+        let gate = pr::gate_of(gh, repo, checks.as_deref().unwrap_or_default(), &pull.head)?;
         pulls.insert(
             issue,
             Waiting {
@@ -1998,14 +2026,7 @@ pub fn look_with(
             },
         );
     }
-    Ok(Look {
-        paused: false,
-        free,
-        claims,
-        holds,
-        pulls,
-        fixes,
-    })
+    Ok(pulls)
 }
 
 impl World for Live {
@@ -2453,6 +2474,9 @@ mod tests {
         posts: Vec<(Option<String>, Kind, String)>,
         /// The number of the next posts of the look that fail.
         post_fails: usize,
+        /// The full check of a pull request is what the fake `gh` tells
+        /// ([`FAKE_GH`]), as for the real look. Else each is done.
+        checked: bool,
     }
 
     impl Forge {
@@ -2548,12 +2572,9 @@ mod tests {
                 let open = forge.open();
                 let claims: HashSet<String> = forge.claims.keys().cloned().collect();
                 let (free, fixes) = fixes(&open, open.free_work(&claims, &HashSet::new()));
-                Ok(Look {
-                    paused: false,
-                    free,
-                    claims: forge.claims.keys().cloned().collect(),
-                    holds: forge.holds.clone(),
-                    pulls: forge
+                let pulls = match forge.checked {
+                    true => waiting(&self.gh, "o/r", &free, &open)?,
+                    false => forge
                         .pulls
                         .keys()
                         .map(|n| {
@@ -2565,6 +2586,13 @@ mod tests {
                             (*n, waiting)
                         })
                         .collect(),
+                };
+                Ok(Look {
+                    paused: false,
+                    free,
+                    claims: forge.claims.keys().cloned().collect(),
+                    holds: forge.holds.clone(),
+                    pulls,
                     fixes,
                 })
             })
@@ -3715,7 +3743,11 @@ mod tests {
     /// `main`, `jobs` the jobs of its run, `pulls` the open pull
     /// requests, and `issues` the open issues. `issue list` gives the file
     /// `with-fix` after `issue create` and before `issue close`. A file
-    /// that is missing gives `[]`: no Gate, no pull request.
+    /// that is missing gives `[]`: no Gate, no pull request. The repository
+    /// `o/r` has `main` as its default branch. The file `rules` holds the
+    /// rules of `main`, and the file `docs` the check runs of the check
+    /// `checks / docs` on any commit but `main`. The other checks of a
+    /// commit passed, and `Gate` has no run.
     const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s' "$*" | tr '\n' ' ' >> "$dir/gh.log"
@@ -3724,7 +3756,12 @@ show() { if [ -e "$dir/$1" ]; then cat "$dir/$1"; else echo '[]'; fi; }
 case "$1 $2" in
   api*)
     case "$2" in
+      repos/o/r) echo '{"default_branch":"main"}' ;;
+      */rules/branches/main*) show rules ;;
       */commits/main/check-runs*) show gate ;;
+      *check_name=Gate) echo '{"check_runs":[]}' ;;
+      *check_name=checks%20%2F%20docs) show docs ;;
+      *check_name=checks%20%2F%20*) echo '{"check_runs":[{"status":"completed","conclusion":"success"}]}' ;;
       */actions/runs/*/jobs*) show jobs ;;
       */milestones*) echo '[{"title":"Wave 1"}]' ;;
       *) exit 1 ;;
@@ -3806,6 +3843,59 @@ esac
         fn posts(&self) -> Vec<(Option<String>, Kind, String)> {
             self.forge().posts.clone()
         }
+    }
+
+    /// #698, 01M5QYDE41FVFX26EC8K5QGYH4, 01M5QYDHN27RC5SRHAB56PFKK0: a
+    /// repository with no check named `Gate`. Its ruleset requires the
+    /// checks `checks / lint` and `checks / docs`. The wave starts no
+    /// verify while one of them runs, and starts it when both passed. It
+    /// never asks for the check `Gate`.
+    #[tokio::test]
+    async fn the_wave_starts_the_verify_when_the_required_checks_passed_and_the_repository_has_no_gate()
+     {
+        let here = Here::looking().await;
+        here.put(
+            "rules",
+            r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[
+                {"context":"checks / lint"},{"context":"checks / docs"},{"context":"riff/verify"}]}}]"#,
+        );
+        here.put(
+            "docs",
+            r#"{"check_runs":[{"status":"in_progress","conclusion":null}]}"#,
+        );
+        {
+            let mut forge = here.forge();
+            forge.checked = true;
+            forge.pulls.insert(1, Pr::Asked);
+        }
+        here.run();
+
+        // The wave looks at the checks of the head again and again, and
+        // starts no verify.
+        here.until(0, |h| !h.calls("check_name=checks%20%2F%20docs").is_empty())
+            .await;
+        here.idle(0).await;
+        assert!(here.forge().starts.is_empty(), "{:?}", here.forge());
+
+        here.put(
+            "docs",
+            r#"{"check_runs":[{"status":"completed","conclusion":"success"}]}"#,
+        );
+        here.until(1, |h| h.running("verify-issue-1").is_some())
+            .await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1".into(),
+        };
+        assert_eq!(here.forge().works, [verify]);
+        // The watch of `main` reads its own Gate: the head of the pull
+        // request has no such call.
+        assert!(
+            here.calls("/commits/c1/check-runs?check_name=Gate")
+                .is_empty()
+        );
+        assert!(!here.calls("/rules/branches/main").is_empty());
     }
 
     /// The look of the daemon at `main` (#1351, 01M5QVH3MAEPPJN9PPVDX6N2EY,

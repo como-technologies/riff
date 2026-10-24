@@ -226,6 +226,8 @@ async fn pr_wait_fails_for_a_failed_required_check() {
 const VERIFY: &str = r#"*'pr view 40 --json headRefOid,body'*) printf '%s' '{"headRefOid":"1a2b3c4d","body":"Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n"}' ;;
 *'pr comment 40 --body-file -'*) echo 'https://github.com/como-technologies/riff/pull/40#issuecomment-7' ;;
 *'/statuses/'*) echo '{}' ;;
+*'api repos/como-technologies/riff') echo '{"default_branch":"main"}' ;;
+*'/rules/branches/main?per_page=100'*) echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]' ;;
 *'/check-runs?check_name=Gate'*) echo '{"total_count":1,"check_runs":[{"name":"Gate","status":"completed","conclusion":"success"}]}' ;;"#;
 
 /// `riff verify VERDICT` makes one comment, one status on the head
@@ -467,13 +469,16 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
     let cases = [
         (
             gate(r#"[{"name":"Gate","status":"in_progress","conclusion":null}]"#),
-            "the Gate of commit 1a2b3c4 runs still.",
+            "the full check of commit 1a2b3c4 (Gate) runs still.",
         ),
         (
             gate(r#"[{"name":"Gate","status":"completed","conclusion":"failure"}]"#),
-            "the Gate of commit 1a2b3c4 ended with failure.",
+            "the full check of commit 1a2b3c4 (Gate) ended with failure.",
         ),
-        (gate("[]"), "the Gate of commit 1a2b3c4 has not started."),
+        (
+            gate("[]"),
+            "the full check of commit 1a2b3c4 (Gate) has not started.",
+        ),
     ];
     for (fake, line) in cases {
         let machine = Machine::new(&fake).await;
@@ -487,7 +492,7 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
         let stderr = text(&out.stderr);
         assert!(
             stderr.contains(&format!(
-                "riff verify pass: {line} A pass needs a Gate success: see gh pr checks 40. \
+                "riff verify pass: {line} A pass needs a success of each check of it: see gh pr checks 40. \
                  Nothing is reported."
             )),
             "{stderr}"
@@ -512,6 +517,145 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
         machine.ok("verifier", &fail).await;
         let calls = log(machine.bin.path());
         assert!(calls.contains("-f state=failure"), "{calls}");
+    }
+}
+
+/// The four checks of the forge of a repository whose full check is not
+/// named `Gate` (#698).
+const FOUR: [&str; 4] = [
+    "checks / lint and test",
+    "checks / docs",
+    "checks / the lowest Rust version",
+    "checks / build x86_64-unknown-linux-musl",
+];
+
+/// The fake forge of such a repository: the ruleset of `main` requires
+/// [`FOUR`] and `riff/verify`, and the head commit has no check run
+/// `Gate`. `run` gives the check run of each of the four, as JSON.
+fn without_gate(run: impl Fn(&str) -> String) -> String {
+    let mut cases: Vec<String> = VERIFY.lines().take(3).map(str::to_owned).collect();
+    let contexts: Vec<String> = FOUR
+        .iter()
+        .chain(&["riff/verify"])
+        .map(|c| format!(r#"{{"context":"{c}"}}"#))
+        .collect();
+    cases
+        .push(r#"*'api repos/como-technologies/riff') echo '{"default_branch":"main"}' ;;"#.into());
+    cases.push(format!(
+        r#"*'/rules/branches/main?per_page=100'*) echo '[{{"type":"required_status_checks","parameters":{{"required_status_checks":[{}]}}}}]' ;;"#,
+        contexts.join(",")
+    ));
+    for check in FOUR {
+        cases.push(format!(
+            "*'/check-runs?check_name={}'*) echo '{{\"check_runs\":[{}]}}' ;;",
+            riff::pr::percent(check),
+            run(check)
+        ));
+    }
+    cases.push(
+        r#"*'/check-runs?check_name=Gate'*) echo '{"total_count":0,"check_runs":[]}' ;;"#.into(),
+    );
+    cases.join("\n")
+}
+
+/// The check runs of each of the four, by its name.
+type Runs = fn(&str) -> String;
+
+/// The check run `name` with the `status` and the `conclusion`.
+fn check_run(name: &str, status: &str, conclusion: &str) -> String {
+    format!(r#"{{"name":"{name}","status":"{status}","conclusion":{conclusion}}}"#)
+}
+
+/// A repository with no check named `Gate` and four required checks that
+/// pass (#698, 01M5QYDE41FVFX26EC8K5QGYH4): `riff verify pass` reads the
+/// required checks of the ruleset of the default branch, and reports. It
+/// never asks for a check named `Gate`.
+#[tokio::test]
+async fn verify_pass_needs_the_required_checks_of_a_repository_with_no_gate() {
+    let fake = without_gate(|name| check_run(name, "completed", r#""success""#));
+    let machine = Machine::new(&fake).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let pass = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.ok("verifier", &pass).await;
+    assert!(out.contains("Woke mike@thelio:"), "{out}");
+
+    let calls = log(machine.bin.path());
+    assert!(
+        calls.contains("gh api repos/como-technologies/riff/rules/branches/main?per_page=100"),
+        "{calls}"
+    );
+    let run = "gh api repos/como-technologies/riff/commits/1a2b3c4d/check-runs?check_name=";
+    for check in [
+        "checks%20%2F%20lint%20and%20test",
+        "checks%20%2F%20docs",
+        "checks%20%2F%20the%20lowest%20Rust%20version",
+        "checks%20%2F%20build%20x86_64-unknown-linux-musl",
+    ] {
+        assert!(calls.contains(&format!("{run}{check}")), "{check}\n{calls}");
+    }
+    assert!(!calls.contains(&format!("{run}Gate")), "{calls}");
+    assert!(
+        calls.contains("statuses/1a2b3c4d -f state=success"),
+        "{calls}"
+    );
+}
+
+/// A required check that runs or failed stops the pass, and
+/// the line names the four checks. A fail needs none of them.
+#[tokio::test]
+async fn verify_pass_refuses_while_a_required_check_has_no_success() {
+    let names = FOUR.join(", ");
+    let cases: [(Runs, &str); 2] = [
+        (
+            |name| {
+                let (status, conclusion) = match name {
+                    "checks / docs" => ("in_progress", "null"),
+                    _ => ("completed", r#""success""#),
+                };
+                check_run(name, status, conclusion)
+            },
+            "runs still",
+        ),
+        (
+            |name| {
+                let conclusion = match name {
+                    "checks / the lowest Rust version" => r#""failure""#,
+                    _ => r#""success""#,
+                };
+                check_run(name, "completed", conclusion)
+            },
+            "ended with failure",
+        ),
+    ];
+    for (run, state) in cases {
+        let machine = Machine::new(&without_gate(run)).await;
+        machine.claim("author", "issue-12").await;
+        let result = machine.write("result.md", "1. The wave shows.\n");
+        let pass = [
+            "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        let out = machine.run("verifier", &pass).await;
+        assert_eq!(out.status.code(), Some(1), "{state}");
+        let stderr = text(&out.stderr);
+        assert!(
+            stderr.contains(&format!(
+                "riff verify pass: the full check of commit 1a2b3c4 ({names}) {state}. A pass \
+                 needs a success of each check of it: see gh pr checks 40. Nothing is reported."
+            )),
+            "{stderr}"
+        );
+        let calls = log(machine.bin.path());
+        assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("/statuses/"), "{calls}");
+
+        let fail = [
+            "verify", "fail", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        machine.ok("verifier", &fail).await;
+        assert!(log(machine.bin.path()).contains("-f state=failure"));
     }
 }
 
@@ -810,6 +954,20 @@ fn the_book_shows_how_a_session_works_on_an_item() {
         "waits at most {} seconds",
         riff::rollout::PULL_WAIT.as_secs()
     )));
+}
+
+/// The refusal in "Report a verify" is the line that `riff verify pass`
+/// prints (01M5QYDE41FVFX26EC8K5QGYH4), and the how-to says what riff waits
+/// for.
+#[test]
+fn the_book_shows_the_line_of_a_refused_pass_and_what_riff_waits_for() {
+    let part = how_to("Report a verify");
+    let checks = ["Gate".to_owned(), "Hygiene".to_owned()];
+    let line = riff::text::gate_not_passed(40, "1a2b3c4d", &checks, &riff::pr::Gate::Running);
+    assert!(part.contains(&format!("{line}\n")), "{line}\n{part}");
+    assert!(part.contains(
+        "each check that the ruleset of the default branch\nrequires, but `riff/verify`"
+    ));
 }
 
 /// Each command has a how-to with a copyable `sh` block, and each
