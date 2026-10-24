@@ -3133,26 +3133,6 @@ The new owner stays after a restart. The `--owner` setting of
 ask for the role: see
 [Take the owner role](start-a-team-riff.md#take-the-owner-role).
 
-### See the members
-
-It shows the owner, the admins, the members and the allowed domains.
-It shows each person once, with the highest role: owner, then admin,
-then member:
-
-```sh
-riff members
-```
-
-```text
-owner            mike@example.com
-admins           ada@example.com
-members          bob@gmail.com
-allowed domains  example.com
-```
-
-A riff with no owner shows the owner `none`. Its last line, in
-yellow, says how an admin takes the owner role.
-
 ## Run the server in a terminal
 
 `riff-server` runs in the foreground, in a terminal. Its log goes to

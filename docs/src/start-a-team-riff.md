@@ -224,6 +224,20 @@ the riff, run:
 riff members
 ```
 
+It shows each person once, with the highest role: owner, then admin,
+then member:
+
+```text
+owner            mike@example.com
+admins           ada@example.com
+members          bob@gmail.com
+allowed domains  example.com
+```
+
+A riff with no owner shows the owner `none`. Its last line, in
+yellow, says how an admin takes the owner role (see
+[Take the owner role](#take-the-owner-role)).
+
 The lead runs it in its container too. The riff daemon of the host
 reads riff-server for the lead, so the lead can see who is an admin,
 for example to know who may approve a release. `riff invite`,
