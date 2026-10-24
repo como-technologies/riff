@@ -6209,6 +6209,14 @@ part when they merge.
 - **01M5NVKNVTVR722EA148V5127M** The book says where the kept work goes,
   riff-kept/ITEM-ID8 of origin, and how to get it back with git fetch
   origin riff-kept/ITEM-ID8.
+- **01M5P1XBJ6ZX3Q8ZVHR1EJFMFF** The lead does not keep the daemon of
+  its host on an old riff. The daemon counts no lead (a session with a
+  terminal) as work: with only the lead, `riff update` and the look of
+  the daemon start the daemon again on the new riff
+  (01M517BTJ9EV4ZGPYRB6HXJJC9). The new daemon takes the lead up with
+  its container, its terminal and its socket
+  (01M4ZDTW00B7N6T9P3MK066KA7), so `riff release check` passes "each
+  host takes the build" while the lead runs.
 
 ### riff relay
 

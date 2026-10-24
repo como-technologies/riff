@@ -51,6 +51,7 @@
 //!     since_ms: 0,
 //!     phase: Phase::Works,
 //!     last: String::new(),
+//!     lead: false,
 //! };
 //! let sessions = Sessions::new(
 //!     vec![
@@ -112,6 +113,10 @@ pub struct Live {
     /// `riff run` shows of its events.
     #[serde(default)]
     pub last: String,
+    /// True for the lead: the session with a terminal. It does not keep the
+    /// daemon on an old riff (an old daemon gives false).
+    #[serde(default)]
+    pub lead: bool,
 }
 
 /// One session of the model: a session of riff-server, a container
@@ -461,6 +466,7 @@ mod tests {
             image: "riff-session".into(),
             since_ms: 0,
             phase,
+            lead: false,
             last: String::new(),
         }
     }

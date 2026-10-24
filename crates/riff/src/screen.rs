@@ -509,6 +509,7 @@ mod tests {
             since_ms: NOW - 300_000,
             phase,
             last: last.into(),
+            lead: false,
         }
     }
 
