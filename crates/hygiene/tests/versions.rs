@@ -103,14 +103,26 @@ fn a_line_of_the_allow_list_that_allows_nothing_fails() {
 }
 
 #[test]
-fn the_requirements_may_name_a_version() {
+fn the_history_of_the_requirements_may_name_a_version() {
     let root = tree(
-        "docs/src/requirements.md",
+        "docs/src/requirements-history.md",
         &format!("Superseded by {}.\n", riff("4.0")),
         "",
     );
     let (out, stderr) = versions(root.path());
     assert_eq!(out.status.code(), Some(0), "{stderr}");
+}
+
+#[test]
+fn the_requirements_of_today_may_not_name_a_version() {
+    let root = tree(
+        "docs/src/requirements.md",
+        &format!("- **R1** {} runs on Linux only.\n", riff("3.0")),
+        "",
+    );
+    let (out, stderr) = versions(root.path());
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("docs/src/requirements.md:1:"), "{stderr}");
 }
 
 #[test]

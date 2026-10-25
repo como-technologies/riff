@@ -2576,9 +2576,37 @@ The old IDs `R1` to `R232` stay. Never give a new requirement the next
 just reqs
 ```
 
-It fails when two requirements have the same ID, or when a file cites an
-ID that no requirement has. It warns when a new ID does not have that
-form, for example the next `R` number.
+It reads `docs/src/requirements.md` and
+`docs/src/requirements-history.md`. It fails when two requirements have
+the same ID, also one on each page, or when a file cites an ID that no
+requirement has on either page. It warns when a new ID does not have
+that form, for example the next `R` number.
+
+## Move a superseded requirement
+
+`docs/src/requirements.md` holds the rules of today. When a new
+requirement replaces an old one in full, move the old one to
+`docs/src/requirements-history.md` in the same change:
+
+1. Cut the old requirement from `requirements.md`.
+2. Paste it into `requirements-history.md`, under the same section
+   heading. Make the heading there when it is missing.
+3. Keep its ID and its text as they are.
+4. Add the new requirement with `just req`.
+
+When a new requirement replaces only a part of an old one, the old one
+stays in `requirements.md`. Write its text again, so that it keeps only
+the part that holds.
+
+To check the move:
+
+```sh
+just reqs
+```
+
+It fails with `superseded-in-full` on a requirement of `requirements.md`
+that says "Superseded by" and does not say "in part". A citation of the
+ID finds it on the history page, so nothing else changes.
 
 ## Add a field or a type of the log or the wire
 
@@ -2683,9 +2711,11 @@ just versions
 ```
 
 It reads each file in `crates/*/src`, `crates/*/tests` and
-`docs/src`, but `docs/src/requirements.md`: a requirement is a dated
-statement. It fails on `riff N` and `riff N.M`, also `riff-server N`,
-also when a line break splits the name. An error of the rule
+`docs/src`, but `docs/src/requirements-history.md`: a requirement
+there is old, and its text stays as it was. It fails on `riff N` and
+`riff N.M`, also `riff-server N`, also when a line break splits the
+name. It reads `docs/src/requirements.md`: the rules of today name no
+version. An error of the rule
 `versions` names the file, the line and the names. Write the line
 again with no version.
 

@@ -12,8 +12,11 @@
 //!
 //! The rule `versions` finds each name of the form `riff N` or
 //! `riff N.M`, also `riff-server N`, in each file of these folders
-//! under ROOT (the default is `.`), but in `docs/src/requirements.md`:
-//! a requirement is a dated statement, and its history names versions.
+//! under ROOT (the default is `.`), but in
+//! `docs/src/requirements-history.md`: a requirement that a new one
+//! superseded in full moved there with its text unchanged, and its
+//! history names versions. `docs/src/requirements.md` holds the rules of
+//! today, so the check reads it.
 //! It finds a name that a line break splits too: `riff` at the end of
 //! a line, and the number at the start of the next one.
 //!
@@ -74,9 +77,9 @@ use crate::Error;
 /// The file of the allow list, from the root.
 pub const ALLOW_FILE: &str = "crates/hygiene/versions.allow";
 
-/// The page that the check skips: the requirements name versions in
-/// their history.
-pub const SKIPPED: &str = "docs/src/requirements.md";
+/// The page that the check skips: the history of the requirements
+/// names versions.
+pub const SKIPPED: &str = "docs/src/requirements-history.md";
 
 /// A line of the allow list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -529,14 +532,15 @@ mod tests {
     }
 
     #[test]
-    fn scan_reads_the_folders_of_the_check_and_skips_the_requirements() {
+    fn scan_reads_the_folders_of_the_check_and_skips_the_requirements_history() {
         let root = tempfile::tempdir().unwrap();
         for (path, text) in [
             ("crates/a/src/lib.rs", "a"),
             ("crates/a/tests/t/b.rs", "b"),
             ("crates/a/other/c.rs", "not read"),
             ("docs/src/page.md", "p"),
-            ("docs/src/requirements.md", "not read"),
+            ("docs/src/requirements.md", "r"),
+            ("docs/src/requirements-history.md", "not read"),
             ("docs/book.toml", "not read"),
         ] {
             let path = root.path().join(path);
@@ -554,7 +558,8 @@ mod tests {
             [
                 "crates/a/src/lib.rs",
                 "crates/a/tests/t/b.rs",
-                "docs/src/page.md"
+                "docs/src/page.md",
+                "docs/src/requirements.md"
             ]
         );
     }

@@ -24,6 +24,12 @@ fn stderr(out: &Output) -> String {
 
 /// A repository with `requirements` and one source file.
 fn repo(requirements: &str, source: &str) -> tempfile::TempDir {
+    repo_with_history(requirements, None, source)
+}
+
+/// A repository with `requirements`, the history page `history` if any, and
+/// one source file.
+fn repo_with_history(requirements: &str, history: Option<&str>, source: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let write = |path: &str, text: &str| {
         let path = dir.path().join(path);
@@ -31,6 +37,9 @@ fn repo(requirements: &str, source: &str) -> tempfile::TempDir {
         std::fs::write(path, text).unwrap();
     };
     write("docs/src/requirements.md", requirements);
+    if let Some(history) = history {
+        write("docs/src/requirements-history.md", history);
+    }
     write("crates/a/src/lib.rs", source);
     write("crates/a/target/debug/x.rs", "// R404 is build output");
     dir
@@ -151,4 +160,100 @@ fn check_finds_a_split_requirement() {
     let out = check(dir.path());
     assert!(!out.status.success());
     assert!(stderr(&out).contains("block-end"), "{}", stderr(&out));
+}
+
+#[test]
+fn a_cited_id_on_the_history_page_resolves() {
+    let (new, old) = (reqs::new_id(), reqs::new_id());
+    let dir = repo_with_history(
+        &format!("- **{new}** New, like {old}.\n"),
+        Some(&format!("- **{old}** Old. Superseded by {new}.\n")),
+        &format!("/// See {old} and {new}.\n"),
+    );
+    let out = check(dir.path());
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "");
+
+    let dir = repo_with_history(
+        &format!("- **{new}** New.\n"),
+        None,
+        &format!("/// See {old}.\n"),
+    );
+    let out = check(dir.path());
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains(&format!("crates/a/src/lib.rs:1: unknown-id: {old}")),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn an_id_on_both_pages_fails() {
+    let id = reqs::new_id();
+    let dir = repo_with_history(
+        &format!("- **{id}** One.\n"),
+        Some(&format!("- **{id}** Old.\n")),
+        "",
+    );
+    let out = check(dir.path());
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(
+        err.contains(&format!(
+            "docs/src/requirements-history.md:1: duplicate-id: {id} is also at docs/src/requirements.md:1"
+        )),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_requirement_superseded_in_full_in_the_rules_of_today_fails() {
+    let new = reqs::new_id();
+    let old = "- **R1** The old rule.\n  Superseded by 3.0 (NEW).\n".replace("NEW", &new);
+    let requirements = format!("{old}- **{new}** The new rule.\n");
+    let dir = repo(&requirements, "");
+    let out = check(dir.path());
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(
+        err.contains("docs/src/requirements.md:1: superseded-in-full: R1"),
+        "{err}"
+    );
+    assert!(err.contains("requirements-history.md"), "{err}");
+
+    // On the history page, the same requirement is where it belongs.
+    let dir = repo_with_history(
+        &format!("- **{new}** The new rule.\n"),
+        Some(&old),
+        &format!("// {new}\n"),
+    );
+    let out = check(dir.path());
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+#[test]
+fn a_requirement_superseded_in_part_stays_in_the_rules_of_today() {
+    let new = reqs::new_id();
+    let dir = repo(
+        &format!(
+            "- **R1** The old rule. Superseded in part by {new}.\n- **{new}** The new rule.\n"
+        ),
+        "",
+    );
+    let out = check(dir.path());
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+#[test]
+fn req_writes_to_the_rules_of_today_and_not_to_the_history_page() {
+    let history = "## A\n\n- **R2** Old.\n";
+    let dir = repo_with_history("## A\n\n- **R1** One.\n", Some(history), "");
+    let out = reqs_in(dir.path(), &["req", "A", "New."]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let new = std::fs::read_to_string(dir.path().join("docs/src/requirements.md")).unwrap();
+    assert!(new.contains("New."));
+    let kept =
+        std::fs::read_to_string(dir.path().join("docs/src/requirements-history.md")).unwrap();
+    assert_eq!(kept, history);
 }
