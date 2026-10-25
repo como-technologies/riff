@@ -752,9 +752,33 @@ cargo test -p riff --test all network:: -- --nocapture
 
 A container that an older riff started has `pasta` in the cgroup of
 `riff.service`. A start of the daemon again ends `pasta`, and the
-container cannot look up a host. For the lead, stop its container, and
-start the lead again in a terminal with no session. Use the name
-`riff-lead-OWNER-REPO` of your repository:
+container runs on with no network: `claude` cannot reach its API, and
+`gh` and `git` fail.
+
+A new daemon looks at each container that it takes up. It looks up
+`api.anthropic.com` in the container, and waits 15 s at most. riff does
+the rest for a worker, and tells you about a lead:
+
+```mermaid
+flowchart TD
+    T["the daemon takes up a session"] --> L{"the container reaches the network?"}
+    L -- yes --> K["nothing to do"]
+    L -- no --> W{"a lead?"}
+    W -- no --> F["the daemon frees the item and stops the container: the wave starts the item again"]
+    W -- yes --> C["one line in riff chat and in riff daemon status"]
+```
+
+A worker or a verify with no network needs nothing from you. For a
+lead, the line says what to do. `riff daemon status` shows it as long as
+the lead runs:
+
+```text
+The lead of como-technologies/riff lost its network at the restart of the daemon: run podman stop riff-lead-como-technologies-riff, then riff lead start, then /resume.
+```
+
+Stop the container of the lead, and start the lead again in a terminal
+with no session. Use the name `riff-lead-OWNER-REPO` of your
+repository:
 
 ```sh
 podman stop riff-lead-como-technologies-riff

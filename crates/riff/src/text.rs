@@ -5780,6 +5780,7 @@ pub fn real_session_test(test: &riff_client::daemons::Test) -> String {
 ///     mcp: vec![],
 ///     claude_token: riff_client::daemons::Token::NotSet,
 ///     watches: vec![],
+///     lost: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -5834,6 +5835,16 @@ pub fn real_session_test(test: &riff_client::daemons::Test) -> String {
 /// let line = "real-session test of v4.1.1 on 90e36bfd, for 3 min\n";
 /// assert!(text.contains(line), "{text}");
 /// assert!(text.find(line) < text.find("Sessions:\n"), "{text}");
+/// // A lead that lost its network at the restart of the daemon
+/// // (01M5SMQBTA3HQXPKKK01ZGFB4H).
+/// status.lost.push(riff::daemon::LostShown {
+///     repo: "o/r".into(),
+///     name: "riff-lead-o-r".into(),
+/// });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// let line = riff::text::lead_lost_network("o/r", "riff-lead-o-r");
+/// assert!(text.contains(&format!("{line}\n")), "{text}");
+/// assert!(text.find(&line) < text.find("Sessions:\n"), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -5856,6 +5867,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     if let Some(test) = &status.test {
         let _ = writeln!(out, "{}", real_session_test(test));
+    }
+    for lost in &status.lost {
+        let _ = writeln!(out, "{}", lead_lost_network(&lost.repo, &lost.name));
     }
     if status.sessions.is_empty() {
         out.push_str("Sessions: none.\n");
@@ -6767,6 +6781,7 @@ pub const INIT_CONTAINER_DONE: &str =
 ///     mcp: vec![],
 ///     claude_token: Default::default(),
 ///     watches: vec![],
+///     lost: vec![],
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
@@ -8889,6 +8904,42 @@ pub fn lead_sign_in_stale(name: &str) -> String {
          revoked\", and /login in it cannot save. Type /exit in the lead. Then run claude \
          setup-token, then riff claude-token, on this machine, and start the lead again: riff \
          lead start"
+    )
+}
+
+/// The lead `name` of the repository `repo` has no network after the
+/// restart of the daemon (01M5SMQBTA3HQXPKKK01ZGFB4H): its container lost
+/// the network process of podman. The person gets it one time in riff
+/// chat, and `riff daemon status` shows it.
+///
+/// ```
+/// let text = riff::text::lead_lost_network("o/r", "riff-lead-o-r");
+/// assert_eq!(
+///     text,
+///     "The lead of o/r lost its network at the restart of the daemon: run podman stop \
+///      riff-lead-o-r, then riff lead start, then /resume."
+/// );
+/// ```
+pub fn lead_lost_network(repo: &str, name: &str) -> String {
+    format!(
+        "The lead of {repo} lost its network at the restart of the daemon: run podman stop \
+         {name}, then riff lead start, then /resume."
+    )
+}
+
+/// The daemon took up the session in the container `name`, and the
+/// container has no network (01M5SMQBTA3HQXPKKK01ZGFB4H). It frees the
+/// item and stops the container: the wave starts the item again.
+///
+/// ```
+/// let text = riff::text::daemon_no_network("riff-issue-12-1a2b3c4d");
+/// assert!(text.starts_with("The session in the container riff-issue-12-1a2b3c4d has no network"));
+/// assert!(text.ends_with("The wave starts the item again."));
+/// ```
+pub fn daemon_no_network(name: &str) -> String {
+    format!(
+        "The session in the container {name} has no network. riff frees its item and stops the \
+         container. The wave starts the item again."
     )
 }
 

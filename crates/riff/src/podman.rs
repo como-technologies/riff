@@ -72,10 +72,11 @@
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::{ExitStatus, Stdio};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::runtime::{Bind, End, Env, Exit, Running, Runtime, SessionSpec, Source};
+use crate::runtime::{Bind, End, Env, Exit, REACH_HOST, Running, Runtime, SessionSpec, Source};
 use crate::text;
 
 /// The program of the container runtime.
@@ -261,6 +262,41 @@ fn plain(path: &Path) -> Result<&str> {
 /// keeps conmon in the cgroup of the unit when it is set, so riff starts
 /// each `podman` with no such variable (01M4ZDTW00B7N6T9P3MK066KA7).
 pub const INVOCATION_ID: &str = "INVOCATION_ID";
+
+/// The longest time that [`Runtime::reaches`] waits for the look-up of a
+/// host. A container with no network waits for its resolver for longer.
+pub const REACH_LIMIT: Duration = Duration::from_secs(15);
+
+/// The arguments of the look-up of [`Runtime::reaches`] in the container
+/// `name`.
+///
+/// ```
+/// let args = riff::podman::reach_args("riff-lead-o-r");
+/// assert_eq!(args, ["exec", "riff-lead-o-r", "getent", "hosts", "api.anthropic.com"]);
+/// ```
+pub fn reach_args(name: &str) -> [&str; 5] {
+    ["exec", name, "getent", "hosts", REACH_HOST]
+}
+
+/// What the exit code of `getent hosts` says: the container reaches the
+/// network (0), or it does not (2: the host has no address, also when the
+/// resolver gets no answer). Another code is a fault of `podman exec`,
+/// or of `getent`: it says nothing.
+///
+/// ```
+/// assert_eq!(riff::podman::reached(Some(0)), Some(true));
+/// assert_eq!(riff::podman::reached(Some(2)), Some(false));
+/// assert_eq!(riff::podman::reached(Some(125)), None);
+/// assert_eq!(riff::podman::reached(Some(127)), None);
+/// assert_eq!(riff::podman::reached(None), None);
+/// ```
+pub fn reached(code: Option<i32>) -> Option<bool> {
+    match code {
+        Some(0) => Some(true),
+        Some(2) => Some(false),
+        _ => None,
+    }
+}
 
 /// A `podman` command with no [`INVOCATION_ID`].
 fn podman() -> tokio::process::Command {
@@ -536,6 +572,25 @@ impl Runtime for Podman {
             .trim()
             .parse()
             .with_context(|| format!("podman exec {name} stat: {}", shown.trim()))
+    }
+
+    /// `podman exec NAME getent hosts api.anthropic.com` ([`reach_args`]).
+    /// A look-up that gets no answer in [`REACH_LIMIT`] says no network:
+    /// `podman exec` ends with it.
+    async fn reaches(&self, name: &str) -> Result<bool> {
+        let mut child = podman()
+            .args(reach_args(name))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| text::no_program(PODMAN))?;
+        let Ok(status) = tokio::time::timeout(REACH_LIMIT, child.wait()).await else {
+            return Ok(false);
+        };
+        let status = status?;
+        reached(status.code()).ok_or_else(|| anyhow!("podman exec {name} getent: {status}"))
     }
 }
 

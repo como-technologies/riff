@@ -4426,6 +4426,19 @@ of this part when they merge.
 - **01M5SN566ZH5ZQ52NYT24WYA4P** `riff wave run` with no `--host` in a
   lead container starts no wave. It names the hosts of the user with a
   daemon that does not serve the repository, and exits with 1.
+- **01M5SMQBTA3HQXPKKK01ZGFB4H** When the daemon takes up a session
+  whose container runs (01M4ZHT01HH88KPA8628M7VBEY), it looks if the
+  container reaches the network: `podman exec NAME getent hosts
+  api.anthropic.com`. A container that lost its network process runs on
+  with no network, and an answer that does not come in 15 s counts as no
+  network. When podman cannot say, the session counts as connected. A
+  worker or a verify with no network: the daemon frees its item and
+  stops the container, so the wave starts the item again. A lead with no
+  network: the daemon tells the person one time in riff chat, and `riff
+  daemon status` shows a line for it as long as the lead runs. The line
+  says that the lead of the repository lost its network at the restart
+  of the daemon, and gives the steps: `podman stop NAME`, then `riff
+  lead start`, then `/resume`.
 
 ### riff relay
 
