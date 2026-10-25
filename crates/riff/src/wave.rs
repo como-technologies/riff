@@ -143,7 +143,9 @@
 //! ```mermaid
 //! flowchart TD
 //!     P["an open pull request,<br/>the verify passed"] --> C{"a check of the head failed?<br/>(statusCheckRollup)"}
-//!     C -- "yes, an item" --> B["a build: Work::Checks at the head commit,<br/>with the names of the checks"]
+//!     C -- "yes, an item" --> R{"a run of<br/>GitHub Actions?"}
+//!     R -- "yes" --> B["a build: Work::Checks at the head commit,<br/>with the names of the checks"]
+//!     R -- "no, another app" --> O["a message to the lead:<br/>the check, its app and its link"]
 //!     C -- "yes, a release" --> M["a message to the lead, with the checks"]
 //!     C -- "no" --> A{"auto-merge off?"}
 //!     A -- "yes" --> N["a message to the lead,<br/>with the command gh pr merge --auto --squash N"]
@@ -163,6 +165,16 @@
 //!   For a known flake it allows one run of the job again. The rollup
 //!   does not say which check a rule requires, so each failed check
 //!   counts. A check that was cancelled or skipped did not fail.
+//! - **A failed check of another app** (#1427). The start text reads the
+//!   log with `gh run view` and runs the job again with `gh run rerun`.
+//!   That works for a run of GitHub Actions only
+//!   ([`rollout::Check::actions`]). A repository whose CI is CircleCI or
+//!   Buildkite has check runs with no run of Actions. The wave starts no
+//!   build for such a check ([`rollout::Pull::failed_others`]). The lead
+//!   gets one message for each check and head commit, with the name of
+//!   the check, its app and its link ([`rollout::Stuck::Other`]). A pull
+//!   request with both kinds gets the build for the runs of Actions, and
+//!   the message for each other check.
 //! - **Auto-merge off** (01M5QW2M1M5QZJXSP0BY6XG118). A pull request
 //!   whose verify passed and that has no auto-merge never merges: nothing
 //!   turns it on. A conflict gets no rebase then
@@ -624,18 +636,26 @@ pub struct Notice {
 
 impl Notice {
     /// The key of the message: the pull request, its head and its
-    /// reason. A message with the same key goes one time.
+    /// reason. A message with the same key goes one time. A failed check
+    /// of another app than GitHub Actions has a message for each check.
     ///
     /// ```
-    /// use riff::rollout::Stuck;
+    /// use riff::rollout::{OtherCheck, Stuck};
     /// use riff::wave::Notice;
     ///
     /// let notice = |commit: &str, stuck| Notice { pull: 40, branch: "b".into(), commit: commit.into(), stuck };
     /// assert_eq!(notice("1a2b", Stuck::AutoMergeOff).key(), "#40@1a2b:auto-merge off");
     /// assert_ne!(notice("1a2b", Stuck::AutoMergeOff).key(), notice("5e6f", Stuck::AutoMergeOff).key());
+    /// let other = |name: &str| Stuck::Other(OtherCheck { name: name.into(), app: None, link: None });
+    /// assert_eq!(notice("1a2b", other("ci")).key(), "#40@1a2b:checks:ci");
+    /// assert_ne!(notice("1a2b", other("ci")).key(), notice("1a2b", other("lint")).key());
     /// ```
     pub fn key(&self) -> String {
-        format!("#{}@{}:{}", self.pull, self.commit, self.stuck.word())
+        let key = format!("#{}@{}:{}", self.pull, self.commit, self.stuck.word());
+        match &self.stuck {
+            rollout::Stuck::Other(check) => format!("{key}:{}", check.name),
+            _ => key,
+        }
     }
 }
 
@@ -1388,13 +1408,13 @@ impl Fix<'_> {
     }
 }
 
-/// The names of the checks of pull request `number` that failed now,
-/// with `gh`.
+/// The names of the checks of pull request `number` that failed now and
+/// are runs of GitHub Actions, with `gh`: the session fixed no other.
 async fn still_failed(gh: pr::Gh, number: u64) -> Result<Vec<String>> {
     blocking(move || {
         let n = number.to_string();
         let pull: rollout::Pull = gh.json(&["pr", "view", &n, "--json", rollout::PULL_FIELDS])?;
-        Ok(pull.failed_checks())
+        Ok(pull.failed_runs())
     })
     .await
 }
@@ -1851,11 +1871,14 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///   already. The free work has no verify of a head with a conflict.
 /// - A pull request with failed checks is one whose verify passed and
 ///   whose head has a failed check ([`rollout::Stuck::Checks`]). It is a
-///   build, with the names of the checks.
+///   build, with the names of the checks that are runs of GitHub Actions
+///   ([`rollout::Pull::failed_runs`]).
 /// - A pull request that no session can fix gets a notice for the lead:
 ///   one with auto-merge off after a pass ([`rollout::Stuck::AutoMergeOff`]),
-///   and a release or a tracker with a failed check. No session builds
-///   a release (the label `release`) or a tracker.
+///   a release or a tracker with a failed check, and a failed check that
+///   is no run of GitHub Actions ([`rollout::Stuck::Other`]), one notice
+///   for each check. No session builds a release (the label `release`) or
+///   a tracker.
 ///
 /// The items `issue-N` of the rebases come after the fix items of a
 /// broken `main` (01M51QEYS538XA58KDRY844T52), before each other item,
@@ -1863,7 +1886,7 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 /// claimed item, as each item.
 ///
 /// ```
-/// use riff::rollout::{Check, Issue, Label, Open, Pull, Stuck};
+/// use riff::rollout::{Check, Issue, Label, Open, OtherCheck, Pull, Stuck};
 /// use riff::wave::{Conflict, Failed, Notice, fixes};
 ///
 /// let pull = |number, issue: u64, state: Option<&str>, mergeable: &str| Pull {
@@ -1876,6 +1899,8 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///     ..Pull::default()
 /// };
 /// let gate = |pull: Pull| Pull { checks: [pull.checks, vec![Check::run("Gate", "FAILURE")]].concat(), ..pull };
+/// let circle = || Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9");
+/// let other = |pull: Pull| Pull { checks: [pull.checks, vec![circle()]].concat(), ..pull };
 /// let open = Open {
 ///     issues: vec![
 ///         Issue { number: 9, labels: vec![Label { name: "broken-main".into() }], ..Issue::default() },
@@ -1889,6 +1914,7 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///         Pull { auto_merge: false, ..pull(45, 5, Some("SUCCESS"), "CONFLICTING") },
 ///         gate(pull(46, 6, Some("SUCCESS"), "MERGEABLE")),
 ///         gate(pull(47, 8, None, "MERGEABLE")),
+///         other(pull(48, 10, Some("SUCCESS"), "MERGEABLE")),
 ///     ],
 ///     ..Open::default()
 /// };
@@ -1899,9 +1925,11 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 /// assert_eq!(fixes.conflicts.keys().copied().collect::<Vec<_>>(), [1, 2]);
 /// assert_eq!(fixes.conflicts[&1], Conflict { pull: 41, commit: "c1".into() });
 /// assert_eq!(fixes.failed[&6], Failed { pull: 46, commit: "c6".into(), checks: vec!["Gate".into()] });
-/// // The lead hears of 5 (auto-merge off) and of the release 8.
+/// // The lead hears of 5 (auto-merge off), of the release 8, and of the check of 10: no run of Actions, so no fix.
 /// let told: Vec<(u64, Stuck)> = fixes.notices.iter().map(|n| (n.pull, n.stuck.clone())).collect();
-/// assert_eq!(told, [(45, Stuck::AutoMergeOff), (47, Stuck::Checks(vec!["Gate".into()]))]);
+/// let ci = OtherCheck { name: "ci".into(), app: Some("app.circleci.com".into()), link: Some("https://app.circleci.com/workflow/9".into()) };
+/// assert_eq!(told, [(45, Stuck::AutoMergeOff), (47, Stuck::Checks(vec!["Gate".into()])), (48, Stuck::Other(ci))]);
+/// assert!(!fixes.failed.contains_key(&10), "no session fixes it");
 /// assert_eq!(fixes.notices[0], Notice { pull: 45, branch: "worktree-issue-5".into(), commit: "c5".into(), stuck: Stuck::AutoMergeOff });
 /// ```
 pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
@@ -1926,13 +1954,27 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
                     found.conflicts.insert(n, conflict);
                 }
             }
-            (rollout::Stuck::Checks(checks), Some(n)) => {
-                let failed = Failed {
-                    pull: p.number,
-                    commit: p.head.clone(),
-                    checks,
-                };
-                found.failed.insert(n, failed);
+            (rollout::Stuck::Checks(_), Some(n)) => {
+                // A session fixes a run of GitHub Actions only: it reads
+                // the log with `gh run view`. The lead hears of each
+                // other check.
+                let runs = p.failed_runs();
+                if !runs.is_empty() {
+                    let failed = Failed {
+                        pull: p.number,
+                        commit: p.head.clone(),
+                        checks: runs,
+                    };
+                    found.failed.insert(n, failed);
+                }
+                for other in p.failed_others() {
+                    found.notices.push(Notice {
+                        pull: p.number,
+                        branch: p.branch.clone(),
+                        commit: p.head.clone(),
+                        stuck: rollout::Stuck::Other(other),
+                    });
+                }
             }
             (stuck, _) => found.notices.push(Notice {
                 pull: p.number,
@@ -2471,6 +2513,10 @@ mod tests {
     const IMAGE: &str = "localhost/riff-session:test";
     const GB: u64 = 1 << 30;
 
+    /// The link of the failed check of another app than GitHub Actions in
+    /// the fake forge.
+    const OTHER_LINK: &str = "https://app.circleci.com/workflow/9";
+
     /// A pull request of the fake forge.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Pr {
@@ -2539,6 +2585,9 @@ mod tests {
         manual: BTreeSet<u64>,
         /// The issues whose pull request has a failed check `Gate`.
         failing: BTreeSet<u64>,
+        /// The issues whose pull request has a failed check of another app
+        /// than GitHub Actions ([`OTHER_LINK`]).
+        failing_other: BTreeSet<u64>,
         /// A rebase and a fix of checks end with no push.
         no_push: bool,
         /// The work of each claim of a session, in order.
@@ -2620,6 +2669,11 @@ mod tests {
                     self.failing
                         .contains(n)
                         .then(|| rollout::Check::run("Gate", "FAILURE")),
+                )
+                .chain(
+                    self.failing_other
+                        .contains(n)
+                        .then(|| rollout::Check::other("ci", "FAILURE", OTHER_LINK)),
                 )
                 .collect(),
                 mergeable: Some(match self.conflicting.contains(n) {
@@ -3815,6 +3869,73 @@ mod tests {
         assert_eq!(forge.told, [stuck("c1", checks)]);
     }
 
+    /// The message to the lead about the failed check `ci` of another app
+    /// than GitHub Actions, at the head `commit` of the pull request #41.
+    fn other(commit: &str) -> String {
+        let check = rollout::OtherCheck {
+            name: "ci".into(),
+            app: Some("app.circleci.com".into()),
+            link: Some(OTHER_LINK.into()),
+        };
+        stuck(commit, rollout::Stuck::Other(check))
+    }
+
+    /// #1427: a failed check that is no run of GitHub Actions has no log
+    /// for `gh run view`. The wave starts no session for it. The lead gets
+    /// one message with the check, its app and its link. A new head is a
+    /// new state.
+    #[tokio::test]
+    async fn a_failed_check_of_another_app_starts_no_session_and_tells_the_lead_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge.failing_other.insert(1);
+        }
+        here.run();
+        here.idle(3).await;
+        let message = other("c1");
+        assert!(message.contains(OTHER_LINK), "{message}");
+        assert!(message.contains("app.circleci.com"), "{message}");
+        {
+            let forge = here.forge();
+            assert!(forge.works.is_empty(), "{:?}", forge.works);
+            assert_eq!(forge.told, std::slice::from_ref(&message), "one message");
+        }
+        here.idle(3).await;
+        assert_eq!(here.forge().told.len(), 1, "once");
+
+        // A new head with a failed check is a new state.
+        here.forge().heads.insert(1, "c1b".into());
+        here.idle(3).await;
+        let forge = here.forge();
+        assert!(forge.works.is_empty(), "{:?}", forge.works);
+        assert_eq!(forge.told, [message, other("c1b")]);
+    }
+
+    /// #1427: a pull request with a failed run of GitHub Actions and a
+    /// failed check of another app gets the build for the run, and the
+    /// lead hears of the other check.
+    #[tokio::test]
+    async fn a_failed_run_of_actions_still_starts_one_session_beside_a_check_of_another_app() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge.failing.insert(1);
+            forge.failing_other.insert(1);
+            forge.no_push = true;
+        }
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.until(3, |h| !h.forge().told.is_empty()).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, [checks("c1")], "the name of the run only");
+        assert_eq!(forge.told, [other("c1")]);
+    }
+
     /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: a pull request that waits for a verify
     /// and has a conflict gets the rebase, not the verify of the old head.
     /// After the push, a new session verifies the new head: it wrote
@@ -4830,7 +4951,7 @@ esac
         let riff = Built::new().await;
         let gh = gh_with_rollup(
             &riff,
-            r#"[{"name":"Gate","conclusion":"FAILURE"},{"context":"riff/verify","state":"SUCCESS"}]"#,
+            r#"[{"name":"Gate","conclusion":"FAILURE","workflowName":"CI"},{"context":"riff/verify","state":"SUCCESS"}]"#,
         );
         let checks = ["Gate".to_owned()];
         let (lines, got) = riff
@@ -4883,6 +5004,27 @@ esac
         ))
         .unwrap();
         assert!(book.contains(&format!("\n{note}\n")), "{note}");
+    }
+
+    /// #1427: the session fixed the runs of GitHub Actions only. A check
+    /// of another app that still fails is not its fix: the lead heard of
+    /// it at the look, so the end of the session gives a note.
+    #[tokio::test]
+    async fn a_fix_of_checks_does_not_count_a_failed_check_of_another_app() {
+        let riff = Built::new().await;
+        let gh = gh_with_rollup(
+            &riff,
+            r#"[{"name":"Gate","conclusion":"SUCCESS","workflowName":"CI"},{"name":"ci","conclusion":"FAILURE","workflowName":"","detailsUrl":"https://app.circleci.com/workflow/9"},{"context":"riff/verify","state":"SUCCESS"}]"#,
+        );
+        let checks = ["Gate".to_owned()];
+        let (lines, got) = riff
+            .after(gh, Some(Fix::Checks("1a2b3c4d5e", &checks)))
+            .await;
+        assert_eq!(lines[1], text::run_lead_noted("issue-12"));
+        let [(kind, _)] = &got[..] else {
+            panic!("{got:?}");
+        };
+        assert_eq!(*kind, Kind::Note);
     }
 
     /// #279: when `gh` cannot read the checks, the lead gets the message:

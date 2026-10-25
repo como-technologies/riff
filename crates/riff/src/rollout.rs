@@ -687,6 +687,21 @@ pub struct Check {
         deserialize_with = "crate::text::forge_de_opt"
     )]
     pub url: Option<String>,
+    /// The workflow of a check run of GitHub Actions, for example `CI`.
+    /// A check run of another app has an empty name.
+    #[serde(
+        rename = "workflowName",
+        default,
+        deserialize_with = "crate::text::forge_de_opt"
+    )]
+    pub workflow: Option<String>,
+    /// The link of a check run to its page in the app that ran it.
+    #[serde(
+        rename = "detailsUrl",
+        default,
+        deserialize_with = "crate::text::forge_de_opt"
+    )]
+    pub details: Option<String>,
 }
 
 impl Check {
@@ -699,20 +714,90 @@ impl Check {
         }
     }
 
-    /// The check run `name` with `conclusion`, as GitHub gives it.
+    /// The check run `name` of GitHub Actions with `conclusion`, as GitHub
+    /// gives it.
     ///
     /// ```
     /// use riff::rollout::Check;
     ///
     /// assert!(Check::run("Gate", "FAILURE").failed());
     /// assert!(!Check::run("Gate", "SUCCESS").failed());
+    /// assert!(Check::run("Gate", "FAILURE").actions());
     /// ```
     pub fn run(name: &str, conclusion: &str) -> Self {
         Self {
             name: Some(name.into()),
             conclusion: Some(conclusion.into()),
+            workflow: Some("CI".into()),
             ..Self::default()
         }
+    }
+
+    /// The check run `name` of another app, with `conclusion` and the
+    /// `link` to its page.
+    ///
+    /// ```
+    /// use riff::rollout::Check;
+    ///
+    /// let check = Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9");
+    /// assert!(check.failed());
+    /// assert!(!check.actions());
+    /// ```
+    pub fn other(name: &str, conclusion: &str, link: &str) -> Self {
+        Self {
+            name: Some(name.into()),
+            conclusion: Some(conclusion.into()),
+            details: Some(link.into()),
+            ..Self::default()
+        }
+    }
+
+    /// True for a check run of GitHub Actions: it has a workflow. Only a
+    /// run of Actions has a log for `gh run view` and a job for `gh run
+    /// rerun`. A check run of another app, for example CircleCI or
+    /// Buildkite, has no workflow. A status has none either.
+    ///
+    /// ```
+    /// use riff::rollout::Check;
+    ///
+    /// let json = |workflow: &str| format!(
+    ///     r#"{{"__typename":"CheckRun","name":"ci","conclusion":"FAILURE","workflowName":"{workflow}"}}"#
+    /// );
+    /// let check: Check = serde_json::from_str(&json("Code Scanning")).unwrap();
+    /// assert!(check.actions());
+    /// let check: Check = serde_json::from_str(&json("")).unwrap();
+    /// assert!(!check.actions());
+    /// let status = Check { context: Some("ci/circleci: test".into()), state: Some("FAILURE".into()), ..Check::default() };
+    /// assert!(!status.actions());
+    /// ```
+    pub fn actions(&self) -> bool {
+        self.context.is_none() && self.workflow.as_deref().is_some_and(|w| !w.is_empty())
+    }
+
+    /// The link of the check to its page in the app that ran it: the
+    /// `detailsUrl` of a check run, or the `targetUrl` of a status.
+    pub fn link(&self) -> Option<&str> {
+        self.details
+            .as_deref()
+            .or(self.url.as_deref())
+            .filter(|l| !l.is_empty())
+    }
+
+    /// The app of the check: the host of its link, for example
+    /// `app.circleci.com`. The rollup does not name the app.
+    ///
+    /// ```
+    /// use riff::rollout::Check;
+    ///
+    /// let check = Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9?x=1");
+    /// assert_eq!(check.app().as_deref(), Some("app.circleci.com"));
+    /// assert_eq!(Check::run("Gate", "FAILURE").app(), None, "no link");
+    /// ```
+    pub fn app(&self) -> Option<String> {
+        let link = self.link()?;
+        let rest = link.split_once("://").map_or(link, |(_, rest)| rest);
+        let host = rest.split(['/', '?', '#']).next()?.rsplit('@').next()?;
+        (!host.is_empty()).then(|| host.to_owned())
     }
 
     /// The name of the check: the context of a status, or the name of a
@@ -777,24 +862,42 @@ pub enum Stuck {
     Conflict,
     /// The verify passed, and these checks of the head failed.
     Checks(Vec<String>),
+    /// The verify passed, and this check of the head failed. It is not a
+    /// run of GitHub Actions ([`Check::actions`]), so no session fixes it.
+    Other(OtherCheck),
     /// The verify passed, and auto-merge is off: nothing merges it.
     AutoMergeOff,
+}
+
+/// A failed check that is not a run of GitHub Actions: a check run of
+/// another app, or a status. The lead hears of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtherCheck {
+    /// The name of the check.
+    pub name: String,
+    /// The host of its link, for example `app.circleci.com`
+    /// ([`Check::app`]).
+    pub app: Option<String>,
+    /// The link to its page in the app.
+    pub link: Option<String>,
 }
 
 impl Stuck {
     /// The words for the reason, in `riff top` and `riff wave list`.
     ///
     /// ```
-    /// use riff::rollout::Stuck;
+    /// use riff::rollout::{OtherCheck, Stuck};
     ///
     /// assert_eq!(Stuck::Conflict.word(), "conflict");
     /// assert_eq!(Stuck::Checks(vec!["Gate".into()]).word(), "checks");
+    /// let other = OtherCheck { name: "ci".into(), app: None, link: None };
+    /// assert_eq!(Stuck::Other(other).word(), "checks");
     /// assert_eq!(Stuck::AutoMergeOff.word(), "auto-merge off");
     /// ```
     pub fn word(&self) -> &'static str {
         match self {
             Stuck::Conflict => "conflict",
-            Stuck::Checks(_) => "checks",
+            Stuck::Checks(_) | Stuck::Other(_) => "checks",
             Stuck::AutoMergeOff => "auto-merge off",
         }
     }
@@ -913,11 +1016,75 @@ impl Pull {
     /// assert_eq!(pull.failed_checks(), ["Gate"]);
     /// ```
     pub fn failed_checks(&self) -> Vec<String> {
+        self.failed_names(|_| true)
+    }
+
+    /// The names of the failed checks that are runs of GitHub Actions
+    /// ([`Check::actions`]), each one time, in order. A session can read
+    /// the log of such a run and run it again.
+    ///
+    /// ```
+    /// use riff::rollout::{Check, Pull};
+    ///
+    /// let pull = Pull {
+    ///     checks: vec![
+    ///         Check::run("Gate", "FAILURE"),
+    ///         Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9"),
+    ///     ],
+    ///     ..Pull::default()
+    /// };
+    /// assert_eq!(pull.failed_checks(), ["Gate", "ci"]);
+    /// assert_eq!(pull.failed_runs(), ["Gate"]);
+    /// ```
+    pub fn failed_runs(&self) -> Vec<String> {
+        self.failed_names(Check::actions)
+    }
+
+    /// The failed checks that are no run of GitHub Actions, each name one
+    /// time, in order, with the app and the link of each.
+    ///
+    /// ```
+    /// use riff::rollout::{Check, OtherCheck, Pull};
+    ///
+    /// let pull = Pull {
+    ///     checks: vec![
+    ///         Check::run("Gate", "FAILURE"),
+    ///         Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9"),
+    ///         Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9"),
+    ///         Check::other("lint", "SUCCESS", "https://app.circleci.com/workflow/9"),
+    ///     ],
+    ///     ..Pull::default()
+    /// };
+    /// let ci = OtherCheck {
+    ///     name: "ci".into(),
+    ///     app: Some("app.circleci.com".into()),
+    ///     link: Some("https://app.circleci.com/workflow/9".into()),
+    /// };
+    /// assert_eq!(pull.failed_others(), [ci]);
+    /// ```
+    pub fn failed_others(&self) -> Vec<OtherCheck> {
+        let mut others: Vec<OtherCheck> = Vec::new();
+        for check in self.checks.iter().filter(|c| c.failed() && !c.actions()) {
+            let name = check.title().unwrap_or("a check");
+            if !others.iter().any(|o| o.name == name) {
+                others.push(OtherCheck {
+                    name: name.to_owned(),
+                    app: check.app(),
+                    link: check.link().map(str::to_owned),
+                });
+            }
+        }
+        others
+    }
+
+    /// The names of the failed checks for which `keep` is true, each one
+    /// time, in order.
+    fn failed_names(&self, keep: impl Fn(&Check) -> bool) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         for name in self
             .checks
             .iter()
-            .filter(|c| c.failed())
+            .filter(|c| c.failed() && keep(c))
             .map(|c| c.title().unwrap_or("a check"))
         {
             if !names.iter().any(|n| n == name) {

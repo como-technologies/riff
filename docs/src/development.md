@@ -1479,7 +1479,9 @@ flowchart TD
     P["open pull request of an item"] --> C{"a conflict with main,<br/>auto-merge on?"}
     C -- yes --> R["a session rebases the branch"]
     C -- no --> F{"verify passed,<br/>a check failed?"}
-    F -- yes --> B["a session fixes the check"]
+    F -- yes --> G{"a run of<br/>GitHub Actions?"}
+    G -- yes --> B["a session fixes the check"]
+    G -- "no, another app" --> N["a message to your lead:<br/>the check, its app, its link"]
     F -- no --> A{"verify passed,<br/>auto-merge off?"}
     A -- yes --> M["a message to your lead"]
     A -- no --> OK["it merges by itself"]
@@ -1488,7 +1490,8 @@ flowchart TD
 | The pull request | What the wave does | In `riff top` |
 |---|---|---|
 | A conflict, auto-merge on | A session rebases it (see [Run the wave](#run-the-wave)) | `stuck: #12 (conflict)` |
-| The verify passed, a check failed | A session fixes the check | `stuck: #12 (checks)` |
+| The verify passed, a run of GitHub Actions failed | A session fixes the check | `stuck: #12 (checks)` |
+| The verify passed, a check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
 | The verify passed, auto-merge off | Your lead gets one message. No session starts | `stuck: #12 (auto-merge off)` |
 | A release, a check failed | Your lead gets one message. No session builds a release | `stuck: #7 (checks)` |
 
@@ -1499,7 +1502,8 @@ check did not fail. GitHub does not tell riff which check a rule
 requires, so each failed check counts. A pull request with a conflict
 gets the rebase first: its new head has new checks.
 
-The session for a failed check gets the names of the checks. It reads
+The session for a failed run of GitHub Actions gets the names of the
+runs. It reads
 the log of the failed run, fixes the work, and pushes to the same pull
 request. New checks and a new verify of the new commit follow. For a
 known flake, it runs the job again one time and pushes nothing. Each
@@ -1556,6 +1560,32 @@ with a failed check gets a message of the same form: it names the
 checks, and says that no session fixes it. Read the checks with
 `gh pr checks 298`. Fix a check of the text of the pull request with
 `gh pr edit 298`. Fix a check of the code with a push to the branch.
+
+#### Fix a failed check of another app
+
+The session for a failed check reads the log with `gh run view`. That
+works for a run of GitHub Actions only. A repository whose CI is
+CircleCI, Buildkite or another app has checks that are no run of
+Actions. The wave starts no session for such a check. Your lead gets one
+message for each check and head commit, with the name of the check, its
+app and its link:
+
+```text
+PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the check ci of the app app.circleci.com failed. It is not a run of GitHub Actions, so no session fixes it, and it waits for you. Fix the cause with a push to worktree-issue-12, or run the check again in its app. Link: https://app.circleci.com/workflow/9
+```
+
+The app is the host of the link. A check with no link says so, and
+points to `gh pr checks`. A pull request with a failed run of Actions
+and a failed check of another app gets the session for the run, and the
+message for the other check.
+
+Open the link, and read the log in the app. Fix the cause with a push to
+the branch, or run the check again in its app. To read the checks of the
+pull request:
+
+```sh
+gh pr checks 40
+```
 
 ### Answer a failed verify with a new request
 

@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use riff::pr::Gh;
-use riff::rollout::Stuck;
+use riff::rollout::{OtherCheck, Stuck};
 use riff::wave::{self, Conflict, Failed, Notice, Work};
 use riff_client::sessions::Sessions;
 use riff_client::waves::Board;
@@ -50,9 +50,26 @@ fn verify(state: &str) -> String {
     format!(r#"{{"__typename":"StatusContext","context":"riff/verify","state":"{state}"}}"#)
 }
 
-/// The check run `name` with `conclusion`.
+/// The check run `name` of GitHub Actions with `conclusion`.
 fn run(name: &str, conclusion: &str) -> String {
-    format!(r#"{{"__typename":"CheckRun","name":"{name}","conclusion":"{conclusion}"}}"#)
+    format!(
+        r#"{{"__typename":"CheckRun","name":"{name}","conclusion":"{conclusion}","workflowName":"CI","detailsUrl":"https://github.com/o/r/actions/runs/9/job/1"}}"#
+    )
+}
+
+/// The check run `name` of CircleCI, an app that is not GitHub Actions,
+/// with `conclusion`. GitHub gives it no workflow.
+fn circle(name: &str, conclusion: &str) -> String {
+    format!(
+        r#"{{"__typename":"CheckRun","name":"{name}","conclusion":"{conclusion}","workflowName":"","detailsUrl":"https://app.circleci.com/workflow/9?utm_source=github-checks-link"}}"#
+    )
+}
+
+/// The status `context` with `state`, as the older apps of CI set it.
+fn status(context: &str, state: &str) -> String {
+    format!(
+        r#"{{"__typename":"StatusContext","context":"{context}","state":"{state}","targetUrl":"https://buildkite.com/o/r/builds/7"}}"#
+    )
 }
 
 /// A pull request on the branch `branch` for `issue` at `head`, with the
@@ -321,6 +338,128 @@ fn a_failed_verify_and_a_held_item_get_no_fix_of_checks() {
         wave::pick(&look, &BTreeSet::new(), &BTreeMap::new()),
         Some(Work::Build { issue: 1 })
     );
+}
+
+/// #1427: the fix of a failed check reads the run with `gh run view`.
+/// That works for GitHub Actions only. A failed check of another app (a
+/// check run of CircleCI, a status of Buildkite) starts no session: the
+/// lead gets a notice with the check, its app and its link. A failed run
+/// of Actions on the same head still starts one session.
+#[test]
+fn a_failed_check_of_another_app_is_a_notice_with_its_link_and_no_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(
+        dir.path(),
+        &[
+            // A check run of CircleCI.
+            pull(1, "aaaa111", &[verify("SUCCESS"), circle("ci", "FAILURE")]),
+            // A status of Buildkite.
+            pull(
+                2,
+                "bbbb222",
+                &[verify("SUCCESS"), status("buildkite/riff", "FAILURE")],
+            ),
+            // A run of Actions and a check run of CircleCI.
+            pull(
+                3,
+                "cccc333",
+                &[
+                    verify("SUCCESS"),
+                    run("Gate", "FAILURE"),
+                    circle("ci", "FAILURE"),
+                    circle("ci", "FAILURE"),
+                ],
+            ),
+        ],
+    );
+    let look = looks(&gh);
+    // One session, for the run of Actions of 3.
+    assert_eq!(
+        look.fixes.failed,
+        BTreeMap::from([(
+            3,
+            Failed {
+                pull: 43,
+                commit: "cccc333".into(),
+                checks: vec!["Gate".into()]
+            }
+        )])
+    );
+    assert_eq!(
+        wave::pick(&look, &BTreeSet::new(), &BTreeMap::new()),
+        Some(checks_of(3, 43, "cccc333", &["Gate"]))
+    );
+    assert!(
+        !look.free.contains(&"issue-1".to_owned()),
+        "{:?}",
+        look.free
+    );
+    assert!(
+        !look.free.contains(&"issue-2".to_owned()),
+        "{:?}",
+        look.free
+    );
+
+    // The lead hears of each other check one time, with its app and link.
+    let other = |pull, issue, commit: &str, name: &str, app: &str, link: &str| Notice {
+        pull,
+        branch: format!("worktree-issue-{issue}"),
+        commit: commit.into(),
+        stuck: Stuck::Other(OtherCheck {
+            name: name.into(),
+            app: Some(app.into()),
+            link: Some(link.into()),
+        }),
+    };
+    let circle_link = "https://app.circleci.com/workflow/9?utm_source=github-checks-link";
+    let notices = [
+        other(41, 1, "aaaa111", "ci", "app.circleci.com", circle_link),
+        other(
+            42,
+            2,
+            "bbbb222",
+            "buildkite/riff",
+            "buildkite.com",
+            "https://buildkite.com/o/r/builds/7",
+        ),
+        other(43, 3, "cccc333", "ci", "app.circleci.com", circle_link),
+    ];
+    assert_eq!(look.fixes.notices, notices);
+    assert_eq!(look.fixes.notices[0].key(), "#41@aaaa111:checks:ci");
+
+    // The message names the check, the app and the link.
+    let body = riff::text::wave_stuck(
+        41,
+        "worktree-issue-1",
+        "main",
+        "aaaa111",
+        &look.fixes.notices[0].stuck,
+    );
+    assert!(
+        body.contains("the check ci of the app app.circleci.com failed"),
+        "{body}"
+    );
+    assert!(body.contains("It is not a run of GitHub Actions"), "{body}");
+    assert!(body.ends_with(&format!("Link: {circle_link}")), "{body}");
+
+    // "Fix a failed check of another app" in the book shows the message.
+    let example = Stuck::Other(OtherCheck {
+        name: "ci".into(),
+        app: Some("app.circleci.com".into()),
+        link: Some("https://app.circleci.com/workflow/9".into()),
+    });
+    let message = riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &example);
+    let book = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/src/development.md"
+    ))
+    .unwrap();
+    assert!(book.contains(&format!("\n{message}\n")), "{message}");
+
+    // `riff top` shows the item as stuck with the checks.
+    let issues = riff::top::issues_from_gh(&gh, REPO).unwrap();
+    assert_eq!(issues.stuck[&1], "checks");
+    assert_eq!(issues.stuck[&2], "checks");
 }
 
 /// No session builds a release (the label `release`, or a branch
