@@ -445,8 +445,9 @@ just static dev
 
 A check after a merge can need a new build of riff, for example of
 the daemon. Build it in the one check clone of the machine,
-`~/.cache/riff/check`. Run this command in a clone or a worktree of
-the repository:
+`~/.cache/riff/check`. The repository needs `[release]` in `riff.toml`
+(see [Turn on the release cycle](#turn-on-the-release-cycle)). Run this
+command in a clone or a worktree of the repository:
 
 ```sh
 riff build
@@ -2558,7 +2559,9 @@ just real-session
 ```
 
 A lead in a container cannot run it, because podman does not run inside
-a container. It asks the daemon of a host with podman:
+a container. It asks the daemon of a host with podman. The repository
+needs `[release]` in `riff.toml` (see
+[Turn on the release cycle](#turn-on-the-release-cycle)):
 
 ```sh
 riff release test v3.3.0 --host thelio
@@ -4421,6 +4424,13 @@ release: only a person skips one. Each command prints the state of the
 release and the next step, for example
 `next: riff release publish v3.3.0`.
 
+The release cycle needs `[release]` in `riff.toml`. A repository with
+no `[release]` has no release cycle of riff: `riff release`, `riff
+build` and the real-session test refuse with one line, and touch
+nothing on GitHub. `riff wave end` has no release gate there. The
+verify of a pull request has no part for a release pull request. See
+[Turn on the release cycle](#turn-on-the-release-cycle).
+
 ```mermaid
 flowchart TD
     A[Last open item of the wave closes] -- "wakes the lead: Wave N is complete" --> B{Change that a person sees since the last tag?}
@@ -4461,6 +4471,30 @@ The gates:
 `riff release status` shows the state of the current release: `cut`,
 `merged`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
 `checked`, `failed` or `rolled back`.
+
+#### Turn on the release cycle
+
+The release cycle is the way riff makes its own releases. It reads the
+version in `Cargo.toml`, runs `deploy/release-check.sh`, and deploys
+with the workflow `CI` and the environment `production`. Turn it on
+only in a repository that has these. The repository opts in with the
+table `[release]` in `riff.toml`. The table has no key:
+
+```sh
+printf '\n[release]\n' >> riff.toml
+```
+
+Merge the change with a pull request. In a repository with no
+`[release]`, each command of the release cycle refuses:
+
+```text
+this repository has no release cycle of riff: riff.toml has no [release]
+```
+
+`riff release cut`, `verify`, `publish`, `status`, `approve`, `check`,
+`retry`, `test` and `rollback`, and `riff build` give this line. The
+daemon of a host gives it too, for `riff build --host` and `riff
+release test --host`.
 
 #### Know what wakes the lead
 
@@ -4637,8 +4671,9 @@ After the check passes, end the wave:
 riff wave end 34
 ```
 
-In the riff repository, `riff wave end` refuses while a merged pull
-request of the wave is in no checked release, and names the next step.
+In a repository with `[release]`, `riff wave end` refuses while a
+merged pull request of the wave is in no checked release, and names the
+next step.
 When no change of the wave is one that a person sees, end it with no
 release. The reason goes into the description of the wave:
 

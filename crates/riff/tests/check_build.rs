@@ -37,12 +37,19 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 /// A bare `origin`, and a clone of it in `here` with one commit on
-/// `main`.
+/// `main`. The `riff.toml` of the commit has the table `[release]`.
 fn repo(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    repo_with(root, "[release]\n")
+}
+
+/// Like [`repo`], with `config` as the text of `riff.toml`.
+fn repo_with(root: &Path, config: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let origin = root.join("origin.git");
     let here = root.join("here");
     git(root, &["init", "-q", "--bare", "origin.git"]);
     git(root, &["clone", "-q", "origin.git", "here"]);
+    std::fs::write(here.join("riff.toml"), config).unwrap();
+    git(&here, &["add", "riff.toml"]);
     commit(&here, "one");
     (origin, here)
 }
@@ -109,4 +116,27 @@ fn riff_build_fails_when_just_static_fails() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("just static in"), "{err}");
     assert!(out.stdout.is_empty(), "{out:?}");
+}
+
+/// 01M5SMPX8NM75P8E38DGQ17W7B: a repository with no `[release]` in its
+/// `riff.toml` has no `riff build`. The command refuses with one line, and
+/// it makes no check clone and runs no `just`.
+#[test]
+fn riff_build_refuses_a_repository_with_no_release_table() {
+    for config in ["", "[session]\nimage = \"x\"\n"] {
+        let env = Isolated::new();
+        let root = isolated::outside_git();
+        let (_origin, here) = repo_with(root.path(), config);
+        let fake = isolated::outside_git();
+        let just = isolated::write_program(fake.path().join("just"), FAKE_JUST);
+
+        let out = build(&env, &here, &just);
+        assert!(!out.status.success(), "{out:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(riff::text::NO_RELEASE), "{err}");
+        assert_eq!(err.trim().lines().count(), 1, "{err}");
+        assert!(out.stdout.is_empty(), "{out:?}");
+        assert!(!env.home().join(".cache/riff/check").exists());
+        assert!(!fake.path().join("just.log").exists());
+    }
 }

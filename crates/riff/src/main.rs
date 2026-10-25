@@ -221,6 +221,7 @@ enum Command {
     /// session that is gone or that does not answer. Then the next
     /// session can claim the item. The subcommands make a release of
     /// riff: cut, publish, status, approve, check, retry and rollback.
+    /// They need the table [release] in riff.toml.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Release {
         /// The thread. The default is your repository thread.
@@ -494,7 +495,8 @@ enum Command {
     /// of this folder into it. Then it fetches origin, puts the clone on
     /// the default branch, and runs just static. It prints the path of
     /// the riff of the build. A session in a worktree runs this command
-    /// in place of git steps on the check clone.
+    /// in place of git steps on the check clone. The repository needs
+    /// the table [release] in riff.toml.
     Build {
         /// The just command.
         #[arg(long, default_value = "just")]
@@ -1655,6 +1657,9 @@ async fn main() -> Result<()> {
     }
     if let Command::Setup { check } = cli.command {
         return setup(check);
+    }
+    if let Command::Build { .. } = &cli.command {
+        riff::release_config::require(&identity::working_dir()?)?;
     }
     if let Command::Build {
         host: Some(host), ..
@@ -2918,13 +2923,14 @@ async fn resume_after_check(reach: &Reach) {
 }
 
 /// The release gate of `riff wave end N` (01M58KMMCZCE7HDNVT9PVHVZX2): only
-/// in a repository with the check of a release tag.
+/// in a repository with the table `[release]` in its riff config
+/// (01M5SMPX8NM75P8E38DGQ17W7B).
 fn wave_release_gate(number: u64, no_release: Option<&str>) -> Result<()> {
     let here = identity::working_dir()?;
     let Some(top) = cloud::top(&here) else {
         return Ok(());
     };
-    if !top.join(riff::cycle::CHECK).is_file() {
+    if !riff::release_config::of_repository(&top)? {
         return Ok(());
     }
     let forge = riff::cycle::GitHub::new(pr::Gh::default(), &top)?;
@@ -2958,6 +2964,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
     use riff::cycle::{self, Approved, Checked, Forge as _};
     use riff::watches::{Op, Stale};
     let here = identity::working_dir()?;
+    riff::release_config::require(&here)?;
     let refuse = |command: &str, why: cycle::Refusal| -> ! {
         eprintln!("{}", text::release_refused(command, why));
         std::process::exit(1)

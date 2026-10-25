@@ -11,7 +11,9 @@
 //! request like each other request of a host: only the person and the
 //! lead of the person act on it, never a work session
 //! ([`super::remote::judge`]). The daemon is not the author of any
-//! item that the test makes.
+//! item that the test makes. It refuses the request when the main clone
+//! has no table `[release]` in its riff config
+//! ([`crate::release_config::require`], 01M5SMPX8NM75P8E38DGQ17W7B).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -155,6 +157,7 @@ pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<Str
     if !is_commit(commit) {
         bail!("\"{commit}\" is not a commit ID");
     }
+    crate::release_config::require(&served.wave.main)?;
     let tag = crate::cycle::tag(crate::cycle::tag_version(tag)?);
     {
         let mut running = running_lock();
