@@ -17,7 +17,8 @@ fn run(cmd: &mut Command) -> Output {
 const GOOD: &str = "Closes #77\n\nPause the riff.\n\nIssue: #77\nMilestone: Wave 3\n";
 
 /// A directory with a fake `gh`. It prints `pr.json` for `gh pr view`,
-/// and `issue-N.json` for `gh issue view N`. A missing file fails.
+/// and `issue-N.json` for `gh issue view N`. A missing file fails. It
+/// appends each call to `calls.txt`.
 fn fake_gh(pr: &serde_json::Value, issues: &[serde_json::Value]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let write = |name: &str, value: &serde_json::Value| {
@@ -28,7 +29,7 @@ fn fake_gh(pr: &serde_json::Value, issues: &[serde_json::Value]) -> tempfile::Te
         write(&format!("issue-{}.json", issue["number"]), issue);
     }
     let script = format!(
-        "#!/bin/sh\nd='{}'\ncase \"$1 $2\" in\n\
+        "#!/bin/sh\nd='{}'\necho \"$*\" >> \"$d/calls.txt\"\ncase \"$1 $2\" in\n\
          'pr view') cat \"$d/pr.json\" ;;\n\
          'issue view') cat \"$d/issue-$3.json\" 2>/dev/null || {{ echo \"no issue $3\" >&2; exit 1; }} ;;\n\
          *) echo \"unknown: $*\" >&2; exit 1 ;;\nesac\n",
@@ -85,6 +86,45 @@ fn a_good_pull_request_passes() {
     assert_eq!(text(&out.stdout), "ok: pull request #90\n");
 }
 
+/// 01M3JFEXS6M5549TC6MH0G2MS0: the squash of a pull request with a
+/// co-author adds a paragraph `Co-authored-by:` after the trailers of
+/// the body. The check reads the commits, and the pull request passes.
+#[test]
+fn a_pull_request_with_a_co_author_passes() {
+    let mut pr = pr_json(GOOD, Some("Wave 3"));
+    pr["author"] = serde_json::json!({"id": "x", "is_bot": false, "login": "ana", "name": "Ana"});
+    pr["commits"] = serde_json::json!([
+        {"oid": "a", "authors": [
+            {"email": "ana@example.com", "id": "x", "login": "ana", "name": "Ana"},
+            {"email": "noreply@z.ai", "id": "", "login": "", "name": "GLM-5.3-Flash"},
+        ]},
+    ]);
+    let gh = fake_gh(&pr, &[issue_json(77, "OPEN", Some("Wave 3"))]);
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "ok: pull request #90\n");
+    let calls = std::fs::read_to_string(gh.path().join("calls.txt")).unwrap();
+    assert!(
+        calls.contains("pr view 90 --json title,body,milestone,author,commits"),
+        "{calls}"
+    );
+}
+
+#[test]
+fn a_pull_request_with_a_co_author_and_a_last_paragraph_of_text_fails() {
+    let body = format!("{GOOD}\nA last paragraph of text.\n");
+    let mut pr = pr_json(&body, Some("Wave 3"));
+    pr["commits"] = serde_json::json!([
+        {"oid": "a", "authors": [{"email": "noreply@z.ai", "id": "", "login": "", "name": "GLM-5.3-Flash"}]},
+    ]);
+    let gh = fake_gh(&pr, &[issue_json(77, "OPEN", Some("Wave 3"))]);
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    for rule in ["issue-trailer:", "milestone-trailer:"] {
+        assert!(stderr.contains(rule), "no {rule} in:\n{stderr}");
+    }
+}
 #[test]
 fn a_broken_pull_request_fails_with_each_rule() {
     let body = GOOD.replace("Milestone: Wave 3\n", "");
@@ -208,4 +248,29 @@ fn an_unknown_commit_is_a_tool_error() {
         "{}",
         text(&out.stderr)
     );
+}
+
+/// 01M3JFEXS6M5549TC6MH0G2MS0: GitHub adds a paragraph `Co-authored-by:`
+/// after the trailers of the body. The commit on `main` must still pass.
+#[test]
+fn a_squash_commit_with_a_co_author_after_the_trailers_passes() {
+    let body = format!(
+        "{GOOD}Generated-by: GLM-5.3-Flash\n\nCo-authored-by: GLM-5.3-Flash <noreply@z.ai>\n"
+    );
+    let dir = repo(&format!("Pause and resume the riff (#90)\n\n{body}"));
+    let out = hygiene(&["commit"], None, Some(dir.path()));
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "ok: commit HEAD\n");
+}
+
+#[test]
+fn a_squash_commit_with_the_trailers_before_a_paragraph_of_text_fails() {
+    let body = format!("{GOOD}\nA last paragraph of text.\n\nCo-authored-by: A <a@b.c>\n");
+    let dir = repo(&format!("Pause and resume the riff (#90)\n\n{body}"));
+    let out = hygiene(&["commit"], None, Some(dir.path()));
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    for rule in ["issue-trailer:", "milestone-trailer:"] {
+        assert!(stderr.contains(rule), "no {rule} in:\n{stderr}");
+    }
 }

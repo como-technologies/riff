@@ -446,8 +446,9 @@
   stands before an issue number (`keyword`). The title does not end
   with `(#N)`, because GitHub adds the number of the pull request
   (`title`).
-- **01M3JDRSYEGKYVNGF49SJMACEB** The body of a pull request ends with
-  the trailers `Issue: #N` and `Milestone: M`, each one time. N is the
+- **01M3JDRSYEGKYVNGF49SJMACEB** The body of a pull request has the
+  trailers `Issue: #N` and `Milestone: M`, each one time, in its last
+  block of trailers (01M5RP9PSKWXCD1F2SKCQN5379). N is the
   issue of the link line (`issue-trailer`). M names the milestone of the
   pull request as 01M518A04JWYJE5FA1VR309SAA says (`milestone-trailer`).
 - **01M518A04JWYJE5FA1VR309SAA** The trailer `Milestone: M` names the
@@ -469,6 +470,18 @@
 - **01M3JDRT7HMZD4FHWHDH3S1A1D** Each error of `hygiene` names its
   rule. It exits with status 1 on a broken rule, and with status 2 when
   `gh` or `git` fails.
+- **01M5RP9PSKWXCD1F2SKCQN5379** The trailers `Issue: #N` and
+  `Milestone: M` of a message stand in its last block of git trailers:
+  the last paragraphs of the message that hold only lines `Key: value`.
+  Other trailers (`Co-authored-by:`, `Signed-off-by:`, `Generated-by:`)
+  may stand in the block, before or after them. A message that ends with
+  a paragraph of text, or with a line of text in the paragraph of its
+  trailers, has no trailer. GitHub adds the `Co-authored-by:` lines of a
+  squash commit in a paragraph of their own, so `hygiene pr` checks the
+  message that the squash will make: the body, and a `Co-authored-by:`
+  line for each co-author of its commits, except the author of the pull
+  request. Supersedes 01M3JDRSYEGKYVNGF49SJMACEB and
+  01M3JFEXS6M5549TC6MH0G2MS0 in part.
 ## Pull requests on GitHub
 
 - **01M3JFEXG85AJK8ZE8N807EQVB** `just github` sets up the repository
@@ -508,7 +521,8 @@
   on a fail. A new commit has no status, so it needs a new verify.
 - **01M3JFEXS6M5549TC6MH0G2MS0** The workflow `Hygiene` also runs on
   each push to `main`. It checks the commit message with the commit
-  rule of the hygiene check.
+  rule of the hygiene check. The trailers stand in the last block, as
+  01M5RP9PSKWXCD1F2SKCQN5379 says.
 - **01M3NB6FTGPD0S5JTXXXNGNNDT** `riff pr open --title TITLE` opens the
   pull request of the current branch with `gh`. The issue is the one
   claim `issue-N` of the session, or `--issue N`. The body is the link

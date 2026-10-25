@@ -30,6 +30,13 @@
 //!   ([`milestone_value`]). The check compares only the number, so a
 //!   rename of a wave breaks no pull request ([`names_milestone`],
 //!   01M518A04JWYJE5FA1VR309SAA).
+//! - The trailers stand in the last block of git trailers of the
+//!   message ([`trailers`]). Other trailers may stand in the block,
+//!   before or after them: `Signed-off-by:`, `Generated-by:`. At the
+//!   squash, GitHub adds a `Co-authored-by:` line for each co-author of
+//!   the commits, in a paragraph of its own. So `hygiene pr` checks the
+//!   message that the squash will make ([`PullRequest::squash_message`]),
+//!   not only the body.
 //!
 //! `hygiene pr N` reads pull request N and its issue with `gh`, and runs
 //! [`check_pr`]. `hygiene commit [REV]` reads the message of a commit
@@ -80,7 +87,8 @@ pub struct Milestone {
     pub title: String,
 }
 
-/// A pull request, as `gh pr view --json title,body,milestone` gives it.
+/// A pull request, as `gh pr view --json title,body,milestone,author,commits`
+/// gives it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct PullRequest {
     /// The title. The squash commit gets it, and the number.
@@ -89,16 +97,132 @@ pub struct PullRequest {
     pub body: String,
     /// The milestone, or `None`.
     pub milestone: Option<Milestone>,
+    /// The author of the pull request. The squash commit is its work, so
+    /// it is not a co-author.
+    #[serde(default)]
+    pub author: Option<Person>,
+    /// The commits of the pull request.
+    #[serde(default)]
+    pub commits: Vec<PullCommit>,
+}
+
+/// A person, as `gh` gives an author. `gh` leaves out the fields that
+/// it does not know.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct Person {
+    /// The login on GitHub.
+    #[serde(default)]
+    pub login: String,
+    /// The name.
+    #[serde(default)]
+    pub name: String,
+    /// The email.
+    #[serde(default)]
+    pub email: String,
+}
+
+/// A commit of a pull request: the people that GitHub counts as its
+/// authors. They are the author, and each person of a `Co-authored-by:`
+/// line.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct PullCommit {
+    /// The authors of the commit.
+    #[serde(default)]
+    pub authors: Vec<Person>,
 }
 
 impl PullRequest {
-    /// A pull request with a title, a body and a milestone.
+    /// A pull request with a title, a body and a milestone, and no
+    /// co-author.
     pub fn new(title: &str, body: &str, milestone: Option<&str>) -> Self {
         Self {
             title: title.to_owned(),
             body: body.to_owned(),
             milestone: milestone.map(milestone_of),
+            author: None,
+            commits: Vec::new(),
         }
+    }
+
+    /// The same pull request with `author` as its author.
+    pub fn by(mut self, author: Person) -> Self {
+        self.author = Some(author);
+        self
+    }
+
+    /// The same pull request with one more commit by `author`.
+    pub fn with_commit_by(mut self, author: Person) -> Self {
+        self.commits.push(PullCommit {
+            authors: vec![author],
+        });
+        self
+    }
+
+    /// The lines `Co-authored-by: Name <email>` that GitHub adds to the
+    /// squash commit: one for each author of a commit, except the author
+    /// of the pull request, and each one once.
+    ///
+    /// ```
+    /// use hygiene::{Person, PullRequest};
+    /// let person = |login: &str, name: &str, email: &str| Person {
+    ///     login: login.into(),
+    ///     name: name.into(),
+    ///     email: email.into(),
+    /// };
+    /// let pr = PullRequest::new("T", "Text.", None)
+    ///     .by(person("ana", "Ana", "ana@example.com"))
+    ///     .with_commit_by(person("ana", "Ana", "ana@example.com"))
+    ///     .with_commit_by(person("", "GLM-5.3-Flash", "noreply@z.ai"))
+    ///     .with_commit_by(person("", "GLM-5.3-Flash", "noreply@z.ai"));
+    /// assert_eq!(pr.co_authors(), ["Co-authored-by: GLM-5.3-Flash <noreply@z.ai>"]);
+    /// ```
+    pub fn co_authors(&self) -> Vec<String> {
+        let mut lines: Vec<String> = Vec::new();
+        for person in self.commits.iter().flat_map(|c| &c.authors) {
+            let own = self.author.as_ref().is_some_and(|a| {
+                (!a.login.is_empty() && a.login == person.login)
+                    || (!a.email.is_empty() && a.email == person.email)
+            });
+            let name = if person.name.is_empty() {
+                &person.login
+            } else {
+                &person.name
+            };
+            if own || name.is_empty() {
+                continue;
+            }
+            let line = format!("Co-authored-by: {name} <{}>", person.email);
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
+        lines
+    }
+
+    /// The message that the squash will make from the body: the body, then
+    /// the lines of [`PullRequest::co_authors`] in a paragraph of their
+    /// own. GitHub adds them after a blank line, also when the body ends
+    /// with trailers.
+    ///
+    /// ```
+    /// use hygiene::{Person, PullRequest};
+    /// let glm = Person { name: "GLM".into(), email: "noreply@z.ai".into(), ..Person::default() };
+    /// let pr = PullRequest::new("T", "Text.\n\nIssue: #7\n", None).with_commit_by(glm);
+    /// assert_eq!(
+    ///     pr.squash_message(),
+    ///     "Text.\n\nIssue: #7\n\nCo-authored-by: GLM <noreply@z.ai>\n"
+    /// );
+    /// ```
+    pub fn squash_message(&self) -> String {
+        let mut message = self.body.replace("\r\n", "\n");
+        let co_authors = self.co_authors();
+        if !co_authors.is_empty() {
+            message.truncate(message.trim_end().len());
+            message.push_str("\n\n");
+            message.push_str(&co_authors.join("\n"));
+            message.push('\n');
+        }
+        message
     }
 }
 
@@ -309,8 +433,12 @@ fn names_issue(word: &str) -> bool {
         .is_some_and(|i| issue_ref(&word[i..]).is_some())
 }
 
-/// The trailers of a message: the lines `Key: value` of its last
-/// paragraph. A last paragraph with a line of another form has none.
+/// The trailers of a message: the lines `Key: value` of its last block of
+/// trailers. The block is the last paragraphs of the message that hold
+/// only such lines. GitHub adds its `Co-authored-by:` lines after a blank
+/// line, so the block may have more than one paragraph. A paragraph with a
+/// line of another form ends the block, and a last paragraph of that form
+/// leaves no trailer at all.
 ///
 /// ```
 /// let body = "Closes #7\n\nText.\n\nIssue: #7\nMilestone: Wave 3\n";
@@ -319,29 +447,52 @@ fn names_issue(word: &str) -> bool {
 ///     ("Milestone".to_owned(), "Wave 3".to_owned()),
 /// ]);
 /// assert!(hygiene::trailers("Text.\n\nIssue: #7\nmore text").is_empty());
+///
+/// // The squash of a pull request with a co-author:
+/// let squash = "Text.\n\nIssue: #7\nMilestone: Wave 3\n\nCo-authored-by: A <a@b.c>\n";
+/// let keys: Vec<_> = hygiene::trailers(squash).into_iter().map(|(k, _)| k).collect();
+/// assert_eq!(keys, ["Issue", "Milestone", "Co-authored-by"]);
+///
+/// // A paragraph of text after the trailers ends the block.
+/// assert!(hygiene::trailers("Issue: #7\n\nText.\n\nCo-authored-by: A <a@b.c>\n")
+///     .iter()
+///     .all(|(k, _)| k != "Issue"));
 /// ```
 pub fn trailers(text: &str) -> Vec<(String, String)> {
-    let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
-    let end = lines
-        .iter()
-        .rposition(|l| !l.is_empty())
-        .map_or(0, |i| i + 1);
-    let start = lines[..end]
-        .iter()
-        .rposition(|l| l.is_empty())
-        .map_or(0, |i| i + 1);
-    let mut found = Vec::new();
-    for line in &lines[start..end] {
-        let Some((key, value)) = line.split_once(": ") else {
-            return Vec::new();
-        };
-        let key_ok = !key.is_empty() && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
-        if !key_ok || value.trim().is_empty() {
-            return Vec::new();
+    let mut paragraphs: Vec<Vec<&str>> = Vec::new();
+    let mut open = false;
+    for line in text.lines().map(str::trim_end) {
+        if line.is_empty() {
+            open = false;
+        } else if open {
+            paragraphs.last_mut().unwrap().push(line);
+        } else {
+            paragraphs.push(vec![line]);
+            open = true;
         }
-        found.push((key.to_owned(), value.trim().to_owned()));
+    }
+    let mut found = Vec::new();
+    for paragraph in paragraphs.iter().rev() {
+        let Some(lines) = paragraph
+            .iter()
+            .map(|line| trailer_line(line))
+            .collect::<Option<Vec<_>>>()
+        else {
+            break;
+        };
+        found.splice(0..0, lines);
     }
     found
+}
+
+/// The key and the value of a line `Key: value`, or `None`.
+fn trailer_line(line: &str) -> Option<(String, String)> {
+    let (key, value) = line.split_once(": ")?;
+    let key_ok = !key.is_empty() && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    if !key_ok || value.trim().is_empty() {
+        return None;
+    }
+    Some((key.to_owned(), value.trim().to_owned()))
 }
 
 /// The issue of a pull request: the issue of its first link line, or of
@@ -492,7 +643,7 @@ pub fn check_pr(pr: &PullRequest, issue: Option<&Issue>) -> Vec<Error> {
         ));
     }
 
-    let trailers = trailers(&body);
+    let trailers = trailers(&pr.squash_message());
     let named = issue_trailer(&trailers, &mut errors);
     if let (Some(named), Some(link)) = (named, link)
         && named != link.issue()
@@ -864,5 +1015,136 @@ mod tests {
             .map(|e| e.rule)
             .collect();
         assert_eq!(rules, ["issue-trailer", "milestone-trailer"]);
+    }
+
+    /// A squash message of a pull request with a co-author: the trailers
+    /// with a line `Generated-by:`, then the paragraph `Co-authored-by:`
+    /// that GitHub adds.
+    const SQUASH: &str = "Make the link test count (#1348)\n\nCloses #692\n\nText.\n\n\
+        Issue: #692\nMilestone: Wave 41\nGenerated-by: GLM-5.3-Flash\n\n\
+        Co-authored-by: GLM-5.3-Flash <noreply@z.ai>\n";
+
+    #[test]
+    fn a_commit_with_a_co_author_after_the_trailers_passes() {
+        for message in [
+            // The lines of one block.
+            "T (#9)\n\nIssue: #7\nMilestone: Wave 3\nCo-authored-by: A <a@b.c>\n",
+            // GitHub adds a blank line before its lines.
+            "T (#9)\n\nIssue: #7\nMilestone: Wave 3\n\nCo-authored-by: A <a@b.c>\n",
+            // Other trailers stand before and after.
+            "T (#9)\n\nSigned-off-by: A <a@b.c>\nIssue: #7\nMilestone: Wave 3\nGenerated-by: X\n",
+            SQUASH,
+        ] {
+            assert_eq!(check_commit(message), [], "{message}");
+        }
+    }
+
+    #[test]
+    fn a_commit_with_the_trailers_before_the_last_block_fails() {
+        for message in [
+            // A paragraph of text after the trailers.
+            "T (#9)\n\nIssue: #7\nMilestone: Wave 3\n\nText.\n",
+            // A paragraph of text between the trailers and the co-author.
+            "T (#9)\n\nIssue: #7\nMilestone: Wave 3\n\nText.\n\nCo-authored-by: A <a@b.c>\n",
+            // A line of text in the paragraph of the trailers.
+            "T (#9)\n\nIssue: #7\nMilestone: Wave 3\nmore text\n\nCo-authored-by: A <a@b.c>\n",
+        ] {
+            let rules: Vec<_> = check_commit(message).iter().map(|e| e.rule).collect();
+            assert_eq!(rules, ["issue-trailer", "milestone-trailer"], "{message}");
+        }
+    }
+
+    #[test]
+    fn the_trailers_of_a_block_of_two_paragraphs_keep_their_order() {
+        let found =
+            trailers("Text.\n\nIssue: #7\nMilestone: Wave 3\n\nCo-authored-by: A <a@b.c>\n");
+        let keys: Vec<_> = found.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["Issue", "Milestone", "Co-authored-by"]);
+    }
+
+    #[test]
+    fn a_message_of_one_paragraph_of_text_has_no_trailer() {
+        assert!(trailers("").is_empty());
+        assert!(trailers("Text.\n").is_empty());
+        assert!(trailers("Text.\n\nMore.\n").is_empty());
+    }
+
+    fn person(name: &str, email: &str) -> Person {
+        Person {
+            name: name.to_owned(),
+            email: email.to_owned(),
+            ..Person::default()
+        }
+    }
+
+    fn glm() -> Person {
+        person("GLM-5.3-Flash", "noreply@z.ai")
+    }
+
+    #[test]
+    fn a_pull_request_with_a_co_author_passes() {
+        let pr = pr(GOOD, Some("Wave 3")).with_commit_by(glm());
+        assert_eq!(
+            pr.co_authors(),
+            ["Co-authored-by: GLM-5.3-Flash <noreply@z.ai>"]
+        );
+        assert_eq!(check_pr(&pr, Some(&open(Some("Wave 3")))), []);
+    }
+
+    #[test]
+    fn a_pull_request_with_a_body_that_ends_with_text_fails_also_with_a_co_author() {
+        let body = format!("{GOOD}\nA last paragraph of text.\n");
+        let pr = pr(&body, Some("Wave 3")).with_commit_by(glm());
+        assert_eq!(
+            rules(&pr, &open(Some("Wave 3"))),
+            ["issue-trailer", "milestone-trailer"]
+        );
+    }
+
+    #[test]
+    fn the_author_of_the_pull_request_is_no_co_author() {
+        let ana = Person {
+            login: "ana".to_owned(),
+            ..person("Ana", "ana@example.com")
+        };
+        let pr = pr(GOOD, Some("Wave 3"))
+            .by(ana.clone())
+            .with_commit_by(ana)
+            .with_commit_by(glm())
+            .with_commit_by(glm());
+        assert_eq!(pr.co_authors().len(), 1);
+        assert_eq!(
+            pr.squash_message(),
+            format!("{GOOD}\nCo-authored-by: GLM-5.3-Flash <noreply@z.ai>\n")
+        );
+    }
+
+    #[test]
+    fn a_pull_request_with_no_co_author_has_its_body_as_message() {
+        assert_eq!(pr(GOOD, None).squash_message(), GOOD);
+        let web = GOOD.replace('\n', "\r\n");
+        assert_eq!(pr(&web, None).squash_message(), GOOD);
+    }
+
+    #[test]
+    fn gh_json_of_a_pull_request_with_commits_has_its_co_author() {
+        let json = r#"{
+            "title": "T", "body": "Closes #1\n\nIssue: #1\nMilestone: Wave 3",
+            "milestone": {"title": "Wave 3"},
+            "author": {"id": "x", "is_bot": false, "login": "ana", "name": "Ana"},
+            "commits": [
+                {"oid": "a", "authors": [{"email": "ana@example.com", "id": "x", "login": "ana", "name": "Ana"}]},
+                {"oid": "b", "authors": [
+                    {"email": "ana@example.com", "id": "x", "login": "ana", "name": "Ana"},
+                    {"email": "noreply@z.ai", "id": "", "login": "", "name": "GLM-5.3-Flash"}
+                ]}
+            ]
+        }"#;
+        let pr: PullRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            pr.co_authors(),
+            ["Co-authored-by: GLM-5.3-Flash <noreply@z.ai>"]
+        );
+        assert_eq!(check_pr(&pr, Some(&open(Some("Wave 3")))), []);
     }
 }
