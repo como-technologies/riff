@@ -4610,17 +4610,17 @@ of this part when they merge.
   timed out or startup failure, or a status in failure or error, except
   riff/verify. The wave of the daemon reads the rollup of each open pull
   request at each look. For the item of such a pull request, it starts a
-  build session with the names of the failed checks in the start text.
-  The text tells the session to read the failed run, to fix the work and
-  push to the same pull request, and, for a known flake, to run the job
-  again one time. Each head commit starts one such session in a run of
-  the wave. A pull request with a conflict gets the rebase first. A
-  cancelled or skipped check did not fail.
+  build session with the names of the failed runs of GitHub Actions in
+  the start text. The text tells the session to read the failed run, to
+  fix the work and push to the same pull request, and, for a known
+  flake, to run the job again one time. Each head commit starts one such
+  session in a run of the wave. A pull request with a conflict gets the
+  rebase first. A cancelled or skipped check did not fail.
 - **01M5QW2KYFM4C287D9NMSPH8TA** When a session of a wave for failed
   checks ends with the same head commit, the daemon sends no verify
   request. It reads the checks of the pull request. The lead gets a
-  message when a check still fails, and a note when none fails because
-  the session ran the job again.
+  message when a run of GitHub Actions still fails, and a note when none
+  fails because the session ran the job again.
 - **01M5QW2M1M5QZJXSP0BY6XG118** A pull request whose verify passed and
   that has auto-merge off never merges. The wave starts no session for
   it. It tells the lead one time for each head commit, with the reason
@@ -4683,6 +4683,17 @@ of this part when they merge.
   wave starts no work at that look, and reads again at the next one.
   `riff wave run` reads no branch. Supersedes 01M5QYBWPAJ219BE8QKVKG1TWW
   in part.
+- **01M5SN0PY23JDWND8DGGAF9XMB** A failed check of a pull request whose
+  verify passed starts a build session only when the check is a run of
+  GitHub Actions: a check run with a workflow. For each other failed
+  check, a check run of another app or a status, the wave starts no
+  session. The lead gets one message for each such check and head
+  commit, with the name of the check, its app and its link. The app is
+  the host of the link. A pull request with both kinds gets the session
+  for its runs of Actions, and the message for each other check. When a
+  session of a wave for failed checks ends with the same head commit,
+  only the runs of Actions count as failed. Supersedes
+  01M5QW2KVAS05Q72630RNW47G0 and 01M5QW2KYFM4C287D9NMSPH8TA in part.
 
 ### The lead, the view and the takeover
 

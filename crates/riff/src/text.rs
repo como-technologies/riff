@@ -7808,10 +7808,12 @@ pub fn wave_checks_start(
 /// The message to the lead about a pull request that cannot merge, and
 /// that no session fixes (#279): `reason` is why. `base` is the default
 /// branch of the repository, for a conflict (01M5QYBWPAJ219BE8QKVKG1TWW).
-/// Each pull request, head and reason comes one time.
+/// Each pull request, head and reason comes one time. A failed check
+/// that is no run of GitHub Actions comes one time for each check, with
+/// its app and its link (#1427).
 ///
 /// ```
-/// use riff::rollout::Stuck;
+/// use riff::rollout::{OtherCheck, Stuck};
 ///
 /// assert_eq!(
 ///     riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::AutoMergeOff),
@@ -7825,6 +7827,22 @@ pub fn wave_checks_start(
 /// assert!(text.contains("gh pr checks 298"));
 /// assert!(text.contains("gh pr edit 298"));
 /// assert!(text.contains("a push to release-v0.8.0"));
+/// let circle = OtherCheck {
+///     name: "ci".into(),
+///     app: Some("app.circleci.com".into()),
+///     link: Some("https://app.circleci.com/workflow/9".into()),
+/// };
+/// assert_eq!(
+///     riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(circle)),
+///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the check ci of \
+///      the app app.circleci.com failed. It is not a run of GitHub Actions, so no session fixes \
+///      it, and it waits for you. Fix the cause with a push to worktree-issue-12, or run the \
+///      check again in its app. Link: https://app.circleci.com/workflow/9"
+/// );
+/// let bare = OtherCheck { name: "ci/x".into(), app: None, link: None };
+/// let text = riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(bare));
+/// assert!(text.contains("the check ci/x of an unknown app failed."));
+/// assert!(text.ends_with("It has no link: see gh pr checks 40"));
 /// let text = riff::text::wave_stuck(41, "worktree-issue-1", "master", "aaaa111bbb", &Stuck::Conflict);
 /// assert!(text.contains("has a conflict with master at commit aaaa111."));
 /// assert!(text.contains("Rebase it on master, and push to worktree-issue-1."));
@@ -7854,6 +7872,23 @@ pub fn wave_stuck(
                  Fix the cause: a check of the title, the body or the milestone needs gh pr \
                  edit {number}, and a check of the code needs a push to {branch}.",
                 names.join(", ")
+            )
+        }
+        Stuck::Other(check) => {
+            let name = safe(&check.name);
+            let app = match &check.app {
+                Some(app) => format!("the app {}", safe(app)),
+                None => "an unknown app".to_owned(),
+            };
+            let link = match &check.link {
+                Some(link) => format!("Link: {}", safe(link)),
+                None => format!("It has no link: see gh pr checks {number}"),
+            };
+            format!(
+                "PR #{number}, branch {branch}, passed its verify at commit {commit}, but the \
+                 check {name} of {app} failed. It is not a run of GitHub Actions, so no session \
+                 fixes it, and it waits for you. Fix the cause with a push to {branch}, or run \
+                 the check again in its app. {link}"
             )
         }
         Stuck::Conflict => format!(
