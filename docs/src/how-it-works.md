@@ -818,7 +818,7 @@ notice:
 
 `riff-server` still talks with a `riff` of the line before its own
 (see [Builds](#builds)), so a wire change stays additive for one
-line. Riff does not bridge a difference in behavior: the version note
+line. Riff does not hide a difference in behavior: the version note
 tells the older session to update.
 
 ### Major

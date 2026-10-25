@@ -3214,7 +3214,7 @@
 
   A wire change stays additive for one line, so that `riff-server`
   serves the line before its own (01M3MX1E1EY1M7JGNCN6FCEVQK). Riff
-  does not bridge a difference in behavior: the version note tells the
+  does not hide a difference in behavior: the version note tells the
   older session to update.
 - **01M3N73ECKSDSH6820AKW9J8F7** The major release `1.0.0` promises that
   the wire and the behavior stay stable. After it, a major breaks, a
@@ -3361,11 +3361,6 @@
   session, and changes no sign-in and no device key. The sessions take
   the new `riff` as 01M3MNVTC248YYJJQKFD9H1WY9,
   01M3NT6WXGCNKW3EQ7MBJDQTR4 and 01M3NT6WZTKAFKGDWGCFKC8TB5 say.
-- **01M5A72C25A1FDZPW3FK2R1F92** The bridge of the lines 1 and 3 ends
-  with the line 4. The server of the line 4 talks with the line 4 and
-  the line 3 (the line before), and refuses the line 1. The client of
-  the line 4 refuses a server of the line 3 or 1. The bridge tests know
-  the line 4 and fail on each later major with no rule.
 - **01M5P1VAX6WNM9DX16NS4Z0SWC** The actions of the pipeline stay on a
   version that GitHub supports. Dependabot opens a pull request each
   week for an action with a newer version.
@@ -3384,6 +3379,10 @@
   run time, and checks that the line before talks and that two lines
   before do not. This supersedes 01M55FCZNNZGKM4EKAXZQFTDWR and
   01M53NGVXEMBTJ8E4K3MHPQ7W9.
+- **01M5RMZEM2C1SN71V1XCRPRP0C** No code, test or text of riff keeps a
+  rule for a pair of lines that is two lines apart. The rule of
+  01M5RG6BXBQVFABA1N4NRZBMQF is the only rule of lines that talk. This
+  supersedes 01M5A72C25A1FDZPW3FK2R1F92 in full.
 
 ## Code
 

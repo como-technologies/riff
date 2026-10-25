@@ -1781,6 +1781,11 @@ page [Requirements](requirements.md) holds the rules of today.
   next major is `3.0.0` (01M4Z60B8N9W9TBE7KKDJQAN2C). A release of only
   fixes, where the old and the new builds act the same, is a patch.
   Superseded by 01M5RG6BTXAJY8DV6MT315VZWF.
+- **01M5A72C25A1FDZPW3FK2R1F92** The bridge of the lines 1 and 3 ends
+  with the line 4. The server of the line 4 talks with the line 4 and
+  the line 3 (the line before), and refuses the line 1. The client of
+  the line 4 refuses a server of the line 3 or 1. The bridge tests know
+  the line 4 and fail on each later major with no rule.
 
 ## Code
 
