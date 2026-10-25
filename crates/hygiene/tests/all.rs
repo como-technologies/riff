@@ -7,6 +7,7 @@ mod ci_lock;
 mod cli;
 mod dependabot;
 mod gate;
+mod merge_queue;
 mod part;
 mod stress;
 mod terminal;

@@ -651,6 +651,18 @@
   setting for the full check. Supersedes 01M5QYDE41FVFX26EC8K5QGYH4,
   01M5QWA0E9A4ZJ8X49EM2MJM5Q, 01M5QZ01Y14Z76RC220RT7YTX7 and
   01M5R1675HZ6TJPMQ6536X37T5 in part.
+- **01M5TKPHDNHY75BHPD4XVBJRN9** The ruleset `main` of
+  como-technologies/riff has a merge queue with the squash method. A
+  pull request merges through the queue: GitHub builds a merge group of
+  the default branch and the pull request, runs the required checks on
+  it, and merges it when they pass. `deploy/merge-queue.sh on REPO
+  RULESET` adds the rule to a ruleset, and `off` removes it. The ruleset
+  that `riff init` makes has no merge queue.
+- **01M5TKPHH2627K9NDS4P1Y1N3T** CI runs the Gate and Hygiene on the
+  event `merge_group`. A job of CI sets the status `riff/verify` on the
+  merge group commit: success when the head commit of the pull request
+  of the group has a passed `riff/verify`, else failure. A verified pull
+  request merges through the queue with no new verify.
 
 ## Tokens on GitHub
 
@@ -4876,6 +4888,19 @@ of this part when they merge.
   look. A look that reads `MERGEABLE` puts the verify in the free work,
   and one that reads `CONFLICTING` puts the rebase
   (01M57FJ3WWMQSDBFRRHXN3SMFQ).
+- **01M5TKPNDET56VR8WZ74FSR71F** The wave of the daemon starts no
+  session and sends no message for an open pull request that is in the
+  merge queue: no rebase, no verify, no notice of a conflict or of
+  auto-merge off (01M5TKPHDNHY75BHPD4XVBJRN9). The wave reads the queue
+  with one GraphQL call for all open pull requests. A call that fails
+  reads as no queue.
+- **01M5TKPNGG27Z1SQKTA296D9H7** A pull request that the merge queue
+  removed, with no push to it since, and whose verify passed: with a
+  conflict with the default branch, the wave starts one rebase session
+  for the head commit, also with auto-merge off, and the session turns
+  auto-merge on again. Else the lead gets one message for the head
+  commit, with the reason of GitHub. `riff top` and `riff wave list`
+  show `stuck` with the words `removed from queue`.
 
 ### The lead, the view and the takeover
 

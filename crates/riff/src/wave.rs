@@ -223,6 +223,33 @@
 //! `stuck: #250 (checks)`, while no session claims it
 //! ([`riff_client::waves::Board`], 01M5QW2M8FPBMMF4S0D8PC39AB).
 //!
+//! # The merge queue
+//!
+//! A repository can have a merge queue on `main`. GitHub then merges each
+//! pull request through it: it builds a merge group of `main` and the
+//! pull request, runs the required checks on the group, and merges the
+//! group when they pass. A pull request needs no rebase because `main`
+//! moved. The look reads the queue with one `gh api graphql` call for all
+//! open pull requests ([`rollout::queue_of`]); a repository with no queue,
+//! and a call that fails, give [`rollout::Queue::Out`] for each of them
+//! (01M5TKPNDET56VR8WZ74FSR71F).
+//!
+//! ```mermaid
+//! flowchart TD
+//!     P["an open pull request of an item"] --> Q{"rollout::Queue"}
+//!     Q -- "In" --> N["no rebase, no verify, no message"]
+//!     Q -- "Removed, a conflict" --> R["a build: Work::Rebase at the head commit,<br/>also with auto-merge off"]
+//!     Q -- "Removed, other" --> M["a message to the lead: Stuck::Dequeued<br/>with the reason of GitHub"]
+//!     Q -- "Out" --> O["as without a queue"]
+//! ```
+//!
+//! A removal counts while it is the last event of the pull request on
+//! GitHub, before any push: a push makes a new head, and the new head has
+//! not been in the queue (01M5TKPNGG27Z1SQKTA296D9H7). The message comes one
+//! time for each head ([`Notice::key`]). The rebase text tells the
+//! session to turn auto-merge on again after its push
+//! ([`text::wave_rebase_start`]).
+//!
 //! # A job
 //!
 //! A job does the steps of the host of `riff run` itself
@@ -1958,6 +1985,10 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///   whose head has a failed check ([`rollout::Stuck::Checks`]). It is a
 ///   build, with the names of the checks that are runs of GitHub Actions
 ///   ([`rollout::Pull::failed_runs`]).
+/// - A pull request in the merge queue ([`rollout::Pull::queued`]) is none
+///   of these: the wave moves nothing for it (01M5TKPNDET56VR8WZ74FSR71F).
+///   One that the queue removed, with a conflict, is a pull request to
+///   rebase; with no conflict it is a notice ([`rollout::Stuck::Dequeued`]).
 /// - A pull request that no session can fix gets a notice for the lead:
 ///   one with auto-merge off after a pass ([`rollout::Stuck::AutoMergeOff`]),
 ///   a release or a tracker with a failed check, and a failed check that
@@ -2723,6 +2754,9 @@ mod tests {
         no_result: bool,
         /// The issues whose pull request has auto-merge off.
         manual: BTreeSet<u64>,
+        /// The place of the pull request of each issue in the merge queue,
+        /// else `Queue::Out`.
+        queue: BTreeMap<u64, rollout::Queue>,
         /// The issues whose pull request has a failed check `Gate`.
         failing: BTreeSet<u64>,
         /// The issues whose pull request has a failed check of another app
@@ -2827,6 +2861,7 @@ mod tests {
                     .into(),
                 ),
                 auto_merge: !self.manual.contains(n),
+                queue: self.queue.get(n).cloned().unwrap_or_default(),
                 reasked: *pr == Pr::Reasked,
                 ..rollout::Pull::default()
             });
@@ -4053,6 +4088,91 @@ mod tests {
         here.idle(3).await;
         let second = stuck("c1b", rollout::Stuck::AutoMergeOff);
         assert_eq!(here.forge().told, [message, second]);
+        assert!(here.forge().works.is_empty());
+    }
+
+    /// 01M5TKPNDET56VR8WZ74FSR71F: a pull request in the merge queue gets
+    /// no rebase and no message, also with a conflict or with auto-merge
+    /// off. GitHub builds its merge group and merges it, or removes it.
+    #[tokio::test]
+    async fn a_queued_pull_request_gets_no_rebase_and_no_message() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge.pulls.insert(2, Pr::Passed);
+            forge.conflicting.insert(1);
+            forge.manual.insert(2);
+            forge.queue.insert(1, rollout::Queue::In);
+            forge.queue.insert(2, rollout::Queue::In);
+        }
+        here.run();
+        here.idle(3).await;
+        let forge = here.forge();
+        assert!(forge.works.is_empty(), "{forge:?}");
+        assert!(forge.told.is_empty(), "{forge:?}");
+    }
+
+    /// 01M5TKPNGG27Z1SQKTA296D9H7: a pull request that the queue removed
+    /// and that has a conflict gets one rebase for its head, also with
+    /// auto-merge off.
+    #[tokio::test]
+    async fn a_pull_request_that_the_queue_removed_with_a_conflict_gets_a_rebase() {
+        let here = conflict(Pr::Passed).await;
+        {
+            let mut forge = here.forge();
+            forge.manual.insert(1);
+            forge.no_push = true;
+            forge
+                .queue
+                .insert(1, rollout::Queue::Removed("MERGE_CONFLICT".into()));
+        }
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, [rebase("c1")], "one rebase for the head");
+        assert!(
+            !forge
+                .told
+                .contains(&stuck("c1", rollout::Stuck::AutoMergeOff)),
+            "{forge:?}"
+        );
+    }
+
+    /// 01M5TKPNGG27Z1SQKTA296D9H7: a pull request that the queue removed
+    /// and that has no conflict gets no session. The lead hears of it one
+    /// time for each head, with the reason of GitHub. After a push the
+    /// queue has no removal for the new head.
+    #[tokio::test]
+    async fn a_pull_request_that_the_queue_removed_tells_the_lead_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        let removed = rollout::Stuck::Dequeued("CI_FAILURE".into());
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge
+                .queue
+                .insert(1, rollout::Queue::Removed("CI_FAILURE".into()));
+        }
+        here.run();
+        here.idle(3).await;
+        let message = stuck("c1", removed.clone());
+        assert!(message.contains("(reason: CI_FAILURE)"), "{message}");
+        assert!(
+            message.ends_with("gh pr merge --auto --squash 41"),
+            "{message}"
+        );
+        assert_eq!(here.forge().told, std::slice::from_ref(&message));
+        assert!(here.forge().works.is_empty());
+
+        // A push makes a new head, and the queue has no removal for it.
+        here.forge().heads.insert(1, "c1b".into());
+        here.forge().queue.clear();
+        here.idle(3).await;
+        assert_eq!(here.forge().told, [message], "no second message");
         assert!(here.forge().works.is_empty());
     }
 

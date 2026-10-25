@@ -353,7 +353,8 @@ pub struct Board {
     /// work for a build.
     pub verify: Vec<u64>,
     /// The items with no claim whose pull request cannot merge by itself,
-    /// each with the reason: `checks`, `conflict` or `auto-merge off`
+    /// each with the reason: `checks`, `conflict`, `auto-merge off` or
+    /// `removed from queue`
     /// (#279). They wait for a session or for the lead, not for the
     /// merge.
     #[serde(default)]

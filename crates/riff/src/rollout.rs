@@ -104,7 +104,7 @@
 //!   the wave one more time. The wave then starts nothing while the
 //!   repository is paused.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -578,6 +578,23 @@ pub const CONNECTIONS: &[&str] = &[
     "reviews",
 ];
 
+/// Where a pull request is in the merge queue of the default branch, as
+/// GitHub says it ([`queue_of`], 01M5TKPNDET56VR8WZ74FSR71F).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Queue {
+    /// Not in the queue, and not removed from it since the last push: a
+    /// repository with no merge queue, or a pull request that waits to
+    /// enter it.
+    #[default]
+    Out,
+    /// In the queue. GitHub builds the merge group and merges it, so
+    /// nothing else has to move the pull request.
+    In,
+    /// The queue removed it, and nobody pushed to it since. The text is
+    /// the reason of GitHub, for example `MERGE_CONFLICT`.
+    Removed(String),
+}
+
 /// An open pull request, as `gh pr list --json` with [`PULL_FIELDS`]
 /// gives it.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -618,6 +635,11 @@ pub struct Pull {
     /// a verify again ([`Pull::verify`]). The wave sets it.
     #[serde(skip)]
     pub reasked: bool,
+    /// The place of the pull request in the merge queue. `gh pr list`
+    /// does not tell it: [`pulls`] reads it one time for all pull
+    /// requests ([`queue_of`]).
+    #[serde(skip)]
+    pub queue: Queue,
 }
 
 /// True when the first line of the commit message `message` starts with
@@ -867,6 +889,10 @@ pub enum Stuck {
     Other(OtherCheck),
     /// The verify passed, and auto-merge is off: nothing merges it.
     AutoMergeOff,
+    /// The verify passed, and the merge queue removed the pull request,
+    /// with this reason of GitHub ([`Queue::Removed`]). Nothing queues it
+    /// again.
+    Dequeued(String),
 }
 
 /// A failed check that is not a run of GitHub Actions: a check run of
@@ -893,12 +919,14 @@ impl Stuck {
     /// let other = OtherCheck { name: "ci".into(), app: None, link: None };
     /// assert_eq!(Stuck::Other(other).word(), "checks");
     /// assert_eq!(Stuck::AutoMergeOff.word(), "auto-merge off");
+    /// assert_eq!(Stuck::Dequeued("MERGE_CONFLICT".into()).word(), "removed from queue");
     /// ```
     pub fn word(&self) -> &'static str {
         match self {
             Stuck::Conflict => "conflict",
             Stuck::Checks(_) | Stuck::Other(_) => "checks",
             Stuck::AutoMergeOff => "auto-merge off",
+            Stuck::Dequeued(_) => "removed from queue",
         }
     }
 }
@@ -970,12 +998,31 @@ impl Pull {
             .find(|c| c.context.as_deref() == Some(crate::pr::VERIFY_CONTEXT))
     }
 
-    /// True when auto-merge is on and the pull request has a conflict
-    /// with the default branch: it cannot merge (01M49Q30XMVRFX42YTM1PHX0RZ).
+    /// True when the pull request is in the merge queue
+    /// (01M5TKPNDET56VR8WZ74FSR71F). GitHub builds its merge group and
+    /// merges it, and drops it from the queue when it cannot: the wave
+    /// moves nothing for it.
+    ///
+    /// ```
+    /// use riff::rollout::{Pull, Queue};
+    ///
+    /// assert!(Pull { queue: Queue::In, ..Pull::default() }.queued());
+    /// assert!(!Pull::default().queued());
+    /// assert!(!Pull { queue: Queue::Removed("MANUAL".into()), ..Pull::default() }.queued());
+    /// ```
+    pub fn queued(&self) -> bool {
+        self.queue == Queue::In
+    }
+
+    /// True when auto-merge is on, or the merge queue removed the pull
+    /// request, and it has a conflict with the default branch: it cannot
+    /// merge (01M49Q30XMVRFX42YTM1PHX0RZ). The removal can turn auto-merge
+    /// off, and the conflict is the same. A pull request in the queue has
+    /// none for the wave: the queue decides (01M5TKPNDET56VR8WZ74FSR71F).
     /// Only a pull request of an item counts, as for [`Pull::verify`].
     ///
     /// ```
-    /// use riff::rollout::Pull;
+    /// use riff::rollout::{Pull, Queue};
     ///
     /// let pull = |mergeable: &str, auto_merge| Pull {
     ///     number: 40,
@@ -990,9 +1037,16 @@ impl Pull {
     /// assert!(!pull("MERGEABLE", true).conflict());
     /// assert!(!Pull { draft: true, ..pull("CONFLICTING", true) }.conflict());
     /// assert!(!Pull { branch: "main".into(), ..pull("CONFLICTING", true) }.conflict());
+    /// // In the merge queue: no conflict for the wave.
+    /// assert!(!Pull { queue: Queue::In, ..pull("CONFLICTING", true) }.conflict());
+    /// // The queue removed it: a conflict also with auto-merge off.
+    /// let removed = Queue::Removed("MERGE_CONFLICT".into());
+    /// assert!(Pull { queue: removed, ..pull("CONFLICTING", false) }.conflict());
     /// ```
     pub fn conflict(&self) -> bool {
-        self.auto_merge
+        let removed = matches!(self.queue, Queue::Removed(_));
+        !self.queued()
+            && (self.auto_merge || removed)
             && self.mergeable.as_deref() == Some("CONFLICTING")
             && self.verify().is_some()
     }
@@ -1116,22 +1170,26 @@ impl Pull {
     }
 
     /// Why this pull request cannot merge by itself, when it cannot
-    /// (#279). A draft, a WIP head, and a failed verify are none: a failed
-    /// verify is free work as a build already. In this order:
+    /// (#279). A draft, a WIP head, a failed verify, and a pull request in
+    /// the merge queue ([`Pull::queued`]) are none: a failed verify is free
+    /// work as a build already. In this order:
     ///
     /// 1. A release with a failed check: [`Stuck::Checks`], with its
     ///    verify in any state. `release` says that its issue has the label
     ///    of a release; a branch `release-…`, as `riff release cut` names
     ///    it, is one too. No session builds a release, so the lead hears
     ///    of it.
-    /// 2. A conflict with `main` with auto-merge on, and a verify that did
-    ///    not fail: [`Stuck::Conflict`]. A release has none: the wave
-    ///    rebases no release.
+    /// 2. A conflict with `main` with auto-merge on, or after a removal
+    ///    from the merge queue, and a verify that did not fail:
+    ///    [`Stuck::Conflict`]. A release has none: the wave rebases no
+    ///    release.
     /// 3. A passed verify and a failed check: [`Stuck::Checks`].
-    /// 4. A passed verify and auto-merge off: [`Stuck::AutoMergeOff`].
+    /// 4. A passed verify and a removal from the merge queue, with no
+    ///    push since: [`Stuck::Dequeued`].
+    /// 5. A passed verify and auto-merge off: [`Stuck::AutoMergeOff`].
     ///
     /// ```
-    /// use riff::rollout::{Check, Pull, Stuck};
+    /// use riff::rollout::{Check, Pull, Queue, Stuck};
     ///
     /// let pull = |checks, mergeable: &str, auto_merge| Pull {
     ///     number: 40,
@@ -1173,9 +1231,29 @@ impl Pull {
     /// assert_eq!(pull(vec![], "CONFLICTING", true).stuck(true), None);
     /// let draft = Pull { draft: true, ..pull(vec![passed()], "MERGEABLE", false) };
     /// assert_eq!(draft.stuck(false), None);
+    /// // In the merge queue: nothing is stuck, also with a conflict or with auto-merge off.
+    /// let queued = |pull: Pull| Pull { queue: Queue::In, ..pull };
+    /// assert_eq!(queued(pull(vec![passed()], "CONFLICTING", true)).stuck(false), None);
+    /// assert_eq!(queued(pull(vec![passed()], "MERGEABLE", false)).stuck(false), None);
+    /// // The queue removed it: a conflict is a rebase, else the lead hears of it.
+    /// let removed = |pull: Pull| Pull { queue: Queue::Removed("CI_FAILURE".into()), ..pull };
+    /// assert_eq!(removed(pull(vec![passed()], "CONFLICTING", false)).stuck(false), Some(Stuck::Conflict));
+    /// assert_eq!(
+    ///     removed(pull(vec![passed()], "MERGEABLE", true)).stuck(false),
+    ///     Some(Stuck::Dequeued("CI_FAILURE".into()))
+    /// );
+    /// assert_eq!(
+    ///     removed(pull(vec![passed()], "MERGEABLE", false)).stuck(false),
+    ///     Some(Stuck::Dequeued("CI_FAILURE".into()))
+    /// );
+    /// // A failed check of the head comes before the removal.
+    /// assert_eq!(
+    ///     removed(pull(vec![passed(), gate("FAILURE")], "MERGEABLE", true)).stuck(false),
+    ///     Some(Stuck::Checks(vec!["Gate".into()]))
+    /// );
     /// ```
     pub fn stuck(&self, release: bool) -> Option<Stuck> {
-        if self.draft {
+        if self.draft || self.queued() {
             return None;
         }
         let release = release || self.branch.starts_with("release-");
@@ -1195,6 +1273,9 @@ impl Pull {
         }
         if !failed.is_empty() {
             return Some(Stuck::Checks(failed));
+        }
+        if let Queue::Removed(reason) = &self.queue {
+            return Some(Stuck::Dequeued(reason.clone()));
         }
         (!self.auto_merge).then_some(Stuck::AutoMergeOff)
     }
@@ -1355,10 +1436,96 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
         .collect()
 }
 
+/// The GraphQL query of [`queue_of`]: for each open pull request, whether
+/// it is in the merge queue, and the last event that tells the queue or a
+/// push. A removal is the last of them only when nobody pushed to the pull
+/// request since.
+pub const QUEUE_QUERY: &str = "query($owner: String!, $name: String!) { \
+    repository(owner: $owner, name: $name) { \
+    pullRequests(states: OPEN, first: 100) { nodes { number isInMergeQueue \
+    timelineItems(last: 1, itemTypes: [PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, \
+    ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]) { \
+    nodes { __typename ... on RemovedFromMergeQueueEvent { reason } } } } } } }";
+
+/// The place in the merge queue ([`Queue`]) of each open pull request in
+/// the reply `reply` of [`QUEUE_QUERY`], by number. A pull request that
+/// the reply does not name, and a reply that is no JSON, give nothing:
+/// the place is [`Queue::Out`].
+///
+/// ```
+/// use riff::rollout::{Queue, queue_from};
+///
+/// let reply = r#"{"data":{"repository":{"pullRequests":{"nodes":[
+///   {"number":40,"isInMergeQueue":true,"timelineItems":{"nodes":[{"__typename":"AddedToMergeQueueEvent"}]}},
+///   {"number":41,"isInMergeQueue":false,"timelineItems":{"nodes":[{"__typename":"RemovedFromMergeQueueEvent","reason":"MERGE_CONFLICT"}]}},
+///   {"number":42,"isInMergeQueue":false,"timelineItems":{"nodes":[{"__typename":"PullRequestCommit"}]}},
+///   {"number":43,"isInMergeQueue":false,"timelineItems":{"nodes":[]}}
+/// ]}}}}"#;
+/// let queue = queue_from(reply);
+/// assert_eq!(queue[&40], Queue::In);
+/// assert_eq!(queue[&41], Queue::Removed("MERGE_CONFLICT".into()));
+/// // A push after the removal is the last event: the removal is old.
+/// assert_eq!(queue[&42], Queue::Out);
+/// assert_eq!(queue[&43], Queue::Out);
+/// assert!(queue_from("not json").is_empty());
+/// ```
+pub fn queue_from(reply: &str) -> HashMap<u64, Queue> {
+    let Ok(reply) = serde_json::from_str::<serde_json::Value>(reply) else {
+        return HashMap::new();
+    };
+    let nodes = reply["data"]["repository"]["pullRequests"]["nodes"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    nodes
+        .iter()
+        .filter_map(|pull| {
+            let number = pull["number"].as_u64()?;
+            let last = &pull["timelineItems"]["nodes"][0];
+            let queue = if pull["isInMergeQueue"].as_bool() == Some(true) {
+                Queue::In
+            } else if last["__typename"] == "RemovedFromMergeQueueEvent" {
+                let reason = last["reason"].as_str().unwrap_or("UNKNOWN");
+                Queue::Removed(crate::text::forge(reason))
+            } else {
+                Queue::Out
+            };
+            Some((number, queue))
+        })
+        .collect()
+}
+
+/// The place in the merge queue ([`Queue`]) of each open pull request of
+/// the repository `repo` (`OWNER/REPO`), by number, with one call of
+/// `gh api graphql` (01M5TKPNDET56VR8WZ74FSR71F). A repository with no merge
+/// queue gives [`Queue::Out`] for each pull request. A fault of `gh`
+/// gives nothing, as for [`head_wip`]: the wave then acts as if no queue
+/// was there.
+pub fn queue_of(gh: &Gh, repo: &str) -> HashMap<u64, Queue> {
+    let Some((owner, name)) = repo.split_once('/') else {
+        return HashMap::new();
+    };
+    let query = format!("query={QUEUE_QUERY}");
+    let args = [
+        "api",
+        "graphql",
+        "-f",
+        &query,
+        "-f",
+        &format!("owner={owner}"),
+        "-f",
+        &format!("name={name}"),
+    ];
+    gh.run(&args, None)
+        .map(|reply| queue_from(&reply))
+        .unwrap_or_default()
+}
+
 /// The open pull requests of the repository `repo` (`OWNER/REPO`),
 /// with `gh`. The head commit of a pull request that waits for a verify
 /// ([`Verify::Asked`]) is read one more time, for [`Pull::wip`]
-/// ([`head_wip`]).
+/// ([`head_wip`]). Their place in the merge queue is read one time
+/// ([`queue_of`]).
 pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
     let mut pulls: Vec<Pull> = gh.json(&[
         "pr",
@@ -1372,8 +1539,10 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
         "--json",
         PULL_FIELDS,
     ])?;
+    let queue = queue_of(gh, repo);
     for pull in &mut pulls {
         pull.wip = pull.verify() == Some(Verify::Asked) && head_wip(gh, repo, &pull.head);
+        pull.queue = queue.get(&pull.number).cloned().unwrap_or_default();
     }
     Ok(pulls)
 }
