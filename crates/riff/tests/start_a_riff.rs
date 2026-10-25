@@ -198,7 +198,7 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
     );
     for step in [
         "### Add riff.toml\n",
-        "#### Add the job Gate\n",
+        "### A repository with no CI\n",
         "#### Use the checks that you have\n",
         "#### Allow auto-merge and squash merge\n",
         "#### Make the ruleset of the default branch\n",
@@ -397,7 +397,8 @@ fn the_step_add_riff_toml_says_the_error_of_a_repository_with_no_riff_toml() {
 /// 01M5QZ01Y14Z76RC220RT7YTX7: the step "Use the checks that you have" has
 /// a copyable `sh` block that lists the checks that riff waits for, as
 /// `riff::repo_setup::full_check_of` does: the required checks of the
-/// ruleset of the default branch, but the verify. An empty list is `Gate`.
+/// ruleset of the default branch, but the verify. An empty list means that
+/// the repository has no CI (01M5SMNKDWBD1J6Y18ENQG87CK).
 #[test]
 fn the_how_to_lists_the_checks_that_riff_waits_for() {
     let how_to = part(PAGE, HOW_TO);
@@ -415,13 +416,44 @@ fn the_how_to_lists_the_checks_that_riff_waits_for() {
     assert!(commands[1].starts_with(r#"gh api "repos/{owner}/{repo}/rules/branches/$BRANCH""#));
     assert!(commands[1].contains(r#"select(.type == "required_status_checks")"#));
     assert!(commands[1].ends_with(&format!(r#"- ["{}"]'"#, riff::pr::VERIFY_CONTEXT)));
-    assert!(step.contains("An empty list\nmeans that riff waits for a check run named `Gate`"));
-    assert_eq!(riff::repo_setup::full_check_of(&[]), [riff::pr::GATE]);
+    assert!(step.contains(
+        "An empty list\nmeans that the repository has no CI: `riff/verify` is the only check"
+    ));
+    assert!(riff::repo_setup::full_check_of(&[]).is_empty());
+}
+
+/// 01M5SMNKDWBD1J6Y18ENQG87CK: the how-to says what riff does with no CI,
+/// and it names no job `Gate` for another repository: neither does a text
+/// of `riff init`.
+#[test]
+fn the_how_to_says_what_riff_does_with_no_ci_and_names_no_job_gate() {
+    let how_to = part(PAGE, HOW_TO);
+    let step = how_to
+        .split("### A repository with no CI\n")
+        .nth(1)
+        .expect("the step");
+    let step = step.split("\n### ").next().unwrap();
+    let note = riff::text::init_ci_no("acme/app", riff::pr::VERIFY_CONTEXT);
+    assert!(step.contains(&note), "{note}");
+    for word in ["riff needs no CI", "`riff/verify`", "at once"] {
+        assert!(step.contains(word), "{word}");
+    }
+    assert!(!how_to.contains("Gate"), "the how-to names a job Gate");
+    let texts = [
+        riff::text::init_fix_ruleset("main", riff::pr::VERIFY_CONTEXT),
+        riff::text::init_fix_ci("main"),
+        riff::text::init_ci_none("acme/app"),
+        riff::text::INIT_FIX_CI_NONE.to_owned(),
+        note,
+    ];
+    for text in texts {
+        assert!(!text.contains("Gate"), "{text}");
+    }
 }
 
 /// The ruleset of the how-to is the ruleset that the step of `riff init`
 /// makes (01M5QWA0E9A4ZJ8X49EM2MJM5Q), and it requires the checks that
-/// riff reads: the verify and the `Gate` that the wave waits for.
+/// riff reads: the verify alone, for a repository with no CI.
 #[test]
 fn the_ruleset_of_the_how_to_is_the_ruleset_of_the_step() {
     let how_to = part(PAGE, HOW_TO);
@@ -442,7 +474,7 @@ fn the_ruleset_of_the_how_to_is_the_ruleset_of_the_step() {
         })
         .map(|c| c["context"].as_str().unwrap())
         .collect();
-    assert_eq!(checks, [riff::pr::GATE, riff::pr::VERIFY_CONTEXT]);
+    assert_eq!(checks, [riff::pr::VERIFY_CONTEXT]);
 }
 
 /// The commands of the how-to that write `riff.toml` write a file that

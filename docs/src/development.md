@@ -2280,9 +2280,10 @@ first free work:
    never starts a held item, or an item that a session claims.
 3. It starts the verify of an item only when no session holds the
    item, and the full check of the head commit is done: each check that
-   the ruleset of the default branch requires, but `riff/verify`, or
-   `Gate` when it requires none. The verify is a new session: an author
-   never verifies its own item.
+   the ruleset of the default branch requires, but `riff/verify`. A
+   repository with no CI has no such check, and its verify starts at
+   once. The verify is a new session: an author never verifies its own
+   item.
 4. It starts one item at most 3 times in a run of the wave. Then your
    lead gets a message, and the item waits for you (see
    [Start a spent item again](#start-a-spent-item-again)).

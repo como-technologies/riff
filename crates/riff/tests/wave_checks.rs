@@ -141,10 +141,11 @@ fn the_wave_starts_the_verify_when_the_required_checks_of_the_default_branch_are
     );
 }
 
-/// A repository whose ruleset requires no check but `riff/verify` has
-/// the check `Gate` as its full check: the wave waits for it.
+/// 01M5SMNKDWBD1J6Y18ENQG87CK: a repository whose ruleset requires no check
+/// but `riff/verify` has no CI and no full check: the wave starts the verify
+/// at once, and reads no check run, also not one named `Gate`.
 #[test]
-fn a_ruleset_with_no_other_check_leaves_the_gate_as_the_full_check() {
+fn a_ruleset_with_no_other_check_has_no_full_check_and_the_verify_starts_at_once() {
     let dir = tempfile::tempdir().unwrap();
     let gh = forge(dir.path());
     std::fs::write(
@@ -152,14 +153,12 @@ fn a_ruleset_with_no_other_check_leaves_the_gate_as_the_full_check() {
         r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"riff/verify"}]}}]"#,
     )
     .unwrap();
-    // The fake forge has no run of `Gate`: the verify waits for it.
+    // The fake forge has no run of any check: the verify does not wait.
     let waiting = look(&gh).unwrap();
-    assert!(!waiting.pulls[&5].gate_done);
+    assert!(waiting.pulls[&5].gate_done);
     let calls = calls(dir.path());
-    assert!(
-        calls.contains(&"api repos/o/r/commits/eeee555/check-runs?check_name=Gate".to_owned()),
-        "{calls:?}"
-    );
+    assert!(!calls.iter().any(|c| c.contains("check-runs")), "{calls:?}");
+    assert!(!calls.iter().any(|c| c.contains("Gate")), "{calls:?}");
 }
 
 /// A look with no verify reads no rules, and a look that cannot read the

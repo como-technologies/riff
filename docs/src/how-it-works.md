@@ -2005,9 +2005,9 @@ head of `main` of each wave that it runs, each minute (see
 default branch of the repository, also when it has another name, for
 example `master`. The daemon reads the same checks as a verify does:
 each check that the ruleset of the default branch requires, but
-`riff/verify`. When the ruleset requires no other check, it reads the
-check `Gate`. A check that GitHub skipped, or that ended `neutral`,
-passed. `main` is broken when one check failed or timed out.
+`riff/verify`. A repository with no CI has no such check, and the daemon
+watches nothing there. A check that GitHub skipped, or that ended
+`neutral`, passed. `main` is broken when one check failed or timed out.
 
 ```mermaid
 flowchart TD
@@ -2078,7 +2078,8 @@ gh run rerun RUN --failed
 The full check on GitHub is the one full test run of each commit. In
 this repository it is the job `Gate` and the check `Hygiene`. In another
 repository it is each check that the ruleset of the default branch
-requires, but `riff/verify`: `Gate` when the ruleset requires none. A
+requires, but `riff/verify`. A repository with no CI has none:
+`riff/verify` is its only check, and no check ran on the commit. A
 verifier does not run `just ci` again. First see that the checks of the
 head commit passed:
 

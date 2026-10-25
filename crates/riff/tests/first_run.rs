@@ -853,7 +853,8 @@ async fn riff_init_check_names_the_github_step_of_each_fact_that_fails() {
              allow_squash_merge=true",
             "  fail  the ruleset of main: no ruleset of main requires the check riff/verify, \
              so a merge does not wait for the verify. Fix: make a ruleset of main that \
-             requires a pull request and the checks Gate and riff/verify. See \"Add another \
+             requires a pull request, the check riff/verify and each check that your CI \
+             runs on a pull request. See \"Add another \
              repository to the riff\" in the book",
             "  fail  the milestone Backlog: acme/app has no open milestone Backlog. Fix: make \
              it: gh api -X POST repos/acme/app/milestones -f title=Backlog. riff wave make \
@@ -1208,12 +1209,32 @@ fn no_ci(bin: &Path) {
     );
 }
 
-/// 01M5RGGD6YR36EXZEG61XCJVRY: the check of the CI is the work of the
-/// person. A repository whose pull requests ran no check gets the ruleset
-/// with `Gate`, and the check fails again after the steps: the second list
-/// shows it, and the end names it with its fix.
+/// A repository that is set up, whose ruleset requires the verify and no
+/// check of the CI, and whose latest pull request ran the check
+/// `checks / lint`.
+fn ci_not_required(bin: &Path) {
+    let [pulls, checks] = ci(r#"{"name":"checks / lint"}"#);
+    fake_forge(
+        bin,
+        &[
+            ("files", "riff.toml\n"),
+            ("milestones", "Wave 1\nBacklog\n"),
+            ("auto_merge", ""),
+            (
+                "ruleset",
+                r#"{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"riff/verify"}]}}]}"#,
+            ),
+            (pulls.0, &pulls.1),
+            (checks.0, &checks.1),
+        ],
+    );
+}
+
+/// 01M5SMNKDWBD1J6Y18ENQG87CK: a repository with no CI has no check but
+/// `riff/verify`. `riff init --yes` makes the ruleset with that check alone,
+/// names no job `Gate`, says so in a note, and exits 0.
 #[tokio::test]
-async fn the_end_names_the_check_of_the_ci_that_the_steps_cannot_fix() {
+async fn riff_init_yes_makes_a_ruleset_with_the_verify_alone_for_a_repository_with_no_ci() {
     let machine = Machine::new();
     machine.add_origin();
     no_ci(&machine.bin);
@@ -1221,39 +1242,39 @@ async fn the_end_names_the_check_of_the_ci_that_the_steps_cannot_fix() {
     let stdout = text(&out.stdout);
     assert_eq!(
         out.status.code(),
-        Some(1),
+        Some(0),
         "{stdout}\n{}",
         text(&out.stderr)
     );
-    let (first, rest) = stdout
+    let (first, second) = stdout
         .split_once("riff checks this machine again:\n")
         .expect("a second list");
-    // The ruleset is a step. The check of the CI has none: riff.toml is
-    // there, so no pull request is to come.
+    // The ruleset is the one step. The check of the CI passes, with its note.
     assert_eq!(step_lines(first).len(), 1, "{first}");
     assert!(step_lines(first)[0].starts_with("  step  the ruleset of main: "));
-    assert_eq!(failed_lines(first).len(), 1, "{first}");
+    assert!(failed_lines(first).is_empty(), "{first}");
     assert!(
-        failed_lines(first)[0].starts_with("  fail  the checks of a pull request: "),
+        first.contains("  done  make the ruleset riff on main: requires riff/verify\n"),
         "{first}"
     );
-    assert!(
-        first.contains("  done  make the ruleset riff on main: requires Gate and riff/verify"),
-        "{first}"
-    );
-    let (second, end) = rest.split_once("1 check failed.").expect("an end");
-    assert_eq!(failed_lines(second).len(), 1, "{second}");
-    let named = named_at_the_end(&stdout);
-    assert_eq!(named.len(), 1, "{end}");
-    assert!(
-        named[0].starts_with("  the checks of a pull request: add a workflow that runs on pull_request, with a job named Gate."),
-        "{}",
-        named[0]
-    );
-    assert!(
-        !stdout.contains("These steps change GitHub:\n  make riff.toml"),
-        "{stdout}"
-    );
+    let note = "  pass  the checks of a pull request: acme/app has no CI: no pull request ran a \
+                check, so riff/verify is the only check";
+    assert!(first.lines().any(|l| l == note), "{first}");
+    assert!(second.lines().any(|l| l == note), "{second}");
+    assert!(failed_lines(&stdout).is_empty(), "{stdout}");
+    assert!(!stdout.contains("Gate"), "{stdout}");
+    // The ruleset requires the verify and no other check.
+    let posts: Vec<String> = machine
+        .read("calls")
+        .lines()
+        .filter(|l| l.contains("rulesets"))
+        .map(str::to_owned)
+        .collect();
+    assert!(posts.iter().any(|l| l.contains("-X POST")), "{posts:?}");
+    let body = machine.read("ruleset");
+    assert!(body.contains(r#""context":"riff/verify""#), "{body}");
+    assert!(!body.contains("Gate"), "{body}");
+    assert_eq!(body.matches("\"context\"").count(), 1, "{body}");
 }
 
 #[tokio::test]
@@ -1380,30 +1401,35 @@ async fn riff_init_prints_no_note_when_each_open_issue_has_the_line() {
     assert!(unread.contains("Must have admin rights"), "{unread}");
 }
 
-/// The check of the CI has no step: riff names the fix, and does nothing for
-/// it. A repository with no `CLAUDE.md` has no line for it (01M5RN89Z749VYS1CRYJQTKAWY).
+/// A ruleset that requires the verify and no check of the CI, with pull
+/// requests that ran checks: the check of the CI has no step. riff names the
+/// fix, and does nothing for it. A repository with no `CLAUDE.md` has no line
+/// for it (01M5RN89Z749VYS1CRYJQTKAWY).
 #[tokio::test]
-async fn riff_init_names_the_fix_of_a_missing_ci_check_and_has_no_line_for_claude_md() {
+async fn riff_init_names_the_fix_of_a_ci_check_that_no_rule_requires_and_has_no_line_for_claude_md()
+{
     let machine = Machine::new();
     machine.add_origin();
-    set_up(&machine.bin);
-    std::fs::write(machine.bin.join("files"), "riff.toml\n").unwrap();
-    std::fs::remove_file(machine.bin.join("prior_pulls")).unwrap();
+    ci_not_required(&machine.bin);
     let out = machine.init(&machine.repo, &["--yes"]).await;
     let stdout = text(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{stdout}");
     let failed = failed_lines(&stdout);
     assert_eq!(failed.len(), 1, "{stdout}");
     assert!(
-        failed[0].starts_with("  fail  the checks of a pull request: no pull request of acme/app ran a check named Gate"),
+        failed[0].starts_with(
+            "  fail  the checks of a pull request: pull requests of acme/app ran checks / lint, \
+             and no rule requires them"
+        ),
         "{}",
         failed[0]
     );
     assert!(
-        failed[0].contains("add a workflow that runs on pull_request"),
+        failed[0].contains("Fix: add them to the ruleset of main."),
         "{}",
         failed[0]
     );
+    assert!(!stdout.contains("Gate"), "{stdout}");
     assert!(!stdout.contains("CLAUDE.md"), "{stdout}");
     assert!(machine.forge_changes().is_empty());
 }
@@ -1512,14 +1538,16 @@ fn assert_is_output(book: &[String], real: &str) {
 }
 
 /// 01M5RGG9KJXCKH8C94145WS8SM, 01M5RGGD6YR36EXZEG61XCJVRY,
-/// 01M5RGGD9AYNC12Z2CG5CDZWNA: "Add another repository to the riff" shows
-/// the output of a first run, and of a run that ends with a failed check.
-/// Each line is a line of the real output.
+/// 01M5RGGD9AYNC12Z2CG5CDZWNA, 01M5SMNKDWBD1J6Y18ENQG87CK: "Add another
+/// repository to the riff" shows the output of a run in the container of the
+/// lead, of a first run, of a run that ends with a failed check, and of a run
+/// in a repository with no CI. Each line is a line of the real output.
 #[tokio::test]
-async fn the_book_shows_the_output_of_a_first_run_and_the_end_of_a_failed_run() {
+async fn the_book_shows_the_output_of_a_container_run_a_first_run_a_failed_run_and_a_run_with_no_ci()
+ {
     let blocks = text_blocks("start-a-riff.md", "Add another repository to the riff");
-    // The fourth block is the line of `riff image --check` (start_a_riff.rs).
-    assert_eq!(blocks.len(), 4, "{blocks:#?}");
+    // The fifth block is the line of `riff image --check` (start_a_riff.rs).
+    assert_eq!(blocks.len(), 5, "{blocks:#?}");
 
     // The run in the container of the lead (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
     let machine = Machine::new();
@@ -1540,8 +1568,15 @@ async fn the_book_shows_the_output_of_a_first_run_and_the_end_of_a_failed_run() 
 
     let machine = Machine::new();
     machine.add_origin();
-    no_ci(&machine.bin);
+    ci_not_required(&machine.bin);
     let out = machine.init(&machine.repo, &["--yes"]).await;
     assert_eq!(out.status.code(), Some(1));
     assert_is_output(&blocks[2], &text(&out.stdout));
+
+    let machine = Machine::new();
+    machine.add_origin();
+    no_ci(&machine.bin);
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    assert_eq!(out.status.code(), Some(0));
+    assert_is_output(&blocks[3], &text(&out.stdout));
 }

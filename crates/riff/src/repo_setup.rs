@@ -36,9 +36,10 @@
 //! | the ruleset of the default branch | the rules that apply to the `default_branch` of the repository ([`rules_path`]) | a `required_status_checks` rule has the check [`VERIFY_CONTEXT`]: without it, nothing on GitHub makes a merge wait for the verify | [`Step::Ruleset`] |
 //! | the milestone `Backlog` | the open milestones ([`crate::waves::open`]) | one has the title [`BACKLOG`]: `riff wave move --to Backlog` and `riff wave end --move-open-to-backlog` need it | [`Step::Backlog`] |
 //! | the first wave | the open milestones | one is a wave: the lead has a wave to plan | [`Step::Wave`] |
-//! | the checks of a pull request | the required checks, and the check runs of the latest pull requests | the full check can end: a rule requires a check of the CI, or a pull request ran [`GATE`], or the ruleset that the step makes will require the checks that the pull requests ran | [`Step::Ruleset`] when no pull request ran a check yet and the default branch has no `riff.toml`: the pull request of [`Step::Config`] may run the first check. Else none |
+//! | the checks of a pull request | the required checks, and the check runs of the latest pull requests | a rule requires a check of the CI, or the ruleset that the step makes will require the checks that the pull requests ran, or the repository has no CI and [`VERIFY_CONTEXT`] is the only check (a note says so) | [`Step::Ruleset`] when no pull request ran a check yet and the default branch has no `riff.toml`: the pull request of [`Step::Config`] may run the first check. Else none |
 //!
-//! The fix of the ruleset names the checks [`GATE`] and [`VERIFY_CONTEXT`].
+//! The fix of the ruleset names the check [`VERIFY_CONTEXT`] and the checks
+//! of the CI.
 //!
 //! `riff init` reads no file of rules for agents, such as `CLAUDE.md` or
 //! `AGENTS.md`: the CI of the repository is the gate of a change, and a
@@ -73,8 +74,9 @@
 //!   already, else the check runs of the head of the latest pull request
 //!   that has some ([`ci_checks`]). The pull request of `riff.toml` is
 //!   often the first one that has check runs, so riff waits up to
-//!   [`Waits::ci`] for them. A repository with no check run gets
-//!   [`GATE`], and its CI check fails.
+//!   [`Waits::ci`] for them. A repository with no check run has no CI: the
+//!   ruleset requires [`VERIFY_CONTEXT`] only, and riff invents no check
+//!   for it (01M5SMNKDWBD1J6Y18ENQG87CK).
 //! - A person who is not an admin gets no step: riff names the fix of
 //!   each failed check and changes nothing ([`Github::admin`]).
 //!
@@ -84,12 +86,14 @@
 //! The wave starts a verify only when each of them is done on the head of
 //! the pull request, and `riff verify pass` needs a success of each
 //! ([`crate::pr::gate_of`]). A repository whose rules require no other
-//! check has [`GATE`] as its full check.
+//! check has no CI: its full check is empty, and [`VERIFY_CONTEXT`] is the
+//! only check that gates a merge (01M5SMNKDWBD1J6Y18ENQG87CK). The wave
+//! starts its verify at once, and `riff verify pass` needs no check run.
 //!
 //! ```mermaid
 //! flowchart LR
 //!     B["gh api repos/OWNER/REPO<br/>default_branch"] --> R["gh api .../rules/branches/BRANCH<br/>required_status_checks"]
-//!     R --> F["the full check:<br/>the required checks but riff/verify,<br/>or Gate when there are none"]
+//!     R --> F["the full check:<br/>the required checks but riff/verify,<br/>none when there are none"]
 //!     F --> C["gh api .../commits/COMMIT/check-runs?check_name=NAME<br/>for each NAME"]
 //!     C --> S["pass, running, ended or missing"]
 //! ```
@@ -99,7 +103,8 @@
 //!
 //! let required = ["checks / lint and test".to_owned(), "riff/verify".to_owned()];
 //! assert_eq!(full_check_of(&required), ["checks / lint and test"]);
-//! assert_eq!(full_check_of(&["riff/verify".to_owned()]), ["Gate"]);
+//! // No CI: the verify is the only check, and the full check has none.
+//! assert!(full_check_of(&["riff/verify".to_owned()]).is_empty());
 //! ```
 //!
 //! A folder with no remote `origin` on GitHub has no such check
@@ -119,7 +124,7 @@
 //!     milestones: vec!["Backlog".into(), "Wave 1".into()],
 //!     admin: true,
 //!     files: vec!["riff.toml".into()],
-//!     ci: vec!["Gate".into()],
+//!     ci: vec![],
 //! };
 //! assert!(checks(&github).iter().all(|c| c.passed()));
 //!
@@ -150,7 +155,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::first_run::Check;
-use crate::pr::{GATE, Gh, VERIFY_CONTEXT, percent};
+use crate::pr::{Gh, VERIFY_CONTEXT, percent};
 use crate::rollout::Issue;
 use crate::session_image;
 use crate::text;
@@ -227,11 +232,11 @@ impl Forge {
     }
 }
 
-/// The ruleset that [`Step::Ruleset`] makes when the CI has no other
-/// check: a pull request with squash merges only, no bypass, and the
-/// checks [`GATE`] and [`VERIFY_CONTEXT`] on the default branch. The
-/// how-to "Add another repository to the riff" shows the same text, and a
-/// test checks that they agree. [`ruleset_for`] puts other checks in it.
+/// The ruleset that [`Step::Ruleset`] makes when the repository has no CI:
+/// a pull request with squash merges only, no bypass, and the check
+/// [`VERIFY_CONTEXT`] on the default branch. The how-to "Add another
+/// repository to the riff" shows the same text, and a test checks that
+/// they agree. [`ruleset_for`] puts the checks of a CI in it.
 pub const RULESET: &str = r#"{
   "name": "riff",
   "target": "branch",
@@ -257,7 +262,6 @@ pub const RULESET: &str = r#"{
       "parameters": {
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "Gate" },
           { "context": "riff/verify" }
         ]
       }
@@ -265,13 +269,13 @@ pub const RULESET: &str = r#"{
   ]
 }"#;
 
-/// [`RULESET`] with the checks `checks` in place of [`GATE`]. The check
-/// [`VERIFY_CONTEXT`] comes last, once.
+/// [`RULESET`] with the checks `checks` of the CI before the check
+/// [`VERIFY_CONTEXT`], which comes last, once.
 ///
 /// ```
 /// use riff::repo_setup::{RULESET, ruleset_for};
 ///
-/// let same = ruleset_for(&["Gate".into()]);
+/// let same = ruleset_for(&[]);
 /// assert_eq!(same, serde_json::from_str::<serde_json::Value>(RULESET)?);
 ///
 /// let ruleset = ruleset_for(&["checks / docs".into(), "riff/verify".into()]);
@@ -317,7 +321,7 @@ pub fn ruleset_for(checks: &[String]) -> Value {
 ///     milestones: vec!["Wave 1".into()],
 ///     admin: true,
 ///     files: vec!["riff.toml".into()],
-///     ci: vec!["Gate".into()],
+///     ci: vec!["checks / lint".into()],
 /// };
 /// let steps: Vec<Step> = checks(&github).iter().filter_map(|c| c.step).collect();
 /// assert_eq!(steps, [Step::Merge, Step::Ruleset, Step::Backlog]);
@@ -493,18 +497,13 @@ impl Step {
 }
 
 /// The checks that the ruleset `riff` requires besides [`VERIFY_CONTEXT`]:
-/// the required checks that the rules have, if one is not [`GATE`]; else
-/// the checks that the latest pull request ran ([`ci_checks`]); else the
-/// check runs of the pull request of `riff.toml`, for up to [`Waits::ci`];
-/// else [`GATE`].
+/// the required checks that the rules have; else the checks that the
+/// latest pull request ran ([`ci_checks`]); else the check runs of the pull
+/// request of `riff.toml`, for up to [`Waits::ci`]; else none: the
+/// repository has no CI (01M5SMNKDWBD1J6Y18ENQG87CK).
 fn wanted(forge: &Forge, github: &Github, pull: Option<&Pull>) -> anyhow::Result<Vec<String>> {
-    let required: Vec<String> = github
-        .required
-        .iter()
-        .filter(|c| *c != VERIFY_CONTEXT)
-        .cloned()
-        .collect();
-    if required.iter().any(|c| c != GATE) {
+    let required = full_check_of(&github.required);
+    if !required.is_empty() {
         return Ok(required);
     }
     let mut ci = if github.ci.is_empty() {
@@ -524,11 +523,7 @@ fn wanted(forge: &Forge, github: &Github, pull: Option<&Pull>) -> anyhow::Result
             std::thread::sleep(forge.waits.poll);
         }
     }
-    Ok(if ci.is_empty() {
-        vec![GATE.to_owned()]
-    } else {
-        ci
-    })
+    Ok(ci)
 }
 
 /// The pull request that [`config`] found or opened.
@@ -754,8 +749,8 @@ pub struct Github {
     /// The names of the files at the root of the default branch.
     pub files: Vec<String>,
     /// The names of the checks that the latest pull requests ran
-    /// ([`ci_checks`]). riff reads them only when no rule requires a
-    /// check but [`VERIFY_CONTEXT`] and [`GATE`].
+    /// ([`ci_checks`]). riff reads them only when no rule requires a check
+    /// but [`VERIFY_CONTEXT`].
     pub ci: Vec<String>,
 }
 
@@ -849,16 +844,24 @@ pub fn required(gh: &Gh, repo: &str) -> anyhow::Result<Vec<String>> {
 
 /// The full check from the checks `required` by the default branch
 /// (01M5QYDE41FVFX26EC8K5QGYH4): each of them but [`VERIFY_CONTEXT`], once,
-/// in order. It is [`GATE`] when there is none.
+/// in order. It is empty when there is none: the repository has no CI, and
+/// the verify is the only check that gates a merge
+/// (01M5SMNKDWBD1J6Y18ENQG87CK).
+///
+/// ```
+/// use riff::repo_setup::full_check_of;
+///
+/// let names = |list: &[&str]| -> Vec<String> { list.iter().map(|c| (*c).into()).collect() };
+/// assert_eq!(full_check_of(&names(&["Check", "riff/verify", "Check"])), ["Check"]);
+/// assert!(full_check_of(&names(&["riff/verify"])).is_empty());
+/// assert!(full_check_of(&[]).is_empty());
+/// ```
 pub fn full_check_of(required: &[String]) -> Vec<String> {
     let mut checks: Vec<String> = Vec::new();
     for name in required {
         if name != VERIFY_CONTEXT && !checks.contains(name) {
             checks.push(name.clone());
         }
-    }
-    if checks.is_empty() {
-        checks.push(GATE.to_owned());
     }
     checks
 }
@@ -901,7 +904,7 @@ pub fn read(gh: &Gh) -> Result<Github, String> {
     let milestones = waves::open(gh).map_err(why)?;
     let files = files(gh, &repo.default_branch).map_err(why)?;
     let required: Vec<String> = rules.iter().flat_map(Rule::required).collect();
-    let custom = required.iter().any(|c| c != VERIFY_CONTEXT && c != GATE);
+    let custom = required.iter().any(|c| c != VERIFY_CONTEXT);
     let ci = if custom {
         vec![]
     } else {
@@ -1028,7 +1031,7 @@ pub fn checks(github: &Github) -> Vec<Check> {
         Check::fail(
             &ruleset,
             text::init_ruleset_off(branch, VERIFY_CONTEXT),
-            text::init_fix_ruleset(branch, GATE, VERIFY_CONTEXT),
+            text::init_fix_ruleset(branch, VERIFY_CONTEXT),
         )
         .with_step(Step::Ruleset)
     };
@@ -1058,39 +1061,42 @@ pub fn checks(github: &Github) -> Vec<Check> {
     vec![config, merge, ruleset, backlog, wave, ci_check(github)]
 }
 
-/// The check of the CI of a pull request: the full check can end. It
-/// passes when a rule requires a check but [`GATE`] and the verify, or a
-/// pull request ran [`GATE`], or no rule requires the verify yet and the
-/// pull requests ran checks: the ruleset that [`Step::Ruleset`] makes
-/// requires them. When no pull request ran a check, and neither the rules
-/// nor the default branch are set up, the check fails with that step:
-/// the pull request of [`Step::Config`] may run the first check, and the
-/// ruleset requires it (01M5RGG9KJXCKH8C94145WS8SM). If it runs none, the
-/// check fails again after the steps, with its fix.
+/// The check of the CI of a pull request. It passes when a rule requires a
+/// check but the verify (the full check, [`full_check_of`]); or when no rule
+/// requires the verify yet and the pull requests ran checks, which the
+/// ruleset that [`Step::Ruleset`] makes requires; or when no pull request
+/// ran a check and the repository has no CI: the verify is the only check,
+/// and the line says so (01M5SMNKDWBD1J6Y18ENQG87CK). When no pull request
+/// ran a check, and neither the rules nor the default branch are set up,
+/// the check fails with that step: the pull request of [`Step::Config`] may
+/// run the first check, and the ruleset requires it
+/// (01M5RGG9KJXCKH8C94145WS8SM). If it runs none, the check passes after the
+/// steps. It fails with its fix when the ruleset requires the verify and no
+/// check of the CI, and the pull requests ran checks.
 fn ci_check(github: &Github) -> Check {
-    let custom = github
-        .required
-        .iter()
-        .any(|c| c != VERIFY_CONTEXT && c != GATE);
+    let full = full_check_of(&github.required);
     let verify = github.required.iter().any(|c| c == VERIFY_CONTEXT);
-    if custom || github.ci.iter().any(|c| c == GATE) {
-        let full = full_check_of(&github.required);
-        let full = if custom { full } else { vec![GATE.to_owned()] };
+    if !full.is_empty() {
         Check::pass(text::INIT_CI, text::init_ci_on(&full))
-    } else if !github.ci.is_empty() && !verify {
-        Check::pass(text::INIT_CI, text::init_ci_will(&github.ci))
     } else if github.ci.is_empty() && !verify && !github.has(CONFIG) {
         Check::fail(
             text::INIT_CI,
             text::init_ci_none(&github.repo),
-            text::init_fix_ci(GATE),
+            text::INIT_FIX_CI_NONE.into(),
         )
         .with_step(Step::Ruleset)
+    } else if github.ci.is_empty() {
+        Check::pass(
+            text::INIT_CI,
+            text::init_ci_no(&github.repo, VERIFY_CONTEXT),
+        )
+    } else if !verify {
+        Check::pass(text::INIT_CI, text::init_ci_will(&github.ci))
     } else {
         Check::fail(
             text::INIT_CI,
-            text::init_ci_off(&github.repo, GATE),
-            text::init_fix_ci(GATE),
+            text::init_ci_open(&github.repo, &github.ci),
+            text::init_fix_ci(&github.default_branch),
         )
     }
 }
@@ -1109,7 +1115,7 @@ mod tests {
             milestones: vec!["Backlog".into(), "Wave 1".into()],
             admin: true,
             files: vec!["riff.toml".into()],
-            ci: vec!["Gate".into()],
+            ci: vec![],
         }
     }
 
@@ -1174,7 +1180,8 @@ mod tests {
             rule.starts_with(
                 "fail  the ruleset of trunk: no ruleset of trunk requires the check riff/verify, \
                  so a merge does not wait for the verify. Fix: make a ruleset of trunk that \
-                 requires a pull request and the checks Gate and riff/verify. See "
+                 requires a pull request, the check riff/verify and each check that your CI \
+                 runs on a pull request. See "
             ),
             "{rule}"
         );
@@ -1196,25 +1203,45 @@ mod tests {
         }
     }
 
-    /// 01M5R1672NF56P15VD0JEX51K4: the check of the CI has no step: only a
-    /// person does its fix.
+    /// 01M5R1672NF56P15VD0JEX51K4: the check of the CI has no step when the
+    /// pull request of `riff.toml` is not to come: only a person does its
+    /// fix. A ruleset that requires no check of the CI, with pull requests
+    /// that ran checks, is that case.
     #[test]
     fn the_check_of_the_ci_has_no_step() {
+        let open = Github {
+            required: vec!["riff/verify".into()],
+            ci: vec!["checks / lint".into()],
+            ..ready()
+        };
+        let failed: Vec<Check> = checks(&open).into_iter().filter(|c| !c.passed()).collect();
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0].step, None);
+        assert!(steps_of(&checks(&open)).is_empty());
+        let line = checks(&open).swap_remove(5).line();
+        assert_eq!(
+            line,
+            "fail  the checks of a pull request: pull requests of acme/app ran checks / lint, \
+             and no rule requires them, so a merge does not wait for them. Fix: add them to \
+             the ruleset of main. See \"Use the checks that you have\" in the book. Then run \
+             riff init again"
+        );
+    }
+
+    /// 01M5SMNKDWBD1J6Y18ENQG87CK: a repository with no CI passes the check
+    /// of the CI. The line is a note: the verify is the only check.
+    #[test]
+    fn a_repository_with_no_ci_passes_with_a_note() {
         let no_ci = Github {
+            required: vec!["riff/verify".into()],
             ci: vec![],
             ..ready()
         };
-        let failed: Vec<Check> = checks(&no_ci).into_iter().filter(|c| !c.passed()).collect();
-        assert_eq!(failed.len(), 1, "{failed:?}");
-        assert_eq!(failed[0].step, None);
-        assert!(steps_of(&checks(&no_ci)).is_empty());
-        let line = checks(&no_ci).swap_remove(5).line();
+        assert!(checks(&no_ci).iter().all(Check::passed));
         assert_eq!(
-            line,
-            "fail  the checks of a pull request: no pull request of acme/app ran a check named \
-             Gate, and no rule requires another check, so the full check never ends. Fix: add a \
-             workflow that runs on pull_request, with a job named Gate. See \"Add the job \
-             Gate\" in the book. Then run riff init again"
+            checks(&no_ci).swap_remove(5).line(),
+            "pass  the checks of a pull request: acme/app has no CI: no pull request ran a \
+             check, so riff/verify is the only check"
         );
     }
 
@@ -1234,7 +1261,6 @@ mod tests {
         let step_of = |github: &Github| {
             let check = checks(github).swap_remove(5);
             assert_eq!(check.name, "the checks of a pull request");
-            assert!(!check.passed(), "{}", check.line());
             check.step
         };
         let to_come = github(&[], &[]);
@@ -1244,8 +1270,17 @@ mod tests {
             "step  the checks of a pull request: no pull request of acme/app ran a check yet. \
              Step: make the ruleset riff on main"
         );
+        assert!(!checks(&to_come).swap_remove(5).passed());
         assert_eq!(step_of(&github(&["riff.toml"], &[])), None);
         assert_eq!(step_of(&github(&[], &["riff/verify"])), None);
+        // With riff.toml or the ruleset there, no pull request is to come: the repository
+        // has no CI, and the check passes.
+        assert!(checks(&github(&["riff.toml"], &[])).swap_remove(5).passed());
+        assert!(
+            checks(&github(&[], &["riff/verify"]))
+                .swap_remove(5)
+                .passed()
+        );
         // The steps of the whole repository: riff.toml and the ruleset.
         let all: Vec<Step> = steps_of(&checks(&Github {
             auto_merge: false,
@@ -1264,9 +1299,10 @@ mod tests {
         );
     }
 
-    /// The full check can end when a rule requires a check of the CI, when a
-    /// pull request ran `Gate`, or when the ruleset that the step makes
-    /// will require the checks that the pull requests ran.
+    /// The check of the CI passes when a rule requires a check of the CI,
+    /// when the ruleset that the step makes will require the checks that the
+    /// pull requests ran, and when the repository has no CI: the verify is
+    /// the only check (01M5SMNKDWBD1J6Y18ENQG87CK).
     #[test]
     fn the_check_of_the_ci_follows_the_rules_and_the_runs() {
         let line = |required: &[&str], ci: &[&str]| {
@@ -1281,8 +1317,9 @@ mod tests {
             line(&["checks / docs", "riff/verify"], &[]),
             "pass  the checks of a pull request: the full check is checks / docs"
         );
+        // A check named Gate is a check like any other.
         assert_eq!(
-            line(&["riff/verify"], &["Gate", "lint"]),
+            line(&["Gate", "riff/verify"], &[]),
             "pass  the checks of a pull request: the full check is Gate"
         );
         assert_eq!(
@@ -1290,10 +1327,30 @@ mod tests {
             "pass  the checks of a pull request: pull requests ran lint and test, and the \
              ruleset that riff makes requires them"
         );
-        // The ruleset is there, and Gate never ran: the full check never ends.
-        assert!(line(&["riff/verify"], &["lint"]).starts_with("fail  "));
-        assert!(line(&["Gate", "riff/verify"], &[]).starts_with("fail  "));
-        assert!(line(&[], &[]).starts_with("fail  "));
+        // No CI: the verify is the only check, and the line says so.
+        assert_eq!(
+            line(&["riff/verify"], &[]),
+            "pass  the checks of a pull request: acme/app has no CI: no pull request ran a \
+             check, so riff/verify is the only check"
+        );
+        assert_eq!(
+            line(&[], &[]),
+            "pass  the checks of a pull request: acme/app has no CI: no pull request ran a \
+             check, so riff/verify is the only check"
+        );
+        // The ruleset is there, the pull requests ran checks, and no rule
+        // requires them: a merge does not wait for the CI.
+        let open = line(&["riff/verify"], &["lint", "Gate"]);
+        assert!(open.starts_with("fail  "), "{open}");
+        assert!(
+            open.contains("pull requests of acme/app ran lint and Gate, and no rule requires them"),
+            "{open}"
+        );
+        assert!(
+            open.contains("Fix: add them to the ruleset of main."),
+            "{open}"
+        );
+        assert!(!open.contains("job Gate"), "{open}");
     }
 
     #[test]
@@ -1598,23 +1655,50 @@ mod tests {
         assert!(checks(&github).iter().all(Check::passed));
     }
 
+    /// 01M5SMNKDWBD1J6Y18ENQG87CK: a repository with no CI gets a ruleset
+    /// that requires only `riff/verify`, and each check passes after it.
     #[test]
-    fn the_ruleset_requires_gate_when_no_pull_request_ran_a_check() {
+    fn the_ruleset_requires_only_the_verify_when_no_pull_request_ran_a_check() {
         let fake = Fake::new(&[]);
         let mut github = fake.github();
         let done = setup(&fake.forge(), &[Step::Ruleset], &mut github);
-        assert_eq!(done[0].1.as_deref(), Ok("requires Gate and riff/verify"));
-        assert_eq!(fake.json("ruleset"), ruleset_for(&["Gate".into()]));
-        // No job Gate ever ran: the check of the CI still fails.
-        let failed: Vec<String> = checks(&github)
-            .iter()
-            .filter(|c| !c.passed())
-            .map(|c| c.name.clone())
-            .collect();
-        assert!(
-            failed.contains(&"the checks of a pull request".to_owned()),
-            "{failed:?}"
+        assert_eq!(done[0].1.as_deref(), Ok("requires riff/verify"));
+        assert_eq!(fake.json("ruleset"), ruleset_for(&[]));
+        assert_eq!(
+            fake.json("ruleset"),
+            serde_json::from_str::<Value>(RULESET).unwrap()
         );
+        // No job Gate: the ruleset names no check of the CI.
+        assert!(!fake.read_file("ruleset").contains("Gate"));
+        // The check of the CI passes, with its note.
+        let ci = checks(&github).swap_remove(5);
+        assert!(ci.passed(), "{}", ci.line());
+        assert!(ci.line().contains("has no CI"), "{}", ci.line());
+    }
+
+    /// 01M5SMNKDWBD1J6Y18ENQG87CK: the steps of `riff init --yes` in a
+    /// repository with no CI make the ruleset with the verify alone, and
+    /// each check passes after them.
+    #[test]
+    fn the_steps_set_up_a_repository_with_no_ci() {
+        let fake = Fake::new(&[]);
+        let done = fake.set_up();
+        let said: Vec<String> = done.iter().map(|(_, done)| done.clone().unwrap()).collect();
+        assert_eq!(
+            said.last().map(String::as_str),
+            Some("requires riff/verify"),
+            "{said:?}"
+        );
+        assert_eq!(fake.json("ruleset"), ruleset_for(&[]));
+        let after = fake.github();
+        assert_eq!(after.required, ["riff/verify"]);
+        assert!(after.ci.is_empty(), "{after:?}");
+        assert!(
+            checks(&after).iter().all(Check::passed),
+            "{:#?}",
+            lines(&after)
+        );
+        assert_eq!(full_check_of(&after.required), Vec::<String>::new());
     }
 
     #[test]
@@ -1656,7 +1740,7 @@ mod tests {
         assert!(done.iter().all(|(_, done)| done.is_ok()), "{done:?}");
         assert_eq!(fake.json("ruleset"), ruleset_for(&["build".into()]));
 
-        // No wait: the runs are not there, and the ruleset gets Gate.
+        // No wait: the runs are not there, and the ruleset requires the verify alone.
         let fake = Fake::new(&[
             ("late", "3"),
             ("checks_5e7a777", r#"{"check_runs":[{"name":"build"}]}"#),
@@ -1664,7 +1748,7 @@ mod tests {
         let mut github = fake.github();
         let done = setup(&fake.forge(), &steps, &mut github);
         assert!(done.iter().all(|(_, done)| done.is_ok()), "{done:?}");
-        assert_eq!(fake.json("ruleset"), ruleset_for(&["Gate".into()]));
+        assert_eq!(fake.json("ruleset"), ruleset_for(&[]));
     }
 
     #[test]
@@ -1807,7 +1891,7 @@ mod tests {
         let ruleset: serde_json::Value = serde_json::from_str(RULESET).unwrap();
         let rules: Vec<Rule> = serde_json::from_value(ruleset["rules"].clone()).unwrap();
         let required: Vec<String> = rules.iter().flat_map(Rule::required).collect();
-        assert_eq!(required, [GATE, VERIFY_CONTEXT]);
+        assert_eq!(required, [VERIFY_CONTEXT]);
         // The ruleset of the step passes the check of the ruleset.
         let github = Github {
             required,
@@ -1817,7 +1901,7 @@ mod tests {
     }
 
     #[test]
-    fn the_full_check_is_each_required_check_but_the_verify_and_else_the_gate() {
+    fn the_full_check_is_each_required_check_but_the_verify_and_else_none() {
         let names = |list: &[&str]| -> Vec<String> { list.iter().map(|c| (*c).into()).collect() };
         // The ruleset of riff: its checks, and the check of the verify.
         assert_eq!(
@@ -1836,9 +1920,46 @@ mod tests {
         assert_eq!(full_check_of(&required), four);
         // A check that two rulesets require counts one time.
         assert_eq!(full_check_of(&names(&["A", "B", "A"])), ["A", "B"]);
-        // No other check: the Gate.
-        assert_eq!(full_check_of(&names(&["riff/verify"])), [GATE]);
-        assert_eq!(full_check_of(&[]), [GATE]);
+        // No other check: the repository has no CI, and the verify is the only check.
+        assert!(full_check_of(&names(&["riff/verify"])).is_empty());
+        assert!(full_check_of(&[]).is_empty());
+    }
+
+    /// 01M5SMNKDWBD1J6Y18ENQG87CK: with no required check and no CI, the full
+    /// check has no name: `riff/verify` is the only check that gates a merge,
+    /// and no check run is read for it.
+    #[test]
+    fn with_no_ci_the_full_check_is_empty_and_the_verify_is_the_only_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = |rules: &str| {
+            format!(
+                r#"#!/bin/sh
+echo "$*" >> "$(dirname "$0")/calls"
+case "$*" in
+  'api repos/acme/app') printf '%s' '{{"default_branch":"main"}}' ;;
+  'api repos/acme/app/rules/branches/main?per_page=100') printf '%s' '{rules}' ;;
+  *) echo "gh: no such call: $*" >&2; exit 1 ;;
+esac
+"#
+            )
+        };
+        let verify_only = r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"riff/verify"}]}}]"#;
+        for (name, rules) in [("none", "[]"), ("verify", verify_only)] {
+            let gh = Gh::at(isolated::write_program(
+                dir.path().join(name),
+                script(rules),
+            ));
+            let full = full_check(&gh, "acme/app").unwrap();
+            assert!(full.is_empty(), "{name}: {full:?}");
+            // An empty full check is done: the wave starts the verify, and
+            // `riff verify pass` needs no check run.
+            let head = "1a2b3c4";
+            let gate = crate::pr::gate_of(&gh, "acme/app", &full, head).unwrap();
+            assert_eq!(gate, crate::pr::Gate::Passed, "{name}");
+        }
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert!(!calls.contains("check-runs"), "{calls}");
+        assert!(!calls.contains("Gate"), "{calls}");
     }
 
     #[test]

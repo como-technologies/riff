@@ -612,7 +612,7 @@ impl Check {
     ///     lines,
     ///     [
     ///         "step  the first wave: acme/app has no open wave. Step: make the milestone Wave 1",
-    ///         "fail  the checks of a pull request: no pull request of acme/app ran a check named Gate, and no rule requires another check, so the full check never ends. Fix: add a workflow that runs on pull_request, with a job named Gate. See \"Add the job Gate\" in the book. Then run riff init again",
+    ///         "fail  the checks of a pull request: pull requests of acme/app ran lint, and no rule requires them, so a merge does not wait for them. Fix: add them to the ruleset of main. See \"Use the checks that you have\" in the book. Then run riff init again",
     ///     ]
     /// );
     /// ```
