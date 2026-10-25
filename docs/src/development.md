@@ -4727,9 +4727,12 @@ leads prints one line: `riff told 1 other lead of this step.`
 Before the daemon of a host starts again on a new riff, it posts one
 note to each lead on that host. The daemon does it for `riff update`,
 for `riff daemon restart`, and for its own look at the end of each
-session. The note says that the lead keeps its container, its terminal
-and its socket, and that its riff tools can fail for a moment. The lead
-keeps its state in its notes.
+session. The note says that the daemon starts again in a few seconds.
+Then riff starts the container of the lead again on the new riff, when
+the turn of the lead has ended, and its conversation goes on. See
+[The lead starts again on the new riff](how-it-works.md#the-lead-starts-again-on-the-new-riff).
+The note says too that the riff tools of the lead can fail for a moment.
+The lead keeps its state in its notes.
 
 #### Hold a release
 
