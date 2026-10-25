@@ -2920,11 +2920,14 @@ it.
 | `milestone` | A pull request or an issue with no milestone | no | holds |
 | `issue-open` | An issue that is closed | no | holds |
 
-In a repository with no table, `riff pr open` gives the pull request the
-milestone of the issue when the issue has one. It writes no trailer
-`Milestone:`, and it opens a pull request for an issue with no
-milestone. The job `Hygiene` of the CI of riff runs each rule on each
-pull request of riff, whatever `riff.toml` says.
+With `rules = "riff"`, the body that `riff pr open` writes has the
+trailer `Milestone:`, and a title that ends with `(#12)` breaks a rule.
+In a repository with no table, `riff pr open` writes no trailer
+`Milestone:`, and it accepts that title. It gives the pull request the
+milestone of the issue when the issue has one, and it opens a pull
+request for an issue with no milestone. `riff pr open --help` says the
+same. The job `Hygiene` of the CI of riff runs each rule on each pull
+request of riff, whatever `riff.toml` says.
 
 To ask for each rule in your repository, add the table to `riff.toml`
 and merge it with a pull request:

@@ -1136,6 +1136,54 @@ fn how_to(heading: &str) -> String {
     rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)].to_owned()
 }
 
+/// The help of `riff pr open` and of `--title` says what holds in each
+/// repository: the trailer `Milestone:` and the rule for a title that
+/// ends with `(#N)` hold only with `rules = "riff"`
+/// (01M5SQ45MQVHFX8ZSFSF02SFKH). "Choose the rules of a repository"
+/// says the same.
+#[test]
+fn the_help_of_pr_open_says_what_holds_in_each_repository() {
+    let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let out = Isolated::new()
+        .riff()
+        .args(["pr", "open", "--help"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let help = flat(&text(&out.stdout));
+    for said in [
+        "The body has the link line and the trailer Issue: of the issue. \
+         With `rules = \"riff\"` in the table `[hygiene]` of riff.toml, \
+         the body also has the trailer Milestone:, which names a wave by \
+         its number, for example Wave 3. \
+         Without it, riff writes no trailer Milestone:.",
+        "--title <TITLE> The title. \
+         With `rules = \"riff\"` in the table `[hygiene]` of riff.toml, \
+         do not end it with (#N). Without it, that is allowed",
+    ] {
+        assert!(help.contains(said), "no {said:?} in {help}");
+    }
+    for old in ["trailers Issue: and Milestone:", "The title. Do not end"] {
+        assert!(!help.contains(old), "{old:?} is in {help}");
+    }
+
+    let page = book::page("development.md");
+    let start = page
+        .find("\n### Choose the rules of a repository\n")
+        .unwrap();
+    let rest = &page[start + 1..];
+    let part = flat(&rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)]);
+    for said in [
+        "With `rules = \"riff\"`, the body that `riff pr open` writes has the \
+         trailer `Milestone:`, and a title that ends with `(#12)` breaks a rule. \
+         In a repository with no table, `riff pr open` writes no trailer \
+         `Milestone:`, and it accepts that title.",
+        "`riff pr open --help` says the same.",
+    ] {
+        assert!(part.contains(said), "no {said:?} in {part}");
+    }
+}
+
 /// The book shows the flow of an item with a mermaid diagram: the work
 /// of a worker ends at the verify request, and the verifier does the
 /// steps after the merge (01M3Z9N6AK6W9KCA1MN72X78B6,

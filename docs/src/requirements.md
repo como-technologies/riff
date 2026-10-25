@@ -618,6 +618,12 @@
   the rest. The `riff.toml` of riff has it. Another value of `rules` is
   an error. The job `Hygiene` of the CI of riff runs each rule on each
   pull request of riff, whatever its riff config says.
+- **01M5SQ45MQVHFX8ZSFSF02SFKH** The help of `riff pr open` and of its
+  flag `--title` says what holds in each repository. It says that the
+  trailer `Milestone:` and the rule for a title that ends with `(#N)`
+  hold only with `rules = "riff"` in the table `[hygiene]`
+  (01M5SMSMWE89SC3Q7XFBQCFY32). It links nothing: the book has the table
+  of the rules.
 
 ## Tokens on GitHub
 
