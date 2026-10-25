@@ -409,6 +409,11 @@
 //! not count, also with the limit 0: the wave is in `waves.json`, so the
 //! new daemon waits for room for it again (01M5MS1Q78AFEY3ZVXNAQXM1FJ).
 //!
+//! The new daemon then starts the lead again on the new riff, when the
+//! turn of the lead has ended: it stops the container of the lead and
+//! starts it again, and the conversation goes on ([`Daemon::leads_again`],
+//! see "The lead on a new riff" above).
+//!
 //! - `riff update` ([`after_update`]): when the `ExecStart` of the unit
 //!   is not the `riff` on `PATH`, it writes the unit again with that riff
 //!   and the same variables (01M517BTDRKDXD3X84P6AEAF7P). When the
