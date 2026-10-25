@@ -562,10 +562,21 @@ impl Machine {
         text(&out.stdout)
     }
 
-    /// A lead runs the riff, so a claim works.
+    /// A lead runs the riff, so a claim works. `whoami` registers the
+    /// session. When `lead` finds no session, the failure shows what
+    /// `whoami` printed and what `riff who` lists (#1401).
     async fn lead(&self) {
-        self.ok(Some("lead1"), &["whoami"]).await;
-        self.ok(None, &["lead", "--session", "lead1"]).await;
+        let whoami = self.ok(Some("lead1"), &["whoami"]).await;
+        let out = self.run(None, &["lead", "--session", "lead1"]).await;
+        if !out.status.success() {
+            let who = self.run(Some("lead1"), &["who", "--all", "--long"]).await;
+            panic!(
+                "riff lead --session lead1: {}\nwhoami:\n{whoami}\nwho:\n{}{}",
+                text(&out.stderr),
+                text(&who.stdout),
+                text(&who.stderr)
+            );
+        }
         self.ok(Some("lead1"), &["resume", "--riff"]).await;
     }
 
