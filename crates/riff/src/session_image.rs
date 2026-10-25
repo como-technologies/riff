@@ -11,7 +11,14 @@
 //! ```toml
 //! [session]
 //! image = "ghcr.io/como-technologies/riff-session@sha256:…"
+//! sources = ["crates.io", "index.crates.io", "static.crates.io"]
 //! ```
+//!
+//! The key `sources` is a list of hosts: the package sources that the
+//! auto mode of each session trusts ([`sources_of_config`],
+//! 01M5SMPA9WN40DMQFNE3V1H4SK). riff adds none by itself, so a config
+//! with no `sources` trusts none. riff reads the list from the merged
+//! config, as it reads the image ([`merged_sources`]).
 //!
 //! An [`Image`] has a registry host, a path and a digest. It has no tag.
 //! A tag can move to another image, but a digest names one image. So
@@ -247,6 +254,125 @@ pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
         )),
     }
     Ok(image)
+}
+
+/// The package sources that the riff config `text` names
+/// (01M5SMPA9WN40DMQFNE3V1H4SK): the key `sources` of the table
+/// `[session]`, a list of hosts. A config with no `sources` names none:
+/// riff adds no source by itself. A host that comes twice counts once.
+/// `place` names the config in an error. An error when `sources` is not
+/// a list of hosts. A host has lowercase letters, digits, `-` and `.`
+/// only, so it is no URL and no path.
+///
+/// ```
+/// use riff::session_image::sources_of_config;
+///
+/// let config = r#"
+/// [session]
+/// sources = ["pypi.org", "files.pythonhosted.org", "pypi.org"]
+/// "#;
+/// assert_eq!(sources_of_config(config, "riff.toml")?, ["pypi.org", "files.pythonhosted.org"]);
+/// assert!(sources_of_config("[session]\nimage = \"x\"\n", "riff.toml")?.is_empty());
+///
+/// let error = sources_of_config("[session]\nsources = [\"https://pypi.org\"]\n", "riff.toml");
+/// assert!(error.unwrap_err().to_string().contains("not a host"));
+/// assert!(sources_of_config("[session]\nsources = \"pypi.org\"\n", "riff.toml").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn sources_of_config(text: &str, place: &str) -> Result<Vec<String>> {
+    let config: toml_edit::DocumentMut = text
+        .parse()
+        .with_context(|| format!("{place} is not valid TOML"))?;
+    let Some(item) = config
+        .get("session")
+        .and_then(|session| session.get("sources"))
+    else {
+        return Ok(Vec::new());
+    };
+    let list = item
+        .as_array()
+        .with_context(|| format!("`sources` in [session] of {place} is not a list of hosts"))?;
+    let mut sources: Vec<String> = Vec::new();
+    for value in list {
+        let host = value.as_str().filter(|h| is_host(h)).with_context(|| {
+            format!(
+                "`sources` in [session] of {place} has {}, which is not a host, \
+                 for example pypi.org",
+                value.to_string().trim()
+            )
+        })?;
+        if !sources.iter().any(|s| s == host) {
+            sources.push(host.to_owned());
+        }
+    }
+    Ok(sources)
+}
+
+/// True when `text` is a host name: labels of lowercase letters, digits
+/// and `-`, joined by `.`. A label does not start or end with `-`.
+fn is_host(text: &str) -> bool {
+    text.split('.').all(|label| {
+        !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+    })
+}
+
+/// The merged package sources of the main clone `main`
+/// (01M5SMPA9WN40DMQFNE3V1H4SK): the `sources` that [`FILE`] names on
+/// the default branch of `origin`, as [`merged`] reads the image. The
+/// working tree never changes them, so an edit in a clone trusts no
+/// source. A clone with no `origin/HEAD`, and a branch with no [`FILE`],
+/// have none. An error when the merged [`FILE`] has a `sources` that is
+/// not a list of hosts.
+///
+/// ```
+/// use std::process::Command;
+/// use riff::session_image::{FILE, merged_sources};
+///
+/// let dir = tempfile::tempdir()?;
+/// let (origin, main) = (dir.path().join("origin.git"), dir.path().join("main"));
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let status = Command::new("git")
+///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+///         .arg("-C")
+///         .arg(dir)
+///         .args(args)
+///         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+///         .status()
+///         .unwrap();
+///     assert!(status.success(), "git {args:?}");
+/// };
+/// git(dir.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+/// git(dir.path(), &["init", "-q", "-b", "main", main.to_str().unwrap()]);
+/// assert!(merged_sources(&main)?.is_empty());
+/// std::fs::write(main.join(FILE), "[session]\nsources = [\"pypi.org\"]\n")?;
+/// git(&main, &["add", FILE]);
+/// git(&main, &["commit", "-q", "-m", "sources"]);
+/// git(&main, &["remote", "add", "origin", origin.to_str().unwrap()]);
+/// git(&main, &["push", "-q", "origin", "main"]);
+/// git(&main, &["remote", "set-head", "origin", "main"]);
+/// assert_eq!(merged_sources(&main)?, ["pypi.org"]);
+///
+/// // An edit that is not merged trusts no source.
+/// std::fs::write(main.join(FILE), "[session]\nsources = [\"pypi.org\", \"npmjs.org\"]\n")?;
+/// assert_eq!(merged_sources(&main)?, ["pypi.org"]);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn merged_sources(main: &Path) -> Result<Vec<String>> {
+    let Ok(head) = git(
+        main,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    ) else {
+        return Ok(Vec::new());
+    };
+    let Ok(config) = git(main, &["show", &format!("{head}:{FILE}")]) else {
+        return Ok(Vec::new());
+    };
+    sources_of_config(&config, &format!("{FILE} of {head}"))
 }
 
 /// True when the branch `head` is there, and has no [`FILE`].

@@ -5103,8 +5103,7 @@ of this part when they merge.
   mode about your environment?" and no session has `/auto-mode-setup`;
   and `autoMode.environment` with `"$defaults"` first, then the places
   of riff work: the GitHub owner of the repository, the repository of
-  riff with its releases, `crates.io`, `ghcr.io` and the riff server of
-  the session.
+  riff with its releases, `ghcr.io` and the riff server of the session.
 - **01M516HEX3GVTN9K2QS12A4PG3** `riff workers start` gives each worker
   the auto mode settings in its flag settings (`--settings`). The user
   settings file does not change. The daemon writes them into the
@@ -5123,6 +5122,17 @@ of this part when they merge.
   `riff::permissions::TABLE` has the project place and the session place
   only. `riff init` still names the wide allow rules of the user
   settings (01M51JCW04FAHZDQ144KDNCCPX).
+- **01M5SMPA9WN40DMQFNE3V1H4SK** The package sources that the auto mode
+  of a session trusts come from the riff config of the repository: the
+  key `sources` of its table `[session]`, a list of hosts. riff adds
+  none by itself, so a config with no `sources` trusts none. riff reads
+  the list from `riff.toml` on the default branch of `origin`, as for
+  the merged pin (01M51STPHXSSZMHF9T7Z85097R): an edit that is not
+  merged trusts nothing. Each host is one entry of
+  `autoMode.environment`, "Trusted internal domains: HOST." riff refuses
+  a `sources` that is not a list of hosts. `riff.toml` of riff names
+  `crates.io`, `index.crates.io` and `static.crates.io`. Supersedes
+  01M516HETNZCBFBJNHT8BKFB1Y in part: the entry of `crates.io`.
 
 ### The steps of an update
 

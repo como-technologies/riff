@@ -542,7 +542,7 @@ pub fn sessions_dir() -> Result<PathBuf> {
 /// ```
 /// use riff::permissions::{Trust, auto_mode};
 ///
-/// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878") };
+/// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878"), sources: &[] };
 /// let settings = riff::run::settings(&auto);
 /// assert_eq!(settings["includeCoAuthoredBy"], false);
 /// assert_eq!(settings["hooks"], riff::run::session_hooks());
@@ -675,7 +675,7 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
 /// let claude = dir.path().join("claude");
 /// let person = dir.path().join("person.json");
 /// std::fs::write(&person, r#"{"theme":"dark"}"#)?;
-/// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878") };
+/// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878"), sources: &[] };
 /// riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto)?;
 /// let read = |name: &str| -> serde_json::Value {
 ///     serde_json::from_slice(&std::fs::read(claude.join(name)).unwrap()).unwrap()
@@ -1831,7 +1831,8 @@ async fn work(
         .with_context(|| format!("cannot lock {}", folder.display()))?;
     let clone = folder.join("clone");
     let claude = folder.join("claude");
-    let auto = crate::permissions::Trust::of(me.place().repo(), server);
+    let sources = session_image::merged_sources(main)?;
+    let auto = crate::permissions::Trust::of(me.place().repo(), server, &sources);
     let home = &checked.host.home;
     claude_folder(&claude, &clone, &home.join(".claude.json"), &auto)?;
     let branch = branch(item);
@@ -2145,6 +2146,7 @@ mod tests {
         let auto = crate::permissions::Trust {
             owner: Some("acme"),
             server: Some("http://h:7878"),
+            sources: &[],
         };
         // The config of the person: their theme, and keys that are not an
         // answer of the first run.

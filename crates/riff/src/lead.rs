@@ -420,11 +420,12 @@ async fn launch(
     if let Fresh::Kept(why) = fresh_clone(main, &clone)? {
         println!("{}", text::lead_clone_kept(&clone, &why));
     }
+    let sources = session_image::merged_sources(main)?;
     run::claude_folder(
         &claude,
         &clone,
         &host.home.join(".claude.json"),
-        &crate::permissions::Trust::of(here.repo(), server),
+        &crate::permissions::Trust::of(here.repo(), server, &sources),
     )?;
 
     let session = identity::new_session_id();

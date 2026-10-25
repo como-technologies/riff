@@ -447,7 +447,7 @@ impl Machine {
         std::fs::write(seed.join("README.md"), "riff\n").unwrap();
         std::fs::write(
             seed.join("riff.toml"),
-            format!("[session]\nimage = \"{PINNED}\"\n"),
+            format!("[session]\nimage = \"{PINNED}\"\nsources = [\"pypi.org\"]\n"),
         )
         .unwrap();
         git(&seed, &["add", "README.md", "riff.toml"]);
@@ -890,6 +890,18 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
             .unwrap()
             .starts_with("Key internal services: the riff server at http")),
         "{environment:?}"
+    );
+    // The package sources come from `sources` in the merged riff.toml
+    // (01M5SMPA9WN40DMQFNE3V1H4SK): pypi.org, and no crates.io.
+    let sources: Vec<&str> = environment
+        .iter()
+        .map(|e| e.as_str().unwrap())
+        .filter(|e| e.starts_with("Trusted internal domains: ") && !e.contains("ghcr.io"))
+        .collect();
+    assert_eq!(sources.len(), 1, "{environment:?}");
+    assert!(
+        sources[0].starts_with("Trusted internal domains: pypi.org."),
+        "{sources:?}"
     );
 
     // The lead got the verify request, and the item is free again.

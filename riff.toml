@@ -5,3 +5,9 @@
 # builds it from deploy/session/. See "Change the session image" in
 # docs/src/development.md.
 image = "ghcr.io/como-technologies/riff-session@sha256:57413e21fc507e6ace6af4f695b3a873218b29f8a94ff66868ae27b178a7ff20"
+
+# The package sources that the auto mode of each session trusts: a list
+# of hosts. riff adds none by itself. riff reads this list from the
+# default branch of origin, so a change counts after its merge. See
+# "Trust a package source" in docs/src/how-it-works.md.
+sources = ["crates.io", "index.crates.io", "static.crates.io"]

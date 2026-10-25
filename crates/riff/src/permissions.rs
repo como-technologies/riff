@@ -170,7 +170,7 @@
 //! ```
 //! use riff::permissions::{Trust, auto_mode};
 //!
-//! let trust = Trust { owner: Some("acme"), server: Some("https://riff.acme.dev") };
+//! let trust = Trust { owner: Some("acme"), server: Some("https://riff.acme.dev"), sources: &[] };
 //! let settings = auto_mode(&trust);
 //! assert_eq!(settings["skillOverrides"]["auto-mode-setup"], "off");
 //! let environment = settings["autoMode"]["environment"].as_array().unwrap();
@@ -515,27 +515,34 @@ pub struct Trust<'a> {
     pub owner: Option<&'a str>,
     /// The riff server of the session.
     pub server: Option<&'a str>,
+    /// The package sources that the repository trusts: the hosts of
+    /// `sources` in `riff.toml` (01M5SMPA9WN40DMQFNE3V1H4SK,
+    /// [`crate::session_image::merged_sources`]). riff adds none by itself.
+    pub sources: &'a [String],
 }
 
 impl<'a> Trust<'a> {
     /// The facts of a session in `repo` that talks to the riff server
-    /// `server`. A repository with no `origin` remote has the owner
-    /// `local` ([`crate::identity::place`]): it has no owner on GitHub.
-    /// An empty `server` names no riff server.
+    /// `server` and trusts the package sources `sources`. A repository
+    /// with no `origin` remote has the owner `local`
+    /// ([`crate::identity::place`]): it has no owner on GitHub. An empty
+    /// `server` names no riff server.
     ///
     /// ```
     /// use riff::permissions::Trust;
     /// use riff_core::name::Repo;
     ///
     /// let repo = Repo::Git { owner: "acme".into(), name: "app".into() };
-    /// let trust = Trust::of(&repo, "http://h:7878");
-    /// assert_eq!(trust, Trust { owner: Some("acme"), server: Some("http://h:7878") });
-    /// assert_eq!(Trust::of(&Repo::None, "http://h:7878").owner, None);
+    /// let trust = Trust::of(&repo, "http://h:7878", &[]);
+    /// assert_eq!(trust, Trust { owner: Some("acme"), server: Some("http://h:7878"), sources: &[] });
+    /// assert_eq!(Trust::of(&Repo::None, "http://h:7878", &[]).owner, None);
     /// let local = Repo::Git { owner: "local".into(), name: "app".into() };
-    /// assert_eq!(Trust::of(&local, "http://h:7878").owner, None);
-    /// assert_eq!(Trust::of(&repo, "").server, None);
+    /// assert_eq!(Trust::of(&local, "http://h:7878", &[]).owner, None);
+    /// assert_eq!(Trust::of(&repo, "", &[]).server, None);
+    /// let pypi = ["pypi.org".to_owned()];
+    /// assert_eq!(Trust::of(&repo, "", &pypi).sources, ["pypi.org"]);
     /// ```
-    pub fn of(repo: &'a Repo, server: &'a str) -> Self {
+    pub fn of(repo: &'a Repo, server: &'a str, sources: &'a [String]) -> Self {
         let owner = match repo {
             Repo::Git { owner, .. } if owner != "local" => Some(owner.as_str()),
             _ => None,
@@ -543,6 +550,7 @@ impl<'a> Trust<'a> {
         Trust {
             owner,
             server: (!server.is_empty()).then_some(server),
+            sources,
         }
     }
 }
@@ -550,24 +558,30 @@ impl<'a> Trust<'a> {
 /// The entries of `autoMode.environment` of a session
 /// (01M516HETNZCBFBJNHT8BKFB1Y): first `"$defaults"`, so the entries of
 /// Claude Code stay; then the places of riff work. The owner of the
-/// repository on GitHub, the releases of riff, the crates of Rust, the
-/// session images and the riff server. An entry that needs a fact that
-/// `trust` does not have is not there.
+/// repository on GitHub, the releases of riff, the session images, the
+/// riff server, and one entry for each package source of the repository
+/// (01M5SMPA9WN40DMQFNE3V1H4SK). riff adds no package source by itself:
+/// `trust.sources` has them all. An entry that needs a fact that `trust`
+/// does not have is not there.
 ///
 /// ```
 /// use riff::permissions::{Trust, environment};
 ///
-/// let all = environment(&Trust { owner: Some("acme"), server: Some("http://h:7878") });
+/// let sources = ["pypi.org".to_owned(), "files.pythonhosted.org".to_owned()];
+/// let all = environment(&Trust { owner: Some("acme"), server: Some("http://h:7878"), sources: &sources });
 /// assert_eq!(all[0], "$defaults");
 /// assert!(all.iter().any(|e| e.starts_with("Source control: github.com/acme ")));
 /// assert!(all.iter().any(|e| e.contains("github.com/como-technologies/riff")));
-/// assert!(all.iter().any(|e| e.contains("crates.io")));
+/// assert!(all.iter().any(|e| e.starts_with("Trusted internal domains: pypi.org.")));
+/// assert!(all.iter().any(|e| e.starts_with("Trusted internal domains: files.pythonhosted.org.")));
 /// assert!(all.iter().any(|e| e.contains("ghcr.io")));
 /// assert!(all.iter().any(|e| e.contains("http://h:7878")));
 ///
+/// // No `sources`: no package source is trusted, not even crates.io.
 /// let few = environment(&Trust::default());
-/// assert_eq!(few.len(), all.len() - 2);
+/// assert_eq!(few.len(), all.len() - 4);
 /// assert!(!few.iter().any(|e| e.contains("github.com/acme")));
+/// assert!(!few.iter().any(|e| e.contains("crates.io") || e.contains("pypi.org")));
 /// ```
 pub fn environment(trust: &Trust) -> Vec<String> {
     let riff = env!("CARGO_PKG_REPOSITORY").trim_start_matches("https://");
@@ -583,11 +597,12 @@ pub fn environment(trust: &Trust) -> Vec<String> {
         "Source control: {riff}, the repository of riff. riff update downloads \
          the releases of riff from it."
     ));
-    out.push(
-        "Trusted internal domains: crates.io, index.crates.io and static.crates.io. \
-         cargo gets the crates of Rust from them."
-            .to_owned(),
-    );
+    for host in trust.sources {
+        out.push(format!(
+            "Trusted internal domains: {host}. The sessions of riff get the packages \
+             of the repository from it."
+        ));
+    }
     out.push(
         "Trusted internal domains: ghcr.io. podman pulls the session image of riff \
          from it."
@@ -610,7 +625,7 @@ pub fn environment(trust: &Trust) -> Vec<String> {
 /// ```
 /// use riff::permissions::{Trust, auto_mode, environment};
 ///
-/// let trust = Trust { owner: Some("acme"), server: None };
+/// let trust = Trust { owner: Some("acme"), server: None, sources: &[] };
 /// let settings = auto_mode(&trust);
 /// assert_eq!(settings["skillOverrides"], serde_json::json!({"auto-mode-setup": "off"}));
 /// assert_eq!(settings["autoMode"]["environment"], serde_json::json!(environment(&trust)));
@@ -632,7 +647,7 @@ pub fn auto_mode(trust: &Trust) -> Value {
 /// ```
 /// use riff::permissions::{Trust, auto_mode, with_auto_mode};
 ///
-/// let trust = Trust { owner: Some("acme"), server: None };
+/// let trust = Trust { owner: Some("acme"), server: None, sources: &[] };
 /// let text = r#"{"model": "opus", "autoMode": {"environment": ["Mine"]}}"#;
 /// let out = with_auto_mode(text, &trust)?.unwrap();
 /// let value: serde_json::Value = serde_json::from_str(&out)?;
@@ -1165,6 +1180,7 @@ mod tests {
         let trust = Trust {
             owner: Some("acme"),
             server: None,
+            sources: &[],
         };
         let text = r#"{
             "skillOverrides": {"other": "off", "auto-mode-setup": "on"},
@@ -1199,9 +1215,11 @@ mod tests {
     fn each_environment_entry_is_one_line_of_prose_with_no_quote() {
         // A worker gets the entries in a quoted argument of a shell
         // command, and the classifier reads each one as a sentence.
+        let sources = ["pypi.org".to_owned(), "registry.acme.dev".to_owned()];
         let trust = Trust {
             owner: Some("acme"),
             server: Some("http://h:7878"),
+            sources: &sources,
         };
         for entry in environment(&trust).iter().skip(1) {
             assert!(
@@ -1210,6 +1228,73 @@ mod tests {
             );
             assert!(entry.ends_with('.'), "{entry:?}");
         }
+    }
+
+    /// The entries of `autoMode.environment` that trust a package source.
+    fn sources_trusted(trust: &Trust) -> Vec<String> {
+        auto_mode(trust)["autoMode"]["environment"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e.as_str().unwrap().to_owned())
+            // ghcr.io is the registry of the session image, not a package source.
+            .filter(|e| e.starts_with("Trusted internal domains: ") && !e.contains("ghcr.io"))
+            .collect()
+    }
+
+    #[test]
+    fn with_no_sources_the_settings_of_a_session_trust_no_package_source() {
+        let with = |owner, server| Trust {
+            owner,
+            server,
+            sources: &[],
+        };
+        for trust in [
+            Trust::default(),
+            with(Some("acme"), None),
+            with(Some("acme"), Some("http://h:7878")),
+        ] {
+            assert_eq!(sources_trusted(&trust), Vec::<String>::new());
+            let text = auto_mode(&trust).to_string();
+            assert!(!text.contains("crates.io"), "{text}");
+        }
+    }
+
+    #[test]
+    fn each_source_of_the_config_is_one_entry_in_its_order() {
+        let sources = ["pypi.org".to_owned(), "files.pythonhosted.org".to_owned()];
+        let trust = Trust {
+            sources: &sources,
+            ..Trust::default()
+        };
+        assert_eq!(
+            sources_trusted(&trust),
+            [
+                "Trusted internal domains: pypi.org. The sessions of riff get the packages \
+                 of the repository from it.",
+                "Trusted internal domains: files.pythonhosted.org. The sessions of riff get \
+                 the packages of the repository from it.",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_new_source_reaches_the_settings_of_an_earlier_start() {
+        let before = auto_mode(&Trust::default()).to_string();
+        let sources = ["pypi.org".to_owned()];
+        let trust = Trust {
+            sources: &sources,
+            ..Trust::default()
+        };
+        let out: Value =
+            serde_json::from_str(&with_auto_mode(&before, &trust).unwrap().unwrap()).unwrap();
+        let entries = out["autoMode"]["environment"].as_array().unwrap();
+        assert_eq!(entries.len(), environment(&Trust::default()).len() + 1);
+        let last = entries.last().unwrap().as_str().unwrap();
+        assert!(
+            last.starts_with("Trusted internal domains: pypi.org."),
+            "{last}"
+        );
     }
 
     #[test]
