@@ -3613,6 +3613,10 @@
   writes only to requirements.md. The check superseded-in-full fails on
   a requirement of requirements.md that has the words Superseded by or
   Replaced by and no words in part.
+- **01M5ST2QHBG5S6F2H0FPJ5A24P** The sign-ins of a `common::Signed` test
+  server end when the server ends. A later server at the same URL, for
+  example on a port that the OS gave again, gets no old sign-in of an
+  earlier test. A machine at an open riff-server holds no sign-in.
 
 ## The phone app
 
