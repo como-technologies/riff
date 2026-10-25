@@ -982,11 +982,15 @@ enum Pr {
     ///
     /// It is for the issue that this session claims, and it turns on
     /// auto-merge with a squash. The body has the link line and the
-    /// trailers Issue: and Milestone: of the issue. The trailer
-    /// Milestone: names a wave by its number, for example Wave 3. Push
-    /// the branch first.
+    /// trailer Issue: of the issue. With `rules = "riff"` in the table
+    /// `[hygiene]` of riff.toml, the body also has the trailer
+    /// Milestone:, which names a wave by its number, for example Wave
+    /// 3. Without it, riff writes no trailer Milestone:. Push the
+    /// branch first.
     Open {
-        /// The title. Do not end it with (#N).
+        /// The title. With `rules = "riff"` in the table `[hygiene]` of
+        /// riff.toml, do not end it with (#N). Without it, that is
+        /// allowed.
         #[arg(long)]
         title: String,
         /// A file with the summary of the change, for the body. It can
