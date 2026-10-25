@@ -5878,6 +5878,19 @@ of this part when they merge.
   approves a release counts only after the first such line, or after the
   line `riff release vX.Y.Z is published`. A line of riff approves
   nothing. Supersedes 01M5NCYW06FJ8P5X629VFK1BNR in part.
+- **01M5TKMVB7CF0QNAWXEVGEQETJ** Only a message that a person wrote
+  counts as the word of the owner or of an admin in riff chat. A line
+  that riff writes as the person of the riff has the kind `riff`: the
+  line "waits for your approval" of the watch of the deploy and its
+  reminder, the other lines of the daemon in riff chat, and the lines of
+  `riff release cut` and `riff release publish`. riff-server keeps the
+  kind, a reader shows the line as a message, and it wakes as a message.
+  The kind `riff` has no name in `riff post`. `riff release approve` of
+  the lead skips each line of the kind `riff` when it looks for the
+  approval and for a stop. With only lines of riff in riff chat, it
+  refuses and changes nothing. A line of a session never counts, also
+  with no kind. This adds to 01M5NCYW06FJ8P5X629VFK1BNR,
+  01M594XQJMXAXY3JXP66Y8EVQ7 and 01M5TKDYAFA683KNAJTGYTQD5W.
 
 ### The release cycle
 

@@ -52,7 +52,7 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{
-    HoldInfo, Kind, LogReply, MembersReply, Person, RiffOwner, RiffReply, RiffState, SessionInfo,
+    HoldInfo, LogReply, MembersReply, Person, RiffOwner, RiffReply, RiffState, SessionInfo,
     WhoReply,
 };
 use serde::de::DeserializeOwned;
@@ -300,10 +300,7 @@ impl Reach {
             Reach::Direct(server) => {
                 let (api, me) = signed(server)?;
                 let to = crate::chat::wakes(body, me.who().user());
-                let thread = crate::chat::thread();
-                api.post(&me, Some(&thread), &to, body, Kind::Message)
-                    .await?;
-                Ok(())
+                crate::chat::post_by_riff(&api, &me, &to, body).await
             }
             Reach::Daemon(socket) => {
                 let call = ServerCall::ChatPost {

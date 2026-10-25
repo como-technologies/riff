@@ -4640,7 +4640,7 @@ flowchart TD
     F -- "riff release test: wakes the lead at the end of the test" --> F2{Result}
     F2 -- FAIL --> F1[Bug issue in the wave, fix merges] --> F
     F2 -- PASS --> G[riff release publish vX.Y.Z: tag, GitHub release, chat line to the owner]
-    G -- "wakes the lead and the owner when the job Deploy waits" --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, or one \"approved\" in riff chat (pauses the riff, approves production)"}}
+    G -- "wakes the lead and the owner when the job Deploy waits" --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, or one \"approved\" that the owner or an admin wrote in riff chat (pauses the riff, approves production)"}}
     H -- no answer --> H1[Waits. Work goes on. The next cut refuses. Reminder in chat each 4 h]
     H1 --> H
     H -- "a lead holds: riff release hold" --> H2[approve refuses until the hold ends, or a person passes --over-holds]
@@ -4661,7 +4661,7 @@ The gates:
 |---|---|---|---|
 | Verify | a session that did not write the change | the verify of riff | the release pull request waits |
 | Real session | a session that wrote none of the items, on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
-| HUMAN GATE 1: deploy | the owner or an admin, in a terminal, or one message "approved" in riff chat, after the line "waits for your approval" | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
+| HUMAN GATE 1: deploy | the owner or an admin, in a terminal, or one message "approved" that the owner or an admin wrote in riff chat, after the line "waits for your approval". No line of riff counts, also that line | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | Hold | a lead of another repository, in a critical place | `riff release hold vX.Y.Z REASON` | `approve` refuses until the lead ends the hold, or a person passes `--over-holds` |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
 | HUMAN GATE 3: skip | the owner or an admin, in a terminal | `riff release cut --skip VERSION --reason TEXT` | no skip |
@@ -5334,7 +5334,12 @@ it. With it, the lead runs `riff release approve` and `riff release
 check`, with no other question.
 
 riff reads the chat from riff-server, not from the model. The message
-must come from the owner or an admin, as a person, not as a session. The
+must come from the owner or an admin, as a person, not as a session.
+Only a message that the person wrote counts. riff marks each line that
+it writes itself in riff chat with the kind `riff`: the line "waits for
+your approval" of the watch of the deploy, its reminder, and the lines
+of `riff release cut` and `publish`. Such a line is never an approval
+and never a `stop`, also when it names `riff release approve`. The
 comment of the approval names the number of the message.
 
 ```sh
@@ -5345,9 +5350,9 @@ A message with `not`, `never` or `don't` does not approve. A `stop` or a
 `wait` of the owner or of an admin after the approval stops the lead
 before the next step: say `approved` again to go on. `riff release
 approve` refuses, and `gh` does not run, when no such message exists: a
-message of a session, of another version, from before the publish, or
-from a member. It also refuses a worker, a work session in a container
-and a session that is not the lead.
+line of riff, a message of a session, of another version, from before
+the publish, or from a member. It also refuses a worker, a work session
+in a container and a session that is not the lead.
 
 The lead runs these commands in its container. `cut` and `publish`
 write their line in riff chat, and `approve` reads the roster and the

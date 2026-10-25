@@ -194,6 +194,7 @@ pub fn show(record: &Record) -> String {
                 Kind::Message => "message",
                 Kind::Status => "status",
                 Kind::Note => "note",
+                Kind::Riff => "riff",
                 Kind::Other => "other",
             };
             let mut body: String = message.body.chars().take(BODY).collect();

@@ -306,7 +306,8 @@ pub trait Lookout: Send + Sync {
 
     /// Writes the line that `line` makes in `riff chat`, as the person.
     /// `line` gets the USER of the owner of the riff, or an empty text
-    /// when it has none. The line wakes the owner.
+    /// when it has none. The line wakes the owner. It has the kind `riff`:
+    /// it is no word of the person (01M5TKMVB7CF0QNAWXEVGEQETJ).
     fn chat<'a>(
         &'a self,
         wave: &'a Wave,
@@ -362,15 +363,7 @@ impl Lookout for Here {
             };
             let body = line(&owner);
             let to = crate::chat::wakes(&body, person.who().user());
-            api.post(
-                &person,
-                Some(&crate::chat::thread()),
-                &to,
-                &body,
-                Kind::Message,
-            )
-            .await?;
-            Ok(())
+            crate::chat::post_by_riff(&api, &person, &to, &body).await
         })
     }
 

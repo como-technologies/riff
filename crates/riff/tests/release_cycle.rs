@@ -1561,18 +1561,22 @@ async fn test_refuses_a_worker() {
 const LEAD: [(&str, &str); 1] = [("RIFF_SESSION", "s1")];
 
 impl Machine {
-    /// Posts `body` to riff chat as `who` (`user` or `user:session`).
-    async fn say(&self, who: &str, body: &str) -> u64 {
+    /// The URI of `who` (`user` or `user:session`).
+    fn uri_of(who: &str) -> riff_core::name::SessionUri {
         let (user, session) = who.split_once(':').map_or((who, ""), |(u, s)| (u, s));
         let query = if session.is_empty() {
             String::new()
         } else {
             format!("?session={session}")
         };
-        let me: riff_core::name::SessionUri =
-            format!("riff://{user}@thelio/como-technologies/riff{query}")
-                .parse()
-                .unwrap();
+        format!("riff://{user}@thelio/como-technologies/riff{query}")
+            .parse()
+            .unwrap()
+    }
+
+    /// Posts `body` to riff chat as `who` (`user` or `user:session`).
+    async fn say(&self, who: &str, body: &str) -> u64 {
+        let me = Self::uri_of(who);
         crate::common::api_of(&self.server, &me)
             .post(
                 &me,
@@ -1584,6 +1588,17 @@ impl Machine {
             .await
             .unwrap()
             .seq
+    }
+
+    /// Posts `body` to riff chat as `who`, as the daemon does for a line
+    /// of riff, such as the line of the watch of a deploy
+    /// (01M5TKMVB7CF0QNAWXEVGEQETJ).
+    async fn say_as_riff(&self, who: &str, body: &str) {
+        let me = Self::uri_of(who);
+        let api = crate::common::api_of(&self.server, &me);
+        riff::chat::post_by_riff(&api, &me, &[], body)
+            .await
+            .unwrap();
     }
 
     /// `riff release approve v3.3.0` as the lead.
@@ -1648,6 +1663,69 @@ async fn the_lead_cannot_approve_without_the_message_of_the_owner() {
     check("a denial", machine.lead_approves().await);
     machine.say("bob", "approve v3.3.0").await;
     check("another person", machine.lead_approves().await);
+}
+
+/// 01M5TKMVB7CF0QNAWXEVGEQETJ: the line of the watch of the deploy, "waits
+/// for your approval", and its reminder come from riff as the person of
+/// the owner. They are no approval. The lines of the lead (the publish
+/// line) are no approval, too.
+#[tokio::test]
+async fn the_lead_cannot_approve_with_the_lines_of_riff_alone() {
+    let machine = lead_with_a_waiting_run().await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    let before = machine.log();
+    let refused = riff::text::release_refused("approve", Refusal::OwnerSilent);
+    let check = |label: &str, out: Output| {
+        assert_eq!(out.status.code(), Some(1), "{label}: {}", text(&out.stdout));
+        assert_eq!(text(&out.stderr), format!("{refused}\n"), "{label}");
+        assert_eq!(machine.log(), before, "{label}: gh ran");
+    };
+    check("the publish line", machine.lead_approves().await);
+    let run = "https://github.com/como-technologies/riff/actions/runs/9";
+    let waits = riff::cycle::waits_line("mike", "v3.3.0", run, false, &[]);
+    machine.say_as_riff("mike", &waits).await;
+    check("the waits line", machine.lead_approves().await);
+    let reminder = riff::cycle::waits_line("mike", "v3.3.0", run, true, &[]);
+    machine.say_as_riff("mike", &reminder).await;
+    check("the reminder", machine.lead_approves().await);
+}
+
+#[tokio::test]
+async fn the_lead_approves_with_the_message_of_the_owner_and_not_with_the_line_of_riff_after_it() {
+    let machine = lead_with_a_waiting_run().await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    let run = "https://github.com/como-technologies/riff/actions/runs/9";
+    let waits = riff::cycle::waits_line("mike", "v3.3.0", run, false, &[]);
+    machine.say_as_riff("mike", &waits).await;
+    let seq = machine.say("mike", "approve v3.3.0").await;
+    let reminder = riff::cycle::waits_line("mike", "v3.3.0", run, true, &[]);
+    machine.say_as_riff("mike", &reminder).await;
+    let out = machine.lead_approves().await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert!(
+        shown.contains(&format!("Approved with message {seq} of the owner")),
+        "{shown}"
+    );
+}
+
+/// 01M5TKMVB7CF0QNAWXEVGEQETJ: `riff release cut` and `publish` write
+/// their chat line with the kind `riff`.
+#[tokio::test]
+async fn the_chat_lines_of_publish_have_the_kind_riff() {
+    let machine = lead_with_a_waiting_run().await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    let mike: riff_core::name::SessionUri =
+        "riff://mike@thelio/como-technologies/riff".parse().unwrap();
+    let read = crate::common::api_of(&machine.server, &mike)
+        .read(&mike, &riff_core::name::ThreadName::chat(), true)
+        .await
+        .unwrap();
+    let line = read
+        .iter()
+        .find(|c| c.message.body.contains("riff release v3.3.0 is published"))
+        .expect("the publish line");
+    assert_eq!(line.message.kind, riff_core::wire::Kind::Riff);
 }
 
 #[tokio::test]

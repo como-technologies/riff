@@ -1260,11 +1260,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         }
         ServerCall::ChatPost { body } => {
             let to = crate::chat::wakes(body, record.me.who().user());
-            let thread = crate::chat::thread();
-            let kind = riff_core::wire::Kind::Message;
-            signed()?
-                .post(&record.me, Some(&thread), &to, body, kind)
-                .await?;
+            crate::chat::post_by_riff(&signed()?, &record.me, &to, body).await?;
             Value::Null
         }
         ServerCall::ChatRead => {
