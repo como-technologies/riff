@@ -6128,6 +6128,21 @@ that builds it merges.
 - **01M5A5HXRH4PFQDFA7XPFFRHWS** The message "started N times" to the
   lead names the reason of the last end of the item, and sends the lead
   to `riff session why ITEM`.
+- **01M5SMP2D4MGME90EHVKAQHQ26** A verify session of a wave that ends
+  with no PASS or FAIL leaves one record in the thread `ends` too
+  (`wave::after_verify`, #1441). It has the same first line and the same
+  last lines as the record of a build, with the item `verify-issue-N`.
+  Its reason says that no PASS or FAIL came, not that no pull request
+  came. The post goes before the folder of the verify goes. `riff
+  session why verify-issue-N` shows it. A verify with a PASS or FAIL
+  leaves no record.
+- **01M5SMP2FFEHJPZBJVGAWBXNNP** `riff daemon events NAME` in a
+  container, with `RIFF_SOCKET` and no `RIFF_SERVER`, asks the daemon on
+  the socket of the session (`ServerCall::Events`), one page after the
+  other, as `riff daemon events NAME --host HOST` does. Only the lead
+  may. With `--host HOST` and `RIFF_SOCKET`, it asks the daemon of HOST
+  through the socket (`ServerCall::Host`). Neither looks for the socket
+  of the daemon on the host, and neither calls riff-server straight.
 
 ## Open
 

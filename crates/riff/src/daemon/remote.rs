@@ -1273,19 +1273,41 @@ pub async fn follow_events(
     me: &SessionUri,
     host: &str,
     name: &str,
-    mut show: impl FnMut(&str),
+    show: impl FnMut(&str),
 ) -> Result<bool> {
-    let (mut after, mut notes) = (0, 0);
-    loop {
+    let get = |after, notes| async move {
         let request = Request::Events {
             name: name.to_owned(),
             after,
             notes,
         };
-        let text = ask(api, me, host, &request, REPLY_WAIT).await?;
-        let page: Page = text
-            .parse()
-            .map_err(|()| anyhow!("{}", text::daemon_no_page(host)))?;
+        page_of(&ask(api, me, host, &request, REPLY_WAIT).await?, host)
+    };
+    follow_pages(get, show).await
+}
+
+/// The [`Page`] in the reply `text` of the daemon of `host`. A reply that
+/// is no page comes from another riff.
+pub fn page_of(text: &str, host: &str) -> Result<Page> {
+    text.parse()
+        .map_err(|()| anyhow!("{}", text::daemon_no_page(host)))
+}
+
+/// Gets one [`Page`] after the other from `get`, which takes the last
+/// event and the lines of the daemon that the caller has, and gives each
+/// line of each page to `show`, up to the end of the session. It gives
+/// true when the session failed. The way to the daemon is the work of
+/// `get`: through riff-server ([`follow_events`]), or through the socket
+/// of a session in a container ([`crate::reach::Reach::follow_events`],
+/// 01M5SMP2FFEHJPZBJVGAWBXNNP).
+pub async fn follow_pages<F, Fut>(mut get: F, mut show: impl FnMut(&str)) -> Result<bool>
+where
+    F: FnMut(u64, u64) -> Fut,
+    Fut: std::future::Future<Output = Result<Page>>,
+{
+    let (mut after, mut notes) = (0, 0);
+    loop {
+        let page = get(after, notes).await?;
         for line in &page.lines {
             show(line);
         }

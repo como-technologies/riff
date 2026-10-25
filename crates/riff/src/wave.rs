@@ -1606,12 +1606,17 @@ async fn no_verify(
 /// The steps after the end of a verify: the report of its result, as
 /// `riff verify` does. The folder of a verify that did not pass goes. It
 /// gives a line for each step.
+///
+/// A verify that ended with no PASS or FAIL leaves a record in the thread
+/// `ends`, as a build with no pull request does (#1441): the record has
+/// the reason of its `ended` and the last lines of its output, so the
+/// post comes before the folder goes.
 async fn after_verify(
     api: &Api,
     record: &Record,
     wave: &Wave,
-    pull: u64,
-    commit: &str,
+    (pull, commit): (u64, &str),
+    ended: Ended,
 ) -> Result<Vec<String>> {
     let me = &record.me;
     let thread = wave.thread()?;
@@ -1622,6 +1627,12 @@ async fn after_verify(
     let item = &record.live.item;
     let found = last_result(&record.folder.join(crate::daemon::EVENTS));
     let Some((verdict, result)) = found.as_deref().and_then(verdict) else {
+        // A fault of the post does not hide the message to the lead.
+        let scrub = crate::run::Scrub::new(crate::session_relay::secrets_here());
+        let end = crate::ends::End::of(record, ended, &scrub);
+        if let Err(e) = crate::ends::post(api, me, &end).await {
+            eprintln!("riff daemon: {}: {e:#}", record.live.name);
+        }
         let _ = std::fs::remove_dir_all(&record.folder);
         let body = text::wave_no_result(item, pull);
         api.post(me, Some(&thread), &lead, &body, Kind::Message)
@@ -2306,7 +2317,7 @@ impl World for Live {
                     after_build(gh, &api, record, wave, *issue, (fix, None), ended).await
                 }
                 Work::Verify { pull, commit, .. } => {
-                    after_verify(&api, record, wave, *pull, commit).await
+                    after_verify(&api, record, wave, (*pull, commit), ended).await
                 }
             };
             self.end(&api, &record.me, &thread, &record.live.item).await;
@@ -4745,6 +4756,64 @@ esac
         };
         assert!(one.message.body.contains("worktree-issue-12"), "{one:?}");
         assert!(one.message.body.contains("1a2b3c4"), "{one:?}");
+    }
+
+    /// 01M5SMP2D4MGME90EHVKAQHQ26 (#1441): a verify that ends with no PASS
+    /// or FAIL leaves a record in the thread `ends`, and `riff session why`
+    /// shows it. The lead gets the message too, and the folder goes.
+    #[tokio::test]
+    async fn a_verify_with_no_result_leaves_the_reason_of_its_end() {
+        let built = Built::new().await;
+        let mut record = built.record.clone();
+        record.live.name = "riff-verify-issue-12".into();
+        record.live.item = "verify-issue-12".into();
+        std::fs::write(
+            record.folder.join(crate::daemon::EVENTS),
+            "{\"type\":\"assistant\"}\n{\"type\":\"result\",\"result\":\"I looked, and I stopped.\"}\n",
+        )
+        .unwrap();
+        let ended = Ended {
+            code: Some(0),
+            failed: false,
+        };
+        let lines = after_verify(&built.api, &record, &built.wave, (40, "1a2b3c4"), ended)
+            .await
+            .unwrap();
+        assert_eq!(lines, [text::wave_no_result("verify-issue-12", 40)]);
+        assert!(!record.folder.exists(), "the folder of the verify goes");
+        let thread = built.wave.thread().unwrap();
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        let [message] = &got[..] else {
+            panic!("one message: {got:?}");
+        };
+        assert_eq!(message.message.body, lines[0]);
+        let records = crate::ends::read(&built.api, &built.lead).await.unwrap();
+        let [one] = &records[..] else {
+            panic!("one record: {records:?}");
+        };
+        assert_eq!(one.tag("item"), "verify-issue-12");
+        assert_eq!(one.tag("session"), "9f8e7d6c");
+        assert_eq!(one.reason, "exit code 0, and no PASS or FAIL");
+        assert_eq!(
+            one.tail,
+            [
+                "{\"type\":\"assistant\"}",
+                "{\"type\":\"result\",\"result\":\"I looked, and I stopped.\"}"
+            ]
+        );
+        let shown = crate::ends::why("verify-issue-12", &records);
+        assert!(
+            shown.starts_with("verify-issue-12: 1 session ended with no PASS or FAIL."),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("ended: exit code 0, and no PASS or FAIL."),
+            "{shown}"
+        );
+        assert_eq!(
+            crate::ends::why("issue-12", &records),
+            text::session_why_none("issue-12")
+        );
     }
 
     /// 01M5A5HXKZTDP5M5HY2FHCEBZA: a build with an open pull request

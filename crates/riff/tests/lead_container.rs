@@ -1,7 +1,7 @@
-//! `riff members`, `riff who`, `riff whoami`, `riff session why` and
-//! `riff run` in the container of the lead (#1338): with `RIFF_SOCKET`
-//! and no `RIFF_SERVER`, each reads or asks through the socket of the
-//! session, over a fake daemon socket.
+//! `riff members`, `riff who`, `riff whoami`, `riff session why`, `riff run`
+//! and `riff daemon events` in the container of the lead (#1338, #1441): with
+//! `RIFF_SOCKET` and no `RIFF_SERVER`, each reads or asks through the socket
+//! of the session, over a fake daemon socket.
 //! Nothing listens at the riff-server of the machine: a command that
 //! called it would fail. `riff audit` has its test in `audit.rs`.
 
@@ -277,4 +277,152 @@ async fn wave_run_names_the_hosts_that_do_not_run_the_wave() {
         riff::text::wave_run_in_container("como-technologies/riff", &hosts)
     );
     assert_eq!(common::call_names(&asked), ["roster", "who"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn session_why_of_a_verify_names_the_missing_pass_or_fail() {
+    let container = Container::new();
+    let body = "ended item=verify-issue-1 session=1a2b3c4d code=0 failed=no denied=0: exit code \
+                0, and no PASS or FAIL\nthe last line";
+    let records = [riff::ends::Record::parse(body, 9).unwrap()];
+    let reply = serde_json::to_value(records).unwrap();
+    let (_dir, socket, asked) = common::session_socket(move |_| Ok(reply.clone()));
+
+    let out = container
+        .riff(&socket, &["session", "why", "verify-issue-1"])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(
+        text(&out.stdout),
+        "verify-issue-1: 1 session ended with no PASS or FAIL. The last one, 1a2b3c4d, ended: \
+         exit code 0, and no PASS or FAIL.\nIts last 1 lines of output:\nthe last line\n"
+    );
+    let out = container
+        .riff(&socket, &["session", "why", "verify-issue-2"])
+        .await;
+    assert!(
+        text(&out.stdout).starts_with("No session of verify-issue-2 ended with no PASS or FAIL."),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(common::call_names(&asked), ["ends", "ends"]);
+}
+
+const SESSION: &str = "riff-issue-12-1a2b3c4d";
+
+/// The fake daemon of a session: the text of the page that follows the
+/// event `after` of the call `events`, or of the request `daemon events`
+/// of the call `host`.
+fn pages(call: &Value) -> Result<Value, String> {
+    let after = match call["call"].as_str() {
+        Some("events") => {
+            assert_eq!(call["name"], SESSION, "{call}");
+            call["after"].as_u64().unwrap()
+        }
+        Some("host") => {
+            assert_eq!(call["host"], "thelio", "{call}");
+            let request = call["request"].as_str().unwrap();
+            request.split_once("--after ").map_or(0, |(_, rest)| {
+                rest.split(' ').next().unwrap().parse().unwrap()
+            })
+        }
+        other => panic!("{other:?}: {call}"),
+    };
+    Ok(Value::String(match after {
+        0 => "events to 2, notes 1\nthe daemon starts it\n> Bash: just check".to_owned(),
+        _ => "events to 3, notes 1, ended: done\nthe session ends".to_owned(),
+    }))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_events_in_a_container_follows_the_session_through_the_socket() {
+    let container = Container::new();
+    let (_dir, socket, asked) = common::session_socket(pages);
+    let out = container
+        .riff(&socket, &["daemon", "events", SESSION])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(
+        text(&out.stdout),
+        "the daemon starts it\n> Bash: just check\nthe session ends\n"
+    );
+    assert_eq!(common::call_names(&asked), ["events", "events"]);
+    let asked = asked.lock().unwrap();
+    assert_eq!(
+        (asked[0]["after"].as_u64(), asked[0]["notes"].as_u64()),
+        (Some(0), Some(0))
+    );
+    assert_eq!(
+        (asked[1]["after"].as_u64(), asked[1]["notes"].as_u64()),
+        (Some(2), Some(1))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_events_with_a_host_in_a_container_asks_the_daemon_of_the_host_through_the_socket() {
+    let container = Container::new();
+    let (_dir, socket, asked) = common::session_socket(pages);
+    let out = container
+        .riff(&socket, &["daemon", "events", SESSION, "--host", "thelio"])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(
+        text(&out.stdout),
+        "the daemon starts it\n> Bash: just check\nthe session ends\n"
+    );
+    assert_eq!(common::call_names(&asked), ["host", "host"]);
+    let asked = asked.lock().unwrap();
+    assert_eq!(
+        asked[0]["request"],
+        format!("daemon events {SESSION}"),
+        "{:?}",
+        asked[0]
+    );
+    assert_eq!(
+        asked[1]["request"],
+        format!("daemon events {SESSION} --after 2 --notes 1"),
+        "{:?}",
+        asked[1]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_events_in_a_container_exits_with_1_for_a_failed_session() {
+    let container = Container::new();
+    let (_dir, socket, _) = common::session_socket(|_| {
+        Ok(Value::String(
+            "events to 1, ended: failed\nthe session failed".to_owned(),
+        ))
+    });
+    let out = container
+        .riff(&socket, &["daemon", "events", SESSION])
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(text(&out.stdout), "the session failed\n");
+    assert_eq!(text(&out.stderr), "");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_events_in_a_container_shows_a_refusal_of_the_daemon() {
+    let container = Container::new();
+    let (_dir, socket, asked) =
+        common::session_socket(|_| Err(riff::text::DAEMON_EVENTS_ONLY_LEAD.into()));
+    let out = container
+        .riff(&socket, &["daemon", "events", SESSION])
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains(riff::text::DAEMON_EVENTS_ONLY_LEAD),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(
+        !text(&out.stderr).contains("daemon install"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(common::call_names(&asked), ["events"]);
 }
