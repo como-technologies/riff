@@ -24,9 +24,10 @@
 //! The daemon sends the messages for a pull request that stops (see "A
 //! pull request that stops"), and does the steps for a broken `main`
 //! (see "When main breaks"). It keeps what it told in memory
-//! ([`Watch`]): after a new start of the daemon, a message can come one
-//! more time. A look that fails shows its fault on stderr one time until
-//! the fault changes, and the wave goes on.
+//! ([`Watch`]). A message about `main` can come one more time after a
+//! new start of the daemon. A message about a pull request cannot (see
+//! "A pull request that stops"). A look that fails shows its fault on
+//! stderr one time until the fault changes, and the wave goes on.
 //!
 //! The rest of this module has no runner now, because the `riff mcp` of a
 //! session on the host is gone (#1200): [`once`] and [`run`] send the
@@ -87,8 +88,28 @@
 //!
 //! Each message comes one time for each pull request, head commit and
 //! state (01M49Q31FASDM7CG3JEGPYCZB9). The daemon keeps what it told in
-//! memory ([`Watch`]). So after a new start of it, a state can come
-//! one more time, and the wait of 30 minutes starts again.
+//! memory ([`Watch`]), and the wait of 30 minutes starts again after a
+//! new start of it.
+//!
+//! A wave can run on more hosts, and each host has a daemon with a watch
+//! of its own. So each post has a key ([`PullNews::key`]): the pull
+//! request, its head commit and the state. `riff-server` drops a post
+//! with the key of a message that it keeps from the same user in the
+//! thread (01M5TKG2K1AYK1KE7C2AA2W9DS, 01M5TKG2P26WXHJZ10Y9J69VFJ). So
+//! the lead gets each message one time, also after a new start of a
+//! daemon, while the thread keeps the message.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant A as the daemon of pangolin
+//!     participant B as the daemon of thelio
+//!     participant S as riff-server
+//!     participant L as the lead
+//!     A->>S: post, key pull-40-1a2b3c4d-conflict
+//!     S->>L: the message
+//!     B->>S: post, key pull-40-1a2b3c4d-conflict
+//!     Note over S: it keeps this key: it drops the post
+//! ```
 //!
 //! # When main breaks
 //!
@@ -281,6 +302,34 @@ pub struct PullNews {
     /// What the message tells: the pull request, its head, and the
     /// state.
     pub told: (u64, String, Stop),
+}
+
+impl PullNews {
+    /// The key of the post of the news (01M5TKG2K1AYK1KE7C2AA2W9DS): the
+    /// pull request, its head commit and the state. The look of each host
+    /// makes the same key for the same news, and riff-server drops the
+    /// second post.
+    ///
+    /// ```
+    /// use riff::look::{PullNews, Stop};
+    ///
+    /// let news = PullNews {
+    ///     to: None,
+    ///     body: String::new(),
+    ///     told: (40, "1a2b3c4d".into(), Stop::Conflict),
+    /// };
+    /// assert_eq!(news.key(), "pull-40-1a2b3c4d-conflict");
+    /// let waits = PullNews { told: (40, "1a2b3c4d".into(), Stop::NoVerify), ..news };
+    /// assert_eq!(waits.key(), "pull-40-1a2b3c4d-no-verify");
+    /// ```
+    pub fn key(&self) -> String {
+        let (number, head, stop) = &self.told;
+        let stop = match stop {
+            Stop::Conflict => "conflict",
+            Stop::NoVerify => "no-verify",
+        };
+        format!("pull-{number}-{head}-{stop}")
+    }
 }
 
 /// Why a pull request stops on its way to the merge.
@@ -935,7 +984,7 @@ pub async fn look_at_main(
 ) -> Result<()> {
     let before = watch.clone();
     let posted = match main_post(gh, &me.place().repo_text(), branch, forge, claims, watch).await {
-        Ok(Some((body, kind))) => post_as_person(api, me, None, &body, kind).await,
+        Ok(Some((body, kind))) => post_as_person(api, me, None, &body, kind, None).await,
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };
@@ -974,7 +1023,11 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
     let news = watch.pulls.news(&pulls, &claims, Instant::now());
     for (at, one) in news.iter().enumerate() {
         let item = one.to.as_deref();
-        if let Err(e) = world.post(wave, item, &one.body, Kind::Message).await {
+        let key = one.key();
+        if let Err(e) = world
+            .post(wave, item, &one.body, Kind::Message, Some(&key))
+            .await
+        {
             news[at..].iter().for_each(|rest| watch.pulls.untell(rest));
             return Err(e);
         }
@@ -989,7 +1042,7 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
     let repo = &wave.repo;
     let posted = match main_post(&gh, repo, &branch, (issues, pulls), claims, &mut watch.main).await
     {
-        Ok(Some((body, kind))) => world.post(wave, None, &body, kind).await,
+        Ok(Some((body, kind))) => world.post(wave, None, &body, kind, None).await,
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };
@@ -1002,18 +1055,29 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
 /// Posts `news` as a message, as the person of the lead `me`: to the
 /// session that holds its item, or to the lead.
 async fn tell_news(api: &Api, me: &SessionUri, news: &PullNews) -> Result<()> {
-    post_as_person(api, me, news.to.as_deref(), &news.body, Kind::Message).await
+    let key = news.key();
+    post_as_person(
+        api,
+        me,
+        news.to.as_deref(),
+        &news.body,
+        Kind::Message,
+        Some(&key),
+    )
+    .await
 }
 
 /// Posts `body` of `kind`, as the person of the lead `me`: to the
 /// session that holds the item `to`, or to the lead when `to` is `None`.
-/// The lead does not see its own posts, so the person posts it.
+/// The lead does not see its own posts, so the person posts it. The post has
+/// `key`, when there is one (01M5TKG2K1AYK1KE7C2AA2W9DS).
 async fn post_as_person(
     api: &Api,
     me: &SessionUri,
     to: Option<&str>,
     body: &str,
     kind: Kind,
+    key: Option<&str>,
 ) -> Result<()> {
     let person = SessionUri::new(Who::new(me.who().user(), None)?, me.place().clone());
     let to: Selector = match (to, me.who().session()) {
@@ -1021,8 +1085,15 @@ async fn post_as_person(
         (None, Some(session)) => format!("session={session}").parse()?,
         (None, None) => anyhow::bail!("the lead has no session"),
     };
-    api.post(&person, me.default_thread().as_ref(), &[to], body, kind)
-        .await?;
+    api.post_keyed(
+        &person,
+        me.default_thread().as_ref(),
+        &[to],
+        body,
+        kind,
+        key,
+    )
+    .await?;
     Ok(())
 }
 

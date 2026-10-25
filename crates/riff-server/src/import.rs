@@ -435,6 +435,7 @@ impl Old {
                     thread: thread.name.clone(),
                     message: with_payload(&thread.name, stored.message.clone()),
                     woken: stored.woken.clone(),
+                    key: None,
                 })));
             }
         }

@@ -1658,7 +1658,8 @@ riff: a lead container runs no wave itself. Your hosts that do not run the wave 
 A pull request can stop on its way to the merge after its verify
 passed. At each look, the wave reads each open pull request of an item
 and acts for it, one time for each head commit. You do not have to
-check them.
+check them. When the wave runs on more hosts, your lead gets each
+message one time, not one time for each host.
 
 ```mermaid
 flowchart TD

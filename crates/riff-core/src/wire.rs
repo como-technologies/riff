@@ -1320,6 +1320,11 @@ pub struct Post {
     /// [`Content`]. The server and each reader keep them unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<String>,
+    /// The key of the news that the post tells. The signature does not
+    /// cover it. The server drops a post whose key is the key of a kept
+    /// message of the same user in the thread (01M5TKG2K1AYK1KE7C2AA2W9DS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 impl Post {
@@ -1334,6 +1339,7 @@ impl Post {
             at_ms: None,
             sig: None,
             payload: None,
+            key: None,
         }
     }
 
@@ -1362,6 +1368,7 @@ impl Post {
             at_ms,
             sig: _,
             payload: _,
+            key: _,
         } = self;
         Some(Content {
             from: me.who(),

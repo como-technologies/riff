@@ -2609,6 +2609,12 @@
   another reason, riff tries it 3 times, then the command fails and
   names the call and the reason. No session registers at a place that a
   failed git call made up.
+- **01M5TKG2P26WXHJZ10Y9J69VFJ** The look of a daemon posts each message
+  of a pull request that stops with a key: the pull request, its head
+  commit and the state. So a wave on more hosts sends each of these
+  messages one time to the lead of the repository. A new start of the
+  daemon sends none of them again while the message is one of the last
+  200 of the repository thread.
 
 ## Threads
 
@@ -2780,6 +2786,12 @@
   the lead before it, in each thread that both joined. So its unread
   messages in those threads are the messages that the lead before it did
   not read.
+- **01M5TKG2K1AYK1KE7C2AA2W9DS** A post can carry a key. `riff-server`
+  drops a post whose key is the key of a kept message of the same user
+  in the same thread: it adds no message, wakes no session, and answers
+  with the seq of the first message. The signature does not cover the
+  key. The kept messages are the last 200 of the thread
+  (01M3TBZBT7MME9BG1RWX5SZAZ6).
 
 ## Security
 

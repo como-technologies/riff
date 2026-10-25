@@ -195,6 +195,7 @@ fn posted(thread: &ThreadName, message: Message, woken: &[&SessionUri]) -> Chang
         thread: thread.clone(),
         message,
         woken: woken.iter().map(|u| u.who().clone()).collect(),
+        key: None,
     }))
 }
 

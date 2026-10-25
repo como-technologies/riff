@@ -631,6 +631,10 @@ pub struct Posted {
     /// Each session that the message woke.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub woken: BTreeSet<Who>,
+    /// The key of the post (`wire::Post::key`): the next post with the same
+    /// key from the same user is dropped (01M5TKG2K1AYK1KE7C2AA2W9DS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 /// The marks of a post for an audit, longest first: the start of a
@@ -681,6 +685,7 @@ impl Posted {
     ///         payload: Some("payload".into()),
     ///     },
     ///     woken: Default::default(),
+    ///     key: None,
     /// };
     /// let audit = posted.clone().for_audit();
     /// assert_eq!(audit.message.body, "request");
@@ -1221,6 +1226,7 @@ pub fn one_of_each() -> Vec<Change> {
                 payload: Some("cA".into()),
             },
             woken: BTreeSet::from([uri().who().clone()]),
+            key: Some("pull-40".into()),
         })),
         Change::JoinedThread(member.clone()),
         Change::LeftThread(member.clone()),

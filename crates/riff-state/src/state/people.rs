@@ -535,7 +535,7 @@ impl View<'_> {
                 ..Selector::default()
             }];
             let note = message(to, body.to_owned(), Kind::Note);
-            changes.append(&mut self.put(server.who(), thread, note, now.at).0);
+            changes.append(&mut self.put(server.who(), thread, note, None, now.at).0);
         }
         let direct = owner::to_lead(body);
         for lead in tell.iter().flat_map(|user| self.live_leads(user, now.at)) {
@@ -545,7 +545,7 @@ impl View<'_> {
             let to = vec![Selector::session(id)];
             let thread = ThreadName::direct(server.who(), &lead);
             let told = message(to, direct.clone(), Kind::Message);
-            changes.append(&mut self.put(server.who(), thread, told, now.at).0);
+            changes.append(&mut self.put(server.who(), thread, told, None, now.at).0);
         }
         changes
     }

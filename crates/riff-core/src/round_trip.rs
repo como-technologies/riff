@@ -566,6 +566,7 @@ mod tests {
                 at_ms: Some(5),
                 sig: Some(text("h.p.s")),
                 payload: Some(text("cA")),
+                key: Some(text("pull-40")),
             });
         }
         c.trip(&Posted {
