@@ -25,6 +25,7 @@ mod daemon;
 mod daemon_hosts;
 mod first_run;
 mod forge_text;
+mod git_fault;
 mod github;
 mod help;
 mod identity;

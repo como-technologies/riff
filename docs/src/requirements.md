@@ -3152,6 +3152,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M5P1XN9EX680KQNKRHWGRWJT** A new watch does not wake a session for
   a message that a `read` returned, also a `read` with `all` and
   `after`. Such a read keeps the cursor.
+- **01M5R9S69W7QEMNKV3JRNV0RNB** riff never guesses where a command
+  works. It asks git for the repository, the remote origin and the
+  worktree. When git says that the directory is outside git, the place
+  has `-` for the repository. When git says that the repository has no
+  origin, the repository is `local/NAME`. When a git call fails for
+  another reason, riff tries it 3 times, then the command fails and
+  names the call and the reason. No session registers at a place that a
+  failed git call made up.
 
 ## Threads
 

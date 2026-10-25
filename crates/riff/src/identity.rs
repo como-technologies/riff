@@ -11,6 +11,9 @@
 //! | owner/repo | The `origin` remote. Without a remote: `local/<main worktree directory>`. |
 //! | worktree | The directory name of a linked worktree. The main worktree has none. |
 //!
+//! A fault of `git` is no source: the command fails and names the
+//! reason of git (see [`place_in`]).
+//!
 //! After an update, a long run gives its place to its new binary in
 //! [`PLACE_ARG`]. The new binary takes host, owner/repo and worktree
 //! from there, not from the rules above (see [`here`]).
@@ -35,8 +38,10 @@
 //! thread.
 
 use std::ffi::OsString;
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use riff_core::name::{Place, Repo, SessionUri, Who, sanitize};
@@ -354,11 +359,18 @@ pub fn common_dir(dir: &Path) -> Option<std::path::PathBuf> {
 }
 
 /// The place for `dir` on a known host.
+///
+/// riff never guesses a place (01M5R9S69W7QEMNKV3JRNV0RNB). It asks git, and git answers
+/// in one of three ways: a repository, no repository, or a fault. Only
+/// an answer of git makes a place. A fault of git, after [`GIT_TRIES`]
+/// tries, is an error of the command, with the reason of git
+/// ([`reading`]). So a session never registers at a place that a failed
+/// `git` call made up, and `riff lead --session ID` finds it (#1401).
 pub fn place_in(dir: &Path, host: &str) -> Result<Place> {
-    let (repo, worktree) = match git(dir, &["rev-parse", "--show-toplevel"]) {
+    let (repo, worktree) = match asked(dir, &["rev-parse", "--show-toplevel"], &NOT_GIT)? {
         Some(top) => (
-            repo_of(dir, &top),
-            linked_worktree(dir).then(|| base_name(&top)),
+            repo_of(dir, &top)?,
+            linked_worktree(dir)?.then(|| base_name(&top)),
         ),
         None => (Repo::None, Some(base_name(&dir.to_string_lossy()))),
     };
@@ -376,39 +388,156 @@ fn short_host(host: &str) -> String {
 
 /// OWNER/REPO from the `origin` remote. Without a remote, the owner is
 /// `local` and the repo is the directory name of the main worktree.
-fn repo_of(dir: &Path, top: &str) -> Repo {
-    if let Some((owner, name)) =
-        git(dir, &["remote", "get-url", "origin"]).and_then(|url| parse_remote(&url))
-    {
-        return Repo::Git {
+fn repo_of(dir: &Path, top: &str) -> Result<Repo> {
+    let remote = asked(dir, &["remote", "get-url", "origin"], &NO_REMOTE)?;
+    if let Some((owner, name)) = remote.and_then(|url| parse_remote(&url)) {
+        return Ok(Repo::Git {
             owner: sanitize(&owner),
             name: sanitize(&name),
-        };
+        });
     }
-    let main = git(
+    let common = asked(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .and_then(|common| {
-        Path::new(&common)
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-    })
-    .unwrap_or_else(|| top.to_owned());
-    Repo::Git {
+        &[],
+    )?;
+    let main = common
+        .as_deref()
+        .and_then(|common| Path::new(common).parent())
+        .map_or_else(|| top.to_owned(), |p| p.to_string_lossy().into_owned());
+    Ok(Repo::Git {
         owner: "local".into(),
         name: sanitize(&base_name(&main)),
-    }
+    })
 }
 
 /// True when `dir` is in a linked worktree, not the main one.
-fn linked_worktree(dir: &Path) -> bool {
-    let git_dir = git(dir, &["rev-parse", "--path-format=absolute", "--git-dir"]);
-    let common = git(
+fn linked_worktree(dir: &Path) -> Result<bool> {
+    let git_dir = asked(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-dir"],
+        &[],
+    )?;
+    let common = asked(
         dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    );
-    matches!((git_dir, common), (Some(a), Some(b)) if a != b)
+        &[],
+    )?;
+    Ok(matches!((git_dir, common), (Some(a), Some(b)) if a != b))
+}
+
+/// What git says, with `LC_ALL=C`, when `dir` is outside git: no
+/// repository, no work tree, or no such directory.
+const NOT_GIT: [&str; 3] = [
+    "not a git repository",
+    "this operation must be run in a work tree",
+    "cannot change to",
+];
+
+/// What git says when the repository has no remote `origin`.
+const NO_REMOTE: [&str; 1] = ["No such remote"];
+
+/// The tries of one `git` call that decides the place. A fault of git
+/// that passes, for example a failed fork on a busy machine, passes
+/// within them.
+pub const GIT_TRIES: u32 = 3;
+
+/// The wait between two tries of [`GIT_TRIES`].
+const GIT_WAIT: Duration = Duration::from_millis(100);
+
+/// `git -C dir ARGS` for the place: the text, or `None` when git says
+/// that the thing is not there (`absent`). A fault of git is tried
+/// [`GIT_TRIES`] times, then it is an error that names the call and the
+/// reason ([`reading`]).
+fn asked(dir: &Path, args: &[&str], absent: &[&str]) -> Result<Option<String>> {
+    let mut tried = 0;
+    loop {
+        tried += 1;
+        let run = Command::new("git")
+            .env("LC_ALL", "C")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output();
+        match reading(run, absent) {
+            Ok(text) => return Ok(text),
+            Err(_) if tried < GIT_TRIES => std::thread::sleep(GIT_WAIT),
+            Err(why) => bail!(
+                "riff cannot read git in {}: `git {}` {why}. riff does not guess where \
+                 you work. Run the command again.",
+                dir.display(),
+                args.join(" ")
+            ),
+        }
+    }
+}
+
+/// What one `git` call that decides the place gave: the text of its
+/// output, `None` when git is not there or says that the thing is not
+/// there, or the reason of a fault.
+///
+/// - Git gave output with exit code 0: the text, trimmed. An empty
+///   output is `None`.
+/// - Git failed, and its message has a phrase of `absent`: `None`. So
+///   a directory outside git has no place in a repository, and a
+///   repository with no `origin` is local.
+/// - No `git` program: `None`. riff works outside git.
+/// - Each other failure is a fault, with a reason: git could not start,
+///   a signal stopped it, or it failed with another message.
+///
+/// ```
+/// use std::os::unix::process::ExitStatusExt;
+/// use std::process::{ExitStatus, Output};
+/// use riff::identity::reading;
+///
+/// let ran = |code: i32, out: &str, err: &str| -> std::io::Result<Output> {
+///     Ok(Output {
+///         status: ExitStatus::from_raw(code << 8),
+///         stdout: out.as_bytes().to_vec(),
+///         stderr: err.as_bytes().to_vec(),
+///     })
+/// };
+/// let outside = ["not a git repository"];
+/// assert_eq!(reading(ran(0, "/src/riff\n", ""), &outside), Ok(Some("/src/riff".into())));
+/// assert_eq!(reading(ran(0, "", ""), &outside), Ok(None));
+/// let fatal = "fatal: not a git repository (or any of the parent directories): .git";
+/// assert_eq!(reading(ran(128, "", fatal), &outside), Ok(None));
+/// // A fault is no answer: riff does not make up a place from it.
+/// let why = reading(ran(128, "", "fatal: unable to read config"), &outside).unwrap_err();
+/// assert_eq!(why, "failed with exit code 128: fatal: unable to read config");
+/// let killed = Ok(Output {
+///     status: ExitStatus::from_raw(9),
+///     stdout: Vec::new(),
+///     stderr: Vec::new(),
+/// });
+/// assert_eq!(reading(killed, &outside).unwrap_err(), "was stopped by signal 9");
+/// let busy = Err(std::io::Error::from_raw_os_error(11));
+/// assert!(reading(busy, &outside).unwrap_err().starts_with("did not start:"));
+/// let no_git = Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+/// assert_eq!(reading(no_git, &outside), Ok(None));
+/// ```
+pub fn reading(
+    run: std::io::Result<Output>,
+    absent: &[&str],
+) -> std::result::Result<Option<String>, String> {
+    let out = match run {
+        Ok(out) => out,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("did not start: {e}")),
+    };
+    if out.status.success() {
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        return Ok((!text.is_empty()).then_some(text));
+    }
+    let said = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+    if absent.iter().any(|phrase| said.contains(phrase)) {
+        return Ok(None);
+    }
+    Err(match (out.status.code(), out.status.signal()) {
+        (Some(code), _) => format!("failed with exit code {code}: {said}"),
+        (None, Some(signal)) => format!("was stopped by signal {signal}"),
+        (None, None) => "failed".to_owned(),
+    })
 }
 
 /// OWNER and REPO from a remote URL, for example
