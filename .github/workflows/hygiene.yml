@@ -3,7 +3,9 @@ name: Hygiene
 # The form of each pull request, and of each commit on main (see the
 # docs of the hygiene crate). A separate workflow, so an edit of a pull
 # request does not run the Gate again. On a push to main, it checks the
-# new commit with the commit rule (01M3JFEXS6M5549TC6MH0G2MS0).
+# new commit with the commit rule (01M3JFEXS6M5549TC6MH0G2MS0). In the
+# merge queue it checks the merge group commit with the same rule, before
+# the commit reaches main (01M5TKPHH2627K9NDS4P1Y1N3T).
 on:
   # main (01M5RG6BZQC8T6SZ8NX9W8TT5M).
   pull_request:
@@ -11,6 +13,7 @@ on:
     types: [opened, edited, synchronize, reopened, milestoned, demilestoned]
   push:
     branches: [main]
+  merge_group:
 
 permissions:
   contents: read
@@ -39,4 +42,8 @@ jobs:
 
       - name: Check the commit on main
         if: github.event_name == 'push'
+        run: cargo run -q -p hygiene -- commit "$GITHUB_SHA"
+
+      - name: Check the commit of the merge group
+        if: github.event_name == 'merge_group'
         run: cargo run -q -p hygiene -- commit "$GITHUB_SHA"

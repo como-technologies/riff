@@ -124,14 +124,15 @@ fn the_wave_reads_the_open_pull_requests_with_no_error() {
     waiting.sort_unstable();
     assert_eq!(waiting, [13, 14, 16]);
 
-    // One read of the list, and one read of each head that waits for a
-    // verify: not the passed, not the draft.
+    // One read of the list, one read of the merge queue, and one read of
+    // each head that waits for a verify: not the passed, not the draft.
     let log = log(bin.path());
-    assert_eq!(log.len(), 4, "{log:?}");
+    assert_eq!(log.len(), 5, "{log:?}");
     assert!(log[0].starts_with("pr list --repo o/r"), "{log:?}");
     assert!(!log[0].contains("commits"), "{log:?}");
+    assert!(log[1].starts_with("api graphql -f query="), "{log:?}");
     assert_eq!(
-        log[1..],
+        log[2..],
         [
             "api repos/o/r/commits/aaa --jq .commit.message",
             "api repos/o/r/commits/bbb --jq .commit.message",

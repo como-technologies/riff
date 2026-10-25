@@ -8259,6 +8259,7 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// assert!(!text.contains("CLAUDE.md names"));
 /// assert!(text.contains("git push --force-with-lease origin worktree-issue-12"));
 /// assert!(text.contains("Do not open a second pull request"));
+/// assert!(text.contains("turn on auto-merge when it is off: gh pr merge --auto --squash 40"));
 /// assert!(text.contains("New checks and a new verify of the new commit follow"));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
@@ -8292,7 +8293,8 @@ pub fn wave_rebase_start(
          its end. Fix each fault of the rebase. {CI_DECIDES}\n\
          6. Commit and push before the end of your work, to the same pull request:\n   \
          git push --force-with-lease origin {branch}\n   \
-         Never push to {base}. Do not open a second pull request.\n\
+         Never push to {base}. Do not open a second pull request. After the push, turn on \
+         auto-merge when it is off: gh pr merge --auto --squash {pull}\n\
          7. New checks and a new verify of the new commit follow. Another session does the \
          verify: do not verify your own work.\n\
          8. Stop each background task that you started, for example a Monitor or a command \
@@ -8471,6 +8473,14 @@ pub fn wave_checks_start(
 /// let text = riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(bare));
 /// assert!(text.contains("the check ci/x of an unknown app failed."));
 /// assert!(text.ends_with("It has no link: see gh pr checks 40"));
+/// let text = riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Dequeued("CI_FAILURE".into()));
+/// assert_eq!(
+///     text,
+///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the merge queue \
+///      removed it (reason: CI_FAILURE). No session fixes it, so it waits for you. See why in the \
+///      run of the merge group in the Actions of the repository. Queue it again: gh pr merge \
+///      --auto --squash 40"
+/// );
 /// let text = riff::text::wave_stuck(41, "worktree-issue-1", "master", "aaaa111bbb", &Stuck::Conflict);
 /// assert!(text.contains("has a conflict with master at commit aaaa111."));
 /// assert!(text.contains("Rebase it on master, and push to worktree-issue-1."));
@@ -8519,6 +8529,13 @@ pub fn wave_stuck(
                  the check again in its app. {link}"
             )
         }
+        Stuck::Dequeued(reason) => format!(
+            "PR #{number}, branch {branch}, passed its verify at commit {commit}, but the merge \
+             queue removed it (reason: {}). No session fixes it, so it waits for you. See why in \
+             the run of the merge group in the Actions of the repository. Queue it again: gh pr \
+             merge --auto --squash {number}",
+            safe(reason)
+        ),
         Stuck::Conflict => format!(
             "PR #{number}, branch {branch}, has a conflict with {base} at commit {commit}. No \
              session rebases it, so it waits for you. Rebase it on {base}, and push to {branch}."

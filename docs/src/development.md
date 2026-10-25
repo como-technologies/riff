@@ -156,6 +156,9 @@ flowchart LR
     G -- no --> F["Gate fails"]
 ```
 
+The Gate runs also on the merge group of the merge queue (see
+[Merge the pull requests of a wave with a merge queue](#merge-the-pull-requests-of-a-wave-with-a-merge-queue)).
+
 The rules of `main` need only the check `Gate`. So a fail of each job
 fails the Gate. While the other jobs run, `gh pr checks` shows no
 `Gate`.
@@ -1598,6 +1601,79 @@ issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). 
 To start the rebase of the same commit again, see
 [Start a spent item again](#start-a-spent-item-again).
 
+#### Merge the pull requests of a wave with a merge queue
+
+When `main` moves after each merge, the other pull requests of a full
+wave get a conflict one after the other, and each rebase costs a new
+Gate and a new verify. A repository can have a merge queue on `main`
+instead. This repository has one: see
+[Turn the merge queue on or off](#turn-the-merge-queue-on-or-off).
+
+A pull request with auto-merge on enters the queue when its checks and
+its verify passed. GitHub builds a merge group for it: `main` and the
+pull request. The Gate and Hygiene run on the merge group, and the job
+`Verify of the merge group` sets `riff/verify` on it from the passed
+verify of the head commit of the pull request. No new verify starts.
+GitHub squash-merges the group when the checks pass.
+
+```mermaid
+flowchart LR
+    P["pull request: verify passed,<br/>checks passed, auto-merge on"] --> Q["GitHub adds it to the queue"]
+    Q --> G["merge group: main and the pull request"]
+    G --> C["Gate and Hygiene run on the group,<br/>riff/verify comes from the head"]
+    C -- pass --> M["squash merge into main"]
+    C -- "fail, or a conflict" --> R["GitHub removes it from the queue"]
+    R -- "a conflict with main" --> B["the wave starts a rebase session"]
+    R -- "other reason" --> L["a message to your lead"]
+```
+
+The wave leaves a pull request in the queue alone. It starts no
+rebase, no verify and no message for it, also when GitHub reads a
+conflict or auto-merge is off: the queue decides.
+
+When GitHub removes a pull request from the queue, and nobody pushed to
+it since, the wave acts one time for the head commit:
+
+- The pull request has a conflict with `main`: a session rebases it, as
+  above, also when auto-merge is off. The session turns auto-merge on
+  again after its push.
+- Another reason, for example a failed check of the merge group: your
+  lead gets one message with the reason of GitHub, and no session
+  starts. See
+  [Queue a pull request that the queue removed](#queue-a-pull-request-that-the-queue-removed).
+
+### Turn the merge queue on or off
+
+You need the rights of an admin of the repository. In your clone of
+`como-technologies/riff`, turn the queue on for the ruleset `main`:
+
+```sh
+deploy/merge-queue.sh on como-technologies/riff
+```
+
+The script adds the rule `merge_queue` to the ruleset and changes no
+other rule. The queue merges with the method `squash`, builds up to 5
+merge groups at the same time, and waits 60 minutes for the checks of a
+group. It prints the file with the ruleset as it was. To turn the queue
+off:
+
+```sh
+deploy/merge-queue.sh off como-technologies/riff
+```
+
+To use another ruleset than `main`, give its name last:
+
+```sh
+deploy/merge-queue.sh on acme/app riff
+```
+
+Turn the queue on only when the `main` of the repository has the event
+`merge_group` in its workflows. Else the queue waits for checks that
+never start, and it removes each pull request after 60 minutes. The
+workflows of this repository have it: the Gate and Hygiene run on the
+merge group, and the job `Verify of the merge group` sets `riff/verify`
+on it. The ruleset that `riff init` makes has no merge queue.
+
 ### Add a host to the wave
 
 A host runs the wave of a repository when its daemon serves the
@@ -1663,13 +1739,17 @@ message one time, not one time for each host.
 
 ```mermaid
 flowchart TD
-    P["open pull request of an item"] --> C{"a conflict with main,<br/>auto-merge on?"}
+    P["open pull request of an item"] --> Q{"in the merge queue?"}
+    Q -- yes --> W["the wave does nothing:<br/>the queue merges it"]
+    Q -- no --> C{"a conflict with main,<br/>auto-merge on or<br/>removed from the queue?"}
     C -- yes --> R["a session rebases the branch"]
     C -- no --> F{"verify passed,<br/>a check failed?"}
     F -- yes --> G{"a run of<br/>GitHub Actions?"}
     G -- yes --> B["a session fixes the check"]
     G -- "no, another app" --> N["a message to your lead:<br/>the check, its app, its link"]
-    F -- no --> A{"verify passed,<br/>auto-merge off?"}
+    F -- no --> D{"verify passed,<br/>removed from the queue?"}
+    D -- yes --> M2["a message to your lead:<br/>the reason of GitHub"]
+    D -- no --> A{"verify passed,<br/>auto-merge off?"}
     A -- yes --> M["a message to your lead"]
     A -- no --> OK["it merges by itself"]
 ```
@@ -1680,6 +1760,7 @@ flowchart TD
 | The verify passed, a run of GitHub Actions failed | A session fixes the check | `stuck: #12 (checks)` |
 | The verify passed, a check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
 | The verify passed, auto-merge off | Your lead gets one message. No session starts | `stuck: #12 (auto-merge off)` |
+| The verify passed, the merge queue removed it | A conflict: a session rebases it. Else your lead gets one message (see [Queue a pull request that the queue removed](#queue-a-pull-request-that-the-queue-removed)) | `stuck: #12 (removed from queue)` |
 | A release, a check failed | Your lead gets one message. No session builds a release | `stuck: #7 (checks)` |
 
 A check failed when its run ended with `failure`, `timed_out` or
@@ -1772,6 +1853,28 @@ pull request:
 
 ```sh
 gh pr checks 40
+```
+
+#### Queue a pull request that the queue removed
+
+The merge queue removes a pull request when its merge group fails, for
+example when the Gate fails on the merge group, or when the pull request
+conflicts with a pull request that merged before it. With a conflict
+with `main`, the wave starts a rebase session. For each other reason,
+your lead gets one message for the head commit, with the reason of
+GitHub:
+
+```text
+PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the merge queue removed it (reason: CI_FAILURE). No session fixes it, so it waits for you. See why in the run of the merge group in the Actions of the repository. Queue it again: gh pr merge --auto --squash 40
+```
+
+Open the run of the merge group in the Actions of the repository, and
+read why it failed. Fix the cause with a push to the branch: a new
+commit has a new verify and a new Gate. When the cause was a flake,
+queue the pull request again with the command of the message:
+
+```sh
+gh pr merge --auto --squash 40
 ```
 
 ### Answer a failed verify with a new request

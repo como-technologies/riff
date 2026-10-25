@@ -1020,7 +1020,7 @@ async fn the_gh_calls_of_top_share_the_token_of_one_read() {
     let calls = std::fs::read_to_string(&log).unwrap();
     assert_eq!(
         calls,
-        "none auth token\ngho_one_read issue list\ngho_one_read pr list\n"
+        "none auth token\ngho_one_read issue list\ngho_one_read pr list\ngho_one_read api graphql\n"
     );
 }
 

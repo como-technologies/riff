@@ -1194,7 +1194,8 @@ wave with its repository, one line for the `free` items, one for the
 session verifies it, and when no session holds it and its pull request
 waits for a verify or for the merge. An item is in `stuck` when no
 session holds it and its pull request cannot merge by itself: a
-conflict, a failed check, or auto-merge off (see
+conflict, a failed check, auto-merge off, or a removal from the merge
+queue (see
 [See a pull request that cannot merge](development.md#see-a-pull-request-that-cannot-merge)).
 An item is in `held` when the lead holds it and no session
 claims it: the reason of the hold follows its items. No worker and no
