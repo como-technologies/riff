@@ -151,6 +151,7 @@ use serde_json::{Value, json};
 
 use crate::first_run::Check;
 use crate::pr::{GATE, Gh, VERIFY_CONTEXT, percent};
+use crate::rollout::Issue;
 use crate::session_image;
 use crate::text;
 use crate::waves::{self, BACKLOG, FIRST_WAVE};
@@ -924,6 +925,57 @@ pub fn read(gh: &Gh) -> Result<Github, String> {
 pub fn here(dir: &std::path::Path) -> Option<Result<Github, String>> {
     let repo = crate::identity::github_origin(dir)?;
     Some(read(&Forge::of(&repo).gh))
+}
+
+/// The numbers of the open issues of the repository of `gh` that have no
+/// line `Done when:`, the least first (01M5SMMP7ZW2PZNGK63WWZAC8P). The wave
+/// starts none of them ([`crate::rollout::Issue::has_done_when`]). A
+/// tracker and a release issue are not in the list: no session does
+/// them.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let gh = isolated::write_program(
+///     dir.path().join("gh"),
+///     r#"#!/bin/sh
+/// printf '%s' '[
+///   {"number":9,"title":"Late","body":"No line.","labels":[]},
+///   {"number":4,"title":"Done","body":"Text.\n\nDone when: x.","labels":[]},
+///   {"number":5,"title":"Tracker: part","body":"No line.","labels":[]},
+///   {"number":2,"title":"Early","body":"","labels":[{"name":"bug"}]}
+/// ]'
+/// "#,
+/// );
+/// let gh = riff::pr::Gh::at(&gh);
+/// assert_eq!(riff::repo_setup::no_done_when(&gh)?, [2, 9]);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn no_done_when(gh: &Gh) -> anyhow::Result<Vec<u64>> {
+    let issues: Vec<Issue> = gh.json(&[
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "1000",
+        "--json",
+        "number,title,body,labels",
+    ])?;
+    let mut numbers: Vec<u64> = issues
+        .iter()
+        .filter(|i| !i.release() && !i.tracker() && !i.has_done_when())
+        .map(|i| i.number)
+        .collect();
+    numbers.sort_unstable();
+    Ok(numbers)
+}
+
+/// [`no_done_when`] for the repository of the folder `dir`, with the
+/// `gh` of the machine: `None` when the folder has no remote `origin` on
+/// GitHub. An `Err` says why `gh` could not list the issues.
+pub fn no_done_when_here(dir: &std::path::Path) -> Option<Result<Vec<u64>, String>> {
+    let repo = crate::identity::github_origin(dir)?;
+    Some(no_done_when(&Forge::of(&repo).gh).map_err(|e| format!("{e:#}")))
 }
 
 /// The checks on the facts `github`, in order: the facts of the

@@ -437,6 +437,12 @@
   warns when an issue has no line that starts with `Done when:`, and
   moves it. The warning says that the wave takes only an issue with that
   line. `--to Backlog` gives no warning.
+- **01M5SMMP561HR1ZQY3ZE4361FD** The names that riff uses on the forge
+  are rules of riff, the same for each repository. They are the
+  milestones `Wave N` and `Backlog`, the labels `tracker`, `broken-main`
+  and `no-verify`, the line `Done when:` and the branch
+  `worktree-issue-N`. The book lists them in one place: the part "The
+  names riff uses on the forge" of the page about waves.
 
 ## Issue hygiene on GitHub
 
@@ -5072,6 +5078,12 @@ of this part when they merge.
   no `--check` in a session container does the steps of the repository,
   installs no daemon and pulls no image: the host has the daemon. On a
   host, the checks stay as 01M4ZJN6TEWCYCB39XTH6BBD9H gives them.
+- **01M5SMMP7ZW2PZNGK63WWZAC8P** `riff init` counts the open issues of
+  the repository that have no line that starts with `Done when:`, and
+  names them in a note, as `riff init --check` does too. A tracker and a
+  release issue are not counted: no session does them. The note changes
+  no exit code, and `riff init` prints nothing when each open issue has
+  the line. When `gh` cannot list the open issues, the note says so.
 
 ### The permission rules
 

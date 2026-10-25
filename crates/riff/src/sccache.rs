@@ -46,10 +46,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result, bail};
-
-/// The version of `sccache` that riff installs.
-pub const PINNED: &str = "0.18.0";
+use anyhow::{Context, Result};
 
 /// The default most size of the cache: `workers.cache`.
 pub const SIZE: &str = "40G";
@@ -326,79 +323,6 @@ pub fn find_in(path: Option<&OsStr>, extra: Option<&Path>) -> Option<PathBuf> {
         .find(|bin| {
             std::fs::metadata(bin).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         })
-}
-
-/// The version in the output of `sccache --version`.
-///
-/// ```
-/// use riff::sccache::version_of;
-/// assert_eq!(version_of("sccache 0.18.0\n"), Some((0, 18, 0)));
-/// assert_eq!(version_of("sccache 0.9.1-dev"), Some((0, 9, 1)));
-/// assert_eq!(version_of("0.18.0"), Some((0, 18, 0)));
-/// assert_eq!(version_of("command not found"), None);
-/// ```
-pub fn version_of(out: &str) -> Option<(u32, u32, u32)> {
-    let word = out
-        .split_whitespace()
-        .find(|w| w.starts_with(|c: char| c.is_ascii_digit()))?;
-    let mut parts = word.split(['.', '-', '+']).map(str::parse::<u32>);
-    Some((
-        parts.next()?.ok()?,
-        parts.next()?.ok()?,
-        parts.next()?.ok()?,
-    ))
-}
-
-/// The version of the `sccache` binary `bin`, or `None` when it gives
-/// none.
-pub fn version(bin: &Path) -> Option<(u32, u32, u32)> {
-    let out = Command::new(bin).arg("--version").output().ok()?;
-    version_of(&String::from_utf8_lossy(&out.stdout))
-}
-
-/// The arguments of `cargo` that install the pinned `sccache`.
-///
-/// ```
-/// assert_eq!(riff::sccache::install_args(), ["install", "--locked", "sccache", "--version", "0.18.0"]);
-/// ```
-pub fn install_args() -> [&'static str; 5] {
-    ["install", "--locked", "sccache", "--version", PINNED]
-}
-
-/// What [`ensure`] did.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Install {
-    /// The machine has [`PINNED`] or newer: riff ran nothing.
-    Present,
-    /// riff installed [`PINNED`].
-    Installed,
-}
-
-/// Installs [`PINNED`] with `cargo` when this machine has no `sccache`,
-/// or an older one (01M4923963S666V9YWTZ46ZZ50). An error says why the
-/// install failed.
-pub fn ensure(cargo: &Path) -> Result<Install> {
-    let pinned = version_of(PINNED).context("the pinned version of sccache")?;
-    if find()
-        .and_then(|bin| version(&bin))
-        .is_some_and(|have| have >= pinned)
-    {
-        return Ok(Install::Present);
-    }
-    println!("{}", crate::text::sccache_installs(PINNED));
-    let status = Command::new(cargo)
-        .args(install_args())
-        .current_dir(crate::lifecycle::run_dir())
-        .stdin(std::process::Stdio::null())
-        .status()
-        .with_context(|| format!("cannot run {}", cargo.display()))?;
-    if !status.success() {
-        bail!("cargo install {status}");
-    }
-    if find().is_none() {
-        bail!("cargo installed sccache, but it is not on PATH or in ~/.cargo/bin");
-    }
-    Ok(Install::Installed)
 }
 
 /// The numbers of the cache from `sccache --show-stats --stats-format

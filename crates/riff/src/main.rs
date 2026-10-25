@@ -519,8 +519,10 @@ enum Command {
     /// default branch that requires riff/verify, has the milestone Backlog
     /// and an open wave, and has a CI check that a pull request runs. It
     /// reads no CLAUDE.md or AGENTS.md: that file is the choice of the
-    /// repository. It names the fix of each check that fails. For the first
-    /// five checks, riff init does the fix itself: it asks one question,
+    /// repository. It names the open issues with no "Done when:" line in a
+    /// note: the wave starts no session for them. It names the fix of each
+    /// check that fails. For the first five checks, riff init does the fix
+    /// itself: it asks one question,
     /// and then it makes riff.toml with a pull request that it merges,
     /// allows auto-merge and squash merges, makes the Backlog and Wave 1,
     /// and makes the ruleset riff. It needs the rights of an admin of the

@@ -417,3 +417,35 @@ fn riff_wave_rename_gives_the_wave_a_new_name_and_keeps_its_number() {
         ]
     );
 }
+
+/// 01M5SMMP561HR1ZQY3ZE4361FD: the part "The names riff uses on the forge"
+/// lists each name that the code of riff reads on the forge.
+#[test]
+fn the_part_about_the_names_lists_each_name_that_the_code_reads() {
+    let page = read("docs/src/waves.md");
+    let start = page
+        .find("\n### The names riff uses on the forge\n")
+        .expect("the part is in the page");
+    let rest = &page[start + 1..];
+    let part = &rest[..rest[4..].find("\n### ").map_or(rest.len(), |end| end + 4)];
+    let branch = format!("{}issue-N", riff::dropped::BRANCH);
+    for name in [
+        "Wave N",
+        riff::waves::BACKLOG,
+        riff::rollout::DONE_WHEN,
+        "Needs:",
+        riff_client::waves::TRACKER,
+        riff_client::waves::TRACKER_TITLE,
+        riff::rollout::BROKEN_MAIN,
+        riff::rollout::NO_VERIFY,
+        riff::cycle::LABEL,
+        &branch,
+    ] {
+        assert!(
+            part.contains(&format!("`{name}`")),
+            "the part lacks `{name}`"
+        );
+    }
+    // The part about the book is linked from the places where a person meets a name.
+    assert!(read("docs/src/start-a-riff.md").contains("waves.md#the-names-riff-uses-on-the-forge"));
+}
