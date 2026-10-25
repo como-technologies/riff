@@ -5798,12 +5798,10 @@ of this part when they merge.
   of its head commit passed. Then it sets the status `riff/verify`. It
   refuses else, and sets nothing.
 - **01M5NCYW06FJ8P5X629VFK1BNR** One message of the owner or of an admin
-  in riff chat approves a whole release: "approved", "approve 4.0.1" or
-  "approve v4.0.1", from a person and not a session, after the line
-  `riff release vX.Y.Z is cut` that `riff release cut` writes in riff
-  chat. A message with no version counts for the version of the last
-  release line of a session before it. With it, the lead runs the
-  real-session test, `riff release publish`, `riff release approve` and
+  in riff chat approves the deploy of a release: "approved", "approve
+  4.0.1" or "approve v4.0.1", from a person and not a session. A message
+  with no version counts for the version of the last release line of
+  riff before it. With it, the lead runs `riff release approve` and
   `riff release check`. `riff release approve` of the lead accepts this
   message instead of the publish line, and replaces
   01M594XQJMXAXY3JXP66Y8EVQ7 in part. A message with `not`, `never` or
@@ -5834,6 +5832,15 @@ of this part when they merge.
   clone with no `origin/HEAD`, a fetch that fails and a `riff.toml` that
   is not TOML are errors that name their cause. `riff release` and `riff
   build` in the clone of a person still read the working tree.
+- **01M5TKDYAFA683KNAJTGYTQD5W** The line that `riff release cut` writes
+  in riff chat asks the owner for nothing: it says that the release is
+  cut and that riff tells the owner when the deploy waits for an
+  approval. The only ask is the line of riff while the job `Deploy`
+  waits ("riff release vX.Y.Z waits for your approval", also "still
+  waits" in a reminder). The message of the owner or of an admin that
+  approves a release counts only after the first such line, or after the
+  line `riff release vX.Y.Z is published`. A line of riff approves
+  nothing. Supersedes 01M5NCYW06FJ8P5X629VFK1BNR in part.
 
 ### The release cycle
 

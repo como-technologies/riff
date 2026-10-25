@@ -4557,7 +4557,7 @@ The gates:
 |---|---|---|---|
 | Verify | a session that did not write the change | the verify of riff | the release pull request waits |
 | Real session | a session that wrote none of the items, on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
-| HUMAN GATE 1: deploy | the owner or an admin, in a terminal, or one message "approved" in riff chat | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
+| HUMAN GATE 1: deploy | the owner or an admin, in a terminal, or one message "approved" in riff chat, after the line "waits for your approval" | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | Hold | a lead of another repository, in a critical place | `riff release hold vX.Y.Z REASON` | `approve` refuses until the lead ends the hold, or a person passes `--over-holds` |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
 | HUMAN GATE 3: skip | the owner or an admin, in a terminal | `riff release cut --skip VERSION --reason TEXT` | no skip |
@@ -4566,6 +4566,14 @@ The gates:
 `riff release status` shows the state of the current release: `cut`,
 `merged`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
 `checked`, `failed` or `rolled back`.
+
+riff asks the owner at HUMAN GATE 1 only when the job `Deploy` waits
+for `production`. Before that, riff asks for nothing. The chat line of
+`riff release cut` says that the release is cut, and that riff tells
+the owner when the deploy waits. The chat line of `riff release
+publish` says that the CI run builds. When the job `Deploy` waits, riff
+posts the line "waits for your approval" in `riff chat`, and wakes the
+owner. That line is the only ask.
 
 #### Turn on the release cycle
 
@@ -4929,6 +4937,10 @@ refuses while a deploy waits for the approval of `production`. It
 also refuses while the version on `origin/main` has no published
 release: publish that release first.
 
+riff also writes a line in riff chat to the owner. It says that the
+release is cut, and that riff tells the owner when the deploy waits for
+an approval. It asks for nothing.
+
 riff registers a watch of the release pull request. The daemon of your
 host wakes the lead when the Gate ends: the lead gets "the Gate
 passed" with `next: riff release verify 1140`, or "the Gate failed"
@@ -4955,11 +4967,6 @@ refuses else, and sets nothing. No model session verifies the pull
 request. After the status, riff registers the watch of the merge: the
 daemon wakes the lead when the pull request merges, or when it closes
 with no merge.
-
-riff also writes a line in riff chat to the owner. One message of the
-owner after it, for example `approved`, lets the lead run the whole
-release: see [Let the lead approve when the owner said
-so](#let-the-lead-approve-when-the-owner-said-so).
 
 #### The release issue
 
@@ -5210,14 +5217,16 @@ app or on the page of the run: they do not pause the riff.
 
 #### Let the lead approve when the owner said so
 
-One message of the owner lets the lead run the whole release. After
-`riff release cut` riff writes a line in riff chat that asks the owner.
-The owner answers in riff chat, at any time after that line, with one
-message: `approved`, `approve 3.3.0` or `approve v3.3.0`. The word
-`deploy` works too. A message with no version counts for the version of
-the last release line of a session before it. With it, the lead runs the
-real-session test, `riff release publish`, `riff release approve` and
-`riff release check`, with no other question.
+One message of the owner lets the lead approve the deploy. riff asks
+the owner only when the job `Deploy` waits: the daemon posts the line
+"waits for your approval" in riff chat (see [Know what wakes the
+lead](#know-what-wakes-the-lead)). The owner answers in riff chat, after
+that line or after the publish line, with one message: `approved`,
+`approve 3.3.0` or `approve v3.3.0`. The word `deploy` works too. A
+message from before the publish does not count. A message with no
+version counts for the version of the last release line of riff before
+it. With it, the lead runs `riff release approve` and `riff release
+check`, with no other question.
 
 riff reads the chat from riff-server, not from the model. The message
 must come from the owner or an admin, as a person, not as a session. The
@@ -5231,9 +5240,9 @@ A message with `not`, `never` or `don't` does not approve. A `stop` or a
 `wait` of the owner or of an admin after the approval stops the lead
 before the next step: say `approved` again to go on. `riff release
 approve` refuses, and `gh` does not run, when no such message exists: a
-message of a session, of another version, from before the cut, or from a
-member. It also refuses a worker, a work session in a container and a
-session that is not the lead.
+message of a session, of another version, from before the publish, or
+from a member. It also refuses a worker, a work session in a container
+and a session that is not the lead.
 
 The lead runs these commands in its container. `cut` and `publish`
 write their line in riff chat, and `approve` reads the roster and the

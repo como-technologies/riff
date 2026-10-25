@@ -1625,7 +1625,11 @@ async fn the_lead_approves_with_the_message_of_the_owner_and_the_comment_names_i
 #[tokio::test]
 async fn the_lead_cannot_approve_without_the_message_of_the_owner() {
     let machine = lead_with_a_waiting_run().await;
-    // A message before the publish does not count.
+    // The cut of the release is no start: a message after it, before the
+    // publish, does not count (01M5TKDYAFA683KNAJTGYTQD5W).
+    machine
+        .say("mike:abc1", &riff::cycle::cut_line("mike", "v3.3.0"))
+        .await;
     machine.say("mike", "approve v3.3.0").await;
     machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
     let before = machine.log();
@@ -1780,6 +1784,15 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
     );
     let body = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
     assert!(body.contains("riff release v3.3.0 is cut"), "{body}");
+    // 01M5TKDYAFA683KNAJTGYTQD5W: the line of the cut asks the owner for nothing.
+    let lower = body.to_lowercase();
+    for ask in ["say", "approve", "?"] {
+        assert!(!lower.contains(ask), "{body}: {ask}");
+    }
+    assert!(
+        body.contains("riff tells you when its deploy waits for your approval"),
+        "{body}"
+    );
     // 01M5SNV75DRFHR26BT2M8243VV: the note to the other leads goes through the socket.
     let note = seen.lock().unwrap()[2]["body"].as_str().unwrap().to_owned();
     assert!(
@@ -1843,8 +1856,9 @@ async fn approve_in_the_lead_container_reads_and_pauses_through_the_socket() {
         line(
             1,
             "mike",
-            true,
-            "riff release v3.3.0 is cut. Say approve 3.3.0"
+            false,
+            "@mike riff release v3.3.0 waits for your approval: https://x/runs/9. \
+             In a terminal, run: riff release approve v3.3.0"
         ),
         line(2, "mike", false, "approve 3.3.0"),
     ]);

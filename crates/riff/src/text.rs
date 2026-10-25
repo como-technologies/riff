@@ -2026,8 +2026,9 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
         ),
         Refusal::OwnerSilent => (
             format!(
-                "riff: riff chat has no verified message of the owner, after the cut, that \
-                 says approve or deploy and names the version. {step} changed nothing."
+                "riff: riff chat has no verified message of the owner, after the line that the deploy \
+                 waits for the approval, that says approve or deploy and names the version. \
+                 {step} changed nothing."
             ),
             "ask the owner to say approve and the version in riff chat".to_owned(),
         ),

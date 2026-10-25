@@ -1615,44 +1615,63 @@ fn says_stop(body: &str) -> bool {
 }
 
 /// The line that `riff release cut` writes in riff chat to the owner
-/// `owner`: the version, and the one message that lets the lead run the
-/// whole release (01M5NCYW06FJ8P5X629VFK1BNR).
+/// `owner`: the version, and that riff tells the owner when the deploy
+/// waits for an approval. It asks for nothing: the only ask is
+/// [`waits_line`] (01M5TKDYAFA683KNAJTGYTQD5W).
 ///
 /// ```
 /// let line = riff::cycle::cut_line("mike", "v3.3.0");
 /// assert_eq!(
 ///     line,
-///     "@mike riff release v3.3.0 is cut. Say \"approve 3.3.0\" in riff chat, and the lead \
-///      runs the test, the publish, the approval of the deploy and the check."
+///     "@mike riff release v3.3.0 is cut. riff tells you when its deploy waits for your approval."
 /// );
+/// assert!(!line.contains("Say") && !line.contains("approve"));
 /// ```
 pub fn cut_line(owner: &str, tag: &str) -> String {
-    let to = if owner.is_empty() {
-        String::new()
-    } else {
-        format!("@{owner} ")
-    };
-    let bare = tag.strip_prefix('v').unwrap_or(tag);
     format!(
-        "{to}riff release {tag} is cut. Say \"approve {bare}\" in riff chat, and the lead runs \
-         the test, the publish, the approval of the deploy and the check."
+        "{}riff release {tag} is cut. riff tells you when its deploy waits for your approval.",
+        mention(owner)
     )
+}
+
+/// The tag of the release line of riff in `body`: `riff release TAG is
+/// published`, `riff release TAG waits for your approval` or `riff
+/// release TAG still waits for your approval`. The line of the cut is no
+/// release line: it asks for nothing.
+fn release_line_tag(body: &str) -> Option<&str> {
+    const ENDS: [&str; 3] = [
+        " is published",
+        " waits for your approval",
+        " still waits for your approval",
+    ];
+    let mut rest = body;
+    while let Some(at) = rest.find("riff release ") {
+        rest = &rest[at + "riff release ".len()..];
+        let (tag, after) = rest.split_at(rest.find(char::is_whitespace).unwrap_or(rest.len()));
+        if ENDS.iter().any(|end| after.starts_with(end)) {
+            return Some(tag);
+        }
+    }
+    None
 }
 
 /// The number of the message in which the owner approved the release
 /// `tag` (01M5NCYW06FJ8P5X629VFK1BNR, in part instead of
-/// 01M594XQJMXAXY3JXP66Y8EVQ7). `lines` are the messages of the thread
-/// `chat`. `may` tells whether a USER is the owner or an admin.
+/// 01M594XQJMXAXY3JXP66Y8EVQ7, 01M5TKDYAFA683KNAJTGYTQD5W). `lines` are
+/// the messages of the thread `chat`. `may` tells whether a USER is the
+/// owner or an admin.
 ///
-/// The release starts at the first verified line of a session that says
-/// `riff release TAG is cut` or `is published`. After it, a verified
-/// message of a person who `may` and says `approve`, `approved` or
-/// `deploy` counts when it names the version, with or without the `v`.
-/// With no version, it counts when the last such line of a session
-/// before it is of this tag: the owner answers the line of the lead.
-/// A message that denies (`not`, `never`, `don't`) does not count. A
-/// message of the owner or of an admin with `stop` or `wait` after the
-/// approval cancels it.
+/// The release starts at the first verified line of riff, from a USER
+/// that `may`, that says `riff release TAG is published` or `riff release
+/// TAG waits for your approval` ([`waits_line`]). The line of the cut does
+/// not start it. After it, a verified message of a person who `may` and
+/// says `approve`, `approved` or `deploy` counts when it names the
+/// version, with or without the `v`. With no version, it counts when the
+/// last release line before it is of this tag: the owner answers the line
+/// of riff. A release line approves nothing, also when it names `riff
+/// release approve`. A message that denies (`not`, `never`, `don't`) does
+/// not count. A message of the owner or of an admin with `stop` or `wait`
+/// after the approval cancels it.
 ///
 /// ```
 /// use riff::cycle::{owner_said, ChatLine};
@@ -1662,37 +1681,43 @@ pub fn cut_line(owner: &str, tag: &str) -> String {
 /// };
 /// let may = |user: &str| user == "mike";
 /// let lines = [
-///     line(1, true, "riff release v3.3.0 is cut. Say approve 3.3.0"),
+///     line(1, true, "riff release v3.3.0 is cut. riff tells you when its deploy waits for your approval."),
 ///     line(2, false, "approve 3.3.0"),
-///     line(3, false, "approved"),
+///     line(3, false, "riff release v3.3.0 waits for your approval: https://x/runs/9. In a terminal, run: riff release approve v3.3.0"),
+///     line(4, false, "approve 3.3.0"),
+///     line(5, false, "approved"),
 /// ];
-/// assert_eq!(owner_said(&lines, "v3.3.0", &may), Some(3));
+/// // The word before the line of the wait does not count, nor does the line.
+/// assert_eq!(owner_said(&lines[..3], "v3.3.0", &may), None);
+/// assert_eq!(owner_said(&lines, "v3.3.0", &may), Some(5));
 /// assert_eq!(owner_said(&lines, "v3.3.1", &may), None);
-/// let stopped = [lines[0].clone(), lines[1].clone(), line(3, false, "stop")];
+/// let stopped = [lines[2].clone(), lines[3].clone(), line(5, false, "stop")];
 /// assert_eq!(owner_said(&stopped, "v3.3.0", &may), None);
 /// ```
 pub fn owner_said(lines: &[ChatLine], tag: &str, may: &dyn Fn(&str) -> bool) -> Option<u64> {
-    let release = |l: &ChatLine, tag: &str| {
+    // A line of riff about `tag`, or about any release when `tag` is `None`.
+    let release = |l: &ChatLine, tag: Option<&str>| {
         l.verified
-            && l.session
-            && (l.body.contains(&format!("riff release {tag} is cut"))
-                || l.body.contains(&format!("riff release {tag} is published")))
+            && may(&l.user)
+            && release_line_tag(&l.body).is_some_and(|named| tag.is_none_or(|t| named == t))
     };
     let start = lines
         .iter()
-        .filter(|l| release(l, tag))
+        .filter(|l| release(l, Some(tag)))
         .map(|l| l.seq)
         .min()?;
-    // The tag of the last line of a session about a release, before `seq`.
+    // The last release line before `seq` is of `tag`.
     let asked = |seq: u64| {
         lines
             .iter()
-            .filter(|l| l.seq < seq && l.verified && l.session)
-            .filter(|l| l.body.contains(" is cut") || l.body.contains(" is published"))
+            .filter(|l| l.seq < seq && release(l, None))
             .max_by_key(|l| l.seq)
-            .is_some_and(|l| release(l, tag))
+            .is_some_and(|l| release(l, Some(tag)))
     };
-    let owner = |l: &ChatLine| l.verified && !l.session && may(&l.user);
+    // A release line is of riff, also when riff posts it as the person.
+    let owner = |l: &ChatLine| {
+        l.verified && !l.session && may(&l.user) && release_line_tag(&l.body).is_none()
+    };
     let approved = lines
         .iter()
         .filter(|l| l.seq > start && owner(l))
@@ -5021,15 +5046,71 @@ pub(crate) mod tests {
         user == "mike"
     }
 
+    /// The line of the job `Deploy` that waits, as the daemon posts it: as
+    /// the person, not as a session.
+    fn waits(seq: u64, tag: &str) -> ChatLine {
+        chat(
+            seq,
+            "mike",
+            false,
+            &waits_line("mike", tag, "https://x/runs/9", false, &[]),
+        )
+    }
+
+    fn published(seq: u64, tag: &str) -> ChatLine {
+        chat(seq, "mike", true, &publish_line("mike", tag, None))
+    }
+
+    #[test]
+    fn the_cut_line_asks_nothing_and_says_that_riff_tells_the_owner() {
+        let line = cut_line("mike", "v4.0.1");
+        assert_eq!(
+            line,
+            "@mike riff release v4.0.1 is cut. riff tells you when its deploy waits for your approval."
+        );
+        let lower = line.to_lowercase();
+        for ask in ["say", "approve", "deploy it", "?"] {
+            assert!(!lower.contains(ask), "{line}: {ask}");
+        }
+        assert!(cut_line("", "v4.0.1").starts_with("riff release v4.0.1 is cut."));
+        // It is no release line: no approval counts after it.
+        assert_eq!(release_line_tag(&line), None);
+    }
+
+    #[test]
+    fn a_release_line_names_its_tag() {
+        for (body, tag) in [
+            (
+                "riff release v4.0.1 is published. Its CI run builds",
+                Some("v4.0.1"),
+            ),
+            (
+                "@mike riff release v4.0.1 waits for your approval: https://x. In a terminal",
+                Some("v4.0.1"),
+            ),
+            (
+                "Reminder: @mike riff release v4.0.2 still waits for your approval: https://x.",
+                Some("v4.0.2"),
+            ),
+            (
+                "riff release v4.0.1 is cut. riff tells you when its deploy waits",
+                None,
+            ),
+            ("riff release approve v4.0.1", None),
+            ("approve 4.0.1", None),
+        ] {
+            assert_eq!(release_line_tag(body), tag, "{body}");
+        }
+    }
+
     #[test]
     fn owner_said_takes_a_version_with_and_without_the_v() {
-        let cut = chat(1, "mike", true, "riff release v4.0.1 is cut.");
         for body in [
             "approve 4.0.1",
             "approve v4.0.1",
             "I approve 4.0.1. proceed",
         ] {
-            let lines = [cut.clone(), chat(2, "mike", false, body)];
+            let lines = [waits(1, "v4.0.1"), chat(2, "mike", false, body)];
             assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(2), "{body}");
             assert_eq!(owner_said(&lines, "v4.0.2", &mike), None, "{body}");
         }
@@ -5038,8 +5119,8 @@ pub(crate) mod tests {
     #[test]
     fn owner_said_takes_approved_as_the_answer_to_the_last_release_line() {
         let lines = [
-            chat(1, "mike", true, "riff release v4.0.0 is published."),
-            chat(2, "mike", true, "riff release v4.0.1 is cut."),
+            published(1, "v4.0.0"),
+            waits(2, "v4.0.1"),
             chat(3, "mike", false, "approved"),
         ];
         assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(3));
@@ -5047,40 +5128,130 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn owner_said_ignores_a_message_before_the_cut_a_member_a_session_and_a_denial() {
-        let cut = chat(2, "mike", true, "riff release v4.0.1 is cut.");
-        let before = [chat(1, "mike", false, "approve 4.0.1"), cut.clone()];
-        assert_eq!(owner_said(&before, "v4.0.1", &mike), None);
+    fn owner_said_counts_an_approval_after_the_line_that_the_deploy_waits() {
+        let lines = [
+            published(1, "v4.0.1"),
+            waits(2, "v4.0.1"),
+            chat(3, "mike", false, "approved"),
+        ];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(3));
+        // The reminder is a release line too.
+        let again = [
+            chat(
+                1,
+                "mike",
+                false,
+                &waits_line("mike", "v4.0.1", "https://x/runs/9", true, &[]),
+            ),
+            chat(2, "mike", false, "approved"),
+        ];
+        assert_eq!(owner_said(&again, "v4.0.1", &mike), Some(2));
+    }
+
+    #[test]
+    fn owner_said_counts_an_approval_after_the_publish_alone() {
+        let lines = [
+            published(1, "v4.0.1"),
+            chat(2, "mike", false, "approve 4.0.1"),
+        ];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(2));
+    }
+
+    #[test]
+    fn owner_said_ignores_an_approval_before_the_publish_and_after_the_cut_alone() {
+        let cut = chat(1, "mike", true, &cut_line("mike", "v4.0.1"));
+        let early = chat(2, "mike", false, "approve 4.0.1");
+        // Only the cut: no word of the owner counts, also a late one.
+        let lines = [
+            cut.clone(),
+            early.clone(),
+            chat(3, "mike", false, "approved"),
+        ];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
+        // The word before the publish does not count.
+        let lines = [cut.clone(), early.clone(), published(3, "v4.0.1")];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
+        // The word before the line of the wait does not count.
+        let lines = [cut, early, waits(3, "v4.0.1")];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
+    }
+
+    #[test]
+    fn owner_said_takes_a_line_of_riff_as_no_approval() {
+        // The line of the wait names `riff release approve vX.Y.Z`, and
+        // the daemon posts it as the owner.
+        let lines = [waits(1, "v4.0.1")];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
+        let lines = [published(1, "v4.0.1"), waits(2, "v4.0.1")];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
+        // A reminder with a hold says `wait`, and it stops nothing.
+        let held = Hold {
+            user: "nate".into(),
+            repo: "o/s".into(),
+            reason: "A demo runs.".into(),
+        };
+        let reminder = chat(
+            3,
+            "mike",
+            false,
+            &waits_line("mike", "v4.0.1", "https://x/runs/9", true, &[held]),
+        );
+        let lines = [
+            waits(1, "v4.0.1"),
+            chat(2, "mike", false, "approved"),
+            reminder,
+        ];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(2));
+    }
+
+    #[test]
+    fn owner_said_ignores_a_line_of_a_member_for_the_start() {
+        let line = waits_line("mike", "v4.0.1", "https://x/runs/9", false, &[]);
+        let lines = [
+            chat(1, "mike", false, "approve 4.0.1"),
+            chat(2, "bob", true, &line),
+            chat(3, "bob", false, &line),
+        ];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
+        let mut loud = waits(2, "v4.0.1");
+        loud.verified = false;
+        let lines = [chat(1, "mike", false, "approve 4.0.1"), loud];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
+    }
+
+    #[test]
+    fn owner_said_ignores_a_member_a_session_and_a_denial() {
+        let start = waits(2, "v4.0.1");
         for (who, session, body) in [
             ("bob", false, "approve 4.0.1"),
             ("mike", true, "approve 4.0.1"),
             ("mike", false, "do not approve 4.0.1"),
             ("mike", false, "I don't approve 4.0.1"),
         ] {
-            let lines = [cut.clone(), chat(3, who, session, body)];
+            let lines = [start.clone(), chat(3, who, session, body)];
             assert_eq!(owner_said(&lines, "v4.0.1", &mike), None, "{body}");
         }
         let mut loud = chat(3, "mike", false, "approved");
         loud.verified = false;
-        assert_eq!(owner_said(&[cut, loud], "v4.0.1", &mike), None);
+        assert_eq!(owner_said(&[start, loud], "v4.0.1", &mike), None);
     }
 
     #[test]
     fn owner_said_stops_at_a_stop_after_the_approval() {
-        let cut = chat(1, "mike", true, "riff release v4.0.1 is cut.");
+        let start = waits(1, "v4.0.1");
         let said = chat(2, "mike", false, "approved");
         for body in ["stop", "wait for me"] {
-            let lines = [cut.clone(), said.clone(), chat(3, "mike", false, body)];
+            let lines = [start.clone(), said.clone(), chat(3, "mike", false, body)];
             assert_eq!(owner_said(&lines, "v4.0.1", &mike), None, "{body}");
         }
         let again = [
-            cut.clone(),
+            start.clone(),
             said.clone(),
             chat(3, "mike", false, "stop"),
             chat(4, "mike", false, "approved"),
         ];
         assert_eq!(owner_said(&again, "v4.0.1", &mike), Some(4));
-        let member = [cut, said, chat(3, "bob", false, "stop")];
+        let member = [start, said, chat(3, "bob", false, "stop")];
         assert_eq!(owner_said(&member, "v4.0.1", &mike), Some(2));
     }
 }
