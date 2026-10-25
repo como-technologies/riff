@@ -673,11 +673,10 @@ The workflow "Release images" runs on each release tag. It reads the
 release pins them. First it checks with an anonymous pull that both
 packages are public. If a package is private, the job fails and names
 the page of its settings: make the package public there, and run the job
-again. A new package is private at first, so do this once for
-`riff-base` and `riff-rust`. Then the job adds the tags `X.Y.Z`, the
-version of the release, and `latest` to the two images, and adds their
-digests to the notes of the GitHub release under the heading "Images".
-A project pins a digest, so the tags are for people.
+again. Then the job adds the tags `X.Y.Z`, the version of the release,
+and `latest` to the two images, and adds their digests to the notes of
+the GitHub release under the heading "Images". A project pins a digest,
+so the tags are for people.
 
 ```mermaid
 flowchart LR
