@@ -1397,7 +1397,7 @@ gets the rebase first: its new head has new checks.
 
 The session for a failed check gets the names of the checks. It reads
 the log of the failed run, fixes the work, and pushes to the same pull
-request. A new Gate and a new verify of the new commit follow. For a
+request. New checks and a new verify of the new commit follow. For a
 known flake, it runs the job again one time and pushes nothing. Each
 head commit starts one such session in a run of the wave.
 
