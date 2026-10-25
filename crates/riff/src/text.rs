@@ -6088,6 +6088,10 @@ pub fn daemon_no_answer(state: &str, socket: &Path) -> String {
 /// The first line of `riff init` (01M4ZJN6TEWCYCB39XTH6BBD9H).
 pub const INIT_CHECKS: &str = "riff checks this machine:";
 
+/// The line of `riff init` in a session container, in place of the checks of
+/// the machine: the host runs them (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
+pub const INIT_MACHINE_SKIPPED: &str = "skip  the checks of the machine: the host runs them";
+
 /// The line before the second list of `riff init`, after the steps of the
 /// setup (01M5RGGD6YR36EXZEG61XCJVRY).
 pub const INIT_CHECKS_AGAIN: &str = "riff checks this machine again:";
@@ -6738,6 +6742,11 @@ pub fn init_failed(failed: &[(&str, &str)]) -> String {
 
 /// Each check of `riff init --check` passed.
 pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check.";
+
+/// Each check passed in a session container, and `riff init` stops there
+/// (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
+pub const INIT_CONTAINER_DONE: &str =
+    "Each check passed. riff installed no daemon and pulled no image: the host has the daemon.";
 
 /// A daemon answers, and `riff init` keeps it (01M4ZJN6Z1DGD43CKZ19QPN2NK).
 ///

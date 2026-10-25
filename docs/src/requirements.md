@@ -5014,6 +5014,16 @@ of this part when they merge.
   of a repository, and riff reads no file of a build tool: the CI of the
   repository is the gate of a change. Supersedes
   01M5R1675HZ6TJPMQ6536X37T5 in part: the check of the `CLAUDE.md`.
+- **01M5SMJMR5KS1Z1Z7CEPH9JVBB** In a session container (`RIFF_SOCKET`
+  is set), `riff init` and `riff init --check` run no check of the
+  machine: not podman, not the init of podman, not `/etc/subuid`, not
+  `/etc/subgid`, not cgroup v2. A session container runs no podman, and
+  the host runs those checks. In place of them, riff prints one line,
+  `skip` and the words `the checks of the machine: the host runs them`,
+  and then runs the checks of the repository. A run of `riff init` with
+  no `--check` in a session container does the steps of the repository,
+  installs no daemon and pulls no image: the host has the daemon. On a
+  host, the checks stay as 01M4ZJN6TEWCYCB39XTH6BBD9H gives them.
 
 ### The permission rules
 

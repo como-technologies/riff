@@ -531,7 +531,11 @@ enum Command {
     /// prints the fix of each check that still fails, and stops. When each
     /// check passes, it installs and starts the riff daemon, as riff daemon
     /// install does, and the daemon pulls the session image. A daemon that
-    /// answers stays: riff init does not start it again.
+    /// answers stays: riff init does not start it again. In a session
+    /// container (RIFF_SOCKET is set), for example the container of a lead,
+    /// riff init skips the checks of the machine, says so in one line, and
+    /// runs the checks of the repository: the host runs the machine, the
+    /// daemon and the image.
     Init {
         /// Change nothing. Print the fix of each check that fails, and
         /// each wide allow rule. Exit with status 1 when a check fails.

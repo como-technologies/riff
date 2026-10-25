@@ -419,6 +419,125 @@ async fn riff_init_check_changes_nothing() {
     assert!(!machine.unit().exists());
 }
 
+impl Machine {
+    /// Breaks each part of the machine that `riff init` checks: no
+    /// podman, no init of podman, no `subuid`, no `subgid`, no cgroup v2.
+    fn break_machine(&self) {
+        std::fs::write(self.bin.join("no-podman"), "").unwrap();
+        std::fs::remove_file(self.init.join("catatonit")).unwrap();
+        std::fs::remove_file(self.etc.join("subuid")).unwrap();
+        std::fs::remove_file(self.etc.join("subgid")).unwrap();
+        std::fs::remove_file(self.cgroup.join("cgroup.controllers")).unwrap();
+    }
+
+    /// `riff init ARGS` in the folder `dir`, in a session container of the
+    /// daemon: `RIFF_SOCKET` is set.
+    async fn container_init(&self, dir: &Path, args: &[&str]) -> Output {
+        let mut cmd = self.init_command(dir, args);
+        cmd.env("RIFF_SOCKET", "/run/riff/riff.sock");
+        output(cmd).await
+    }
+}
+
+/// The names of the checks in the lines `lines`: the text between the
+/// mark and the first colon.
+fn names_of<'a>(lines: &[&'a str]) -> Vec<&'a str> {
+    lines
+        .iter()
+        .map(|l| l.trim_start().split_once("  ").unwrap().1)
+        .map(|l| l.split(':').next().unwrap())
+        .collect()
+}
+
+/// 01M5SMJMR5KS1Z1Z7CEPH9JVBB: `riff init --check` in a session container
+/// (`RIFF_SOCKET` is set) prints no line of podman, its init, `subuid`,
+/// `subgid` or cgroup v2, prints the line of the skip, and runs the checks
+/// of the repository. On a host, the same machine prints the five lines.
+#[tokio::test]
+async fn riff_init_check_in_a_session_container_skips_the_checks_of_the_machine() {
+    let machine = Machine::new();
+    machine.add_origin();
+    bare(&machine.bin);
+    machine.break_machine();
+
+    let host = text(&machine.init(&machine.repo, &["--check"]).await.stdout);
+    assert_eq!(
+        names_of(&failed_lines(&host))[..5],
+        [
+            "podman",
+            "the init of podman",
+            "/etc/subuid",
+            "/etc/subgid",
+            "cgroup v2"
+        ],
+        "{host}"
+    );
+    assert!(!host.contains("the checks of the machine"), "{host}");
+
+    let out = machine.container_init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.starts_with(
+            "riff checks this machine:\n  skip  the checks of the machine: the host runs them\n"
+        ),
+        "{stdout}"
+    );
+    for word in ["podman", "subuid", "subgid", "cgroup"] {
+        assert!(!stdout.contains(word), "{word}\nin\n{stdout}");
+    }
+    assert_eq!(
+        names_of(&failed_lines(&stdout)),
+        [
+            "riff.toml on main",
+            "auto-merge and squash merge",
+            "the ruleset of main",
+            "the milestone Backlog",
+            "the first wave"
+        ],
+        "{stdout}"
+    );
+    assert!(stdout.contains("\n5 checks failed. "), "{stdout}");
+    assert!(machine.forge_changes().is_empty());
+    assert_eq!(machine.read("systemctl.log"), "");
+}
+
+/// 01M5SMJMR5KS1Z1Z7CEPH9JVBB: `riff init` in a session container, where
+/// each check of the repository passes, installs no daemon and pulls no
+/// image: the host has them.
+#[tokio::test]
+async fn riff_init_in_a_session_container_installs_no_daemon() {
+    let machine = Machine::new();
+    machine.add_origin();
+    set_up(&machine.bin);
+    machine.break_machine();
+
+    let host = machine.init(&machine.repo, &[]).await;
+    assert_eq!(host.status.code(), Some(1), "{}", text(&host.stdout));
+
+    for args in [&[][..], &["--yes"]] {
+        let out = machine.container_init(&machine.repo, args).await;
+        let stdout = text(&out.stdout);
+        assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+        assert!(
+            stdout.contains("  skip  the checks of the machine: the host runs them\n"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("fail  "), "{stdout}");
+        assert!(
+            stdout.ends_with(
+                "Each check passed. riff installed no daemon and pulled no image: the host has \
+                 the daemon.\n"
+            ),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("This machine is ready."), "{stdout}");
+    }
+    assert_eq!(machine.read("systemctl.log"), "");
+    assert!(!machine.unit().exists());
+    assert!(machine.forge_changes().is_empty());
+}
+
 /// 01M510NW68CTZBHHW7ZYFV7Q3X: the riff of a plain `cargo build` links
 /// the libc of the machine. `riff init` gives one failed check for it,
 /// with the fix `riff update`, and installs nothing. The test
@@ -1249,8 +1368,10 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
             "riff init",
             "riff init --yes",
             "riff init --check",
-            // "Add another repository to the riff": set it up, check, then pull the image.
+            // "Add another repository to the riff": set it up, check in the container of the
+            // lead (01M5SMJMR5KS1Z1Z7CEPH9JVBB), check, then pull the image.
             "riff init",
+            "riff init --check",
             "riff init --check",
             "riff init"
         ]
@@ -1296,7 +1417,15 @@ fn assert_is_output(book: &[String], real: &str) {
 #[tokio::test]
 async fn the_book_shows_the_output_of_a_first_run_and_the_end_of_a_failed_run() {
     let blocks = text_blocks("start-a-riff.md", "Add another repository to the riff");
-    assert_eq!(blocks.len(), 2, "{blocks:#?}");
+    assert_eq!(blocks.len(), 3, "{blocks:#?}");
+
+    // The run in the container of the lead (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
+    let machine = Machine::new();
+    machine.add_origin();
+    set_up(&machine.bin);
+    let out = machine.container_init(&machine.repo, &["--check"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_is_output(&blocks[0], &text(&out.stdout));
 
     let machine = Machine::new();
     let clone = machine.clone_behind_origin();
@@ -1305,12 +1434,12 @@ async fn the_book_shows_the_output_of_a_first_run_and_the_end_of_a_failed_run() 
     let out = machine.init(&clone, &["--yes"]).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     let real = text(&out.stdout).replace(clone.to_str().unwrap(), "/home/mike/app");
-    assert_is_output(&blocks[0], &real);
+    assert_is_output(&blocks[1], &real);
 
     let machine = Machine::new();
     machine.add_origin();
     no_ci(&machine.bin);
     let out = machine.init(&machine.repo, &["--yes"]).await;
     assert_eq!(out.status.code(), Some(1));
-    assert_is_output(&blocks[1], &text(&out.stdout));
+    assert_is_output(&blocks[2], &text(&out.stdout));
 }
