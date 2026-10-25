@@ -907,7 +907,7 @@ async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
     std::fs::create_dir_all(a.dir()).unwrap();
     let repo = lead.place().repo_text();
     let waves = serde_json::json!({repo.clone(): {
-        "repo": repo, "main": main, "server": &*server, "host": "a", "branch": "main",
+        "repo": repo, "main": main, "server": &*server, "host": "a",
     }});
     std::fs::write(a.dir().join("waves.json"), waves.to_string()).unwrap();
     assert!(!a.dir().join("served.json").exists());
@@ -923,4 +923,47 @@ async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
     assert!(text(&out.stdout).contains("Its folder:"), "{out:?}");
     let served = remote::read_served(&a.dir()).unwrap();
     assert_eq!(served[&repo].wave.server, &*server);
+}
+
+/// 01M5R56GN3DC09GAPAF69GENEZ (#1404): `waves.json` and `served.json` of
+/// an older build have no default branch. The daemon of a later build
+/// reads both, serves the repository, and keeps the session that the older
+/// build gave it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_daemon_with_the_served_file_of_an_older_build_serves_host() {
+    let server = start_server().await;
+    let root = tempfile::tempdir().unwrap();
+    let main = repository(root.path());
+    let lead = session(&main, "mike", "a", "l1");
+    let api = crate::common::api_of(&server, &lead);
+    api.register(&lead).await.unwrap();
+    crate::common::name_lead(&server.api("mike", None), &lead).await;
+    api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let mut a = Host::new("a", &server);
+    a.claude_ends_in(300);
+    std::fs::create_dir_all(a.dir()).unwrap();
+    let repo = lead.place().repo_text();
+    let wave = serde_json::json!({
+        "repo": repo, "main": main, "server": &*server, "host": "a",
+    });
+    let waves = serde_json::json!({repo.clone(): wave.clone()});
+    std::fs::write(a.dir().join("waves.json"), waves.to_string()).unwrap();
+    let session = riff::identity::new_session_id();
+    let served = serde_json::json!({repo.clone(): {"wave": wave, "session": session}});
+    std::fs::write(a.dir().join("served.json"), served.to_string()).unwrap();
+    a.start().await;
+
+    let out = until("the status of the host", || async {
+        let out = a
+            .run(&main, &["daemon", "status", "--host", "a"], Some("l1"))
+            .await;
+        out.status.success().then_some(out)
+    })
+    .await;
+    assert!(text(&out.stdout).contains("Its folder:"), "{out:?}");
+    let kept = remote::read_served(&a.dir()).unwrap();
+    assert_eq!(kept[&repo].session, session);
+    assert_eq!(kept[&repo].wave.server, &*server);
+    let written = std::fs::read_to_string(a.dir().join("served.json")).unwrap();
+    assert!(!written.contains("branch"), "{written}");
 }

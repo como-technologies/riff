@@ -7599,6 +7599,10 @@ pub fn wave_rebase_start(
     )
 }
 
+/// The words for the default branch in [`wave_not_rebased`] when the branch
+/// does not read (01M5R56GN3DC09GAPAF69GENEZ).
+pub const WAVE_BASE_UNREAD: &str = "the default branch";
+
 /// The message to the lead when the rebase session of `item` ended and
 /// its pull request still has the head `commit` with the conflict: the
 /// session pushed nothing (01M57FJ3Z8AFDY9G0KTAYZJESY). `base` is the
@@ -7613,6 +7617,11 @@ pub fn wave_rebase_start(
 ///      for this commit. Give the item to a session to rebase, or run riff wave run to start \
 ///      the rebase again. The item is free."
 /// );
+/// // The default branch did not read.
+/// let unread = riff::text::wave_not_rebased(
+///     "issue-12", 40, "worktree-issue-12", riff::text::WAVE_BASE_UNREAD, "1a2b3c4d5e", "9f8e7d6c",
+/// );
+/// assert!(unread.contains("with the conflict with the default branch. The riff daemon"), "{unread}");
 /// ```
 pub fn wave_not_rebased(
     item: &str,

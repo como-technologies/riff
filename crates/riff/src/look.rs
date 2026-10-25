@@ -956,11 +956,13 @@ pub struct Watch {
 /// One look of the daemon at the repository of `wave`
 /// (01M5QVH3MAEPPJN9PPVDX6N2EY): it reads the open issues and pull
 /// requests and the claims, sends the messages for the pull requests
-/// that stop ([`PullWatch::news`]), and looks at the full check of `main`
-/// ([`main_post`]). Each post goes through [`World::post`]. When a post
-/// does not go out, `watch` forgets what it did not tell, and the next
-/// look does it again. A forge or a riff-server that does not answer is
-/// the error.
+/// that stop ([`PullWatch::news`]), and looks at the full check of the
+/// default branch ([`main_post`]). Each post goes through [`World::post`].
+/// When a post does not go out, `watch` forgets what it did not tell, and
+/// the next look does it again. A forge or a riff-server that does not
+/// answer is the error. So is a default branch that does not read
+/// ([`crate::pr::default_branch`]): the wave reads it at each look, and
+/// keeps it in no file (01M5R56GN3DC09GAPAF69GENEZ).
 pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Result<()> {
     let gh = world.gh(&wave.repo);
     let (issues, pulls) = {
@@ -976,9 +978,15 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
             return Err(e);
         }
     }
+    // Like a forge that does not answer, a default branch that does not read is
+    // the error of the look. The news about the pull requests went out first.
+    let branch = {
+        let (gh, repo) = (gh.clone(), wave.repo.clone());
+        tokio::task::spawn_blocking(move || crate::pr::default_branch(&gh, &repo)).await??
+    };
     let before = watch.main.clone();
-    let (repo, branch) = (&wave.repo, &wave.branch);
-    let posted = match main_post(&gh, repo, branch, (issues, pulls), claims, &mut watch.main).await
+    let repo = &wave.repo;
+    let posted = match main_post(&gh, repo, &branch, (issues, pulls), claims, &mut watch.main).await
     {
         Ok(Some((body, kind))) => world.post(wave, None, &body, kind).await,
         Ok(None) => Ok(()),

@@ -4164,14 +4164,11 @@ pub async fn ask_serve(
         bail!("{}", text::RUN_NO_REPO);
     }
     let (main, _) = crate::run::main_clone(work)?;
-    // A served lead runs no wave: the branch of `origin/HEAD` is enough.
-    let branch = crate::permissions::Project::of(&main).branch;
     let wave = Wave {
         repo: here.repo_text(),
         main,
         server: server.to_owned(),
         host: here.host().to_owned(),
-        branch,
     };
     ask_done(dir, Ask::Serve { wave }, |line| println!("{line}")).await
 }
@@ -4456,7 +4453,6 @@ mod tests {
                     main: self.root.path().to_owned(),
                     server: start.server.clone(),
                     host: "h".into(),
-                    branch: "main".into(),
                 },
                 work: crate::wave::Work::Build { issue: 12 },
             };
@@ -5542,7 +5538,6 @@ mod tests {
                 main: root.path().to_owned(),
                 server: record.server.clone(),
                 host: "h".into(),
-                branch: "main".into(),
             },
             work: crate::wave::Work::Build { issue: 1 },
         });
@@ -5608,6 +5603,82 @@ mod tests {
         assert!(record_path(&dir, name).exists());
         let (_relay, had) = Relay::connect(&session_dir(&dir, name), 1, false).await;
         assert_eq!(had, 0);
+    }
+
+    /// 01M5R56GN3DC09GAPAF69GENEZ (#1404): the live record of a wave job
+    /// that an older build wrote has a wave of four fields, with no default
+    /// branch. A new daemon reads it and takes the session up: its job
+    /// goes on with the keep-alive of its claim. It does not remove the
+    /// record as one that does not parse.
+    #[tokio::test]
+    async fn a_new_daemon_takes_up_a_session_with_a_wave_job_of_an_older_build() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let name = "riff-issue-1-aaaaaaaa";
+        let folder = root.path().join("sessions/issue-1");
+        std::fs::create_dir_all(&folder).unwrap();
+        private_dir(&dir.join(LIVE)).unwrap();
+        let record = Record {
+            live: Live {
+                name: name.into(),
+                session: format!("{name}-session"),
+                item: "issue-1".into(),
+                image: IMAGE.into(),
+                since_ms: 0,
+                phase: Phase::default(),
+                last: String::new(),
+                lead: false,
+            },
+            folder,
+            server: "http://127.0.0.1:1".into(),
+            me: me(name),
+            inputs: vec![user_line("Do it.")],
+            closed: false,
+            failed: false,
+            job: Some(Job {
+                wave: Wave {
+                    repo: "o/r".into(),
+                    main: root.path().join("r"),
+                    server: "http://127.0.0.1:1".into(),
+                    host: "thelio".into(),
+                },
+                work: crate::wave::Work::Build { issue: 1 },
+            }),
+            terminal: false,
+            takeover: false,
+            interrupt: false,
+        };
+        // The wave of an older build had these four fields, and no more.
+        let old = serde_json::to_value(&record).unwrap();
+        let mut fields: Vec<&str> = old["job"]["wave"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["host", "main", "repo", "server"]);
+        std::fs::write(record_path(&dir, name), old.to_string()).unwrap();
+        private_dir(&session_dir(&dir, name)).unwrap();
+
+        let fake = Fake::default().with_image(IMAGE).with_no_answer();
+        let listener = listen(&dir).await.unwrap();
+        riff_client::secrets::mock_store();
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let daemon = Arc::new(Daemon::new(fake, dir.clone()).unwrap().with_world(world));
+        daemon.recover().await;
+        tokio::spawn(daemon.serve(listener, std::future::pending()));
+        let names: Vec<String> = status(&dir)
+            .await
+            .unwrap()
+            .sessions
+            .into_iter()
+            .map(|l| l.name)
+            .collect();
+        assert_eq!(names, [name]);
+        assert!(record_path(&dir, name).exists());
+        assert_eq!(server.said(), [format!("resume {name}-session")]);
     }
 
     #[tokio::test]
@@ -6672,7 +6743,6 @@ mod tests {
             main: dir.join("r"),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
-            branch: "main".into(),
         };
         crate::wave::write_waves(dir, &BTreeMap::from([(wave.repo.clone(), wave)])).unwrap();
         daemon.run_waves();
@@ -6738,7 +6808,6 @@ mod tests {
             main: root.path().join(repo),
             server: server.into(),
             host: "pangolin".into(),
-            branch: "main".into(),
         };
         let waves = [
             ("o/new".to_owned(), wave("o/new", "http://127.0.0.1:1")),
@@ -7704,7 +7773,6 @@ mod tests {
                 main: here.root.path().to_owned(),
                 server: server.clone(),
                 host: host.into(),
-                branch: "main".into(),
             };
             let served = remote::Served {
                 wave,

@@ -175,7 +175,6 @@ pub fn read_served(dir: &Path) -> Result<BTreeMap<String, Served>> {
 ///     main: "/src/r".into(),
 ///     server: "http://127.0.0.1:1".into(),
 ///     host: "thelio".into(),
-///     branch: "main".into(),
 /// };
 /// let first = serve_in_file(dir.path(), &wave)?;
 /// let moved = Wave { main: "/src/r2".into(), ..wave };

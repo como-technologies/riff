@@ -6642,6 +6642,16 @@ part when they merge.
   branch of the repository at each look, after the look at the blocks,
   and a failed read gives no look at the full check, like a forge that
   does not answer. Refs 01M5QYBWPAJ219BE8QKVKG1TWW.
+- **01M5R56GN3DC09GAPAF69GENEZ** The wave keeps the default branch of
+  the repository in no file. The loop of the wave and its look read the
+  branch from the forge at each look, and a build, a rebase and a verify
+  read it at their start. So `waves.json`, `served.json` and the record
+  of a session have no branch, and the files of an older build stay
+  valid after an update: a machine takes each release with no step of a
+  person. A branch that does not read gives the error of the look: the
+  wave starts no work at that look, and reads again at the next one.
+  `riff wave run` reads no branch. Supersedes 01M5QYBWPAJ219BE8QKVKG1TWW
+  in part.
 
 ### The lead, the view and the takeover
 

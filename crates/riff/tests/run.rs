@@ -44,7 +44,7 @@ fn script(path: &Path, body: &str) {
 /// milestone is Wave 27, no pull request is open, and issue 12 is the
 /// open issue of Wave 27 while `bin/wave-issue` is there. The default
 /// branch of the repository is `main`, or the text of the file
-/// `bin/branch`. For the look at the default branch, the file `bin/gate`
+/// `bin/branch`, and it does not read while `bin/branch-fails` is there. For the look at the default branch, the file `bin/gate`
 /// holds the check runs of its head, and `issue create` files the fix
 /// item 901.
 fn fake_gh(bin: &Path) {
@@ -54,7 +54,9 @@ echo "gh $*" >> "$dir/gh.log"
 branch=main
 [ -f "$dir/branch" ] && branch=$(cat "$dir/branch")
 case "$*" in
-  'api repos/como-technologies/riff --jq .default_branch') echo "$branch" ;;
+  'api repos/como-technologies/riff --jq .default_branch')
+    if [ -f "$dir/branch-fails" ]; then echo 'gh: HTTP 502' >&2; exit 1; fi
+    echo "$branch" ;;
   'auth token') echo GHTOKEN ;;
   'issue view 12 --json number,state,milestone')
     while [ -f "$dir/milestone-hold" ]; do sleep 0.05; done
@@ -2319,11 +2321,11 @@ async fn the_daemon_tells_the_lead_that_main_is_broken_and_files_the_fix_item() 
     machine.ok(None, &["wave", "stop"]).await;
 }
 
-/// 01M5QYBWPAJ219BE8QKVKG1TWW (#1352): the default branch of the
-/// repository is `master`. `riff wave run` reads it from the forge one
-/// time and keeps it in the wave. The look reads the full check of
-/// `commits/master`, and never `commits/main`: the fake `gh` has no check
-/// for `main`.
+/// 01M5QYBWPAJ219BE8QKVKG1TWW (#1352), 01M5R56GN3DC09GAPAF69GENEZ (#1404):
+/// the default branch of the repository is `master`. The wave reads it
+/// from the forge at each look and keeps it in no file. The look reads the
+/// full check of `commits/master`, and never `commits/main`: the fake `gh`
+/// has no check for `main`.
 #[tokio::test]
 async fn the_look_of_a_repository_with_the_default_branch_master_reads_master() {
     let machine = Machine::new().await;
@@ -2342,7 +2344,7 @@ async fn the_look_of_a_repository_with_the_default_branch_master_reads_master() 
 
     let waves = machine.env.riff_home().join("daemon/waves.json");
     let kept = std::fs::read_to_string(&waves).unwrap();
-    assert!(kept.contains(r#""branch": "master""#), "{kept}");
+    assert!(!kept.contains("branch"), "{kept}");
     let started = Instant::now();
     let thread = loop {
         let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
@@ -2357,15 +2359,135 @@ async fn the_look_of_a_repository_with_the_default_branch_master_reads_master() 
         "{thread}"
     );
     let log = machine.read("gh.log");
-    assert_eq!(
-        log.matches("gh api repos/como-technologies/riff --jq .default_branch")
-            .count(),
-        1,
+    assert!(
+        log.contains("gh api repos/como-technologies/riff --jq .default_branch"),
         "{log}"
     );
     assert!(log.contains("/commits/master/check-runs"), "{log}");
     assert!(!log.contains("/commits/main/"), "{log}");
     machine.ok(None, &["wave", "stop"]).await;
+}
+
+/// 01M5R56GN3DC09GAPAF69GENEZ (#1404): `waves.json` of an older build has
+/// no default branch. The daemon of a later build starts with that file, runs
+/// the wave, and its look reads the full check of `commits/master`, the
+/// default branch that the forge gives. `riff wave run` reads the old file
+/// too, and the file that it writes has no branch.
+#[tokio::test]
+async fn a_daemon_with_a_waves_file_of_an_older_build_runs_the_wave_and_the_look_reads_master() {
+    let mut machine = Machine::new().await;
+    machine.lead().await;
+    machine
+        .ok(None, &["daemon", "limit", "--sessions", "0"])
+        .await;
+    let bin = machine.bin.path().to_owned();
+    std::fs::write(bin.join("branch"), "master\n").unwrap();
+    std::fs::write(
+        bin.join("gate"),
+        r#"{"check_runs":[{"status":"completed","conclusion":"failure","head_sha":"5103311abcdef"}]}"#,
+    )
+    .unwrap();
+
+    // The daemon stops, and the file of an older build is there when it starts.
+    machine.stop_daemon().await;
+    let waves = machine.env.riff_home().join("daemon/waves.json");
+    let old = serde_json::json!({"como-technologies/riff": {
+        "repo": "como-technologies/riff",
+        "main": machine.main,
+        "server": machine.server,
+        "host": "thelio",
+    }});
+    std::fs::write(&waves, old.to_string()).unwrap();
+    machine.start_daemon().await;
+    wait_for(
+        &bin.join("daemon.out"),
+        "runs the wave of como-technologies/riff",
+    )
+    .await;
+
+    let started = Instant::now();
+    let thread = loop {
+        let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+        if thread.contains("main is broken") {
+            break thread;
+        }
+        assert!(started.elapsed() < isolated::HANG, "no message: {thread}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert!(
+        thread.contains("the full check failed at commit 5103311"),
+        "{thread}"
+    );
+    let log = machine.read("gh.log");
+    assert!(log.contains("/commits/master/check-runs"), "{log}");
+    assert!(!log.contains("/commits/main/"), "{log}");
+    let out = machine.read("daemon.out");
+    assert!(!out.contains("cannot read the waves"), "{out}");
+
+    // `riff wave run` reads the old file, and writes none of the branch.
+    machine.ok(None, &["wave", "run"]).await;
+    let kept = std::fs::read_to_string(&waves).unwrap();
+    assert!(kept.contains("como-technologies/riff"), "{kept}");
+    assert!(!kept.contains("branch"), "{kept}");
+    machine.ok(None, &["wave", "stop"]).await;
+}
+
+/// 01M5R56GN3DC09GAPAF69GENEZ (#1404): a default branch that does not read
+/// is the error of the look. The wave starts no work at that look, says
+/// why in `riff daemon status`, and reads the branch again at the next
+/// look. Then it starts the build, and the start text names the branch.
+#[tokio::test]
+async fn a_default_branch_that_does_not_read_starts_no_work_and_the_next_look_reads_it_again() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let bin = machine.bin.path();
+    std::fs::write(bin.join("branch"), "master").unwrap();
+    std::fs::write(bin.join("branch-fails"), "").unwrap();
+    std::fs::write(bin.join("hold"), "").unwrap();
+    std::fs::write(bin.join("wave-issue"), "").unwrap();
+    machine.ok(None, &["wave", "run"]).await;
+
+    // The wave looks, and the branch does not read: no start.
+    wait_for(&bin.join("gh.log"), "--jq .default_branch").await;
+    let started = Instant::now();
+    let status = loop {
+        let status = machine.ok(None, &["daemon", "status"]).await;
+        if status.contains("cannot look:") {
+            break status;
+        }
+        assert!(started.elapsed() < isolated::HANG, "{status}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert!(status.contains("HTTP 502"), "{status}");
+    assert!(!status.contains("riff-issue-12-"), "{status}");
+    assert!(machine.read("run.stdin").is_empty());
+    assert!(!machine.read("gh.log").contains("issue view 12"));
+
+    // The forge answers again. `riff wave run` makes the wave look at once.
+    let reads = machine
+        .read("gh.log")
+        .matches("--jq .default_branch")
+        .count();
+    std::fs::remove_file(bin.join("branch-fails")).unwrap();
+    machine.ok(None, &["wave", "run"]).await;
+    wait_for(&bin.join("run.stdin"), "Never push to master.").await;
+    let log = machine.read("gh.log");
+    assert!(log.matches("--jq .default_branch").count() > reads, "{log}");
+    machine.ok(None, &["wave", "stop"]).await;
+    std::fs::remove_file(bin.join("wave-issue")).unwrap();
+    std::fs::remove_file(bin.join("hold")).unwrap();
+    let started = Instant::now();
+    while machine
+        .ok(None, &["daemon", "status"])
+        .await
+        .contains("riff-issue-12-")
+    {
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "the session did not end"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// 01M5QYBWPAJ219BE8QKVKG1TWW (#1352): the start text of a build of a
