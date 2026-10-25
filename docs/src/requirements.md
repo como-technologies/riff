@@ -4969,11 +4969,10 @@ of this part when they merge.
   default branch that has some. A repository with no such check run gets
   `Gate`. When the setup pull request is the only one, riff waits for
   its check runs. `riff init` also checks that the repository has a CI
-  check and a `CLAUDE.md` on the default branch. It has no step for
-  either: the check names the fix. A person who is not an admin of the
-  repository gets each step named, and riff changes nothing. A step that
-  fails prints why and its fix, and the next steps run. Superseded
-  in part by 01M5RN89Z749VYS1CRYJQTKAWY.
+  check on the default branch. It has no step for it: the check names
+  the fix. A person who is not an admin of the repository gets each step
+  named, and riff changes nothing. A step that fails prints why and its
+  fix, and the next steps run.
 - **01M5RGG9KJXCKH8C94145WS8SM** Before the question of the setup, `riff
   init` prints the line of a check that a step of the setup fixes with
   `step` in place of `fail`, and names the step, when a plain `riff
@@ -5282,13 +5281,11 @@ of this part when they merge.
   what riff needs from a session: the item, the branch, the frame of the
   pull request and the verify report. They name no convention of the
   riff repository: not `just`, `requirements.md`, the book or the Gate.
-  They send the session to the `CLAUDE.md` of the repository for its
-  rules, and the verify text names the checks of the full check as riff
-  read them. The `CLAUDE.md` of riff holds the rules that left the
-  texts. A test of the texts (`text::tests`) checks the words, and the
-  how-to "Add another repository to the riff" says what the `CLAUDE.md`
-  of a repository should say. Superseded in part
-  by 01M5RN89WH3PHV3BHMJ25T3SX4.
+  The verify text names the checks of the full check as riff read them.
+  The `CLAUDE.md` of riff holds the rules that left the texts. A test
+  of the texts (`text::tests`) checks the words, and the how-to "Write a
+  CLAUDE.md, when you want one" says what a `CLAUDE.md` of a repository
+  may say.
 - **01M51R8H3TXPKAEWDJQGQ01PBK** A repository with no session image of
   its own pins the session image of `como-technologies/riff`: its
   `riff.toml` has the same key `image` as the `riff.toml` of riff. That
