@@ -85,7 +85,7 @@ use crate::binary::{Follow, with_last, with_place};
 use crate::catch_up::{self, Seen, Start};
 use crate::style::{DIM, WARNING, styled};
 use crate::text::{lost_messages, safe};
-use riff_client::api::Api;
+use riff_client::api::{Api, Refusal};
 use riff_client::link::STREAM_RETRY;
 use riff_client::threads::{ACTION, Line, Sender};
 
@@ -111,14 +111,86 @@ pub fn thread() -> ThreadName {
     ThreadName::chat()
 }
 
+/// The mark at the start of a line of riff that went to a riff-server
+/// with the kind `message`, because the server refused the kind `riff`
+/// (01M5TQ0DX4M2EJJGE7QA8DZVYS).
+pub const BY_RIFF: &str = "[by riff] ";
+
+/// True when `body` has the mark [`BY_RIFF`]: riff wrote the line, also
+/// when its kind is `message`. [`crate::cycle::chat_lines`] reads such a
+/// line as a line of the kind `riff`.
+///
+/// ```
+/// use riff::chat::{BY_RIFF, marked};
+///
+/// assert!(marked(&format!("{BY_RIFF}@mike riff release v3.3.0 is cut.")));
+/// assert!(!marked("approve v3.3.0"));
+/// ```
+pub fn marked(body: &str) -> bool {
+    body.starts_with(BY_RIFF)
+}
+
 /// Posts `body` in riff chat as `me`, as a line that riff writes: the
 /// kind of the post is `riff` (01M5TKMVB7CF0QNAWXEVGEQETJ). The watch of
 /// a deploy, the daemon and `riff release` post so, as the person of the
 /// riff. `to` is what [`wakes`] gave for `body`. A line of the kind `riff`
 /// is no word of the person: `riff release approve` skips it.
+///
+/// A riff-server of the release before refuses the kind `riff`. After a
+/// rollback of the server to that release, the line goes again with the
+/// kind `message` and the mark [`BY_RIFF`] at the start of its body
+/// (01M5TQ0DX4M2EJJGE7QA8DZVYS). The mark keeps the line out of the words
+/// of the owner, as the kind does. Any other refusal is an error.
+///
+/// ```mermaid
+/// sequenceDiagram
+///     participant R as riff
+///     participant S as riff-server (the release before)
+///     R->>S: post, kind riff
+///     S-->>R: refused: no such kind
+///     R->>S: post, kind message, body "[by riff] ..."
+///     S-->>R: posted
+/// ```
 pub async fn post_by_riff(api: &Api, me: &SessionUri, to: &[Selector], body: &str) -> Result<()> {
-    api.post(me, Some(&thread()), to, body, Kind::Riff).await?;
-    Ok(())
+    let sent = api.post(me, Some(&thread()), to, body, Kind::Riff).await;
+    match sent {
+        Err(e) if refuses_kind_riff(&e) => {
+            let marked = format!("{BY_RIFF}{body}");
+            api.post(me, Some(&thread()), to, &marked, Kind::Message)
+                .await?;
+            Ok(())
+        }
+        sent => sent.map(drop),
+    }
+}
+
+/// True when `error` is the refusal of a riff-server that does not know
+/// the kind `riff`: a bad request with "no such kind". No other error is.
+///
+/// ```
+/// use riff::chat::refuses_kind_riff;
+/// use riff_client::api::Refusal;
+///
+/// let refusal = |status, text: &str| {
+///     anyhow::Error::new(Refusal {
+///         op: "post".into(),
+///         status,
+///         code: Some("bad_request".into()),
+///         text: text.into(),
+///     })
+/// };
+/// let bad = reqwest::StatusCode::BAD_REQUEST;
+/// let old = "no such kind: use message, status or note";
+/// assert!(refuses_kind_riff(&refusal(bad, old)));
+/// // Another bad request, another status and another error do not match.
+/// assert!(!refuses_kind_riff(&refusal(bad, "the thread is too long")));
+/// assert!(!refuses_kind_riff(&refusal(reqwest::StatusCode::FORBIDDEN, old)));
+/// assert!(!refuses_kind_riff(&anyhow::anyhow!(old)));
+/// ```
+pub fn refuses_kind_riff(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<Refusal>().is_some_and(|refusal| {
+        refusal.status == reqwest::StatusCode::BAD_REQUEST && refusal.text.contains("no such kind")
+    })
 }
 
 /// The sessions that a chat line of `sender` wakes: the leads of each

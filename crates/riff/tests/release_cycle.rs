@@ -64,6 +64,11 @@ impl Machine {
 
     /// A machine whose repository has the `riff.toml` text `config`.
     async fn with_config(config: &str) -> Machine {
+        Machine::on(config, crate::common::start_signed().await).await
+    }
+
+    /// As [`Machine::with_config`], at the server `server`.
+    async fn on(config: &str, server: crate::common::Signed) -> Machine {
         let root = tempfile::tempdir().unwrap();
         let origin = root.path().join("como-technologies/riff.git");
         std::fs::create_dir_all(&origin).unwrap();
@@ -101,7 +106,7 @@ impl Machine {
         let machine = Machine {
             env: Isolated::new(),
             root,
-            server: crate::common::start_signed().await,
+            server,
         };
         machine.fake_gh("");
         machine
@@ -692,7 +697,12 @@ impl Machine {
 /// origin/main with the merged release pull request of 3.3.0, tested by
 /// the real-session test, and a gh that knows it.
 async fn merged_release() -> (Machine, String) {
-    let machine = Machine::new().await;
+    merged_release_on(crate::common::start_signed().await).await
+}
+
+/// [`merged_release`] at the server `server`.
+async fn merged_release_on(server: crate::common::Signed) -> (Machine, String) {
+    let machine = Machine::on("[release]\n", server).await;
     let clone = machine.clone();
     for name in ["Cargo.toml", "Cargo.lock"] {
         let file = clone.join(name);
@@ -1610,7 +1620,12 @@ impl Machine {
 /// The lead with the lead mark, and the fake `gh` that knows the
 /// release 3.3.0 and a run that waits.
 async fn lead_with_a_waiting_run() -> Machine {
-    let (machine, merge) = merged_release().await;
+    lead_with_a_waiting_run_on(crate::common::start_signed().await).await
+}
+
+/// [`lead_with_a_waiting_run`] at the server `server`.
+async fn lead_with_a_waiting_run_on(server: crate::common::Signed) -> Machine {
+    let (machine, merge) = merged_release_on(server).await;
     machine.name_lead(&LEAD).await;
     machine.fake_gh(&format!("{WAITS}\n{}", machine.release_cases(&merge, true)));
     machine
@@ -1726,6 +1741,78 @@ async fn the_chat_lines_of_publish_have_the_kind_riff() {
         .find(|c| c.message.body.contains("riff release v3.3.0 is published"))
         .expect("the publish line");
     assert_eq!(line.message.kind, riff_core::wire::Kind::Riff);
+}
+
+/// The messages of riff chat.
+async fn chat_of(server: &crate::common::Signed) -> Vec<riff_client::api::Checked> {
+    let mike: riff_core::name::SessionUri =
+        "riff://mike@thelio/como-technologies/riff".parse().unwrap();
+    crate::common::api_of(server, &mike)
+        .read(&mike, &riff_core::name::ThreadName::chat(), true)
+        .await
+        .unwrap()
+}
+
+/// 01M5TQ0DX4M2EJJGE7QA8DZVYS: after a rollback of riff-server to the
+/// release before, the server refuses the kind `riff`. The lines of riff
+/// still post, with the kind `message` and the mark, and they are no
+/// approval of the owner.
+#[tokio::test]
+async fn a_server_that_refuses_the_kind_riff_still_gets_the_lines_of_riff_and_they_approve_nothing()
+{
+    let old = crate::common::start_signed_with(crate::common::refuse_kind_riff).await;
+    let machine = lead_with_a_waiting_run_on(old).await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    let run = "https://github.com/como-technologies/riff/actions/runs/9";
+    let waits = riff::cycle::waits_line("mike", "v3.3.0", run, false, &[]);
+    machine.say_as_riff("mike", &waits).await;
+    let reminder = riff::cycle::waits_line("mike", "v3.3.0", run, true, &[]);
+    machine.say_as_riff("mike", &reminder).await;
+
+    // The server holds each line as a message with the mark.
+    let read = chat_of(&machine.server).await;
+    for body in [
+        "riff release v3.3.0 is published",
+        "riff release v3.3.0 waits for your approval",
+        "riff release v3.3.0 still waits for your approval",
+    ] {
+        let line = read
+            .iter()
+            .find(|c| c.message.body.contains(body))
+            .unwrap_or_else(|| panic!("no line with {body}"));
+        assert_eq!(line.message.kind, riff_core::wire::Kind::Message, "{body}");
+        assert!(riff::chat::marked(&line.message.body), "{body}");
+    }
+    assert!(read.iter().any(|c| c.message.body.ends_with(&waits)));
+
+    // The lines are no word of the owner.
+    let lines = riff::cycle::chat_lines(read);
+    assert!(lines.iter().filter(|l| l.riff).count() >= 3, "{lines:?}");
+    let may = |user: &str| user == "mike";
+    assert_eq!(riff::cycle::owner_said(&lines, "v3.3.0", &may), None);
+    let before = machine.log();
+    let out = machine.lead_approves().await;
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert_eq!(
+        text(&out.stderr),
+        format!(
+            "{}\n",
+            riff::text::release_refused("approve", Refusal::OwnerSilent)
+        )
+    );
+    assert_eq!(machine.log(), before, "gh ran");
+
+    // The word of the owner counts, and a later line of riff does not
+    // take it back.
+    let seq = machine.say("mike", "approve v3.3.0").await;
+    machine.say_as_riff("mike", &reminder).await;
+    let out = machine.lead_approves().await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains(&format!("Approved with message {seq} of the owner")),
+        "{}",
+        text(&out.stdout)
+    );
 }
 
 #[tokio::test]

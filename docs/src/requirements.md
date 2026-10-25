@@ -5900,6 +5900,15 @@ of this part when they merge.
   refuses and changes nothing. A line of a session never counts, also
   with no kind. This adds to 01M5NCYW06FJ8P5X629VFK1BNR,
   01M594XQJMXAXY3JXP66Y8EVQ7 and 01M5TKDYAFA683KNAJTGYTQD5W.
+- **01M5TQ0DX4M2EJJGE7QA8DZVYS** After a rollback of riff-server to the
+  release before, the kind `riff` is refused, and a line of riff in riff
+  chat must still post. When riff-server refuses a post of the kind
+  `riff` with "no such kind", riff posts the line again with the kind
+  `message` and the mark `[by riff] ` at the start of the body. A line
+  with the kind `riff`, or with this mark, is a line of riff: `riff
+  release approve` of the lead skips it when it looks for the approval
+  and for a stop. Any other refusal of the post is an error. This adds
+  to 01M5TKMVB7CF0QNAWXEVGEQETJ.
 
 ### The release cycle
 
