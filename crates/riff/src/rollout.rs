@@ -997,6 +997,27 @@ impl Pull {
             && self.verify().is_some()
     }
 
+    /// True when GitHub did not find yet if the pull request has a
+    /// conflict with the default branch: `mergeable` is `UNKNOWN`. That
+    /// happens for a short time after a push, and for each open pull
+    /// request after the default branch moved. It is no conflict
+    /// ([`Pull::conflict`]), and it is no sign that the pull request has
+    /// none: a verify of the head waits for the next look
+    /// ([`crate::wave::fixes`], #1464).
+    ///
+    /// ```
+    /// use riff::rollout::Pull;
+    ///
+    /// let pull = |mergeable: &str| Pull { mergeable: Some(mergeable.into()), ..Pull::default() };
+    /// assert!(pull("UNKNOWN").unknown());
+    /// assert!(!pull("MERGEABLE").unknown());
+    /// assert!(!pull("CONFLICTING").unknown());
+    /// assert!(!Pull::default().unknown());
+    /// ```
+    pub fn unknown(&self) -> bool {
+        self.mergeable.as_deref() == Some("UNKNOWN")
+    }
+
     /// The names of the checks of the head that failed ([`Check::failed`]),
     /// each one time, in order. The rollup of `gh` does not say which
     /// check a rule requires, so each failed check counts.

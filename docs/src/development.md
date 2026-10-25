@@ -1566,11 +1566,19 @@ to the same pull request. Then a new Gate runs, and a new session
 verifies the new commit. The wave starts no verify of a commit with a
 conflict.
 
+A verify waits until GitHub knows that the pull request has no
+conflict. After a push, and after `main` moves, GitHub does not know it
+for a short time: it gives the state `UNKNOWN`. The wave starts no
+verify at that look. At the next look GitHub gives `MERGEABLE`, and the
+verify starts, or it gives `CONFLICTING`, and the rebase starts.
+
 ```mermaid
 flowchart LR
     C["pull request: auto-merge on, a conflict"] --> R["a session rebases the branch"]
     R -- "push" --> V["a new Gate, then a new verify"]
     R -- "no push" --> L["a message to your lead"]
+    U["GitHub gives UNKNOWN"] -- "next look: MERGEABLE" --> V
+    U -- "next look: CONFLICTING" --> C
 ```
 
 The wave starts one session for each head commit with a conflict.

@@ -116,6 +116,15 @@
 //! verify request for the same head comes ([`reasked`], #1157): then it
 //! waits for a verify again.
 //!
+//! A pull request whose `mergeable` is `UNKNOWN` has no verify in the
+//! free work either ([`rollout::Pull::unknown`], #1464). GitHub gives
+//! `UNKNOWN` after a push, and for each open pull request after `main`
+//! moved, until it has looked at them. The pull request may have a
+//! conflict then: a verify would test a head that the rebase replaces,
+//! and a verify that ends with no result starts again. The verify waits
+//! for the next look. It reads `MERGEABLE` (the verify) or
+//! `CONFLICTING` (the rebase).
+//!
 //! Each head commit with a conflict starts one session in a run of the
 //! wave: [`Work::key`] names the rebase by the item and the head. A pause
 //! or a fault of the host takes the start back, as for each item.
@@ -1932,6 +1941,12 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///   auto-merge on and a conflict with `main` ([`rollout::Pull::conflict`])
 ///   whose verify did not fail: a failed verify is free work as a build
 ///   already. The free work has no verify of a head with a conflict.
+/// - The free work has no verify of a pull request whose state GitHub
+///   does not know yet: its `mergeable` is `UNKNOWN`
+///   ([`rollout::Pull::unknown`], #1464). That is so for a short time
+///   after each push, and after each move of `main`. The verify waits
+///   for the next look: with `CONFLICTING` the pull request gets the
+///   rebase, with `MERGEABLE` the verify.
 /// - A pull request with failed checks is one whose verify passed and
 ///   whose head has a failed check ([`rollout::Stuck::Checks`]). It is a
 ///   build, with the names of the checks that are runs of GitHub Actions
@@ -1978,10 +1993,11 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///         gate(pull(46, 6, Some("SUCCESS"), "MERGEABLE")),
 ///         gate(pull(47, 8, None, "MERGEABLE")),
 ///         other(pull(48, 10, Some("SUCCESS"), "MERGEABLE")),
+///         pull(49, 11, None, "UNKNOWN"),
 ///     ],
 ///     ..Open::default()
 /// };
-/// let free = ["issue-9", "verify-issue-2", "issue-3", "issue-7"].map(String::from).to_vec();
+/// let free = ["issue-9", "verify-issue-2", "issue-3", "issue-7", "verify-issue-11"].map(String::from).to_vec();
 /// let (free, fixes) = fixes(&open, free);
 /// // The rebases of 1 and 2, the fix of the checks of 6.
 /// assert_eq!(free, ["issue-9", "issue-1", "issue-2", "issue-6", "issue-3", "issue-7"]);
@@ -1994,6 +2010,19 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 /// assert_eq!(told, [(45, Stuck::AutoMergeOff), (47, Stuck::Checks(vec!["Gate".into()])), (48, Stuck::Other(ci))]);
 /// assert!(!fixes.failed.contains_key(&10), "no session fixes it");
 /// assert_eq!(fixes.notices[0], Notice { pull: 45, branch: "worktree-issue-5".into(), commit: "c5".into(), stuck: Stuck::AutoMergeOff });
+///
+/// // The pull request of 11 reads UNKNOWN: its verify waits, and the pull request is no conflict yet.
+/// assert!(!free.contains(&"verify-issue-11".to_owned()));
+/// assert!(!fixes.conflicts.contains_key(&11));
+/// // The next look reads MERGEABLE: the verify is free work.
+/// let next = |mergeable| Open { pulls: vec![pull(49, 11, None, mergeable)], ..Open::default() };
+/// let waiting = || vec!["verify-issue-11".to_owned()];
+/// let (free, _) = riff::wave::fixes(&next("MERGEABLE"), waiting());
+/// assert_eq!(free, ["verify-issue-11"]);
+/// // Or it reads CONFLICTING: the rebase, and no verify.
+/// let (free, fixes) = riff::wave::fixes(&next("CONFLICTING"), waiting());
+/// assert_eq!(free, ["issue-11"]);
+/// assert!(fixes.conflicts.contains_key(&11));
 /// ```
 pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
     // No session builds a release or a tracker.
@@ -2054,9 +2083,19 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
         .map(|i| i.number)
         .collect();
     let fix = |item: &String| usage::issue_of(item).is_some_and(|(n, _)| fix_items.contains(&n));
+    // The verify of a pull request whose state GitHub does not know yet
+    // waits for the next look (#1464).
+    let unknown = |n: u64| {
+        open.pulls
+            .iter()
+            .find(|p| p.issue() == Some(n))
+            .is_some_and(rollout::Pull::unknown)
+    };
     let mut free: Vec<String> = free
         .into_iter()
-        .filter(|item| verify_issue(item).is_none_or(|n| !found.conflicts.contains_key(&n)))
+        .filter(|item| {
+            verify_issue(item).is_none_or(|n| !found.conflicts.contains_key(&n) && !unknown(n))
+        })
         .collect();
     let at = free.iter().take_while(|item| fix(item)).count();
     let new: Vec<String> = found
@@ -2661,6 +2700,11 @@ mod tests {
         heads: BTreeMap<u64, String>,
         /// The issues whose pull request has a conflict with `main`.
         conflicting: BTreeSet<u64>,
+        /// The issues whose pull request reads `UNKNOWN`: GitHub did not
+        /// find yet if it has a conflict. It wins over `conflicting`.
+        unknown: BTreeSet<u64>,
+        /// A verify ends with no result: its pull request waits still.
+        no_result: bool,
         /// The issues whose pull request has auto-merge off.
         manual: BTreeSet<u64>,
         /// The issues whose pull request has a failed check `Gate`.
@@ -2758,10 +2802,14 @@ mod tests {
                         .then(|| rollout::Check::other("ci", "FAILURE", OTHER_LINK)),
                 )
                 .collect(),
-                mergeable: Some(match self.conflicting.contains(n) {
-                    true => "CONFLICTING".into(),
-                    false => "MERGEABLE".into(),
-                }),
+                mergeable: Some(
+                    match (self.unknown.contains(n), self.conflicting.contains(n)) {
+                        (true, _) => "UNKNOWN",
+                        (false, true) => "CONFLICTING",
+                        (false, false) => "MERGEABLE",
+                    }
+                    .into(),
+                ),
                 auto_merge: !self.manual.contains(n),
                 reasked: *pr == Pr::Reasked,
                 ..rollout::Pull::default()
@@ -2937,6 +2985,7 @@ mod tests {
                 match job.work {
                     Work::Build { .. } if forge.no_pull => None,
                     Work::Build { issue } => forge.pulls.insert(issue, Pr::Asked),
+                    Work::Verify { .. } if forge.no_result => None,
                     Work::Verify { issue, .. } => forge.pulls.insert(issue, Pr::Passed),
                     Work::Rebase { .. } if forge.no_push => None,
                     // The push of the rebase: a new head with no conflict
@@ -4196,6 +4245,64 @@ mod tests {
             panic!("{forge:?}");
         };
         assert_ne!(rebaser, verifier, "the verify is a new session");
+    }
+
+    /// #1464, #1468: the cause of three verifies of a head with a
+    /// conflict. When a merge moves `main`, GitHub gives `UNKNOWN` for the
+    /// other open pull requests until it has looked at them. `UNKNOWN` is
+    /// no conflict ([`rollout::Pull::conflict`]), so the pull request was
+    /// free work as a verify. Each verify ended with no result, the pull
+    /// request still waited, and the next look started it again: three
+    /// starts for one head. The wave starts no verify while the state is
+    /// `UNKNOWN`. The next look reads `CONFLICTING`: one rebase, no
+    /// verify.
+    #[tokio::test]
+    async fn a_pull_request_that_reads_unknown_gets_no_verify_and_then_the_rebase() {
+        let here = conflict(Pr::Asked).await;
+        {
+            let mut forge = here.forge();
+            forge.unknown.insert(1);
+            forge.no_result = true;
+        }
+        here.run();
+        here.idle(3).await;
+        assert!(here.forge().works.is_empty(), "{:?}", here.forge());
+        // The next look: GitHub knows that the head has a conflict.
+        here.forge().unknown.clear();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.end("issue-1").await;
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1r".into(),
+        };
+        assert_eq!(here.forge().works, [rebase("c1"), verify]);
+    }
+
+    /// #1464: the next look reads `MERGEABLE`: the verify starts for the
+    /// head, one time.
+    #[tokio::test]
+    async fn a_pull_request_that_reads_unknown_gets_its_verify_when_it_reads_mergeable() {
+        let here = Here::new(&[1], 3, Arc::new(AtomicU64::new(64))).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Asked);
+            forge.unknown.insert(1);
+        }
+        here.run();
+        here.idle(3).await;
+        assert!(here.forge().works.is_empty(), "{:?}", here.forge());
+        here.forge().unknown.clear();
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1".into(),
+        };
+        assert_eq!(here.forge().works, [verify]);
     }
 
     /// 01M57FJ3WWMQSDBFRRHXN3SMFQ, 01M558EYCXPFW8CJV3XJ7HK3NR: a claim of
