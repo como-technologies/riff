@@ -1,4 +1,4 @@
-//! | Find the image digest of a live session |//! The runtime of a session: the trait [`Runtime`] and the plain data of
+//! The runtime of a session: the trait [`Runtime`] and the plain data of
 //! a session, [`SessionSpec`] (#715, 01M4Z60B7GTV4HHF9R3TMZRS7J).
 //!
 //! # Design
