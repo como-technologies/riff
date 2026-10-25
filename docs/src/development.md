@@ -1094,6 +1094,13 @@ The daemon keeps the end of a session for 5 minutes. In that time,
 `riff daemon events` shows the events and the end of a session that
 ended.
 
+Your lead can run `riff daemon events` in its container, with the same
+command and the same lines. The riff daemon of the host answers on the
+socket of the lead: you do not have to do a step on the host. Only the
+lead can: the daemon refuses each other session. To see the events of a
+session on another host, add `--host` (see [See a session on another
+host](#see-a-session-on-another-host)).
+
 ### Remove the folders of old sessions
 
 The folder of a session holds its clone with its `target`: often some
@@ -1651,6 +1658,23 @@ ended with no pull request. The message "started 3 times" to your lead
 names the same reason. A session that ends with an open pull request
 leaves no record.
 
+A verify session can end with no PASS or FAIL. Your lead gets the
+message "ended with no PASS or FAIL", and the pull request waits for a
+new verify. The daemon leaves a record for it too, under the item
+`verify-issue-N`. It shows the same facts as the record of a build:
+
+```sh
+riff session why verify-issue-1203
+```
+
+```mermaid
+flowchart LR
+    V["a verify session ends"] --> R{"a PASS or a FAIL<br/>in its result?"}
+    R -- yes --> P["riff reports it on the pull request"]
+    R -- no --> N["a record in the thread ends,<br/>and a message to your lead"]
+    N --> W["riff session why verify-issue-N"]
+```
+
 ### Start a spent item again
 
 The wave starts one item at most 3 times in a run of the wave. Then
@@ -2081,7 +2105,9 @@ It shows the same lines as `riff daemon events` on that host (see
 [See the events of a session](#see-the-events-of-a-session)), up to
 the end of the session. Ctrl-C ends it: the session goes on. It exits
 with 1 when the session failed. The events have no secret: the daemon
-took each secret out before it kept them.
+took each secret out before it kept them. Your lead can run the same
+command in its container: the riff daemon of its host sends the request
+for it.
 
 To watch the sessions of that host, as `riff view` shows them there:
 

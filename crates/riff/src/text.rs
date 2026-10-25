@@ -5469,6 +5469,16 @@ pub const DAEMON_AUDIT_ONLY_LEAD: &str =
 /// (#1338).
 pub const DAEMON_RUN_ONLY_LEAD: &str = "Only the lead can run an item through the riff daemon.";
 
+/// A session that is not the lead asks the daemon for the events of a
+/// session, for `riff daemon events` (#1441).
+pub const DAEMON_EVENTS_ONLY_LEAD: &str =
+    "Only the lead can read the events of a session through the riff daemon.";
+
+/// The riff daemon on the socket of the session gave a page of events
+/// that this riff cannot read: it runs another riff.
+pub const DAEMON_NO_PAGE_HERE: &str = "riff: this riff cannot read the reply of the riff daemon: it \
+     runs another riff. Update riff on the host of the lead, then run riff daemon restart there.";
+
 /// The daemon runs on a host with no `gcloud`. [`crate::reach::DaemonLog`]
 /// knows the text.
 pub const DAEMON_NO_GCLOUD: &str = "gcloud does not run on the host of the riff daemon";
@@ -7519,9 +7529,17 @@ pub fn wave_no_done_when(issue: u64) -> String {
 }
 
 /// `riff session why` for an `item` with no record.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::session_why_none("verify-issue-1"),
+///     "No session of verify-issue-1 ended with no PASS or FAIL. The thread ends has no record of it."
+/// );
+/// ```
 pub fn session_why_none(item: &str) -> String {
     format!(
-        "No session of {item} ended with no pull request. The thread {} has no record of it.",
+        "No session of {item} ended with no {}. The thread {} has no record of it.",
+        crate::ends::lacks(item),
         crate::ends::THREAD
     )
 }
@@ -7537,11 +7555,20 @@ pub fn session_why_none(item: &str) -> String {
 ///     "issue-1: 3 sessions ended with no pull request. The last one, 1a2b3c4d, ended: exit code 1.\n\
 ///      Its last 1 lines of output:\nlast"
 /// );
+///
+/// let record = Record::parse("ended item=verify-issue-1 session=5e6f7a8b code=0 failed=no denied=0: exit code 0, and no PASS or FAIL\nlast", 0).unwrap();
+/// assert_eq!(
+///     riff::text::session_why("verify-issue-1", 1, &record),
+///     "verify-issue-1: 1 session ended with no PASS or FAIL. The last one, 5e6f7a8b, ended: exit code 0, and no PASS or FAIL.\n\
+///      Its last 1 lines of output:\nlast"
+/// );
 /// ```
 pub fn session_why(item: &str, count: usize, last: &crate::ends::Record) -> String {
+    let sessions = if count == 1 { "session" } else { "sessions" };
     let mut text = format!(
-        "{item}: {count} sessions ended with no pull request. The last one, {}, ended: {}.\n\
+        "{item}: {count} {sessions} ended with no {}. The last one, {}, ended: {}.\n\
          Its last {} lines of output:",
+        crate::ends::lacks(item),
         last.tag("session"),
         last.reason,
         last.tail.len()

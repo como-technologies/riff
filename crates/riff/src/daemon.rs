@@ -942,15 +942,21 @@ pub enum SessionAsk {
 /// A call of [`SessionAsk::Server`]: the reads of `riff wave list`,
 /// `riff release check`, `riff members`, `riff who`, `riff whoami`,
 /// `riff audit` and `riff session why`, the resume of the riff after
-/// `riff release check`, and the run of an item by the lead (#1338,
-/// 01M5QVX8D3JE51FAYRWXMAYFAY, 01M5QW31TFA1W2GWPGRS2Y65GP,
-/// 01M5QVX8FFG2FPWZEW61A985CF).
+/// `riff release check`, the run of an item by the lead, and the events
+/// of a session for the lead (#1338, 01M5QVX8D3JE51FAYRWXMAYFAY,
+/// 01M5QW31TFA1W2GWPGRS2Y65GP, 01M5QVX8FFG2FPWZEW61A985CF,
+/// 01M5SMP2FFEHJPZBJVGAWBXNNP).
 ///
 /// ```
 /// use riff::daemon::ServerCall;
 ///
 /// let run = ServerCall::Run { item: "issue-12".into() };
 /// assert_eq!(serde_json::to_string(&run)?, r#"{"call":"run","item":"issue-12"}"#);
+/// let events = ServerCall::Events { name: "riff-issue-12-1a2b3c4d".into(), after: 7, notes: 1 };
+/// assert_eq!(
+///     serde_json::to_string(&events)?,
+///     r#"{"call":"events","name":"riff-issue-12-1a2b3c4d","after":7,"notes":1}"#
+/// );
 /// assert_eq!(serde_json::to_string(&ServerCall::Members)?, r#"{"call":"members"}"#);
 /// assert_eq!(serde_json::to_string(&ServerCall::Ends)?, r#"{"call":"ends"}"#);
 /// let log = ServerCall::Log { repo: "o/r".parse().unwrap() };
@@ -997,6 +1003,18 @@ pub enum ServerCall {
     /// The [`Status`] of this daemon, for `riff daemon status` in a
     /// container (#1239). A session that is not the lead may ask it.
     Status,
+    /// One [`remote::Page`] of the events of the session `name` of this
+    /// daemon, after the event `after` and the line `notes` of the
+    /// daemon, as `riff daemon events NAME` follows it in a container
+    /// (#1441). Only the lead may. The answer is the text of the page.
+    Events {
+        /// The name of the container.
+        name: String,
+        /// The last event that the caller has: 0 for none.
+        after: u64,
+        /// The number of lines of the daemon that the caller has.
+        notes: u64,
+    },
     /// A request to the daemon of the host `host` through riff-server, as
     /// `riff daemon status --host` makes it on a host
     /// ([`remote::Request`], #1239). Only the lead may. The answer is
@@ -1150,6 +1168,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         ServerCall::Run { .. } => bail!("the daemon runs the item itself"),
         ServerCall::Watch { .. } => bail!("the daemon watches itself"),
         ServerCall::Status => bail!("the daemon answers the status itself"),
+        ServerCall::Events { .. } => bail!("the daemon answers the events itself"),
     })
 }
 
@@ -3414,6 +3433,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                         project,
                         filter,
                     } => self.cloud_log(&record, &service, &project, &filter).await,
+                    ServerCall::Events { name, after, notes } => {
+                        self.events_page(&record, &name, (after, notes)).await
+                    }
                     ServerCall::Run { item } => self.run_item(&record, &item),
                     ServerCall::Watch { op } => self.watch_op(&record, op),
                     _ => server_call(&record, &call).await,
@@ -3589,6 +3611,17 @@ impl<R: Runtime + 'static> Daemon<R> {
             crate::wave::job(daemon.clone(), wave, work, slot, taken, starts, true).await;
         });
         Ok(Value::String(text::run_asked(item)))
+    }
+
+    /// The answer to [`ServerCall::Events`]: the text of one
+    /// [`remote::Page`] of the session `name`, as `riff daemon events
+    /// --host` gets it from the daemon of another host. Only the lead may.
+    async fn events_page(&self, record: &Record, name: &str, after: (u64, u64)) -> Result<Value> {
+        if !record.terminal {
+            bail!(text::DAEMON_EVENTS_ONLY_LEAD);
+        }
+        let page = remote::page(&self.dir, name, after, remote::EVENT_HOLD).await?;
+        Ok(Value::String(page.to_string()))
     }
 
     /// `gcloud logging read` for the lead of `record`, with the `gcloud`
@@ -8222,6 +8255,61 @@ mod tests {
                 end: None
             }
         );
+    }
+
+    /// 01M5SMP2FFEHJPZBJVGAWBXNNP (#1441): the lead asks a page of the
+    /// events of a session on the socket of its own session, and gets the
+    /// same page as `remote::page` gives. A worker gets a refusal.
+    #[tokio::test]
+    async fn the_lead_asks_a_page_of_events_through_its_socket_and_a_worker_is_refused() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        drop(client);
+        let worker = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&worker, 1, false).await;
+        relay.event(1, TURN[0]).await;
+        relay.event(2, TURN[2]).await;
+        let mut lead = here.start("riff-lead-o-r", "lead");
+        lead.terminal = true;
+        let (_lead_client, lead_name) = here.started(lead).await;
+        let lead = session_dir(&here.dir, &lead_name).join(SOCKET);
+
+        let call = ServerCall::Events {
+            name: name.clone(),
+            after: 0,
+            notes: 0,
+        };
+        let reply = crate::session_relay::ask_server(&lead, &call)
+            .await
+            .unwrap();
+        let page: remote::Page = reply.as_str().unwrap().parse().unwrap();
+        let mut view = crate::run::View::default();
+        let mut want = view.shown(TURN[0]);
+        want.extend(view.shown(TURN[2]));
+        assert_eq!((page.last, page.end), (2, None));
+        assert_eq!(page.lines, want);
+
+        let error = crate::session_relay::ask_server(&worker.join(SOCKET), &call)
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains(text::DAEMON_EVENTS_ONLY_LEAD),
+            "{error:#}"
+        );
+
+        let next = ServerCall::Events {
+            name: name.clone(),
+            after: 2,
+            notes: page.notes,
+        };
+        relay.exit(3, 0).await;
+        let reply = crate::session_relay::ask_server(&lead, &next)
+            .await
+            .unwrap();
+        let page: remote::Page = reply.as_str().unwrap().parse().unwrap();
+        assert_eq!(page.end, Some(false), "{page:?}");
     }
 
     /// 01M57GCZXZZRPGGWC5HZS49DGM: a replay gives each line of the

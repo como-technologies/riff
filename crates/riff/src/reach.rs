@@ -39,8 +39,12 @@
 //! Through the socket, each session can read the build of riff-server,
 //! the sessions, the holds of a thread, the members, the state of `riff who`
 //! and `riff whoami`, and the records of the thread `ends`. Only the lead
-//! can resume the whole riff, read the log for an audit and run an item:
-//! the daemon knows by the socket which session asks.
+//! can resume the whole riff, read the log for an audit, run an item and
+//! follow the events of a session with `riff daemon events`: the daemon
+//! knows by the socket which session asks. `riff daemon events NAME` asks
+//! the daemon on the socket, and `riff daemon events NAME --host HOST`
+//! asks the daemon of HOST through it ([`Reach::follow_events`],
+//! #1441).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -235,6 +239,41 @@ impl Reach {
             request: request.to_string(),
         };
         ask(socket, &call).await
+    }
+
+    /// Follows the events of the session `name` up to its end, through
+    /// the socket of the session, as `riff daemon events NAME` does on a
+    /// host (#1441). With no `host`, the daemon on the socket answers.
+    /// With a `host`, it asks the daemon of that host through
+    /// riff-server, as `riff daemon events NAME --host HOST` does. Only
+    /// the lead may. It gives each line to `show`, and gives true when
+    /// the session failed.
+    pub async fn follow_events(
+        &self,
+        host: Option<&str>,
+        name: &str,
+        show: impl FnMut(&str),
+    ) -> Result<bool> {
+        use crate::daemon::remote::{Request, follow_pages, page_of};
+        let Reach::Daemon(socket) = self else {
+            anyhow::bail!("this riff has no socket of a session");
+        };
+        let get = |after, notes| async move {
+            let name = name.to_owned();
+            match host {
+                Some(host) => {
+                    let request = Request::Events { name, after, notes };
+                    page_of(&self.host(host, &request).await?, host)
+                }
+                None => {
+                    let call = ServerCall::Events { name, after, notes };
+                    let text: String = ask(socket, &call).await?;
+                    text.parse()
+                        .map_err(|()| anyhow!("{}", text::DAEMON_NO_PAGE_HERE))
+                }
+            }
+        };
+        follow_pages(get, show).await
     }
 
     /// The user of this session, and the owner and the people of the

@@ -1,5 +1,6 @@
-//! The end of a session with no pull request (01M5A5HXKZTDP5M5HY2FHCEBZA):
-//! the record in the thread [`THREAD`] and `riff session why`.
+//! The end of a session with no pull request (01M5A5HXKZTDP5M5HY2FHCEBZA),
+//! or of a verify with no PASS or FAIL (01M5SMP2D4MGME90EHVKAQHQ26): the
+//! record in the thread [`THREAD`] and `riff session why`.
 //!
 //! # Design
 //!
@@ -8,7 +9,10 @@
 //! After the end of a build, the daemon looks for the open pull request
 //! of its branch. When there is none, it posts one note in the thread
 //! [`THREAD`], as the session ([`post`]), and the session leaves the
-//! thread. The lead reads it with `riff session why ITEM` ([`read`]).
+//! thread. A verify has a pull request, so the daemon looks for its
+//! PASS or FAIL: when there is none, it posts the same note for the item
+//! `verify-issue-N`. The lead reads it with `riff session why ITEM`
+//! ([`read`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -17,7 +21,7 @@
 //!     participant R as riff-server
 //!     participant L as lead
 //!     S->>D: the end (code, or signal)
-//!     D->>D: the pull request of the branch? none
+//!     D->>D: the pull request of the branch? none (a verify: PASS or FAIL? none)
 //!     D->>R: a note in "ends": the reason, the last 50 lines
 //!     L->>R: riff session why ITEM
 //!     R->>L: the last record of ITEM
@@ -49,6 +53,9 @@
 //! assert_eq!(record.tag("item"), "issue-1202");
 //! assert_eq!(record.reason, end.reason());
 //! assert_eq!(record.tail, ["last line"]);
+//!
+//! let verify = End { item: "verify-issue-1202".into(), code: Some(0), failed: false, denied: vec![], ..end };
+//! assert_eq!(verify.reason(), "exit code 0, and no PASS or FAIL");
 //! ```
 
 use std::collections::BTreeMap;
@@ -60,6 +67,7 @@ use riff_core::wire::Kind;
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::{EVENTS, Ended};
+use crate::room::Role;
 use crate::run::Scrub;
 
 /// The thread of the records.
@@ -74,6 +82,21 @@ pub const LINE_MAX: usize = 300;
 /// The thread [`THREAD`].
 pub fn thread() -> ThreadName {
     THREAD.parse().expect("ends is a thread name")
+}
+
+/// What a session of `item` lacks when its record is in the thread
+/// [`THREAD`]: a verify has no PASS or FAIL, any other item has no pull
+/// request.
+///
+/// ```
+/// assert_eq!(riff::ends::lacks("issue-7"), "pull request");
+/// assert_eq!(riff::ends::lacks("verify-issue-7"), "PASS or FAIL");
+/// ```
+pub fn lacks(item: &str) -> &'static str {
+    match Role::of(item) {
+        Role::Verify => "PASS or FAIL",
+        Role::Lead | Role::Work => "pull request",
+    }
 }
 
 /// How a session ended.
@@ -153,7 +176,7 @@ impl End {
     /// tool calls.
     pub fn reason(&self) -> String {
         let mut reason = match (self.code, self.failed) {
-            (Some(0), false) => "exit code 0, and no pull request".to_owned(),
+            (Some(0), false) => format!("exit code 0, and no {}", lacks(&self.item)),
             (Some(0), true) => {
                 "exit code 0, but a turn ended with an error or a stop ended it".to_owned()
             }

@@ -1172,7 +1172,8 @@ enum DaemonCommand {
     /// ends. It also shows the lines of the daemon about the session.
     /// The daemon keeps the end of a session for 5 minutes. riff daemon
     /// status shows the names. Ctrl-C ends the view: the session goes
-    /// on.
+    /// on. Your lead can run it in its container: the riff daemon of
+    /// the host answers on the socket of the lead.
     Events {
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,
@@ -2276,14 +2277,30 @@ fn open_browser(url: &str) {
 /// daemon of that host through the riff-server of `server`
 /// ([`riff::daemon::remote`]).
 async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -> Result<()> {
-    if let Some(DaemonCommand::Events {
-        name,
-        host: Some(host),
-    }) = command
-    {
-        let (server, _) = server_of(server)?;
-        let here = identity::place(&identity::working_dir()?)?;
-        return daemon_events(host, name, &here, &server).await;
+    if let Some(DaemonCommand::Events { name, host }) = command {
+        // In a container, the events come through the socket of the
+        // session: the lead has no daemon socket of the host there
+        // (01M5SMP2FFEHJPZBJVGAWBXNNP).
+        let socket = riff::session_relay::socket_here().ok();
+        match (host.as_deref(), socket) {
+            (Some(host), socket) => {
+                let (server, source) = server_of(server)?;
+                return match Reach::of(&server, source, socket) {
+                    reach @ Reach::Daemon(_) => {
+                        events_end(reach.follow_events(Some(host), name, show_line).await)
+                    }
+                    Reach::Direct(server) => {
+                        let here = identity::place(&identity::working_dir()?)?;
+                        daemon_events(host, name, &here, &server).await
+                    }
+                };
+            }
+            (None, Some(socket)) => {
+                let reach = Reach::Daemon(socket);
+                return events_end(reach.follow_events(None, name, show_line).await);
+            }
+            (None, None) => {}
+        }
     }
     if let Some(DaemonCommand::Host { host: Some(host) }) = command {
         let (server, source) = server_of(server)?;
@@ -2525,8 +2542,19 @@ async fn ask_daemon(
 /// failed, or the daemon refused.
 async fn daemon_events(host: &str, name: &str, here: &Place, server: &str) -> Result<()> {
     let (api, me) = daemon_asker(here, server)?;
-    let show = |line: &str| println!("{line}");
-    match riff::daemon::remote::follow_events(&api, &me, host, name, show).await {
+    let followed = riff::daemon::remote::follow_events(&api, &me, host, name, show_line).await;
+    events_end(followed)
+}
+
+/// Prints one line of `riff daemon events`.
+fn show_line(line: &str) {
+    println!("{line}");
+}
+
+/// The end of `riff daemon events` after `followed`: the exit code 1 when
+/// the session failed, or the daemon refused.
+fn events_end(followed: Result<bool>) -> Result<()> {
+    match followed {
         Ok(false) => Ok(()),
         Ok(true) => std::process::exit(1),
         Err(e) => {
