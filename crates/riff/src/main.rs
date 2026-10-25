@@ -3339,11 +3339,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                         println!("riff closed the release issue #{issue}.");
                         resume_after_check(reach).await;
                     }
-                    let step = match passed {
-                        true => riff::hold::Step::Checked,
-                        false => riff::hold::Step::CheckFailed,
-                    };
-                    tell_other_leads(reach, &here, step, tag).await;
+                    tell_other_leads(reach, &here, cycle::check_step(&lines), tag).await;
                 }
             }
             next(&forge, tag);

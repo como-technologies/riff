@@ -2053,6 +2053,11 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 ///     riff::text::release_note(Step::Approved, "v4.4.0", "the lead of o/r")
 ///         .contains("next for you: stop at your next step")
 /// );
+/// assert_eq!(
+///     riff::text::release_note(Step::CheckUnknown, "v4.4.0", "the lead of o/r"),
+///     "The checks of v4.4.0 could not all run: the lead of o/r checks again after a sign-in \
+///      on the host. The riff stays paused. next for you: wait for the next note."
+/// );
 /// ```
 pub fn release_note(step: crate::hold::Step, tag: &str, by: &str) -> String {
     use crate::hold::Step;
@@ -2089,6 +2094,10 @@ pub fn release_note(step: crate::hold::Step, tag: &str, by: &str) -> String {
         Step::CheckFailed => format!(
             "The checks of {tag} failed. {by} fixes forward with a patch release, or rolls back. \
              The riff stays paused. next for you: wait for the next note."
+        ),
+        Step::CheckUnknown => format!(
+            "The checks of {tag} could not all run: {by} checks again after a sign-in on the \
+             host. The riff stays paused. next for you: wait for the next note."
         ),
         Step::NotDeployed => format!(
             "The deploy of {tag} failed, and the old revision still serves. {by} ran riff \
