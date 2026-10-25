@@ -4496,6 +4496,10 @@ this repository has no release cycle of riff: riff.toml has no [release]
 daemon of a host gives it too, for `riff build --host` and `riff
 release test --host`.
 
+In a repository with `[release]` in `riff.toml`, `riff wave end` also
+refuses while a merged pull request of the wave is in no checked
+release. In a repository with no `[release]`, it has no release gate.
+
 #### Know what wakes the lead
 
 The lead does not wait for an operation by itself. Each command that
@@ -4671,9 +4675,9 @@ After the check passes, end the wave:
 riff wave end 34
 ```
 
-In a repository with `[release]`, `riff wave end` refuses while a
-merged pull request of the wave is in no checked release, and names the
-next step.
+In a repository with `[release]` in `riff.toml`, `riff wave end` also
+refuses while a merged pull request of the wave is in no checked
+release, and names the next step.
 When no change of the wave is one that a person sees, end it with no
 release. The reason goes into the description of the wave:
 

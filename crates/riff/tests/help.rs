@@ -372,3 +372,26 @@ fn release_approve_help_says_who_may_approve() {
     }
     assert!(!help.contains("it refuses in each agent"), "{help}");
 }
+
+/// 01M5SMPX8NM75P8E38DGQ17W7B: the release gate of `riff wave end`
+/// holds only in a repository with `[release]` in `riff.toml`. The help
+/// and "Turn on the release cycle" in the book say so, and the help does
+/// not name `deploy/release-check.sh`: `riff release cut` runs that
+/// script, and `riff wave end` does not look for it.
+#[test]
+fn the_help_of_wave_end_names_the_release_table_of_riff_toml() {
+    let help = words(&riff(&["wave", "end", "--help"]));
+    let gate = "In a repository with [release] in riff.toml, it also refuses \
+                while a merged pull request of the wave is in no checked release";
+    assert!(help.contains(gate), "no {gate:?} in {help}");
+    assert!(!help.contains("release-check.sh"), "{help}");
+
+    let book = words(&under("development.md", "#### Turn on the release cycle"));
+    let said = "In a repository with [release] in riff.toml, riff wave end also \
+                refuses while a merged pull request of the wave is in no checked release.";
+    assert!(book.contains(said), "no {said:?} in {book}");
+
+    // The help of the cut still says that the cut runs the script.
+    let cut = words(&riff(&["release", "cut", "--help"]));
+    assert!(cut.contains("runs deploy/release-check.sh"), "{cut}");
+}
