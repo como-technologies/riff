@@ -62,6 +62,9 @@ pub const EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 /// The most characters of the last step of a session in the facts.
 pub const LAST_CHARS: usize = 80;
 
+/// The hex digits of a short digest ([`short`]).
+pub const SHORT_DIGEST: usize = 12;
+
 /// Under this many minutes left, the sign-in of `claude` is short: the
 /// lead gets one note (01M57D3FC5PB5EQ6Y38Y5R2DBB).
 pub const SHORT_MINUTES: i64 = 120;
@@ -185,6 +188,10 @@ pub struct Session {
     /// Its last step, at most [`LAST_CHARS`] characters.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub last: String,
+    /// The short digest ([`short`]) of the image that its container
+    /// runs, or empty when podman did not say.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub digest: String,
 }
 
 /// A wave that the daemon runs.
@@ -194,6 +201,10 @@ pub struct Wave {
     pub repo: String,
     /// What the wave did last.
     pub word: String,
+    /// The merged pin of the repository, or `None` when its main clone
+    /// has no good merged pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<Image>,
 }
 
 /// The real-session test that the daemon runs (01M5QVBTXE8YRY44A1C1VP71QS).
@@ -207,13 +218,29 @@ pub struct Test {
     pub secs: u64,
 }
 
-/// The session image of a repository that the daemon serves.
+/// The session image that the merged pin of a wave names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Image {
-    /// The name of the image, with no digest.
-    pub name: String,
+    /// The short digest ([`short`]) of the pinned image.
+    pub digest: String,
     /// True when podman has the pinned image on the host.
     pub here: bool,
+}
+
+/// The short form of a digest: the first [`SHORT_DIGEST`] hex digits
+/// after `sha256:`. A text with no `sha256:` is cut the same way.
+///
+/// ```
+/// use riff_client::daemons::short;
+///
+/// assert_eq!(short(&format!("sha256:{}", "0123456789abcdef".repeat(4))), "0123456789ab");
+/// assert_eq!(short("0123456789abcdef"), "0123456789ab");
+/// assert_eq!(short("sha256:abc"), "abc");
+/// assert_eq!(short(""), "");
+/// ```
+pub fn short(digest: &str) -> String {
+    let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
+    hex.chars().take(SHORT_DIGEST).collect()
 }
 
 /// The facts of the daemon of a host (01M57D3F50347RD8ED79KEA9V7).
@@ -249,9 +276,6 @@ pub struct Facts {
     /// The version of podman, or `None` with no podman.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub podman: Option<String>,
-    /// The session image of the repository, or `None` when it pins none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<Image>,
     /// The sign-in of riff to its riff-server.
     #[serde(default)]
     pub riff: Sign,
@@ -290,6 +314,7 @@ impl Facts {
     ///     item: format!("issue-{i}"),
     ///     phase: Phase::Works,
     ///     last: "x".repeat(200),
+    ///     digest: "0123456789ab".into(),
     /// };
     /// let facts = Facts { sessions: (0..100).map(session).collect(), ..Facts::default() };
     /// let line = facts.line();
@@ -413,12 +438,17 @@ mod tests {
                 item: "issue-12".into(),
                 phase: Phase::Ends,
                 last: "end: success".into(),
+                digest: "0123456789ab".into(),
             }],
             more: 0,
             waiting: vec!["riff-issue-13-2b3c4d5e".into()],
             waves: vec![Wave {
                 repo: "o/r".into(),
                 word: "started issue-12".into(),
+                image: Some(Image {
+                    digest: "0123456789ab".into(),
+                    here: true,
+                }),
             }],
             test: Some(Test {
                 tag: "v4.1.1".into(),
@@ -438,10 +468,6 @@ mod tests {
                 total_gb: 455,
             }),
             podman: Some("5.2.1".into()),
-            image: Some(Image {
-                name: "ghcr.io/o/riff-session".into(),
-                here: true,
-            }),
             riff: Sign::On,
             gh: Sign::Off,
             claude: Sign::Left { minutes: 90 },
@@ -459,6 +485,19 @@ mod tests {
         assert_eq!(machine.threads, 32);
         assert_eq!((machine.mhz, machine.avail_gb), (5883, 117));
         assert!(facts.line().contains(r#""cores":32"#));
+    }
+
+    /// An old daemon sent the image of one repository for the host, and no
+    /// digest: the new facts read it with no image and no digest.
+    #[test]
+    fn the_facts_of_an_old_daemon_have_no_wave_image_and_no_digest() {
+        let old = r#"daemon facts: {"build":"4.3.0","limit":8,"floor_gb":8,"sessions":[{"name":"riff-issue-12-1a2b3c4d","item":"issue-12","phase":"works"}],"waves":[{"repo":"o/r","word":"waits"}],"image":{"name":"ghcr.io/o/i","here":true}}"#;
+        let facts = Facts::parse(old).unwrap();
+        assert_eq!(facts.waves[0].image, None);
+        assert_eq!(facts.sessions[0].digest, "");
+        // A fact with no digest adds nothing to the line.
+        assert!(!facts.line().contains("digest"));
+        assert!(!facts.line().contains("image"));
     }
 
     #[test]

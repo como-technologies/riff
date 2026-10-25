@@ -2989,7 +2989,7 @@ pub fn who(sessions: &[SessionInfo], owner: &RiffOwner, me: &SessionUri) -> Stri
             let _ = writeln!(out, "  {line}");
         }
     }
-    let hosts = crate::view::hosts(sessions);
+    let hosts = crate::view::hosts(sessions, true);
     out.push_str(&anstream::adapter::strip_str(&hosts).to_string());
     out
 }
@@ -5954,8 +5954,15 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 /// The lines of the facts of the daemon of a host in `riff who` and
 /// `riff top` (01M57D3F7FXTPZB3M72Z1DQ1T7, 01M57D3F9SWMKP22WNRPRY3X5T):
 /// each line is its parts, each with its style. A fact that needs the
-/// person has the warning style: no podman, no session image, a
-/// sign-in that is off or short, low memory or disk.
+/// person has the warning style: no podman, a wave with no session image
+/// or with an image that the host does not have, a sign-in that is off
+/// or short, low memory or disk.
+///
+/// The session image shows for each wave, not for the host
+/// (01M5TKPG5WZ1T58FNAMZNP6CJ5): the merged pin of its repository, and
+/// whether the host has it. With `long`, the line of a wave has the short
+/// digest of the pin, and the line of a session has the short digest of
+/// the image that its container runs.
 ///
 /// ```
 /// use riff_client::daemons::{Facts, Image, Session, Sign, Token, Wave};
@@ -5971,57 +5978,92 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 ///         item: "issue-12".into(),
 ///         phase: Phase::Works,
 ///         last: "> Bash: just check".into(),
+///         digest: "1a2b3c4d5e6f".into(),
 ///     }],
 ///     waiting: vec!["riff-issue-13-2b3c4d5e".into()],
-///     waves: vec![Wave { repo: "o/r".into(), word: "started issue-12".into() }],
+///     waves: vec![
+///         Wave {
+///             repo: "o/r".into(),
+///             word: "started issue-12".into(),
+///             image: Some(Image { digest: "1a2b3c4d5e6f".into(), here: true }),
+///         },
+///         Wave {
+///             repo: "o/s".into(),
+///             word: "waits".into(),
+///             image: Some(Image { digest: "9f8e7d6c5b4a".into(), here: false }),
+///         },
+///     ],
 ///     machine: Some(Machine { threads: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
 ///     disk: Some(Disk { free_gb: 200, total_gb: 455 }),
 ///     podman: Some("5.2.1".into()),
-///     image: Some(Image { name: "ghcr.io/o/riff-session".into(), here: true }),
 ///     riff: Sign::On,
 ///     gh: Sign::On,
 ///     claude: Sign::Left { minutes: 90 },
 ///     claude_token: Token::NotSet,
 ///     ..Facts::default()
 /// };
-/// let plain: Vec<String> = riff::text::daemon_facts(&facts)
-///     .into_iter()
-///     .map(|parts| parts.into_iter().map(|(t, _)| t).collect::<Vec<_>>().join("  "))
-///     .collect();
+/// let plain = |facts: &Facts, long: bool| -> Vec<String> {
+///     riff::text::daemon_facts(facts, long)
+///         .into_iter()
+///         .map(|parts| parts.into_iter().map(|(t, _)| t).collect::<Vec<_>>().join("  "))
+///         .collect()
+/// };
 /// assert_eq!(
-///     plain,
+///     plain(&facts, false),
 ///     [
 ///         "daemon 3.1.0 d2ae080  sessions 1/4  floor 8GB",
-///         "load 1.5/16 threads  24GB avail  disk 200GB free (43%)  podman 5.2.1  image here",
+///         "load 1.5/16 threads  24GB avail  disk 200GB free (43%)  podman 5.2.1",
 ///         "riff on  gh on  claude 1h30m left  claude token not set",
-///         "wave o/r: started issue-12",
+///         "wave o/r: started issue-12  image here",
+///         "wave o/s: waits  image not here",
 ///         "riff-issue-12-1a2b3c4d  issue-12  works  > Bash: just check",
 ///         "waits: riff-issue-13-2b3c4d5e",
 ///     ]
 /// );
-/// let warned: Vec<String> = riff::text::daemon_facts(&facts)
+/// // With long, the digest of each wave and of each session.
+/// assert_eq!(
+///     plain(&facts, true)[3..],
+///     [
+///         "wave o/r: started issue-12  image 1a2b3c4d5e6f here",
+///         "wave o/s: waits  image 9f8e7d6c5b4a not here",
+///         "riff-issue-12-1a2b3c4d  issue-12  works  image 1a2b3c4d5e6f  > Bash: just check",
+///         "waits: riff-issue-13-2b3c4d5e",
+///     ]
+/// );
+/// let warned: Vec<String> = riff::text::daemon_facts(&facts, false)
 ///     .into_iter()
 ///     .flatten()
 ///     .filter(|(_, style)| *style == riff::style::WARNING)
 ///     .map(|(t, _)| t)
 ///     .collect();
-/// assert_eq!(warned, ["claude 1h30m left", "claude token not set"]);
+/// assert_eq!(warned, ["claude 1h30m left", "claude token not set", "image not here"]);
+/// // A wave with no merged pin, and a session that podman did not tell.
+/// let none = Facts {
+///     waves: vec![Wave { repo: "o/r".into(), word: "waits".into(), image: None }],
+///     sessions: vec![Session { digest: String::new(), ..facts.sessions[0].clone() }],
+///     ..facts.clone()
+/// };
+/// assert_eq!(plain(&none, true)[3], "wave o/r: waits  no session image");
+/// assert!(plain(&none, true)[4].contains("works  image ?  >"));
 /// // With a token, the minutes of claude do not warn.
 /// let token = Facts { claude_token: Token::Set, ..facts.clone() };
-/// let warned = riff::text::daemon_facts(&token).into_iter().flatten()
+/// let warned = riff::text::daemon_facts(&token, false).into_iter().flatten()
 ///     .filter(|(_, style)| *style == riff::style::WARNING).count();
-/// assert_eq!(warned, 0);
-/// let bare = riff::text::daemon_facts(&Facts { build: "3.1.0".into(), ..Facts::default() });
+/// assert_eq!(warned, 1, "only the image that the host does not have");
+/// let bare = riff::text::daemon_facts(&Facts { build: "3.1.0".into(), ..Facts::default() }, false);
 /// let words: Vec<&str> = bare[1..3].iter().flatten().map(|(t, _)| t.as_str()).collect();
-/// assert_eq!(words, ["no podman", "no session image", "riff ?", "gh ?", "claude ?", "claude token ?"]);
+/// assert_eq!(words, ["no podman", "riff ?", "gh ?", "claude ?", "claude token ?"]);
 /// // A real-session test that runs shows on the first line of the host
 /// // (01M5QVBTXE8YRY44A1C1VP71QS).
 /// let test = riff_client::daemons::Test { tag: "v4.1.1".into(), commit: "90e36bfd".into(), secs: 185 };
-/// let testing = riff::text::daemon_facts(&Facts { test: Some(test), ..facts });
+/// let testing = riff::text::daemon_facts(&Facts { test: Some(test), ..facts }, false);
 /// let first: Vec<&str> = testing[0].iter().map(|(t, _)| t.as_str()).collect();
 /// assert_eq!(first[3], "real-session test of v4.1.1 on 90e36bfd, for 3 min");
 /// ```
-pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, anstyle::Style)>> {
+pub fn daemon_facts(
+    facts: &riff_client::daemons::Facts,
+    long: bool,
+) -> Vec<Vec<(String, anstyle::Style)>> {
     let plain = anstyle::Style::new;
     let warn = |over: bool| if over { WARNING } else { plain() };
     // The version and the commit of the build, with no time.
@@ -6053,11 +6095,6 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
         Some(version) => (format!("podman {}", safe(version)), plain()),
         None => ("no podman".to_owned(), WARNING),
     });
-    host.push(match &facts.image {
-        Some(image) if image.here => ("image here".to_owned(), plain()),
-        Some(_) => ("image missing".to_owned(), WARNING),
-        None => ("no session image".to_owned(), WARNING),
-    });
     let sign = |name: &str, sign: &riff_client::daemons::Sign| {
         (format!("{name} {}", sign_word(sign)), warn(sign.short()))
     };
@@ -6080,7 +6117,19 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
     let mut lines = vec![head, host, signs];
     for wave in &facts.waves {
         let line = format!("wave {}: {}", safe(&wave.repo), safe(&wave.word));
-        lines.push(vec![(line, plain())]);
+        let image = match &wave.image {
+            Some(image) => {
+                let here = if image.here { "here" } else { "not here" };
+                let text = if long {
+                    format!("image {} {here}", safe(&image.digest))
+                } else {
+                    format!("image {here}")
+                };
+                (text, warn(!image.here))
+            }
+            None => ("no session image".to_owned(), WARNING),
+        };
+        lines.push(vec![(line, plain()), image]);
     }
     for s in &facts.sessions {
         let mut parts = vec![
@@ -6088,6 +6137,10 @@ pub fn daemon_facts(facts: &riff_client::daemons::Facts) -> Vec<Vec<(String, ans
             (safe(&s.item), plain()),
             (phase_word(s.phase).to_owned(), plain()),
         ];
+        if long {
+            let digest = if s.digest.is_empty() { "?" } else { &s.digest };
+            parts.push((format!("image {}", safe(digest)), plain()));
+        }
         if !s.last.is_empty() {
             parts.push((safe(&s.last), MUTED));
         }
@@ -6171,6 +6224,7 @@ pub fn real_session_test(test: &riff_client::daemons::Test) -> String {
 ///     session: "1a2b3c4d-0000".into(),
 ///     item: "issue-12".into(),
 ///     image: "img".into(),
+///     digest: String::new(),
 ///     since_ms: 240_000,
 ///     phase: Phase::Works,
 ///     last: "> Bash: just check".into(),
@@ -10105,7 +10159,7 @@ mod tests {
             machine: Some(machine),
             ..Default::default()
         };
-        let load = &daemon_facts(&facts)[1][0];
+        let load = &daemon_facts(&facts, false)[1][0];
         assert_eq!(load.0, "load 30.0/32 threads");
         assert_eq!(load.1, anstyle::Style::new(), "30 is under 32");
     }

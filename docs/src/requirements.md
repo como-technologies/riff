@@ -4413,9 +4413,8 @@ of this part when they merge.
   most 4000 characters. The facts are the riff build, the limit and
   the floor, the live sessions with their item, phase and last step,
   the starts that wait, the state of each wave, the load, the free
-  memory, the disk, the version of podman, the session image of the
-  repository, and the sign-ins of riff, `gh` and `claude`. Facts older
-  than 180 seconds count as none.
+  memory, the disk, the version of podman, and the sign-ins of riff,
+  `gh` and `claude`. Facts older than 180 seconds count as none.
 - **01M57D3F7FXTPZB3M72Z1DQ1T7** `riff who` ends with the part `Hosts`:
   the facts of the daemon of each host, with their age.
 - **01M5923PW9YW5S58RQG5Y532RS** The `who` tool of a session ends with
@@ -4559,6 +4558,16 @@ of this part when they merge.
   (01M5P26VSA7AA99K1RYG83R8J9) run with `-c commit.gpgsign=false`. A
   host whose git signs each commit keeps no folder for that reason, and
   riff saves the work.
+- **01M5TKPG5WZ1T58FNAMZNP6CJ5** The facts of a daemon show the session
+  image for each wave, not for the host. Each wave has the short digest
+  (12 hex digits) of the merged pin of its repository, as the main clone
+  has it, and whether podman has that image on the host: `here` or `not
+  here`. Each live session has the short digest of the image that its
+  container runs. The daemon asks podman for it with `podman container
+  inspect --format {{.ImageDigest}} NAME`. `riff who --long` and the
+  `who` tool of a session show the digests. `riff who` and `riff top`
+  show only `here` or `not here` for each wave. This supersedes
+  01M57D3F50347RD8ED79KEA9V7 in part.
 
 ### riff relay
 

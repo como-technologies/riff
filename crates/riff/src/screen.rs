@@ -502,6 +502,7 @@ mod tests {
 
     fn live(name: &str, item: &str, phase: Phase, last: &str) -> Live {
         Live {
+            digest: String::new(),
             name: name.into(),
             session: format!("{name}-session"),
             item: item.into(),

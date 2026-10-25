@@ -1813,6 +1813,7 @@ esac
         let name = "riff-issue-12-9f8e7d6c";
         let record = Record {
             live: Live {
+                digest: String::new(),
                 name: name.into(),
                 session: "9f8e7d6c-0000-4000-8000-000000000000".into(),
                 item: "issue-12".into(),

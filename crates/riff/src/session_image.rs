@@ -475,6 +475,58 @@ pub fn merged_sources(main: &Path) -> Result<Vec<String>> {
     sources_of_config(&config, &format!("{FILE} of {head}"))
 }
 
+/// The merged pin of the main clone `main` as the clone has it now
+/// (01M5TKPG5WZ1T58FNAMZNP6CJ5): the image that [`FILE`] pins on the
+/// default branch of `origin`. Unlike [`merged`], it fetches nothing and
+/// says nothing, so the facts of the daemon can read it at each look.
+/// The latest start of a session fetched that branch. An error when the
+/// clone has no `origin/HEAD`, when that branch has no [`FILE`], or when
+/// it pins no good image.
+///
+/// ```
+/// use std::process::Command;
+/// use riff::session_image::{FILE, merged_here};
+///
+/// let dir = tempfile::tempdir()?;
+/// let (origin, main) = (dir.path().join("origin.git"), dir.path().join("main"));
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let status = Command::new("git")
+///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+///         .arg("-C")
+///         .arg(dir)
+///         .args(args)
+///         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+///         .status()
+///         .unwrap();
+///     assert!(status.success(), "git {args:?}");
+/// };
+/// let config = |n: &str| format!("[session]\nimage = \"ghcr.io/o/i@sha256:{}\"\n", n.repeat(64));
+/// git(dir.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+/// git(dir.path(), &["init", "-q", "-b", "main", main.to_str().unwrap()]);
+/// assert!(merged_here(&main).is_err());
+/// std::fs::write(main.join(FILE), config("0"))?;
+/// git(&main, &["add", FILE]);
+/// git(&main, &["commit", "-q", "-m", "pin"]);
+/// git(&main, &["remote", "add", "origin", origin.to_str().unwrap()]);
+/// git(&main, &["push", "-q", "origin", "main"]);
+/// git(&main, &["remote", "set-head", "origin", "main"]);
+/// assert_eq!(merged_here(&main)?.digest(), format!("sha256:{}", "0".repeat(64)));
+///
+/// // An edit that is not merged changes nothing.
+/// std::fs::write(main.join(FILE), config("1"))?;
+/// assert_eq!(merged_here(&main)?.digest(), format!("sha256:{}", "0".repeat(64)));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn merged_here(main: &Path) -> Result<Image> {
+    let head = git(
+        main,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .map_err(|_| anyhow!("{}", text::image_no_origin_head(main)))?;
+    let config = git(main, &["show", &format!("{head}:{FILE}")])?;
+    Image::of_config(&config, &format!("{FILE} of {head}"))
+}
+
 /// True when the branch `head` is there, and has no [`FILE`].
 fn lacks_config(main: &Path, head: &str) -> bool {
     let has = |spec: String| git(main, &["rev-parse", "--verify", "--quiet", &spec]).is_ok();

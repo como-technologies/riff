@@ -1102,9 +1102,9 @@ riff top --host thelio
 Hosts:
 mike@thelio (12s ago)
   daemon 3.1.0 d2ae080  sessions 1/4  floor 8GB
-  load 1.5/32 threads  100GB avail  disk 300GB free (75%)  podman 5.2.1  image here
+  load 1.5/32 threads  100GB avail  disk 300GB free (75%)  podman 5.2.1
   riff on  gh on  claude 1h30m left
-  wave como-technologies/riff: started issue-12
+  wave como-technologies/riff: started issue-12  image here
   riff-issue-12-1a2b3c4d  issue-12  works  > Bash: just check
   waits: riff-issue-13-2b3c4d5e
 ```
@@ -1112,20 +1112,23 @@ mike@thelio (12s ago)
 - The first line: the riff build of the daemon, the live sessions
   against the limit, and the floor of free memory.
 - The second line: the 1-minute load against the hardware threads, the
-  free memory, the disk of the session folders, the version of podman,
-  and the session image of the repository. The hardware threads are
-  the logical CPUs: thelio has 16 cores with 2 threads each, so 32.
-  The load is yellow when it is more than the threads.
+  free memory, the disk of the session folders, and the version of
+  podman. The hardware threads are the logical CPUs: thelio has 16
+  cores with 2 threads each, so 32. The load is yellow when it is more
+  than the threads.
 - The third line: the sign-ins on the host. `claude` shows the time
   left. riff and `gh` show `on` or `off`. `?` means that riff cannot
   read it.
-- Then the state of each wave, each live session with its item, phase
-  and last step, and the starts that wait for room.
+- Then the state of each wave with its session image, each live session
+  with its item, phase and last step, and the starts that wait for
+  room. A host can run the waves of two repositories, and the two can
+  pin two images: so the image is on the line of the wave, not on the
+  line of the host.
 
-A fact in yellow needs the person: no podman, no session image, a
-sign-in that is off or has less than 2 hours left, low memory or a
-full disk. A host whose daemon sent no facts for 3 minutes shows
-none.
+A fact in yellow needs the person: no podman, a wave with no session
+image or with an image that the host does not have, a sign-in that is
+off or has less than 2 hours left, low memory or a full disk. A host
+whose daemon sent no facts for 3 minutes shows none.
 
 The daemon also posts a note to the lead:
 
@@ -1147,11 +1150,62 @@ flowchart LR
 ### Show the URI of each session
 
 The table shows a short name. To see the full URI of each session in
-its place, use `--long`:
+its place, use `--long`. It also shows the image digests: see
+[See which image a session runs](#see-which-image-a-session-runs).
 
 ```sh
 riff who --long
 ```
+
+### See which image a session runs
+
+A repository pins its session image in `riff.toml`. A merge can change
+the pin. To see that a new worker runs the new pin, use `--long`. It
+adds the short digest of each image: the first 12 digits of its
+sha256. The `who` tool of a session shows the digests too, so the lead
+can read them:
+
+```sh
+riff who --long
+```
+
+```text
+Hosts:
+mike@thelio (12s ago)
+  daemon 3.1.0 d2ae080  sessions 2/4  floor 8GB
+  load 1.5/32 threads  100GB avail  disk 300GB free (75%)  podman 5.2.1
+  riff on  gh on  claude 1h30m left
+  wave como-technologies/riff: started issue-12  image 1a2b3c4d5e6f here
+  wave n8behavior/sens-o-matic: started issue-3  image 9f8e7d6c5b4a not here
+  riff-issue-12-1a2b3c4d  issue-12  works  image 1a2b3c4d5e6f  > Bash: just check
+  riff-issue-3-2b3c4d5e  issue-3  works  image 7c6b5a493827  > Edit: src/lib.rs
+```
+
+- The line of a wave shows the merged pin of its repository: the image
+  that `riff.toml` pins on the default branch of `origin`. The main
+  clone fetches `origin` at each start of a session, so the pin is new
+  after the first start that follows the merge.
+- `here` means that podman has the image on the host. `not here` is
+  yellow: the daemon pulls the image before the next start. `no session
+  image` is yellow too: the main clone has no good merged pin.
+- The line of a session shows the digest of the image that its
+  container runs, as podman says it. `image ?` means that podman did
+  not say yet.
+- A worker runs the new pin when the digest on its line is the digest
+  on the line of its wave. The URI of the session in the table above
+  names its repository. In the example, `riff-issue-3-2b3c4d5e` works
+  on `n8behavior/sens-o-matic`. It started before the merge, so it
+  still runs an old image. It runs it until it ends.
+
+```mermaid
+flowchart LR
+    O["riff.toml on origin<br/>the merged pin"] --> W["the line of the wave<br/>the digest and here"]
+    P["podman<br/>the image of the container"] --> S["the line of the session<br/>the digest"]
+    W -.->|"same digest?"| S
+```
+
+Without `--long`, `riff who` shows only `image here` or `image not
+here` for each wave.
 
 ### List the sessions without color
 

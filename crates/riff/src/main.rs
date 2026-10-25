@@ -67,7 +67,8 @@ enum Command {
         /// List gone sessions too.
         #[arg(long)]
         all: bool,
-        /// Show the URI of each session in place of its name and claims.
+        /// Show the URI of each session in place of its name and claims, and the
+        /// image digests of each wave and session of a host.
         #[arg(long)]
         long: bool,
     },

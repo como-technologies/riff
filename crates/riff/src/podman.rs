@@ -298,6 +298,34 @@ pub fn reached(code: Option<i32>) -> Option<bool> {
     }
 }
 
+/// The arguments of the look-up of [`Runtime::digest`] for the container
+/// `name`.
+///
+/// ```
+/// let args = riff::podman::digest_args("riff-issue-12-1a2b3c4d");
+/// assert_eq!(args, ["container", "inspect", "--format", "{{.ImageDigest}}", "riff-issue-12-1a2b3c4d"]);
+/// ```
+pub fn digest_args(name: &str) -> [&str; 5] {
+    ["container", "inspect", "--format", "{{.ImageDigest}}", name]
+}
+
+/// The digest that `podman container inspect` printed: `sha256:` and 64
+/// hex digits on one line. Anything else says nothing.
+///
+/// ```
+/// let digest = format!("sha256:{}", "ab".repeat(32));
+/// assert_eq!(riff::podman::digest_of(format!("{digest}\n").as_bytes()), Some(digest));
+/// assert_eq!(riff::podman::digest_of(b""), None);
+/// assert_eq!(riff::podman::digest_of(b"sha256:abc\n"), None);
+/// assert_eq!(riff::podman::digest_of(b"<no value>\n"), None);
+/// ```
+pub fn digest_of(printed: &[u8]) -> Option<String> {
+    let digest = std::str::from_utf8(printed).ok()?.trim();
+    let hex = digest.strip_prefix("sha256:")?;
+    (hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        .then(|| digest.to_owned())
+}
+
 /// The arguments of `podman` for [`Runtime::output`]: `run` of the image
 /// with the program as the entrypoint, with no network and no pull.
 ///
@@ -698,6 +726,23 @@ impl Runtime for Podman {
         };
         let status = status?;
         reached(status.code()).ok_or_else(|| anyhow!("podman exec {name} getent: {status}"))
+    }
+
+    /// `podman container inspect --format {{.ImageDigest}} NAME`
+    /// ([`digest_args`]).
+    async fn digest(&self, name: &str) -> Result<String> {
+        let out = podman()
+            .args(digest_args(name))
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .await
+            .with_context(|| text::no_program(PODMAN))?;
+        out.status
+            .success()
+            .then(|| digest_of(&out.stdout))
+            .flatten()
+            .ok_or_else(|| anyhow!("podman does not say the image digest of {name}"))
     }
 }
 

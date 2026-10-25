@@ -465,7 +465,7 @@ pub fn who(
             .collect();
         out.push_str(&table(&head, &rows));
     }
-    out.push_str(&hosts(sessions));
+    out.push_str(&hosts(sessions, long));
     for action in actions {
         let _ = writeln!(out, "{action}");
     }
@@ -485,13 +485,45 @@ pub fn who(
 ///     "uri": "riff://mike@thelio/o/r?session=d1", "live": true,
 /// }))?;
 /// s.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 12 });
-/// let text = riff::view::hosts(&[s]);
+/// let text = riff::view::hosts(&[s], false);
 /// let plain = anstream::adapter::strip_str(&text).to_string();
 /// assert!(plain.starts_with("\nHosts:\nmike@thelio (12s ago)\n  daemon 3.1.0  sessions 0/4  floor 8GB\n"), "{plain}");
-/// assert_eq!(riff::view::hosts(&[]), "");
+/// assert_eq!(riff::view::hosts(&[], false), "");
+///
+/// // --long adds the digest of the pin of each wave and of each session.
+/// use riff_client::daemons::{Image, Session, Wave};
+/// use riff_client::sessions::Phase;
+/// let facts = Facts {
+///     build: "3.1.0".into(),
+///     limit: 4,
+///     floor_gb: 8,
+///     sessions: vec![Session {
+///         name: "riff-issue-12-1a2b3c4d".into(),
+///         item: "issue-12".into(),
+///         phase: Phase::Works,
+///         last: String::new(),
+///         digest: "1a2b3c4d5e6f".into(),
+///     }],
+///     waves: vec![Wave {
+///         repo: "o/r".into(),
+///         word: "started issue-12".into(),
+///         image: Some(Image { digest: "1a2b3c4d5e6f".into(), here: true }),
+///     }],
+///     ..Facts::default()
+/// };
+/// let mut s: SessionInfo = serde_json::from_value(serde_json::json!({
+///     "uri": "riff://mike@thelio/o/r?session=d1", "live": true,
+/// }))?;
+/// s.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 12 });
+/// let long = anstream::adapter::strip_str(&riff::view::hosts(&[s.clone()], true)).to_string();
+/// assert!(long.contains("\n  wave o/r: started issue-12  image 1a2b3c4d5e6f here\n"), "{long}");
+/// assert!(long.contains("\n  riff-issue-12-1a2b3c4d  issue-12  works  image 1a2b3c4d5e6f\n"), "{long}");
+/// let short = anstream::adapter::strip_str(&riff::view::hosts(&[s], false)).to_string();
+/// assert!(short.contains("\n  wave o/r: started issue-12  image here\n"), "{short}");
+/// assert!(!short.contains("1a2b3c4d5e6f"), "{short}");
 /// # Ok::<(), serde_json::Error>(())
 /// ```
-pub fn hosts(sessions: &[SessionInfo]) -> String {
+pub fn hosts(sessions: &[SessionInfo], long: bool) -> String {
     let found = riff_client::daemons::hosts(sessions);
     if found.is_empty() {
         return String::new();
@@ -505,7 +537,7 @@ pub fn hosts(sessions: &[SessionInfo]) -> String {
             styled(BOLD, &safe(&host.host)),
             text::ago(host.age_secs)
         );
-        for parts in text::daemon_facts(&host.facts) {
+        for parts in text::daemon_facts(&host.facts, long) {
             let line: Vec<String> = parts.iter().map(|(t, style)| styled(*style, t)).collect();
             let _ = writeln!(out, "  {}", line.join("  "));
         }

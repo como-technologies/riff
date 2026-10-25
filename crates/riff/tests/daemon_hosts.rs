@@ -628,7 +628,9 @@ async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
             part.contains(&format!("disk {free}GB free")),
             "{host}: {part}"
         );
-        assert!(part.contains("no session image"), "{host}: {part}");
+        // The image is on the line of a wave, and no wave runs here
+        // (01M5TKPG5WZ1T58FNAMZNP6CJ5).
+        assert!(!part.contains("image"), "{host}: {part}");
         assert!(part.contains("riff on"), "{host}: {part}");
         // The gh of a test has no sign-in.
         assert!(part.contains("gh off"), "{host}: {part}");
