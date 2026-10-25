@@ -4183,6 +4183,11 @@ esac
     const WITH_FIX: &str = r#"[{"number":1,"body":"","comments":[],"milestone":{"title":"Wave 1"},"labels":[]},
 {"number":901,"body":"Needs: nothing","comments":[],"milestone":{"title":"Wave 1"},"labels":[{"name":"broken-main"}]}]"#;
 
+    /// The rules of `main` in the repository of riff: the job `Gate` and the
+    /// verify.
+    const GATE_RULES: &str = r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[
+        {"context":"Gate"},{"context":"riff/verify"}]}}]"#;
+
     /// The failed jobs of the run.
     const JOBS: &str =
         r#"[{"name":"Clippy","conclusion":"failure"},{"name":"Gate","conclusion":"failure"}]"#;
@@ -4210,6 +4215,9 @@ esac
             here.put("issues", ISSUES);
             here.put("with-fix", WITH_FIX);
             here.put("jobs", JOBS);
+            // The ruleset of riff: the job Gate and the verify. A repository with
+            // no required check has no full check (01M5SMNKDWBD1J6Y18ENQG87CK).
+            here.put("rules", GATE_RULES);
             here
         }
 

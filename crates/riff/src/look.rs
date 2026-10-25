@@ -97,11 +97,11 @@
 //! their full check can break `main` together. The look of the daemon
 //! reads the full check of the head of `main` ([`MainWatch`],
 //! 01M51QEYKTD7ZEB0YA0C3MQTPN, 01M5R13DGMTNWPY88A3EG49WWS): each check
-//! that the ruleset of the default branch requires, but `riff/verify`, and
-//! the check `Gate` when it requires none
-//! ([`crate::repo_setup::full_check`]). It reads the rules at each look,
-//! and the check runs of each check on `main`. A check that ends `skipped`
-//! or `neutral` passed ([`crate::pr::is_success`]).
+//! that the ruleset of the default branch requires, but `riff/verify`
+//! ([`crate::repo_setup::full_check`]). A repository with no CI has none,
+//! and its look gives nothing (01M5SMNKDWBD1J6Y18ENQG87CK). The look reads
+//! the rules at each look, and the check runs of each check on `main`. A
+//! check that ends `skipped` or `neutral` passed ([`crate::pr::is_success`]).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -472,6 +472,8 @@ impl MainGate {
     /// let waits = MainGate::of(&[vec![run("success", 1)], vec![]]).unwrap();
     /// assert_eq!(waits.gate, Gate::Missing);
     /// assert_eq!(MainGate::of(&[vec![], vec![]]), None);
+    /// // A repository with no CI has no check to read (01M5SMNKDWBD1J6Y18ENQG87CK).
+    /// assert_eq!(MainGate::of(&[]), None);
     /// // A required check that was skipped passed.
     /// assert_eq!(MainGate::of(&[vec![run("skipped", 3)]]).unwrap().gate, Gate::Passed);
     /// // An old failed run of a check does not count when a newer run passed.
@@ -867,6 +869,7 @@ pub fn main_steps(
 ///      case \"$1 $2\" in\n\
 ///        api*) case \"$2\" in\n\
 ///          repos/o/r) echo '{\"default_branch\":\"master\"}' ;;\n\
+///          */rules/branches/master*) echo '[{\"type\":\"required_status_checks\",\"parameters\":{\"required_status_checks\":[{\"context\":\"Gate\"},{\"context\":\"riff/verify\"}]}}]' ;;\n\
 ///          */commits/master/check-runs?check_name=Gate) echo '{\"check_runs\":[{\"status\":\"completed\",\"conclusion\":\"failure\",\"head_sha\":\"5103311abc\"}]}' ;;\n\
 ///          *) echo '[]' ;;\n\
 ///        esac ;;\n\

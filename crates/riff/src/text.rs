@@ -6482,17 +6482,19 @@ pub fn init_ruleset_off(branch: &str, check: &str) -> String {
 }
 
 /// The fix when no ruleset of `branch` requires the verify: a ruleset
-/// with a pull request and the checks `gate` and `verify`.
+/// with a pull request, the check `verify` and each check of the CI.
 ///
 /// ```
-/// let fix = riff::text::init_fix_ruleset("main", "Gate", "riff/verify");
-/// assert!(fix.starts_with("make a ruleset of main that requires a pull request and the checks Gate and riff/verify."), "{fix}");
+/// let fix = riff::text::init_fix_ruleset("main", "riff/verify");
+/// assert!(fix.starts_with("make a ruleset of main that requires a pull request, the check riff/verify and each check that your CI runs on a pull request."), "{fix}");
+/// assert!(!fix.contains("Gate"), "{fix}");
 /// assert!(fix.ends_with("See \"Add another repository to the riff\" in the book"), "{fix}");
 /// ```
-pub fn init_fix_ruleset(branch: &str, gate: &str, verify: &str) -> String {
+pub fn init_fix_ruleset(branch: &str, verify: &str) -> String {
     format!(
-        "make a ruleset of {branch} that requires a pull request and the checks {gate} and \
-         {verify}. See \"Add another repository to the riff\" in the book"
+        "make a ruleset of {branch} that requires a pull request, the check {verify} and each \
+         check that your CI runs on a pull request. See \"Add another repository to the riff\" \
+         in the book"
     )
 }
 
@@ -6619,18 +6621,16 @@ pub fn init_ci_on(checks: &[String]) -> String {
     format!("the full check is {}", checks.join(" and "))
 }
 
-/// No pull request of the repository `repo` ran the check `gate`, and no
-/// rule requires another one: the full check never ends.
+/// No pull request of the repository `repo` ran a check, and no rule
+/// requires one: the repository has no CI, and the verify `verify` is the
+/// only check (01M5SMNKDWBD1J6Y18ENQG87CK). It is a note, not a fault.
 ///
 /// ```
-/// let found = riff::text::init_ci_off("o/r", "Gate");
-/// assert_eq!(found, "no pull request of o/r ran a check named Gate, and no rule requires another check, so the full check never ends");
+/// let note = riff::text::init_ci_no("o/r", "riff/verify");
+/// assert_eq!(note, "o/r has no CI: no pull request ran a check, so riff/verify is the only check");
 /// ```
-pub fn init_ci_off(repo: &str, gate: &str) -> String {
-    format!(
-        "no pull request of {repo} ran a check named {gate}, and no rule requires another check, \
-         so the full check never ends"
-    )
+pub fn init_ci_no(repo: &str, verify: &str) -> String {
+    format!("{repo} has no CI: no pull request ran a check, so {verify} is the only check")
 }
 
 /// No pull request of the repository `repo` ran a check yet. The pull
@@ -6645,16 +6645,42 @@ pub fn init_ci_none(repo: &str) -> String {
     format!("no pull request of {repo} ran a check yet")
 }
 
-/// The fix when the repository has no CI check of a pull request.
+/// The fix when no pull request ran a check yet, and `riff init` cannot
+/// do the step of the ruleset: a person with a CI opens a pull request. A
+/// repository with no CI needs no fix.
+pub const INIT_FIX_CI_NONE: &str = "when the repository has a CI, open a pull request so that it \
+     runs, then run riff init again. With no CI, riff/verify is the only check: no fix is needed";
+
+/// The ruleset of the repository `repo` requires the verify and no check
+/// of the CI, and the pull requests ran `checks`: a merge does not wait for
+/// them.
 ///
 /// ```
-/// let fix = riff::text::init_fix_ci("Gate");
-/// assert!(fix.starts_with("add a workflow that runs on pull_request, with a job named Gate."), "{fix}");
+/// assert_eq!(
+///     riff::text::init_ci_open("o/r", &["lint".into(), "test".into()]),
+///     "pull requests of o/r ran lint and test, and no rule requires them, so a merge does not wait for them"
+/// );
 /// ```
-pub fn init_fix_ci(gate: &str) -> String {
+pub fn init_ci_open(repo: &str, checks: &[String]) -> String {
     format!(
-        "add a workflow that runs on pull_request, with a job named {gate}. See \"Add the job \
-         Gate\" in the book. Then run riff init again"
+        "pull requests of {repo} ran {}, and no rule requires them, so a merge does not wait for \
+         them",
+        checks.join(" and ")
+    )
+}
+
+/// The fix when the ruleset of `branch` requires no check of the CI that
+/// the pull requests run.
+///
+/// ```
+/// let fix = riff::text::init_fix_ci("main");
+/// assert!(fix.starts_with("add them to the ruleset of main."), "{fix}");
+/// assert!(!fix.contains("Gate"), "{fix}");
+/// ```
+pub fn init_fix_ci(branch: &str) -> String {
+    format!(
+        "add them to the ruleset of {branch}. See \"Use the checks that you have\" in the book. \
+         Then run riff init again"
     )
 }
 
@@ -8338,6 +8364,12 @@ pub fn wave_checks_rerun(
 /// assert!(!text.contains("release pull request"));
 /// assert!(!text.contains("`release`"));
 /// assert!(text.contains("Find its \"Done when:\" line.\n2. Read the rules"));
+///
+/// // No CI (01M5SMNKDWBD1J6Y18ENQG87CK): no check to wait for, and none ran.
+/// let none = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &[], true);
+/// assert!(none.contains("The repository has no CI: riff/verify is its only check"));
+/// assert!(none.contains("Run the tests that the criteria name."));
+/// assert!(!none.contains("the full check of the commit was done"));
 /// ```
 pub fn wave_verify_start(
     repo: &str,
@@ -8348,13 +8380,23 @@ pub fn wave_verify_start(
     checks: &[String],
     release: bool,
 ) -> String {
-    let names = check_names(checks);
     let release = if release {
         "   When the pull request has the label `release`, verify it against the part \"Verify of \
          the release pull request\" of its issue, and not against the line \"Done when:\": the \
          release is not published before the merge.\n"
     } else {
         ""
+    };
+    let ran = if checks.is_empty() {
+        "The repository has no CI: riff/verify is its only check, and no check ran on the commit. \
+         Run the tests that the criteria name."
+            .to_owned()
+    } else {
+        format!(
+            "The wave started you when the full check of the commit was done: {}. Do not run it \
+             again. When it failed, the verify fails: name the step that failed.",
+            check_names(checks)
+        )
     };
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
@@ -8369,8 +8411,7 @@ pub fn wave_verify_start(
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
          origin/{base}...HEAD\n\
          4. See the checks of the commit: gh pr checks {pull}\n   \
-         The wave started you when the full check of the commit was done: {names}. Do not run \
-         it again. When it failed, the verify fails: name the step that failed.\n\
+         {ran}\n\
          5. Check each criterion: review the code and its fit with the design, read the test \
          of each criterion, and run that test by its name when you must.\n\
          6. Do not commit, do not push, and do not change the pull request. Run each test in \

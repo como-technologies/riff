@@ -89,7 +89,7 @@ case "$*" in
   'api repos/como-technologies/riff/milestones?state=open&per_page=100')
     echo '[{"title":"Wave 27"}]' ;;
   'api repos/como-technologies/riff') echo "{\"default_branch\":\"$branch\"}" ;;
-  "api repos/como-technologies/riff/rules/branches/$branch?per_page=100") echo '[]' ;;
+  "api repos/como-technologies/riff/rules/branches/$branch?per_page=100") echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]' ;;
   "api repos/como-technologies/riff/commits/$branch/check-runs?check_name=Gate")
     if [ -f "$dir/gate" ]; then cat "$dir/gate"; else echo '{"check_runs":[]}'; fi ;;
   'label create '*) ;;

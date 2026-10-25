@@ -581,8 +581,7 @@
 - **01M5QYDE41FVFX26EC8K5QGYH4** The full check of a commit is each
   check that the ruleset of the default branch requires, but
   `riff/verify`: riff reads it with `gh api
-  repos/OWNER/REPO/rules/branches/BRANCH`. When the ruleset requires no
-  other check, the full check is the check run `Gate`. `riff verify pass
+  repos/OWNER/REPO/rules/branches/BRANCH`. `riff verify pass
   N` and the verify of the wave read the check runs of the full check by
   name. A pass, and the start of a verify, need each check to be done:
   the pass needs a `success` of each. The line of a refused pass names
@@ -641,6 +640,17 @@
   public, or run `podman login REGISTRY` on each host of the wave. `riff
   verify fail N` needs no such check. The verify of the wave uses the
   same rule.
+- **01M5SMNKDWBD1J6Y18ENQG87CK** A repository with no CI has no full
+  check. When the ruleset of the default branch requires no check but
+  `riff/verify`, the full check is empty, and `riff/verify` is the only
+  check that gates a merge. riff names no check `Gate` for it. The
+  verify of the wave starts when the pull request has a head commit, and
+  `riff verify pass` needs no check run. `riff init` makes the ruleset
+  `riff` with `riff/verify` alone when no pull request ran a check, and
+  it says in a note that the repository has no CI. `riff.toml` has no
+  setting for the full check. Supersedes 01M5QYDE41FVFX26EC8K5QGYH4,
+  01M5QWA0E9A4ZJ8X49EM2MJM5Q, 01M5QZ01Y14Z76RC220RT7YTX7 and
+  01M5R1675HZ6TJPMQ6536X37T5 in part.
 
 ## Tokens on GitHub
 
@@ -4736,11 +4746,10 @@ of this part when they merge.
   group comes after verify.
 - **01M5QYDHN27RC5SRHAB56PFKK0** A wave starts the verify of an item
   when the full check of the head commit of its pull request is done
-  (01M5QYDE41FVFX26EC8K5QGYH4). A repository whose full check is not
-  named `Gate` gets its verify when each required check of the default
-  branch passed or ended. A wave that cannot read the required checks
-  fails its look, and says why. Supersedes 01M4ZV3B6NKPEZ5FNE27X95GF0 in
-  part.
+  (01M5QYDE41FVFX26EC8K5QGYH4). It gets its verify when each required
+  check of the default branch but `riff/verify` passed or ended. A wave
+  that cannot read the required checks fails its look, and says why.
+  Supersedes 01M4ZV3B6NKPEZ5FNE27X95GF0 in part.
 - **01M5R0QFM265CCKTADK4T5XREQ** While the last background_tasks_changed
   event of a session of a wave lists one task or more, the daemon uses
   the quiet limit for it, not the grace (01M5P26VPJA73WCPVZY6CPG9HD).
@@ -5068,18 +5077,17 @@ of this part when they merge.
 - **01M5QWA0E9A4ZJ8X49EM2MJM5Q** Each failed check of the repository on
   GitHub carries its step in code (`riff::repo_setup::Step`): allow
   auto-merge and squash merge, make the ruleset `riff` that requires a
-  pull request and the checks `Gate` and `riff/verify`, and make the
-  Backlog. A step is safe to do again. The how-to makes the same
-  ruleset: a test compares the two. `riff init` does the steps after a
-  question (01M5R1672NF56P15VD0JEX51K4).
+  pull request and the check `riff/verify`, and make the Backlog. A
+  step is safe to do again. The how-to makes the same ruleset: a test
+  compares the two. `riff init` does the steps after a question
+  (01M5R1672NF56P15VD0JEX51K4).
 - **01M5QZ01Y14Z76RC220RT7YTX7** The how-to "Add another repository to
   the riff" has a step "Use the checks that you have" with a copyable
   `sh` block that lists the checks that riff waits for: the required
   checks of the ruleset of the default branch, but `riff/verify`
   (01M5QYDE41FVFX26EC8K5QGYH4). The step says that an empty list means
-  the check `Gate`, and that a repository with checks already needs no
-  job `Gate`. The verifier of the wave gets the same rule in its start
-  text.
+  that the repository has no CI, and that `riff/verify` is the only
+  check. The verifier of the wave gets the same rule in its start text.
 - **01M5R1672NF56P15VD0JEX51K4** In a clone of a repository on GitHub
   that is not set up for riff, `riff init` does the setup of the
   repository after one question, `Question::Setup`, with `[y/N]`: only a
@@ -5098,10 +5106,9 @@ of this part when they merge.
   commit of the build. The ruleset `riff` that `riff init` makes
   requires `riff/verify` and the checks that the CI runs on a pull
   request: the check runs of the head of the latest pull request of the
-  default branch that has some. A repository with no such check run gets
-  `Gate`. When the setup pull request is the only one, riff waits for
-  its check runs. `riff init` also checks that the repository has a CI
-  check on the default branch. It has no step for it: the check names
+  default branch that has some. When the setup pull request is the only
+  one, riff waits for its check runs. `riff init` also checks the CI
+  check of the default branch. It has no step for it: the check names
   the fix. A person who is not an admin of the repository gets each step
   named, and riff changes nothing. A step that fails prints why and its
   fix, and the next steps run.

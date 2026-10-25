@@ -471,8 +471,8 @@ enum Command {
     /// request, sets the status riff/verify of its head commit, and posts
     /// the result to the session that holds its issue. A pass needs a
     /// success of the full check of the head commit: each check that the
-    /// ruleset of the default branch requires, but riff/verify, or the
-    /// check Gate when the ruleset requires none.
+    /// ruleset of the default branch requires, but riff/verify. A repository
+    /// with no CI has none: riff/verify is its only check.
     Verify {
         /// pass sets the status success, fail sets failure.
         verdict: VerdictArg,

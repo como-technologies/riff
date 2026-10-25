@@ -49,12 +49,12 @@
 //! The full check of a commit is its one full test run
 //! (01M49HAZ5BZYGAR9PGC089RM3F). In the repository of riff it is the job
 //! `Gate`. In another repository it is each check that the ruleset of the
-//! default branch requires, but `riff/verify`: `Gate` when it requires
-//! none ([`repo_setup::full_check`], 01M5QYDE41FVFX26EC8K5QGYH4). The
-//! verifier does not run the tests again: it reviews. So
-//! `riff verify pass` reports nothing while the full check of the head
-//! commit has no success ([`gate_of`], 01M49HAZ7P3JMWNCG1SWCMAXQP). A fail
-//! needs no Gate.
+//! default branch requires, but `riff/verify`; a repository with no CI has
+//! none, and `riff/verify` is its only check ([`repo_setup::full_check`],
+//! 01M5QYDE41FVFX26EC8K5QGYH4, 01M5SMNKDWBD1J6Y18ENQG87CK). The verifier
+//! does not run the tests again: it reviews. So `riff verify pass` reports
+//! nothing while the full check of the head commit has no success
+//! ([`gate_of`], 01M49HAZ7P3JMWNCG1SWCMAXQP). A fail needs no Gate.
 //!
 //! A pull request that changes the session image in `riff.toml`
 //! ([`pin_changed`]) needs one more thing for a pass: the registry of the
@@ -1043,8 +1043,8 @@ pub fn default_branch(gh: &Gh, repo: &str) -> Result<String> {
 
 /// The name of the check run of the full test run of a commit in the
 /// repository of riff: the job `Gate` of `.github/workflows/ci.yml`
-/// (01M49HAZ5BZYGAR9PGC089RM3F). It is also the full check of a repository
-/// whose ruleset requires no check but [`VERIFY_CONTEXT`]
+/// (01M49HAZ5BZYGAR9PGC089RM3F). Another repository has its own checks, and
+/// a repository with no CI has no full check: riff invents no check for it
 /// ([`repo_setup::full_check_of`]).
 pub const GATE: &str = "Gate";
 

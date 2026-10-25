@@ -385,7 +385,7 @@ each step that is done already:
 | `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins the session image of the riff that you run. |
 | The Backlog | It makes the `Backlog`. |
 | The first wave | When the repository has no open wave, it makes `Wave 1`. |
-| The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks `riff/verify` and the checks that your CI runs on a pull request. A repository whose CI has no check yet gets the check `Gate`. |
+| The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks that your CI runs on a pull request, and `riff/verify`. A repository with no CI gets `riff/verify` alone. |
 
 ```mermaid
 flowchart LR
@@ -403,12 +403,13 @@ why it did not, and you run `git pull` in your clone. A second run of
 `riff init` changes nothing on GitHub and asks nothing. See
 [Read the output for a repository on GitHub](#read-the-output-for-a-repository-on-github).
 
-One part is your own work. `riff init` has no step for it, and it
-names the fix: a CI check that a pull request runs. The full check of a
-pull request, its CI, is the gate of a change: riff waits for it before
-it starts a verify, and the ruleset lets no change merge without it. See
-[Add the job Gate](#add-the-job-gate) and
-[Use the checks that you have](#use-the-checks-that-you-have).
+One part is your own work: the CI. The full check of a pull request, its
+CI, is the gate of a change: riff waits for it before it starts a
+verify, and the ruleset lets no change merge without it. riff needs no
+CI, though. A repository with no CI has no check but `riff/verify`, and
+`riff init` says so in a note. See
+[Use the checks that you have](#use-the-checks-that-you-have) and
+[A repository with no CI](#a-repository-with-no-ci).
 
 A `CLAUDE.md` or an `AGENTS.md` is the choice of the repository. riff
 needs neither, and `riff init` checks neither: it prints no line for
@@ -503,18 +504,39 @@ This machine is ready. Run one item in a container: riff run ITEM
   says why it did not, and you run `git pull` yourself.
 
 When a check still fails, the end of the output names each one with its
-fix. riff installs nothing then, and exits with 1. For example, when no
-pull request of the repository ran a check, the ruleset gets the check
-`Gate`, and the check of a pull request fails until you add that job:
+fix. riff installs nothing then, and exits with 1. For example, when the
+pull requests ran a check of your CI and no rule requires it, the check
+of a pull request fails until you add that check to the ruleset:
+
+```text
+riff checks this machine:
+  ...
+  fail  the checks of a pull request: pull requests of acme/app ran checks / lint, and no rule requires them, so a merge does not wait for them. Fix: add them to the ruleset of main. See "Use the checks that you have" in the book. Then run riff init again
+  ...
+1 check failed. riff installed no daemon and pulled no image. Do each fix, then run riff init again:
+  the checks of a pull request: add them to the ruleset of main. See "Use the checks that you have" in the book. Then run riff init again
+```
+
+### A repository with no CI
+
+riff needs no CI. A repository with no CI has no check but
+`riff/verify`. `riff init` makes the ruleset with that check alone, and
+it says so in a note:
 
 ```text
 riff checks this machine again:
   ...
-  fail  the checks of a pull request: no pull request of acme/app ran a check named Gate, and no rule requires another check, so the full check never ends. Fix: add a workflow that runs on pull_request, with a job named Gate. See "Add the job Gate" in the book. Then run riff init again
+  pass  the checks of a pull request: acme/app has no CI: no pull request ran a check, so riff/verify is the only check
   ...
-1 check failed. riff installed no daemon and pulled no image. Do each fix, then run riff init again:
-  the checks of a pull request: add a workflow that runs on pull_request, with a job named Gate. See "Add the job Gate" in the book. Then run riff init again
+This machine is ready. Run one item in a container: riff run ITEM
 ```
+
+The wave starts the verify of a pull request at once, as no check must
+end first. The verifier runs the tests that the criteria name, as no
+check ran them. GitHub merges the pull request when `riff/verify`
+passes. riff never invents a check for you. When you add a CI later, run
+`riff init` again: it names the checks to add to the ruleset, and
+[Use the checks that you have](#use-the-checks-that-you-have) shows how.
 
 ### Do the steps by hand
 
@@ -540,11 +562,12 @@ flowchart LR
 | auto-merge and squash merge | [Allow auto-merge and squash merge](#allow-auto-merge-and-squash-merge) |
 | the ruleset of the default branch | [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch) |
 | the Backlog, the first wave | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
-| the checks of a pull request | [Add the job Gate](#add-the-job-gate) |
+| the checks of a pull request | [Use the checks that you have](#use-the-checks-that-you-have) |
 
-The full check is a step of your own. Your repository may have one
-already: see
-[Use the checks that you have](#use-the-checks-that-you-have).
+The checks of a pull request are your own work. Your repository may
+have a CI already: see
+[Use the checks that you have](#use-the-checks-that-you-have). With no
+CI, see [A repository with no CI](#a-repository-with-no-ci).
 
 ### Add riff.toml
 
@@ -583,45 +606,15 @@ Run each step once, in a clone of the repository, as an admin of the
 repository. `gh` fills `{owner}` and `{repo}` from the remote of the
 clone.
 
-#### Add the job Gate
-
-riff starts the verify of a pull request only when the full check of
-its head is done. A repository whose ruleset requires no check but
-`riff/verify` has a full check named `Gate`. Add a workflow with a job
-of that name. Put the command of your tests in place of `make test`.
-Push the workflow to the default branch before you make the ruleset.
-A repository with checks already needs no job `Gate`: skip this step,
-and see [Use the checks that you have](#use-the-checks-that-you-have).
-
-```sh
-mkdir -p .github/workflows
-cat > .github/workflows/gate.yml <<'YAML'
-name: Gate
-on:
-  pull_request:
-  push:
-    branches: [main]
-jobs:
-  Gate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: make test
-YAML
-git add .github/workflows/gate.yml
-git commit -m "Add the job Gate"
-git push
-```
-
 #### Use the checks that you have
 
-A repository whose ruleset of the default branch requires checks
-already needs no job `Gate`. riff reads the required checks of that
-ruleset. The full check is each of them but `riff/verify`. riff starts
-the verify of a pull request when each of them passed or ended on its
-head. A pass of `riff verify pass` needs a success of each of them. A
-check that GitHub skipped, or that ended `neutral`, counts as a success.
-The daemon watches `main` with the same checks: see
+A repository whose ruleset of the default branch requires checks has a
+full check. riff reads the required checks of that ruleset. The full
+check is each of them but `riff/verify`. riff starts the verify of a
+pull request when each of them passed or ended on its head. A pass of
+`riff verify pass` needs a success of each of them. A check that GitHub
+skipped, or that ended `neutral`, counts as a success. The daemon
+watches `main` with the same checks: see
 [When main breaks](how-it-works.md#when-main-breaks). riff reads the
 rulesets of GitHub, and not the branch protection of the old kind.
 
@@ -633,8 +626,9 @@ gh api "repos/{owner}/{repo}/rules/branches/$BRANCH" --jq '[.[] | select(.type =
 ```
 
 The answer is a list, for example `["checks / docs"]`. An empty list
-means that riff waits for a check run named `Gate`. When your full
-check has other names, put them in the ruleset in place of `Gate`: see
+means that the repository has no CI: `riff/verify` is the only check,
+and riff waits for nothing else. When your CI has checks that the list
+does not name, put them in the ruleset before `riff/verify`: see
 [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch).
 
 #### Allow auto-merge and squash merge
@@ -649,9 +643,9 @@ gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_me
 #### Make the ruleset of the default branch
 
 Without a rule, nothing on GitHub makes a merge wait for the verify.
-This ruleset needs a pull request, and the checks `Gate` and
-`riff/verify`. It allows squash merges only, and it lets nobody bypass
-it. When your full check has other names, put them in place of `Gate`:
+This ruleset needs a pull request, and the check `riff/verify`. It
+allows squash merges only, and it lets nobody bypass it. When your CI
+has checks, put each of them before `riff/verify`, in the same list:
 
 ```sh
 gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'
@@ -680,7 +674,6 @@ gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'
       "parameters": {
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "Gate" },
           { "context": "riff/verify" }
         ]
       }

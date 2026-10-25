@@ -1827,7 +1827,7 @@ fn verify_cases(gate: &str) -> String {
     format!(
         "'pr view 1140 --json number,title,body,state,labels,milestone,headRefOid,files'*) printf '%s\\n' '{{\"number\":1140,\"title\":\"Release v3.3.0\",\"body\":\"{body}\",\"state\":\"OPEN\",\"labels\":[{{\"name\":\"release\"}}],\"milestone\":{{\"title\":\"Wave 34: Release\"}},\"headRefOid\":\"h1\",\"files\":[{{\"path\":\"Cargo.toml\"}},{{\"path\":\"Cargo.lock\"}}]}}' ;;\n\
          'api repos/{{owner}}/{{repo}}') printf '%s\\n' '{{\"default_branch\":\"main\"}}' ;;\n\
-         'api repos/{{owner}}/{{repo}}/rules/branches/main?per_page=100') printf '%s\\n' '[]' ;;\n\
+         'api repos/{{owner}}/{{repo}}/rules/branches/main?per_page=100') printf '%s\\n' '[{{\"type\":\"required_status_checks\",\"parameters\":{{\"required_status_checks\":[{{\"context\":\"Gate\"}},{{\"context\":\"riff/verify\"}}]}}}}]' ;;\n\
          'api repos/{{owner}}/{{repo}}/commits/h1/check-runs?check_name=Gate') printf '%s\\n' '{{\"check_runs\":[{gate}]}}' ;;"
     )
 }

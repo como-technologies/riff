@@ -38,7 +38,7 @@ case "$1 $2" in
           *--jq*) echo master ;;
           *) echo '{"default_branch":"master"}' ;;
         esac ;;
-      */rules/branches/master*) echo '[]' ;;
+      */rules/branches/master*) echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]' ;;
       */commits/master/check-runs*) cat "$dir/gate" ;;
       */actions/runs/38861280871/jobs*) cat "$dir/jobs" ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
