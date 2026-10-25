@@ -534,6 +534,105 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
     }
 }
 
+/// The fake forge of a pull request that changes `riff.toml` from the
+/// pin of `ghcr.io/o/i` to the pin `head`.
+fn pin_cases(head: &str) -> String {
+    let file = |image: &str| format!(r#"printf '[session]\nimage = "{image}"\n'"#);
+    format!(
+        "{VERIFY}\n\
+         *'/pulls/40/files'*) printf 'src/lib.rs\\nriff.toml\\n' ;;\n\
+         *'pr view 40 --json baseRefName'*) echo main ;;\n\
+         *'contents/riff.toml?ref=1a2b3c4d') {} ;;\n\
+         *'contents/riff.toml?ref=main') {} ;;",
+        file(head),
+        file(&format!("ghcr.io/o/i@sha256:{}", "0".repeat(64))),
+    )
+}
+
+/// 01M5SMRRAG1WPBJMQKKTPSRHRP: a pull request that pins a new session
+/// image that a registry does not give with no login gets no pass. The
+/// line has the fix. Nothing is commented, set or posted.
+#[tokio::test]
+async fn verify_pass_refuses_a_new_image_that_a_host_cannot_pull_with_no_login() {
+    // A package that is private, one that is not there, and a registry
+    // that gives no anonymous token.
+    for (manifest, token, answer) in [(403, 200, 403_u16), (404, 200, 404), (200, 401, 401)] {
+        let (host, seen) = crate::common::registry(manifest, token).await;
+        let head = format!("{host}/o/i@sha256:{}", "1".repeat(64));
+        let machine = Machine::new(&pin_cases(&head)).await;
+        machine.claim("author", "issue-12").await;
+        let result = machine.write("result.md", "1. The wave shows.\n");
+        let pass = [
+            "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        let out = machine.run("verifier", &pass).await;
+        assert_eq!(out.status.code(), Some(1), "{answer}");
+        let stderr = text(&out.stderr);
+        assert_eq!(stderr.trim().lines().count(), 1, "one line: {stderr}");
+        let image: riff::session_image::Image = head.parse().unwrap();
+        let status = reqwest::StatusCode::from_u16(answer).unwrap();
+        let why = format!("the registry answered {status}");
+        let line = riff::text::verify_image_closed(40, &image, &why);
+        assert!(stderr.contains(&line), "{line}\n{stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "Fix: make the package public, or run podman login {host} on each host of the wave."
+            )),
+            "{stderr}"
+        );
+        assert!(stderr.contains("Nothing is reported."), "{stderr}");
+        assert!(seen.load(std::sync::atomic::Ordering::SeqCst) > 0);
+        let calls = log(machine.bin.path());
+        assert!(calls.contains("contents/riff.toml?ref=1a2b3c4d"), "{calls}");
+        assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("/statuses/"), "{calls}");
+        let inbox = machine.ok("author", &["read"]).await;
+        assert!(!inbox.contains("verify result:"), "{inbox}");
+
+        // A fail needs no such check.
+        let fail = [
+            "verify", "fail", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        machine.ok("verifier", &fail).await;
+        assert!(log(machine.bin.path()).contains("-f state=failure"));
+    }
+}
+
+/// A new image that the registry gives to the anonymous token passes, and
+/// a pin that is the pin of the base branch is not asked at all.
+#[tokio::test]
+async fn verify_pass_reports_a_new_image_that_a_host_can_pull_and_asks_no_old_pin() {
+    let (host, seen) = crate::common::registry(200, 200).await;
+    let head = format!("{host}/o/i@sha256:{}", "1".repeat(64));
+    let machine = Machine::new(&pin_cases(&head)).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let pass = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.ok("verifier", &pass).await;
+    assert!(out.contains("Woke mike@thelio:"), "{out}");
+    assert!(
+        log(machine.bin.path()).contains("statuses/1a2b3c4d -f state=success"),
+        "{}",
+        log(machine.bin.path())
+    );
+    assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 3);
+
+    // The head pins the image of the base: the registry says no, and
+    // riff asks nothing.
+    let (host, seen) = crate::common::registry(403, 200).await;
+    let same = format!("ghcr.io/o/i@sha256:{}", "0".repeat(64));
+    let machine = Machine::new(&pin_cases(&same)).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let pass = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    machine.ok("verifier", &pass).await;
+    assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 0, "{host}");
+}
+
 /// The four checks of the forge of a repository whose full check is not
 /// named `Gate` (#698).
 const FOUR: [&str; 4] = [
@@ -1246,6 +1345,25 @@ fn the_book_shows_the_line_of_a_refused_pass_and_what_riff_waits_for() {
     assert!(part.contains(
         "each check that the ruleset of the default branch\nrequires, but `riff/verify`"
     ));
+}
+
+/// 01M5SMRRAG1WPBJMQKKTPSRHRP: the refusal for a session image that a
+/// host cannot pull is in "Report a verify", as `riff verify pass` prints
+/// it.
+#[test]
+fn the_book_shows_the_line_of_a_pass_refused_for_an_image_that_a_host_cannot_pull() {
+    let part = how_to("Report a verify");
+    let image: riff::session_image::Image =
+        format!("ghcr.io/acme/session@sha256:{}", "ab".repeat(32))
+            .parse()
+            .unwrap();
+    let line = riff::text::verify_image_closed(40, &image, "the registry answered 403 Forbidden")
+        .replace(image.digest(), "sha256:…");
+    assert!(
+        part.contains(&format!("```text\n{line}\n```")),
+        "{line}\n{part}"
+    );
+    assert!(part.contains("(start-a-riff.md#check-that-each-host-can-pull-the-image)"));
 }
 
 /// Each command has a how-to with a copyable `sh` block, and each

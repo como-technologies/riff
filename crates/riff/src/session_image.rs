@@ -35,7 +35,9 @@
 //!
 //! `riff image` prints the image of the repository of the current
 //! folder ([`of_folder`], 01M4Z7SPC20RWG218EWPEGYZTF). `podman pull`
-//! takes the text as it is.
+//! takes the text as it is. `riff image --check` also asks the registry
+//! whether a host with no login can pull it
+//! ([`crate::registry`], 01M5SMSB0NFBD1XHEW3BSE4BDP).
 //!
 //! The pin that counts is the merged pin ([`merged`],
 //! 01M51STPHXSSZMHF9T7Z85097R): [`FILE`] on the default branch of
@@ -127,6 +129,29 @@ impl Image {
         &self.digest
     }
 
+    /// The registry host, with its port when it has one, for example
+    /// `ghcr.io`.
+    ///
+    /// ```
+    /// let digest = format!("sha256:{}", "ab".repeat(32));
+    /// let image: riff::session_image::Image =
+    ///     format!("ghcr.io/como-technologies/riff-session@{digest}").parse()?;
+    /// assert_eq!(image.host(), "ghcr.io");
+    /// assert_eq!(image.path(), "como-technologies/riff-session");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn host(&self) -> &str {
+        self.name
+            .split_once('/')
+            .map_or(&self.name, |(host, _)| host)
+    }
+
+    /// The path in the registry, for example
+    /// `como-technologies/riff-session`.
+    pub fn path(&self) -> &str {
+        self.name.split_once('/').map_or("", |(_, path)| path)
+    }
+
     /// The image that the riff config of the repository at `root` pins.
     ///
     /// ```
@@ -155,7 +180,7 @@ impl Image {
     /// config in an error. A bad table `[session.env]` or
     /// `[session.volumes]` is an error too ([`Setup::of_config`]): so each
     /// reader of the file, also `riff image`, finds it.
-    fn of_config(text: &str, place: &str) -> Result<Image> {
+    pub(crate) fn of_config(text: &str, place: &str) -> Result<Image> {
         let config: toml_edit::DocumentMut = text
             .parse()
             .with_context(|| format!("{place} is not valid TOML"))?;

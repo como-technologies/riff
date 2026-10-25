@@ -404,6 +404,36 @@ async fn quiet(args: &[&str]) -> Result<ExitStatus> {
         .with_context(|| text::no_program(PODMAN))
 }
 
+/// The reason of a failed `podman pull` in its stderr: the last line that
+/// starts with `Error:`, else the last line. podman shows its progress
+/// on stderr too.
+///
+/// ```
+/// use riff::podman::pull_reason;
+///
+/// let stderr = "Trying to pull ghcr.io/o/i@sha256:0...\n\
+///               Error: initializing source docker://ghcr.io/o/i@sha256:0: reading manifest: unauthorized\n";
+/// assert_eq!(
+///     pull_reason(stderr),
+///     "Error: initializing source docker://ghcr.io/o/i@sha256:0: reading manifest: unauthorized"
+/// );
+/// assert_eq!(pull_reason("one\ntwo\n\n"), "two");
+/// assert_eq!(pull_reason(""), "podman said nothing");
+/// ```
+pub fn pull_reason(stderr: &str) -> String {
+    let lines = || {
+        stderr
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+    };
+    lines()
+        .rfind(|line| line.starts_with("Error:"))
+        .or_else(|| lines().next_back())
+        .unwrap_or("podman said nothing")
+        .to_owned()
+}
+
 /// Fails when `status` is not a success of `podman ARGS`.
 fn succeeded(status: ExitStatus, args: &[&str]) -> Result<()> {
     if !status.success() {
@@ -417,9 +447,29 @@ impl Runtime for Podman {
         Ok(quiet(&["image", "exists", image]).await?.success())
     }
 
+    /// A pull that fails gives the reason of podman: its last error line
+    /// ([`pull_reason`], 01M5SMSB3H1E9NXMBDN8ZDJ6CD).
     async fn pull(&self, image: &str) -> Result<()> {
         let args = ["pull", image];
-        succeeded(quiet(&args).await?, &args)
+        let out = podman()
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .with_context(|| text::no_program(PODMAN))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            eprint!("{stderr}");
+            bail!(
+                "podman {}: {}: {}",
+                args.join(" "),
+                out.status,
+                pull_reason(&stderr)
+            );
+        }
+        Ok(())
     }
 
     /// Only the `podman` child gets the values of the host, in its

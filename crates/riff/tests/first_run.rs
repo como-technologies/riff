@@ -1518,7 +1518,8 @@ fn assert_is_output(book: &[String], real: &str) {
 #[tokio::test]
 async fn the_book_shows_the_output_of_a_first_run_and_the_end_of_a_failed_run() {
     let blocks = text_blocks("start-a-riff.md", "Add another repository to the riff");
-    assert_eq!(blocks.len(), 3, "{blocks:#?}");
+    // The fourth block is the line of `riff image --check` (start_a_riff.rs).
+    assert_eq!(blocks.len(), 4, "{blocks:#?}");
 
     // The run in the container of the lead (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
     let machine = Machine::new();

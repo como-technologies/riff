@@ -73,7 +73,14 @@
 //!   [`run::MIN_MINUTES`] left. No item can start then, so no start
 //!   counts. The wave waits, and looks again at [`LOOK_EVERY`]. The lead
 //!   gets one message when the wave starts to wait, and `riff daemon
-//!   status` shows the reason (01M57A7A1W2K9440WZA1QZ3M9T).
+//!   status` shows the reason (01M57A7A1W2K9440WZA1QZ3M9T);
+//! - any item for one look after podman failed to pull the
+//!   session image of the wave (`Daemon::failed_pull`). Such a start
+//!   does not count. `riff daemon status` shows the image and the reason
+//!   in the line of the wave until a pull works. The lead gets one message
+//!   for each image, with the fix: make the package public, or run
+//!   `podman login REGISTRY` on each host of the wave
+//!   (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
 //!
 //! # A conflict with main
 //!
@@ -283,7 +290,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::daemon::sweep::{self, Fate, InJob};
-use crate::daemon::{Daemon, Ended, Out, Record, Say, Start};
+use crate::daemon::{Daemon, Ended, Out, PullFailed, Record, Say, Start};
 use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
@@ -1062,13 +1069,20 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     None if next.is_some() => waits = false,
                     None => {}
                 }
+                // A pull of the image that failed: the wave waits for the next
+                // try, and no start counts (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+                let pulling = fault.is_none()
+                    && next.is_some()
+                    && daemon
+                        .failed_pull(&wave.repo)
+                        .is_some_and(|pull| pull.waits);
                 say(match (&next, &fault) {
                     _ if look.paused => text::WAVE_PAUSED.into(),
                     (Some(_), Some(fault)) => text::wave_host_word(&fault.wave_text()),
                     (Some(work), None) => text::wave_started(&work.item()),
                     (None, _) => text::WAVE_NO_WORK.into(),
                 });
-                next.filter(|_| fault.is_none())
+                next.filter(|_| fault.is_none() && !pulling)
             }
             Err(e) => {
                 say(text::wave_no_look(&format!("{e:#}")));
@@ -1178,6 +1192,17 @@ pub(crate) async fn job<R: Runtime + 'static>(
             take_back(&starts, &work);
             Some(why)
         }
+        Err(ref e) if let Some(pull) = e.downcast_ref::<PullFailed>() => {
+            let error = format!("{e:#}");
+            eprintln!("riff daemon: {}: {item}: {error}", wave.repo);
+            daemon.note_end(&item, text::wave_no_start(&error));
+            take_back(&starts, &work);
+            if daemon.pull_failed(&wave.repo, pull) && !asked {
+                let body = text::wave_pull_failed(&wave.repo, &pull.image, &pull.reason);
+                daemon.world().tell(&wave, &body).await;
+            }
+            Some(error)
+        }
         Err(e) => {
             let error = format!("{e:#}");
             eprintln!("riff daemon: {}: {item}: {error}", wave.repo);
@@ -1214,6 +1239,7 @@ async fn start_job<R: Runtime + 'static>(
     daemon
         .have_image(&pinned.image, |line| println!("{line}"))
         .await?;
+    daemon.pull_worked(&wave.repo);
     let Some(start) = world.begin(wave, work, &pinned).await? else {
         return Ok(None);
     };
@@ -2638,6 +2664,8 @@ mod tests {
         /// The full check of a pull request is what the fake `gh` tells
         /// ([`FAKE_GH`]), as for the real look. Else each is done.
         checked: bool,
+        /// The image that the wave pins, else [`IMAGE`].
+        image: Option<String>,
     }
 
     impl Forge {
@@ -2776,9 +2804,10 @@ mod tests {
         }
 
         fn pinned<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Pinned>> {
-            Box::pin(async {
+            let image = lock(&self.forge).image.clone();
+            Box::pin(async move {
                 Ok(Pinned {
-                    image: IMAGE.into(),
+                    image: image.unwrap_or_else(|| IMAGE.into()),
                     setup: Setup::default(),
                 })
             })
@@ -3461,6 +3490,63 @@ mod tests {
         assert_eq!(forge.refused, vec!["issue-1"; faults]);
         assert_eq!(forge.starts.len(), 1);
         assert!(forge.told.is_empty(), "{:?}", forge.told);
+    }
+
+    /// 01M5SMSB3H1E9NXMBDN8ZDJ6CD: podman cannot pull the image that the
+    /// wave pins, more times than [`STARTS`]. No item starts, no start
+    /// counts, `riff daemon status` shows the image and the reason, and
+    /// the lead hears once. When a pull works, the wave starts the item.
+    #[tokio::test]
+    async fn a_pull_that_fails_shows_in_the_status_and_the_lead_hears_once() {
+        const PRIVATE: &str = "ghcr.io/o/private@sha256:0000";
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new_looking(&[1], 3, free, Duration::from_millis(60)).await;
+        here.forge().image = Some(PRIVATE.into());
+        here.run();
+        let pulls = |h: &Here| {
+            h.fake
+                .calls()
+                .iter()
+                .filter(|c| c.starts_with("pull "))
+                .count()
+        };
+        // More tries than the starts of an item: a start that fails to
+        // pull does not count.
+        here.until(0, |h| pulls(h) > STARTS as usize + 1).await;
+
+        let reason = format!("the registry has no image {PRIVATE}");
+        let word = text::wave_pull_word(PRIVATE, &reason);
+        assert_eq!(here.daemon.waves_shown()[0].word, word);
+        let shown = text::daemon_status(&here.daemon.status().await, crate::daemon::now_ms());
+        assert!(
+            shown.contains(&format!("Waves:\n  o/r  {word}\n")),
+            "{shown}"
+        );
+        {
+            let forge = here.forge();
+            assert!(forge.starts.is_empty(), "{forge:?}");
+            let told = text::wave_pull_failed("o/r", PRIVATE, &reason);
+            assert_eq!(forge.told, std::slice::from_ref(&told));
+            assert!(told.contains("podman login ghcr.io"), "{told}");
+            assert!(told.contains("make the package public"), "{told}");
+        }
+
+        // A pull works: the item starts, the line goes, and the lead
+        // hears nothing more.
+        here.fake.clone().with_registry(PRIVATE);
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_ne!(here.daemon.waves_shown()[0].word, word);
+        assert_eq!(here.forge().told.len(), 1, "{:?}", here.forge().told);
+
+        // A new failure after a pull that worked is news again.
+        let failed = |reason: &str| PullFailed {
+            image: PRIVATE.into(),
+            reason: reason.into(),
+        };
+        assert!(here.daemon.pull_failed("o/r", &failed("a")));
+        assert!(!here.daemon.pull_failed("o/r", &failed("b")));
+        here.daemon.pull_worked("o/r");
+        assert!(here.daemon.pull_failed("o/r", &failed("c")));
     }
 
     /// The lead of `o/r` on this host, as the record of its session.

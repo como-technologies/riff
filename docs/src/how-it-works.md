@@ -2125,6 +2125,20 @@ riff verify pass: the full check of commit 1a2b3c4 (Gate, Hygiene) runs still. A
 
 Wait for the checks, then report again. A fail needs no full check.
 
+A pull request that changes the session image in `riff.toml` needs one
+more thing for a pass: a host with no login must be able to pull the new
+image. riff asks the registry for the manifest of the image. When the
+registry gives none, or does not answer, `riff verify pass` reports
+nothing and prints one line with the fix:
+
+```text
+riff verify pass: pull request #40 pins a session image that a host cannot pull. ghcr.io gives no manifest of ghcr.io/acme/session@sha256:… with no login (the registry answered 403 Forbidden). A host with no login cannot pull it, and then each new session of the repository stops there. Fix: make the package public, or run podman login ghcr.io on each host of the wave. Nothing is reported.
+```
+
+Report a fail with the line, or tell the author. The author can ask
+the same question before the pull request: see
+[Check that each host can pull the image](start-a-riff.md#check-that-each-host-can-pull-the-image).
+
 The wave starts the verify of a pull request in the same way: it waits
 until each check of the full check passed or ended on the head commit.
 To see the checks of another repository, see

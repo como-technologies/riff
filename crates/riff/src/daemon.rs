@@ -2031,6 +2031,9 @@ pub struct Daemon<R> {
     news: facts::News,
     /// The reason of the last end of each item of a wave ([`crate::ends`]).
     ends: Mutex<BTreeMap<String, String>>,
+    /// The pull of the session image that failed for the wave of each
+    /// repository, until a pull works (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+    pulls: Mutex<BTreeMap<String, Pulled>>,
     /// The `gcloud` of the host, for [`ServerCall::CloudLog`].
     gcloud: Arc<crate::cloud::Gcloud>,
     /// The session of each lead whose stale sign-in the person heard of
@@ -2042,6 +2045,43 @@ pub struct Daemon<R> {
     lost: Mutex<std::collections::BTreeSet<String>>,
     /// The forge and the posts of the watches ([`crate::watches`]).
     lookout: Arc<dyn crate::watches::Lookout>,
+}
+
+/// A pull of the session image that failed. [`Daemon::have_image`] gives
+/// it as its error, so a wave can tell it from each other fault
+/// (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+#[derive(Debug)]
+pub(crate) struct PullFailed {
+    /// The image.
+    pub(crate) image: String,
+    /// Why podman could not pull it.
+    pub(crate) reason: String,
+}
+
+impl std::fmt::Display for PullFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", text::run_no_image(&self.image), self.reason)
+    }
+}
+
+impl std::error::Error for PullFailed {}
+
+/// The last failed pull of the wave of a repository.
+struct Pulled {
+    image: String,
+    reason: String,
+    /// When it failed.
+    at: std::time::Instant,
+}
+
+/// A failed pull as the wave reads it ([`Daemon::failed_pull`]).
+pub(crate) struct FailedPull {
+    /// The image.
+    pub(crate) image: String,
+    /// Why podman could not pull it.
+    pub(crate) reason: String,
+    /// True while the wave waits for its next try.
+    pub(crate) waits: bool,
 }
 
 /// A wave that runs in the daemon.
@@ -2112,6 +2152,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             serving: Mutex::new(BTreeMap::new()),
             news: facts::News::default(),
             ends: Mutex::new(BTreeMap::new()),
+            pulls: Mutex::new(BTreeMap::new()),
             gcloud: Arc::default(),
             stale: Mutex::default(),
             lost: Mutex::default(),
@@ -2570,17 +2611,24 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
-    /// Each wave that the daemon runs, with what it did last.
+    /// Each wave that the daemon runs, with what it did last, or the
+    /// image that podman cannot pull for it (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
     pub fn waves_shown(&self) -> Vec<WaveShown> {
         self.waves_lock()
             .iter()
             .map(|(repo, running)| WaveShown {
                 repo: repo.clone(),
-                word: running
-                    .word
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .clone(),
+                // A pull that failed shows until a pull works.
+                word: self.failed_pull(repo).map_or_else(
+                    || {
+                        running
+                            .word
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .clone()
+                    },
+                    |pull| text::wave_pull_word(&pull.image, &pull.reason),
+                ),
             })
             .collect()
     }
@@ -2807,16 +2855,56 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Has the image `image` on this machine: it pulls it when it is not
-    /// here, and gives `show` the line of the pull.
+    /// here, and gives `show` the line of the pull. A pull that fails is a
+    /// [`PullFailed`].
     pub(crate) async fn have_image(&self, image: &str, show: impl FnOnce(String)) -> Result<()> {
         if !self.runtime.has_image(image).await? {
             show(text::run_pulling(image));
-            self.runtime
-                .pull(image)
-                .await
-                .map_err(|e| anyhow!("{}: {e:#}", text::run_no_image(image)))?;
+            self.runtime.pull(image).await.map_err(|e| PullFailed {
+                image: image.to_owned(),
+                reason: format!("{e:#}"),
+            })?;
         }
         Ok(())
+    }
+
+    /// Keeps the failed pull `pull` for the wave of `repo`. True when the
+    /// lead has not heard of this image yet: the first failure, or the
+    /// first one after a pull that worked
+    /// ([`Daemon::pull_worked`], 01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+    pub(crate) fn pull_failed(&self, repo: &str, pull: &PullFailed) -> bool {
+        let mut pulls = self.pulls.lock().unwrap_or_else(PoisonError::into_inner);
+        let first = pulls.get(repo).is_none_or(|old| old.image != pull.image);
+        pulls.insert(
+            repo.to_owned(),
+            Pulled {
+                image: pull.image.clone(),
+                reason: pull.reason.clone(),
+                at: std::time::Instant::now(),
+            },
+        );
+        first
+    }
+
+    /// The image of the wave of `repo` is on this machine: forgets the
+    /// failed pull.
+    pub(crate) fn pull_worked(&self, repo: &str) {
+        self.pulls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(repo);
+    }
+
+    /// The failed pull of the wave of `repo`, until a pull works. The
+    /// wave waits for [`Daemon::look_every`] after a failure, then tries
+    /// the pull again (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+    pub(crate) fn failed_pull(&self, repo: &str) -> Option<FailedPull> {
+        let pulls = self.pulls.lock().unwrap_or_else(PoisonError::into_inner);
+        pulls.get(repo).map(|pulled| FailedPull {
+            image: pulled.image.clone(),
+            reason: pulled.reason.clone(),
+            waits: pulled.at.elapsed() < self.look_every,
+        })
     }
 
     /// Refuses to start a session when the binary that the daemon binds

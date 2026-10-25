@@ -630,6 +630,17 @@
   hold only with `rules = "riff"` in the table `[hygiene]`
   (01M5SMSMWE89SC3Q7XFBQCFY32). It links nothing: the book has the table
   of the rules.
+- **01M5SMRRAG1WPBJMQKKTPSRHRP** `riff verify pass N` checks a pull
+  request that changes the session image in `riff.toml`: the registry of
+  the new pin must give the manifest of the image with no login. riff
+  asks the registry API of the OCI distribution spec, with no podman:
+  the anonymous token that the `WWW-Authenticate` header of a 401 names,
+  then the manifest by its digest. When the registry gives no manifest,
+  or does not answer, it makes no comment, no status and no post. It
+  exits with status 1 and one line with the fix: make the package
+  public, or run `podman login REGISTRY` on each host of the wave. `riff
+  verify fail N` needs no such check. The verify of the wave uses the
+  same rule.
 
 ## Tokens on GitHub
 
@@ -4075,6 +4086,11 @@ of this part when they merge.
   `SCCACHE_IGNORE_SERVER_IO_ERROR=1`. The tools lock the volumes
   themselves. The toolchain is in the image, with no write, so there is
   no volume for rustup. A test checks that the file sets them.
+- **01M5SMSB0NFBD1XHEW3BSE4BDP** `riff image --check` asks the registry
+  the question of 01M5SMRRAG1WPBJMQKKTPSRHRP for the image of the
+  current folder, and gives the same fix when the registry gives no
+  manifest with no login. So a person can check the package before a
+  pull request pins it, and on each host of the wave.
 
 ### Sessions
 
@@ -4778,6 +4794,14 @@ of this part when they merge.
   session of a wave for failed checks ends with the same head commit,
   only the runs of Actions count as failed. Supersedes
   01M5QW2KVAS05Q72630RNW47G0 and 01M5QW2KYFM4C287D9NMSPH8TA in part.
+- **01M5SMSB3H1E9NXMBDN8ZDJ6CD** When podman cannot pull the session
+  image of a wave, the daemon starts no item of that wave for one
+  minute, and no start counts. Then it tries the pull again. `riff
+  daemon status` shows the image and the reason of the failed pull, in
+  the line of the wave, until a pull works. The daemon tells the lead
+  once for each image that fails to pull, with the fix of
+  01M5SMRRAG1WPBJMQKKTPSRHRP: make the package public, or run `podman
+  login REGISTRY` on each host of the wave.
 
 ### The lead, the view and the takeover
 

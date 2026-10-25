@@ -692,7 +692,17 @@ enum Command {
     /// digest and no tag, so podman pull takes it as it is. It fails when
     /// riff.toml names a tag. riff run, riff lead start and the waves use
     /// only the merged pin: riff.toml on the default branch of origin.
-    Image,
+    ///
+    /// With --check, riff also asks the registry of the image for its
+    /// manifest with no login: the question of a host that has no podman
+    /// login. It exits with status 1 and the fix when the registry gives
+    /// none: each host of the wave must pull the image.
+    Image {
+        /// Ask the registry whether a host with no login can pull the
+        /// image.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 /// The top level of the tree of `riff top`.
@@ -1564,9 +1574,24 @@ async fn main() -> Result<()> {
         println!("{}", riff::claude_token::run(&riff::daemon::dir()?)?);
         return Ok(());
     }
-    if let Command::Image = cli.command {
+    if let Command::Image { check } = cli.command {
         let dir = std::env::current_dir().context("cannot read the current folder")?;
-        println!("{}", riff::session_image::of_folder(&dir)?);
+        let image = riff::session_image::of_folder(&dir)?;
+        if !check {
+            println!("{image}");
+            return Ok(());
+        }
+        match riff::registry::anonymous(&image).await {
+            Ok(riff::registry::Pull::Open) => println!("{}", text::image_open(&image)),
+            Ok(riff::registry::Pull::Closed(why)) => {
+                eprintln!("{}", text::image_closed(&image, &why));
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("{}", text::image_unasked(&image, &format!("{e:#}")));
+                std::process::exit(1);
+            }
+        }
         return Ok(());
     }
     if let Command::Daemon { command } = &cli.command {
@@ -2230,7 +2255,7 @@ async fn main() -> Result<()> {
         | Command::Cloud { .. }
         | Command::ClaudeToken
         | Command::Release { .. }
-        | Command::Image
+        | Command::Image { .. }
         | Command::Daemon { .. }
         | Command::Init { .. }
         | Command::Relay { .. }
