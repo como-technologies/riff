@@ -4032,6 +4032,37 @@ of this part when they merge.
   checks the merged pin before it asks the wave and before it prints
   that the lead starts: with no merged pin, it prints no line that the
   lead starts.
+- **01M5SMVVC4GQS310CVK3H9CMQ7** The table `[session.env]` of
+  `riff.toml` gives the variables of the environment of a session, and
+  the table `[session.volumes]` gives its named volumes: the key is the
+  name of the volume, and the value is the path in the container. A
+  value and a path may have `$HOME`: riff puts the home of the person
+  there. Both come from the merged `riff.toml`, as the image does
+  (01M51STPHXSSZMHF9T7Z85097R). A `riff.toml` with neither table gives a
+  session neither.
+- **01M5SMW28KT5D5HPRH7KAZ8TVC** riff sets in a session only what riff
+  needs itself: the home, the user, the sign-ins, the git config, the
+  Claude folder, the clone, the folder of the socket, `--memory` and
+  `--cpus`. It sets no variable and no volume of a language or a tool:
+  no `RUSTC_WRAPPER`, no `CARGO_HOME`, no `CARGO_BUILD_JOBS`, no sccache
+  and no cache volume. A repository sets them in `riff.toml`. This
+  supersedes 01M4Z60B7RPSQ1ABGVMJSZWS5P and 01M57818168N3AQGE3G5GDYDDD
+  in full, and 01M56Q4AQ86V99RC8CA1KGCMSZ in part.
+- **01M5SMW2B4GMJ3V6BCX1KGC1ZY** riff refuses a `riff.toml` whose
+  `[session.env]` names a variable that riff sets itself (`HOME`,
+  `USER`, `LOGNAME`, `GH_TOKEN`, `CLAUDE_CONFIG_DIR`,
+  `CLAUDE_CODE_OAUTH_TOKEN`, or a name that starts with `GIT_CONFIG_` or
+  `RIFF_`), or whose `[session.volumes]` names a volume that podman
+  could read as a path, or gives a path that is not absolute. The error
+  names the key and the file.
+- **01M5SMW2DQ8G919EJ4P0GXF9Y3** The `riff.toml` of this repository sets
+  the build cache of its sessions: the volumes `riff-cargo` at
+  `$HOME/.cargo` and `riff-sccache` at `$HOME/.cache/sccache`, and the
+  variables `CARGO_HOME`, `SCCACHE_DIR`, `SCCACHE_CACHE_SIZE=40G`,
+  `RUSTC_WRAPPER=sccache`, `SCCACHE_IDLE_TIMEOUT=0` and
+  `SCCACHE_IGNORE_SERVER_IO_ERROR=1`. The tools lock the volumes
+  themselves. The toolchain is in the image, with no write, so there is
+  no volume for rustup. A test checks that the file sets them.
 
 ### Sessions
 
@@ -4050,16 +4081,12 @@ of this part when they merge.
 - **01M4Z60B7QDWEFQ96H448RE9N2** Each session is a rootless podman
   container (`podman run --rm --userns=keep-id`) from the image of its
   repository. riff binds with write only: the clone of the session, its
-  Claude folder, the folder of its socket, and the cache volumes
-  (01M4Z60B7RPSQ1ABGVMJSZWS5P). riff binds `~/.gitconfig` and
-  `~/.config/gh` with no write, or as an overlay (`:O`) whose changes go
-  when the session ends. Each other write goes to the copy-on-write
-  layer of the container, and goes when the session ends.
-- **01M4Z60B7RPSQ1ABGVMJSZWS5P** The cache volumes are named volumes:
-  one for all of `CARGO_HOME`, and one for the folder of sccache. The
-  tools lock them themselves. The toolchain is in the image, with no
-  write, so riff makes no volume for rustup. The sccache server of a
-  session has `SCCACHE_IDLE_TIMEOUT=0`.
+  Claude folder, the folder of its socket, and the volumes that
+  `riff.toml` names (01M5SMVVC4GQS310CVK3H9CMQ7). riff binds
+  `~/.gitconfig` and `~/.config/gh` with no write, or as an overlay
+  (`:O`) whose changes go when the session ends. Each other write goes
+  to the copy-on-write layer of the container, and goes when the
+  session ends.
 - **01M4Z60B7SHAMXXFK15BE3KZSP** The home of the person is a tmpfs in
   the container, at the same path, with `HOME` set:
   `--mount type=tmpfs,destination=$HOME,tmpfs-mode=0700,U=true`. The
@@ -4084,10 +4111,10 @@ of this part when they merge.
   `--cpus` (01M56Q4AQ86V99RC8CA1KGCMSZ). `podman stop` ends a session
   and each of its processes.
 - **01M56Q4AQ86V99RC8CA1KGCMSZ** The caps of a container are settings
-  of the host, not constants. Each new container gets `--cpus N`,
-  `CARGO_BUILD_JOBS=N` and `--memory GBg`. The defaults are 8 CPUs and
-  8 GB. The daemon puts the caps in the spec when it starts the
-  session. A session that runs keeps its caps.
+  of the host, not constants. Each new container gets `--cpus N` and
+  `--memory GBg`. The defaults are 8 CPUs and 8 GB. The daemon puts the
+  caps in the spec when it starts the session. A session that runs
+  keeps its caps.
 - **01M51117K3WXK35CE67KPRFMA8** Each container of a session starts
   with `podman run --init`. The init of podman (catatonit) is PID 1. It
   reaps each orphan process of the session, and it passes each signal
@@ -4502,28 +4529,23 @@ of this part when they merge.
   limit, each start that waits for room, and each wave with what it did
   last.
 - **01M56Q4ASHTDWVA2MS2CBQ2PAM** `riff daemon limit --cpus N` sets the
-  CPUs and the build jobs of each new container of the host.
+  CPUs of each new container of the host.
   `--memory GB` sets its memory cap. Both go in `limit.json`. A
   `limit.json` with no value for one of them gives the default.
   `riff daemon limit` and `riff daemon status` show both. riff refuses
   0 for each.
-- **01M57818168N3AQGE3G5GDYDDD** `riff daemon cache SIZE` sets the most
-  size of the compile cache of the container sessions of the host in
-  `cache.json` in the folder of the daemon. The default is `40G`. The
-  daemon gives the size to each new session in `SCCACHE_CACHE_SIZE`. A
-  session that runs keeps the size of its start.
 - **01M5781930TF6XBX7ME7RAMX2X** `riff daemon cache` shows the size of
-  the volume `riff-sccache` now and the most size. `riff daemon status`
-  shows the same line.
+  the volume `riff-sccache` now. `riff daemon status` shows the same
+  line.
 - **01M5781A4PRTTYRHH5GJ1GHN7G** `riff daemon cache --clear` deletes
   each file and folder in the volume `riff-sccache`, and keeps the
-  volume. It works while sessions run. Each session has
-  `SCCACHE_IGNORE_SERVER_IO_ERROR=1`, and a build compiles each file
-  that the clear deleted.
+  volume. It works while sessions run. A session with
+  `SCCACHE_IGNORE_SERVER_IO_ERROR=1` compiles each file that the clear
+  deleted.
 - **01M588JW2KS6EVX1SE49686FQ7** `riff daemon cache` and `riff daemon
   status` show the size on the disk of each file in the volume
-  `riff-sccache`, with 1GB = 1024³ bytes: the unit of the most size,
-  which `sccache` reads as 1024³ bytes for each `G`. `podman system
+  `riff-sccache`, with 1GB = 1024³ bytes: the unit that `sccache`
+  reads for each `G`. `podman system
   df -v` counts 1GB as 1000³ bytes, so its number is about 7% larger,
   for example 8.3GB for 7.7GB. When the person cannot read a folder of
   the volume (rootless podman), riff reads it with `podman unshare`.

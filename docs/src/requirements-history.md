@@ -1866,6 +1866,21 @@ page [Requirements](requirements.md) holds the rules of today.
   later plan" says that its plan is not in riff 3.0.0, and that its
   items wait in the Backlog.
 
+### Sessions
+
+- **01M4Z60B7RPSQ1ABGVMJSZWS5P** The cache volumes are named volumes:
+  one for all of `CARGO_HOME`, and one for the folder of sccache. The
+  tools lock them themselves. The toolchain is in the image, with no
+  write, so riff makes no volume for rustup. The sccache server of a
+  session has `SCCACHE_IDLE_TIMEOUT=0`. Superseded by
+  01M5SMW28KT5D5HPRH7KAZ8TVC.
+- **01M57818168N3AQGE3G5GDYDDD** `riff daemon cache SIZE` sets the most
+  size of the compile cache of the container sessions of the host in
+  `cache.json` in the folder of the daemon. The default is `40G`. The
+  daemon gives the size to each new session in `SCCACHE_CACHE_SIZE`. A
+  session that runs keeps the size of its start. Superseded by
+  01M5SMW28KT5D5HPRH7KAZ8TVC.
+
 ### The riff daemon
 
 - **01M4ZDTVXY84ETYJWMWDMQ34CN** `riff run ITEM` does one work item in

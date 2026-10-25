@@ -246,7 +246,6 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 ///     "daemon limit --sessions 4 --floor 8 --cpus 6 --memory 12",
 ///     "daemon limit --effort high --effort-lead max --effort-verify low",
 ///     "daemon cache",
-///     "daemon cache 20G",
 ///     "daemon cache --clear",
 ///     "daemon state",
 ///     "daemon events riff-issue-12-1a2b3c4d",
@@ -275,6 +274,7 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 /// assert!("daemon end".parse::<Request>().is_err());
 /// assert!("daemon events n --after x".parse::<Request>().is_err());
 /// assert!("daemon events n --after 7 --notes x".parse::<Request>().is_err());
+/// assert!("daemon cache 20G".parse::<Request>().is_err());
 /// assert!("daemon cache 20G --clear".parse::<Request>().is_err());
 /// assert_eq!(
 ///     "host o/r --run".parse(),
@@ -293,10 +293,8 @@ pub enum Request {
     Status,
     /// `riff daemon limit`, with its flags.
     Limit(Change),
-    /// `riff daemon cache`: the new most size, or the clear.
+    /// `riff daemon cache`: show the cache, or the clear.
     Cache {
-        /// The new most size, for example 20G.
-        size: Option<String>,
         /// True empties the volume.
         clear: bool,
     },
@@ -364,18 +362,8 @@ impl FromStr for Request {
     fn from_str(body: &str) -> Result<Self, ()> {
         match body.split_whitespace().collect::<Vec<_>>()[..] {
             ["daemon", "status"] => Ok(Request::Status),
-            ["daemon", "cache"] => Ok(Request::Cache {
-                size: None,
-                clear: false,
-            }),
-            ["daemon", "cache", "--clear"] => Ok(Request::Cache {
-                size: None,
-                clear: true,
-            }),
-            ["daemon", "cache", size] => Ok(Request::Cache {
-                size: Some(size.to_owned()),
-                clear: false,
-            }),
+            ["daemon", "cache"] => Ok(Request::Cache { clear: false }),
+            ["daemon", "cache", "--clear"] => Ok(Request::Cache { clear: true }),
             ["daemon", "state"] => Ok(Request::State),
             ["daemon", "events", name] => Ok(Request::Events {
                 name: name.to_owned(),
@@ -478,11 +466,8 @@ impl fmt::Display for Request {
                 }
                 Ok(())
             }
-            Request::Cache { clear: true, .. } => write!(f, "daemon cache --clear"),
-            Request::Cache {
-                size: Some(size), ..
-            } => write!(f, "daemon cache {size}"),
-            Request::Cache { .. } => write!(f, "daemon cache"),
+            Request::Cache { clear: true } => write!(f, "daemon cache --clear"),
+            Request::Cache { clear: false } => write!(f, "daemon cache"),
             Request::State => write!(f, "daemon state"),
             Request::Events {
                 name,
@@ -911,15 +896,13 @@ pub async fn answer(
 ) -> std::result::Result<String, String> {
     let done = match request {
         Request::Status => super::status(dir).await.map(|status| {
-            let cache = crate::compile_cache::shown(dir);
+            let cache = crate::compile_cache::shown();
             format!("{}{cache}", text::daemon_status(&status, super::now_ms()))
         }),
         Request::Limit(change) => {
             crate::room::set(dir, *change).map(|limit| text::daemon_limit(&limit))
         }
-        Request::Cache { size, clear } => {
-            crate::compile_cache::change(dir, size.as_deref(), *clear)
-        }
+        Request::Cache { clear } => crate::compile_cache::change(*clear),
         Request::State => super::status(dir)
             .await
             .and_then(|status| Ok(serde_json::to_string(&status)?)),

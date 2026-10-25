@@ -20,6 +20,11 @@
 //! with no `sources` trusts none. riff reads the list from the merged
 //! config, as it reads the image ([`merged_sources`]).
 //!
+//! The tables `[session.env]` and `[session.volumes]` give the env and
+//! the volumes of a session (01M5SMVVC4GQS310CVK3H9CMQ7). See
+//! [`crate::session_setup`]. They follow the rule of the image: only the
+//! merged file counts ([`merged_config`]).
+//!
 //! An [`Image`] has a registry host, a path and a digest. It has no tag.
 //! A tag can move to another image, but a digest names one image. So
 //! each session of a repository runs the same image, and only a change of
@@ -97,6 +102,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow, bail};
 
+use crate::session_setup::Setup;
 use crate::text;
 
 /// The riff config of a repository, at the root of the repository.
@@ -146,7 +152,9 @@ impl Image {
     }
 
     /// The image that the riff config `text` pins. `place` names the
-    /// config in an error.
+    /// config in an error. A bad table `[session.env]` or
+    /// `[session.volumes]` is an error too ([`Setup::of_config`]): so each
+    /// reader of the file, also `riff image`, finds it.
     fn of_config(text: &str, place: &str) -> Result<Image> {
         let config: toml_edit::DocumentMut = text
             .parse()
@@ -156,9 +164,11 @@ impl Image {
             .and_then(|session| session.get("image"))
             .and_then(toml_edit::Item::as_str)
             .with_context(|| format!("{place} has no image in [session]"))?;
-        image
+        let image = image
             .parse()
-            .with_context(|| format!("the session image of {place}"))
+            .with_context(|| format!("the session image of {place}"))?;
+        Setup::of_config(text, place)?;
+        Ok(image)
     }
 }
 
@@ -223,7 +233,59 @@ impl Image {
 /// assert!(error.contains("Fix: add riff.toml"), "{error}");
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
+pub fn merged(main: &Path, say: impl FnMut(&str)) -> Result<Image> {
+    Ok(merged_config(main, say)?.image)
+}
+
+/// What the merged [`FILE`] gives a session (01M5SMVVC4GQS310CVK3H9CMQ7):
+/// the pinned image, and the env and the volumes of the tables
+/// `[session.env]` and `[session.volumes]` ([`Setup`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Merged {
+    /// The pinned image.
+    pub image: Image,
+    /// The env and the volumes.
+    pub setup: Setup,
+}
+
+/// [`merged`] with the env and the volumes of the merged [`FILE`] too. A
+/// bad table of them is an error, as a bad image is.
+///
+/// ```
+/// use riff::session_image::{FILE, merged_config};
+///
+/// let dir = tempfile::tempdir()?;
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let status = std::process::Command::new("git")
+///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+///         .arg("-C")
+///         .arg(dir)
+///         .args(args)
+///         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+///         .status()
+///         .unwrap();
+///     assert!(status.success(), "git {args:?}");
+/// };
+/// let (origin, main) = (dir.path().join("origin.git"), dir.path().join("main"));
+/// git(dir.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+/// git(dir.path(), &["init", "-q", "-b", "main", main.to_str().unwrap()]);
+/// let image = format!("ghcr.io/o/i@sha256:{}", "0".repeat(64));
+/// std::fs::write(
+///     main.join(FILE),
+///     format!("[session]\nimage = \"{image}\"\n\n[session.env]\nA = \"$HOME\"\n"),
+/// )?;
+/// git(&main, &["add", FILE]);
+/// git(&main, &["commit", "-q", "-m", "pin"]);
+/// git(&main, &["remote", "add", "origin", origin.to_str().unwrap()]);
+/// git(&main, &["push", "-q", "origin", "main"]);
+/// git(&main, &["remote", "set-head", "origin", "main"]);
+///
+/// let merged = merged_config(&main, |_| {})?;
+/// assert_eq!(merged.image.to_string(), image);
+/// assert_eq!(merged.setup.env, [("A".to_owned(), "$HOME".to_owned())]);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn merged_config(main: &Path, mut say: impl FnMut(&str)) -> Result<Merged> {
     let head = git(
         main,
         &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
@@ -238,7 +300,9 @@ pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
         Err(_) if lacks_config(main, &head) => bail!("{}", text::image_no_config(&head)),
         Err(e) => return Err(e),
     };
-    let image = Image::of_config(&config, &format!("{FILE} of {head}"))?;
+    let place = format!("{FILE} of {head}");
+    let image = Image::of_config(&config, &place)?;
+    let setup = Setup::of_config(&config, &place)?;
     match Image::of_repository(main) {
         Ok(local) if local == image => {}
         Ok(local) => say(&text::image_local_differs(
@@ -253,7 +317,7 @@ pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
             &head,
         )),
     }
-    Ok(image)
+    Ok(Merged { image, setup })
 }
 
 /// The package sources that the riff config `text` names
@@ -762,6 +826,51 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("names a tag"), "{error}");
+    }
+
+    /// 01M5SMVVC4GQS310CVK3H9CMQ7: the env and the volumes come from the
+    /// merged file, not from the working tree.
+    #[test]
+    fn the_env_and_the_volumes_are_the_ones_of_the_merged_file() {
+        let merged = format!(
+            "{}\n[session.env]\nA = \"$HOME/a\"\n\n[session.volumes]\nv = \"/v\"\n",
+            config("0")
+        );
+        let (_dir, main, _origin) = test_clone(&merged);
+        std::fs::write(main.join(FILE), config("0")).unwrap();
+        let found = merged_config(&main, |_| {}).unwrap();
+        assert_eq!(found.image.to_string(), pin("0"));
+        assert_eq!(found.setup.env, [("A".to_owned(), "$HOME/a".to_owned())]);
+        assert_eq!(found.setup.volumes, [("v".to_owned(), "/v".to_owned())]);
+    }
+
+    /// 01M5SMW2B4GMJ3V6BCX1KGC1ZY: a bad table in the merged file stops
+    /// riff, and the error names the file and the branch.
+    #[test]
+    fn a_bad_env_in_the_merged_file_is_an_error_that_names_the_branch() {
+        let bad = format!("{}\n[session.env]\nGH_TOKEN = \"x\"\n", config("0"));
+        let (_dir, main, _origin) = test_clone(&bad);
+        let error = format!("{:#}", merged_config(&main, |_| {}).unwrap_err());
+        assert!(error.starts_with("riff.toml of origin/main: "), "{error}");
+        assert!(error.contains("riff sets GH_TOKEN itself"), "{error}");
+        // `merged` has the same rule.
+        assert!(merged(&main, |_| {}).is_err());
+    }
+
+    /// 01M5SMW2B4GMJ3V6BCX1KGC1ZY: a bad table is a bad config for each
+    /// reader of the file, also for the working tree (`riff image`).
+    #[test]
+    fn a_bad_env_makes_the_config_of_the_working_tree_bad() {
+        let root = tempfile::tempdir().unwrap();
+        let bad = format!("{}\n[session.volumes]\n\"/etc\" = \"/etc\"\n", config("0"));
+        std::fs::write(root.path().join(FILE), bad).unwrap();
+        let error = format!("{:#}", Image::of_repository(root.path()).unwrap_err());
+        assert!(
+            error.contains("[session.volumes] /etc is not the name of a volume"),
+            "{error}"
+        );
+        std::fs::write(root.path().join(FILE), config("0")).unwrap();
+        assert!(Image::of_repository(root.path()).is_ok());
     }
 
     fn refused(text: &str, why: &str) {

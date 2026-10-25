@@ -12,6 +12,23 @@ image = "ghcr.io/como-technologies/riff-session@sha256:57413e21fc507e6ace6af4f69
 # "Trust a package source" in docs/src/how-it-works.md.
 sources = ["crates.io", "index.crates.io", "static.crates.io"]
 
+# The env and the volumes of a session come from here: riff sets none of
+# its own. See "Where the env of a session comes from" in
+# docs/src/how-it-works.md. $HOME is the home of the person. The build
+# cache of riff: sccache, and the cargo home. The toolchain is in the
+# image.
+[session.env]
+CARGO_HOME = "$HOME/.cargo"
+SCCACHE_DIR = "$HOME/.cache/sccache"
+SCCACHE_CACHE_SIZE = "40G"
+RUSTC_WRAPPER = "sccache"
+SCCACHE_IDLE_TIMEOUT = "0"
+SCCACHE_IGNORE_SERVER_IO_ERROR = "1"
+
+[session.volumes]
+riff-cargo = "$HOME/.cargo"
+riff-sccache = "$HOME/.cache/sccache"
+
 [hygiene]
 # riff pr open applies each rule of the hygiene check to the pull
 # requests of this repository. See "Choose the rules of a repository"

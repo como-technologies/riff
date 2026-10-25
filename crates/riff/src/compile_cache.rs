@@ -3,15 +3,16 @@
 //!
 //! # Design
 //!
-//! Each session runs its own `sccache` server in its container, and each
-//! server reads and writes the one volume [`SCCACHE_VOLUME`] of the host
-//! (01M4Z60B7RPSQ1ABGVMJSZWS5P). `riff daemon cache` is the one place to
-//! look at it:
+//! riff sets no cache in a session (01M5SMW28KT5D5HPRH7KAZ8TVC). The
+//! `riff.toml` of riff names the volume [`SCCACHE_VOLUME`], and each
+//! `sccache` server of a session reads and writes it
+//! (01M5SMW2DQ8G919EJ4P0GXF9Y3). `riff daemon cache` is the one place to
+//! look at that volume, and to empty it. It knows the name of the volume
+//! of riff: a repository that names another volume is outside it.
 //!
 //! | Command | Does |
 //! |---|---|
-//! | `riff daemon cache` | shows the size of the volume now, and the most size |
-//! | `riff daemon cache SIZE` | sets the most size in [`CACHE_FILE`] (01M57818168N3AQGE3G5GDYDDD) |
+//! | `riff daemon cache` | shows the size of the volume now |
 //! | `riff daemon cache --clear` | deletes each file in the volume ([`clear`], 01M5781A4PRTTYRHH5GJ1GHN7G) |
 //!
 //! Each of them also takes `--host HOST`: the daemon of that host does
@@ -20,14 +21,14 @@
 //! `riff daemon status` shows the same line ([`crate::text::daemon_cache`],
 //! 01M5781930TF6XBX7ME7RAMX2X).
 //!
-//! The daemon reads [`CACHE_FILE`] at each start of a session, and puts
-//! the size in `SCCACHE_CACHE_SIZE` of the spec ([`Setting::apply`]). So
-//! a session that runs keeps the size of its start.
+//! The most size of the cache is the variable `SCCACHE_CACHE_SIZE` in the
+//! `riff.toml` of the repository: riff sets no size.
 //!
 //! The clear keeps the volume and its top folder: each session that runs
-//! has it as a bind. A session has `SCCACHE_IGNORE_SERVER_IO_ERROR=1`.
-//! For `sccache`, a file that the clear deleted is a miss: the build
-//! compiles, and writes the file again.
+//! has it as a bind. The `riff.toml` of riff sets
+//! `SCCACHE_IGNORE_SERVER_IO_ERROR=1`. For `sccache`, a file that the
+//! clear deleted is a miss: the build compiles, and writes the file
+//! again.
 //!
 //! In rootless podman, a folder of the volume can belong to a user of
 //! the container, and the person cannot read it. Then [`measure`] and
@@ -36,8 +37,6 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     S["riff daemon cache SIZE"] --> F["cache.json in the folder of the daemon"]
-//!     F --> D["the daemon starts a session:<br/>SCCACHE_CACHE_SIZE=SIZE"]
 //!     C["riff daemon cache --clear"] --> P["podman volume inspect riff-sccache"]
 //!     P --> R["delete each file in its folder,<br/>keep the folder"]
 //!     R -- "permission denied" --> U["podman unshare find ... rm -rf"]
@@ -49,156 +48,28 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
 
-pub use crate::run::SCCACHE_VOLUME;
-use crate::runtime::{Env, SessionSpec};
+/// The named volume of the compile cache of riff: the one that the
+/// `riff.toml` of riff names (01M5SMW2DQ8G919EJ4P0GXF9Y3).
+pub const SCCACHE_VOLUME: &str = "riff-sccache";
 
-/// The file of the setting, in the folder of the daemon.
-pub const CACHE_FILE: &str = "cache.json";
-
-/// The variable of the most size of the cache of `sccache`.
-pub const SIZE_VAR: &str = "SCCACHE_CACHE_SIZE";
-
-/// The setting of the cache of the host: its most size, for example
-/// `40G`. With no file, the size is [`crate::sccache::SIZE`].
+/// `riff daemon cache`, on this host or for the daemon of a host with
+/// `--host`: empties the volume when `clear`. It gives the text to show:
+/// the line of [`shown`] last.
 ///
 /// ```
-/// use riff::compile_cache::Setting;
-///
-/// assert_eq!(Setting::default().size, "40G");
-/// let dir = tempfile::tempdir()?;
-/// assert_eq!(Setting::read(dir.path())?, Setting::default());
-/// Setting { size: "20G".into() }.write(dir.path())?;
-/// assert_eq!(Setting::read(dir.path())?.size, "20G");
-/// std::fs::write(dir.path().join("cache.json"), r#"{"size":"20GB"}"#)?;
-/// assert!(Setting::read(dir.path()).is_err());
+/// let shown = riff::compile_cache::change(false)?;
+/// assert!(shown.contains("riff-sccache"));
+/// assert!(!shown.contains("at most"));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Setting {
-    /// The most size: a number with K, M, G or T.
-    pub size: String,
-}
-
-impl Default for Setting {
-    fn default() -> Self {
-        Setting {
-            size: crate::sccache::SIZE.to_owned(),
-        }
-    }
-}
-
-impl Setting {
-    /// The setting in the folder `dir` of the daemon: its [`CACHE_FILE`],
-    /// or [`Setting::default`] when the file is not there. A file that
-    /// riff cannot read, or a size that is not a size, is an error.
-    pub fn read(dir: &Path) -> Result<Setting> {
-        let path = dir.join(CACHE_FILE);
-        let setting: Setting = match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text)
-                .with_context(|| format!("cannot read the cache setting in {}", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Setting::default()),
-            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
-        };
-        if !crate::sccache::valid_size(&setting.size) {
-            bail!("the size in {} is not a size such as 40G", path.display());
-        }
-        Ok(setting)
-    }
-
-    /// Writes the setting to [`CACHE_FILE`] in the folder `dir`, in
-    /// place of the old one.
-    pub fn write(&self, dir: &Path) -> Result<()> {
-        std::fs::create_dir_all(dir).with_context(|| format!("cannot make {}", dir.display()))?;
-        let path = dir.join(CACHE_FILE);
-        let tmp = path.with_extension("json.new");
-        std::fs::write(&tmp, serde_json::to_vec(self)?)
-            .with_context(|| format!("cannot write {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
-    }
-
-    /// Puts the size in `SCCACHE_CACHE_SIZE` of `spec`, in place of an
-    /// old value (01M57818168N3AQGE3G5GDYDDD).
-    ///
-    /// ```
-    /// use riff::compile_cache::Setting;
-    /// use riff::runtime::{Env, SessionSpec};
-    ///
-    /// let mut spec = SessionSpec {
-    ///     name: "s".into(),
-    ///     image: "i".into(),
-    ///     home: "/h".into(),
-    ///     workdir: "/w".into(),
-    ///     binds: vec![],
-    ///     env: vec![Env::Value("SCCACHE_CACHE_SIZE".into(), "40G".into())],
-    ///     memory: "8g".into(),
-    ///     cpus: 8,
-    ///     command: vec![],
-    /// };
-    /// Setting { size: "20G".into() }.apply(&mut spec);
-    /// assert_eq!(spec.env, [Env::Value("SCCACHE_CACHE_SIZE".into(), "20G".into())]);
-    /// ```
-    pub fn apply(&self, spec: &mut SessionSpec) {
-        spec.env
-            .retain(|e| !matches!(e, Env::Value(name, _) if name == SIZE_VAR));
-        spec.env
-            .push(Env::Value(SIZE_VAR.into(), self.size.clone()));
-    }
-}
-
-/// `riff daemon cache SIZE`: sets the most size in the folder `dir` of
-/// the daemon, and gives the setting. With no size, it changes nothing.
-///
-/// ```
-/// use riff::compile_cache::{Setting, set};
-///
-/// let dir = tempfile::tempdir()?;
-/// assert_eq!(set(dir.path(), None)?, Setting::default());
-/// assert!(!dir.path().join("cache.json").exists());
-/// assert_eq!(set(dir.path(), Some("12G"))?.size, "12G");
-/// assert!(set(dir.path(), Some("12GB")).is_err());
-/// assert_eq!(Setting::read(dir.path())?.size, "12G");
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn set(dir: &Path, size: Option<&str>) -> Result<Setting> {
-    let Some(size) = size else {
-        return Setting::read(dir);
-    };
-    if !crate::sccache::valid_size(size) {
-        bail!("the size of the cache is a number with K, M, G or T, for example 40G");
-    }
-    let setting = Setting {
-        size: size.to_owned(),
-    };
-    setting.write(dir)?;
-    Ok(setting)
-}
-
-/// `riff daemon cache` with its argument, on this host or for the
-/// daemon of a host with `--host`: empties the volume with `clear`, or
-/// sets the most `size` in the folder `dir` of the daemon. It gives the
-/// text to show: the line of [`shown`] last.
-///
-/// ```
-/// let dir = tempfile::tempdir()?;
-/// let shown = riff::compile_cache::change(dir.path(), Some("12G"), false)?;
-/// assert!(shown.contains("at most 12G"));
-/// assert!(riff::compile_cache::change(dir.path(), Some("12GB"), false).is_err());
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn change(dir: &Path, size: Option<&str>, clear: bool) -> Result<String> {
+pub fn change(clear: bool) -> Result<String> {
     let mut lines = Vec::new();
-    if clear {
-        if let Some(folder) = folder() {
-            self::clear(&folder)?;
-            lines.push(crate::text::DAEMON_CACHE_CLEARED.to_owned());
-        }
-    } else {
-        set(dir, size)?;
+    if clear && let Some(folder) = folder() {
+        self::clear(&folder)?;
+        lines.push(crate::text::DAEMON_CACHE_CLEARED.to_owned());
     }
-    lines.push(shown(dir));
+    lines.push(shown());
     Ok(lines.join("\n"))
 }
 
@@ -243,8 +114,8 @@ pub fn folder_of(out: &str) -> Option<PathBuf> {
 
 /// The size of the files in the folder `dir` now, in bytes: the size on
 /// the disk of each file (01M588JW2KS6EVX1SE49686FQ7). riff shows it
-/// with 1GB = 1024³ bytes ([`crate::text::size_words`]), the unit of the
-/// most size: `sccache` reads `40G` as 40 × 1024³ bytes. `podman system
+/// with 1GB = 1024³ bytes ([`crate::text::size_words`]), the unit that
+/// `sccache` reads in `40G`: 40 × 1024³ bytes. `podman system
 /// df -v` counts 1GB as 1000³ bytes, so its number for the volume is
 /// about 7% larger, for example 8.3GB for 7.7GB.
 ///
@@ -422,10 +293,9 @@ fn clear_here(dir: &Path) -> Result<()> {
 
 /// The cache of the host now, as `riff daemon cache` and `riff daemon
 /// status` show it ([`crate::text::daemon_cache`]).
-pub fn shown(dir: &Path) -> String {
-    let setting = Setting::read(dir).unwrap_or_default();
+pub fn shown() -> String {
     let now = folder().map(|f| measure(&f).map_err(|e| format!("{e:#}")));
-    crate::text::daemon_cache(&setting.size, now)
+    crate::text::daemon_cache(now)
 }
 
 #[cfg(test)]
@@ -464,33 +334,5 @@ mod tests {
     fn a_clear_of_a_folder_that_is_not_there_fails() {
         let dir = tempfile::tempdir().unwrap();
         assert!(clear(&dir.path().join("none")).is_err());
-    }
-
-    #[test]
-    fn a_new_size_takes_the_place_of_the_old_one_in_the_spec() {
-        let mut spec = crate::run::spec(&crate::run::Facts {
-            session: "1a2b3c4d-0000".into(),
-            item: "issue-12".into(),
-            image: "i".into(),
-            home: "/h".into(),
-            user: "m".into(),
-            clone: "/c".into(),
-            objects: "/o".into(),
-            claude: "/cl".into(),
-            sign_in: crate::run::ClaudeSignIn::Token,
-            gitconfig: None,
-            gh_config: None,
-        });
-        Setting { size: "7G".into() }.apply(&mut spec);
-        Setting { size: "9G".into() }.apply(&mut spec);
-        let sizes: Vec<_> = spec
-            .env
-            .iter()
-            .filter_map(|e| match e {
-                Env::Value(name, value) if name == SIZE_VAR => Some(value.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(sizes, ["9G"]);
     }
 }

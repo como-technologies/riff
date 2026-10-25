@@ -177,9 +177,8 @@
 //! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` | 01M4Z60B89G8YNVMTEPGX7FQCV |
 //! | The Claude folder | with write | 01M4Z60B86N999JRN7Z1G52PG4 |
 //! | The sign-in of `claude` | `-e CLAUDE_CODE_OAUTH_TOKEN`: the name only, when a token is set ([`crate::claude_token`]); else the sign-in file of the host with no write | 01M58B7H2HMYT6VTY0B8T2G0KW, 01M4Z60B869HWDTZMSYPVYACD8 |
-//! | The caches | the volumes `riff-cargo` and `riff-sccache` | 01M4Z60B7RPSQ1ABGVMJSZWS5P |
-//! | The size of the compile cache | `SCCACHE_CACHE_SIZE`: the daemon puts the setting of the host at the start ([`crate::compile_cache`]) | 01M57818168N3AQGE3G5GDYDDD |
-//! | The caps | `--memory`, `--cpus` and `CARGO_BUILD_JOBS`: the defaults, and the daemon puts the caps of the host at the start ([`crate::room::Limit::caps`]) | 01M4Z60B7XT7462XMV49GJTVSJ, 01M56Q4AQ86V99RC8CA1KGCMSZ |
+//! | The env and the volumes of the repository | `[session.env]` and `[session.volumes]` of the merged `riff.toml` ([`crate::session_setup`]). riff sets no variable and no volume of a language or a tool | 01M5SMVVC4GQS310CVK3H9CMQ7, 01M5SMW28KT5D5HPRH7KAZ8TVC |
+//! | The caps | `--memory` and `--cpus`: the defaults, and the daemon puts the caps of the host at the start ([`crate::room::Limit::caps`]) | 01M4Z60B7XT7462XMV49GJTVSJ, 01M56Q4AQ86V99RC8CA1KGCMSZ |
 //! | `claude` | `-p` in stream-json, the riff session ID, the auto mode | 01M4Z60B82FHN2YG9YJHW8XZX1, 01M4Z81ATZK3FX9GRFTM236FE6 |
 //! | The socket of the session | the daemon adds it: its folder at `/run/riff` with write, and `RIFF_SOCKET` | 01M4ZDTVSP0T1YENKAWGKA114D |
 
@@ -200,14 +199,9 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use crate::daemon::{self, Ask, Ended, Say};
 use crate::runtime::{Bind, Env, SessionSpec, Source};
+use crate::session_setup::Setup;
 use crate::{dropped, home, identity, pr, rollout, session_image, text};
 use riff_client::api::{self, Api};
-
-/// The named volume for all of `CARGO_HOME` (01M4Z60B7RPSQ1ABGVMJSZWS5P).
-pub const CARGO_VOLUME: &str = "riff-cargo";
-
-/// The named volume for the folder of sccache.
-pub const SCCACHE_VOLUME: &str = "riff-sccache";
 
 /// riff starts no session while the access token of `claude` has less
 /// than this many minutes left (01M4Z60B869HWDTZMSYPVYACD8).
@@ -253,6 +247,9 @@ pub struct Facts {
     pub gitconfig: Option<PathBuf>,
     /// `~/.config/gh`, when it exists.
     pub gh_config: Option<PathBuf>,
+    /// The env and the volumes of the merged `riff.toml`
+    /// (01M5SMVVC4GQS310CVK3H9CMQ7).
+    pub setup: Setup,
 }
 
 /// How `claude` in a container signs in. It holds no secret.
@@ -285,6 +282,7 @@ pub enum ClaudeSignIn {
 ///     sign_in: ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: Some("/home/mike/.gitconfig".into()),
 ///     gh_config: None,
+///     setup: Default::default(),
 /// };
 /// let spec = spec(&facts);
 /// assert_eq!(spec.name, "riff-issue-12-1a2b3c4d");
@@ -300,6 +298,26 @@ pub enum ClaudeSignIn {
 /// assert!(token.env.contains(&Env::Host("CLAUDE_CODE_OAUTH_TOKEN".into())));
 /// assert!(!token.binds.iter().any(|b| b.target.ends_with(".credentials.json")));
 /// assert!(!spec.env.contains(&Env::Host("CLAUDE_CODE_OAUTH_TOKEN".into())));
+///
+/// // riff sets no variable and no volume of a language or a tool
+/// // (01M5SMW28KT5D5HPRH7KAZ8TVC): the repository gives them.
+/// let names: Vec<&str> = spec.env.iter().map(|e| match e {
+///     Env::Value(n, _) | Env::Host(n) => n.as_str(),
+/// }).collect();
+/// assert!(!names.iter().any(|n| ["CARGO", "RUST", "SCCACHE"].iter().any(|t| n.contains(t))));
+/// assert!(spec.binds.iter().all(|b| !matches!(b.source, Source::Volume(_))));
+///
+/// // The env and the volumes of the riff.toml come after, with `$HOME` in place.
+/// let setup = riff::session_setup::Setup::of_config(
+///     "[session.env]\nCARGO_HOME = \"$HOME/.cargo\"\n[session.volumes]\nriff-cargo = \"$HOME/.cargo\"\n",
+///     "riff.toml",
+/// )?;
+/// let with = riff::run::spec(&Facts { setup, ..facts.clone() });
+/// assert!(with.env.contains(&Env::Value("CARGO_HOME".into(), "/home/mike/.cargo".into())));
+/// assert!(with.binds.iter().any(|b| {
+///     b.source == Source::Volume("riff-cargo".into()) && b.target == std::path::Path::new("/home/mike/.cargo")
+/// }));
+/// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn spec(facts: &Facts) -> SessionSpec {
     let home = &facts.home;
@@ -308,14 +326,7 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         target: p.to_owned(),
         write,
     };
-    let volume = |name: &str, target: PathBuf| Bind {
-        source: Source::Volume(name.into()),
-        target,
-        write: true,
-    };
     let claude_dir = home.join(".claude");
-    let cargo = home.join(".cargo");
-    let sccache = home.join(".cache/sccache");
     let mut binds = vec![path(&facts.clone, true), path(&facts.objects, false)];
     binds.extend(facts.gitconfig.iter().map(|p| Bind {
         source: Source::Path(p.clone()),
@@ -339,8 +350,7 @@ pub fn spec(facts: &Facts) -> SessionSpec {
             write: false,
         });
     }
-    binds.push(volume(CARGO_VOLUME, cargo.clone()));
-    binds.push(volume(SCCACHE_VOLUME, sccache.clone()));
+    binds.extend(facts.setup.binds(home));
     let value = |name: &str, value: &str| Env::Value(name.into(), value.into());
     let shown = |p: &Path| p.to_string_lossy().into_owned();
     let mut env = vec![
@@ -352,15 +362,11 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         value("GIT_CONFIG_KEY_0", "commit.gpgsign"),
         value("GIT_CONFIG_VALUE_0", "false"),
         value("CLAUDE_CONFIG_DIR", &shown(&claude_dir)),
-        value("CARGO_HOME", &shown(&cargo)),
-        value("SCCACHE_DIR", &shown(&sccache)),
-        value("RUSTC_WRAPPER", "sccache"),
-        value("SCCACHE_IDLE_TIMEOUT", "0"),
-        value("SCCACHE_IGNORE_SERVER_IO_ERROR", "1"),
     ];
     if facts.sign_in == ClaudeSignIn::Token {
         env.push(Env::Host(crate::claude_token::VAR.into()));
     }
+    env.extend(facts.setup.env(home));
     let command = [
         "claude",
         "-p",
@@ -1753,10 +1759,14 @@ pub async fn run_with(
     let issue = issue_of(item)?;
     let dir = identity::working_dir()?;
     let (main, common) = main_clone(&dir)?;
-    let image = match image {
-        Some(image) => image.to_owned(),
-        None => session_image::merged(&main, |line| println!("{line}"))?.to_string(),
+    // With --image, the image is the one that the person gives, and the
+    // lines about the pin say nothing. The env and the volumes still come
+    // from the merged riff.toml (01M5SMVVC4GQS310CVK3H9CMQ7).
+    let merged = match image {
+        Some(_) => session_image::merged_config(&main, |_| {})?,
+        None => session_image::merged_config(&main, |line| println!("{line}"))?,
     };
+    let image = image.map_or_else(|| merged.image.to_string(), str::to_owned);
     let image = image.as_str();
     let checked = check(daemon, &main, issue, image).await?;
     let Some(thread) = here.default_thread() else {
@@ -1789,7 +1799,18 @@ pub async fn run_with(
 
     let mut steps = EndSteps::default();
     let worked = work(
-        daemon, server, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
+        daemon,
+        server,
+        &api,
+        &me,
+        &thread,
+        &main,
+        &common,
+        &checked,
+        &session,
+        item,
+        issue,
+        (image, &merged.setup),
         &mut steps,
     )
     .await;
@@ -1821,7 +1842,7 @@ async fn work(
     session: &str,
     item: &str,
     issue: u64,
-    image: &str,
+    (image, setup): (&str, &Setup),
     steps: &mut EndSteps,
 ) -> Result<i32> {
     let folder = sessions_dir()?.join(format!("{item}-{}", short(session)));
@@ -1850,6 +1871,7 @@ async fn work(
         sign_in: checked.host.claude.sign_in(),
         gitconfig: existing(home.join(".gitconfig")),
         gh_config: existing(home.join(".config/gh")),
+        setup: setup.clone(),
     };
     let spec = spec(&facts);
     let repo = me.place().repo_text();
@@ -2042,7 +2064,13 @@ mod tests {
             sign_in: ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
             gitconfig: Some("/home/mike/.gitconfig".into()),
             gh_config: Some("/home/mike/.config/gh".into()),
+            setup: Setup::default(),
         }
+    }
+
+    /// The env and the volumes of the `riff.toml` of riff.
+    fn riff_setup() -> Setup {
+        Setup::of_config(include_str!("../../../riff.toml"), "riff.toml").unwrap()
     }
 
     /// A bind as `SOURCE -> TARGET`, with ` (no write)` when the session
@@ -2121,8 +2149,6 @@ mod tests {
                 "/r/sessions/issue-12-1a2b3c4d/claude -> /home/mike/.claude",
                 "/home/mike/.claude/.credentials.json -> /home/mike/.claude/.credentials.json \
                  (no write)",
-                "volume riff-cargo -> /home/mike/.cargo",
-                "volume riff-sccache -> /home/mike/.cache/sccache",
             ]
         );
         // Each path of the person on the host has no write.
@@ -2214,12 +2240,6 @@ mod tests {
                 "GIT_CONFIG_KEY_0=commit.gpgsign",
                 "GIT_CONFIG_VALUE_0=false",
                 "CLAUDE_CONFIG_DIR=/home/mike/.claude",
-                "CARGO_HOME=/home/mike/.cargo",
-                "SCCACHE_DIR=/home/mike/.cache/sccache",
-                "RUSTC_WRAPPER=sccache",
-                "SCCACHE_IDLE_TIMEOUT=0",
-                "SCCACHE_IGNORE_SERVER_IO_ERROR=1",
-                "CARGO_BUILD_JOBS=8",
             ]
         );
         assert_eq!(
@@ -2230,6 +2250,97 @@ mod tests {
         // The token of gh is the one value of the host.
         let token = [("GH_TOKEN".to_owned(), "gho_x".to_owned())];
         assert!(spec.check_values(&token).is_ok());
+    }
+
+    /// 01M5SMW28KT5D5HPRH7KAZ8TVC: a `riff.toml` with no `env` and no
+    /// `volumes` gives a session no variable and no volume of a language
+    /// or a tool, and no `CARGO_BUILD_JOBS`.
+    #[test]
+    fn a_spec_of_a_riff_toml_with_no_env_has_no_variable_and_no_volume_of_a_tool() {
+        let setup = Setup::of_config("[session]\nimage = \"x\"\n", "riff.toml").unwrap();
+        let spec = spec(&Facts { setup, ..facts() });
+        let names: Vec<String> = variables(&spec)
+            .iter()
+            .map(|v| v.split('=').next().unwrap().to_owned())
+            .collect();
+        for tool in [
+            "RUSTC_WRAPPER",
+            "CARGO_BUILD_JOBS",
+            "CARGO_HOME",
+            "SCCACHE_DIR",
+        ] {
+            assert!(!names.iter().any(|n| n == tool), "{tool} in {names:?}");
+        }
+        assert!(!names.iter().any(|n| n.contains("SCCACHE")), "{names:?}");
+        assert!(
+            spec.binds
+                .iter()
+                .all(|b| !matches!(b.source, Source::Volume(_))),
+            "{:?}",
+            spec.binds
+        );
+        // The caps are only `--memory` and `--cpus`.
+        assert_eq!((spec.memory.as_str(), spec.cpus), ("8g", 8));
+    }
+
+    /// 01M5SMVVC4GQS310CVK3H9CMQ7: the env and the volumes of the
+    /// `riff.toml` are in the spec, after what riff sets, with `$HOME` in
+    /// place.
+    #[test]
+    fn a_spec_of_a_riff_toml_with_env_and_volumes_has_them_with_the_home_in_place() {
+        let setup = Setup::of_config(
+            "[session.env]\nPIP_CACHE_DIR = \"$HOME/.pip\"\nPLAIN = \"x\"\n\n\
+             [session.volumes]\nriff-pip = \"$HOME/.pip\"\nshared = \"/opt/shared\"\n",
+            "riff.toml",
+        )
+        .unwrap();
+        let spec = spec(&Facts { setup, ..facts() });
+        let binds: Vec<String> = spec.binds.iter().map(shown).collect();
+        assert_eq!(
+            binds[binds.len() - 2..],
+            [
+                "volume riff-pip -> /home/mike/.pip",
+                "volume shared -> /opt/shared"
+            ]
+        );
+        assert!(spec.binds.iter().rev().take(2).all(|b| b.write));
+        let vars = variables(&spec);
+        assert_eq!(
+            vars[vars.len() - 2..],
+            ["PIP_CACHE_DIR=/home/mike/.pip", "PLAIN=x"]
+        );
+        // What riff sets stays before them.
+        assert_eq!(vars[0], "HOME=/home/mike");
+    }
+
+    /// 01M5SMW2DQ8G919EJ4P0GXF9Y3: the `riff.toml` of riff keeps its
+    /// build fast: the cargo home, sccache and their volumes.
+    #[test]
+    fn the_riff_toml_of_riff_sets_the_build_cache_of_its_sessions() {
+        let spec = spec(&Facts {
+            setup: riff_setup(),
+            ..facts()
+        });
+        let binds: Vec<String> = spec.binds.iter().map(shown).collect();
+        assert_eq!(
+            binds[binds.len() - 2..],
+            [
+                "volume riff-cargo -> /home/mike/.cargo",
+                "volume riff-sccache -> /home/mike/.cache/sccache"
+            ]
+        );
+        let vars = variables(&spec);
+        assert_eq!(
+            vars[vars.len() - 6..],
+            [
+                "CARGO_HOME=/home/mike/.cargo",
+                "SCCACHE_DIR=/home/mike/.cache/sccache",
+                "SCCACHE_CACHE_SIZE=40G",
+                "RUSTC_WRAPPER=sccache",
+                "SCCACHE_IDLE_TIMEOUT=0",
+                "SCCACHE_IGNORE_SERVER_IO_ERROR=1",
+            ]
+        );
     }
 
     #[test]

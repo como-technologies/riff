@@ -36,11 +36,12 @@
 //! # The caps of a container
 //!
 //! The same file holds the caps of each new container of the host
-//! (01M56Q4AQ86V99RC8CA1KGCMSZ): its CPUs, which are also its build jobs
-//! in `CARGO_BUILD_JOBS`, and its memory. The daemon puts them in the
-//! spec of a session when it starts it ([`Limit::caps`]). So a session
-//! that runs keeps the caps of its start. The defaults are 8 CPUs and
-//! 8 GB.
+//! (01M56Q4AQ86V99RC8CA1KGCMSZ): its CPUs and its memory. The daemon puts
+//! them in the spec of a session when it starts it ([`Limit::caps`]). So a
+//! session that runs keeps the caps of its start. The defaults are 8 CPUs
+//! and 8 GB. riff sets no build jobs: a tool reads the CPUs of its
+//! container, and a repository can set a variable in its `riff.toml`
+//! (01M5SMW28KT5D5HPRH7KAZ8TVC).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -52,7 +53,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
-use crate::runtime::{Env, SessionSpec};
+use crate::runtime::SessionSpec;
 
 /// The default number of live sessions of a host
 /// (01M4Z60B7Y4XD6TJCYEYJT2R4S).
@@ -61,16 +62,13 @@ pub const SESSIONS: u32 = 3;
 /// The default floor of free memory, in GB (01M4Z60B7Y4XD6TJCYEYJT2R4S).
 pub const FLOOR_GB: u64 = 8;
 
-/// The default CPUs and build jobs of each container
+/// The default CPUs of each container
 /// (01M56Q4AQ86V99RC8CA1KGCMSZ).
 pub const CPUS: u32 = 8;
 
 /// The default memory cap of each container, in GB
 /// (01M56Q4AQ86V99RC8CA1KGCMSZ).
 pub const MEMORY_GB: u64 = 8;
-
-/// The variable of the build jobs of a container.
-pub const JOBS_VAR: &str = "CARGO_BUILD_JOBS";
 
 /// The file of the limit, in the folder of the daemon.
 pub const LIMIT_FILE: &str = "limit.json";
@@ -164,7 +162,7 @@ impl Role {
 
 /// The limit of the host: at most `sessions` live sessions, and no start
 /// while the free memory is below `floor_gb`. Each new container gets
-/// `cpus` CPUs and build jobs, and `memory_gb` GB of memory. It also
+/// `cpus` CPUs, and `memory_gb` GB of memory. It also
 /// holds the effort of the three roles: the daemon starts each new
 /// session with `claude --effort LEVEL` ([`Limit::effort`]), `xhigh` by
 /// default (a requirement of the book). A session that runs keeps its
@@ -189,7 +187,7 @@ pub struct Limit {
     pub sessions: u32,
     /// The floor of free memory, in GB.
     pub floor_gb: u64,
-    /// The CPUs and the build jobs of each new container.
+    /// The CPUs of each new container.
     pub cpus: u32,
     /// The memory cap of each new container, in GB.
     pub memory_gb: u64,
@@ -268,8 +266,9 @@ impl Limit {
         std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
     }
 
-    /// Puts the caps of a container in `spec`: `--cpus`, the same number
-    /// in `CARGO_BUILD_JOBS`, and `--memory` (01M56Q4AQ86V99RC8CA1KGCMSZ).
+    /// Puts the caps of a container in `spec`: `--cpus` and `--memory`
+    /// (01M56Q4AQ86V99RC8CA1KGCMSZ). It sets no variable: a tool reads the
+    /// CPUs of its container (01M5SMW28KT5D5HPRH7KAZ8TVC).
     ///
     /// ```
     /// use riff::room::Limit;
@@ -281,22 +280,18 @@ impl Limit {
     ///     home: "/h".into(),
     ///     workdir: "/w".into(),
     ///     binds: vec![],
-    ///     env: vec![Env::Value("CARGO_BUILD_JOBS".into(), "8".into())],
+    ///     env: vec![Env::Host("GH_TOKEN".into())],
     ///     memory: "8g".into(),
     ///     cpus: 8,
     ///     command: vec![],
     /// };
     /// Limit { cpus: 12, memory_gb: 16, ..Limit::default() }.caps(&mut spec);
     /// assert_eq!((spec.cpus, spec.memory.as_str()), (12, "16g"));
-    /// assert_eq!(spec.env, [Env::Value("CARGO_BUILD_JOBS".into(), "12".into())]);
+    /// assert_eq!(spec.env, [Env::Host("GH_TOKEN".into())]);
     /// ```
     pub fn caps(&self, spec: &mut SessionSpec) {
         spec.cpus = self.cpus;
         spec.memory = format!("{}g", self.memory_gb);
-        spec.env
-            .retain(|e| !matches!(e, Env::Value(name, _) if name == JOBS_VAR));
-        spec.env
-            .push(Env::Value(JOBS_VAR.into(), self.cpus.to_string()));
     }
 
     /// The effort of a session of `role`.

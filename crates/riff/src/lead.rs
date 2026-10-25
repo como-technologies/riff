@@ -125,6 +125,7 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 ///     sign_in: riff::run::ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: None,
 ///     gh_config: None,
+///     setup: Default::default(),
 /// };
 /// let spec = riff::lead::spec(&facts, "o/r", &riff::text::lead_start("o/r"));
 /// assert_eq!(spec.name, "riff-lead-o-r");
@@ -144,8 +145,9 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
     let mut spec = run::spec(facts);
     spec.name = name_of(repo);
-    // The folder `~/.cache` of the container belongs to root, because
-    // of the bind of the compile cache: `riff build` needs another one.
+    // The folder `~/.cache` of the container can belong to root, when a
+    // volume of `riff.toml` binds under it: `riff build` needs another
+    // one.
     spec.env.push(crate::runtime::Env::Value(
         crate::check::VAR.into(),
         spec.home.join(".riff-check").to_string_lossy().into_owned(),
@@ -412,7 +414,8 @@ async fn launch(
         fault => fault.into(),
     })?;
     needs_token(&host.claude.sign_in())?;
-    let image = session_image::merged(main, |line| println!("{line}"))?.to_string();
+    let merged = session_image::merged_config(main, |line| println!("{line}"))?;
+    let image = merged.image.to_string();
     daemon::image(dir, &image, |line| println!("{line}")).await?;
     let folder = folder_of(&run::data_dir()?, &repo);
     let clone = folder.join("clone");
@@ -456,6 +459,7 @@ async fn launch(
         sign_in: host.claude.sign_in(),
         gitconfig: existing(host.home.join(".gitconfig")),
         gh_config: existing(host.home.join(".config/gh")),
+        setup: merged.setup,
     };
     let start = daemon::Start {
         session: session.clone(),
@@ -786,6 +790,7 @@ mod tests {
             sign_in: run::ClaudeSignIn::File(file.clone()),
             gitconfig: None,
             gh_config: None,
+            setup: Default::default(),
         };
         let spec = spec(&facts, "como-technologies/riff", "start");
         let values = [("GH_TOKEN".to_owned(), "gho_x".to_owned())];
