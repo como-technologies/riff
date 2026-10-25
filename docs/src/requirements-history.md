@@ -241,6 +241,22 @@ page [Requirements](requirements.md) holds the rules of today.
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.
   Superseded by 4.0 (#1173).
+- **01M4YJ6KGBPTCSVMFQCDKACZPV** A patch of an older release line goes
+  on the branch `release/MAJOR.x` of that line, by pull request. The
+  branch starts at the last release tag of the line. CI runs the `Gate`
+  and `Hygiene` on each pull request and each push of a branch
+  `release/**`, as on `main`. A push to it does not deploy. The
+  command `just github` makes the ruleset `release-branches` on
+  `release/**`: a change needs a pull request with 0 approvals and the
+  checks `Gate`, `Hygiene` and `riff/verify`, as on `main`. No force
+  push, no deletion, no bypass actor. The checks do not stop the push
+  that makes a new branch of a line. Superseded by
+  01M5RG6BZQC8T6SZ8NX9W8TT5M.
+- **01M5QWJJ94T4M3KJB0R3WTJCQF** riff pr open --base BRANCH opens the
+  pull request against that branch, for example release/1.x, and not
+  against the default branch. The body, the trailers and the auto-merge
+  are the same. The steps for a patch of an older release line use it,
+  not gh pr create. Superseded by 01M5RG6BZQC8T6SZ8NX9W8TT5M.
 
 ## Tokens on GitHub
 
@@ -359,6 +375,18 @@ page [Requirements](requirements.md) holds the rules of today.
 - **R161** Replaced by 01M3NJAZAQ3AKMAM0EGM7R3S89.
 - **01M3ZE3Z26N1CG090D5D5FZ3NW** Replaced by 01M496JTN962N0AX378MA1MBPM.
 - **01M4262DY8NN30SC4REYX2G9DV** Replaced by 01M558C4VZ2PSMEYPAZBRYW1VV.
+- **01M56N6KSMFJ46PW99Z80GF9DM** The GitHub releases of a retired line
+  stay normal releases. When a line retires, no release of it becomes a
+  prerelease, and its notes do not change. The line 1.x retired after
+  riff 3.0.0 (#961): its 12 GitHub releases are normal releases, and
+  GitHub marks `v3.0.0` "Latest". The line 2.x retired before this rule
+  (#706): its one GitHub release, `v2.0.1`, is a prerelease. The tag
+  `v2.0.0` has no GitHub release. Superseded by
+  01M5RG6BTXAJY8DV6MT315VZWF.
+- **01M56N6KVZRGT3W7CEK05DHR57** riff has no command that retires a
+  release line. `riff --help` lists no `retire`, and `riff retire`
+  fails: riff does not know the command. Superseded by
+  01M5RG6BTXAJY8DV6MT315VZWF.
 
 ## One instance
 
@@ -1748,6 +1776,11 @@ page [Requirements](requirements.md) holds the rules of today.
   line, also an answer that riff cannot talk to. With no answer within
   the wait of the status line, it shows no tag.
   Superseded by 4.0 (#1173).
+- **01M53N7KN4QKZ70W2GNQ3VQWQ9** On the line 1.x, a release that the
+  test of 01M3N73EEQ4HPCPPAGCAHH3S6B makes a major is a minor. The
+  next major is `3.0.0` (01M4Z60B8N9W9TBE7KKDJQAN2C). A release of only
+  fixes, where the old and the new builds act the same, is a patch.
+  Superseded by 01M5RG6BTXAJY8DV6MT315VZWF.
 
 ## Code
 
@@ -1806,7 +1839,7 @@ page [Requirements](requirements.md) holds the rules of today.
 - **01M53NGVXEMBTJ8E4K3MHPQ7W9** riff-server 3.0.0 serves the API of
   riff 1.x. So a machine of riff 1.x works until it takes riff 3.0.0.
   Superseded in part by 01M55FCZNNZGKM4EKAXZQFTDWR: only from riff
-  1.8.2.
+  1.8.2. Superseded by 01M5RG6BXBQVFABA1N4NRZBMQF.
 - **01M55FCZNNZGKM4EKAXZQFTDWR** The bridge: a `riff` and a
   `riff-server` of the lines 1 and 3 talk, in both directions, from
   riff 1.8.2 and riff 3.0.0. The same line and the line before still
@@ -1817,7 +1850,8 @@ page [Requirements](requirements.md) holds the rules of today.
   before the call takes effect. The check of `riff` does not change.
   riff 1.8.2 releases from v1.8.1 on the branch `release/1.8`, before
   riff 3.0.0. riff-server 1.8.2 still uses no checkpoint of the line 3
-  (01M4YNCEMNRCAXD37V03T4JQYR).
+  (01M4YNCEMNRCAXD37V03T4JQYR). Superseded by
+  01M5RG6BXBQVFABA1N4NRZBMQF.
 - **01M53NGWJ48MMYPQNJQ0EY9T47** The book page "riff 3.0" has the plan
   of the re-cut, with a mermaid diagram of a container session with
   riff-server, what riff 3.0.0 removes, and the state that it leaves on
@@ -1880,6 +1914,16 @@ page [Requirements](requirements.md) holds the rules of today.
   tool with a text that says why. Superseded by
   01M4ZV3B6T2KB09WJ59F07HXET.
 
+### The lead, the view and the takeover
+
+- **01M51KJ1V0STB4QCN4N5SBYGSP** `hold` has the field `interrupt`.
+  With it, the relay writes the interrupt control request of
+  stream-json on the stdin of `claude` before the close, as the Agent
+  SDK does. The hello of the relay says `interrupts` when the relay can
+  do it. A relay of riff 1.5 reads a `hold` with `interrupt` as its own
+  `hold`. The protocol stays 4. Superseded by
+  01M5RG6C25DB49ZKM03Y93QB1F.
+
 ### The permission rules
 
 - **01M5084K09Z2S7N57315CX2R0F** `riff init` checks that the user
@@ -1909,6 +1953,22 @@ page [Requirements](requirements.md) holds the rules of today.
   local files of riff. `riff init` and `riff init --check` show whether
   the sync is on, and that line. Superseded by 4.0
   (01M59EWWDC7EBQEG02TVNN81HD).
+
+### The steps of an update
+
+- **01M5GT0QV72BZA4VVWDPR1WG17** riff keeps no command only so that the
+  update of an older line can finish. When the update from the line
+  before stops on the new riff, the book gives the step that a person
+  runs by hand. Superseded by 01M5RG6C4H3YPACS41S6EPS87E.
+- **01M5JFF7TAVA87TMJXK25HDJ19** riff init removes the plugin of riff 3
+  that is left on the machine: the folder claude-plugin in the data
+  folder of riff, and the keys enabledPlugins.riff@riff,
+  extraKnownMarketplaces.riff and a statusLine that runs riff statusline
+  in the user, project and local settings of Claude Code. Each other key
+  stays. riff init --check names them and removes nothing. The riff
+  daemon of a release removes them at its start behind the gate of the
+  update by itself, and riff update --check names them with the fix riff
+  init. Superseded by 01M5RG6C4H3YPACS41S6EPS87E.
 
 ### riff run
 
@@ -2812,6 +2872,15 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   service, the GCS bucket, the Secret Manager entries and the GitHub App
   of riff go. Mike decides when. Superseded by Wave C
   (01M51R8HK0VPBD4W6CKACWC1WW).
+
+### The release cycle
+
+- **01M58KMMHH70JEMBX3EYT9H3WM** The watch of the lead looks at the
+  release cycle each 5 minutes, in a clone with
+  `deploy/release-check.sh`. Each new state of the current release
+  wakes the lead with the state and the next step. The first look
+  after a start only learns the state. Superseded by
+  01M5RGCW5NCKQYA61RM63914TX and 01M5RGD0RTXYA7FF5K1TH72MGX.
 
 ## The UIs
 

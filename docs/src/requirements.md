@@ -483,21 +483,9 @@
   check, from each session and from each person. For an urgent fix,
   our user turns the ruleset off, pushes, and turns it on again with
   `just github`.
-- **01M4YJ6KGBPTCSVMFQCDKACZPV** A patch of an older release line goes
-  on the branch `release/MAJOR.x` of that line, by pull request. The
-  branch starts at the last release tag of the line. CI runs the `Gate`
-  and `Hygiene` on each pull request and each push of a branch
-  `release/**`, as on `main`. A push to it does not deploy. The
-  command `just github` makes the ruleset `release-branches` on
-  `release/**`: a change needs a pull request with 0 approvals and the
-  checks `Gate`, `Hygiene` and `riff/verify`, as on `main`. No force
-  push, no deletion, no bypass actor. The checks do not stop the push
-  that makes a new branch of a line. Superseded by
-  01M5RG6BZQC8T6SZ8NX9W8TT5M.
 - **01M56H9Q0757ESXMJEDM16Z7AT** Our user runs `just github` from a
   checkout of `main` only. The `deploy/github.sh` of `main` sets each
-  ruleset, also the ruleset `release-branches`. Superseded in part by
-  01M5RG6BZQC8T6SZ8NX9W8TT5M: there is no ruleset `release-branches`.
+  ruleset.
 - **01M4YTW8788K4XYTEMRSXDH7B9** The GitHub release of the line that
   the shared riff runs is marked "Latest". A release of another line is
   not, also when its version is higher.
@@ -565,11 +553,6 @@
   not `success`, it makes no comment, no status and no post. It exits
   with status 1 and one line that names the commit, the state of the
   Gate and `gh pr checks N`. `riff verify fail N` needs no Gate.
-- **01M5QWJJ94T4M3KJB0R3WTJCQF** riff pr open --base BRANCH opens the
-  pull request against that branch, for example release/1.x, and not
-  against the default branch. The body, the trailers and the auto-merge
-  are the same. The steps for a patch of an older release line use it,
-  not gh pr create. Superseded by 01M5RG6BZQC8T6SZ8NX9W8TT5M.
 - **01M5QYDE41FVFX26EC8K5QGYH4** The full check of a commit is each
   check that the ruleset of the default branch requires, but
   `riff/verify`: riff reads it with `gh api
@@ -1644,18 +1627,6 @@
   GitHub, with no sign-in. With `RIFF_RELEASES`, it reads the file
   `latest` there, in the form of the reply of the API. When it finds no
   Latest release, it installs nothing and names `--tag`.
-- **01M56N6KSMFJ46PW99Z80GF9DM** The GitHub releases of a retired line
-  stay normal releases. When a line retires, no release of it becomes a
-  prerelease, and its notes do not change. The line 1.x retired after
-  riff 3.0.0 (#961): its 12 GitHub releases are normal releases, and
-  GitHub marks `v3.0.0` "Latest". The line 2.x retired before this rule
-  (#706): its one GitHub release, `v2.0.1`, is a prerelease. The tag
-  `v2.0.0` has no GitHub release. Superseded by
-  01M5RG6BTXAJY8DV6MT315VZWF.
-- **01M56N6KVZRGT3W7CEK05DHR57** riff has no command that retires a
-  release line. `riff --help` lists no `retire`, and `riff retire`
-  fails: riff does not know the command. Superseded by
-  01M5RG6BTXAJY8DV6MT315VZWF.
 - **01M3MRMAY3P1K151RGAP9K6GSH** The deploy takes a release tag as its
   input. It checks out that tag and deploys only it. It refuses an input
   that is not a tag `vX.Y.Z` of the version of the crates.
@@ -3254,11 +3225,6 @@
   same riff, act differently or fail to understand each other? Yes: a
   minor, and a major after 1.0. No: a patch. A wave release is a patch
   unless the wave has a minor change.
-- **01M53N7KN4QKZ70W2GNQ3VQWQ9** On the line 1.x, a release that the
-  test of 01M3N73EEQ4HPCPPAGCAHH3S6B makes a major is a minor. The
-  next major is `3.0.0` (01M4Z60B8N9W9TBE7KKDJQAN2C). A release of only
-  fixes, where the old and the new builds act the same, is a patch.
-  Superseded by 01M5RG6BTXAJY8DV6MT315VZWF.
 - **01M3N73EGY4NQDQQP8Y185E9VZ** The pull request of a release states
   the level and the reason in one line. The release notes list the
   commands that each person runs, for example
@@ -4812,19 +4778,6 @@ of this part when they merge.
   in place of `--session-id ID`. The sequence numbers of the events go
   on. The hello of the relay says `held` while it waits, so a new
   daemon knows.
-- **01M51KJ1V0STB4QCN4N5SBYGSP** `hold` has the field `interrupt`.
-  With it, the relay writes the interrupt control request of
-  stream-json on the stdin of `claude` before the close, as the Agent
-  SDK does. The hello of the relay says `interrupts` when the relay can
-  do it. A relay of riff 1.5 reads a `hold` with `interrupt` as its own
-  `hold`. The protocol stays 4. Superseded by
-  01M5RG6C25DB49ZKM03Y93QB1F.
-- **01M51KJ1V0STB4QCN4N5SBYGSP** `hold` has the field `interrupt`. With
-  it, the relay writes the interrupt control request of stream-json on
-  the stdin of `claude` before the close, as the Agent SDK does. The
-  hello of the relay says `interrupts` when the relay can do it. A relay
-  that cannot do it reads a `hold` with `interrupt` as its own `hold`.
-  The protocol stays 4.
 - **01M501PABB010P4S8YF7R29XXS** The daemon keeps a takeover in the
   record of the session, from the ask until it gives the session back.
   It gives the session back at the `go on` of `riff takeover`, or at
@@ -4917,6 +4870,11 @@ of this part when they merge.
   (01M5RG6BTXAJY8DV6MT315VZWF). A relay always interrupts the turn of
   `claude` at a `hold` with `interrupt`. This supersedes
   01M51KJ1V0STB4QCN4N5SBYGSP.
+- **01M59BTTH6ZATH7R2PFC6NGHJK** riff has no `riff worktrees`, no `riff
+  lead compact`, no `riff lead blocked`, no tidy of the worktrees of a
+  host, and no compact of the lead. The tidy of the folders of container
+  sessions stays (the sweep of the riff daemon). `lead.wake` and
+  `lead.notify` stay as keys of the settings file.
 
 ### The first run
 
@@ -5183,19 +5141,6 @@ of this part when they merge.
   with the fix. It changes nothing, except the step that needs a
   person for the status line. It exits with 1 when a step is not in
   step.
-- **01M5GT0QV72BZA4VVWDPR1WG17** riff keeps no command only so that the
-  update of an older line can finish. When the update from the line
-  before stops on the new riff, the book gives the step that a person
-  runs by hand. Superseded by 01M5RG6C4H3YPACS41S6EPS87E.
-- **01M5JFF7TAVA87TMJXK25HDJ19** riff init removes the plugin of riff 3
-  that is left on the machine: the folder claude-plugin in the data
-  folder of riff, and the keys enabledPlugins.riff@riff,
-  extraKnownMarketplaces.riff and a statusLine that runs riff statusline
-  in the user, project and local settings of Claude Code. Each other key
-  stays. riff init --check names them and removes nothing. The riff
-  daemon of a release removes them at its start behind the gate of the
-  update by itself, and riff update --check names them with the fix riff
-  init. Superseded by 01M5RG6C4H3YPACS41S6EPS87E.
 - **01M5RG6C4H3YPACS41S6EPS87E** riff has no step that removes what an
   older release left on a machine (01M5RG6BTXAJY8DV6MT315VZWF). `riff
   init`, `riff init --check`, `riff update --check`, the update by
@@ -5428,16 +5373,14 @@ of this part when they merge.
   01M58B7HA8CRCW0MJ17QP3R5QG in part, for the place of the token
   (R21). `riff claude-token` keeps the token in the OS keyring under
   the name `claude setup-token`, with `riff_client::secrets::set`, and
-  writes no file for it. It removes the old file `claude-token` of the
-  daemon folder when it is there, and says so. The daemon reads the
+  writes no file for it. The daemon reads the
   token from the keyring at each container start, with `KEYRING_WAIT`.
   A keyring that is locked, or does not answer, starts no container:
   the wave tells the lead one time, as for the sign-in of riff
   (01M4385CEWGCP31DP5PAMPXZ97). The daemon never falls back to the
   sign-in of `claude` on the host then. The mark `claude-token-refused`
   stays a file. `riff daemon status` and `riff who` show `claude token`:
-  `set`, `not set`, `refused` or `keyring locked`. Superseded in part
-  by 01M5RG6C4H3YPACS41S6EPS87E: riff does not remove the old file.
+  `set`, `not set`, `refused` or `keyring locked`.
 - **01M58B7HCXKZF39DCF6KV84JRV** When a token is set, the daemon posts
   no note for the sign-in of `claude` (01M57D3FC5PB5EQ6Y38Y5R2DBB), and
   the facts of the host do not warn about its minutes left.
@@ -5617,14 +5560,11 @@ of this part when they merge.
   tags the newest commit with a pass.
 - **01M58KMM1BHX3YY81BPZG04JSX** `riff release publish` does not need a
   paused riff. After the release, it posts a chat line to the owner in
-  `riff chat`: the version, the CI run, and `riff release approve
-  vX.Y.Z`. Superseded in part by 01M5RGD0XTR4X1MEV726HMCEGQ.
+  `riff chat`.
 - **01M58KMM3NFGJRW4CCV50KJQB2** HUMAN GATE 1: on yes, `riff release
   approve` pauses the whole riff, which tells each other lead, and then
   approves the deploy. While a deploy waits for the approval,
-  `riff release cut` refuses, the riff is not paused, and the watch of
-  the lead reminds the owner in `riff chat` each 4 hours. Superseded in
-  part by 01M5RGD0XTR4X1MEV726HMCEGQ.
+  `riff release cut` refuses, and the riff is not paused.
 - **01M58KMM5ZPAQ289S2YJVQ5WW6** `riff release check vX.Y.Z` refuses
   while the job `Deploy` of the newest CI run of the tag did not end.
   After a pass of the job, it checks: `riff server` shows the build; the
@@ -5659,12 +5599,6 @@ of this part when they merge.
   `publish`, `check`, `retry` and `rollback` refuse a worker, a
   container session, an agent session that is not the lead, and a
   member, as `publish` does (01M58B0JSQMWNCMSNX19536XT8).
-- **01M58KMMHH70JEMBX3EYT9H3WM** The watch of the lead looks at the
-  release cycle each 5 minutes, in a clone with
-  `deploy/release-check.sh`. Each new state of the current release
-  wakes the lead with the state and the next step. The first look
-  after a start only learns the state. Superseded by
-  01M5RGCW5NCKQYA61RM63914TX and 01M5RGD0RTXYA7FF5K1TH72MGX.
 - **01M58KMMKZ8T11KT3R3Z7D0RE1** HUMAN GATE 3: `riff release cut
   --skip` refuses in each agent session, and for a member.
 - **01M58KMMP9FKRFYX58ESVRSZQX** When riff cannot read the Cloud Run
