@@ -3,8 +3,11 @@
 //!
 //! # Design
 //!
-//! Each wave ends with a release in a fixed cycle
-//! (01M58KMKR33P1FSCFDQRZ56A8P). Each step is a riff command. No session
+//! Each wave of a repository with the table `[release]` in its riff config
+//! ends with a release in a fixed cycle (01M58KMKR33P1FSCFDQRZ56A8P,
+//! 01M5SMPX8NM75P8E38DGQ17W7B, [`crate::release_config`]). Without the
+//! table, each command refuses with one line before it touches the
+//! forge. Each step is a riff command. No session
 //! writes a script or a raw `gh` or `git` line for it. Each command finds
 //! the versions, the commits, the tags and the IDs itself, names the
 //! failed check when it refuses, and prints the next step ([`next`],
@@ -575,9 +578,9 @@ pub trait Forge {
     /// no open wave. A release issue and a tracker are no item: they
     /// have no code of their own (01M5ND16V2SVN8A9K7W90VC6X9).
     fn wave_open(&self) -> Result<Option<(String, usize)>>;
-    /// True when the repository has the check of a release tag
-    /// ([`CHECK`]): its waves end with a release.
-    fn has_release_check(&self) -> bool;
+    /// True when the repository has the table `[release]` in its riff
+    /// config ([`crate::release_config`]): its waves end with a release.
+    fn has_release(&self) -> bool;
 }
 
 /// The state of a release in the cycle (01M58KMKTE2XC35CNJBFKZWAXF).
@@ -3295,8 +3298,8 @@ impl Forge for GitHub {
         Ok(Some((wave.title, open)))
     }
 
-    fn has_release_check(&self) -> bool {
-        self.dir.join(CHECK).is_file()
+    fn has_release(&self) -> bool {
+        crate::release_config::of_folder(&self.dir).unwrap_or(false)
     }
 }
 
@@ -3337,8 +3340,8 @@ pub(crate) mod tests {
         pub(crate) failed: Vec<String>,
         /// The current wave and its open items.
         pub(crate) wave_open: Option<(String, usize)>,
-        /// True when the repository has the check of a release tag.
-        pub(crate) release_check: bool,
+        /// True when the repository has the table `[release]`.
+        pub(crate) has_release: bool,
     }
 
     impl Fake {
@@ -3531,8 +3534,8 @@ pub(crate) mod tests {
         fn wave_open(&self) -> Result<Option<(String, usize)>> {
             Ok(self.wave_open.clone())
         }
-        fn has_release_check(&self) -> bool {
-            self.release_check
+        fn has_release(&self) -> bool {
+            self.has_release
         }
     }
 

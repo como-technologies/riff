@@ -1842,7 +1842,15 @@ mod tests {
             ),
             (
                 Role::Verifier,
-                text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d", &["CI".to_owned()]),
+                text::wave_verify_start(
+                    "o/r",
+                    "main",
+                    12,
+                    40,
+                    "1a2b3c4d",
+                    &["CI".to_owned()],
+                    true,
+                ),
             ),
             (Role::Lead, text::MCP_LEAD.to_owned()),
         ];

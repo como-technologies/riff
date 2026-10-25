@@ -154,7 +154,11 @@ fn repository(root: &Path) -> PathBuf {
         assert!(out.status.success(), "git {args:?}: {out:?}");
     };
     git(&["init", "-q"]);
-    git(&["commit", "-q", "--allow-empty", "-m", "x"]);
+    // 01M5SMPX8NM75P8E38DGQ17W7B: the release cycle is for a repository
+    // with the table `[release]`.
+    std::fs::write(main.join("riff.toml"), "[release]\n").unwrap();
+    git(&["add", "riff.toml"]);
+    git(&["commit", "-q", "-m", "x"]);
     std::fs::canonicalize(&main).unwrap()
 }
 
@@ -930,6 +934,53 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     );
     let seen = std::fs::read_to_string(&log).unwrap_or_default();
     assert!(!seen.contains("real-session"), "{seen}");
+}
+
+/// 01M5SMPX8NM75P8E38DGQ17W7B: a repository with no `[release]` in its
+/// `riff.toml` has no real-session test and no `riff build` on the daemon:
+/// both refuse with one line, and the daemon runs no program and calls no
+/// `gh`.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_daemon_refuses_the_test_and_the_build_of_a_repository_with_no_release_table() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (log, code) = (tmp.path().join("gh.log"), tmp.path().join("code"));
+    let extra = fake_real_session(tmp.path(), &log, &code);
+    let r = riff_env(300, 300, &extra).await;
+    std::fs::write(&code, "0").unwrap();
+    std::fs::write(r.main.join("riff.toml"), "[session]\nimage = \"x\"\n").unwrap();
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&r.main)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let commit = text(&head.stdout).trim().to_owned();
+
+    let test = remote::Request::ReleaseTest {
+        commit,
+        tag: TAG.to_owned(),
+    };
+    for asked in [test, remote::Request::Build] {
+        let err = remote::ask(
+            &r.api(&r.lead),
+            &r.lead,
+            "a",
+            &asked,
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains(riff::text::NO_RELEASE),
+            "{asked}: {err:#}"
+        );
+    }
+    // The daemon asks `gh` for its own token: it sets no status and makes no
+    // comment.
+    let seen = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(!seen.contains("statuses"), "{seen}");
+    assert!(!seen.contains("issue"), "{seen}");
+    assert!(!tmp.path().join("server").exists(), "the test ran");
 }
 
 /// #1262: a daemon that runs the wave of a repository serves `--host` for

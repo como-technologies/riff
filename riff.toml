@@ -34,3 +34,8 @@ riff-sccache = "$HOME/.cache/sccache"
 # requests of this repository. See "Choose the rules of a repository"
 # in docs/src/development.md.
 rules = "riff"
+
+# The release cycle of riff: `riff release`, `riff build` and the
+# real-session test run only in a repository with this table. See "The
+# release cycle" in docs/src/development.md.
+[release]

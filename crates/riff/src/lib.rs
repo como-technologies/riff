@@ -99,6 +99,7 @@ pub mod podman;
 pub mod pr;
 pub mod reach;
 pub mod release;
+pub mod release_config;
 pub mod repo_setup;
 pub mod rollout;
 pub mod room;

@@ -5685,6 +5685,15 @@ of this part when they merge.
   the full check and their state, as the line of `riff verify pass`
   does. The full check is the same as for 01M5QYDE41FVFX26EC8K5QGYH4.
   Supersedes 01M5ND0ZNFFAPT1AWD3DP1Y77N in part.
+- **01M5SMPX8NM75P8E38DGQ17W7B** Only a repository whose `riff.toml` has
+  the table `[release]` has the release cycle of riff. Without it, each
+  `riff release` subcommand, `riff build` and the real-session test
+  refuse with one line, "this repository has no release cycle of riff:
+  riff.toml has no [release]", and touch nothing on the forge. Then
+  `riff wave end N` has no release gate, and the verify start text has
+  no part for a release pull request. The probe for
+  `deploy/release-check.sh` does not decide it. The `riff.toml` of riff
+  has `[release]`. Supersedes 01M58KMMCZCE7HDNVT9PVHVZX2 in part.
 
 ### The release cycle
 
@@ -5736,11 +5745,10 @@ of this part when they merge.
   older than the newest one. The run by hand has the name
   `Deploy vPREV`, so `riff release approve vPREV` and `riff release
   check vPREV` find it.
-- **01M58KMMCZCE7HDNVT9PVHVZX2** In a repository with
-  `deploy/release-check.sh`, `riff wave end N` refuses while a merged
-  pull request of the wave, other than a release pull request, is in a
-  release tag with no checked release, and names the next step. It
-  refuses while one is in no release tag, unless `--no-release TEXT`
+- **01M58KMMCZCE7HDNVT9PVHVZX2** `riff wave end N` refuses while a
+  merged pull request of the wave, other than a release pull request,
+  is in a release tag with no checked release, and names the next step.
+  It refuses while one is in no release tag, unless `--no-release TEXT`
   is given: then riff writes "No release: TEXT" in the description of
   the wave.
 - **01M58KMMF9WMH39ZMD0MKGRVZB** `riff init` writes the permission

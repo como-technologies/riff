@@ -938,6 +938,7 @@ pub async fn answer(
         Request::Build => {
             let main = served.wave.main.clone();
             tokio::task::spawn_blocking(move || {
+                crate::release_config::require(&main)?;
                 let home = std::env::var_os("HOME")
                     .filter(|h| !h.is_empty())
                     .context("HOME is not set")?;

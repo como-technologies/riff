@@ -56,7 +56,14 @@ struct Machine {
 }
 
 impl Machine {
+    /// A machine whose repository has the table `[release]` in `riff.toml`
+    /// (01M5SMPX8NM75P8E38DGQ17W7B).
     async fn new() -> Machine {
+        Machine::with_config("[release]\n").await
+    }
+
+    /// A machine whose repository has the `riff.toml` text `config`.
+    async fn with_config(config: &str) -> Machine {
         let root = tempfile::tempdir().unwrap();
         let origin = root.path().join("como-technologies/riff.git");
         std::fs::create_dir_all(&origin).unwrap();
@@ -78,6 +85,7 @@ impl Machine {
             "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"3.2.0\"\n",
         );
         write("Cargo.lock", LOCK);
+        write("riff.toml", config);
         std::fs::copy(
             top().join("deploy/release-check.sh"),
             clone.join("deploy/release-check.sh"),
@@ -283,6 +291,73 @@ async fn the_helper_refuses_the_socket_of_the_daemon() {
     let real = riff::daemon::in_session().to_string_lossy().into_owned();
     let refused = std::panic::catch_unwind(|| test_socket(&real));
     assert!(refused.is_err());
+}
+
+/// 01M5SMPX8NM75P8E38DGQ17W7B: a repository with no `[release]` in its
+/// `riff.toml` has no release cycle. `riff release cut 1.0.0` refuses with
+/// one line. It files no issue, makes no branch, registers no watch, and
+/// runs no `gh`.
+#[tokio::test]
+async fn cut_refuses_a_repository_with_no_release_table_and_makes_no_issue() {
+    for config in ["", "[session]\nimage = \"x\"\n"] {
+        let machine = Machine::with_config(config).await;
+        machine.serve();
+        let out = machine.run(&[], &["release", "cut", "1.0.0"], "").await;
+        assert!(!out.status.success(), "{out:?}");
+        let err = text(&out.stderr);
+        assert!(err.contains(riff::text::NO_RELEASE), "{err}");
+        assert_eq!(err.trim().lines().count(), 1, "{err}");
+        assert!(out.stdout.is_empty(), "{out:?}");
+        assert_eq!(machine.log(), "", "the command called gh");
+        assert!(!machine.log().contains("issue create"));
+        assert!(machine.watches().is_empty());
+        let branches = git(&machine.origin(), &["branch", "--list", "release-*"]);
+        assert_eq!(branches, "");
+    }
+}
+
+/// 01M5SMPX8NM75P8E38DGQ17W7B: each subcommand of `riff release` refuses
+/// in a repository with no `[release]`, before the guard of its caller
+/// and before `gh`.
+#[tokio::test]
+async fn each_release_command_refuses_a_repository_with_no_release_table() {
+    let machine = Machine::with_config("[session]\nimage = \"x\"\n").await;
+    machine.serve();
+    for args in [
+        &["release", "cut", "3.3.0"][..],
+        &["release", "verify", "7"],
+        &["release", "publish", "v3.3.0"],
+        &["release", "status"],
+        &["release", "approve", "v3.3.0"],
+        &["release", "check", "v3.3.0"],
+        &["release", "retry", "v3.3.0"],
+        &["release", "test", "v3.3.0", "--host", "thelio"],
+        &["release", "rollback", "v3.2.0"],
+    ] {
+        let out = machine.run(&[], args, "").await;
+        assert!(!out.status.success(), "riff {args:?}: {out:?}");
+        let err = text(&out.stderr);
+        assert!(err.contains(riff::text::NO_RELEASE), "riff {args:?}: {err}");
+    }
+    assert_eq!(machine.log(), "", "a command called gh");
+}
+
+/// 01M5SMPX8NM75P8E38DGQ17W7B: `riff wave end N` has no release gate in a
+/// repository with no `[release]`: the merged pull request of the wave
+/// that is in no release does not stop it.
+#[tokio::test]
+async fn wave_end_has_no_release_gate_in_a_repository_with_no_release_table() {
+    let machine = Machine::with_config("[session]\nimage = \"x\"\n").await;
+    machine.fake_gh("'api -X PATCH'*) printf '%s\n' '{\"number\":40,\"title\":\"Wave 34: Release\",\"open_issues\":0,\"closed_issues\":2}' ;;");
+    let out = machine.run(&[], &["wave", "end", "34"], "").await;
+    // The wave has open items, so the end refuses, but not at the gate.
+    assert!(!out.status.success());
+    let err = text(&out.stderr);
+    assert!(err.contains("has 2 open items"), "{err}");
+    assert!(!err.contains("in no release"), "{err}");
+    let log = machine.log();
+    assert!(!log.contains("pr list --state merged"), "{log}");
+    assert!(!log.contains("-X PATCH"), "{log}");
 }
 
 #[tokio::test]

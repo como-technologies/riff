@@ -1879,6 +1879,19 @@ pub struct LeadOnly {
     pub lead_unknown: &'static str,
 }
 
+/// The refusal of `riff release …`, `riff build` and the real-session test
+/// in a repository whose `riff.toml` has no `[release]`
+/// (01M5SMPX8NM75P8E38DGQ17W7B).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::NO_RELEASE,
+///     "this repository has no release cycle of riff: riff.toml has no [release]"
+/// );
+/// ```
+pub const NO_RELEASE: &str =
+    "this repository has no release cycle of riff: riff.toml has no [release]";
+
 /// The refusal of the command `riff release COMMAND` for `refusal`
 /// (01M58B0JSQMWNCMSNX19536XT8, 01M58KMMF9WMH39ZMD0MKGRVZB), with its
 /// line `next:` (01M58KMKWRKSV1DR42FRH2K43X).
@@ -8107,11 +8120,13 @@ pub fn wave_checks_rerun(
 /// the full check of the commit: the wave started the verify when they
 /// were done. It sends the verifier to the rules of the repository for
 /// agents, when it has them (01M5R580VCRCHJM8FY7NT485R1,
-/// 01M5RN89WH3PHV3BHMJ25T3SX4).
+/// 01M5RN89WH3PHV3BHMJ25T3SX4). It has the part for a release pull
+/// request only when the repository has `release`, the table
+/// `[release]` of its riff config (01M5SMPX8NM75P8E38DGQ17W7B).
 ///
 /// ```
 /// let checks = ["CI".to_owned()];
-/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks);
+/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks, true);
 /// assert!(text.contains("git diff origin/master...HEAD"));
 /// assert!(!text.contains("origin/main"));
 /// assert!(text.contains("pull request #40"));
@@ -8125,8 +8140,14 @@ pub fn wave_checks_rerun(
 /// assert!(text.contains("Run each test in the foreground"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
-/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two);
+/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, true);
 /// assert!(text.contains("was done: the checks Lint, Test."));
+///
+/// // A repository with no `[release]` has no release pull request.
+/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, false);
+/// assert!(!text.contains("release pull request"));
+/// assert!(!text.contains("`release`"));
+/// assert!(text.contains("Find its \"Done when:\" line.\n2. Read the rules"));
 /// ```
 pub fn wave_verify_start(
     repo: &str,
@@ -8135,8 +8156,16 @@ pub fn wave_verify_start(
     pull: u64,
     commit: &str,
     checks: &[String],
+    release: bool,
 ) -> String {
     let names = check_names(checks);
+    let release = if release {
+        "   When the pull request has the label `release`, verify it against the part \"Verify of \
+         the release pull request\" of its issue, and not against the line \"Done when:\": the \
+         release is not published before the merge.\n"
+    } else {
+        ""
+    };
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
@@ -8144,10 +8173,8 @@ pub fn wave_verify_start(
          change it. riff does the claim, the release and the report of your result. Your riff \
          tools only talk: whoami, who, threads, read, post, tell, status and blocked.\n\n\
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
-         Find its \"Done when:\" line.\n   \
-         When the pull request has the label `release`, verify it against the part \"Verify of \
-         the release pull request\" of its issue, and not against the line \"Done when:\": the \
-         release is not published before the merge.\n\
+         Find its \"Done when:\" line.\n\
+         {release}\
          2. {READ_RULES}, and obey the rules for a verify.\n\
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
          origin/{base}...HEAD\n\
@@ -9319,7 +9346,7 @@ mod tests {
             ),
             (
                 "verify",
-                wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
+                wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, true),
             ),
             (
                 "failed verify",

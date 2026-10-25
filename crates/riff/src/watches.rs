@@ -831,7 +831,7 @@ fn look_wave(forge: &dyn Forge, seen: &mut Seen) -> Result<Outcome> {
     }
     seen.wave = None;
     let number = hygiene::wave_number(&title).unwrap_or_default();
-    let next = match forge.has_release_check() {
+    let next = match forge.has_release() {
         true => format!("riff release cut X.Y.Z, or riff wave end {number} --no-release TEXT"),
         false => format!("riff wave end {number}"),
     };
@@ -1347,7 +1347,7 @@ mod tests {
         let ground = Ground::new(Fake::new());
         ground.forge(|f| {
             f.wave_open = Some(("Wave 41: only the current release".into(), 2));
-            f.release_check = true;
+            f.has_release = true;
         });
         look(dir.path(), &ground, MINUTE).await;
         assert!(ground.told().is_empty());
@@ -1379,7 +1379,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_wave_of_a_repository_with_no_release_check_ends_the_wave() {
+    async fn the_wave_of_a_repository_with_no_release_table_ends_the_wave() {
         let dir = daemon_dir();
         let ground = Ground::new(Fake::new());
         ground.forge(|f| f.wave_open = Some(("Wave 3".into(), 1)));

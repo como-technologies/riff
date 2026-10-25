@@ -289,7 +289,7 @@ use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
 use crate::session_setup::Setup;
-use crate::{identity, look, pr, repo_setup, rollout, session_image, text, usage};
+use crate::{identity, look, pr, release_config, repo_setup, rollout, session_image, text, usage};
 use riff_client::api::{self, Api};
 
 /// The file of the waves that the daemon runs, in its folder.
@@ -1803,7 +1803,9 @@ impl Live {
                 let checks =
                     blocking(move || repo_setup::full_check(&pr::Gh::for_repo(&repo), &repo))
                         .await?;
-                text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks)
+                let main_at = main.clone();
+                let release = blocking(move || Ok(release_config::merged(&main_at))).await?;
+                text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks, release)
             }
         };
         let existing = |p: PathBuf| p.exists().then_some(p);
