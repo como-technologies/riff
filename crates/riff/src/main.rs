@@ -3536,13 +3536,6 @@ async fn wave_end_moving(
     Ok(())
 }
 
-/// `riff wave list`: the open milestones from `gh`, with the items and
-/// the hosts of riff-server (01M58ATZ408RBCX0PM0D0ZCY4B). As in
-/// [`top`], the repository comes from the folder `here`, also for a
-/// person with no session, and each call carries the token of the
-/// caller, straight or through the riff daemon ([`Reach`]). When riff
-/// cannot read them, one line on stderr says why
-/// (01M58ATZ6FA5PJMD3D848CEWBJ).
 /// `riff wave run` in a lead container: the container has no daemon of its
 /// own, so it runs no wave. It names the hosts of the user that do not run
 /// the wave of the repository, for `riff wave run --host` (#1430,
@@ -3557,6 +3550,13 @@ async fn wave_run_in_container(reach: &Reach, here: &Place) -> Result<()> {
     std::process::exit(1);
 }
 
+/// `riff wave list`: the open milestones from `gh`, with the items and
+/// the hosts of riff-server (01M58ATZ408RBCX0PM0D0ZCY4B). As in
+/// [`top`], the repository comes from the folder `here`, also for a
+/// person with no session, and each call carries the token of the
+/// caller, straight or through the riff daemon ([`Reach`]). When riff
+/// cannot read them, one line on stderr says why
+/// (01M58ATZ6FA5PJMD3D848CEWBJ).
 async fn wave_list(reach: &Reach, here: &riff_core::name::Place) -> Result<()> {
     let gh = pr::Gh::default();
     let milestones = riff::waves::open(&gh)?;
