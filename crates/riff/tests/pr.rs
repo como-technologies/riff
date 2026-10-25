@@ -37,8 +37,12 @@ fn text(out: &[u8]) -> String {
     String::from_utf8_lossy(out).into_owned()
 }
 
+/// The riff config of riff: it asks for each rule of the hygiene check
+/// (01M5SMSMWE89SC3Q7XFBQCFY32).
+const RIFF_TOML: &str = "[hygiene]\nrules = \"riff\"\n";
+
 /// A git repository with a GitHub origin, so the place of each session
-/// is `como-technologies/riff`.
+/// is `como-technologies/riff`, with the riff config of riff.
 fn repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     for args in [
@@ -56,6 +60,7 @@ fn repo() -> tempfile::TempDir {
             .status();
         assert!(status.unwrap().success());
     }
+    std::fs::write(dir.path().join("riff.toml"), RIFF_TOML).unwrap();
     dir
 }
 
@@ -115,6 +120,15 @@ impl Machine {
         self.ok("", &["lead", "--session", session]).await;
         self.ok(session, &["resume", "--riff"]).await;
         self.ok(session, &["claim", item]).await;
+    }
+
+    /// Sets the riff config of the clone: `None` removes the file.
+    fn riff_toml(&self, config: Option<&str>) {
+        let path = self.repo.path().join("riff.toml");
+        match config {
+            Some(config) => std::fs::write(path, config).unwrap(),
+            None => std::fs::remove_file(path).unwrap(),
+        }
     }
 
     fn write(&self, name: &str, content: &str) -> String {
@@ -940,6 +954,161 @@ async fn pr_open_refuses_a_title_that_breaks_the_hygiene_check() {
         text(&out.stderr)
     );
     assert!(!log(machine.bin.path()).contains("gh pr create"));
+}
+
+/// The issue 12 of the fake `gh` has no milestone.
+const OPEN_NO_WAVE: &str = r#"*'issue view 12 --json number,state,milestone'*) echo '{"number":12,"state":"OPEN","milestone":null}' ;;
+*'pr create'*) echo 'https://github.com/como-technologies/riff/pull/40' ;;"#;
+
+/// The riff config of a repository that is not riff: it has no table
+/// `[hygiene]`.
+const OTHER_TOML: &str = "[session]\nimage = \"ghcr.io/acme/app-session@sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n";
+
+/// A repository with no table `[hygiene]` gets the rules that riff
+/// reads and no others: a title with `(#12)` and an issue with no
+/// milestone pass. The body has `Closes #12` and `Issue: #12`
+/// (01M5SMSHNQ9E4P9W6RCB8E1WTN).
+#[tokio::test]
+async fn pr_open_keeps_only_what_riff_reads_in_a_repository_with_no_hygiene_table() {
+    for config in [None, Some(OTHER_TOML), Some("[hygiene]\n")] {
+        let machine = Machine::new(OPEN_NO_WAVE).await;
+        machine.riff_toml(config);
+        machine.claim("author", "issue-12").await;
+        let out = machine
+            .ok("author", &["pr", "open", "--title", "Show the wave (#12)"])
+            .await;
+        assert!(out.starts_with("Opened pull request #40"), "{out}");
+
+        let log = log(machine.bin.path());
+        assert!(
+            log.contains("gh pr create --title Show the wave (#12) --body-file -\n"),
+            "{log}"
+        );
+        assert!(!log.contains("--milestone"), "{log}");
+        let body = std::fs::read_to_string(machine.bin.path().join("body")).unwrap();
+        assert_eq!(body, "Closes #12\n\nIssue: #12\n", "{config:?}");
+        let create = log.find("gh pr create");
+        let merge = log.find("gh pr merge 40 --auto --squash");
+        assert!(create.is_some() && create < merge, "{log}");
+    }
+}
+
+/// An issue with a milestone gives it to the pull request, because riff
+/// reads the milestone for the lists of a wave. The body has no
+/// trailer `Milestone:`, and a closing keyword in the text passes.
+#[tokio::test]
+async fn pr_open_gives_the_milestone_but_no_trailer_in_a_repository_with_no_hygiene_table() {
+    let machine = Machine::new(OPEN).await;
+    machine.riff_toml(None);
+    machine.claim("author", "issue-12").await;
+    let summary = machine.write("summary.md", "Show the wave. It fixes #13.\n");
+    machine
+        .ok(
+            "author",
+            &["pr", "open", "--title", "Show the wave", "--file", &summary],
+        )
+        .await;
+    let (_, body) = created(machine.bin.path());
+    assert_eq!(
+        body,
+        "Closes #12\n\nShow the wave. It fixes #13.\n\nIssue: #12\n"
+    );
+    let log = log(machine.bin.path());
+    assert!(
+        log.contains("gh pr create --title Show the wave --milestone Wave 3 --body-file -"),
+        "{log}"
+    );
+}
+
+/// What riff reads still holds in a repository with no table: a line for
+/// another issue is refused, and nothing opens.
+#[tokio::test]
+async fn pr_open_still_refuses_a_line_for_another_issue_in_a_repository_with_no_hygiene_table() {
+    let machine = Machine::new(OPEN_NO_WAVE).await;
+    machine.riff_toml(None);
+    machine.claim("author", "issue-12").await;
+    let summary = machine.write("summary.md", "Text.\n\nIssue: #9\n");
+    let out = machine
+        .run(
+            "author",
+            &["pr", "open", "--title", "Show the wave", "--file", &summary],
+        )
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains(
+            "the body has the line `Issue: #9`, but this pull request needs `Issue: #12`."
+        ),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(!log(machine.bin.path()).contains("gh pr create"));
+}
+
+/// In riff, with `rules = "riff"`, each rule holds: an issue with no
+/// milestone, a title with `(#12)` and a closing keyword each stop the
+/// pull request (01M5SMSMWE89SC3Q7XFBQCFY32).
+#[tokio::test]
+async fn pr_open_keeps_each_rule_in_a_repository_with_the_rules_of_riff() {
+    let machine = Machine::new(OPEN_NO_WAVE).await;
+    machine.claim("author", "issue-12").await;
+    let out = machine
+        .run("author", &["pr", "open", "--title", "Show the wave"])
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("issue #12 has no milestone"),
+        "{}",
+        text(&out.stderr)
+    );
+
+    let machine = Machine::new(OPEN).await;
+    machine.claim("author", "issue-12").await;
+    let summary = machine.write("summary.md", "Show the wave. It fixes #13.\n");
+    let out = machine
+        .run(
+            "author",
+            &[
+                "pr",
+                "open",
+                "--title",
+                "Show the wave (#12)",
+                "--file",
+                &summary,
+            ],
+        )
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("keyword: "), "{err}");
+    assert!(err.contains("title: "), "{err}");
+    assert!(!log(machine.bin.path()).contains("gh pr create"));
+}
+
+/// A value of `rules` that riff does not know, and a riff config that is
+/// not TOML, stop the command before any call of `gh`.
+#[tokio::test]
+async fn pr_open_refuses_a_riff_config_it_cannot_read() {
+    for (config, said) in [
+        (
+            "[hygiene]\nrules = \"strict\"\n",
+            "[hygiene] rules is \"strict\". The one value is \"riff\".",
+        ),
+        ("[hygiene]\nrules = true\n", "[hygiene] rules is true."),
+        ("[hygiene\n", "is not valid TOML"),
+    ] {
+        let machine = Machine::new(OPEN).await;
+        machine.riff_toml(Some(config));
+        machine.claim("author", "issue-12").await;
+        let out = machine
+            .run("author", &["pr", "open", "--title", "Show the wave"])
+            .await;
+        assert_eq!(out.status.code(), Some(1), "{config}");
+        let err = text(&out.stderr);
+        assert!(err.contains(said), "{err}");
+        assert!(err.contains("riff.toml"), "{err}");
+        assert!(log(machine.bin.path()).is_empty(), "{config}");
+    }
 }
 
 #[tokio::test]

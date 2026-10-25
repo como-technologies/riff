@@ -91,7 +91,7 @@
 //! ```
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 
@@ -454,6 +454,11 @@ pub fn config_of(image: &Image) -> String {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn of_folder(dir: &Path) -> Result<Image> {
+    Image::of_repository(&top(dir)?)
+}
+
+/// The top of the git work tree of the folder `dir`.
+pub(crate) fn top(dir: &Path) -> Result<PathBuf> {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -469,7 +474,7 @@ pub fn of_folder(dir: &Path) -> Result<Image> {
         );
     }
     let top = String::from_utf8(out.stdout).context("the path of the repository is not UTF-8")?;
-    Image::of_repository(Path::new(top.trim_end_matches('\n')))
+    Ok(top.trim_end_matches('\n').into())
 }
 
 impl FromStr for Image {

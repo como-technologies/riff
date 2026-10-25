@@ -2156,7 +2156,8 @@ async fn main() -> Result<()> {
                     .with_context(|| format!("cannot read {}", file.display()))?,
                 None => String::new(),
             };
-            let (number, url) = pr::open(&pr::Gh::default(), &title, &summary, issue, refs)?;
+            let rules = riff::hygiene_rules::of_folder(&identity::working_dir()?)?;
+            let (number, url) = pr::open(&pr::Gh::default(), &title, &summary, issue, refs, rules)?;
             println!("{}", text::pr_opened(number, &url));
             riff::look::tell_fact(&api, &me, issue, number, PullState::Asked).await;
         }

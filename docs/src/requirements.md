@@ -511,10 +511,11 @@
   their own GitHub identity (#97).
 - **01M3JFEXMPNFEV4HBZJQ15JD25** The author opens a pull request with
   `riff pr open`, with the milestone of the issue and the body form of
-  the hygiene check, and auto-merge with a squash on at once, before
-  any other push. No session runs `gh pr merge` after a push. The last
-  pull request of an issue has `Closes #N`. Each other one, and one
-  with a check after the release left, has `Refs #N`.
+  the rules that apply (01M5SMSHNQ9E4P9W6RCB8E1WTN,
+  01M5SMSMWE89SC3Q7XFBQCFY32), and auto-merge with a squash on at
+  once, before any other push. No session runs `gh pr merge` after a
+  push. The last pull request of an issue has `Closes #N`. Each other
+  one, and one with a check after the release left, has `Refs #N`.
 - **01M3JFEXPXRTXYHCV0WSKEK07M** The verifier puts its result on the
   pull request as a comment that names the commit. It sets the commit
   status `riff/verify` on that commit: `success` on a pass, `failure`
@@ -527,17 +528,21 @@
   pull request of the current branch with `gh`. The issue is the one
   claim `issue-N` of the session, or `--issue N`. The body is the link
   line `Closes #N` (`Refs #N` with `--refs`), the summary of `--file`,
-  and the trailers `Issue: #N` and `Milestone: M` of the issue
-  (01M518A07QF1YACBYT91M0DD1R). It refuses a pull request that breaks
-  the hygiene check, and opens nothing then. After the create, it runs
+  and the trailer `Issue: #N`. With the rules of riff
+  (01M5SMSMWE89SC3Q7XFBQCFY32), it also has the trailer `Milestone: M`
+  of the issue (01M518A07QF1YACBYT91M0DD1R). It refuses a pull request
+  that breaks the rules that apply (01M5SMSHNQ9E4P9W6RCB8E1WTN), and
+  opens nothing then. After the create, it runs
   `gh pr merge N --auto --squash` at once.
-- **01M518A07QF1YACBYT91M0DD1R** `riff pr open` writes the trailer
+- **01M518A07QF1YACBYT91M0DD1R** With the rules of riff
+  (01M5SMSMWE89SC3Q7XFBQCFY32), `riff pr open` writes the trailer
   `Milestone: Wave N` for a wave: its number, with no name. For a
   milestone that is not a wave, it writes the whole title. A trailer
   `Milestone:` of `--file` with the same wave number is the one of the
   pull request.
 - **01M3W2627GYXR8CFW76KB6CB9W** `riff pr open` adds the link line and
-  each of the trailers `Issue:` and `Milestone:` only when the text of
+  each of the trailers `Issue:` and, with the rules of riff
+  (01M5SMSMWE89SC3Q7XFBQCFY32), `Milestone:` only when the text of
   `--file` does not have it. When that text has a link line, or a
   trailer `Issue:` or `Milestone:`, that is not the one of the pull
   request, it names the line, opens nothing, and exits with status 1.
@@ -597,6 +602,22 @@
   line. `riff pr open` has no flag `--base`. This supersedes
   01M4YJ6KGBPTCSVMFQCDKACZPV and 01M5QWJJ94T4M3KJB0R3WTJCQF, and
   01M56H9Q0757ESXMJEDM16Z7AT for the ruleset `release-branches`.
+- **01M5SMSHNQ9E4P9W6RCB8E1WTN** In a repository whose riff config
+  (`riff.toml` at the top of the work tree) has no `rules = "riff"` in
+  the table `[hygiene]`, `riff pr open` keeps only the rules for what
+  riff reads: the link line `Closes #N` or `Refs #N` (`link`), and the
+  trailer `Issue: #N` (`issue-trailer`). It needs no milestone on the
+  issue, writes no trailer `Milestone:`, and opens a pull request whose
+  title ends with `(#N)`. When the issue has a milestone, the pull
+  request gets it. Supersedes 01M3NB6FTGPD0S5JTXXXNGNNDT,
+  01M518A07QF1YACBYT91M0DD1R and 01M3W2627GYXR8CFW76KB6CB9W in part.
+- **01M5SMSMWE89SC3Q7XFBQCFY32** With `rules = "riff"` in the table
+  `[hygiene]` of its riff config, `riff pr open` applies each rule of
+  the hygiene check (01M3JDRSW3E9ENAKC3S0KHPV8M and the requirements
+  after it): the milestone of the issue, the trailer `Milestone:` and
+  the rest. The `riff.toml` of riff has it. Another value of `rules` is
+  an error. The job `Hygiene` of the CI of riff runs each rule on each
+  pull request of riff, whatever its riff config says.
 
 ## Tokens on GitHub
 

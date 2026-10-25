@@ -22,8 +22,15 @@
 //! each of them only when the summary does not have it, and refuses a
 //! summary with a line for another issue or another wave
 //! (01M3W2627GYXR8CFW76KB6CB9W). It checks the pull request with
-//! [`hygiene::check_pr`] before it opens it, and turns on auto-merge
+//! [`hygiene::check_pr_for`] before it opens it, and turns on auto-merge
 //! with a squash at once (01M3NB6FTGPD0S5JTXXXNGNNDT).
+//!
+//! The rules are the ones that the riff config of the repository asks
+//! for ([`crate::hygiene_rules`]). Only the repository of riff gets
+//! each rule. Another repository gets the rules for what riff reads, the
+//! link line and the trailer `Issue:`, so its pull request needs no
+//! milestone and no trailer `Milestone:`
+//! (01M5SMSHNQ9E4P9W6RCB8E1WTN, 01M5SMSMWE89SC3Q7XFBQCFY32).
 //!
 //! `riff pr wait N` looks at the pull request until it is merged, and
 //! prints the merge commit. It stops with an error when the pull request
@@ -476,6 +483,25 @@ fn read_all(pipe: Option<impl Read + Send + 'static>) -> JoinHandle<Vec<u8>> {
 /// );
 /// ```
 pub fn body(link: hygiene::Link, summary: &str, milestone: &str) -> Result<String> {
+    body_for(link, summary, Some(milestone))
+}
+
+/// The body of a pull request like [`body`]. With `None` for the
+/// milestone, it has no trailer `Milestone:`: the body of a repository
+/// that asks only for the rules that riff reads
+/// (01M5SMSHNQ9E4P9W6RCB8E1WTN). A trailer `Milestone:` of `summary`
+/// stays as it is then.
+///
+/// ```
+/// use hygiene::Link;
+///
+/// let body = riff::pr::body_for(Link::Closes(12), "Show the wave.\n", None).unwrap();
+/// assert_eq!(body, "Closes #12\n\nShow the wave.\n\nIssue: #12\n");
+///
+/// // A line for another issue is refused, as in `body`.
+/// assert!(riff::pr::body_for(Link::Closes(12), "Issue: #9\n", None).is_err());
+/// ```
+pub fn body_for(link: hygiene::Link, summary: &str, milestone: Option<&str>) -> Result<String> {
     let n = link.issue();
     let line = match link {
         hygiene::Link::Closes(_) => format!("Closes #{n}"),
@@ -506,12 +532,13 @@ pub fn body(link: hygiene::Link, summary: &str, milestone: &str) -> Result<Strin
     let trailers = hygiene::trailers(summary);
     let mut missing = String::new();
     let issue = format!("#{n}");
-    for (key, want) in [
-        ("Issue", issue.clone()),
-        ("Milestone", hygiene::milestone_value(milestone)),
-    ] {
-        let fits = |value: &str| match key {
-            "Milestone" => hygiene::names_milestone(value, milestone),
+    let mut wanted = vec![("Issue", issue.clone())];
+    if let Some(milestone) = milestone {
+        wanted.push(("Milestone", hygiene::milestone_value(milestone)));
+    }
+    for (key, want) in wanted {
+        let fits = |value: &str| match (key, milestone) {
+            ("Milestone", Some(milestone)) => hygiene::names_milestone(value, milestone),
             _ => value == issue,
         };
         let mut values = trailers.iter().filter(|(k, _)| k == key).map(|(_, v)| v);
@@ -568,20 +595,38 @@ pub fn claimed_issue(claims: &[String]) -> Result<u64> {
 /// turns on auto-merge with a squash (01M3NB6FTGPD0S5JTXXXNGNNDT). The
 /// pull request is against the default branch. Returns its number and
 /// its URL.
-pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Result<(u64, String)> {
+///
+/// `rules` are the rules of the hygiene check that it applies
+/// ([`crate::hygiene_rules`]). With [`hygiene::Rules::All`] the issue
+/// needs a milestone, the body has the trailer `Milestone:`, and the
+/// pull request gets that milestone. With [`hygiene::Rules::Read`] the
+/// issue needs none: the body has the link line and the trailer
+/// `Issue:`, and the pull request gets the milestone of the issue only
+/// when the issue has one (01M5SMSHNQ9E4P9W6RCB8E1WTN).
+pub fn open(
+    gh: &Gh,
+    title: &str,
+    summary: &str,
+    issue: u64,
+    refs: bool,
+    rules: hygiene::Rules,
+) -> Result<(u64, String)> {
     let n = issue.to_string();
     let found: hygiene::Issue =
         gh.json(&["issue", "view", &n, "--json", "number,state,milestone"])?;
-    let Some(milestone) = found.milestone.as_ref().map(|m| m.title.clone()) else {
+    let milestone = found.milestone.as_ref().map(|m| m.title.clone());
+    if milestone.is_none() && rules == hygiene::Rules::All {
         bail!("issue #{issue} has no milestone. Ask the lead to put it in a wave.");
-    };
+    }
     // The milestone goes into the body and into `gh pr create`: a text
     // of the forge that `text::forge` changes is refused whole.
-    if text::forge(&milestone) != milestone {
+    if let Some(milestone) = &milestone
+        && text::forge(milestone) != *milestone
+    {
         bail!(
             "the milestone of issue #{issue} ({}) has a control character or is too long. Ask \
              the lead to rename it.",
-            text::forge(&milestone)
+            text::forge(milestone)
         );
     }
     let link = if refs {
@@ -589,9 +634,13 @@ pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Resu
     } else {
         hygiene::Link::Closes(issue)
     };
-    let body = body(link, summary, &milestone)?;
-    let errors = hygiene::check_pr(
-        &hygiene::PullRequest::new(title, &body, Some(&milestone)),
+    let wave = milestone
+        .as_deref()
+        .filter(|_| rules == hygiene::Rules::All);
+    let body = body_for(link, summary, wave)?;
+    let errors = hygiene::check_pr_for(
+        rules,
+        &hygiene::PullRequest::new(title, &body, milestone.as_deref()),
         Some(&found),
     );
     if !errors.is_empty() {
@@ -601,16 +650,11 @@ pub fn open(gh: &Gh, title: &str, summary: &str, issue: u64, refs: bool) -> Resu
             lines.join("\n")
         );
     }
-    let args = [
-        "pr",
-        "create",
-        "--title",
-        title,
-        "--milestone",
-        &milestone,
-        "--body-file",
-        "-",
-    ];
+    let mut args = vec!["pr", "create", "--title", title];
+    if let Some(milestone) = &milestone {
+        args.extend(["--milestone", milestone]);
+    }
+    args.extend(["--body-file", "-"]);
     let url = text::forge(gh.run(&args, Some(&body))?.trim());
     let number = url
         .rsplit('/')

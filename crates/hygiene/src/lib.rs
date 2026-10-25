@@ -606,6 +606,69 @@ fn milestone_trailer<'a>(
 /// assert_eq!(rules, ["link", "keyword", "title", "milestone-trailer", "milestone", "issue-open"]);
 /// ```
 pub fn check_pr(pr: &PullRequest, issue: Option<&Issue>) -> Vec<Error> {
+    check_pr_for(Rules::All, pr, issue)
+}
+
+/// The rules that a check of a pull request applies.
+///
+/// riff reads the link line and the trailer `Issue:`. The other rules
+/// are the habits of riff itself. So a repository gets them only when
+/// its riff config asks for them.
+///
+/// ```
+/// use hygiene::Rules;
+///
+/// assert!(Rules::All.applies("milestone"));
+/// assert!(Rules::Read.applies("link") && Rules::Read.applies("issue-trailer"));
+/// assert!(!Rules::Read.applies("title"));
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rules {
+    /// Each rule of the table: the repository of riff, and a repository
+    /// whose riff config asks for them.
+    All,
+    /// Only the rules for what riff reads: `link` and `issue-trailer`.
+    Read,
+}
+
+impl Rules {
+    /// True when the rule named `rule` is one of these rules.
+    pub fn applies(self, rule: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Read => matches!(rule, "link" | "issue-trailer"),
+        }
+    }
+}
+
+/// Checks a pull request and its issue with the rules `rules`
+/// ([`check_pr`] with [`Rules::All`]).
+///
+/// ```
+/// use hygiene::{Issue, PullRequest, Rules};
+///
+/// // A title with `(#12)`, a keyword and no milestone: only `Rules::All` finds them.
+/// let pr = PullRequest::new("Fix it (#12)", "Closes #12\n\nFixes #13\n\nIssue: #12\n", None);
+/// let issue = Issue::new(12, "OPEN", None);
+/// let rules = |set| -> Vec<_> {
+///     hygiene::check_pr_for(set, &pr, Some(&issue)).iter().map(|e| e.rule).collect()
+/// };
+/// assert_eq!(rules(Rules::All), ["keyword", "title", "milestone-trailer", "milestone", "milestone"]);
+/// assert!(rules(Rules::Read).is_empty());
+///
+/// // What riff reads still holds.
+/// let pr = PullRequest::new("Fix it", "Closes #12\n\nIssue: #9\n", None);
+/// let found: Vec<_> = hygiene::check_pr_for(Rules::Read, &pr, None).iter().map(|e| e.rule).collect();
+/// assert_eq!(found, ["issue-trailer"]);
+/// ```
+pub fn check_pr_for(rules: Rules, pr: &PullRequest, issue: Option<&Issue>) -> Vec<Error> {
+    let mut errors = all_errors(pr, issue);
+    errors.retain(|e| rules.applies(e.rule));
+    errors
+}
+
+/// Each broken rule of a pull request, whatever the rules.
+fn all_errors(pr: &PullRequest, issue: Option<&Issue>) -> Vec<Error> {
     let body = pr.body.replace("\r\n", "\n");
     let mut errors = Vec::new();
 
@@ -1146,5 +1209,31 @@ mod tests {
             ["Co-authored-by: GLM-5.3-Flash <noreply@z.ai>"]
         );
         assert_eq!(check_pr(&pr, Some(&open(Some("Wave 3")))), []);
+    }
+
+    #[test]
+    fn the_rules_that_riff_reads_pass_a_pull_request_of_another_habit() {
+        let plain = PullRequest::new(
+            "Fix it (#77)",
+            "Closes #77\n\nFixes #78.\n\nIssue: #77\n",
+            None,
+        );
+        let issue = Issue::new(77, "CLOSED", None);
+        assert_eq!(check_pr_for(Rules::Read, &plain, Some(&issue)), []);
+        assert!(!check_pr_for(Rules::All, &plain, Some(&issue)).is_empty());
+    }
+
+    #[test]
+    fn the_rules_that_riff_reads_find_a_missing_link_and_a_wrong_issue_line() {
+        let rules = |body: &str| -> Vec<&'static str> {
+            check_pr_for(Rules::Read, &pr(body, None), None)
+                .iter()
+                .map(|e| e.rule)
+                .collect()
+        };
+        assert_eq!(rules("Text.\n\nIssue: #77\n"), ["link"]);
+        assert_eq!(rules("Closes #77\n\nText.\n"), ["issue-trailer"]);
+        assert_eq!(rules("Closes #77\n\nIssue: #9\n"), ["issue-trailer"]);
+        assert!(rules("Refs #77\n\nIssue: #77\n").is_empty());
     }
 }
