@@ -956,6 +956,13 @@ pub trait World: Send + Sync {
     /// keep-alive: the end of the lead.
     fn leave<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, ()>;
 
+    /// The [`Start`] of the lead of `record` for a start again on the riff of
+    /// this daemon: the same session and folder, `claude --resume`
+    /// (`wave` gives the main clone, [`crate::lead::again`],
+    /// 01M5TC2919TB9XPF42YFNJBP79).
+    fn lead_again<'a>(&'a self, wave: &'a Wave, record: &'a Record)
+    -> BoxFuture<'a, Result<Start>>;
+
     /// Frees the item of the session of `record` on riff-server at once,
     /// ends that session, and stops its keep-alive: a person ends the
     /// session ([`crate::daemon::Ask::End`], 01M579Z9VRD12FRK6DSYVKDHQB).
@@ -2467,6 +2474,15 @@ impl World for Live {
         })
     }
 
+    fn lead_again<'a>(
+        &'a self,
+        wave: &'a Wave,
+        record: &'a Record,
+    ) -> BoxFuture<'a, Result<Start>> {
+        let (wave, record) = (wave.clone(), record.clone());
+        Box::pin(blocking(move || crate::lead::again(&wave, &record)))
+    }
+
     fn free<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let api = Api::new(&record.server).signed_in(Some(&record.live.session))?;
@@ -3066,6 +3082,10 @@ mod tests {
 
         fn leave<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, ()> {
             Box::pin(async {})
+        }
+
+        fn lead_again<'a>(&'a self, _: &'a Wave, _: &'a Record) -> BoxFuture<'a, Result<Start>> {
+            Box::pin(async { bail!("no lead in this test") })
         }
 
         fn free<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, Result<()>> {

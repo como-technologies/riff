@@ -417,6 +417,9 @@ struct Machine {
     daemon: Option<std::process::Child>,
     /// The quiet limit of the daemon, when the test sets one.
     quiet: Option<Duration>,
+    /// The time of no write that makes a lead idle for the daemon, when the
+    /// test sets one.
+    lead_idle: Option<Duration>,
     /// The name of this host in each command of riff.
     host: &'static str,
 }
@@ -517,6 +520,7 @@ impl Machine {
             _signed: signed,
             daemon: None,
             quiet,
+            lead_idle: None,
             host: "thelio",
         };
         machine.start_daemon().await;
@@ -533,6 +537,9 @@ impl Machine {
         let mut daemon = self.command(None, &["daemon"]);
         if let Some(quiet) = self.quiet {
             daemon.env(riff::daemon::QUIET_VAR, quiet.as_millis().to_string());
+        }
+        if let Some(idle) = self.lead_idle {
+            daemon.env(riff::daemon::LEAD_IDLE_VAR, idle.as_millis().to_string());
         }
         let daemon = daemon
             .env("INVOCATION_ID", "riff-test-unit")
@@ -1705,6 +1712,75 @@ async fn a_new_daemon_tells_the_person_that_a_lead_lost_its_network() {
     assert!(!machine.read("podman.log").contains("podman stop"));
 
     // The lead ends: the line goes with it.
+    std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+    let started = Instant::now();
+    while machine.ok(None, &["daemon", "status"]).await.contains(name) {
+        assert!(started.elapsed() < isolated::HANG, "the lead did not end");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// 01M5TC24PB3YC2CC8BA275WSEN: `riff update` replaces the riff, and the
+/// daemon starts again. The new daemon takes up the lead, sees that its
+/// container binds the old riff, and starts the lead again on the new one
+/// when the lead is idle: `claude --resume` of the same session.
+#[tokio::test]
+async fn a_new_daemon_starts_the_idle_lead_again_on_the_new_riff_with_claude_resume() {
+    let mut machine = Machine::new().await;
+    machine.lead().await;
+    machine.claude_token();
+    std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+    let name = "riff-lead-como-technologies-riff";
+    machine.ok(None, &["lead", "start"]).await;
+    let args = machine.read("run.args");
+    let args: Vec<&str> = args.lines().collect();
+    let session = args[args.iter().position(|a| *a == "--session-id").unwrap() + 1].to_owned();
+    wait_for(&machine.bin.path().join("claude.args"), "--mcp-config").await;
+    std::fs::remove_file(machine.bin.path().join("claude.args")).unwrap();
+
+    // The riff on disk is another file than the one that the container
+    // binds: in the container the old file has no link. The lead is idle.
+    let stopped = machine.stop_daemon().await;
+    assert!(stopped.success(), "{stopped}");
+    std::fs::write(machine.bin.path().join("links"), "0\n").unwrap();
+    machine.lead_idle = Some(Duration::from_millis(1));
+    machine.start_daemon().await;
+
+    // The daemon tells the person, stops the container, and starts it again.
+    let line = riff::text::lead_started_again(name);
+    wait_for(&machine.bin.path().join("daemon.out"), &line).await;
+    let log = machine.read("podman.log");
+    assert!(log.contains(&format!("podman stop {name}")), "{log}");
+    let args = machine.read("run.args");
+    let args: Vec<&str> = args.lines().collect();
+    let at = args.iter().position(|a| *a == "--resume").unwrap();
+    assert_eq!(args[at + 1], session, "the same conversation");
+    assert!(!args.contains(&"--session-id"), "{args:?}");
+    let at = args.iter().position(|a| *a == "/opt/riff/riff").unwrap();
+    assert_eq!(
+        args[at..at + 5],
+        ["/opt/riff/riff", "relay", "--terminal", "--", "claude"]
+    );
+    wait_for(&machine.bin.path().join("claude.args"), "--resume").await;
+    let claude = machine.read("claude.args");
+    assert!(
+        claude.contains(&format!("--resume\n{session}\n")),
+        "{claude}"
+    );
+    assert!(
+        claude.contains("--dangerously-skip-permissions\n"),
+        "{claude}"
+    );
+    assert!(
+        claude.contains(&riff::text::lead_again("como-technologies/riff")),
+        "{claude}"
+    );
+    // The new container binds the new riff: the daemon looks no more.
+    std::fs::write(machine.bin.path().join("links"), "1\n").unwrap();
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(status.contains(name), "{status}");
+
+    // The person ends the lead: the daemon ends its session.
     std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
     let started = Instant::now();
     while machine.ok(None, &["daemon", "status"]).await.contains(name) {

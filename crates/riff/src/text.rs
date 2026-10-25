@@ -5781,9 +5781,16 @@ pub const DAEMON_PAUSE_ONLY_LEAD: &str =
 
 /// The note to the lead before the daemon starts again on a new riff
 /// (01M5SNV7H3739PXW73H14XM4B8).
+///
+/// ```
+/// let note = riff::text::LEAD_DAEMON_STARTS_AGAIN;
+/// assert!(note.contains("keep your state in your notes"));
+/// assert!(note.contains("starts your container again"));
+/// ```
 pub const LEAD_DAEMON_STARTS_AGAIN: &str = "The riff daemon of your host starts again on the new \
-     riff in a few seconds. Your container, your terminal and your socket stay. next for you: \
-     keep your state in your notes. Your riff tools may fail for a moment: try them again then.";
+     riff in a few seconds. Then riff starts your container again on the new riff, when your \
+     turn has ended, and your conversation goes on. next for you: keep your state in your \
+     notes. Your riff tools may fail for a moment: try them again then.";
 
 /// The line of the daemon for the lead that it told of its new start.
 ///
@@ -9481,6 +9488,103 @@ pub fn lead_lost_network(repo: &str, name: &str) -> String {
     format!(
         "The lead of {repo} lost its network at the restart of the daemon: run podman stop \
          {name}, then riff lead start, then /resume."
+    )
+}
+
+/// The first prompt of a lead that the daemon starts again on a new riff
+/// (01M5TC2919TB9XPF42YFNJBP79): `claude --resume` gives the whole
+/// conversation back, and the Monitor of the old container ended with
+/// it.
+///
+/// ```
+/// let text = riff::text::lead_again("o/r");
+/// assert!(text.contains("started your container again on a new riff"));
+/// assert!(text.contains("/opt/riff/riff relay watch --follow"));
+/// assert!(text.contains("the riff tools whoami, notes and read"));
+/// ```
+pub fn lead_again(repo: &str) -> String {
+    format!(
+        "You are the lead of {repo} in riff. riff started your container again on a new riff, \
+         and your conversation goes on. Your Monitor ended with the old container. Call the riff \
+         tools whoami, notes and read, and read the notes and the unread messages. Then start \
+         /opt/riff/riff relay watch --follow with the Monitor tool again, and go on with your \
+         work. Tell your person nothing about this start: the person has a line in riff chat."
+    )
+}
+
+/// The line in riff chat for the person: the daemon started the lead
+/// `name` again on the new riff (01M5TC2919TB9XPF42YFNJBP79).
+///
+/// ```
+/// let text = riff::text::lead_started_again("riff-lead-o-r");
+/// assert!(text.starts_with("riff started the lead riff-lead-o-r again on the new riff"));
+/// assert!(text.ends_with("Attach with: riff view"));
+/// ```
+pub fn lead_started_again(name: &str) -> String {
+    format!(
+        "riff started the lead {name} again on the new riff, and its conversation goes on. \
+         Attach with: riff view"
+    )
+}
+
+/// The log line of the daemon: it stops the lead `name` to start it
+/// again on the new riff (01M5TC2919TB9XPF42YFNJBP79).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_stops_lead("riff-lead-o-r"),
+///     "The riff daemon stops the lead riff-lead-o-r to start it again on the new riff."
+/// );
+/// ```
+pub fn daemon_stops_lead(name: &str) -> String {
+    format!("The riff daemon stops the lead {name} to start it again on the new riff.")
+}
+
+/// The daemon knows no wave of the repository `repo`, so it knows no main
+/// clone of it: it cannot start the lead again (01M5TC29A4Q94NJP7HFC75XCF3).
+///
+/// ```
+/// let text = riff::text::lead_again_no_wave("o/r");
+/// assert!(text.contains("no main clone of o/r"));
+/// assert!(text.ends_with("Run riff wave run in a clone of o/r"));
+/// ```
+pub fn lead_again_no_wave(repo: &str) -> String {
+    format!(
+        "the daemon knows no main clone of {repo}: it runs no wave of it. Run riff wave run in a \
+         clone of {repo}"
+    )
+}
+
+/// The daemon could not start the lead `name` again on the new riff, and
+/// the lead runs on the old riff (01M5TC29A4Q94NJP7HFC75XCF3). The person
+/// gets it one time in riff chat. The daemon tries again at its next
+/// look.
+///
+/// ```
+/// let text = riff::text::lead_again_waits("riff-lead-o-r", "no wave of o/r");
+/// assert!(text.contains("the lead riff-lead-o-r again on the new riff: no wave of o/r."));
+/// assert!(text.ends_with("The lead still runs the old riff. riff tries again every minute."));
+/// ```
+pub fn lead_again_waits(name: &str, why: &str) -> String {
+    format!(
+        "riff cannot start the lead {name} again on the new riff: {why}. The lead still runs the \
+         old riff. riff tries again every minute."
+    )
+}
+
+/// The daemon stopped the lead `name` to start it again on the new riff,
+/// and the start failed (01M5TC29A4Q94NJP7HFC75XCF3). The lead is not
+/// there: the person starts it.
+///
+/// ```
+/// let text = riff::text::lead_again_failed("riff-lead-o-r", "podman run failed");
+/// assert!(text.contains("the start failed: podman run failed"));
+/// assert!(text.ends_with("run riff lead start, then /resume."));
+/// ```
+pub fn lead_again_failed(name: &str, why: &str) -> String {
+    format!(
+        "riff stopped the lead {name} to start it again on the new riff, and the start failed: \
+         {why}. The lead is not there: run riff lead start, then /resume."
     )
 }
 

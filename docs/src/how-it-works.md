@@ -741,6 +741,7 @@ idle, so no work stops:
 | `riff relay watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
 | `riff chat` | runs the new `riff` in its place | between two lines |
 | The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session and no real-session test, else after its last session |
+| The lead in a container | the daemon stops its container and starts it again on the new `riff` with `claude --resume`; the lead goes on with its conversation (see [The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)) | when the lead is idle: its transcript got no write for 5 minutes |
 
 You still start `riff-server` again yourself. `riff update` tells you
 when it runs the old build.
@@ -1372,13 +1373,72 @@ Each riff process then starts again on the new riff when it is idle.
 See [Which processes start again](#which-processes-start-again) and
 [When the builds differ](#when-the-builds-differ). The mark goes in a
 minute. A session in a container keeps the mark until the riff daemon
-starts again, after its last session. When the mark stays, do the
-step for the session: install the riff daemon again. It starts again
-on the new riff at once:
+starts again, after its last session. The daemon starts a lead again by
+itself (see
+[The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)).
+When the mark of another session stays, do the step for the session:
+install the riff daemon again. It starts again on the new riff at once:
 
 ```sh
 riff daemon install
 ```
+
+### The lead starts again on the new riff
+
+The lead runs for hours or days. A container keeps the file of the riff
+that it started with, also after `riff update`. So the riff daemon
+starts the lead again by itself. You stop no container.
+
+```mermaid
+flowchart TD
+    U["riff update"] --> D["the daemon starts again on the new riff"]
+    D --> O{"the container of the lead<br/>binds the old riff?"}
+    O -- no --> N["nothing to do"]
+    O -- yes --> I{"the lead is idle?<br/>no write to its transcript in 5 minutes"}
+    I -- no --> W["wait: look again in a minute"]
+    I -- yes --> S["stop the container, start it again:<br/>claude --resume of the conversation"]
+    S --> C["one line in riff chat"]
+```
+
+The daemon looks at its start, and each minute. It sees a turn of the
+lead by the transcript of its conversation: `claude` writes it at each
+message and each tool call. A lead in a turn waits for the end of the
+turn. A tool call that runs for more than 5 minutes with no output
+counts as idle.
+
+The new container has the same session, the same clone and the same
+Claude folder. So the lead goes on with its conversation and its notes.
+It starts its Monitor again. Its session on riff-server stays, and it
+stays your lead.
+
+You get one line in riff chat for each lead that started again:
+
+```text
+riff started the lead riff-lead-como-technologies-riff again on the new riff, and its conversation goes on. Attach with: riff view
+```
+
+Attach to the lead again:
+
+```sh
+riff view
+```
+
+When you are attached at that moment, your terminal shows the end of
+the container. Attach again with `riff view`.
+
+When the daemon cannot start the lead again, you get one line in riff
+chat for it. The line says which case it is:
+
+- The start failed before the stop. The lead still runs the old riff.
+  The line names the fault, for example that the daemon knows no main
+  clone of the repository. Fix the fault. riff tries again every
+  minute.
+- The start failed after the stop. The lead is not there. Start it
+  again, then type `/resume` in it. It finds the old conversation:
+
+  ```sh
+  riff lead start
+  ```
 
 ### When riff cannot reach the server
 

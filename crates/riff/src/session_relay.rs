@@ -124,12 +124,15 @@
 //!
 //! # Versions
 //!
-//! An update of riff reaches new sessions only: the bind keeps the old
-//! binary in a session that runs (01M4Z60B800BH5BHX0H9JVDG6A). So on the
-//! socket of a session, the daemon takes a hello of the protocol before
-//! its own, of its own, and of the next ([`daemon::compatible`]). A
-//! change of the protocol adds a line or a field, and a side skips a
-//! line that it does not know (01M4ZHSZPRYK42C20ETXM3HJZ2).
+//! An update of riff reaches a worker and a verify at their next start
+//! only: the bind keeps the old binary in a session that runs
+//! (01M4Z60B800BH5BHX0H9JVDG6A). So on the socket of a session, the daemon
+//! takes a hello of the protocol before its own, of its own, and of the
+//! next ([`daemon::compatible`]). A change of the protocol adds a line or
+//! a field, and a side skips a line that it does not know
+//! (01M4ZHSZPRYK42C20ETXM3HJZ2). A lead runs for days, so the daemon
+//! starts it again on the new riff when it is idle
+//! ([`daemon::Daemon::leads_again`], 01M5TC24PB3YC2CC8BA275WSEN).
 //!
 //! # Secrets
 //!
