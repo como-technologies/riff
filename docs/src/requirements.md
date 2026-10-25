@@ -6979,6 +6979,27 @@ part when they merge.
   either: the check names the fix. A person who is not an admin of the
   repository gets each step named, and riff changes nothing. A step that
   fails prints why and its fix, and the next steps run.
+- **01M5RGG9KJXCKH8C94145WS8SM** Before the question of the setup, `riff
+  init` prints the line of a check that a step of the setup fixes with
+  `step` in place of `fail`, and names the step, when a plain `riff
+  init` or `riff init --yes` can do the step (the person is an admin of
+  the repository). A check that no step fixes stays `fail` with its fix.
+  The check of the checks of a pull request counts as fixed by a step
+  when no pull request ran a check yet and the pull request of
+  `riff.toml` is to come, and the check of the session image counts as
+  fixed when neither the clone nor the default branch has `riff.toml`.
+  `riff init --check` and a person who is not an admin get `fail` and
+  the fix.
+- **01M5RGGD6YR36EXZEG61XCJVRY** After the steps of the setup, `riff
+  init` prints the list of the checks again, and the end of a run with a
+  failed check names each check that still fails with its fix. A check
+  whose step failed shows as `fail` with its fix in the second list.
+- **01M5RGGD9AYNC12Z2CG5CDZWNA** After the step that merges `riff.toml`
+  on the default branch, when the clone is on the default branch, has no
+  change, and lacks only commits of `origin`, `riff init` runs `git pull
+  --ff-only origin BRANCH` in the clone and says so, and the check of
+  the session image reads the `riff.toml` of the clone. Else `riff init`
+  says why it ran no `git pull` and names the step to do by hand.
 
 ### The permission rules
 

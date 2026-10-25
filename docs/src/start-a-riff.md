@@ -199,7 +199,8 @@ flowchart LR
     D --> I["get the session image<br/>of the project"]
 ```
 
-`riff init` prints one line for each check, with `pass` or `fail`:
+`riff init` prints one line for each check, with `pass`, `step` or
+`fail`:
 
 | Check | It must be true |
 |---|---|
@@ -211,10 +212,12 @@ flowchart LR
 | The riff binary | It is static, so `riff relay` starts in each session image. |
 | The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, a pull request runs a CI check, and `CLAUDE.md` is there. `riff init` does the first five itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
 
-A line with `fail` also gives the fix. Do each fix, then run
-`riff init` again. When each check passes, `riff init` installs and
-starts the riff daemon, and the daemon gets the session image. A riff
-daemon that runs already stays. Then do one item: see
+A line with `fail` also gives the fix. A line with `step` is a check of
+your repository on GitHub that `riff init` fixes itself, after one
+question. Do each fix, then run `riff init` again. When each check
+passes, `riff init` installs and starts the riff daemon, and the daemon
+gets the session image. A riff daemon that runs already stays. Then do
+one item: see
 [Run one item in a container](development.md#run-one-item-in-a-container).
 
 ### Let the lead start the work
@@ -411,9 +414,12 @@ flowchart LR
     C -- "all done" --> D
 ```
 
-`riff init` makes `riff.toml` on the default branch of `origin`, not in
-your clone. Run `git pull` in your clone to get it. A second run of
-`riff init` changes nothing on GitHub and asks nothing.
+`riff init` makes `riff.toml` on the default branch of `origin`. When
+your clone is on the default branch, has no change, and lacks only
+commits of `origin`, it runs `git pull --ff-only` there. Else it says
+why it did not, and you run `git pull` in your clone. A second run of
+`riff init` changes nothing on GitHub and asks nothing. See
+[Read the output for a repository on GitHub](#read-the-output-for-a-repository-on-github).
 
 Two parts are your own work. `riff init` has no step for them, and it
 names the fix of each:
@@ -431,6 +437,73 @@ To do the steps with no question, run `riff init --yes`. To see the
 steps and change nothing, run `riff init --check`. A person who is not
 an admin of the repository gets the fix of each check, and riff changes
 nothing: ask an admin to run `riff init`.
+
+### Read the output for a repository on GitHub
+
+This is the output of `riff init` in a clone of `acme/app` that is not
+set up for riff. The answer to the question is `y`. A line with `...`
+stands for lines that this page leaves out:
+
+```text
+riff checks this machine:
+  ...
+  step  the session image: cannot read the riff config /home/mike/app/riff.toml: No such file or directory (os error 2). Step: make riff.toml on main with a pull request
+  ...
+  step  riff.toml on main: main of acme/app has no riff.toml, so riff lead start stops. Step: make riff.toml on main with a pull request
+  step  auto-merge and squash merge: acme/app allows no auto-merge. Step: allow auto-merge and squash merge
+  step  the ruleset of main: no ruleset of main requires the check riff/verify, so a merge does not wait for the verify. Step: make the ruleset riff on main
+  step  the milestone Backlog: acme/app has no open milestone Backlog. Step: make the milestone Backlog
+  step  the first wave: acme/app has no open wave. Step: make the milestone Wave 1
+  pass  the checks of a pull request: pull requests ran checks / lint and checks / test, and the ruleset that riff makes requires them
+  ...
+riff can set up acme/app for riff. These steps change GitHub:
+  allow auto-merge and squash merge
+  make riff.toml on main with a pull request
+  make the milestone Backlog
+  make the milestone Wave 1
+  make the ruleset riff on main
+Do them? [y/N] y
+  done  allow auto-merge and squash merge: allowed both
+  done  make riff.toml on main with a pull request: opened https://github.com/acme/app/pull/7 and merged it
+  done  make the milestone Backlog: made Backlog
+  done  make the milestone Wave 1: made Wave 1
+  done  make the ruleset riff on main: requires checks / lint and checks / test and riff/verify
+riff.toml is on main now. riff ran git pull --ff-only in this clone, so the clone has it.
+riff checks this machine again:
+  ...
+  pass  riff.toml on main: main of acme/app has it
+  pass  auto-merge and squash merge: acme/app allows both
+  pass  the ruleset of main: it requires the check riff/verify
+  pass  the milestone Backlog: acme/app has it open
+  pass  the first wave: acme/app has the open wave Wave 1
+  pass  the checks of a pull request: the full check is checks / lint and checks / test
+  ...
+This machine is ready. Run one item in a container: riff run ITEM
+```
+
+- A line with `step` is a check that fails, and that `riff init` fixes
+  with a step. No fact that a step fixes shows as `fail`. A line with
+  `fail` is your work: it gives the fix.
+- After the steps, riff checks again. A check passes when its step
+  worked.
+- `riff init` makes `riff.toml` on `origin`. Then it runs
+  `git pull --ff-only` in your clone when your clone is on the default
+  branch, has no change, and lacks only commits of `origin`. Else it
+  says why it did not, and you run `git pull` yourself.
+
+When a check still fails, the end of the output names each one with its
+fix. riff installs nothing then, and exits with 1. For example, when no
+pull request of the repository ran a check, the ruleset gets the check
+`Gate`, and the check of a pull request fails until you add that job:
+
+```text
+riff checks this machine again:
+  ...
+  fail  the checks of a pull request: no pull request of acme/app ran a check named Gate, and no rule requires another check, so the full check never ends. Fix: add a workflow that runs on pull_request, with a job named Gate. See "Add the job Gate" in the book. Then run riff init again
+  ...
+1 check failed. riff installed no daemon and pulled no image. Do each fix, then run riff init again:
+  the checks of a pull request: add a workflow that runs on pull_request, with a job named Gate. See "Add the job Gate" in the book. Then run riff init again
+```
 
 ### Do the steps by hand
 
