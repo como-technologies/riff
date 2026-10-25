@@ -4590,6 +4590,20 @@ release test --host`. `riff release hold` does not: the lead of another
 repository holds a release of riff, and that repository has no
 `[release]`.
 
+Only the merged `riff.toml` counts for the daemon of a host, as for the
+image (see [Only a merged pin counts](#only-a-merged-pin-counts)). The
+daemon fetches the default branch of `origin` and reads `riff.toml`
+there. It does not read the working tree of its main clone. So a host
+with an old main clone runs `riff release test --host` and `riff build
+--host` as soon as the pull request with `[release]` merges, and you
+do not pull on the host. A `[release]` that is only in the working tree
+of the main clone does not count. To see what the daemon reads:
+
+```sh
+git fetch origin
+git show origin/HEAD:riff.toml
+```
+
 In a repository with `[release]` in `riff.toml`, `riff wave end` also
 refuses while a merged pull request of the wave is in no checked
 release. In a repository with no `[release]`, it has no release gate.
