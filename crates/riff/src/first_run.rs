@@ -79,18 +79,18 @@
 //! | the milestone `Backlog` | the open milestones | one has that title |
 //! | the first wave | the open milestones | one is a wave |
 //! | the checks of a pull request | the required checks and the check runs of the latest pull requests | the full check can end |
-//! | `CLAUDE.md` | the files at the root of the default branch | it is there |
 //!
 //! The first five checks of the repository have a step that `riff init`
 //! can do. The check of the session image has the step of `riff.toml` when
 //! the default branch has none. The check of a pull request has the step of
-//! the ruleset when no pull request ran a check yet, and `CLAUDE.md` has
-//! none: their fix is the work of the person.
+//! the ruleset when no pull request ran a check yet: else its fix is the
+//! work of the person. `riff init` reads no file of rules for agents, such
+//! as `CLAUDE.md` or `AGENTS.md` (01M5RN89Z749VYS1CRYJQTKAWY).
 //!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
 //!
-//! The last seven checks run only in a folder whose remote `origin` is on
+//! The last six checks run only in a folder whose remote `origin` is on
 //! GitHub, with the `gh` of the machine. They read the repository and
 //! change nothing, also without `--check`; only the steps of the setup
 //! change it. When `gh` cannot read the
@@ -547,7 +547,7 @@ impl Check {
     ///     required: vec!["riff/verify".into()],
     ///     milestones: vec!["Backlog".into()],
     ///     admin: true,
-    ///     files: vec!["riff.toml".into(), "CLAUDE.md".into()],
+    ///     files: vec!["riff.toml".into()],
     ///     ci: vec!["lint".into()],
     /// };
     /// let lines: Vec<String> = checks(&github)
@@ -1184,7 +1184,7 @@ mod tests {
             required: vec!["Gate".into(), "riff/verify".into()],
             milestones: vec!["Backlog".into(), "Wave 1".into()],
             admin: true,
-            files: vec!["riff.toml".into(), "CLAUDE.md".into()],
+            files: vec!["riff.toml".into()],
             ci: vec!["Gate".into()],
         }
     }
@@ -1193,7 +1193,7 @@ mod tests {
     /// the checks of the machine, and only for a folder with a remote on
     /// GitHub.
     #[test]
-    fn the_repository_on_github_has_seven_checks_after_the_machine() {
+    fn the_repository_on_github_has_six_checks_after_the_machine() {
         let names = |facts: &Facts| {
             checks(facts)
                 .into_iter()
@@ -1214,8 +1214,7 @@ mod tests {
                 "the ruleset of main",
                 "the milestone Backlog",
                 "the first wave",
-                "the checks of a pull request",
-                "CLAUDE.md"
+                "the checks of a pull request"
             ]
         );
         let none = Facts {
@@ -1749,12 +1748,12 @@ mod tests {
     }
 
     impl Forged {
-        /// A bare repository: a `CLAUDE.md`, a pull request that ran two
-        /// checks, no `riff.toml`, no auto-merge, no ruleset, no milestone.
+        /// A bare repository: no file, a pull request that ran two checks,
+        /// no auto-merge, no ruleset, no milestone.
         fn bare() -> Forged {
             let dir = tempfile::tempdir().unwrap();
             let files = [
-                ("files", "CLAUDE.md\n"),
+                ("files", ""),
                 ("milestones", ""),
                 (
                     "prior_pulls",

@@ -517,8 +517,9 @@ enum Command {
     /// repository with gh and checks that it has riff.toml on the default
     /// branch, allows auto-merge and squash merges, has a ruleset of the
     /// default branch that requires riff/verify, has the milestone Backlog
-    /// and an open wave, has a CI check that a pull request runs, and has a
-    /// CLAUDE.md. It names the fix of each check that fails. For the first
+    /// and an open wave, and has a CI check that a pull request runs. It
+    /// reads no CLAUDE.md or AGENTS.md: that file is the choice of the
+    /// repository. It names the fix of each check that fails. For the first
     /// five checks, riff init does the fix itself: it asks one question,
     /// and then it makes riff.toml with a pull request that it merges,
     /// allows auto-merge and squash merges, makes the Backlog and Wave 1,

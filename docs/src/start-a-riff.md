@@ -192,7 +192,7 @@ flowchart LR
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |
 | The riff binary | It is static, so `riff relay` starts in each session image. |
-| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, a pull request runs a CI check, and `CLAUDE.md` is there. `riff init` does the first five itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
+| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, and a pull request runs a CI check. `riff init` checks no `CLAUDE.md` or `AGENTS.md`: such a file is the choice of the repository. `riff init` does the first five itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
 
 A line with `fail` also gives the fix. A line with `step` is a check of
 your repository on GitHub that `riff init` fixes itself, after one
@@ -403,17 +403,18 @@ why it did not, and you run `git pull` in your clone. A second run of
 `riff init` changes nothing on GitHub and asks nothing. See
 [Read the output for a repository on GitHub](#read-the-output-for-a-repository-on-github).
 
-Two parts are your own work. `riff init` has no step for them, and it
-names the fix of each:
+One part is your own work. `riff init` has no step for it, and it
+names the fix: a CI check that a pull request runs. The full check of a
+pull request, its CI, is the gate of a change: riff waits for it before
+it starts a verify, and the ruleset lets no change merge without it. See
+[Add the job Gate](#add-the-job-gate) and
+[Use the checks that you have](#use-the-checks-that-you-have).
 
-- A CI check that a pull request runs. riff waits for the full check
-  before it starts a verify. See [Add the job Gate](#add-the-job-gate)
-  and [Use the checks that you have](#use-the-checks-that-you-have).
-- A `CLAUDE.md` at the root of the default branch. Each session reads
-  it for the rules of the repository: how to run the checks before a
-  push, and what a pull request needs. See
-  [Write the CLAUDE.md of the repository](#write-the-claudemd-of-the-repository).
-  Push it, and run `riff init` again.
+A `CLAUDE.md` or an `AGENTS.md` is the choice of the repository. riff
+needs neither, and `riff init` checks neither: it prints no line for
+them, and a repository with none passes. A session reads the rules of
+the repository for agents when it has them. See
+[Write a CLAUDE.md, when you want one](#write-a-claudemd-when-you-want-one).
 
 To do the steps with no question, run `riff init --yes`. To see the
 steps and change nothing, run `riff init --check`. A person who is not
@@ -512,7 +513,6 @@ flowchart LR
 | the ruleset of the default branch | [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch) |
 | the Backlog, the first wave | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
 | the checks of a pull request | [Add the job Gate](#add-the-job-gate) |
-| `CLAUDE.md` | [Write the CLAUDE.md of the repository](#write-the-claudemd-of-the-repository) |
 
 The full check is a step of your own. Your repository may have one
 already: see
@@ -674,17 +674,18 @@ A repository that has waves and no Backlog gets the Backlog alone:
 gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog
 ```
 
-### Write the CLAUDE.md of the repository
+### Write a CLAUDE.md, when you want one
 
-A session reads `CLAUDE.md` at the root of the repository for its
-rules. The start text of riff says only what riff needs: the item, the
-branch, the frame of the pull request and, for a verify, the report. The
-rules of your repository come from your `CLAUDE.md`.
+A `CLAUDE.md` or an `AGENTS.md` is the choice of the repository. riff
+needs neither. The start text of riff says only what riff needs: the
+item, the branch, the frame of the pull request and, for a verify, the
+report. A session reads the rules of the repository for agents when it
+has them. Write one when you want to give each session rules.
 
 ```mermaid
 flowchart LR
     S["start text of riff<br/>the item, the branch,<br/>the pull request"] --> A["a session"]
-    C["CLAUDE.md of<br/>the repository<br/>its rules"] --> A
+    C["CLAUDE.md of the repository<br/>its rules, when it has them"] --> A
 ```
 
 | Part | What it says |
@@ -693,8 +694,8 @@ flowchart LR
 | Issues | What a `Done when:` line names. |
 | Verify | What a verifier reads and runs, and what it does not run. |
 
-Write the file with your own commands in place of `make check`, push it
-with a pull request, and run `riff init` again:
+Write the file with your own commands in place of `make check`, and push
+it with a pull request:
 
 ```sh
 cat > CLAUDE.md <<'EOF'
