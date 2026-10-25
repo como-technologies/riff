@@ -113,7 +113,9 @@ esac
 /// background, and `wait` waits for its end. `stop` logs, and ends the
 /// `run`. `container inspect` says `true` while the `run` runs. `attach`
 /// and `exec` log, and end at once. `volume inspect` of `riff-sccache`
-/// gives the folder `bin/volume` when it is there. With `bin/exit-in-attach`, `attach`
+/// gives the folder `bin/volume` when it is there. With `bin/no-network`, the
+/// look-up of `exec ... getent` fails: the container has no network. With
+/// `bin/exit-in-attach`, `attach`
 /// first ends the `run`, as `/exit` in the lead does. A zombie counts as
 /// ended. The `run`
 /// with `-d` exits, so PID 1 becomes the parent of the relay. When PID 1
@@ -134,6 +136,9 @@ case "$1" in
   # The count of the links of a file in the container: the file `links`
   # holds it.
   exec) if [ "$3" = stat ]; then cat "$dir/links" 2>/dev/null; exit; fi
+    # The look-up of a host in the container: exit 2 (no address) when the
+    # file `no-network` is there.
+    if [ "$3" = getent ]; then [ -f "$dir/no-network" ] && exit 2; exit 0; fi
     echo "podman $*" >> "$dir/podman.log"; exit 0 ;;
   attach) echo "podman $*" >> "$dir/podman.log"
     # The person types /exit in the lead: its container ends.
@@ -1631,6 +1636,66 @@ async fn a_restart_of_the_daemon_loses_no_event_and_riff_run_goes_on() {
         "{viewed}"
     );
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// 01M5SMQBTA3HQXPKKK01ZGFB4H: the container of a session lost its network
+/// at the restart of the daemon, and runs on with no network. The new
+/// daemon stops it and frees its item: the wave starts the item again.
+#[tokio::test]
+async fn a_new_daemon_stops_a_session_with_no_network_and_frees_its_item() {
+    let mut machine = Machine::new().await;
+    machine.lead().await;
+    let (child, name, _) = hanging_run(&machine).await;
+    let log = machine.folder("issue-12").join("events.jsonl");
+    wait_for(&log, "\"init\"").await;
+    let stopped = machine.stop_daemon().await;
+    assert!(stopped.success(), "{stopped}");
+
+    std::fs::write(machine.bin.path().join("no-network"), "").unwrap();
+    machine.start_daemon().await;
+    let daemon_out = machine.bin.path().join("daemon.out");
+    wait_for(&daemon_out, &riff::text::daemon_no_network(&name)).await;
+    wait_for(
+        &machine.bin.path().join("podman.log"),
+        &format!("podman stop {name}"),
+    )
+    .await;
+    // The session ends, and riff run with it. The item is free.
+    let out = output_of(child).await;
+    assert!(!out.status.success(), "{}", text(&out.stdout));
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// 01M5SMQBTA3HQXPKKK01ZGFB4H: a lead that lost its network at the restart
+/// of the daemon runs on. The daemon says so, and `riff daemon status`
+/// shows the line as long as the lead runs.
+#[tokio::test]
+async fn a_new_daemon_tells_the_person_that_a_lead_lost_its_network() {
+    let mut machine = Machine::new().await;
+    machine.lead().await;
+    machine.claude_token();
+    std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+    let name = "riff-lead-como-technologies-riff";
+    machine.ok(None, &["lead", "start"]).await;
+    let stopped = machine.stop_daemon().await;
+    assert!(stopped.success(), "{stopped}");
+
+    std::fs::write(machine.bin.path().join("no-network"), "").unwrap();
+    machine.start_daemon().await;
+    let line = riff::text::lead_lost_network("como-technologies/riff", name);
+    wait_for(&machine.bin.path().join("daemon.out"), &line).await;
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(status.contains(&format!("{line}\n")), "{status}");
+    // The daemon stops no lead: the person does.
+    assert!(!machine.read("podman.log").contains("podman stop"));
+
+    // The lead ends: the line goes with it.
+    std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+    let started = Instant::now();
+    while machine.ok(None, &["daemon", "status"]).await.contains(name) {
+        assert!(started.elapsed() < isolated::HANG, "the lead did not end");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 #[tokio::test]

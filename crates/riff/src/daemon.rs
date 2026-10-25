@@ -1216,6 +1216,11 @@ pub struct Status {
     /// the watch of a wave ([`crate::watches`]). An old daemon gives none.
     #[serde(default)]
     pub watches: Vec<WatchShown>,
+    /// The leads that lost their network at the restart of the daemon,
+    /// while they run (01M5SMQBTA3HQXPKKK01ZGFB4H). An old daemon gives
+    /// none.
+    #[serde(default)]
+    pub lost: Vec<LostShown>,
 }
 
 impl Status {
@@ -1277,6 +1282,16 @@ pub struct WatchShown {
     pub what: String,
     /// The start of the watch, in milliseconds since the epoch.
     pub since_ms: i64,
+}
+
+/// A lead with no network, as `riff daemon status` shows it
+/// ([`crate::text::lead_lost_network`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LostShown {
+    /// The repository of the lead, as `OWNER/REPO`.
+    pub repo: String,
+    /// The container of the lead.
+    pub name: String,
 }
 
 /// A wave that the daemon runs, as `riff daemon status` shows it.
@@ -2021,6 +2036,10 @@ pub struct Daemon<R> {
     /// The session of each lead whose stale sign-in the person heard of
     /// in riff chat ([`Daemon::stale_leads`]).
     stale: Mutex<std::collections::BTreeSet<String>>,
+    /// The session of each lead that lost its network at the restart of the
+    /// daemon: the person heard of it in riff chat, and `riff daemon status`
+    /// shows it ([`Daemon::recover`]).
+    lost: Mutex<std::collections::BTreeSet<String>>,
     /// The forge and the posts of the watches ([`crate::watches`]).
     lookout: Arc<dyn crate::watches::Lookout>,
 }
@@ -2095,6 +2114,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             ends: Mutex::new(BTreeMap::new()),
             gcloud: Arc::default(),
             stale: Mutex::default(),
+            lost: Mutex::default(),
             lookout: Arc::new(crate::watches::Here),
         })
     }
@@ -2456,6 +2476,8 @@ impl<R: Runtime + 'static> Daemon<R> {
         let claude_token = tokio::task::spawn_blocking(move || crate::claude_token::state(&dir))
             .await
             .unwrap_or_default();
+        // Before the struct: its `sessions` holds the lock of the sessions.
+        let lost = self.lost_shown();
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
@@ -2486,7 +2508,21 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .unwrap_or_default(),
             claude_token,
             watches: self.watches_shown(),
+            lost,
         }
+    }
+
+    /// The leads that run with no network ([`Daemon::lost_network`]).
+    fn lost_shown(&self) -> Vec<LostShown> {
+        let lost = self.lost.lock().unwrap_or_else(PoisonError::into_inner);
+        self.records()
+            .into_iter()
+            .filter(|r| r.terminal && lost.contains(&r.live.session))
+            .map(|r| LostShown {
+                repo: r.me.place().repo_text(),
+                name: r.live.name,
+            })
+            .collect()
     }
 
     /// The watches in the file, but the watch of a wave: a wave shows in
@@ -3832,11 +3868,44 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
+    /// Looks if the container of the session `record`, that this daemon took
+    /// up, reaches the network (01M5SMQBTA3HQXPKKK01ZGFB4H): a container that
+    /// an older daemon started has its network process in the cgroup of the
+    /// unit, and the restart of the daemon ends it. The container runs on
+    /// with no network, and `claude` in it cannot reach its API. A worker or
+    /// a verify with no network ends as `riff daemon end` ends it: the daemon
+    /// frees its item and stops the container, so the wave starts the item
+    /// again. A lead with no network gets one line in riff chat and in
+    /// [`Status::lost`]: the person ends it. When podman cannot say, the
+    /// session counts as connected.
+    async fn lost_network(self: Arc<Self>, record: Record) {
+        let name = &record.live.name;
+        if self.runtime.reaches(name).await.unwrap_or(true) {
+            return;
+        }
+        if record.terminal {
+            self.lost
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(record.live.session.clone());
+            let line = text::lead_lost_network(&record.me.place().repo_text(), name);
+            println!("{line}");
+            self.world.chat(&record, &line).await;
+            return;
+        }
+        println!("{}", text::daemon_no_network(name));
+        match self.end_session(name).await {
+            Ok(lines) => lines.iter().for_each(|line| println!("{line}")),
+            Err(e) => eprintln!("riff daemon: {name}: {e:#}"),
+        }
+    }
+
     /// Takes up each session of a record in the folder of the daemon
     /// whose container runs, or when podman cannot say, and removes each
     /// other record
     /// (01M4ZHT01HH88KPA8628M7VBEY). Call it after [`listen`], before
-    /// [`Daemon::serve`].
+    /// [`Daemon::serve`]. For each session that it took up, a task looks if
+    /// the container reaches the network (`lost_network`).
     pub async fn recover(self: &Arc<Self>) {
         let Ok(entries) = std::fs::read_dir(self.dir.join(LIVE)) else {
             return;
@@ -3882,6 +3951,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             match self.own(record.clone(), Scrub::default(), true) {
                 Ok((owned, notes)) => {
                     println!("{}", text::daemon_takes_up(&name));
+                    let looked = record.clone();
                     // The lead keeps its session on riff-server alive.
                     if record.terminal {
                         self.world.resume(&record);
@@ -3896,6 +3966,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         tokio::spawn(crate::wave::after(self.clone(), record, said, job));
                     }
                     tokio::spawn(self.clone().watch(owned, notes, None));
+                    tokio::spawn(self.clone().lost_network(looked));
                 }
                 Err(e) => eprintln!("riff daemon: {name}: {e:#}"),
             }
@@ -5724,6 +5795,100 @@ mod tests {
         assert!(record_path(&dir, name).exists());
         let (_relay, had) = Relay::connect(&session_dir(&dir, name), 1, false).await;
         assert_eq!(had, 0);
+    }
+
+    /// The lines of the chat that `server` got.
+    fn chats(server: &Server) -> Vec<String> {
+        server
+            .said()
+            .into_iter()
+            .filter(|s| s.starts_with("chat "))
+            .collect()
+    }
+
+    /// 01M5SMQBTA3HQXPKKK01ZGFB4H: the sessions that an old daemon started
+    /// have their network process in the cgroup of its unit. A new daemon
+    /// takes up a session whose container has no network: it stops a
+    /// worker and frees its item, and tells the person of a lead one time.
+    #[tokio::test]
+    async fn a_new_daemon_stops_a_worker_with_no_network_and_tells_the_person_of_a_lead() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let mut here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let (_lost, worker) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let (_kept, kept) = here
+            .started(here.start("riff-issue-13-5e6f7a8b", "issue-13"))
+            .await;
+        let mut leads = Vec::new();
+        for name in ["riff-lead-como-technologies-riff", "riff-lead-o-r"] {
+            let mut start = here.start(name, "lead");
+            start.terminal = true;
+            let (mut client, name) = here.started(start).await;
+            assert_eq!(client.next().await.unwrap(), Some(Say::Done));
+            leads.push(name);
+        }
+        let [lost, good] = [leads[0].clone(), leads[1].clone()];
+
+        // The restart of the daemon ended the network of two containers.
+        here.fake
+            .clone()
+            .with_no_network(&worker)
+            .with_no_network(&lost);
+        here.restart().await;
+        here.daemon.recover().await;
+
+        // The worker: its item is free, and its container is stopped.
+        until(|| server.said().contains(&"free issue-12".to_owned())).await;
+        until(|| here.fake.calls().contains(&format!("stop {worker}"))).await;
+        // The lead: one line in riff chat, and one in the status.
+        let line = text::lead_lost_network("como-technologies/riff", &lost);
+        until(|| chats(&server) == [format!("chat {lost}: {line}")]).await;
+        let shown = status(&here.dir).await.unwrap();
+        assert_eq!(
+            shown.lost,
+            [LostShown {
+                repo: "como-technologies/riff".into(),
+                name: lost.clone()
+            }]
+        );
+        assert!(text::daemon_status(&shown, now_ms()).contains(&format!("{line}\n")));
+        // The others have their network: no stop, no free, no line. A lead
+        // is never stopped.
+        let calls = here.fake.calls();
+        for name in [&kept, &good, &lost] {
+            assert!(!calls.contains(&format!("stop {name}")), "{calls:?}");
+        }
+        assert!(!server.said().contains(&"free issue-13".to_owned()));
+        assert_eq!(chats(&server).len(), 1);
+    }
+
+    /// 01M5SMQBTA3HQXPKKK01ZGFB4H: when podman cannot say whether a
+    /// container reaches the network, the session counts as connected.
+    #[tokio::test]
+    async fn a_new_daemon_leaves_a_session_when_podman_cannot_say_if_it_has_a_network() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let mut here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let (_worker, worker) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let mut start = here.start("riff-lead-o-r", "lead");
+        start.terminal = true;
+        let (mut client, _) = here.started(start).await;
+        assert_eq!(client.next().await.unwrap(), Some(Say::Done));
+
+        here.fake.clone().with_no_answer();
+        here.restart().await;
+        here.daemon.recover().await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert!(!here.fake.calls().contains(&format!("stop {worker}")));
+        assert!(server.said().iter().all(|s| s.starts_with("resume ")));
+        assert!(status(&here.dir).await.unwrap().lost.is_empty());
     }
 
     /// 01M5R56GN3DC09GAPAF69GENEZ (#1404): the live record of a wave job

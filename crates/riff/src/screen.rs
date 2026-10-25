@@ -528,6 +528,7 @@ mod tests {
             mcp: vec![],
             claude_token: Default::default(),
             watches: vec![],
+            lost: vec![],
         }
     }
 

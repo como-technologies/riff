@@ -38,6 +38,7 @@
 //! | Draw the terminal again at the next attach | [`Runtime::redraw`] | `podman exec NAME stty -F /dev/console rows ROWS cols COLS` |
 //! | Start with a terminal | [`Runtime::start_terminal`] | `podman run --rm -d -i -t ...` ([`crate::podman::terminal_args`]), then `podman wait NAME` |
 //! | Run a command with a terminal | [`Runtime::exec`] | `podman exec -it NAME COMMAND` |
+//! | Find out if a live session reaches the network | [`Runtime::reaches`] | `podman exec NAME getent hosts api.anthropic.com` |
 //!
 //! A session with a terminal is the lead (01M4Z60B81RTZT71PN5HV0GZHX).
 //! The runtime holds its terminal: conmon on podman. A person attaches to
@@ -351,7 +352,16 @@ pub trait Runtime: Send + Sync {
     /// the host replaced it: the session holds the old file
     /// (01M5NJ87YEHHGJBANM7CRYV56Z).
     fn links(&self, name: &str, path: &Path) -> impl Future<Output = Result<u64>> + Send;
+
+    /// True when the live session `name` reaches the network: it looks up
+    /// the host of the API of `claude` ([`REACH_HOST`]). A container that
+    /// lost its network process runs on with no network
+    /// (01M5SMQBTA3HQXPKKK01ZGFB4H). Fails when the runtime cannot say.
+    fn reaches(&self, name: &str) -> impl Future<Output = Result<bool>> + Send;
 }
+
+/// The host that [`Runtime::reaches`] looks up: the API of `claude`.
+pub const REACH_HOST: &str = "api.anthropic.com";
 
 /// A runtime with no container, for tests (01M4ZBGK5G3EFXWT61DR2NHMDD).
 ///
@@ -411,6 +421,8 @@ struct Book {
     /// True when each attach ends the session: the person ends the
     /// command in the terminal.
     exit_in_attach: bool,
+    /// The sessions with no network ([`Runtime::reaches`]).
+    offline: BTreeSet<String>,
 }
 
 /// One session of a [`Fake`].
@@ -461,6 +473,40 @@ impl Fake {
     /// types `/exit` in the `claude` of the lead.
     pub fn with_exit_in_attach(self) -> Self {
         self.lock().exit_in_attach = true;
+        self
+    }
+
+    /// The session `name` has no network: [`Runtime::reaches`] says false
+    /// for it, as for a container that lost its network process.
+    ///
+    /// ```
+    /// use riff::runtime::{Fake, Runtime, SessionSpec};
+    ///
+    /// let spec = |name: &str| SessionSpec {
+    ///     name: name.into(),
+    ///     image: "i".into(),
+    ///     home: "/h".into(),
+    ///     workdir: "/w".into(),
+    ///     binds: vec![],
+    ///     env: vec![],
+    ///     memory: "8g".into(),
+    ///     cpus: 4,
+    ///     command: vec![],
+    /// };
+    /// let fake = Fake::default().with_image("i").with_no_network("s2");
+    /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+    ///     let _s1 = fake.start(&spec("s1"), &[]).await?;
+    ///     let _s2 = fake.start(&spec("s2"), &[]).await?;
+    ///     assert!(fake.reaches("s1").await?);
+    ///     assert!(!fake.reaches("s2").await?);
+    ///     // A session that does not run cannot say.
+    ///     assert!(fake.reaches("s3").await.is_err());
+    ///     Ok::<(), anyhow::Error>(())
+    /// })?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_no_network(self, name: &str) -> Self {
+        self.lock().offline.insert(name.to_owned());
         self
     }
 
@@ -621,6 +667,17 @@ impl Runtime for Fake {
             Some(file) => Ok(file.metadata()?.nlink()),
             None => bail!("the session {name} has no file {}", path.display()),
         }
+    }
+
+    async fn reaches(&self, name: &str) -> Result<bool> {
+        let book = self.lock();
+        if book.no_answer {
+            bail!("podman does not answer");
+        }
+        if book.sessions.get(name).is_none_or(|p| p.exit.is_some()) {
+            bail!("no session {name} runs");
+        }
+        Ok(!book.offline.contains(name))
     }
 }
 
