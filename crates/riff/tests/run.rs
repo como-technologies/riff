@@ -428,8 +428,12 @@ impl Machine {
     /// [`Proxy`] has another URL than the server. A token binds to the
     /// URL of the server (DPoP), so a signed call through the proxy fails.
     async fn open() -> Machine {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (listener, url) = crate::common::listen().await;
+        Machine::open_on(listener, url).await
+    }
+
+    /// As [`Machine::open`], on `listener` with the URL `url`.
+    async fn open_on(listener: TcpListener, url: String) -> Machine {
         tokio::spawn(async move { axum::serve(listener, riff_server::router()).await.unwrap() });
         Machine::build(None, url, None).await
     }
@@ -1876,6 +1880,26 @@ async fn still_held(machine: &Machine) {
         "{}",
         text(&taken.stdout)
     );
+}
+
+/// 01M5ST2QHBG5S6F2H0FPJ5A24P (#1474): the OS gives the port of a test
+/// that ended to a later test. A machine at an open riff-server then
+/// held the sign-in of the signed server that had the port: `whoami` of
+/// a session got no session token and did not register it, and `lead
+/// --session` found no session. A signed server that ended leaves no
+/// sign-in at its URL.
+#[tokio::test]
+async fn a_machine_at_the_url_of_an_ended_signed_server_holds_no_sign_in() {
+    let (listener, url) = crate::common::listen().await;
+    let (elsewhere, _) = crate::common::listen().await;
+    let ended = crate::common::start_signed_at(elsewhere, &url, None, |router| router).await;
+    drop(ended);
+
+    let machine = Machine::open_on(listener, url.clone()).await;
+    machine.lead().await;
+    let secrets = machine.env.riff_home().join("secrets");
+    let held = riff_client::secrets::file_get(&secrets, &riff_client::login::secret_name(&url));
+    assert_eq!(held.unwrap(), None);
 }
 
 #[tokio::test]

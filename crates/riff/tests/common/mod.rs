@@ -244,9 +244,11 @@ pub fn call_names(asked: &Asked) -> Vec<String> {
         .collect()
 }
 
-/// The device key, and the sign-in JSON of each user, of one [`Signed`]
-/// server. [`sign_in`] writes them into the secret files of a `RIFF_HOME`.
-type SignIns = (String, HashMap<String, String>);
+/// The ID of a [`Signed`] server, the device key, and the sign-in JSON of
+/// each user, of that server. [`sign_in`] writes them into the secret
+/// files of a `RIFF_HOME`. The map keeps them by URL, only while the
+/// server lives: its [`Drop`] removes them (#1474).
+type SignIns = (u64, String, HashMap<String, String>);
 
 fn sign_ins() -> &'static Mutex<HashMap<String, SignIns>> {
     static SIGN_INS: std::sync::OnceLock<Mutex<HashMap<String, SignIns>>> =
@@ -271,6 +273,9 @@ pub struct Signed {
     /// The service of the server.
     pub service: riff_server::Service,
     url: String,
+    /// The ID of this server in [`sign_ins`]: a later server at the same
+    /// URL has another one.
+    id: u64,
     calls: Calls,
     refused: Calls,
 }
@@ -312,7 +317,19 @@ impl std::fmt::Display for Signed {
 }
 
 impl Drop for Signed {
+    /// Removes the sign-ins of this server. The OS gives its port to a
+    /// later test, and a machine at an open riff-server on that port must
+    /// not get the sign-in of this one (01M5ST2QHBG5S6F2H0FPJ5A24P). A
+    /// later server at the same URL keeps its own.
     fn drop(&mut self) {
+        let mut sign_ins = sign_ins().lock().unwrap_or_else(|e| e.into_inner());
+        if sign_ins
+            .get(&self.url)
+            .is_some_and(|(id, ..)| *id == self.id)
+        {
+            sign_ins.remove(&self.url);
+        }
+        drop(sign_ins);
         if !std::thread::panicking() {
             let refused = self.unsigned();
             assert!(
@@ -409,13 +426,16 @@ pub async fn start_signed_at(
         };
         people.insert((*user).to_owned(), serde_json::to_string(&sign_in).unwrap());
     }
+    static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     sign_ins()
         .lock()
         .unwrap()
-        .insert(url.clone(), (key.to_secret(), people));
+        .insert(url.clone(), (id, key.to_secret(), people));
     Signed {
         service,
         url,
+        id,
         calls,
         refused,
     }
@@ -425,7 +445,7 @@ pub async fn start_signed_at(
 /// server at `url`, as the person `user` ([`PEOPLE`]). It does nothing for another
 /// server.
 pub fn sign_in(url: &str, home: &std::path::Path, user: &str) {
-    let Some((key, people)) = sign_ins().lock().unwrap().get(url).cloned() else {
+    let Some((_, key, people)) = sign_ins().lock().unwrap().get(url).cloned() else {
         return;
     };
     let sign_in = people
@@ -443,7 +463,7 @@ pub fn sign_in(url: &str, home: &std::path::Path, user: &str) {
 /// client of the next user after the use of this one.
 pub fn api(url: &str, user: &str, session: Option<&str>) -> riff_client::api::Api {
     let people = sign_ins().lock().unwrap().get(url).cloned();
-    let (_, people) = people.unwrap_or_else(|| panic!("{url} is not a signed server"));
+    let (_, _, people) = people.unwrap_or_else(|| panic!("{url} is not a signed server"));
     let sign_in = people
         .get(user)
         .unwrap_or_else(|| panic!("no sign-in for {user}"));
