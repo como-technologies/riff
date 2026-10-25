@@ -5339,7 +5339,10 @@ Only a message that the person wrote counts. riff marks each line that
 it writes itself in riff chat with the kind `riff`: the line "waits for
 your approval" of the watch of the deploy, its reminder, and the lines
 of `riff release cut` and `publish`. Such a line is never an approval
-and never a `stop`, also when it names `riff release approve`. The
+and never a `stop`, also when it names `riff release approve`. A
+riff-server of the release before refuses the kind `riff`: riff then
+posts the line with the kind `message` and the mark `[by riff] ` at the
+start, and the lead skips that line too. The
 comment of the approval names the number of the message.
 
 ```sh

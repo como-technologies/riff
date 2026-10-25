@@ -356,6 +356,36 @@ pub async fn start_signed_with(wrap: impl FnOnce(axum::Router) -> axum::Router) 
     start_signed_at(listener, &url, None, wrap).await
 }
 
+/// A layer for [`start_signed_with`] that makes the server a riff-server
+/// of the release before the kind `riff`: it refuses a `post` with that
+/// kind, with the text and the code of that release, and it writes
+/// nothing.
+pub fn refuse_kind_riff(router: axum::Router) -> axum::Router {
+    use axum::body::{Body, to_bytes};
+    use axum::extract::Request;
+    use axum::middleware::{Next, from_fn};
+    use axum::response::Response;
+
+    router.layer(from_fn(|request: Request, next: Next| async move {
+        let (head, body) = request.into_parts();
+        let bytes = to_bytes(body, usize::MAX).await.unwrap();
+        let riff = head.uri.path() == "/v1/post"
+            && serde_json::from_slice::<Value>(&bytes).is_ok_and(|post| post["kind"] == "riff");
+        if riff {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header(
+                    riff_core::build::HEADER,
+                    riff_core::build::Build::this().to_string(),
+                )
+                .header(riff_core::wire::REFUSED_HEADER, "bad_request")
+                .body(Body::from("no such kind: use message, status or note"))
+                .unwrap();
+        }
+        next.run(Request::from_parts(head, Body::from(bytes))).await
+    }))
+}
+
 /// The store that a server loads, and the timing of its lease.
 pub type Loaded = (
     Arc<dyn riff_state::store::Store>,

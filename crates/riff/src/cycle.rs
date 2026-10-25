@@ -1528,7 +1528,8 @@ pub fn waiting_run(forge: &dyn Forge, tag_text: &str) -> Result<Option<Waiting>>
     Ok(forge.waiting()?.into_iter().find(|w| w.tag == tag))
 }
 
-/// The messages of the thread `chat` as [`ChatLine`]s.
+/// The messages of the thread `chat` as [`ChatLine`]s. A line of the kind
+/// `riff`, or with the mark [`crate::chat::BY_RIFF`], is a line of riff.
 pub fn chat_lines(read: Vec<riff_client::api::Checked>) -> Vec<ChatLine> {
     read.into_iter()
         .map(|c| ChatLine {
@@ -1536,7 +1537,7 @@ pub fn chat_lines(read: Vec<riff_client::api::Checked>) -> Vec<ChatLine> {
             user: c.message.from.who().user().to_owned(),
             session: c.message.from.who().session().is_some(),
             verified: c.verified,
-            riff: c.message.kind.by_riff(),
+            riff: c.message.kind.by_riff() || crate::chat::marked(&c.message.body),
             body: c.message.body,
         })
         .collect()
@@ -1554,7 +1555,8 @@ pub struct ChatLine {
     /// True when riff proved the sender.
     pub verified: bool,
     /// True when riff wrote the line, as the person: it has the kind
-    /// `riff`, and it is never the word of a person.
+    /// `riff`, or the mark [`crate::chat::BY_RIFF`] (a riff-server of the
+    /// release before refuses the kind). It is never the word of a person.
     #[serde(default)]
     pub riff: bool,
     /// The text.
@@ -5396,6 +5398,36 @@ pub(crate) mod tests {
             .map(|kind| chat_lines(vec![checked(kind)])[0].riff)
             .collect();
         assert_eq!(marks, [false, false, false, true]);
+    }
+
+    /// A server of the release before refuses the kind `riff`: the line
+    /// goes with the kind `message` and the mark (01M5TQ0DX4M2EJJGE7QA8DZVYS).
+    #[test]
+    fn chat_lines_mark_a_message_with_the_mark_of_riff() {
+        let checked = |body: String| riff_client::api::Checked {
+            message: riff_core::wire::Message {
+                seq: 1,
+                from: "riff://mike@pangolin".parse().unwrap(),
+                to: vec![],
+                body,
+                at_ms: 0,
+                kind: riff_core::wire::Kind::Message,
+                sig: None,
+                payload: None,
+            },
+            verified: true,
+        };
+        let cut = cut_line("mike", "v4.0.1");
+        let marked = format!("{}{cut}", crate::chat::BY_RIFF);
+        let lines = chat_lines(vec![checked(cut.clone()), checked(marked)]);
+        assert_eq!([lines[0].riff, lines[1].riff], [false, true]);
+        // The cut line says "deploy" and names the version: as the word
+        // of the owner it would approve. With the mark, it does not.
+        let said = |line: &ChatLine| {
+            let published = published(0, "v4.0.1");
+            owner_said(&[published, line.clone()], "v4.0.1", &mike)
+        };
+        assert_eq!([said(&lines[0]), said(&lines[1])], [Some(1), None]);
     }
 
     #[test]
