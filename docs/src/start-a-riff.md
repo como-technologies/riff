@@ -666,15 +666,19 @@ The `CLAUDE.md` of riff is an example of a longer file.
 ### Use any default branch
 
 The default branch can have any name: `main`, `master` or `trunk`.
-`riff wave run` reads it from GitHub one time. A verify reads its diff
-against that branch, a rebase starts from it, and the look watches its
-full check. This command shows the branch that riff reads:
+The wave reads it from GitHub at each look, and keeps it in no file. A
+verify reads its diff against that branch, a rebase starts from it, and
+the look watches its full check. This command shows the branch that riff
+reads:
 
 ```sh
 gh api repos/{owner}/{repo} --jq .default_branch
 ```
 
-After you rename the default branch, run `riff wave run` again.
+After you rename the default branch, do nothing: the next look reads the
+new name. When GitHub does not answer, the wave starts no work at that
+look, and `riff daemon status` says why. The wave looks again each
+minute.
 
 ### Pin an image with another toolchain
 

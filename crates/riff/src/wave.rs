@@ -78,9 +78,11 @@
 //! # A conflict with main
 //!
 //! `main` is the default branch of the repository, also in the start text
-//! of a verify and in the look of the Gate: `riff wave run` reads it one
-//! time ([`Wave::branch`], 01M5QYBWPAJ219BE8QKVKG1TWW), so `master` and
-//! `trunk` work the same.
+//! of a verify and in the look of the Gate. The wave reads it from the forge
+//! at each look ([`Look::branch`], [`pr::default_branch`],
+//! 01M5R56GN3DC09GAPAF69GENEZ), so `master` and `trunk` work the same, and
+//! `waves.json` has no branch. A branch that does not read is the error
+//! of the look: the wave starts no work at that look.
 //!
 //! A pull request of an item with auto-merge on and a conflict with
 //! `main` ([`rollout::Pull::conflict`]) cannot merge, also after its
@@ -306,10 +308,6 @@ pub struct Wave {
     pub server: String,
     /// The name of this host in the URI of a session.
     pub host: String,
-    /// The default branch of the repository on the forge, for example
-    /// `main` or `master`: `riff wave run` reads it one time
-    /// (01M5QYBWPAJ219BE8QKVKG1TWW).
-    pub branch: String,
 }
 
 impl Wave {
@@ -323,7 +321,6 @@ impl Wave {
     ///     main: "/src/r".into(),
     ///     server: "http://127.0.0.1:1".into(),
     ///     host: "thelio".into(),
-    ///     branch: "master".into(),
     /// };
     /// assert_eq!(riff::identity::place_text(&wave.place(Some("issue-12"))?), "thelio/o/r#issue-12");
     /// assert_eq!(wave.thread()?.to_string(), "o/r");
@@ -384,11 +381,6 @@ pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
 /// start a container runs no wave (01M558EYAJFZK7Y822NVWGBS9H). The git
 /// steps of the pin block, so they run on a thread that may block: they
 /// stop no task of `riff mcp`.
-///
-/// It also reads the default branch of the repository from the forge
-/// with `gh`, one time ([`Wave::branch`], [`pr::default_branch`]): a
-/// repository with the default branch `master` or `trunk` runs like one
-/// with `main` (01M5QYBWPAJ219BE8QKVKG1TWW).
 pub async fn ask(dir: &Path, here: &Place, server: &str, show: impl FnMut(&str)) -> Result<String> {
     ask_with(dir, identity::working_dir()?, here, server, show).await
 }
@@ -406,16 +398,11 @@ pub async fn ask_with(
     if here.default_thread().is_none() {
         bail!("{}", text::RUN_NO_REPO);
     }
-    let repo = here.repo_text();
-    let (main, image, lines, branch) = blocking({
-        let repo = repo.clone();
-        move || {
-            let (main, _) = run::main_clone(&work)?;
-            let mut lines = Vec::new();
-            let image = session_image::merged(&main, |line| lines.push(line.to_owned()))?;
-            let branch = pr::default_branch(&pr::Gh::for_repo(&repo), &repo)?;
-            Ok((main, image.to_string(), lines, branch))
-        }
+    let (main, image, lines) = blocking(move || {
+        let (main, _) = run::main_clone(&work)?;
+        let mut lines = Vec::new();
+        let image = session_image::merged(&main, |line| lines.push(line.to_owned()))?;
+        Ok((main, image.to_string(), lines))
     })
     .await?;
     for line in &lines {
@@ -424,12 +411,12 @@ pub async fn ask_with(
     crate::daemon::image(dir, &image, &mut show)
         .await
         .map_err(|e| anyhow!("{}", text::wave_no_container(&format!("{e:#}"))))?;
+    let repo = here.repo_text();
     let wave = Wave {
         repo: repo.clone(),
         main,
         server: server.to_owned(),
         host: here.host().to_owned(),
-        branch,
     };
     crate::daemon::ask_done(dir, crate::daemon::Ask::Wave { wave }, show).await?;
     Ok(repo)
@@ -686,6 +673,10 @@ pub struct Look {
     /// `Done when:` in their body
     /// ([`rollout::Open::no_done_when`]). The lead hears of each once.
     pub no_done_when: BTreeSet<u64>,
+    /// The default branch of the repository on the forge, for example
+    /// `main` or `master`. The look reads it at each look, and keeps it
+    /// in no file (01M5R56GN3DC09GAPAF69GENEZ).
+    pub branch: String,
 }
 
 /// The issue of `verify-issue-N`.
@@ -1014,7 +1005,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                         let body = text::wave_stuck(
                             notice.pull,
                             &notice.branch,
-                            &wave.branch,
+                            &look.branch,
                             &notice.commit,
                             &notice.stuck,
                         );
@@ -1477,17 +1468,27 @@ async fn after_build(
                 ),
                 Kind::Message,
             ),
-            None => (
-                text::wave_not_rebased(
-                    item,
-                    pull.number,
-                    &branch,
-                    &wave.branch,
-                    &pull.head_ref_oid,
-                    session,
-                ),
-                Kind::Message,
-            ),
+            None => {
+                // The default branch is not in a file: the message says
+                // "the default branch" when it does not read.
+                let base = blocking({
+                    let (gh, repo) = (gh.clone(), wave.repo.clone());
+                    move || pr::default_branch(&gh, &repo)
+                })
+                .await
+                .unwrap_or_else(|_| text::WAVE_BASE_UNREAD.to_owned());
+                (
+                    text::wave_not_rebased(
+                        item,
+                        pull.number,
+                        &branch,
+                        &base,
+                        &pull.head_ref_oid,
+                        session,
+                    ),
+                    Kind::Message,
+                )
+            }
         },
         Some(pull) if wip_head(&gh, &wave.repo, &pull.head_ref_oid).await => (
             text::wave_wip_head(item, pull.number, &branch, &pull.head_ref_oid, session),
@@ -1669,13 +1670,15 @@ impl Live {
     }
 
     /// The steps before the start after the claim: the clone, the
-    /// Claude folder, the spec and the start text.
+    /// Claude folder, the spec and the start text. `base` is the default
+    /// branch of the repository.
     #[allow(clippy::too_many_arguments)]
     async fn prepare(
         wave: &Wave,
         work: &Work,
         image: &str,
         host: &run::Host,
+        base: &str,
         milestone: Option<String>,
         session: &str,
         me: &SessionUri,
@@ -1705,14 +1708,7 @@ impl Live {
                 let milestone = milestone.context("a build has a milestone")?;
                 let frame = pr::body(hygiene::Link::Closes(issue), "SUMMARY", &milestone)?;
                 let mut text = text::run_start(
-                    &wave.repo,
-                    &wave.branch,
-                    issue,
-                    &branch,
-                    session,
-                    &frame,
-                    &milestone,
-                    earlier,
+                    &wave.repo, base, issue, &branch, session, &frame, &milestone, earlier,
                 );
                 if let Some(failed) = failed {
                     text.push_str("\n\n");
@@ -1728,15 +1724,7 @@ impl Live {
                 let branch = branch_of(*issue);
                 let (main, at, on) = (main.clone(), clone.clone(), branch.clone());
                 blocking(move || run::make_clone(&main, &at, &on)).await?;
-                text::wave_rebase_start(
-                    &wave.repo,
-                    &wave.branch,
-                    *issue,
-                    *pull,
-                    commit,
-                    &branch,
-                    session,
-                )
+                text::wave_rebase_start(&wave.repo, base, *issue, *pull, commit, &branch, session)
             }
             Work::Checks {
                 issue,
@@ -1748,14 +1736,7 @@ impl Live {
                 let (main, at, on) = (main.clone(), clone.clone(), branch.clone());
                 blocking(move || run::make_clone(&main, &at, &on)).await?;
                 text::wave_checks_start(
-                    &wave.repo,
-                    &wave.branch,
-                    *issue,
-                    *pull,
-                    commit,
-                    checks,
-                    &branch,
-                    session,
+                    &wave.repo, base, *issue, *pull, commit, checks, &branch, session,
                 )
             }
             Work::Verify {
@@ -1770,7 +1751,7 @@ impl Live {
                 let checks =
                     blocking(move || repo_setup::full_check(&pr::Gh::for_repo(&repo), &repo))
                         .await?;
-                text::wave_verify_start(&wave.repo, &wave.branch, *issue, *pull, commit, &checks)
+                text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks)
             }
         };
         let existing = |p: PathBuf| p.exists().then_some(p);
@@ -2032,7 +2013,8 @@ pub fn reasked(bodies: &[&str]) -> HashSet<(u64, String)> {
 
 /// The facts of the wave of the repository `repo` from the forge, with
 /// `gh`, and the items that a session claims (`claims`) and the held
-/// items (`holds`): the free work with the fixes ([`fixes`]), and
+/// items (`holds`): the default branch ([`pr::default_branch`]), the free
+/// work with the fixes ([`fixes`]), and
 /// the pull request of each verify among it, with the full check of its
 /// head ([`repo_setup::full_check`]).
 pub fn look_on(
@@ -2054,6 +2036,9 @@ pub fn look_with(
     holds: BTreeSet<String>,
     asked: &HashSet<(u64, String)>,
 ) -> Result<Look> {
+    // A branch that does not read is the error of the look: the wave starts
+    // no work, and reads it again at the next look.
+    let branch = pr::default_branch(gh, repo)?;
     let claimed: HashSet<String> = claims.iter().cloned().collect();
     let held: HashSet<String> = holds.iter().cloned().collect();
     let mut open = rollout::Open::of(gh, repo)?;
@@ -2072,6 +2057,7 @@ pub fn look_with(
         pulls,
         fixes,
         no_done_when,
+        branch,
     })
 }
 
@@ -2171,6 +2157,10 @@ impl World for Live {
             let item = work.item();
             let main = wave.main.clone();
             let host = blocking(move || Ok(run::host_facts(&main)?)).await?;
+            let base = {
+                let repo = wave.repo.clone();
+                blocking(move || pr::default_branch(&pr::Gh::for_repo(&repo), &repo)).await?
+            };
             let milestone = match work {
                 Work::Build { issue } => {
                     let (repo, issue) = (wave.repo.clone(), *issue);
@@ -2199,7 +2189,7 @@ impl World for Live {
             }
             self.keep_alive(api.clone(), me.clone(), &session);
             println!("{}", text::wave_claimed(&wave.repo, &item, &session));
-            match Self::prepare(wave, work, image, &host, milestone, &session, &me).await {
+            match Self::prepare(wave, work, image, &host, &base, milestone, &session, &me).await {
                 Ok(start) => Ok(Some(start)),
                 Err(e) => {
                     self.end(&api, &me, &thread, &item).await;
@@ -2500,6 +2490,10 @@ mod tests {
         pulls: BTreeMap<u64, Pr>,
         /// Each claim of a session: the item, and the session.
         starts: Vec<(String, String)>,
+        /// True while the default branch of the repository does not read.
+        branch_unread: bool,
+        /// The looks that read the default branch.
+        branch_reads: usize,
         /// Each item after its end.
         finished: Vec<String>,
         /// Each message to the lead.
@@ -2650,7 +2644,11 @@ mod tests {
     impl World for Fakes {
         fn look<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Look>> {
             Box::pin(async move {
-                let forge = lock(&self.forge);
+                let mut forge = lock(&self.forge);
+                forge.branch_reads += 1;
+                if forge.branch_unread {
+                    bail!("gh api repos/o/r: HTTP 502");
+                }
                 // The free work of the forge, as `look_on` takes it. The
                 // pick skips a held item.
                 let open = forge.open();
@@ -2680,6 +2678,7 @@ mod tests {
                     pulls,
                     fixes,
                     no_done_when: no_done_when.into_iter().collect(),
+                    branch: "main".into(),
                 })
             })
         }
@@ -2959,7 +2958,6 @@ mod tests {
                     main: "/src/r".into(),
                     server: "http://127.0.0.1:1".into(),
                     host: "thelio".into(),
-                    branch: "main".into(),
                 })
                 .unwrap();
         }
@@ -3081,7 +3079,6 @@ mod tests {
             main,
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
-            branch: "main".into(),
         };
         assert_eq!(Live::default().image(&wave).await.unwrap(), pin("0"));
     }
@@ -3095,6 +3092,28 @@ mod tests {
         assert!(here.forge().starts.is_empty());
         free.store(9, Ordering::SeqCst);
         here.until(1, |h| h.daemon.live_count() == 1).await;
+    }
+
+    /// 01M5R56GN3DC09GAPAF69GENEZ (#1404): a default branch that does not
+    /// read is the error of the look. The wave starts no work at that
+    /// look, says why, and reads the branch again at the next look.
+    #[tokio::test]
+    async fn a_default_branch_that_does_not_read_starts_no_work_and_the_next_look_reads_it_again() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().branch_unread = true;
+        here.run();
+        here.until(0, |h| h.forge().branch_reads >= 3).await;
+        assert!(here.forge().starts.is_empty());
+        let word = here.daemon.waves_shown()[0].word.clone();
+        assert_eq!(word, text::wave_no_look("gh api repos/o/r: HTTP 502"));
+
+        // The branch reads again at the next look: the work starts.
+        let reads = here.forge().branch_reads;
+        here.forge().branch_unread = false;
+        here.until(1, |h| h.running("issue-1").is_some()).await;
+        assert!(here.forge().branch_reads > reads);
+        assert_eq!(here.forge().starts.len(), 1);
     }
 
     #[tokio::test]
@@ -3354,7 +3373,6 @@ mod tests {
             main: "/src/r".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
-            branch: "main".into(),
         };
         let who = riff_core::name::Who::new("mike", Some("lead1")).unwrap();
         Record {
@@ -3388,7 +3406,6 @@ mod tests {
             main: "/src/r".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
-            branch: "main".into(),
         };
         write_waves(here.daemon.dir(), &[("o/r".to_owned(), wave)].into()).unwrap();
     }
@@ -3448,7 +3465,6 @@ mod tests {
             main: "/src/r".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
-            branch: "main".into(),
         };
         crate::daemon::remote::serve_in_file(here.daemon.dir(), &wave).unwrap();
         here.daemon.run_item(&lead_record(), "issue-5").unwrap();
@@ -3886,7 +3902,11 @@ runs() { if [ -e "$dir/$1" ]; then cat "$dir/$1"; else echo '{"check_runs":[]}';
 case "$1 $2" in
   api*)
     case "$2" in
-      repos/o/r) echo '{"default_branch":"main"}' ;;
+      repos/o/r)
+        case "$*" in
+          *--jq*) echo main ;;
+          *) echo '{"default_branch":"main"}' ;;
+        esac ;;
       */rules/branches/main*) show rules ;;
       */commits/main/check-runs*) runs gate ;;
       *check_name=Gate) echo '{"check_runs":[]}' ;;
@@ -4200,7 +4220,6 @@ esac
             main: "/src/other".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
-            branch: "main".into(),
         };
         here.daemon.run_wave(other.clone()).unwrap();
         let kept = read_waves(here.daemon.dir()).unwrap();
@@ -4219,7 +4238,6 @@ esac
             main: "/src/r".into(),
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
-            branch: "main".into(),
         };
         let waves: BTreeMap<String, Wave> = [("o/r".to_owned(), wave)].into();
         write_waves(dir.path(), &waves).unwrap();
@@ -4275,7 +4293,6 @@ esac
                 main: "/src/r".into(),
                 server: "http://127.0.0.1:1".into(),
                 host: "thelio".into(),
-                branch: "main".into(),
             },
             work: Work::Verify {
                 issue: 12,
@@ -4430,7 +4447,6 @@ esac
                 main: "/src/r".into(),
                 server: server.clone(),
                 host: "thelio".into(),
-                branch: "main".into(),
             };
             let who = |session| riff_core::name::Who::new("mike", Some(session)).unwrap();
             let lead = SessionUri::new(who("lead1"), wave.place(None).unwrap());
@@ -4484,6 +4500,7 @@ esac
             let script = format!(
                 r#"#!/bin/sh
 case "$*" in
+"api repos/o/r --jq .default_branch") echo main ;;
 "pr view worktree-issue-12 --json number,url,headRefOid,state")
     echo '{{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"1a2b3c4d5e","state":"OPEN"}}' ;;
 "issue view 12 --json number,labels")
@@ -4747,6 +4764,35 @@ esac
             run_the_wave.contains(&format!("\n{message}\n")),
             "{message}"
         );
+    }
+
+    /// 01M5R56GN3DC09GAPAF69GENEZ (#1404): the default branch is not in a
+    /// file. When it does not read after a rebase with no push, the lead
+    /// still gets the message, with "the default branch" in place of its
+    /// name.
+    #[tokio::test]
+    async fn a_rebase_with_no_push_tells_the_lead_when_the_default_branch_does_not_read() {
+        let riff = Built::new().await;
+        let gh = pr::Gh::at(isolated::write_program(
+            riff.dir.path().join("gh"),
+            r#"#!/bin/sh
+case "$*" in
+"pr view worktree-issue-12 --json number,url,headRefOid,state")
+    echo '{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"1a2b3c4d5e","state":"OPEN"}' ;;
+*) echo "gh: HTTP 502" >&2; exit 1 ;;
+esac
+"#,
+        ));
+        let (_, got) = riff.after(gh, Some(Fix::Rebase("1a2b3c4d5e"))).await;
+        let message = text::wave_not_rebased(
+            "issue-12",
+            40,
+            "worktree-issue-12",
+            text::WAVE_BASE_UNREAD,
+            "1a2b3c4d5e",
+            "9f8e7d6c",
+        );
+        assert_eq!(got, [(Kind::Message, message)]);
     }
 
     /// A fake `gh` for the fix of checks: the pull request #40 of the

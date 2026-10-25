@@ -963,7 +963,8 @@ pub fn same_commit(head: &str, tested: &str) -> Result<()> {
 
 /// The default branch of `repo` (`OWNER/REPO`) on the forge, for example
 /// `main`, `master` or `trunk` (01M5QYBWPAJ219BE8QKVKG1TWW). The wave
-/// reads it one time for each `riff wave run`.
+/// reads it at each look, and keeps it in no file
+/// (01M5R56GN3DC09GAPAF69GENEZ).
 ///
 /// ```
 /// use riff::pr::{Gh, default_branch};
