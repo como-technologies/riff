@@ -399,6 +399,26 @@ run the command again:
 cd ~/src/riff
 ```
 
+### When git fails
+
+riff asks git where you work: the repository, the remote `origin` and
+the worktree. riff never guesses. A directory outside git is not a
+fault: its repository is `-`. A repository with no `origin` is not a
+fault either: its repository is `local/NAME`. When a call of git
+fails for another reason, riff tries it 3 times. Then the command
+fails, and the error names the call and the reason of git:
+
+```text
+Error: riff cannot read git in /src/riff: `git rev-parse --show-toplevel` failed with exit code 128: fatal: detected dubious ownership in repository at '/src/riff'. riff does not guess where you work. Run the command again.
+```
+
+The command registers no session. Fix what git says, and run the
+command again. To see the reason yourself, run the same call:
+
+```sh
+git -C ~/src/riff rev-parse --show-toplevel
+```
+
 ### When the versions do not match
 
 Each `riff` command fails with an error like this one:
