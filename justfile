@@ -199,7 +199,7 @@ real-session *ARGS:
     cargo build -q -p real-session
     target/debug/real-session --riff target/static/debug/riff {{ARGS}}
 
-# Set up the GitHub repository for pull requests: auto-merge, squash only, the rulesets on main, release/** and the tags
+# Set up the GitHub repository for pull requests: auto-merge, squash only, the rulesets on main and the tags
 github REPO="como-technologies/riff":
     deploy/github.sh {{REPO}}
 

@@ -1,10 +1,9 @@
 //! `riff-server` refuses a `riff` of a version that it cannot talk to,
-//! takes a `riff` of its line, of the line before or of the other line
-//! of the bridge, and names its own build in each reply
-//! (01M3JEE7P46GWXR1BD4Q1TTSGN, 01M3MX1E65XGWDZ062PQ9YXQ5T,
-//! 01M3MX1DYY6AVDW946NR0B9T2C, 01M3MX1E1EY1M7JGNCN6FCEVQK,
-//! 01M55FCZNNZGKM4EKAXZQFTDWR). riff-server of the line 3 takes the line
-//! 1 only from 1.8.2.
+//! takes a `riff` of its line or of the line before, and names its own
+//! build in each reply (01M3JEE7P46GWXR1BD4Q1TTSGN,
+//! 01M3MX1E65XGWDZ062PQ9YXQ5T, 01M3MX1DYY6AVDW946NR0B9T2C,
+//! 01M3MX1E1EY1M7JGNCN6FCEVQK, 01M5RG6BXBQVFABA1N4NRZBMQF). The tests
+//! take the version of this build at run time.
 
 use crate::common;
 
@@ -57,14 +56,15 @@ async fn a_call_of_this_build_passes_the_check() {
 #[tokio::test]
 async fn a_riff_of_this_line_or_the_line_before_passes_the_check() {
     let (_service, url) = common::start(false, &[]).await;
-    let mut versions = vec![Semver {
-        patch: this().patch + 3,
-        ..this()
-    }];
-    // The line 1 has no line before: 0.x does not talk with it.
-    if let Some(before) = this().line_before() {
-        versions.extend([before, Semver { patch: 9, ..before }]);
-    }
+    let before = this().line_before().unwrap();
+    let versions = [
+        Semver {
+            patch: this().patch + 3,
+            ..this()
+        },
+        before,
+        Semver { patch: 9, ..before },
+    ];
     for version in versions {
         for path in CALLS {
             let (status, theirs, body) = call(&url, path, Some(&at(version))).await;
@@ -74,83 +74,18 @@ async fn a_riff_of_this_line_or_the_line_before_passes_the_check() {
     }
 }
 
-/// The bridge: riff-server of the line 1 takes a `riff` of the line 3,
-/// and riff-server of the line 3 takes a `riff` of the line 1 from 1.8.2
-/// (01M55FCZNNZGKM4EKAXZQFTDWR). This server is on one of the two lines.
+/// The version of a `riff` two lines before this server: it talks with
+/// neither.
+fn two_lines_before() -> Semver {
+    this().line_before().unwrap().line_before().unwrap()
+}
+
+/// A `riff` two lines before the server gets 409 and the step to update
+/// riff, before the call takes effect (01M5RG6BXBQVFABA1N4NRZBMQF).
 #[tokio::test]
-async fn a_riff_of_the_other_line_of_the_bridge_passes_the_check() {
+async fn a_riff_two_lines_before_is_refused_before_the_call_takes_effect() {
     let (_service, url) = common::start(false, &[]).await;
-    let others = match this().major {
-        1 => ["3.0.0", "3.2.1"],
-        3 => ["1.8.2", "1.9.0"],
-        // The bridge ends with the line 4: riff-server 4 refuses riff 1
-        // (01M55FCZNNZGKM4EKAXZQFTDWR). It takes the line 3 as the line
-        // before, in the test above.
-        4 => {
-            for version in ["1.8.2", "1.9.0"] {
-                for path in CALLS {
-                    let (status, _, body) =
-                        call(&url, path, Some(&at(version.parse().unwrap()))).await;
-                    assert_eq!(status, 409, "{version} {path}: {body}");
-                }
-            }
-            return;
-        }
-        major => panic!("riff-server {major}.x is on no line of the bridge"),
-    };
-    for version in others {
-        for path in CALLS {
-            let (status, theirs, body) =
-                call(&url, path, Some(&at(version.parse().unwrap()))).await;
-            assert_ne!(status, 409, "{version} {path}: {body}");
-            assert_eq!(theirs, VERSION, "{path}");
-        }
-    }
-}
-
-/// riff-server of the line 3 takes a `riff` of the line 1 only from
-/// 1.8.2, the first build that knows the bridge
-/// (01M55FCZNNZGKM4EKAXZQFTDWR). riff 1.8.1 refuses each reply of
-/// riff-server 3, so the server refuses its call with 409 and the step
-/// to update riff.
-#[tokio::test]
-async fn riff_server_3_refuses_a_riff_of_the_line_1_before_the_bridge() {
-    let server = at("3.0.0".parse().unwrap());
-    let (_service, url) = common::start_as(server.clone()).await;
-    for version in ["1.8.1", "1.0.0"] {
-        let old = at(version.parse().unwrap());
-        for path in CALLS {
-            let (status, theirs, body) = call(&url, path, Some(&old)).await;
-            assert_eq!(status, 409, "{version} {path}: {body}");
-            assert_eq!(theirs, server.to_string(), "{path}");
-            assert!(
-                body.contains(&old.to_string()) && body.contains(&server.to_string()),
-                "{body}"
-            );
-            assert!(
-                body.contains("riff-server 3 talks only with riff 3, 2 and 1 from 1.8.2."),
-                "{body}"
-            );
-            assert!(body.contains("Update riff on this machine"), "{body}");
-            assert!(body.contains(UPDATE_URL), "{body}");
-        }
-    }
-    for version in ["1.8.2", "1.9.0"] {
-        for path in CALLS {
-            let (status, _, body) = call(&url, path, Some(&at(version.parse().unwrap()))).await;
-            assert_ne!(status, 409, "{version} {path}: {body}");
-        }
-    }
-}
-
-/// A call that riff-server 3 refuses takes no effect: a post of riff
-/// 1.8.1 is not in the thread. The same post of riff 1.8.2 is
-/// (01M55FCZNNZGKM4EKAXZQFTDWR).
-#[tokio::test]
-async fn a_call_that_riff_server_3_refuses_takes_no_effect() {
-    let (_service, url) = common::start_as(at("3.0.0".parse().unwrap())).await;
-    let old = at("1.8.1".parse().unwrap());
-    let bridge = at("1.8.2".parse().unwrap());
+    let old = at(two_lines_before());
     let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=lead"
         .parse()
         .unwrap();
@@ -159,12 +94,13 @@ async fn a_call_that_riff_server_3_refuses_takes_no_effect() {
         me: me.clone(),
         worker: false,
     };
-    let reply = send(&url, "/v1/register", &bridge, &register).await;
+    let before = at(this().line_before().unwrap());
+    let reply = send(&url, "/v1/register", &before, &register).await;
     assert_eq!(reply.status(), 200);
     let post = |body| Post::new(&me, Some(thread.clone()), Vec::new(), body);
-    let reply = send(&url, "/v1/post", &old, &post("from 1.8.1")).await;
+    let reply = send(&url, "/v1/post", &old, &post("from two lines before")).await;
     assert_eq!(reply.status(), 409);
-    let reply = send(&url, "/v1/post", &bridge, &post("from 1.8.2")).await;
+    let reply = send(&url, "/v1/post", &before, &post("from the line before")).await;
     assert_eq!(reply.status(), 200);
     let read = Read {
         me: me.clone(),
@@ -172,14 +108,14 @@ async fn a_call_that_riff_server_3_refuses_takes_no_effect() {
         all: true,
         after: None,
     };
-    let reply: ReadReply = send(&url, "/v1/read", &bridge, &read)
+    let reply: ReadReply = send(&url, "/v1/read", &before, &read)
         .await
         .json()
         .await
         .unwrap();
     let bodies: Vec<&str> = reply.messages.iter().map(|m| m.body.as_str()).collect();
-    assert!(bodies.contains(&"from 1.8.2"), "{bodies:?}");
-    assert!(!bodies.contains(&"from 1.8.1"), "{bodies:?}");
+    assert!(bodies.contains(&"from the line before"), "{bodies:?}");
+    assert!(!bodies.contains(&"from two lines before"), "{bodies:?}");
 }
 
 /// A call of a `riff` of `build`, with `body` as JSON.
@@ -201,8 +137,7 @@ async fn send(
 #[tokio::test]
 async fn an_older_riff_is_refused_and_told_to_update_riff() {
     let (_service, url) = common::start(false, &[]).await;
-    // No line of riff-server from the line 1 takes a riff of 0.x.
-    let old = at("0.8.0".parse().unwrap());
+    let old = at(two_lines_before());
     for path in CALLS {
         let (status, theirs, body) = call(&url, path, Some(&old)).await;
         assert_eq!(status, 409, "{path}");
@@ -211,8 +146,12 @@ async fn an_older_riff_is_refused_and_told_to_update_riff() {
             body.contains(&old.to_string()) && body.contains(VERSION),
             "{body}"
         );
+        let line = this().line();
+        let before = this().line_before().unwrap().line();
+        let lines = format!("riff-server {line} talks only with riff {line} and {before}.");
+        assert!(body.contains(&lines), "{body}");
         assert!(body.contains("Update riff on this machine"), "{body}");
-        assert!(body.contains(riff_core::build::UPDATE_URL), "{body}");
+        assert!(body.contains(UPDATE_URL), "{body}");
     }
 }
 

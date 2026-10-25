@@ -84,8 +84,7 @@
 //! daemon says [`Say::Hold`]: the relay closes the stdin of `claude`, so
 //! `claude` ends after its turn. With `interrupt`, the relay first writes
 //! [`INTERRUPT`] on the stdin of `claude`: `claude` stops its turn at
-//! once (01M51KJ1V0STB4QCN4N5SBYGSP). The hello of the relay says
-//! `interrupts`, so the daemon knows that this relay can do it. The end
+//! once (01M51KJ1V0STB4QCN4N5SBYGSP, 01M5RG6C25DB49ZKM03Y93QB1F). The end
 //! of `claude` is then no exit: the relay says
 //! [`Up::Held`], and the container stays. The person runs `claude
 //! --resume ID` in the container with a terminal (`podman exec`). After
@@ -713,7 +712,6 @@ async fn connected(
         inputs: link.inputs,
         closed: link.closed,
         held: link.held.is_some(),
-        interrupts: true,
     };
     send(&mut write, &hello).await.ok()?;
     match serde_json::from_str::<Say>(&lines.next_line().await.ok()??) {
@@ -1425,7 +1423,6 @@ mod tests {
                 inputs: 1,
                 closed: true,
                 held: true,
-                interrupts: true,
             }
         );
         say(&mut write, &Say::Resume { events: 2 }).await;
@@ -1480,7 +1477,6 @@ mod tests {
                 inputs: 0,
                 closed: false,
                 held: false,
-                interrupts: true,
             }
         );
         say(&mut write, &Say::Resume { events: 0 }).await;
@@ -1528,7 +1524,6 @@ mod tests {
                 inputs: 1,
                 closed: false,
                 held: false,
-                interrupts: true,
             }
         );
         say(&mut write, &Say::Resume { events: 1 }).await;

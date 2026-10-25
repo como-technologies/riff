@@ -879,10 +879,8 @@ riff claude-token
 ```
 
 riff keeps the token in the OS keyring, under the name
-`claude setup-token`, and in no file. If riff 3.3.0 kept the token in
-`~/.local/share/riff/daemon/claude-token`, `riff claude-token`
-removes that file and says so. The token goes to no riff-server, no
-message, no log and no clone. An agent session cannot run `riff
+`claude setup-token`, and in no file. The token goes to no riff-server,
+no message, no log and no clone. An agent session cannot run `riff
 claude-token`: it refuses when stdin is not a terminal.
 
 ```mermaid
@@ -2702,10 +2700,9 @@ PATH | TEXT | REASON
 - TEXT is a part of a line of the file. It holds the version name.
 - REASON says why the name stays.
 
-The allowed kinds are a rule between versions with its tests (the
-builds that talk), and the code that removes what a named old release
-left on a machine, with its texts and how-tos. The check fails on a
-line of the list that allows no name. Remove that line.
+The one allowed kind is a rule between versions with its real text (the
+builds that talk). The check fails on a line of the list that allows
+no name. Remove that line.
 
 ## Check a pull request on GitHub
 
@@ -2777,13 +2774,10 @@ just github
 ```
 
 It turns on auto-merge and squash merge only, and makes or updates
-three rulesets:
+two rulesets:
 
 - `main`: a change needs a pull request and the checks `Gate`,
   `Hygiene` and `riff/verify`.
-- `release-branches` on the branches `release/**`: a change needs a
-  pull request and the checks `Gate`, `Hygiene` and `riff/verify`. See
-  [Make a patch of an older release](#make-a-patch-of-an-older-release).
 - `releases` on the tags `v*`: only the repository admin role can
   create, move or delete a release tag.
 
@@ -4326,7 +4320,6 @@ script, or a raw line of `gh` or `git`, for a release. See
 
 Pick the version with
 [The test for each release](how-it-works.md#the-test-for-each-release).
-On the line 1.x, a release that the test makes a major is a minor.
 
 #### Cut the release pull request
 
@@ -4576,104 +4569,6 @@ fails. The pause is only for the deploy: `riff release check` resumes
 the riff. When no run waits, riff says so and changes nothing. When the
 approval fails, the riff stays paused: run
 `riff release approve v3.3.0` again, or `riff resume --riff`.
-
-### Make a patch of an older release
-
-`main` holds the newest release line. A patch of an older line goes on
-the branch `release/MAJOR.x` of that line, for example `release/1.x`
-when `main` holds 2.x. The branch starts at the last release tag of
-the line. CI runs the `Gate` and `Hygiene` on it as on `main`. A push
-to the branch does not deploy.
-
-Make the branch one time, from the last release tag of the line. Then
-run `just github` in a checkout of `main`, never of the release
-branch. The `deploy/github.sh` of `main` sets the ruleset
-`release-branches`. An older copy on the release branch can remove a
-check, for example `riff/verify`:
-
-```sh
-git push origin 'v1.3.0^{commit}:refs/heads/release/1.x'
-git fetch origin
-git switch --detach origin/main
-just github
-```
-
-Each change goes in by a pull request to the branch, as on `main`.
-The pull request waits for its verify, as one to `main` does: it
-merges only when the checks `Gate`, `Hygiene` and `riff/verify` pass.
-Open it with `riff pr open`, not with `gh pr create`: it sets the
-wave and the trailers that `Hygiene` needs, and turns on
-auto-merge at once. `--base` names the branch. `--issue` names the
-issue of the change; a session with the claim `issue-N` needs no
-`--issue`:
-
-```sh
-git fetch origin
-git switch --no-track -c my-fix origin/release/1.x
-git push -u origin HEAD
-riff pr open --base release/1.x --title "My fix" --file summary.md --issue 1203
-```
-
-`just check` compares your branch with the last release tag of the
-line: the fork point of your branch and `origin/main`. So it runs the
-tests of each crate that changed on the line.
-
-`riff release cut` and `riff release publish` work only from
-`origin/main`. Make a patch of an older line by hand, with
-`release/1.x` in place of `origin/main`. Set the version on a branch
-of the line:
-
-```sh
-git switch --no-track -c release-v1.3.1 origin/release/1.x
-sed -i 's/^version = ".*"/version = "1.3.1"/' Cargo.toml
-cargo update --workspace
-git commit -am "Release v1.3.1"
-git push -u origin HEAD
-riff pr open --base release/1.x --title "Release v1.3.1" --file pr.md --issue 1203 --refs
-gh pr edit --add-label release
-```
-
-The release pull request has the issue and the wave of the patch, as
-each pull request has. `--refs` links with `Refs`, so the merge leaves
-the issue open. The label `release` keeps the pull request out of the
-notes.
-
-After the merge, write the notes in `notes.md`: the level line of the
-pull request. Tag the merge commit on the branch. Name the last
-tag of the line for the notes. The release of the line that the
-shared riff runs is the latest release on GitHub. This example is a
-patch of that line, so it is the latest:
-
-```sh
-git fetch origin
-git tag v1.3.1 origin/release/1.x
-git push origin v1.3.1
-gh release create v1.3.1 --verify-tag --title v1.3.1 --notes-file notes.md --generate-notes --notes-start-tag v1.3.0 --latest
-```
-
-A patch of a line that the shared riff does not run is not the latest:
-use `--latest=false`.
-
-The tag deploys the patch as each release tag does.
-
-### Retire a release line
-
-The GitHub releases of a retired line stay normal releases. Do not make
-them prereleases, and do not change their notes. The line 1.x retired
-when the line 3 began (#961), and its releases are normal releases.
-
-`riff update` installs the release that GitHub marks Latest (see
-[Releases](how-it-works.md#releases)). The first release of the new
-line becomes Latest, as each new release does. A patch of the retired
-line is not the latest: see
-[Make a patch of an older release](#make-a-patch-of-an-older-release).
-
-Check that GitHub marks the release of the line that the shared riff
-runs Latest:
-
-```sh
-gh release list --repo como-technologies/riff
-```
 
 ### Deploy the shared server at the end of a wave
 

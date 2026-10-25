@@ -1,51 +1,10 @@
 # Each use of a version name of riff that must stay: PATH | TEXT | REASON.
 # See "Check the version names" in the book.
 #
-# The kinds that stay:
-# - a rule between versions, and its tests: the builds that talk
-# - the code that removes what a named old release left on a machine,
-#   with its texts and how-tos
+# The kind that stays: a rule between versions, with its real text. The
+# sample builds in it are data, not a release of riff.
 
 # A rule between versions: the builds that talk.
-crates/riff-core/src/build.rs | riff 1.8.1 | the rule between versions: a sample build that the server refuses
-crates/riff-core/src/build.rs | riff-server 3 | the rule between versions: a sample server
-crates/riff-core/src/build.rs | riff-server 0.4 talks only with riff 0.4 | the rule between versions: the real text of the refusal
-crates/riff-core/src/build.rs | riff-server 0.5 will refuse riff 0.3 | the rule between versions: the real text of the note
-crates/riff-core/tests/versions.rs | riff-server 0.5 will refuse riff 0.3 | the test of the rule between versions
-crates/riff-core/tests/versions.rs | riff-server 0.4 talks only with riff 0.4 | the test of the rule between versions
-crates/riff-core/tests/versions.rs | riff 1.8.1 | the test of the rule between versions
-crates/riff-core/tests/versions.rs | riff-server 3 talks only with riff 3 | the test of the rule between versions
-crates/riff-core/tests/versions.rs | riff-server 3 | the test of the rule between versions
-crates/riff-core/tests/versions.rs | riff-server 1 talks only with riff 1 | the test of the rule between versions
-crates/riff-core/tests/versions.rs | riff-server 4 will refuse riff 1 | the test of the rule between versions
-crates/riff-server/tests/build.rs | riff-server 4 refuses riff 1 | the test of the rule between versions
-crates/riff-server/tests/build.rs | riff 1.8.1 | the test of the rule between versions
-crates/riff-server/tests/build.rs | riff-server 3 talks only with riff 3 | the test of the rule between versions
-crates/riff-server/tests/build.rs | riff-server 3 | the test of the rule between versions
-crates/riff-server/tests/build.rs | riff 1.8.2 | the test of the rule between versions
-crates/riff/tests/build.rs | riff-server 4 will refuse riff 1 | the test of the rule between versions
-crates/riff/tests/build.rs | riff 4 refuses a server | the test of the rule between versions
 crates/riff/src/lifecycle.rs | riff-server 0.4.1 929605821e54 | a sample of the version line that the rule between versions reads
-docs/src/how-it-works.md | riff-server 0.4.0: | the rule between versions: a sample build in the diagram
 docs/src/how-it-works.md | riff-server 0.5 will refuse riff 0.3 | the rule between versions: the real text of the note
 docs/src/how-it-works.md | riff-server 0.4 talks only with riff 0.4 | the rule between versions: the real text of the refusal
-
-# What riff 3.3.0 left on a machine: the file of the token, which riff claude-token removes.
-crates/riff/src/claude_token.rs | riff 3.3.0 | the code that removes the file of riff 3.3.0
-crates/riff/src/main.rs | file of riff 3.3.0 | the help of riff claude-token, which removes the file of riff 3.3.0
-crates/riff/src/text.rs | file of riff 3.3.0 | the text of riff claude-token, which removes the file of riff 3.3.0
-docs/src/development.md | riff 3.3.0 kept the token | the how-to of riff claude-token, which removes the file of riff 3.3.0
-
-# What riff 3 left on a machine: its plugin for Claude Code, which riff init removes.
-crates/riff/src/old_plugin.rs | riff 3 | the code that removes the plugin of riff 3
-crates/riff/src/first_run.rs | plugin of riff 3 | the step of riff init that removes the plugin of riff 3
-crates/riff/src/update_steps.rs | plugin of riff 3 | the step of the update that removes the plugin of riff 3
-crates/riff/src/text.rs | plugin of riff 3 | the texts of the step that removes the plugin of riff 3
-crates/riff/tests/first_run.rs | plugin of riff 3 | the test of the step that removes the plugin of riff 3
-crates/riff/tests/first_run.rs | riff 3 and keeps it | the test of the step that removes the plugin of riff 3
-crates/riff/tests/start_a_riff.rs | plugin of riff 3 | the test of the step that removes the plugin of riff 3
-docs/src/how-it-works.md | plugin of riff 3 | the how-to of the step that removes the plugin of riff 3
-docs/src/start-a-riff.md | plugin of riff 3 | the how-to of the step that removes the plugin of riff 3
-docs/src/start-a-riff.md | riff 3 put a plugin | the how-to of the step that removes the plugin of riff 3
-docs/src/join-a-riff.md | Update from riff 3 | the how-to of the update from riff 3
-docs/src/join-a-riff.md | update of riff 3 stops | the how-to of the update from riff 3

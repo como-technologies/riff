@@ -825,7 +825,7 @@ impl Rule {
 /// use riff::repo_setup::rules_path;
 ///
 /// assert_eq!(rules_path("{owner}/{repo}", "main"), "repos/{owner}/{repo}/rules/branches/main?per_page=100");
-/// assert_eq!(rules_path("acme/app", "release/2.x"), "repos/acme/app/rules/branches/release%2F2.x?per_page=100");
+/// assert_eq!(rules_path("acme/app", "feature/x"), "repos/acme/app/rules/branches/feature%2Fx?per_page=100");
 /// ```
 pub fn rules_path(repo: &str, branch: &str) -> String {
     format!(
@@ -1820,8 +1820,8 @@ mod tests {
         let script = r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/calls"
 case "$*" in
-  'api repos/acme/app') printf '%s' '{"default_branch":"release/2.x"}' ;;
-  'api repos/acme/app/rules/branches/release%2F2.x?per_page=100')
+  'api repos/acme/app') printf '%s' '{"default_branch":"feature/x"}' ;;
+  'api repos/acme/app/rules/branches/feature%2Fx?per_page=100')
     printf '%s' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"checks / docs"},{"context":"riff/verify"}]}}]' ;;
   *) echo "gh: no such call: $*" >&2; exit 1 ;;
 esac
@@ -1886,7 +1886,7 @@ esac
         );
         assert_eq!(body_of("HTTP/2.0 200 OK\n\n{}"), "{}");
         assert_eq!(body_of("{}"), "{}");
-        assert_eq!(ref_of("release/2.x"), "release/2.x");
+        assert_eq!(ref_of("feature/x"), "feature/x");
         assert_eq!(ref_of("a b"), "a%20b");
     }
 }

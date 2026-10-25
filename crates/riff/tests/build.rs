@@ -32,19 +32,16 @@ fn at(version: Semver) -> Build {
     }
 }
 
-/// A server of the line before this riff, or of 0.8 for the line 1:
-/// this riff is newer, and cannot talk to it.
+/// A server of the line before this riff: this riff is newer, and
+/// cannot talk to it.
 fn older() -> Build {
-    at(this()
-        .line_before()
-        .unwrap_or_else(|| "0.8.0".parse().unwrap()))
+    at(this().line_before().unwrap())
 }
 
-/// A server three lines after this riff: it refuses this riff. Two
-/// lines after the line 1 is the line 3, which talks with the line 1
-/// (01M55FCZNNZGKM4EKAXZQFTDWR).
+/// A server two lines after this riff: it refuses this riff, which is
+/// two lines before it (01M5RG6BXBQVFABA1N4NRZBMQF).
 fn much_newer() -> Build {
-    at(this().line_after().line_after().line_after())
+    at(this().line_after().line_after())
 }
 
 /// A layer that names `build` in each reply, or no build.
@@ -275,26 +272,6 @@ async fn a_server_of_the_next_line_works_with_the_update_note() {
     works_and_notes_once(theirs, &note).await;
 }
 
-/// 01M55FCZNNZGKM4EKAXZQFTDWR: a server of the other line of the
-/// bridge talks with this riff. The note names the older side.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_server_of_the_other_line_of_the_bridge_works_with_the_note() {
-    let (version, step) = match this().major {
-        1 => (
-            "3.0.0",
-            "riff-server 4 will refuse riff 1. Run riff update soon.",
-        ),
-        3 => ("1.8.2", "Update riff-server when you can."),
-        // The bridge ends with the line 4: riff 4 refuses a server of
-        // the line 3 or 1 (01M55FCZNNZGKM4EKAXZQFTDWR).
-        4 => return,
-        major => panic!("riff {major}.x is on no line of the bridge"),
-    };
-    let theirs = at(version.parse().unwrap());
-    let note = format!("riff-server runs build {theirs}; this riff runs build {VERSION}. {step}");
-    works_and_notes_once(theirs, &note).await;
-}
-
 /// Runs `cmd`, which writes an executable file. This process never
 /// holds a write fd of the file. So a fork of a parallel test cannot
 /// inherit one, and an exec of the file cannot fail with ETXTBSY.
@@ -429,9 +406,8 @@ fn the_book_has_the_part_that_the_error_names() {
 /// The book says what each level of a version means, and the test for
 /// each release (01M3N73E7YTHFX2J2KXT7017QX to
 /// 01M3N73EEQ4HPCPPAGCAHH3S6B). The minor names the line before, as
-/// the server does (01M3MX1E1EY1M7JGNCN6FCEVQK). The major links to the
-/// level of the line 1.x, and says its last minor and the next major
-/// (01M53N7KN4QKZ70W2GNQ3VQWQ9, 01M53NGVTE186GE5E48E68N0BY).
+/// the server does (01M3MX1E1EY1M7JGNCN6FCEVQK). The major says what a
+/// major promises.
 #[test]
 fn the_book_says_what_patch_minor_and_major_mean() {
     let book = std::fs::read_to_string(
@@ -465,20 +441,13 @@ fn the_book_says_what_patch_minor_and_major_mean() {
     let major = &part[part.find("### Major\n").unwrap()..];
     let major = &major[..major[4..].find("\n### ").unwrap() + 4];
     assert!(
-        major.contains(
-            "The line\n1.x takes no major: see [Make a release](development.md#make-a-release)."
-        ),
-        "{major}"
-    );
-    assert!(
-        major.contains("1.8.x is the last minor release of 1.x. The next major is 3.0.0"),
+        major.contains("A major version promises that the wire and the behavior stay stable."),
         "{major}"
     );
 }
 
 /// The notes and the error in the book are the real text
-/// (01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MX1E65XGWDZ062PQ9YXQ5T,
-/// 01M55FCZNNZGKM4EKAXZQFTDWR).
+/// (01M3MX1E8M9TKBN90P4DYKH3H8, 01M3MX1E65XGWDZ062PQ9YXQ5T).
 #[test]
 fn the_book_shows_the_real_notes_and_error() {
     use riff_core::build::{Mismatch, other_build};
@@ -499,10 +468,6 @@ fn the_book_shows_the_real_notes_and_error() {
             &b("0.4.0 7213825ab1c2 2026-09-27T20:10:44Z"),
         ),
         other_build(&b("0.3.2 929605821e54 2026-09-20T22:03:01Z"), &server),
-        other_build(
-            &b("3.0.0 929605821e54 2026-10-18T22:03:01Z"),
-            &b("1.8.2 7213825ab1c2 2026-10-17T20:10:44Z"),
-        ),
         Mismatch {
             riff: Some(b("0.2.0 929605821e54 2026-09-27T22:03:01Z")),
             server: Some(b("0.4.0 7213825ab1c2 2026-09-28T20:10:44Z")),

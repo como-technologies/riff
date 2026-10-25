@@ -272,7 +272,7 @@ fn fake_gh(bin: &Path) {
 /// [`fake_gh`] with the list `open` of the open milestones.
 fn fake_gh_with(bin: &Path, open: &str) {
     let made = r#"{"number":34,"title":"Wave 29","open_issues":0,"closed_issues":0}"#;
-    let renamed = r#"{"number":33,"title":"Wave 28: 1.x, fixes that slow the work","open_issues":2,"closed_issues":0}"#;
+    let renamed = r#"{"number":33,"title":"Wave 28: cloud, fixes that slow the work","open_issues":2,"closed_issues":0}"#;
     let ended = r#"{"number":32,"title":"Wave 27: Cloud","open_issues":0,"closed_issues":9}"#;
     let path = bin.join("gh");
     isolated::write_program(
@@ -393,13 +393,13 @@ fn riff_wave_rename_gives_the_wave_a_new_name_and_keeps_its_number() {
         &env,
         bin.path(),
         &[
-            "rename", "28", "1.x,", "fixes", "that", "slow", "the", "work",
+            "rename", "28", "cloud,", "fixes", "that", "slow", "the", "work",
         ],
     );
     assert!(renamed.status.success(), "{}", text(&renamed));
     assert_eq!(
         text(&renamed),
-        "Renamed the wave Wave 28 to Wave 28: 1.x, fixes that slow the work. Each pull request \
+        "Renamed the wave Wave 28 to Wave 28: cloud, fixes that slow the work. Each pull request \
          names it `Milestone: Wave 28`, so no pull request changes.\n"
     );
 
@@ -416,7 +416,7 @@ fn riff_wave_rename_gives_the_wave_a_new_name_and_keeps_its_number() {
     assert_eq!(
         writes,
         [
-            "gh api -X PATCH repos/{owner}/{repo}/milestones/33 -f title=Wave 28: 1.x, fixes that \
+            "gh api -X PATCH repos/{owner}/{repo}/milestones/33 -f title=Wave 28: cloud, fixes that \
           slow the work"
         ]
     );

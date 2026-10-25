@@ -669,13 +669,12 @@ enum Command {
     /// Run claude setup-token on this machine first, and sign in at the
     /// browser. Then run riff claude-token in a terminal, and paste the
     /// token. riff reads it from stdin with no echo, and keeps it in the
-    /// OS keyring, in no file. It removes the old file of riff 3.3.0.
-    /// The daemon gives each new
-    /// container session the token in CLAUDE_CODE_OAUTH_TOKEN, and binds
-    /// no sign-in file of claude. So a session starts also when the
-    /// sign-in of claude on this machine ends soon. Run it again for a
-    /// new token. It refuses when stdin is not a terminal: an agent
-    /// session cannot run it.
+    /// OS keyring, in no file. The daemon gives each new container
+    /// session the token in CLAUDE_CODE_OAUTH_TOKEN, and binds no sign-in
+    /// file of claude. So a session starts also when the sign-in of
+    /// claude on this machine ends soon. Run it again for a new token. It
+    /// refuses when stdin is not a terminal: an agent session cannot run
+    /// it.
     ClaudeToken,
     /// Print the session image of this repository
     ///
@@ -996,10 +995,6 @@ enum Pr {
         /// The issue. The default is the claim issue-N of this session.
         #[arg(long)]
         issue: Option<u64>,
-        /// The branch to merge into, for example release/1.x. The default
-        /// is the default branch of the repository.
-        #[arg(long)]
-        base: Option<String>,
     },
     /// Wait for the merge of a pull request
     ///
@@ -2125,7 +2120,6 @@ async fn main() -> Result<()> {
                     file,
                     refs,
                     issue,
-                    base,
                 },
         } => {
             let issue = match issue {
@@ -2141,14 +2135,7 @@ async fn main() -> Result<()> {
                     .with_context(|| format!("cannot read {}", file.display()))?,
                 None => String::new(),
             };
-            let (number, url) = pr::open(
-                &pr::Gh::default(),
-                &title,
-                &summary,
-                issue,
-                refs,
-                base.as_deref(),
-            )?;
+            let (number, url) = pr::open(&pr::Gh::default(), &title, &summary, issue, refs)?;
             println!("{}", text::pr_opened(number, &url));
             riff::look::tell_fact(&api, &me, issue, number, PullState::Asked).await;
         }

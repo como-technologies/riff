@@ -501,7 +501,6 @@ async fn riff_update_check_shows_each_step_and_changes_nothing() {
             "not in step  the session image of this folder: podman does not have {IMAGE}. Fix: \
              podman pull {IMAGE}"
         ),
-        "in step  the plugin of riff 3: it is not here".to_owned(),
         "in step  podman: podman version 5.7.0".to_owned(),
         format!(
             "needs you  the init of podman: {no_init}. Fix: {}",
@@ -594,61 +593,6 @@ async fn riff_init_names_each_wide_rule_and_removes_none_with_no_yes() {
     assert_eq!(before(&machine.settings()), user_text);
     assert_eq!(before(&local), local_text);
     assert!(!machine.unit().exists());
-}
-
-/// 01M5JFF7TAVA87TMJXK25HDJ19: `riff init --check` names the plugin of
-/// riff 3 and keeps it. `riff init` removes the folder and its keys in
-/// the user settings, also when a check fails, and keeps each other key.
-#[tokio::test]
-async fn riff_init_removes_the_plugin_of_riff_3() {
-    let machine = Machine::new();
-    let plugin = machine.env.home().join(".local/share/riff/claude-plugin");
-    std::fs::create_dir_all(plugin.join("riff/hooks")).unwrap();
-    machine.write_settings(
-        r#"{"enabledPlugins":{"riff@riff":true},"extraKnownMarketplaces":{"riff":{}},"statusLine":{"type":"command","command":"riff statusline"},"theme":"auto"}"#,
-    );
-    let named = format!(
-        "The plugin of riff 3 is still here. riff has no plugin now, so each of its hooks fails in \
-         Claude Code:\n  {}\n  {}: enabledPlugins.riff@riff, extraKnownMarketplaces.riff, \
-         statusLine\n",
-        plugin.display(),
-        machine.settings().display()
-    );
-
-    let out = machine.init(&machine.repo, &["--check"]).await;
-    let stdout = text(&out.stdout);
-    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
-    assert!(stdout.contains(&named), "{named}\nnot in\n{stdout}");
-    assert!(
-        stdout.contains(
-            "riff removed nothing: --check. To remove the plugin of riff 3, run riff init.\n"
-        ),
-        "{stdout}"
-    );
-    assert!(plugin.exists());
-
-    // podman fails, so riff stops before the daemon.
-    std::fs::write(machine.bin.join("no-podman"), "").unwrap();
-    let out = machine.init(&machine.repo, &[]).await;
-    let stdout = text(&out.stdout);
-    assert_eq!(out.status.code(), Some(1), "{stdout}");
-    assert!(stdout.contains(&named), "{stdout}");
-    assert!(
-        stdout.contains("riff removed the plugin of riff 3.\n"),
-        "{stdout}"
-    );
-    assert!(!plugin.exists());
-    assert_eq!(
-        std::fs::read_to_string(machine.settings()).unwrap(),
-        "{\n  \"theme\": \"auto\"\n}\n"
-    );
-
-    let out = machine.init(&machine.repo, &[]).await;
-    assert!(
-        !text(&out.stdout).contains("plugin of riff 3"),
-        "{}",
-        text(&out.stdout)
-    );
 }
 
 /// The fake forge `tests/fake/forge` as the `gh` of the machine: it
@@ -1300,7 +1244,6 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
     assert_eq!(
         init,
         [
-            "riff init",
             "riff init",
             "riff init",
             "riff init --yes",

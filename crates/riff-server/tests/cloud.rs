@@ -222,30 +222,22 @@ fn off(mut ctx: Ctx) -> Ctx {
     ctx
 }
 
-/// 01M4YJ6KGBPTCSVMFQCDKACZPV: CI and Hygiene run on each push and
-/// each pull request of `main` and of each branch `release/**`.
+/// 01M5RG6BZQC8T6SZ8NX9W8TT5M: CI and Hygiene run on each push to
+/// `main` and on each pull request to `main`, and on no other branch.
 #[test]
-fn ci_runs_on_main_and_on_the_release_branches() {
+fn ci_runs_on_main_only() {
     let (on, _) = ci_parts();
     let push = on.split_once("\n  push:\n").unwrap().1;
     let pull = on.split_once("\n  pull_request:\n").unwrap().1;
     for part in [push, pull] {
-        assert!(
-            part.trim_start()
-                .starts_with("branches: [main, \"release/**\"]"),
-            "{on}"
-        );
+        assert!(part.trim_start().starts_with("branches: [main]"), "{on}");
     }
     let hygiene = fs::read_to_string(deploy().join("../.github/workflows/hygiene.yml")).unwrap();
     let on = hygiene.split_once("\npermissions:").unwrap().0;
     let pull = on.split_once("\n  pull_request:\n").unwrap().1;
     let push = on.split_once("\n  push:\n").unwrap().1;
     for part in [pull, push] {
-        assert!(
-            part.trim_start()
-                .starts_with("branches: [main, \"release/**\"]"),
-            "{on}"
-        );
+        assert!(part.trim_start().starts_with("branches: [main]"), "{on}");
     }
 }
 
@@ -268,11 +260,6 @@ fn a_release_tag_or_a_run_by_hand_deploys() {
         for release in ["success", "skipped", "failure"] {
             let ctx = push("refs/heads/main", gate, release);
             assert!(!deploys(&ctx), "a push to main deploys: {ctx:?}");
-            let ctx = push("refs/heads/release/1.x", gate, release);
-            assert!(
-                !deploys(&ctx),
-                "a push to a release branch deploys: {ctx:?}"
-            );
         }
     }
     // A tag that is not vX.Y.Z fails its Release check.
@@ -387,10 +374,6 @@ fn each_push_to_main_deploys_the_stage_and_runs_the_smoke_test() {
         assert!(!runs("stage", &stage_push("refs/heads/main", gate)));
     }
     assert!(!runs("stage", &stage_push("refs/heads/other", "success")));
-    assert!(!runs(
-        "stage",
-        &stage_push("refs/heads/release/1.x", "success")
-    ));
     assert!(!runs("stage", &stage_push("refs/tags/v1.2.0", "success")));
     let mut off = stage_push("refs/heads/main", "success");
     off.retain(|(key, _)| *key != "vars.STAGE_DEPLOY");
@@ -459,9 +442,7 @@ fn the_book_deploys_a_release_again() {
 /// (01M3N73AW2J3TVSZWFJ88A91PG, 01M58B0HZYMAK1B2AJMWKHCXG0). The pull
 /// request states the level, and its body gives the notes, with what
 /// each person runs (01M3N73EGY4NQDQQP8Y185E9VZ). GitHub generates the
-/// rest of the notes (01M3NB3EWE2V9PCTMNTZAKEXMA). A release of the
-/// line 1.x that the test makes a major is a minor
-/// (01M53N7KN4QKZ70W2GNQ3VQWQ9).
+/// rest of the notes (01M3NB3EWE2V9PCTMNTZAKEXMA).
 #[test]
 fn the_book_makes_a_release() {
     let page = fs::read_to_string(deploy().join("../docs/src/development.md")).unwrap();
@@ -470,7 +451,6 @@ fn the_book_makes_a_release() {
     for text in [
         "The lead makes the release",
         "(how-it-works.md#the-test-for-each-release)",
-        "\nOn the line 1.x, a release that the test makes a major is a minor.\n",
         "the level line",
         "the commands that each\nperson runs",
         "`riff update --tag v3.3.0`",

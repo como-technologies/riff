@@ -31,9 +31,8 @@
 //! - PATH is the path of the file from ROOT.
 //! - TEXT is a part of a line of that file. It holds the version name.
 //!   The line is allowed for each name in TEXT.
-//! - REASON says why the name stays. The allowed kinds: a rule between
-//!   versions and its tests, and the code that removes what a named old
-//!   release left on a machine, with its texts and how-tos.
+//! - REASON says why the name stays. The one allowed kind: a rule between
+//!   versions, with its real text.
 //!
 //! A line of the list that allows nothing is an error: the list holds
 //! no old entry. A line that starts with `#` is a comment.
@@ -371,7 +370,8 @@ mod tests {
         assert!(found(&format!("{}x", riff("1"))).is_empty());
         assert!(found(&format!("{}_a", riff("1"))).is_empty());
         assert!(found("riff 1a, riff  2, riff, riff-core 3, riff-3.md").is_empty());
-        assert!(found("myriff 3, the-riff 3").is_empty());
+        let (a, b) = (riff("3"), riff("3"));
+        assert!(found(&format!("my{a}, the-{b}")).is_empty());
     }
 
     #[test]

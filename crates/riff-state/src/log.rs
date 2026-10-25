@@ -559,7 +559,7 @@ pub async fn replay_after(store: &dyn Store, after: u64) -> Result<Replayed, Sto
 
 /// The kinds of record of a later release line that this build drops
 /// (01M4YNCECQDQR3Z8QTGQ1PW3WV). `forge_allowed` is the forge state of
-/// 2.0: the 1.x instance does not keep it. A replay drops such a record
+/// a later line: the build before it does not keep it. A replay drops such a record
 /// with no warning, and it does not count as a skipped record.
 ///
 /// ```

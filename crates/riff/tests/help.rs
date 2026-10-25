@@ -178,55 +178,6 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
     assert!(!help.contains("--forge"), "{help}");
 }
 
-/// 01M56N6KVZRGT3W7CEK05DHR57: riff has no command that retires a
-/// release line. The help lists no `retire`, and `riff retire` fails.
-#[test]
-fn riff_has_no_command_that_retires_a_line() {
-    let help = riff(&["--help"]);
-    assert!(
-        !help.lines().any(|l| l.trim_start().starts_with("retire ")),
-        "{help}"
-    );
-    for args in [
-        &["retire", "1.x", "--issue", "961"][..],
-        &["retire", "--help"],
-        &["help", "retire"],
-    ] {
-        let out = Isolated::shared().riff().args(args).output().unwrap();
-        assert!(!out.status.success(), "riff {args:?}: {out:?}");
-        let stderr = String::from_utf8(out.stderr).unwrap();
-        assert!(
-            stderr.contains("unrecognized subcommand 'retire'"),
-            "riff {args:?}: {stderr}"
-        );
-    }
-}
-
-/// 01M56N6KSMFJ46PW99Z80GF9DM, 01M56N6KVZRGT3W7CEK05DHR57: the book
-/// names no `riff retire`. The how-to "Retire a release line" says that
-/// the releases of a retired line stay normal releases, and edits no
-/// release.
-#[test]
-fn the_book_keeps_the_releases_of_a_retired_line_normal() {
-    let page = book::page("development.md");
-    assert!(!page.contains("riff retire"));
-    let start = page
-        .find("\n### Retire a release line\n")
-        .expect("development.md has \"### Retire a release line\"");
-    let rest = &page[start + 1..];
-    let howto = rest[4..].find("\n##").map_or(rest, |end| &rest[..end + 4]);
-    // The words, with no line breaks of the wrap.
-    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        words(howto).contains("The GitHub releases of a retired line stay normal releases."),
-        "{howto}"
-    );
-    assert_eq!(
-        book::commands_in(howto),
-        ["gh release list --repo como-technologies/riff"]
-    );
-}
-
 /// 01M53NGW6F5HP1DZ9QRGP50MGT, 01M57D4FZGCVE62AP4MVG59HM4,
 /// 01M53NGVE839TRH7XB7CDPQNZE: `riff view` shows the sessions of this
 /// machine, or with `--host` of another host through riff-server, and

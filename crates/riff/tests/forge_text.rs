@@ -127,7 +127,7 @@ fn each_reply_of_the_forge_that_riff_reads_has_no_control_character() {
     // into the body of the pull request. It is refused, and nothing is
     // sent.
     std::fs::remove_file(bin.path().join("body")).unwrap();
-    let refused = riff::pr::open(&gh, "Fix it", "Fix it.\n", 7, false, None).unwrap_err();
+    let refused = riff::pr::open(&gh, "Fix it", "Fix it.\n", 7, false).unwrap_err();
     let refused = format!("{refused:#}");
     clean(&refused);
     assert!(refused.contains("has a control character"), "{refused}");
