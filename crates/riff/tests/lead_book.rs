@@ -84,7 +84,8 @@ fn no_other_page_repeats_the_rules_of_the_lead() {
     for entry in fs::read_dir(book()).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        if !name.ends_with(".md") || name == "requirements.md" {
+        if !name.ends_with(".md") || name == "requirements.md" || name == "requirements-history.md"
+        {
             continue;
         }
         let mut text = read(&name);
@@ -162,13 +163,15 @@ fn part(page: &str, heading: &str) -> String {
     rest[..end].to_owned()
 }
 
-/// The names of the book pages, `requirements.md` apart: it keeps the
-/// superseded decisions.
+/// The names of the book pages, `requirements.md` and its history apart:
+/// they keep the superseded decisions.
 fn pages() -> Vec<String> {
     let mut names: Vec<String> = fs::read_dir(book())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| name.ends_with(".md") && name != "requirements.md")
+        .filter(|name| {
+            name.ends_with(".md") && name != "requirements.md" && name != "requirements-history.md"
+        })
         .collect();
     names.sort();
     names

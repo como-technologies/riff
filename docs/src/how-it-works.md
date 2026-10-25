@@ -126,7 +126,8 @@ container,
 [#707](https://github.com/como-technologies/riff/issues/699#issuecomment-6186136739),
 and the result of the spike of the claims,
 [#708](https://github.com/como-technologies/riff/issues/699#issuecomment-6184805987).
-The [requirements for sessions in containers](requirements.md#riff-30)
+The
+[requirements for sessions in containers](requirements.md#sessions-in-containers)
 hold each decision of the design.
 
 | What sessions share | How riff keeps them apart | What a session can still do to another |

@@ -15,3 +15,7 @@
 - [Design: the UIs of riff](riff-uis.md)
 - [Requirements](requirements.md)
 - [Development](development.md)
+
+# History
+
+- [Requirements history](requirements-history.md)

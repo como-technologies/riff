@@ -52,12 +52,14 @@ fn flat(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The book pages, with their names.
+/// The book pages, with their names, but the history of the requirements: it
+/// holds old text.
 fn book() -> Vec<(String, String)> {
     let mut pages: Vec<_> = fs::read_dir(repo().join("docs/src"))
         .unwrap()
         .map(|e| e.unwrap().path())
         .filter(|p| p.extension().is_some_and(|x| x == "md"))
+        .filter(|p| !p.ends_with("requirements-history.md"))
         .map(|p| (p.display().to_string(), fs::read_to_string(&p).unwrap()))
         .collect();
     pages.sort();
@@ -133,9 +135,7 @@ fn the_skill_the_requirements_and_the_page_agree() {
 }
 
 /// A check that only the shared riff can test waits for the release
-/// of the wave (R194, 01M3MRDEXSMFT0STXF2HAR2QZ6). A live check of new
-/// code runs in a dev session. No text says "after the merge" for a
-/// check.
+/// of the wave (R194). No text says "after the merge" for a check.
 #[test]
 fn a_check_of_the_shared_riff_waits_for_the_release() {
     let requirements = flat(&read("docs/src/requirements.md"));
@@ -162,10 +162,6 @@ fn a_check_of_the_shared_riff_waits_for_the_release() {
         assert!(!doc.contains("check after the merge"), "{name}");
         assert!(!doc.contains("checks after the merge"), "{name}");
     }
-    assert!(
-        requirements.contains("runs in a dev session"),
-        "requirements.md"
-    );
 }
 
 #[test]

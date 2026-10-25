@@ -19,6 +19,13 @@ The book in `docs/src/` holds the requirements and the big picture.
   the ID, wraps the text and writes it after the last requirement of
   the section. Never edit `requirements.md` by hand to add one. Never
   renumber a requirement.
+- `requirements.md` holds the rules of today. A requirement that a new
+  one supersedes in full moves, in the same change, to
+  `requirements-history.md`: same section, same ID, same text. A
+  requirement that a new one supersedes in part stays, and its text
+  keeps only the part that holds. `just reqs` fails on a requirement
+  in `requirements.md` that says "Superseded by" or "Replaced by" with
+  no "in part".
 - No users yet. Change any interface freely. No compatibility shims.
 - Work on a branch. Merge by pull request with auto-merge. Never push
   to `main`.

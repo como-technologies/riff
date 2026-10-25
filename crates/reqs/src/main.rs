@@ -1,6 +1,7 @@
 //! `reqs rid` prints a new requirement ID. `reqs req SECTION TEXT` adds a
-//! requirement. `reqs check [ROOT]` checks
-//! the requirement IDs of a repository. See the library docs.
+//! requirement. `reqs check [ROOT]` checks the requirement IDs of a
+//! repository, on the page of the rules of today and on the history page.
+//! See the library docs.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -63,13 +64,21 @@ fn run_check(root: &Path) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let history = match std::fs::read_to_string(root.join(reqs::HISTORY)) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            eprintln!("error: {}: {e}", reqs::HISTORY);
+            return ExitCode::FAILURE;
+        }
+    };
     let mut files = Vec::new();
     for start in ROOTS {
         collect(&root.join(start), &mut files);
     }
     let texts: Vec<(String, String)> = files
         .iter()
-        .filter(|p| !p.ends_with(reqs::REQUIREMENTS))
+        .filter(|p| !p.ends_with(reqs::REQUIREMENTS) && !p.ends_with(reqs::HISTORY))
         .filter_map(|p| {
             let text = std::fs::read_to_string(p).ok()?;
             let shown = p.strip_prefix(root).unwrap_or(p);
@@ -80,7 +89,7 @@ fn run_check(root: &Path) -> ExitCode {
         .iter()
         .map(|(p, t)| (p.as_str(), t.as_str()))
         .collect();
-    let report = reqs::check(&requirements, &sources);
+    let report = reqs::check(&requirements, &history, &sources);
     for w in &report.warnings {
         eprintln!("warning: {w}");
     }

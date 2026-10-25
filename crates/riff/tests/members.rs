@@ -699,7 +699,8 @@ fn the_book_has_one_how_to_for_riff_members() {
     let mut commands = Vec::new();
     for entry in fs::read_dir(book::dir()).unwrap() {
         let name = entry.unwrap().file_name().into_string().unwrap();
-        if !name.ends_with(".md") || name == "requirements.md" {
+        if !name.ends_with(".md") || name == "requirements.md" || name == "requirements-history.md"
+        {
             continue;
         }
         let page = book::page(&name);
