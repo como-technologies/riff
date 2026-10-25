@@ -48,6 +48,8 @@ mod loops;
 mod mcp;
 mod measure;
 mod members;
+#[cfg(target_os = "linux")]
+mod network;
 mod no_sign_in;
 mod one_user;
 mod owner;
