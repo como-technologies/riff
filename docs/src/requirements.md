@@ -4478,6 +4478,13 @@ of this part when they merge.
   says that the lead of the repository lost its network at the restart
   of the daemon, and gives the steps: `podman stop NAME`, then `riff
   lead start`, then `/resume`.
+- **01M5SNV7H3739PXW73H14XM4B8** Before the daemon of a host starts
+  again on a new riff, it posts one note to each lead on that host. The
+  note says that the daemon starts again on the new riff, that the lead
+  keeps its container, its terminal and its socket, and that the lead
+  keeps its state in its notes. The daemon posts it for `riff daemon
+  restart`, for the look at the end of each session, and for `riff
+  update`.
 
 ### riff relay
 
@@ -5244,6 +5251,8 @@ of this part when they merge.
   a `sources` that is not a list of hosts. `riff.toml` of riff names
   `crates.io`, `index.crates.io` and `static.crates.io`. Supersedes
   01M516HETNZCBFBJNHT8BKFB1Y in part: the entry of `crates.io`.
+- **01M5SNV7KZRDBRC3NM2E5W92KS** `riff init` writes the permission rule
+  of the lead for `riff release hold`, in the container of the lead.
 
 ### The steps of an update
 
@@ -5687,13 +5696,13 @@ of this part when they merge.
   Supersedes 01M5ND0ZNFFAPT1AWD3DP1Y77N in part.
 - **01M5SMPX8NM75P8E38DGQ17W7B** Only a repository whose `riff.toml` has
   the table `[release]` has the release cycle of riff. Without it, each
-  `riff release` subcommand, `riff build` and the real-session test
-  refuse with one line, "this repository has no release cycle of riff:
-  riff.toml has no [release]", and touch nothing on the forge. Then
-  `riff wave end N` has no release gate, and the verify start text has
-  no part for a release pull request. The probe for
-  `deploy/release-check.sh` does not decide it. The `riff.toml` of riff
-  has `[release]`. Supersedes 01M58KMMCZCE7HDNVT9PVHVZX2 in part.
+  `riff release` subcommand but `hold`, `riff build` and the
+  real-session test refuse with one line, "this repository has no
+  release cycle of riff: riff.toml has no [release]", and touch nothing
+  on the forge. Then `riff wave end N` has no release gate, and the
+  verify start text has no part for a release pull request. The probe
+  for `deploy/release-check.sh` does not decide it. The `riff.toml` of
+  riff has `[release]`. Supersedes 01M58KMMCZCE7HDNVT9PVHVZX2 in part.
 
 ### The release cycle
 
@@ -5819,6 +5828,40 @@ of this part when they merge.
   end N --no-release TEXT`. A release issue and a tracker are no item. A
   repository with no check of a release tag gets the next step `riff
   wave end N`.
+- **01M5SNV75DRFHR26BT2M8243VV** Each step of a release posts one note
+  to each lead of the riff, other than the lead that runs the step:
+  `riff release cut`, `publish`, the wait of the deploy for the
+  approval, `approve`, the end of the deploy (a pass or a failure),
+  `check` and `rollback`. The note is a message in the thread `release`.
+  It names the version and the step, and says what comes next for that
+  lead. A command posts the note of its own step. The watch of the
+  daemon posts the note of the wait and of the end of the deploy, in the
+  same look that wakes the lead of the release.
+- **01M5SNV78EBAYY4SZ891DM2MQG** `riff release hold vX.Y.Z REASON` is
+  the hold of a lead. It posts the reason in the thread `release` to
+  each other lead of the riff. `riff release hold vX.Y.Z --end` ends the
+  hold of that lead, and posts that to each other lead. Only a lead
+  holds, and only a lead ends its own hold. A hold counts only from a
+  verified message of a session that was the lead when it posted. A lead
+  holds one version once: a second hold of the same version replaces its
+  reason.
+- **01M5SNV7BC5J58WRZRJ5HS4NSJ** `riff release status` shows each hold
+  of the current release and of each deploy that waits, as "the lead of
+  OWNER/REPO asks to wait: REASON". The chat line to the owner while the
+  job `Deploy` waits for the approval, and each reminder, shows each
+  hold of the version in the same words.
+- **01M5SNV7E775DRY9QY60E8JPJR** `riff release approve vX.Y.Z` refuses
+  while a hold of that version stands. It names each hold with its
+  reason, and says `next:` the end of the hold or `--over-holds`. A
+  person in a plain terminal passes `--over-holds` to approve all the
+  same. The lead of the owner never passes it: `--over-holds` refuses in
+  each agent session.
+- **01M5SSXJNW7CR0E1EE6G4KNFJ4** The command `riff release hold` works
+  in a repository with no `[release]` in `riff.toml`: the lead of
+  another repository holds a release of riff, and that repository has no
+  release cycle. It needs no file of the repository and touches nothing
+  on the forge. Supersedes 01M5SMPX8NM75P8E38DGQ17W7B in part: the
+  refusal of each `riff release` subcommand.
 
 ### The real-session test
 

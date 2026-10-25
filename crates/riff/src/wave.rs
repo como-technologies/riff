@@ -929,6 +929,13 @@ pub trait World: Send + Sync {
     /// (01M5NJ87YEHHGJBANM7CRYV56Z).
     fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()>;
 
+    /// Posts `body` as a message to the lead of `record`, as the person
+    /// of the lead: the lead wakes and acts on it. The default posts
+    /// nothing (01M5SNV7H3739PXW73H14XM4B8).
+    fn note_lead<'a>(&'a self, _record: &'a Record, _body: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
     /// Ends the session of `record` on riff-server, and stops its
     /// keep-alive: the end of the lead.
     fn leave<'a>(&'a self, record: &'a Record) -> BoxFuture<'a, ()>;
@@ -2523,6 +2530,20 @@ impl World for Live {
                     Kind::Message,
                 )
                 .await?;
+                Ok::<(), anyhow::Error>(())
+            };
+            if let Err(e) = posted.await {
+                eprintln!("riff daemon: {}: {e:#}", record.live.name);
+            }
+        })
+    }
+
+    fn note_lead<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let posted = async {
+                let person = identity::person(record.me.place(), &record.server)?;
+                let api = Api::new(&record.server).signed_in(None)?;
+                crate::hold::tell_session(&api, &person, &record.live.session, body).await?;
                 Ok::<(), anyhow::Error>(())
             };
             if let Err(e) = posted.await {

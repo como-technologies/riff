@@ -20,7 +20,8 @@
 //! | `riff release publish vX.Y.Z` | the owner or an admin of the riff, or its lead, with a `gh` of an admin | the tag on the tested commit, the GitHub release, the chat line to the owner ([`publish`], 01M58B0JABCET719T3HFB19NDW) |
 //! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test on the daemon of a host ([`test_target`], [`crate::daemon::release_test`], 01M5924C8BTT6CW05Q0YZJ1GCY) |
 //! | `riff release status` | each session | the versions, what waits, the state and the next step ([`status`], 01M58KMKTE2XC35CNJBFKZWAXF) |
-//! | `riff release approve vX.Y.Z` | a person in a terminal, or the lead of the owner with a word of the owner in riff chat | the pause of the riff, then the approval of `production` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2) |
+//! | `riff release approve vX.Y.Z` | a person in a terminal, or the lead of the owner with a word of the owner in riff chat | the pause of the riff, then the approval of `production`; it refuses while a lead holds the version, unless a person passes `--over-holds` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2, 01M5SNV7E775DRY9QY60E8JPJR) |
+//! | `riff release hold vX.Y.Z REASON` | the lead of any user, also of a member | the hold of the version: each other lead hears it, `riff release status` shows it ([`crate::hold`], 01M5SNV78EBAYY4SZ891DM2MQG) |
 //! | `riff release check vX.Y.Z` | the lead | the checks after the deploy, the result on the release issue ([`check`], 01M58KMM5ZPAQ289S2YJVQ5WW6) |
 //! | `riff release retry vX.Y.Z` | the lead | the failed jobs of the CI run again ([`retry`], 01M58KMM8CV9731AWGVZQBB80D) |
 //! | `riff release rollback vPREV` | the lead | the deploy of an older release ([`rollback`], 01M58KMMAPJ33CQWR8GRX62GMR) |
@@ -61,6 +62,11 @@
 //! and `Part of #N` for the release issue, never `Closes #N`: the
 //! release issue closes only when the checks after the deploy pass.
 //!
+//! Each step also posts one note to each other lead of the riff
+//! ([`crate::hold`], 01M5SNV75DRFHR26BT2M8243VV): the command posts the
+//! note of its own step, and the watch of the daemon posts the note of the
+//! wait and of the end of the deploy ([`crate::watches`]).
+//!
 //! The guards of the callers are in [`Caller`]: the steps of the lead
 //! refuse a worker, a container session and a session that is not the
 //! lead ([`Caller::lead_step`]). The steps of a person refuse each agent
@@ -91,6 +97,7 @@ use riff_core::build::Semver;
 use riff_core::wire::PersonRole;
 use serde::Deserialize;
 
+use crate::hold::Hold;
 use crate::pr::{self, Gh};
 use crate::text;
 
@@ -1221,27 +1228,37 @@ pub fn publish_line(owner: &str, tag: &str, run: Option<&str>) -> String {
 /// The chat line to the owner `owner` while the job `Deploy` of `tag`
 /// waits for [`PRODUCTION`] (01M5RGD0XTR4X1MEV726HMCEGQ): the run, and the
 /// command of the person. A `reminder` starts with a word that says so.
+/// Each hold of `holds` follows in the same words as `riff release
+/// status` (01M5SNV7BC5J58WRZRJ5HS4NSJ).
 ///
 /// ```
-/// let line = riff::cycle::waits_line("mike", "v3.3.0", "https://x/runs/9", false);
+/// let line = riff::cycle::waits_line("mike", "v3.3.0", "https://x/runs/9", false, &[]);
 /// assert_eq!(
 ///     line,
 ///     "@mike riff release v3.3.0 waits for your approval: https://x/runs/9. \
 ///      In a terminal, run: riff release approve v3.3.0"
 /// );
-/// let again = riff::cycle::waits_line("", "v3.3.0", "https://x/runs/9", true);
+/// let again = riff::cycle::waits_line("", "v3.3.0", "https://x/runs/9", true, &[]);
 /// assert!(again.starts_with("Reminder: riff release v3.3.0 still waits"));
+/// let held = riff::hold::Hold { user: "nate".into(), repo: "o/s".into(), reason: "A demo runs.".into() };
+/// let line = riff::cycle::waits_line("mike", "v3.3.0", "https://x/runs/9", false, &[held]);
+/// assert!(line.ends_with(" A hold stands: the lead of o/s asks to wait: A demo runs."));
 /// ```
-pub fn waits_line(owner: &str, tag: &str, run: &str, reminder: bool) -> String {
+pub fn waits_line(owner: &str, tag: &str, run: &str, reminder: bool, holds: &[Hold]) -> String {
     let (start, waits) = match reminder {
         true => ("Reminder: ", "still waits"),
         false => ("", "waits"),
     };
-    format!(
+    let mut line = format!(
         "{start}{}riff release {tag} {waits} for your approval: {run}. In a terminal, run: riff \
          release approve {tag}",
         mention(owner)
-    )
+    );
+    if !holds.is_empty() {
+        let each: Vec<String> = holds.iter().map(Hold::line).collect();
+        line.push_str(&format!(" A hold stands: {}", each.join(" ")));
+    }
+    line
 }
 
 /// `@owner ` for a chat line, or nothing when the riff has no owner.
@@ -1339,6 +1356,11 @@ pub struct Status {
     /// The newest commit of a merged release, and the state of the
     /// real-session test on it (01M5924C8BTT6CW05Q0YZJ1GCY).
     pub test: Option<(String, Option<TestState>)>,
+    /// Each hold of the release and of each deploy that waits
+    /// (01M5SNV7BC5J58WRZRJ5HS4NSJ). [`status`] leaves it empty: the holds
+    /// are in the thread `release` of riff-server, and the command fills
+    /// them in ([`status_tags`]).
+    pub holds: Vec<Hold>,
 }
 
 /// The facts of the release cycle.
@@ -1364,7 +1386,18 @@ pub fn status(forge: &dyn Forge) -> Result<Status> {
         waiting: forge.waiting()?,
         stage,
         test,
+        holds: Vec::new(),
     })
+}
+
+/// The tags whose holds `riff release status` shows: the current release
+/// and each deploy that waits for [`PRODUCTION`] (01M5SNV7BC5J58WRZRJ5HS4NSJ).
+pub fn status_tags(status: &Status) -> Vec<String> {
+    let mut tags: Vec<String> = status.stage.iter().map(|s| tag(s.version)).collect();
+    tags.extend(status.waiting.iter().map(|w| w.tag.clone()));
+    tags.sort();
+    tags.dedup();
+    tags
 }
 
 /// The lines of `riff release status`.
@@ -1374,6 +1407,7 @@ pub fn status(forge: &dyn Forge) -> Result<Status> {
 ///
 /// let status = Status {
 ///     main: version("3.3.0")?, last: Some(version("3.2.0")?), unpublished: None, waiting: vec![], stage: None, test: None,
+///     holds: vec![],
 /// };
 /// assert_eq!(
 ///     render_status(&status),
@@ -1404,6 +1438,9 @@ pub fn render_status(status: &Status) -> String {
         let word = state.map_or("none", TestState::word);
         out.push_str(&format!("real-session test: {word} on {commit}\n"));
     }
+    for hold in &status.holds {
+        out.push_str(&format!("hold: {}\n", hold.line()));
+    }
     out.push_str(&stage_lines(status.stage.as_ref()));
     out
 }
@@ -1418,14 +1455,23 @@ pub enum Approved {
     /// The person said yes to this run. [`approve_run`] approves it after
     /// the pause of the riff.
     Yes(Waiting),
+    /// A hold stands, and the person did not pass `--over-holds`: riff
+    /// changed nothing (01M5SNV7E775DRY9QY60E8JPJR).
+    Held(Vec<Hold>),
 }
 
 /// Asks for the approval of the deploy of `tag` to [`PRODUCTION`]
 /// (01M58B0JMFQ5E40TWTQ48MPSGK). It shows the tag, the commit and the
 /// run to `out`, and asks `yes` on `answer`. It changes nothing.
+///
+/// While a hold of `holds` stands, it asks nothing and gives
+/// [`Approved::Held`], unless `over_holds` is true: then it shows each
+/// hold above the question (01M5SNV7E775DRY9QY60E8JPJR).
 pub fn approve(
     forge: &dyn Forge,
     tag_text: &str,
+    holds: &[Hold],
+    over_holds: bool,
     answer: &mut dyn BufRead,
     out: &mut dyn Write,
 ) -> Result<Approved> {
@@ -1433,10 +1479,20 @@ pub fn approve(
     let Some(run) = forge.waiting()?.into_iter().find(|w| w.tag == tag) else {
         return Ok(Approved::NoRun);
     };
+    if !holds.is_empty() && !over_holds {
+        return Ok(Approved::Held(holds.to_vec()));
+    }
+    writeln!(
+        out,
+        "tag: {}\ncommit: {}\nrun: {}",
+        run.tag, run.commit, run.url
+    )?;
+    for hold in holds {
+        writeln!(out, "hold: {}", hold.line())?;
+    }
     write!(
         out,
-        "tag: {}\ncommit: {}\nrun: {}\nApprove the deploy of {tag} to {PRODUCTION}? (yes or no) ",
-        run.tag, run.commit, run.url
+        "Approve the deploy of {tag} to {PRODUCTION}? (yes or no) "
     )?;
     out.flush()?;
     let mut line = String::new();
@@ -2393,6 +2449,48 @@ impl Caller {
     /// ```
     pub fn test_step(&self) -> Option<Refusal> {
         self.worker.then_some(Refusal::Worker)
+    }
+
+    /// Why this caller may not run `riff release hold`, or `None`
+    /// (01M5SNV78EBAYY4SZ891DM2MQG). Only the lead of its user may, and
+    /// the lead of a member may too: a hold needs no role. A person in a
+    /// plain terminal may not, because a hold names the lead of a
+    /// repository.
+    ///
+    /// ```
+    /// use riff::cycle::{Caller, Refusal};
+    /// use riff_core::wire::PersonRole;
+    ///
+    /// let lead = Caller { agent: true, lead: Some(true), ..Caller::default() };
+    /// assert!(lead.hold_step().is_none());
+    /// let member = Caller { role: Some(PersonRole::Member), ..lead };
+    /// assert!(member.hold_step().is_none());
+    /// let worker = Caller { worker: true, agent: true, lead: Some(false), ..Caller::default() };
+    /// assert_eq!(worker.hold_step(), Some(Refusal::Worker));
+    /// let container = Caller { container: true, agent: true, ..Caller::default() };
+    /// assert_eq!(container.hold_step(), Some(Refusal::Container));
+    /// let other = Caller { agent: true, lead: Some(false), ..Caller::default() };
+    /// assert_eq!(other.hold_step(), Some(Refusal::NotTheLead));
+    /// let unknown = Caller { agent: true, ..Caller::default() };
+    /// assert_eq!(unknown.hold_step(), Some(Refusal::LeadUnknown));
+    /// assert_eq!(Caller::default().hold_step(), Some(Refusal::NotTheLead));
+    /// ```
+    pub fn hold_step(&self) -> Option<Refusal> {
+        if self.worker {
+            Some(Refusal::Worker)
+        } else if self.container && !self.lead_container {
+            Some(Refusal::Container)
+        } else if self.lead_container {
+            None
+        } else if !self.agent {
+            Some(Refusal::NotTheLead)
+        } else {
+            match self.lead {
+                Some(true) => None,
+                Some(false) => Some(Refusal::NotTheLead),
+                None => Some(Refusal::LeadUnknown),
+            }
+        }
     }
 
     /// Why this caller may not run a step of a person: `riff release
@@ -4199,7 +4297,15 @@ pub(crate) mod tests {
         let mut forge = Fake::new();
         forge.waiting = vec![run("v3.3.0")];
         let mut out = Vec::new();
-        let done = approve(&forge, "v3.3.0", &mut "yes\n".as_bytes(), &mut out).unwrap();
+        let done = approve(
+            &forge,
+            "v3.3.0",
+            &[],
+            false,
+            &mut "yes\n".as_bytes(),
+            &mut out,
+        )
+        .unwrap();
         assert_eq!(done, Approved::Yes(run("v3.3.0")));
         let shown = String::from_utf8(out).unwrap();
         assert!(
@@ -4215,12 +4321,118 @@ pub(crate) mod tests {
     #[test]
     fn approve_with_no_or_no_run_changes_nothing() {
         let mut forge = Fake::new();
-        let none = approve(&forge, "v3.3.0", &mut "yes\n".as_bytes(), &mut Vec::new()).unwrap();
-        assert_eq!(none, Approved::NoRun);
+        let ask = |forge: &Fake, answer: &str| {
+            approve(
+                forge,
+                "v3.3.0",
+                &[],
+                false,
+                &mut answer.as_bytes(),
+                &mut Vec::new(),
+            )
+            .unwrap()
+        };
+        assert_eq!(ask(&forge, "yes\n"), Approved::NoRun);
         forge.waiting = vec![run("v3.3.0")];
-        let no = approve(&forge, "v3.3.0", &mut "no\n".as_bytes(), &mut Vec::new()).unwrap();
-        assert_eq!(no, Approved::No);
+        assert_eq!(ask(&forge, "no\n"), Approved::No);
         assert!(forge.log().is_empty());
+    }
+
+    fn a_hold() -> Hold {
+        Hold {
+            user: "nate".into(),
+            repo: "n8behavior/sens-o-matic".into(),
+            reason: "I migrate a database.".into(),
+        }
+    }
+
+    /// 01M5SNV7E775DRY9QY60E8JPJR: a hold stops the approval, with no
+    /// question. `--over-holds` shows the hold and asks.
+    #[test]
+    fn approve_refuses_while_a_hold_stands_unless_the_person_passes_over_holds() {
+        let mut forge = Fake::new();
+        forge.waiting = vec![run("v3.3.0")];
+        let holds = [a_hold()];
+        let mut out = Vec::new();
+        let held = approve(
+            &forge,
+            "v3.3.0",
+            &holds,
+            false,
+            &mut "yes\n".as_bytes(),
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(held, Approved::Held(holds.to_vec()));
+        assert!(out.is_empty(), "no question while a hold stands");
+
+        let mut out = Vec::new();
+        let over = approve(
+            &forge,
+            "v3.3.0",
+            &holds,
+            true,
+            &mut "yes\n".as_bytes(),
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(over, Approved::Yes(run("v3.3.0")));
+        let shown = String::from_utf8(out).unwrap();
+        assert!(
+            shown.contains(
+                "hold: the lead of n8behavior/sens-o-matic asks to wait: I migrate a database.\nApprove"
+            ),
+            "{shown}"
+        );
+        // With no run, a hold changes nothing and says nothing.
+        forge.waiting.clear();
+        let none = approve(
+            &forge,
+            "v3.3.0",
+            &holds,
+            false,
+            &mut "yes\n".as_bytes(),
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(none, Approved::NoRun);
+    }
+
+    /// 01M5SNV7BC5J58WRZRJ5HS4NSJ: the status shows each hold above the
+    /// release, and the tags of the status are the release and each
+    /// deploy that waits.
+    #[test]
+    fn the_status_shows_each_hold_and_names_the_tags_to_look_at() {
+        let stage = Stage {
+            version: version("3.3.0").unwrap(),
+            state: State::Waiting,
+            pr: None,
+            merge: None,
+            deploy: None,
+            checks_failed: false,
+            test: None,
+            previous: Some(version("3.2.0").unwrap()),
+        };
+        let mut status = Status {
+            main: version("3.3.0").unwrap(),
+            last: Some(version("3.2.0").unwrap()),
+            unpublished: None,
+            waiting: vec![run("v3.2.0"), run("v3.3.0")],
+            stage: Some(stage),
+            test: None,
+            holds: vec![a_hold()],
+        };
+        assert_eq!(status_tags(&status), ["v3.2.0", "v3.3.0"]);
+        let shown = render_status(&status);
+        assert!(
+            shown.contains(
+                "hold: the lead of n8behavior/sens-o-matic asks to wait: I migrate a database.\n\
+                 release: v3.3.0 waiting\n"
+            ),
+            "{shown}"
+        );
+        status.holds.clear();
+        assert!(!render_status(&status).contains("hold:"));
     }
 
     /// A log in memory: the lines of each filter that has a part of

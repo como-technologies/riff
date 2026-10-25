@@ -19,7 +19,7 @@
 //!
 //! | Where | What it reads | With no `[release]` |
 //! |---|---|---|
-//! | `riff release SUBCOMMAND`, `riff build`, `riff release test`, the request `build` and the request `release test` of the daemon | the working tree: [`require`] | refuses with [`NO_RELEASE`](crate::text::NO_RELEASE) before it touches the forge |
+//! | `riff release SUBCOMMAND` but `hold`, `riff build`, `riff release test`, the request `build` and the request `release test` of the daemon | the working tree: [`require`] | refuses with [`NO_RELEASE`](crate::text::NO_RELEASE) before it touches the forge |
 //! | `riff wave end N`, the hint of the end of a wave | the working tree: [`of_folder`] | no release gate; the hint is `riff wave end N` |
 //! | the verify start text of the wave | the merged file: [`merged`] | no part for a release pull request |
 //!

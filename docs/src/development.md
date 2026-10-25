@@ -4428,8 +4428,9 @@ The release cycle needs `[release]` in `riff.toml`. A repository with
 no `[release]` has no release cycle of riff: `riff release`, `riff
 build` and the real-session test refuse with one line, and touch
 nothing on GitHub. `riff wave end` has no release gate there. The
-verify of a pull request has no part for a release pull request. See
-[Turn on the release cycle](#turn-on-the-release-cycle).
+verify of a pull request has no part for a release pull request. Only
+`riff release hold` works there: see [Hold a release](#hold-a-release).
+See [Turn on the release cycle](#turn-on-the-release-cycle).
 
 ```mermaid
 flowchart TD
@@ -4447,6 +4448,8 @@ flowchart TD
     G -- "wakes the lead and the owner when the job Deploy waits" --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, or one \"approved\" in riff chat (pauses the riff, approves production)"}}
     H -- no answer --> H1[Waits. Work goes on. The next cut refuses. Reminder in chat each 4 h]
     H1 --> H
+    H -- "a lead holds: riff release hold" --> H2[approve refuses until the hold ends, or a person passes --over-holds]
+    H2 --> H
     H -- approved --> I{Deploy job}
     I -- "FAIL: wakes the lead with the failed jobs" --> I1[Old revision still serves. riff release check files the issue and resumes the riff. riff release retry vX.Y.Z] --> H
     I -- "PASS: wakes the lead" --> J{riff release check vX.Y.Z}
@@ -4464,6 +4467,7 @@ The gates:
 | Verify | a session that did not write the change | the verify of riff | the release pull request waits |
 | Real session | a session that wrote none of the items, on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
 | HUMAN GATE 1: deploy | the owner or an admin, in a terminal, or one message "approved" in riff chat | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
+| Hold | a lead of another repository, in a critical place | `riff release hold vX.Y.Z REASON` | `approve` refuses until the lead ends the hold, or a person passes `--over-holds` |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
 | HUMAN GATE 3: skip | the owner or an admin, in a terminal | `riff release cut --skip VERSION --reason TEXT` | no skip |
 | Log access | a person on the host, when the sign-in of `gcloud` is gone | `gcloud auth login` | `riff release check` says which check it could not do |
@@ -4494,7 +4498,9 @@ this repository has no release cycle of riff: riff.toml has no [release]
 `riff release cut`, `verify`, `publish`, `status`, `approve`, `check`,
 `retry`, `test` and `rollback`, and `riff build` give this line. The
 daemon of a host gives it too, for `riff build --host` and `riff
-release test --host`.
+release test --host`. `riff release hold` does not: the lead of another
+repository holds a release of riff, and that repository has no
+`[release]`.
 
 #### Know what wakes the lead
 
@@ -4586,6 +4592,92 @@ the next step:
 ```sh
 riff release status
 ```
+
+#### Know what the other leads hear
+
+A riff has one lead for each user and repository. The lead that runs a
+release is not the only one: a deploy pauses the riff, and the daemon of
+each host starts again on the new riff. So each step of a release posts
+one note to each other lead of the riff, in the thread `release`. The
+note names the version and the step, and says what comes next for that
+lead. It wakes the lead, so the lead can react.
+
+```mermaid
+sequenceDiagram
+    participant A as lead of como-technologies/riff
+    participant S as riff-server
+    participant B as lead of n8behavior/sens-o-matic
+    A->>S: riff release cut 3.3.0
+    S-->>B: note: the cut. next for you: nothing yet
+    A->>S: riff release publish v3.3.0
+    S-->>B: note: the publish
+    Note over S,B: the job Deploy waits: the watch of the daemon posts a note
+    B->>S: riff release hold v3.3.0 "I migrate a database"
+    S-->>A: wake: the lead of n8behavior/sens-o-matic asks to wait
+    A->>S: riff release approve v3.3.0
+    S-->>A: refused: a hold stands
+```
+
+| Step | The note comes from | The other leads hear |
+|---|---|---|
+| `riff release cut` | the command | the cut, with the pull request |
+| `riff release publish` | the command | the tag, and the CI run that builds |
+| The job `Deploy` waits | the watch of the daemon | the deploy waits for a person: hold now, when you are in a critical place |
+| `riff release approve` | the command | the riff is paused: stop at your next step, and keep your state in your notes |
+| The job `Deploy` ends | the watch of the daemon | the deploy passed (the daemon of your host starts again on the release after its sessions), or it failed (the old revision still serves) |
+| `riff release check` | the command | the checks passed and the riff runs again, or they failed, or the deploy had failed |
+| `riff release rollback` | the command | the older release deploys: hold now, when you are in a critical place |
+
+The lead of the same user and repository as the command gets no note.
+It runs the step, and the watches wake it. A command that woke other
+leads prints one line: `riff told 1 other lead of this step.`
+
+Before the daemon of a host starts again on a new riff, it posts one
+note to each lead on that host. The daemon does it for `riff update`,
+for `riff daemon restart`, and for its own look at the end of each
+session. The note says that the lead keeps its container, its terminal
+and its socket, and that its riff tools can fail for a moment. The lead
+keeps its state in its notes.
+
+#### Hold a release
+
+A lead in a critical place asks the riff to wait, for example while it
+runs a migration. Run this in the container of the lead, in any
+repository: it needs no `[release]` in `riff.toml`. Give the version of
+the release and the reason in one line:
+
+```sh
+riff release hold v3.3.0 "I run a database migration until 17:00."
+```
+
+Each other lead hears the hold, and so does the lead of the release.
+`riff release status` shows each hold above the state of the release:
+
+```text
+hold: the lead of n8behavior/sens-o-matic asks to wait: I run a database migration until 17:00.
+```
+
+The line to the owner in `riff chat`, while the deploy waits for the
+approval, shows each hold too. While a hold stands, `riff release
+approve` refuses and names each reason. A person who knows better
+passes `--over-holds`, in a plain terminal:
+
+```sh
+riff release approve v3.3.0 --over-holds
+```
+
+The lead of the owner never passes `--over-holds`: it waits for the end
+of the hold, or it tells the owner. A lead ends its own hold when it can
+go on:
+
+```sh
+riff release hold v3.3.0 --end
+```
+
+Only a lead holds: a worker, a session that is no lead and a person in
+a terminal get a refusal. The lead of a member may hold. A lead holds a
+version one time: a second hold replaces the reason. A hold is for one
+version, so the next release starts with no hold.
 
 #### Check the release after the deploy
 
@@ -4930,15 +5022,17 @@ so](#let-the-lead-approve-when-the-owner-said-so).
 riff release approve v3.3.0
 ```
 
-riff finds the CI run of the tag that waits for `production`. It shows
-the tag, the commit and the run, and asks yes or no. With `yes`, it
-pauses the whole riff, which tells each other lead, then approves the
-run with the comment `Release v3.3.0`. Then it registers the watch of
-the job `Deploy`: the daemon wakes the lead when the job passes or
-fails. The pause is only for the deploy: `riff release check` resumes
-the riff. When no run waits, riff says so and changes nothing. When the
-approval fails, the riff stays paused: run
-`riff release approve v3.3.0` again, or `riff resume --riff`.
+riff finds the CI run of the tag that waits for `production`. While a
+lead holds the version, it refuses and asks nothing: see [Hold a
+release](#hold-a-release). Else it shows the tag, the commit and the
+run, and asks yes or no. With `yes`, it pauses the whole riff, which
+tells each other lead, then approves the run with the comment `Release
+v3.3.0`. Then it registers the watch of the job `Deploy`: the daemon
+wakes the lead when the job passes or fails. The pause is only for the
+deploy: `riff release check` resumes the riff. When no run waits, riff
+says so and changes nothing. When the approval fails, the riff stays
+paused: run `riff release approve v3.3.0` again, or `riff resume
+--riff`.
 
 ### Deploy the shared server at the end of a wave
 

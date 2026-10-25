@@ -86,10 +86,18 @@
 //! ```
 //!
 //! At "Waits" the lead gets one message, and the owner gets the line
-//! "waits for your approval" in `riff chat`. After `riff release retry`
+//! "waits for your approval" in `riff chat`, with each hold of the
+//! version (01M5SNV7BC5J58WRZRJ5HS4NSJ). After `riff release retry`
 //! or `rollback`, the CI run still has its old state for a moment. So
 //! the command gives the state that it saw ([`Stale`]), and the watch
 //! ignores that state until it moves.
+//!
+//! At "Waits", "Passed" and "Failed" the watch also posts one note to
+//! each other lead of the riff ([`Post::Leads`], [`crate::hold`],
+//! 01M5SNV75DRFHR26BT2M8243VV): the lead of the release has the message
+//! above, and the other leads have the note, with what comes next for
+//! them. The note comes after the message and the line to the owner, so
+//! a post that fails leaves the message to the lead as the first fact.
 
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
@@ -105,6 +113,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cycle::{self, DeployState, Forge, TestState};
 use crate::daemon::remote;
+use crate::hold::{self, Hold, Step};
 use crate::pr::Gate;
 use crate::wave::{BoxFuture, Wave};
 
@@ -266,6 +275,10 @@ pub struct Outcome {
 pub enum Post {
     /// A message that wakes the lead of the repository.
     Lead(String),
+    /// A note to each other lead of the riff: the step of the release
+    /// that the watch saw ([`crate::hold::tell_leads`],
+    /// 01M5SNV75DRFHR26BT2M8243VV).
+    Leads(String),
     /// A line to the owner in `riff chat`: the deploy of `tag` waits for
     /// the approval ([`cycle::waits_line`]).
     Owner {
@@ -299,6 +312,16 @@ pub trait Lookout: Send + Sync {
         wave: &'a Wave,
         line: &'a (dyn Fn(&str) -> String + Sync),
     ) -> BoxFuture<'a, Result<()>>;
+
+    /// Posts `body` as a message to each lead of the riff, but the lead of
+    /// the person in the repository of `wave`, as the person
+    /// (01M5SNV75DRFHR26BT2M8243VV). That lead gets the message of the
+    /// watch.
+    fn leads<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, Result<()>>;
+
+    /// The holds on `tag` that stand now, as the person
+    /// (01M5SNV7BC5J58WRZRJ5HS4NSJ).
+    fn holds<'a>(&'a self, wave: &'a Wave, tag: &'a str) -> BoxFuture<'a, Result<Vec<Hold>>>;
 }
 
 /// The [`Lookout`] of the daemon: `gh` with the sign-in of the person,
@@ -342,6 +365,22 @@ impl Lookout for Here {
             )
             .await?;
             Ok(())
+        })
+    }
+
+    fn leads<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let person = crate::identity::person(&wave.place(None)?, &wave.server)?;
+            let api = riff_client::api::Api::new(&wave.server).signed_in(None)?;
+            crate::hold::tell_leads(&api, &person, true, body).await?;
+            Ok(())
+        })
+    }
+
+    fn holds<'a>(&'a self, wave: &'a Wave, tag: &'a str) -> BoxFuture<'a, Result<Vec<Hold>>> {
+        Box::pin(async move {
+            let lines = crate::hold::read_as_person(&wave.server, &wave.place(None)?).await?;
+            Ok(crate::hold::holds(&lines, tag))
         })
     }
 }
@@ -614,8 +653,11 @@ fn read_all(
 async fn post_one(lookout: &dyn Lookout, wave: &Wave, post: &Post) -> Result<()> {
     match post {
         Post::Lead(body) => lookout.tell(wave, body).await,
+        Post::Leads(body) => lookout.leads(wave, body).await,
         Post::Owner { tag, run, reminder } => {
-            let line = |owner: &str| cycle::waits_line(owner, tag, run, *reminder);
+            // A hold that riff cannot read leaves the line as it was.
+            let holds = lookout.holds(wave, tag).await.unwrap_or_default();
+            let line = |owner: &str| cycle::waits_line(owner, tag, run, *reminder, &holds);
             lookout.chat(wave, &line).await
         }
     }
@@ -646,7 +688,9 @@ pub fn look(forge: &dyn Forge, watch: &mut Watch, now_ms: i64) -> Result<Outcome
     match watch.op.clone() {
         Op::Pull { tag, number } => look_pull(forge, &mut watch.seen, &tag, number),
         Op::Test { tag, commit } => look_test(forge, &tag, &commit),
-        Op::Deploy { tag, stale } => look_deploy(forge, &mut watch.seen, &tag, stale, now_ms),
+        Op::Deploy { tag, stale } => {
+            look_deploy(forge, &mut watch.seen, &watch.repo, &tag, stale, now_ms)
+        }
         Op::Wave => look_wave(forge, &mut watch.seen),
     }
 }
@@ -654,6 +698,15 @@ pub fn look(forge: &dyn Forge, watch: &mut Watch, now_ms: i64) -> Result<Outcome
 fn say(body: String, end: bool) -> Outcome {
     Outcome {
         posts: vec![Post::Lead(body)],
+        end,
+    }
+}
+
+/// [`say`], and a note to each other lead of the riff
+/// (01M5SNV75DRFHR26BT2M8243VV).
+fn say_and_tell_leads(body: String, note: String, end: bool) -> Outcome {
+    Outcome {
+        posts: vec![Post::Lead(body), Post::Leads(note)],
         end,
     }
 }
@@ -734,6 +787,7 @@ fn look_test(forge: &dyn Forge, tag: &str, commit: &str) -> Result<Outcome> {
 fn look_deploy(
     forge: &dyn Forge,
     seen: &mut Seen,
+    repo: &str,
     tag: &str,
     stale: Option<Stale>,
     now_ms: i64,
@@ -772,6 +826,7 @@ fn look_deploy(
                         run: run.to_owned(),
                         reminder: false,
                     },
+                    Post::Leads(crate::text::release_note(Step::Waits, tag, &hold::by(repo))),
                 ],
                 end: false,
             })
@@ -795,8 +850,9 @@ fn look_deploy(
         }
         DeployState::Passed => {
             let next = next_of(forge, tag, &format!("riff release check {tag}"));
-            Ok(say(
+            Ok(say_and_tell_leads(
                 format!("The deploy of {tag} passed: {run}. next: {next}"),
+                crate::text::release_note(Step::Deployed, tag, &hold::by(repo)),
                 true,
             ))
         }
@@ -806,12 +862,13 @@ fn look_deploy(
                 tag,
                 &format!("riff release retry {tag}, or riff release rollback vPREVIOUS"),
             );
-            Ok(say(
+            Ok(say_and_tell_leads(
                 format!(
                     "The deploy of {tag} failed{}: {run}. The old revision still serves. next: \
                      {next}",
                     jobs_text(&deploy.failed, "a failure")
                 ),
+                crate::text::release_note(Step::DeployFailed, tag, &hold::by(repo)),
                 true,
             ))
         }
@@ -864,6 +921,10 @@ mod tests {
         down: AtomicBool,
         told: Mutex<Vec<String>>,
         chats: Mutex<Vec<String>>,
+        /// The notes to each other lead.
+        leads: Mutex<Vec<String>>,
+        /// The holds that stand.
+        holds: Mutex<Vec<Hold>>,
         /// The `fetch` of each forge that the watches asked for.
         fetches: Mutex<Vec<bool>>,
     }
@@ -876,6 +937,8 @@ mod tests {
                 down: AtomicBool::new(false),
                 told: Mutex::default(),
                 chats: Mutex::default(),
+                leads: Mutex::default(),
+                holds: Mutex::default(),
                 fetches: Mutex::default(),
             })
         }
@@ -892,6 +955,11 @@ mod tests {
         /// The lines to the owner since the last call.
         fn chats(&self) -> Vec<String> {
             std::mem::take(&mut self.chats.lock().unwrap())
+        }
+
+        /// The notes to each other lead since the last call.
+        fn leads(&self) -> Vec<String> {
+            std::mem::take(&mut self.leads.lock().unwrap())
         }
     }
 
@@ -923,6 +991,20 @@ mod tests {
                 self.chats.lock().unwrap().push(line("mike"));
                 Ok(())
             })
+        }
+
+        fn leads<'a>(&'a self, _: &'a Wave, body: &'a str) -> BoxFuture<'a, Result<()>> {
+            Box::pin(async move {
+                if self.down.load(Ordering::SeqCst) {
+                    return Err(anyhow!("riff-server does not answer"));
+                }
+                self.leads.lock().unwrap().push(body.to_owned());
+                Ok(())
+            })
+        }
+
+        fn holds<'a>(&'a self, _: &'a Wave, _: &'a str) -> BoxFuture<'a, Result<Vec<Hold>>> {
+            Box::pin(async move { Ok(self.holds.lock().unwrap().clone()) })
         }
     }
 
@@ -1195,9 +1277,45 @@ mod tests {
                  https://github.com/o/r/actions/runs/9. In a terminal, run: riff release \
                  approve v3.3.0"]
         );
+        // 01M5SNV75DRFHR26BT2M8243VV: each other lead gets the wait too.
+        assert_eq!(
+            ground.leads(),
+            [crate::text::release_note(
+                Step::Waits,
+                "v3.3.0",
+                "the lead of o/r"
+            )]
+        );
         look(dir.path(), &ground, 6 * MINUTE).await;
         assert!(ground.told().is_empty());
         assert!(ground.chats().is_empty());
+        assert!(ground.leads().is_empty(), "one note for the wait");
+    }
+
+    /// 01M5SNV7BC5J58WRZRJ5HS4NSJ: the line to the owner shows each hold
+    /// that stands, also in a reminder.
+    #[tokio::test]
+    async fn the_line_to_the_owner_shows_each_hold() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        ground.forge(|f| f.deploy = deploy(DeployState::Waiting, &[]));
+        ground.holds.lock().unwrap().push(Hold {
+            user: "nate".into(),
+            repo: "n8behavior/sens-o-matic".into(),
+            reason: "I migrate a database.".into(),
+        });
+        watch(dir.path(), deploy_op(None));
+        look(dir.path(), &ground, 0).await;
+        let hold = " A hold stands: the lead of n8behavior/sens-o-matic asks to wait: I migrate a \
+                    database.";
+        let chats = ground.chats();
+        assert!(chats[0].ends_with(hold), "{chats:?}");
+        look(dir.path(), &ground, 4 * 60 * MINUTE).await;
+        let chats = ground.chats();
+        assert!(
+            chats[0].starts_with("Reminder: ") && chats[0].ends_with(hold),
+            "{chats:?}"
+        );
     }
 
     #[tokio::test]
@@ -1254,8 +1372,15 @@ mod tests {
                  riff release check v3.3.0"
             ]
         );
+        assert_eq!(
+            ground.leads(),
+            [
+                crate::text::release_note(Step::Waits, "v3.3.0", "the lead of o/r"),
+                crate::text::release_note(Step::Deployed, "v3.3.0", "the lead of o/r"),
+            ]
+        );
         look(dir.path(), &ground, 4 * MINUTE).await;
-        assert!(ground.told().is_empty());
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
         assert!(kept(dir.path()).is_empty());
     }
 
@@ -1276,8 +1401,16 @@ mod tests {
                  riff release retry v3.3.0, or riff release rollback v3.2.0"]
         );
         assert!(ground.chats().is_empty());
+        assert_eq!(
+            ground.leads(),
+            [crate::text::release_note(
+                Step::DeployFailed,
+                "v3.3.0",
+                "the lead of o/r"
+            )]
+        );
         look(dir.path(), &ground, 2 * MINUTE).await;
-        assert!(ground.told().is_empty());
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
         assert!(kept(dir.path()).is_empty());
     }
 

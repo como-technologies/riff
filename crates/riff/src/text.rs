@@ -1956,6 +1956,178 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
     format!("{why} next: {next}")
 }
 
+/// The note to each other lead for the step `step` of the release `tag`
+/// (01M5SNV75DRFHR26BT2M8243VV). `by` names who runs the step, for
+/// example "the lead of como-technologies/riff". The note ends with what
+/// comes next for the lead that reads it.
+///
+/// ```
+/// use riff::hold::Step;
+///
+/// assert_eq!(
+///     riff::text::release_note(Step::Cut { number: 1140 }, "v4.4.0", "the lead of o/r"),
+///     "the lead of o/r cut the release v4.4.0: pull request #1140. next for you: nothing yet. \
+///      To ask the riff to wait before the deploy, run: riff release hold v4.4.0 REASON"
+/// );
+/// assert!(
+///     riff::text::release_note(Step::Approved, "v4.4.0", "the lead of o/r")
+///         .contains("next for you: stop at your next step")
+/// );
+/// ```
+pub fn release_note(step: crate::hold::Step, tag: &str, by: &str) -> String {
+    use crate::hold::Step;
+    let hold = format!("run: riff release hold {tag} REASON");
+    match step {
+        Step::Cut { number } => format!(
+            "{by} cut the release {tag}: pull request #{number}. next for you: nothing yet. To \
+             ask the riff to wait before the deploy, {hold}"
+        ),
+        Step::Published => format!(
+            "{by} published the release {tag}. The CI run of the tag builds. A person approves \
+             the deploy later. next for you: nothing yet. To ask the riff to wait, {hold}"
+        ),
+        Step::Waits => format!(
+            "The deploy of {tag} waits for the approval of a person. next for you: when you are \
+             in a critical place, {hold}. Else nothing."
+        ),
+        Step::Approved => format!(
+            "A person approved the deploy of {tag}. The riff is paused and the deploy runs. next \
+             for you: stop at your next step, and keep your state in your notes."
+        ),
+        Step::Deployed => format!(
+            "The deploy of {tag} passed. {by} checks it now. next for you: keep your state in \
+             your notes. The daemon of your host starts again on {tag} after its sessions, and \
+             it tells you first."
+        ),
+        Step::DeployFailed => format!(
+            "The deploy of {tag} failed. The old revision still serves. The riff stays paused \
+             until {by} runs riff release check. next for you: nothing."
+        ),
+        Step::Checked => format!(
+            "The checks of {tag} passed. The riff runs again. next for you: go on with your work."
+        ),
+        Step::CheckFailed => format!(
+            "The checks of {tag} failed. {by} fixes forward with a patch release, or rolls back. \
+             The riff stays paused. next for you: wait for the next note."
+        ),
+        Step::NotDeployed => format!(
+            "The deploy of {tag} failed, and the old revision still serves. {by} ran riff \
+             release check. The riff runs again. next for you: go on with your work."
+        ),
+        Step::RolledBack => format!(
+            "{by} rolls the riff back to {tag}. The deploy waits for the approval of a person. \
+             next for you: when you are in a critical place, {hold}. Else nothing."
+        ),
+    }
+}
+
+/// The text of `riff release approve` when holds of `tag` stand
+/// (01M5SNV7E775DRY9QY60E8JPJR): each hold with its reason, and the two
+/// ways on.
+///
+/// ```
+/// use riff::hold::Hold;
+///
+/// let holds = [Hold { user: "nate".into(), repo: "o/s".into(), reason: "A demo runs.".into() }];
+/// assert_eq!(
+///     riff::text::release_held("v4.4.0", &holds),
+///     "riff: riff release approve v4.4.0 changed nothing. A hold stands:\n\
+///      the lead of o/s asks to wait: A demo runs.\n\
+///      next: wait for the end of the hold, or a person runs riff release approve v4.4.0 --over-holds"
+/// );
+/// ```
+pub fn release_held(tag: &str, holds: &[crate::hold::Hold]) -> String {
+    let mut out = format!("riff: riff release approve {tag} changed nothing. A hold stands:\n");
+    for hold in holds {
+        out.push_str(&hold.line());
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "next: wait for the end of the hold, or a person runs riff release approve {tag} \
+         --over-holds"
+    ));
+    out
+}
+
+/// The line of `riff release hold` that says what it did
+/// (01M5SNV78EBAYY4SZ891DM2MQG).
+///
+/// ```
+/// use riff::hold::Held;
+///
+/// assert_eq!(
+///     riff::text::release_hold_done("v4.4.0", &Held::Set { told: 2 }),
+///     "You hold v4.4.0. riff told 2 leads. next: riff release hold v4.4.0 --end when you can go on"
+/// );
+/// assert_eq!(
+///     riff::text::release_hold_done("v4.4.0", &Held::NoHold),
+///     "You have no hold on v4.4.0. riff changed nothing. next: riff release status"
+/// );
+/// ```
+pub fn release_hold_done(tag: &str, held: &crate::hold::Held) -> String {
+    use crate::hold::Held;
+    let leads = |n: usize| match n {
+        1 => "1 lead".to_owned(),
+        n => format!("{n} leads"),
+    };
+    match held {
+        Held::Set { told } => format!(
+            "You hold {tag}. riff told {}. next: riff release hold {tag} --end when you can go on",
+            leads(*told)
+        ),
+        Held::Ended { told } => format!(
+            "You end your hold on {tag}. riff told {}. next: go on with your work",
+            leads(*told)
+        ),
+        Held::NoHold => {
+            format!("You have no hold on {tag}. riff changed nothing. next: riff release status")
+        }
+    }
+}
+
+/// The line of a command of the release cycle that told other leads
+/// (01M5SNV75DRFHR26BT2M8243VV).
+///
+/// ```
+/// assert_eq!(riff::text::release_leads_told(1), "riff told 1 other lead of this step.");
+/// assert_eq!(riff::text::release_leads_told(3), "riff told 3 other leads of this step.");
+/// ```
+pub fn release_leads_told(leads: usize) -> String {
+    match leads {
+        1 => "riff told 1 other lead of this step.".to_owned(),
+        n => format!("riff told {n} other leads of this step."),
+    }
+}
+
+/// A command of the release cycle could not tell the other leads: the
+/// step stands.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::release_leads_not_told("no answer"),
+///     "riff: cannot tell the other leads of this step: no answer"
+/// );
+/// ```
+pub fn release_leads_not_told(fault: &str) -> String {
+    format!("riff: cannot tell the other leads of this step: {fault}")
+}
+
+/// `riff release status` could not read the holds.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::release_holds_unread("no answer"),
+///     "riff: cannot read the holds of the release: no answer. riff shows no hold."
+/// );
+/// ```
+pub fn release_holds_unread(fault: &str) -> String {
+    format!("riff: cannot read the holds of the release: {fault}. riff shows no hold.")
+}
+
+/// `riff release hold` with an empty reason.
+pub const RELEASE_HOLD_NO_REASON: &str = "riff: riff release hold needs a reason, in one line for the other leads. riff changed \
+     nothing. next: riff release hold vX.Y.Z REASON";
+
 /// Why a machine starts no worker: its available memory and its floor
 /// (01M3WFZ01PTAYYKG3T5CFA2W4D).
 ///
@@ -5421,6 +5593,27 @@ pub fn daemon_protocol(theirs: u32, ours: u32) -> String {
 /// A session that is not the lead asks the daemon to pause the riff.
 pub const DAEMON_PAUSE_ONLY_LEAD: &str =
     "Only the lead can pause the riff through the riff daemon.";
+
+/// The note to the lead before the daemon starts again on a new riff
+/// (01M5SNV7H3739PXW73H14XM4B8).
+pub const LEAD_DAEMON_STARTS_AGAIN: &str = "The riff daemon of your host starts again on the new \
+     riff in a few seconds. Your container, your terminal and your socket stay. next for you: \
+     keep your state in your notes. Your riff tools may fail for a moment: try them again then.";
+
+/// The line of the daemon for the lead that it told of its new start.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_told_lead("riff-lead-o-r"),
+///     "The riff daemon told the lead riff-lead-o-r that it starts again on the new riff."
+/// );
+/// ```
+pub fn daemon_told_lead(name: &str) -> String {
+    format!("The riff daemon told the lead {name} that it starts again on the new riff.")
+}
+
+/// A session that is not the lead asks the daemon to hold a release.
+pub const DAEMON_HOLD_ONLY_LEAD: &str = "Only the lead can hold a release through the riff daemon.";
 
 /// A session that is not the lead asks the daemon to resume the riff.
 pub const DAEMON_RESUME_ONLY_LEAD: &str =

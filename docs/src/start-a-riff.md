@@ -286,7 +286,7 @@ these rules of its own:
 | `Bash(/opt/riff/riff relay watch)`, `Bash(/opt/riff/riff relay watch --follow)` | the wakes of the lead |
 | `Bash(/opt/riff/riff wave *)` | the steps of the waves of the lead: see [Waves](waves.md) |
 | `Bash(/opt/riff/riff wave move *)`, `Bash(/opt/riff/riff wave end *)` | move items to another wave, end a wave |
-| `Bash(/opt/riff/riff release status)`, `Bash(/opt/riff/riff release cut *)` | the steps of the release cycle of the lead: see [The release cycle](development.md#the-release-cycle). No rule names `riff release approve`: only you approve |
+| `Bash(/opt/riff/riff release status)`, `Bash(/opt/riff/riff release cut *)`, `Bash(/opt/riff/riff release hold *)` | the steps of the release cycle of the lead: see [The release cycle](development.md#the-release-cycle). No rule names `riff release approve`: only you approve |
 
 When the auto mode check still refuses a step of riff, the session
 writes the step on its issue and tells your lead. The fix is a new
