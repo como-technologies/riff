@@ -1373,6 +1373,14 @@ The daemon keeps the wave, also over its own restart, until you stop
 it. The rollout of your lead runs it for you: see
 [Let the rollout of the lead run the wave](#let-the-rollout-of-the-lead-run-the-wave).
 
+To run the wave on another host of yours too, with no login there:
+
+```sh
+riff wave run --host thelio
+```
+
+See [Add a host to the wave](#add-a-host-to-the-wave).
+
 Each minute the daemon also looks at the forge for the wave. It tells
 your lead when a pull request stops (see
 [When a pull request stops](how-it-works.md#when-a-pull-request-stops))
@@ -1403,6 +1411,61 @@ issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). 
 
 To start the rebase of the same commit again, see
 [Start a spent item again](#start-a-spent-item-again).
+
+### Add a host to the wave
+
+A host runs the wave of a repository when its daemon serves the
+repository. You do not log in to the host and you do not clone the
+repository there. The daemon of the host makes the main clone itself,
+with the `gh` of your user on that host. Run this in your clone of the
+repository, or let your lead run it in its container:
+
+```sh
+riff wave run --host thelio
+```
+
+```mermaid
+sequenceDiagram
+    participant L as lead on pangolin
+    participant S as riff-server
+    participant D as riff daemon on thelio
+    L->>S: riff wave run --host thelio
+    S->>D: wake: the request
+    D->>D: gh repo clone, once, into its folder clones
+    D->>D: serve the repository, run its wave
+    D->>S: a direct note to the lead: the reply
+    S-->>L: riff prints the reply
+```
+
+The daemon of thelio does three steps:
+
+1. It clones the repository into `clones/OWNER/REPO` in its folder.
+   It clones nothing when it serves the repository already.
+2. It serves the repository, so the other `--host` commands reach it.
+3. It runs the wave, as `riff wave run` does there.
+
+A second call changes nothing: the daemon keeps its clone, its session
+and its wave. To serve the repository on that host and run no wave:
+
+```sh
+riff daemon host --host thelio
+```
+
+The host needs a riff daemon of your user that serves another
+repository already, and a `gh` that is signed in and can clone the
+repository. Else do the steps of
+[Use a second machine](#use-a-second-machine) there once. Only you in a
+terminal and your lead in this repository can use `--host`. The daemon
+of HOST refuses each other session, for example a worker.
+
+In the container of your lead, `riff wave run` with no `--host` starts
+no wave: the container has no daemon of its own. It names the hosts of
+yours with a daemon that does not serve the repository, and exits with
+1:
+
+```text
+riff: a lead container runs no wave itself. Your hosts that do not run the wave of como-technologies/riff: thelio. To add one, run riff wave run --host thelio.
+```
 
 ### See a pull request that cannot merge
 
@@ -1666,7 +1729,10 @@ It looks each 10 seconds.
 
 The rollout of your lead asks only the daemon of its own machine. A
 second machine takes work in containers when its own daemon runs the
-wave of the repository. Get that machine ready as for `riff run` (see
+wave of the repository. When the daemon of that machine serves another
+repository of yours already, see
+[Add a host to the wave](#add-a-host-to-the-wave): you do not log in
+there. Else get that machine ready as for `riff run` (see
 [Get ready to run an item](#get-ready-to-run-an-item)). Then, in the
 clone of the repository on that machine:
 
@@ -1907,7 +1973,8 @@ riff daemon host
 
 `riff wave run` on that host does it too. So does the start of a
 daemon that runs the wave of the repository. The daemon keeps it over
-its restarts.
+its restarts. With `--host` the daemon of the host makes the main clone
+itself: see [Add a host to the wave](#add-a-host-to-the-wave).
 
 Then, from the lead, or from a terminal of yours in the clone of the
 repository, add `--host` and the name of the host. Only you in a
@@ -1950,7 +2017,8 @@ riff daemon end riff-issue-12-1a2b3c4d --host thelio
 ```
 
 To run, or stop, the wave of the repository on that host. The daemon
-uses its own main clone there:
+uses its own main clone there, and makes it when it has none (see
+[Add a host to the wave](#add-a-host-to-the-wave)):
 
 ```sh
 riff wave run --host thelio
@@ -4514,7 +4582,7 @@ watch of the test when the test starts, and wakes the lead at its end:
 the lead gets one message with `passed` or `failed`, and the next step.
 Name the host as `riff daemon status --host HOST` does. The host needs
 `riff daemon host` or `riff wave run` in its main clone of the
-repository.
+repository, or `riff daemon host --host HOST` from here.
 
 The lead runs this command, and each other `--host` command, in its
 container: `riff daemon status --host`, `riff daemon sweep --host`,

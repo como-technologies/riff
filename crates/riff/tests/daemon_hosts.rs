@@ -1018,3 +1018,222 @@ async fn a_daemon_with_the_served_file_of_an_older_build_serves_host() {
     let written = std::fs::read_to_string(a.dir().join("served.json")).unwrap();
     assert!(!written.contains("branch"), "{written}");
 }
+
+/// The repository `name` in `origins`, with the pin of the session image
+/// that a wave needs. Its folder name makes its repository `local/NAME`.
+fn origin(origins: &Path, name: &str) -> PathBuf {
+    let dir = origins.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    git(&["init", "-q"]);
+    let pin = format!(
+        "[session]\nimage = \"ghcr.io/o/i@sha256:{}\"\n",
+        "0".repeat(64)
+    );
+    std::fs::write(dir.join("riff.toml"), pin).unwrap();
+    git(&["add", "riff.toml"]);
+    git(&["commit", "-q", "-m", "pin"]);
+    std::fs::canonicalize(&dir).unwrap()
+}
+
+/// A fake forge for the hosts (#1430): a `gh` that logs each call in
+/// `tmp/gh.log`, makes the clone `gh repo clone local/NAME PATH` from
+/// `tmp/origins/NAME`, and fails each other call, and a `podman` that has
+/// each image. Gives the variables for a host.
+fn fake_forge(tmp: &Path) -> Vec<(String, String)> {
+    let bin = tmp.join("forge-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let gh = format!(
+        "#!/bin/sh\necho \"$*\" >> {log}\n\
+         if [ \"$1 $2\" = \"repo clone\" ]; then exec git clone -q {origins}/\"${{3#local/}}\" \"$4\"; fi\n\
+         exit 1\n",
+        log = tmp.join("gh.log").display(),
+        origins = tmp.join("origins").display(),
+    );
+    isolated::write_program(bin.join("gh"), gh);
+    isolated::write_program(bin.join("podman"), "#!/bin/sh\nexit 0\n");
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    vec![("PATH".into(), path)]
+}
+
+/// The lines of `tmp/gh.log` that clone a repository.
+fn clones(tmp: &Path) -> Vec<String> {
+    std::fs::read_to_string(tmp.join("gh.log"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.starts_with("repo clone "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// #1430, 01M5SN561BM9SK24SS0AVJ3P5J, 01M5SN5644YVEPF3D452ZA2JVD:
+/// `riff wave run --host b` for a repository that `b` does not serve.
+/// The daemon of `b` makes the main clone with the `gh` of the user,
+/// serves the repository and runs its wave. A second call changes
+/// nothing: no new clone, the same session, the same files.
+#[tokio::test(flavor = "multi_thread")]
+async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_the_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    let other = origin(&tmp.path().join("origins"), "other");
+    let r = riff_env(300, 300, &fake_forge(tmp.path())).await;
+    // The lead of local/other runs on `a`. Only local/riff is served on `b`.
+    let lead = session(&other, "mike", "a", "l2");
+    r.api(&lead).register(&lead).await.unwrap();
+    crate::common::name_lead(&r.server.api("mike", None), &lead).await;
+    r.api(&lead)
+        .set_riff(&lead, RiffState::Running)
+        .await
+        .unwrap();
+    let repo = lead.place().repo_text();
+    assert_eq!(repo, "local/other");
+    assert!(!remote::read_served(&r.b.dir()).unwrap().contains_key(&repo));
+    let clone = r.b.dir().join("clones/local/other");
+    assert!(!clone.exists());
+
+    let out =
+        r.a.run(&other, &["wave", "run", "--host", "b"], Some("l2"))
+            .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}\n{}", r.b.output());
+    assert!(
+        stdout.contains(&riff::text::daemon_cloned(&repo, "b", &clone)),
+        "{stdout}"
+    );
+    assert!(stdout.contains(&riff::text::wave_asked(&repo)), "{stdout}");
+
+    // The clone is the origin, the daemon serves it, and its wave runs.
+    assert!(clone.join(".git").exists() && clone.join("riff.toml").exists());
+    assert_eq!(clones(tmp.path()).len(), 1, "{:?}", clones(tmp.path()));
+    let served = remote::read_served(&r.b.dir()).unwrap();
+    assert_eq!(served[&repo].wave.main, clone);
+    assert_eq!(served[&repo].wave.host, "b");
+    let waves = riff::wave::read_waves(&r.b.dir()).unwrap();
+    assert_eq!(waves[&repo].main, clone);
+    // The daemon of `a` serves nothing new.
+    assert!(!remote::read_served(&r.a.dir()).unwrap().contains_key(&repo));
+
+    // The daemon of `b` has a session for the repository now: the
+    // lead reaches it with the other commands too.
+    let id = until("the daemon of the new repository in who", || async {
+        let who = r.api(&lead).who(&lead, false).await.ok()?;
+        remote::find(&who, "mike", &repo, "b").map(str::to_owned)
+    })
+    .await;
+    assert_eq!(id, served[&repo].session);
+    let out =
+        r.a.run(&other, &["daemon", "status", "--host", "b"], Some("l2"))
+            .await;
+    assert!(out.status.success(), "{out:?}");
+    assert!(text(&out.stdout).contains(&repo), "{out:?}");
+
+    // A second call changes nothing.
+    let files = |host: &Host| {
+        ["served.json", "waves.json"].map(|f| std::fs::read_to_string(host.dir().join(f)).unwrap())
+    };
+    let before = files(&r.b);
+    let head = |dir: &Path| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        text(&out.stdout)
+    };
+    let (commit, mtime) = (
+        head(&clone),
+        std::fs::metadata(&clone).unwrap().modified().unwrap(),
+    );
+    let out =
+        r.a.run(&other, &["wave", "run", "--host", "b"], Some("l2"))
+            .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}\n{}", r.b.output());
+    assert!(!stdout.contains("cloned"), "{stdout}");
+    assert!(stdout.contains(&riff::text::wave_asked(&repo)), "{stdout}");
+    assert_eq!(files(&r.b), before);
+    assert_eq!(clones(tmp.path()).len(), 1, "{:?}", clones(tmp.path()));
+    assert_eq!(head(&clone), commit);
+    assert_eq!(
+        std::fs::metadata(&clone).unwrap().modified().unwrap(),
+        mtime
+    );
+    assert_eq!(
+        std::fs::read_dir(r.b.dir().join("clones/local"))
+            .unwrap()
+            .count(),
+        1
+    );
+
+    // The person asks for it from a terminal too, for a host that is served.
+    let out = r.a.run(&other, &["wave", "run", "--host", "b"], None).await;
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(clones(tmp.path()).len(), 1);
+}
+
+/// #1430, 01M5SN561BM9SK24SS0AVJ3P5J: `riff daemon host --host b` makes
+/// the main clone and serves the repository, and runs no wave. A host
+/// with no daemon of the user fails with the words of riff.
+#[tokio::test(flavor = "multi_thread")]
+async fn daemon_host_with_host_clones_and_serves_but_runs_no_wave() {
+    let tmp = tempfile::tempdir().unwrap();
+    let third = origin(&tmp.path().join("origins"), "third");
+    let r = riff_env(300, 300, &fake_forge(tmp.path())).await;
+    let repo = "local/third";
+
+    // The person asks from a terminal in the clone.
+    let out =
+        r.a.run(&third, &["daemon", "host", "--host", "b"], None)
+            .await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{out:?}\n{}", r.b.output());
+    let clone = r.b.dir().join("clones/local/third");
+    assert!(
+        stdout.contains(&riff::text::daemon_cloned(repo, "b", &clone)),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&riff::text::daemon_serves(repo, "b")),
+        "{stdout}"
+    );
+    assert!(clone.join("riff.toml").exists());
+    assert!(remote::read_served(&r.b.dir()).unwrap().contains_key(repo));
+    assert!(riff::wave::read_waves(&r.b.dir()).unwrap().is_empty());
+    assert_eq!(clones(tmp.path()).len(), 1);
+
+    // Again: no clone, the same session.
+    let session = remote::read_served(&r.b.dir()).unwrap()[repo]
+        .session
+        .clone();
+    let out =
+        r.a.run(&third, &["daemon", "host", "--host", "b"], None)
+            .await;
+    assert!(out.status.success(), "{out:?}");
+    assert!(!text(&out.stdout).contains("cloned"), "{out:?}");
+    assert_eq!(clones(tmp.path()).len(), 1);
+    assert_eq!(
+        remote::read_served(&r.b.dir()).unwrap()[repo].session,
+        session
+    );
+
+    // A host with no daemon of the user.
+    let out =
+        r.a.run(&third, &["daemon", "host", "--host", "c"], None)
+            .await;
+    assert!(!out.status.success(), "{out:?}");
+    assert_eq!(
+        text(&out.stderr).trim(),
+        riff::text::no_daemon_host("c", repo)
+    );
+    assert_eq!(clones(tmp.path()).len(), 1);
+}

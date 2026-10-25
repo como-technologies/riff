@@ -307,6 +307,7 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
         (&["daemon", "sweep"], daemon),
         (&["daemon", "end"], daemon),
         (&["daemon", "restart"], daemon),
+        (&["daemon", "host"], daemon),
         (&["wave", "run"], daemon),
         (&["wave", "stop"], daemon),
         (&["view"], daemon),
@@ -329,6 +330,7 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
             "### See a session on another host",
             daemon,
         ),
+        ("development.md", "### Add a host to the wave", daemon),
     ] {
         let text = words(&under(name, heading));
         assert!(text.contains(who), "{name} {heading}: {text}");
