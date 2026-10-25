@@ -1018,6 +1018,13 @@ pub struct CheckRun {
     /// `https://github.com/o/r/actions/runs/38861280871/job/1`.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub html_url: Option<String>,
+    /// When the run started, for example `2026-10-24T17:04:30Z`.
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+    pub started_at: Option<String>,
+    /// When the run ended, for example `2026-10-24T17:26:50Z`, when it is
+    /// completed.
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+    pub completed_at: Option<String>,
 }
 
 /// The check runs of one commit.
@@ -1030,15 +1037,16 @@ pub struct CheckRuns {
 /// The state of the full check of a commit, for example of the [`GATE`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Gate {
-    /// Each run of the check is completed with a success ([`is_success`]).
+    /// Each newest run of the check ([`newest_runs`]) is completed with a
+    /// success ([`is_success`]).
     Passed,
     /// The commit has no run of the check.
     #[default]
     Missing,
-    /// A run of the check is not completed.
+    /// A newest run of the check is not completed.
     Running,
-    /// A run of the check is completed with this conclusion, which is no
-    /// success.
+    /// A newest run of the check is completed with this conclusion, which
+    /// is no success.
     Ended(String),
 }
 
@@ -1056,8 +1064,46 @@ pub fn is_success(conclusion: &str) -> bool {
     matches!(conclusion, "success" | "skipped" | "neutral")
 }
 
+/// The newest runs of one check (01M5RGM8HBVQMY25H5PYESK17J): the runs
+/// with the latest `started_at`, then the latest `completed_at`, as `gh pr
+/// checks` and the merge rules of GitHub read them. A check can run again
+/// on one commit, and the old run stays in the list. A run with no time is
+/// older than a run with a time. Runs that tie all count, so a failure is
+/// never lost for a tie. GitHub gives each time in UTC and in one form, so
+/// the text order is the time order.
+///
+/// ```
+/// use riff::pr::{CheckRun, newest_runs};
+///
+/// let run = |started: &str, conclusion: &str| CheckRun {
+///     status: "completed".into(),
+///     conclusion: Some(conclusion.into()),
+///     started_at: Some(started.into()),
+///     ..CheckRun::default()
+/// };
+/// let runs = [
+///     run("2026-10-24T17:00:00Z", "failure"),
+///     run("2026-10-24T17:20:00Z", "success"),
+/// ];
+/// let newest = newest_runs(&runs);
+/// assert_eq!(newest.len(), 1);
+/// assert_eq!(newest[0].conclusion.as_deref(), Some("success"));
+/// assert!(newest_runs(&[]).is_empty());
+/// ```
+pub fn newest_runs(runs: &[CheckRun]) -> Vec<&CheckRun> {
+    fn time(run: &CheckRun) -> (Option<&str>, Option<&str>) {
+        (run.started_at.as_deref(), run.completed_at.as_deref())
+    }
+    let Some(newest) = runs.iter().map(time).max() else {
+        return Vec::new();
+    };
+    runs.iter().filter(|run| time(run) == newest).collect()
+}
+
 /// The state of one check from its check runs. A pass needs one run or
-/// more, each completed with a success ([`is_success`]).
+/// more, and each newest run ([`newest_runs`]) completed with a success
+/// ([`is_success`]). An old run does not count when a newer run of the
+/// check is there (01M5RGM8HBVQMY25H5PYESK17J).
 ///
 /// ```
 /// use riff::pr::{CheckRun, Gate, gate_state};
@@ -1070,6 +1116,7 @@ pub fn is_success(conclusion: &str) -> bool {
 /// assert_eq!(gate_state(&[run("completed", Some("success"))]), Gate::Passed);
 /// assert_eq!(gate_state(&[]), Gate::Missing);
 /// assert_eq!(gate_state(&[run("in_progress", None)]), Gate::Running);
+/// // Two runs with no time tie: both count.
 /// assert_eq!(
 ///     gate_state(&[run("completed", Some("success")), run("completed", Some("failure"))]),
 ///     Gate::Ended("failure".into())
@@ -1081,12 +1128,27 @@ pub fn is_success(conclusion: &str) -> bool {
 ///     gate_state(&[run("completed", Some("cancelled"))]),
 ///     Gate::Ended("cancelled".into())
 /// );
+///
+/// // The newest run decides, in any order of the list.
+/// let at = |started: &str, conclusion: &str| CheckRun {
+///     started_at: Some(started.into()),
+///     ..run("completed", Some(conclusion))
+/// };
+/// let failed = at("2026-10-24T17:04:00Z", "failure");
+/// let passed = at("2026-10-24T17:26:00Z", "success");
+/// assert_eq!(gate_state(&[failed.clone(), passed.clone()]), Gate::Passed);
+/// assert_eq!(gate_state(&[passed.clone(), failed.clone()]), Gate::Passed);
+/// let failed = at("2026-10-24T17:26:00Z", "failure");
+/// let passed = at("2026-10-24T17:04:00Z", "success");
+/// assert_eq!(gate_state(&[passed.clone(), failed.clone()]), Gate::Ended("failure".into()));
+/// assert_eq!(gate_state(&[failed, passed]), Gate::Ended("failure".into()));
 /// ```
 pub fn gate_state(runs: &[CheckRun]) -> Gate {
-    if runs.is_empty() {
+    let newest = newest_runs(runs);
+    if newest.is_empty() {
         return Gate::Missing;
     }
-    for run in runs {
+    for run in newest {
         match (run.status.as_str(), run.conclusion.as_deref()) {
             ("completed", Some(conclusion)) if is_success(conclusion) => {}
             ("completed", conclusion) => {
@@ -1238,10 +1300,110 @@ mod tests {
 
     use hygiene::Link;
 
-    use super::{Gh, body};
+    use super::{CheckRun, Gate, Gh, body, full_state, gate_state};
     use crate::text;
 
     const FULL: &str = "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
+
+    fn run(started: Option<&str>, completed: Option<&str>, conclusion: Option<&str>) -> CheckRun {
+        CheckRun {
+            status: if conclusion.is_some() {
+                "completed"
+            } else {
+                "in_progress"
+            }
+            .into(),
+            conclusion: conclusion.map(Into::into),
+            started_at: started.map(Into::into),
+            completed_at: completed.map(Into::into),
+            ..CheckRun::default()
+        }
+    }
+
+    /// 01M5RGM8HBVQMY25H5PYESK17J: the newest run of a check decides, and
+    /// the old run does not count, in any order of the list.
+    #[test]
+    fn the_newest_run_of_a_check_decides_its_state() {
+        let old = |c| {
+            run(
+                Some("2026-10-24T17:01:00Z"),
+                Some("2026-10-24T17:04:30Z"),
+                c,
+            )
+        };
+        let new = |c| {
+            run(
+                Some("2026-10-24T17:22:00Z"),
+                Some("2026-10-24T17:26:50Z"),
+                c,
+            )
+        };
+        assert_eq!(
+            gate_state(&[old(Some("failure")), new(Some("success"))]),
+            Gate::Passed
+        );
+        assert_eq!(
+            gate_state(&[new(Some("success")), old(Some("failure"))]),
+            Gate::Passed
+        );
+        let failed = Gate::Ended("failure".into());
+        assert_eq!(
+            gate_state(&[old(Some("success")), new(Some("failure"))]),
+            failed
+        );
+        assert_eq!(
+            gate_state(&[new(Some("failure")), old(Some("success"))]),
+            failed
+        );
+        // A new run that runs makes the check run, also when an old run passed.
+        assert_eq!(
+            gate_state(&[old(Some("success")), new(None)]),
+            Gate::Running
+        );
+        // An old run that runs does not count when a new run passed.
+        assert_eq!(gate_state(&[old(None), new(Some("success"))]), Gate::Passed);
+    }
+
+    #[test]
+    fn the_end_time_breaks_a_tie_of_the_start_time() {
+        let start = Some("2026-10-24T17:01:00Z");
+        let first = run(start, Some("2026-10-24T17:04:30Z"), Some("failure"));
+        let second = run(start, Some("2026-10-24T17:09:00Z"), Some("success"));
+        assert_eq!(gate_state(&[first.clone(), second.clone()]), Gate::Passed);
+        assert_eq!(gate_state(&[second, first]), Gate::Passed);
+    }
+
+    #[test]
+    fn a_run_with_no_time_is_older_and_a_tie_counts_each_run() {
+        let timed = run(Some("2026-10-24T17:01:00Z"), None, Some("success"));
+        let bare = run(None, None, Some("failure"));
+        assert_eq!(gate_state(&[bare.clone(), timed.clone()]), Gate::Passed);
+        assert_eq!(gate_state(&[timed, bare.clone()]), Gate::Passed);
+        let other = run(None, None, Some("success"));
+        assert_eq!(
+            gate_state(&[other, bare]),
+            Gate::Ended("failure".into()),
+            "a tie must not lose a failure"
+        );
+    }
+
+    #[test]
+    fn the_full_state_uses_the_newest_run_of_each_check() {
+        let at = |s, c| run(Some(s), Some(s), Some(c));
+        let lint = [
+            at("2026-10-24T17:01:00Z", "failure"),
+            at("2026-10-24T17:22:00Z", "success"),
+        ];
+        let docs = [at("2026-10-24T17:05:00Z", "success")];
+        let state = full_state([gate_state(&lint), gate_state(&docs)]);
+        assert_eq!(state, Gate::Passed);
+        let docs = [
+            at("2026-10-24T17:05:00Z", "success"),
+            at("2026-10-24T17:30:00Z", "cancelled"),
+        ];
+        let state = full_state([gate_state(&lint), gate_state(&docs)]);
+        assert_eq!(state, Gate::Ended("cancelled".into()));
+    }
 
     fn refused(link: Link, summary: &str) -> String {
         body(link, summary, "Wave 3").unwrap_err().to_string()
