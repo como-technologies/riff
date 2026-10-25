@@ -2802,6 +2802,45 @@ Each error names its rule. The
 GitHub runs no check on a pull request that has a conflict with
 `main`. When `Hygiene` does not run, rebase your branch on `main` and
 push it again.
+
+### Choose the rules of a repository
+
+The form above is the form of riff. riff reads only two parts of it:
+the link line and the trailer `Issue:`. So `riff pr open` in a
+repository that is not riff keeps only these two rules. The other rules
+are the habits of riff. A repository gets them when its `riff.toml` has
+`rules = "riff"` in the table `[hygiene]`. The `riff.toml` of riff has
+it.
+
+| Rule | Finds | Other repository | riff |
+|---|---|---|---|
+| `link` | No link line, or more than one | holds | holds |
+| `issue-trailer` | No `Issue: #N`, or one for another issue | holds | holds |
+| `keyword` | A closing keyword, for example `Fixes #12` | no | holds |
+| `title` | A title that ends with `(#12)` | no | holds |
+| `milestone-trailer` | No `Milestone:` trailer | no | holds |
+| `milestone` | A pull request or an issue with no milestone | no | holds |
+| `issue-open` | An issue that is closed | no | holds |
+
+In a repository with no table, `riff pr open` gives the pull request the
+milestone of the issue when the issue has one. It writes no trailer
+`Milestone:`, and it opens a pull request for an issue with no
+milestone. The job `Hygiene` of the CI of riff runs each rule on each
+pull request of riff, whatever `riff.toml` says.
+
+To ask for each rule in your repository, add the table to `riff.toml`
+and merge it with a pull request:
+
+```sh
+cat >> riff.toml <<'EOF'
+
+[hygiene]
+rules = "riff"
+EOF
+```
+
+`riff pr open` reads `riff.toml` in your clone. It stops with the file
+name when `rules` has another value, or when the file is not TOML.
 ## Merge by pull request on GitHub
 
 No session and no person pushes to `main`. Each change goes in by a

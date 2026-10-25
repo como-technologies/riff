@@ -1892,13 +1892,17 @@ riff pr open --title "Show the wave" --file summary.md
 
 The issue is the claim `issue-N` of the session. Give `--issue 12`
 when the session holds no claim or more than one. The body gets the
-link line `Closes #12`, the summary of `summary.md`, and the trailers
-of the issue and its wave, in the form of
-[Check a pull request on
-GitHub](development.md#check-a-pull-request-on-github). The pull request
-gets the wave of the issue. Then `riff pr open` turns on auto-merge with
-a squash at once. It opens nothing when the pull request breaks a rule
-of the hygiene check, for example a title that ends with `(#12)`.
+link line `Closes #12`, the summary of `summary.md`, and the trailer of
+the issue. The pull request gets the wave of the issue. Then
+`riff pr open` turns on auto-merge with a squash at once. It opens
+nothing when the pull request breaks a rule of the hygiene check, for
+example a link line for another issue. In riff, the body also gets the
+trailer of the wave, and a title that ends with `(#12)` breaks a rule.
+See [Check a pull request on
+GitHub](development.md#check-a-pull-request-on-github), and
+[Choose the rules of a
+repository](development.md#choose-the-rules-of-a-repository) for the
+rules of your repository.
 
 `summary.md` can also hold the link line and the trailers. Then
 `riff pr open` adds only the lines that are missing. It opens nothing

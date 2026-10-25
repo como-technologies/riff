@@ -75,6 +75,7 @@ pub mod ends;
 pub mod first_run;
 pub mod help;
 pub mod home;
+pub mod hygiene_rules;
 
 pub mod identity;
 #[cfg(all(

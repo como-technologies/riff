@@ -11,3 +11,9 @@ image = "ghcr.io/como-technologies/riff-session@sha256:57413e21fc507e6ace6af4f69
 # default branch of origin, so a change counts after its merge. See
 # "Trust a package source" in docs/src/how-it-works.md.
 sources = ["crates.io", "index.crates.io", "static.crates.io"]
+
+[hygiene]
+# riff pr open applies each rule of the hygiene check to the pull
+# requests of this repository. See "Choose the rules of a repository"
+# in docs/src/development.md.
+rules = "riff"
