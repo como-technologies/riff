@@ -101,6 +101,25 @@
 //! a process in a scope that gives no `cpu` to its children still gets
 //! containers with `cpu.max` (01M4Z60B7MW963MBQAPN2CJEQZ).
 //!
+//! # In a session container
+//!
+//! A session container, for example a lead, runs no podman: the host
+//! runs the containers. When `RIFF_SOCKET` is set ([`Facts::container`]),
+//! `riff init` and `riff init --check` skip the first five checks, print
+//! the line [`text::INIT_MACHINE_SKIPPED`] in their place, and run the
+//! other checks. `riff init` then does the steps of the repository, and
+//! stops after the checks: the host has the daemon and the session image
+//! (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     I["riff init"] --> S{"RIFF_SOCKET<br/>set?"}
+//!     S -- "no: a host" --> M["the checks of the machine"]
+//!     S -- "yes: a session<br/>container" --> K["skip, and say so"]
+//!     M --> R["the checks of the repository"]
+//!     K --> R
+//! ```
+//!
 //! ```
 //! use riff::first_run::{Facts, checks};
 //!
@@ -118,6 +137,7 @@
 //!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
 //!     github: None,
 //!     folder: "/home/mike/riff".into(),
+//!     container: false,
 //! };
 //! assert!(checks(&facts).iter().all(|c| c.passed()));
 //!
@@ -142,6 +162,14 @@
 //! assert_eq!(failed.len(), 1);
 //! assert!(failed[0].starts_with("fail  the init of podman: "), "{}", failed[0]);
 //! assert!(failed[0].ends_with("Fix: install catatonit, the init of podman, for example: sudo apt install catatonit"), "{}", failed[0]);
+//!
+//! // In a session container the host runs the checks of the machine
+//! // (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
+//! facts.container = true;
+//! let lines: Vec<String> = checks(&facts).iter().map(|c| c.line()).collect();
+//! assert_eq!(lines.len(), 2);
+//! assert!(lines[0].starts_with("pass  the session image: "), "{}", lines[0]);
+//! assert!(lines[1].starts_with("pass  the riff binary: "), "{}", lines[1]);
 //! ```
 //!
 //! For tests, [`ETC_VAR`] names a folder that riff reads in place of
@@ -234,6 +262,10 @@ pub struct Facts {
     /// The folder that riff checks: the clone, where `git pull` runs
     /// after the step of `riff.toml` (01M5RGGD9AYNC12Z2CG5CDZWNA).
     pub folder: PathBuf,
+    /// True in a session container ([`crate::cycle::in_container`]): it
+    /// runs no podman, and the host runs the checks of the machine
+    /// (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
+    pub container: bool,
 }
 
 /// The home of the person who runs riff.
@@ -390,6 +422,7 @@ impl Facts {
             riff: riff_binary(),
             github: crate::repo_setup::here(dir),
             folder: dir.to_owned(),
+            container: crate::cycle::in_container(),
         }
     }
 }
@@ -652,7 +685,11 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
         Ok(found) => Check::pass(text::INIT_RIFF, found.clone()),
         Err(found) => Check::fail(text::INIT_RIFF, found.clone(), text::INIT_FIX_RIFF.into()),
     };
-    let mut checks = machine_checks(facts);
+    let mut checks = if facts.container {
+        Vec::new()
+    } else {
+        machine_checks(facts)
+    };
     checks.extend([image, riff]);
     checks.extend(facts.github.iter().flat_map(crate::repo_setup::checks_of));
     checks
@@ -786,6 +823,9 @@ pub async fn run(
     forge: &Forge,
 ) -> Result<i32> {
     println!("{}", text::INIT_CHECKS);
+    if facts.container {
+        println!("  {}", text::INIT_MACHINE_SKIPPED);
+    }
     let mut list = checks(facts);
     // A step fixes a failed check only when riff can do the step now
     // (01M5RGG9KJXCKH8C94145WS8SM).
@@ -835,6 +875,10 @@ pub async fn run(
     }
     if mode == Mode::Check {
         println!("{}", text::INIT_CHECKED);
+        return Ok(0);
+    }
+    if facts.container {
+        println!("{}", text::INIT_CONTAINER_DONE);
         return Ok(0);
     }
     let Ok(image) = &facts.image else {
@@ -1029,6 +1073,7 @@ mod tests {
             riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
             github: None,
             folder: "/nonexistent/clone".into(),
+            container: false,
         }
     }
 
@@ -1355,6 +1400,65 @@ mod tests {
         assert_eq!(code, 1);
         assert!(manager.0.lock().unwrap().is_empty());
         assert!(!dir_in(root.path()).exists());
+    }
+
+    /// 01M5SMJMR5KS1Z1Z7CEPH9JVBB: a session container runs no check of
+    /// the machine, also when each fact of the machine would fail.
+    #[test]
+    fn a_session_container_runs_no_check_of_the_machine() {
+        let broken = Facts {
+            podman: Err(text::INIT_NO_PODMAN.into()),
+            init: None,
+            subuid: None,
+            subgid: None,
+            cgroup: None,
+            user_cgroup: None,
+            ..ready()
+        };
+        assert_eq!(failed(&broken).len(), 5);
+        let container = Facts {
+            container: true,
+            ..broken
+        };
+        let lines: Vec<String> = checks(&container).iter().map(Check::line).collect();
+        assert_eq!(
+            lines,
+            [
+                &format!("pass  the session image: {IMAGE}"),
+                "pass  the riff binary: /home/mike/.cargo/bin/riff is static",
+            ]
+        );
+    }
+
+    /// 01M5SMJMR5KS1Z1Z7CEPH9JVBB: in a session container, `riff init` with
+    /// no `--check` does no step of the daemon: no unit, no daemon, no
+    /// image.
+    #[tokio::test]
+    async fn a_run_in_a_session_container_installs_no_daemon() {
+        for mode in [Mode::Check, Mode::Ask, Mode::Yes] {
+            let root = tempfile::tempdir().unwrap();
+            let manager = Manager::default();
+            let facts = Facts {
+                podman: Err(text::INIT_NO_PODMAN.into()),
+                container: true,
+                ..ready()
+            };
+            let code = run(
+                &facts,
+                mode,
+                no_question,
+                &dir_in(root.path()),
+                &manager,
+                &unit(),
+                WAIT,
+                &Forge::default(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(code, 0, "{mode:?}");
+            assert!(manager.0.lock().unwrap().is_empty(), "{mode:?}");
+            assert!(!dir_in(root.path()).exists(), "{mode:?}");
+        }
     }
 
     #[tokio::test]

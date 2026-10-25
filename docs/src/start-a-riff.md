@@ -421,6 +421,27 @@ steps and change nothing, run `riff init --check`. A person who is not
 an admin of the repository gets the fix of each check, and riff changes
 nothing: ask an admin to run `riff init`.
 
+### Run the checks in the container of the lead
+
+A lead can run `riff init --check` in its container. A container runs
+no podman, and the host runs the checks of the machine. So in a
+container `riff init` skips them, says so in one line, and runs the
+checks of the repository:
+
+```sh
+riff init --check
+```
+
+```text
+riff checks this machine:
+  skip  the checks of the machine: the host runs them
+  ...
+```
+
+`riff init` with no `--check` does the steps of the repository in the
+container, as on the host. It installs no daemon and pulls no image: the
+host has them.
+
 ### Read the output for a repository on GitHub
 
 This is the output of `riff init` in a clone of `acme/app` that is not
