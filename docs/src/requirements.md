@@ -5993,6 +5993,14 @@ of this part when they merge.
   release cycle. It needs no file of the repository and touches nothing
   on the forge. Supersedes 01M5SMPX8NM75P8E38DGQ17W7B in part: the
   refusal of each `riff release` subcommand.
+- **01M5TMZE0AAER3F5Q8DT3K0AJJ** A result of `riff release check` with
+  no failed check and one or more checks that could not run, for example
+  when the sign-in of gcloud ended, is an unknown result. It gives each
+  other lead its own note in the thread `release`: the checks could not
+  all run, the lead that runs the check checks again after a sign-in on
+  the host, the riff stays paused, and the lead that reads the note
+  waits for the next note. The note says nothing of a failure or a
+  rollback. Only a failed check gives the note of a failed check.
 
 ### The real-session test
 

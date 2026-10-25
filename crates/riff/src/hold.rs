@@ -117,6 +117,9 @@ pub enum Step {
     Checked,
     /// `riff release check` found a failed check.
     CheckFailed,
+    /// `riff release check` found no failed check, and one or more checks
+    /// could not run.
+    CheckUnknown,
     /// `riff release check` found that the deploy had failed.
     NotDeployed,
     /// `riff release rollback`: the deploy of an older release.

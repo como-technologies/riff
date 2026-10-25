@@ -97,7 +97,7 @@ use riff_core::build::Semver;
 use riff_core::wire::PersonRole;
 use serde::Deserialize;
 
-use crate::hold::Hold;
+use crate::hold::{Hold, Step};
 use crate::pr::{self, Gh};
 use crate::text;
 
@@ -2076,6 +2076,33 @@ pub enum Checked {
     },
 }
 
+/// The step that the other leads hear for the result of [`checks`]
+/// (01M5TMZE0AAER3F5Q8DT3K0AJJ): [`Step::Checked`] when each check passed,
+/// [`Step::CheckFailed`] when one check failed, and [`Step::CheckUnknown`]
+/// when no check failed and one or more could not run.
+///
+/// ```
+/// use riff::cycle::{Verdict, check_step};
+/// use riff::hold::Step;
+///
+/// let passed = ("a", Verdict::Passed);
+/// let failed = ("b", Verdict::Failed("1 replies 500".into()));
+/// let unknown = ("c", Verdict::Unknown("no log".into()));
+/// assert_eq!(check_step(&[passed.clone()]), Step::Checked);
+/// assert_eq!(check_step(&[passed.clone(), unknown.clone()]), Step::CheckUnknown);
+/// assert_eq!(check_step(&[passed, unknown, failed.clone()]), Step::CheckFailed);
+/// assert_eq!(check_step(&[failed]), Step::CheckFailed);
+/// ```
+pub fn check_step(lines: &[(&'static str, Verdict)]) -> Step {
+    if lines.iter().all(|(_, v)| *v == Verdict::Passed) {
+        Step::Checked
+    } else if lines.iter().any(|(_, v)| matches!(v, Verdict::Failed(_))) {
+        Step::CheckFailed
+    } else {
+        Step::CheckUnknown
+    }
+}
+
 /// The text of the result of [`checks`], for the release issue.
 ///
 /// ```
@@ -2085,12 +2112,10 @@ pub enum Checked {
 /// assert_eq!(text, "riff release check v3.3.0: unknown\n\n- a: passed\n- b: riff could not check it: no log\n");
 /// ```
 pub fn check_text(tag: &str, lines: &[(&'static str, Verdict)]) -> String {
-    let result = if lines.iter().all(|(_, v)| *v == Verdict::Passed) {
-        "passed"
-    } else if lines.iter().any(|(_, v)| matches!(v, Verdict::Failed(_))) {
-        "failed"
-    } else {
-        "unknown"
+    let result = match check_step(lines) {
+        Step::Checked => "passed",
+        Step::CheckFailed => "failed",
+        _ => "unknown",
     };
     let mut out = format!("{}\n\n", check_mark(tag, result));
     for (name, verdict) in lines {
@@ -4614,7 +4639,16 @@ pub(crate) mod tests {
         };
         let log = Log(Err("gcloud: Reauthentication failed"));
         let done = check(&forge, "v3.3.0", &served("3.3.0"), &log).unwrap();
-        assert!(matches!(done, Checked::Ran { passed: false, .. }));
+        let Checked::Ran {
+            lines,
+            passed: false,
+            ..
+        } = &done
+        else {
+            panic!("{done:?}");
+        };
+        // No check failed: the other leads hear an unknown result.
+        assert_eq!(check_step(lines), Step::CheckUnknown);
         let log = forge.log();
         // No release issue: check makes it.
         assert!(

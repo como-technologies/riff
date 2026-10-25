@@ -4734,7 +4734,8 @@ sequenceDiagram
 | The job `Deploy` waits | the watch of the daemon | the deploy waits for a person: hold now, when you are in a critical place |
 | `riff release approve` | the command | the riff is paused: stop at your next step, and keep your state in your notes |
 | The job `Deploy` ends | the watch of the daemon | the deploy passed (the daemon of your host starts again on the release after its sessions), or it failed (the old revision still serves) |
-| `riff release check` | the command | the checks passed and the riff runs again, or they failed, or the deploy had failed |
+| `riff release check` | the command | the checks passed and the riff runs again, or a check failed, or the deploy had failed |
+| `riff release check`, an unknown result | the command | the checks could not all run, and no check failed, for example when the sign-in of gcloud ended: the riff stays paused, and the lead checks again after a sign-in on the host |
 | `riff release rollback` | the command | the older release deploys: hold now, when you are in a critical place |
 
 The lead of the same user and repository as the command gets no note.

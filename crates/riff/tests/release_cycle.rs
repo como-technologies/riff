@@ -2185,6 +2185,66 @@ async fn the_check_gives_the_other_lead_one_note() {
     );
 }
 
+/// 01M5TMZE0AAER3F5Q8DT3K0AJJ: a check that found no failure, but could
+/// not read the Cloud Run log, gives the other lead the note of an
+/// unknown result. The note says nothing of a failure or a rollback, and
+/// the riff stays paused.
+#[tokio::test]
+async fn an_unknown_check_gives_the_other_lead_the_note_of_an_unknown_result() {
+    let machine = Machine::new().await;
+    let tag = this_tag();
+    machine.fake_gh(&deployed(&tag, "success"));
+    machine.shared_cloud();
+    isolated::write_program(
+        machine.bin().join("gcloud"),
+        "#!/bin/sh\necho 'ERROR: (gcloud.logging.read) There was a problem refreshing your \
+         current auth tokens: Reauthentication failed. Please run: gcloud auth login' >&2\n\
+         exit 1\n",
+    );
+    machine.name_lead(&LEAD).await;
+    let other = machine.other_lead().await;
+    machine.ok(&LEAD, &["pause", "--riff"]).await;
+    let out = machine.ok(&LEAD, &["release", "check", &tag]).await;
+    assert!(
+        out.starts_with(&format!("riff release check {tag}: unknown\n")),
+        "{out}"
+    );
+    assert!(!out.contains("The riff is running now."), "{out}");
+    let heard = machine.heard(&other).await;
+    assert_eq!(heard, [note(Step::CheckUnknown, &tag)]);
+    assert!(heard[0].contains("could not all run"), "{heard:?}");
+    assert!(heard[0].contains("The riff stays paused."), "{heard:?}");
+    assert!(!heard[0].contains("failed"), "{heard:?}");
+    assert!(!heard[0].contains("rolls back"), "{heard:?}");
+}
+
+/// 01M5TMZE0AAER3F5Q8DT3K0AJJ: a check that failed still gives the other
+/// lead the note of a failed check, also when another check could not
+/// run.
+#[tokio::test]
+async fn a_failed_check_gives_the_other_lead_the_note_of_a_failed_check() {
+    let machine = Machine::new().await;
+    let tag = this_tag();
+    machine.fake_gh(&deployed(&tag, "success"));
+    machine.shared_cloud();
+    isolated::write_program(
+        machine.bin().join("gcloud"),
+        "#!/bin/sh\ncase \"$*\" in\n\
+         *'riff-server serves'*) printf '2026-10-18T20:00:09Z\\triff-server-00002-new\\n' ;;\n\
+         *'status=500'*) printf '2026-10-18T20:00:40Z\\triff-server-00002-new\\n' ;;\n\
+         esac\nexit 0\n",
+    );
+    machine.name_lead(&LEAD).await;
+    let other = machine.other_lead().await;
+    machine.ok(&LEAD, &["pause", "--riff"]).await;
+    let out = machine.ok(&LEAD, &["release", "check", &tag]).await;
+    assert!(
+        out.starts_with(&format!("riff release check {tag}: failed\n")),
+        "{out}"
+    );
+    assert_eq!(machine.heard(&other).await, [note(Step::CheckFailed, &tag)]);
+}
+
 /// 01M5SNV75DRFHR26BT2M8243VV: a rollback gives the other lead one note.
 #[tokio::test]
 async fn the_rollback_gives_the_other_lead_one_note() {
