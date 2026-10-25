@@ -848,37 +848,6 @@ async fn pr_open_names_a_wave_with_a_name_by_its_number() {
     }
 }
 
-/// #279: `--base` opens the pull request against another branch, for
-/// example the branch of an older release line. The body is the same.
-#[tokio::test]
-async fn pr_open_with_base_opens_against_that_branch() {
-    let machine = Machine::new(OPEN).await;
-    machine
-        .ok(
-            "author",
-            &[
-                "pr",
-                "open",
-                "--title",
-                "My fix",
-                "--issue",
-                "12",
-                "--base",
-                "release/1.x",
-            ],
-        )
-        .await;
-    let (_, body) = created(machine.bin.path());
-    assert_eq!(body, "Closes #12\n\nIssue: #12\nMilestone: Wave 3\n");
-    let log = log(machine.bin.path());
-    assert!(
-        log.contains(
-            "gh pr create --title My fix --milestone Wave 3 --body-file - --base release/1.x"
-        ),
-        "{log}"
-    );
-}
-
 #[tokio::test]
 async fn pr_open_with_refs_links_with_refs() {
     let machine = Machine::new(OPEN).await;
@@ -1103,7 +1072,6 @@ fn the_book_has_a_how_to_for_each_command() {
         "--file <FILE>",
         "--refs",
         "--issue <ISSUE>",
-        "--base <BASE>",
     ] {
         assert!(open.contains(flag), "{flag} is not in riff pr open --help");
     }

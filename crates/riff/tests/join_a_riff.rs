@@ -70,8 +70,6 @@ fn each_riff_command_of_the_page_is_real() {
             "riff server",
             "riff who",
             "riff update",
-            "riff --version",
-            "riff update",
             "riff login",
         ]
     );

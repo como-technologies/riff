@@ -35,6 +35,21 @@ fn riff_claude_token_refuses_a_token_that_does_not_come_from_a_terminal() {
     );
     assert!(shown.contains("in a terminal only"), "{shown}");
     assert!(!shown.contains(token), "{shown}");
-    let file = riff::claude_token::path(&riff::daemon::dir_in(&env.riff_home()));
-    assert!(!file.exists(), "{}", file.display());
+    assert!(!written(&env.riff_home(), token), "a file holds the token");
+}
+
+/// True when a file under `dir` holds `text`.
+fn written(dir: &std::path::Path, text: &str) -> bool {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                written(&path, text)
+            } else {
+                std::fs::read_to_string(&path).is_ok_and(|content| content.contains(text))
+            }
+        })
 }

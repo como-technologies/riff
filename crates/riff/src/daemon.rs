@@ -257,12 +257,12 @@
 //! # A takeover
 //!
 //! A person takes over a worker with [`Ask::Takeover`]
-//! (01M4Z60B83ZH10HYKW7X1C0SSS, 01M501PABB010P4S8YF7R29XXS). The daemon keeps the takeover in the
-//! [`Record`], and tells the relay [`Say::Hold`]: `claude` ends after
-//! its turn, and the relay waits ([`crate::session_relay`]). The hold
-//! interrupts the turn at once, when the hello of the relay says
-//! `interrupts` and the input of `claude` is open
-//! (01M51KJ1R9K7A7RW8T8XH8VW43). With `at_end`, it waits for the end of
+//! (01M4Z60B83ZH10HYKW7X1C0SSS, 01M501PABB010P4S8YF7R29XXS). The daemon
+//! keeps the takeover in the [`Record`], and tells the relay
+//! [`Say::Hold`]: `claude` ends after its turn, and the relay waits
+//! ([`crate::session_relay`]). The hold interrupts the turn at once, when
+//! the input of `claude` is open (01M51KJ1R9K7A7RW8T8XH8VW43,
+//! 01M5RG6C25DB49ZKM03Y93QB1F). With `at_end`, it waits for the end of
 //! the turn. The result of a turn that a takeover interrupts is no fail
 //! of the session ([`Record::interrupt`]). At the
 //! [`Up::Held`] of the relay, the daemon says [`Say::Held`] to `riff
@@ -861,11 +861,6 @@ pub enum SessionAsk {
         /// for [`Say::GoOn`].
         #[serde(default)]
         held: bool,
-        /// True when the relay interrupts the turn of `claude` at a
-        /// [`Say::Hold`] with `interrupt` (01M51KJ1V0STB4QCN4N5SBYGSP).
-        /// A relay from before the interrupts has no such field.
-        #[serde(default)]
-        interrupts: bool,
     },
     /// The riff tools of the session, over MCP
     /// (01M4ZHSZXAY7F7E17B3CMHG562).
@@ -1299,10 +1294,9 @@ pub enum Say {
     /// the container at its end.
     Hold {
         /// True to send `claude` an interrupt before the close: it ends
-        /// its turn at once (01M51KJ1V0STB4QCN4N5SBYGSP). A relay
-        /// from before the interrupts skips the field, and waits for the
-        /// end of the turn.
-        #[serde(default)]
+        /// its turn at once (01M51KJ1V0STB4QCN4N5SBYGSP,
+        /// 01M5RG6C25DB49ZKM03Y93QB1F). Else the relay waits for the end
+        /// of the turn.
         interrupt: bool,
     },
     /// To the relay: the takeover ended. Start `claude` again.
@@ -1491,8 +1485,6 @@ struct SessionState {
     relay: Option<Out>,
     /// The protocol of the last relay that connected, or 0.
     relay_protocol: u32,
-    /// True when the last relay that connected interrupts a turn.
-    relay_interrupts: bool,
     /// True when `claude` ended for a takeover, and the relay waits.
     held: bool,
     /// The connection of `riff takeover`.
@@ -1715,11 +1707,11 @@ impl Owned {
     }
 
     /// Relays the session on the connection of its relay: the hello said
-    /// `protocol`, `inputs`, `closed`, `held` and `interrupts`.
+    /// `protocol`, `inputs`, `closed` and `held`.
     async fn relay(
         &self,
         protocol: u32,
-        (inputs, closed, held, interrupts): (u64, bool, bool, bool),
+        (inputs, closed, held): (u64, bool, bool),
         mut lines: Lines<BufReader<OwnedReadHalf>>,
         write: OwnedWriteHalf,
     ) {
@@ -1728,7 +1720,6 @@ impl Owned {
             let mut state = self.lock();
             out.say(Say::Resume { events: state.seq });
             state.relay_protocol = protocol;
-            state.relay_interrupts = interrupts;
             state.held = held;
             // A takeover that ended while the relay was away: go on
             // first, so that the new input reaches the new claude.
@@ -2738,7 +2729,6 @@ impl<R: Runtime + 'static> Daemon<R> {
                 followers: Vec::new(),
                 relay: None,
                 relay_protocol: 0,
-                relay_interrupts: false,
                 held: false,
                 taker: None,
                 last_step: String::new(),
@@ -3267,10 +3257,9 @@ impl<R: Runtime + 'static> Daemon<R> {
                 inputs,
                 closed,
                 held,
-                interrupts,
             }) => {
                 owned
-                    .relay(protocol, (inputs, closed, held, interrupts), lines, write)
+                    .relay(protocol, (inputs, closed, held), lines, write)
                     .await;
             }
             Ok(SessionAsk::Mcp { client, .. }) => self.mcp(&owned, client, lines, write).await,
@@ -3632,8 +3621,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     // The relay can interrupt only while the stdin of
                     // claude is open. An interrupt of an earlier takeover
                     // can still run.
-                    state.record.interrupt |=
-                        !at_end && state.relay_interrupts && !state.record.closed;
+                    state.record.interrupt |= !at_end && !state.record.closed;
                     if let Err(e) = owned.save(&state) {
                         eprintln!("riff daemon: {e:#}");
                     }
@@ -4508,7 +4496,6 @@ mod tests {
                     inputs,
                     closed,
                     held: false,
-                    interrupts: true,
                 },
             )
             .await
@@ -6008,13 +5995,11 @@ mod tests {
                 inputs: 1,
                 closed: false,
                 held: false,
-                interrupts: true,
             })
             .unwrap(),
-            r#"{"ask":"relay","protocol":2,"inputs":1,"closed":false,"held":false,"interrupts":true}"#
+            r#"{"ask":"relay","protocol":2,"inputs":1,"closed":false,"held":false}"#
         );
-        // The hello of a relay of protocol 3 has no held, and a relay from
-        // before the interrupts has no interrupts.
+        // The hello of a relay of protocol 3 has no held.
         assert_eq!(
             serde_json::from_str::<SessionAsk>(
                 r#"{"ask":"relay","protocol":3,"inputs":1,"closed":true}"#
@@ -6025,28 +6010,16 @@ mod tests {
                 inputs: 1,
                 closed: true,
                 held: false,
-                interrupts: false,
             }
-        );
-        // The hold from before the interrupts waits for the end of the turn. A
-        // relay from before the interrupts reads the new hold as its own hold.
-        assert_eq!(
-            serde_json::from_str::<Say>(r#"{"say":"hold"}"#).unwrap(),
-            Say::Hold { interrupt: false }
         );
         assert_eq!(
             serde_json::to_string(&Say::Hold { interrupt: true }).unwrap(),
             r#"{"say":"hold","interrupt":true}"#
         );
-        #[derive(Deserialize)]
-        #[serde(tag = "say", rename_all = "snake_case")]
-        enum Old {
-            Hold,
-        }
-        assert!(matches!(
-            serde_json::from_str::<Old>(r#"{"say":"hold","interrupt":true}"#),
-            Ok(Old::Hold)
-        ));
+        assert_eq!(
+            serde_json::to_string(&Say::Hold { interrupt: false }).unwrap(),
+            r#"{"say":"hold","interrupt":false}"#
+        );
         // The takeover from before at_end has no at_end: it interrupts.
         let line = format!(r#"{{"protocol":{PROTOCOL},"ask":{{"ask":"takeover","name":"n"}}}}"#);
         let Ok(Ask::Takeover { at_end, .. }) = hello(&line) else {
@@ -7223,8 +7196,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_takeover_waits_for_the_end_of_the_turn_with_at_end_with_a_relay_of_riff_1_5_or_after_the_result()
-     {
+    async fn a_takeover_waits_for_the_end_of_the_turn_with_at_end_or_after_the_result() {
         let waits = |name: &str| Say::Line {
             text: text::takeover_waits(name),
         };
@@ -7237,23 +7209,6 @@ mod tests {
         assert_eq!(first, waits(&name));
         assert_eq!(relay.next().await, at_end);
         assert!(!record_of(&here.dir, &name).interrupt);
-
-        // A relay from before the interrupts: its hello has no interrupts.
-        let here = Here::new(Fake::default().with_image(IMAGE)).await;
-        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
-        let (_client, name) = here.started(start).await;
-        let old = SessionAsk::Relay {
-            protocol: PROTOCOL,
-            inputs: 0,
-            closed: false,
-            held: false,
-            interrupts: false,
-        };
-        let (mut relay, _) = Relay::connect_as(&session_dir(&here.dir, &name), old).await;
-        assert!(matches!(relay.next().await, Say::Input { .. }));
-        let (_taker, first) = take_over(&here.dir, &name).await;
-        assert_eq!(first, waits(&name));
-        assert_eq!(relay.next().await, at_end);
 
         // After the result, the input of claude is closed: claude ends,
         // or waits for its background tasks.
@@ -7303,7 +7258,6 @@ mod tests {
             inputs: 0,
             closed: false,
             held: false,
-            interrupts: false,
         };
         let (_relay, _) = Relay::connect_as(&socket, old).await;
         assert_eq!(take_over(&here.dir, &name).await.1, refused);
@@ -7363,7 +7317,6 @@ mod tests {
             inputs: 1,
             closed: true,
             held: true,
-            interrupts: true,
         };
         let (mut relay, had) = Relay::connect_as(&socket, held).await;
         assert_eq!(had, 1);

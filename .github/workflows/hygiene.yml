@@ -5,12 +5,12 @@ name: Hygiene
 # request does not run the Gate again. On a push to main, it checks the
 # new commit with the commit rule (01M3JFEXS6M5549TC6MH0G2MS0).
 on:
-  # main, and each branch release/MAJOR.x (01M4YJ6KGBPTCSVMFQCDKACZPV).
+  # main (01M5RG6BZQC8T6SZ8NX9W8TT5M).
   pull_request:
-    branches: [main, "release/**"]
+    branches: [main]
     types: [opened, edited, synchronize, reopened, milestoned, demilestoned]
   push:
-    branches: [main, "release/**"]
+    branches: [main]
 
 permissions:
   contents: read

@@ -723,10 +723,12 @@
   `release/**`: a change needs a pull request with 0 approvals and the
   checks `Gate`, `Hygiene` and `riff/verify`, as on `main`. No force
   push, no deletion, no bypass actor. The checks do not stop the push
-  that makes a new branch of a line.
+  that makes a new branch of a line. Superseded by
+  01M5RG6BZQC8T6SZ8NX9W8TT5M.
 - **01M56H9Q0757ESXMJEDM16Z7AT** Our user runs `just github` from a
   checkout of `main` only. The `deploy/github.sh` of `main` sets each
-  ruleset, also the ruleset `release-branches`.
+  ruleset, also the ruleset `release-branches`. Superseded in part by
+  01M5RG6BZQC8T6SZ8NX9W8TT5M: there is no ruleset `release-branches`.
 - **01M4YTW8788K4XYTEMRSXDH7B9** The GitHub release of the line that
   the shared riff runs is marked "Latest". A release of another line is
   not, also when its version is higher.
@@ -804,7 +806,7 @@
   pull request against that branch, for example release/1.x, and not
   against the default branch. The body, the trailers and the auto-merge
   are the same. The steps for a patch of an older release line use it,
-  not gh pr create.
+  not gh pr create. Superseded by 01M5RG6BZQC8T6SZ8NX9W8TT5M.
 - **01M5QYDE41FVFX26EC8K5QGYH4** The full check of a commit is each
   check that the ruleset of the default branch requires, but
   `riff/verify`: riff reads it with `gh api
@@ -828,6 +830,13 @@
   failed. Runs that tie all count. `riff verify pass`, `riff release
   verify`, the verify of the wave and the look at `main` use one rule.
   Supersedes 01M5QYDE41FVFX26EC8K5QGYH4 in part.
+- **01M5RG6BZQC8T6SZ8NX9W8TT5M** A release goes on `main` only
+  (01M5RG6BTXAJY8DV6MT315VZWF). CI runs on `main` and on each pull
+  request to `main`. There is no branch `release/**`, no ruleset
+  `release-branches`, and no how-to for a patch of an older release
+  line. `riff pr open` has no flag `--base`. This supersedes
+  01M4YJ6KGBPTCSVMFQCDKACZPV and 01M5QWJJ94T4M3KJB0R3WTJCQF, and
+  01M56H9Q0757ESXMJEDM16Z7AT for the ruleset `release-branches`.
 
 ## Tokens on GitHub
 
@@ -1997,12 +2006,14 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   riff 3.0.0 (#961): its 12 GitHub releases are normal releases, and
   GitHub marks `v3.0.0` "Latest". The line 2.x retired before this rule
   (#706): its one GitHub release, `v2.0.1`, is a prerelease. The tag
-  `v2.0.0` has no GitHub release.
+  `v2.0.0` has no GitHub release. Superseded by
+  01M5RG6BTXAJY8DV6MT315VZWF.
 - **01M550XYBAW5QYXEMQ49Z34M4N** Replaced by 01M56N6KVZRGT3W7CEK05DHR57.
 - **01M553AWMXYAG7CJGW7M30XDZ8** Replaced by 01M56N6KVZRGT3W7CEK05DHR57.
 - **01M56N6KVZRGT3W7CEK05DHR57** riff has no command that retires a
   release line. `riff --help` lists no `retire`, and `riff retire`
-  fails: riff does not know the command.
+  fails: riff does not know the command. Superseded by
+  01M5RG6BTXAJY8DV6MT315VZWF.
 - **01M3MRMAY3P1K151RGAP9K6GSH** The deploy takes a release tag as its
   input. It checks out that tag and deploys only it. It refuses an
   input that is not a tag `vX.Y.Z` of the version of the crates.
@@ -5009,6 +5020,7 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   test of 01M3N73EEQ4HPCPPAGCAHH3S6B makes a major is a minor. The
   next major is `3.0.0` (01M4Z60B8N9W9TBE7KKDJQAN2C). A release of only
   fixes, where the old and the new builds act the same, is a patch.
+  Superseded by 01M5RG6BTXAJY8DV6MT315VZWF.
 - **01M3N73EGY4NQDQQP8Y185E9VZ** The pull request of a release states
   the level and the reason in one line. The release notes list the
   commands that each person runs, for example
@@ -5248,6 +5260,21 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
 - **01M5P1VAX6WNM9DX16NS4Z0SWC** The actions of the pipeline stay on a
   version that GitHub supports. Dependabot opens a pull request each
   week for an action with a newer version.
+- **01M5RG6BTXAJY8DV6MT315VZWF** riff supports the latest release only.
+  Each machine runs the latest release. riff has no code, test, check,
+  text or how-to that keeps an older release working, or that removes
+  what an older release left on a machine. A history page and this page
+  may name an older release. This supersedes 01M56N6KSMFJ46PW99Z80GF9DM,
+  01M56N6KVZRGT3W7CEK05DHR57 and 01M53N7KN4QKZ70W2GNQ3VQWQ9.
+- **01M5RG6BXBQVFABA1N4NRZBMQF** `riff-server` talks with a `riff` of
+  its own line and of the line before its own, and with no `riff` of
+  another line (01M5RG6BTXAJY8DV6MT315VZWF, 01M3MX1DYY6AVDW946NR0B9T2C,
+  01M3MX1E1EY1M7JGNCN6FCEVQK). The rule reads the version of each side
+  at run time. No release number of riff is a constant in
+  `crates/*/src`. A test of the rule takes the version of the build at
+  run time, and checks that the line before talks and that two lines
+  before do not. This supersedes 01M55FCZNNZGKM4EKAXZQFTDWR and
+  01M53NGVXEMBTJ8E4K3MHPQ7W9.
 
 ## Code
 
@@ -5706,7 +5733,7 @@ part when they merge.
 - **01M53NGVXEMBTJ8E4K3MHPQ7W9** riff-server 3.0.0 serves the API of
   riff 1.x. So a machine of riff 1.x works until it takes riff 3.0.0.
   Superseded in part by 01M55FCZNNZGKM4EKAXZQFTDWR: only from riff
-  1.8.2.
+  1.8.2. Superseded by 01M5RG6BXBQVFABA1N4NRZBMQF.
 - **01M55FCZNNZGKM4EKAXZQFTDWR** The bridge: a `riff` and a
   `riff-server` of the lines 1 and 3 talk, in both directions, from
   riff 1.8.2 and riff 3.0.0. The same line and the line before still
@@ -5717,7 +5744,8 @@ part when they merge.
   before the call takes effect. The check of `riff` does not change.
   riff 1.8.2 releases from v1.8.1 on the branch `release/1.8`, before
   riff 3.0.0. riff-server 1.8.2 still uses no checkpoint of the line 3
-  (01M4YNCEMNRCAXD37V03T4JQYR).
+  (01M4YNCEMNRCAXD37V03T4JQYR). Superseded by
+  01M5RG6BXBQVFABA1N4NRZBMQF.
 - **01M53NGW0DWJ075C4MDP06WAGS** riff 3.0.0 removes the riff of peers of
   Wave B (#803), with its code, its tests and its book text (#959). No
   cargo feature and no flag keeps it. Its items wait in the Backlog:
@@ -6793,7 +6821,8 @@ part when they merge.
   stream-json on the stdin of `claude` before the close, as the Agent
   SDK does. The hello of the relay says `interrupts` when the relay can
   do it. A relay of riff 1.5 reads a `hold` with `interrupt` as its own
-  `hold`. The protocol stays 4.
+  `hold`. The protocol stays 4. Superseded by
+  01M5RG6C25DB49ZKM03Y93QB1F.
 - **01M501PABB010P4S8YF7R29XXS** The daemon keeps a takeover in the
   record of the session, from the ask until it gives the session back.
   It gives the session back at the `go on` of `riff takeover`, or at
@@ -6881,6 +6910,11 @@ part when they merge.
   the PATH of claude. So a person who types ! riff in the terminal runs
   the riff of the container. The path /opt/riff/riff stays, and the
   permission rules that name it still match.
+- **01M5RG6C25DB49ZKM03Y93QB1F** The hello of the relay has no field
+  `interrupts`, and `hold` always has the field `interrupt`
+  (01M5RG6BTXAJY8DV6MT315VZWF). A relay always interrupts the turn of
+  `claude` at a `hold` with `interrupt`. This supersedes
+  01M51KJ1V0STB4QCN4N5SBYGSP.
 
 ### The first run
 
@@ -7176,7 +7210,7 @@ part when they merge.
 - **01M5GT0QV72BZA4VVWDPR1WG17** riff keeps no command only so that the
   update of an older line can finish. When the update from the line
   before stops on the new riff, the book gives the step that a person
-  runs by hand.
+  runs by hand. Superseded by 01M5RG6C4H3YPACS41S6EPS87E.
 - **01M5JFF7TAVA87TMJXK25HDJ19** riff init removes the plugin of riff 3
   that is left on the machine: the folder claude-plugin in the data
   folder of riff, and the keys enabledPlugins.riff@riff,
@@ -7185,7 +7219,15 @@ part when they merge.
   stays. riff init --check names them and removes nothing. The riff
   daemon of a release removes them at its start behind the gate of the
   update by itself, and riff update --check names them with the fix riff
-  init.
+  init. Superseded by 01M5RG6C4H3YPACS41S6EPS87E.
+- **01M5RG6C4H3YPACS41S6EPS87E** riff has no step that removes what an
+  older release left on a machine (01M5RG6BTXAJY8DV6MT315VZWF). `riff
+  init`, `riff init --check`, `riff update --check`, the update by
+  itself and `riff claude-token` remove no plugin of Claude Code, no key
+  of its settings and no old file of the token. The book has no how-to
+  for the update from an older release. This supersedes
+  01M5JFF7TAVA87TMJXK25HDJ19 and 01M5GT0QV72BZA4VVWDPR1WG17, and
+  01M58XZF928T82YAMF4DSJBKBF for the removal of the old file.
 
 ### riff run
 
@@ -7419,7 +7461,8 @@ part when they merge.
   (01M4385CEWGCP31DP5PAMPXZ97). The daemon never falls back to the
   sign-in of `claude` on the host then. The mark `claude-token-refused`
   stays a file. `riff daemon status` and `riff who` show `claude token`:
-  `set`, `not set`, `refused` or `keyring locked`.
+  `set`, `not set`, `refused` or `keyring locked`. Superseded in part
+  by 01M5RG6C4H3YPACS41S6EPS87E: riff does not remove the old file.
 - **01M58B7HCXKZF39DCF6KV84JRV** When a token is set, the daemon posts
   no note for the sign-in of `claude` (01M57D3FC5PB5EQ6Y38Y5R2DBB), and
   the facts of the host do not warn about its minutes left.

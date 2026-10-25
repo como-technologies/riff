@@ -5,7 +5,7 @@
 //!
 //! A real `riff-server` with sign-in stands in for the riff. Each of
 //! its replies names a newer release. The update runs a fake `cargo`, a
-//! fake `riff` for `riff connect` and a fake `riff-server` that log their
+//! fake `riff` that the update must not run and a fake `riff-server` that log their
 //! arguments. Each test is one machine: one [`Isolated`] environment.
 
 use std::path::{Path, PathBuf};
@@ -331,7 +331,7 @@ async fn a_failed_update_keeps_the_old_riff_and_tells_the_lead_once() {
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    // cargo ran once. The plugin and the binaries stay as they were.
+    // cargo ran once. The binaries stay as they were.
     assert_eq!(log(machine.bin.path(), "cargo"), install(&newer_tag()));
     assert_eq!(log(machine.bin.path(), "riff"), "");
     let version = machine.run("w", &["--version"]).await;

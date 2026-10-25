@@ -281,11 +281,11 @@ async fn server_names_another_build_and_what_to_run() {
         stdout.ends_with("\nRun riff update, then riff login\n"),
         "{stdout}"
     );
-    // Three lines after: two lines after the line 1 is the line 3, which
-    // talks with it (01M55FCZNNZGKM4EKAXZQFTDWR).
+    // Two lines after: the server takes this riff as neither its line
+    // nor the line before (01M5RG6BXBQVFABA1N4NRZBMQF).
     let this = Build::this().semver().unwrap();
     let other_line = Build {
-        version: this.line_after().line_after().line_after().to_string(),
+        version: this.line_after().line_after().to_string(),
         ..other()
     };
     let url = fake(other_line.clone()).await;
@@ -854,8 +854,8 @@ async fn update_downloads_the_static_binaries_of_the_release() {
 
 /// 01M4ZPJ0BAQZ6AN06FGXS5D4FP: a file with another SHA-256, a binary
 /// that is not static, or a file that is missing: `riff update` installs
-/// nothing, names the reason, and runs neither cargo nor the plugin
-/// update.
+/// nothing, names the reason, and runs neither cargo nor the `riff` of
+/// PATH.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[tokio::test]
 async fn update_installs_nothing_when_a_file_fails_a_check() {

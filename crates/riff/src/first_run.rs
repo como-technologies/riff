@@ -26,7 +26,7 @@
 //! 1. The checks ([`checks`]). riff reads the [`Facts`] of the machine,
 //!    and prints one line for each check: `pass`, or `fail` with the
 //!    fix (01M4ZJN6TEWCYCB39XTH6BBD9H). When riff can do the step of a
-//!    failed check now (step 4), the line reads `step` with the step, in
+//!    failed check now (step 3), the line reads `step` with the step, in
 //!    place of `fail` with the fix ([`Check::planned_line`],
 //!    01M5RGG9KJXCKH8C94145WS8SM).
 //! 2. The wide rules ([`Wide`]). When the user settings, the project
@@ -37,11 +37,7 @@
 //!    terminal removes them ([`crate::permissions::remove`],
 //!    01M51JCW2EKF8H8QFQYSVRSPET). `--yes` and `--check` ask nothing and
 //!    remove nothing. A wide rule fails no check.
-//! 3. The plugin of riff 3 ([`crate::old_plugin`]). When its folder or
-//!    its keys in the settings of Claude Code are left, riff names them
-//!    and removes them, with no question: each of its hooks fails in
-//!    Claude Code. `--check` removes nothing (01M5JFF7TAVA87TMJXK25HDJ19).
-//! 4. The setup of the repository (01M5R1672NF56P15VD0JEX51K4).
+//! 3. The setup of the repository (01M5R1672NF56P15VD0JEX51K4).
 //!    When a check of the repository on GitHub failed and has a step
 //!    ([`crate::repo_setup::Step`]), and the person is an admin of the
 //!    repository, riff names the steps and asks one question
@@ -55,14 +51,14 @@
 //!    image of the release is the session image of this run. Then riff
 //!    checks again and prints the list again: a step that worked passes
 //!    its check (01M5RGGD6YR36EXZEG61XCJVRY).
-//! 5. When a check still fails, riff installs nothing, pulls no image,
+//! 4. When a check still fails, riff installs nothing, pulls no image,
 //!    names the check and the fix of each failed check, and exits with 1.
 //!    `--check` stops here (01M4ZJN6WR0JJ891R9JMQNPKGD).
-//! 6. The daemon. When a riff daemon answers, riff keeps it: it does
+//! 5. The daemon. When a riff daemon answers, riff keeps it: it does
 //!    not start it again. When no daemon answers, riff installs it as
 //!    `riff daemon install` does ([`crate::daemon::install`],
 //!    01M4ZJN6Z1DGD43CKZ19QPN2NK).
-//! 7. The image. riff asks the daemon for the session image that
+//! 6. The image. riff asks the daemon for the session image that
 //!    `riff.toml` pins. The daemon pulls it when podman does not have
 //!    it (01M4ZJN718EF1PC9YY9GFD0EJ2).
 //!
@@ -120,7 +116,6 @@
 //!     image: Ok(format!("ghcr.io/o/i@sha256:{}", "0".repeat(64))),
 //!     wide: vec![],
 //!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
-//!     old_plugin: Default::default(),
 //!     github: None,
 //!     folder: "/home/mike/riff".into(),
 //! };
@@ -232,8 +227,6 @@ pub struct Facts {
     /// What riff found of its own binary: static, or why it is not
     /// ([`crate::release::check_file`]).
     pub riff: Result<String, String>,
-    /// What is left of the plugin of riff 3 ([`crate::old_plugin`]).
-    pub old_plugin: crate::old_plugin::Found,
     /// The facts of the repository on GitHub that riff reads
     /// ([`crate::repo_setup`]), or why it cannot. `None` when the folder
     /// has no remote `origin` on GitHub: riff checks nothing there.
@@ -395,7 +388,6 @@ impl Facts {
                 .map_err(|e| format!("{e:#}")),
             wide: Wide::here(dir),
             riff: riff_binary(),
-            old_plugin: crate::old_plugin::Found::here(Some(dir)),
             github: crate::repo_setup::here(dir),
             folder: dir.to_owned(),
         }
@@ -818,15 +810,6 @@ pub async fn run(
             println!("{}", text::INIT_WIDE_KEPT);
         }
     }
-    if !facts.old_plugin.is_empty() {
-        println!("{}", text::old_plugin(&facts.old_plugin));
-        if mode == Mode::Check {
-            println!("{}", text::OLD_PLUGIN_KEPT);
-        } else {
-            facts.old_plugin.remove()?;
-            println!("{}", text::OLD_PLUGIN_REMOVED);
-        }
-    }
     let after = if mode == Mode::Check {
         None
     } else {
@@ -1044,7 +1027,6 @@ mod tests {
             image: Ok(IMAGE.into()),
             wide: vec![],
             riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
-            old_plugin: Default::default(),
             github: None,
             folder: "/nonexistent/clone".into(),
         }
@@ -1374,48 +1356,6 @@ mod tests {
         assert_eq!(code, 1);
         assert!(manager.0.lock().unwrap().is_empty());
         assert!(!dir_in(root.path()).exists());
-    }
-
-    /// 01M5JFF7TAVA87TMJXK25HDJ19: riff init removes the plugin of riff
-    /// 3 with no question, also when a check fails. `--check` keeps it.
-    #[tokio::test]
-    async fn riff_init_removes_the_plugin_of_riff_3_and_check_keeps_it() {
-        let root = tempfile::tempdir().unwrap();
-        let plugin = root.path().join("claude-plugin");
-        let user = root.path().join("settings.json");
-        let user_text = r#"{"enabledPlugins":{"riff@riff":true},"theme":"auto"}"#;
-        let found = || crate::old_plugin::Found::of(&plugin, std::slice::from_ref(&user));
-        std::fs::create_dir_all(plugin.join("riff/hooks")).unwrap();
-        std::fs::write(&user, user_text).unwrap();
-        let manager = Manager::default();
-        for (mode, kept) in [(Mode::Check, true), (Mode::Yes, false)] {
-            let facts = Facts {
-                podman: Err(text::INIT_NO_PODMAN.into()),
-                old_plugin: found(),
-                ..ready()
-            };
-            let dir = dir_in(root.path());
-            let code = run(
-                &facts,
-                mode,
-                no_question,
-                &dir,
-                &manager,
-                &unit(),
-                WAIT,
-                &Forge::default(),
-            )
-            .await
-            .unwrap();
-            assert_eq!(code, 1, "{mode:?}");
-            assert_eq!(plugin.exists(), kept, "{mode:?}");
-            assert_eq!(found().is_empty(), !kept, "{mode:?}");
-        }
-        assert_eq!(
-            std::fs::read_to_string(&user).unwrap(),
-            "{\n  \"theme\": \"auto\"\n}\n"
-        );
-        assert!(manager.0.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

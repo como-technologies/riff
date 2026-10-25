@@ -4932,25 +4932,14 @@ pub const CLAUDE_TOKEN_REFUSED: &str = "claude refused the token of riff claude-
      or it was revoked. The daemon starts no session until a new token is set. Run claude \
      setup-token, then riff claude-token, on this machine.";
 
-/// `riff claude-token` kept the token in the OS keyring. `old` is the old
-/// file of riff 3.3.0 that it removed.
+/// `riff claude-token` kept the token in the OS keyring.
 ///
 /// ```
-/// let text = riff::text::claude_token_kept(None);
+/// let text = riff::text::CLAUDE_TOKEN_KEPT;
 /// assert!(text.starts_with("riff keeps the token in the OS keyring."), "{text}");
-/// let old = std::path::Path::new("/d/claude-token");
-/// let text = riff::text::claude_token_kept(Some(old));
-/// assert!(text.contains("It removed the old file /d/claude-token."), "{text}");
 /// ```
-pub fn claude_token_kept(old: Option<&Path>) -> String {
-    let removed = old.map_or_else(String::new, |old| {
-        format!(" It removed the old file {}.", old.display())
-    });
-    format!(
-        "riff keeps the token in the OS keyring.{removed} Each new container session signs in \
-         with it. See it: riff daemon status"
-    )
-}
+pub const CLAUDE_TOKEN_KEPT: &str = "riff keeps the token in the OS keyring. Each new container \
+     session signs in with it. See it: riff daemon status";
 
 /// The daemon cannot read the token of `claude` from the OS keyring of
 /// `host`: it starts no session (01M58XZF928T82YAMF4DSJBKBF).
@@ -6708,81 +6697,6 @@ pub fn init_wide_removed(path: &Path, count: usize) -> String {
 /// `riff init` kept each wide rule: no `y` in a terminal.
 pub const INIT_WIDE_KEPT: &str =
     "riff removed no rule. To remove them, run riff init in a terminal, and answer y.";
-
-/// What `riff init` found of the plugin of riff 3
-/// ([`crate::old_plugin`]): the folder, and each settings file with its
-/// keys.
-///
-/// ```
-/// use riff::old_plugin::Found;
-///
-/// let found = Found {
-///     dir: Some("/d/claude-plugin".into()),
-///     settings: vec![("/h/s.json".into(), vec!["enabledPlugins.riff@riff", "statusLine"])],
-/// };
-/// assert_eq!(
-///     riff::text::old_plugin(&found),
-///     "The plugin of riff 3 is still here. riff has no plugin now, so each of its hooks fails in Claude Code:\n  /d/claude-plugin\n  /h/s.json: enabledPlugins.riff@riff, statusLine"
-/// );
-/// ```
-pub fn old_plugin(found: &crate::old_plugin::Found) -> String {
-    let mut out = String::from(
-        "The plugin of riff 3 is still here. riff has no plugin now, so each of its hooks fails in \
-         Claude Code:",
-    );
-    for line in old_plugin_parts(found) {
-        out.push_str("\n  ");
-        out.push_str(&line);
-    }
-    out
-}
-
-/// Each part of the plugin of riff 3 that is left: the folder, and each
-/// settings file with its keys.
-fn old_plugin_parts(found: &crate::old_plugin::Found) -> Vec<String> {
-    found
-        .dir
-        .iter()
-        .map(|dir| dir.display().to_string())
-        .chain(
-            found
-                .settings
-                .iter()
-                .map(|(path, keys)| format!("{}: {}", path.display(), keys.join(", "))),
-        )
-        .collect()
-}
-
-/// `riff init` removed the plugin of riff 3.
-pub const OLD_PLUGIN_REMOVED: &str = "riff removed the plugin of riff 3.";
-
-/// `riff init --check` kept the plugin of riff 3.
-pub const OLD_PLUGIN_KEPT: &str =
-    "riff removed nothing: --check. To remove the plugin of riff 3, run riff init.";
-
-/// The step of the plugin of riff 3 ([`crate::update_steps::old_plugin`]).
-pub const STEP_OLD_PLUGIN: &str = "the plugin of riff 3";
-
-/// The step of the plugin of riff 3: nothing is left.
-pub const STEP_OLD_PLUGIN_NONE: &str = "it is not here";
-
-/// The step of the plugin of riff 3: riff removed it.
-pub const STEP_OLD_PLUGIN_REMOVED: &str = "riff removed it";
-
-/// The fix of the step of the plugin of riff 3.
-pub const STEP_FIX_OLD_PLUGIN: &str = "riff init";
-
-/// The step of the plugin of riff 3: what is left.
-///
-/// ```
-/// use riff::old_plugin::Found;
-///
-/// let found = Found { dir: Some("/d/claude-plugin".into()), settings: vec![] };
-/// assert_eq!(riff::text::step_old_plugin(&found), "it is still here: /d/claude-plugin");
-/// ```
-pub fn step_old_plugin(found: &crate::old_plugin::Found) -> String {
-    format!("it is still here: {}", old_plugin_parts(found).join("; "))
-}
 
 /// Some checks of `riff init` failed: `failed` has the name and the fix of
 /// each one, so a person need not search the lists above

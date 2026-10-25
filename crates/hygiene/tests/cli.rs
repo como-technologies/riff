@@ -110,7 +110,7 @@ fn a_broken_pull_request_fails_with_each_rule() {
 /// number, so the check passes. A trailer of another wave fails.
 #[test]
 fn a_trailer_of_the_old_title_passes_after_a_rename_of_the_wave() {
-    let renamed = Some("Wave 28: 1.x, fixes that slow the work");
+    let renamed = Some("Wave 28: cloud, fixes that slow the work");
     let old = GOOD.replace("Wave 3", "Wave 28: after 1.4.0");
     let gh = fake_gh(&pr_json(&old, renamed), &[issue_json(77, "OPEN", renamed)]);
     let out = hygiene(&["pr", "90"], Some(gh.path()), None);
@@ -127,7 +127,7 @@ fn a_trailer_of_the_old_title_passes_after_a_rename_of_the_wave() {
     assert!(
         stderr.contains(
             "error: milestone-trailer: `Milestone: Wave 27: after 1.4.0` is not the milestone of \
-             the pull request (Wave 28: 1.x, fixes that slow the work)"
+             the pull request (Wave 28: cloud, fixes that slow the work)"
         ),
         "{stderr}"
     );

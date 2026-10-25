@@ -2929,18 +2929,17 @@ fn closed(mut reply: Response, whole: bool) -> Response {
 
 /// Refuses a call from a `riff` of a version that this server cannot
 /// talk to, or that names no build (01M3MX1E65XGWDZ062PQ9YXQ5T), with
-/// the line `denied` and the code `old_build` (01M3X4Z64ZNRD0G0F4JV1M64FN). A `riff`
-/// of the line of this server, of the line before, or of the other line
-/// of the bridge, goes on (01M3MX1DYY6AVDW946NR0B9T2C,
-/// 01M3MX1E1EY1M7JGNCN6FCEVQK, 01M55FCZNNZGKM4EKAXZQFTDWR). A server of
-/// the line 3 takes the line 1 only from [`build::BRIDGE_FROM`]
-/// ([`build::server_takes`]): it refuses an older `riff` of the line 1
-/// before the call takes effect. The OAuth metadata, `/v1/token` and
-/// `/v1/sign-in` stay open to each client (01M3MX4V43SF2XFCZWANHD19WV).
+/// the line `denied` and the code `old_build` (01M3X4Z64ZNRD0G0F4JV1M64FN).
+/// A `riff` of the line of this server, or of the line before, goes on
+/// ([`build::compatible`], 01M3MX1DYY6AVDW946NR0B9T2C,
+/// 01M3MX1E1EY1M7JGNCN6FCEVQK, 01M5RG6BXBQVFABA1N4NRZBMQF). The server
+/// refuses each other `riff` before the call takes effect. The OAuth
+/// metadata, `/v1/token` and `/v1/sign-in` stay open to each client
+/// (01M3MX4V43SF2XFCZWANHD19WV).
 async fn check_build(AxumState(s): AxumState<Shared>, request: Request, next: Next) -> Response {
     let this = s.config.build.clone();
     let riff = Build::from_header(request.headers().get(build::HEADER).map(|v| v.as_bytes()));
-    if riff.as_ref().is_some_and(|r| build::server_takes(r, &this)) {
+    if riff.as_ref().is_some_and(|r| build::compatible(r, &this)) {
         return next.run(request).await;
     }
     let mismatch = Mismatch {
@@ -4000,13 +3999,14 @@ mod tests {
         );
     }
 
-    /// The rollback of 2.0.1 to the line 1.x (01M4YNCECQDQR3Z8QTGQ1PW3WV,
+    /// The rollback to the line before (01M4YNCECQDQR3Z8QTGQ1PW3WV,
     /// 01M4YNCEMNRCAXD37V03T4JQYR): the log has a record `forge_allowed`,
-    /// and the newest checkpoint comes from 2.0.1, with the field
-    /// `forge_accounts`. A build of 1.x drops the record, does not use the
-    /// checkpoint, and writes checkpoints again.
+    /// and the newest checkpoint comes from the later line, with the field
+    /// `forge_accounts`. The build of the line before drops the record,
+    /// does not use the checkpoint, and writes checkpoints again.
     #[tokio::test(start_paused = true)]
-    async fn a_build_of_1_x_writes_checkpoints_past_the_records_and_the_checkpoint_of_2_0() {
+    async fn a_rolled_back_build_writes_checkpoints_past_the_records_and_the_checkpoint_of_the_later_line()
+     {
         let store = Arc::new(Gated::default());
         let service = running(store.clone()).await;
         post_n(&service, 2, "before").await;

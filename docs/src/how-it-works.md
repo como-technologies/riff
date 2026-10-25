@@ -293,28 +293,22 @@ starts a new line (see [Versions](#versions)). Most merges keep the
 line.
 
 `riff-server` talks with a `riff` of its own line, and of the line
-before. So you have one release to update `riff` in. The lines 1 and
-3 also talk, in both directions: the bridge. `riff-server` of the
-line 3 takes `riff` of the line 1 only from 1.8.2, the first build
-that knows the bridge. The line 2 is retired.
+before. So you have one release to update `riff` in. It talks with no
+`riff` of another line.
 
-| riff | riff-server | Result |
-|---|---|---|
-| 0.4.0 | 0.4.3 | They talk. riff tells you once to update. |
-| 0.3.2 | 0.4.0 | They talk. riff tells you to update soon. |
-| 0.4.0 | 0.3.2 | riff-server refuses: update riff-server. |
-| 0.2.0 | 0.4.0 | riff-server refuses: update riff. |
-| 1.8.2 | 3.0.0 | They talk: the bridge. riff tells you to update soon. |
-| 3.0.0 | 1.8.2 | They talk: the bridge. riff tells you to update riff-server. |
-| 1.8.1 | 3.0.0 | riff-server refuses: update riff. |
-| 1.8.2 | 4.0.0 | riff-server refuses: update riff. |
+| `riff` is on | Result |
+|---|---|
+| the line of `riff-server` | They talk. When the builds differ, riff tells you once to update. |
+| the line before | They talk. riff tells you to update soon. |
+| a later line | riff-server refuses: update riff-server. |
+| two lines before, or more | riff-server refuses: update riff. |
 
 Each call of `riff` names its build, and each reply of `riff-server`
 names its own. Each side compares the versions:
 
 ```mermaid
 flowchart LR
-    R["riff<br/>0.3.2 929605821e54"] -- "call, with the build of riff" --> S{"riff-server 0.4.0:<br/>riff on the line 0.4 or 0.3?"}
+    R["riff<br/>a build"] -- "call, with the build of riff" --> S{"riff-server:<br/>riff on its line<br/>or the line before?"}
     S -- yes --> OK["the reply. Another build:<br/>riff tells you once to update"]
     S -- no --> E["409: both builds, and the side to update"]
 ```
@@ -359,14 +353,6 @@ server refuses it. The note says so:
 
 ```text
 riff: riff-server runs build 0.4.0 7213825ab1c2 2026-09-27T20:10:44Z; this riff runs build 0.3.2 929605821e54 2026-09-20T22:03:01Z. riff-server 0.5 will refuse riff 0.3. Run riff update soon.
-```
-
-Across the bridge, `riff` of the line 3 talks with `riff-server` of
-the line 1, for example after a rollback of the server. Then the
-server is the older side too:
-
-```text
-riff: riff-server runs build 1.8.2 7213825ab1c2 2026-10-17T20:10:44Z; this riff runs build 3.0.0 929605821e54 2026-10-18T22:03:01Z. Update riff-server when you can.
 ```
 
 When the note says "Run riff update", update riff on this machine:
@@ -472,11 +458,9 @@ So a new tag does not break your machine before the shared server
 runs it. `riff server` shows the release of `riff` and of each riff.
 
 When the riff names no release, `riff update` installs the release
-that GitHub marks "Latest": the release of the line that the shared
-riff runs. It is not always the highest tag: GitHub never marks a
-prerelease Latest, for example `v2.0.1` of the retired line 2.x. The
-releases of the retired line 1.x are normal releases, older than the
-Latest. See the Latest release:
+that GitHub marks "Latest": the release that the shared riff runs. It
+is not always the highest tag: GitHub never marks a prerelease Latest.
+See the Latest release:
 
 ```sh
 gh release view --repo como-technologies/riff
@@ -642,8 +626,7 @@ flowchart TD
     G -- "no" --> N["it changes nothing"]
     G -- "yes" --> U["1. the unit of the daemon"]
     U --> I["2. the session image of each wave"]
-    I --> O["3. the plugin of riff 3"]
-    O --> P["4. the checks of the machine:<br/>it only tells you"]
+    I --> P["3. the checks of the machine:<br/>it only tells you"]
     N --> P
 ```
 
@@ -651,8 +634,7 @@ flowchart TD
 |---|---|---|
 | 1. The unit of the daemon | `riff.service` is the text that the new riff writes for it, with your riff and your variables | writes it again, and starts again on it when it runs no session |
 | 2. The session image of each wave | podman has the merged pin: the image that `riff.toml` on the default branch of `origin` pins (see [Only a merged pin counts](development.md#only-a-merged-pin-counts)) | pulls it |
-| 3. The plugin of riff 3 | nothing of it is left: see [Remove the plugin of riff 3](start-a-riff.md#remove-the-plugin-of-riff-3) | removes it |
-| 4. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
+| 3. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
 
 - Only a release does a step: a `riff` whose SHA-256 is in
   `SHA256SUMS` of the GitHub release of its version. A check build or
@@ -700,7 +682,6 @@ update.auto is on, and this riff is the release v1.6.0: at its next start, the r
 in step  the riff binary: it is the release v1.6.0
 not in step  the unit of the daemon: the unit file is not the text that this riff writes for it. Fix: riff daemon install
 in step  the session image of como-technologies/riff: ghcr.io/como-technologies/riff-session@sha256:…
-in step  the plugin of riff 3: it is not here
 in step  podman: podman version 5.7.0
 needs you  the init of podman: podman has no init: no catatonit in /usr/local/libexec/podman, /usr/local/lib/podman, /usr/libexec/podman, /usr/lib/podman, so no session can start. Fix: install catatonit, the init of podman, for example: sudo apt install catatonit
 in step  /etc/subuid: 65536 IDs for mike
@@ -808,13 +789,12 @@ To ask again, remove the key, then run `riff login`.
 A riff is a contract between machines and between sessions. Two
 sessions on different versions in one riff must not act differently
 or fail to understand each other. The level of a release tells you
-what changed. While riff is `0.x`, the minor has the role of the
-major.
+what changed.
 
 ### Patch
 
-`0.3.0` to `0.3.1`. Nothing changes that another machine or session
-can notice:
+The patch number grows. Nothing changes that another machine or
+session can notice:
 
 - a fix that restores the intended behavior;
 - the docs, an output format, the tests;
@@ -823,7 +803,7 @@ can notice:
 
 ### Minor
 
-`0.3.x` to `0.4.0`. A change that another machine or session can
+The minor number grows. A change that another machine or session can
 notice:
 
 - the wire: a route or a field that a client needs, a removed one, or
@@ -837,18 +817,14 @@ notice:
 
 `riff-server` still talks with a `riff` of the line before its own
 (see [Builds](#builds)), so a wire change stays additive for one
-line. The lines 1 and 3 also talk, in both directions, because the
-line 2 is retired: the wire of 3.0.0 is the wire of 1.8. Riff does
-not bridge a difference in behavior: the version note tells the older
-session to update.
+line. Riff does not bridge a difference in behavior: the version note
+tells the older session to update.
 
 ### Major
 
-`1.0.0` promises that the wire and the behavior stay stable. After
-it, a major breaks, a minor adds and a patch fixes. A change of
-behavior that can break a pipeline or a policy is a major. The line
-1.x takes no major: see [Make a release](development.md#make-a-release).
-1.8.x is the last minor release of 1.x. The next major is 3.0.0.
+A major version promises that the wire and the behavior stay stable.
+A major breaks, a minor adds and a patch fixes. A change of behavior
+that can break a pipeline or a policy is a major.
 
 ### The test for each release
 
@@ -1922,9 +1898,6 @@ GitHub](development.md#check-a-pull-request-on-github). The pull request
 gets the wave of the issue. Then `riff pr open` turns on auto-merge with
 a squash at once. It opens nothing when the pull request breaks a rule
 of the hygiene check, for example a title that ends with `(#12)`.
-Give `--base release/1.x` to open it against the branch of an older
-release line (see [Make a patch of an older
-release](development.md#make-a-patch-of-an-older-release)).
 
 `summary.md` can also hold the link line and the trailers. Then
 `riff pr open` adds only the lines that are missing. It opens nothing

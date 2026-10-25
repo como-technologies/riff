@@ -46,11 +46,9 @@
 //!
 //! With no tag from the person or the riff, `riff update` installs the
 //! release that GitHub marks "Latest" ([`latest`],
-//! 01M510MPR1S0EQNRK2195XTXG5): the release of the line that the shared
-//! riff runs (01M4YTW8788K4XYTEMRSXDH7B9). It is not always the highest
-//! tag: GitHub never marks a prerelease "Latest", for example `v2.0.1`
-//! of the retired line 2.x. The releases of the retired line 1.x are
-//! normal releases, older than the Latest (01M56N6KSMFJ46PW99Z80GF9DM).
+//! 01M510MPR1S0EQNRK2195XTXG5): the release that the shared riff runs
+//! (01M4YTW8788K4XYTEMRSXDH7B9). It is not always the highest tag: GitHub
+//! never marks a prerelease "Latest".
 //! riff asks the API of GitHub with no sign-in, and reads the tag of the
 //! reply ([`tag_of`]).
 //!

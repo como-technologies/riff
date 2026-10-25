@@ -213,16 +213,14 @@ pub fn later(theirs: &str, ours: &str) -> bool {
 
 /// True when the version `theirs` has a later major version than
 /// `ours`: it comes from a later release line (01M4YNCEMNRCAXD37V03T4JQYR).
-/// The line 0.x has one major version, so its minor versions are not a
-/// later line here. A version that is not a semantic version is not
+/// The minor lines of the major 0 share one major version, so they are
+/// not a later line here. A version that is not a semantic version is not
 /// later.
 ///
 /// ```
 /// use riff_state::checkpoint::later_line;
 ///
 /// assert!(later_line("2.0.1", "1.3.1"));
-/// // The bridge of the lines 1 and 3 does not change it: riff-server
-/// // 1.8.2 uses no checkpoint of 3.0.0 (01M55FCZNNZGKM4EKAXZQFTDWR).
 /// assert!(later_line("3.0.0", "1.8.2"));
 /// assert!(!later_line("1.4.0", "1.3.1"));
 /// assert!(!later_line("1.3.1", "2.0.1"));
@@ -546,9 +544,9 @@ mod tests {
         assert_eq!(load(&store, "0.9.0").await.unwrap().blocked, None);
     }
 
-    /// 01M4YNCEMNRCAXD37V03T4JQYR: the checkpoints of the line 2.x are
-    /// the state of another instance. A start of 1.x uses the newest
-    /// checkpoint of its own line, and writes checkpoints again.
+    /// 01M4YNCEMNRCAXD37V03T4JQYR: the checkpoints of a later line are
+    /// the state of another instance. A start after a rollback uses the
+    /// newest checkpoint of its own line, and writes checkpoints again.
     #[tokio::test]
     async fn a_checkpoint_of_a_later_release_line_is_not_used_and_does_not_block() {
         let store = Memory::default();

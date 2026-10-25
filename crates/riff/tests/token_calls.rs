@@ -236,7 +236,7 @@ async fn an_error_that_is_no_refusal_keeps_the_sign_in() {
     assert_eq!(riff_client::login::stored(&down).unwrap(), Some(expired));
 }
 
-/// `riff connect claude` signs in again when the sign-in ended.
+/// `login::ensure` signs in again when the sign-in ended.
 #[tokio::test]
 async fn ensure_signs_in_again_after_the_sign_in_ended() {
     let (service, api, _replies) = start().await;

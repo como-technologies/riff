@@ -9,9 +9,9 @@
 //! person runs `riff claude-token` on the same host, in a terminal, and
 //! pastes the token. riff reads it from stdin with no echo, and keeps it
 //! in the OS keyring under [`NAME`] ([`store`], R21). It writes no file
-//! for the token, and removes the old file [`FILE`] of riff 3.3.0 when
-//! it is there. With no terminal on stdin, `riff claude-token` refuses:
-//! an agent session has none ([`text::CLAUDE_TOKEN_NO_TERMINAL`]).
+//! for the token. With no terminal on stdin, `riff claude-token`
+//! refuses: an agent session has none
+//! ([`text::CLAUDE_TOKEN_NO_TERMINAL`]).
 //!
 //! The daemon reads the token from the keyring at each container start
 //! ([`load`], with `KEYRING_WAIT`). A keyring that is locked, or that
@@ -52,7 +52,7 @@
 //! ```
 
 use std::io::BufRead;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use riff_client::daemons::Token;
@@ -71,10 +71,6 @@ pub const VAR: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 /// The name of the token in the OS keyring (R21): the account of the
 /// entry under [`secrets::SERVICE`].
 pub const NAME: &str = "claude setup-token";
-
-/// The file of riff 3.3.0 for the token in the folder of the daemon.
-/// `riff claude-token` removes it.
-pub const FILE: &str = "claude-token";
 
 /// The mark in the folder of the daemon: `claude` refused the token.
 pub const REFUSED: &str = "claude-token-refused";
@@ -106,42 +102,32 @@ pub fn read(input: impl BufRead) -> Result<String> {
     bail!("{}", text::CLAUDE_TOKEN_BAD)
 }
 
-/// The path of the old token file in the folder `dir` of the daemon.
-/// riff 3.3.0 kept the token there. [`store`] removes it.
-pub fn path(dir: &Path) -> PathBuf {
-    dir.join(FILE)
-}
-
 /// Keeps `token` in the OS keyring under [`NAME`], in the place of the
 /// old one, and removes the mark [`REFUSED`] in the folder `dir` of the
-/// daemon. It removes the old file [`FILE`] of riff 3.3.0 too, and gives
-/// its path when it was there. It writes no file for the token.
+/// daemon. It writes no file for the token.
 ///
 /// ```standalone_crate
 /// # keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
 /// use riff::claude_token::{load, refuse, refused, store};
 ///
 /// let dir = tempfile::tempdir()?;
-/// let old = riff::claude_token::path(dir.path());
-/// std::fs::write(&old, "sk-ant-oat01-old\n")?;
 /// refuse(dir.path())?;
-/// assert_eq!(store(dir.path(), "sk-ant-oat01-abc")?, Some(old.clone()));
-/// assert!(!old.exists());
+/// store(dir.path(), "sk-ant-oat01-abc")?;
 /// assert_eq!(load()?.as_deref(), Some("sk-ant-oat01-abc"));
 /// assert!(!refused(dir.path()));
-/// assert_eq!(store(dir.path(), "sk-ant-oat01-def")?, None);
+/// store(dir.path(), "sk-ant-oat01-def")?;
+/// assert_eq!(load()?.as_deref(), Some("sk-ant-oat01-def"));
+/// assert_eq!(std::fs::read_dir(dir.path())?.count(), 0, "no file for the token");
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn store(dir: &Path, token: &str) -> Result<Option<PathBuf>> {
+pub fn store(dir: &Path, token: &str) -> Result<()> {
     secrets::set(NAME, token).context("cannot keep the token in the OS keyring")?;
-    let removed = |file: &Path| match std::fs::remove_file(file) {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e).with_context(|| format!("cannot remove {}", file.display())),
-    };
-    removed(&dir.join(REFUSED))?;
-    let old = path(dir);
-    Ok(removed(&old)?.then_some(old))
+    let mark = dir.join(REFUSED);
+    match std::fs::remove_file(&mark) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("cannot remove {}", mark.display())),
+    }
 }
 
 /// The token in the OS keyring, or `None`. It reads the keyring at each
@@ -239,9 +225,8 @@ pub fn refusal(event: &Value) -> bool {
 }
 
 /// `riff claude-token`: reads the token from stdin, which must be a
-/// terminal, with no echo, and keeps it in the OS keyring. It removes
-/// the old file in the folder `dir` of the daemon. It gives the text for
-/// the person.
+/// terminal, with no echo, and keeps it in the OS keyring. It gives the
+/// text for the person.
 pub fn run(dir: &Path) -> Result<String> {
     use std::io::IsTerminal;
     let stdin = std::io::stdin();
@@ -254,8 +239,8 @@ pub fn run(dir: &Path) -> Result<String> {
         read(stdin.lock())
     };
     eprintln!();
-    let old = store(dir, &token?)?;
-    Ok(text::claude_token_kept(old.as_deref()))
+    store(dir, &token?)?;
+    Ok(text::CLAUDE_TOKEN_KEPT.to_owned())
 }
 
 /// The terminal of stdin with no echo, until the drop.
@@ -316,22 +301,22 @@ mod tests {
     use super::*;
 
     /// 01M58XZF928T82YAMF4DSJBKBF: the token goes to the keyring and to
-    /// no file. The old file goes away, and the mark goes with a new token.
+    /// no file, and the mark goes with a new token.
     #[test]
     fn the_token_is_in_the_keyring_and_in_no_file() {
         let _token = test_token();
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(state(dir.path()), Token::NotSet);
-        std::fs::write(path(dir.path()), "sk-ant-oat01-old\n").unwrap();
         refuse(dir.path()).unwrap();
-        let old = store(dir.path(), "sk-ant-oat01-new").unwrap();
-        assert_eq!(old, Some(path(dir.path())));
+        assert_eq!(state(dir.path()), Token::NotSet);
+        store(dir.path(), "sk-ant-oat01-new").unwrap();
         assert_eq!(load().unwrap().as_deref(), Some("sk-ant-oat01-new"));
         assert!(held());
         assert_eq!(state(dir.path()), Token::Set);
         let files: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
         assert!(files.is_empty(), "{files:?}");
-        assert_eq!(store(dir.path(), "sk-ant-oat01-newer").unwrap(), None);
+        store(dir.path(), "sk-ant-oat01-newer").unwrap();
+        assert_eq!(load().unwrap().as_deref(), Some("sk-ant-oat01-newer"));
     }
 
     /// A locked keyring is a locked error and the state `Locked`, never

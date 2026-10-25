@@ -159,7 +159,7 @@ pub fn wave_number(title: &str) -> Option<u64> {
 /// milestone that is not a wave (01M518A07QF1YACBYT91M0DD1R).
 ///
 /// ```
-/// assert_eq!(hygiene::milestone_value("Wave 28: 1.x, fixes that slow the work"), "Wave 28");
+/// assert_eq!(hygiene::milestone_value("Wave 28: cloud, fixes that slow the work"), "Wave 28");
 /// assert_eq!(hygiene::milestone_value("Wave 3"), "Wave 3");
 /// assert_eq!(hygiene::milestone_value("Backlog"), "Backlog");
 /// ```
@@ -175,7 +175,7 @@ pub fn milestone_value(title: &str) -> String {
 /// ```
 /// use hygiene::names_milestone;
 ///
-/// let renamed = "Wave 28: 1.x, fixes that slow the work";
+/// let renamed = "Wave 28: cloud, fixes that slow the work";
 /// assert!(names_milestone("Wave 28", renamed));
 /// assert!(names_milestone("Wave 28: after 1.4.0", renamed), "the title before the rename");
 /// assert!(!names_milestone("Wave 27: after 1.4.0", renamed), "another wave");
@@ -746,7 +746,7 @@ mod tests {
     /// 1.4.0` while a pull request had its old title in the trailer.
     #[test]
     fn a_trailer_of_the_old_title_passes_after_a_rename_of_the_wave() {
-        let renamed = Some("Wave 28: 1.x, fixes that slow the work");
+        let renamed = Some("Wave 28: cloud, fixes that slow the work");
         let body = GOOD.replace("Wave 3", "Wave 28: after 1.4.0");
         assert_eq!(check_pr(&pr(&body, renamed), Some(&open(renamed))), []);
         let number = GOOD.replace("Wave 3", "Wave 28");
@@ -758,7 +758,7 @@ mod tests {
             [Error::new(
                 "milestone-trailer",
                 "`Milestone: Wave 27: after 1.4.0` is not the milestone of the pull request \
-                 (Wave 28: 1.x, fixes that slow the work)"
+                 (Wave 28: cloud, fixes that slow the work)"
             )]
         );
     }

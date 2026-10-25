@@ -79,12 +79,11 @@ fn the_install_command_installs_riff_and_its_server_from_the_repository() {
     assert_eq!(words[git + 2..], [env!("CARGO_PKG_NAME"), "riff-server"]);
 }
 
-/// "Update riff" of "Start a Riff" is one command, and `riff init`
-/// removes the plugin of riff 3 (01M5JFF7TAVA87TMJXK25HDJ19).
+/// "Update riff" of "Start a Riff" is one command.
 #[test]
 fn a_person_updates_riff_with_riff_update() {
     let update = commands_of_part(PAGE, "Update riff");
-    assert_eq!(update, ["riff update", "riff init"]);
+    assert_eq!(update, ["riff update"]);
     each_is_real(&update);
 }
 
