@@ -957,6 +957,75 @@ async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing
     assert_eq!(machine.forge_changes(), changes);
 }
 
+/// The `riff.toml` that the fake forge got in the pull request of the
+/// setup.
+fn made_config(machine: &Machine) -> String {
+    use base64::Engine as _;
+    let config: serde_json::Value = serde_json::from_str(&machine.read("config.json")).unwrap();
+    let content = config["content"].as_str().expect("the step made riff.toml");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(content)
+        .unwrap();
+    String::from_utf8(bytes).unwrap()
+}
+
+/// 01M5SNTPEP41NMSP3SEKR7KVB0: the `riff.toml` that `riff init --yes`
+/// makes in a new repository pins `riff-base`, the image of the release
+/// with no language, and one line says that the project adds its
+/// toolchain in an image of its own.
+#[tokio::test]
+async fn riff_init_yes_pins_the_base_image_and_says_to_add_the_toolchain() {
+    let machine = Machine::new();
+    machine.add_origin();
+    bare(&machine.bin);
+    std::fs::write(machine.bin.join("no-image"), "").unwrap();
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    let base = riff::session_image::base();
+    assert_eq!(base.name(), "ghcr.io/como-technologies/riff-base");
+    assert_eq!(made_config(&machine), riff::session_image::config_of(&base));
+    let line = format!("  {}", riff::text::init_toolchain(&base));
+    assert_eq!(stdout.lines().filter(|l| *l == line).count(), 1, "{stdout}");
+    assert!(stdout.contains("an image with claude, git and gh and no language"));
+}
+
+/// 01M5SNTPEP41NMSP3SEKR7KVB0: `riff init --yes --image REF` pins REF in
+/// place of `riff-base`, and says nothing of a toolchain. A tag is
+/// refused before riff changes anything.
+#[tokio::test]
+async fn riff_init_image_pins_the_image_that_it_names_and_refuses_a_tag() {
+    let machine = Machine::new();
+    machine.add_origin();
+    bare(&machine.bin);
+    std::fs::write(machine.bin.join("no-image"), "").unwrap();
+    let mine = format!("ghcr.io/acme/app-session@sha256:{}", "ab".repeat(32));
+    let out = machine
+        .init(&machine.repo, &["--yes", "--image", &mine])
+        .await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert_eq!(
+        made_config(&machine),
+        format!("[session]\nimage = \"{mine}\"\n")
+    );
+    assert!(!stdout.contains("no language"), "{stdout}");
+
+    let machine = Machine::new();
+    machine.add_origin();
+    bare(&machine.bin);
+    let out = machine
+        .init(
+            &machine.repo,
+            &["--yes", "--image", "ghcr.io/acme/app:latest"],
+        )
+        .await;
+    assert!(!out.status.success(), "{out:?}");
+    let error = text(&out.stderr);
+    assert!(error.contains("names a tag"), "{error}");
+    assert!(machine.forge_changes().is_empty());
+}
+
 /// 01M5RGG9KJXCKH8C94145WS8SM, 01M5RGGD6YR36EXZEG61XCJVRY: with no `y` (no
 /// terminal), the first list has `step` lines for the five facts that a step
 /// fixes, and no `fail`. A no does no step, so the end names each check with
@@ -1053,7 +1122,7 @@ async fn a_clone_that_riff_does_not_pull_gets_the_new_image_and_a_line_to_pull()
         ),
         "{stdout}"
     );
-    let release = riff::session_image::of_release().to_string();
+    let release = riff::session_image::base().to_string();
     assert!(
         stdout.contains(&format!("This machine has the session image {release}.")),
         "{stdout}"
@@ -1500,7 +1569,9 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
             "riff init",
             "riff init --check",
             "riff init --check",
-            "riff init"
+            "riff init",
+            // "Build the image of a project": pin an image in the first pull request.
+            "riff init --yes --image \"$IMAGE@$DIGEST\""
         ]
     );
     each_is_real(&init);

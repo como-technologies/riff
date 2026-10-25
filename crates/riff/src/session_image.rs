@@ -63,23 +63,34 @@
 //! ```
 //!
 //! The image of this repository comes from the folder `deploy/session/`
-//! (01M4Z7SP5TGJ3DMWFGE5SN68N1). The workflow "Session image" builds it
-//! on each change of that folder, and pushes it to
-//! `ghcr.io/como-technologies/riff-session` with the tag `tree-ID`. ID is
-//! the git tree of the folder. When that tag is there, the workflow
-//! builds nothing (01M4Z7SP7Y19BQ8QTV1T6AE8SR). It fails when [`FILE`]
-//! does not pin the digest of that tag (01M4Z7SP9YZ5JCHA8YD8R5A4Y9). So a
-//! change of the Dockerfile and the change of its pin go in one pull
+//! (01M4Z7SP5TGJ3DMWFGE5SN68N1). It builds `FROM` the `riff-rust` of
+//! `deploy/rust/`, and that builds `FROM` the `riff-base` of
+//! `deploy/base/` (01M5SNTDW9WVEXZW5D0TKGBA8Z). Each `FROM` pins the
+//! digest of the image before it. The workflow "Session image" builds the
+//! three in order on each change of a folder, and pushes each to its
+//! package on ghcr.io with the tag `tree-ID`. ID is the git tree of the
+//! folder. When that tag is there, the workflow builds nothing
+//! (01M4Z7SP7Y19BQ8QTV1T6AE8SR). It fails at the first `FROM` that pins
+//! another digest, and when [`FILE`] does not pin the digest of the last
+//! image (01M5SNTDZ95BRDCPQEKDTYD2PY, 01M4Z7SP9YZ5JCHA8YD8R5A4Y9). So a
+//! change of a Dockerfile and the change of its pin go in one pull
 //! request.
 //!
 //! ```mermaid
 //! flowchart LR
-//!     D["deploy/session/Dockerfile"] -- "each change" --> W["workflow Session image"]
-//!     W -- "push tree-ID" --> G[("ghcr.io/como-technologies/riff-session")]
-//!     G -- "its digest" --> T["riff.toml: [session] image"]
-//!     T -- "the merged pin" --> R["riff run, riff lead start, the waves"]
-//!     R -- "podman pull NAME@sha256:…" --> G
+//!     B["deploy/base/Dockerfile"] -- "each change" --> W["workflow Session image"]
+//!     R["deploy/rust/Dockerfile<br/>FROM riff-base@sha256:…"] --> W
+//!     D["deploy/session/Dockerfile<br/>FROM riff-rust@sha256:…"] --> W
+//!     W -- "push tree-ID" --> G[("ghcr.io/como-technologies/<br/>riff-base, riff-rust, riff-session")]
+//!     G -- "the digest of riff-session" --> T["riff.toml: [session] image"]
+//!     T -- "the merged pin" --> U["riff run, riff lead start, the waves"]
+//!     U -- "podman pull NAME@sha256:…" --> G
 //! ```
+//!
+//! A new project pins `riff-base`, not the image of this repository:
+//! [`base`] reads it from the `FROM` of `deploy/rust/Dockerfile`, and `riff
+//! init` writes it in `riff.toml` (01M5SNTPEP41NMSP3SEKR7KVB0). The
+//! project adds its toolchain in an image of its own.
 //!
 //! ```
 //! use riff::session_image::Image;
@@ -494,29 +505,41 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(out.trim_end().to_owned())
 }
 
-/// The riff config of riff at the commit of this build.
-const OF_RELEASE: &str = include_str!("../../../riff.toml");
+/// The Dockerfile of `riff-rust` at the commit of the build. Its `FROM`
+/// pins the `riff-base` of the release.
+const RUST_DOCKERFILE: &str = include_str!("../../../deploy/rust/Dockerfile");
 
-/// The session image that the release of riff that runs uses
-/// (01M5R1675HZ6TJPMQ6536X37T5): the pin of the [`FILE`] of riff at the
-/// commit of the build. `riff init` pins it in a repository that has no
-/// [`FILE`].
+/// The `riff-base` that the release of riff that runs pins
+/// (01M5SNTPEP41NMSP3SEKR7KVB0): the image in the first `FROM` of
+/// `deploy/rust/Dockerfile` at the commit of the build. `riff init` pins
+/// it in a repository that has no [`FILE`], and the daemon names it to the
+/// lead of a repository whose image has an old tool
+/// ([`crate::image_tools`]).
 ///
 /// ```
-/// let image = riff::session_image::of_release();
-/// assert!(image.name().ends_with("/riff-session"), "{image}");
+/// let image = riff::session_image::base();
+/// assert!(image.name().ends_with("/riff-base"), "{image}");
 /// assert!(image.digest().starts_with("sha256:"), "{image}");
 /// ```
-pub fn of_release() -> Image {
-    Image::of_config(OF_RELEASE, "the riff.toml of riff")
-        .expect("the riff.toml of riff pins an image")
+pub fn base() -> Image {
+    from_of(RUST_DOCKERFILE)
+        .and_then(|from| from.parse().ok())
+        .expect("deploy/rust/Dockerfile builds FROM a riff-base pinned by digest")
+}
+
+/// The image in the first `FROM` line of the Dockerfile `dockerfile`.
+fn from_of(dockerfile: &str) -> Option<&str> {
+    dockerfile
+        .lines()
+        .find_map(|line| line.strip_prefix("FROM "))
+        .map(str::trim)
 }
 
 /// The text of a [`FILE`] that pins `image`: the file that the how-to
 /// "Add another repository to the riff" writes.
 ///
 /// ```
-/// let image = riff::session_image::of_release();
+/// let image = riff::session_image::base();
 /// let text = riff::session_image::config_of(&image);
 /// assert_eq!(text, format!("[session]\nimage = \"{image}\"\n"));
 /// ```
@@ -955,6 +978,18 @@ mod tests {
         refused(&format!("ghcr.io/O/i@{d}"), "not a valid image name");
         refused(&format!("ghcr.io//i@{d}"), "not a valid image name");
         refused(&format!("ghcr.io/o i@{d}"), "not a valid image name");
+    }
+
+    /// 01M5SNTPEP41NMSP3SEKR7KVB0: the base of the release is the image in
+    /// the first `FROM` of the Dockerfile of `riff-rust`, pinned by digest.
+    #[test]
+    fn the_base_of_the_release_is_the_from_of_the_rust_image() {
+        let dockerfile = "# A comment\nFROM ghcr.io/o/riff-base@sha256:0\nFROM other\n";
+        assert_eq!(from_of(dockerfile), Some("ghcr.io/o/riff-base@sha256:0"));
+        assert_eq!(from_of("ARG X=1\n"), None);
+        let image = base();
+        assert_eq!(image.name(), "ghcr.io/como-technologies/riff-base");
+        assert_eq!(from_of(RUST_DOCKERFILE), Some(image.to_string().as_str()));
     }
 
     #[test]

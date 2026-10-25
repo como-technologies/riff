@@ -298,6 +298,37 @@ pub fn reached(code: Option<i32>) -> Option<bool> {
     }
 }
 
+/// The arguments of `podman` for [`Runtime::output`]: `run` of the image
+/// with the program as the entrypoint, with no network and no pull.
+///
+/// ```
+/// use riff::podman::output_args;
+///
+/// assert_eq!(
+///     output_args("ghcr.io/o/i@sha256:0", &["gh", "--version"]).join(" "),
+///     "run --rm --network=none --pull=never --entrypoint gh ghcr.io/o/i@sha256:0 --version"
+/// );
+/// ```
+pub fn output_args(image: &str, command: &[&str]) -> Vec<String> {
+    let (program, args) = command.split_first().unwrap_or((&"", &[]));
+    let mut out: Vec<String> = [
+        "run",
+        "--rm",
+        "--network=none",
+        "--pull=never",
+        "--entrypoint",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    out.extend([program, image].map(str::to_owned));
+    out.extend(args.iter().map(|a| (*a).to_owned()));
+    out
+}
+
+/// How long [`Runtime::output`] waits for a program in an image.
+pub const OUTPUT_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// A `podman` command with no [`INVOCATION_ID`].
 fn podman() -> tokio::process::Command {
     let mut command = tokio::process::Command::new(PODMAN);
@@ -470,6 +501,32 @@ impl Runtime for Podman {
             );
         }
         Ok(())
+    }
+
+    /// `podman run` of the image with the program as the entrypoint, no
+    /// network and no pull. It stops after [`OUTPUT_LIMIT`].
+    async fn output(&self, image: &str, command: &[&str]) -> Result<String> {
+        let program = command.first().context("no command to run")?;
+        let run = podman()
+            .args(output_args(image, command))
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output();
+        let out = tokio::time::timeout(OUTPUT_LIMIT, run)
+            .await
+            .map_err(|_| {
+                anyhow!(
+                    "podman run {image} {program} took more than {} s",
+                    OUTPUT_LIMIT.as_secs()
+                )
+            })?
+            .with_context(|| text::no_program(PODMAN))?;
+        if !out.status.success() {
+            bail!("podman run {image} {program}: {}", out.status);
+        }
+        String::from_utf8(out.stdout)
+            .with_context(|| format!("{program} in {image} prints no UTF-8"))
     }
 
     /// Only the `podman` child gets the values of the host, in its

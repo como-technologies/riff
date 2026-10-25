@@ -2127,6 +2127,9 @@ pub struct Daemon<R> {
     /// daemon: the person heard of it in riff chat, and `riff daemon status`
     /// shows it ([`Daemon::recover`]).
     lost: Mutex<std::collections::BTreeSet<String>>,
+    /// The repositories and images whose tools the daemon looked at since it
+    /// started ([`Daemon::check_tools`]).
+    looked: Mutex<BTreeSet<String>>,
     /// The forge and the posts of the watches ([`crate::watches`]).
     lookout: Arc<dyn crate::watches::Lookout>,
 }
@@ -2240,6 +2243,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             gcloud: Arc::default(),
             stale: Mutex::default(),
             lost: Mutex::default(),
+            looked: Mutex::default(),
             lookout: Arc::new(crate::watches::Here),
         })
     }
@@ -3007,6 +3011,40 @@ impl<R: Runtime + 'static> Daemon<R> {
             reason: pulled.reason.clone(),
             waits: pulled.at.elapsed() < self.look_every,
         })
+    }
+
+    /// At the first job of a wave of a repository with the image `image`
+    /// after the daemon starts, reads the version of each tool of
+    /// [`crate::image_tools::Tool::ALL`] in the image. When one is older
+    /// than this riff needs, it tells the lead of the repository one
+    /// message with the `riff-base` to build `FROM`
+    /// (01M5SNTPHHXP54YBTV09JNRY3F). A tool with no version, or an image
+    /// that does not run, gives no message and a line in the log: the job
+    /// goes on. Call it after [`Daemon::have_image`].
+    pub(crate) async fn check_tools(&self, wave: &Wave, image: &str) {
+        let first = self
+            .looked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(format!("{} {image}", wave.repo));
+        if !first {
+            return;
+        }
+        let mut old = Vec::new();
+        for tool in crate::image_tools::Tool::ALL {
+            match self.runtime.output(image, &tool.command()).await {
+                Ok(printed) => old.extend(tool.old_in(&printed)),
+                Err(e) => println!(
+                    "riff daemon: {}: cannot read the version of {} in {image}: {e:#}",
+                    wave.repo,
+                    tool.name()
+                ),
+            }
+        }
+        if !old.is_empty() {
+            let note = text::image_old_tools(&wave.repo, &old, &crate::session_image::base());
+            self.world.tell(wave, &note).await;
+        }
     }
 
     /// Refuses to start a session when the binary that the daemon binds

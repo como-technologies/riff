@@ -5180,6 +5180,46 @@ pub fn image_unasked(image: &crate::session_image::Image, error: &str) -> String
     )
 }
 
+/// The note to the lead: the session image of `repo` has a tool older
+/// than this riff needs. The lead files the item that builds the image
+/// again `FROM` the `riff-base` of this riff (01M5SNTPHHXP54YBTV09JNRY3F).
+///
+/// ```
+/// use riff::image_tools::{Old, Tool};
+///
+/// let old = Old {
+///     tool: Tool::Claude,
+///     has: "2.0.1".parse()?,
+///     needs: "2.1.300".parse()?,
+/// };
+/// let base = format!("ghcr.io/o/riff-base@sha256:{}", "ab".repeat(32)).parse()?;
+/// let text = riff::text::image_old_tools("o/r", &[old], &base);
+/// assert!(text.starts_with("The session image of o/r has claude 2.0.1, and riff needs claude 2.1.300 or newer."), "{text}");
+/// assert!(text.contains(&format!("FROM {base}")), "{text}");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn image_old_tools(
+    repo: &str,
+    old: &[crate::image_tools::Old],
+    base: &crate::session_image::Image,
+) -> String {
+    let tools = old
+        .iter()
+        .map(|o| format!("{} {}", o.tool.name(), o.has))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let needs = old
+        .iter()
+        .map(|o| format!("{} {} or newer", o.tool.name(), o.needs))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    format!(
+        "The session image of {repo} has {tools}, and riff needs {needs}. Build the image again \
+         FROM {base}, and pin the new image in riff.toml. See \"Build the image of a project\" in \
+         the book."
+    )
+}
+
 /// The image is not on this machine, and podman cannot pull it.
 pub fn run_no_image(image: &str) -> String {
     format!(
@@ -6995,6 +7035,25 @@ pub fn init_not_admin(repo: &str) -> String {
     format!(
         "You are not an admin of {repo}, so riff changes nothing there. Ask an admin to run riff \
          init, or do the fix of each failed check."
+    )
+}
+
+/// `riff init` made `riff.toml` with `base`, the image of riff with no
+/// language: the project adds its toolchain in an image of its own
+/// (01M5SNTPEP41NMSP3SEKR7KVB0).
+///
+/// ```
+/// let base = format!("ghcr.io/o/riff-base@sha256:{}", "ab".repeat(32)).parse()?;
+/// let text = riff::text::init_toolchain(&base);
+/// assert!(text.starts_with(&format!("riff.toml pins {base}, an image with claude, git and gh and no language.")), "{text}");
+/// assert!(text.contains("Build the image of a project"), "{text}");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn init_toolchain(base: &crate::session_image::Image) -> String {
+    format!(
+        "riff.toml pins {base}, an image with claude, git and gh and no language. Add the \
+         toolchain of the project in an image of its own, built FROM it. See \"Build the image of \
+         a project\" in the book."
     )
 }
 

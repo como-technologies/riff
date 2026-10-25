@@ -86,8 +86,17 @@ flowchart LR
   session of the item, with your sign-in of riff. The riff tools of the
   session act on riff-server through the daemon.
 - Each repository names its session image, pinned by digest, in the
-  file `riff.toml` at its root. See
+  file `riff.toml` at its root. A project builds that image `FROM` the
+  public image `riff-base` of riff, or `riff-rust`, and adds its own
+  toolchain. See
+  [Build the image of a project](start-a-riff.md#build-the-image-of-a-project)
+  and
   [Change the session image](development.md#change-the-session-image).
+- The daemon reads the version of `claude` and `gh` in the session image
+  of a repository at the first job of its wave after the daemon starts.
+  When a tool is older than the `riff-base` of this riff has, the lead
+  gets one message with the new digest. See
+  [Build the image again for a new riff-base](start-a-riff.md#build-the-image-again-for-a-new-riff-base).
 - The session pushes its work with your sign-in of GitHub.
 
 ### How a session works in a container

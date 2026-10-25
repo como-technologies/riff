@@ -509,17 +509,25 @@ readelf -lW target/static/release/riff | grep interpreter
 riff runs each session in a container from the session image of
 the repository. The file `riff.toml` at the root of the repository pins
 the image by its digest. A digest names one image, but a tag can move,
-so riff refuses a tag. The image of this repository comes from
-`deploy/session/Dockerfile`.
+so riff refuses a tag. The image of this repository comes from three
+folders, each `FROM` the one before it by digest. `riff-base` and
+`riff-rust` are the images that other projects build `FROM` too (see
+[Build the image of a project](start-a-riff.md#build-the-image-of-a-project)).
 
 ```mermaid
 flowchart LR
-    D["deploy/session/Dockerfile"] -- "each change" --> W["workflow Session image"]
-    W -- "push tree-ID" --> G[("ghcr.io/como-technologies/riff-session")]
-    G -- "its digest" --> T["riff.toml of your branch"]
+    B["deploy/base/Dockerfile<br/>riff-base"] -- "FROM digest" --> R["deploy/rust/Dockerfile<br/>riff-rust"]
+    R -- "FROM digest" --> S["deploy/session/Dockerfile<br/>riff-session"]
+    S -- "its digest" --> T["riff.toml of your branch"]
     T -- "the merge" --> M["riff.toml on origin/main"]
-    M -- "the merged pin" --> S["each session"]
+    M -- "the merged pin" --> E["each session"]
 ```
+
+| Folder | Image | What it adds |
+|---|---|---|
+| `deploy/base/` | `ghcr.io/como-technologies/riff-base` | Debian, `bash`, CA certificates, `git`, `curl`, `procps`, `gh` and `claude`. No language. |
+| `deploy/rust/` | `ghcr.io/como-technologies/riff-rust` | The C linker, and the Rust channel of `rust-toolchain.toml` with `rustfmt` and `clippy`. |
+| `deploy/session/` | `ghcr.io/como-technologies/riff-session` | What only riff needs: `just`, `mdbook`, `sccache`, `rust-analyzer`, D-Bus and the keyring of the tests. |
 
 To see the image that your working tree pins:
 
@@ -563,35 +571,80 @@ pin, and stops. Set `origin/HEAD` in the main clone:
 git remote set-head origin --auto
 ```
 
-### Edit and build the image
+### Edit and build the images
 
-Change `deploy/session/Dockerfile`. When you change
-`rust-toolchain.toml`, also change the line `ARG RUST_CHANNEL` and the
-`--component` flags of the Dockerfile, in the same commit. A test
-fails when they do not agree.
+Change the Dockerfile of the folder that holds the part you change:
 
-Build the image on your machine, and try it:
+- `deploy/session/`: a tool that only riff needs.
+- `deploy/rust/`: the Rust channel. When you change
+  `rust-toolchain.toml`, also change the line `ARG RUST_CHANNEL` and the
+  `--component` flags of `deploy/rust/Dockerfile` and
+  `deploy/session/Dockerfile`, in the same commit. A test fails when
+  they do not agree.
+- `deploy/base/`: a tool that each project needs. Change the version
+  of `claude` or `gh` only when riff needs a newer one, or for a fix of
+  security. The two lines `ARG CLAUDE_VERSION` and `ARG GH_VERSION` are
+  the least versions that riff needs. A daemon tells the lead of each
+  project whose image has an older one (see
+  [Build the image again for a new riff-base](start-a-riff.md#build-the-image-again-for-a-new-riff-base)).
+  A new base reaches all projects, so change it rarely.
+
+Build the image on your machine, and try it. The Dockerfile of a folder
+builds `FROM` the digest of the folder before it, so podman pulls that
+image from the registry:
 
 ```sh
 podman build -t localhost/riff-session:test deploy/session
 podman run --rm localhost/riff-session:test claude --version
 ```
 
-### Pin the new digest
+### Check the contract of an image
+
+`deploy/contract.sh` checks in a container that an image of riff has
+its contract. For `base`: each tool of `riff-base` at its version, and
+no language. For `rust`: Rust at the channel of `rust-toolchain.toml`,
+with `rustfmt`, `clippy` and a linker that builds a program. The
+container runs as a user that is not root, with no network, as a
+session does. The workflow runs it on each `riff-base` and `riff-rust`.
+To run it on the image that your branch pins:
+
+```sh
+deploy/contract.sh base "$(sed -n 's/^FROM //p' deploy/rust/Dockerfile | head -n 1)"
+deploy/contract.sh rust "$(sed -n 's/^FROM //p' deploy/session/Dockerfile | head -n 1)"
+```
+
+### Pin the new digests
 
 Push your branch and open the pull request. The workflow "Session
-image" builds the image and pushes it to
-`ghcr.io/como-technologies/riff-session`, with the tag `tree-ID`. ID is
-the git tree of `deploy/session/`. Then the workflow fails, because
-`riff.toml` pins the old digest. Its error and its summary give the new
-line for `riff.toml`. To see them, find the run, and show it:
+image" has one job for each folder, in this order. Each job builds its
+image and pushes it to the package of the image, with the tag `tree-ID`.
+ID is the git tree of the folder. A folder that did not change has its
+image already, so its job builds nothing. Before a job builds, it checks
+that the `FROM` of its Dockerfile pins the digest of the job before it.
+When it does not, the job fails, and its error gives the new `FROM`
+line. The last job fails when `riff.toml` pins another digest than the
+image of `deploy/session/`. To see the errors and the summaries, find
+the run, and show it:
 
 ```sh
 gh run list --workflow session-image.yml --branch "$(git branch --show-current)" --limit 1
 gh run view RUN_ID
 ```
 
-Write that line in `riff.toml`. Commit it, and push:
+Fix the first error, push, and read the next one. A change of
+`deploy/session/` alone needs only the pin in `riff.toml`. A change of
+`deploy/rust/` also needs the `FROM` of `deploy/session/`, and a change
+of `deploy/base/` also needs the `FROM` of `deploy/rust/`. For example,
+the `FROM` of `deploy/session/`:
+
+```sh
+sed -i "s|^FROM .*|FROM ghcr.io/como-technologies/riff-rust@sha256:DIGEST|" deploy/session/Dockerfile
+git add deploy/session/Dockerfile
+git commit -m "Pin the riff-rust of the session image"
+git push
+```
+
+Write the last line in `riff.toml`. Commit it, and push:
 
 ```sh
 git add riff.toml
@@ -599,10 +652,10 @@ git commit -m "Pin the session image"
 git push
 ```
 
-The workflow runs again. The registry has the image of the folder now,
-so the workflow builds nothing and passes. The package is public, as
-the repository is. Check that podman pulls the image by its digest,
-with no sign-in:
+The workflow runs again. The registry has the images of the folders
+now, so the jobs build nothing and pass. The packages are public, as the
+repository is. Check that podman pulls the image by its digest, with no
+sign-in:
 
 ```sh
 podman pull "$(riff image)"
@@ -611,6 +664,27 @@ podman pull "$(riff image)"
 The workflow builds the image of a folder one time only. To build it
 again, for example for new Debian packages, change a line of the
 Dockerfile, for example a version.
+
+### Release the images
+
+The workflow "Release images" runs on each release tag. It reads the
+`riff-base` in the `FROM` of `deploy/rust/Dockerfile` and the
+`riff-rust` in the `FROM` of `deploy/session/Dockerfile`, as the
+release pins them. First it checks with an anonymous pull that both
+packages are public. If a package is private, the job fails and names
+the page of its settings: make the package public there, and run the job
+again. Then the job adds the tags `X.Y.Z`, the version of the release,
+and `latest` to the two images, and adds their digests to the notes of
+the GitHub release under the heading "Images". A project pins a digest,
+so the tags are for people.
+
+```mermaid
+flowchart LR
+    T["the release tag vX.Y.Z"] --> P["both packages public?<br/>an anonymous pull"]
+    P -- yes --> G["tags X.Y.Z and latest<br/>on the two digests"]
+    G --> N["the digests in the notes<br/>of the GitHub release"]
+    P -- no --> F["the job fails:<br/>make the package public"]
+```
 
 ### Run the tests in the session image
 

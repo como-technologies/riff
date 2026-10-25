@@ -4004,25 +4004,23 @@ of this part when they merge.
 - **01M4ZPJ0FXTC78Z8GG2QA65167** `just real-session` runs the static
   riff of the tree, so its daemon can run `riff relay` in the session
   image.
-- **01M4Z60B7JF80TMP6FHQ04MHCZ** The session image has a release train
-  of its own. Each repository names its session image, pinned by digest,
-  in its riff config. The first base is the Dockerfile of #707. An image
-  has `claude`, `git`, `gh` at `/usr/bin/gh`, CA certificates, a POSIX
-  shell and the toolchain of the repository. It holds no riff.
+- **01M4Z60B7JF80TMP6FHQ04MHCZ** Each repository names its session
+  image, pinned by digest, in its riff config. An image has `claude`,
+  `git`, `gh` at `/usr/bin/gh`, CA certificates, a POSIX shell and the
+  toolchain of the repository. It holds no riff.
 - **01M4Z7SP3KSKJYKNRP1MQ70C4Q** The riff config of a repository is the
   file `riff.toml` at its root. The key `image` of its table `[session]`
   names the session image as `HOST/PATH@sha256:DIGEST`. riff refuses a
   tag, also beside a digest, and a name with no registry host.
 - **01M4Z7SP5TGJ3DMWFGE5SN68N1** The session image of this repository is
-  built from the folder `deploy/session/`. Its Dockerfile installs the
-  Rust channel and the components of `rust-toolchain.toml`. A test
-  checks that they agree.
+  built from the folder `deploy/session/`.
 - **01M4Z7SP7Y19BQ8QTV1T6AE8SR** The workflow "Session image" runs on
-  each change of `deploy/session/`, of `riff.toml` or of the workflow,
-  in a pull request and on `main`. It tags the image `tree-ID`, where ID
-  is the git tree of `deploy/session/`, and pushes it to
-  `ghcr.io/como-technologies/riff-session`. When the registry has that
-  tag, it builds nothing. The summary of the job names the digest.
+  each change of `deploy/base/`, `deploy/rust/`, `deploy/session/`, of
+  `riff.toml` or of the workflow, in a pull request and on `main`. It
+  tags each image `tree-ID`, where ID is the git tree of its folder, and
+  pushes it to the package of the image on ghcr.io. When the registry
+  has that tag, it builds nothing. The summary of each job names the
+  digest.
 - **01M4Z7SP9YZ5JCHA8YD8R5A4Y9** The workflow "Session image" fails when
   `riff.toml` does not pin the digest of the image of `deploy/session/`
   of its commit. So a change of the Dockerfile and the change of its
@@ -4047,9 +4045,9 @@ of this part when they merge.
   of this folder in `riff update --check` read `riff.toml` of the
   working tree. So a person can try the pin of a branch before its
   merge.
-- **01M4Z7SPE5Q02RQWW5VZBEK2G3** The package `riff-session` on ghcr.io
-  is public, as the repository is. So podman pulls the image with no
-  sign-in.
+- **01M4Z7SPE5Q02RQWW5VZBEK2G3** The packages `riff-session`,
+  `riff-base` and `riff-rust` on ghcr.io are public, as the repository
+  is. So podman pulls each image with no sign-in.
 - **01M4Z60B7KEV0H161RBZ1SDRY2** riff binds its own binary into each
   session with no write, and runs it as the entrypoint: `riff relay`. So
   the riff code in a session is always the riff code of the host.
@@ -4105,6 +4103,46 @@ of this part when they merge.
   current folder, and gives the same fix when the registry gives no
   manifest with no login. So a person can check the package before a
   pull request pins it, and on each host of the wave.
+- **01M5SNT57ANM99NQS5SNB8XPWV** riff publishes the images
+  `ghcr.io/como-technologies/riff-base` and
+  `ghcr.io/como-technologies/riff-rust`. `riff-base` has Debian slim,
+  `bash`, CA certificates, `git`, `curl`, `procps`, `claude` at a fixed
+  version and `gh` at `/usr/bin/gh` at a fixed version. It has no
+  language, no build tool, no D-Bus, no keyring, no riff and no secret.
+  `riff-rust` is built `FROM` a digest of `riff-base`. It adds the C
+  linker and one Rust channel with `rustfmt` and `clippy`. A project
+  builds its session image `FROM` a digest of one of them, and adds its
+  toolchain. Supersedes 01M4Z60B7JF80TMP6FHQ04MHCZ in part: the first
+  base.
+- **01M5SNTDW9WVEXZW5D0TKGBA8Z** The images of this repository come from
+  three folders, each `FROM` the one before it by digest: `deploy/base/`
+  (`riff-base`), `deploy/rust/` (`riff-rust`) and `deploy/session/`
+  (`riff-session`). `riff-session` adds only what riff needs: `just`,
+  `mdbook`, `sccache`, `rust-analyzer`, D-Bus and the keyring of the
+  tests. The Rust channel of `deploy/rust/` is the channel of
+  `rust-toolchain.toml`, and the components of `deploy/rust/` and
+  `deploy/session/` together are its components. A test checks that they
+  agree. Supersedes 01M4Z7SP5TGJ3DMWFGE5SN68N1 in part.
+- **01M5SNTDZ95BRDCPQEKDTYD2PY** The workflow "Session image" builds the
+  three images in the order of their folders. Before it builds an
+  image, it checks that the `FROM` of its Dockerfile pins the digest of
+  the image before it. After the last image, it checks that `riff.toml`
+  pins the digest of `riff-session`. It runs `deploy/contract.sh` on
+  `riff-base` and `riff-rust`, built or found.
+- **01M5SNTE280ABA4RYEPK445P3A** `deploy/contract.sh KIND IMAGE` checks
+  the contract of an image in a container: for KIND `base`, each tool of
+  `riff-base` is there at its fixed version, and no language is; for
+  KIND `rust`, `rustc`, `cargo`, `rustfmt` and `clippy-driver` are there
+  at the channel of `rust-toolchain.toml`. A test reads
+  `deploy/base/Dockerfile` for the same contract: each tool, and no
+  language.
+- **01M5SNTE54DH3N568GZXRQ86DC** For a release tag, the workflow
+  "Release images" checks that the packages `riff-base` and `riff-rust`
+  are public, with an anonymous pull. Then it adds the tags `X.Y.Z` and
+  `latest` to the `riff-base` that `deploy/rust/Dockerfile` pins and to
+  the `riff-rust` that `deploy/session/Dockerfile` pins, and adds their
+  digests to the notes of the GitHub release. It waits up to 60 minutes
+  for the release.
 
 ### Sessions
 
@@ -4822,6 +4860,15 @@ of this part when they merge.
   once for each image that fails to pull, with the fix of
   01M5SMRRAG1WPBJMQKKTPSRHRP: make the package public, or run `podman
   login REGISTRY` on each host of the wave.
+- **01M5SNTPHHXP54YBTV09JNRY3F** At the first job of a wave of a
+  repository after the daemon starts, the daemon runs `claude --version`
+  and `gh --version` in the merged session image, with podman and no
+  network. When a version is older than the version in
+  `deploy/base/Dockerfile` of this riff, the daemon tells the lead one
+  message: each old tool with its version and the version that riff
+  needs, and the digest of `riff-base` to build `FROM`. The daemon tells
+  the lead of a repository one time for each image and each base, until
+  it starts again. A tool that gives no version gives no message.
 
 ### The lead, the view and the takeover
 
@@ -5111,11 +5158,8 @@ of this part when they merge.
   ruleset `riff`. Each step uses `gh` and the API of GitHub, never the
   working tree of the clone. A second run of `riff init` in a repository
   that is set up asks nothing and makes no call that changes GitHub.
-- **01M5R1675HZ6TJPMQ6536X37T5** The `riff.toml` that `riff init` makes
-  pins the session image of the release of riff that runs
-  (`riff::session_image::of_release`): the `riff.toml` of riff at the
-  commit of the build. The ruleset `riff` that `riff init` makes
-  requires `riff/verify` and the checks that the CI runs on a pull
+- **01M5R1675HZ6TJPMQ6536X37T5** The ruleset `riff` that `riff init`
+  makes requires `riff/verify` and the checks that the CI runs on a pull
   request: the check runs of the head of the latest pull request of the
   default branch that has some. When the setup pull request is the only
   one, riff waits for its check runs. `riff init` also checks the CI
@@ -5167,6 +5211,14 @@ of this part when they merge.
   release issue are not counted: no session does them. The note changes
   no exit code, and `riff init` prints nothing when each open issue has
   the line. When `gh` cannot list the open issues, the note says so.
+- **01M5SNTPEP41NMSP3SEKR7KVB0** `riff init` pins `riff-base` in a
+  repository that has no `riff.toml`: the digest in the `FROM` of
+  `deploy/rust/Dockerfile` at the commit of the build
+  (`riff::session_image::base`). It prints one line that says the
+  project adds its toolchain in an image of its own, built `FROM` that
+  image. With `--image REF`, it pins REF in place of `riff-base`. riff
+  refuses a tag in REF, as it does in `riff.toml`. Supersedes
+  01M5R1675HZ6TJPMQ6536X37T5 in part: the image that `riff init` pins.
 
 ### The permission rules
 

@@ -79,6 +79,7 @@ pub mod home;
 pub mod hygiene_rules;
 
 pub mod identity;
+pub mod image_tools;
 #[cfg(all(
     unix,
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))

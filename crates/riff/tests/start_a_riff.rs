@@ -204,7 +204,10 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
         "#### Make the ruleset of the default branch\n",
         "#### Make the Backlog and the first wave\n",
         "### Write a CLAUDE.md, when you want one\n",
-        "### Pin an image with another toolchain\n",
+        "### Build the image of a project\n",
+        "### Build the image with a workflow\n",
+        "### Pin the image of the project\n",
+        "### Build the image again for a new riff-base\n",
     ] {
         assert!(how_to.contains(step), "{step}");
     }
@@ -215,8 +218,9 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
         "gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'",
         "riff wave make \"Wave 1\"",
         "gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog",
-        "podman push --digestfile /tmp/digest \"$IMAGE:node\"",
-        "printf '[session]\\nimage = \"%s@%s\"\\n' \"$IMAGE\" \"$(cat /tmp/digest)\" > riff.toml",
+        "printf '[session]\\nimage = \"%s@%s\"\\n' \"$IMAGE\" \"$DIGEST\" > riff.toml",
+        "riff init --yes --image \"$IMAGE@$DIGEST\"",
+        "sed -i \"s|^FROM .*|FROM $BASE|\" deploy/session/Dockerfile",
     ] {
         assert!(
             commands.contains(&command.to_owned()),
@@ -478,8 +482,10 @@ fn the_ruleset_of_the_how_to_is_the_ruleset_of_the_step() {
 }
 
 /// The commands of the how-to that write `riff.toml` write a file that
-/// riff reads (01M4Z7SP3KSKJYKNRP1MQ70C4Q), and its `sed` finds the pin of
-/// the `riff.toml` of this repository.
+/// riff reads (01M4Z7SP3KSKJYKNRP1MQ70C4Q), its `sed` finds the digest of
+/// `riff-base` and of `riff-rust` in the Dockerfiles of this repository,
+/// and each Dockerfile of the how-to builds `FROM` one of them
+/// (01M5SNT57ANM99NQS5SNB8XPWV).
 #[test]
 fn the_riff_toml_of_the_how_to_is_a_file_that_riff_reads() {
     let how_to = part(PAGE, HOW_TO);
@@ -495,44 +501,99 @@ fn the_riff_toml_of_the_how_to_is_a_file_that_riff_reads() {
         String::from_utf8(out.stdout).unwrap()
     };
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let pin = riff::session_image::Image::of_repository(&root)
-        .unwrap()
-        .to_string();
+    let base = riff::session_image::base().to_string();
+    // The `sed` of a command that reads a Dockerfile of riff from GitHub,
+    // run on the Dockerfile `path` of this repository.
+    let from_of = |var: &str, path: &str| {
+        let read = commands
+            .iter()
+            .find(|c| {
+                c.starts_with(&format!(
+                    "{var}=$(gh api repos/como-technologies/riff/contents/{path} "
+                ))
+            })
+            .unwrap_or_else(|| panic!("the read of {var}"));
+        // `gh api ... | base64 -d | sed ... | head -n 1`: the file replaces the first two.
+        let tail: Vec<&str> = read.split(" | ").skip(2).collect();
+        let (sed, head) = (tail[0], tail[1].trim_end_matches(')'));
+        sh(&format!("{sed} {path} | {head}"), &root, &[])
+            .trim_end()
+            .to_owned()
+    };
 
-    // "Add riff.toml": the pin of riff goes in the new file.
-    let read = commands
-        .iter()
-        .find(|c| c.starts_with("IMAGE=$(gh api repos/como-technologies/riff/contents/riff.toml"))
-        .expect("the read of the image of riff");
-    let sed = read.split(" | ").last().unwrap().trim_end_matches(')');
-    assert_eq!(sh(&format!("{sed} riff.toml"), &root, &[]).trim_end(), pin);
+    // "Add riff.toml": riff-base goes in the new file.
+    let from_rust = from_of("IMAGE", "deploy/rust/Dockerfile");
+    assert_eq!(from_rust, base);
     let dir = tempfile::tempdir().unwrap();
     let write = "printf '[session]\\nimage = \"%s\"\\n' \"$IMAGE\" > riff.toml";
     assert!(commands.contains(&write.to_owned()));
-    sh(write, dir.path(), &[("IMAGE", &pin)]);
+    sh(write, dir.path(), &[("IMAGE", &base)]);
     let image = riff::session_image::Image::of_repository(dir.path()).unwrap();
-    assert_eq!(image.to_string(), pin);
+    assert_eq!(image.to_string(), base);
 
-    // "Pin an image with another toolchain": the base is that pin, and the
-    // digest of `podman push` makes a pin that riff reads.
-    let base = commands
-        .iter()
-        .find(|c| c.starts_with("BASE=$(sed "))
-        .expect("the base");
-    assert_eq!(
-        sh(&format!("{base}; printf %s \"$BASE\""), dir.path(), &[]),
-        pin
-    );
-    assert!(commands.contains(&"FROM $BASE".to_owned()) || how_to.contains("\nFROM $BASE\n"));
+    // "Build the image of a project": BASE is riff-base, RUST is riff-rust,
+    // and each Dockerfile of the how-to starts with the FROM of one.
+    assert_eq!(from_of("BASE", "deploy/rust/Dockerfile"), base);
+    let rust = from_of("RUST", "deploy/session/Dockerfile");
+    assert!(rust.parse::<riff::session_image::Image>().is_ok(), "{rust}");
+    assert!(rust.contains("/riff-rust@sha256:"), "{rust}");
+    let block = |at: &str| {
+        let after = how_to.split(at).nth(1).unwrap_or_else(|| panic!("{at}"));
+        let block = after.split("```sh\n").nth(1).unwrap();
+        block.split("\n```").next().unwrap().to_owned()
+    };
+    for (after, from) in [
+        ("This one is for a project that needs Node:", &base),
+        (
+            "build `FROM riff-rust` and add what the project needs:",
+            &rust,
+        ),
+        ("build `FROM riff-base` and install that\nversion.", &base),
+    ] {
+        let work = tempfile::tempdir().unwrap();
+        sh(
+            &block(after),
+            work.path(),
+            &[("BASE", &base), ("RUST", &rust)],
+        );
+        let dockerfile =
+            std::fs::read_to_string(work.path().join("deploy/session/Dockerfile")).unwrap();
+        assert_eq!(
+            dockerfile.lines().next(),
+            Some(format!("FROM {from}").as_str()),
+            "{after}"
+        );
+        assert!(dockerfile.lines().all(|l| !l.is_empty()), "{dockerfile}");
+    }
+
+    // "Pin the image of the project": the pin riff reads, and the pin that
+    // `riff init --image` takes.
     let digest = format!("sha256:{}", "ab".repeat(32));
-    std::fs::write(dir.path().join("digest"), &digest).unwrap();
-    let pin_new =
-        "printf '[session]\\nimage = \"%s@%s\"\\n' \"$IMAGE\" \"$(cat /tmp/digest)\" > riff.toml"
-            .replace(
-                "/tmp/digest",
-                &dir.path().join("digest").display().to_string(),
-            );
-    sh(&pin_new, dir.path(), &[("IMAGE", "ghcr.io/acme/session")]);
+    let pin_new = "printf '[session]\\nimage = \"%s@%s\"\\n' \"$IMAGE\" \"$DIGEST\" > riff.toml";
+    assert!(commands.contains(&pin_new.to_owned()));
+    let env = [
+        ("IMAGE", "ghcr.io/acme/session"),
+        ("DIGEST", digest.as_str()),
+    ];
+    sh(pin_new, dir.path(), &env);
     let image = riff::session_image::Image::of_repository(dir.path()).unwrap();
     assert_eq!(image.to_string(), format!("ghcr.io/acme/session@{digest}"));
+
+    // "Build the image again for a new riff-base": the `sed` moves the FROM.
+    let bump = "sed -i \"s|^FROM .*|FROM $BASE|\" deploy/session/Dockerfile";
+    assert!(commands.contains(&bump.to_owned()));
+    let work = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(work.path().join("deploy/session")).unwrap();
+    let old = format!(
+        "ghcr.io/como-technologies/riff-base@sha256:{}",
+        "00".repeat(32)
+    );
+    std::fs::write(
+        work.path().join("deploy/session/Dockerfile"),
+        format!("FROM {old}\nRUN true\n"),
+    )
+    .unwrap();
+    sh(bump, work.path(), &[("BASE", &base)]);
+    let moved = std::fs::read_to_string(work.path().join("deploy/session/Dockerfile")).unwrap();
+    assert_eq!(moved, format!("FROM {base}\nRUN true\n"));
 }

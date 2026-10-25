@@ -162,7 +162,18 @@ case "$1" in
     [ "$*" = "volume inspect --format {{.Mountpoint}} riff-sccache" ] || exit 2
     [ -d "$dir/volume" ] || exit 125
     echo "$dir/volume"; exit 0 ;;
-  run) ;;
+  # The daemon reads the version of claude and gh in the image
+  # (01M5SNTPHHXP54YBTV09JNRY3F): new enough, and no container starts.
+  run) case " $* " in
+    *" --network=none "*)
+      case " $* " in
+        *" --entrypoint claude "*)
+          if [ -f "$dir/old-claude" ]; then echo "0.0.1 (Claude Code)"
+          else echo "999.0.0 (Claude Code)"; fi ;;
+        *" --entrypoint gh "*) echo "gh version 999.0.0 (2026-01-01)" ;;
+      esac
+      exit 0 ;;
+    esac ;;
   *) exit 2 ;;
 esac
 printf '%s\n' "$@" > "$dir/run.args"
@@ -2516,6 +2527,51 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
     assert!(
         !thread.contains("could not start issue-12"),
         "the lead got a message: {thread}"
+    );
+    machine.ok(None, &["wave", "stop"]).await;
+}
+
+/// 01M5SNTPHHXP54YBTV09JNRY3F: before the first job of a wave, the daemon
+/// reads the version of claude and gh in the session image with podman.
+/// An image with an old claude makes one message to the lead, with the
+/// riff-base to build FROM, also when the wave starts a second job.
+#[tokio::test]
+async fn a_session_image_with_an_old_claude_tells_the_lead_once() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let bin = machine.bin.path();
+    std::fs::write(bin.join("wave-issue"), "").unwrap();
+    std::fs::write(bin.join("old-claude"), "").unwrap();
+    machine.ok(None, &["wave", "run"]).await;
+    wait_for(&bin.join("daemon.out"), "starts: issue-12").await;
+
+    let claude = riff::image_tools::Tool::Claude;
+    let old = riff::image_tools::Old {
+        tool: claude,
+        has: "0.0.1".parse().unwrap(),
+        needs: claude.needed(),
+    };
+    let note = riff::text::image_old_tools(
+        "como-technologies/riff",
+        &[old],
+        &riff::session_image::base(),
+    );
+    let started = Instant::now();
+    let thread = loop {
+        let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
+        if thread.contains(&note) {
+            break thread;
+        }
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "no note to the lead: {thread}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(thread.matches("has claude 0.0.1").count(), 1, "{thread}");
+    assert!(
+        thread.contains("FROM ghcr.io/como-technologies/riff-base@sha256:"),
+        "{thread}"
     );
     machine.ok(None, &["wave", "stop"]).await;
 }

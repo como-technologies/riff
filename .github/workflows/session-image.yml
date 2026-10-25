@@ -1,32 +1,56 @@
 name: Session image
 
-# The session image of this repository (01M4Z7SP7Y19BQ8QTV1T6AE8SR). A
-# change of its folder, of its pin or of this workflow builds the image
-# of the folder, when the registry does not have it yet. Then the job
-# checks that riff.toml pins it (01M4Z7SP9YZ5JCHA8YD8R5A4Y9).
+# The images of this repository (01M5SNTDW9WVEXZW5D0TKGBA8Z): riff-base
+# from deploy/base/, riff-rust from deploy/rust/, FROM riff-base, and the
+# session image from deploy/session/, FROM riff-rust. A change of a
+# folder, of a pin or of this workflow builds the image of each folder,
+# when the registry does not have it yet. Each job checks that the FROM
+# of its Dockerfile pins the image before it, and the last job checks
+# that riff.toml pins the session image (01M5SNTDZ95BRDCPQEKDTYD2PY,
+# 01M4Z7SP9YZ5JCHA8YD8R5A4Y9).
 on:
   push:
     branches: [main]
     paths:
+      - deploy/base/**
+      - deploy/rust/**
       - deploy/session/**
+      - deploy/contract.sh
       - riff.toml
+      - rust-toolchain.toml
+      - .github/actions/image/**
       - .github/workflows/session-image.yml
   pull_request:
     branches: [main]
     paths:
+      - deploy/base/**
+      - deploy/rust/**
       - deploy/session/**
+      - deploy/contract.sh
       - riff.toml
+      - rust-toolchain.toml
+      - .github/actions/image/**
       - .github/workflows/session-image.yml
 
-# Least privilege: the job below adds the write of the packages.
+# Least privilege: each job below adds the write of the packages.
 permissions:
   contents: read
 
+# One run at a time. A newer run waits, and then finds the images.
+concurrency:
+  group: session-image
+  cancel-in-progress: false
+
+env:
+  BASE: ghcr.io/como-technologies/riff-base
+  RUST: ghcr.io/como-technologies/riff-rust
+  IMAGE: ghcr.io/como-technologies/riff-session
+
 jobs:
-  image:
-    name: Session image
+  base:
+    name: Base image
     # A pull request from a fork cannot write the packages, so it cannot
-    # push the image.
+    # push the images.
     if: >-
       github.event_name == 'push' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -34,69 +58,92 @@ jobs:
     permissions:
       contents: read
       packages: write
-    # One run at a time. A newer run waits, and then finds the image.
-    concurrency:
-      group: session-image
-      cancel-in-progress: false
     outputs:
-      digest: ${{ steps.pin.outputs.digest }}
-    env:
-      IMAGE: ghcr.io/como-technologies/riff-session
+      digest: ${{ steps.image.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
 
-      # The tag is the git tree of the folder. The same folder gives the
-      # same tag, also after the squash merge.
-      - name: Tag the image with the tree of its folder
-        run: echo "TAG=tree-$(git rev-parse HEAD:deploy/session)" >> "$GITHUB_ENV"
-
-      - uses: docker/login-action@v4
+      - name: Build the image of deploy/base
+        id: image
+        uses: ./.github/actions/image
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          image: ${{ env.BASE }}
+          folder: deploy/base
+          contract: base
+          actor: ${{ github.actor }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/setup-buildx-action@v4
+  rust:
+    name: Rust image
+    needs: [base]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
 
-      # A build of the same folder gives a new digest, so the job builds
-      # the image of a folder only one time.
-      - name: Look for the image of the folder
-        id: found
+      - name: Check the FROM of deploy/rust
+        env:
+          WANT: ${{ env.BASE }}@${{ needs.base.outputs.digest }}
         run: |
-          if out=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}'); then
-            echo "digest=$(jq -r .digest <<< "$out")" >> "$GITHUB_OUTPUT"
-          else
-            echo "The registry has no $IMAGE:$TAG. The job builds it."
+          have=$(sed -n 's/^FROM //p' deploy/rust/Dockerfile | head -n 1)
+          if [ "$have" != "$WANT" ]; then
+            echo "::error file=deploy/rust/Dockerfile::deploy/rust/Dockerfile builds FROM $have. The image of deploy/base/ is $WANT. Pin it: FROM $WANT"
+            exit 1
           fi
+          echo "deploy/rust/Dockerfile builds FROM $WANT."
 
-      - name: Build and push the image
-        id: build
-        if: steps.found.outputs.digest == ''
-        uses: docker/build-push-action@v7
+      - name: Build the image of deploy/rust
+        id: image
+        uses: ./.github/actions/image
         with:
-          context: deploy/session
-          push: true
-          tags: ${{ env.IMAGE }}:${{ env.TAG }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          # One image manifest and no index: its digest is the digest
-          # that riff.toml pins and podman pulls.
-          provenance: false
-          cache-from: type=gha,scope=session-image
-          cache-to: type=gha,scope=session-image,mode=max
+          image: ${{ env.RUST }}
+          folder: deploy/rust
+          contract: rust
+          actor: ${{ github.actor }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  session:
+    name: Session image
+    needs: [rust]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the FROM of deploy/session
+        env:
+          WANT: ${{ env.RUST }}@${{ needs.rust.outputs.digest }}
+        run: |
+          have=$(sed -n 's/^FROM //p' deploy/session/Dockerfile | head -n 1)
+          if [ "$have" != "$WANT" ]; then
+            echo "::error file=deploy/session/Dockerfile::deploy/session/Dockerfile builds FROM $have. The image of deploy/rust/ is $WANT. Pin it: FROM $WANT"
+            exit 1
+          fi
+          echo "deploy/session/Dockerfile builds FROM $WANT."
+
+      - name: Build the image of deploy/session
+        id: image
+        uses: ./.github/actions/image
+        with:
+          image: ${{ env.IMAGE }}
+          folder: deploy/session
+          actor: ${{ github.actor }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check the pin in riff.toml
-        id: pin
         env:
-          DIGEST: ${{ steps.found.outputs.digest || steps.build.outputs.digest }}
+          DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           want="$IMAGE@$DIGEST"
-          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           {
-            echo "## Session image"
             echo
-            echo "The image of \`deploy/session/\` is \`$IMAGE:$TAG\`. Pin it in \`riff.toml\`:"
+            echo "Pin it in \`riff.toml\`:"
             echo
             echo '```toml'
             echo "image = \"$want\""
