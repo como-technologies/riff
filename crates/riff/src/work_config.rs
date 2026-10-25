@@ -25,13 +25,15 @@
 //! give the `rules` (01M5RH1SH11PTWKCJMNEMV8N2H). A `CLAUDE.md` or an
 //! `AGENTS.md` is the choice of the repository: the texts send a
 //! session to it only as a hint, and `riff init` checks no such file
-//! (01M5RH1SPRX0ZY5Q3WA4ENP84M).
+//! (01M5RH1SPRX0ZY5Q3WA4ENP84M). riff guesses no `check`: it reads no
+//! justfile and no file of a build tool. `riff init` writes the command
+//! that the person gives (01M5RKRKN36FRPWZ53F6CCP4DQ).
 //!
 //! ```mermaid
 //! flowchart LR
 //!     T["riff.toml on origin/main<br/>[work] check, rules"] --> W["Work"]
 //!     W --> S["the start texts of<br/>a build, a rebase,<br/>a fix of checks, a verify"]
-//!     I["riff init"] -- "no [work] table:<br/>the justfile recipe check,<br/>else Cargo.toml" --> T
+//!     I["riff init"] -- "no [work] check:<br/>the command that the person gives,<br/>or no check" --> T
 //! ```
 //!
 //! ```
@@ -55,17 +57,6 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use crate::{session_image, text};
-
-/// The names that `just` takes for its file, in the order of its search.
-pub const JUSTFILES: [&str; 3] = ["justfile", "Justfile", ".justfile"];
-
-/// The check that `riff init` writes when the justfile has a recipe
-/// `check` (01M5RH1SKTT7JASP1VCCSTEE6F).
-pub const JUST_CHECK: &str = "just check";
-
-/// The check that `riff init` writes when the repository has a
-/// `Cargo.toml` and no recipe `check`.
-pub const CARGO_CHECK: &str = "cargo test";
 
 /// The work table of a riff config: what riff gives a session of the
 /// repository.
@@ -185,60 +176,6 @@ pub fn with_check(config: &str, check: &str) -> Result<String> {
     Ok(doc.to_string())
 }
 
-/// True when the justfile `text` has a recipe `name`: a line with no
-/// indent that starts with the name (and an optional `@`), then
-/// parameters, then a colon that is not the start of `:=`.
-///
-/// ```
-/// use riff::work_config::has_recipe;
-///
-/// assert!(has_recipe("check:\n    cargo test\n", "check"));
-/// assert!(has_recipe("# Run the checks\n[private]\n@check: fmt lint\n    cargo test\n", "check"));
-/// assert!(has_recipe("check target='all':\n    cargo test\n", "check"));
-/// // A variable, a longer name and a line of a body are no recipe.
-/// assert!(!has_recipe("check := \"x\"\n", "check"));
-/// assert!(!has_recipe("check-all:\n    cargo test\n", "check"));
-/// assert!(!has_recipe("build:\n    check: here\n", "check"));
-/// assert!(!has_recipe("# check: this is a comment\n", "check"));
-/// ```
-pub fn has_recipe(text: &str, name: &str) -> bool {
-    text.lines().any(|line| {
-        let Some(rest) = line.strip_prefix('@').unwrap_or(line).strip_prefix(name) else {
-            return false;
-        };
-        if !rest.starts_with(|c: char| c == ':' || c.is_whitespace()) {
-            return false;
-        }
-        match rest.find(':') {
-            Some(at) => !rest[at + 1..].starts_with('='),
-            None => false,
-        }
-    })
-}
-
-/// The check that `riff init` writes for a repository
-/// (01M5RH1SKTT7JASP1VCCSTEE6F): [`JUST_CHECK`] when its `justfile` has
-/// a recipe `check`, else [`CARGO_CHECK`] when `has_cargo` says that the
-/// root has a `Cargo.toml`, else none.
-///
-/// ```
-/// use riff::work_config::suggest;
-///
-/// assert_eq!(suggest(Some("check:\n    make\n"), true).as_deref(), Some("just check"));
-/// assert_eq!(suggest(Some("build:\n    make\n"), true).as_deref(), Some("cargo test"));
-/// assert_eq!(suggest(None, true).as_deref(), Some("cargo test"));
-/// assert_eq!(suggest(Some("build:\n    make\n"), false), None);
-/// ```
-pub fn suggest(justfile: Option<&str>, has_cargo: bool) -> Option<String> {
-    if justfile.is_some_and(|text| has_recipe(text, "check")) {
-        Some(JUST_CHECK.to_owned())
-    } else if has_cargo {
-        Some(CARGO_CHECK.to_owned())
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,21 +235,11 @@ mod tests {
     fn the_riff_toml_of_riff_names_just_check() {
         let text = include_str!("../../../riff.toml");
         let work = Work::of_config(text, "riff.toml").unwrap();
-        assert_eq!(work.check.as_deref(), Some(JUST_CHECK));
+        assert_eq!(work.check.as_deref(), Some("just check"));
         assert!(
             work.rules.is_empty(),
             "the rules of riff are in its CLAUDE.md"
         );
         assert!(session_image::of_release().digest().starts_with("sha256:"));
-    }
-
-    /// A justfile with the recipe `check` after other recipes and
-    /// attributes.
-    #[test]
-    fn a_justfile_with_a_recipe_check_gives_just_check() {
-        let justfile = "set shell := [\"bash\", \"-c\"]\n\ndefault:\n    @just --list\n\n\
-                        # Before a push\ncheck: fmt lint\n    cargo test\n";
-        assert_eq!(suggest(Some(justfile), true).as_deref(), Some(JUST_CHECK));
-        assert_eq!(suggest(Some("fmt:\n    cargo fmt\n"), false), None);
     }
 }

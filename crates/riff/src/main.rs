@@ -523,22 +523,32 @@ enum Command {
     /// with no CLAUDE.md: a note fails nothing. For the first five
     /// checks, riff init does the fix itself: it asks one question, and
     /// then it makes riff.toml with a pull request that it merges (with
-    /// the check of the repository in [work], or it adds that table to a
+    /// the check of the repository in [work], or it adds the check to a
     /// riff.toml that has none), allows auto-merge and squash merges,
-    /// makes the Backlog and Wave 1, and makes the ruleset riff. It needs the rights of an admin of the
-    /// repository, and a second run changes nothing. It writes no rule into
-    /// your user settings of Claude Code. It names each allow rule of your
-    /// user, project and local settings of Claude Code that is wider than
-    /// the steps of riff, and asks one question before it removes them. It
-    /// prints the fix of each check that still fails, and stops. When each
-    /// check passes, it installs and starts the riff daemon, as riff daemon
-    /// install does, and the daemon pulls the session image. A daemon that
-    /// answers stays: riff init does not start it again.
+    /// makes the Backlog and Wave 1, and makes the ruleset riff. When
+    /// riff.toml has no check, riff init asks for the command, or takes
+    /// it from --check-command: it guesses no command. It needs the
+    /// rights of an admin of the repository, and a second run changes
+    /// nothing. It writes no rule into your user settings of Claude Code.
+    /// It names each allow rule of your user, project and local settings
+    /// of Claude Code that is wider than the steps of riff, and asks one
+    /// question before it removes them. It prints the fix of each check
+    /// that still fails, and stops. When each check passes, it installs
+    /// and starts the riff daemon, as riff daemon install does, and the
+    /// daemon pulls the session image. A daemon that answers stays: riff
+    /// init does not start it again.
     Init {
         /// Change nothing. Print the fix of each check that fails, and
         /// each wide allow rule. Exit with status 1 when a check fails.
         #[arg(long, conflicts_with = "yes")]
         check: bool,
+        /// The command that a session runs before each push, for example
+        /// "make test". riff init writes it as check in the table [work] of
+        /// riff.toml when riff.toml has no check, and asks no question for it.
+        /// Without it, riff init asks for the command; with --yes it writes
+        /// no check.
+        #[arg(long, value_name = "CMD", conflicts_with = "check")]
+        check_command: Option<String>,
         /// Ask no question. It sets up the repository on GitHub, and it
         /// removes no wide rule.
         #[arg(long)]
@@ -1554,14 +1564,19 @@ async fn main() -> Result<()> {
     if let Command::Daemon { command } = &cli.command {
         return daemon_command(command.as_ref(), cli.server.as_deref()).await;
     }
-    if let Command::Init { check, yes } = cli.command {
+    if let Command::Init {
+        check,
+        yes,
+        check_command,
+    } = cli.command
+    {
         use riff::first_run::Mode;
         let mode = match (check, yes) {
             (true, _) => Mode::Check,
             (false, true) => Mode::Yes,
             (false, false) => Mode::Ask,
         };
-        let code = riff::first_run::init(mode).await?;
+        let code = riff::first_run::init(mode, check_command.as_deref()).await?;
         if code != 0 {
             std::process::exit(code);
         }

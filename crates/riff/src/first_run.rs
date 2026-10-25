@@ -10,8 +10,10 @@
 //! flowchart LR
 //!     C["the checks<br/>podman, its init, subuid, subgid,<br/>cgroup v2, riff.toml,<br/>the riff binary,<br/>the repository on GitHub"] --> X{"wide<br/>rules?"}
 //!     X -- "one question:<br/>y in a terminal" --> V["remove them"]
-//!     X -- "no" --> G{"steps of the<br/>repository?"}
-//!     V --> G
+//!     X -- "no" --> K{"no check<br/>in riff.toml?"}
+//!     V --> K
+//!     K -- "one question,<br/>or --check-command" --> G{"steps of the<br/>repository?"}
+//!     K -- "no" --> G
 //!     G -- "one question:<br/>y in a terminal, or --yes" --> T["set up the<br/>repository on GitHub"]
 //!     G -- "none, or no" --> E{"each check<br/>passed?"}
 //!     T --> P["git pull --ff-only<br/>in the clone, when it is safe"]
@@ -24,19 +26,11 @@
 //! ```
 //!
 //! 1. The checks ([`checks`]). riff reads the [`Facts`] of the machine,
-<<<<<<< HEAD
-//!    and prints one line for each check: `pass`, or `fail` with the
-//!    fix (01M4ZJN6TEWCYCB39XTH6BBD9H). When riff can do the step of a
-//!    failed check now (step 3), the line reads `step` with the step, in
-//!    place of `fail` with the fix ([`Check::planned_line`],
-//!    01M5RGG9KJXCKH8C94145WS8SM).
-=======
 //!    and prints one line for each check: `pass`, `note`, or `fail` with
 //!    the fix (01M4ZJN6TEWCYCB39XTH6BBD9H). A note fails nothing. When
-//!    riff can do the step of a failed check now (step 4), the line reads
+//!    riff can do the step of a failed check now (step 3), the line reads
 //!    `step` with the step, in place of `fail` with the fix
 //!    ([`Check::planned_line`], 01M5RGG9KJXCKH8C94145WS8SM).
->>>>>>> 062d0f04 (riff.toml holds the check and the rules of a repository in [work], and riff init does not require a CLAUDE.md)
 //! 2. The wide rules ([`Wide`]). When the user settings, the project
 //!    settings or the local settings of Claude Code have an allow rule
 //!    that is wider than the steps of riff ([`crate::permissions::wide`]),
@@ -50,7 +44,13 @@
 //!    ([`crate::repo_setup::Step`]), and the person is an admin of the
 //!    repository, riff names the steps and asks one question
 //!    ([`Question::Setup`]). Only a `y` in a terminal does them. `--yes`
-//!    does them with no question. `--check` does none. A person who is
+//!    does them with no question. `--check` does none. Before it, when
+//!    `riff.toml` has no `[work]` check, riff asks for the check command
+//!    ([`ask_check`]), unless `--check-command CMD` gave it. An empty
+//!    answer, `--yes` and no `--check-command` give no command: riff
+//!    guesses none (01M5RKRKN36FRPWZ53F6CCP4DQ), writes no `check`, and
+//!    the last list has a note that names the step
+//!    (01M5RH1SKTT7JASP1VCCSTEE6F). A person who is
 //!    not an admin gets the fix of each check, and riff changes nothing
 //!    there. After the steps, when the step of `riff.toml` merged the
 //!    file and the clone has none, riff runs `git pull --ff-only` in the
@@ -87,7 +87,7 @@
 //! | the milestone `Backlog` | the open milestones | one has that title |
 //! | the first wave | the open milestones | one is a wave |
 //! | the checks of a pull request | the required checks and the check runs of the latest pull requests | the full check can end |
-//! | the check in `riff.toml` | the table `[work]` of `riff.toml` ([`crate::work_config`]) | it has a `check`; else a note, and a step when riff finds a check to add |
+//! | the check in `riff.toml` | the table `[work]` of `riff.toml` ([`crate::work_config`]) | it has a `check`; else a note, and a step when the person gave a command to add |
 //! | `CLAUDE.md` | the files at the root of the default branch | it is there; else a note (01M5RH1SPRX0ZY5Q3WA4ENP84M) |
 //!
 //! The first five checks of the repository have a step that `riff init`
@@ -576,7 +576,7 @@ impl Check {
     ///     ci: vec!["lint".into()],
     ///     work: WorkFacts {
     ///         check: Some("just check".into()),
-    ///         suggested: None,
+    ///         add: None,
     ///     },
     /// };
     /// let lines: Vec<String> = checks(&github)
@@ -791,6 +791,61 @@ pub fn ask(
     Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
+/// Asks the question [`text::INIT_ASK_CHECK`] of `riff init`: the check
+/// command of the repository (01M5RH1SKTT7JASP1VCCSTEE6F). It writes the
+/// question to `out`, and reads one line of `input`. The answer is the
+/// command on one line of plain text. An empty answer, the end of the
+/// input, and no `terminal` give none: riff guesses no command
+/// (01M5RKRKN36FRPWZ53F6CCP4DQ).
+///
+/// ```
+/// use riff::first_run::ask_check;
+///
+/// let mut out = Vec::new();
+/// assert_eq!(ask_check(true, &mut &b"  make   test\n"[..], &mut out)?.as_deref(), Some("make test"));
+/// assert!(String::from_utf8(out)?.starts_with("riff.toml has no [work] check."));
+///
+/// assert_eq!(ask_check(true, &mut &b"\n"[..], &mut Vec::new())?, None);
+/// assert_eq!(ask_check(true, &mut &b""[..], &mut Vec::new())?, None);
+///
+/// // No terminal: no question, and no command.
+/// let mut out = Vec::new();
+/// assert_eq!(ask_check(false, &mut &b"make test\n"[..], &mut out)?, None);
+/// assert!(out.is_empty());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn ask_check(
+    terminal: bool,
+    input: &mut impl BufRead,
+    out: &mut impl Write,
+) -> Result<Option<String>> {
+    if !terminal {
+        return Ok(None);
+    }
+    write!(out, "{}", text::INIT_ASK_CHECK)?;
+    out.flush()?;
+    let mut answer = String::new();
+    input.read_line(&mut answer)?;
+    let command = text::line(&answer);
+    Ok((!command.is_empty()).then_some(command))
+}
+
+/// The check command that `--check-command` gave, on one line of plain
+/// text. An empty command is an error.
+///
+/// ```
+/// use riff::first_run::check_command;
+///
+/// assert_eq!(check_command("  make   test ")?, "make test");
+/// assert!(check_command("  ").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn check_command(given: &str) -> Result<String> {
+    let command = text::line(given);
+    anyhow::ensure!(!command.is_empty(), "--check-command is empty");
+    Ok(command)
+}
+
 /// The first run on `facts`, with the daemon in the folder `dir`. It
 /// prints each step, and gives the exit code: 1 when a check failed.
 /// When settings have wide rules, it names them, and in [`Mode::Ask`]
@@ -798,7 +853,9 @@ pub fn ask(
 /// repository on GitHub failed and has a step, and the person is an admin,
 /// it names the steps and does them in the `forge`: after the question
 /// [`Question::Setup`] in [`Mode::Ask`], and with no question in
-/// [`Mode::Yes`] (01M5R1672NF56P15VD0JEX51K4). It prints the list of the
+/// [`Mode::Yes`] (01M5R1672NF56P15VD0JEX51K4). When `riff.toml` has no
+/// `[work]` check and the person gave no command, [`Mode::Ask`] asks
+/// `ask_check` for it first (01M5RH1SKTT7JASP1VCCSTEE6F). It prints the list of the
 /// checks again after the steps, and the end of a failed run names each
 /// failed check with its fix. With [`Mode::Check`], it stops after the
 /// checks. When no daemon answers, it installs `unit` with
@@ -808,6 +865,7 @@ pub async fn run(
     facts: &Facts,
     mode: Mode,
     mut ask: impl FnMut(Question) -> Result<bool>,
+    mut ask_check: impl FnMut() -> Result<Option<String>>,
     dir: &Path,
     manager: &impl ServiceManager,
     unit: &Unit,
@@ -838,6 +896,11 @@ pub async fn run(
         } else {
             println!("{}", text::INIT_WIDE_KEPT);
         }
+    }
+    let given = with_command(facts, mode, &mut ask_check)?;
+    let facts = given.as_ref().unwrap_or(facts);
+    if given.is_some() {
+        list = checks(facts);
     }
     let after = if mode == Mode::Check {
         None
@@ -880,6 +943,39 @@ pub async fn run(
     println!("{}", text::init_image_here(image));
     println!("{}", text::INIT_READY);
     Ok(0)
+}
+
+/// The `facts` with the check command that the person gives now, or
+/// `None` when riff asks for none (01M5RH1SKTT7JASP1VCCSTEE6F). In
+/// [`Mode::Ask`], when the person is an admin of the repository on
+/// GitHub, `riff.toml` there has no `[work]` check, and `--check-command`
+/// gave none, riff asks `ask_check` for it. The command goes to
+/// `work.add` of the facts, so the step of `riff.toml` adds it. An empty
+/// answer leaves the facts as they are: riff guesses no command
+/// (01M5RKRKN36FRPWZ53F6CCP4DQ).
+fn with_command(
+    facts: &Facts,
+    mode: Mode,
+    ask_check: &mut impl FnMut() -> Result<Option<String>>,
+) -> Result<Option<Facts>> {
+    let Some(Ok(github)) = &facts.github else {
+        return Ok(None);
+    };
+    if mode != Mode::Ask
+        || !github.admin
+        || github.work.check.is_some()
+        || github.work.add.is_some()
+    {
+        return Ok(None);
+    }
+    let Some(command) = ask_check()? else {
+        return Ok(None);
+    };
+    let mut facts = facts.clone();
+    if let Some(Ok(github)) = &mut facts.github {
+        github.work.add = Some(command);
+    }
+    Ok(Some(facts))
 }
 
 /// The steps of the failed checks `list` that set up the repository on
@@ -998,15 +1094,20 @@ pub fn pull(clone: &Path, branch: &str) -> Result<(), String> {
 
 /// `riff init`: the first run on this machine, with the repository of
 /// the current folder and the daemon of this machine. It asks its
-/// question on the terminal. It gives the exit code. On a host that is
-/// not Linux, it changes nothing.
-pub async fn init(mode: Mode) -> Result<i32> {
+/// questions on the terminal. `command` is the check command that
+/// `--check-command` gave ([`check_command`]). It gives the exit code. On
+/// a host that is not Linux, it changes nothing.
+pub async fn init(mode: Mode, command: Option<&str>) -> Result<i32> {
+    let command = command.map(check_command).transpose()?;
     #[cfg(target_os = "linux")]
     {
         use anyhow::Context;
         use std::io::IsTerminal;
         let here = std::env::current_dir().context("cannot read the current folder")?;
-        let facts = Facts::here(&here);
+        let mut facts = Facts::here(&here);
+        if let (Some(command), Some(Ok(github))) = (command, &mut facts.github) {
+            github.work.add = Some(command);
+        }
         let manager = crate::service::Systemd::here()?;
         let unit = Unit::of_this()?;
         let question = |question: Question| {
@@ -1018,15 +1119,34 @@ pub async fn init(mode: Mode) -> Result<i32> {
                 &mut std::io::stdout(),
             )
         };
+        let question_check = || {
+            let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+            ask_check(
+                terminal,
+                &mut std::io::stdin().lock(),
+                &mut std::io::stdout(),
+            )
+        };
         let forge = crate::identity::github_origin(&here)
             .map(|repo| Forge::of(&repo))
             .unwrap_or_default();
         let dir = daemon::dir()?;
-        run(&facts, mode, question, &dir, &manager, &unit, WAIT, &forge).await
+        run(
+            &facts,
+            mode,
+            question,
+            question_check,
+            &dir,
+            &manager,
+            &unit,
+            WAIT,
+            &forge,
+        )
+        .await
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = mode;
+        let _ = (mode, command);
         anyhow::bail!("{}", text::INIT_LINUX_ONLY)
     }
 }
@@ -1064,6 +1184,11 @@ mod tests {
     /// The question of a run that must ask nothing.
     fn no_question(question: Question) -> Result<bool> {
         panic!("riff asked: {}", question.text())
+    }
+
+    /// The check question of a run that must ask nothing.
+    fn no_check() -> Result<Option<String>> {
+        panic!("riff asked: {}", text::INIT_ASK_CHECK)
     }
 
     fn failed(facts: &Facts) -> Vec<Check> {
@@ -1217,7 +1342,7 @@ mod tests {
             ci: vec!["Gate".into()],
             work: crate::repo_setup::WorkFacts {
                 check: Some("just check".into()),
-                suggested: None,
+                add: None,
             },
         }
     }
@@ -1379,6 +1504,7 @@ mod tests {
             &facts,
             Mode::Ask,
             no_question,
+            no_check,
             &dir_in(root.path()),
             &manager,
             &unit(),
@@ -1400,6 +1526,7 @@ mod tests {
             &ready(),
             Mode::Check,
             no_question,
+            no_check,
             &dir_in(root.path()),
             &manager,
             &unit(),
@@ -1444,6 +1571,7 @@ mod tests {
                 &facts,
                 mode,
                 |_| Ok(true),
+                no_check,
                 &dir,
                 &manager,
                 &unit(),
@@ -1479,6 +1607,7 @@ mod tests {
             &ready(),
             Mode::Ask,
             no_question,
+            no_check,
             &dir,
             &manager,
             &unit(),
@@ -1497,6 +1626,7 @@ mod tests {
             &ready(),
             Mode::Ask,
             no_question,
+            no_check,
             &dir,
             &manager,
             &unit(),
@@ -1632,6 +1762,7 @@ mod tests {
             &facts,
             Mode::Ask,
             question,
+            no_check,
             &dir,
             &manager,
             &unit(),
@@ -1685,6 +1816,7 @@ mod tests {
             &facts,
             Mode::Ask,
             question,
+            no_check,
             &dir,
             &Manager::default(),
             &unit(),
@@ -1715,6 +1847,7 @@ mod tests {
             &facts,
             Mode::Check,
             no_question,
+            no_check,
             &dir,
             &manager,
             &unit(),
@@ -1732,6 +1865,7 @@ mod tests {
             &facts,
             Mode::Yes,
             no_question,
+            no_check,
             &dir,
             &manager,
             &unit(),
@@ -1762,6 +1896,7 @@ mod tests {
             &ready(),
             Mode::Ask,
             no_question,
+            no_check,
             &dir,
             &Manager::default(),
             &unit(),
@@ -1839,26 +1974,59 @@ mod tests {
         fn has(&self, name: &str) -> bool {
             self.dir.path().join(name).exists()
         }
+
+        /// The text that the step pushed as `riff.toml`.
+        fn pushed(&self) -> String {
+            use base64::Engine;
+            let body =
+                std::fs::read_to_string(self.dir.path().join("config.json")).unwrap_or_default();
+            let body: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(body["content"].as_str().unwrap_or_default())
+                .unwrap();
+            String::from_utf8(bytes).unwrap()
+        }
     }
 
     /// `run` with a podman that fails: it does the setup and the checks,
     /// and stops before the daemon.
     async fn run_stopped(forged: &Forged, facts: &Facts, mode: Mode, yes: bool) -> (i32, usize) {
+        let (code, asked, _) = run_asking(forged, facts, mode, yes, None).await;
+        (code, asked)
+    }
+
+    /// `run_stopped`, where the person answers the question about the
+    /// check command with `command`. It gives the exit code, the number
+    /// of questions about the steps, and the number of questions about
+    /// the check command.
+    async fn run_asking(
+        forged: &Forged,
+        facts: &Facts,
+        mode: Mode,
+        yes: bool,
+        command: Option<&str>,
+    ) -> (i32, usize, usize) {
         let root = tempfile::tempdir().unwrap();
         let facts = Facts {
             podman: Err(text::INIT_NO_PODMAN.into()),
             ..facts.clone()
         };
         let asked = std::cell::Cell::new(0);
+        let asked_check = std::cell::Cell::new(0);
         let question = |q: Question| {
             assert_eq!(q, Question::Setup, "riff asked: {}", q.text());
             asked.set(asked.get() + 1);
             Ok(yes)
         };
+        let question_check = || {
+            asked_check.set(asked_check.get() + 1);
+            Ok(command.map(Into::into))
+        };
         let code = run(
             &facts,
             mode,
             question,
+            question_check,
             &dir_in(root.path()),
             &Manager::default(),
             &unit(),
@@ -1867,7 +2035,7 @@ mod tests {
         )
         .await
         .unwrap();
-        (code, asked.get())
+        (code, asked.get(), asked_check.get())
     }
 
     /// 01M5R1672NF56P15VD0JEX51K4: `riff init --yes` sets up a bare
@@ -1895,6 +2063,7 @@ mod tests {
             &forged.facts(None),
             Mode::Yes,
             no_question,
+            no_check,
             &dir,
             &manager,
             &unit(),
@@ -1918,6 +2087,7 @@ mod tests {
             &forged.facts(Some(&release)),
             Mode::Yes,
             no_question,
+            no_check,
             &dir,
             &manager,
             &unit(),
@@ -1963,6 +2133,93 @@ mod tests {
             .is_empty()
         );
         let (_, asked) = run_stopped(&forged, &facts, Mode::Ask, true).await;
+        assert_eq!(asked, 0);
+    }
+
+    /// 01M5RH1SKTT7JASP1VCCSTEE6F, 01M5RKRKN36FRPWZ53F6CCP4DQ: in
+    /// `Mode::Ask`, riff asks for the check command when `riff.toml` has no
+    /// check, and the command is the `[work] check` of the new file. An
+    /// empty answer writes no check: riff guesses none, also when the
+    /// repository has a justfile with a recipe `check` and a `Cargo.toml`.
+    #[tokio::test]
+    async fn riff_asks_for_the_check_command_and_an_empty_answer_writes_no_check() {
+        let forged = Forged::bare();
+        std::fs::write(
+            forged.dir.path().join("files"),
+            "CLAUDE.md\njustfile\nCargo.toml\n",
+        )
+        .unwrap();
+        std::fs::write(
+            forged.dir.path().join("content_justfile"),
+            "check:\n    make\n",
+        )
+        .unwrap();
+        let facts = forged.facts(Some(IMAGE));
+        let answer = run_asking(&forged, &facts, Mode::Ask, true, Some("make test")).await;
+        assert_eq!(answer, (1, 1, 1));
+        assert!(
+            forged
+                .pushed()
+                .ends_with("\n[work]\ncheck = \"make test\"\n"),
+            "{}",
+            forged.pushed()
+        );
+
+        // An empty answer: the new file has no [work] table.
+        let forged = Forged::bare();
+        let facts = forged.facts(Some(IMAGE));
+        let answer = run_asking(&forged, &facts, Mode::Ask, true, None).await;
+        assert_eq!(answer, (1, 1, 1));
+        assert!(!forged.pushed().contains("[work]"), "{}", forged.pushed());
+
+        // A no to the steps: riff asked for the command, and changes nothing.
+        let forged = Forged::bare();
+        let facts = forged.facts(Some(IMAGE));
+        let answer = run_asking(&forged, &facts, Mode::Ask, false, Some("make test")).await;
+        assert_eq!(answer, (1, 1, 1));
+        assert!(forged.changes().is_empty(), "{:?}", forged.changes());
+    }
+
+    /// 01M5RH1SKTT7JASP1VCCSTEE6F: riff asks no question about the check
+    /// command with `--yes`, with `--check`, with a person who is not an
+    /// admin, with a command from `--check-command`, and with a `riff.toml`
+    /// that has a check. `--yes` with no command writes no check.
+    #[tokio::test]
+    async fn riff_asks_no_question_about_the_check_command_when_it_has_no_use_for_it() {
+        let forged = Forged::bare();
+        let facts = forged.facts(Some(IMAGE));
+        for mode in [Mode::Yes, Mode::Check] {
+            let (_, _, asked) = run_asking(&forged, &facts, mode, true, Some("make test")).await;
+            assert_eq!(asked, 0, "{mode:?}");
+        }
+        assert!(!forged.pushed().contains("[work]"), "{}", forged.pushed());
+
+        // A command from --check-command: no question, and the file has it.
+        let forged = Forged::bare();
+        let mut facts = forged.facts(Some(IMAGE));
+        if let Some(Ok(github)) = &mut facts.github {
+            github.work.add = Some("make test".into());
+        }
+        let (_, _, asked) = run_asking(&forged, &facts, Mode::Ask, true, None).await;
+        assert_eq!(asked, 0);
+        assert!(
+            forged
+                .pushed()
+                .ends_with("\n[work]\ncheck = \"make test\"\n")
+        );
+
+        // A person who is not an admin.
+        let forged = Forged::bare();
+        std::fs::write(forged.dir.path().join("not_admin"), "").unwrap();
+        let facts = forged.facts(Some(IMAGE));
+        let (_, _, asked) = run_asking(&forged, &facts, Mode::Ask, true, None).await;
+        assert_eq!(asked, 0);
+
+        // A riff.toml that has a check.
+        let forged = Forged::bare();
+        std::fs::write(forged.dir.path().join("files"), "CLAUDE.md\nriff.toml\n").unwrap();
+        let facts = forged.facts(Some(IMAGE));
+        let (_, _, asked) = run_asking(&forged, &facts, Mode::Ask, true, None).await;
         assert_eq!(asked, 0);
     }
 

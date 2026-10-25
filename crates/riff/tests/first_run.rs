@@ -842,19 +842,20 @@ fn pushed_config(machine: &Machine) -> String {
 }
 
 /// 01M5RH1SKTT7JASP1VCCSTEE6F, 01M5RH1SPRX0ZY5Q3WA4ENP84M: `riff init
-/// --yes` in a repository with a justfile that has a recipe `check` and
-/// no `CLAUDE.md` makes the setup pull request with `riff.toml` that has
-/// `[work] check = "just check"`, and passes with a note for `CLAUDE.md`.
-/// A second run changes nothing.
+/// --yes --check-command "make test"` in a repository with no `CLAUDE.md`
+/// makes the setup pull request with `riff.toml` that has `[work] check =
+/// "make test"`, and passes with a note for `CLAUDE.md`. The repository
+/// has a justfile with a recipe `check` and a `Cargo.toml`: riff does not
+/// read them (01M5RKRKN36FRPWZ53F6CCP4DQ). A second run changes nothing.
 #[tokio::test]
-async fn riff_init_yes_writes_the_work_table_and_passes_a_repository_with_no_claude_md() {
+async fn riff_init_yes_writes_the_check_command_and_passes_a_repository_with_no_claude_md() {
     let machine = Machine::new();
     machine.add_origin();
     let [pulls, checks] = ci(r#"{"name":"checks / lint"}"#);
     fake_forge(
         &machine.bin,
         &[
-            ("files", "justfile\n"),
+            ("files", "justfile\nCargo.toml\n"),
             (
                 "content_justfile",
                 "fmt:\n    cargo fmt\n\ncheck: fmt\n    cargo test\n",
@@ -865,12 +866,14 @@ async fn riff_init_yes_writes_the_work_table_and_passes_a_repository_with_no_cla
         ],
     );
     std::fs::write(machine.bin.join("no-image"), "").unwrap();
-    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let out = machine
+        .init(&machine.repo, &["--yes", "--check-command", "make test"])
+        .await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     // The line is in the step, so a person sees it before the pull request.
     for line in [
-        "  make riff.toml on main with a pull request, with check = \"just check\" in [work]",
+        "  make riff.toml on main with a pull request, with check = \"make test\" in [work]",
         "  note  CLAUDE.md: main of acme/app has none. This is fine: a CLAUDE.md is the choice \
          of the repository",
         "This machine is ready.",
@@ -887,11 +890,17 @@ async fn riff_init_yes_writes_the_work_table_and_passes_a_repository_with_no_cla
     let config = pushed_config(&machine);
     assert!(config.starts_with("[session]\nimage = \""), "{config}");
     assert!(
-        config.ends_with("\n[work]\ncheck = \"just check\"\n"),
+        config.ends_with("\n[work]\ncheck = \"make test\"\n"),
         "{config}"
     );
     let work = riff::work_config::Work::of_config(&config, "riff.toml").unwrap();
-    assert_eq!(work.check.as_deref(), Some("just check"));
+    assert_eq!(work.check.as_deref(), Some("make test"));
+    // No call read the justfile or the Cargo.toml.
+    let calls = machine.read("calls");
+    assert!(
+        !calls.contains("contents/justfile") && !calls.contains("contents/Cargo.toml"),
+        "{calls}"
+    );
 
     // A second run: the check passes, the note stays, and nothing changes.
     let changes = machine.forge_changes();
@@ -900,19 +909,57 @@ async fn riff_init_yes_writes_the_work_table_and_passes_a_repository_with_no_cla
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     assert!(
         stdout.lines().any(|l| l
-            == "  pass  the check in riff.toml: riff.toml of main of acme/app has [work] check = \"just check\""),
+            == "  pass  the check in riff.toml: riff.toml of main of acme/app has [work] check = \"make test\""),
         "{stdout}"
     );
     assert!(!stdout.contains("These steps change GitHub"), "{stdout}");
     assert_eq!(machine.forge_changes(), changes);
 }
 
+/// 01M5RH1SKTT7JASP1VCCSTEE6F, 01M5RKRKN36FRPWZ53F6CCP4DQ: `riff init
+/// --yes` with no `--check-command` writes no `check`, also when the
+/// repository has a justfile with a recipe `check`. The list names the
+/// step that is left, as a note, and the run passes.
+#[tokio::test]
+async fn riff_init_yes_with_no_check_command_writes_no_check_and_names_the_step() {
+    let machine = Machine::new();
+    machine.add_origin();
+    let [pulls, checks] = ci(r#"{"name":"checks / lint"}"#);
+    fake_forge(
+        &machine.bin,
+        &[
+            ("files", "justfile\nCargo.toml\n"),
+            ("content_justfile", "check:\n    cargo test\n"),
+            ("milestones", ""),
+            (pulls.0, &pulls.1),
+            (checks.0, &checks.1),
+        ],
+    );
+    std::fs::write(machine.bin.join("no-image"), "").unwrap();
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    let config = pushed_config(&machine);
+    assert!(config.starts_with("[session]\nimage = \""), "{config}");
+    assert!(!config.contains("[work]"), "{config}");
+    assert!(
+        stdout.lines().any(|l| l.starts_with(
+            "  note  the check in riff.toml: riff.toml of main has no [work] check, and riff \
+             guesses none, so a session looks for the check in the files of the repository. To \
+             name it, run riff init --check-command CMD, or add check = \"COMMAND\" in the \
+             table [work] of riff.toml"
+        )),
+        "{stdout}"
+    );
+    assert!(stdout.contains("This machine is ready."), "{stdout}");
+}
+
 /// 01M5RH1SKTT7JASP1VCCSTEE6F: a repository with a `riff.toml` that has no
 /// `[work]` table gets the table in the setup pull request, and the file
-/// keeps its text. A repository with a `Cargo.toml` and no justfile gets
-/// `cargo test`.
+/// keeps its text. `--check` names the step that is left, and changes
+/// nothing. riff guesses no command from the `Cargo.toml`.
 #[tokio::test]
-async fn riff_init_adds_the_work_table_to_a_riff_toml_that_has_none() {
+async fn riff_init_adds_the_check_command_to_a_riff_toml_that_has_none() {
     let machine = Machine::new();
     machine.add_origin();
     set_up(&machine.bin);
@@ -925,28 +972,54 @@ async fn riff_init_adds_the_work_table_to_a_riff_toml_that_has_none() {
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     assert!(
         stdout.contains(
-            "  note  the check in riff.toml: riff.toml of main has no [work] check, so a session \
-             looks for the check in the files of the repository. riff can add check = \"cargo test\""
+            "  note  the check in riff.toml: riff.toml of main has no [work] check, and riff \
+             guesses none"
         ),
         "{stdout}"
     );
     assert!(machine.forge_changes().is_empty());
 
-    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let out = machine
+        .init(&machine.repo, &["--yes", "--check-command", "make test"])
+        .await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     assert!(
         stdout.contains(
-            "  add check = \"cargo test\" in [work] to riff.toml on main with a pull request"
+            "  add check = \"make test\" in [work] to riff.toml on main with a pull request"
         ),
         "{stdout}"
     );
     assert_eq!(
         pushed_config(&machine),
-        format!("{own}\n[work]\ncheck = \"cargo test\"\n")
+        format!("{own}\n[work]\ncheck = \"make test\"\n")
     );
     let body: serde_json::Value = serde_json::from_str(&machine.read("config.json")).unwrap();
     assert_eq!(body["sha"], "b10b111");
+}
+
+/// `--check-command` is for the setup: `--check` changes nothing, so the
+/// two flags do not go together. An empty command is an error.
+#[tokio::test]
+async fn riff_init_check_command_does_not_go_with_check_and_is_not_empty() {
+    let machine = Machine::new();
+    machine.add_origin();
+    set_up(&machine.bin);
+    let out = machine
+        .init(&machine.repo, &["--check", "--check-command", "make test"])
+        .await;
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("--check"), "{stderr}");
+    assert!(machine.forge_changes().is_empty());
+
+    let out = machine
+        .init(&machine.repo, &["--yes", "--check-command", "  "])
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(stderr.contains("--check-command is empty"), "{stderr}");
+    assert!(machine.forge_changes().is_empty());
 }
 
 /// 01M5RGG9KJXCKH8C94145WS8SM, 01M5RGGD6YR36EXZEG61XCJVRY: with no `y` (no
@@ -1371,6 +1444,7 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
             "riff init --check",
             // "Add another repository to the riff": set it up, check, then pull the image.
             "riff init",
+            "riff init --check-command \"make test\"",
             "riff init --check",
             "riff init"
         ]

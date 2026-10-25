@@ -7049,12 +7049,13 @@ part when they merge.
   `riff.toml` with no `check` gets a start text that sends the session
   to the files of the repository for its check.
 - **01M5RH1SKTT7JASP1VCCSTEE6F** `riff init` writes the `[work]` table
-  in the pull request "Set up riff" when `riff.toml` has none: `check =
-  "just check"` when the justfile of the default branch has a recipe
-  `check`, else `check = "cargo test"` when the root has a `Cargo.toml`.
-  It names the line in the step that it asks about. A `riff.toml` that
-  has a `[work]` table stays as it is. A repository with neither file
-  gets no line, and `riff init` says so in a note.
+  in the pull request "Set up riff" when `riff.toml` has no `check`. It
+  asks the person for the command, in one more question, and `riff init
+  --check-command CMD` gives it with no question. The step names the
+  line. A `riff.toml` that has a `[work]` table with a `check` stays as
+  it is. With `--yes` and no `--check-command`, and when the person
+  gives no command, riff writes no `check`, and a note names the step
+  that is left: `riff init --check-command CMD`.
 - **01M5RH1SPRX0ZY5Q3WA4ENP84M** `riff init` checks no file of rules. A
   repository with no `CLAUDE.md`, `AGENTS.md` or such file passes: `riff
   init` shows "CLAUDE.md: none" as a note, not a fail. A `CLAUDE.md` is
@@ -7062,6 +7063,10 @@ part when they merge.
 - **01M5RH1SSPTA80JHHNDQB9PCB6** The how-to "Add another repository to
   the riff" shows the table `[work]` in a `toml` block, and says that a
   `CLAUDE.md` is the choice of the repository.
+- **01M5RKRKN36FRPWZ53F6CCP4DQ** riff guesses no check command. No code
+  of riff reads a justfile, a `Cargo.toml` or another file of a build
+  tool to pick the check: riff is tied to no build tool and no
+  language.
 
 ### The permission rules
 

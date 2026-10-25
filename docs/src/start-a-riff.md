@@ -382,7 +382,7 @@ each step that is done already:
 | Step | What `riff init` does |
 |---|---|
 | Merge settings | It allows auto-merge and squash merge. |
-| `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins the session image of the riff that you run, and has the table `[work]` with your check. When `riff.toml` has no `[work]` table, the same pull request adds it. |
+| `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins the session image of the riff that you run, and has the table `[work]` with the check that you give. When `riff.toml` has no `check`, the same pull request adds it. |
 | The Backlog | It makes the `Backlog`. |
 | The first wave | When the repository has no open wave, it makes `Wave 1`. |
 | The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks `riff/verify` and the checks that your CI runs on a pull request. A repository whose CI has no check yet gets the check `Gate`. |
@@ -413,11 +413,9 @@ rules = ["Each change has a test."]
 ```
 
 - `check` is the command that a session runs before each push and
-  after a rebase. `riff init` writes `just check` when the justfile of
-  the default branch has a recipe `check`, else `cargo test` when the
-  root has a `Cargo.toml`. It names the line in its question. Change
-  it later in `riff.toml`. A repository with neither gets no line, and
-  `riff init` says so in a note.
+  after a rebase. `riff init` writes the command that you give: see
+  [Give the check command to riff init](#give-the-check-command-to-riff-init).
+  Change it later in `riff.toml`.
 - `rules` is an optional list of lines. riff gives them to each
   session of the repository in its start text.
 
@@ -436,6 +434,24 @@ To do the steps with no question, run `riff init --yes`. To see the
 steps and change nothing, run `riff init --check`. A person who is not
 an admin of the repository gets the fix of each check, and riff changes
 nothing: ask an admin to run `riff init`.
+
+### Give the check command to riff init
+
+`riff init` guesses no command: it reads no justfile and no other file
+of a build tool. When `riff.toml` has no `check`, `riff init` asks for
+the command, in one question before the steps. Press Enter to name
+none. To give the command with no question, use `--check-command`:
+
+```sh
+riff init --check-command "make test"
+```
+
+The pull request "Set up riff" then has `check = "make test"` in the
+table `[work]`. A `riff.toml` that has a `check` keeps it. `riff init
+--yes` with no `--check-command` writes no `check`, and the end of its
+output has a note that names this step. Add the command later with
+`riff init --check-command CMD`, or write it in `riff.toml`. The flag
+does not go with `--check`, which changes nothing.
 
 ### Read the output for a repository on GitHub
 
@@ -485,6 +501,11 @@ This machine is ready. Run one item in a container: riff run ITEM
   `fail` is your work: it gives the fix.
 - After the steps, riff checks again. A check passes when its step
   worked.
+- When `riff.toml` has no `check`, `riff init` asks one more question
+  before the steps: see
+  [Give the check command to riff init](#give-the-check-command-to-riff-init).
+  This page leaves it out, because the output comes from `riff init
+  --yes`.
 - `riff init` makes `riff.toml` on `origin`. Then it runs
   `git pull --ff-only` in your clone when your clone is on the default
   branch, has no change, and lacks only commits of `origin`. Else it

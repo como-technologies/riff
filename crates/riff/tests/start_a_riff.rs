@@ -203,6 +203,7 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
         "#### Allow auto-merge and squash merge\n",
         "#### Make the ruleset of the default branch\n",
         "#### Make the Backlog and the first wave\n",
+        "### Give the check command to riff init\n",
         "### Name the check and the rules of the repository\n",
         "### Write a CLAUDE.md, when you want one\n",
         "### Pin an image with another toolchain\n",

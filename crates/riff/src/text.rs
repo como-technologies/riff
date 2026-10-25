@@ -5092,9 +5092,9 @@ fn push_check(work: &Work) -> String {
 /// assert!(again.contains("earlier session"));
 ///
 /// // The check of riff.toml is the check of the session, not the CLAUDE.md.
-/// let work = Work { check: Some("cargo test".into()), rules: vec!["Each change has a test.".into()] };
+/// let work = Work { check: Some("make test".into()), rules: vec!["Each change has a test.".into()] };
 /// let text = riff::text::run_start("o/r", "master", 12, "b", "1a2b", frame, "Wave 3", false, &work);
-/// assert!(text.contains("run the check of the repository: `cargo test`"));
+/// assert!(text.contains("run the check of the repository: `make test`"));
 /// assert!(text.contains("Run it in the foreground"));
 /// assert!(text.contains("Obey the rules of this repository:\n   - Each change has a test."));
 /// assert!(text.contains("Read CLAUDE.md or AGENTS.md too when the repository has one"));
@@ -6648,55 +6648,61 @@ pub fn init_work_on(repo: &str, branch: &str, check: &str) -> String {
     format!("riff.toml of {branch} of {repo} has [work] check = \"{check}\"")
 }
 
-/// `riff.toml` on `branch` has no check, and riff can add the line
-/// `suggested` ([`crate::work_config::suggest`]).
+/// `riff.toml` on `branch` has no check, and the person gave the command
+/// `add`: the step adds it.
 ///
 /// ```
-/// let found = riff::text::init_work_off("main", "just check");
-/// assert!(found.starts_with("riff.toml of main has no [work] check, so a session looks for the check in the files"), "{found}");
-/// assert!(found.ends_with("riff can add check = \"just check\""), "{found}");
+/// assert_eq!(
+///     riff::text::init_work_off("main", "make test"),
+///     "riff.toml of main has no [work] check. riff will add check = \"make test\""
+/// );
 /// ```
-pub fn init_work_off(branch: &str, suggested: &str) -> String {
-    format!(
-        "riff.toml of {branch} has no [work] check, so a session looks for the check in the \
-         files of the repository. riff can add check = \"{suggested}\""
-    )
+pub fn init_work_off(branch: &str, add: &str) -> String {
+    format!("riff.toml of {branch} has no [work] check. riff will add check = \"{add}\"")
 }
 
-/// `riff.toml` on `branch` has no check, and riff finds none to add.
+/// `riff.toml` on `branch` has no check, and the person gave no command.
+/// riff guesses none (01M5RKRKN36FRPWZ53F6CCP4DQ): the note names the step
+/// that is left.
 ///
 /// ```
 /// let found = riff::text::init_work_none("main");
-/// assert!(found.contains("no recipe check in a justfile and no Cargo.toml"), "{found}");
-/// assert!(found.ends_with("add check = \"COMMAND\" in the table [work] of riff.toml"), "{found}");
+/// assert!(found.starts_with("riff.toml of main has no [work] check, and riff guesses none"), "{found}");
+/// assert!(found.contains("riff init --check-command CMD"), "{found}");
+/// assert!(found.ends_with("or add check = \"COMMAND\" in the table [work] of riff.toml"), "{found}");
 /// ```
 pub fn init_work_none(branch: &str) -> String {
     format!(
-        "riff.toml of {branch} has no [work] check, and riff found no recipe check in a justfile \
-         and no Cargo.toml, so a session looks for the check in the files of the repository. To \
-         name it, add check = \"COMMAND\" in the table [work] of riff.toml"
+        "riff.toml of {branch} has no [work] check, and riff guesses none, so a session looks \
+         for the check in the files of the repository. To name it, run riff init --check-command \
+         CMD, or add check = \"COMMAND\" in the table [work] of riff.toml"
     )
 }
 
+/// The question of `riff init` about the check command
+/// (01M5RH1SKTT7JASP1VCCSTEE6F). An empty answer gives no command.
+pub const INIT_ASK_CHECK: &str = "riff.toml has no [work] check. Which command does a session run \
+     before each push, for example make test? Press Enter to name none: ";
+
 /// The step that makes `riff.toml` on `branch` with a pull request
 /// ([`crate::repo_setup::Step::Config`]): `has` says that the file is
-/// there, and `suggested` is the check that the step adds.
+/// there, and `add` is the check that the step adds.
 ///
 /// ```
 /// use riff::text::init_config_step;
 ///
 /// assert_eq!(init_config_step("main", false, None), "make riff.toml on main with a pull request");
 /// assert_eq!(
-///     init_config_step("main", false, Some("just check")),
-///     "make riff.toml on main with a pull request, with check = \"just check\" in [work]"
+///     init_config_step("main", false, Some("make test")),
+///     "make riff.toml on main with a pull request, with check = \"make test\" in [work]"
 /// );
 /// assert_eq!(
-///     init_config_step("main", true, Some("cargo test")),
-///     "add check = \"cargo test\" in [work] to riff.toml on main with a pull request"
+///     init_config_step("main", true, Some("make test")),
+///     "add check = \"make test\" in [work] to riff.toml on main with a pull request"
 /// );
 /// ```
-pub fn init_config_step(branch: &str, has: bool, suggested: Option<&str>) -> String {
-    match (has, suggested) {
+pub fn init_config_step(branch: &str, has: bool, add: Option<&str>) -> String {
+    match (has, add) {
         (true, Some(check)) => {
             format!(
                 "add check = \"{check}\" in [work] to riff.toml on {branch} with a pull request"
@@ -7792,7 +7798,7 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// ```
 /// use riff::work_config::Work;
 ///
-/// let work = Work { check: Some("cargo test".into()), rules: vec![] };
+/// let work = Work { check: Some("make test".into()), rules: vec![] };
 /// let text = riff::text::wave_rebase_start("o/r", "master", 12, 40, "1a2b3c4d5e", "worktree-issue-12", "9f8e", &work);
 /// assert!(text.contains("on the branch worktree-issue-12 of pull request #40"));
 /// assert!(text.contains("a conflict with master at commit 1a2b3c4"));
@@ -7801,7 +7807,7 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// assert!(text.contains("git rebase origin/master"));
 /// assert!(!text.contains("main"));
 /// assert!(text.contains("Resolve each conflict"));
-/// assert!(text.contains("run the check of the repository: `cargo test`"));
+/// assert!(text.contains("run the check of the repository: `make test`"));
 /// assert!(!text.contains("the checks that CLAUDE.md names"));
 /// assert!(text.contains("git push --force-with-lease origin worktree-issue-12"));
 /// assert!(text.contains("Do not open a second pull request"));
@@ -7915,7 +7921,7 @@ fn check_names(checks: &[String]) -> String {
 /// use riff::work_config::Work;
 ///
 /// let checks = ["Gate".to_owned()];
-/// let work = Work { check: Some("cargo test".into()), rules: vec![] };
+/// let work = Work { check: Some("make test".into()), rules: vec![] };
 /// let text = riff::text::wave_checks_start("o/r", "master", 12, 40, "1a2b3c4d5e", &checks, "worktree-issue-12", "9f8e", &work);
 /// assert!(text.contains("Never push to master."));
 /// assert!(!text.contains("main"));
@@ -7925,7 +7931,7 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("gh pr checks 40"));
 /// assert!(text.contains("gh run view RUN_ID --log-failed"));
-/// assert!(text.contains("run the check of the repository: `cargo test`"));
+/// assert!(text.contains("run the check of the repository: `make test`"));
 /// assert!(!text.contains("the checks that CLAUDE.md names"));
 /// assert!(text.contains("git push origin worktree-issue-12"));
 /// assert!(text.contains("A known flake"));
@@ -8117,7 +8123,7 @@ pub fn wave_checks_rerun(
 /// let checks = ["CI".to_owned()];
 /// use riff::work_config::Work;
 ///
-/// let work = Work { check: Some("cargo test".into()), rules: vec!["Name no secret in a log.".into()] };
+/// let work = Work { check: Some("make test".into()), rules: vec!["Name no secret in a log.".into()] };
 /// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks, &work);
 /// assert!(text.contains("git diff origin/master...HEAD"));
 /// assert!(!text.contains("origin/main"));
@@ -8129,7 +8135,7 @@ pub fn wave_checks_rerun(
 /// assert!(text.contains("when the full check of the commit was done: the check CI."));
 /// assert!(text.contains("Obey the rules of this repository for a verify:\n   - Name no secret in a log."));
 /// assert!(text.contains("Read CLAUDE.md or AGENTS.md too when the repository has one"));
-/// assert!(text.contains("The check of the repository is `cargo test`"));
+/// assert!(text.contains("The check of the repository is `make test`"));
 /// assert!(text.contains("Run each test in the foreground"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
@@ -9286,7 +9292,7 @@ mod tests {
         let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3";
         let checks = ["CI".to_owned()];
         let work = Work {
-            check: Some("cargo test".into()),
+            check: Some("make test".into()),
             rules: vec!["Each change has a test.".into()],
         };
         let texts = [
@@ -9355,7 +9361,7 @@ mod tests {
             // 01M5RH1SH11PTWKCJMNEMV8N2H: the check and the rules come from riff.toml.
             if ["work", "work again", "rebase", "checks", "verify"].contains(&name) {
                 assert!(
-                    text.contains("`cargo test`"),
+                    text.contains("`make test`"),
                     "{name} text names no check: {text}"
                 );
                 assert!(

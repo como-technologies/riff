@@ -69,12 +69,40 @@ pub fn riff_commands_of(name: &str) -> Vec<String> {
         .collect()
 }
 
+/// The words of a shell line: white space ends a word, and a word in double
+/// quotes is one word.
+fn words(line: &str) -> Vec<String> {
+    let (mut words, mut word, mut quoted, mut any) = (vec![], String::new(), false, false);
+    for c in line.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                any = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if any {
+                    words.push(std::mem::take(&mut word));
+                    any = false;
+                }
+            }
+            c => {
+                word.push(c);
+                any = true;
+            }
+        }
+    }
+    if any {
+        words.push(word);
+    }
+    words
+}
+
 /// Checks that each `riff` command in `commands` runs with `--help`.
 pub fn each_is_real(commands: &[String]) {
     for command in commands {
         Isolated::shared()
             .assert_riff()
-            .args(command.split_whitespace().skip(1))
+            .args(words(command).into_iter().skip(1))
             .arg("--help")
             .assert()
             .success();
