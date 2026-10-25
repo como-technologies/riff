@@ -230,6 +230,44 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
     each_is_real(&riff);
 }
 
+/// 01M5SMSB0NFBD1XHEW3BSE4BDP, 01M5SMRRAG1WPBJMQKKTPSRHRP: the how-to has
+/// the step "Check that each host can pull the image". It says that each
+/// host of the wave must pull the session image, and has a copyable `sh`
+/// block for the check and for the fix. Its `text` block is the line that
+/// `riff image --check` prints, and the pin step links to it.
+#[test]
+fn the_how_to_says_that_each_host_must_pull_the_image_and_how_to_check_it() {
+    let how_to = part(PAGE, HOW_TO);
+    let step = how_to
+        .split("### Check that each host can pull the image\n")
+        .nth(1)
+        .expect("the step");
+    let step = step.split("\n### ").next().unwrap();
+    assert_eq!(
+        book::commands_in(step),
+        [
+            "riff image --check",
+            "podman login ghcr.io",
+            "riff daemon status"
+        ]
+    );
+    let words = step.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(words.contains("The session image must be pullable by each host of the wave."));
+    assert!(words.contains("riff manages no registry login"));
+    let image: riff::session_image::Image =
+        format!("ghcr.io/acme/session@sha256:{}", "ab".repeat(32))
+            .parse()
+            .unwrap();
+    let line = riff::text::image_closed(&image, "the registry answered 403 Forbidden")
+        .replace(image.digest(), "sha256:…");
+    assert!(
+        step.contains(&format!("```text\n{line}\n```")),
+        "{line}\n{step}"
+    );
+    assert!(how_to.contains("(#check-that-each-host-can-pull-the-image)"));
+    assert!(step.contains("(how-it-works.md#report-a-verify)"));
+}
+
 /// 01M5RN89Z749VYS1CRYJQTKAWY: the how-to has the step "Write a CLAUDE.md,
 /// when you want one" with a copyable `sh` block. The block writes a
 /// `CLAUDE.md` with one part for each row of the table of the step. The

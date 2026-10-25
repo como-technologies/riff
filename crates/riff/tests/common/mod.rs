@@ -455,3 +455,41 @@ pub fn api(url: &str, user: &str, session: Option<&str>) -> riff_client::api::Ap
 pub fn api_of(url: &str, me: &riff_core::name::SessionUri) -> riff_client::api::Api {
     api(url, me.who().user(), me.who().session())
 }
+
+/// A fake registry for a session image `HOST/o/i@sha256:…` (host
+/// `127.0.0.1:PORT`): each request with no token gets a 401 that names
+/// its own token URL; a request with a token gets the status `manifest`;
+/// a token request gets the status `token`. It gives the host, and the
+/// number of requests that it got.
+pub async fn registry(manifest: u16, token: u16) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    use axum::http::{HeaderMap, header};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let seen = Arc::new(AtomicUsize::new(0));
+    let (a, b) = (seen.clone(), seen.clone());
+    let app = Router::new()
+        .route(
+            "/v2/o/i/manifests/{digest}",
+            get(move |headers: HeaderMap| async move {
+                a.fetch_add(1, Ordering::SeqCst);
+                let mut reply = HeaderMap::new();
+                if headers.get(header::AUTHORIZATION).is_some() {
+                    return (StatusCode::from_u16(manifest).unwrap(), reply);
+                }
+                let host = headers[header::HOST].to_str().unwrap();
+                let challenge = format!(r#"Bearer realm="http://{host}/token",service="reg""#);
+                reply.insert(header::WWW_AUTHENTICATE, challenge.parse().unwrap());
+                (StatusCode::UNAUTHORIZED, reply)
+            }),
+        )
+        .route(
+            "/token",
+            get(move || async move {
+                b.fetch_add(1, Ordering::SeqCst);
+                (StatusCode::from_u16(token).unwrap(), r#"{"token":"anon"}"#)
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let host = format!("127.0.0.1:{}", listener.local_addr().unwrap().port());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (host, seen)
+}

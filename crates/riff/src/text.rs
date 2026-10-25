@@ -156,6 +156,85 @@ pub fn gate_not_passed(
     )
 }
 
+/// The fix for a session image that a host cannot pull with no login
+/// (01M5SMRRAG1WPBJMQKKTPSRHRP, 01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::image_fix("ghcr.io"),
+///     "Fix: make the package public, or run podman login ghcr.io on each host of the wave."
+/// );
+/// ```
+pub fn image_fix(registry: &str) -> String {
+    format!(
+        "Fix: make the package public, or run podman login {registry} on each host of the wave."
+    )
+}
+
+/// The line of `riff verify pass` when the registry of the new pin of
+/// pull request `number` gives no manifest with no login
+/// (01M5SMRRAG1WPBJMQKKTPSRHRP). `why` is what the registry answered.
+///
+/// ```
+/// let image: riff::session_image::Image =
+///     format!("ghcr.io/o/i@sha256:{}", "0".repeat(64)).parse()?;
+/// let line = riff::text::verify_image_closed(40, &image, "the registry answered 403 Forbidden");
+/// assert!(line.starts_with(
+///     "riff verify pass: pull request #40 pins a session image that a host cannot pull. ghcr.io gives no manifest of ghcr.io/o/i@sha256:"
+/// ));
+/// assert!(line.contains("with no login (the registry answered 403 Forbidden)."));
+/// assert!(line.ends_with(
+///     "Fix: make the package public, or run podman login ghcr.io on each host of the wave. \
+///      Nothing is reported."
+/// ));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn verify_image_closed(number: u64, image: &crate::session_image::Image, why: &str) -> String {
+    format!(
+        "riff verify pass: pull request #{number} pins a session image that a host cannot pull. \
+         {} Nothing is reported.",
+        image_closed(image, why)
+    )
+}
+
+/// The line of `riff verify pass` when riff cannot ask the registry of the
+/// new pin of pull request `number` (01M5SMRRAG1WPBJMQKKTPSRHRP).
+///
+/// ```
+/// let image: riff::session_image::Image =
+///     format!("ghcr.io/o/i@sha256:{}", "0".repeat(64)).parse()?;
+/// let line = riff::text::verify_image_unasked(40, &image, "cannot ask https://ghcr.io: timed out");
+/// assert!(line.starts_with("riff verify pass: riff cannot ask ghcr.io about the session image"));
+/// assert!(line.ends_with("Try again. Nothing is reported."));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn verify_image_unasked(
+    number: u64,
+    image: &crate::session_image::Image,
+    error: &str,
+) -> String {
+    format!(
+        "riff verify pass: riff cannot ask {} about the session image {image} of pull request \
+         #{number}: {}. Try again. Nothing is reported.",
+        image.host(),
+        forge(error)
+    )
+}
+
+/// The line of `riff verify pass` when `riff.toml` of the pull request
+/// pins no good image (01M5SMRRAG1WPBJMQKKTPSRHRP).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::verify_pin_bad("riff.toml of pull request #40 has no image in [session]"),
+///     "riff verify pass: riff.toml of pull request #40 has no image in [session]. \
+///      Nothing is reported."
+/// );
+/// ```
+pub fn verify_pin_bad(why: &str) -> String {
+    format!("riff verify pass: {}. Nothing is reported.", forge(why))
+}
+
 /// The line of a `riff release verify` that the full check `checks` of the
 /// head commit stops (01M5R13DK401K3TZ91E2QK2DYM). It names the checks.
 ///
@@ -3437,7 +3516,7 @@ where
 /// let text = plain(&view);
 /// assert!(text.contains("\nserver      https://riff.example.com  (from RIFF_SERVER)\n"), "{text}");
 /// assert!(text.contains("\n  sign-in   yes, you are not signed in\n"), "{text}");
-/// assert!(!text.contains("7878"), "{text}");
+/// assert!(!text.contains("127.0.0.1:7878"), "{text}");
 /// assert!(text.ends_with("\nRun riff login"), "{text}");
 /// ```
 ///
@@ -4861,6 +4940,72 @@ pub fn image_local_differs(path: &Path, local: &str, merged: &str, head: &str) -
 /// (01M51STPMEM62Z8B26YM2CH6QH).
 pub fn image_local_bad(why: &str, merged: &str, head: &str) -> String {
     format!("{why}. riff uses the merged pin {merged} of {head}.")
+}
+
+/// The registry of `image` gives its manifest with no login: a host with
+/// no login can pull it (01M5SMSB0NFBD1XHEW3BSE4BDP).
+///
+/// ```
+/// let image: riff::session_image::Image =
+///     format!("ghcr.io/o/i@sha256:{}", "0".repeat(64)).parse()?;
+/// assert_eq!(
+///     riff::text::image_open(&image),
+///     format!("{image} can be pulled with no login: ghcr.io gives its manifest.")
+/// );
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn image_open(image: &crate::session_image::Image) -> String {
+    format!(
+        "{image} can be pulled with no login: {} gives its manifest.",
+        image.host()
+    )
+}
+
+/// The registry of `image` gives no manifest with no login
+/// (01M5SMRRAG1WPBJMQKKTPSRHRP, 01M5SMSB0NFBD1XHEW3BSE4BDP). `why` is what
+/// the registry answered.
+///
+/// ```
+/// let image: riff::session_image::Image =
+///     format!("ghcr.io/o/i@sha256:{}", "0".repeat(64)).parse()?;
+/// let line = riff::text::image_closed(&image, "the registry answered 403 Forbidden");
+/// assert_eq!(
+///     line,
+///     format!(
+///         "ghcr.io gives no manifest of {image} with no login (the registry answered 403 \
+///          Forbidden). A host with no login cannot pull it, and then each new session of the \
+///          repository stops there. Fix: make the package public, or run podman login ghcr.io \
+///          on each host of the wave."
+///     )
+/// );
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn image_closed(image: &crate::session_image::Image, why: &str) -> String {
+    let registry = image.host();
+    format!(
+        "{registry} gives no manifest of {image} with no login ({}). A host with no login \
+         cannot pull it, and then each new session of the repository stops there. {}",
+        forge(why),
+        image_fix(registry)
+    )
+}
+
+/// riff cannot ask the registry of `image` (01M5SMSB0NFBD1XHEW3BSE4BDP).
+///
+/// ```
+/// let image: riff::session_image::Image =
+///     format!("ghcr.io/o/i@sha256:{}", "0".repeat(64)).parse()?;
+/// let line = riff::text::image_unasked(&image, "cannot ask https://ghcr.io: timed out");
+/// assert!(line.starts_with("riff cannot ask ghcr.io about "));
+/// assert!(line.ends_with("cannot ask https://ghcr.io: timed out. Try again."));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn image_unasked(image: &crate::session_image::Image, error: &str) -> String {
+    format!(
+        "riff cannot ask {} about {image}: {}. Try again.",
+        image.host(),
+        forge(error)
+    )
 }
 
 /// The image is not on this machine, and podman cannot pull it.
@@ -7484,6 +7629,51 @@ pub fn wave_job_failed(item: &str, error: &str) -> String {
         "The riff daemon could not start {item} for the wave: {error}. It tries again at its \
          next look."
     )
+}
+
+/// podman cannot pull the session image `image` for the wave of `repo`
+/// (01M5SMSB3H1E9NXMBDN8ZDJ6CD): the message to the lead, one time for each
+/// image.
+///
+/// ```
+/// let text = riff::text::wave_pull_failed(
+///     "o/r",
+///     "ghcr.io/o/i@sha256:0",
+///     "podman pull ghcr.io/o/i@sha256:0: exit status: 125: Error: unauthorized",
+/// );
+/// assert_eq!(
+///     text,
+///     "The riff daemon starts no session for the wave of o/r now: podman cannot pull the \
+///      session image ghcr.io/o/i@sha256:0 on this machine (podman pull ghcr.io/o/i@sha256:0: \
+///      exit status: 125: Error: unauthorized). No start of an item counts. Fix: make the \
+///      package public, or run podman login ghcr.io on each host of the wave. The wave tries \
+///      the pull again each minute, and starts the work by itself when the pull works. See \
+///      it: riff daemon status"
+/// );
+/// ```
+pub fn wave_pull_failed(repo: &str, image: &str, reason: &str) -> String {
+    let registry = image.split('/').next().unwrap_or(image);
+    format!(
+        "The riff daemon starts no session for the wave of {repo} now: podman cannot pull the \
+         session image {image} on this machine ({}). No start of an item counts. {} The wave \
+         tries the pull again each minute, and starts the work by itself when the pull works. \
+         See it: riff daemon status",
+        forge(reason),
+        image_fix(registry)
+    )
+}
+
+/// What the wave does while podman cannot pull its session image: the
+/// word of `riff daemon status` (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_pull_word("ghcr.io/o/i@sha256:0", "Error: unauthorized"),
+///     "waits: podman cannot pull ghcr.io/o/i@sha256:0: Error: unauthorized"
+/// );
+/// ```
+pub fn wave_pull_word(image: &str, reason: &str) -> String {
+    format!("waits: podman cannot pull {image}: {}", forge(reason))
 }
 
 /// The sign-in of `claude` on the host of a wave ends in `minutes`

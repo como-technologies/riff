@@ -20,7 +20,7 @@
 //! | `riff audit` | Checks from the log and from `gh` that a wave followed the rules. See [`audit`]. |
 //! | `riff cloud` | Makes and runs riff-server instances on Cloud Run, with `gcloud`. See [`cloud`]. |
 //! | `riff init` | The first run of riff on a machine: checks rootless podman and the repository on GitHub, sets the repository up for riff, installs the daemon and pulls the session image. See [`first_run`], [`repo_setup`]. |
-//! | `riff image` | Prints the session image that the riff config of the repository pins. See [`session_image`]. |
+//! | `riff image` | Prints the session image that the riff config of the repository pins. With `--check`, it asks the registry whether a host with no login can pull it. See [`session_image`], [`registry`]. |
 //! | `riff run` | Runs one work item in a rootless podman container: the host claims, the container works. See [`run`]. |
 //!
 //! `riff --help` lists the commands under headings (see [`help`]).
@@ -98,6 +98,7 @@ pub mod tools;
 pub mod podman;
 pub mod pr;
 pub mod reach;
+pub mod registry;
 pub mod release;
 pub mod release_config;
 pub mod repo_setup;

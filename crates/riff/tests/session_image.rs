@@ -164,6 +164,76 @@ fn riff_image_names_a_missing_config() {
     assert!(error.contains(FILE), "{error}");
 }
 
+/// `riff image --check` in the folder `dir`.
+async fn riff_image_check(dir: &Path) -> Output {
+    let mut cmd = Isolated::shared().riff();
+    cmd.args(["image", "--check"]).current_dir(dir);
+    tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap()
+}
+
+/// 01M5SMSB0NFBD1XHEW3BSE4BDP: `riff image --check` asks the registry of
+/// the image with no login. A package that a host can pull gives one
+/// line and the exit 0.
+#[tokio::test]
+async fn riff_image_check_says_that_a_host_can_pull_a_public_image() {
+    let (host, seen) = crate::common::registry(200, 200).await;
+    let image = format!("{host}/o/i@sha256:{}", "ab".repeat(32));
+    let root = repository(Some(&format!("[session]\nimage = \"{image}\"\n")));
+    let out = riff_image_check(root.path()).await;
+    assert!(out.status.success(), "{out:?}");
+    let parsed: Image = image.parse().unwrap();
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        format!("{}\n", riff::text::image_open(&parsed))
+    );
+    assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 3);
+
+    // Without --check, riff asks nothing.
+    let out = riff_image(root.path());
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), format!("{image}\n"));
+    assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 3);
+}
+
+/// A package that is private, or not there: the exit 1, and the fix.
+#[tokio::test]
+async fn riff_image_check_gives_the_fix_for_an_image_that_a_host_cannot_pull() {
+    for status in [401_u16, 403, 404] {
+        let (host, _) = crate::common::registry(status, 200).await;
+        let image = format!("{host}/o/i@sha256:{}", "ab".repeat(32));
+        let root = repository(Some(&format!("[session]\nimage = \"{image}\"\n")));
+        let out = riff_image_check(root.path()).await;
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        assert!(out.stdout.is_empty(), "{out:?}");
+        let parsed: Image = image.parse().unwrap();
+        let why = format!(
+            "the registry answered {}",
+            reqwest::StatusCode::from_u16(status).unwrap()
+        );
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            format!("{}\n", riff::text::image_closed(&parsed, &why))
+        );
+    }
+}
+
+/// A registry that nobody listens at gives no answer: the exit 1 and a
+/// line that says so.
+#[tokio::test]
+async fn riff_image_check_says_when_it_cannot_ask_the_registry() {
+    let image = format!("127.0.0.1:9/o/i@sha256:{}", "ab".repeat(32));
+    let root = repository(Some(&format!("[session]\nimage = \"{image}\"\n")));
+    let out = riff_image_check(root.path()).await;
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let error = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        error.starts_with("riff cannot ask 127.0.0.1:9 about "),
+        "{error}"
+    );
+    assert!(error.trim_end().ends_with("Try again."), "{error}");
+}
+
 /// Runs `deploy/session-test.sh` with `args`, the fake engines of `bin`
 /// first in `PATH`, and the engine `engine` when it is set.
 fn session_test_output(args: &[&str], bin: &Path, engine: Option<&str>) -> Output {

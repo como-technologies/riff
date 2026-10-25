@@ -12,7 +12,7 @@
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
 //! | `riff pr wait N` | `pr view`, `pr checks --required`, again each `--every` seconds. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
-//! | `riff verify pass\|fail N` | `pr view`, `api …/rules/branches/BRANCH` and `api …/commits/COMMIT/check-runs` (a pass), `pr comment`, `api …/statuses/COMMIT` |
+//! | `riff verify pass\|fail N` | `pr view`, `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs` and `api …/pulls/N/files` (a pass), `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
@@ -56,6 +56,15 @@
 //! commit has no success ([`gate_of`], 01M49HAZ7P3JMWNCG1SWCMAXQP). A fail
 //! needs no Gate.
 //!
+//! A pull request that changes the session image in `riff.toml`
+//! ([`pin_changed`]) needs one more thing for a pass: the registry of the
+//! new pin must give its manifest with no login
+//! ([`crate::registry::anonymous_here`], 01M5SMRRAG1WPBJMQKKTPSRHRP). A
+//! pull request that merges an image that a host cannot pull stops each
+//! new session of the repository on that host. The verify of the wave
+//! uses the same rule, because it calls [`report`]. A fail needs no
+//! such check.
+//!
 //! The author of a pull request releases its item at the verify
 //! request. So the issue can have no holder. Then the result wakes the
 //! lead of the user of the verifier in the repository ([`result_to`],
@@ -89,7 +98,9 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use zeroize::Zeroizing;
 
+use crate::registry;
 use crate::repo_setup;
+use crate::session_image;
 use crate::text;
 
 /// The status code in the first line of a reply that `gh api --include`
@@ -1272,12 +1283,121 @@ pub fn gate_of(gh: &Gh, repo: &str, checks: &[String], commit: &str) -> Result<G
     Ok(full_state(states))
 }
 
+/// The text of the file `path` in `repo` at `git_ref` (a commit or a
+/// branch), with `gh`. `None` when the file is not there.
+fn file_at(gh: &Gh, repo: &str, git_ref: &str, path: &str) -> Result<Option<String>> {
+    let api = format!("repos/{repo}/contents/{path}?ref={git_ref}");
+    let args = ["api", "-H", "Accept: application/vnd.github.raw+json", &api];
+    let (ok, stdout, stderr) = gh.output(&args, None)?;
+    match (ok, stderr.contains("HTTP 404")) {
+        (true, _) => Ok(Some(stdout)),
+        (false, true) => Ok(None),
+        (false, false) => bail!("gh {}: {}", args.join(" "), text::forge(stderr.trim())),
+    }
+}
+
+/// The session image that pull request `number` of `repo` pins in
+/// [`session_image::FILE`] at its head `commit`, when it changes the pin
+/// of its base branch (01M5SMRRAG1WPBJMQKKTPSRHRP). `None` when the pull
+/// request leaves the file as it is, or deletes it. An error when the
+/// file of the head pins no good image.
+///
+/// ```
+/// use riff::pr::{Gh, pin_changed};
+///
+/// let dir = tempfile::tempdir()?;
+/// let digest = |n: &str| format!("sha256:{}", n.repeat(64));
+/// let file = |n: &str| format!("[session]\nimage = \"ghcr.io/o/i@{}\"\n", digest(n));
+/// std::fs::write(dir.path().join("head"), file("1"))?;
+/// std::fs::write(dir.path().join("base"), file("0"))?;
+/// let gh = Gh::at(isolated::write_program(
+///     dir.path().join("gh"),
+///     format!(
+///         "#!/bin/sh\n\
+///          case \"$*\" in\n\
+///            *'/pulls/40/files'*) printf 'src/main.rs\\nriff.toml\\n' ;;\n\
+///            'pr view 40 --json baseRefName --jq .baseRefName') echo main ;;\n\
+///            *'contents/riff.toml?ref=abc') cat {0}/head ;;\n\
+///            *'contents/riff.toml?ref=main') cat {0}/base ;;\n\
+///            *) exit 1 ;;\n\
+///          esac\n",
+///         dir.path().display()
+///     ),
+/// ));
+/// let image = pin_changed(&gh, "o/r", 40, "abc")?.unwrap();
+/// assert_eq!(image.digest(), digest("1"));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn pin_changed(
+    gh: &Gh,
+    repo: &str,
+    number: u64,
+    commit: &str,
+) -> Result<Option<session_image::Image>> {
+    let files = gh.run(
+        &[
+            "api",
+            &format!("repos/{repo}/pulls/{number}/files"),
+            "--paginate",
+            "--jq",
+            ".[].filename",
+        ],
+        None,
+    )?;
+    if !files.lines().any(|name| name == session_image::FILE) {
+        return Ok(None);
+    }
+    let Some(head) = file_at(gh, repo, commit, session_image::FILE)? else {
+        return Ok(None);
+    };
+    let place = format!("{} of pull request #{number}", session_image::FILE);
+    let image = session_image::Image::of_config(&head, &place)
+        .map_err(|e| anyhow!("{}", text::verify_pin_bad(&format!("{e:#}"))))?;
+    let base = gh.run(
+        &[
+            "pr",
+            "view",
+            &number.to_string(),
+            "--json",
+            "baseRefName",
+            "--jq",
+            ".baseRefName",
+        ],
+        None,
+    )?;
+    let old = file_at(gh, repo, base.trim(), session_image::FILE)?
+        .and_then(|text| session_image::Image::of_config(&text, "the base").ok());
+    Ok((old.as_ref() != Some(&image)).then_some(image))
+}
+
+/// Checks that a host can pull the session image that pull request
+/// `number` pins, when it changes the pin ([`pin_changed`]): the registry
+/// must give the manifest with no login
+/// (01M5SMRRAG1WPBJMQKKTPSRHRP).
+fn image_pullable(gh: &Gh, repo: &str, number: u64, commit: &str) -> Result<()> {
+    let Some(image) = pin_changed(gh, repo, number, commit)? else {
+        return Ok(());
+    };
+    match registry::anonymous_here(&image) {
+        Ok(registry::Pull::Open) => Ok(()),
+        Ok(registry::Pull::Closed(why)) => {
+            bail!("{}", text::verify_image_closed(number, &image, &why))
+        }
+        Err(e) => bail!(
+            "{}",
+            text::verify_image_unasked(number, &image, &format!("{e:#}"))
+        ),
+    }
+}
+
 /// Puts the result on pull request `number` as a comment, and sets the
 /// status `riff/verify` of its head commit in `repo`
 /// (01M3NB6FYXXKX80VHEVA5CV6RY). It reports nothing when the head is
 /// not the commit `tested` ([`same_commit`]), and no pass while the full
 /// check of the head has no success (01M49HAZ7P3JMWNCG1SWCMAXQP,
-/// 01M5QYDE41FVFX26EC8K5QGYH4). The caller posts it to the holder of the
+/// 01M5QYDE41FVFX26EC8K5QGYH4), or while the session image that the pull
+/// request pins is one that a host cannot pull with no login
+/// (01M5SMRRAG1WPBJMQKKTPSRHRP). The caller posts it to the holder of the
 /// issue.
 pub fn report(
     gh: &Gh,
@@ -1300,6 +1420,7 @@ pub fn report(
         if gate != Gate::Passed {
             bail!("{}", text::gate_not_passed(number, &commit, &checks, &gate));
         }
+        image_pullable(gh, repo, number, &commit)?;
     }
     let text = comment(verdict, issue, &commit, result);
     let url = text::forge(

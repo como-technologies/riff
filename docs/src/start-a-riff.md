@@ -807,12 +807,67 @@ printf '[session]\nimage = "%s@%s"\n' "$IMAGE" "$(cat /tmp/digest)" > riff.toml
 Merge `riff.toml` into the default branch with a pull request: the
 sessions use only the merged pin (see
 [Only a merged pin counts](development.md#only-a-merged-pin-counts)).
-Make the package public in its settings on GitHub. A private package
-needs `podman login ghcr.io` on each machine of the riff. Then run
-`riff init`. When each check passes, the riff daemon pulls the image:
+Make the package public in its settings on GitHub, and check that each
+host can pull it: see
+[Check that each host can pull the image](#check-that-each-host-can-pull-the-image).
+Then run `riff init`. When each check passes, the riff daemon pulls the
+image:
 
 ```sh
 riff init
+```
+
+### Check that each host can pull the image
+
+The session image must be pullable by each host of the wave. The riff
+daemon runs `podman pull` as your user on the host. riff manages no
+registry login, so only a `podman login` of your user on that host
+counts. A host that cannot pull the image starts no session of the
+repository.
+
+```mermaid
+flowchart LR
+    P["a pull request<br/>changes the image"] --> V["riff verify pass<br/>asks the registry"]
+    V -- "no manifest" --> F["no pass, and the fix"]
+    V -- "the manifest,<br/>with no login" --> M["merge"]
+    M --> H["each host:<br/>podman pull"]
+    H -- "fails" --> S["riff daemon status<br/>and a message to the lead"]
+```
+
+To ask the registry the question of a host that has no login, run
+this in a clone of the repository. It reads `riff.toml` of the working
+tree, so you can try an edit before its pull request:
+
+```sh
+riff image --check
+```
+
+When the registry gives the manifest, it prints one line and exits with
+status 0. When it gives none, it prints the fix and exits with
+status 1. This is the line for a private package:
+
+```text
+ghcr.io gives no manifest of ghcr.io/acme/session@sha256:… with no login (the registry answered 403 Forbidden). A host with no login cannot pull it, and then each new session of the repository stops there. Fix: make the package public, or run podman login ghcr.io on each host of the wave.
+```
+
+Do the fix. Make the package public in its settings on GitHub. Or run
+this as your user on each host of the wave, and give the login of the
+registry:
+
+```sh
+podman login ghcr.io
+```
+
+The verify of a pull request that changes the image in `riff.toml`
+asks the registry the same question. It passes no pull request while
+the registry gives no manifest: see
+[Report a verify](how-it-works.md#report-a-verify). When a host cannot
+pull the image of a wave, the daemon starts no item there. It shows the
+image and the reason in the line of the wave, and it tells the lead
+once with the fix. It pulls again each minute:
+
+```sh
+riff daemon status
 ```
 
 To learn more, read [How It Works](how-it-works.md).
