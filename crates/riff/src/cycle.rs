@@ -356,7 +356,8 @@ pub struct Waiting {
 }
 
 /// Where the job `Deploy` of a CI run is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DeployState {
     /// The jobs before the job `Deploy` run.
     Before,
@@ -566,6 +567,17 @@ pub trait Forge {
     fn wave_title(&self, number: u64) -> Result<String>;
     /// Writes `text` in the description of the open wave `number`.
     fn note_wave(&self, number: u64, text: &str) -> Result<()>;
+    /// The names of the jobs of the full check `checks` of `commit` that
+    /// did not pass, with no `Gate`: the Gate only sums the other jobs
+    /// ([`crate::look::failed_jobs`]).
+    fn failed_jobs(&self, checks: &[String], commit: &str) -> Result<Vec<String>>;
+    /// The current wave and the number of its open items, or `None` with
+    /// no open wave. A release issue and a tracker are no item: they
+    /// have no code of their own (01M5ND16V2SVN8A9K7W90VC6X9).
+    fn wave_open(&self) -> Result<Option<(String, usize)>>;
+    /// True when the repository has the check of a release tag
+    /// ([`CHECK`]): its waves end with a release.
+    fn has_release_check(&self) -> bool;
 }
 
 /// The state of a release in the cycle (01M58KMKTE2XC35CNJBFKZWAXF).
@@ -1121,6 +1133,21 @@ pub fn verify(forge: &dyn Forge, number: u64) -> Result<String> {
     Ok(pr.head)
 }
 
+/// The tag of the release pull request with the title `title`
+/// (`Release vX.Y.Z`, see [`title`]).
+///
+/// ```
+/// assert_eq!(riff::cycle::tag_of_title("Release v3.3.0")?, "v3.3.0");
+/// assert!(riff::cycle::tag_of_title("Fix the line").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn tag_of_title(title: &str) -> Result<String> {
+    let version = title
+        .strip_prefix("Release ")
+        .ok_or_else(|| anyhow!("\"{title}\" is no title of a release pull request"))?;
+    Ok(tag(tag_version(version)?))
+}
+
 /// The notes of a release from the body of its pull request: the body
 /// with no link line, no line `Part of`, and no trailer.
 ///
@@ -1165,29 +1192,61 @@ pub struct Published {
 }
 
 /// The chat line of `riff release publish` to the owner `owner`
-/// (01M58KMM1BHX3YY81BPZG04JSX): the version, the run, and the command
-/// of the person.
+/// (01M58KMM1BHX3YY81BPZG04JSX): the version, the CI run that builds, and
+/// that riff tells the owner when the deploy waits. It says nothing of a
+/// wait: the jobs before the job `Deploy` still run
+/// ([`waits_line`], 01M5RGD0XTR4X1MEV726HMCEGQ).
 ///
 /// ```
 /// let line = riff::cycle::publish_line("mike", "v3.3.0", Some("https://x/runs/9"));
 /// assert_eq!(
 ///     line,
-///     "@mike riff release v3.3.0 is published. Its deploy waits for your approval: \
-///      https://x/runs/9. In a terminal, run: riff release approve v3.3.0"
+///     "@mike riff release v3.3.0 is published. Its CI run builds: https://x/runs/9. \
+///      riff tells you when its deploy waits for your approval."
 /// );
 /// assert!(riff::cycle::publish_line("", "v3.3.0", None).starts_with("riff release v3.3.0"));
 /// ```
 pub fn publish_line(owner: &str, tag: &str, run: Option<&str>) -> String {
-    let to = if owner.is_empty() {
-        String::new()
-    } else {
-        format!("@{owner} ")
-    };
     let run = run.unwrap_or("the CI run of the tag");
     format!(
-        "{to}riff release {tag} is published. Its deploy waits for your approval: {run}. In a \
-         terminal, run: riff release approve {tag}"
+        "{}riff release {tag} is published. Its CI run builds: {run}. riff tells you when its \
+         deploy waits for your approval.",
+        mention(owner)
     )
+}
+
+/// The chat line to the owner `owner` while the job `Deploy` of `tag`
+/// waits for [`PRODUCTION`] (01M5RGD0XTR4X1MEV726HMCEGQ): the run, and the
+/// command of the person. A `reminder` starts with a word that says so.
+///
+/// ```
+/// let line = riff::cycle::waits_line("mike", "v3.3.0", "https://x/runs/9", false);
+/// assert_eq!(
+///     line,
+///     "@mike riff release v3.3.0 waits for your approval: https://x/runs/9. \
+///      In a terminal, run: riff release approve v3.3.0"
+/// );
+/// let again = riff::cycle::waits_line("", "v3.3.0", "https://x/runs/9", true);
+/// assert!(again.starts_with("Reminder: riff release v3.3.0 still waits"));
+/// ```
+pub fn waits_line(owner: &str, tag: &str, run: &str, reminder: bool) -> String {
+    let (start, waits) = match reminder {
+        true => ("Reminder: ", "still waits"),
+        false => ("", "waits"),
+    };
+    format!(
+        "{start}{}riff release {tag} {waits} for your approval: {run}. In a terminal, run: riff \
+         release approve {tag}",
+        mention(owner)
+    )
+}
+
+/// `@owner ` for a chat line, or nothing when the riff has no owner.
+fn mention(owner: &str) -> String {
+    match owner.is_empty() {
+        true => String::new(),
+        false => format!("@{owner} "),
+    }
 }
 
 /// Publishes the release `tag` (01M58B0JABCET719T3HFB19NDW,
@@ -2386,13 +2445,19 @@ pub struct GitHub {
 impl GitHub {
     /// The forge of the clone `dir`. It fetches `origin` and its tags.
     pub fn new(gh: Gh, dir: &Path) -> Result<Self> {
-        let forge = Self {
+        let forge = Self::at(gh, dir);
+        forge.git(&["fetch", "-q", "--tags", "--force", "origin"])?;
+        Ok(forge)
+    }
+
+    /// The forge of the clone `dir`, with no fetch: for a read that
+    /// needs only `gh`.
+    pub fn at(gh: Gh, dir: &Path) -> Self {
+        Self {
             gh,
             dir: dir.to_owned(),
             run_waits: vec![Duration::from_secs(5); 6],
-        };
-        forge.git(&["fetch", "-q", "--tags", "--force", "origin"])?;
-        Ok(forge)
+        }
     }
 
     fn git_in(&self, dir: &Path, args: &[&str]) -> Result<String> {
@@ -2498,6 +2563,14 @@ struct GhFile {
 struct GhIssue {
     number: u64,
     title: String,
+}
+
+#[derive(Deserialize)]
+struct GhOpenIssue {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    labels: Vec<GhLabel>,
 }
 
 #[derive(Deserialize)]
@@ -3163,45 +3236,113 @@ impl Forge for GitHub {
             .send("PATCH", &path, &serde_json::json!({ "description": text }))?;
         Ok(())
     }
+
+    fn failed_jobs(&self, checks: &[String], commit: &str) -> Result<Vec<String>> {
+        let repo = "{owner}/{repo}";
+        let mut runs: Vec<String> = Vec::new();
+        for check in checks {
+            for run in pr::check_runs(&self.gh, repo, commit, check)? {
+                let failed = run
+                    .conclusion
+                    .as_deref()
+                    .is_some_and(|c| !pr::is_success(c));
+                let page = run.html_url.as_deref().and_then(crate::look::run_of);
+                if let Some(page) = page.filter(|_| failed)
+                    && !runs.iter().any(|r| r == page)
+                {
+                    runs.push(page.to_owned());
+                }
+            }
+        }
+        let mut names: Vec<String> = Vec::new();
+        for run in runs {
+            for name in crate::look::read_failed_jobs(&self.gh, repo, &run)? {
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        Ok(names)
+    }
+
+    fn wave_open(&self) -> Result<Option<(String, usize)>> {
+        let Some(wave) = crate::waves::open(&self.gh)?
+            .into_iter()
+            .find(|m| hygiene::wave_number(&m.title).is_some())
+        else {
+            return Ok(None);
+        };
+        let items: Vec<GhOpenIssue> = self.gh.json(&[
+            "issue",
+            "list",
+            "--state",
+            "open",
+            "--milestone",
+            &wave.title,
+            "--limit",
+            "1000",
+            "--json",
+            "title,labels",
+        ])?;
+        let open = items
+            .iter()
+            .filter(|i| {
+                let labels = i.labels.iter().map(|l| l.name.as_str());
+                let is_release = labels.clone().any(|l| l == LABEL);
+                !is_release && !riff_client::waves::is_tracker(&i.title, labels)
+            })
+            .count();
+        Ok(Some((wave.title, open)))
+    }
+
+    fn has_release_check(&self) -> bool {
+        self.dir.join(CHECK).is_file()
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::cell::RefCell;
 
     /// A forge in memory. It logs each write.
-    #[derive(Default)]
-    struct Fake {
-        main: String,
-        releases: Vec<&'static str>,
-        merged: Vec<Merged>,
-        release_pr: Option<ReleasePr>,
-        open_pr: Option<(u64, &'static str)>,
-        verify: bool,
-        candidate: Candidate,
+    #[derive(Default, Clone)]
+    pub(crate) struct Fake {
+        pub(crate) main: String,
+        pub(crate) releases: Vec<&'static str>,
+        pub(crate) merged: Vec<Merged>,
+        pub(crate) release_pr: Option<ReleasePr>,
+        pub(crate) open_pr: Option<(u64, &'static str)>,
+        pub(crate) verify: bool,
+        pub(crate) candidate: Candidate,
         /// The checks of the full check.
-        checks: Vec<String>,
-        gate: pr::Gate,
-        on_main: bool,
-        tags: Vec<String>,
-        admin: bool,
-        waiting: Vec<Waiting>,
+        pub(crate) checks: Vec<String>,
+        pub(crate) gate: pr::Gate,
+        pub(crate) on_main: bool,
+        pub(crate) tags: Vec<String>,
+        pub(crate) admin: bool,
+        pub(crate) waiting: Vec<Waiting>,
         /// The commits with a pass or a fail of the real-session test.
-        real: Vec<(&'static str, bool)>,
+        pub(crate) real: Vec<(&'static str, bool)>,
         /// The commits whose real-session test runs.
-        running: Vec<&'static str>,
+        pub(crate) running: Vec<&'static str>,
         /// The commits from the merge commit to origin/main, newest first.
-        since: Vec<&'static str>,
-        deploy: Option<Deploy>,
-        issue: Option<ReleaseIssue>,
+        pub(crate) since: Vec<&'static str>,
+        pub(crate) deploy: Option<Deploy>,
+        pub(crate) issue: Option<ReleaseIssue>,
         /// The release tags that hold each commit.
-        released: Vec<(&'static str, Vec<&'static str>)>,
-        log: RefCell<Vec<String>>,
+        pub(crate) released: Vec<(&'static str, Vec<&'static str>)>,
+        pub(crate) log: RefCell<Vec<String>>,
+        /// The failed jobs of the full check.
+        pub(crate) failed: Vec<String>,
+        /// The current wave and its open items.
+        pub(crate) wave_open: Option<(String, usize)>,
+        /// True when the repository has the check of a release tag.
+        pub(crate) release_check: bool,
     }
 
     impl Fake {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Fake {
                 main: "3.2.0".into(),
                 checks: vec!["Gate".into()],
@@ -3213,7 +3354,7 @@ mod tests {
             }
         }
 
-        fn ready(main: &str) -> Self {
+        pub(crate) fn ready(main: &str) -> Self {
             Fake {
                 main: main.into(),
                 release_pr: Some(ReleasePr {
@@ -3230,7 +3371,7 @@ mod tests {
             }
         }
 
-        fn log(&self) -> Vec<String> {
+        pub(crate) fn log(&self) -> Vec<String> {
             self.log.borrow().clone()
         }
 
@@ -3383,6 +3524,15 @@ mod tests {
         fn note_wave(&self, number: u64, text: &str) -> Result<()> {
             self.write(format!("note wave {number}: {text}"));
             Ok(())
+        }
+        fn failed_jobs(&self, _checks: &[String], _commit: &str) -> Result<Vec<String>> {
+            Ok(self.failed.clone())
+        }
+        fn wave_open(&self) -> Result<Option<(String, usize)>> {
+            Ok(self.wave_open.clone())
+        }
+        fn has_release_check(&self) -> bool {
+            self.release_check
         }
     }
 

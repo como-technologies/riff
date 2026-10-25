@@ -47,6 +47,7 @@
 //! | `live/NAME.json` | The [`Record`] of the session `NAME`, with no secret. |
 //! | `limit.json` | The limit of the host ([`crate::room`]), when `riff daemon limit` set it. |
 //! | `waves.json` | The waves that the daemon runs ([`crate::wave`]). |
+//! | `watches.json` | The async operations that the daemon watches ([`crate::watches`]). |
 //!
 //! The old riff of peers kept its state in this folder too: `state/`,
 //! each `state.lost-MS/`, `invites.json` and `forges.json`. The daemon
@@ -201,6 +202,29 @@
 //!     C->>D: init, ..., result
 //!     Note over D,C: no event for the quiet limit
 //!     D->>C: stop the container
+//! ```
+//!
+//! # The watches
+//!
+//! A riff command that starts an async operation of the release cycle
+//! registers a watch in [`FILE`](crate::watches::FILE): on the host, the
+//! command writes the file; in a container, the lead asks the daemon on
+//! its socket ([`ServerCall::Watch`]). [`Daemon::watch_every`] looks at
+//! each watch, and posts one message to the lead of the repository when
+//! the operation ends (01M5RGCW5NCKQYA61RM63914TX,
+//! 01M5RGD0RTXYA7FF5K1TH72MGX). See [`crate::watches`] for the design.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant C as riff release publish
+//!     participant D as riff daemon
+//!     participant G as GitHub
+//!     participant L as the lead
+//!     C->>D: ServerCall::Watch (or the file, on the host)
+//!     loop each minute
+//!         D->>G: the state of the CI run
+//!     end
+//!     D->>L: one message at the end, then the watch goes
 //! ```
 //!
 //! # The wakes of a session
@@ -1029,6 +1053,14 @@ pub enum ServerCall {
         /// The work item, for example `issue-12`.
         item: String,
     },
+    /// Register the watch of an async operation that a command of the release
+    /// cycle started, for the repository of the session
+    /// ([`crate::watches`], 01M5RGCW5NCKQYA61RM63914TX). Each session may:
+    /// the watch only wakes the lead. The answer is [`crate::watches::Registered`].
+    Watch {
+        /// The operation.
+        op: crate::watches::Op,
+    },
 }
 
 /// Makes the call `call` of the session of `record` on its riff-server,
@@ -1121,6 +1153,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         }
         ServerCall::CloudLog { .. } => bail!("the daemon reads the log itself"),
         ServerCall::Run { .. } => bail!("the daemon runs the item itself"),
+        ServerCall::Watch { .. } => bail!("the daemon watches itself"),
         ServerCall::Status => bail!("the daemon answers the status itself"),
     })
 }
@@ -1165,6 +1198,10 @@ pub struct Status {
     /// [`Token::Unknown`](riff_client::daemons::Token::Unknown).
     #[serde(default)]
     pub claude_token: riff_client::daemons::Token,
+    /// The watches of the async operations that the daemon follows, but
+    /// the watch of a wave ([`crate::watches`]). An old daemon gives none.
+    #[serde(default)]
+    pub watches: Vec<WatchShown>,
 }
 
 impl Status {
@@ -1215,6 +1252,17 @@ impl Status {
         let works = self.sessions.iter().filter(|live| !live.lead).count();
         works + runs + self.jobs + usize::from(self.test.is_some())
     }
+}
+
+/// A watch of the daemon, as `riff daemon status` shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WatchShown {
+    /// The repository, as `OWNER/REPO`.
+    pub repo: String,
+    /// What the watch waits for, in words ([`crate::watches::Op::what`]).
+    pub what: String,
+    /// The start of the watch, in milliseconds since the epoch.
+    pub since_ms: i64,
 }
 
 /// A wave that the daemon runs, as `riff daemon status` shows it.
@@ -1963,6 +2011,8 @@ pub struct Daemon<R> {
     /// The session of each lead whose stale sign-in the person heard of
     /// in riff chat ([`Daemon::stale_leads`]).
     stale: Mutex<std::collections::BTreeSet<String>>,
+    /// The forge and the posts of the watches ([`crate::watches`]).
+    lookout: Arc<dyn crate::watches::Lookout>,
 }
 
 /// A wave that runs in the daemon.
@@ -2035,6 +2085,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             ends: Mutex::new(BTreeMap::new()),
             gcloud: Arc::default(),
             stale: Mutex::default(),
+            lookout: Arc::new(crate::watches::Here),
         })
     }
 
@@ -2090,6 +2141,14 @@ impl<R: Runtime + 'static> Daemon<R> {
     #[must_use]
     pub fn with_world(mut self, world: Arc<dyn World>) -> Self {
         self.world = world;
+        self
+    }
+
+    /// The daemon whose watches look at the forge and post through
+    /// `lookout`, for a test ([`crate::watches`]).
+    #[must_use]
+    pub fn with_lookout(mut self, lookout: Arc<dyn crate::watches::Lookout>) -> Self {
+        self.lookout = lookout;
         self
     }
 
@@ -2306,6 +2365,39 @@ impl<R: Runtime + 'static> Daemon<R> {
         });
     }
 
+    /// Looks at the watches each `every`, until the daemon
+    /// stops ([`crate::watches`], 01M5RGD0RTXYA7FF5K1TH72MGX). A look that
+    /// fails shows its fault on stderr one time until the fault changes.
+    /// A test stops the loop with the task that it gives.
+    pub fn watch_every(self: &Arc<Self>, every: Duration) -> JoinHandle<()> {
+        let daemon = self.clone();
+        tokio::spawn(async move {
+            let watches = crate::watches::Watches::new(&daemon.dir);
+            let mut last_error = None;
+            loop {
+                match watches.look_all(&daemon.lookout, now_ms()).await {
+                    Ok(()) => last_error = None,
+                    Err(e) => {
+                        let e = format!("{e:#}");
+                        if last_error.as_ref() != Some(&e) {
+                            eprintln!("riff daemon: watches: {e}");
+                        }
+                        last_error = Some(e);
+                    }
+                }
+                tokio::time::sleep(every).await;
+            }
+        })
+    }
+
+    /// Registers the watch of `op` for the repository of the session of
+    /// `record` ([`ServerCall::Watch`]).
+    pub(crate) fn watch_op(&self, record: &Record, op: crate::watches::Op) -> Result<Value> {
+        let repo = record.me.place().repo_text();
+        let registered = crate::watches::Watches::new(&self.dir).register(&repo, op, now_ms())?;
+        Ok(serde_json::to_value(registered)?)
+    }
+
     /// Waits until a session ends, or a job of a wave ends.
     pub(crate) async fn changed(&self) {
         self.changed.notified().await;
@@ -2383,7 +2475,23 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .map(|servers| crate::session_mcp::names(&servers))
                 .unwrap_or_default(),
             claude_token,
+            watches: self.watches_shown(),
         }
+    }
+
+    /// The watches in the file, but the watch of a wave: a wave shows in
+    /// [`Status::waves`].
+    fn watches_shown(&self) -> Vec<WatchShown> {
+        let all = crate::watches::Watches::new(&self.dir).read();
+        all.unwrap_or_default()
+            .into_iter()
+            .filter(|w| w.op != crate::watches::Op::Wave)
+            .map(|w| WatchShown {
+                what: w.op.what(),
+                repo: w.repo,
+                since_ms: w.since_ms,
+            })
+            .collect()
     }
 
     /// Asks for a new start of the daemon with `restart` when it runs an
@@ -3318,6 +3426,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         filter,
                     } => self.cloud_log(&record, &service, &project, &filter).await,
                     ServerCall::Run { item } => self.run_item(&record, &item),
+                    ServerCall::Watch { op } => self.watch_op(&record, op),
                     _ => server_call(&record, &call).await,
                 };
                 out.say(match done {
@@ -3465,13 +3574,8 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
         let issue = crate::run::issue_of(item)?;
         let repo = record.me.place().repo_text();
-        let wave = match crate::wave::read_waves(&self.dir)?.remove(&repo) {
-            Some(wave) => wave,
-            None => remote::read_served(&self.dir)?
-                .remove(&repo)
-                .map(|served| served.wave)
-                .ok_or_else(|| anyhow::anyhow!(text::run_no_wave(&repo)))?,
-        };
+        let wave = crate::watches::wave_of(&self.dir, &repo)
+            .map_err(|_| anyhow::anyhow!(text::run_no_wave(&repo)))?;
         let (taken, starts) = match self.waves_lock().get(&repo) {
             Some(running) => (running.taken.clone(), running.starts.clone()),
             None => Default::default(),
@@ -4096,6 +4200,7 @@ pub async fn serve_here() -> Result<()> {
         daemon.serve_repos();
         daemon.sweep_every();
         daemon.stale_every();
+        daemon.watch_every(crate::watches::every());
         // The steps of an update of this release: the rules of Claude
         // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
         let steps = dir.clone();
@@ -8482,5 +8587,110 @@ mod tests {
         let socket = session_dir(&here.dir, &name).join(SOCKET);
         crate::session_relay::prompt(&socket).await.unwrap();
         assert!(block_of(&api, &reader, &me).await, "the block holds");
+    }
+    /// 01M5RGCW5NCKQYA61RM63914TX: a session registers a watch through
+    /// its socket, for the repository of the session, and each session
+    /// may (a watch only wakes the lead).
+    #[tokio::test]
+    async fn a_session_registers_a_watch_through_its_socket() {
+        use crate::watches::{Op, Registered, Watches};
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let wave = Wave {
+            repo: "como-technologies/riff".into(),
+            main: here.root.path().to_owned(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        crate::wave::write_waves(&here.dir, &BTreeMap::from([(wave.repo.clone(), wave)])).unwrap();
+        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let (_client, name) = here.started(start).await;
+        let socket = session_dir(&here.dir, &name).join(SOCKET);
+
+        let op = Op::Deploy {
+            tag: "v1.2.3".into(),
+            stale: None,
+        };
+        let call = ServerCall::Watch { op: op.clone() };
+        let reply = crate::session_relay::ask_server(&socket, &call)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_value::<Registered>(reply).unwrap(),
+            Registered::New
+        );
+        let reply = crate::session_relay::ask_server(&socket, &call)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_value::<Registered>(reply).unwrap(),
+            Registered::Kept
+        );
+
+        let all = Watches::new(&here.dir).read().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(
+            (all[0].repo.as_str(), &all[0].op),
+            ("como-technologies/riff", &op)
+        );
+    }
+
+    /// A session of a repository that the daemon does not serve gets the
+    /// fault, and no watch registers.
+    #[tokio::test]
+    async fn a_watch_for_a_repository_that_the_daemon_does_not_serve_is_refused() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let (_client, name) = here.started(start).await;
+        let socket = session_dir(&here.dir, &name).join(SOCKET);
+        let call = ServerCall::Watch {
+            op: crate::watches::Op::Wave,
+        };
+        let error = crate::session_relay::ask_server(&socket, &call)
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("does not serve"), "{error:#}");
+        assert!(
+            crate::watches::Watches::new(&here.dir)
+                .read()
+                .unwrap()
+                .is_empty()
+        );
+    }
+    /// 01M5RGCW5NCKQYA61RM63914TX: the status of the daemon lists the
+    /// watches of the operations, and not the watch of a wave: a wave has
+    /// its line in `Waves:`.
+    #[tokio::test]
+    async fn the_status_lists_the_watches_but_not_the_watch_of_a_wave() {
+        use crate::watches::{Op, Watches};
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: here.root.path().to_owned(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        crate::wave::write_waves(&here.dir, &BTreeMap::from([(wave.repo.clone(), wave)])).unwrap();
+        assert!(here.daemon.status().await.watches.is_empty());
+        let watches = Watches::new(&here.dir);
+        watches.register("o/r", Op::Wave, 5).unwrap();
+        let deploy = Op::Deploy {
+            tag: "v1.2.3".into(),
+            stale: None,
+        };
+        watches.register("o/r", deploy, 7).unwrap();
+        let shown = here.daemon.status().await.watches;
+        assert_eq!(
+            shown,
+            [WatchShown {
+                repo: "o/r".into(),
+                what: "the deploy of v1.2.3".into(),
+                since_ms: 7
+            }]
+        );
+        let text = text::daemon_status(&here.daemon.status().await, 60_007);
+        assert!(
+            text.contains("Watches:\n  o/r  the deploy of v1.2.3, for 1m\n"),
+            "{text}"
+        );
     }
 }

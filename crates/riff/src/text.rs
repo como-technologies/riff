@@ -5770,6 +5770,7 @@ pub fn real_session_test(test: &riff_client::daemons::Test) -> String {
 ///     test: None,
 ///     mcp: vec![],
 ///     claude_token: riff_client::daemons::Token::NotSet,
+///     watches: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -5805,6 +5806,14 @@ pub fn real_session_test(test: &riff_client::daemons::Test) -> String {
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
 /// assert!(text.contains("claude token: set.\n"), "{text}");
+/// // A watch of an async operation (01M5RGCW5NCKQYA61RM63914TX).
+/// status.watches.push(riff::daemon::WatchShown {
+///     repo: "o/r".into(),
+///     what: "the deploy of v4.3.0".into(),
+///     since_ms: 120_000,
+/// });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// assert!(text.contains("Watches:\n  o/r  the deploy of v4.3.0, for 3m\n"), "{text}");
 /// // A real-session test that runs has a line of its own, before the sessions
 /// // (01M5QVBTXE8YRY44A1C1VP71QS).
 /// status.test = Some(riff_client::daemons::Test {
@@ -5870,6 +5879,18 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
         out.push_str("Waves:\n");
         for wave in &status.waves {
             let _ = writeln!(out, "  {}  {}", wave.repo, wave.word);
+        }
+    }
+    if !status.watches.is_empty() {
+        out.push_str("Watches:\n");
+        for watch in &status.watches {
+            let _ = writeln!(
+                out,
+                "  {}  {}, for {}",
+                watch.repo,
+                watch.what,
+                age(watch.since_ms)
+            );
         }
     }
     out
@@ -6832,6 +6853,7 @@ pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check
 ///     test: None,
 ///     mcp: vec![],
 ///     claude_token: Default::default(),
+///     watches: vec![],
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");
@@ -7292,6 +7314,65 @@ pub fn wave_started(item: &str) -> String {
 /// The word of a wave that could not look at the forge or the riff.
 pub fn wave_no_look(error: &str) -> String {
     format!("cannot look: {error}")
+}
+
+/// A command registers a watch for a repository whose clone the daemon
+/// does not know ([`crate::watches::wave_of`]).
+pub fn watch_no_wave(repo: &str) -> String {
+    format!(
+        "The riff daemon does not serve {repo} yet, so it cannot watch there. Run riff wave run in \
+         the clone of {repo} on the host."
+    )
+}
+
+/// The line of a command after it registered a watch
+/// ([`crate::watches::Registered`]).
+///
+/// ```
+/// use riff::watches::Registered;
+///
+/// assert_eq!(
+///     riff::text::watch_registered("the deploy of v4.3.0", Registered::New),
+///     "riff watches the deploy of v4.3.0. The lead gets one message when it ends."
+/// );
+/// assert!(riff::text::watch_registered("the deploy of v4.3.0", Registered::Kept)
+///     .contains("already"));
+/// ```
+pub fn watch_registered(what: &str, registered: crate::watches::Registered) -> String {
+    match registered {
+        crate::watches::Registered::New => {
+            format!("riff watches {what}. The lead gets one message when it ends.")
+        }
+        crate::watches::Registered::Kept => {
+            format!("riff watches {what} already. The lead gets one message when it ends.")
+        }
+    }
+}
+
+/// A command started an operation, and the watch did not register. The
+/// operation runs: only the wake of the lead at its end is missing.
+pub fn watch_not_registered(what: &str, error: &str) -> String {
+    format!(
+        "riff could not register the watch of {what}: {error}. The operation runs, and the lead \
+         gets no message when it ends. next: riff daemon status"
+    )
+}
+
+/// The message to the lead when a watch cannot read the forge
+/// ([`crate::watches::Watches::look_all`]).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::watch_fault("the deploy of v4.3.0", "gh: HTTP 502"),
+///     "riff cannot read the state of the deploy of v4.3.0: gh: HTTP 502. riff tries again each \
+///      minute, and tells you this fault one time."
+/// );
+/// ```
+pub fn watch_fault(what: &str, error: &str) -> String {
+    format!(
+        "riff cannot read the state of {what}: {error}. riff tries again each minute, and tells \
+         you this fault one time."
+    )
 }
 
 /// A wave claimed `item` for the session `session`.

@@ -527,6 +527,7 @@ mod tests {
             test: None,
             mcp: vec![],
             claude_token: Default::default(),
+            watches: vec![],
         }
     }
 

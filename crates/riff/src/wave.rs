@@ -1323,7 +1323,12 @@ pub struct Live {
 
 /// Posts `body` of `kind` as the person of `wave`: to the session that
 /// claims `item`, or to the lead of the person.
-async fn post_as_person(wave: &Wave, item: Option<&str>, body: &str, kind: Kind) -> Result<()> {
+pub(crate) async fn post_as_person(
+    wave: &Wave,
+    item: Option<&str>,
+    body: &str,
+    kind: Kind,
+) -> Result<()> {
     let person = identity::person(&wave.place(None)?, &wave.server)?;
     let api = Api::new(&wave.server).signed_in(None)?;
     let to = match item {

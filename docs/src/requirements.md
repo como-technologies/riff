@@ -8513,12 +8513,13 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
 - **01M58KMM1BHX3YY81BPZG04JSX** `riff release publish` does not need a
   paused riff. After the release, it posts a chat line to the owner in
   `riff chat`: the version, the CI run, and `riff release approve
-  vX.Y.Z`.
+  vX.Y.Z`. Superseded in part by 01M5RGD0XTR4X1MEV726HMCEGQ.
 - **01M58KMM3NFGJRW4CCV50KJQB2** HUMAN GATE 1: on yes, `riff release
   approve` pauses the whole riff, which tells each other lead, and then
   approves the deploy. While a deploy waits for the approval,
   `riff release cut` refuses, the riff is not paused, and the watch of
-  the lead reminds the owner in `riff chat` each 4 hours.
+  the lead reminds the owner in `riff chat` each 4 hours. Superseded in
+  part by 01M5RGD0XTR4X1MEV726HMCEGQ.
 - **01M58KMM5ZPAQ289S2YJVQ5WW6** `riff release check vX.Y.Z` refuses
   while the job `Deploy` of the newest CI run of the tag did not end.
   After a pass of the job, it checks: `riff server` shows the build; the
@@ -8557,7 +8558,8 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   release cycle each 5 minutes, in a clone with
   `deploy/release-check.sh`. Each new state of the current release
   wakes the lead with the state and the next step. The first look
-  after a start only learns the state.
+  after a start only learns the state. Superseded by
+  01M5RGCW5NCKQYA61RM63914TX and 01M5RGD0RTXYA7FF5K1TH72MGX.
 - **01M58KMMKZ8T11KT3R3Z7D0RE1** HUMAN GATE 3: `riff release cut
   --skip` refuses in each agent session, and for a member.
 - **01M58KMMP9FKRFYX58ESVRSZQX** When riff cannot read the Cloud Run
@@ -8591,6 +8593,35 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   the sign-in of gcloud ended, each check of the log says that a person
   on the host runs gcloud auth login, and the daemon tells the lead in
   chat.
+- **01M5RGCW5NCKQYA61RM63914TX** Each async operation that a riff
+  command starts has a watch that wakes the lead at its end, with its
+  result and the next step. The command that starts the operation
+  registers the watch with the riff daemon of its host in the same call,
+  so no session has to remember to wait. The operations are the Gate of
+  the release pull request (`riff release cut`), its merge (`riff
+  release verify`), the real-session test (`riff release test`), the CI
+  run of the tag up to a deploy that waits for a person or a job that
+  failed (`riff release publish`), the job `Deploy` (`riff release
+  approve`, `retry` and `rollback`), and the end of the current wave.
+- **01M5RGD0RTXYA7FF5K1TH72MGX** The daemon keeps its watches in
+  `watches.json` of its folder, so a restart keeps them. It looks at
+  each watch each minute. When an operation ends, with a success or a
+  failure, the daemon posts one message to the lead of the repository:
+  the result, the failed jobs and the next step. Then the watch goes,
+  and no second message comes for the same end. A watch whose state riff
+  cannot read posts the fault once, and goes on.
+- **01M5RGD0XTR4X1MEV726HMCEGQ** The chat line of `riff release publish`
+  says that the CI run of the tag builds, and that riff tells the owner
+  when the deploy waits. The watch of the tag posts the line "waits for
+  your approval" to the owner in `riff chat`, and a message to the lead,
+  only when the job `Deploy` waits for `production`. While it waits, the
+  watch reminds the owner in `riff chat` each 4 hours.
+- **01M5RGD12P0GZDDR9HWHP4N0KP** When the last open item of the current
+  wave closes, the daemon posts one message to the lead: "Wave N is
+  complete", with the next step `riff release cut X.Y.Z`, or `riff wave
+  end N --no-release TEXT`. A release issue and a tracker are no item. A
+  repository with no check of a release tag gets the next step `riff
+  wave end N`.
 
 ### The real-session test
 

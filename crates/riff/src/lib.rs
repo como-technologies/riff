@@ -121,5 +121,6 @@ pub mod top;
 pub mod update_steps;
 pub mod usage;
 pub mod view;
+pub mod watches;
 pub mod wave;
 pub mod waves;

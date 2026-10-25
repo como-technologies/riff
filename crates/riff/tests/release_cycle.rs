@@ -151,6 +151,36 @@ impl Machine {
         std::fs::read_to_string(self.bin().join("gh.log")).unwrap_or_default()
     }
 
+    /// The folder of the riff daemon of this machine.
+    fn daemon_dir(&self) -> PathBuf {
+        self.env.riff_home().join("daemon")
+    }
+
+    /// The daemon of this machine runs the wave of the repository, so a
+    /// command registers its watch there (01M5RGCW5NCKQYA61RM63914TX).
+    fn serve(&self) {
+        let dir = self.daemon_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let wave = riff::wave::Wave {
+            repo: "como-technologies/riff".into(),
+            main: self.clone(),
+            server: self.server.to_string(),
+            host: "thelio".into(),
+        };
+        let waves = std::collections::BTreeMap::from([(wave.repo.clone(), wave)]);
+        riff::wave::write_waves(&dir, &waves).unwrap();
+    }
+
+    /// The watches in the file of the daemon, but the watch of the wave.
+    fn watches(&self) -> Vec<riff::watches::Watch> {
+        let all = riff::watches::Watches::new(&self.daemon_dir())
+            .read()
+            .unwrap();
+        all.into_iter()
+            .filter(|w| w.op != riff::watches::Op::Wave)
+            .collect()
+    }
+
     /// `riff ARGS` in the clone, with the fake `gh` first in `PATH`, and
     /// `vars` in its environment.
     async fn run(&self, vars: &[(&str, &str)], args: &[&str], stdin: &str) -> Output {
@@ -258,14 +288,29 @@ async fn the_helper_refuses_the_socket_of_the_daemon() {
 #[tokio::test]
 async fn cut_pushes_the_branch_and_opens_the_release_pull_request() {
     let machine = Machine::new().await;
+    machine.serve();
     let out = machine
         .ok(&[], &["release", "cut", "3.3.0", "--why", "New commands."])
         .await;
     assert_eq!(
         out,
         "The release pull request #1140 for issue #7, with auto-merge on: \
-         https://github.com/como-technologies/riff/pull/1140\nnext: wait for the verify and the merge of pull request #1140\n"
+         https://github.com/como-technologies/riff/pull/1140\n\
+         riff watches the release pull request #1140. The lead gets one message when it ends.\n\
+         next: wait for the verify and the merge of pull request #1140\n"
     );
+    // 01M5RGCW5NCKQYA61RM63914TX: the command registered the watch of the
+    // Gate and the merge in the same call.
+    let watches = machine.watches();
+    assert_eq!(watches.len(), 1, "{watches:?}");
+    assert_eq!(
+        watches[0].op,
+        riff::watches::Op::Pull {
+            tag: "v3.3.0".into(),
+            number: 1140
+        }
+    );
+    assert_eq!(watches[0].repo, "como-technologies/riff");
     let branch = git(&machine.origin(), &["show", "release-v3.3.0:Cargo.toml"]);
     assert!(branch.contains("version = \"3.3.0\""), "{branch}");
     let lock = git(&machine.origin(), &["show", "release-v3.3.0:Cargo.lock"]);
@@ -407,6 +452,7 @@ const WAITS: &str = "*'-X POST'*) printf '%s\n' 'HTTP/2.0 200 OK' ;;\n\
 async fn approve_shows_the_run_asks_and_approves_with_a_comment() {
     let machine = Machine::new().await;
     machine.fake_gh(WAITS);
+    machine.serve();
     machine.ok(&[], &["resume", "--riff"]).await;
     let out = machine
         .run(&[], &["release", "approve", "v3.3.0"], "yes\n")
@@ -426,6 +472,24 @@ async fn approve_shows_the_run_asks_and_approves_with_a_comment() {
     assert!(
         shown.ends_with("next: the lead runs riff release check v3.3.0 after the deploy\n"),
         "{shown}"
+    );
+    assert!(
+        shown
+            .contains("riff watches the deploy of v3.3.0. The lead gets one message when it ends."),
+        "{shown}"
+    );
+    // The run waited when the person approved: the watch ignores that state.
+    let watches = machine.watches();
+    assert_eq!(watches.len(), 1, "{watches:?}");
+    assert_eq!(
+        watches[0].op,
+        riff::watches::Op::Deploy {
+            tag: "v3.3.0".into(),
+            stale: Some(riff::watches::Stale {
+                run: 9,
+                state: riff::cycle::DeployState::Waiting
+            })
+        }
     );
     let log = machine.log();
     assert!(
@@ -586,25 +650,38 @@ async fn publish_tags_the_tested_merge_commit_in_a_running_riff_and_tells_the_ch
 
     // The riff runs: only the approval of the deploy pauses it.
     machine.fake_gh(&machine.release_cases(&merge, true));
+    machine.serve();
     let out = machine.ok(&lead, &["release", "publish", "v3.3.0"]).await;
     assert_eq!(
         out,
         "Published v3.3.0: https://github.com/como-technologies/riff/releases/tag/v3.3.0\n\
          The CI run of the tag: https://github.com/como-technologies/riff/actions/runs/9\n\
          riff told the owner brett in riff chat.\n\
+         riff watches the deploy of v3.3.0. The lead gets one message when it ends.\n\
          next: wait for the jobs of the CI run; then a person runs riff release approve v3.3.0 \
          in a terminal\n"
     );
     let chat = machine
         .ok(&lead, &["read", "--thread", "chat", "--all"])
         .await;
+    // The CI run builds: the line does not say that the deploy waits.
     assert!(
         chat.contains(
-            "riff release v3.3.0 is published. Its deploy waits for your approval: \
-             https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: riff \
-             release approve v3.3.0"
+            "riff release v3.3.0 is published. Its CI run builds: \
+             https://github.com/como-technologies/riff/actions/runs/9. riff tells you when its \
+             deploy waits for your approval."
         ),
         "{chat}"
+    );
+    assert!(!chat.contains("Its deploy waits"), "{chat}");
+    let watches = machine.watches();
+    assert_eq!(watches.len(), 1, "{watches:?}");
+    assert_eq!(
+        watches[0].op,
+        riff::watches::Op::Deploy {
+            tag: "v3.3.0".into(),
+            stale: None
+        }
     );
     let tags = git(&machine.origin(), &["tag"]);
     assert_eq!(tags, "v3.2.0\nv3.3.0", "only the new tag is pushed");
@@ -838,13 +915,29 @@ async fn retry_runs_the_failed_jobs_again() {
     machine.fake_gh(&deployed("v3.3.0", "failure"));
     let lead = [("RIFF_SESSION", "s1")];
     machine.name_lead(&lead).await;
+    machine.serve();
     let out = machine.ok(&lead, &["release", "retry", "v3.3.0"]).await;
     assert_eq!(
         out,
         "The failed jobs of https://github.com/como-technologies/riff/actions/runs/9 run again.\n\
+         riff watches the deploy of v3.3.0. The lead gets one message when it ends.\n\
          next: a person runs riff release approve v3.3.0 in a terminal\n"
     );
     assert!(machine.log().contains("gh run rerun 9 --failed"));
+    // The CI run still shows its old failure for a moment: the watch
+    // ignores that state until the run moves.
+    let watches = machine.watches();
+    assert_eq!(watches.len(), 1, "{watches:?}");
+    assert_eq!(
+        watches[0].op,
+        riff::watches::Op::Deploy {
+            tag: "v3.3.0".into(),
+            stale: Some(riff::watches::Stale {
+                run: 9,
+                state: riff::cycle::DeployState::Failed
+            })
+        }
+    );
 
     // A run that passed: retry refuses.
     machine.fake_gh(&deployed("v3.3.0", "success"));
@@ -867,11 +960,24 @@ async fn rollback_starts_the_deploy_of_an_older_release() {
     machine.fake_gh(&deployed("v3.2.0", "success"));
     let lead = [("RIFF_SESSION", "s1")];
     machine.name_lead(&lead).await;
+    machine.serve();
     let out = machine.ok(&lead, &["release", "rollback", "v3.0.0"]).await;
     assert_eq!(
         out,
         "The deploy of v3.0.0 to replace v3.2.0 started.\n\
+         riff watches the deploy of v3.0.0. The lead gets one message when it ends.\n\
          next: a person runs riff release approve v3.0.0 in a terminal\n"
+    );
+    // The older release has no CI run yet: the watch waits for the run by
+    // hand.
+    let watches = machine.watches();
+    assert_eq!(watches.len(), 1, "{watches:?}");
+    assert_eq!(
+        watches[0].op,
+        riff::watches::Op::Deploy {
+            tag: "v3.0.0".into(),
+            stale: None
+        }
     );
     let log = machine.log();
     assert!(
@@ -1024,6 +1130,17 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         "| HUMAN GATE 3: skip |",
         "| Log access |",
         "`deploying`, `deployed`,\n`checked`, `failed` or `rolled back`",
+        // 01M5RGCW5NCKQYA61RM63914TX: the diagram says what wakes the lead
+        // at each step, and a how-to says how the watches work.
+        "wakes the lead: Wave N is complete",
+        "wakes the lead: the Gate passed, or failed with its jobs",
+        "wakes the lead: the pull request merged",
+        "riff release test: wakes the lead at the end of the test",
+        "wakes the lead and the owner when the job Deploy waits",
+        "FAIL: wakes the lead with the failed jobs",
+        "#### Know what wakes the lead",
+        "`watches.json`",
+        "sequenceDiagram",
     ] {
         assert!(cycle.contains(text), "{text} in The release cycle");
     }
@@ -1039,6 +1156,11 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         (
             "#### Check the release after the deploy",
             "riff release check v3.3.0",
+            &cycle,
+        ),
+        (
+            "#### See the watches of the daemon",
+            "riff daemon status",
             &cycle,
         ),
         (
@@ -1529,6 +1651,7 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
     let machine = Machine::new().await;
     let (_dir, socket, seen) = lead_daemon(|call| match call {
         "roster" => roster(),
+        "watch" => serde_json::json!("new"),
         _ => serde_json::Value::Null,
     });
     let out = machine
@@ -1536,9 +1659,20 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
         .await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stderr), "");
-    assert_eq!(names(&seen), ["roster", "chat_post"]);
+    assert_eq!(names(&seen), ["roster", "chat_post", "watch"]);
     let body = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
     assert!(body.contains("riff release v3.3.0 is cut"), "{body}");
+    // The watch goes through the daemon of the host (01M5RGCW5NCKQYA61RM63914TX).
+    let op = seen.lock().unwrap()[2]["op"].clone();
+    assert_eq!(
+        op,
+        serde_json::json!({"kind": "pull", "tag": "v3.3.0", "number": 1140})
+    );
+    assert!(
+        text(&out.stdout).contains("riff watches the release pull request #1140."),
+        "{}",
+        text(&out.stdout)
+    );
 }
 
 #[tokio::test]
@@ -1546,6 +1680,7 @@ async fn publish_in_the_lead_container_tells_the_chat_through_the_socket() {
     let (machine, _) = merged_release().await;
     let (_dir, socket, seen) = lead_daemon(|call| match call {
         "roster" => roster(),
+        "watch" => serde_json::json!("new"),
         _ => serde_json::Value::Null,
     });
     let out = machine
@@ -1557,9 +1692,12 @@ async fn publish_in_the_lead_container_tells_the_chat_through_the_socket() {
         "{}",
         text(&out.stdout)
     );
-    assert_eq!(names(&seen), ["roster", "chat_post"]);
+    assert_eq!(names(&seen), ["roster", "chat_post", "watch"]);
     let body = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
     assert!(body.contains("riff release v3.3.0 is published"), "{body}");
+    assert!(!body.contains("Its deploy waits"), "{body}");
+    let op = seen.lock().unwrap()[2]["op"].clone();
+    assert_eq!(op, serde_json::json!({"kind": "deploy", "tag": "v3.3.0"}));
 }
 
 #[tokio::test]
@@ -1584,6 +1722,7 @@ async fn approve_in_the_lead_container_reads_and_pauses_through_the_socket() {
         "roster" => roster(),
         "chat_read" => chat.clone(),
         "pause_riff" => serde_json::json!("The riff is paused now."),
+        "watch" => serde_json::json!("new"),
         other => panic!("{other}"),
     });
     let out = machine
@@ -1595,6 +1734,103 @@ async fn approve_in_the_lead_container_reads_and_pauses_through_the_socket() {
         "{}",
         text(&out.stdout)
     );
-    assert_eq!(names(&seen), ["roster", "chat_read", "pause_riff"]);
+    assert_eq!(names(&seen), ["roster", "chat_read", "pause_riff", "watch"]);
+    let op = seen.lock().unwrap()[3]["op"].clone();
+    assert_eq!(
+        op,
+        serde_json::json!({
+            "kind": "deploy", "tag": "v3.3.0", "stale": {"run": 9, "state": "waiting"}
+        })
+    );
     assert!(machine.log().contains("pending_deployments"));
+}
+
+/// The cases of `gh` for `riff release verify 1140`: an open release pull
+/// request with the version files, and a Gate that `gate` is.
+fn verify_cases(gate: &str) -> String {
+    let body = "Refs #7\\n\\nPart of #7: the release pull request.\\n\\nLevel: minor, 3.3.0.\\n\\nIssue: #7\\nMilestone: Wave 34\\n";
+    format!(
+        "'pr view 1140 --json number,title,body,state,labels,milestone,headRefOid,files'*) printf '%s\\n' '{{\"number\":1140,\"title\":\"Release v3.3.0\",\"body\":\"{body}\",\"state\":\"OPEN\",\"labels\":[{{\"name\":\"release\"}}],\"milestone\":{{\"title\":\"Wave 34: Release\"}},\"headRefOid\":\"h1\",\"files\":[{{\"path\":\"Cargo.toml\"}},{{\"path\":\"Cargo.lock\"}}]}}' ;;\n\
+         'api repos/{{owner}}/{{repo}}') printf '%s\\n' '{{\"default_branch\":\"main\"}}' ;;\n\
+         'api repos/{{owner}}/{{repo}}/rules/branches/main?per_page=100') printf '%s\\n' '[]' ;;\n\
+         'api repos/{{owner}}/{{repo}}/commits/h1/check-runs?check_name=Gate') printf '%s\\n' '{{\"check_runs\":[{gate}]}}' ;;"
+    )
+}
+
+/// 01M5RGCW5NCKQYA61RM63914TX: `riff release verify` sets the status
+/// `riff/verify` and registers the watch of the merge in the same call.
+#[tokio::test]
+async fn verify_registers_the_watch_of_the_merge() {
+    let machine = Machine::new().await;
+    machine.serve();
+    let passed = r#"{"status":"completed","conclusion":"success","head_sha":"h1"}"#;
+    machine.fake_gh(&verify_cases(passed));
+    let out = machine.ok(&[], &["release", "verify", "1140"]).await;
+    assert_eq!(
+        out,
+        "Pull request #1140 passed: the status riff/verify of h1 is a success.\n\
+         riff watches the release pull request #1140. The lead gets one message when it ends.\n\
+         next: the auto-merge merges pull request #1140\n"
+    );
+    assert!(
+        machine.log().contains("context=riff/verify"),
+        "{}",
+        machine.log()
+    );
+    let watches = machine.watches();
+    assert_eq!(watches.len(), 1, "{watches:?}");
+    assert_eq!(
+        watches[0].op,
+        riff::watches::Op::Pull {
+            tag: "v3.3.0".into(),
+            number: 1140
+        }
+    );
+
+    // The same pull request again: the watch is one watch.
+    let out = machine.ok(&[], &["release", "verify", "1140"]).await;
+    assert!(
+        out.contains("riff watches the release pull request #1140 already."),
+        "{out}"
+    );
+    assert_eq!(machine.watches().len(), 1);
+}
+
+/// A verify that refuses starts no operation: it registers no watch.
+#[tokio::test]
+async fn a_verify_that_refuses_registers_no_watch() {
+    let machine = Machine::new().await;
+    machine.serve();
+    let failed = r#"{"status":"completed","conclusion":"failure","head_sha":"h1"}"#;
+    machine.fake_gh(&verify_cases(failed));
+    let out = machine.run(&[], &["release", "verify", "1140"], "").await;
+    assert!(!out.status.success());
+    assert!(machine.watches().is_empty());
+}
+
+/// A command that starts an operation with no daemon that serves the
+/// repository still runs the operation. It says on stderr what the lead
+/// misses.
+#[tokio::test]
+async fn a_cut_with_no_daemon_that_serves_the_repository_says_that_the_lead_gets_no_message() {
+    let machine = Machine::new().await;
+    let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("The release pull request #1140"),
+        "{}",
+        text(&out.stdout)
+    );
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(
+            "riff could not register the watch of the release pull request #1140: The riff \
+             daemon does not serve como-technologies/riff yet"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("the lead gets no message when it ends"),
+        "{stderr}"
+    );
 }

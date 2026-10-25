@@ -4094,21 +4094,23 @@ release and the next step, for example
 
 ```mermaid
 flowchart TD
-    A[Last item of the wave merges] --> B{Change that a person sees since the last tag?}
+    A[Last open item of the wave closes] -- "wakes the lead: Wave N is complete" --> B{Change that a person sees since the last tag?}
     B -- no --> Z[riff wave end N --no-release TEXT: the reason in the wave]
     B -- yes --> C[riff release cut X.Y.Z: release pull request]
-    C --> D{Verify by another session}
+    C -- "wakes the lead: the Gate passed, or failed with its jobs" --> D{Verify by another session}
     D -- FAIL --> D1[Fix on the release branch] --> D
-    D -- PASS --> E[Auto-merge]
-    E --> F{just real-session on origin/main}
-    F -- FAIL --> F1[Bug issue in the wave, fix merges] --> F
-    F -- PASS --> G[riff release publish vX.Y.Z: tag, GitHub release, chat line to the owner]
-    G --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, or one \"approved\" in riff chat (pauses the riff, approves production)"}}
+    D -- PASS --> V[riff release verify N]
+    V --> E[Auto-merge]
+    E -- "wakes the lead: the pull request merged" --> F{just real-session on origin/main}
+    F -- "riff release test: wakes the lead at the end of the test" --> F2{Result}
+    F2 -- FAIL --> F1[Bug issue in the wave, fix merges] --> F
+    F2 -- PASS --> G[riff release publish vX.Y.Z: tag, GitHub release, chat line to the owner]
+    G -- "wakes the lead and the owner when the job Deploy waits" --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, or one \"approved\" in riff chat (pauses the riff, approves production)"}}
     H -- no answer --> H1[Waits. Work goes on. The next cut refuses. Reminder in chat each 4 h]
     H1 --> H
     H -- approved --> I{Deploy job}
-    I -- FAIL --> I1[Old revision still serves. riff release check files the issue and resumes the riff. riff release retry vX.Y.Z] --> H
-    I -- PASS --> J{riff release check vX.Y.Z}
+    I -- "FAIL: wakes the lead with the failed jobs" --> I1[Old revision still serves. riff release check files the issue and resumes the riff. riff release retry vX.Y.Z] --> H
+    I -- "PASS: wakes the lead" --> J{riff release check vX.Y.Z}
     J -- PASS --> K[riff resumes. Release issue closes. riff wave end N. Next wave starts]
     J -- FAIL --> L{Lead: fix forward or roll back}
     L -- fix forward --> L1[Issue, patch release X.Y.Z+1: the same cycle] --> C
@@ -4129,9 +4131,78 @@ The gates:
 
 `riff release status` shows the state of the current release: `cut`,
 `merged`, `tested`, `published`, `waiting`, `deploying`, `deployed`,
-`checked`, `failed` or `rolled back`. The watch of the lead wakes the
-lead at each change of the state. While a deploy waits for a person,
-it reminds the owner in `riff chat` each 4 hours.
+`checked`, `failed` or `rolled back`.
+
+#### Know what wakes the lead
+
+The lead does not wait for an operation by itself. Each command that
+starts an async operation registers a watch with the riff daemon of
+its host, in the same call. The daemon looks at each watch each
+minute. When the operation ends, with a success or a failure, the
+daemon posts one message to the lead of the repository: the result,
+the failed jobs, and the next step. Then the watch goes.
+
+```mermaid
+sequenceDiagram
+    participant L as the lead
+    participant C as riff release cut (or another command)
+    participant D as riff daemon (the host)
+    participant G as GitHub
+    participant S as riff-server
+    L->>C: riff release cut 3.3.0
+    C->>D: register the watch (watches.json)
+    C-->>L: riff watches the release pull request #1140
+    loop each minute
+        D->>G: the state of the operation
+    end
+    G-->>D: the Gate failed, or the pull request merged
+    D->>S: one message to the lead: the result, next: ...
+    D->>D: the watch goes
+    S-->>L: wake
+```
+
+| Step | The command registers | The lead gets one message when |
+|---|---|---|
+| The release pull request | `riff release cut`, `riff release verify` | the Gate passed (next: `riff release verify`), the Gate failed (the failed jobs), the pull request merged, or it closed with no merge |
+| The real-session test | `riff release test --host HOST` | the test passed, or failed |
+| The CI run of the tag | `riff release publish` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
+| The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job passed, or failed (the failed jobs) |
+| The wave | `riff wave run` | the last open item of the current wave closed |
+
+The message ends with `next:` and the command of the next step. A
+second command for the same operation, for example a second `riff
+release verify` of the same pull request, adds no second watch.
+
+The chat line of `riff release publish` says that the CI run of the
+tag builds. The jobs before the job `Deploy` run first, so the deploy
+does not wait yet. The watch posts the line "waits for your approval"
+to the owner in `riff chat` only when the job `Deploy` waits for
+`production`. While it waits, the watch reminds the owner in `riff
+chat` each 4 hours.
+
+The daemon keeps the watches in the file `watches.json` of its folder,
+so a restart of the daemon keeps them. A watch that cannot read the
+state of its operation, for example when GitHub does not answer, tells
+the lead the fault one time, and goes on. The lead can read the fault
+and the next step in the message.
+
+A command prints the line `riff watches ...` after it starts the
+operation. When the daemon of the host does not serve the repository,
+the command still runs the operation. It says on stderr that the lead
+gets no message at the end. Run `riff wave run` in the main clone of
+the repository, and the daemon serves it.
+
+#### See the watches of the daemon
+
+The status of the daemon lists the watches that it follows:
+
+```sh
+riff daemon status
+```
+
+In a container, the same command shows the daemon of the host. The
+part `Watches:` has one line for each watch, with the repository, the
+operation and its age.
 
 The lead may run `riff release cut`, `publish`, `status`, `check`,
 `retry` and `rollback`: the riff daemon gives its session the
@@ -4290,6 +4361,12 @@ refuses while a deploy waits for the approval of `production`. It
 also refuses while the version on `origin/main` has no published
 release: publish that release first.
 
+riff registers a watch of the release pull request. The daemon of your
+host wakes the lead when the Gate ends: the lead gets "the Gate
+passed" with `next: riff release verify 1140`, or "the Gate failed"
+with the failed jobs. It wakes the lead again when the pull request
+merges (see [Know what wakes the lead](#know-what-wakes-the-lead)).
+
 When a check of the release pull request fails, for example `Hygiene`,
 the wave tells your lead once with the names of the checks: see [See a
 pull request that cannot merge](#see-a-pull-request-that-cannot-merge).
@@ -4307,7 +4384,9 @@ riff checks the label `release`, the diff (only `Cargo.toml` and
 `Cargo.lock`), the format of the body, and the Gate. Then it sets the
 status `riff/verify`, and the auto-merge merges the pull request. It
 refuses else, and sets nothing. No model session verifies the pull
-request.
+request. After the status, riff registers the watch of the merge: the
+daemon wakes the lead when the pull request merges, or when it closes
+with no merge.
 
 riff also writes a line in riff chat to the owner. One message of the
 owner after it, for example `approved`, lets the lead run the whole
@@ -4384,10 +4463,12 @@ riff release status
 ```
 
 `riff release status` shows the line `real-session test: running on
-COMMIT`, then `passed` or `failed`. Name the host as `riff daemon
-status --host HOST` does. The host needs `riff daemon host` or
-`riff wave run` in its main
-clone of the repository.
+COMMIT`, then `passed` or `failed`. The daemon of the host registers a
+watch of the test when the test starts, and wakes the lead at its end:
+the lead gets one message with `passed` or `failed`, and the next step.
+Name the host as `riff daemon status --host HOST` does. The host needs
+`riff daemon host` or `riff wave run` in its main clone of the
+repository.
 
 The lead runs this command, and each other `--host` command, in its
 container: `riff daemon status --host`, `riff daemon sweep --host`,
@@ -4446,8 +4527,13 @@ release: the notes of the pull request, then the notes that GitHub
 makes from the last release, marked as the latest. The GitHub releases
 are the changelog of riff. riff prints the URL of the CI run of the
 tag, and posts a chat line to the owner in `riff chat`: the version,
-the run, and `riff release approve v3.3.0`. It refuses in a worker, in
-a container session, and in a session that is not the lead.
+the run, and that riff tells the owner when the deploy waits. It
+registers a watch of the CI run. When the job `Deploy` waits for
+`production`, the daemon posts the line "waits for your approval" to
+the owner, with `riff release approve v3.3.0`, and one message to the
+lead. When a job failed, it wakes the lead with the failed jobs. The
+command refuses in a worker, in a container session, and in a session
+that is not the lead.
 
 The installed riff can be older than the release. For the first
 release with these commands, run `publish` from a build of the merge
@@ -4484,11 +4570,12 @@ riff release approve v3.3.0
 riff finds the CI run of the tag that waits for `production`. It shows
 the tag, the commit and the run, and asks yes or no. With `yes`, it
 pauses the whole riff, which tells each other lead, then approves the
-run with the comment `Release v3.3.0`. The pause is only for the
-deploy: `riff release check` resumes the riff. When no run waits, riff
-says so and changes nothing. When the approval fails, the riff stays
-paused: run `riff release approve v3.3.0` again, or
-`riff resume --riff`.
+run with the comment `Release v3.3.0`. Then it registers the watch of
+the job `Deploy`: the daemon wakes the lead when the job passes or
+fails. The pause is only for the deploy: `riff release check` resumes
+the riff. When no run waits, riff says so and changes nothing. When the
+approval fails, the riff stays paused: run
+`riff release approve v3.3.0` again, or `riff resume --riff`.
 
 ### Make a patch of an older release
 
@@ -4831,7 +4918,9 @@ When the CI run of a release tag failed, run its failed jobs again:
 riff release retry v3.3.0
 ```
 
-riff refuses a run that did not fail. The job `Deploy` then waits for
+riff refuses a run that did not fail. It registers a watch of the run,
+and the daemon wakes the lead when the job `Deploy` waits for a person
+and when it ends. The job `Deploy` then waits for
 `riff release approve v3.3.0`.
 
 #### Roll back to an older release
@@ -4844,9 +4933,10 @@ riff release rollback v3.2.0
 ```
 
 riff starts the CI workflow on `main` with the input `tag`, and writes
-the rollback on the release issue of the newest release. The gate runs
-first. The job refuses an input that is not a release tag. Then the
-job `Deploy` waits for the approval of a person (HUMAN GATE 2):
+the rollback on the release issue of the newest release. It registers a
+watch of the run, as `retry` does. The gate runs first. The job
+refuses an input that is not a release tag. Then the job `Deploy` waits
+for the approval of a person (HUMAN GATE 2):
 
 ```sh
 riff release approve v3.2.0

@@ -164,8 +164,8 @@ release removes them too.
 
 The owner or an admin of a riff that deploys its own server gives the
 human gates of each release: the deploy, a rollback and a skip. The
-lead tells you in `riff chat` when a deploy waits. Approve it in a
-plain terminal, outside Claude Code:
+riff daemon tells you in `riff chat` when a deploy waits. Approve it in
+a plain terminal, outside Claude Code:
 
 ```sh
 riff release approve v3.3.0
