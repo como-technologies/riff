@@ -528,7 +528,9 @@ enum Command {
     /// and then it makes riff.toml with a pull request that it merges,
     /// allows auto-merge and squash merges, makes the Backlog and Wave 1,
     /// and makes the ruleset riff. It needs the rights of an admin of the
-    /// repository, and a second run changes nothing. It writes no rule into
+    /// repository, and a second run changes nothing. The riff.toml that it
+    /// makes pins riff-base: claude, git and gh, with no language. --image
+    /// pins another image. It writes no rule into
     /// your user settings of Claude Code. It names each allow rule of your
     /// user, project and local settings of Claude Code that is wider than
     /// the steps of riff, and asks one question before it removes them. It
@@ -549,6 +551,11 @@ enum Command {
         /// removes no wide rule.
         #[arg(long)]
         yes: bool,
+        /// The session image that riff.toml pins, as HOST/PATH@sha256:DIGEST.
+        /// The default is riff-base, the image of riff with claude, git and
+        /// gh and no language. riff refuses a tag.
+        #[arg(long, value_name = "REF")]
+        image: Option<String>,
     },
     /// Run one work item in a rootless podman container
     ///
@@ -1597,14 +1604,17 @@ async fn main() -> Result<()> {
     if let Command::Daemon { command } = &cli.command {
         return daemon_command(command.as_ref(), cli.server.as_deref()).await;
     }
-    if let Command::Init { check, yes } = cli.command {
+    if let Command::Init { check, yes, image } = cli.command {
         use riff::first_run::Mode;
+        let image = image
+            .map(|text| text.parse::<riff::session_image::Image>())
+            .transpose()?;
         let mode = match (check, yes) {
             (true, _) => Mode::Check,
             (false, true) => Mode::Yes,
             (false, false) => Mode::Ask,
         };
-        let code = riff::first_run::init(mode).await?;
+        let code = riff::first_run::init(mode, image).await?;
         if code != 0 {
             std::process::exit(code);
         }

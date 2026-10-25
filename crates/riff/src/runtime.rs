@@ -308,6 +308,12 @@ pub trait Runtime: Send + Sync {
     /// Gets the image `image` from its registry.
     fn pull(&self, image: &str) -> impl Future<Output = Result<()>> + Send;
 
+    /// Runs `command` in a container of the image `image`, with no
+    /// network, and gives what it prints. An error when the command
+    /// fails, or the image has no such program
+    /// ([`crate::image_tools`], 01M5SNTPHHXP54YBTV09JNRY3F).
+    fn output(&self, image: &str, command: &[&str]) -> impl Future<Output = Result<String>> + Send;
+
     /// Starts the session of `spec`. `values` gives the value of each
     /// [`Env::Host`] of the spec ([`SessionSpec::check_values`]).
     fn start(
@@ -410,6 +416,8 @@ struct Book {
     local: BTreeSet<String>,
     /// The images that a pull finds.
     registry: BTreeSet<String>,
+    /// What a command prints in an image, by image and program.
+    tools: BTreeMap<(String, String), String>,
     /// The lines that each new session prints.
     events: Vec<String>,
     /// Each pull, start, stop, redraw, attach and exec, in order.
@@ -453,6 +461,15 @@ impl Fake {
     /// A pull finds the image `image`.
     pub fn with_registry(self, image: &str) -> Self {
         self.lock().registry.insert(image.to_owned());
+        self
+    }
+
+    /// The program `program` prints `printed` in the image `image`
+    /// ([`Runtime::output`]). An image has no other program.
+    pub fn with_tool(self, image: &str, program: &str, printed: &str) -> Self {
+        self.lock()
+            .tools
+            .insert((image.to_owned(), program.to_owned()), printed.to_owned());
         self
     }
 
@@ -581,6 +598,15 @@ impl Runtime for Fake {
         }
         book.local.insert(image.to_owned());
         Ok(())
+    }
+
+    async fn output(&self, image: &str, command: &[&str]) -> Result<String> {
+        let program = command.first().copied().unwrap_or_default();
+        self.lock()
+            .tools
+            .get(&(image.to_owned(), program.to_owned()))
+            .cloned()
+            .ok_or_else(|| anyhow!("the image {image} has no program {program}"))
     }
 
     async fn start(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<Running> {

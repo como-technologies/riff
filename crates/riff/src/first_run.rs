@@ -963,11 +963,15 @@ fn set_up(
         let title = step.title(github);
         println!(
             "  {}",
-            match done {
-                Ok(what) => text::init_step_done(&title, &what),
-                Err(why) => text::init_step_failed(&title, &why),
+            match &done {
+                Ok(what) => text::init_step_done(&title, what),
+                Err(why) => text::init_step_failed(&title, why),
             }
         );
+        // The base has no language: the project adds its toolchain.
+        if step == repo_setup::Step::Config && done.is_ok() && forge.image.is_none() {
+            println!("  {}", text::init_toolchain(&forge.pin()));
+        }
     }
     let mut facts = facts.clone();
     if facts.image.is_err() && !github.has(session_image::FILE) && after.has(session_image::FILE) {
@@ -988,7 +992,7 @@ fn set_up(
         let image = pulled
             .then(|| session_image::of_folder(&facts.folder).ok())
             .flatten()
-            .unwrap_or_else(session_image::of_release);
+            .unwrap_or_else(|| forge.pin());
         facts.image = Ok(image.to_string());
     }
     facts.github = Some(Ok(after));
@@ -1043,8 +1047,10 @@ pub fn pull(clone: &Path, branch: &str) -> Result<(), String> {
 /// `riff init`: the first run on this machine, with the repository of
 /// the current folder and the daemon of this machine. It asks its
 /// question on the terminal. It gives the exit code. On a host that is
-/// not Linux, it changes nothing.
-pub async fn init(mode: Mode) -> Result<i32> {
+/// not Linux, it changes nothing. `image` is the session image that the
+/// new `riff.toml` pins in place of the base of the release
+/// (`riff init --image`, 01M5SNTPEP41NMSP3SEKR7KVB0).
+pub async fn init(mode: Mode, image: Option<session_image::Image>) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
         use anyhow::Context;
@@ -1062,15 +1068,18 @@ pub async fn init(mode: Mode) -> Result<i32> {
                 &mut std::io::stdout(),
             )
         };
-        let forge = crate::identity::github_origin(&here)
-            .map(|repo| Forge::of(&repo))
-            .unwrap_or_default();
+        let forge = Forge {
+            image,
+            ..crate::identity::github_origin(&here)
+                .map(|repo| Forge::of(&repo))
+                .unwrap_or_default()
+        };
         let dir = daemon::dir()?;
         run(&facts, mode, question, &dir, &manager, &unit, WAIT, &forge).await
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = mode;
+        let _ = (mode, image);
         anyhow::bail!("{}", text::INIT_LINUX_ONLY)
     }
 }
@@ -1909,6 +1918,7 @@ mod tests {
             Forge {
                 gh: crate::pr::Gh::at(self.dir.path().join("gh")),
                 waits: repo_setup::Waits::NONE,
+                image: None,
             }
         }
 
@@ -1978,7 +1988,7 @@ mod tests {
         let forged = Forged::bare();
         let root = tempfile::tempdir().unwrap();
         let dir = dir_in(root.path());
-        let release = session_image::of_release().to_string();
+        let release = session_image::base().to_string();
         let fake = Fake::default().with_registry(&release);
         let listener = listen(&dir).await.unwrap();
         riff_client::secrets::mock_store();
@@ -2174,7 +2184,7 @@ mod tests {
             git(&origin, &["rev-parse", "HEAD"])
         );
         assert_eq!(after.image, Ok(IMAGE.to_owned()));
-        assert_ne!(IMAGE, session_image::of_release().to_string());
+        assert_ne!(IMAGE, session_image::base().to_string());
     }
 
     /// 01M5RGGD9AYNC12Z2CG5CDZWNA: a clone on another branch, with a change,
@@ -2182,7 +2192,7 @@ mod tests {
     /// nothing in it, and the image of the release stands in for the file.
     #[test]
     fn a_clone_that_is_not_safe_to_pull_gets_no_git_pull() {
-        let release = session_image::of_release().to_string();
+        let release = session_image::base().to_string();
         for case in ["another branch", "a change", "a local commit"] {
             let forged = Forged::bare();
             let root = tempfile::tempdir().unwrap();

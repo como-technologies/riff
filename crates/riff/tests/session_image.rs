@@ -97,31 +97,64 @@ fn workflow_job(workflow: &str, name: &str) -> String {
     job[..end].to_owned()
 }
 
+/// The components that the `--component` flags of the Dockerfile at
+/// `path` install.
+fn installed(path: &str) -> Vec<String> {
+    read(path)
+        .split("--component ")
+        .skip(1)
+        .map(|rest| rest.split_whitespace().next().unwrap().to_owned())
+        .collect()
+}
+
+/// 01M5SNTDW9WVEXZW5D0TKGBA8Z: the channel of `deploy/rust/` is the
+/// channel of `rust-toolchain.toml`, and the components of `deploy/rust/`
+/// and `deploy/session/` together are its components.
 #[test]
-fn the_session_image_has_the_toolchain_of_the_repository() {
+fn the_images_have_the_toolchain_of_the_repository() {
     let toolchain: toml_edit::DocumentMut = read("rust-toolchain.toml").parse().unwrap();
     let channel = toolchain["toolchain"]["channel"].as_str().unwrap();
-    let components: Vec<&str> = toolchain["toolchain"]["components"]
+    let mut components: Vec<String> = toolchain["toolchain"]["components"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|c| c.as_str().unwrap())
+        .map(|c| c.as_str().unwrap().to_owned())
         .collect();
-    let dockerfile = read("deploy/session/Dockerfile");
+    components.sort();
     let arg = format!("ARG RUST_CHANNEL={channel}");
     assert!(
-        dockerfile.lines().any(|line| line == arg),
-        "deploy/session/Dockerfile has no line {arg:?}: change it with rust-toolchain.toml"
+        read("deploy/rust/Dockerfile")
+            .lines()
+            .any(|line| line == arg),
+        "deploy/rust/Dockerfile has no line {arg:?}: change it with rust-toolchain.toml"
     );
-    let installed: Vec<&str> = dockerfile
-        .split("--component ")
-        .skip(1)
-        .map(|rest| rest.split_whitespace().next().unwrap())
-        .collect();
+    let mut both = installed("deploy/rust/Dockerfile");
+    both.extend(installed("deploy/session/Dockerfile"));
+    both.sort();
+    both.dedup();
     assert_eq!(
-        installed, components,
-        "deploy/session/Dockerfile installs other components than rust-toolchain.toml"
+        both, components,
+        "deploy/rust/ and deploy/session/ install other components than rust-toolchain.toml"
     );
+}
+
+/// 01M5SNT57ANM99NQS5SNB8XPWV: `riff-rust` builds `FROM` a digest of
+/// `riff-base`, and it is the base that `riff init` pins.
+#[test]
+fn the_rust_image_builds_from_a_digest_of_the_base_image() {
+    let base = riff::session_image::base();
+    assert_eq!(base.name(), "ghcr.io/como-technologies/riff-base");
+    assert_ne!(
+        base.digest(),
+        format!("sha256:{}", "0".repeat(64)),
+        "deploy/rust/Dockerfile pins the placeholder, not the digest of a build"
+    );
+    let from = read("deploy/rust/Dockerfile")
+        .lines()
+        .filter(|line| line.starts_with("FROM "))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(from, [format!("FROM {base}")]);
 }
 
 /// A new git repository with the riff config `config`, if any.

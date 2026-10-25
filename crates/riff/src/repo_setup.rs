@@ -61,8 +61,9 @@
 //!
 //! - The merge settings come first: the pull request of `riff.toml` has
 //!   a squash merge.
-//! - `riff.toml` pins the session image of the release of riff that runs
-//!   ([`crate::session_image::of_release`]). The step reuses an open pull
+//! - `riff.toml` pins the `riff-base` of the release of riff that runs
+//!   ([`crate::session_image::base`], 01M5SNTPEP41NMSP3SEKR7KVB0), or the
+//!   image that `riff init --image` gives ([`Forge::image`]). The step reuses an open pull
 //!   request from the branch [`SETUP_BRANCH`], and it resets that branch
 //!   to the default branch, so a step that failed half way can run again.
 //!   GitHub may need a moment to say that the pull request can merge, so
@@ -214,6 +215,9 @@ pub struct Forge {
     pub gh: Gh,
     /// What riff waits for.
     pub waits: Waits,
+    /// The session image that [`Step::Config`] pins (`riff init --image`).
+    /// With `None`, it pins the base of the release ([`session_image::base`]).
+    pub image: Option<session_image::Image>,
 }
 
 impl Forge {
@@ -223,7 +227,14 @@ impl Forge {
         Forge {
             gh: Gh::for_repo(repo).with_limit(LIMIT),
             waits: Waits::default(),
+            image: None,
         }
+    }
+
+    /// The image that [`Step::Config`] pins in `riff.toml`: the image of
+    /// `riff init --image`, else the base of the release.
+    pub fn pin(&self) -> session_image::Image {
+        self.image.clone().unwrap_or_else(session_image::base)
     }
 }
 
@@ -552,7 +563,7 @@ fn config(forge: &Forge, branch: &str) -> anyhow::Result<Made> {
             opened: false,
         },
         None => Made {
-            pull: open_pull(gh, branch)?,
+            pull: open_pull(forge, branch)?,
             opened: true,
         },
     };
@@ -572,8 +583,10 @@ fn config(forge: &Forge, branch: &str) -> anyhow::Result<Made> {
 }
 
 /// Makes the branch [`SETUP_BRANCH`] from `branch`, adds `riff.toml` to
-/// it, and opens the pull request.
-fn open_pull(gh: &Gh, branch: &str) -> anyhow::Result<Pull> {
+/// it, and opens the pull request. `riff.toml` pins the image of the
+/// forge, else the base of the release ([`session_image::base`]).
+fn open_pull(forge: &Forge, branch: &str) -> anyhow::Result<Pull> {
+    let gh = &forge.gh;
     let base: Value = gh.json(&[
         "api",
         &format!("repos/{{owner}}/{{repo}}/git/ref/heads/{}", ref_of(branch)),
@@ -602,7 +615,7 @@ fn open_pull(gh: &Gh, branch: &str) -> anyhow::Result<Pull> {
         ),
         Err(e) => return Err(e),
     }?;
-    let config = session_image::config_of(&session_image::of_release());
+    let config = session_image::config_of(&forge.pin());
     gh.send(
         "PUT",
         &format!("repos/{{owner}}/{{repo}}/contents/{CONFIG}"),
@@ -1370,6 +1383,7 @@ mod tests {
             Forge {
                 gh: self.gh(),
                 waits: Waits::NONE,
+                image: None,
             }
         }
 
@@ -1550,7 +1564,7 @@ mod tests {
         let content = String::from_utf8(content).unwrap();
         assert_eq!(
             content,
-            format!("[session]\nimage = \"{}\"\n", session_image::of_release())
+            format!("[session]\nimage = \"{}\"\n", session_image::base())
         );
         let pull = fake.json("pull.json");
         assert_eq!(pull["title"], "Set up riff");
@@ -1879,6 +1893,7 @@ esac
         let forge = Forge {
             gh,
             waits: Waits::NONE,
+            image: None,
         };
         let mut github = ready();
         let done = setup(&forge, &[Step::Merge], &mut github);

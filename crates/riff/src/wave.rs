@@ -1240,6 +1240,7 @@ async fn start_job<R: Runtime + 'static>(
         .have_image(&pinned.image, |line| println!("{line}"))
         .await?;
     daemon.pull_worked(&wave.repo);
+    daemon.check_tools(wave, &pinned.image).await;
     let Some(start) = world.begin(wave, work, &pinned).await? else {
         return Ok(None);
     };
@@ -3547,6 +3548,98 @@ mod tests {
         assert!(!here.daemon.pull_failed("o/r", &failed("b")));
         here.daemon.pull_worked("o/r");
         assert!(here.daemon.pull_failed("o/r", &failed("c")));
+    }
+
+    /// The output of `claude --version` and `gh --version` in a fake
+    /// image, for the version `claude` of claude and `gh` of gh.
+    fn tools(here: &Here, claude: &str, gh: &str) {
+        here.fake
+            .clone()
+            .with_tool(IMAGE, "claude", &format!("{claude} (Claude Code)\n"))
+            .with_tool(
+                IMAGE,
+                "gh",
+                &format!("gh version {gh} (2026-01-01)\nhttps://github.com/cli/cli\n"),
+            );
+    }
+
+    /// 01M5SNTPHHXP54YBTV09JNRY3F: an image with a `claude` older than
+    /// riff needs makes one message to the lead with the `riff-base` to
+    /// build `FROM`, also when the wave starts more than one job.
+    #[tokio::test]
+    async fn an_image_with_an_old_tool_tells_the_lead_once_with_the_new_base() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        tools(
+            &here,
+            "0.0.1",
+            &crate::image_tools::Tool::Gh.needed().to_string(),
+        );
+        here.run();
+        here.until(3, |h| {
+            h.running("issue-1").is_some() && h.running("issue-2").is_some()
+        })
+        .await;
+        here.idle(3).await;
+        let old = crate::image_tools::Old {
+            tool: crate::image_tools::Tool::Claude,
+            has: "0.0.1".parse().unwrap(),
+            needs: crate::image_tools::Tool::Claude.needed(),
+        };
+        let base = crate::session_image::base();
+        assert_eq!(
+            here.forge().told,
+            [text::image_old_tools("o/r", &[old], &base)]
+        );
+        assert!(here.forge().told[0].contains(&format!("FROM {base}")));
+    }
+
+    /// 01M5SNTPHHXP54YBTV09JNRY3F: both tools old make one message that
+    /// names both.
+    #[tokio::test]
+    async fn an_image_with_two_old_tools_makes_one_message_for_both() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        tools(&here, "0.0.1", "0.0.2");
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        let told = here.forge().told.clone();
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert!(told[0].contains("claude 0.0.1 and gh 0.0.2"), "{told:?}");
+    }
+
+    /// 01M5SNTPHHXP54YBTV09JNRY3F: an image with tools that are new enough,
+    /// an image where a tool prints no version, and an image that does
+    /// not run the tools, tell the lead nothing, and the job goes on.
+    #[tokio::test]
+    async fn an_image_with_new_tools_or_no_version_tells_the_lead_nothing() {
+        let current = |h: &Here| {
+            let (claude, gh) = (
+                crate::image_tools::Tool::Claude,
+                crate::image_tools::Tool::Gh,
+            );
+            tools(h, &claude.needed().to_string(), &gh.needed().to_string());
+        };
+        for case in ["new enough", "newer", "no version", "no tools"] {
+            let free = Arc::new(AtomicU64::new(64));
+            let here = Here::new(&[1], 3, free).await;
+            match case {
+                "new enough" => current(&here),
+                "newer" => tools(&here, "999.0.0", "999.0.0"),
+                "no version" => {
+                    here.fake
+                        .clone()
+                        .with_tool(IMAGE, "claude", "unknown\n")
+                        .with_tool(IMAGE, "gh", "");
+                }
+                _ => {}
+            }
+            here.run();
+            here.until(3, |h| h.running("issue-1").is_some()).await;
+            here.idle(3).await;
+            let told = here.forge().told.clone();
+            assert!(told.is_empty(), "{case}: {told:?}");
+        }
     }
 
     /// The lead of `o/r` on this host, as the record of its session.

@@ -494,29 +494,41 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(out.trim_end().to_owned())
 }
 
-/// The riff config of riff at the commit of this build.
-const OF_RELEASE: &str = include_str!("../../../riff.toml");
+/// The Dockerfile of `riff-rust` at the commit of the build. Its `FROM`
+/// pins the `riff-base` of the release.
+const RUST_DOCKERFILE: &str = include_str!("../../../deploy/rust/Dockerfile");
 
-/// The session image that the release of riff that runs uses
-/// (01M5R1675HZ6TJPMQ6536X37T5): the pin of the [`FILE`] of riff at the
-/// commit of the build. `riff init` pins it in a repository that has no
-/// [`FILE`].
+/// The `riff-base` that the release of riff that runs pins
+/// (01M5SNTPEP41NMSP3SEKR7KVB0): the image in the first `FROM` of
+/// `deploy/rust/Dockerfile` at the commit of the build. `riff init` pins
+/// it in a repository that has no [`FILE`], and the daemon names it to the
+/// lead of a repository whose image has an old tool
+/// ([`crate::image_tools`]).
 ///
 /// ```
-/// let image = riff::session_image::of_release();
-/// assert!(image.name().ends_with("/riff-session"), "{image}");
+/// let image = riff::session_image::base();
+/// assert!(image.name().ends_with("/riff-base"), "{image}");
 /// assert!(image.digest().starts_with("sha256:"), "{image}");
 /// ```
-pub fn of_release() -> Image {
-    Image::of_config(OF_RELEASE, "the riff.toml of riff")
-        .expect("the riff.toml of riff pins an image")
+pub fn base() -> Image {
+    from_of(RUST_DOCKERFILE)
+        .and_then(|from| from.parse().ok())
+        .expect("deploy/rust/Dockerfile builds FROM a riff-base pinned by digest")
+}
+
+/// The image in the first `FROM` line of the Dockerfile `dockerfile`.
+fn from_of(dockerfile: &str) -> Option<&str> {
+    dockerfile
+        .lines()
+        .find_map(|line| line.strip_prefix("FROM "))
+        .map(str::trim)
 }
 
 /// The text of a [`FILE`] that pins `image`: the file that the how-to
 /// "Add another repository to the riff" writes.
 ///
 /// ```
-/// let image = riff::session_image::of_release();
+/// let image = riff::session_image::base();
 /// let text = riff::session_image::config_of(&image);
 /// assert_eq!(text, format!("[session]\nimage = \"{image}\"\n"));
 /// ```
@@ -955,6 +967,18 @@ mod tests {
         refused(&format!("ghcr.io/O/i@{d}"), "not a valid image name");
         refused(&format!("ghcr.io//i@{d}"), "not a valid image name");
         refused(&format!("ghcr.io/o i@{d}"), "not a valid image name");
+    }
+
+    /// 01M5SNTPEP41NMSP3SEKR7KVB0: the base of the release is the image in
+    /// the first `FROM` of the Dockerfile of `riff-rust`, pinned by digest.
+    #[test]
+    fn the_base_of_the_release_is_the_from_of_the_rust_image() {
+        let dockerfile = "# A comment\nFROM ghcr.io/o/riff-base@sha256:0\nFROM other\n";
+        assert_eq!(from_of(dockerfile), Some("ghcr.io/o/riff-base@sha256:0"));
+        assert_eq!(from_of("ARG X=1\n"), None);
+        let image = base();
+        assert_eq!(image.name(), "ghcr.io/como-technologies/riff-base");
+        assert_eq!(from_of(RUST_DOCKERFILE), Some(image.to_string().as_str()));
     }
 
     #[test]
