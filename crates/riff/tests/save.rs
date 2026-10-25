@@ -2,7 +2,7 @@
 //! commit on the branch of the item (01M5P26VSA7AA99K1RYG83R8J9), over
 //! real git.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -21,24 +21,25 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
-#[test]
-fn a_clone_with_changes_and_no_pushed_commit_gets_a_wip_commit_on_its_branch() {
-    let root = tempfile::tempdir().unwrap();
-    let (origin, clone) = (root.path().join("origin.git"), root.path().join("clone"));
-    git(
-        root.path(),
-        &["init", "-q", "--bare", "-b", "main", "origin.git"],
-    );
-    git(
-        root.path(),
-        &["clone", "-q", origin.to_str().unwrap(), "clone"],
-    );
+/// A bare `origin` with `main`, and a clone of it on the branch
+/// `worktree-issue-1`.
+fn seeded(root: &Path) -> (PathBuf, PathBuf) {
+    let (origin, clone) = (root.join("origin.git"), root.join("clone"));
+    git(root, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+    git(root, &["clone", "-q", origin.to_str().unwrap(), "clone"]);
     git(&clone, &["config", "user.name", "riff test"]);
     git(&clone, &["config", "user.email", "test@example.com"]);
     git(&clone, &["commit", "-q", "--allow-empty", "-m", "start"]);
     git(&clone, &["push", "-q", "origin", "HEAD:main"]);
     git(&clone, &["remote", "set-head", "origin", "main"]);
     git(&clone, &["checkout", "-q", "-b", "worktree-issue-1"]);
+    (origin, clone)
+}
+
+#[test]
+fn a_clone_with_changes_and_no_pushed_commit_gets_a_wip_commit_on_its_branch() {
+    let root = tempfile::tempdir().unwrap();
+    let (origin, clone) = seeded(root.path());
 
     // A clean clone has nothing to save.
     let branch = "worktree-issue-1";
@@ -57,4 +58,35 @@ fn a_clone_with_changes_and_no_pushed_commit_gets_a_wip_commit_on_its_branch() {
     // The branch is on origin: a new change stays where it is.
     std::fs::write(clone.join("more.md"), "more\n").unwrap();
     assert_eq!(riff::leave::save(&clone, branch).unwrap(), None);
+}
+
+/// 01M5TKETGZP9NTHBXFBP1RM1HP: the git of the host signs each commit, and
+/// the program that signs finds no key. The WIP commit of riff has no
+/// signature, so riff saves the work.
+#[test]
+fn a_host_whose_git_signs_each_commit_gets_the_wip_commit() {
+    let root = tempfile::tempdir().unwrap();
+    let (origin, clone) = seeded(root.path());
+    git(&clone, &["config", "commit.gpgsign", "true"]);
+    git(&clone, &["config", "gpg.program", "false"]);
+    std::fs::write(clone.join("work.md"), "work\n").unwrap();
+    // The setup is real: a plain commit fails to sign. A container of riff
+    // sets `commit.gpgsign=false` in `GIT_CONFIG_*`: the check drops it.
+    let plain = Command::new("git")
+        .current_dir(&clone)
+        .args(["commit", "-q", "--allow-empty", "-m", "plain"])
+        .env_remove("GIT_CONFIG_COUNT")
+        .output()
+        .unwrap();
+    assert!(!plain.status.success(), "{plain:?}");
+
+    let branch = "worktree-issue-1";
+    let (pushed, commit) = riff::leave::save(&clone, branch).unwrap().unwrap();
+
+    assert_eq!(pushed, branch);
+    assert_eq!(git(&origin, &["rev-parse", "--short", branch]), commit);
+    assert_eq!(
+        git(&origin, &["show", "--name-only", "--format=", branch]),
+        "work.md"
+    );
 }

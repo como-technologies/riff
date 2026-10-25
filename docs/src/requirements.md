@@ -4553,6 +4553,12 @@ of this part when they merge.
   is idle, and that the lead keeps its state in its notes. The daemon
   posts it for `riff daemon restart`, for the look at the end of each
   session, and for `riff update`.
+- **01M5TKETGZP9NTHBXFBP1RM1HP** A commit that riff makes for itself has
+  no signature: the commit of the sweep (01M5NVKNGZPK0GG7B7ZWBS0DFE) and
+  the WIP commit of a session that ended with no push
+  (01M5P26VSA7AA99K1RYG83R8J9) run with `-c commit.gpgsign=false`. A
+  host whose git signs each commit keeps no folder for that reason, and
+  riff saves the work.
 
 ### riff relay
 
