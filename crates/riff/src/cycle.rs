@@ -1536,6 +1536,7 @@ pub fn chat_lines(read: Vec<riff_client::api::Checked>) -> Vec<ChatLine> {
             user: c.message.from.who().user().to_owned(),
             session: c.message.from.who().session().is_some(),
             verified: c.verified,
+            riff: c.message.kind.by_riff(),
             body: c.message.body,
         })
         .collect()
@@ -1552,6 +1553,10 @@ pub struct ChatLine {
     pub session: bool,
     /// True when riff proved the sender.
     pub verified: bool,
+    /// True when riff wrote the line, as the person: it has the kind
+    /// `riff`, and it is never the word of a person.
+    #[serde(default)]
+    pub riff: bool,
     /// The text.
     pub body: String,
 }
@@ -1673,11 +1678,16 @@ fn release_line_tag(body: &str) -> Option<&str> {
 /// not count. A message of the owner or of an admin with `stop` or `wait`
 /// after the approval cancels it.
 ///
+/// A message that riff wrote, as the person (`riff`: the line "waits for
+/// your approval" of the watch of the deploy, and its reminder), is no
+/// word of a person: it never counts, and it never cancels
+/// (01M5TKMVB7CF0QNAWXEVGEQETJ).
+///
 /// ```
 /// use riff::cycle::{owner_said, ChatLine};
 ///
 /// let line = |seq, session, body: &str| ChatLine {
-///     seq, user: "mike".into(), session, verified: true, body: body.into(),
+///     seq, user: "mike".into(), session, verified: true, riff: false, body: body.into(),
 /// };
 /// let may = |user: &str| user == "mike";
 /// let lines = [
@@ -1693,6 +1703,14 @@ fn release_line_tag(body: &str) -> Option<&str> {
 /// assert_eq!(owner_said(&lines, "v3.3.1", &may), None);
 /// let stopped = [lines[2].clone(), lines[3].clone(), line(5, false, "stop")];
 /// assert_eq!(owner_said(&stopped, "v3.3.0", &may), None);
+///
+/// // The line of riff, as the person, is no approval.
+/// let waits = ChatLine {
+///     riff: true,
+///     ..line(2, false, "@mike riff release v3.3.0 waits for your approval: https://x/runs/9. \
+///                       In a terminal, run: riff release approve v3.3.0")
+/// };
+/// assert_eq!(owner_said(&[lines[0].clone(), waits], "v3.3.0", &may), None);
 /// ```
 pub fn owner_said(lines: &[ChatLine], tag: &str, may: &dyn Fn(&str) -> bool) -> Option<u64> {
     // A line of riff about `tag`, or about any release when `tag` is `None`.
@@ -1714,9 +1732,10 @@ pub fn owner_said(lines: &[ChatLine], tag: &str, may: &dyn Fn(&str) -> bool) -> 
             .max_by_key(|l| l.seq)
             .is_some_and(|l| release(l, Some(tag)))
     };
-    // A release line is of riff, also when riff posts it as the person.
+    // A line of riff is of riff, also when riff posts it as the person: it
+    // has the kind `riff`, and a release line has its words.
     let owner = |l: &ChatLine| {
-        l.verified && !l.session && may(&l.user) && release_line_tag(&l.body).is_none()
+        l.verified && !l.session && !l.riff && may(&l.user) && release_line_tag(&l.body).is_none()
     };
     let approved = lines
         .iter()
@@ -5038,7 +5057,16 @@ pub(crate) mod tests {
             user: user.into(),
             session,
             verified: true,
+            riff: false,
             body: body.into(),
+        }
+    }
+
+    /// A line that riff wrote as the person of the riff.
+    fn by_riff(seq: u64, user: &str, body: &str) -> ChatLine {
+        ChatLine {
+            riff: true,
+            ..chat(seq, user, false, body)
         }
     }
 
@@ -5234,6 +5262,106 @@ pub(crate) mod tests {
         let mut loud = chat(3, "mike", false, "approved");
         loud.verified = false;
         assert_eq!(owner_said(&[start, loud], "v4.0.1", &mike), None);
+    }
+
+    /// The lines that riff writes in riff chat for the release of `tag`
+    /// (01M5TKMVB7CF0QNAWXEVGEQETJ): the cut line and the publish line of
+    /// the lead, the line "waits for your approval" of the watch and its
+    /// reminder as the person.
+    fn lines_of_riff(tag: &str) -> Vec<ChatLine> {
+        let run = "https://github.com/o/r/actions/runs/9";
+        vec![
+            chat(1, "mike", true, &cut_line("mike", tag)),
+            chat(2, "mike", true, &publish_line("mike", tag, Some(run))),
+            by_riff(3, "mike", &waits_line("mike", tag, run, false, &[])),
+            by_riff(4, "mike", &waits_line("mike", tag, run, true, &[])),
+        ]
+    }
+
+    #[test]
+    fn owner_said_gives_no_approval_for_the_lines_of_riff_alone() {
+        let lines = lines_of_riff("v4.0.1");
+        for n in 1..=lines.len() {
+            assert_eq!(owner_said(&lines[..n], "v4.0.1", &mike), None, "{n}");
+        }
+        // The cut line and the publish line also name the command: a
+        // person who did not mark them is still no approval, but a line
+        // that riff wrote and marked never is, also from a person.
+        let mut marked = lines.clone();
+        marked[0].session = false;
+        marked[0].riff = true;
+        marked[1].session = false;
+        marked[1].riff = true;
+        assert_eq!(owner_said(&marked, "v4.0.1", &mike), None);
+    }
+
+    #[test]
+    fn owner_said_gives_the_message_of_the_owner_among_the_lines_of_riff() {
+        let mut lines = lines_of_riff("v4.0.1");
+        lines.push(chat(5, "mike", false, "approve 4.0.1"));
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(5));
+        // A reminder after the message is not a newer approval.
+        lines.push(by_riff(
+            6,
+            "mike",
+            &waits_line("mike", "v4.0.1", "https://x/runs/9", true, &[]),
+        ));
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(5));
+        // A message of the owner after the publish and before the line of
+        // the wait counts, too.
+        let between = [lines[0].clone(), lines[1].clone()]
+            .into_iter()
+            .chain([chat(3, "mike", false, "approved")])
+            .chain(lines[2..4].iter().cloned().map(|l| ChatLine {
+                seq: l.seq + 1,
+                ..l
+            }))
+            .collect::<Vec<_>>();
+        assert_eq!(owner_said(&between, "v4.0.1", &mike), Some(3));
+    }
+
+    #[test]
+    fn owner_said_does_not_stop_at_a_line_of_riff() {
+        let lines = [
+            published(1, "v4.0.1"),
+            chat(2, "mike", false, "approved"),
+            by_riff(3, "mike", "stop. wait for me"),
+        ];
+        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(2));
+    }
+
+    #[test]
+    fn a_line_of_the_log_reads_the_kind_riff_and_the_old_line_has_none() {
+        let line = chat(2, "mike", false, "approved");
+        let json = serde_json::to_value(&line).unwrap();
+        assert_eq!(json["riff"], false);
+        let old = serde_json::json!({
+            "seq": 2, "user": "mike", "session": false, "verified": true, "body": "approved",
+        });
+        assert_eq!(serde_json::from_value::<ChatLine>(old).unwrap(), line);
+    }
+
+    #[test]
+    fn chat_lines_mark_the_kind_riff_and_no_other_kind() {
+        let checked = |kind| riff_client::api::Checked {
+            message: riff_core::wire::Message {
+                seq: 1,
+                from: "riff://mike@pangolin".parse().unwrap(),
+                to: vec![],
+                body: "@mike riff release v4.0.1 waits for your approval".into(),
+                at_ms: 0,
+                kind,
+                sig: None,
+                payload: None,
+            },
+            verified: true,
+        };
+        use riff_core::wire::Kind;
+        let marks: Vec<bool> = [Kind::Message, Kind::Note, Kind::Other, Kind::Riff]
+            .into_iter()
+            .map(|kind| chat_lines(vec![checked(kind)])[0].riff)
+            .collect();
+        assert_eq!(marks, [false, false, false, true]);
     }
 
     #[test]

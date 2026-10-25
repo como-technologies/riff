@@ -111,6 +111,16 @@ pub fn thread() -> ThreadName {
     ThreadName::chat()
 }
 
+/// Posts `body` in riff chat as `me`, as a line that riff writes: the
+/// kind of the post is `riff` (01M5TKMVB7CF0QNAWXEVGEQETJ). The watch of
+/// a deploy, the daemon and `riff release` post so, as the person of the
+/// riff. `to` is what [`wakes`] gave for `body`. A line of the kind `riff`
+/// is no word of the person: `riff release approve` skips it.
+pub async fn post_by_riff(api: &Api, me: &SessionUri, to: &[Selector], body: &str) -> Result<()> {
+    api.post(me, Some(&thread()), to, body, Kind::Riff).await?;
+    Ok(())
+}
+
 /// The sessions that a chat line of `sender` wakes: the leads of each
 /// user that the line names with `@USER`, and the leads of the sender for
 /// `@lead`. `@USER:REPO` and `@lead:REPO` name the one lead in the

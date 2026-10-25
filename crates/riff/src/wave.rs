@@ -972,7 +972,8 @@ pub trait World: Send + Sync {
 
     /// Writes `body` in riff chat as the person of the lead of `record`,
     /// and wakes no session: the lead cannot act on it
-    /// (01M5NJ87YEHHGJBANM7CRYV56Z).
+    /// (01M5NJ87YEHHGJBANM7CRYV56Z). The line has the kind `riff`: it is
+    /// no word of the person (01M5TKMVB7CF0QNAWXEVGEQETJ).
     fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()>;
 
     /// Posts `body` as a message to the lead of `record`, as the person
@@ -2641,15 +2642,7 @@ impl World for Live {
             let posted = async {
                 let person = identity::person(record.me.place(), &record.server)?;
                 let api = Api::new(&record.server).signed_in(None)?;
-                api.post(
-                    &person,
-                    Some(&crate::chat::thread()),
-                    &[],
-                    body,
-                    Kind::Message,
-                )
-                .await?;
-                Ok::<(), anyhow::Error>(())
+                crate::chat::post_by_riff(&api, &person, &[], body).await
             };
             if let Err(e) = posted.await {
                 eprintln!("riff daemon: {}: {e:#}", record.live.name);

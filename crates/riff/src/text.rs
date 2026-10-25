@@ -464,7 +464,7 @@ pub fn wake_line(wake: &Wake) -> String {
     match wake.kind {
         // A note wakes no session, so a wake of a note does not come. A
         // kind of a later build is a message.
-        Kind::Message | Kind::Note | Kind::Other => format!(
+        Kind::Message | Kind::Note | Kind::Riff | Kind::Other => format!(
             "riff: {from} wrote to you in {place} (message {}). Use the riff read tool.",
             wake.seq
         ),
@@ -2515,7 +2515,7 @@ pub fn message(line: &Line) -> String {
     let lead = if line.lead { " lead=true" } else { "" };
     let head = format!("[{}] {}{lead}{to} ({mark})", line.seq, name(&line.from));
     match (line.kind, line.body.is_empty()) {
-        (Kind::Message | Kind::Other, _) => match action(&line.from, &line.body) {
+        (Kind::Message | Kind::Riff | Kind::Other, _) => match action(&line.from, &line.body) {
             Some(action) => format!("{head}: {action}"),
             None => format!("{head}: {}", line.body),
         },
@@ -3381,7 +3381,7 @@ pub fn told_step(session: &str) -> String {
 pub fn posted_step(kind: riff_core::wire::Kind, body: &str) -> String {
     use riff_core::wire::Kind;
     let action = match kind {
-        Kind::Message | Kind::Other => "posted a message",
+        Kind::Message | Kind::Riff | Kind::Other => "posted a message",
         Kind::Status => "asked for status",
         Kind::Note => "posted a note",
     };
@@ -3624,7 +3624,7 @@ where
     };
     let _ = write!(out, "  {mark}  {}", styled(DIM, &format!("#{}", m.seq)));
     let body = match (m.kind, m.body.is_empty()) {
-        (Kind::Message | Kind::Other, _) => {
+        (Kind::Message | Kind::Riff | Kind::Other, _) => {
             safe(&action(&m.from, &m.body).unwrap_or_else(|| m.body.clone()))
         }
         (Kind::Status, true) => "asks for your status.".into(),

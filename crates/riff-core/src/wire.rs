@@ -1407,6 +1407,13 @@ pub enum Kind {
     /// A note: it informs and wakes no session. A session sees it at its
     /// next `read` (01M3JPMQE6S7YM4HPEVGXWK7ET).
     Note,
+    /// A message that riff itself writes, as the person of the riff: the
+    /// watch of a deploy, the daemon, the lines of `riff release`. It
+    /// reads and wakes as a message. It never counts as the word of a
+    /// person ([`Kind::by_riff`]). A session has no use for it, so a
+    /// schema of a call does not list it.
+    #[schemars(skip)]
+    Riff,
     /// A kind that this build does not know. A reader shows the post as
     /// a message.
     #[schemars(skip)]
@@ -1415,20 +1422,37 @@ pub enum Kind {
 
 /// The set of kinds can grow. A build reads each value that it does not
 /// know as [`Kind::Other`]: a text, and each other form of JSON
-/// (01M3XSF90E9JYYTC13D9THY4WE).
+/// (01M3XSF90E9JYYTC13D9THY4WE). The kind [`Kind::Riff`] has a name in
+/// JSON but not in [`FromStr`](std::str::FromStr): a person types no
+/// such kind.
 impl<'de> Deserialize<'de> for Kind {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
-        Ok(value
-            .as_str()
-            .and_then(|text| text.parse().ok())
-            .unwrap_or(Kind::Other))
+        Ok(match value.as_str() {
+            Some("riff") => Kind::Riff,
+            text => text
+                .and_then(|text| text.parse().ok())
+                .unwrap_or(Kind::Other),
+        })
     }
 }
 
 impl Kind {
     pub fn is_message(&self) -> bool {
         *self == Kind::Message
+    }
+
+    /// True for the kind of a line that riff writes, not a person:
+    /// [`Kind::Riff`].
+    ///
+    /// ```
+    /// use riff_core::wire::Kind;
+    ///
+    /// assert!(Kind::Riff.by_riff());
+    /// assert!(![Kind::Message, Kind::Status, Kind::Note, Kind::Other].iter().any(Kind::by_riff));
+    /// ```
+    pub fn by_riff(&self) -> bool {
+        *self == Kind::Riff
     }
 
     /// True when a post of this kind needs a body. Only a status request
@@ -1446,11 +1470,15 @@ impl Kind {
     ///
     /// let read = |json: &str| serde_json::from_str::<Kind>(json).unwrap();
     /// assert_eq!(read(r#""note""#), Kind::Note);
+    /// // The kind of a line of riff has a name in JSON, and none for a person.
+    /// assert_eq!(read(r#""riff""#), Kind::Riff);
+    /// assert_eq!(serde_json::to_string(&Kind::Riff).unwrap(), r#""riff""#);
+    /// assert!("riff".parse::<Kind>().is_err());
     /// // A kind of a later build can have each form of JSON.
     /// for later in [r#""poll""#, r#"{"poll":"wave"}"#, "7", "null"] {
     ///     assert_eq!(read(later), Kind::Other, "{later}");
     /// }
-    /// assert!(Kind::Note.is_post() && !Kind::Other.is_post());
+    /// assert!(Kind::Note.is_post() && Kind::Riff.is_post() && !Kind::Other.is_post());
     /// assert_eq!(serde_json::to_string(&Kind::Other).unwrap(), r#""other""#);
     ///
     /// // The schema of a call has only the kinds of a `post` call.
