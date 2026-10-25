@@ -40,12 +40,14 @@
 //! that work to the branch `riff-kept/ITEM-ID8` of `origin`, then removes
 //! the folder ([`push_kept`], 01M5NVKNGZPK0GG7B7ZWBS0DFE). The push has
 //! the commits of `HEAD` that `origin` has not, and the changes of the
-//! tracked files in one more commit. It never has a file that git does
-//! not track. A commit on another local branch than `HEAD` goes to the
-//! branch `riff-kept/ITEM-ID8-BRANCH`, one for each such branch
-//! (01M5QVCAXF5ANTTT46XHR6SF7H). The folder stays when the push fails, or
-//! when git cannot read the clone. riff says why in `riff daemon sweep`,
-//! and one time in the log of the daemon ([`Daemon::sweep_news`]).
+//! tracked files in one more commit. That commit has no signature, also on
+//! a host whose git signs each commit (01M5TKETGZP9NTHBXFBP1RM1HP). It
+//! never has a file that git does not track. A commit on another local
+//! branch than `HEAD` goes to the branch `riff-kept/ITEM-ID8-BRANCH`, one
+//! for each such branch (01M5QVCAXF5ANTTT46XHR6SF7H). The folder stays
+//! when the push fails, or when git cannot read the clone. riff says why
+//! in `riff daemon sweep`, and one time in the log of the daemon
+//! ([`Daemon::sweep_news`]).
 //!
 //! After each sweep the daemon posts one digest note to the lead of the
 //! repository: what it pushed, with each branch, and what it removed
@@ -594,7 +596,9 @@ fn other_branches(clone: &Path) -> Result<Vec<String>> {
 /// `BRANCH-NAME`, for example `riff-kept/issue-12-1a2b3c4d-spare`
 /// (01M5QVCAXF5ANTTT46XHR6SF7H). It never pushes a file that git does not
 /// track: a scratch file or a log can hold a secret. A clone with only
-/// such files pushes nothing.
+/// such files pushes nothing. The commit has no signature
+/// (01M5TKETGZP9NTHBXFBP1RM1HP): the git of the host can sign each commit
+/// and have no key for riff.
 ///
 /// ```
 /// use riff::daemon::sweep::{Pushed, push_kept};
@@ -623,6 +627,16 @@ fn other_branches(clone: &Path) -> Result<Vec<String>> {
 /// assert_eq!(pushed, Pushed { branches: vec!["riff-kept/issue-12-1a2b3c4d-spare".into()], lost: 0 });
 /// // The next call finds nothing: `origin` has the commit.
 /// assert_eq!(push_kept(&clone, "riff-kept/issue-12-1a2b3c4d")?.branches, Vec::<String>::new());
+/// // A change of a tracked file, on a host whose git signs each commit and has no key.
+/// std::fs::write(clone.join("work.md"), "one")?;
+/// git(&clone, &["add", "work.md"]);
+/// git(&clone, &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "track"]);
+/// git(&clone, &["push", "-q", "origin", "HEAD:refs/heads/main"]);
+/// std::fs::write(clone.join("work.md"), "two")?;
+/// git(&clone, &["config", "commit.gpgsign", "true"]);
+/// git(&clone, &["config", "gpg.program", "false"]);
+/// let pushed = push_kept(&clone, "riff-kept/issue-13-1a2b3c4d")?;
+/// assert_eq!(pushed.branches, ["riff-kept/issue-13-1a2b3c4d"]);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn push_kept(clone: &Path, branch: &str) -> Result<Pushed> {
@@ -642,7 +656,14 @@ pub fn push_kept(clone: &Path, branch: &str) -> Result<Pushed> {
     let mut targets = Vec::new();
     if ahead > 0 || tracked > 0 {
         git(&["add", "-u"])?;
-        let who = ["-c", "user.name=riff", "-c", "user.email=riff@localhost"];
+        let who = [
+            "-c",
+            "user.name=riff",
+            "-c",
+            "user.email=riff@localhost",
+            "-c",
+            "commit.gpgsign=false",
+        ];
         let message = format!("riff kept the work of {branch}");
         git(&[
             &who[..],
@@ -1651,6 +1672,49 @@ pub(crate) mod tests {
         assert!(
             here.daemon.news.take("o/r").is_empty(),
             "one note, not one at each sweep"
+        );
+    }
+
+    /// 01M5TKETGZP9NTHBXFBP1RM1HP: the git of the host signs each commit,
+    /// and the program that signs finds no key. The commit of the sweep has
+    /// no signature, so the sweep keeps the work and the folder goes.
+    #[tokio::test]
+    async fn the_sweep_pushes_the_work_on_a_host_whose_git_signs_each_commit() {
+        let (here, _) = here(&[(1, Fate::Closed { pull: 41 })]).await;
+        let kept = folder(&here, "issue-1-00000001");
+        let clone = kept.join("clone");
+        std::fs::write(clone.join("tracked.md"), "one").unwrap();
+        git(&clone, &["add", "tracked.md"]);
+        git(&clone, &["commit", "-q", "-m", "track"]);
+        std::fs::write(clone.join("tracked.md"), "two").unwrap();
+        git(&clone, &["config", "commit.gpgsign", "true"]);
+        git(&clone, &["config", "gpg.program", "false"]);
+        // The setup is real: a plain commit fails to sign. A container of
+        // riff sets `commit.gpgsign=false` in `GIT_CONFIG_*`: the check drops it.
+        let plain = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&clone)
+            .args(["commit", "-q", "-a", "-m", "plain"])
+            .env_remove("GIT_CONFIG_COUNT")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_AUTHOR_NAME", "riff test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "riff test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .output()
+            .unwrap();
+        assert!(!plain.status.success(), "{plain:?}");
+
+        let swept = here.daemon.sweep_news(None).await;
+
+        let over = "the pull request #41 closed with no merge";
+        let branch = ["riff-kept/issue-1-00000001".to_owned()];
+        assert_eq!(swept, [text::swept_pushed(&kept, over, &branch, 0)]);
+        assert!(!kept.exists());
+        assert_eq!(
+            pushed(&here, "riff-kept/issue-1-00000001").unwrap(),
+            ["tracked.md"]
         );
     }
 

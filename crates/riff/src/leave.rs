@@ -70,6 +70,29 @@ pub const WIP_MESSAGE: &str = "WIP: the session left the riff";
 /// assert!(refused.contains("not the top of a git worktree"), "{refused}");
 /// # Ok::<(), std::io::Error>(())
 /// ```
+///
+/// The WIP commit has no signature (01M5TKETGZP9NTHBXFBP1RM1HP): the git
+/// of the host can sign each commit and have no key for riff.
+///
+/// ```
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+///     assert!(out.status.success(), "git {args:?}: {out:?}");
+/// };
+/// let root = tempfile::tempdir()?;
+/// let (origin, work) = (root.path().join("origin"), root.path().join("work"));
+/// git(root.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+/// git(root.path(), &["clone", "-q", origin.to_str().unwrap(), work.to_str().unwrap()]);
+/// git(&work, &["config", "user.name", "t"]);
+/// git(&work, &["config", "user.email", "t@t"]);
+/// git(&work, &["-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "first"]);
+/// git(&work, &["switch", "-q", "-c", "worktree-issue-1"]);
+/// git(&work, &["config", "commit.gpgsign", "true"]);
+/// git(&work, &["config", "gpg.program", "false"]);
+/// std::fs::write(work.join("work.md"), "work")?;
+/// assert_eq!(riff::leave::wip(&work)?, "worktree-issue-1");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
 pub fn wip(dir: &Path) -> Result<String> {
     if !crate::identity::is_top(dir) {
         bail!(
@@ -99,7 +122,17 @@ pub fn wip(dir: &Path) -> Result<String> {
     }
     if !git(dir, &["status", "--porcelain"])?.is_empty() {
         git(dir, &["add", "-A"])?;
-        git(dir, &["commit", "--quiet", "-m", WIP_MESSAGE])?;
+        git(
+            dir,
+            &[
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                WIP_MESSAGE,
+            ],
+        )?;
     }
     git(dir, &["push", "--quiet", "-u", "origin", "HEAD"])?;
     Ok(branch)

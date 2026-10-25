@@ -1365,6 +1365,9 @@ next sweep tries again:
 riff kept the folder /home/mike/.local/share/riff/sessions/issue-735-7788e301: the pull request #738 closed with no merge, but riff could not push its work: git push: denied. The next sweep tries again.
 ```
 
+riff signs no commit that it makes for itself. So a host whose git signs
+each commit (`commit.gpgsign`) keeps no folder for that reason.
+
 Look at the work in the clone, and push it by hand:
 
 ```sh
