@@ -52,7 +52,13 @@ fn pr(number: &str) -> ExitCode {
         eprintln!("error: {number:?} is not the number of a pull request\n{USAGE}");
         return ExitCode::from(2);
     }
-    let pr: PullRequest = match gh(&["pr", "view", number, "--json", "title,body,milestone"]) {
+    let pr: PullRequest = match gh(&[
+        "pr",
+        "view",
+        number,
+        "--json",
+        "title,body,milestone,author,commits",
+    ]) {
         Ok(pr) => pr,
         Err(e) => return tool_error(&e),
     };

@@ -2754,9 +2754,31 @@ Milestone: Wave 3
   request of the issue. Use `Refs #N` in each other one, and when a
   check after the release is left.
 - The last lines are trailers: the issue, and its wave by the number
-  (see [Rename a wave](waves.md#rename-a-wave)).
+  (see [Rename a wave](waves.md#rename-a-wave)). They stand in the last
+  block of trailers of the message. Other trailers may stand in the
+  block, before or after them: `Co-authored-by:`, `Signed-off-by:` and
+  `Generated-by:`. A line of text in the block breaks the rule, and so
+  does a paragraph of text after it.
 - Give the pull request the milestone of its issue. Do not end the
   title with `(#N)`. GitHub adds the number of the pull request.
+
+A pull request with a co-author gets a `Co-authored-by:` line for each
+one at the squash, after a blank line. `Hygiene` reads the commits of
+the pull request, and checks the message that the squash will make.
+This commit on `main` passes:
+
+```text
+Pause and resume the riff (#90)
+
+Closes #77
+
+Pause and resume the riff. A new riff starts paused.
+
+Issue: #77
+Milestone: Wave 3
+
+Co-authored-by: Ana <ana@example.com>
+```
 
 `riff pr open` writes this body and opens the pull request (see
 [Open a pull request](how-it-works.md#open-a-pull-request)).
