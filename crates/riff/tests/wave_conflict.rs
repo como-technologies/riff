@@ -159,6 +159,50 @@ fn a_new_head_with_no_conflict_waits_for_its_verify() {
     );
 }
 
+/// #1464: GitHub gives `UNKNOWN` for a pull request after `main` moved,
+/// until it has looked at it. The Gate of the head passed, and the pull
+/// request waits for a verify, but the verify waits too: the head may have
+/// a conflict. The look at `MERGEABLE` puts the verify in the free work,
+/// and the look at `CONFLICTING` puts the rebase.
+#[test]
+fn a_pull_request_that_reads_unknown_gets_its_verify_at_the_next_look() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(dir.path(), &[pull(1, "aaaa111", None, "UNKNOWN", true)]);
+    let first = look(&gh);
+    assert_eq!(first.free, ["issue-2", "issue-3", "issue-4", "issue-5"]);
+    assert!(first.pulls.is_empty(), "{:?}", first.pulls);
+    assert!(first.fixes.conflicts.is_empty());
+    let verify = Work::Verify {
+        issue: 1,
+        pull: 41,
+        commit: "aaaa111".into(),
+    };
+    let none = BTreeSet::new();
+    assert_ne!(
+        wave::pick(&first, &none, &BTreeMap::new()),
+        Some(verify.clone())
+    );
+
+    // The next look: GitHub knows that the head has no conflict.
+    forge(dir.path(), &[pull(1, "aaaa111", None, "MERGEABLE", true)]);
+    let second = look(&gh);
+    assert_eq!(second.free[0], "verify-issue-1");
+    assert_eq!(wave::pick(&second, &none, &BTreeMap::new()), Some(verify));
+
+    // Or it knows that the head has a conflict: the rebase, no verify.
+    forge(dir.path(), &[pull(1, "aaaa111", None, "CONFLICTING", true)]);
+    let third = look(&gh);
+    assert_eq!(third.free[0], "issue-1");
+    assert_eq!(
+        wave::pick(&third, &none, &BTreeMap::new()),
+        Some(Work::Rebase {
+            issue: 1,
+            pull: 41,
+            commit: "aaaa111".into()
+        })
+    );
+}
+
 /// A pull request whose verify failed is free work as a build, with the
 /// failed result: no rebase.
 #[test]

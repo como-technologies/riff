@@ -4869,6 +4869,13 @@ of this part when they merge.
   needs, and the digest of `riff-base` to build `FROM`. The daemon tells
   the lead of a repository one time for each image and each base, until
   it starts again. A tool that gives no version gives no message.
+- **01M5SVE4HJ0EEVECE848DVT1RX** The wave of the daemon starts no verify
+  of an open pull request whose state `mergeable` is `UNKNOWN`: GitHub
+  did not find yet if the head commit has a conflict with `main`, as
+  after a push or after a move of `main`. The verify waits for the next
+  look. A look that reads `MERGEABLE` puts the verify in the free work,
+  and one that reads `CONFLICTING` puts the rebase
+  (01M57FJ3WWMQSDBFRRHXN3SMFQ).
 
 ### The lead, the view and the takeover
 
