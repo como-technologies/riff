@@ -2711,6 +2711,11 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
             match self.lead_launch(start.clone()).await {
                 Ok(()) => {
+                    // The next update can fail on its own: the person hears of it.
+                    self.again_told
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .remove(&record.live.session);
                     let line = text::lead_started_again(&name);
                     self.world.chat(&record, &line).await;
                     return Some(line);
@@ -2725,8 +2730,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The [`Start`] of the lead of `record` on the riff of this daemon,
-    /// with everything that the start needs checked: the daemon refuses
-    /// nothing in it, the image is here and the riff is one that it binds.
+    /// with all that can fail checked before the stop: the main clone of
+    /// the wave, the facts of the host, the spec, the relay and the image.
     async fn lead_start(&self, record: &Record) -> Result<Start> {
         let repo = record.me.place().repo_text();
         let wave = crate::wave::read_waves(&self.dir)?
