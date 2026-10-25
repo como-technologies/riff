@@ -2605,8 +2605,9 @@ just reqs
 ```
 
 It fails with `superseded-in-full` on a requirement of `requirements.md`
-that says "Superseded by" and does not say "in part". A citation of the
-ID finds it on the history page, so nothing else changes.
+that says "Superseded by" or "Replaced by" and does not say "in part".
+A citation of the ID finds it on the history page, so nothing else
+changes.
 
 ## Add a field or a type of the log or the wire
 

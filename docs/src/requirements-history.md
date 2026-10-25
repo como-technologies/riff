@@ -128,6 +128,7 @@ page [Requirements](requirements.md) holds the rules of today.
 - **R75** `riff connect claude` removes the user-scope MCP server entry
   `riff`, if it exists. The plugin gives the riff tools instead.
   Superseded by 4.0 (#1173).
+- **R76** Replaced by 01M3XY2SNXQJRSH5QX82AFVM2S.
 - **R77** `riff connect claude` does not need a riff session or a git
   repository. It works in any directory. Superseded by 4.0 (#1173).
 - **01M3XY2SHGXQR9NVXF7QJBN09T** riff is off in a Claude Code session
@@ -252,6 +253,8 @@ page [Requirements](requirements.md) holds the rules of today.
 
 ## Pause
 
+- **01M3JCG3T8AJZN31SZQQTP3FAF** Replaced by
+  01M3XAHZDSQR263QZVB41CK0MX.
 - **01M3JCG48QPCNNTKW34FTR0AMR** The start hook and the skill tell a
   session the state of the riff. They tell it to pick a free item only
   when the riff is running. When the hook cannot read the state, it
@@ -274,9 +277,19 @@ page [Requirements](requirements.md) holds the rules of today.
   the same worktree on a free local port. It never talks to the shared
   riff. `just dev` changes nothing that is installed.
   Superseded by 4.0 (#1173).
+- **01M43B491Z25KT0XBC7CANFS5G** Replaced by 01M49NP2907J4SH4S6MAY09VXE.
+
+## Saved state
+
+- **R154** Replaced by R125.
+- **R128** Replaced by 01M3XA877YZQ649SWB5TN60V5P.
+- **01M3TFG527M04TA7ESM970X3B8** Replaced by 01M53T8XH45WSVKS9FV3VXF2X8.
+- **R149** Replaced by 01M3T411BZQB8N4D2S0JFVESMS.
 
 ## The log
 
+- **01M3WRD9DYJWVN1QRBAC3ZVVZD** Replaced by
+  01M3Z8MRDZEKTXSKZTDTDSCZ3W.
 - **01M3X9XA3H6YF0QCYSNB2P0CT2** Only a `register` or a `start` that
   the session sends makes the first lead of a user in a repository
   (R176), and never for a worker. The `register` that the engine runs
@@ -325,6 +338,7 @@ page [Requirements](requirements.md) holds the rules of today.
 
 ## Cloud
 
+- **01M3K0Q854K18DGXJKQ427W586** Replaced by 01M3Q5VE74608N5H2M73RB6Y2Z.
 - **01M3K0Q892KWM76R9DJC1P37JA** `riff update` updates riff on a
   machine: it installs `riff` and `riff-server` of a release from the
   repository with `cargo`, then updates the plugin with
@@ -334,6 +348,24 @@ page [Requirements](requirements.md) holds the rules of today.
   does not restart it. That server is the server of `riff` when it is
   on the same machine, else `http://127.0.0.1:7878`. Superseded by 3.0
   (01M4Z60B7H67YSP22NMGT3DM7X).
+- **01M3K0Q8C9NK4NY6TJWRMJS7ZQ** Replaced by 01M4262DQ9RNFNJ07CRTSGEAM1.
+- **R160** Replaced by 01M3NJAZ6BYH7TWKDYTVEK78PG.
+- **01M3MMZQ3KTF5Z3GXNR7DRQ65Z** Replaced by 01M3NJAZ8HSE87H0GZ8SNGWN31.
+- **01M3MRMASMP59PKHAV92XSV7XE** Replaced by
+  01M3N73AW2J3TVSZWFJ88A91PG.
+- **01M510MPTKK285C9Z2TW54M5P7** Replaced by 01M56N6KSMFJ46PW99Z80GF9DM.
+- **01M550XYBAW5QYXEMQ49Z34M4N** Replaced by 01M56N6KVZRGT3W7CEK05DHR57.
+- **01M553AWMXYAG7CJGW7M30XDZ8** Replaced by 01M56N6KVZRGT3W7CEK05DHR57.
+- **R161** Replaced by 01M3NJAZAQ3AKMAM0EGM7R3S89.
+- **01M3ZE3Z26N1CG090D5D5FZ3NW** Replaced by 01M496JTN962N0AX378MA1MBPM.
+- **01M4262DY8NN30SC4REYX2G9DV** Replaced by 01M558C4VZ2PSMEYPAZBRYW1VV.
+
+## One instance
+
+- **01M3THEE08ZKV8WGHDSVWV69ZE** Replaced by 01M52JYGHHK5X0XS39VFT3ZGGM.
+- **01M3THEE31H5QVV3JAFC4ZRGFR** Replaced by 01M52JYGM7WH565B7PCVBEJC17.
+- **R140** Replaced by 01M52JYGPX5ETP3HKR0S0Y0YCR.
+- **01M53NHK07KNXJ7FXS26NB1675** Replaced by 01M56T4SZ4Y6PSY1VTVA3758FT.
 
 ## Sessions
 
@@ -356,6 +388,8 @@ page [Requirements](requirements.md) holds the rules of today.
   When the push of an earlier worktree
   fails, the pull names the branch:
   `git -C PATH pull --rebase origin BRANCH`. Superseded by 4.0 (#1173).
+- **01M3JNVBPMZ1K9WX7Q7DP6Y0DH** Replaced by
+  01M3XA87HE06Z6M32ZJPSYSYRZ.
 - **R176** The first session of a person in a repository becomes the
   lead, with no action. It is first when no other session of the
   person in that repository holds (R9). A later session does not
@@ -395,6 +429,9 @@ page [Requirements](requirements.md) holds the rules of today.
   on the item, pushes its work as WIP, writes the state on the issue,
   and claims the item again only when the lead asks it to.
   Superseded by 4.0 (#1173).
+- **01M3MEW73CDSJDSKX32XW80WZH** Replaced by 01M3Q63MVZ74WPNBA3QJYQGHFG.
+- **01M3MEW75WC7Y4M1BKQ7SXRPNR** Replaced by 01M3Q5VE2D244XDZRYXM8DNSRS.
+- **01M3N754NY5JX4P0SN8R4ZYFG9** Replaced by 01M3Q63NK0AHM25MB258B0K8XP.
 - **01M3JDWA0WZWKF3JT3NYA2FV5Z** `riff statusline` prints the status
   line of a Claude Code session: `riff`, the short session ID of
   `riff who`, `lead`, each claim, and `blocked`. It is the
@@ -545,6 +582,8 @@ page [Requirements](requirements.md) holds the rules of today.
   step, and to call `blocked` when it cannot go on with no decision of
   a person. It says what the words of a status are for.
   Superseded by 4.0 (#1173).
+- **01M3NK7VM1J5DDB0PECNZ28P4E** Replaced by
+  01M49Z4E8QB1QDXVCPE6MX5JX2.
 
 ## Security
 
@@ -562,9 +601,22 @@ page [Requirements](requirements.md) holds the rules of today.
   cannot be removed. `riff members` shows the owner, the admins, the
   members and the allowed domains to each person who signed in.
   Superseded by 3.0 (01M519Z4AEMDFGBF22RZ3HQR1R).
+- **01M3JN3ANE676DT5WQ2NTG47DK** Replaced by
+  01M3XA875QZ584JBGA37853PWX.
 - **01M3MN157X8N9QKER1AJEPEJVX** `riff members` lists each person
   once, with the highest role: owner, then admin, then member.
   Superseded by 3.0 (01M519Z4AEMDFGBF22RZ3HQR1R).
+- **01M3N7K443DGPZ8XH5WWKK6M35** Replaced by
+  01M3Q5460YESBSQHTV3M15PE53.
+- **01M3N7K46H5BRFJCB46P3JNAFZ** Replaced by
+  01M3Q546335NBTKG5BHQ27QC93.
+- **01M3N7K48XQ8XSP7R0HD535ZX3** Replaced by 01M3Q63NNC6SC03BFCG80M7B4D.
+- **R116** Replaced by 01M3TFG4SJ5C96NH8W7XRXJG6Z.
+- **01M3TFG4PN1DWY1FXX0SVB3H3R** Replaced by 01M3WFVAB44T8EP4QZD4KS7DRF.
+- **01M3WFVAB44T8EP4QZD4KS7DRF** Replaced by 01M52JYGWD3ZJKNYE3HG5BJYTP.
+- **01M3TFG4ZCWS98R7W6RYZFWZXF** Replaced by 01M3WFVADCDZM8XX590KAEMEYG.
+- **01M3TFG551C76BP4TRA32P7VC3** Replaced by 01M52JYGSNTFPQ0ZP50AD2BG89.
+- **R103** Replaced by 01M3WFVADCDZM8XX590KAEMEYG.
 - **01M4385CEWGCP31DP5PAMPXZ97** A workers host looks at the OS
   keyring each 30 seconds. When the keyring locks, the host says one
   line and posts one note to the lead. While it stays locked, the host
@@ -817,6 +869,8 @@ page [Requirements](requirements.md) holds the rules of today.
   the user. This applies only while the rollout is off
   (01M3Q5QE9H42FQKEDC5G9GKCWD). Superseded by 3.0
   (01M4Z60B7NW4GHKGCYZZDG26R6).
+- **01M3JQC8ANFYYEXSHBS2DCZYBX** Replaced by
+  01M493YZVZGA7TSRJH6F67VN0H.
 - **01M3JQC8ETHRAWSJPHMKA062SQ** The wrapper sets `RIFF_WORKER=1`. The
   start context of such a session says that it is a worker.
   Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
@@ -825,6 +879,8 @@ page [Requirements](requirements.md) holds the rules of today.
   not end its session. A worker does not wait for a verify
   (01M3Z9N6AK6W9KCA1MN72X78B6). The start hook and the skill say so.
   Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+- **01M3K0AXPFSWNG7YPVXE65W464** Replaced by
+  01M3Q5A0NKY1FCS0YH6N6YD3GN and 01M3Q5A11RKZW1610SWGSMTE3W.
 - **01M3K0AXRNA0F2920E9QCSDFQZ** The skill tells the lead: when an item
   or a verify request is free, give it to an idle worker with a
   request (`tell`, `request: claim ITEM`) before it starts a new
@@ -1592,9 +1648,21 @@ page [Requirements](requirements.md) holds the rules of today.
 
 ## Builds
 
+- **01M3JEE7KZR5VVJGZQD82AA6NH** Replaced by
+  01M3MNVT7G701SDP1Z1THMRDQ2.
+- **01M3MNVT7G701SDP1Z1THMRDQ2** Replaced by
+  01M3MX1DYY6AVDW946NR0B9T2C and 01M3MX1E3R5WESVHA8RZXFQR1J.
+- **01M3MX1E3R5WESVHA8RZXFQR1J** Replaced by
+  01M3N73E5JWFTYZ90JX5AVFGEP to 01M3N73EEQ4HPCPPAGCAHH3S6B.
+- **01M3JEE7RDTDD3KQMKH41E8D57** Replaced by
+  01M3MX1E65XGWDZ062PQ9YXQ5T.
+- **01M3MNVT9TYNXZ8V845BHKQADV** Replaced by
+  01M3MX1E8M9TKBN90P4DYKH3H8.
 - **01M3JEE7TPZMNK7X6JXJ7GWFPP** When the versions cannot talk, the
   start hook gives the session the error, and tells it to tell its
   user at once and not to use the riff. Superseded by 4.0 (#1173).
+- **01M3MNVTE6GAK4WRSCFGYVS0BE** Replaced by
+  01M3NT6WZTKAFKGDWGCFKC8TB5.
 - **01M3NT6WZTKAFKGDWGCFKC8TB5** When a new `riff` binary is on disk,
   `riff mcp` runs it in its place at the first moment with no request
   in flight, with no end call, so that the claims of the session stay.
@@ -1609,6 +1677,8 @@ page [Requirements](requirements.md) holds the rules of today.
   fails, the old process keeps the tools of the session, says the
   error once on stderr, and waits for the next new binary.
   Superseded by 4.0 (#1173).
+- **01M43F5KH7RE8241T18ZJJH7DV** Replaced by
+  01M53QQR7J7DG86SMAERKMYSAF.
 - **01M53QQR7J7DG86SMAERKMYSAF** A `riff mcp` whose client sent no
   initialize request runs a new binary too. A client of the MCP
   protocol `2026-07-28`, as Claude Code is, starts with
@@ -1664,6 +1734,8 @@ page [Requirements](requirements.md) holds the rules of today.
 - **01M3NJCRVZW5BFQYZ9N185K2D2** `riff mcp` records its build on the
   machine, with its session record, while it runs.
   Superseded by 4.0 (#1173).
+- **01M3NJCWBFJK03AC64XN04TTH0** Replaced by
+  01M3NT6X22A4GNFTNKRYV8Z4N1.
 - **01M3NT6X22A4GNFTNKRYV8Z4N1** When `riff-server` runs a newer
   release than the `riff mcp` of a session, the status line of the
   session adds a tag: `update vX.Y.Z: riff update`; with

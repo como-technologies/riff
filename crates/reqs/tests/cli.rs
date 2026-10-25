@@ -233,6 +233,29 @@ fn a_requirement_superseded_in_full_in_the_rules_of_today_fails() {
 }
 
 #[test]
+fn a_replaced_requirement_in_the_rules_of_today_fails() {
+    let new = reqs::new_id();
+    let old = format!("- **R1** Replaced by\n  {new}.\n");
+    let dir = repo(&format!("{old}- **{new}** The new rule.\n"), "");
+    let out = check(dir.path());
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(
+        err.contains("docs/src/requirements.md:1: superseded-in-full: R1 says \"Replaced by\""),
+        "{err}"
+    );
+
+    // On the history page, the same requirement is where it belongs.
+    let dir = repo_with_history(
+        &format!("- **{new}** The new rule.\n"),
+        Some(&old),
+        &format!("// {new}\n"),
+    );
+    let out = check(dir.path());
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+#[test]
 fn a_requirement_superseded_in_part_stays_in_the_rules_of_today() {
     let new = reqs::new_id();
     let dir = repo(

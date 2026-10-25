@@ -22,7 +22,7 @@
 //! | `unknown-id` | error | A cited ID that no requirement has, on either page. |
 //! | `id-format` | warning | A requirement ID that is not an old ID (`R1` to `R232`) and not a valid ULID. |
 //! | `block-end` | error | A requirement block whose last line does not end with a full stop. A new requirement in the middle of another one causes it. |
-//! | `superseded-in-full` | error | A requirement in `requirements.md` that says "Superseded by" and does not say "in part". |
+//! | `superseded-in-full` | error | A requirement in `requirements.md` that says "Superseded by" or "Replaced by" and does not say "in part". |
 //!
 //! A requirement is a line of the form `- **ID** text`. Its block is
 //! that line and the indented lines under it. A citation is a word that
@@ -149,9 +149,9 @@ pub const HISTORY: &str = "docs/src/requirements-history.md";
 /// ID that `sources` cite. Each source is a path and its text. An ID is
 /// unique across both pages, and a citation finds its ID on either one.
 ///
-/// A requirement of `requirements` whose block says "Superseded by" and
-/// does not say "in part" is superseded in full. It belongs on the
-/// history page.
+/// A requirement of `requirements` whose block says "Superseded by" or
+/// "Replaced by" and does not say "in part" is superseded in full. It
+/// belongs on the history page.
 ///
 /// ```
 /// let requirements = "- **R1** One.\n- **R1** Again.\n- **X-1** Bad.\n- **R233** New.\n";
@@ -172,6 +172,9 @@ pub const HISTORY: &str = "docs/src/requirements-history.md";
 ///     "docs/src/requirements.md:1: superseded-in-full: R1 says \"Superseded by\" and not \"in part\". \
 ///      Move it to docs/src/requirements-history.md, in the same section, with its ID and text unchanged",
 /// ]);
+///
+/// let report = reqs::check("- **R1** Replaced by R2.\n- **R2** New.\n", "", &[]);
+/// assert!(report.errors[0].contains("R1 says \"Replaced by\" and not \"in part\""));
 /// ```
 pub fn check(requirements: &str, history: &str, sources: &[(&str, &str)]) -> Report {
     let mut report = Report::default();
@@ -208,9 +211,11 @@ pub fn check(requirements: &str, history: &str, sources: &[(&str, &str)]) -> Rep
                     n + 1
                 ));
             }
-            if path == REQUIREMENTS && superseded_in_full(&lines[n..=end]) {
+            if path == REQUIREMENTS
+                && let Some(marker) = superseded_in_full(&lines[n..=end])
+            {
                 report.errors.push(format!(
-                    "{path}:{}: superseded-in-full: {id} says \"Superseded by\" and not \"in part\". \
+                    "{path}:{}: superseded-in-full: {id} says \"{marker}\" and not \"in part\". \
                      Move it to {HISTORY}, in the same section, with its ID and text unchanged",
                     n + 1
                 ));
@@ -241,15 +246,21 @@ pub fn check(requirements: &str, history: &str, sources: &[(&str, &str)]) -> Rep
     report
 }
 
-/// True when the block `block` says "Superseded by" and does not say
-/// "in part". A line break may split either phrase.
-fn superseded_in_full(block: &[&str]) -> bool {
+/// The words that mark a requirement as superseded in full, when the block
+/// `block` has one of them and does not say "in part". A line break may
+/// split any of the phrases.
+fn superseded_in_full(block: &[&str]) -> Option<&'static str> {
     let text = block
         .iter()
         .flat_map(|l| l.split_whitespace())
         .collect::<Vec<_>>()
         .join(" ");
-    text.contains("Superseded by") && !text.contains("in part")
+    if text.contains("in part") {
+        return None;
+    }
+    ["Superseded by", "Replaced by"]
+        .into_iter()
+        .find(|marker| text.contains(marker))
 }
 
 /// The last line (0-based) of the requirement block that starts on line
@@ -482,11 +493,32 @@ mod tests {
     }
 
     #[test]
+    fn a_replaced_requirement_left_in_the_rules_of_today_is_an_error() {
+        let id = new_id();
+        for text in [
+            format!("- **R1** Replaced by {id}.\n"),
+            format!("- **R1** Replaced by\n  {id}.\n"),
+        ] {
+            let requirements = format!("{text}- **{id}** New.\n");
+            let report = check(&requirements, "", &[]);
+            assert_eq!(report.errors.len(), 1, "{text}: {report:?}");
+            assert!(
+                report.errors[0].starts_with(&format!(
+                    "{REQUIREMENTS}:1: superseded-in-full: R1 says \"Replaced by\""
+                )),
+                "{report:?}"
+            );
+            assert_eq!(check("", &requirements, &[]), Report::default(), "{text}");
+        }
+    }
+
+    #[test]
     fn a_requirement_superseded_in_part_stays() {
         let id = new_id();
         for text in [
             format!("- **R1** One. Superseded in part by {id}.\n"),
             format!("- **R1** One. Superseded by {id} in\n  part.\n"),
+            format!("- **R1** One. Replaced in part by {id}.\n"),
             "- **R1** One. The old one is superseded by another.\n".to_string(),
         ] {
             let requirements = format!("{text}- **{id}** New.\n");

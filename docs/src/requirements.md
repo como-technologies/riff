@@ -164,7 +164,6 @@
   work". In the main worktree, the context has no worktree line.
 - **01M3JN21YJSP7HM1JPS1TCFM9W** The update of each machine pulls each
   clone of the project with `git pull --ff-only`.
-- **R76** Replaced by 01M3XY2SNXQJRSH5QX82AFVM2S.
 - **01M3XY2T2YEV7GT7DKJHSMMHYR** In a linked worktree, riff also reads
   the local settings and the project settings of the main clone. The
   local settings come before the project settings.
@@ -703,8 +702,6 @@
   true) names the whole riff. `--repo OWNER/REPO` names a repository.
   A resume of a repository while the whole riff is paused changes only
   the pause of the repository.
-- **01M3JCG3T8AJZN31SZQQTP3FAF** Replaced by
-  01M3XAHZDSQR263QZVB41CK0MX.
 - **01M3XAHZDSQR263QZVB41CK0MX** A person (a call with no session ID,
   for example `riff pause` in a shell) or the lead of a repository can
   pause and resume the repository of the call. Only the owner or an
@@ -817,7 +814,6 @@
   `TMPDIR`, then `/var/tmp`, `/tmp` and `/dev/shm`. So the test passes,
   and writes nothing, also when `TMPDIR` is in a repository, for
   example the home of the person.
-- **01M43B491Z25KT0XBC7CANFS5G** Replaced by 01M49NP2907J4SH4S6MAY09VXE.
 - **01M49NP2907J4SH4S6MAY09VXE** Each cargo run in the riff repository,
   also a plain `cargo test`, has `TMPDIR` set to `/var/tmp`:
   `.cargo/config.toml` sets it with `force`. So no test of a worker
@@ -923,7 +919,6 @@
   of the load. Its claims and its lead end after the grace period
   (R9), unless it comes back. A record that came since the load
   (01M3THEE08ZKV8WGHDSVWV69ZE) does not start the time again.
-- **R154** Replaced by R125.
 - **R126** After a replay, each session is gone until it calls again.
   `who --all` shows it in the place of the last record that names it.
 - **R127** `riff-server` saves the changed token store at most once each
@@ -932,8 +927,6 @@
   of one save of the token store to the start of the next. So the store
   gets at most one save of the object each second, also when one save is
   slow and the next one is fast.
-- **R128** Replaced by 01M3XA877YZQ649SWB5TN60V5P.
-- **01M3TFG527M04TA7ESM970X3B8** Replaced by 01M53T8XH45WSVKS9FV3VXF2X8.
 - **01M53T8XH45WSVKS9FV3VXF2X8** `riff-server` replies to a refresh and
   to a swap for a session token before it saves the token store. While
   the last save of the token store failed, a refresh first saves it
@@ -958,7 +951,6 @@
 - **R147** The name of each chunk of the log starts with `log/`. The
   name of each checkpoint starts with `checkpoint/`. The token store
   and the lease have names outside `log/` and `checkpoint/`.
-- **R149** Replaced by 01M3T411BZQB8N4D2S0JFVESMS.
 - **01M3MMXYS1V8CA89D2XHKPR6C4** When `riff-server` cannot read a saved
   object at start, for example state of an old format, it does not
   migrate it. It logs one error at the ERROR level and stops. The error
@@ -1150,8 +1142,6 @@
   commands, each with a path of its own: `/v1/pause`, `/v1/resume` and
   `/v1/idle/set`. A read of the pause (`/v1/riff`) and of the settings
   of idle workers (`/v1/idle`) is a query.
-- **01M3WRD9DYJWVN1QRBAC3ZVVZD** Replaced by
-  01M3Z8MRDZEKTXSKZTDTDSCZ3W.
 - **01M3Z8MRDZEKTXSKZTDTDSCZ3W** Go live keeps the work of each
   repository of the riff. A start of `riff-server` on a store that has
   the objects of a `riff-server` from before the log (`sessions`,
@@ -1569,7 +1559,6 @@
   URL, `HOST` or `HOST:PORT`. With no scheme, `riff` uses `http://`,
   and port 7878 when there is no port. A bare IPv6 address gets
   brackets in the URL.
-- **01M3K0Q854K18DGXJKQ427W586** Replaced by 01M3Q5VE74608N5H2M73RB6Y2Z.
 - **01M3Q5VE74608N5H2M73RB6Y2Z** `riff server` shows the server that
   `riff` uses, and where that choice comes from: `--server`,
   `RIFF_SERVER` or the default. For that server, it shows if the
@@ -1612,7 +1601,6 @@
   they have the same port, and the same host or two loopback names,
   for example `localhost` and `127.0.0.1`. `riff server` shows one
   riff once.
-- **01M3K0Q8C9NK4NY6TJWRMJS7ZQ** Replaced by 01M4262DQ9RNFNJ07CRTSGEAM1.
 - **R32** The OIDC client secret is in Secret Manager. Cloud Run gives
   it to `riff-server` as `RIFF_OIDC_CLIENT_SECRET`.
 - **R134** `riff-server` runs as its own service account. The account
@@ -1622,7 +1610,6 @@
   certificates. It runs as a user that is not root.
 - **R151** Cloud Build builds the image as its own service account. That
   account can only build and store images.
-- **R160** Replaced by 01M3NJAZ6BYH7TWKDYTVEK78PG.
 - **01M3NJAZ6BYH7TWKDYTVEK78PG** CI deploys `riff-server` when the
   repository variable `CLOUD_DEPLOY` is `true`, in two cases: a push of
   a release tag `vX.Y.Z`, after the job `Release check` of the tag
@@ -1630,13 +1617,10 @@
   `tag`, after the gate passes. CI builds the image of that release,
   pushes it to the image repository of the project, and deploys it. One
   deploy runs at a time.
-- **01M3MMZQ3KTF5Z3GXNR7DRQ65Z** Replaced by 01M3NJAZ8HSE87H0GZ8SNGWN31.
 - **01M3NJAZ8HSE87H0GZ8SNGWN31** A push to `main` never deploys the
   shared server. A tag that is not `vX.Y.Z` never deploys. The release
   tag at the end of a wave deploys the release (R216). A run by hand is
   for a redeploy or a rollback to an older release.
-- **01M3MRMASMP59PKHAV92XSV7XE** Replaced by
-  01M3N73AW2J3TVSZWFJ88A91PG.
 - **01M3N73AW2J3TVSZWFJ88A91PG** A release is a git tag `vX.Y.Z`. X.Y.Z
   is the version of the crates in `Cargo.toml` and `Cargo.lock`. The
   rules 01M3N73E5JWFTYZ90JX5AVFGEP to 01M53N7KN4QKZ70W2GNQ3VQWQ9 pick
@@ -1660,7 +1644,6 @@
   GitHub, with no sign-in. With `RIFF_RELEASES`, it reads the file
   `latest` there, in the form of the reply of the API. When it finds no
   Latest release, it installs nothing and names `--tag`.
-- **01M510MPTKK285C9Z2TW54M5P7** Replaced by 01M56N6KSMFJ46PW99Z80GF9DM.
 - **01M56N6KSMFJ46PW99Z80GF9DM** The GitHub releases of a retired line
   stay normal releases. When a line retires, no release of it becomes a
   prerelease, and its notes do not change. The line 1.x retired after
@@ -1669,8 +1652,6 @@
   (#706): its one GitHub release, `v2.0.1`, is a prerelease. The tag
   `v2.0.0` has no GitHub release. Superseded by
   01M5RG6BTXAJY8DV6MT315VZWF.
-- **01M550XYBAW5QYXEMQ49Z34M4N** Replaced by 01M56N6KVZRGT3W7CEK05DHR57.
-- **01M553AWMXYAG7CJGW7M30XDZ8** Replaced by 01M56N6KVZRGT3W7CEK05DHR57.
 - **01M56N6KVZRGT3W7CEK05DHR57** riff has no command that retires a
   release line. `riff --help` lists no `retire`, and `riff retire`
   fails: riff does not know the command. Superseded by
@@ -1693,7 +1674,6 @@
   pull request with neither the label `design` nor `internal`),
   `Design` (the label `design`) and `Internal` (the label `internal`).
   `.github/release.yml` sets the groups.
-- **R161** Replaced by 01M3NJAZAQ3AKMAM0EGM7R3S89.
 - **01M3NJAZAQ3AKMAM0EGM7R3S89** CI signs in to Google Cloud with the
   OIDC token of GitHub. No key exists. Only the `main` branch and the
   tags `v*` of the repository can sign in. The deploy account can push
@@ -1731,7 +1711,6 @@
   the how-to in the book. `riff cloud signin` puts the client secret in
   Secret Manager and the client ID in the settings file. The secret is
   never in the repository or in a downloaded file.
-- **01M3ZE3Z26N1CG090D5D5FZ3NW** Replaced by 01M496JTN962N0AX378MA1MBPM.
 - **01M496JTN962N0AX378MA1MBPM** The stage is a second riff-server in
   the project, for the rehearsal of a release and the check of each
   merge. `deploy/cloud/stage.env` holds its settings. It has its own
@@ -1765,7 +1744,6 @@
   settings have `CLOUD_CONFIRM=true`, as the shared riff has. With no
   terminal, only `--confirm NAME` gives it. `delete` keeps the bucket
   unless `--with-state`.
-- **01M4262DY8NN30SC4REYX2G9DV** Replaced by 01M558C4VZ2PSMEYPAZBRYW1VV.
 - **01M558C4VZ2PSMEYPAZBRYW1VV** These riff commands write outside the
   session that runs them, to the riff, the forge or the cloud: the
   writes of `riff cloud`: `create`, `signin`, `deploy`, `smoke` and
@@ -1820,7 +1798,6 @@
   (01M3THEE08ZKV8WGHDSVWV69ZE). Then it makes a random ID and writes it
   to the lease. It then waits 15 seconds, applies the chunks that came
   since the load, and starts to serve.
-- **01M3THEE08ZKV8WGHDSVWV69ZE** Replaced by 01M52JYGHHK5X0XS39VFT3ZGGM.
 - **01M52JYGHHK5X0XS39VFT3ZGGM** The start order of an instance with a
   store is: load, then the port, then the lease. The load reads the
   sign-ins, the newest checkpoint and the log after it, with no lease.
@@ -1853,7 +1830,6 @@
   from the newest checkpoint that reads, and replays the log after it.
   So the read cursors, the statuses and the last calls of the old
   instance stay after a deploy.
-- **01M3THEE31H5QVV3JAFC4ZRGFR** Replaced by 01M52JYGM7WH565B7PCVBEJC17.
 - **01M52JYGM7WH565B7PCVBEJC17** `riff-server` opens its port after the
   load, before it takes the lease. Until it serves, it replies 503 to
   each call, with the build of riff-server. So at an instance change,
@@ -1862,7 +1838,6 @@
 - **R139** An instance reads the lease every 2 seconds. It serves only
   for 5 seconds after the last read that showed its own ID. Else it
   replies 503.
-- **R140** Replaced by 01M52JYGPX5ETP3HKR0S0Y0YCR.
 - **01M52JYGPX5ETP3HKR0S0Y0YCR** An instance that reads another ID in
   the lease stops for good. It closes each stream, replies 503 to each
   call in flight, and saves nothing more, except the checkpoint and the
@@ -1887,7 +1862,6 @@
   replies 503, reads the lease every 2 seconds, and takes the lease only
   when that lease ended. When the instance or the holder has no
   revision, the newest instance takes the lease (R138).
-- **01M53NHK07KNXJ7FXS26NB1675** Replaced by 01M56T4SZ4Y6PSY1VTVA3758FT.
 - **01M56T4SZ4Y6PSY1VTVA3758FT** A SIGTERM before the end of the wait
   for the lease ends the start of an instance at once. The instance ends
   the lease that it took, closes its port and exits with success. It
@@ -1980,8 +1954,6 @@
   run the command again. `riff` keeps the old sign-in until the person
   runs `riff logout`. At a riff with sign-in, the riff ID finds an old
   sign-in (01M3JNVBRS35B3CD67367JF7SJ).
-- **01M3JNVBPMZ1K9WX7Q7DP6Y0DH** Replaced by
-  01M3XA87HE06Z6M32ZJPSYSYRZ.
 - **01M3JNVBRS35B3CD67367JF7SJ** `riff` keeps the riff ID with each
   sign-in. Before its first token in a process, `riff` compares it with
   the riff ID of the server. When they differ, or the sign-in has none,
@@ -2098,7 +2070,6 @@
   space, and keeps at most 256 characters. A body of the forge is only
   read for numbers and trailers, and is never printed. `riff pr open`
   refuses a wave name that the filter changes.
-- **01M3MEW73CDSJDSKX32XW80WZH** Replaced by 01M3Q63MVZ74WPNBA3QJYQGHFG.
 - **01M3Q63MVZ74WPNBA3QJYQGHFG** `riff who` shows the facts of the
   riff, then a table with a row for each session. The facts are
   `riff` (`running` green, `paused` yellow, with who set the pause),
@@ -2109,12 +2080,10 @@
   (01M3QB6CJ1XCQG5B1BVR8AF3B4). ROLE has `you` in bold and the tags.
   With `--long`, the column URI takes the place of SESSION. The styles
   come from one shared module. The MCP `who` tool stays plain.
-- **01M3MEW75WC7Y4M1BKQ7SXRPNR** Replaced by 01M3Q5VE2D244XDZRYXM8DNSRS.
 - **01M3Q5VE2D244XDZRYXM8DNSRS** `--color <auto|always|never>` is an
   option of each `riff` command. `auto` uses color only when stdout is
   a terminal, and obeys `NO_COLOR` and `CLICOLOR_FORCE`. A pipe gets
   plain text.
-- **01M3N754NY5JX4P0SN8R4ZYFG9** Replaced by 01M3Q63NK0AHM25MB258B0K8XP.
 - **01M3Q63NK0AHM25MB258B0K8XP** `riff who` names the owner of the
   riff in the fact `owner`: `USER (EMAIL)`, or `none`. A riff with no
   owner ends with the line that names `riff owner --take`, in yellow.
@@ -2731,8 +2700,6 @@
   again at once, and show nothing for it. Only a connect that fails
   shows one short dim line `(reconnecting…)`, and the next item
   `(back)`. A server that riff cannot talk to shows its error.
-- **01M3NK7VM1J5DDB0PECNZ28P4E** Replaced by
-  01M49Z4E8QB1QDXVCPE6MX5JX2.
 - **01M49Z4E8QB1QDXVCPE6MX5JX2** At each connect, `riff tail` and
   `riff chat` open the stream first, then read the thread after the
   last `seq` that they showed, then show the live messages. They show
@@ -2888,8 +2855,6 @@
   environment of `riff-server`, `--public-url`, `--owner`, a sign-in of
   the owner, and `riff invite EMAIL` for each person. No secret is on
   the page.
-- **01M3JN3ANE676DT5WQ2NTG47DK** Replaced by
-  01M3XA875QZ584JBGA37853PWX.
 - **01M3JY7T109BR860EQBSKEFDHY** `riff admin add EMAIL` makes a person
   an admin and a member. `riff admin remove EMAIL` makes an admin a
   member again. Only the owner can do either. The owner stays an admin.
@@ -2928,15 +2893,11 @@
   direct message to each live lead of the admin, and a note. With no
   answer in N minutes, the admin that asked is the owner. The old owner
   stays an admin.
-- **01M3N7K443DGPZ8XH5WWKK6M35** Replaced by
-  01M3Q5460YESBSQHTV3M15PE53.
 - **01M3Q5460YESBSQHTV3M15PE53** `riff-server` has three settings of the
   owner role, each 1 or more: N is `--owner-take-minutes`
   (`RIFF_OWNER_TAKE_MINUTES`, default 10). M is `--owner-ping-minutes`
   (`RIFF_OWNER_PING_MINUTES`, default 10). P is `--owner-pings`
   (`RIFF_OWNER_PINGS`, default 3).
-- **01M3N7K46H5BRFJCB46P3JNAFZ** Replaced by
-  01M3Q546335NBTKG5BHQ27QC93.
 - **01M3Q546335NBTKG5BHQ27QC93** `riff-server` checks the owner each M
   minutes, while the riff has an owner and an admin who is not the
   owner. A check misses when no session of the owner is live, and the
@@ -2948,7 +2909,6 @@
   owner at once. With no request, the riff has no owner, and asks for a
   volunteer: a direct message to each live lead of each admin, and a
   note.
-- **01M3N7K48XQ8XSP7R0HD535ZX3** Replaced by 01M3Q63NNC6SC03BFCG80M7B4D.
 - **01M3Q63NNC6SC03BFCG80M7B4D** On a riff with no owner, `riff owner
   --take` of an admin makes that admin the owner at once. `riff members`
   shows the owner `none` and ends with the line that says that the riff
@@ -2988,7 +2948,6 @@
   that sign-in, except after a lost reply (01M3MX4TG7PNNETZ986DQS10JJ).
 - **R110** Only the device key of a sign-in can revoke it by reuse. A
   reused refresh token with another key is refused and changes nothing.
-- **R116** Replaced by 01M3TFG4SJ5C96NH8W7XRXJG6Z.
 - **01M3TFG4SJ5C96NH8W7XRXJG6Z** A refresh token names its chain and its
   generation: `chain.generation.secret`. A refresh with the current
   generation gives the next generation. `riff-server` keeps the hash of
@@ -2996,8 +2955,6 @@
   generation before it. A refresh token of an older generation is reused
   (R17), at any time. A refresh token with a wrong secret is not known,
   and changes nothing.
-- **01M3TFG4PN1DWY1FXX0SVB3H3R** Replaced by 01M3WFVAB44T8EP4QZD4KS7DRF.
-- **01M3WFVAB44T8EP4QZD4KS7DRF** Replaced by 01M52JYGWD3ZJKNYE3HG5BJYTP.
 - **01M52JYGWD3ZJKNYE3HG5BJYTP** A sign-in has one chain: the chain of
   the person. A session token has no refresh token and no chain: the
   reply to the swap has an access token and an empty `refresh_token`. A
@@ -3008,8 +2965,6 @@
   can be one generation behind. So the first refresh of each chain after
   a start takes the current generation of the saved store, or the next
   one, as good. `riff-server` checks the device key first (R110).
-- **01M3TFG4ZCWS98R7W6RYZFWZXF** Replaced by 01M3WFVADCDZM8XX590KAEMEYG.
-- **01M3TFG551C76BP4TRA32P7VC3** Replaced by 01M52JYGSNTFPQ0ZP50AD2BG89.
 - **01M52JYGSNTFPQ0ZP50AD2BG89** The token store keeps the hash of each
   live access token, of a person or of a session, with its sign-in, its
   session and the time when it expires. So an access token works after a
@@ -3088,7 +3043,6 @@
   keyring.
 - **R19** Each session gets its own token. The token works only for that
   session.
-- **R103** Replaced by 01M3WFVADCDZM8XX590KAEMEYG.
 - **01M3WFVADCDZM8XX590KAEMEYG** A session gets its token by token
   exchange (RFC 8693): it sends a person access token and its session
   ID. Before the session token expires, `riff` swaps the person token
@@ -3180,10 +3134,6 @@
   the WIP push of the `leave` tool act only on a dir that is the top of
   a git worktree. For a dir in a repository above it, the fast-forward
   changes nothing and says nothing, and the `leave` tool refuses.
-- **01M3JQC8ANFYYEXSHBS2DCZYBX** Replaced by
-  01M493YZVZGA7TSRJH6F67VN0H.
-- **01M3K0AXPFSWNG7YPVXE65W464** Replaced by
-  01M3Q5A0NKY1FCS0YH6N6YD3GN and 01M3Q5A11RKZW1610SWGSMTE3W.
 - **01M3WN72ECF0WKR4M7M6ZYAF9J** Each stream of the client (`watch`,
   `tail`) has a connection of its own. That connection is never in the
   pool of the client, so no call uses the connection of an open stream.
@@ -3261,10 +3211,6 @@
 
 ## Builds
 
-- **01M3JEE7KZR5VVJGZQD82AA6NH** Replaced by
-  01M3MNVT7G701SDP1Z1THMRDQ2.
-- **01M3MNVT7G701SDP1Z1THMRDQ2** Replaced by
-  01M3MX1DYY6AVDW946NR0B9T2C and 01M3MX1E3R5WESVHA8RZXFQR1J.
 - **01M3MX1DYY6AVDW946NR0B9T2C** A build names the crate version, the
   last commit that changed `crates`, `Cargo.toml` or `Cargo.lock`, and
   the UTC time of that commit. The crate version is a semantic version.
@@ -3277,8 +3223,6 @@
   when its version is lower, or when the version is the same and the
   time of its commit is older. A build of a higher version is not
   older, also from an older commit.
-- **01M3MX1E3R5WESVHA8RZXFQR1J** Replaced by
-  01M3N73E5JWFTYZ90JX5AVFGEP to 01M3N73EEQ4HPCPPAGCAHH3S6B.
 - **01M3N73E5JWFTYZ90JX5AVFGEP** While the major is 0, the minor has
   the role of the major.
 - **01M3N73E7YTHFX2J2KXT7017QX** A patch release (`0.3.0` to `0.3.1`)
@@ -3323,8 +3267,6 @@
 - **01M3JEE7P46GWXR1BD4Q1TTSGN** Each call of `riff` names its build in
   the header `riff-build`. Each reply of `riff-server` names the build
   of the server in the same header.
-- **01M3JEE7RDTDD3KQMKH41E8D57** Replaced by
-  01M3MX1E65XGWDZ062PQ9YXQ5T.
 - **01M3MX1E65XGWDZ062PQ9YXQ5T** `riff-server` refuses each call of a
   `riff` that it cannot talk to, or that names no build, with status
   409. `riff` refuses each reply of a `riff-server` that it cannot
@@ -3355,8 +3297,6 @@
   500s of `riff-server` and the replies of Cloud Run with "no available
   instance" apart. A 500 of `riff-server` is a bug. A reply of Cloud
   Run in the hand-over is not.
-- **01M3MNVT9TYNXZ8V845BHKQADV** Replaced by
-  01M3MX1E8M9TKBN90P4DYKH3H8.
 - **01M3MX1E8M9TKBN90P4DYKH3H8** With another build that it can talk
   to, `riff` goes on. Each `riff` process prints one note to stderr:
   `riff-server runs build X; this riff runs build Y. Run riff update
@@ -3378,10 +3318,6 @@
 - **01M3NJGD6H8DNVHHHG80F9YFCE** When `riff` cannot read its working
   directory, the error names the directory from `PWD`, and tells the
   person to change to a directory that exists.
-- **01M3MNVTE6GAK4WRSCFGYVS0BE** Replaced by
-  01M3NT6WZTKAFKGDWGCFKC8TB5.
-- **01M43F5KH7RE8241T18ZJJH7DV** Replaced by
-  01M53QQR7J7DG86SMAERKMYSAF.
 - **01M3NT6WXGCNKW3EQ7MBJDQTR4** When a new `riff` binary is on disk,
   `riff top` and `riff chat` run it in their place, as `riff tail`
   does. The chat does it between two lines. The new chat shows no
@@ -3459,8 +3395,6 @@
   session, and changes no sign-in and no device key. The sessions take
   the new `riff` as 01M3MNVTC248YYJJQKFD9H1WY9,
   01M3NT6WXGCNKW3EQ7MBJDQTR4 and 01M3NT6WZTKAFKGDWGCFKC8TB5 say.
-- **01M3NJCWBFJK03AC64XN04TTH0** Replaced by
-  01M3NT6X22A4GNFTNKRYV8Z4N1.
 - **01M5A72C25A1FDZPW3FK2R1F92** The bridge of the lines 1 and 3 ends
   with the line 4. The server of the line 4 talks with the line 4 and
   the line 3 (the line before), and refuses the line 1. The client of
@@ -3654,8 +3588,8 @@
   requirements.md and requirements-history.md. An ID is unique across
   both pages, and a citation of an ID finds it on either page. just req
   writes only to requirements.md. The check superseded-in-full fails on
-  a requirement of requirements.md that has the words Superseded by and
-  no words in part.
+  a requirement of requirements.md that has the words Superseded by or
+  Replaced by and no words in part.
 
 ## The phone app
 
