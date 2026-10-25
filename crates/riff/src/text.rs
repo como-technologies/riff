@@ -14,6 +14,7 @@ use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
+use crate::work_config::Work;
 use riff_client::api::{Claimed, Inbox, Told};
 use riff_client::threads::{Line, Thread};
 use riff_core::wire::{
@@ -5023,14 +5024,60 @@ pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &
     )
 }
 
+/// The step of a start text that sends the session to the rules of the
+/// repository (01M5RH1SH11PTWKCJMNEMV8N2H): the `rules` of `riff.toml`,
+/// if any, and the hint to read `CLAUDE.md` or `AGENTS.md` when the
+/// repository has one. `of` names the kind of work, for example `for a
+/// verify`, or is empty.
+fn rules_step(work: &Work, of: &str) -> String {
+    let of = if of.is_empty() {
+        String::new()
+    } else {
+        format!(" {of}")
+    };
+    if work.rules.is_empty() {
+        return format!(
+            "Read CLAUDE.md or AGENTS.md when the repository has one, and obey its rules{of}."
+        );
+    }
+    let rules: Vec<String> = work.rules.iter().map(|r| format!("   - {r}")).collect();
+    format!(
+        "Obey the rules of this repository{of}:\n{}\n   Read CLAUDE.md or AGENTS.md too when the \
+         repository has one.",
+        rules.join("\n")
+    )
+}
+
+/// The sentences of a start text that tell the session to run the check
+/// of the repository before a push (01M5RH1SH11PTWKCJMNEMV8N2H): the
+/// `check` of `riff.toml`. A repository with no `check` sends the session
+/// to the files of the repository.
+fn push_check(work: &Work) -> String {
+    match &work.check {
+        Some(check) => format!(
+            "Before each push, run the check of the repository: `{check}`. Run it in the \
+             foreground, and wait for its end."
+        ),
+        None => "Before each push, run the checks of the repository. riff.toml names none: find \
+                 them in CLAUDE.md, AGENTS.md or the README. Run each check in the foreground, \
+                 and wait for its end."
+            .to_owned(),
+    }
+}
+
 /// The start text of a session of `riff run`: the work item, the
 /// branch, and the frame of the body of the pull request
 /// (01M4Z81APKC14AVNJWCGRQKNVW). It tells the session to leave no
 /// background task at the end of its work (01M4ZSZXBXM6T6MGQ00ACQA66X).
+/// The `check` and the `rules` of the repository come from its `work`
+/// table (01M5RH1SH11PTWKCJMNEMV8N2H).
 ///
 /// ```
+/// use riff::work_config::Work;
+///
 /// let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
-/// let text = riff::text::run_start("o/r", "master", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", false);
+/// let none = Work::default();
+/// let text = riff::text::run_start("o/r", "master", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", false, &none);
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("git push -u origin worktree-issue-12"));
 /// assert!(text.contains("Never push to master."));
@@ -5039,11 +5086,28 @@ pub fn run_started(item: &str, session: &str, clone: &Path, image: &str, name: &
 /// assert!(text.contains(frame));
 /// assert!(text.contains("Leave no background task at the end of your work"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
-/// assert!(text.contains("Run each check in the foreground"));
 /// assert!(text.contains("Commit and push the branch before the end of your work"));
 /// assert!(!text.contains("earlier session"));
-/// let again = riff::text::run_start("o/r", "master", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", true);
+/// let again = riff::text::run_start("o/r", "master", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", true, &none);
 /// assert!(again.contains("earlier session"));
+///
+/// // The check of riff.toml is the check of the session, not the CLAUDE.md.
+/// let work = Work { check: Some("cargo test".into()), rules: vec!["Each change has a test.".into()] };
+/// let text = riff::text::run_start("o/r", "master", 12, "b", "1a2b", frame, "Wave 3", false, &work);
+/// assert!(text.contains("run the check of the repository: `cargo test`"));
+/// assert!(text.contains("Run it in the foreground"));
+/// assert!(text.contains("Obey the rules of this repository:\n   - Each change has a test."));
+/// assert!(text.contains("Read CLAUDE.md or AGENTS.md too when the repository has one"));
+/// assert!(!text.contains("the checks that CLAUDE.md names"));
+///
+/// // A riff.toml with no check sends the session to the files of the repository.
+/// assert!(!text_of(&none).contains("`"), "{}", text_of(&none));
+/// assert!(text_of(&none).contains("riff.toml names none: find them in CLAUDE.md, AGENTS.md or the README"));
+/// assert!(text_of(&none).contains("Run each check in the foreground"));
+/// assert!(!text_of(&none).contains("the checks that CLAUDE.md names"));
+/// # fn text_of(work: &Work) -> String {
+/// #     riff::text::run_start("o/r", "main", 12, "b", "1a2b", "F", "Wave 3", false, work)
+/// # }
 /// ```
 #[allow(clippy::too_many_arguments)]
 pub fn run_start(
@@ -5055,7 +5119,9 @@ pub fn run_start(
     frame: &str,
     milestone: &str,
     earlier: bool,
+    work: &Work,
 ) -> String {
+    let (rules, check) = (rules_step(work, ""), push_check(work));
     let earlier = if earlier {
         "\nThe branch has the work of an earlier session. Go on from it. Do not start again.\n"
     } else {
@@ -5069,11 +5135,10 @@ pub fn run_start(
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
          Find its \"Done when:\" line. When the line is missing, or you cannot test it, stop \
          and say why.\n\
-         2. Read CLAUDE.md, and obey its rules.\n\
+         2. {rules}\n\
          3. Do the work on the branch {branch}. Give each commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n\
-         4. Before each push, run the checks that CLAUDE.md names. Run each check in the \
-         foreground, and wait for its end.\n\
+         4. {check}\n\
          5. Commit and push the branch before the end of your work, even when the work is not \
          done: git push -u origin {branch}\n   \
          Never push to {base}.\n\
@@ -6078,6 +6143,17 @@ fn flat(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A text of a file of the repository, such as a line of `riff.toml`, on
+/// one line of plain text: no escape sequence, no control character, and
+/// each run of white space is one space.
+///
+/// ```
+/// assert_eq!(riff::text::line("make \x1b[2J\n  check\x07 "), "make check");
+/// ```
+pub fn line(text: &str) -> String {
+    flat(&safe(text))
+}
+
 /// A check of `riff init` that passed.
 ///
 /// ```
@@ -6085,6 +6161,16 @@ fn flat(text: &str) -> String {
 /// ```
 pub fn init_pass(name: &str, found: &str) -> String {
     format!("pass  {name}: {}", flat(found))
+}
+
+/// A check of `riff init` that passed with a note, on one line
+/// (01M5RH1SPRX0ZY5Q3WA4ENP84M).
+///
+/// ```
+/// assert_eq!(riff::text::init_note("CLAUDE.md", "main of o/r has none"), "note  CLAUDE.md: main of o/r has none");
+/// ```
+pub fn init_note(name: &str, found: &str) -> String {
+    format!("note  {name}: {}", flat(found))
 }
 
 /// A check of `riff init` that failed, with its fix, on one line.
@@ -6530,23 +6616,98 @@ pub fn init_claude_on(repo: &str, branch: &str) -> String {
     format!("{branch} of {repo} has it")
 }
 
-/// The branch `branch` of the repository `repo` has no `CLAUDE.md`: a
-/// session has no rules of the repository.
+/// The branch `branch` of the repository `repo` has no `CLAUDE.md`. It is
+/// a note, not a fail: a `CLAUDE.md` is the choice of the repository
+/// (01M5RH1SPRX0ZY5Q3WA4ENP84M).
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::init_claude_off("o/r", "main"),
-///     "main of o/r has no CLAUDE.md, so a session has no rules of the repository"
+///     riff::text::init_claude_none("o/r", "main"),
+///     "main of o/r has none. This is fine: a CLAUDE.md is the choice of the repository"
 /// );
 /// ```
-pub fn init_claude_off(repo: &str, branch: &str) -> String {
-    format!("{branch} of {repo} has no CLAUDE.md, so a session has no rules of the repository")
+pub fn init_claude_none(repo: &str, branch: &str) -> String {
+    format!(
+        "{branch} of {repo} has none. This is fine: a CLAUDE.md is the choice of the repository"
+    )
 }
 
-/// The fix when the repository has no `CLAUDE.md`.
-pub const INIT_FIX_CLAUDE: &str = "write CLAUDE.md at the root of the repository: how to run its \
-     checks before a push, and its rules for a pull request. See \"Add another repository to \
-     the riff\" in the book";
+/// The name of the check of the table `[work]` of `riff.toml`
+/// (01M5RH1SKTT7JASP1VCCSTEE6F).
+pub const INIT_WORK: &str = "the check in riff.toml";
+
+/// `riff.toml` on `branch` of `repo` has the check `check`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_work_on("o/r", "main", "just check"),
+///     "riff.toml of main of o/r has [work] check = \"just check\""
+/// );
+/// ```
+pub fn init_work_on(repo: &str, branch: &str, check: &str) -> String {
+    format!("riff.toml of {branch} of {repo} has [work] check = \"{check}\"")
+}
+
+/// `riff.toml` on `branch` has no check, and riff can add the line
+/// `suggested` ([`crate::work_config::suggest`]).
+///
+/// ```
+/// let found = riff::text::init_work_off("main", "just check");
+/// assert!(found.starts_with("riff.toml of main has no [work] check, so a session looks for the check in the files"), "{found}");
+/// assert!(found.ends_with("riff can add check = \"just check\""), "{found}");
+/// ```
+pub fn init_work_off(branch: &str, suggested: &str) -> String {
+    format!(
+        "riff.toml of {branch} has no [work] check, so a session looks for the check in the \
+         files of the repository. riff can add check = \"{suggested}\""
+    )
+}
+
+/// `riff.toml` on `branch` has no check, and riff finds none to add.
+///
+/// ```
+/// let found = riff::text::init_work_none("main");
+/// assert!(found.contains("no recipe check in a justfile and no Cargo.toml"), "{found}");
+/// assert!(found.ends_with("add check = \"COMMAND\" in the table [work] of riff.toml"), "{found}");
+/// ```
+pub fn init_work_none(branch: &str) -> String {
+    format!(
+        "riff.toml of {branch} has no [work] check, and riff found no recipe check in a justfile \
+         and no Cargo.toml, so a session looks for the check in the files of the repository. To \
+         name it, add check = \"COMMAND\" in the table [work] of riff.toml"
+    )
+}
+
+/// The step that makes `riff.toml` on `branch` with a pull request
+/// ([`crate::repo_setup::Step::Config`]): `has` says that the file is
+/// there, and `suggested` is the check that the step adds.
+///
+/// ```
+/// use riff::text::init_config_step;
+///
+/// assert_eq!(init_config_step("main", false, None), "make riff.toml on main with a pull request");
+/// assert_eq!(
+///     init_config_step("main", false, Some("just check")),
+///     "make riff.toml on main with a pull request, with check = \"just check\" in [work]"
+/// );
+/// assert_eq!(
+///     init_config_step("main", true, Some("cargo test")),
+///     "add check = \"cargo test\" in [work] to riff.toml on main with a pull request"
+/// );
+/// ```
+pub fn init_config_step(branch: &str, has: bool, suggested: Option<&str>) -> String {
+    match (has, suggested) {
+        (true, Some(check)) => {
+            format!(
+                "add check = \"{check}\" in [work] to riff.toml on {branch} with a pull request"
+            )
+        }
+        (false, Some(check)) => format!(
+            "make riff.toml on {branch} with a pull request, with check = \"{check}\" in [work]"
+        ),
+        (_, None) => format!("make riff.toml on {branch} with a pull request"),
+    }
+}
 
 /// The steps that `riff init` can do in the repository `repo`, one for
 /// each line.
@@ -7629,7 +7790,10 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// 01M5QYBWPAJ219BE8QKVKG1TWW).
 ///
 /// ```
-/// let text = riff::text::wave_rebase_start("o/r", "master", 12, 40, "1a2b3c4d5e", "worktree-issue-12", "9f8e");
+/// use riff::work_config::Work;
+///
+/// let work = Work { check: Some("cargo test".into()), rules: vec![] };
+/// let text = riff::text::wave_rebase_start("o/r", "master", 12, 40, "1a2b3c4d5e", "worktree-issue-12", "9f8e", &work);
 /// assert!(text.contains("on the branch worktree-issue-12 of pull request #40"));
 /// assert!(text.contains("a conflict with master at commit 1a2b3c4"));
 /// assert!(text.contains("gh issue view 12 --comments"));
@@ -7637,13 +7801,15 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// assert!(text.contains("git rebase origin/master"));
 /// assert!(!text.contains("main"));
 /// assert!(text.contains("Resolve each conflict"));
-/// assert!(text.contains("Run the checks that CLAUDE.md names before a push"));
+/// assert!(text.contains("run the check of the repository: `cargo test`"));
+/// assert!(!text.contains("the checks that CLAUDE.md names"));
 /// assert!(text.contains("git push --force-with-lease origin worktree-issue-12"));
 /// assert!(text.contains("Do not open a second pull request"));
 /// assert!(text.contains("New checks and a new verify of the new commit follow"));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub fn wave_rebase_start(
     repo: &str,
     base: &str,
@@ -7652,8 +7818,10 @@ pub fn wave_rebase_start(
     commit: &str,
     branch: &str,
     session: &str,
+    work: &Work,
 ) -> String {
     let commit = commit.get(..7).unwrap_or(commit);
+    let (rules, check) = (rules_step(work, ""), push_check(work));
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch} of pull request #{pull}. The pull request has a conflict with {base} at \
@@ -7662,15 +7830,14 @@ pub fn wave_rebase_start(
          who, threads, read, post, tell, status and blocked.\n\n\
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
          Read the pull request: gh pr view {pull} --comments\n\
-         2. Read CLAUDE.md, and obey its rules.\n\
+         2. {rules}\n\
          3. Rebase the branch on {base}:\n   \
          git fetch -q origin {base}\n   \
          git rebase origin/{base}\n\
          4. Resolve each conflict. Keep the work of the pull request and the new work of {base}. \
          Add the files, and run git rebase --continue. Give each new commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n\
-         5. Run the checks that CLAUDE.md names before a push. Run each check in the \
-         foreground, and wait for its end. Fix each fault of the rebase.\n\
+         5. {check} Fix each fault of the rebase.\n\
          6. Commit and push before the end of your work, to the same pull request:\n   \
          git push --force-with-lease origin {branch}\n   \
          Never push to {base}. Do not open a second pull request.\n\
@@ -7745,8 +7912,11 @@ fn check_names(checks: &[String]) -> String {
 /// repository (01M5QYBWPAJ219BE8QKVKG1TWW).
 ///
 /// ```
+/// use riff::work_config::Work;
+///
 /// let checks = ["Gate".to_owned()];
-/// let text = riff::text::wave_checks_start("o/r", "master", 12, 40, "1a2b3c4d5e", &checks, "worktree-issue-12", "9f8e");
+/// let work = Work { check: Some("cargo test".into()), rules: vec![] };
+/// let text = riff::text::wave_checks_start("o/r", "master", 12, 40, "1a2b3c4d5e", &checks, "worktree-issue-12", "9f8e", &work);
 /// assert!(text.contains("Never push to master."));
 /// assert!(!text.contains("main"));
 /// assert!(text.contains("on the branch worktree-issue-12 of pull request #40"));
@@ -7755,14 +7925,15 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("gh pr checks 40"));
 /// assert!(text.contains("gh run view RUN_ID --log-failed"));
-/// assert!(text.contains("Run the checks that CLAUDE.md names before a push"));
+/// assert!(text.contains("run the check of the repository: `cargo test`"));
+/// assert!(!text.contains("the checks that CLAUDE.md names"));
 /// assert!(text.contains("git push origin worktree-issue-12"));
 /// assert!(text.contains("A known flake"));
 /// assert!(text.contains("gh run rerun RUN_ID --failed"));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
 /// let two = ["Gate".to_owned(), "Hygiene".to_owned()];
-/// let text = riff::text::wave_checks_start("o/r", "main", 12, 40, "1a2b3c4d5e", &two, "b", "9f8e");
+/// let text = riff::text::wave_checks_start("o/r", "main", 12, 40, "1a2b3c4d5e", &two, "b", "9f8e", &work);
 /// assert!(text.contains("the checks Gate, Hygiene failed at commit 1a2b3c4"));
 /// ```
 #[allow(clippy::too_many_arguments)]
@@ -7775,9 +7946,11 @@ pub fn wave_checks_start(
     checks: &[String],
     branch: &str,
     session: &str,
+    work: &Work,
 ) -> String {
     let commit = commit.get(..7).unwrap_or(commit);
     let names = check_names(checks);
+    let (rules, check) = (rules_step(work, ""), push_check(work));
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch} of pull request #{pull}. The verify of the pull request passed, but \
@@ -7787,13 +7960,12 @@ pub fn wave_checks_start(
          blocked.\n\n\
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
          Read the pull request: gh pr view {pull} --comments\n\
-         2. Read CLAUDE.md, and obey its rules.\n\
+         2. {rules}\n\
          3. Find the cause. See the checks: gh pr checks {pull}\n   \
          Read the log of the failed run, with the run ID of the URL: gh run view RUN_ID \
          --log-failed\n\
-         4. A fault of the work: fix it on the branch. Run the checks that CLAUDE.md names \
-         before a push. Run each check in the foreground, and wait for its end. Give each \
-         commit this trailer:\n   \
+         4. A fault of the work: fix it on the branch. {check} Give each commit this \
+         trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n   \
          Commit and push before the end of your work, to the same pull request:\n   \
          git push origin {branch}\n   \
@@ -7938,12 +8110,15 @@ pub fn wave_checks_rerun(
 /// (01M4ZV3B6R4WSEJXYT7QPRWT6X). It reads the diff against the default
 /// branch `base` (01M5QYBWPAJ219BE8QKVKG1TWW). It names the `checks` of
 /// the full check of the commit: the wave started the verify when they
-/// were done. The rules of the repository for a verify come from its
-/// `CLAUDE.md` (01M5R580VCRCHJM8FY7NT485R1).
+/// were done. The rules of the repository for a verify come from the
+/// `rules` of its `riff.toml` (01M5RH1SH11PTWKCJMNEMV8N2H).
 ///
 /// ```
 /// let checks = ["CI".to_owned()];
-/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks);
+/// use riff::work_config::Work;
+///
+/// let work = Work { check: Some("cargo test".into()), rules: vec!["Name no secret in a log.".into()] };
+/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks, &work);
 /// assert!(text.contains("git diff origin/master...HEAD"));
 /// assert!(!text.contains("origin/main"));
 /// assert!(text.contains("pull request #40"));
@@ -7952,11 +8127,15 @@ pub fn wave_checks_rerun(
 /// assert!(text.contains("The first line is PASS or FAIL"));
 /// assert!(text.contains("Verify of the release pull request"));
 /// assert!(text.contains("when the full check of the commit was done: the check CI."));
-/// assert!(text.contains("Read CLAUDE.md, and obey its rules for a verify"));
+/// assert!(text.contains("Obey the rules of this repository for a verify:\n   - Name no secret in a log."));
+/// assert!(text.contains("Read CLAUDE.md or AGENTS.md too when the repository has one"));
+/// assert!(text.contains("The check of the repository is `cargo test`"));
 /// assert!(text.contains("Run each test in the foreground"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
-/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two);
+/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, &Work::default());
+/// assert!(text.contains("Read CLAUDE.md or AGENTS.md when the repository has one, and obey its rules for a verify"));
+/// assert!(!text.contains("The check of the repository is"));
 /// assert!(text.contains("was done: the checks Lint, Test."));
 /// ```
 pub fn wave_verify_start(
@@ -7966,8 +8145,16 @@ pub fn wave_verify_start(
     pull: u64,
     commit: &str,
     checks: &[String],
+    work: &Work,
 ) -> String {
     let names = check_names(checks);
+    let rules = rules_step(work, "for a verify");
+    let own = match &work.check {
+        Some(check) => {
+            format!(" The check of the repository is `{check}`: use it to see how a test runs.")
+        }
+        None => String::new(),
+    };
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
@@ -7979,14 +8166,14 @@ pub fn wave_verify_start(
          When the pull request has the label `release`, verify it against the part \"Verify of \
          the release pull request\" of its issue, and not against the line \"Done when:\": the \
          release is not published before the merge.\n\
-         2. Read CLAUDE.md, and obey its rules for a verify.\n\
+         2. {rules}\n\
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
          origin/{base}...HEAD\n\
          4. See the checks of the commit: gh pr checks {pull}\n   \
          The wave started you when the full check of the commit was done: {names}. Do not run \
          it again. When it failed, the verify fails: name the step that failed.\n\
          5. Check each criterion: review the code and its fit with the design, read the test \
-         of each criterion, and run that test by its name when you must.\n\
+         of each criterion, and run that test by its name when you must.{own}\n\
          6. Do not commit, do not push, and do not change the pull request. Run each test in \
          the foreground, and wait for its end. Never end a turn while a background task runs: \
          a session does not continue after its result.\n\
@@ -8374,7 +8561,9 @@ pub fn not_in_the_lead_container(tool: &str) -> String {
 /// assert!(text.contains("You are the lead of o/r"));
 /// assert!(text.contains("/opt/riff/riff relay watch --follow"));
 /// assert!(text.contains("the riff tools whoami, notes and read"));
-/// assert!(text.contains("The rules of the repository are in its CLAUDE.md."));
+/// assert!(text.contains(
+///     "The rules of the repository are in its riff.toml, and in its CLAUDE.md or AGENTS.md when it has one."
+/// ));
 /// assert!(text.contains("When the Monitor ends, start it again."));
 /// assert!(text.contains("at each start, after each resume and after each compaction"));
 /// assert!(text.contains("never only in the Claude memory of the host"));
@@ -8387,7 +8576,8 @@ pub fn lead_start(repo: &str) -> String {
          deadlines, the next steps, and the choices of the person and of the host. Read the notes \
          and the unread messages at each start, after each resume and after each compaction of \
          your context. Your rules are in the instructions of the riff tools. The rules of the \
-         repository are in its CLAUDE.md. Keep the running state in the notes and on GitHub, \
+         repository are in its riff.toml, and in its CLAUDE.md or AGENTS.md when it has one. \
+         Keep the running state in the notes and on GitHub, \
          never only in the Claude memory of the host: that memory is not there on another host \
          or after a crash. Write each change of state to the notes when it happens. Then start \
          /opt/riff/riff relay watch --follow with the Monitor tool. When the Monitor ends, start \
@@ -9089,31 +9279,36 @@ mod tests {
 
     /// #1354 (01M5R580VCRCHJM8FY7NT485R1): the start texts of the
     /// sessions say what riff needs, and name no convention of the riff
-    /// repository. The rules of a repository come from its `CLAUDE.md`.
+    /// repository. The check and the rules of a repository come from its
+    /// `riff.toml` (01M5RH1SH11PTWKCJMNEMV8N2H); `CLAUDE.md` is a hint.
     #[test]
     fn the_start_texts_name_no_convention_of_the_riff_repository() {
         let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3";
         let checks = ["CI".to_owned()];
+        let work = Work {
+            check: Some("cargo test".into()),
+            rules: vec!["Each change has a test.".into()],
+        };
         let texts = [
             (
                 "work",
-                run_start("o/r", "main", 12, "b", "1a", frame, "Wave 3", false),
+                run_start("o/r", "main", 12, "b", "1a", frame, "Wave 3", false, &work),
             ),
             (
                 "work again",
-                run_start("o/r", "main", 12, "b", "1a", frame, "Wave 3", true),
+                run_start("o/r", "main", 12, "b", "1a", frame, "Wave 3", true, &work),
             ),
             (
                 "rebase",
-                wave_rebase_start("o/r", "main", 12, 40, "1a2b3c4", "b", "1a"),
+                wave_rebase_start("o/r", "main", 12, 40, "1a2b3c4", "b", "1a", &work),
             ),
             (
                 "checks",
-                wave_checks_start("o/r", "main", 12, 40, "1a2b3c4", &checks, "b", "1a"),
+                wave_checks_start("o/r", "main", 12, 40, "1a2b3c4", &checks, "b", "1a", &work),
             ),
             (
                 "verify",
-                wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
+                wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, &work),
             ),
             (
                 "failed verify",
@@ -9141,7 +9336,7 @@ mod tests {
                 !lower.contains("requirement"),
                 "{name} text names a requirement: {text}"
             );
-            // The text sends the session to the rules of the repository.
+            // The text sends the session to the files of the repository as a hint.
             if [
                 "work",
                 "work again",
@@ -9153,8 +9348,23 @@ mod tests {
             .contains(&name)
             {
                 assert!(
-                    text.contains("CLAUDE.md"),
-                    "{name} text names no CLAUDE.md: {text}"
+                    text.contains("CLAUDE.md or AGENTS.md"),
+                    "{name} text names no CLAUDE.md or AGENTS.md: {text}"
+                );
+            }
+            // 01M5RH1SH11PTWKCJMNEMV8N2H: the check and the rules come from riff.toml.
+            if ["work", "work again", "rebase", "checks", "verify"].contains(&name) {
+                assert!(
+                    text.contains("`cargo test`"),
+                    "{name} text names no check: {text}"
+                );
+                assert!(
+                    text.contains("Each change has a test."),
+                    "{name} text gives no rule: {text}"
+                );
+                assert!(
+                    !text.contains("the checks that CLAUDE.md names"),
+                    "{name} text sends the session to CLAUDE.md for the check: {text}"
                 );
             }
         }

@@ -831,6 +831,124 @@ async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing
     assert_eq!(machine.forge_changes(), changes);
 }
 
+/// The text that the setup pull request pushed as `riff.toml`.
+fn pushed_config(machine: &Machine) -> String {
+    use base64::Engine;
+    let body: serde_json::Value = serde_json::from_str(&machine.read("config.json")).unwrap();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(body["content"].as_str().unwrap())
+        .unwrap();
+    String::from_utf8(bytes).unwrap()
+}
+
+/// 01M5RH1SKTT7JASP1VCCSTEE6F, 01M5RH1SPRX0ZY5Q3WA4ENP84M: `riff init
+/// --yes` in a repository with a justfile that has a recipe `check` and
+/// no `CLAUDE.md` makes the setup pull request with `riff.toml` that has
+/// `[work] check = "just check"`, and passes with a note for `CLAUDE.md`.
+/// A second run changes nothing.
+#[tokio::test]
+async fn riff_init_yes_writes_the_work_table_and_passes_a_repository_with_no_claude_md() {
+    let machine = Machine::new();
+    machine.add_origin();
+    let [pulls, checks] = ci(r#"{"name":"checks / lint"}"#);
+    fake_forge(
+        &machine.bin,
+        &[
+            ("files", "justfile\n"),
+            (
+                "content_justfile",
+                "fmt:\n    cargo fmt\n\ncheck: fmt\n    cargo test\n",
+            ),
+            ("milestones", ""),
+            (pulls.0, &pulls.1),
+            (checks.0, &checks.1),
+        ],
+    );
+    std::fs::write(machine.bin.join("no-image"), "").unwrap();
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    // The line is in the step, so a person sees it before the pull request.
+    for line in [
+        "  make riff.toml on main with a pull request, with check = \"just check\" in [work]",
+        "  note  CLAUDE.md: main of acme/app has none. This is fine: a CLAUDE.md is the choice \
+         of the repository",
+        "This machine is ready.",
+    ] {
+        assert!(
+            stdout.lines().any(|l| l.starts_with(line)),
+            "{line}\nnot in\n{stdout}"
+        );
+    }
+    assert!(
+        !stdout.contains(" failed. riff installed nothing"),
+        "{stdout}"
+    );
+    let config = pushed_config(&machine);
+    assert!(config.starts_with("[session]\nimage = \""), "{config}");
+    assert!(
+        config.ends_with("\n[work]\ncheck = \"just check\"\n"),
+        "{config}"
+    );
+    let work = riff::work_config::Work::of_config(&config, "riff.toml").unwrap();
+    assert_eq!(work.check.as_deref(), Some("just check"));
+
+    // A second run: the check passes, the note stays, and nothing changes.
+    let changes = machine.forge_changes();
+    let out = machine.init(&machine.repo, &[]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.lines().any(|l| l
+            == "  pass  the check in riff.toml: riff.toml of main of acme/app has [work] check = \"just check\""),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("These steps change GitHub"), "{stdout}");
+    assert_eq!(machine.forge_changes(), changes);
+}
+
+/// 01M5RH1SKTT7JASP1VCCSTEE6F: a repository with a `riff.toml` that has no
+/// `[work]` table gets the table in the setup pull request, and the file
+/// keeps its text. A repository with a `Cargo.toml` and no justfile gets
+/// `cargo test`.
+#[tokio::test]
+async fn riff_init_adds_the_work_table_to_a_riff_toml_that_has_none() {
+    let machine = Machine::new();
+    machine.add_origin();
+    set_up(&machine.bin);
+    let own = "# My riff config.\n[session]\nimage = \"ghcr.io/o/i:0\"\n";
+    std::fs::write(machine.bin.join("content_riff.toml"), own).unwrap();
+    std::fs::write(machine.bin.join("files"), "riff.toml\nCargo.toml\n").unwrap();
+    // `--check` names the step, as a note: it fails nothing, and changes nothing.
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains(
+            "  note  the check in riff.toml: riff.toml of main has no [work] check, so a session \
+             looks for the check in the files of the repository. riff can add check = \"cargo test\""
+        ),
+        "{stdout}"
+    );
+    assert!(machine.forge_changes().is_empty());
+
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains(
+            "  add check = \"cargo test\" in [work] to riff.toml on main with a pull request"
+        ),
+        "{stdout}"
+    );
+    assert_eq!(
+        pushed_config(&machine),
+        format!("{own}\n[work]\ncheck = \"cargo test\"\n")
+    );
+    let body: serde_json::Value = serde_json::from_str(&machine.read("config.json")).unwrap();
+    assert_eq!(body["sha"], "b10b111");
+}
+
 /// 01M5RGG9KJXCKH8C94145WS8SM, 01M5RGGD6YR36EXZEG61XCJVRY: with no `y` (no
 /// terminal), the first list has `step` lines for the five facts that a step
 /// fixes, and no `fail`. A no does no step, so the end names each check with
@@ -1146,6 +1264,7 @@ async fn riff_init_check_passes_a_repository_that_is_set_up() {
         "  pass  the milestone Backlog: acme/app has it open",
         "  pass  the first wave: acme/app has the open wave Wave 1",
         "  pass  the checks of a pull request: the full check is Gate",
+        "  pass  the check in riff.toml: riff.toml of main of acme/app has [work] check = \"just check\"",
         "  pass  CLAUDE.md: main of acme/app has it",
     ] {
         assert!(
@@ -1155,10 +1274,11 @@ async fn riff_init_check_passes_a_repository_that_is_set_up() {
     }
 }
 
-/// The checks of the CI and of `CLAUDE.md` have no step: riff names the
-/// fix, and does nothing for them.
+/// The check of the CI has no step: riff names the fix, and does nothing
+/// for it. A missing `CLAUDE.md` is a note, not a fail
+/// (01M5RH1SPRX0ZY5Q3WA4ENP84M).
 #[tokio::test]
-async fn riff_init_names_the_fix_of_a_missing_ci_check_and_a_missing_claude_md() {
+async fn riff_init_names_the_fix_of_a_missing_ci_check_and_notes_a_missing_claude_md() {
     let machine = Machine::new();
     machine.add_origin();
     set_up(&machine.bin);
@@ -1168,7 +1288,7 @@ async fn riff_init_names_the_fix_of_a_missing_ci_check_and_a_missing_claude_md()
     let stdout = text(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{stdout}");
     let failed = failed_lines(&stdout);
-    assert_eq!(failed.len(), 2, "{stdout}");
+    assert_eq!(failed.len(), 1, "{stdout}");
     assert!(
         failed[0].starts_with("  fail  the checks of a pull request: no pull request of acme/app ran a check named Gate"),
         "{}",
@@ -1180,9 +1300,10 @@ async fn riff_init_names_the_fix_of_a_missing_ci_check_and_a_missing_claude_md()
         failed[0]
     );
     assert!(
-        failed[1].starts_with("  fail  CLAUDE.md: main of acme/app has no CLAUDE.md"),
-        "{}",
-        failed[1]
+        stdout.lines().any(|l| l
+            == "  note  CLAUDE.md: main of acme/app has none. This is fine: a CLAUDE.md is the \
+                choice of the repository"),
+        "{stdout}"
     );
     assert!(machine.forge_changes().is_empty());
 }

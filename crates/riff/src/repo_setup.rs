@@ -4,9 +4,11 @@
 //!
 //! # Design
 //!
-//! `riff init` checks seven facts of the repository of the current
+//! `riff init` checks eight facts of the repository of the current
 //! folder. Each fact that fails carries its fix for a person, and for
-//! five of them its [`Step`]: the code that does the fix. A person does
+//! five of them its [`Step`]: the code that does the fix. Two facts
+//! pass with a note when they are not so: the check in `riff.toml`, and
+//! a `CLAUDE.md` (01M5RH1SPRX0ZY5Q3WA4ENP84M). A person does
 //! the fix, for example from the how-to "Add another repository to the
 //! riff" in the book. Or `riff init` does the steps after one question,
 //! or with `--yes` ([`setup`]). The step and the how-to make the same
@@ -18,14 +20,14 @@
 //!     O["remote origin<br/>github.com/OWNER/REPO"] --> R["gh api repos/OWNER/REPO"]
 //!     O --> B["gh api repos/OWNER/REPO/rules/branches/BRANCH"]
 //!     O --> M["gh api repos/OWNER/REPO/milestones"]
-//!     O --> F["gh api repos/OWNER/REPO/contents"]
+//!     O --> F["gh api repos/OWNER/REPO/contents<br/>and riff.toml, the justfile"]
 //!     O --> P["gh api repos/OWNER/REPO/pulls<br/>and the check runs of their heads"]
-//!     R --> C["the seven checks"]
+//!     R --> C["the eight checks"]
 //!     B --> C
 //!     M --> C
 //!     F --> C
 //!     P --> C
-//!     C --> L["pass or fail lines of riff init"]
+//!     C --> L["pass, note or fail lines of riff init"]
 //!     C -- "a step, one question or --yes" --> S["the steps, in order"]
 //! ```
 //!
@@ -37,7 +39,8 @@
 //! | the milestone `Backlog` | the open milestones ([`crate::waves::open`]) | one has the title [`BACKLOG`]: `riff wave move --to Backlog` and `riff wave end --move-open-to-backlog` need it | [`Step::Backlog`] |
 //! | the first wave | the open milestones | one is a wave: the lead has a wave to plan | [`Step::Wave`] |
 //! | the checks of a pull request | the required checks, and the check runs of the latest pull requests | the full check can end: a rule requires a check of the CI, or a pull request ran [`GATE`], or the ruleset that the step makes will require the checks that the pull requests ran | [`Step::Ruleset`] when no pull request ran a check yet and the default branch has no `riff.toml`: the pull request of [`Step::Config`] may run the first check. Else none |
-//! | `CLAUDE.md` | the files at the root of the default branch | it is there: a session reads the rules of the repository in it | none |
+//! | the check in `riff.toml` | the table `[work]` of `riff.toml`, the recipes of the justfile and `Cargo.toml` ([`crate::work_config`], 01M5RH1SKTT7JASP1VCCSTEE6F) | `riff.toml` has a `check`; else a note, and the step [`Step::Config`] when riff finds a check to add | [`Step::Config`] |
+//! | `CLAUDE.md` | the files at the root of the default branch | it is there; else a note: a `CLAUDE.md` is the choice of the repository | none |
 //!
 //! The fix of the ruleset names the checks [`GATE`] and [`VERIFY_CONTEXT`].
 //!
@@ -59,7 +62,12 @@
 //! - The merge settings come first: the pull request of `riff.toml` has
 //!   a squash merge.
 //! - `riff.toml` pins the session image of the release of riff that runs
-//!   ([`crate::session_image::of_release`]). The step reuses an open pull
+//!   ([`crate::session_image::of_release`]), and has the check of the
+//!   repository in the table `[work]`: `just check` when the justfile has
+//!   a recipe `check`, else `cargo test` when the root has a `Cargo.toml`
+//!   ([`crate::work_config::suggest`], 01M5RH1SKTT7JASP1VCCSTEE6F). A
+//!   `riff.toml` that the default branch has keeps its text and gets the
+//!   table when it has none. The step reuses an open pull
 //!   request from the branch [`SETUP_BRANCH`], and it resets that branch
 //!   to the default branch, so a step that failed half way can run again.
 //!   GitHub may need a moment to say that the pull request can merge, so
@@ -105,7 +113,7 @@
 //! others do not run.
 //!
 //! ```
-//! use riff::repo_setup::{Github, Step, checks};
+//! use riff::repo_setup::{Github, Step, WorkFacts, checks};
 //!
 //! let mut github = Github {
 //!     repo: "acme/app".into(),
@@ -117,6 +125,7 @@
 //!     admin: true,
 //!     files: vec!["riff.toml".into(), "CLAUDE.md".into()],
 //!     ci: vec!["Gate".into()],
+//!     work: WorkFacts { check: Some("just check".into()), suggested: None },
 //! };
 //! assert!(checks(&github).iter().all(|c| c.passed()));
 //!
@@ -133,7 +142,6 @@
 //!         "the ruleset of main",
 //!         "the milestone Backlog",
 //!         "the first wave",
-//!         "CLAUDE.md",
 //!     ]
 //! );
 //! let steps: Vec<Step> = checks(&github).iter().filter_map(|c| c.step).collect();
@@ -152,6 +160,7 @@ use crate::pr::{GATE, Gh, VERIFY_CONTEXT, percent};
 use crate::session_image;
 use crate::text;
 use crate::waves::{self, BACKLOG, FIRST_WAVE};
+use crate::work_config::{self, JUSTFILES, Work};
 
 /// The time that riff waits for each call of `gh`.
 pub const LIMIT: Duration = Duration::from_secs(30);
@@ -163,8 +172,9 @@ pub const SETUP_BRANCH: &str = "riff-setup";
 pub const SETUP_TITLE: &str = "Set up riff";
 
 /// The body of the pull request of [`Step::Config`].
-const SETUP_BODY: &str = "riff init made this pull request. It adds riff.toml, which pins the \
-     session image of each session of this repository.";
+const SETUP_BODY: &str = "riff init made this pull request. It sets up riff.toml, which pins the \
+     session image of each session of this repository, and names the check that a session runs \
+     before a push.";
 
 /// The file that [`Step::Config`] makes.
 const CONFIG: &str = session_image::FILE;
@@ -318,6 +328,7 @@ pub fn ruleset_for(checks: &[String]) -> Value {
 ///     admin: true,
 ///     files: vec!["riff.toml".into(), "CLAUDE.md".into()],
 ///     ci: vec!["Gate".into()],
+///     work: riff::repo_setup::WorkFacts::default(),
 /// };
 /// let steps: Vec<Step> = checks(&github).iter().filter_map(|c| c.step).collect();
 /// assert_eq!(steps, [Step::Merge, Step::Ruleset, Step::Backlog]);
@@ -327,8 +338,10 @@ pub enum Step {
     /// Allow auto-merge and squash merge: `gh api -X PATCH`.
     Merge,
     /// Make `riff.toml` on the default branch with the session image of
-    /// this release of riff: the branch [`SETUP_BRANCH`], the pull request
-    /// [`SETUP_TITLE`] and its squash merge.
+    /// this release of riff and the check of the repository in `[work]`:
+    /// the branch [`SETUP_BRANCH`], the pull request [`SETUP_TITLE`] and
+    /// its squash merge. When the file is there with no `[work]` check,
+    /// add the check to it.
     Config,
     /// Make the open milestone [`BACKLOG`]
     /// ([`crate::waves::make_backlog`]).
@@ -395,6 +408,7 @@ impl Step {
     ///     admin: true,
     ///     files: vec![],
     ///     ci: vec![],
+    ///     work: riff::repo_setup::WorkFacts::default(),
     /// };
     /// assert_eq!(Step::Config.title(&github), "make riff.toml on main with a pull request");
     /// assert_eq!(Step::Wave.title(&github), "make the milestone Wave 1");
@@ -402,9 +416,10 @@ impl Step {
     pub fn title(self, github: &Github) -> String {
         match self {
             Step::Merge => "allow auto-merge and squash merge".to_owned(),
-            Step::Config => format!(
-                "make {CONFIG} on {} with a pull request",
-                github.default_branch
+            Step::Config => text::init_config_step(
+                &github.default_branch,
+                github.has(CONFIG),
+                github.work.suggested.as_deref(),
             ),
             Step::Backlog => format!("make the milestone {BACKLOG}"),
             Step::Wave => format!("make the milestone {FIRST_WAVE}"),
@@ -442,8 +457,17 @@ impl Step {
                 Ok("allowed both".to_owned())
             }
             Step::Config => {
-                let made = config(forge, &github.default_branch)?;
-                github.files.push(CONFIG.to_owned());
+                let made = config(
+                    forge,
+                    &github.default_branch,
+                    github.work.suggested.as_deref(),
+                )?;
+                if !github.has(CONFIG) {
+                    github.files.push(CONFIG.to_owned());
+                }
+                if github.work.check.is_none() {
+                    github.work.check = github.work.suggested.take();
+                }
                 let said = format!(
                     "{} {} and merged it",
                     if made.opened { "opened" } else { "found" },
@@ -539,7 +563,8 @@ struct Made {
 
 /// Makes `riff.toml` on `branch` with a pull request, and merges it with
 /// a squash merge. It reuses an open pull request from [`SETUP_BRANCH`].
-fn config(forge: &Forge, branch: &str) -> anyhow::Result<Made> {
+/// The file has the check `check` in its table `[work]`, when there is one.
+fn config(forge: &Forge, branch: &str, check: Option<&str>) -> anyhow::Result<Made> {
     let gh = &forge.gh;
     let pulls: Vec<Pull> =
         gh.json(&["api", "repos/{owner}/{repo}/pulls?state=open&per_page=100"])?;
@@ -552,7 +577,7 @@ fn config(forge: &Forge, branch: &str) -> anyhow::Result<Made> {
             opened: false,
         },
         None => Made {
-            pull: open_pull(gh, branch)?,
+            pull: open_pull(gh, branch, check)?,
             opened: true,
         },
     };
@@ -571,9 +596,12 @@ fn config(forge: &Forge, branch: &str) -> anyhow::Result<Made> {
     Ok(made)
 }
 
-/// Makes the branch [`SETUP_BRANCH`] from `branch`, adds `riff.toml` to
-/// it, and opens the pull request.
-fn open_pull(gh: &Gh, branch: &str) -> anyhow::Result<Pull> {
+/// Makes the branch [`SETUP_BRANCH`] from `branch`, sets `riff.toml` up on
+/// it, and opens the pull request. A `riff.toml` that the branch has
+/// keeps its text, and gets the check `check` in its table `[work]`. A new
+/// one pins the image of the release of riff, and has the check too
+/// (01M5RH1SKTT7JASP1VCCSTEE6F).
+fn open_pull(gh: &Gh, branch: &str, check: Option<&str>) -> anyhow::Result<Pull> {
     let base: Value = gh.json(&[
         "api",
         &format!("repos/{{owner}}/{{repo}}/git/ref/heads/{}", ref_of(branch)),
@@ -602,15 +630,28 @@ fn open_pull(gh: &Gh, branch: &str) -> anyhow::Result<Pull> {
         ),
         Err(e) => return Err(e),
     }?;
-    let config = session_image::config_of(&session_image::of_release());
+    let there = contents(gh, CONFIG, SETUP_BRANCH)?;
+    let config = match (&there, check) {
+        (Some(file), Some(check)) => work_config::with_check(&file.text, check)?,
+        (Some(file), None) => file.text.clone(),
+        (None, Some(check)) => work_config::with_check(
+            &session_image::config_of(&session_image::of_release()),
+            check,
+        )?,
+        (None, None) => session_image::config_of(&session_image::of_release()),
+    };
+    let mut body = json!({
+        "message": SETUP_TITLE,
+        "content": base64::engine::general_purpose::STANDARD.encode(config),
+        "branch": SETUP_BRANCH,
+    });
+    if let Some(file) = &there {
+        body["sha"] = json!(file.sha);
+    }
     gh.send(
         "PUT",
         &format!("repos/{{owner}}/{{repo}}/contents/{CONFIG}"),
-        &json!({
-            "message": SETUP_TITLE,
-            "content": base64::engine::general_purpose::STANDARD.encode(config),
-            "branch": SETUP_BRANCH,
-        }),
+        &body,
     )?;
     let reply = gh.send(
         "POST",
@@ -726,7 +767,7 @@ pub fn setup(forge: &Forge, steps: &[Step], github: &mut Github) -> Vec<Outcome>
 pub fn steps_of(checks: &[Check]) -> Vec<Step> {
     let mut steps: Vec<Step> = checks
         .iter()
-        .filter(|c| !c.passed())
+        .filter(|c| !c.passed() || c.note)
         .filter_map(|c| c.step)
         .collect();
     steps.sort();
@@ -757,6 +798,21 @@ pub struct Github {
     /// ([`ci_checks`]). riff reads them only when no rule requires a
     /// check but [`VERIFY_CONTEXT`] and [`GATE`].
     pub ci: Vec<String>,
+    /// What riff finds about the check of `riff.toml`
+    /// (01M5RH1SKTT7JASP1VCCSTEE6F).
+    pub work: WorkFacts,
+}
+
+/// The facts about the check of the repository: the table `[work]` of
+/// `riff.toml` on the default branch ([`crate::work_config`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkFacts {
+    /// The `check` that `riff.toml` has. None when the file has none, or
+    /// when the default branch has no `riff.toml`.
+    pub check: Option<String>,
+    /// The check that [`Step::Config`] adds ([`work_config::suggest`]).
+    /// None when `riff.toml` has a check, or when riff finds none.
+    pub suggested: Option<String>,
 }
 
 impl Github {
@@ -889,6 +945,65 @@ fn files(gh: &Gh, branch: &str) -> anyhow::Result<Vec<String>> {
     }
 }
 
+/// A file of the repository, as the contents API of GitHub gives it.
+struct Contents {
+    /// The text of the file.
+    text: String,
+    /// The blob of the file: an update of the file needs it.
+    sha: String,
+}
+
+/// The file `name` on `branch`, or `None` when GitHub has none (404).
+fn contents(gh: &Gh, name: &str, branch: &str) -> anyhow::Result<Option<Contents>> {
+    #[derive(Deserialize)]
+    struct Reply {
+        content: String,
+        sha: String,
+    }
+    let path = format!(
+        "repos/{{owner}}/{{repo}}/contents/{}?ref={}",
+        percent(name),
+        percent(branch)
+    );
+    let reply: Reply = match gh.json(&["api", &path]) {
+        Ok(reply) => reply,
+        Err(e) if not_found(&e) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    // GitHub breaks the base64 text into lines.
+    let packed: String = reply.content.split_whitespace().collect();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(packed)
+        .with_context(|| format!("GitHub gave {name} in a form that riff cannot read"))?;
+    let text = String::from_utf8(bytes).with_context(|| format!("{name} is not UTF-8"))?;
+    Ok(Some(Contents {
+        text,
+        sha: reply.sha,
+    }))
+}
+
+/// The facts about the check of the repository (01M5RH1SKTT7JASP1VCCSTEE6F):
+/// the `[work] check` of `riff.toml` on `branch`; when it has none, the
+/// check that riff would add. riff reads the justfile only then.
+fn work_facts(gh: &Gh, branch: &str, files: &[String]) -> anyhow::Result<WorkFacts> {
+    let has = |name: &str| files.iter().any(|f| f == name);
+    let mut facts = WorkFacts::default();
+    if has(CONFIG) {
+        let place = format!("{CONFIG} of {branch}");
+        if let Some(file) = contents(gh, CONFIG, branch)? {
+            facts.check = Work::of_config(&file.text, &place)?.check;
+        }
+    }
+    if facts.check.is_none() {
+        let justfile = match files.iter().find(|f| JUSTFILES.contains(&f.as_str())) {
+            Some(name) => contents(gh, name, branch)?.map(|file| file.text),
+            None => None,
+        };
+        facts.suggested = work_config::suggest(justfile.as_deref(), has("Cargo.toml"));
+    }
+    Ok(facts)
+}
+
 /// Reads the facts of the repository of `gh` with four calls, or with
 /// more when the rules require no check of the CI, or says why it
 /// cannot.
@@ -900,6 +1015,7 @@ pub fn read(gh: &Gh) -> Result<Github, String> {
         .map_err(why)?;
     let milestones = waves::open(gh).map_err(why)?;
     let files = files(gh, &repo.default_branch).map_err(why)?;
+    let work = work_facts(gh, &repo.default_branch, &files).map_err(why)?;
     let required: Vec<String> = rules.iter().flat_map(Rule::required).collect();
     let custom = required.iter().any(|c| c != VERIFY_CONTEXT && c != GATE);
     let ci = if custom {
@@ -917,6 +1033,7 @@ pub fn read(gh: &Gh) -> Result<Github, String> {
         admin: repo.permissions.is_some_and(|p| p.admin),
         files,
         ci,
+        work,
     })
 }
 
@@ -1004,24 +1121,36 @@ pub fn checks(github: &Github) -> Vec<Check> {
         )
         .with_step(Step::Wave),
     };
+    // A CLAUDE.md is the choice of the repository (01M5RH1SPRX0ZY5Q3WA4ENP84M).
     let claude = if github.has(CLAUDE) {
         Check::pass(text::INIT_CLAUDE, text::init_claude_on(repo, branch))
     } else {
-        Check::fail(
-            text::INIT_CLAUDE,
-            text::init_claude_off(repo, branch),
-            text::INIT_FIX_CLAUDE.into(),
-        )
+        Check::note(text::INIT_CLAUDE, text::init_claude_none(repo, branch))
     };
-    vec![
-        config,
-        merge,
-        ruleset,
-        backlog,
-        wave,
-        ci_check(github),
-        claude,
-    ]
+    let mut list = vec![config, merge, ruleset, backlog, wave, ci_check(github)];
+    list.extend(work_check(github));
+    list.push(claude);
+    list
+}
+
+/// The check of the table `[work]` of `riff.toml` (01M5RH1SKTT7JASP1VCCSTEE6F).
+/// There is none when the default branch has no `riff.toml`: the check of
+/// the file fails, and [`Step::Config`] adds the table with the file. It
+/// passes with a note when the file has no `check`; the note carries the
+/// step when riff finds a check to add.
+fn work_check(github: &Github) -> Option<Check> {
+    let (repo, branch) = (&github.repo, &github.default_branch);
+    if !github.has(CONFIG) {
+        return None;
+    }
+    Some(match (&github.work.check, &github.work.suggested) {
+        (Some(check), _) => Check::pass(text::INIT_WORK, text::init_work_on(repo, branch, check)),
+        (None, Some(suggested)) => {
+            Check::note(text::INIT_WORK, text::init_work_off(branch, suggested))
+                .with_step(Step::Config)
+        }
+        (None, None) => Check::note(text::INIT_WORK, text::init_work_none(branch)),
+    })
 }
 
 /// The check of the CI of a pull request: the full check can end. It
@@ -1076,6 +1205,10 @@ mod tests {
             admin: true,
             files: vec!["riff.toml".into(), "CLAUDE.md".into(), "justfile".into()],
             ci: vec!["Gate".into()],
+            work: WorkFacts {
+                check: Some("just check".into()),
+                suggested: None,
+            },
         }
     }
 
@@ -1094,6 +1227,7 @@ mod tests {
                 "pass  the milestone Backlog: acme/app has it open",
                 "pass  the first wave: acme/app has the open wave Wave 1",
                 "pass  the checks of a pull request: the full check is Gate",
+                "pass  the check in riff.toml: riff.toml of main of acme/app has [work] check = \"just check\"",
                 "pass  CLAUDE.md: main of acme/app has it",
             ]
         );
@@ -1163,24 +1297,31 @@ mod tests {
         }
     }
 
-    /// 01M5R1672NF56P15VD0JEX51K4: the checks of the CI and of `CLAUDE.md`
-    /// have no step: only a person does their fix.
+    /// 01M5R1672NF56P15VD0JEX51K4: the check of the CI has no step: only a
+    /// person does its fix. 01M5RH1SPRX0ZY5Q3WA4ENP84M: a repository with
+    /// no `CLAUDE.md` passes, with a note.
     #[test]
-    fn the_checks_of_the_ci_and_of_claude_md_have_no_step() {
-        let no_claude = Github {
-            files: vec!["riff.toml".into()],
-            ..ready()
-        };
+    fn the_check_of_the_ci_has_no_step_and_a_missing_claude_md_is_a_note() {
         let no_ci = Github {
             ci: vec![],
             ..ready()
         };
-        for github in [&no_claude, &no_ci] {
-            let failed: Vec<Check> = checks(github).into_iter().filter(|c| !c.passed()).collect();
-            assert_eq!(failed.len(), 1, "{failed:?}");
-            assert_eq!(failed[0].step, None);
-            assert!(steps_of(&checks(github)).is_empty());
-        }
+        let failed: Vec<Check> = checks(&no_ci).into_iter().filter(|c| !c.passed()).collect();
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0].step, None);
+        assert!(steps_of(&checks(&no_ci)).is_empty());
+
+        let no_claude = Github {
+            files: vec!["riff.toml".into()],
+            ..ready()
+        };
+        assert!(checks(&no_claude).iter().all(Check::passed));
+        assert!(steps_of(&checks(&no_claude)).is_empty());
+        assert_eq!(
+            checks(&no_claude).pop().unwrap().line(),
+            "note  CLAUDE.md: main of acme/app has none. This is fine: a CLAUDE.md is the choice \
+             of the repository"
+        );
         let line = checks(&no_ci).swap_remove(5).line();
         assert_eq!(
             line,
@@ -1399,6 +1540,7 @@ mod tests {
                 admin: true,
                 files: vec!["CLAUDE.md".into()],
                 ci: vec!["checks / lint".into(), "checks / test".into()],
+                work: WorkFacts::default(),
             }
         );
         // The repository, the rules, the milestones, the files, the pull
@@ -1441,6 +1583,163 @@ mod tests {
         let broken = fails("broken", "gh: Server Error (HTTP 500)");
         let why = format!("{:#}", files(&broken, "main").unwrap_err());
         assert!(why.contains("HTTP 500"), "{why}");
+    }
+
+    /// The forge with a justfile that has a recipe `check`, and the pull
+    /// request of the CI of a bare repository.
+    fn with_justfile(files: &str, riff_toml: Option<&str>) -> Fake {
+        let mut state = vec![
+            ("files", files),
+            (
+                "content_justfile",
+                "fmt:\n    cargo fmt\n\ncheck: fmt\n    cargo test\n",
+            ),
+            (
+                "prior_pulls",
+                r#"[{"number":3,"html_url":"https://github.com/acme/app/pull/3","head":{"ref":"feature","sha":"abc1234"},"base":{"ref":"main"}}]"#,
+            ),
+            ("checks_abc1234", r#"{"check_runs":[{"name":"Gate"}]}"#),
+        ];
+        if let Some(text) = riff_toml {
+            state.push(("content_riff.toml", text));
+        }
+        Fake::new(&state)
+    }
+
+    /// The text of the file that the last step pushed to the branch.
+    fn pushed(fake: &Fake) -> String {
+        let body = fake.json("config.json");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(body["content"].as_str().unwrap())
+            .unwrap();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    /// 01M5RH1SKTT7JASP1VCCSTEE6F: riff reads the `[work] check` of
+    /// `riff.toml`; when the file has none, the check that riff would add.
+    #[test]
+    fn read_finds_the_check_of_riff_toml_or_the_check_that_riff_would_add() {
+        let fact = |check: Option<&str>, suggested: Option<&str>| WorkFacts {
+            check: check.map(Into::into),
+            suggested: suggested.map(Into::into),
+        };
+        // A check in riff.toml: riff suggests nothing.
+        let fake = with_justfile(
+            "riff.toml\njustfile\n",
+            Some("[work]\ncheck = \"make test\"\n"),
+        );
+        assert_eq!(fake.github().work, fact(Some("make test"), None));
+        // A riff.toml with no [work]: the recipe check of the justfile.
+        let fake = with_justfile("riff.toml\njustfile\n", Some("[session]\nimage = \"x\"\n"));
+        assert_eq!(fake.github().work, fact(None, Some("just check")));
+        // No riff.toml: the same.
+        let fake = with_justfile("justfile\n", None);
+        assert_eq!(fake.github().work, fact(None, Some("just check")));
+        // A justfile with no recipe check, and a Cargo.toml.
+        let fake = Fake::new(&[
+            ("files", "justfile\nCargo.toml\n"),
+            ("content_justfile", "build:\n    cargo build\n"),
+        ]);
+        assert_eq!(fake.github().work, fact(None, Some("cargo test")));
+        // A Cargo.toml only.
+        let fake = Fake::new(&[("files", "Cargo.toml\n")]);
+        assert_eq!(fake.github().work, fact(None, Some("cargo test")));
+        // Neither: a note, no line.
+        assert_eq!(Fake::new(&[]).github().work, WorkFacts::default());
+        // A riff.toml that is not TOML is a fault of the read.
+        let fake = with_justfile("riff.toml\n", Some("[work\n"));
+        let why = read(&fake.gh()).unwrap_err();
+        assert!(why.contains("riff.toml of main is not valid TOML"), "{why}");
+    }
+
+    /// 01M5RH1SKTT7JASP1VCCSTEE6F, 01M5RH1SPRX0ZY5Q3WA4ENP84M: a
+    /// `riff.toml` with no check passes with a note. The note has the step
+    /// when riff finds a check to add.
+    #[test]
+    fn a_riff_toml_with_no_check_passes_with_a_note_and_a_step_when_riff_finds_one() {
+        let github = Github {
+            work: WorkFacts {
+                check: None,
+                suggested: Some("just check".into()),
+            },
+            ..ready()
+        };
+        let list = checks(&github);
+        assert!(list.iter().all(Check::passed), "{list:?}");
+        assert_eq!(steps_of(&list), [Step::Config]);
+        let note = list.iter().find(|c| c.step.is_some()).unwrap();
+        assert_eq!(
+            note.line(),
+            "note  the check in riff.toml: riff.toml of main has no [work] check, so a session \
+             looks for the check in the files of the repository. riff can add check = \"just check\""
+        );
+        assert_eq!(
+            Step::Config.title(&github),
+            "add check = \"just check\" in [work] to riff.toml on main with a pull request"
+        );
+        // A repository with no file of its own gets the line in the new file.
+        let new = Github {
+            files: vec![],
+            ..github
+        };
+        assert_eq!(
+            Step::Config.title(&new),
+            "make riff.toml on main with a pull request, with check = \"just check\" in [work]"
+        );
+        // No check to add: a note with no step.
+        let none = Github {
+            work: WorkFacts::default(),
+            ..ready()
+        };
+        let list = checks(&none);
+        assert!(list.iter().all(Check::passed));
+        assert!(steps_of(&list).is_empty());
+        assert!(
+            list.iter()
+                .any(|c| c.note && c.found.contains("no recipe check"))
+        );
+    }
+
+    /// 01M5RH1SKTT7JASP1VCCSTEE6F: the step makes `riff.toml` with the
+    /// session image and the check in its table `[work]`, in the same pull
+    /// request. A `riff.toml` that the branch has keeps its text.
+    #[test]
+    fn the_step_writes_the_work_table_in_the_same_pull_request() {
+        let fake = with_justfile("justfile\nCLAUDE.md\n", None);
+        let done = fake.set_up();
+        let config = done.iter().find(|(step, _)| *step == Step::Config).unwrap();
+        assert!(config.1.is_ok(), "{done:?}");
+        let text = pushed(&fake);
+        assert!(text.starts_with("[session]\nimage = \"ghcr.io/"), "{text}");
+        assert!(
+            text.ends_with("\n\n[work]\ncheck = \"just check\"\n"),
+            "{text}"
+        );
+        assert!(fake.json("config.json").get("sha").is_none());
+        // The merged file has the table: a second read finds the check.
+        assert_eq!(fake.github().work.check.as_deref(), Some("just check"));
+        assert!(
+            steps_of(&checks(&fake.github()))
+                .iter()
+                .all(|s| *s != Step::Config)
+        );
+
+        // A riff.toml with no [work]: the step adds the table to its text.
+        let own = "# My riff config.\n[session]\nimage = \"ghcr.io/o/i@sha256:0\"\n";
+        let fake = with_justfile("riff.toml\njustfile\n", Some(own));
+        let mut github = fake.github();
+        // The bare forge has other steps to do too: this test does the file only.
+        let steps = steps_of(&checks(&github));
+        assert!(steps.contains(&Step::Config), "{steps:?}");
+        let done = setup(&fake.forge(), &[Step::Config], &mut github);
+        assert!(done[0].1.is_ok(), "{done:?}");
+        assert_eq!(
+            pushed(&fake),
+            format!("{own}\n[work]\ncheck = \"just check\"\n")
+        );
+        assert_eq!(fake.json("config.json")["sha"], "b10b111");
+        assert_eq!(github.work.check.as_deref(), Some("just check"));
+        assert!(!steps_of(&checks(&github)).contains(&Step::Config));
     }
 
     /// 01M5R1672NF56P15VD0JEX51K4: the steps of a bare repository make

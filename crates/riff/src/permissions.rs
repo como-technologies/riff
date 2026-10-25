@@ -1709,6 +1709,7 @@ mod tests {
     #[test]
     fn each_step_of_a_session_of_the_daemon_matches_a_session_rule_of_its_role() {
         use crate::text;
+        use crate::work_config::Work;
         let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3";
         let texts = [
             (
@@ -1722,6 +1723,7 @@ mod tests {
                     frame,
                     "Wave 3",
                     true,
+                    &Work::default(),
                 ),
             ),
             (
@@ -1738,6 +1740,7 @@ mod tests {
                     "1a2b3c4d",
                     "worktree-issue-12",
                     "1a2b",
+                    &Work::default(),
                 ),
             ),
             // #279: the fix of a failed check reads the failed run, and
@@ -1753,11 +1756,20 @@ mod tests {
                     &["Gate".to_owned()],
                     "worktree-issue-12",
                     "1a2b",
+                    &Work::default(),
                 ),
             ),
             (
                 Role::Verifier,
-                text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d", &["CI".to_owned()]),
+                text::wave_verify_start(
+                    "o/r",
+                    "main",
+                    12,
+                    40,
+                    "1a2b3c4d",
+                    &["CI".to_owned()],
+                    &Work::default(),
+                ),
             ),
             (Role::Lead, text::MCP_LEAD.to_owned()),
         ];

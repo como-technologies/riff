@@ -340,8 +340,8 @@ pub async fn image(runtime: &impl Runtime, repo: &str, image: &str, change: bool
 /// use riff::update_steps::{machine, State};
 ///
 /// let checks = [
-///     Check { name: "podman".into(), found: "podman version 5.7.0".into(), fix: None, step: None },
-///     Check { name: "the init of podman".into(), found: "no catatonit".into(), fix: Some("sudo apt install catatonit".into()), step: None },
+///     Check { name: "podman".into(), found: "podman version 5.7.0".into(), fix: None, step: None, note: false },
+///     Check { name: "the init of podman".into(), found: "no catatonit".into(), fix: Some("sudo apt install catatonit".into()), step: None, note: false },
 /// ];
 /// let steps = machine(&checks);
 /// assert_eq!(steps[0].state, State::InStep("podman version 5.7.0".into()));
@@ -707,6 +707,7 @@ mod tests {
                     found: "no catatonit".into(),
                     fix: Some("sudo apt install catatonit".into()),
                     step: None,
+                    note: false,
                 }],
             };
             sync(&gate, &at).await

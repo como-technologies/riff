@@ -200,6 +200,7 @@ use tokio::signal::unix::{SignalKind, signal};
 
 use crate::daemon::{self, Ask, Ended, Say};
 use crate::runtime::{Bind, Env, SessionSpec, Source};
+use crate::work_config::Work;
 use crate::{dropped, home, identity, pr, rollout, session_image, text};
 use riff_client::api::{self, Api};
 
@@ -1753,11 +1754,22 @@ pub async fn run_with(
     let issue = issue_of(item)?;
     let dir = identity::working_dir()?;
     let (main, common) = main_clone(&dir)?;
+    let given = image.is_some();
     let image = match image {
         Some(image) => image.to_owned(),
         None => session_image::merged(&main, |line| println!("{line}"))?.to_string(),
     };
     let image = image.as_str();
+    // The check and the rules of the repository (01M5RH1SH11PTWKCJMNEMV8N2H).
+    // A local image needs no riff.toml: the session has no rules then.
+    let rules = match Work::merged(&main) {
+        Ok(rules) => rules,
+        Err(e) if given => {
+            println!("riff: {e:#}");
+            Work::default()
+        }
+        Err(e) => return Err(e),
+    };
     let checked = check(daemon, &main, issue, image).await?;
     let Some(thread) = here.default_thread() else {
         bail!("{}", text::RUN_NO_REPO);
@@ -1790,7 +1802,7 @@ pub async fn run_with(
     let mut steps = EndSteps::default();
     let worked = work(
         daemon, server, &api, &me, &thread, &main, &common, &checked, &session, item, issue, image,
-        &mut steps,
+        &rules, &mut steps,
     )
     .await;
     let ending = api.with_budget(END_BUDGET);
@@ -1822,6 +1834,7 @@ async fn work(
     item: &str,
     issue: u64,
     image: &str,
+    rules: &Work,
     steps: &mut EndSteps,
 ) -> Result<i32> {
     let folder = sessions_dir()?.join(format!("{item}-{}", short(session)));
@@ -1868,6 +1881,7 @@ async fn work(
         &frame,
         &checked.milestone,
         earlier,
+        rules,
     );
     let secrets = checked.host.secrets();
     let values = checked.host.values();

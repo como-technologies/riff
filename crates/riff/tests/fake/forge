@@ -8,6 +8,9 @@
 #   not_admin       the person is not an admin
 #   no_login        each call fails: gh has no sign-in
 #   files           the files at the root of main, one on a line
+#   content_NAME    the text of the file NAME at the root of main, for example
+#                   content_justfile. riff.toml has a text of its own when this
+#                   file is not there: a session image and [work] check = "just check".
 #   milestones      the titles of the open milestones, one on a line
 #   static_rules    the JSON of the rules of main before the ruleset riff
 #   ruleset         the body of the ruleset riff, when it is made
@@ -58,6 +61,14 @@ case "$*" in
       printf '%s{"name":"%s","type":"file"}' "$sep" "$name"; sep=','
     done < "$dir/files"
     printf ']' ;;
+  'api repos/{owner}/{repo}/contents/'*'?ref='*)
+    name=${2#*/contents/}; name=${name%%\?*}
+    grep -qx -- "$name" "$dir/files" || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+    if flag "content_$name"; then text=$(cat "$dir/content_$name")
+    elif [ "$name" = riff.toml ]; then
+      text=$(printf '[session]\nimage = "ghcr.io/o/i@sha256:%064d"\n\n[work]\ncheck = "just check"' 0)
+    else text=''; fi
+    printf '{"sha":"b10b111","content":"%s"}' "$(printf '%s\n' "$text" | base64 | tr -d '\n')" ;;
   'api repos/{owner}/{repo}/pulls?state=all&base=main&per_page=5')
     if flag prior_pulls; then cat "$dir/prior_pulls"; else printf '[]'; fi ;;
   'api repos/{owner}/{repo}/commits/'*'/check-runs?per_page=100')
@@ -83,7 +94,10 @@ case "$*" in
       echo $(($(cat "$dir/busy") - 1)) > "$dir/busy"
       echo 'gh: Pull Request is not mergeable (HTTP 405)' >&2; exit 1
     fi
-    cp "$last" "$dir/merge.json"; echo riff.toml >> "$dir/files"; rm -f "$dir/open_pulls"; reply '200 OK' '{"merged":true}' ;;
+    cp "$last" "$dir/merge.json"; rm -f "$dir/open_pulls"
+    grep -qx riff.toml "$dir/files" || echo riff.toml >> "$dir/files"
+    sed -n 's/.*"content":"\([^"]*\)".*/\1/p' "$dir/config.json" | base64 -d > "$dir/content_riff.toml"
+    reply '200 OK' '{"merged":true}' ;;
   'api -X DELETE repos/{owner}/{repo}/git/refs/heads/riff-setup') rm -f "$dir/branch" ;;
   'api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_merge=true') touch "$dir/auto_merge" ;;
   'api repos/{owner}/{repo}/rulesets?per_page=100')

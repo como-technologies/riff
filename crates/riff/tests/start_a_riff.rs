@@ -203,7 +203,8 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
         "#### Allow auto-merge and squash merge\n",
         "#### Make the ruleset of the default branch\n",
         "#### Make the Backlog and the first wave\n",
-        "### Write the CLAUDE.md of the repository\n",
+        "### Name the check and the rules of the repository\n",
+        "### Write a CLAUDE.md, when you want one\n",
         "### Pin an image with another toolchain\n",
     ] {
         assert!(how_to.contains(step), "{step}");
@@ -230,46 +231,82 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
     each_is_real(&riff);
 }
 
-/// 01M5R580VCRCHJM8FY7NT485R1: the how-to has the step "Write the
-/// CLAUDE.md of the repository" with a copyable `sh` block. The block
-/// writes a `CLAUDE.md` with one part for each row of the table of the
-/// step: the rules that the start texts of riff leave to the repository.
-#[test]
-fn the_how_to_writes_a_claude_md_with_the_rules_that_the_start_texts_leave_out() {
+/// The first `sh` block of the step `heading` of the how-to, and the
+/// step.
+fn block_of(heading: &str) -> (String, String) {
     let how_to = part(PAGE, HOW_TO);
     let step = how_to
-        .split("### Write the CLAUDE.md of the repository\n")
+        .split(heading)
         .nth(1)
-        .expect("the step");
-    let step = step.split("\n### ").next().unwrap();
+        .unwrap_or_else(|| panic!("the step {heading}"));
+    let step = step.split("\n### ").next().unwrap().to_owned();
     let block = step.split("```sh\n").nth(1).expect("its block");
+    let block = block.split("\n```").next().unwrap().to_owned();
+    (block, step)
+}
+
+/// 01M5RH1SSPTA80JHHNDQB9PCB6: the how-to shows the table `[work]` in a
+/// `toml` block that riff reads, and says that a `CLAUDE.md` is the
+/// choice of the repository.
+#[test]
+fn the_how_to_shows_the_work_table_and_leaves_claude_md_to_the_repository() {
+    let how_to = part(PAGE, HOW_TO);
+    let block = how_to.split("```toml\n").nth(1).expect("a toml block");
     let block = block.split("\n```").next().unwrap();
+    let work = riff::work_config::Work::of_config(block, "the book").unwrap();
+    assert_eq!(work.check.as_deref(), Some("just check"));
+    assert!(!work.rules.is_empty(), "{block}");
+    let words = how_to.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(words.contains("A `CLAUDE.md` or an `AGENTS.md` is the choice of the repository."));
+    assert!(words.contains("shows `CLAUDE.md: none` as a note, and the check passes"));
+    assert!(how_to.contains("(#name-the-check-and-the-rules-of-the-repository)"));
+    assert!(how_to.contains("(#write-a-claudemd-when-you-want-one)"));
+}
+
+/// 01M5RH1SKTT7JASP1VCCSTEE6F: the step "Name the check and the rules of
+/// the repository" has a copyable `sh` block that adds the table `[work]`
+/// to `riff.toml`, and riff reads what it writes.
+#[test]
+fn the_step_that_names_the_check_writes_a_table_that_riff_reads() {
+    let (block, step) = block_of("### Name the check and the rules of the repository\n");
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("riff.toml"), "[session]\nimage = \"x\"\n").unwrap();
+    let out = std::process::Command::new("sh")
+        .args(["-c", &block])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{block}: {out:?}");
+    let text = fs::read_to_string(dir.path().join("riff.toml")).unwrap();
+    assert!(text.starts_with("[session]\nimage = \"x\"\n"), "{text}");
+    let work = riff::work_config::Work::of_config(&text, "riff.toml").unwrap();
+    assert_eq!(work.check.as_deref(), Some("make check"));
+    assert_eq!(work.rules.len(), 2, "{text}");
+    // The step has no riff command to check.
+    assert!(
+        book::commands_in(&step)
+            .iter()
+            .all(|c| !c.starts_with("riff "))
+    );
+}
+
+/// 01M5RH1SPRX0ZY5Q3WA4ENP84M: the step "Write a CLAUDE.md, when you
+/// want one" is optional, and its `sh` block writes a `CLAUDE.md`.
+#[test]
+fn the_step_for_a_claude_md_is_optional_and_writes_one() {
+    let (block, step) = block_of("### Write a CLAUDE.md, when you want one\n");
     let dir = tempfile::tempdir().unwrap();
     let out = std::process::Command::new("sh")
-        .args(["-c", block])
+        .args(["-c", &block])
         .current_dir(dir.path())
         .output()
         .unwrap();
     assert!(out.status.success(), "{block}: {out:?}");
     let file = fs::read_to_string(dir.path().join("CLAUDE.md")).unwrap();
-    for row in ["Work", "Issues", "Verify"] {
-        assert!(
-            step.contains(&format!("| {row} |")),
-            "{row} is not in the table"
-        );
-        assert!(file.contains(&format!("\n## {row}\n")), "{row}\n{file}");
-    }
     assert!(file.contains("\"Done when:\""), "{file}");
-    // The step has no riff command to check.
-    assert!(
-        book::commands_in(step)
-            .iter()
-            .all(|c| !c.starts_with("riff "))
-    );
-    // The step says where a session gets the rules, and links it from the table.
     let words = step.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(words.contains("The rules of your repository come from your `CLAUDE.md`."));
-    assert!(how_to.contains("(#write-the-claudemd-of-the-repository)"));
+    assert!(words.contains("is the choice of the repository"), "{words}");
+    assert!(words.contains("riff needs neither"), "{words}");
 }
 
 /// 01M5R1672NF56P15VD0JEX51K4: the how-to starts with `riff init` in a

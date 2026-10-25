@@ -1695,6 +1695,12 @@ impl Live {
         let auto = crate::permissions::Trust::of(me.place().repo(), &wave.server);
         run::claude_folder(&claude, &clone, &host.home.join(".claude.json"), &auto)?;
         let (main, common) = run::main_clone(&wave.main)?;
+        // The check and the rules of the repository: the merged riff.toml
+        // (01M5RH1SH11PTWKCJMNEMV8N2H).
+        let rules = {
+            let main = main.clone();
+            blocking(move || crate::work_config::Work::merged(&main)).await?
+        };
         let start = match work {
             Work::Build { issue } => {
                 let issue = *issue;
@@ -1713,7 +1719,7 @@ impl Live {
                 let milestone = milestone.context("a build has a milestone")?;
                 let frame = pr::body(hygiene::Link::Closes(issue), "SUMMARY", &milestone)?;
                 let mut text = text::run_start(
-                    &wave.repo, base, issue, &branch, session, &frame, &milestone, earlier,
+                    &wave.repo, base, issue, &branch, session, &frame, &milestone, earlier, &rules,
                 );
                 if let Some(failed) = failed {
                     text.push_str("\n\n");
@@ -1729,7 +1735,9 @@ impl Live {
                 let branch = branch_of(*issue);
                 let (main, at, on) = (main.clone(), clone.clone(), branch.clone());
                 blocking(move || run::make_clone(&main, &at, &on)).await?;
-                text::wave_rebase_start(&wave.repo, base, *issue, *pull, commit, &branch, session)
+                text::wave_rebase_start(
+                    &wave.repo, base, *issue, *pull, commit, &branch, session, &rules,
+                )
             }
             Work::Checks {
                 issue,
@@ -1741,7 +1749,7 @@ impl Live {
                 let (main, at, on) = (main.clone(), clone.clone(), branch.clone());
                 blocking(move || run::make_clone(&main, &at, &on)).await?;
                 text::wave_checks_start(
-                    &wave.repo, base, *issue, *pull, commit, checks, &branch, session,
+                    &wave.repo, base, *issue, *pull, commit, checks, &branch, session, &rules,
                 )
             }
             Work::Verify {
@@ -1756,7 +1764,7 @@ impl Live {
                 let checks =
                     blocking(move || repo_setup::full_check(&pr::Gh::for_repo(&repo), &repo))
                         .await?;
-                text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks)
+                text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks, &rules)
             }
         };
         let existing = |p: PathBuf| p.exists().then_some(p);

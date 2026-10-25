@@ -7009,8 +7009,8 @@ part when they merge.
   default branch that has some. A repository with no such check run gets
   `Gate`. When the setup pull request is the only one, riff waits for
   its check runs. `riff init` also checks that the repository has a CI
-  check and a `CLAUDE.md` on the default branch. It has no step for
-  either: the check names the fix. A person who is not an admin of the
+  check on the default branch. It has no step for it: the check names
+  the fix. A person who is not an admin of the
   repository gets each step named, and riff changes nothing. A step that
   fails prints why and its fix, and the next steps run.
 - **01M5RGG9KJXCKH8C94145WS8SM** Before the question of the setup, `riff
@@ -7034,6 +7034,34 @@ part when they merge.
   --ff-only origin BRANCH` in the clone and says so, and the check of
   the session image reads the `riff.toml` of the clone. Else `riff init`
   says why it ran no `git pull` and names the step to do by hand.
+- **01M5RH1SE99SNN9R66ZTS6VDSX** riff.toml holds what riff needs from a
+  repository, in the table `[work]`: `check`, the command that a session
+  runs before each push and after a rebase, for example `check = "just
+  check"`, and `rules`, an optional list of lines that riff gives each
+  session of the repository in its start text. riff reads the table from
+  `riff.toml` on the default branch of `origin`. The `riff.toml` of riff
+  has `[work] check = "just check"`: the rules of riff stay in its
+  `CLAUDE.md`.
+- **01M5RH1SH11PTWKCJMNEMV8N2H** The start texts of a build, a rebase, a
+  fix of checks and a verify name the `check` of `riff.toml` and give
+  its `rules`. They say "Read CLAUDE.md or AGENTS.md when the repository
+  has one" only as a hint, never as the source of the check. A
+  `riff.toml` with no `check` gets a start text that sends the session
+  to the files of the repository for its check.
+- **01M5RH1SKTT7JASP1VCCSTEE6F** `riff init` writes the `[work]` table
+  in the pull request "Set up riff" when `riff.toml` has none: `check =
+  "just check"` when the justfile of the default branch has a recipe
+  `check`, else `check = "cargo test"` when the root has a `Cargo.toml`.
+  It names the line in the step that it asks about. A `riff.toml` that
+  has a `[work]` table stays as it is. A repository with neither file
+  gets no line, and `riff init` says so in a note.
+- **01M5RH1SPRX0ZY5Q3WA4ENP84M** `riff init` checks no file of rules. A
+  repository with no `CLAUDE.md`, `AGENTS.md` or such file passes: `riff
+  init` shows "CLAUDE.md: none" as a note, not a fail. A `CLAUDE.md` is
+  the choice of the repository.
+- **01M5RH1SSPTA80JHHNDQB9PCB6** The how-to "Add another repository to
+  the riff" shows the table `[work]` in a `toml` block, and says that a
+  `CLAUDE.md` is the choice of the repository.
 
 ### The permission rules
 
@@ -7359,12 +7387,11 @@ part when they merge.
   what riff needs from a session: the item, the branch, the frame of the
   pull request and the verify report. They name no convention of the
   riff repository: not `just`, `requirements.md`, the book or the Gate.
-  They send the session to the `CLAUDE.md` of the repository for its
-  rules, and the verify text names the checks of the full check as riff
-  read them. The `CLAUDE.md` of riff holds the rules that left the
-  texts. A test of the texts (`text::tests`) checks the words, and the
-  how-to "Add another repository to the riff" says what the `CLAUDE.md`
-  of a repository should say.
+  They give the session the `check` and the `rules` of the `riff.toml`
+  of the repository (01M5RH1SH11PTWKCJMNEMV8N2H), and the verify text
+  names the checks of the full check as riff read them. The `CLAUDE.md`
+  of riff holds the rules that left the texts. A test of the texts
+  (`text::tests`) checks the words.
 
 ### How the relay drives claude
 

@@ -217,20 +217,12 @@ impl Image {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
-    let head = git(
-        main,
-        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    )
-    .map_err(|_| anyhow!("{}", text::image_no_origin_head(main)))?;
+    let head = origin_head(main)?;
     let branch = head.strip_prefix("origin/").unwrap_or(&head);
     if let Err(e) = git(main, &["fetch", "--quiet", "origin", branch]) {
         say(&text::image_no_fetch(&head, &format!("{e:#}")));
     }
-    let config = match git(main, &["show", &format!("{head}:{FILE}")]) {
-        Ok(config) => config,
-        Err(_) if lacks_config(main, &head) => bail!("{}", text::image_no_config(&head)),
-        Err(e) => return Err(e),
-    };
+    let config = show_config(main, &head)?;
     let image = Image::of_config(&config, &format!("{FILE} of {head}"))?;
     match Image::of_repository(main) {
         Ok(local) if local == image => {}
@@ -247,6 +239,35 @@ pub fn merged(main: &Path, mut say: impl FnMut(&str)) -> Result<Image> {
         )),
     }
     Ok(image)
+}
+
+/// The default branch of `origin` as the clone has it, for example
+/// `origin/main`: the branch of `origin/HEAD`.
+fn origin_head(main: &Path) -> Result<String> {
+    git(
+        main,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .map_err(|_| anyhow!("{}", text::image_no_origin_head(main)))
+}
+
+/// The text of [`FILE`] on the branch `head`. The error names the file,
+/// the branch and the fix when the branch has no [`FILE`].
+fn show_config(main: &Path, head: &str) -> Result<String> {
+    match git(main, &["show", &format!("{head}:{FILE}")]) {
+        Ok(config) => Ok(config),
+        Err(_) if lacks_config(main, head) => bail!("{}", text::image_no_config(head)),
+        Err(e) => Err(e),
+    }
+}
+
+/// The default branch of `origin` and the text of [`FILE`] on it, as the
+/// clone has them: no fetch. [`merged`] fetches first; the work table of
+/// a start text ([`crate::work_config::Work::merged`]) reads after it.
+pub(crate) fn merged_config(main: &Path) -> Result<(String, String)> {
+    let head = origin_head(main)?;
+    let config = show_config(main, &head)?;
+    Ok((head, config))
 }
 
 /// True when the branch `head` is there, and has no [`FILE`].

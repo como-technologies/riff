@@ -24,11 +24,19 @@
 //! ```
 //!
 //! 1. The checks ([`checks`]). riff reads the [`Facts`] of the machine,
+<<<<<<< HEAD
 //!    and prints one line for each check: `pass`, or `fail` with the
 //!    fix (01M4ZJN6TEWCYCB39XTH6BBD9H). When riff can do the step of a
 //!    failed check now (step 3), the line reads `step` with the step, in
 //!    place of `fail` with the fix ([`Check::planned_line`],
 //!    01M5RGG9KJXCKH8C94145WS8SM).
+=======
+//!    and prints one line for each check: `pass`, `note`, or `fail` with
+//!    the fix (01M4ZJN6TEWCYCB39XTH6BBD9H). A note fails nothing. When
+//!    riff can do the step of a failed check now (step 4), the line reads
+//!    `step` with the step, in place of `fail` with the fix
+//!    ([`Check::planned_line`], 01M5RGG9KJXCKH8C94145WS8SM).
+>>>>>>> 062d0f04 (riff.toml holds the check and the rules of a repository in [work], and riff init does not require a CLAUDE.md)
 //! 2. The wide rules ([`Wide`]). When the user settings, the project
 //!    settings or the local settings of Claude Code have an allow rule
 //!    that is wider than the steps of riff ([`crate::permissions::wide`]),
@@ -79,18 +87,19 @@
 //! | the milestone `Backlog` | the open milestones | one has that title |
 //! | the first wave | the open milestones | one is a wave |
 //! | the checks of a pull request | the required checks and the check runs of the latest pull requests | the full check can end |
-//! | `CLAUDE.md` | the files at the root of the default branch | it is there |
+//! | the check in `riff.toml` | the table `[work]` of `riff.toml` ([`crate::work_config`]) | it has a `check`; else a note, and a step when riff finds a check to add |
+//! | `CLAUDE.md` | the files at the root of the default branch | it is there; else a note (01M5RH1SPRX0ZY5Q3WA4ENP84M) |
 //!
 //! The first five checks of the repository have a step that `riff init`
 //! can do. The check of the session image has the step of `riff.toml` when
 //! the default branch has none. The check of a pull request has the step of
-//! the ruleset when no pull request ran a check yet, and `CLAUDE.md` has
-//! none: their fix is the work of the person.
+//! the ruleset when no pull request ran a check yet: else its fix is the
+//! work of the person. The last two pass with a note when they are not so.
 //!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
 //!
-//! The last seven checks run only in a folder whose remote `origin` is on
+//! The last eight checks run only in a folder whose remote `origin` is on
 //! GitHub, with the `gh` of the machine. They read the repository and
 //! change nothing, also without `--check`; only the steps of the setup
 //! change it. When `gh` cannot read the
@@ -488,6 +497,11 @@ pub struct Check {
     /// The step that does the fix, when the check failed and riff has the
     /// code of the step ([`crate::repo_setup::Step`]).
     pub step: Option<crate::repo_setup::Step>,
+    /// The check passed with a note: something that a person may want to
+    /// know or to do, and that fails nothing (01M5RH1SPRX0ZY5Q3WA4ENP84M).
+    /// The step of a note is optional work: riff does it with the steps
+    /// that failed checks name.
+    pub note: bool,
 }
 
 impl Check {
@@ -497,6 +511,7 @@ impl Check {
             found,
             fix: None,
             step: None,
+            note: false,
         }
     }
 
@@ -506,6 +521,15 @@ impl Check {
             found,
             fix: Some(fix),
             step: None,
+            note: false,
+        }
+    }
+
+    /// A check that passed, with a note in place of a fix.
+    pub(crate) fn note(name: &str, found: String) -> Check {
+        Check {
+            note: true,
+            ..Check::pass(name, found)
         }
     }
 
@@ -522,10 +546,11 @@ impl Check {
         self.fix.is_none()
     }
 
-    /// The line for people: `pass  NAME: FOUND`, or
+    /// The line for people: `pass  NAME: FOUND`, `note  NAME: FOUND`, or
     /// `fail  NAME: FOUND. Fix: FIX`.
     pub fn line(&self) -> String {
         match &self.fix {
+            None if self.note => text::init_note(&self.name, &self.found),
             None => text::init_pass(&self.name, &self.found),
             Some(fix) => text::init_fail(&self.name, &self.found, fix),
         }
@@ -537,7 +562,7 @@ impl Check {
     ///
     /// ```
     /// use riff::first_run::Check;
-    /// use riff::repo_setup::{Github, checks};
+    /// use riff::repo_setup::{Github, WorkFacts, checks};
     ///
     /// let github = Github {
     ///     repo: "acme/app".into(),
@@ -549,6 +574,10 @@ impl Check {
     ///     admin: true,
     ///     files: vec!["riff.toml".into(), "CLAUDE.md".into()],
     ///     ci: vec!["lint".into()],
+    ///     work: WorkFacts {
+    ///         check: Some("just check".into()),
+    ///         suggested: None,
+    ///     },
     /// };
     /// let lines: Vec<String> = checks(&github)
     ///     .iter()
@@ -1186,6 +1215,10 @@ mod tests {
             admin: true,
             files: vec!["riff.toml".into(), "CLAUDE.md".into()],
             ci: vec!["Gate".into()],
+            work: crate::repo_setup::WorkFacts {
+                check: Some("just check".into()),
+                suggested: None,
+            },
         }
     }
 
@@ -1193,7 +1226,7 @@ mod tests {
     /// the checks of the machine, and only for a folder with a remote on
     /// GitHub.
     #[test]
-    fn the_repository_on_github_has_seven_checks_after_the_machine() {
+    fn the_repository_on_github_has_eight_checks_after_the_machine() {
         let names = |facts: &Facts| {
             checks(facts)
                 .into_iter()
@@ -1215,6 +1248,7 @@ mod tests {
                 "the milestone Backlog",
                 "the first wave",
                 "the checks of a pull request",
+                "the check in riff.toml",
                 "CLAUDE.md"
             ]
         );

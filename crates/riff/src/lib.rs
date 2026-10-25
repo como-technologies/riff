@@ -123,3 +123,4 @@ pub mod view;
 pub mod watches;
 pub mod wave;
 pub mod waves;
+pub mod work_config;

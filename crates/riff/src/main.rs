@@ -517,12 +517,15 @@ enum Command {
     /// repository with gh and checks that it has riff.toml on the default
     /// branch, allows auto-merge and squash merges, has a ruleset of the
     /// default branch that requires riff/verify, has the milestone Backlog
-    /// and an open wave, has a CI check that a pull request runs, and has a
-    /// CLAUDE.md. It names the fix of each check that fails. For the first
-    /// five checks, riff init does the fix itself: it asks one question,
-    /// and then it makes riff.toml with a pull request that it merges,
-    /// allows auto-merge and squash merges, makes the Backlog and Wave 1,
-    /// and makes the ruleset riff. It needs the rights of an admin of the
+    /// and an open wave, and has a CI check that a pull request runs. It
+    /// names the fix of each check that fails. It shows a note for a
+    /// riff.toml with no check in the table [work], and for a repository
+    /// with no CLAUDE.md: a note fails nothing. For the first five
+    /// checks, riff init does the fix itself: it asks one question, and
+    /// then it makes riff.toml with a pull request that it merges (with
+    /// the check of the repository in [work], or it adds that table to a
+    /// riff.toml that has none), allows auto-merge and squash merges,
+    /// makes the Backlog and Wave 1, and makes the ruleset riff. It needs the rights of an admin of the
     /// repository, and a second run changes nothing. It writes no rule into
     /// your user settings of Claude Code. It names each allow rule of your
     /// user, project and local settings of Claude Code that is wider than

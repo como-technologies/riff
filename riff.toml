@@ -5,3 +5,8 @@
 # builds it from deploy/session/. See "Change the session image" in
 # docs/src/development.md.
 image = "ghcr.io/como-technologies/riff-session@sha256:57413e21fc507e6ace6af4f695b3a873218b29f8a94ff66868ae27b178a7ff20"
+
+[work]
+# What a session runs before each push and after a rebase
+# (01M5RH1SE99SNN9R66ZTS6VDSX). The rules of riff are in CLAUDE.md.
+check = "just check"

@@ -181,8 +181,8 @@ flowchart LR
     D --> I["get the session image<br/>of the project"]
 ```
 
-`riff init` prints one line for each check, with `pass`, `step` or
-`fail`:
+`riff init` prints one line for each check, with `pass`, `note`, `step`
+or `fail`. A `note` fails nothing:
 
 | Check | It must be true |
 |---|---|
@@ -192,7 +192,7 @@ flowchart LR
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |
 | The riff binary | It is static, so `riff relay` starts in each session image. |
-| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, a pull request runs a CI check, and `CLAUDE.md` is there. `riff init` does the first five itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
+| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, and a pull request runs a CI check. `riff.toml` names the check of a session in `[work]`: a note says when it does not. A repository with no `CLAUDE.md` passes, with a note. `riff init` does the first five itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
 
 A line with `fail` also gives the fix. A line with `step` is a check of
 your repository on GitHub that `riff init` fixes itself, after one
@@ -382,7 +382,7 @@ each step that is done already:
 | Step | What `riff init` does |
 |---|---|
 | Merge settings | It allows auto-merge and squash merge. |
-| `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins the session image of the riff that you run. |
+| `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins the session image of the riff that you run, and has the table `[work]` with your check. When `riff.toml` has no `[work]` table, the same pull request adds it. |
 | The Backlog | It makes the `Backlog`. |
 | The first wave | When the repository has no open wave, it makes `Wave 1`. |
 | The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks `riff/verify` and the checks that your CI runs on a pull request. A repository whose CI has no check yet gets the check `Gate`. |
@@ -403,17 +403,34 @@ why it did not, and you run `git pull` in your clone. A second run of
 `riff init` changes nothing on GitHub and asks nothing. See
 [Read the output for a repository on GitHub](#read-the-output-for-a-repository-on-github).
 
-Two parts are your own work. `riff init` has no step for them, and it
-names the fix of each:
+`riff.toml` holds what riff needs from the repository, in the table
+`[work]`:
 
-- A CI check that a pull request runs. riff waits for the full check
-  before it starts a verify. See [Add the job Gate](#add-the-job-gate)
-  and [Use the checks that you have](#use-the-checks-that-you-have).
-- A `CLAUDE.md` at the root of the default branch. Each session reads
-  it for the rules of the repository: how to run the checks before a
-  push, and what a pull request needs. See
-  [Write the CLAUDE.md of the repository](#write-the-claudemd-of-the-repository).
-  Push it, and run `riff init` again.
+```toml
+[work]
+check = "just check"
+rules = ["Each change has a test."]
+```
+
+- `check` is the command that a session runs before each push and
+  after a rebase. `riff init` writes `just check` when the justfile of
+  the default branch has a recipe `check`, else `cargo test` when the
+  root has a `Cargo.toml`. It names the line in its question. Change
+  it later in `riff.toml`. A repository with neither gets no line, and
+  `riff init` says so in a note.
+- `rules` is an optional list of lines. riff gives them to each
+  session of the repository in its start text.
+
+A `CLAUDE.md` or an `AGENTS.md` is the choice of the repository. riff
+needs neither, and `riff init` checks neither: with no `CLAUDE.md` it
+shows `CLAUDE.md: none` as a note, and the check passes. A session
+reads such a file when the repository has one.
+
+One part is your own work. `riff init` has no step for it, and it
+names the fix: a CI check that a pull request runs. riff waits for the
+full check before it starts a verify. See
+[Add the job Gate](#add-the-job-gate) and
+[Use the checks that you have](#use-the-checks-that-you-have).
 
 To do the steps with no question, run `riff init --yes`. To see the
 steps and change nothing, run `riff init --check`. A person who is not
@@ -508,11 +525,12 @@ flowchart LR
 | Check of `riff init` | Step |
 |---|---|
 | `riff.toml` on the default branch | [Add riff.toml](#add-rifftoml) |
+| the check in `riff.toml` | [Name the check and the rules of the repository](#name-the-check-and-the-rules-of-the-repository) |
 | auto-merge and squash merge | [Allow auto-merge and squash merge](#allow-auto-merge-and-squash-merge) |
 | the ruleset of the default branch | [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch) |
 | the Backlog, the first wave | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
 | the checks of a pull request | [Add the job Gate](#add-the-job-gate) |
-| `CLAUDE.md` | [Write the CLAUDE.md of the repository](#write-the-claudemd-of-the-repository) |
+| `CLAUDE.md` | [Write a CLAUDE.md, when you want one](#write-a-claudemd-when-you-want-one) |
 
 The full check is a step of your own. Your repository may have one
 already: see
@@ -541,6 +559,34 @@ the ruleset: after the ruleset, each change needs a pull request.
 ```sh
 git add riff.toml
 git commit -m "Pin the session image of riff"
+git push
+```
+
+### Name the check and the rules of the repository
+
+`riff.toml` has the table `[work]` for what a session needs from your
+repository. `check` is the command that a session runs before each
+push and after a rebase. `rules` is an optional list of lines for the
+start text of each session. Without a `check`, a session looks for it
+in the files of the repository.
+
+This command adds the table to `riff.toml`. Write your own command in
+place of `make check`:
+
+```sh
+cat >> riff.toml <<'EOF'
+
+[work]
+check = "make check"
+rules = ["Each change has a test.", "A verifier runs the test of each criterion."]
+EOF
+```
+
+Commit it with the same steps as `riff.toml`:
+
+```sh
+git add riff.toml
+git commit -m "Name the check of the repository"
 git push
 ```
 
@@ -674,36 +720,17 @@ A repository that has waves and no Backlog gets the Backlog alone:
 gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog
 ```
 
-### Write the CLAUDE.md of the repository
+### Write a CLAUDE.md, when you want one
 
-A session reads `CLAUDE.md` at the root of the repository for its
-rules. The start text of riff says only what riff needs: the item, the
-branch, the frame of the pull request and, for a verify, the report. The
-rules of your repository come from your `CLAUDE.md`.
-
-```mermaid
-flowchart LR
-    S["start text of riff<br/>the item, the branch,<br/>the pull request"] --> A["a session"]
-    C["CLAUDE.md of<br/>the repository<br/>its rules"] --> A
-```
-
-| Part | What it says |
-|---|---|
-| Work | The commands to run before a push, and how to read the result. |
-| Issues | What a `Done when:` line names. |
-| Verify | What a verifier reads and runs, and what it does not run. |
-
-Write the file with your own commands in place of `make check`, push it
-with a pull request, and run `riff init` again:
+A `CLAUDE.md` or an `AGENTS.md` is the choice of the repository. riff
+needs neither, and `riff init` only shows a note when `CLAUDE.md` is
+not there. Write one when you have more rules than a few lines of
+`rules`. A session reads the file when it is there. The `CLAUDE.md` of
+riff is an example of a longer file.
 
 ```sh
 cat > CLAUDE.md <<'EOF'
 # Notes for agents
-
-## Work
-
-- Run `make check` before each push. It passes with no warning.
-- Each change has a test.
 
 ## Issues
 
@@ -712,11 +739,8 @@ cat > CLAUDE.md <<'EOF'
 ## Verify
 
 - A verifier reads the diff and runs the test of each criterion.
-- A verifier does not run `make check` again: the CI did it.
 EOF
 ```
-
-The `CLAUDE.md` of riff is an example of a longer file.
 
 ### Use any default branch
 
