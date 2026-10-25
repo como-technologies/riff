@@ -36,7 +36,7 @@
 //! | the ruleset of the default branch | the rules that apply to the `default_branch` of the repository ([`rules_path`]) | a `required_status_checks` rule has the check [`VERIFY_CONTEXT`]: without it, nothing on GitHub makes a merge wait for the verify | [`Step::Ruleset`] |
 //! | the milestone `Backlog` | the open milestones ([`crate::waves::open`]) | one has the title [`BACKLOG`]: `riff wave move --to Backlog` and `riff wave end --move-open-to-backlog` need it | [`Step::Backlog`] |
 //! | the first wave | the open milestones | one is a wave: the lead has a wave to plan | [`Step::Wave`] |
-//! | the checks of a pull request | the required checks, and the check runs of the latest pull requests | the full check can end: a rule requires a check of the CI, or a pull request ran [`GATE`], or the ruleset that the step makes will require the checks that the pull requests ran | none |
+//! | the checks of a pull request | the required checks, and the check runs of the latest pull requests | the full check can end: a rule requires a check of the CI, or a pull request ran [`GATE`], or the ruleset that the step makes will require the checks that the pull requests ran | [`Step::Ruleset`] when no pull request ran a check yet and the default branch has no `riff.toml`: the pull request of [`Step::Config`] may run the first check. Else none |
 //! | `CLAUDE.md` | the files at the root of the default branch | it is there: a session reads the rules of the repository in it | none |
 //!
 //! The fix of the ruleset names the checks [`GATE`] and [`VERIFY_CONTEXT`].
@@ -1028,7 +1028,11 @@ pub fn checks(github: &Github) -> Vec<Check> {
 /// passes when a rule requires a check but [`GATE`] and the verify, or a
 /// pull request ran [`GATE`], or no rule requires the verify yet and the
 /// pull requests ran checks: the ruleset that [`Step::Ruleset`] makes
-/// requires them.
+/// requires them. When no pull request ran a check, and neither the rules
+/// nor the default branch are set up, the check fails with that step:
+/// the pull request of [`Step::Config`] may run the first check, and the
+/// ruleset requires it (01M5RGG9KJXCKH8C94145WS8SM). If it runs none, the
+/// check fails again after the steps, with its fix.
 fn ci_check(github: &Github) -> Check {
     let custom = github
         .required
@@ -1041,6 +1045,13 @@ fn ci_check(github: &Github) -> Check {
         Check::pass(text::INIT_CI, text::init_ci_on(&full))
     } else if !github.ci.is_empty() && !verify {
         Check::pass(text::INIT_CI, text::init_ci_will(&github.ci))
+    } else if github.ci.is_empty() && !verify && !github.has(CONFIG) {
+        Check::fail(
+            text::INIT_CI,
+            text::init_ci_none(&github.repo),
+            text::init_fix_ci(GATE),
+        )
+        .with_step(Step::Ruleset)
     } else {
         Check::fail(
             text::INIT_CI,
@@ -1177,6 +1188,52 @@ mod tests {
              Gate, and no rule requires another check, so the full check never ends. Fix: add a \
              workflow that runs on pull_request, with a job named Gate. See \"Add the job \
              Gate\" in the book. Then run riff init again"
+        );
+    }
+
+    /// 01M5RGG9KJXCKH8C94145WS8SM: no pull request ran a check yet, and the
+    /// pull request of `riff.toml` is to come: the check has the step of the
+    /// ruleset, which reads the checks of that pull request. When
+    /// `riff.toml` is there, or the ruleset, no pull request is to come, and
+    /// the check has no step.
+    #[test]
+    fn the_check_of_the_ci_has_a_step_while_the_pull_request_of_riff_toml_is_to_come() {
+        let github = |files: &[&str], required: &[&str]| Github {
+            files: files.iter().map(|f| (*f).into()).collect(),
+            required: required.iter().map(|c| (*c).into()).collect(),
+            ci: vec![],
+            ..ready()
+        };
+        let step_of = |github: &Github| {
+            let check = checks(github).swap_remove(5);
+            assert_eq!(check.name, "the checks of a pull request");
+            assert!(!check.passed(), "{}", check.line());
+            check.step
+        };
+        let to_come = github(&["CLAUDE.md"], &[]);
+        assert_eq!(step_of(&to_come), Some(Step::Ruleset));
+        assert_eq!(
+            checks(&to_come).swap_remove(5).planned_line(&to_come),
+            "step  the checks of a pull request: no pull request of acme/app ran a check yet. \
+             Step: make the ruleset riff on main"
+        );
+        assert_eq!(step_of(&github(&["riff.toml"], &[])), None);
+        assert_eq!(step_of(&github(&["CLAUDE.md"], &["riff/verify"])), None);
+        // The steps of the whole repository: riff.toml and the ruleset.
+        let all: Vec<Step> = steps_of(&checks(&Github {
+            auto_merge: false,
+            milestones: vec![],
+            ..to_come
+        }));
+        assert_eq!(
+            all,
+            [
+                Step::Merge,
+                Step::Config,
+                Step::Backlog,
+                Step::Wave,
+                Step::Ruleset
+            ]
         );
     }
 

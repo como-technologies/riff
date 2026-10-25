@@ -6058,6 +6058,10 @@ pub fn daemon_no_answer(state: &str, socket: &Path) -> String {
 /// The first line of `riff init` (01M4ZJN6TEWCYCB39XTH6BBD9H).
 pub const INIT_CHECKS: &str = "riff checks this machine:";
 
+/// The line before the second list of `riff init`, after the steps of the
+/// setup (01M5RGGD6YR36EXZEG61XCJVRY).
+pub const INIT_CHECKS_AGAIN: &str = "riff checks this machine again:";
+
 /// `text` on one line, with no cut: each run of white space is one
 /// space.
 fn flat(text: &str) -> String {
@@ -6084,6 +6088,22 @@ pub fn init_fail(name: &str, found: &str, fix: &str) -> String {
         "fail  {name}: {}. Fix: {}",
         flat(found).trim_end_matches('.'),
         flat(fix)
+    )
+}
+
+/// A check of `riff init` that failed, and that a step of the setup
+/// fixes: the line names the step in place of the fix
+/// (01M5RGG9KJXCKH8C94145WS8SM).
+///
+/// ```
+/// let line = riff::text::init_planned("the first wave", "o/r has no open wave", "make the milestone Wave 1");
+/// assert_eq!(line, "step  the first wave: o/r has no open wave. Step: make the milestone Wave 1");
+/// ```
+pub fn init_planned(name: &str, found: &str, step: &str) -> String {
+    format!(
+        "step  {name}: {}. Step: {}",
+        flat(found).trim_end_matches('.'),
+        flat(step)
     )
 }
 
@@ -6434,6 +6454,18 @@ pub fn init_ci_off(repo: &str, gate: &str) -> String {
     )
 }
 
+/// No pull request of the repository `repo` ran a check yet. The pull
+/// request of `riff.toml`, which `riff init` makes, may run the first
+/// one, and then the ruleset that `riff init` makes requires it
+/// (01M5RGG9KJXCKH8C94145WS8SM).
+///
+/// ```
+/// assert_eq!(riff::text::init_ci_none("o/r"), "no pull request of o/r ran a check yet");
+/// ```
+pub fn init_ci_none(repo: &str) -> String {
+    format!("no pull request of {repo} ran a check yet")
+}
+
 /// The fix when the repository has no CI check of a pull request.
 ///
 /// ```
@@ -6534,10 +6566,55 @@ pub const INIT_ASK_SETUP: &str = "Do them? [y/N] ";
 pub const INIT_SETUP_KEPT: &str = "riff did no step. To do them, run riff init in a terminal and \
      answer y, or run riff init --yes.";
 
-/// `riff init` made `riff.toml` on the default branch, and this clone does
-/// not have it yet.
-pub const INIT_PULL: &str =
-    "riff.toml is on the default branch now. Run git pull in this clone to get it.";
+/// `riff init` made `riff.toml` on the default branch `branch`, and ran
+/// `git pull --ff-only` in this clone (01M5RGGD9AYNC12Z2CG5CDZWNA).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_pulled("main"),
+///     "riff.toml is on main now. riff ran git pull --ff-only in this clone, so the clone has it."
+/// );
+/// ```
+pub fn init_pulled(branch: &str) -> String {
+    format!(
+        "riff.toml is on {branch} now. riff ran git pull --ff-only in this clone, so the clone \
+         has it."
+    )
+}
+
+/// `riff init` made `riff.toml` on the default branch `branch`, and ran
+/// no `git pull` in this clone: `why`.
+///
+/// ```
+/// let said = riff::text::init_not_pulled("main", "the clone is on dev, not on main");
+/// assert_eq!(
+///     said,
+///     "riff.toml is on main now. riff ran no git pull in this clone: the clone is on dev, not on main. Run git pull in this clone to get it."
+/// );
+/// ```
+pub fn init_not_pulled(branch: &str, why: &str) -> String {
+    format!(
+        "riff.toml is on {branch} now. riff ran no git pull in this clone: {}. Run git pull in \
+         this clone to get it.",
+        flat(why).trim_end_matches('.')
+    )
+}
+
+/// The clone is on the branch `on`, and `riff init` pulls only into the
+/// default branch `branch`. `on` is empty when the clone is on no branch.
+///
+/// ```
+/// assert_eq!(riff::text::init_clone_branch("dev", "main"), "the clone is on dev, not on main");
+/// assert_eq!(riff::text::init_clone_branch("", "main"), "the clone is on no branch, not on main");
+/// ```
+pub fn init_clone_branch(on: &str, branch: &str) -> String {
+    let on = if on.is_empty() { "no branch" } else { on };
+    format!("the clone is on {on}, not on {branch}")
+}
+
+/// The clone has a change, and `riff init` pulls only into a clone with
+/// none.
+pub const INIT_CLONE_CHANGED: &str = "the clone has a change";
 
 /// The person is not an admin of the repository `repo`: riff changes
 /// nothing there.
@@ -6707,18 +6784,31 @@ pub fn step_old_plugin(found: &crate::old_plugin::Found) -> String {
     format!("it is still here: {}", old_plugin_parts(found).join("; "))
 }
 
-/// Some checks of `riff init` failed.
+/// Some checks of `riff init` failed: `failed` has the name and the fix of
+/// each one, so a person need not search the lists above
+/// (01M5RGGD6YR36EXZEG61XCJVRY).
 ///
 /// ```
-/// assert!(riff::text::init_failed(1).starts_with("1 check failed."));
-/// assert!(riff::text::init_failed(2).starts_with("2 checks failed."));
+/// let one = riff::text::init_failed(&[("CLAUDE.md", "write it")]);
+/// assert_eq!(
+///     one,
+///     "1 check failed. riff installed no daemon and pulled no image. Do each fix, then run riff init again:\n  CLAUDE.md: write it"
+/// );
+/// let two = riff::text::init_failed(&[("podman", "install it"), ("cgroup v2", "enable\nit")]);
+/// assert!(two.starts_with("2 checks failed."), "{two}");
+/// assert!(two.ends_with("\n  podman: install it\n  cgroup v2: enable it"), "{two}");
 /// ```
-pub fn init_failed(count: usize) -> String {
-    let checks = if count == 1 { "check" } else { "checks" };
-    format!(
-        "{count} {checks} failed. riff installed nothing and pulled nothing. Do each fix, then \
-         run riff init again."
-    )
+pub fn init_failed(failed: &[(&str, &str)]) -> String {
+    let checks = if failed.len() == 1 { "check" } else { "checks" };
+    let mut out = format!(
+        "{} {checks} failed. riff installed no daemon and pulled no image. Do each fix, then run \
+         riff init again:",
+        failed.len()
+    );
+    for (name, fix) in failed {
+        out.push_str(&format!("\n  {name}: {}", flat(fix)));
+    }
+    out
 }
 
 /// Each check of `riff init --check` passed.

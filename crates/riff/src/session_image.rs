@@ -257,7 +257,7 @@ fn lacks_config(main: &Path, head: &str) -> bool {
 
 /// Runs `git ARGS` in `dir` with no prompt, and gives its stdout. An
 /// error names the command and its stderr, in one line.
-fn git(dir: &Path, args: &[&str]) -> Result<String> {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)

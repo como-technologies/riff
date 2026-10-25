@@ -318,10 +318,33 @@ async fn riff_init_names_the_fix_of_each_missing_part_and_installs_nothing() {
     assert!(!machine.settings().exists());
     assert!(
         stdout.contains(
-            "6 checks failed. riff installed nothing and pulled nothing. Do each fix, then run \
-             riff init again."
+            "6 checks failed. riff installed no daemon and pulled no image. Do each fix, then run \
+             riff init again:\n"
         ),
         "{stdout}"
+    );
+    // The end names each failed check with its fix (01M5RGGD6YR36EXZEG61XCJVRY).
+    let named = named_at_the_end(&stdout);
+    let names: Vec<&str> = named
+        .iter()
+        .map(|l| l.trim_start().split_once(": ").expect("a name and a fix").0)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "podman",
+            "the init of podman",
+            "/etc/subuid",
+            "/etc/subgid",
+            "cgroup v2",
+            "the session image"
+        ],
+        "{stdout}"
+    );
+    assert!(
+        named[2].contains("sudo usermod --add-subuids 165536-231071 "),
+        "{}",
+        named[2]
     );
     assert_eq!(machine.read("systemctl.log"), "");
     assert_eq!(machine.read("podman.log"), "podman --version\n");
@@ -720,6 +743,25 @@ fn failed_lines(stdout: &str) -> Vec<&str> {
         .collect()
 }
 
+/// The lines of `stdout` that start with `step  `: the checks that a step
+/// of the setup fixes (01M5RGG9KJXCKH8C94145WS8SM).
+fn step_lines(stdout: &str) -> Vec<&str> {
+    stdout
+        .lines()
+        .filter(|l| l.starts_with("  step  "))
+        .collect()
+}
+
+/// The lines at the end of `stdout` after "N checks failed": `  NAME: FIX`
+/// for each failed check (01M5RGGD6YR36EXZEG61XCJVRY).
+fn named_at_the_end(stdout: &str) -> Vec<&str> {
+    let mut lines = stdout
+        .lines()
+        .skip_while(|l| !l.contains(" failed. riff installed no daemon"));
+    lines.next();
+    lines.collect()
+}
+
 /// 01M5QVF5535YRN1EF3DZAB4W8G, 01M5R1672NF56P15VD0JEX51K4: `riff init
 /// --check` in a clone of a repository with no `riff.toml`, no
 /// auto-merge, no ruleset that requires `riff/verify`, no `Backlog` and no
@@ -759,9 +801,11 @@ async fn riff_init_check_names_the_github_step_of_each_fact_that_fails() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("5 checks failed. riff installed nothing and pulled nothing."),
+        stdout.contains("5 checks failed. riff installed no daemon and pulled no image."),
         "{stdout}"
     );
+    // --check only reads: it plans no step, so the lines say `fail`.
+    assert!(step_lines(&stdout).is_empty(), "{stdout}");
     assert!(!stdout.contains("These steps change GitHub"), "{stdout}");
     // riff reads the repository, and changes nothing: no write call.
     assert!(
@@ -843,8 +887,10 @@ async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing
     assert_eq!(machine.forge_changes(), changes);
 }
 
-/// 01M5R1672NF56P15VD0JEX51K4: with no `--yes` and no terminal, riff
-/// names the steps, asks nothing, does none and says how to do them.
+/// 01M5RGG9KJXCKH8C94145WS8SM, 01M5RGGD6YR36EXZEG61XCJVRY: with no `y` (no
+/// terminal), the first list has `step` lines for the five facts that a step
+/// fixes, and no `fail`. A no does no step, so the end names each check with
+/// its fix.
 #[tokio::test]
 async fn riff_init_without_a_terminal_names_the_steps_and_does_none() {
     let machine = Machine::new();
@@ -853,6 +899,19 @@ async fn riff_init_without_a_terminal_names_the_steps_and_does_none() {
     let out = machine.init(&machine.repo, &[]).await;
     let stdout = text(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(failed_lines(&stdout).is_empty(), "{stdout}");
+    let steps = step_lines(&stdout);
+    assert_eq!(steps.len(), 5, "{stdout}");
+    assert_eq!(
+        steps[0],
+        "  step  riff.toml on main: main of acme/app has no riff.toml, so riff lead start \
+         stops. Step: make riff.toml on main with a pull request"
+    );
+    assert_eq!(
+        steps[2],
+        "  step  the ruleset of main: no ruleset of main requires the check riff/verify, so a \
+         merge does not wait for the verify. Step: make the ruleset riff on main"
+    );
     assert!(
         stdout.contains("These steps change GitHub:\n  allow auto-merge and squash merge\n"),
         "{stdout}"
@@ -864,7 +923,19 @@ async fn riff_init_without_a_terminal_names_the_steps_and_does_none() {
         ),
         "{stdout}"
     );
+    // No step ran, so no second list. The end names each check, with its fix.
+    assert!(
+        !stdout.contains("riff checks this machine again:"),
+        "{stdout}"
+    );
     assert!(stdout.contains("5 checks failed."), "{stdout}");
+    let named = named_at_the_end(&stdout);
+    assert_eq!(named.len(), 5, "{stdout}");
+    assert!(
+        named[1].starts_with("  auto-merge and squash merge: allow them: gh api -X PATCH"),
+        "{}",
+        named[1]
+    );
     assert!(machine.forge_changes().is_empty());
     assert_eq!(machine.read("systemctl.log"), "");
 }
@@ -892,26 +963,226 @@ async fn a_person_who_is_not_an_admin_gets_the_steps_named_and_riff_changes_noth
     assert!(machine.forge_changes().is_empty());
 }
 
-/// A clone with no `riff.toml` of its own gets the new file as the image
-/// of the run, and riff says to pull.
+/// A clone that is not safe to pull gets the image of the release for the
+/// run, and riff says why it ran no `git pull` and to pull (01M5RGGD9AYNC12Z2CG5CDZWNA).
 #[tokio::test]
-async fn a_clone_with_no_riff_toml_gets_the_new_image_and_a_line_to_pull() {
+async fn a_clone_that_riff_does_not_pull_gets_the_new_image_and_a_line_to_pull() {
     let machine = Machine::new();
     machine.add_origin();
     bare(&machine.bin);
     std::fs::remove_file(machine.repo.join("riff.toml")).unwrap();
+    // On another branch than the default branch of the repository.
+    machine.git(&machine.repo, &["symbolic-ref", "HEAD", "refs/heads/dev"]);
     let out = machine.init(&machine.repo, &["--yes"]).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     assert!(
         stdout.contains(
-            "riff.toml is on the default branch now. Run git pull in this clone to get it."
+            "riff.toml is on main now. riff ran no git pull in this clone: the clone is on dev, \
+             not on main. Run git pull in this clone to get it."
         ),
         "{stdout}"
     );
     let release = riff::session_image::of_release().to_string();
     assert!(
         stdout.contains(&format!("This machine has the session image {release}.")),
+        "{stdout}"
+    );
+}
+
+impl Machine {
+    /// `git ARGS` in `dir`, as a person with a name.
+    fn git(&self, dir: &Path, args: &[&str]) {
+        let status = self
+            .env
+            .command("git")
+            .args([
+                "-c",
+                "user.name=riff",
+                "-c",
+                "user.email=riff@example.com",
+                "-C",
+            ])
+            .arg(dir)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    /// A clone of acme/app that lacks only the last commit of `origin`:
+    /// the commit with `riff.toml` that the merge of the step makes. The
+    /// remote `origin` is a folder of this machine whose path names
+    /// `github.com/acme/app`, so riff takes it for the repository on GitHub.
+    fn clone_behind_origin(&self) -> PathBuf {
+        let root = self.env.path();
+        let origin = format!("{}//github.com/acme/app.git", root.join("remote").display());
+        let (work, clone) = (root.join("work"), root.join("clone"));
+        self.git(root, &["init", "-q", "--bare", "-b", "main", &origin]);
+        self.git(root, &["init", "-q", "-b", "main", "work"]);
+        self.git(&work, &["remote", "add", "origin", &origin]);
+        std::fs::write(work.join("CLAUDE.md"), "rules\n").unwrap();
+        self.git(&work, &["add", "."]);
+        self.git(&work, &["commit", "-q", "-m", "first"]);
+        self.git(&work, &["push", "-q", "origin", "main"]);
+        self.git(root, &["clone", "-q", &origin, "clone"]);
+        std::fs::write(
+            work.join("riff.toml"),
+            format!("[session]\nimage = \"{IMAGE}\"\n"),
+        )
+        .unwrap();
+        self.git(&work, &["add", "."]);
+        self.git(&work, &["commit", "-q", "-m", "Set up riff"]);
+        self.git(&work, &["push", "-q", "origin", "main"]);
+        clone
+    }
+}
+
+/// 01M5RGG9KJXCKH8C94145WS8SM, 01M5RGGD6YR36EXZEG61XCJVRY,
+/// 01M5RGGD9AYNC12Z2CG5CDZWNA: `riff init` in a clone of a repository with
+/// no setup, that lacks only the commits of `origin`. The first list has
+/// `step` lines, and `fail` for no fact that a step fixes. After the steps
+/// the clone has `riff.toml` with no `git pull` by hand, the second list
+/// shows each check, and the end names the one that still fails.
+#[tokio::test]
+async fn riff_init_shows_the_steps_pulls_riff_toml_and_names_the_check_that_still_fails() {
+    let machine = Machine::new();
+    let clone = machine.clone_behind_origin();
+    // The machine fails one check that no step fixes: podman.
+    std::fs::write(machine.bin.join("no-podman"), "").unwrap();
+    bare(&machine.bin);
+    assert!(!clone.join("riff.toml").exists());
+    let out = machine.init(&clone, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{stdout}\n{}",
+        text(&out.stderr)
+    );
+    let (first, rest) = stdout
+        .split_once("riff checks this machine again:\n")
+        .expect("a second list");
+
+    // The first list: a `step` for each fact that a step fixes, and a `fail`
+    // only for the check that no step fixes.
+    let steps: Vec<&str> = step_lines(first)
+        .iter()
+        .map(|l| l.split_once(": ").unwrap().0)
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            "  step  the session image",
+            "  step  riff.toml on main",
+            "  step  auto-merge and squash merge",
+            "  step  the ruleset of main",
+            "  step  the milestone Backlog",
+            "  step  the first wave",
+        ],
+        "{first}"
+    );
+    let failed = failed_lines(first);
+    assert_eq!(failed.len(), 1, "{first}");
+    assert!(failed[0].starts_with("  fail  podman: "), "{}", failed[0]);
+
+    // The steps ran, and riff ran `git pull --ff-only`.
+    assert!(
+        first.contains(
+            "riff.toml is on main now. riff ran git pull --ff-only in this clone, so the clone \
+             has it."
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("Run git pull"), "{stdout}");
+    assert_eq!(
+        std::fs::read_to_string(clone.join("riff.toml")).unwrap(),
+        format!("[session]\nimage = \"{IMAGE}\"\n")
+    );
+
+    // The second list shows each check; only podman fails; the end names it.
+    let (second, end) = rest.split_once("1 check failed.").expect("an end");
+    assert!(step_lines(second).is_empty(), "{second}");
+    assert_eq!(failed_lines(second).len(), 1, "{second}");
+    for line in [
+        "  pass  the session image: ghcr.io/como-technologies/riff-session@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "  pass  riff.toml on main: main of acme/app has it",
+        "  pass  auto-merge and squash merge: acme/app allows both",
+        "  pass  the ruleset of main: it requires the check riff/verify",
+    ] {
+        assert!(
+            second.lines().any(|l| l == line),
+            "{line}\nnot in\n{second}"
+        );
+    }
+    assert!(
+        end.starts_with(
+            " riff installed no daemon and pulled no image. Do each fix, then run riff init \
+             again:\n  podman: "
+        ),
+        "{end}"
+    );
+    assert_eq!(named_at_the_end(&stdout).len(), 1, "{stdout}");
+    assert_eq!(machine.read("systemctl.log"), "");
+}
+
+/// A repository that is set up but for its CI: `riff.toml` is on `main`, and
+/// no pull request ran a check.
+fn no_ci(bin: &Path) {
+    fake_forge(
+        bin,
+        &[
+            ("files", "riff.toml\nCLAUDE.md\n"),
+            ("milestones", "Wave 1\nBacklog\n"),
+            ("auto_merge", ""),
+        ],
+    );
+}
+
+/// 01M5RGGD6YR36EXZEG61XCJVRY: the check of the CI is the work of the
+/// person. A repository whose pull requests ran no check gets the ruleset
+/// with `Gate`, and the check fails again after the steps: the second list
+/// shows it, and the end names it with its fix.
+#[tokio::test]
+async fn the_end_names_the_check_of_the_ci_that_the_steps_cannot_fix() {
+    let machine = Machine::new();
+    machine.add_origin();
+    no_ci(&machine.bin);
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{stdout}\n{}",
+        text(&out.stderr)
+    );
+    let (first, rest) = stdout
+        .split_once("riff checks this machine again:\n")
+        .expect("a second list");
+    // The ruleset is a step. The check of the CI has none: riff.toml is
+    // there, so no pull request is to come.
+    assert_eq!(step_lines(first).len(), 1, "{first}");
+    assert!(step_lines(first)[0].starts_with("  step  the ruleset of main: "));
+    assert_eq!(failed_lines(first).len(), 1, "{first}");
+    assert!(
+        failed_lines(first)[0].starts_with("  fail  the checks of a pull request: "),
+        "{first}"
+    );
+    assert!(
+        first.contains("  done  make the ruleset riff on main: requires Gate and riff/verify"),
+        "{first}"
+    );
+    let (second, end) = rest.split_once("1 check failed.").expect("an end");
+    assert_eq!(failed_lines(second).len(), 1, "{second}");
+    let named = named_at_the_end(&stdout);
+    assert_eq!(named.len(), 1, "{end}");
+    assert!(
+        named[0].starts_with("  the checks of a pull request: add a workflow that runs on pull_request, with a job named Gate."),
+        "{}",
+        named[0]
+    );
+    assert!(
+        !stdout.contains("These steps change GitHub:\n  make riff.toml"),
         "{stdout}"
     );
 }
@@ -1041,4 +1312,61 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
         ]
     );
     each_is_real(&init);
+}
+
+/// The `text` blocks of the part `heading` of the page `name`, each as its lines.
+fn text_blocks(name: &str, heading: &str) -> Vec<Vec<String>> {
+    let (mut blocks, mut open) = (Vec::new(), None::<Vec<String>>);
+    for line in crate::book::part(name, heading).lines() {
+        if line.trim() == "```text" {
+            open = Some(Vec::new());
+        } else if line.trim_start().starts_with("```") {
+            blocks.extend(open.take());
+        } else if let Some(block) = &mut open {
+            block.push(line.to_owned());
+        }
+    }
+    blocks
+}
+
+/// Each line of the block `book` is a line of `real`, in the same order. A
+/// line `  ...` stands for lines that the book leaves out, and the answer
+/// to the question is not in the output of `--yes`.
+fn assert_is_output(book: &[String], real: &str) {
+    let mut lines = real.lines();
+    for line in book {
+        if line == "  ..." || line == "Do them? [y/N] y" {
+            continue;
+        }
+        assert!(
+            lines.by_ref().any(|l| l == line),
+            "{line}\nis not a line of the output, or it comes too early:\n{real}"
+        );
+    }
+}
+
+/// 01M5RGG9KJXCKH8C94145WS8SM, 01M5RGGD6YR36EXZEG61XCJVRY,
+/// 01M5RGGD9AYNC12Z2CG5CDZWNA: "Add another repository to the riff" shows
+/// the output of a first run, and of a run that ends with a failed check.
+/// Each line is a line of the real output.
+#[tokio::test]
+async fn the_book_shows_the_output_of_a_first_run_and_the_end_of_a_failed_run() {
+    let blocks = text_blocks("start-a-riff.md", "Add another repository to the riff");
+    assert_eq!(blocks.len(), 2, "{blocks:#?}");
+
+    let machine = Machine::new();
+    let clone = machine.clone_behind_origin();
+    bare(&machine.bin);
+    std::fs::write(machine.bin.join("no-image"), "").unwrap();
+    let out = machine.init(&clone, &["--yes"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let real = text(&out.stdout).replace(clone.to_str().unwrap(), "/home/mike/app");
+    assert_is_output(&blocks[0], &real);
+
+    let machine = Machine::new();
+    machine.add_origin();
+    no_ci(&machine.bin);
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert_is_output(&blocks[1], &text(&out.stdout));
 }
