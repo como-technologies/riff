@@ -628,7 +628,7 @@ fn bare(bin: &Path) {
     fake_forge(
         bin,
         &[
-            ("files", "CLAUDE.md\n"),
+            ("files", ""),
             ("milestones", ""),
             (pulls.0, &pulls.1),
             (checks.0, &checks.1),
@@ -642,7 +642,7 @@ fn set_up(bin: &Path) {
     fake_forge(
         bin,
         &[
-            ("files", "riff.toml\nCLAUDE.md\n"),
+            ("files", "riff.toml\n"),
             ("milestones", "Wave 1\nBacklog\n"),
             ("auto_merge", ""),
             (
@@ -766,6 +766,9 @@ async fn riff_init_check_names_the_github_step_of_each_fact_that_fails() {
 /// milestone makes the pull request with `riff.toml` and merges it,
 /// allows auto-merge and squash merge, makes the ruleset with
 /// `riff/verify` and the checks of the CI, and makes the two milestones.
+/// The repository has no `CLAUDE.md`: each check of the repository passes
+/// or has its step, and riff init prints no line for `CLAUDE.md`, also in
+/// the second list (01M5RN89Z749VYS1CRYJQTKAWY).
 /// A second run makes no call that changes the forge, and asks nothing.
 #[tokio::test]
 async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing() {
@@ -799,6 +802,8 @@ async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing
     // The clone has its own riff.toml, so riff does not ask for a pull.
     assert!(!stdout.contains("Run git pull"), "{stdout}");
     assert!(stdout.contains("This machine is ready."), "{stdout}");
+    assert!(!stdout.contains("CLAUDE.md"), "{stdout}");
+    assert!(!stdout.contains("AGENTS.md"), "{stdout}");
 
     let bin = &machine.bin;
     let json =
@@ -826,6 +831,7 @@ async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     assert!(!stdout.contains("fail  "), "{stdout}");
+    assert!(!stdout.contains("CLAUDE.md"), "{stdout}");
     assert!(!stdout.contains("These steps change GitHub"), "{stdout}");
     assert!(!stdout.contains("Do them?"), "{stdout}");
     assert_eq!(machine.forge_changes(), changes);
@@ -1076,7 +1082,7 @@ fn no_ci(bin: &Path) {
     fake_forge(
         bin,
         &[
-            ("files", "riff.toml\nCLAUDE.md\n"),
+            ("files", "riff.toml\n"),
             ("milestones", "Wave 1\nBacklog\n"),
             ("auto_merge", ""),
         ],
@@ -1146,7 +1152,6 @@ async fn riff_init_check_passes_a_repository_that_is_set_up() {
         "  pass  the milestone Backlog: acme/app has it open",
         "  pass  the first wave: acme/app has the open wave Wave 1",
         "  pass  the checks of a pull request: the full check is Gate",
-        "  pass  CLAUDE.md: main of acme/app has it",
     ] {
         assert!(
             stdout.lines().any(|l| l == line),
@@ -1155,10 +1160,10 @@ async fn riff_init_check_passes_a_repository_that_is_set_up() {
     }
 }
 
-/// The checks of the CI and of `CLAUDE.md` have no step: riff names the
-/// fix, and does nothing for them.
+/// The check of the CI has no step: riff names the fix, and does nothing for
+/// it. A repository with no `CLAUDE.md` has no line for it (01M5RN89Z749VYS1CRYJQTKAWY).
 #[tokio::test]
-async fn riff_init_names_the_fix_of_a_missing_ci_check_and_a_missing_claude_md() {
+async fn riff_init_names_the_fix_of_a_missing_ci_check_and_has_no_line_for_claude_md() {
     let machine = Machine::new();
     machine.add_origin();
     set_up(&machine.bin);
@@ -1168,7 +1173,7 @@ async fn riff_init_names_the_fix_of_a_missing_ci_check_and_a_missing_claude_md()
     let stdout = text(&out.stdout);
     assert_eq!(out.status.code(), Some(1), "{stdout}");
     let failed = failed_lines(&stdout);
-    assert_eq!(failed.len(), 2, "{stdout}");
+    assert_eq!(failed.len(), 1, "{stdout}");
     assert!(
         failed[0].starts_with("  fail  the checks of a pull request: no pull request of acme/app ran a check named Gate"),
         "{}",
@@ -1179,11 +1184,7 @@ async fn riff_init_names_the_fix_of_a_missing_ci_check_and_a_missing_claude_md()
         "{}",
         failed[0]
     );
-    assert!(
-        failed[1].starts_with("  fail  CLAUDE.md: main of acme/app has no CLAUDE.md"),
-        "{}",
-        failed[1]
-    );
+    assert!(!stdout.contains("CLAUDE.md"), "{stdout}");
     assert!(machine.forge_changes().is_empty());
 }
 

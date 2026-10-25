@@ -4,7 +4,7 @@
 //!
 //! # Design
 //!
-//! `riff init` checks seven facts of the repository of the current
+//! `riff init` checks six facts of the repository of the current
 //! folder. Each fact that fails carries its fix for a person, and for
 //! five of them its [`Step`]: the code that does the fix. A person does
 //! the fix, for example from the how-to "Add another repository to the
@@ -20,7 +20,7 @@
 //!     O --> M["gh api repos/OWNER/REPO/milestones"]
 //!     O --> F["gh api repos/OWNER/REPO/contents"]
 //!     O --> P["gh api repos/OWNER/REPO/pulls<br/>and the check runs of their heads"]
-//!     R --> C["the seven checks"]
+//!     R --> C["the six checks"]
 //!     B --> C
 //!     M --> C
 //!     F --> C
@@ -37,9 +37,12 @@
 //! | the milestone `Backlog` | the open milestones ([`crate::waves::open`]) | one has the title [`BACKLOG`]: `riff wave move --to Backlog` and `riff wave end --move-open-to-backlog` need it | [`Step::Backlog`] |
 //! | the first wave | the open milestones | one is a wave: the lead has a wave to plan | [`Step::Wave`] |
 //! | the checks of a pull request | the required checks, and the check runs of the latest pull requests | the full check can end: a rule requires a check of the CI, or a pull request ran [`GATE`], or the ruleset that the step makes will require the checks that the pull requests ran | [`Step::Ruleset`] when no pull request ran a check yet and the default branch has no `riff.toml`: the pull request of [`Step::Config`] may run the first check. Else none |
-//! | `CLAUDE.md` | the files at the root of the default branch | it is there: a session reads the rules of the repository in it | none |
 //!
 //! The fix of the ruleset names the checks [`GATE`] and [`VERIFY_CONTEXT`].
+//!
+//! `riff init` reads no file of rules for agents, such as `CLAUDE.md` or
+//! `AGENTS.md`: the CI of the repository is the gate of a change, and a
+//! `CLAUDE.md` is the choice of the repository (01M5RN89Z749VYS1CRYJQTKAWY).
 //!
 //! # The steps
 //!
@@ -115,7 +118,7 @@
 //!     required: vec!["Gate".into(), "riff/verify".into()],
 //!     milestones: vec!["Backlog".into(), "Wave 1".into()],
 //!     admin: true,
-//!     files: vec!["riff.toml".into(), "CLAUDE.md".into()],
+//!     files: vec!["riff.toml".into()],
 //!     ci: vec!["Gate".into()],
 //! };
 //! assert!(checks(&github).iter().all(|c| c.passed()));
@@ -133,7 +136,6 @@
 //!         "the ruleset of main",
 //!         "the milestone Backlog",
 //!         "the first wave",
-//!         "CLAUDE.md",
 //!     ]
 //! );
 //! let steps: Vec<Step> = checks(&github).iter().filter_map(|c| c.step).collect();
@@ -168,9 +170,6 @@ const SETUP_BODY: &str = "riff init made this pull request. It adds riff.toml, w
 
 /// The file that [`Step::Config`] makes.
 const CONFIG: &str = session_image::FILE;
-
-/// The file that the rules of the repository live in, for a session.
-const CLAUDE: &str = "CLAUDE.md";
 
 /// The pull requests that [`ci_checks`] reads, the latest first.
 pub const PULLS: usize = 5;
@@ -316,7 +315,7 @@ pub fn ruleset_for(checks: &[String]) -> Value {
 ///     required: vec![],
 ///     milestones: vec!["Wave 1".into()],
 ///     admin: true,
-///     files: vec!["riff.toml".into(), "CLAUDE.md".into()],
+///     files: vec!["riff.toml".into()],
 ///     ci: vec!["Gate".into()],
 /// };
 /// let steps: Vec<Step> = checks(&github).iter().filter_map(|c| c.step).collect();
@@ -943,7 +942,7 @@ pub fn checks_of(github: &Result<Github, String>) -> Vec<Check> {
 
 /// The checks on `github`, in order: `riff.toml`, the merge settings,
 /// the ruleset of the default branch, the milestone `Backlog`, the first
-/// wave, the checks of a pull request and `CLAUDE.md`.
+/// wave and the checks of a pull request.
 pub fn checks(github: &Github) -> Vec<Check> {
     let repo = &github.repo;
     let branch = &github.default_branch;
@@ -1004,24 +1003,7 @@ pub fn checks(github: &Github) -> Vec<Check> {
         )
         .with_step(Step::Wave),
     };
-    let claude = if github.has(CLAUDE) {
-        Check::pass(text::INIT_CLAUDE, text::init_claude_on(repo, branch))
-    } else {
-        Check::fail(
-            text::INIT_CLAUDE,
-            text::init_claude_off(repo, branch),
-            text::INIT_FIX_CLAUDE.into(),
-        )
-    };
-    vec![
-        config,
-        merge,
-        ruleset,
-        backlog,
-        wave,
-        ci_check(github),
-        claude,
-    ]
+    vec![config, merge, ruleset, backlog, wave, ci_check(github)]
 }
 
 /// The check of the CI of a pull request: the full check can end. It
@@ -1074,7 +1056,7 @@ mod tests {
             required: vec!["Gate".into(), "riff/verify".into()],
             milestones: vec!["Backlog".into(), "Wave 1".into()],
             admin: true,
-            files: vec!["riff.toml".into(), "CLAUDE.md".into(), "justfile".into()],
+            files: vec!["riff.toml".into()],
             ci: vec!["Gate".into()],
         }
     }
@@ -1094,7 +1076,6 @@ mod tests {
                 "pass  the milestone Backlog: acme/app has it open",
                 "pass  the first wave: acme/app has the open wave Wave 1",
                 "pass  the checks of a pull request: the full check is Gate",
-                "pass  CLAUDE.md: main of acme/app has it",
             ]
         );
     }
@@ -1120,7 +1101,7 @@ mod tests {
             ..ready()
         };
         let no_config = Github {
-            files: vec!["CLAUDE.md".into()],
+            files: vec![],
             ..ready()
         };
         let line = |github: &Github, at: usize| lines(github).swap_remove(at);
@@ -1163,24 +1144,18 @@ mod tests {
         }
     }
 
-    /// 01M5R1672NF56P15VD0JEX51K4: the checks of the CI and of `CLAUDE.md`
-    /// have no step: only a person does their fix.
+    /// 01M5R1672NF56P15VD0JEX51K4: the check of the CI has no step: only a
+    /// person does its fix.
     #[test]
-    fn the_checks_of_the_ci_and_of_claude_md_have_no_step() {
-        let no_claude = Github {
-            files: vec!["riff.toml".into()],
-            ..ready()
-        };
+    fn the_check_of_the_ci_has_no_step() {
         let no_ci = Github {
             ci: vec![],
             ..ready()
         };
-        for github in [&no_claude, &no_ci] {
-            let failed: Vec<Check> = checks(github).into_iter().filter(|c| !c.passed()).collect();
-            assert_eq!(failed.len(), 1, "{failed:?}");
-            assert_eq!(failed[0].step, None);
-            assert!(steps_of(&checks(github)).is_empty());
-        }
+        let failed: Vec<Check> = checks(&no_ci).into_iter().filter(|c| !c.passed()).collect();
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0].step, None);
+        assert!(steps_of(&checks(&no_ci)).is_empty());
         let line = checks(&no_ci).swap_remove(5).line();
         assert_eq!(
             line,
@@ -1210,7 +1185,7 @@ mod tests {
             assert!(!check.passed(), "{}", check.line());
             check.step
         };
-        let to_come = github(&["CLAUDE.md"], &[]);
+        let to_come = github(&[], &[]);
         assert_eq!(step_of(&to_come), Some(Step::Ruleset));
         assert_eq!(
             checks(&to_come).swap_remove(5).planned_line(&to_come),
@@ -1218,7 +1193,7 @@ mod tests {
              Step: make the ruleset riff on main"
         );
         assert_eq!(step_of(&github(&["riff.toml"], &[])), None);
-        assert_eq!(step_of(&github(&["CLAUDE.md"], &["riff/verify"])), None);
+        assert_eq!(step_of(&github(&[], &["riff/verify"])), None);
         // The steps of the whole repository: riff.toml and the ruleset.
         let all: Vec<Step> = steps_of(&checks(&Github {
             auto_merge: false,
@@ -1306,13 +1281,13 @@ mod tests {
     }
 
     impl Fake {
-        /// A forge with a `CLAUDE.md` and the `state` files, over the
+        /// A forge with the `state` files, over the
         /// state of a bare repository: no `riff.toml`, no auto-merge, no
         /// ruleset, no milestone.
         fn new(state: &[(&str, &str)]) -> Fake {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path();
-            std::fs::write(path.join("files"), "CLAUDE.md\n").unwrap();
+            std::fs::write(path.join("files"), "").unwrap();
             std::fs::write(path.join("milestones"), "").unwrap();
             for (name, text) in state {
                 std::fs::write(path.join(name), text).unwrap();
@@ -1397,7 +1372,7 @@ mod tests {
                 required: vec![],
                 milestones: vec![],
                 admin: true,
-                files: vec!["CLAUDE.md".into()],
+                files: vec![],
                 ci: vec!["checks / lint".into(), "checks / test".into()],
             }
         );

@@ -203,7 +203,7 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
         "#### Allow auto-merge and squash merge\n",
         "#### Make the ruleset of the default branch\n",
         "#### Make the Backlog and the first wave\n",
-        "### Write the CLAUDE.md of the repository\n",
+        "### Write a CLAUDE.md, when you want one\n",
         "### Pin an image with another toolchain\n",
     ] {
         assert!(how_to.contains(step), "{step}");
@@ -230,15 +230,16 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
     each_is_real(&riff);
 }
 
-/// 01M5R580VCRCHJM8FY7NT485R1: the how-to has the step "Write the
-/// CLAUDE.md of the repository" with a copyable `sh` block. The block
-/// writes a `CLAUDE.md` with one part for each row of the table of the
-/// step: the rules that the start texts of riff leave to the repository.
+/// 01M5RN89Z749VYS1CRYJQTKAWY: the how-to has the step "Write a CLAUDE.md,
+/// when you want one" with a copyable `sh` block. The block writes a
+/// `CLAUDE.md` with one part for each row of the table of the step. The
+/// how-to says that the file is the choice of the repository, and that the
+/// CI is the gate of a change.
 #[test]
-fn the_how_to_writes_a_claude_md_with_the_rules_that_the_start_texts_leave_out() {
+fn the_how_to_leaves_claude_md_to_the_repository_and_writes_one_on_request() {
     let how_to = part(PAGE, HOW_TO);
     let step = how_to
-        .split("### Write the CLAUDE.md of the repository\n")
+        .split("### Write a CLAUDE.md, when you want one\n")
         .nth(1)
         .expect("the step");
     let step = step.split("\n### ").next().unwrap();
@@ -268,8 +269,22 @@ fn the_how_to_writes_a_claude_md_with_the_rules_that_the_start_texts_leave_out()
     );
     // The step says where a session gets the rules, and links it from the table.
     let words = step.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(words.contains("The rules of your repository come from your `CLAUDE.md`."));
-    assert!(how_to.contains("(#write-the-claudemd-of-the-repository)"));
+    assert!(words.contains("A `CLAUDE.md` or an `AGENTS.md` is the choice of the repository."));
+    assert!(
+        words.contains("A session reads the rules of the repository for agents when it has them.")
+    );
+    assert!(how_to.contains("(#write-a-claudemd-when-you-want-one)"));
+    // The part before the steps says that riff checks no such file, and that the CI is the gate.
+    let intro = how_to.split("### Read the output").next().unwrap();
+    let intro = intro.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(intro.contains(
+        "`riff init` checks neither: it prints no line for them, and a repository with none passes."
+    ));
+    assert!(intro.contains("The full check of a pull request, its CI, is the gate of a change"));
+    assert!(
+        !how_to.contains("| `CLAUDE.md` |"),
+        "the table of steps has no row for CLAUDE.md"
+    );
 }
 
 /// 01M5R1672NF56P15VD0JEX51K4: the how-to starts with `riff init` in a

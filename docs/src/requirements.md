@@ -4972,7 +4972,8 @@ of this part when they merge.
   check and a `CLAUDE.md` on the default branch. It has no step for
   either: the check names the fix. A person who is not an admin of the
   repository gets each step named, and riff changes nothing. A step that
-  fails prints why and its fix, and the next steps run.
+  fails prints why and its fix, and the next steps run. Superseded
+  in part by 01M5RN89Z749VYS1CRYJQTKAWY.
 - **01M5RGG9KJXCKH8C94145WS8SM** Before the question of the setup, `riff
   init` prints the line of a check that a step of the setup fixes with
   `step` in place of `fail`, and names the step, when a plain `riff
@@ -4994,6 +4995,13 @@ of this part when they merge.
   --ff-only origin BRANCH` in the clone and says so, and the check of
   the session image reads the `riff.toml` of the clone. Else `riff init`
   says why it ran no `git pull` and names the step to do by hand.
+- **01M5RN89Z749VYS1CRYJQTKAWY** `riff init` checks no file of rules for
+  agents: not `CLAUDE.md`, not `AGENTS.md`. It prints no line for such a
+  file, and a repository with none passes. A `CLAUDE.md` is the choice
+  of the repository. `riff.toml` has no table for the check or the rules
+  of a repository, and riff reads no file of a build tool: the CI of the
+  repository is the gate of a change. Supersedes
+  01M5R1675HZ6TJPMQ6536X37T5 in part: the check of the `CLAUDE.md`.
 
 ### The permission rules
 
@@ -5279,13 +5287,24 @@ of this part when they merge.
   read them. The `CLAUDE.md` of riff holds the rules that left the
   texts. A test of the texts (`text::tests`) checks the words, and the
   how-to "Add another repository to the riff" says what the `CLAUDE.md`
-  of a repository should say.
+  of a repository should say. Superseded in part
+  by 01M5RN89WH3PHV3BHMJ25T3SX4.
 - **01M51R8H3TXPKAEWDJQGQ01PBK** A repository with no session image of
   its own pins the session image of `como-technologies/riff`: its
   `riff.toml` has the same key `image` as the `riff.toml` of riff. That
   image has `claude`, `git`, `gh`, a POSIX shell and Rust. The people of
   the repository can make an image of its own later
   (01M4Z60B7JF80TMP6FHQ04MHCZ).
+- **01M5RN89WH3PHV3BHMJ25T3SX4** The start texts of a build, a rebase, a
+  fix of checks and a verify, and the first prompt of the lead, send the
+  session to the rules of the repository for agents when it has them,
+  for example `CLAUDE.md` or `AGENTS.md`. They name no file as required
+  and no command. A build, a rebase and a fix of checks tell the session
+  to run the checks that the repository names, when it names some,
+  before a push. The full check of the pull request (its CI) and the
+  verify decide the merge. Supersedes 01M5R580VCRCHJM8FY7NT485R1 in
+  part: the part that sends a session to the `CLAUDE.md` of the
+  repository.
 
 ### How the relay drives claude
 
