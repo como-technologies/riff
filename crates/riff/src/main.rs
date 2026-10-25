@@ -1109,7 +1109,9 @@ enum WaveCommand {
     /// The daemon keeps the wave, also over its own restart, until riff
     /// wave stop. It needs the sign-in of riff, of gh and of claude on
     /// this machine. With --host, the daemon of HOST runs the wave in its
-    /// own main clone of the repository.
+    /// own main clone of the repository. When HOST does not serve the
+    /// repository yet, its daemon clones it first, with the gh of your user
+    /// there.
     Run {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this
@@ -1312,8 +1314,17 @@ enum DaemonCommand {
     /// session of its own on riff-server for the repository, and keeps
     /// it over its restarts. Then the lead runs the daemon commands
     /// with --host and the name of this host. riff wave run does this
-    /// step too.
-    Host,
+    /// step too. With --host, the daemon of HOST does it for the
+    /// repository of this folder, and clones the repository first when
+    /// it has no main clone.
+    Host {
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Show or change the MCP servers of the sessions of this host
     ///
     /// These are the MCP servers that each new container session of this
@@ -1900,7 +1911,12 @@ async fn main() -> Result<()> {
                 let request = riff::daemon::remote::Request::WaveStop;
                 ask_daemon(host, &request, &here, &reach).await?;
             }
-            WaveCommand::Run { host: None } => riff::wave::ask_run(&dir, &here, api.base()).await?,
+            WaveCommand::Run { host: None } => {
+                if let Reach::Daemon(_) = &reach {
+                    return wave_run_in_container(&reach, &here).await;
+                }
+                riff::wave::ask_run(&dir, &here, api.base()).await?
+            }
             WaveCommand::Stop { host: None } => riff::wave::ask_stop(&dir, &here).await?,
             WaveCommand::List => wave_list(&reach, &here).await?,
             WaveCommand::Move { items, to } => wave_move(&reach, &here, items, to).await?,
@@ -2269,6 +2285,16 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
         let here = identity::place(&identity::working_dir()?)?;
         return daemon_events(host, name, &here, &server).await;
     }
+    if let Some(DaemonCommand::Host { host: Some(host) }) = command {
+        let (server, source) = server_of(server)?;
+        let here = identity::place(&identity::working_dir()?)?;
+        if here.default_thread().is_none() {
+            anyhow::bail!("{}", text::RUN_NO_REPO);
+        }
+        let request = riff::daemon::remote::host_request(&here.repo_text(), false)?;
+        let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
+        return ask_daemon(host, &request, &here, &reach).await;
+    }
     if let Some((host, request)) = command.and_then(remote_request) {
         let (server, source) = server_of(server)?;
         let here = identity::place(&identity::working_dir()?)?;
@@ -2362,7 +2388,7 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             println!("{}", riff::text::session_mcp(&names));
             Ok(())
         }
-        DaemonCommand::Host => {
+        DaemonCommand::Host { .. } => {
             let (server, _) = server_of(server)?;
             let work = identity::working_dir()?;
             let here = identity::place(&work)?;
@@ -2444,7 +2470,7 @@ fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote
         DaemonCommand::Restart { host } => (host, Request::Restart),
         DaemonCommand::Install
         | DaemonCommand::Uninstall
-        | DaemonCommand::Host
+        | DaemonCommand::Host { .. }
         | DaemonCommand::Mcp { .. } => return None,
     };
     Some((host.as_deref()?, request))
@@ -3516,6 +3542,20 @@ async fn wave_end_moving(
 /// caller, straight or through the riff daemon ([`Reach`]). When riff
 /// cannot read them, one line on stderr says why
 /// (01M58ATZ6FA5PJMD3D848CEWBJ).
+/// `riff wave run` in a lead container: the container has no daemon of its
+/// own, so it runs no wave. It names the hosts of the user that do not run
+/// the wave of the repository, for `riff wave run --host` (#1430,
+/// 01M5SN566ZH5ZQ52NYT24WYA4P).
+async fn wave_run_in_container(reach: &Reach, here: &Place) -> Result<()> {
+    if here.default_thread().is_none() {
+        anyhow::bail!("{}", text::RUN_NO_REPO);
+    }
+    let (repo, user) = (here.repo_text(), reach.roster().await?.user);
+    let hosts = riff::daemon::remote::missing_hosts(&reach.who(false).await?, &user, &repo);
+    eprintln!("{}", text::wave_run_in_container(&repo, &hosts));
+    std::process::exit(1);
+}
+
 async fn wave_list(reach: &Reach, here: &riff_core::name::Place) -> Result<()> {
     let gh = pr::Gh::default();
     let milestones = riff::waves::open(&gh)?;

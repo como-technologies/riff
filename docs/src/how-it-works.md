@@ -114,8 +114,9 @@ sequenceDiagram
 ```
 
 A second machine takes work when its daemon runs the wave of the
-repository too. The claims on riff-server keep two machines from one
-item.
+repository too. `riff wave run --host HOST` adds it: see
+[Add a host to the wave](development.md#add-a-host-to-the-wave). The
+claims on riff-server keep two machines from one item.
 
 ### What sessions share
 
@@ -598,7 +599,7 @@ your lead once in each repository of the message:
 | The process that starts the update | The repository of the message |
 |---|---|
 | A session, or a `riff` command in a clone | The repository of the session or the clone |
-| The riff daemon | Each repository whose wave the daemon runs on the same riff (`riff wave run` or `riff daemon host` in its main clone; a daemon start serves the waves it already runs) |
+| The riff daemon | Each repository whose wave the daemon runs on the same riff (`riff wave run` or `riff daemon host` in its main clone, or either one with `--host` from another host; a daemon start serves the waves it already runs) |
 
 The riff daemon has no repository of its own. Its working folder can
 be in the work tree of another repository, for example a home folder
@@ -3465,10 +3466,12 @@ sequenceDiagram
 ```
 
 On thelio, the riff daemon must serve the repository. If it does not,
-run this once in the main clone on thelio:
+run this once in your clone of the repository. The daemon of thelio
+makes its own main clone (see
+[Add a host to the wave](development.md#add-a-host-to-the-wave)):
 
 ```sh
-riff daemon host
+riff daemon host --host thelio
 ```
 
 Then run this on pangolin, in the repository:

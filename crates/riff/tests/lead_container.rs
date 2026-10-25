@@ -236,3 +236,45 @@ async fn who_reads_the_sessions_and_the_owner_through_the_socket() {
     assert!(shown.contains("(c1)") && shown.contains("(w1)"), "{shown}");
     assert_eq!(common::call_names(&asked), ["who_facts"]);
 }
+
+/// #1430, 01M5SN566ZH5ZQ52NYT24WYA4P: `riff wave run` in the container of
+/// the lead starts no wave:
+/// the container has no daemon of its own. It names the hosts of the user
+/// with a daemon that does not serve the repository, and `riff wave run
+/// --host` as the way to add one.
+#[tokio::test(flavor = "multi_thread")]
+async fn wave_run_names_the_hosts_that_do_not_run_the_wave() {
+    let container = Container::new();
+    let daemon = |uri: &str| {
+        json!({
+            "uri": uri,
+            "live": true,
+            "status": {
+                "step": "daemon host: pid 1, build 4.3.0, 0 sessions",
+                "age_secs": 1,
+                "stale": false,
+            },
+        })
+    };
+    let sessions = json!([
+        daemon("riff://mike@thelio/como-technologies/riff?session=d1"),
+        daemon("riff://mike@pangolin/como-technologies/other?session=d2"),
+        daemon("riff://ada@minty/como-technologies/other?session=d3"),
+        {"uri": LEAD, "live": true, "container": true},
+    ]);
+    let (_dir, socket, asked) = common::session_socket(move |call| match call["call"].as_str() {
+        Some("roster") => {
+            Ok(json!({"user": "mike", "owner": {"kind": "no_sign_in"}, "people": []}))
+        }
+        Some("who") => Ok(sessions.clone()),
+        _ => Err(format!("unexpected call {call}")),
+    });
+    let out = container.riff(&socket, &["wave", "run"]).await;
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let hosts = ["pangolin".to_owned()];
+    assert_eq!(
+        text(&out.stderr).trim(),
+        riff::text::wave_run_in_container("como-technologies/riff", &hosts)
+    );
+    assert_eq!(common::call_names(&asked), ["roster", "who"]);
+}

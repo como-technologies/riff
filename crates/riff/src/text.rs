@@ -7046,20 +7046,89 @@ pub const DAEMON_HOST_WHO: &str = "Only you in a terminal and your lead in this 
 use --host. The daemon of HOST refuses each other session, for example a worker.";
 
 /// The error when no daemon of the user serves the repository `repo`
-/// on `host`.
+/// on `host`. The words name the two ways: the daemon of `host` makes a
+/// main clone of `repo` itself (#1430), or a person starts one there.
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::no_daemon_host("thelio", "o/r"),
-///     "riff: no daemon of your user on thelio serves o/r. On thelio, run riff daemon host \
-///      in the main clone of o/r."
+///     "riff: no daemon of your user on thelio serves o/r. To make it serve o/r, run riff \
+///      daemon host --host thelio. When no daemon of yours runs on thelio, run riff daemon \
+///      host in a clone of o/r on thelio."
 /// );
 /// ```
 pub fn no_daemon_host(host: &str, repo: &str) -> String {
     format!(
-        "riff: no daemon of your user on {host} serves {repo}. On {host}, run riff daemon host \
-         in the main clone of {repo}."
+        "riff: no daemon of your user on {host} serves {repo}. To make it serve {repo}, run riff \
+         daemon host --host {host}. When no daemon of yours runs on {host}, run riff daemon host \
+         in a clone of {repo} on {host}."
     )
+}
+
+/// The error when a repository is no `OWNER/REPO` that the daemon takes
+/// for a clone.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_bad_repo("o/../r"),
+///     "riff: o/../r is no repository as OWNER/REPO, with letters, digits, - _ . and ~ in each \
+///      part."
+/// );
+/// ```
+pub fn daemon_bad_repo(repo: &str) -> String {
+    format!(
+        "riff: {repo} is no repository as OWNER/REPO, with letters, digits, - _ . and ~ in each \
+         part."
+    )
+}
+
+/// The line of the daemon of `host` that made the main clone of `repo`
+/// in `main` (#1430).
+///
+/// ```
+/// use std::path::Path;
+/// assert_eq!(
+///     riff::text::daemon_cloned("o/r", "thelio", Path::new("/d/clones/o/r")),
+///     "The riff daemon of thelio cloned o/r into /d/clones/o/r."
+/// );
+/// ```
+pub fn daemon_cloned(repo: &str, host: &str, main: &std::path::Path) -> String {
+    format!(
+        "The riff daemon of {host} cloned {repo} into {}.",
+        main.display()
+    )
+}
+
+/// What `riff wave run` in a lead container says: the container has no
+/// daemon of its own, and the daemon of another host runs the wave
+/// (#1430, 01M5SN566ZH5ZQ52NYT24WYA4P). `hosts` are the hosts of the
+/// user with a daemon that does not serve `repo`.
+///
+/// ```
+/// let hosts = ["pangolin".to_owned(), "thelio".to_owned()];
+/// assert_eq!(
+///     riff::text::wave_run_in_container("o/r", &hosts),
+///     "riff: a lead container runs no wave itself. Your hosts that do not run the wave of \
+///      o/r: pangolin, thelio. To add one, run riff wave run --host pangolin."
+/// );
+/// assert_eq!(
+///     riff::text::wave_run_in_container("o/r", &[]),
+///     "riff: a lead container runs no wave itself. Each host of yours with a daemon runs the \
+///      wave of o/r. To start it again on one, run riff wave run --host HOST."
+/// );
+/// ```
+pub fn wave_run_in_container(repo: &str, hosts: &[String]) -> String {
+    match hosts.first() {
+        Some(first) => format!(
+            "riff: a lead container runs no wave itself. Your hosts that do not run the wave of \
+             {repo}: {}. To add one, run riff wave run --host {first}.",
+            hosts.join(", ")
+        ),
+        None => format!(
+            "riff: a lead container runs no wave itself. Each host of yours with a daemon runs \
+             the wave of {repo}. To start it again on one, run riff wave run --host HOST."
+        ),
+    }
 }
 
 /// The error when the daemon of `host` gave no reply in `wait`.

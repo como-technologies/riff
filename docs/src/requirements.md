@@ -4389,6 +4389,22 @@ of this part when they merge.
   pasta, the network process of podman, runs in a scope of its own, not
   in the cgroup of the unit, and a stop of the unit does not end it.
   With no `INVOCATION_ID`, the daemon starts `podman run` itself.
+- **01M5SN561BM9SK24SS0AVJ3P5J** `riff wave run --host HOST` and `riff
+  daemon host --host HOST` for a repository that no daemon of the user
+  on HOST serves go to the session of another daemon of the user on
+  HOST. That daemon makes a main clone of the repository with `gh repo
+  clone`, with the `gh` of the user on HOST, in `clones/OWNER/REPO` in
+  its folder. Then it serves the repository. For `riff wave run` it
+  runs the wave too. A daemon that serves the repository keeps its main
+  clone and clones nothing, so a second request changes nothing.
+- **01M5SN5644YVEPF3D452ZA2JVD** The person, and the lead of the
+  repository of the request, can ask a daemon of the user to serve that
+  repository, also when the daemon serves another repository. The daemon
+  takes a repository only as `OWNER/REPO`, with no part that starts with
+  `-` and no part `.` or `..`.
+- **01M5SN566ZH5ZQ52NYT24WYA4P** `riff wave run` with no `--host` in a
+  lead container starts no wave. It names the hosts of the user with a
+  daemon that does not serve the repository, and exits with 1.
 
 ### riff relay
 
