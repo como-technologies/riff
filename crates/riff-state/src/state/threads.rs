@@ -5,7 +5,8 @@
 //!
 //! - Part of the riff: [`Threads`]. The members and the last
 //!   [`KEEP_MESSAGES`] messages of each thread, and the index of the
-//!   signed messages for the copy check (01M3JEJVXXEPPNGT3FY4ZSFCWZ).
+//!   signed messages for the copy check (01M3JEJVXXEPPNGT3FY4ZSFCWZ), and
+//!   the index of the keys of the posts (01M5TKG2K1AYK1KE7C2AA2W9DS).
 //! - `apply`: `Threads::posted`, `Threads::joined` and
 //!   `Threads::left` for the records `posted`, `joined_thread` and
 //!   `left_thread`. `Threads::forgotten` for a `session_forgotten`
@@ -36,6 +37,9 @@ pub struct Threads {
     /// The seq of each kept signed message, by thread and by the hash of
     /// its payload.
     pub(super) copies: BTreeMap<(ThreadName, String), u64>,
+    /// The seq of each kept message that has a key, by thread, by user of the
+    /// sender, and by key.
+    pub(super) keys: BTreeMap<(ThreadName, String, String), u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -53,6 +57,18 @@ pub(super) struct Stored {
     /// Each session that the message woke.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) woken: BTreeSet<Who>,
+    /// The key of the post.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) key: Option<String>,
+}
+
+impl Stored {
+    /// The place of the key of the message in [`Threads::keys`].
+    fn key_in(&self, thread: &ThreadName) -> Option<(ThreadName, String, String)> {
+        let key = self.key.as_ref()?;
+        let user = self.message.from.who().user();
+        Some((thread.clone(), user.to_owned(), key.clone()))
+    }
 }
 
 impl Threads {
@@ -63,16 +79,22 @@ impl Threads {
             thread,
             message,
             woken,
+            key,
         } = posted;
         if let Some(payload) = &message.payload {
             self.copies
                 .insert((thread.clone(), payload_hash(payload)), message.seq);
         }
-        let messages = &mut self.by_name.entry(thread.clone()).or_default().messages;
-        messages.push_back(Stored {
+        let stored = Stored {
             message: message.clone(),
             woken: woken.clone(),
-        });
+            key: key.clone(),
+        };
+        if let Some(place) = stored.key_in(thread) {
+            self.keys.insert(place, message.seq);
+        }
+        let messages = &mut self.by_name.entry(thread.clone()).or_default().messages;
+        messages.push_back(stored);
         while messages.len() > KEEP_MESSAGES {
             let Some(old) = messages.pop_front() else {
                 break;
@@ -80,8 +102,20 @@ impl Threads {
             if let Some(payload) = &old.message.payload {
                 self.copies.remove(&(thread.clone(), payload_hash(payload)));
             }
+            if let Some(place) = old.key_in(thread)
+                && self.keys.get(&place) == Some(&old.message.seq)
+            {
+                self.keys.remove(&place);
+            }
         }
         Ok(())
+    }
+
+    /// The seq of the kept message of `thread` that has `key` from the
+    /// sender `user`.
+    pub(super) fn keyed(&self, thread: &ThreadName, user: &str, key: &str) -> Option<u64> {
+        let place = (thread.clone(), user.to_owned(), key.to_owned());
+        self.keys.get(&place).copied()
     }
 
     /// The session is a member of the thread. A new thread starts.
@@ -120,6 +154,7 @@ impl Threads {
             .collect();
         self.by_name.retain(|thread, _| !gone.contains(thread));
         self.copies.retain(|(thread, _), _| !gone.contains(thread));
+        self.keys.retain(|(thread, _, _), _| !gone.contains(thread));
     }
 
     /// True when the riff has the thread.
@@ -143,8 +178,12 @@ impl Threads {
 
     /// The threads, for a checkpoint.
     pub(super) fn saved(&self) -> Saved {
-        // A restore makes the copies again from the messages.
-        let Threads { by_name, copies: _ } = self;
+        // A restore makes the copies and the keys again from the messages.
+        let Threads {
+            by_name,
+            copies: _,
+            keys: _,
+        } = self;
         Saved {
             threads: by_name
                 .iter()
@@ -193,6 +232,9 @@ impl Saved {
                     threads
                         .copies
                         .insert((name.clone(), payload_hash(payload)), m.message.seq);
+                }
+                if let Some(place) = m.key_in(&name) {
+                    threads.keys.insert(place, m.message.seq);
                 }
             }
             let thread = Thread {
@@ -366,13 +408,15 @@ impl View<'_> {
 
     /// The changes that put `message` in `thread` with the next sequence
     /// number, and wake each live session that its selectors match,
-    /// except `from`. Each selected session joins the thread. It also
-    /// gives each selector that matched no session.
+    /// except `from`. Each selected session joins the thread. The record
+    /// keeps `key`, the key of the post. It also gives each selector that
+    /// matched no session.
     pub(super) fn put(
         &self,
         from: &Who,
         thread: ThreadName,
         message: Message,
+        key: Option<String>,
         now: Instant,
     ) -> (Vec<Change>, Vec<Selector>) {
         let (mut woken, unmatched) = self.selected(from, &message.to, thread.is_direct(), now);
@@ -418,6 +462,7 @@ impl View<'_> {
             thread,
             message,
             woken,
+            key,
         })));
         (changes, unmatched)
     }
@@ -497,17 +542,23 @@ impl Command for Leave {
 /// post with the lead mark from a session that is not the lead is
 /// refused (R198). A signed post with the payload of a message in the
 /// thread is a copy, and is refused (01M3JEJVXXEPPNGT3FY4ZSFCWZ).
+///
+/// A post with a key that a kept message of the same user has in the
+/// thread is dropped (01M5TKG2K1AYK1KE7C2AA2W9DS). It makes no record:
+/// the reply names the first message, and no woken session. The check of
+/// the key comes before the check of the copy, so a post again of the
+/// same news from another host is no error.
 impl Command for Post {
     const KIND: CommandKind = CommandKind::Post;
     type Reply = wire::Posted;
-    type Note = Vec<Selector>;
+    type Note = PostNote;
 
     fn handle(
         &self,
         caller: &Caller,
         view: &View<'_>,
         now: Now,
-    ) -> Result<(Vec<Change>, Vec<Selector>), Refused> {
+    ) -> Result<(Vec<Change>, PostNote), Refused> {
         let post = self;
         let me = &post.me;
         let now = now.at;
@@ -531,6 +582,15 @@ impl Command for Post {
             );
         }
         let thread = view.thread_of(from, post.thread.as_ref(), &post.to, now)?;
+        if let Some(key) = &post.key
+            && let Some(first) = view.riff.threads().keyed(&thread, from.user(), key)
+        {
+            let note = PostNote {
+                unmatched: Vec::new(),
+                repeat: Some((thread, first)),
+            };
+            return Ok((Vec::new(), note));
+        }
         if let Some(payload) = &post.payload
             && let Some(seq) = view
                 .riff
@@ -563,6 +623,7 @@ impl Command for Post {
             at_ms,
             sig,
             payload,
+            key,
         } = post;
         let message = Message {
             seq: 0,
@@ -574,9 +635,13 @@ impl Command for Post {
             sig: sig.clone(),
             payload: payload.clone(),
         };
-        let (mut put, unmatched) = view.put(from, thread, message, now);
+        let (mut put, unmatched) = view.put(from, thread, message, key.clone(), now);
         changes.append(&mut put);
-        Ok((changes, unmatched))
+        let note = PostNote {
+            unmatched,
+            repeat: None,
+        };
+        Ok((changes, note))
     }
 
     fn reply(
@@ -584,13 +649,23 @@ impl Command for Post {
         _: &Caller,
         view: &View<'_>,
         done: &Done,
-        unmatched: Vec<Selector>,
+        note: PostNote,
         now: Now,
     ) -> wire::Posted {
+        let PostNote { unmatched, repeat } = note;
+        if let Some((thread, seq)) = repeat {
+            return wire::Posted {
+                thread,
+                seq,
+                woken: Vec::new(),
+                unmatched,
+            };
+        }
         let Posted {
             thread,
             message,
             woken,
+            key: _,
         } = message_of(&done.made).expect("the records of a post end with the message");
         wire::Posted {
             thread: thread.clone(),
@@ -599,6 +674,16 @@ impl Command for Post {
             unmatched,
         }
     }
+}
+
+/// What the check of a [`Post`] tells its reply and its caller.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PostNote {
+    /// Each selector that matched no session (R61).
+    pub unmatched: Vec<Selector>,
+    /// The thread and the seq of the kept message that has the key of the
+    /// post, when the post is dropped.
+    pub repeat: Option<(ThreadName, u64)>,
 }
 
 /// A post of the riff server itself (01M3N7K4BC1RPZKQ1XNDTBRPGF). The
@@ -646,7 +731,7 @@ impl Command for Announce {
             sig: None,
             payload: None,
         };
-        let (changes, _) = view.put(from, thread, message, now.at);
+        let (changes, _) = view.put(from, thread, message, None, now.at);
         Ok((changes, ()))
     }
 

@@ -1255,6 +1255,7 @@ mod tests {
                 payload: None,
             },
             woken: BTreeSet::new(),
+            key: None,
         };
         record(position, session, Change::Posted(Box::new(posted)))
     }

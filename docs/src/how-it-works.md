@@ -2051,9 +2051,28 @@ flowchart TD
   verify to a free session, or starts a worker.
 
 Each message comes one time for each pull request, head commit and
-state. A new push that has a conflict again gives a new message. After a
-new start of the daemon, a message can come one more time. To fix
-a conflict, rebase in the worktree of the item, and push:
+state. A new push that has a conflict again gives a new message. A wave
+on more hosts sends each message one time, not one time for each host,
+and a new start of a daemon sends none again. Each post has a key: the
+pull request, its head commit and the state. riff-server drops a post
+with the key of a message that it keeps from the same person.
+
+```mermaid
+sequenceDiagram
+    participant A as daemon on pangolin
+    participant B as daemon on thelio
+    participant S as riff-server
+    participant L as the lead
+    A->>S: post, key pull-40-1a2b3c4d-conflict
+    S->>L: the message
+    B->>S: post, key pull-40-1a2b3c4d-conflict
+    Note over S: it keeps this key: it drops the post
+```
+
+riff-server keeps a key as long as it keeps its message: the last 200
+messages of the repository thread.
+
+To fix a conflict, rebase in the worktree of the item, and push:
 
 ```sh
 git fetch -q origin

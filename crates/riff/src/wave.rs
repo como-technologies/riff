@@ -931,13 +931,16 @@ pub trait World: Send + Sync {
 
     /// Posts `body` of `kind` as the person of the wave: to the session
     /// that claims `item`, or to the lead of the person when `item` is
-    /// `None`. The error is a post that did not go out.
+    /// `None`. The error is a post that did not go out. A post with a
+    /// `key` is dropped by riff-server when a kept message of the person
+    /// has the key in the thread of the wave (01M5TKG2K1AYK1KE7C2AA2W9DS).
     fn post<'a>(
         &'a self,
         wave: &'a Wave,
         item: Option<&'a str>,
         body: &'a str,
         kind: Kind,
+        key: Option<&'a str>,
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Writes `body` in riff chat as the person of the lead of `record`,
@@ -1407,12 +1410,14 @@ pub struct Live {
 }
 
 /// Posts `body` of `kind` as the person of `wave`: to the session that
-/// claims `item`, or to the lead of the person.
+/// claims `item`, or to the lead of the person. The post has `key`, when
+/// there is one (01M5TKG2K1AYK1KE7C2AA2W9DS).
 pub(crate) async fn post_as_person(
     wave: &Wave,
     item: Option<&str>,
     body: &str,
     kind: Kind,
+    key: Option<&str>,
 ) -> Result<()> {
     let person = identity::person(&wave.place(None)?, &wave.server)?;
     let api = Api::new(&wave.server).signed_in(None)?;
@@ -1420,7 +1425,7 @@ pub(crate) async fn post_as_person(
         Some(item) => format!("claim={item},repo={}", wave.repo).parse()?,
         None => riff_core::selector::Selector::lead(person.who().user(), &wave.repo),
     };
-    api.post(&person, Some(&wave.thread()?), &[to], body, kind)
+    api.post_keyed(&person, Some(&wave.thread()?), &[to], body, kind, key)
         .await?;
     Ok(())
 }
@@ -2563,7 +2568,7 @@ impl World for Live {
             if lock(&self.told).get(&wave.repo).is_some_and(|t| t == body) {
                 return;
             }
-            match post_as_person(wave, None, body, Kind::Message).await {
+            match post_as_person(wave, None, body, Kind::Message, None).await {
                 Ok(()) => {
                     lock(&self.told).insert(wave.repo.clone(), body.to_owned());
                 }
@@ -2595,8 +2600,9 @@ impl World for Live {
         item: Option<&'a str>,
         body: &'a str,
         kind: Kind,
+        key: Option<&'a str>,
     ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(post_as_person(wave, item, body, kind))
+        Box::pin(post_as_person(wave, item, body, kind, key))
     }
 
     fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()> {
@@ -2741,6 +2747,8 @@ mod tests {
         /// Each post of the look: the item whose holder gets it, or `None`
         /// for the lead, the kind, and the body.
         posts: Vec<(Option<String>, Kind, String)>,
+        /// The key of each post of `posts`, in the same order.
+        post_keys: Vec<Option<String>>,
         /// The number of the next posts of the look that fail.
         post_fails: usize,
         /// The full check of a pull request is what the fake `gh` tells
@@ -3062,6 +3070,7 @@ mod tests {
             item: Option<&'a str>,
             body: &'a str,
             kind: Kind,
+            key: Option<&'a str>,
         ) -> BoxFuture<'a, Result<()>> {
             Box::pin(async move {
                 let mut forge = lock(&self.forge);
@@ -3072,6 +3081,7 @@ mod tests {
                 forge
                     .posts
                     .push((item.map(str::to_owned), kind, body.to_owned()));
+                forge.post_keys.push(key.map(str::to_owned));
                 Ok(())
             })
         }
@@ -4597,6 +4607,8 @@ esac
         assert_eq!(here.calls("issue close 901").len(), 1);
         here.looks_more(3).await;
         assert_eq!(here.posts().len(), 2);
+        // A message about main has no key.
+        assert_eq!(here.forge().post_keys, [None, None]);
         assert_eq!(here.calls("issue close").len(), 1);
     }
 
@@ -4693,6 +4705,16 @@ esac
         let (to, _, body) = here.posts().remove(1);
         assert_eq!(to, None);
         assert!(body.contains("No session holds issue-12"), "{body}");
+        // Each post has the key of its news: the look of another host makes
+        // the same keys, and riff-server drops the second post
+        // (01M5TKG2K1AYK1KE7C2AA2W9DS).
+        assert_eq!(
+            here.forge().post_keys,
+            [
+                Some("pull-52-1a2b3c4d5e-conflict".to_owned()),
+                Some("pull-52-5e6f7a8b9c-conflict".to_owned())
+            ]
+        );
     }
 
     /// `riff wave stop` ends the look with the loop of the wave.

@@ -402,6 +402,7 @@ impl Delivery {
             thread,
             message,
             woken,
+            key: _,
         } = posted;
         Delivery {
             wakes: woken
@@ -2428,8 +2429,11 @@ impl State {
             at_ms: Some(at_ms),
             ..post
         };
-        let (made, unmatched) = self.run(&trusted(&me), &post, now).map_err(|r| r.reason)?;
-        Ok(self.delivery(&made, unmatched))
+        let (made, note) = self.run(&trusted(&me), &post, now).map_err(|r| r.reason)?;
+        if let Some((_, seq)) = note.repeat {
+            return Err(format!("the post repeats message {seq}: its key is kept"));
+        }
+        Ok(self.delivery(&made, note.unmatched))
     }
 
     /// Posts a note or a message of the riff server itself
@@ -4122,7 +4126,7 @@ mod tests {
                 "riff_pause": {"by": {"session": "mike/a1"}, "at_ms": T0},
                 "pauses": {"design": {"by": {"session": "mike/a1"}, "at_ms": T0}},
                 "threads": [{"thread": "como-technologies/riff", "members": [ann],
-                             "messages": [{"message": message, "woken": [ann]}]}],
+                             "messages": [{"message": message, "woken": [ann], "key": "pull-40-1a2b3c4d-conflict"}]}],
                 "claims": [{"thread": "como-technologies/riff", "item": "issue-7", "holder": ann}],
                 "leads": [{"thread": "como-technologies/riff", "lead": ann}],
                 "sessions": [
@@ -4711,6 +4715,108 @@ mod tests {
             Some("a new payload"),
             "the message keeps the payload"
         );
+    }
+
+    /// A post of `me` to the lead of mike in the repository thread, with
+    /// the key `key`.
+    fn keyed(me: &SessionUri, thread: &ThreadName, key: &str, body: &str) -> Post {
+        Post {
+            key: Some(key.into()),
+            ..Post::new(me, Some(thread.clone()), mike_lead(), body)
+        }
+    }
+
+    /// 01M5TKG2K1AYK1KE7C2AA2W9DS: the look of a second host tells the same
+    /// news. The server drops the post: the thread has one message, and
+    /// no session wakes a second time.
+    #[test]
+    fn a_post_with_the_key_of_a_kept_message_of_the_same_user_is_dropped() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let thelio = uri("riff://mike@thelio/como-technologies/riff?session=d4");
+        state.register(&thelio, now);
+        let (conflict, key) = ("a conflict", "pull-40-1a2b3c4d-conflict");
+
+        let first = state
+            .post(keyed(&api(), &repo(), key, conflict), now, 1)
+            .unwrap();
+        let error = state
+            .post(keyed(&thelio, &repo(), key, conflict), now, 2)
+            .unwrap_err();
+        assert!(
+            error.contains(&format!("repeats message {}", first.tailed.message.seq)),
+            "{error}"
+        );
+        let all = state.read(&tests(), &repo(), true, now).unwrap();
+        assert_eq!(all.len(), 1, "{all:?}");
+
+        // Another key is other news.
+        let other = keyed(&thelio, &repo(), "pull-40-5e6f7a8b-conflict", conflict);
+        assert!(state.post(other, now, 3).is_ok());
+        // A post with no key is never dropped.
+        let plain = Post::new(&thelio, Some(repo()), mike_lead(), conflict);
+        assert!(state.post(plain.clone(), now, 4).is_ok());
+        assert!(state.post(plain, now, 5).is_ok());
+    }
+
+    /// 01M5TKG2K1AYK1KE7C2AA2W9DS: a key is the key of a user in a thread.
+    /// Another user, or another thread, can use the same key.
+    #[test]
+    fn a_key_is_the_key_of_a_user_in_a_thread() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let design = thread("design");
+        let key = "pull-40-1a2b3c4d-conflict";
+        let to_all = |post: Post| Post {
+            to: to(&["user=mike"]),
+            ..post
+        };
+        state
+            .post(to_all(keyed(&api(), &repo(), key, "mike")), now, 1)
+            .unwrap();
+        // Brett cannot drop the news of mike with the same key.
+        let brett = to_all(keyed(&tests(), &repo(), key, "brett"));
+        assert!(state.post(brett, now, 2).is_ok());
+        // The same user in another thread.
+        let elsewhere = to_all(keyed(&api(), &design, key, "design"));
+        assert!(state.post(elsewhere, now, 3).is_ok());
+        // The same user in the same thread: dropped.
+        let again = to_all(keyed(&docs(), &repo(), key, "again"));
+        assert!(state.post(again, now, 4).is_err());
+    }
+
+    /// 01M5TKG2K1AYK1KE7C2AA2W9DS: the keys of the kept messages hold after a
+    /// replay of the log and after a start from a checkpoint. The key goes
+    /// with its message, when the thread keeps no more of it.
+    #[test]
+    fn a_key_holds_after_a_replay_and_a_checkpoint_and_goes_with_its_message() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let key = "pull-40-1a2b3c4d-conflict";
+        state
+            .post(keyed(&api(), &repo(), key, "conflict"), now, 1)
+            .unwrap();
+        let log = state.take_queue();
+        let again = keyed(&docs(), &repo(), key, "conflict");
+
+        let mut replayed = State::replay(log.clone(), now, T0);
+        assert!(replayed.post(again.clone(), now, 2).is_err());
+        let mut loaded = State::load(Some(through_json(&replayed, now)), [], now, T0);
+        assert!(loaded.post(again.clone(), now, 2).is_err());
+
+        // The thread keeps the last messages: the key of the oldest goes.
+        for n in 0..KEEP_MESSAGES {
+            post(
+                &mut loaded,
+                &docs(),
+                "como-technologies/riff",
+                &[],
+                &format!("m{n}"),
+            );
+        }
+        assert!(loaded.post(again.clone(), now, 3).is_ok());
+        let mut restarted = State::load(Some(through_json(&loaded, now)), [], now, T0);
+        assert!(restarted.post(again, now, 4).is_err(), "it is kept again");
     }
 
     #[test]

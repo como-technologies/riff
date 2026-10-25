@@ -910,7 +910,7 @@ The three rules of the store design stay. These rules come with them:
 | `claimed` | The new holder replaces the old one. | Yes, for a log from before E2. Since E2, the old holder gets a `released` record first. |
 | `released` | A record of a session that does not hold the item changes nothing. `handle` refuses such a release, so the engine does not write this record. | Yes. |
 | `lead_set` | The session of the record replaces the old lead of its user in the thread. | Yes. |
-| `posted`, `session_forgotten` | They keep the index of the signed messages for the copy check. A `posted` record adds the hash of its payload, and removes the hash of the message that goes at 200. A `session_forgotten` record removes the hashes of each direct thread that goes. | Yes. |
+| `posted`, `session_forgotten` | They keep the index of the signed messages for the copy check, and the index of the keys of the posts. A `posted` record adds the hash of its payload and its key, and removes those of the message that goes at 200. A `session_forgotten` record removes the hashes and the keys of each direct thread that goes. | Yes. |
 | `riff_made` | A riff keeps its first ID: a second record changes nothing. | Yes. |
 | `person_joined` | The first email keeps a USER: a record for a USER that another email holds changes nothing. | Yes. |
 | `member_removed` | It finds each USER of the email, and keeps the position of the record for each: the end of their sign-ins. | Yes. |

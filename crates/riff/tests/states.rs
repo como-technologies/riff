@@ -350,6 +350,52 @@ async fn a_pull_request_with_a_conflict_tells_its_holder_or_the_lead_once() {
     );
 }
 
+/// The waves of two hosts run two daemons, and each has its own watch
+/// in memory. Both look at the same pull requests with a conflict, and
+/// the lead and the holder of the item get each message one time. A
+/// daemon that starts again tells nothing again, and a new head is a new
+/// state (#1467, 01M5TKG2K1AYK1KE7C2AA2W9DS, 01M5TKG2P26WXHJZ10Y9J69VFJ).
+#[tokio::test(flavor = "multi_thread")]
+async fn two_daemons_that_look_at_the_same_conflict_give_the_lead_one_message() {
+    let (_server, (al, aw, lead, worker)) = start_open().await;
+    aw.claim(&worker, &repo(), "issue-12").await.unwrap();
+    al.inbox(&lead, None, false).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let pull = |number, issue, head: &str| {
+        format!(
+            r#"{{"number":{number},"headRefName":"worktree-issue-{issue}","headRefOid":"{head}","isDraft":false,"statusCheckRollup":[{{"context":"riff/verify","state":"SUCCESS"}}],"mergeable":"CONFLICTING","autoMergeRequest":{{"mergeMethod":"SQUASH"}}}}"#
+        )
+    };
+    // #40 has a holder, and #41 has none.
+    let pulls = |head41: &str| format!("[{},{}]", pull(40, 12, "1a2b3c4d5e"), pull(41, 13, head41));
+    let gh = forge(dir.path(), "gh", &pulls("5e6f7a8b9c"));
+    let (mut pangolin, mut thelio) = (PullWatch::default(), PullWatch::default());
+
+    look_at(&al, &lead, &gh, &mut pangolin).await;
+    look_at(&al, &lead, &gh, &mut thelio).await;
+    let told = unread(&al, &lead).await;
+    assert_eq!(told.len(), 2, "one message for each pull request: {told:?}");
+    assert!(told[0].contains("Pull request #40 of issue-12"), "{told:?}");
+    assert!(told[1].contains("Pull request #41 of issue-13"), "{told:?}");
+    // The holder reads the thread: the message of its item comes one time.
+    let mine = unread(&aw, &worker).await;
+    let own = mine.iter().filter(|m| m.contains("#40 of issue-12"));
+    assert_eq!(own.count(), 1, "{mine:?}");
+
+    // A daemon that starts again has no memory: the server still has the key.
+    look_at(&al, &lead, &gh, &mut PullWatch::default()).await;
+    assert!(unread(&al, &lead).await.is_empty());
+    assert!(unread(&aw, &worker).await.is_empty());
+
+    // A new head is a new state: both daemons tell it, and the lead gets it once.
+    let gh = forge(dir.path(), "gh2", &pulls("0a0b0c0d0e"));
+    look_at(&al, &lead, &gh, &mut pangolin).await;
+    look_at(&al, &lead, &gh, &mut thelio).await;
+    let again = unread(&al, &lead).await;
+    assert_eq!(again.len(), 1, "{again:?}");
+    assert!(again[0].contains("at commit 0a0b0c0"), "{again:?}");
+}
+
 /// A pull request that waits for a verify with no `verify-` claim for the
 /// wait tells the lead one time. A claimed verify tells nothing
 /// (01M49Q316RXNATJP587DWGDNCD, 01M49Q31FASDM7CG3JEGPYCZB9).

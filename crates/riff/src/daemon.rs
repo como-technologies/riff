@@ -7086,6 +7086,7 @@ mod tests {
             _: Option<&'a str>,
             _: &'a str,
             _: riff_core::wire::Kind,
+            _: Option<&'a str>,
         ) -> crate::wave::BoxFuture<'a, Result<()>> {
             Box::pin(async { Ok(()) })
         }

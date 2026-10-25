@@ -39,7 +39,7 @@
 //! | `claimed` | The new holder replaces the old one. | Yes, for a log from before the `released` record of a taken item (01M3X4Z6BKM251H7CS2CEGR205). A new claim gives the old holder that record first. |
 //! | `released` | It frees the claim only when the session of the record holds it. If not, the record changes nothing. `handle` refuses such a release, so only a fault or an old build writes this record. | Yes. |
 //! | `lead_set` | The session of the record replaces the old lead of its user in the thread. | Yes. |
-//! | `posted`, `session_forgotten` | They keep the index of the signed messages for the copy check: a `posted` record adds the hash of its payload, and removes the hash of the message that goes at the limit. A `session_forgotten` record removes the hashes of each direct thread that goes. | Yes. |
+//! | `posted`, `session_forgotten` | They keep the index of the signed messages for the copy check, and the index of the keys of the posts: a `posted` record adds the hash of its payload and its key, and removes those of the message that goes at the limit. A `session_forgotten` record removes the hashes and the keys of each direct thread that goes. | Yes. |
 //! | each record that names a session | It keeps the URI of the session and the time of the record. | Yes. |
 //! | `session_started` | It stores the worker mark. A record with the reason `process` or `clear` also stores its time, and ends MustClear. A record with the reason `other` changes nothing. | Yes. |
 //! | `released` | A record with `must_clear` sets the MustClear mark of its session. | Yes. |

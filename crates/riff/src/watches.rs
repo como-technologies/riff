@@ -339,7 +339,13 @@ impl Lookout for Here {
     }
 
     fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, Result<()>> {
-        Box::pin(crate::wave::post_as_person(wave, None, body, Kind::Message))
+        Box::pin(crate::wave::post_as_person(
+            wave,
+            None,
+            body,
+            Kind::Message,
+            None,
+        ))
     }
 
     fn chat<'a>(

@@ -1150,6 +1150,7 @@ mod tests {
                 thread: thread.clone(),
                 message,
                 woken: Default::default(),
+                key: None,
             };
             apply(riff, &record(Change::Posted(Box::new(posted))));
         }

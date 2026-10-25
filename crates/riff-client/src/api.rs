@@ -1331,8 +1331,25 @@ impl Api {
         body: &str,
         kind: Kind,
     ) -> Result<Posted> {
+        self.post_keyed(me, thread, to, body, kind, None).await
+    }
+
+    /// [`Api::post`] with a key (01M5TKG2K1AYK1KE7C2AA2W9DS): riff-server
+    /// drops the post when a kept message of the same user in the thread
+    /// has the key. The reply then names the first message and wakes no
+    /// session. So the same news from two hosts comes one time.
+    pub async fn post_keyed(
+        &self,
+        me: &SessionUri,
+        thread: Option<&ThreadName>,
+        to: &[Selector],
+        body: &str,
+        kind: Kind,
+        key: Option<&str>,
+    ) -> Result<Posted> {
         let mut request = Post {
             kind,
+            key: key.map(str::to_owned),
             ..Post::new(me, thread.cloned(), to.to_vec(), body)
         };
         if let Some(auth) = &self.auth {

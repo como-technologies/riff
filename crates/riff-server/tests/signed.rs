@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{Post, ReadReply, TokenReply};
+use riff_core::wire::{Post, Posted, ReadReply, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_state::store::{Memory, Store};
@@ -293,6 +293,56 @@ async fn a_copy_of_a_signed_message_is_refused() {
     direct.sign(&a.key, now_ms());
     assert_eq!(a.call(&base, "post", &direct).await.status(), 200);
     assert_eq!(a.call(&base, "post", &direct).await.status(), 400);
+}
+
+/// The waves of two hosts of mike post the same news with the same key.
+/// The second post is no error: the server drops it, and answers with
+/// the first message, and it wakes no one. A key is the key of a user
+/// (01M5TKG2K1AYK1KE7C2AA2W9DS).
+#[tokio::test]
+async fn a_post_with_the_key_of_a_kept_message_is_dropped_and_the_reply_names_the_first() {
+    let (service, base) = common::start(true, &[]).await;
+    let pangolin = Caller::new(&service, &base, A).await;
+    let thelio = Caller::new(
+        &service,
+        &base,
+        "riff://mike@thelio/como-technologies/riff?session=t",
+    )
+    .await;
+    let brett = Caller::new(&service, &base, BRETT).await;
+    for caller in [&pangolin, &thelio, &brett] {
+        let register = serde_json::json!({ "me": caller.me });
+        assert_eq!(
+            caller.call(&base, "register", &register).await.status(),
+            200
+        );
+    }
+    let keyed = |caller: &Caller, key: &str| {
+        let mut post = caller.unsigned(REPO, "Pull request #40 has a conflict.");
+        post.key = Some(key.into());
+        post.to = vec!["user=brett".parse().unwrap()];
+        post.sign(&caller.key, now_ms());
+        post
+    };
+    let mut told = Vec::new();
+    for (caller, key) in [
+        (&pangolin, "pull-40-1a2b3c4d-conflict"),
+        (&thelio, "pull-40-1a2b3c4d-conflict"),
+        (&thelio, "pull-40-5e6f7a8b-conflict"),
+        (&brett, "pull-40-1a2b3c4d-conflict"),
+    ] {
+        let reply = caller.call(&base, "post", &keyed(caller, key)).await;
+        assert_eq!(reply.status(), 200);
+        told.push(reply.json::<Posted>().await.unwrap());
+    }
+
+    // The second post names the first message, and wakes no session.
+    assert_eq!(told.iter().map(|p| p.seq).collect::<Vec<_>>(), [1, 1, 2, 3]);
+    assert_eq!(told[0].woken.len(), 1);
+    assert!(told[1].woken.is_empty(), "{:?}", told[1].woken);
+    // The key of mike is no key of brett.
+    assert_eq!(told[3].seq, 3);
+    assert_eq!(brett.read(&base, REPO).await.messages.len(), 3);
 }
 
 #[tokio::test]

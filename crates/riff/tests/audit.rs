@@ -122,6 +122,7 @@ fn post(second: u64, session: &str, to: &str, body: &str) -> Record {
             payload: None,
         },
         woken: Default::default(),
+        key: None,
     };
     record(second, session, Change::Posted(Box::new(posted)))
 }
