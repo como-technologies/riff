@@ -4514,10 +4514,11 @@ release and the next step, for example
 The release cycle needs `[release]` in `riff.toml`. A repository with
 no `[release]` has no release cycle of riff: `riff release`, `riff
 build` and the real-session test refuse with one line, and touch
-nothing on GitHub. `riff wave end` has no release gate there. The
-verify of a pull request has no part for a release pull request. Only
-`riff release hold` works there: see [Hold a release](#hold-a-release).
-See [Turn on the release cycle](#turn-on-the-release-cycle).
+nothing on GitHub. The verify of a pull request has no part for a
+release pull request. Only `riff release hold` works there: see
+[Hold a release](#hold-a-release). See
+[Turn on the release cycle](#turn-on-the-release-cycle), also for the
+release gate of `riff wave end`.
 
 ```mermaid
 flowchart TD
@@ -4856,11 +4857,10 @@ After the check passes, end the wave:
 riff wave end 34
 ```
 
-In a repository with `[release]` in `riff.toml`, `riff wave end` also
-refuses while a merged pull request of the wave is in no checked
-release, and names the next step.
-When no change of the wave is one that a person sees, end it with no
-release. The reason goes into the description of the wave:
+`riff wave end` has a release gate: see
+[Turn on the release cycle](#turn-on-the-release-cycle). When no change
+of the wave is one that a person sees, end it with no release. The
+reason goes into the description of the wave:
 
 ```sh
 riff wave end 34 --no-release "Only the tests changed."

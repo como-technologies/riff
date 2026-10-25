@@ -377,7 +377,8 @@ fn release_approve_help_says_who_may_approve() {
 /// holds only in a repository with `[release]` in `riff.toml`. The help
 /// and "Turn on the release cycle" in the book say so, and the help does
 /// not name `deploy/release-check.sh`: `riff release cut` runs that
-/// script, and `riff wave end` does not look for it.
+/// script, and `riff wave end` does not look for it. The book says the
+/// rule in that one place only.
 #[test]
 fn the_help_of_wave_end_names_the_release_table_of_riff_toml() {
     let help = words(&riff(&["wave", "end", "--help"]));
@@ -390,6 +391,20 @@ fn the_help_of_wave_end_names_the_release_table_of_riff_toml() {
     let said = "In a repository with [release] in riff.toml, riff wave end also \
                 refuses while a merged pull request of the wave is in no checked release.";
     assert!(book.contains(said), "no {said:?} in {book}");
+
+    // The rule is in one place only. The intro of "The release cycle" and
+    // "End the wave of the release" link to it.
+    let page = words(&book::page("development.md"));
+    let gate = "is in no checked release";
+    assert_eq!(page.matches(gate).count(), 1, "the rule is in one place");
+    for heading in ["### The release cycle", "#### End the wave of the release"] {
+        let section = under("development.md", heading);
+        assert!(
+            section.contains("](#turn-on-the-release-cycle)"),
+            "no link to the rule in {heading}: {section}"
+        );
+        assert!(!words(&section).contains(gate), "{heading}: {section}");
+    }
 
     // The help of the cut still says that the cut runs the script.
     let cut = words(&riff(&["release", "cut", "--help"]));
