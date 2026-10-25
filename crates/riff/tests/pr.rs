@@ -631,6 +631,70 @@ async fn verify_pass_counts_a_skipped_or_neutral_required_check_as_a_pass() {
     );
 }
 
+/// #1417, 01M5RGM8HBVQMY25H5PYESK17J: a commit can have two runs of one
+/// check, for example a run that failed before a maintainer set the
+/// milestone and a run that passed after it. `riff verify pass` reads the
+/// newest run of each check, as `gh pr checks` does, in any order of the
+/// list.
+#[tokio::test]
+async fn verify_pass_reads_the_newest_run_of_each_check() {
+    let run = |started: &str, completed: &str, conclusion: &str| {
+        format!(
+            r#"{{"name":"Gate","status":"completed","conclusion":"{conclusion}","started_at":"{started}","completed_at":"{completed}"}}"#
+        )
+    };
+    let old = |conclusion| run("2026-10-24T17:01:00Z", "2026-10-24T17:04:30Z", conclusion);
+    let new = |conclusion| run("2026-10-24T17:22:00Z", "2026-10-24T17:26:50Z", conclusion);
+    let gate = |runs: [String; 2]| {
+        VERIFY.replace(
+            r#"[{"name":"Gate","status":"completed","conclusion":"success"}]"#,
+            &format!("[{}]", runs.join(",")),
+        )
+    };
+    let passes = [
+        gate([old("failure"), new("success")]),
+        gate([new("success"), old("failure")]),
+    ];
+    for fake in passes {
+        let machine = Machine::new(&fake).await;
+        machine.claim("author", "issue-12").await;
+        let result = machine.write("result.md", "1. The wave shows.\n");
+        let pass = [
+            "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        let out = machine.ok("verifier", &pass).await;
+        assert!(out.contains("Woke mike@thelio:"), "{out}");
+        let calls = log(machine.bin.path());
+        assert!(
+            calls.contains("statuses/1a2b3c4d -f state=success"),
+            "{calls}"
+        );
+    }
+
+    let refusals = [
+        gate([old("success"), new("failure")]),
+        gate([new("failure"), old("success")]),
+    ];
+    for fake in refusals {
+        let machine = Machine::new(&fake).await;
+        machine.claim("author", "issue-12").await;
+        let result = machine.write("result.md", "1. The wave shows.\n");
+        let pass = [
+            "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+        ];
+        let out = machine.run("verifier", &pass).await;
+        assert_eq!(out.status.code(), Some(1));
+        let stderr = text(&out.stderr);
+        assert!(
+            stderr.contains("the full check of commit 1a2b3c4 (Gate) ended with failure."),
+            "{stderr}"
+        );
+        let calls = log(machine.bin.path());
+        assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("/statuses/"), "{calls}");
+    }
+}
+
 /// A required check that runs or failed stops the pass, and
 /// the line names the four checks. A fail needs none of them.
 #[tokio::test]

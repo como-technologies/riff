@@ -165,7 +165,9 @@ use riff_core::wire::{ItemFact, Kind, PullFact, PullState, Unanswered};
 use serde::Deserialize;
 
 use crate::cycle::{self, Stage, State};
-use crate::pr::{CheckRun, GATE, Gate, Gh, check_runs, full_state, gate_state, is_success};
+use crate::pr::{
+    CheckRun, GATE, Gate, Gh, check_runs, full_state, gate_state, is_success, newest_runs,
+};
 use crate::repo_setup;
 use crate::rollout::{BROKEN_MAIN, Issue, Milestone, Pull, Verify, claims, current_wave, needs};
 use crate::text;
@@ -462,8 +464,9 @@ impl MainGate {
     /// (`checks`, one list for each check of [`repo_setup::full_check`]):
     /// `None` when the commit has no run of any check. The commit is the
     /// commit of the first run, and a run of another commit does not
-    /// count: `main` moved between two calls. The run is the run that did
-    /// not pass, or the first one.
+    /// count: `main` moved between two calls. Of the runs of one check,
+    /// only the newest count ([`newest_runs`], 01M5RGM8HBVQMY25H5PYESK17J).
+    /// The run is the newest run that did not pass, or the first one.
     ///
     /// ```
     /// use riff::look::MainGate;
@@ -474,6 +477,7 @@ impl MainGate {
     ///     conclusion: Some(conclusion.into()),
     ///     head_sha: "5103311abc".into(),
     ///     html_url: Some(format!("https://github.com/o/r/actions/runs/{id}/job/7")),
+    ///     ..CheckRun::default()
     /// };
     /// let main = MainGate::of(&[vec![run("success", 1)], vec![run("failure", 2)]]).unwrap();
     /// assert_eq!(main.commit, "5103311abc");
@@ -486,6 +490,14 @@ impl MainGate {
     /// assert_eq!(MainGate::of(&[vec![], vec![]]), None);
     /// // A required check that was skipped passed.
     /// assert_eq!(MainGate::of(&[vec![run("skipped", 3)]]).unwrap().gate, Gate::Passed);
+    /// // An old failed run of a check does not count when a newer run passed.
+    /// let at = |started: &str, run: CheckRun| CheckRun { started_at: Some(started.into()), ..run };
+    /// let old = at("2026-10-24T17:04:00Z", run("failure", 4));
+    /// let new = at("2026-10-24T17:26:00Z", run("success", 5));
+    /// let main = MainGate::of(&[vec![old.clone(), new.clone()]]).unwrap();
+    /// assert_eq!(main.gate, Gate::Passed);
+    /// assert_eq!(main.run.as_deref(), Some("https://github.com/o/r/actions/runs/5"));
+    /// assert_eq!(MainGate::of(&[vec![new, old]]).unwrap().gate, Gate::Passed);
     /// ```
     pub fn of(checks: &[Vec<CheckRun>]) -> Option<Self> {
         let first = checks.iter().flatten().next()?;
@@ -500,10 +512,12 @@ impl MainGate {
             })
             .collect();
         let gate = full_state(at_head.iter().map(|runs| gate_state(runs)));
-        let shown = at_head
+        let newest: Vec<&CheckRun> = at_head.iter().flat_map(|runs| newest_runs(runs)).collect();
+        let shown = newest
             .iter()
-            .flatten()
+            .copied()
             .find(|r| r.conclusion.as_deref().is_some_and(|c| !is_success(c)))
+            .or(newest.first().copied())
             .unwrap_or(first);
         Some(Self {
             commit: commit.to_owned(),
@@ -1437,6 +1451,38 @@ mod tests {
             gate,
             run: None,
         }
+    }
+
+    /// 01M5RGM8HBVQMY25H5PYESK17J: an old failed run of a check on `main`
+    /// does not make main broken when a newer run of it passed.
+    #[test]
+    fn the_look_at_main_reads_the_newest_run_of_each_check() {
+        let run = |started: &str, conclusion: &str, id: u64| CheckRun {
+            status: "completed".into(),
+            conclusion: Some(conclusion.into()),
+            head_sha: "5103311abc".into(),
+            html_url: Some(format!("https://github.com/o/r/actions/runs/{id}/job/7")),
+            started_at: Some(started.into()),
+            ..CheckRun::default()
+        };
+        let old = run("2026-10-24T17:01:00Z", "failure", 1);
+        let new = run("2026-10-24T17:22:00Z", "success", 2);
+        let hygiene = run("2026-10-24T17:05:00Z", "success", 3);
+        for runs in [
+            vec![old.clone(), new.clone()],
+            vec![new.clone(), old.clone()],
+        ] {
+            let main = MainGate::of(&[runs, vec![hygiene.clone()]]).unwrap();
+            assert_eq!(main.gate, Gate::Passed);
+            assert!(!main.broken());
+        }
+        let late = run("2026-10-24T17:40:00Z", "failure", 4);
+        let main = MainGate::of(&[vec![late, new, old], vec![hygiene]]).unwrap();
+        assert!(main.broken());
+        assert_eq!(
+            main.run.as_deref(),
+            Some("https://github.com/o/r/actions/runs/4")
+        );
     }
 
     /// riff cannot file the fix item: the lead still gets the message

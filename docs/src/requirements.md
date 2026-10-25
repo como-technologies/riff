@@ -820,6 +820,14 @@
   `main` use one rule. A conclusion of `failure`, `timed_out`,
   `cancelled`, `stale` or `action_required` is no success. Supersedes
   01M5QYDE41FVFX26EC8K5QGYH4 in part.
+- **01M5RGM8HBVQMY25H5PYESK17J** Of the check runs of one name on a
+  commit, riff reads only the newest: the latest started_at, then the
+  latest completed_at, as gh pr checks and the merge rules of GitHub do.
+  An older run of the name that failed does not count when a newer run
+  passed, and an older run that passed does not count when a newer run
+  failed. Runs that tie all count. `riff verify pass`, `riff release
+  verify`, the verify of the wave and the look at `main` use one rule.
+  Supersedes 01M5QYDE41FVFX26EC8K5QGYH4 in part.
 
 ## Tokens on GitHub
 

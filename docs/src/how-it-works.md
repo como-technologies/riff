@@ -2096,7 +2096,10 @@ says why. Test the new head, or tell the author.
 
 A pass needs a success of each check of the full check of the head
 commit. A check that GitHub skipped, or that ended `neutral`, counts as
-a success. While one of them runs, failed, or has not started,
+a success. A check can have more than one run on a commit, for example
+after a rerun. riff reads only the newest run of each check, as
+`gh pr checks` does: an old run that failed does not count when a newer
+run passed. While one of them runs, failed, or has not started,
 `riff verify pass` reports nothing and prints one line. The line names
 the checks that riff waits for:
 
