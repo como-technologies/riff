@@ -10,6 +10,7 @@ mod common;
 mod again;
 mod audit;
 mod auto_update;
+mod base_image;
 mod broken_main;
 mod build;
 mod chat;

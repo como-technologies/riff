@@ -47,6 +47,8 @@ fn the_workflow_builds_the_image_that_riff_toml_names() {
         "{workflow}"
     );
     for path in [
+        "deploy/base/**",
+        "deploy/rust/**",
         "deploy/session/**",
         "riff.toml",
         ".github/workflows/session-image.yml",
@@ -57,10 +59,42 @@ fn the_workflow_builds_the_image_that_riff_toml_names() {
             "{path}"
         );
     }
+    // 01M5SNTDZ95BRDCPQEKDTYD2PY: the three images, each after the one before.
+    for (job, needs, folder) in [
+        ("base", None, "deploy/base"),
+        ("rust", Some("base"), "deploy/rust"),
+        ("session", Some("rust"), "deploy/session"),
+    ] {
+        let text = workflow_job(&workflow, job);
+        assert!(
+            text.contains(&format!("folder: {folder}\n")),
+            "{job}:\n{text}"
+        );
+        match needs {
+            Some(needs) => assert!(
+                text.contains(&format!("needs: [{needs}]\n")),
+                "{job}:\n{text}"
+            ),
+            None => assert!(!text.contains("needs:"), "{job}:\n{text}"),
+        }
+    }
+    // The tag is the git tree of the folder (01M4Z7SP7Y19BQ8QTV1T6AE8SR).
+    let action = read(".github/actions/image/action.yml");
     assert!(
-        workflow.contains("git rev-parse HEAD:deploy/session"),
-        "{workflow}"
+        action.contains("git rev-parse \"HEAD:$FOLDER\""),
+        "{action}"
     );
+}
+
+/// The text of the job `name` of the workflow `workflow`.
+fn workflow_job(workflow: &str, name: &str) -> String {
+    let jobs = workflow.split_once("\njobs:").unwrap().1;
+    let job = jobs.split_once(&format!("\n  {name}:\n")).unwrap().1;
+    let end = job
+        .match_indices("\n  ")
+        .find(|(at, _)| job[at + 3..].starts_with(|c: char| c.is_ascii_alphabetic()))
+        .map_or(job.len(), |(at, _)| at);
+    job[..end].to_owned()
 }
 
 #[test]
