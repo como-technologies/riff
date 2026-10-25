@@ -36,15 +36,24 @@ pub fn commands_of(name: &str) -> Vec<String> {
 }
 
 /// The text of one `##` part of the book page `name`, from its heading
-/// to the next `##` heading.
+/// to the next `##` heading. A line that starts with `## ` in a code
+/// block is no heading.
 pub fn part(name: &str, heading: &str) -> String {
     let page = page(name);
     let start = page
         .find(&format!("\n## {heading}\n"))
         .unwrap_or_else(|| panic!("{heading} is in {name}"));
     let rest = &page[start + 1..];
-    let part = rest[3..].find("\n## ").map_or(rest, |end| &rest[..end + 3]);
-    part.to_owned()
+    let (mut fenced, mut at) = (false, 0);
+    for line in rest.split_inclusive('\n') {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+        } else if !fenced && at > 0 && line.starts_with("## ") {
+            return rest[..at - 1].to_owned();
+        }
+        at += line.len();
+    }
+    rest.to_owned()
 }
 
 /// The commands of one `##` part of the book page `name`.

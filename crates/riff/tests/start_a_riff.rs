@@ -204,6 +204,7 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
         "#### Allow auto-merge and squash merge\n",
         "#### Make the ruleset of the default branch\n",
         "#### Make the Backlog and the first wave\n",
+        "### Write the CLAUDE.md of the repository\n",
         "### Pin an image with another toolchain\n",
     ] {
         assert!(how_to.contains(step), "{step}");
@@ -228,6 +229,48 @@ fn the_page_has_the_how_to_add_another_repository_to_the_riff() {
         .filter(|c| c.starts_with("riff "))
         .collect();
     each_is_real(&riff);
+}
+
+/// 01M5R580VCRCHJM8FY7NT485R1: the how-to has the step "Write the
+/// CLAUDE.md of the repository" with a copyable `sh` block. The block
+/// writes a `CLAUDE.md` with one part for each row of the table of the
+/// step: the rules that the start texts of riff leave to the repository.
+#[test]
+fn the_how_to_writes_a_claude_md_with_the_rules_that_the_start_texts_leave_out() {
+    let how_to = part(PAGE, HOW_TO);
+    let step = how_to
+        .split("### Write the CLAUDE.md of the repository\n")
+        .nth(1)
+        .expect("the step");
+    let step = step.split("\n### ").next().unwrap();
+    let block = step.split("```sh\n").nth(1).expect("its block");
+    let block = block.split("\n```").next().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new("sh")
+        .args(["-c", block])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{block}: {out:?}");
+    let file = fs::read_to_string(dir.path().join("CLAUDE.md")).unwrap();
+    for row in ["Work", "Issues", "Verify"] {
+        assert!(
+            step.contains(&format!("| {row} |")),
+            "{row} is not in the table"
+        );
+        assert!(file.contains(&format!("\n## {row}\n")), "{row}\n{file}");
+    }
+    assert!(file.contains("\"Done when:\""), "{file}");
+    // The step has no riff command to check.
+    assert!(
+        book::commands_in(step)
+            .iter()
+            .all(|c| !c.starts_with("riff "))
+    );
+    // The step says where a session gets the rules, and links it from the table.
+    let words = step.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(words.contains("The rules of your repository come from your `CLAUDE.md`."));
+    assert!(how_to.contains("(#write-the-claudemd-of-the-repository)"));
 }
 
 /// 01M5R1672NF56P15VD0JEX51K4: the how-to starts with `riff init` in a

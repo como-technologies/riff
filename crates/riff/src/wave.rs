@@ -1766,7 +1766,11 @@ impl Live {
                 let (at, commit_at) = (clone.clone(), commit.clone());
                 let (main_at, pull_at) = (main.clone(), *pull);
                 blocking(move || clone_at(&main_at, &at, pull_at, &commit_at)).await?;
-                text::wave_verify_start(&wave.repo, &wave.branch, *issue, *pull, commit)
+                let repo = wave.repo.clone();
+                let checks =
+                    blocking(move || repo_setup::full_check(&pr::Gh::for_repo(&repo), &repo))
+                        .await?;
+                text::wave_verify_start(&wave.repo, &wave.branch, *issue, *pull, commit, &checks)
             }
         };
         let existing = |p: PathBuf| p.exists().then_some(p);

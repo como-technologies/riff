@@ -5080,7 +5080,7 @@ pub fn run_start(
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
          Find its \"Done when:\" line. When the line is missing, or you cannot test it, stop \
          and say why.\n\
-         2. Read CLAUDE.md, and obey its rules. To add a requirement, run just req SECTION \"text\". Never edit requirements.md by hand to add one.\n\
+         2. Read CLAUDE.md, and obey its rules.\n\
          3. Do the work on the branch {branch}. Give each commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n\
          4. Before each push, run the checks that CLAUDE.md names. Run each check in the \
@@ -7552,10 +7552,10 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// assert!(text.contains("git rebase origin/master"));
 /// assert!(!text.contains("main"));
 /// assert!(text.contains("Resolve each conflict"));
-/// assert!(text.contains("just check"));
+/// assert!(text.contains("Run the checks that CLAUDE.md names before a push"));
 /// assert!(text.contains("git push --force-with-lease origin worktree-issue-12"));
 /// assert!(text.contains("Do not open a second pull request"));
-/// assert!(text.contains("A new Gate and a new verify"));
+/// assert!(text.contains("New checks and a new verify of the new commit follow"));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
 /// ```
@@ -7584,12 +7584,12 @@ pub fn wave_rebase_start(
          4. Resolve each conflict. Keep the work of the pull request and the new work of {base}. \
          Add the files, and run git rebase --continue. Give each new commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n\
-         5. Run the checks that CLAUDE.md names before a push, for example just check. Run \
-         each check in the foreground, and wait for its end. Fix each fault of the rebase.\n\
+         5. Run the checks that CLAUDE.md names before a push. Run each check in the \
+         foreground, and wait for its end. Fix each fault of the rebase.\n\
          6. Commit and push before the end of your work, to the same pull request:\n   \
          git push --force-with-lease origin {branch}\n   \
          Never push to {base}. Do not open a second pull request.\n\
-         7. A new Gate and a new verify of the new commit follow. Another session does the \
+         7. New checks and a new verify of the new commit follow. Another session does the \
          verify: do not verify your own work.\n\
          8. Stop each background task that you started, for example a Monitor or a command \
          in the background. Never end a turn while a background task runs: a session does not \
@@ -7661,7 +7661,7 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("gh pr checks 40"));
 /// assert!(text.contains("gh run view RUN_ID --log-failed"));
-/// assert!(text.contains("just check"));
+/// assert!(text.contains("Run the checks that CLAUDE.md names before a push"));
 /// assert!(text.contains("git push origin worktree-issue-12"));
 /// assert!(text.contains("A known flake"));
 /// assert!(text.contains("gh run rerun RUN_ID --failed"));
@@ -7698,13 +7698,14 @@ pub fn wave_checks_start(
          Read the log of the failed run, with the run ID of the URL: gh run view RUN_ID \
          --log-failed\n\
          4. A fault of the work: fix it on the branch. Run the checks that CLAUDE.md names \
-         before a push, for example just check. Run each check in the foreground, and wait \
-         for its end. Give each commit this trailer:\n   \
+         before a push. Run each check in the foreground, and wait for its end. Give each \
+         commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n   \
          Commit and push before the end of your work, to the same pull request:\n   \
          git push origin {branch}\n   \
-         Never push to {base}. Do not open a second pull request. A new Gate and a new verify of \
-         the new commit follow. Another session does the verify: do not verify your own work.\n\
+         Never push to {base}. Do not open a second pull request. New checks and a new verify \
+         of the new commit follow. Another session does the verify: do not verify your own \
+         work.\n\
          5. A known flake: the failed test has no link to the diff, and the issue, the pull \
          request or an earlier run shows that it failed before. Run the job again one time:\n   \
          gh run rerun RUN_ID --failed\n   \
@@ -7841,10 +7842,14 @@ pub fn wave_checks_rerun(
 
 /// The start text of a verify session of a wave
 /// (01M4ZV3B6R4WSEJXYT7QPRWT6X). It reads the diff against the default
-/// branch `base` (01M5QYBWPAJ219BE8QKVKG1TWW).
+/// branch `base` (01M5QYBWPAJ219BE8QKVKG1TWW). It names the `checks` of
+/// the full check of the commit: the wave started the verify when they
+/// were done. The rules of the repository for a verify come from its
+/// `CLAUDE.md` (01M5R580VCRCHJM8FY7NT485R1).
 ///
 /// ```
-/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f");
+/// let checks = ["CI".to_owned()];
+/// let text = riff::text::wave_verify_start("o/r", "master", 12, 40, "1a2b3c4d5e6f", &checks);
 /// assert!(text.contains("git diff origin/master...HEAD"));
 /// assert!(!text.contains("origin/main"));
 /// assert!(text.contains("pull request #40"));
@@ -7852,11 +7857,23 @@ pub fn wave_checks_rerun(
 /// assert!(text.contains("commit 1a2b3c4d5e6f"));
 /// assert!(text.contains("The first line is PASS or FAIL"));
 /// assert!(text.contains("Verify of the release pull request"));
-/// assert!(text.contains("each check that the ruleset of its default branch requires, but `riff/verify`"));
+/// assert!(text.contains("when the full check of the commit was done: the check CI."));
+/// assert!(text.contains("Read CLAUDE.md, and obey its rules for a verify"));
 /// assert!(text.contains("Run each test in the foreground"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
+/// let two = ["Lint".to_owned(), "Test".to_owned()];
+/// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two);
+/// assert!(text.contains("was done: the checks Lint, Test."));
 /// ```
-pub fn wave_verify_start(repo: &str, base: &str, issue: u64, pull: u64, commit: &str) -> String {
+pub fn wave_verify_start(
+    repo: &str,
+    base: &str,
+    issue: u64,
+    pull: u64,
+    commit: &str,
+    checks: &[String],
+) -> String {
+    let names = check_names(checks);
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
@@ -7872,13 +7889,10 @@ pub fn wave_verify_start(repo: &str, base: &str, issue: u64, pull: u64, commit: 
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
          origin/{base}...HEAD\n\
          4. See the checks of the commit: gh pr checks {pull}\n   \
-         The full check is each check that the ruleset of its default branch requires, but \
-         `riff/verify`: the check `Gate` when the ruleset requires none. The wave started you \
-         when each of them was done. Do not run it again. When one failed, the verify fails: \
-         name the step that failed.\n\
+         The wave started you when the full check of the commit was done: {names}. Do not run \
+         it again. When it failed, the verify fails: name the step that failed.\n\
          5. Check each criterion: review the code and its fit with the design, read the test \
-         of each criterion, and run that test by its name when you must. Read the book, the \
-         rustdoc and the requirements.\n\
+         of each criterion, and run that test by its name when you must.\n\
          6. Do not commit, do not push, and do not change the pull request. Run each test in \
          the foreground, and wait for its end. Never end a turn while a background task runs: \
          a session does not continue after its result.\n\
@@ -8135,10 +8149,8 @@ macro_rules! lead_rules {
         "Rules. You place the issues in the waves; a worker does not. Do not run a raw shell \
 one-liner for a task that a riff command does: use the riff command. Run each riff command \
 alone, as one command: do not join it with `&&`, `;` or a pipe. Start each `tell` with the \
-request, in the first words, then the reason. Each \"Done when:\" line of an issue names the \
-docs: where a person finds the feature in the book. Put each finding in a GitHub issue: a \
-finding only in chat or in a note is lost. GEN;SET means Good Enough for Now, Safe Enough to \
-Try: choose a safe default, record the requirement, and go on. When a guard refuses a good \
+request, in the first words, then the reason. Put each finding in a GitHub issue: a \
+finding only in chat or in a note is lost. When a guard refuses a good \
 action, file an issue to fix the guard in code: do not work around the refusal. State facts \
 that you read, and say \"I do not know\" for the rest: do not speculate. When your person \
 writes in the riff chat, answer in the riff chat, not only in your terminal: post to the thread `chat` with the selector `{user, host, person: true}`, so that no agent session wakes. Do not name \
@@ -8160,9 +8172,9 @@ notes."
 /// for (name, phrase) in riff::text::LEAD_RULES {
 ///     assert!(riff::text::MCP_LEAD.contains(phrase), "{name}: {phrase}");
 /// }
-/// assert_eq!(riff::text::LEAD_RULES.len(), 18);
+/// assert_eq!(riff::text::LEAD_RULES.len(), 16);
 /// ```
-pub const LEAD_RULES: [(&str, &str); 18] = [
+pub const LEAD_RULES: [(&str, &str); 16] = [
     ("lead-places-issues", "You place the issues in the waves"),
     ("no-raw-oneliners", "Do not run a raw shell one-liner"),
     ("riff-commands-alone", "Run each riff command alone"),
@@ -8170,12 +8182,7 @@ pub const LEAD_RULES: [(&str, &str); 18] = [
         "tell-starts-with-request",
         "Start each `tell` with the request",
     ),
-    ("docs-in-done-when", "names the docs"),
     ("findings-in-issues", "Put each finding in a GitHub issue"),
-    (
-        "gen-set-defaults",
-        "GEN;SET means Good Enough for Now, Safe Enough to Try",
-    ),
     (
         "fix-refusals-in-code",
         "file an issue to fix the guard in code",
@@ -8273,6 +8280,7 @@ pub fn not_in_the_lead_container(tool: &str) -> String {
 /// assert!(text.contains("You are the lead of o/r"));
 /// assert!(text.contains("/opt/riff/riff relay watch --follow"));
 /// assert!(text.contains("the riff tools whoami, notes and read"));
+/// assert!(text.contains("The rules of the repository are in its CLAUDE.md."));
 /// assert!(text.contains("When the Monitor ends, start it again."));
 /// assert!(text.contains("at each start, after each resume and after each compaction"));
 /// assert!(text.contains("never only in the Claude memory of the host"));
@@ -8284,12 +8292,13 @@ pub fn lead_start(repo: &str) -> String {
          The notes are the running state of the lead: what runs, what waits for the person, the \
          deadlines, the next steps, and the choices of the person and of the host. Read the notes \
          and the unread messages at each start, after each resume and after each compaction of \
-         your context. Your rules are in the instructions of the riff tools. Keep the running \
-         state in the notes and on GitHub, never only in the Claude memory of the host: that \
-         memory is not there on another host or after a crash. Write each change of state to the \
-         notes when it happens. Then start /opt/riff/riff relay watch --follow with the Monitor \
-         tool. When the Monitor ends, start it again. Then tell your person in two lines what the \
-         thread says, and wait for the person."
+         your context. Your rules are in the instructions of the riff tools. The rules of the \
+         repository are in its CLAUDE.md. Keep the running state in the notes and on GitHub, \
+         never only in the Claude memory of the host: that memory is not there on another host \
+         or after a crash. Write each change of state to the notes when it happens. Then start \
+         /opt/riff/riff relay watch --follow with the Monitor tool. When the Monitor ends, start \
+         it again. Then tell your person in two lines what the thread says, and wait for the \
+         person."
     )
 }
 
@@ -8982,6 +8991,79 @@ mod tests {
         }
         let names: std::collections::BTreeSet<_> = LEAD_RULES.iter().map(|rule| rule.0).collect();
         assert_eq!(names.len(), LEAD_RULES.len());
+    }
+
+    /// #1354 (01M5R580VCRCHJM8FY7NT485R1): the start texts of the
+    /// sessions say what riff needs, and name no convention of the riff
+    /// repository. The rules of a repository come from its `CLAUDE.md`.
+    #[test]
+    fn the_start_texts_name_no_convention_of_the_riff_repository() {
+        let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3";
+        let checks = ["CI".to_owned()];
+        let texts = [
+            (
+                "work",
+                run_start("o/r", "main", 12, "b", "1a", frame, "Wave 3", false),
+            ),
+            (
+                "work again",
+                run_start("o/r", "main", 12, "b", "1a", frame, "Wave 3", true),
+            ),
+            (
+                "rebase",
+                wave_rebase_start("o/r", "main", 12, 40, "1a2b3c4", "b", "1a"),
+            ),
+            (
+                "checks",
+                wave_checks_start("o/r", "main", 12, 40, "1a2b3c4", &checks, "b", "1a"),
+            ),
+            (
+                "verify",
+                wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks),
+            ),
+            (
+                "failed verify",
+                wave_failed_verify(40, "1a2b3c4", "https://c"),
+            ),
+            ("lead", MCP_LEAD.to_owned()),
+            ("lead start", lead_start("o/r")),
+            ("lead moved", lead_moved("o/r")),
+            ("container", MCP_CONTAINER.to_owned()),
+        ];
+        for (name, text) in texts {
+            let lower = text.to_lowercase();
+            for phrase in ["requirements.md", "the book", "gate"] {
+                assert!(
+                    !lower.contains(phrase),
+                    "{name} text names {phrase:?}: {text}"
+                );
+            }
+            let words = lower.split(|c: char| !c.is_alphanumeric());
+            assert!(
+                !words.clone().any(|w| w == "just"),
+                "{name} text names just: {text}"
+            );
+            assert!(
+                !lower.contains("requirement"),
+                "{name} text names a requirement: {text}"
+            );
+            // The text sends the session to the rules of the repository.
+            if [
+                "work",
+                "work again",
+                "rebase",
+                "checks",
+                "verify",
+                "lead start",
+            ]
+            .contains(&name)
+            {
+                assert!(
+                    text.contains("CLAUDE.md"),
+                    "{name} text names no CLAUDE.md: {text}"
+                );
+            }
+        }
     }
 
     /// 01M56Q55SHHJSKJWNHMW79X7HA

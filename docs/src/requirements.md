@@ -7257,6 +7257,17 @@ part when they merge.
 - **01M4ZSZXBXM6T6MGQ00ACQA66X** The start text of `riff run` tells the
   session to stop each background task that it started, and to leave
   none at the end of its work.
+- **01M5R580VCRCHJM8FY7NT485R1** The start texts of a build, a rebase, a
+  fix of checks and a verify, and the instructions of the lead, say only
+  what riff needs from a session: the item, the branch, the frame of the
+  pull request and the verify report. They name no convention of the
+  riff repository: not `just`, `requirements.md`, the book or the Gate.
+  They send the session to the `CLAUDE.md` of the repository for its
+  rules, and the verify text names the checks of the full check as riff
+  read them. The `CLAUDE.md` of riff holds the rules that left the
+  texts. A test of the texts (`text::tests`) checks the words, and the
+  how-to "Add another repository to the riff" says what the `CLAUDE.md`
+  of a repository should say.
 
 ### How the relay drives claude
 
@@ -8317,8 +8328,9 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   like `just rid`, wraps the text at 72 characters, and writes it after
   the last requirement of the section. The check `block-end` of
   `reqs::check` fails when a requirement block, its first line and the
-  indented lines under it, does not end with a full stop. The start text
-  of a container session and CLAUDE.md say to use the command.
+  indented lines under it, does not end with a full stop. CLAUDE.md
+  says to use the command. The start text of a container session no
+  longer says it (01M5R580VCRCHJM8FY7NT485R1).
 
 ### The release commands
 

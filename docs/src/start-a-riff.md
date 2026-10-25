@@ -423,8 +423,9 @@ names the fix of each:
   and [Use the checks that you have](#use-the-checks-that-you-have).
 - A `CLAUDE.md` at the root of the default branch. Each session reads
   it for the rules of the repository: how to run the checks before a
-  push, and what a pull request needs. Write it, push it, and run
-  `riff init` again.
+  push, and what a pull request needs. See
+  [Write the CLAUDE.md of the repository](#write-the-claudemd-of-the-repository).
+  Push it, and run `riff init` again.
 
 To do the steps with no question, run `riff init --yes`. To see the
 steps and change nothing, run `riff init --check`. A person who is not
@@ -456,7 +457,7 @@ flowchart LR
 | the ruleset of the default branch | [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch) |
 | the Backlog, the first wave | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
 | the checks of a pull request | [Add the job Gate](#add-the-job-gate) |
-| `CLAUDE.md` | Write it at the root of the repository. |
+| `CLAUDE.md` | [Write the CLAUDE.md of the repository](#write-the-claudemd-of-the-repository) |
 
 The full check is a step of your own. Your repository may have one
 already: see
@@ -617,6 +618,50 @@ A repository that has waves and no Backlog gets the Backlog alone:
 ```sh
 gh api -X POST repos/{owner}/{repo}/milestones -f title=Backlog
 ```
+
+### Write the CLAUDE.md of the repository
+
+A session reads `CLAUDE.md` at the root of the repository for its
+rules. The start text of riff says only what riff needs: the item, the
+branch, the frame of the pull request and, for a verify, the report. The
+rules of your repository come from your `CLAUDE.md`.
+
+```mermaid
+flowchart LR
+    S["start text of riff<br/>the item, the branch,<br/>the pull request"] --> A["a session"]
+    C["CLAUDE.md of<br/>the repository<br/>its rules"] --> A
+```
+
+| Part | What it says |
+|---|---|
+| Work | The commands to run before a push, and how to read the result. |
+| Issues | What a `Done when:` line names. |
+| Verify | What a verifier reads and runs, and what it does not run. |
+
+Write the file with your own commands in place of `make check`, push it
+with a pull request, and run `riff init` again:
+
+```sh
+cat > CLAUDE.md <<'EOF'
+# Notes for agents
+
+## Work
+
+- Run `make check` before each push. It passes with no warning.
+- Each change has a test.
+
+## Issues
+
+- Each "Done when:" line of an issue names a test that you can run.
+
+## Verify
+
+- A verifier reads the diff and runs the test of each criterion.
+- A verifier does not run `make check` again: the CI did it.
+EOF
+```
+
+The `CLAUDE.md` of riff is an example of a longer file.
 
 ### Use any default branch
 

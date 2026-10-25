@@ -9,8 +9,7 @@ The book in `docs/src/` holds the requirements and the big picture.
   record the requirement, move on.
 - `just check` passes before each push: the fast checks and the tests
   of the crates that you touched. Zero warnings. The Gate on GitHub is
-  the one full run of each commit. A verifier does not run `just ci`:
-  it reads the Gate and reviews.
+  the one full run of each commit.
 - Design docs live in the code as rustdoc, with doc tests. The book
   stays for people: what riff is, how to join, the big picture.
 - Each change has unit tests, integration tests and doc tests.
@@ -23,6 +22,17 @@ The book in `docs/src/` holds the requirements and the big picture.
 - No users yet. Change any interface freely. No compatibility shims.
 - Work on a branch. Merge by pull request with auto-merge. Never push
   to `main`.
+
+## Issues
+
+- Each "Done when:" line of an issue names the docs: where a person
+  finds the feature in the book.
+
+## Verify
+
+- A verifier does not run `just ci`: it reads the Gate and reviews.
+- A verifier reads the book, the rustdoc and the requirements, and
+  checks that the change fits them.
 
 ## User docs (STRONG REQUIREMENT)
 
