@@ -2981,9 +2981,6 @@ impl<R: Runtime + 'static> Daemon<R> {
         let limit = self.room.limit();
         limit.caps(&mut spec);
         limit.effort(&mut spec, &item);
-        crate::compile_cache::Setting::read(&self.dir)
-            .unwrap_or_default()
-            .apply(&mut spec);
         self.give_mcp(&mut spec, &mut values, &mut secrets);
         let name = spec.name.clone();
         let record = Record {
@@ -4314,7 +4311,7 @@ pub async fn show_status(dir: &Path, manager: &impl crate::service::ServiceManag
     match status(dir).await {
         Ok(status) => {
             print!("{}", text::daemon_status(&status, now_ms()));
-            println!("{}", crate::compile_cache::shown(dir));
+            println!("{}", crate::compile_cache::shown());
             0
         }
         Err(e) => {
@@ -4763,18 +4760,10 @@ mod tests {
             .collect()
     }
 
-    /// The caps of a container: `--cpus`, `CARGO_BUILD_JOBS` and
-    /// `--memory`, as the daemon gives them to the runtime.
-    fn caps(spec: &SessionSpec) -> (u32, Vec<&str>, &str) {
-        let jobs = spec
-            .env
-            .iter()
-            .filter_map(|e| match e {
-                Env::Value(name, value) if name == "CARGO_BUILD_JOBS" => Some(value.as_str()),
-                _ => None,
-            })
-            .collect();
-        (spec.cpus, jobs, spec.memory.as_str())
+    /// The caps of a container: `--cpus` and `--memory`, as the daemon
+    /// gives them to the runtime.
+    fn caps(spec: &SessionSpec) -> (u32, &str) {
+        (spec.cpus, spec.memory.as_str())
     }
 
     #[tokio::test]
@@ -4784,7 +4773,14 @@ mod tests {
             .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
             .await;
         let spec = here.fake.spec(&first).unwrap();
-        assert_eq!(caps(&spec), (8, vec!["8"], "8g"));
+        assert_eq!(caps(&spec), (8, "8g"));
+        // riff sets no build jobs (01M5SMW28KT5D5HPRH7KAZ8TVC).
+        assert!(
+            !spec
+                .env
+                .iter()
+                .any(|e| matches!(e, Env::Value(n, _) if n == "CARGO_BUILD_JOBS"))
+        );
 
         let change = crate::room::Change {
             cpus: Some(6),
@@ -4796,10 +4792,10 @@ mod tests {
             .started(here.start("riff-issue-13-2b3c4d5e", "issue-13"))
             .await;
         let spec = here.fake.spec(&second).unwrap();
-        assert_eq!(caps(&spec), (6, vec!["6"], "12g"));
+        assert_eq!(caps(&spec), (6, "12g"));
         // The session that runs keeps the caps of its start.
         let spec = here.fake.spec(&first).unwrap();
-        assert_eq!(caps(&spec), (8, vec!["8"], "8g"));
+        assert_eq!(caps(&spec), (8, "8g"));
     }
 
     /// The claude command of the lead, of a work item and of a verify has
@@ -6307,7 +6303,10 @@ mod tests {
             Box::pin(async { bail!("no wave in this test") })
         }
 
-        fn image<'a>(&'a self, _: &'a Wave) -> crate::wave::BoxFuture<'a, Result<String>> {
+        fn pinned<'a>(
+            &'a self,
+            _: &'a Wave,
+        ) -> crate::wave::BoxFuture<'a, Result<crate::wave::Pinned>> {
             Box::pin(async { bail!("no wave in this test") })
         }
 
@@ -6322,7 +6321,7 @@ mod tests {
             &'a self,
             _: &'a Wave,
             _: &'a crate::wave::Work,
-            _: &'a str,
+            _: &'a crate::wave::Pinned,
         ) -> crate::wave::BoxFuture<'a, Result<Option<Start>>> {
             Box::pin(async { bail!("no wave in this test") })
         }

@@ -641,6 +641,69 @@ workspace in the session image, for each pull request (see
 they run the tests in the new image. To run one part of them, see
 [Run one part of the tests](#run-one-part-of-the-tests).
 
+## Set the env and the volumes of a session
+
+riff sets no variable and no volume of a language or a tool in a
+session. The repository gives them in `riff.toml`: the table
+`[session.env]` for variables, and the table `[session.volumes]` for
+named volumes. The key of a volume is its name, and its value is the
+path in the container. `$HOME` in a value or in a path is the home of
+the person. See [Where the env of a session comes
+from](how-it-works.md#where-the-env-of-a-session-comes-from).
+
+This is the build cache of riff in its own `riff.toml`: the cargo home,
+sccache with a most size of 40G, and one volume for each. Without it, a
+Rust session has no sccache and no cargo cache:
+
+```toml
+[session.env]
+CARGO_HOME = "$HOME/.cargo"
+SCCACHE_DIR = "$HOME/.cache/sccache"
+SCCACHE_CACHE_SIZE = "40G"
+RUSTC_WRAPPER = "sccache"
+SCCACHE_IDLE_TIMEOUT = "0"
+SCCACHE_IGNORE_SERVER_IO_ERROR = "1"
+
+[session.volumes]
+riff-cargo = "$HOME/.cargo"
+riff-sccache = "$HOME/.cache/sccache"
+```
+
+The image must have the tool: `RUSTC_WRAPPER = "sccache"` needs sccache
+in the image. A project of another language names its own variables and
+volumes, for example `npm_config_cache = "$HOME/.npm"` and the volume
+`my-npm = "$HOME/.npm"`. A volume is bound with write, and all sessions
+of the host that name it share it. The value of a variable is in the
+command line of podman: put no secret in `riff.toml`.
+
+riff refuses a `riff.toml` that it cannot keep:
+
+- A variable that riff sets itself: `HOME`, `USER`, `LOGNAME`,
+  `GH_TOKEN`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, and each
+  name that starts with `GIT_CONFIG_` or `RIFF_`.
+- A volume name that podman could read as a path. A name starts with a
+  letter or a digit, and has letters, digits, `_`, `.` and `-`.
+- A path that is not absolute, or that has a colon or a comma.
+
+The error names the key and the file. To check your working tree, run
+`riff image`. It prints the image, or the error:
+
+```sh
+riff image
+```
+
+Only the merged `riff.toml` counts, as for the image (see [Only a merged
+pin counts](#only-a-merged-pin-counts)). Merge your change with a pull
+request. A new session reads it at its start, and a session that runs
+keeps its env. `riff run --image` changes the image only: the env and
+the volumes still come from the merged file. To see what the sessions
+get:
+
+```sh
+git fetch origin
+git show origin/HEAD:riff.toml
+```
+
 ## Start the riff daemon
 
 The riff daemon owns the containers of `riff run` on your machine.
@@ -1257,10 +1320,12 @@ another host, add `--host thelio`.
   works](how-it-works.md#the-auto-mode-settings-of-a-session).
 - A home of its own in memory. Each other write goes when the
   container ends.
-- The volumes `riff-cargo` and `riff-sccache` for the caches.
-- The caps of the host: `--cpus` and the same number in
-  `CARGO_BUILD_JOBS`, and `--memory`. The defaults are 8 CPUs and
-  8 GB. See [Set the caps of a container](#set-the-caps-of-a-container).
+- The env and the volumes that `riff.toml` names, for example the build
+  cache. riff sets none of its own. See [Set the env and the volumes of
+  a session](#set-the-env-and-the-volumes-of-a-session).
+- The caps of the host: `--cpus` and `--memory`. The defaults are 8
+  CPUs and 8 GB. See
+  [Set the caps of a container](#set-the-caps-of-a-container).
 - The folder of its own socket of the daemon at `/run/riff`, with
   write, and `RIFF_SOCKET=/run/riff/riff.sock`.
 - Your riff binary at `/opt/riff/riff`, with no write. Its
@@ -1944,10 +2009,10 @@ The daemon reads the limit at each start: a change counts at once.
 
 ### Set the caps of a container
 
-Each new container of the host gets the same caps: its CPUs, which are
-also its build jobs in `CARGO_BUILD_JOBS`, and its memory. The default
-is 8 CPUs and 8 GB. `riff daemon limit` shows them. To set them, for
-example 12 CPUs and 16 GB:
+Each new container of the host gets the same caps: its CPUs and its
+memory. The default is 8 CPUs and 8 GB. riff sets no build jobs: a tool
+reads the CPUs of its container. `riff daemon limit` shows them. To set
+them, for example 12 CPUs and 16 GB:
 
 ```sh
 riff daemon limit --cpus 12 --memory 16
@@ -1976,11 +2041,12 @@ gets the levels at its start. A session that runs keeps its effort: in
 the lead, use `/effort` to change it. riff refuses a level that Claude
 Code does not know. Add `--host HOST` to set the levels on another host.
 
-### Set or empty the compile cache of the container sessions
+### Show or empty the compile cache of the container sessions
 
-The container sessions of a host share one compile cache of sccache:
-the podman volume `riff-sccache`. Its most size is 40G by default. To
-see its size now and its most size:
+The container sessions of riff share one compile cache of sccache: the
+podman volume `riff-sccache`, which the `riff.toml` of riff names. riff
+sets no cache in a session, so a repository that names no such volume
+has none. To see the size of the volume now:
 
 ```sh
 riff daemon cache
@@ -1988,22 +2054,17 @@ riff daemon cache
 
 `riff daemon status` shows the same line. The size is the size on the
 disk of each file in the folder of the volume. riff counts 1GB as
-1024³ bytes, the same as the most size: sccache reads `40G` as 40 ×
-1024³ bytes. `podman system df -v` counts 1GB as 1000³ bytes, so its
-number is about 7% larger: for example 8.3GB where riff shows 7.7GB.
+1024³ bytes, as sccache reads `40G`: 40 × 1024³ bytes. `podman system
+df -v` counts 1GB as 1000³ bytes, so its number is about 7% larger: for
+example 8.3GB where riff shows 7.7GB.
 
 In rootless podman, the folders of the volume can belong to a user of
 the container. Then riff reads them with `podman unshare du`. When
 riff cannot read the size, the line says so and gives the reason.
 
-To set the most size, for example 20G:
-
-```sh
-riff daemon cache 20G
-```
-
-The size goes in `cache.json` in the folder of the daemon. A new
-session gets it at its start. A session that runs keeps its size.
+The most size of the cache is the variable `SCCACHE_CACHE_SIZE` in
+`riff.toml`: riff keeps no size. To change it, see [Set the env and the
+volumes of a session](#set-the-env-and-the-volumes-of-a-session).
 
 To delete each file of the cache:
 
@@ -2088,11 +2149,10 @@ To remove its folders whose work is over:
 riff daemon sweep --host thelio
 ```
 
-To show, set or empty its compile cache:
+To show or empty its compile cache:
 
 ```sh
 riff daemon cache --host thelio
-riff daemon cache 20G --host thelio
 riff daemon cache --clear --host thelio
 ```
 

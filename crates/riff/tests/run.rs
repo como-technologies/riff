@@ -31,6 +31,24 @@ const IMAGE: &str = "localhost/riff-session:test";
 const PINNED: &str = "ghcr.io/como-technologies/riff-session@sha256:\
                       0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
+/// The `riff.toml` of the repository: the image, one package source, and the
+/// env and the volumes that the `riff.toml` of riff sets for its build cache.
+fn riff_toml() -> String {
+    format!(
+        "[session]\nimage = \"{PINNED}\"\nsources = [\"pypi.org\"]\n\n\
+         [session.env]\n\
+         CARGO_HOME = \"$HOME/.cargo\"\n\
+         SCCACHE_DIR = \"$HOME/.cache/sccache\"\n\
+         RUSTC_WRAPPER = \"sccache\"\n\
+         SCCACHE_IDLE_TIMEOUT = \"0\"\n\
+         SCCACHE_IGNORE_SERVER_IO_ERROR = \"1\"\n\
+         SCCACHE_CACHE_SIZE = \"40G\"\n\n\
+         [session.volumes]\n\
+         riff-cargo = \"$HOME/.cargo\"\n\
+         riff-sccache = \"$HOME/.cache/sccache\"\n"
+    )
+}
+
 /// Writes the program `path` with `body`.
 fn script(path: &Path, body: &str) {
     isolated::write_program(path, body);
@@ -445,11 +463,7 @@ impl Machine {
         std::fs::create_dir_all(&seed).unwrap();
         git(&seed, &["init", "-q", "-b", "main"]);
         std::fs::write(seed.join("README.md"), "riff\n").unwrap();
-        std::fs::write(
-            seed.join("riff.toml"),
-            format!("[session]\nimage = \"{PINNED}\"\nsources = [\"pypi.org\"]\n"),
-        )
-        .unwrap();
+        std::fs::write(seed.join("riff.toml"), riff_toml()).unwrap();
         git(&seed, &["add", "README.md", "riff.toml"]);
         git(&seed, &["commit", "-q", "-m", "one"]);
         git(&seed, &["push", "-q", bare.to_str().unwrap(), "main"]);
@@ -626,6 +640,83 @@ impl Machine {
     }
 }
 
+/// 01M5SMW28KT5D5HPRH7KAZ8TVC: a `riff.toml` with no env and no volumes
+/// gives the session none. riff sets no variable and no volume of a
+/// language or a tool: no `RUSTC_WRAPPER`, no cargo or sccache volume, no
+/// `CARGO_BUILD_JOBS`. The caps are only `--cpus` and `--memory`.
+#[tokio::test]
+async fn a_riff_toml_with_no_env_and_no_volumes_gives_the_session_none() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    std::fs::write(
+        machine.main.join("riff.toml"),
+        format!("[session]\nimage = \"{PINNED}\"\n"),
+    )
+    .unwrap();
+    git(&machine.main, &["commit", "-q", "-am", "no env"]);
+    git(&machine.main, &["push", "-q", "origin", "main"]);
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    let args = machine.read("run.args");
+    for none in [
+        "RUSTC_WRAPPER",
+        "CARGO",
+        "SCCACHE",
+        "riff-cargo",
+        "riff-sccache",
+        "RUST",
+    ] {
+        assert!(!args.contains(none), "{none} in\n{args}");
+    }
+    // The caps stay: `--cpus` and `--memory`.
+    let lines: Vec<&str> = args.lines().collect();
+    assert!(lines.windows(2).any(|w| w == ["--cpus", "8"]), "{args}");
+    assert!(lines.windows(2).any(|w| w == ["--memory", "8g"]), "{args}");
+}
+
+/// 01M5SMVVC4GQS310CVK3H9CMQ7: the env and the volumes come from the
+/// merged `riff.toml`. An edit in the working tree that is not merged
+/// changes nothing, and `$HOME` is the home of the person.
+#[tokio::test]
+async fn the_env_and_the_volumes_of_a_session_are_the_ones_of_the_merged_riff_toml() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let home = machine.env.home().display().to_string();
+    let config = |env: &str| {
+        format!(
+            "[session]\nimage = \"{PINNED}\"\n\n[session.env]\n{env} = \"$HOME/.pip\"\n\n\
+             [session.volumes]\nriff-pip = \"$HOME/.pip\"\n"
+        )
+    };
+    std::fs::write(machine.main.join("riff.toml"), config("PIP_CACHE_DIR")).unwrap();
+    git(&machine.main, &["commit", "-q", "-am", "pip"]);
+    git(&machine.main, &["push", "-q", "origin", "main"]);
+    // Not merged: this edit changes nothing.
+    std::fs::write(machine.main.join("riff.toml"), config("NOT_MERGED")).unwrap();
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    let args = machine.read("run.args");
+    assert!(
+        args.contains(&format!("\nPIP_CACHE_DIR={home}/.pip\n")),
+        "{args}"
+    );
+    assert!(
+        args.contains(&format!("\nriff-pip:{home}/.pip\n")),
+        "{args}"
+    );
+    assert!(!args.contains("NOT_MERGED"), "{args}");
+    assert!(!args.contains("RUSTC_WRAPPER"), "{args}");
+    assert!(!args.contains("riff-cargo"), "{args}");
+}
+
 #[tokio::test]
 async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_the_home() {
     let machine = Machine::new().await;
@@ -732,8 +823,6 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "SCCACHE_IDLE_TIMEOUT=0",
         "-e",
         "SCCACHE_IGNORE_SERVER_IO_ERROR=1",
-        "-e",
-        "CARGO_BUILD_JOBS=8",
         "-e",
         "SCCACHE_CACHE_SIZE=40G",
         "-e",
@@ -958,22 +1047,31 @@ async fn riff_run_sends_no_verify_request_when_a_lead_holds_the_verify() {
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
-/// `riff daemon cache SIZE` sets the size of the compile cache, and the
-/// daemon gives it to each new session (01M57818168N3AQGE3G5GDYDDD).
 /// `riff daemon cache` and `riff daemon status` show the size of the
-/// volume now and the setting (01M5781930TF6XBX7ME7RAMX2X). A clear
-/// while the session runs empties the volume, keeps its folder, and the
-/// session goes on to its end (01M5781A4PRTTYRHH5GJ1GHN7G).
+/// volume now (01M5781930TF6XBX7ME7RAMX2X). riff keeps no size: the size
+/// is a variable of the `riff.toml` of the repository, and the command
+/// takes no size (01M5SMW28KT5D5HPRH7KAZ8TVC). A clear while the session
+/// runs empties the volume, keeps its folder, and the session goes on to
+/// its end (01M5781A4PRTTYRHH5GJ1GHN7G).
 #[tokio::test]
-async fn riff_daemon_cache_sets_the_size_of_each_new_session_and_a_clear_empties_the_volume() {
+async fn riff_daemon_cache_shows_the_volume_and_a_clear_empties_it_while_a_session_runs() {
     let machine = Machine::new().await;
     machine.lead().await;
-    let set = machine.ok(None, &["daemon", "cache", "20G"]).await;
+    let shown = machine.ok(None, &["daemon", "cache"]).await;
     assert!(
-        set.contains(
-            "The compile cache of the container sessions: no volume riff-sccache yet, at most 20G."
-        ),
-        "{set}"
+        shown.contains("The compile cache of the container sessions: no volume riff-sccache yet."),
+        "{shown}"
+    );
+    assert!(!shown.contains("at most"), "{shown}");
+    let size = machine.run(None, &["daemon", "cache", "20G"]).await;
+    assert!(!size.status.success(), "{size:?}");
+    assert!(
+        !machine
+            .env
+            .riff_home()
+            .join("daemon")
+            .join("cache.json")
+            .exists()
     );
     let volume = machine.bin.path().join("volume");
     std::fs::create_dir_all(volume.join("a/b")).unwrap();
@@ -990,15 +1088,14 @@ async fn riff_daemon_cache_sets_the_size_of_each_new_session_and_a_clear_empties
         .unwrap();
     wait_for(&machine.bin.path().join("run.stdin"), "user").await;
     let args = machine.read("run.args");
-    assert!(args.contains("\nSCCACHE_CACHE_SIZE=20G\n"), "{args}");
-    assert!(!args.contains("SCCACHE_CACHE_SIZE=40G"), "{args}");
+    // The size is the variable of the riff.toml of the repository.
+    assert!(args.contains("\nSCCACHE_CACHE_SIZE=40G\n"), "{args}");
 
     let status = machine.ok(None, &["daemon", "status"]).await;
     assert!(
         status.contains(
-            "The compile cache of the container sessions: 3MB now, at most 20G, in the volume \
-             riff-sccache.\nSet it with: riff daemon cache SIZE. Empty it with: riff daemon cache \
-             --clear"
+            "The compile cache of the container sessions: 3MB now, in the volume riff-sccache.\n\
+             Empty it with: riff daemon cache --clear"
         ),
         "{status}"
     );
@@ -1007,7 +1104,7 @@ async fn riff_daemon_cache_sets_the_size_of_each_new_session_and_a_clear_empties
         cleared.contains("riff deleted each file of the compile cache of the container sessions."),
         "{cleared}"
     );
-    assert!(cleared.contains(": 0MB now, at most 20G"), "{cleared}");
+    assert!(cleared.contains(": 0MB now, in the volume"), "{cleared}");
     assert!(volume.is_dir());
     assert_eq!(std::fs::read_dir(&volume).unwrap().count(), 0);
 

@@ -602,7 +602,7 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
     assert_eq!(
         text(&out.stdout),
         "The limit of this host: 3 live sessions, and 8 GB of free memory or more for a start.\n\
-         Each new container: 8 CPUs and 8 build jobs, and 8 GB of memory.\n\
+         Each new container: 8 CPUs and 8 GB of memory.\n\
          Effort of the lead xhigh, of a work item xhigh, of a verify xhigh.\n"
     );
     let file = here.env.riff_home().join("daemon/limit.json");
@@ -618,7 +618,7 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
     assert_eq!(
         text(&out.stdout),
         format!(
-            "{set}\nEach new container: 8 CPUs and 8 build jobs, and 8 GB of memory.\n\
+            "{set}\nEach new container: 8 CPUs and 8 GB of memory.\n\
              Effort of the lead xhigh, of a work item xhigh, of a verify xhigh.\n"
         )
     );
@@ -627,7 +627,7 @@ async fn riff_daemon_limit_shows_and_sets_the_limit_of_the_host() {
     let out = here
         .run(false, &["daemon", "limit", "--cpus", "6", "--memory", "12"])
         .await;
-    let caps = "Each new container: 6 CPUs and 6 build jobs, and 12 GB of memory.";
+    let caps = "Each new container: 6 CPUs and 12 GB of memory.";
     assert!(text(&out.stdout).contains(caps), "{}", text(&out.stdout));
     let saved = std::fs::read_to_string(&file).unwrap();
     assert!(saved.contains(r#""cpus":6,"memory_gb":12"#), "{saved}");

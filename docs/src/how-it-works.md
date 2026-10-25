@@ -133,7 +133,7 @@ hold each decision of the design.
 
 | What sessions share | How riff keeps them apart | What a session can still do to another |
 |---|---|---|
-| The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the cache volumes. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. | Nothing outside its binds. See the rows of git and of the caches. |
+| The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. | Nothing outside its binds. See the rows of git and of the caches. |
 | git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff. The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The clone goes when its item ends, after its push. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
 | git: the commit | A commit has your git identity and a `Riff-Session:` trailer. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main`. No gpg agent goes into a container. | Nothing. Only the trailer tells the commits of two sessions apart. |
@@ -142,14 +142,38 @@ hold each decision of the design.
 | The processes | Each container has its own processes. Its PID 1 is the init of podman (`podman run --init`): it reaps each process that ends, so no zombie stays. A `pkill` in one session does not hit another. `podman stop` ends a session and each of its processes. | Nothing: it does not see the processes of another container. |
 | `/tmp` | Each container has its own `/tmp`. It goes when the session ends. | Nothing. |
 | The ports | Each container has its own loopback. A test port of one session does not hit another. | It can reach a port that listens on the network of your machine, as each program on it can. |
-| The caches: `CARGO_HOME` and sccache | One named volume holds `CARGO_HOME`, and one holds the folder of sccache. Both are bound with write. The tools lock them themselves. The toolchain is in the image, with no write. A new clone has no `target/`: a warm sccache makes its build short. | It can write a bad file in a cache, and a later build of another session uses it. |
+| The caches | riff sets no cache. A repository names its cache volumes in `riff.toml`. The `riff.toml` of riff names one volume for `CARGO_HOME` and one for the folder of sccache. Both are bound with write. The tools lock them themselves. The toolchain is in the image, with no write. A new clone has no `target/`: a warm sccache makes its build short. | It can write a bad file in a cache, and a later build of another session uses it. |
 | Your home | The home of the container is an empty tmpfs at the path of your home. riff binds your `~/.gitconfig` and the Claude folder of the session on top of it. Each other write in that home goes when the session ends. riff writes nothing in your home outside its own folders. It does not write `~/.claude`, `~/.claude.json`, a git config or a shell file. | It reads `~/.gitconfig` and `~/.config/gh`. |
-| The CPU | Each container gets `--cpus` and the same number of build jobs, 8 by default. `riff daemon limit --cpus N` sets it for the host. The daemon keeps one limit for the host: the number of live sessions, at most 3 by default. | A build of one session makes the builds of the others slower, up to its limit. |
+| The CPU | Each container gets `--cpus`, 8 by default. riff sets no build jobs: a tool reads the CPUs of its container. `riff daemon limit --cpus N` sets it for the host. The daemon keeps one limit for the host: the number of live sessions, at most 3 by default. | A build of one session makes the builds of the others slower, up to its limit. |
 | The memory | Each container gets `--memory`, 8 GB by default. `riff daemon limit --memory GB` sets it for the host. A session past its limit loses its own processes, not those of another session. The daemon starts no new session while the free memory is below a floor, 8 GB by default. | It takes memory, up to its limit, that a new session needs. |
 | The network | Each session reaches the internet, as a plain `claude` does. No proxy and no filter. | It uses the same connection and reaches each service that your machine reaches. |
 | The sign-in of `gh` | The daemon reads `gh auth token` on the host and gives the container `GH_TOKEN`. podman gets only the name of the variable, so the value is in no command line. The image has `gh` at `/usr/bin/gh`. A session has your rights on GitHub, as a plain `claude` has. No GitHub App. No secret goes into a log line, a message or a file of a clone. | It can do on GitHub each thing that you can do, also to the issues and the pull requests of another session. |
 | The sign-in of `claude` | Each session has its own Claude folder in a folder of riff. riff trusts the clone of the session there, as you trust the main clone. The daemon gives the session the long-lived token of `riff claude-token`, kept in the OS keyring, in `CLAUDE_CODE_OAUTH_TOKEN`. With no token, riff binds your `~/.claude/.credentials.json` with no write, and starts no session while its access token has less than 60 minutes left. riff never changes your own Claude config. | It uses the limits of your plan that another session needs. |
 | The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. The daemon serves the riff tools of the session on riff-server, as its worker session. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The owner and admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |
+
+## Where the env of a session comes from
+
+riff sets in a session only what riff needs itself: the home, the user,
+the sign-ins, the git config, the Claude folder, the clone, the folder
+of the socket, and the caps `--memory` and `--cpus`. It sets no
+variable and no volume of a language or a tool. The repository gives
+them in its `riff.toml`, in the tables `[session.env]` and
+`[session.volumes]`. Only the merged `riff.toml` counts, as for the
+image (see
+[Only a merged pin counts](development.md#only-a-merged-pin-counts)).
+
+```mermaid
+flowchart LR
+    R["riff.toml on the default branch:<br/>[session.env] and [session.volumes]"] --> S["the spec of the session"]
+    H["riff: the home, the user, the sign-ins,<br/>the clone, the socket, --cpus, --memory"] --> S
+    S --> P["podman run -e NAME=VALUE -v VOLUME:PATH"]
+```
+
+A `riff.toml` with neither table gives a session no tool variable and
+no cache volume. A repository of any language works the same way. The
+`riff.toml` of riff sets the build cache of riff: the cargo home,
+sccache, and their two volumes. To write the tables, see
+[Set the env and the volumes of a session](development.md#set-the-env-and-the-volumes-of-a-session).
 
 ## Find a command
 

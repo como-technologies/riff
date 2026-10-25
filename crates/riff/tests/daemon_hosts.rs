@@ -296,27 +296,19 @@ async fn each_daemon_command_with_host_reaches_the_daemon_of_that_host() {
         );
 
         // No --clear here: podman of the test machine is not isolated.
-        let size = if name == "a" { "12G" } else { "13G" };
-        let out = r.lead(&["daemon", "cache", size], name).await;
-        assert!(out.status.success(), "{out:?}");
-        assert!(
-            text(&out.stdout).contains(&format!("at most {size}")),
-            "{out:?}"
-        );
-        let saved = std::fs::read_to_string(host.dir().join("cache.json")).unwrap();
-        assert!(saved.contains(size), "{saved}");
         let out = r.lead(&["daemon", "cache"], name).await;
         assert!(out.status.success(), "{out:?}");
+        let shown = text(&out.stdout);
         assert!(
-            text(&out.stdout).contains(&format!("at most {size}")),
+            shown.contains("The compile cache of the container sessions:"),
             "{out:?}"
         );
-        let out = r.lead(&["daemon", "cache", "12GB"], name).await;
+        assert!(!shown.contains("at most"), "{out:?}");
+        // riff keeps no size: it is in the riff.toml of the repository
+        // (01M5SMW28KT5D5HPRH7KAZ8TVC).
+        let out = r.lead(&["daemon", "cache", "12G"], name).await;
         assert!(!out.status.success(), "{out:?}");
-        assert!(
-            text(&out.stderr).contains("a number with K, M, G or T"),
-            "{out:?}"
-        );
+        assert!(!host.dir().join("cache.json").exists());
 
         let sessions = if name == "a" { "4" } else { "5" };
         let out = r

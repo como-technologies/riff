@@ -1194,9 +1194,9 @@ enum DaemonCommand {
     /// other start waits for room, in order. With no flag, it shows the
     /// limit. The default is 3 sessions and a floor of 8 GB.
     ///
-    /// The limit also holds the caps of each new container: its CPUs,
-    /// which are also its build jobs, and its memory. The default is 8
-    /// CPUs and 8 GB. A session that runs keeps its caps.
+    /// The limit also holds the caps of each new container: its CPUs and
+    /// its memory. The default is 8 CPUs and 8 GB. A session that runs
+    /// keeps its caps.
     ///
     /// It also holds the effort of the sessions: the daemon starts the
     /// lead, each work item and each verify with `claude --effort`. The
@@ -1209,7 +1209,7 @@ enum DaemonCommand {
         /// The floor of free memory for a start, in GB.
         #[arg(long, value_name = "GB")]
         floor: Option<u64>,
-        /// The CPUs and the build jobs of each new container, 1 or more.
+        /// The CPUs of each new container, 1 or more.
         #[arg(long, value_name = "N")]
         cpus: Option<u32>,
         /// The memory cap of each new container, in GB, 1 or more.
@@ -1233,18 +1233,14 @@ enum DaemonCommand {
         #[arg(long)]
         host: Option<String>,
     },
-    /// Show, set or empty the compile cache of the sessions
+    /// Show or empty the compile cache of the sessions
     ///
-    /// The container sessions of this host share one compile cache of
-    /// sccache: the podman volume riff-sccache. With no argument, it
-    /// shows the size of the volume now and the most size. The default
-    /// most size is 40G. A new session gets the size at its start; a
-    /// session that runs keeps its size. --clear deletes each file of
-    /// the cache, also while sessions run: their builds compile again.
+    /// The container sessions of riff share one compile cache of sccache:
+    /// the podman volume riff-sccache, which the riff.toml of riff names.
+    /// With no flag, it shows the size of the volume now. --clear deletes
+    /// each file of the cache, also while sessions run: their builds
+    /// compile again.
     Cache {
-        /// The new most size: a number with K, M, G or T, for example 20G.
-        #[arg(conflicts_with = "clear")]
-        size: Option<String>,
         /// Delete each file of the cache.
         #[arg(long)]
         clear: bool,
@@ -2364,11 +2360,8 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             println!("{}", riff::text::daemon_limit(&limit));
             Ok(())
         }
-        DaemonCommand::Cache { size, clear, .. } => {
-            println!(
-                "{}",
-                riff::compile_cache::change(&dir, size.as_deref(), *clear)?
-            );
+        DaemonCommand::Cache { clear, .. } => {
+            println!("{}", riff::compile_cache::change(*clear)?);
             Ok(())
         }
         DaemonCommand::Sweep {
@@ -2467,13 +2460,7 @@ fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote
         // `daemon_command` follows the events of another host.
         DaemonCommand::Events { .. } => return None,
         DaemonCommand::Limit { host, .. } => (host, Request::Limit(limit_change(command)?)),
-        DaemonCommand::Cache { size, clear, host } => (
-            host,
-            Request::Cache {
-                size: size.clone(),
-                clear: *clear,
-            },
-        ),
+        DaemonCommand::Cache { clear, host } => (host, Request::Cache { clear: *clear }),
         DaemonCommand::Sweep {
             host,
             remove: Some(name),

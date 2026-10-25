@@ -288,6 +288,7 @@ use crate::pr::Verdict;
 use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
+use crate::session_setup::Setup;
 use crate::{identity, look, pr, repo_setup, rollout, session_image, text, usage};
 use riff_client::api::{self, Api};
 
@@ -821,14 +822,26 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// The wait before the next connection of the wakes of a session.
 const WAKE_RETRY: Duration = Duration::from_secs(1);
 
+/// What the merged `riff.toml` of the main clone gives to the sessions of a
+/// wave: the pinned image, and the env and the volumes
+/// (01M5SMVVC4GQS310CVK3H9CMQ7).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Pinned {
+    /// The pinned image, as podman pulls it.
+    pub image: String,
+    /// The env and the volumes.
+    pub setup: Setup,
+}
+
 /// The forge and the riff of the waves: [`Live`], or a fake in a test.
 pub trait World: Send + Sync {
     /// The facts of the wave now.
     fn look<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<Look>>;
 
-    /// The session image of the repository of the wave: the merged pin
-    /// of its main clone ([`session_image::merged`]).
-    fn image<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<String>>;
+    /// The session image of the repository of the wave, with its env and
+    /// volumes: the merged pin of its main clone
+    /// ([`session_image::merged_config`]).
+    fn pinned<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<Pinned>>;
 
     /// The facts of the host that no item changes (as `riff run` checks them):
     /// the fault of the first that fails (01M57A7A1W2K9440WZA1QZ3M9T).
@@ -843,7 +856,7 @@ pub trait World: Send + Sync {
         &'a self,
         wave: &'a Wave,
         work: &'a Work,
-        image: &'a str,
+        pinned: &'a Pinned,
     ) -> BoxFuture<'a, Result<Option<Start>>>;
 
     /// Goes on with the claim of the session of `record` after a new
@@ -1197,9 +1210,11 @@ async fn start_job<R: Runtime + 'static>(
     slot: Slot,
 ) -> Result<Option<(Record, Ended)>> {
     let world = daemon.world();
-    let image = world.image(wave).await?;
-    daemon.have_image(&image, |line| println!("{line}")).await?;
-    let Some(start) = world.begin(wave, work, &image).await? else {
+    let pinned = world.pinned(wave).await?;
+    daemon
+        .have_image(&pinned.image, |line| println!("{line}"))
+        .await?;
+    let Some(start) = world.begin(wave, work, &pinned).await? else {
         return Ok(None);
     };
     let job = Job {
@@ -1712,7 +1727,7 @@ impl Live {
     async fn prepare(
         wave: &Wave,
         work: &Work,
-        image: &str,
+        pinned: &Pinned,
         host: &run::Host,
         base: &str,
         milestone: Option<String>,
@@ -1795,7 +1810,7 @@ impl Live {
         let facts = Facts {
             session: session.to_owned(),
             item: item.clone(),
-            image: image.to_owned(),
+            image: pinned.image.clone(),
             home: host.home.clone(),
             user: host.user.clone(),
             clone,
@@ -1804,6 +1819,7 @@ impl Live {
             sign_in: host.claude.sign_in(),
             gitconfig: existing(host.home.join(".gitconfig")),
             gh_config: existing(host.home.join(".config/gh")),
+            setup: pinned.setup.clone(),
         };
         let secrets = host.secrets();
         Ok(Start {
@@ -2189,11 +2205,14 @@ impl World for Live {
         })
     }
 
-    fn image<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<String>> {
+    fn pinned<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<Pinned>> {
         let (main, repo) = (wave.main.clone(), wave.repo.clone());
         Box::pin(blocking(move || {
-            let image = session_image::merged(&main, |line| println!("{repo}: {line}"))?;
-            Ok(image.to_string())
+            let merged = session_image::merged_config(&main, |line| println!("{repo}: {line}"))?;
+            Ok(Pinned {
+                image: merged.image.to_string(),
+                setup: merged.setup,
+            })
         }))
     }
 
@@ -2210,7 +2229,7 @@ impl World for Live {
         &'a self,
         wave: &'a Wave,
         work: &'a Work,
-        image: &'a str,
+        pinned: &'a Pinned,
     ) -> BoxFuture<'a, Result<Option<Start>>> {
         Box::pin(async move {
             let item = work.item();
@@ -2248,7 +2267,7 @@ impl World for Live {
             }
             self.keep_alive(api.clone(), me.clone(), &session);
             println!("{}", text::wave_claimed(&wave.repo, &item, &session));
-            match Self::prepare(wave, work, image, &host, &base, milestone, &session, &me).await {
+            match Self::prepare(wave, work, pinned, &host, &base, milestone, &session, &me).await {
                 Ok(start) => Ok(Some(start)),
                 Err(e) => {
                     self.end(&api, &me, &thread, &item).await;
@@ -2754,8 +2773,13 @@ mod tests {
             })
         }
 
-        fn image<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<String>> {
-            Box::pin(async { Ok(IMAGE.into()) })
+        fn pinned<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Pinned>> {
+            Box::pin(async {
+                Ok(Pinned {
+                    image: IMAGE.into(),
+                    setup: Setup::default(),
+                })
+            })
         }
 
         fn host<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<(), run::HostFault>> {
@@ -2767,7 +2791,7 @@ mod tests {
             &'a self,
             _: &'a Wave,
             work: &'a Work,
-            image: &'a str,
+            pinned: &'a Pinned,
         ) -> BoxFuture<'a, Result<Option<Start>>> {
             Box::pin(async move {
                 let item = work.item();
@@ -2810,7 +2834,7 @@ mod tests {
                 }
                 let spec = SessionSpec {
                     name,
-                    image: image.into(),
+                    image: pinned.image.clone(),
                     home: "/home/mike".into(),
                     workdir: clone.clone(),
                     binds: vec![Bind {
@@ -3151,7 +3175,7 @@ mod tests {
             server: "http://127.0.0.1:1".into(),
             host: "thelio".into(),
         };
-        assert_eq!(Live::default().image(&wave).await.unwrap(), pin("0"));
+        assert_eq!(Live::default().pinned(&wave).await.unwrap().image, pin("0"));
     }
 
     #[tokio::test]

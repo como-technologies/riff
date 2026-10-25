@@ -556,6 +556,11 @@ no wave. The image of riff has `claude`, `git`, `gh` and Rust, so it is
 good for a Rust project. For another toolchain, see
 [Pin an image with another toolchain](#pin-an-image-with-another-toolchain).
 
+riff sets no cache and no variable of a tool in a session. A project
+that wants a build cache adds the tables `[session.env]` and
+`[session.volumes]` to `riff.toml`: see
+[Set the env and the volumes of a session](development.md#set-the-env-and-the-volumes-of-a-session).
+
 This command writes `riff.toml` with the image of riff:
 
 ```sh
