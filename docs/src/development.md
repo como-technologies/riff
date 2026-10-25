@@ -1581,7 +1581,7 @@ flowchart LR
     C["pull request: auto-merge on, a conflict"] --> R["a session rebases the branch"]
     R -- "push" --> V["a new Gate, then a new verify"]
     R -- "no push" --> L["a message to your lead"]
-    U["GitHub gives UNKNOWN"] -- "next look: MERGEABLE" --> V
+    U["GitHub gives UNKNOWN"] -- "next look: MERGEABLE" --> W["the verify"]
     U -- "next look: CONFLICTING" --> C
 ```
 
