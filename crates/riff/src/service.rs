@@ -1,4 +1,4 @@
-//! The service manager of riff 3.0 (01M4Z60B7GTV4HHF9R3TMZRS7J): it
+//! The service manager of riff (01M4Z60B7GTV4HHF9R3TMZRS7J): it
 //! installs and removes the user unit of the daemon, and shows its
 //! state. On Linux, it is systemd ([`Systemd`]).
 //!

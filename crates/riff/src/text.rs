@@ -1654,7 +1654,7 @@ pub fn waves_open_items(title: &str, open: u64) -> String {
     )
 }
 
-/// The answer to `riff invite` (riff-server 1.x): the address of
+/// The answer to `riff invite`: the address of
 /// the riff and the lines that the person runs to join
 /// (01M3MEF4B33Z6WVJMDP29C7SS2). The lines are the ones of "Join a Riff"
 /// in the book, and hold no secret.
@@ -1689,7 +1689,7 @@ pub fn invited(done: &Invited) -> String {
     )
 }
 
-/// The answer to `riff remove` (riff-server 1.x).
+/// The answer to `riff remove`.
 ///
 /// ```
 /// use riff_core::wire::Removed;
@@ -2756,7 +2756,7 @@ pub struct Here {
 /// use riff_core::wire::{BlockedInfo, SessionInfo};
 ///
 /// let id = "2a880834-3707-4672";
-/// let here = Here { build: Some("3.2.0".into()), repo: Some("como-technologies/riff".into()) };
+/// let here = Here { build: Some("dev".into()), repo: Some("como-technologies/riff".into()) };
 /// let mut info = SessionInfo {
 ///     uri: "riff://mike@pangolin/como-technologies/riff?session=2a880834-3707-4672&claim=issue-78#issue-78"
 ///         .parse()?,
@@ -2788,16 +2788,16 @@ pub struct Here {
 /// });
 /// assert_eq!(
 ///     statusline(id, Some(&info), &here),
-///     "riff 3.2.0 como-technologies/riff 2a880834 lead issue-78 blocked"
+///     "riff dev como-technologies/riff 2a880834 lead issue-78 blocked"
 /// );
 /// info.blocked = None;
 /// assert_eq!(
 ///     statusline(id, Some(&info), &here),
-///     "riff 3.2.0 como-technologies/riff 2a880834 lead issue-78"
+///     "riff dev como-technologies/riff 2a880834 lead issue-78"
 /// );
 /// // A lead outside git.
 /// let no_repo = Here { repo: None, ..here.clone() };
-/// assert_eq!(statusline(id, Some(&info), &no_repo), "riff 3.2.0 2a880834 lead issue-78");
+/// assert_eq!(statusline(id, Some(&info), &no_repo), "riff dev 2a880834 lead issue-78");
 /// // Not in the riff: no build and no repository.
 /// assert_eq!(statusline(id, None, &here), "riff 2a880834 (not in the riff)");
 /// # Ok::<(), riff_core::name::NameError>(())
@@ -2836,10 +2836,10 @@ pub fn statusline_answer(info: Option<&SessionInfo>) -> String {
 /// ```
 /// use riff::text::{Here, statusline_kept};
 ///
-/// let here = Here { build: Some("3.2.0".into()), repo: Some("como-technologies/riff".into()) };
+/// let here = Here { build: Some("dev".into()), repo: Some("como-technologies/riff".into()) };
 /// assert_eq!(
 ///     statusline_kept("2a880834-aaaa", true, "lead", &here),
-///     "riff 3.2.0 como-technologies/riff 2a880834 lead"
+///     "riff dev como-technologies/riff 2a880834 lead"
 /// );
 /// assert_eq!(statusline_kept("2a880834-aaaa", false, "", &here), "riff 2a880834");
 /// assert_eq!(statusline_kept("2a880834-aaaa", true, "lead", &Here::default()), "riff 2a880834 lead");
@@ -4023,18 +4023,18 @@ pub fn needs_you(name: &str, fix: &str, more: usize) -> String {
 /// ```
 /// use riff::update_steps::Gate;
 ///
-/// let line = |g| riff::text::steps_gate("1.5.0 (abc)", &g);
+/// let line = |g| riff::text::steps_gate("abc1234 (dev)", &g);
 /// assert_eq!(
 ///     line(Gate::Off),
-///     "riff 1.5.0 (abc) does no step of an update: update.auto is off"
+///     "riff abc1234 (dev) does no step of an update: update.auto is off"
 /// );
 /// assert_eq!(
 ///     line(Gate::NotRelease("it is a dev build".into())),
-///     "riff 1.5.0 (abc) does no step of an update: it is not a release: it is a dev build"
+///     "riff abc1234 (dev) does no step of an update: it is not a release: it is a dev build"
 /// );
 /// assert_eq!(
 ///     line(Gate::Open("v1.5.0".into())),
-///     "riff 1.5.0 (abc) is the release v1.5.0, and update.auto is on: it does each step of an \
+///     "riff abc1234 (dev) is the release v1.5.0, and update.auto is on: it does each step of an \
 ///      update that is not in step"
 /// );
 /// ```
@@ -4830,7 +4830,7 @@ pub fn no_program(program: &str) -> String {
 }
 
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
-pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff 3.0 runs on Linux only.";
+pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff runs on Linux only.";
 
 /// The daemon pulls the image of the session, for `riff run` or
 /// `riff init`.
@@ -5264,7 +5264,7 @@ pub fn daemon_silent(limit: std::time::Duration) -> String {
 }
 
 /// `riff daemon` on a host that is not Linux.
-pub const DAEMON_LINUX_ONLY: &str = "riff daemon needs Linux: riff 3.0 runs on Linux only.";
+pub const DAEMON_LINUX_ONLY: &str = "riff daemon needs Linux: riff runs on Linux only.";
 
 /// A second daemon on the control socket of a daemon that runs.
 pub fn daemon_runs_already(pid: u32, socket: &Path) -> String {
@@ -6056,7 +6056,7 @@ pub fn daemon_no_answer(state: &str, socket: &Path) -> String {
 }
 
 /// The first line of `riff init` (01M4ZJN6TEWCYCB39XTH6BBD9H).
-pub const INIT_CHECKS: &str = "riff checks this machine for riff 3.0:";
+pub const INIT_CHECKS: &str = "riff checks this machine:";
 
 /// `text` on one line, with no cut: each run of white space is one
 /// space.
@@ -6645,12 +6645,12 @@ pub const INIT_WIDE_KEPT: &str =
 /// };
 /// assert_eq!(
 ///     riff::text::old_plugin(&found),
-///     "The plugin of riff 3 is still here. riff 4 has no plugin, so each of its hooks fails in Claude Code:\n  /d/claude-plugin\n  /h/s.json: enabledPlugins.riff@riff, statusLine"
+///     "The plugin of riff 3 is still here. riff has no plugin now, so each of its hooks fails in Claude Code:\n  /d/claude-plugin\n  /h/s.json: enabledPlugins.riff@riff, statusLine"
 /// );
 /// ```
 pub fn old_plugin(found: &crate::old_plugin::Found) -> String {
     let mut out = String::from(
-        "The plugin of riff 3 is still here. riff 4 has no plugin, so each of its hooks fails in \
+        "The plugin of riff 3 is still here. riff has no plugin now, so each of its hooks fails in \
          Claude Code:",
     );
     for line in old_plugin_parts(found) {
@@ -6772,11 +6772,10 @@ pub fn init_image_here(image: &str) -> String {
 }
 
 /// The last line of `riff init` (01M4ZJN718EF1PC9YY9GFD0EJ2).
-pub const INIT_READY: &str =
-    "This machine is ready for riff 3.0. Run one item in a container: riff run ITEM";
+pub const INIT_READY: &str = "This machine is ready. Run one item in a container: riff run ITEM";
 
 /// `riff init` on a host that is not Linux.
-pub const INIT_LINUX_ONLY: &str = "riff init needs Linux: riff 3.0 runs on Linux only.";
+pub const INIT_LINUX_ONLY: &str = "riff init needs Linux: riff runs on Linux only.";
 
 /// A text that no line of a unit file can hold.
 pub fn unit_bad_text(text: &str) -> String {

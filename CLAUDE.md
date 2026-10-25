@@ -45,6 +45,10 @@ it. Requirements and rustdoc do not count: they are for agents.
   action, "it failed" for a past event. Never the present tense for a
   future action.
 - Less is more. Say each thing in one place only.
+- Name no version of riff in a text, in rustdoc or in the book: write
+  "riff runs each session in a container". `just check` fails on a
+  version name. The few uses that stay are in
+  `crates/hygiene/versions.allow`.
 - Explain how things work with mermaid diagrams.
 - Keep "Start a Riff" short and current. It is for a person who knows
   nothing about riff.

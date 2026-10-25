@@ -3,7 +3,7 @@
 //!
 //! # Design
 //!
-//! The hermetic tests give riff a fake home. The faults of riff 2.0 came
+//! The hermetic tests give riff a fake home. The faults of an earlier release came
 //! from a real home (#693, #678), and those tests did not see them. So
 //! before each tag, a person runs this test on a host with podman: the
 //! `riff` of the tree does one scratch item with `riff run`, the riff
@@ -250,7 +250,7 @@ use serde::Deserialize;
 pub const MILESTONE: &str = "Backlog";
 
 /// The page of the book that the scratch item changes.
-pub const BOOK_FILE: &str = "docs/src/riff-3.md";
+pub const BOOK_FILE: &str = "docs/src/introduction.md";
 
 /// The name of the check run of the full check of a commit.
 pub const GATE: &str = "Gate";
@@ -1307,9 +1307,9 @@ pub fn scratch_line(stamp: u64) -> String {
 ///
 /// ```
 /// let body = real_session::issue_body("Real-session test 7.");
-/// assert!(body.contains("add this line at the end of `docs/src/riff-3.md`"));
+/// assert!(body.contains("add this line at the end of `docs/src/introduction.md`"));
 /// assert!(body.contains("\n```text\nReal-session test 7.\n```\n"));
-/// assert!(body.contains("Done when:\n- `docs/src/riff-3.md` ends with the line `Real-session test 7.`"));
+/// assert!(body.contains("Done when:\n- `docs/src/introduction.md` ends with the line `Real-session test 7.`"));
 /// ```
 pub fn issue_body(line: &str) -> String {
     format!(

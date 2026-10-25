@@ -24,10 +24,10 @@ own. Run this command before each push:
 just check
 ```
 
-It runs the fast checks: `fmt-check`, `lint`, `doc`, `book`, `reqs`
-and `wrap`. Then it runs the tests of each crate that your change
-touches, and of each crate that depends on one of them. It prints one
-line that says which tests it runs, and why:
+It runs the fast checks: `fmt-check`, `lint`, `doc`, `book`, `reqs`,
+`wrap` and `versions`. Then it runs the tests of each crate that your
+change touches, and of each crate that depends on one of them. It
+prints one line that says which tests it runs, and why:
 
 ```text
 just check runs the tests of riff, riff-core, riff-server: riff-core differs from origin/main, and each crate that depends on a changed crate runs too
@@ -70,8 +70,8 @@ just ci runs each check: crates/riff/src/main.rs is not a text file
 ```mermaid
 flowchart TD
     D["just ci: the files that differ<br/>from origin/main"] --> T{"Is each file text?"}
-    T -- yes --> X["the text checks:<br/>book, reqs, wrap"]
-    T -- no --> F["each check: fmt-check, lint,<br/>test, doc, book, reqs, wrap"]
+    T -- yes --> X["the text checks:<br/>book, reqs, wrap, versions"]
+    T -- no --> F["each check: fmt-check, lint, test,<br/>doc, book, reqs, wrap, versions"]
     N["no file differs, or git<br/>cannot compare"] --> F
 ```
 
@@ -122,8 +122,8 @@ To run each check for each change, for example before a release:
 just ci-full
 ```
 
-It runs `fmt-check`, `lint`, `test`, `doc`, `book`, `reqs` and `wrap`.
-The Gate on GitHub runs the same checks (see
+It runs `fmt-check`, `lint`, `test`, `doc`, `book`, `reqs`, `wrap` and
+`versions`. The Gate on GitHub runs the same checks (see
 [How the Gate runs](#how-the-gate-runs)). Tests read the pages of the
 book. So a change of only text that passes `just ci` can still fail a
 test in the Gate.
@@ -137,7 +137,7 @@ same time. Each job has a runner of its own:
 |---|---|
 | `Clippy` | `just lint` |
 | `Tests 1/4` to `Tests 4/4` | `just test-part 1/4` to `just test-part 4/4`, in the session image |
-| `Checks` | `just fmt-check doc book reqs wrap` |
+| `Checks` | `just fmt-check doc book reqs wrap versions` |
 | `Gate` | Starts when each other job ended. It passes only when each of them passed. |
 
 The tests run in a container of the session image, as a session runs
@@ -148,7 +148,7 @@ them (see
 flowchart LR
     P["a push or a<br/>pull request"] --> C["Clippy"]
     P --> T["Tests 1/4 … 4/4<br/>in the session image"]
-    P --> K["Checks: fmt, doc,<br/>book, reqs, wrap"]
+    P --> K["Checks: fmt, doc, book,<br/>reqs, wrap, versions"]
     C --> G{"Gate: did each<br/>job pass?"}
     T --> G
     K --> G
@@ -505,7 +505,7 @@ readelf -lW target/static/release/riff | grep interpreter
 
 ## Change the session image
 
-riff 3.0 runs each session in a container from the session image of
+riff runs each session in a container from the session image of
 the repository. The file `riff.toml` at the root of the repository pins
 the image by its digest. A digest names one image, but a tag can move,
 so riff refuses a tag. The image of this repository comes from
@@ -643,10 +643,11 @@ they run the tests in the new image. To run one part of them, see
 
 ## Start the riff daemon
 
-The riff daemon owns the containers of `riff run` on your machine. It
-is the server of [riff 3.0](riff-3.md) on one machine. The systemd
-user unit `riff.service` runs it. `riff run` asks the daemon to run
-each session.
+The riff daemon owns the containers of `riff run` on your machine.
+The systemd user unit `riff.service` runs it. `riff run` asks the
+daemon to run each session. See
+[Sessions in containers](how-it-works.md#sessions-in-containers) for
+the picture.
 
 ```mermaid
 flowchart LR
@@ -678,10 +679,10 @@ its error names `riff update`. See
 
 The daemon keeps no state of the riff, and has no key of its own.
 riff-server holds the claims, the messages and the wakes of its
-sessions. riff 1.6 to 1.8 kept the state of a riff of peers in
-`~/.local/share/riff/daemon`. riff 3.0 does not read, change or delete
-it: see
-[What riff 3.0.0 leaves on a machine](riff-3.md#what-riff-300-leaves-on-a-machine).
+sessions. The old riff of peers kept its state in
+`~/.local/share/riff/daemon`. The daemon does not read, change or
+delete it: see
+[What the old riff of peers left on a machine](#what-the-old-riff-of-peers-left-on-a-machine).
 
 ### Install the daemon
 
@@ -762,12 +763,25 @@ riff daemon
 
 Press Ctrl-C to stop it. Its containers run on.
 
+### What the old riff of peers left on a machine
+
+The old riff of peers made state on each machine. The daemon does not
+read, change or delete it. DIR is the folder of the daemon: `daemon`
+in the data folder of riff.
+
+| The state | Where it is |
+|---|---|
+| The key of the daemon | The secret `daemon-key DIR` in the OS keyring |
+| The records and the riffs of the daemon | The folder `state` in DIR, and each folder `state.lost-MS` beside it |
+| The invites of the owner | `invites.json` in DIR |
+| The main clones of the claims | `forges.json` in DIR |
+| The claims of `--peers` | The refs `refs/riff/claims/ITEM` on GitHub |
+
 ## Run one item in a container
 
 `riff run ITEM` does one work item in a rootless podman container. It
-is the first part of [riff 3.0](riff-3.md). The riff of today still
-claims the item, wakes the lead and releases the item. The riff daemon
-runs the container. The container does the work: `claude -p` in a
+claims the item, wakes the lead and releases the item. The riff
+daemon runs the container. The container does the work: `claude -p` in a
 clone of its own, with your sign-in of git, `gh` and `claude`.
 
 ```mermaid
@@ -789,8 +803,8 @@ flowchart LR
 ### Get ready to run an item
 
 1. Use Linux: `riff run` starts nothing on another OS. Install podman,
-   and run the first run of riff 3.0 in your clone (see
-   [Get ready for riff 3.0](start-a-riff.md#get-ready-for-riff-30)). It
+   and run `riff init` in your clone (see
+   [Get this machine ready](start-a-riff.md#get-this-machine-ready)). It
    checks rootless podman, starts the riff daemon and gets the
    session image. With no daemon, `riff run` stops before the claim:
 
@@ -1231,13 +1245,13 @@ another host, add `--host thelio`.
   [Choose the MCP servers of the container sessions](#choose-the-mcp-servers-of-the-container-sessions).
 
 A commit of the session has your git identity, no signature, and a
-`Riff-Session:` trailer. The table of what sessions share is on the
-page [riff 3.0](riff-3.md).
+`Riff-Session:` trailer. The table of what sessions share is in
+[What sessions share](how-it-works.md#what-sessions-share).
 
 ### The riff tools of a session
 
 The riff tools of a session of the daemon act on the riff-server of
-the session, as in riff 1.x. Each session of `riff run`, of a wave and
+the session. Each session of `riff run`, of a wave and
 of `riff lead start` has your riff-server. So the lead of your user
 sees each post of a session, and `riff relay watch` of that session
 wakes on a message of riff-server.
@@ -2039,7 +2053,7 @@ daemon takes it up, and does the steps after its end.
 
 ## Run the lead and watch the riff
 
-In riff 3.0 the lead is a session of the riff daemon too: `claude` in
+The lead is a session of the riff daemon too: `claude` in
 a container of the session image, with a terminal. conmon, the monitor
 of podman, holds the terminal. So the lead runs on when you close your
 terminal, and when the daemon stops. `riff view` shows each session of
@@ -2234,7 +2248,7 @@ session. While you have the session, the quiet limit of the daemon
 does not stop it.
 
 riff cannot stop a turn after the result of the session (the state
-`ends`), or of a session that started with riff 1.5. Then
+`ends`), or of a session with an old relay. Then
 `riff takeover` says that it waits for the end of the turn.
 
 When you press Ctrl-C before `claude` opens, the session goes on when
@@ -2627,6 +2641,42 @@ that line shorter.
 An error of the rule `blank` names the page and the second blank
 line. Remove that line. The check skips a code block. It reads each
 Markdown file in `docs/src` and its subfolders.
+
+## Check the version names
+
+A text, a comment and a page of the book describe the riff of today.
+They name no version of riff: write "riff runs each session in a
+container", not "riff N runs each session in a container". A version
+name is right on the day of a release, and wrong after the next major
+release. `just check` and `just ci` run this check. To run only this
+check:
+
+```sh
+just versions
+```
+
+It reads each file in `crates/*/src`, `crates/*/tests` and
+`docs/src`, but `docs/src/requirements.md`: a requirement is a dated
+statement. It fails on `riff N` and `riff N.M`, also `riff-server N`,
+also when a line break splits the name. An error of the rule
+`versions` names the file, the line and the names. Write the line
+again with no version.
+
+A few uses must name a version. Each one is a line in the allow list
+`crates/hygiene/versions.allow`:
+
+```text
+PATH | TEXT | REASON
+```
+
+- PATH is the path of the file.
+- TEXT is a part of a line of the file. It holds the version name.
+- REASON says why the name stays.
+
+The allowed kinds are a rule between versions with its tests (the
+builds that talk), and the code that removes what a named old release
+left on a machine, with its texts and how-tos. The check fails on a
+line of the list that allows no name. Remove that line.
 
 ## Check a pull request on GitHub
 
@@ -3714,7 +3764,7 @@ stateDiagram-v2
 - The command reads the time in the lease with the clock of your
   machine. Your clock can be at most 50 seconds ahead of the clock of
   the server. Check your clock before a cut on the bucket.
-- A lease from riff-server 0.8.0 or older has no time, so it does not
+- A lease that an old riff-server wrote has no time, so it does not
   end. The refusal names the lease object. Stop the server, delete the
   object, and run the command again:
 
@@ -4494,7 +4544,7 @@ The tag deploys the patch as each release tag does.
 
 The GitHub releases of a retired line stay normal releases. Do not make
 them prereleases, and do not change their notes. The line 1.x retired
-after riff 3.0.0 (#961), and its releases are normal releases.
+when the line 3 began (#961), and its releases are normal releases.
 
 `riff update` installs the release that GitHub marks Latest (see
 [Releases](how-it-works.md#releases)). The first release of the new
@@ -4669,7 +4719,7 @@ flowchart TD
    repository of the riff. Post the time in each repository thread.
 2. Pause the whole riff. Each session pushes its work, and keeps its
    claims. Then stop the wave of your machine. Each machine still
-   has riff 0.8.0: its `riff pause` pauses the whole riff, and it has
+   has the old riff: its `riff pause` pauses the whole riff, and it has
    no `--riff` flag:
 
    ```sh
@@ -4694,7 +4744,7 @@ flowchart TD
    riff cloud log shared --filter 'jsonPayload.message:"imported the objects"'
    ```
 
-   riff 0.8.0 shows the release of the new server on its `release`
+   The old riff shows the release of the new server on its `release`
    line: `v1.0.0 … another build; this riff cannot talk to it`. Its
    last line is `Run riff update`. When an old object does not read,
    the new server does not start, and the old server serves on: the

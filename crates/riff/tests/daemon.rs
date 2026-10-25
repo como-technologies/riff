@@ -1124,9 +1124,9 @@ pub(crate) async fn stop(mut child: std::process::Child) {
 /// record and reads no claim on the forge (`git ls-remote`). `riff
 /// daemon status` shows no key, no riff and no peer link.
 ///
-/// 01M53NGWFBWR1WMJWC2DHVHJ3T: the state of the riff of peers that riff
-/// 1.6 to 1.8 made on a machine is the same after a start, a status and
-/// a stop: the folders `state` and `state.lost-MS`, the files
+/// 01M53NGWFBWR1WMJWC2DHVHJ3T: the state of the riff of peers that
+/// the old riff made on a machine is the same after a start, a status
+/// and a stop: the folders `state` and `state.lost-MS`, the files
 /// `invites.json` and `forges.json`, and the secret `daemon-key DIR` in
 /// the fake keyring.
 #[tokio::test]
@@ -1156,14 +1156,17 @@ async fn the_daemon_makes_no_key_and_no_riff_and_leaves_the_state_of_the_riff_of
         assert!(!said.contains(part), "{part}: {said}");
     }
 
-    // The state of riff 1.8, and its key in the fake keyring.
+    // The state of the old riff of peers, and its key in the fake keyring.
     let main = here.env.path().join("main");
     let old = [
         (
             "state/riff.json",
             r#"{"riff":"0a1b","owner":"mike"}"#.to_owned(),
         ),
-        ("state/records", "a record of riff 1.8".to_owned()),
+        (
+            "state/records",
+            "a record of the old riff of peers".to_owned(),
+        ),
         ("state.lost-7/records", "an old record".to_owned()),
         ("invites.json", "[]".to_owned()),
         (
@@ -1179,7 +1182,7 @@ async fn the_daemon_makes_no_key_and_no_riff_and_leaves_the_state_of_the_riff_of
     let key =
         riff_client::secrets::file_of(&here.secrets(), &format!("daemon-key {}", dir.display()));
     std::fs::create_dir_all(key.parent().unwrap()).unwrap();
-    std::fs::write(&key, "a key of riff 1.8").unwrap();
+    std::fs::write(&key, "a key of the old riff of peers").unwrap();
     let peer_state = || {
         let mut files = files_of(&dir.join("state"));
         files.extend(files_of(&dir.join("state.lost-7")));

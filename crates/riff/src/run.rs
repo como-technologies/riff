@@ -401,8 +401,8 @@ pub fn short(session: &str) -> &str {
     session.get(..8).unwrap_or(session)
 }
 
-/// The branch of the session of `item`: the branch name of a worker of
-/// riff 1.3, so that its tools find the work (01M4Z81AX3ND5RX7V1GEY4HMF5).
+/// The branch of the session of `item`: the branch name of a worker on
+/// the host, so that its tools find the work (01M4Z81AX3ND5RX7V1GEY4HMF5).
 ///
 /// ```
 /// assert_eq!(riff::run::branch("issue-12"), "worktree-issue-12");
@@ -411,7 +411,7 @@ pub fn branch(item: &str) -> String {
     format!("{}{item}", dropped::BRANCH)
 }
 
-/// The variable that names the data folder of riff 3.0 in place of the
+/// The variable that names the data folder of riff in place of the
 /// data folder of the machine (01M53YP97S9BDMFBN0X5G444MY). Only the
 /// real-session test sets it, so that its riff daemon runs beside the
 /// daemon of the machine, with a folder and a socket of its own. It
@@ -423,7 +423,7 @@ pub fn branch(item: &str) -> String {
 /// ```
 pub const DATA_VAR: &str = "RIFF_DATA";
 
-/// The data folder of riff 3.0: `RIFF_DATA` ([`DATA_VAR`]), else
+/// The data folder of riff: `RIFF_DATA` ([`DATA_VAR`]), else
 /// `RIFF_HOME`, else `XDG_DATA_HOME/riff`, else
 /// `HOME/.local/share/riff`. It holds the session folders and the folder
 /// of the daemon ([`crate::daemon::dir`]).

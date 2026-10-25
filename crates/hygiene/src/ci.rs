@@ -10,7 +10,7 @@
 //!
 //! | Recipe | Checks | When |
 //! |---|---|---|
-//! | `ci-text` | `book`, `reqs`, `wrap` | Each changed file is text. |
+//! | `ci-text` | `book`, `reqs`, `wrap`, `versions` | Each changed file is text. |
 //! | `ci-full` | Each check. | Each other case. |
 //!
 //! A file is text ([`is_text`]) when it is in `docs/` or `design/`, or
@@ -29,11 +29,11 @@
 //! The Gate on GitHub runs each check of `just ci-full`: the one full
 //! run of each pushed commit (01M49HAZ5BZYGAR9PGC089RM3F). Before a
 //! push, an author runs `just check` (01M49HAZA5K08XW2JQ11TG87JP): the fast
-//! checks (`fmt-check`, `lint`, `doc`, `book`, `reqs`, `wrap`) and the
-//! tests of the crates that the diff touches. `hygiene crates [BASE]`
-//! prints the arguments of `cargo test` for these crates ([`tests`]),
-//! and one line for the person to stderr. A text file needs a test
-//! here: the tests read the book, `CLAUDE.md` and the requirements.
+//! checks (`fmt-check`, `lint`, `doc`, `book`, `reqs`, `wrap`, `versions`)
+//! and the tests of the crates that the diff touches. `hygiene crates
+//! [BASE]` prints the arguments of `cargo test` for these crates
+//! ([`tests`]), and one line for the person to stderr. A text file needs
+//! a test here: the tests read the book, `CLAUDE.md` and the requirements.
 //!
 //! ```mermaid
 //! flowchart LR
@@ -88,7 +88,7 @@ use std::fmt;
 /// A set of checks: a recipe of the justfile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Checks {
-    /// The checks for text: `book`, `reqs` and `wrap`.
+    /// The checks for text: `book`, `reqs`, `wrap` and `versions`.
     Text,
     /// Each check.
     Full,
@@ -116,7 +116,7 @@ pub struct Choice {
 impl fmt::Display for Choice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let set = match self.checks {
-            Checks::Text => "only the text checks (book, reqs, wrap)",
+            Checks::Text => "only the text checks (book, reqs, wrap, versions)",
             Checks::Full => "each check",
         };
         write!(f, "just ci runs {set}: {}", self.why)
@@ -342,7 +342,7 @@ mod tests {
         assert_eq!(one.checks, Checks::Text);
         assert_eq!(
             one.to_string(),
-            "just ci runs only the text checks (book, reqs, wrap): design/reviews/x.md \
+            "just ci runs only the text checks (book, reqs, wrap, versions): design/reviews/x.md \
              is the only file that differs from origin/main, and it is text"
         );
         let two = choose(

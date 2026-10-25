@@ -3,7 +3,7 @@
 This page is the design of the UI architecture of riff (#982). It
 decides the core library, the list of UIs and their order. Each UI has
 a child design of its own. Only the CLI is built: the work on the rest
-starts in riff 3.1 (see [The order](#the-order)). Until then,
+starts with the core library (see [The order](#the-order)). Until then,
 `riff --help` does not show `riff device`, and `riff` with no command
 prints the help. The [requirements of the UIs](requirements.md#the-uis)
 hold each decision.
@@ -205,27 +205,25 @@ browser or a desktop app with a sign-in of its own. The phone design
 
 ```mermaid
 flowchart LR
-    A["riff 3.0: isolation (#953),<br/>patches until it is stable"] --> B["riff 3.1:<br/>the core library riff-client,<br/>in small steps"]
+    B["the core library riff-client,<br/>in small steps"]
     B --> TUI["the TUI"]
     B --> PH["the phone app"]
     PH --> WEB["the web UI"]
     WEB --> DT["the desktop GUI"]
 ```
 
-1. riff 3.0 (isolation, #953) ships first, with the patch releases
-   that make it stable.
-2. riff 3.1 moves the core library out of the CLI, in small steps. Each
-   step keeps each test and changes no command. Then riff 3.1 gets
+1. The core library moves out of the CLI, in small steps. Each step
+   keeps each test and changes no command. Then the core library gets
    stable.
-3. After riff 3.1, the UIs come in this order: the TUI, the phone app,
-   the web UI, the desktop GUI. The TUI does not block the phone app:
-   the two can be built at the same time. The build items of a UI come
-   from its child design, after Mike signs it off.
+2. After the core library, the UIs come in this order: the TUI, the
+   phone app, the web UI, the desktop GUI. The TUI does not block the
+   phone app: the two can be built at the same time. The build items of
+   a UI come from its child design, after Mike signs it off.
 
-## The build items of riff 3.1
+## The build items of the core library
 
-Each item is an issue in the Backlog. The lead puts them in the waves
-after riff 3.0 is stable.
+Each item is an issue in the Backlog. The lead puts them in the
+waves.
 
 | Item | What | Needs |
 |---|---|---|

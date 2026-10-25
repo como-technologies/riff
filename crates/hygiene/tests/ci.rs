@@ -83,7 +83,7 @@ fn a_branch_with_only_a_review_file_gets_the_text_checks() {
     assert_eq!(recipe, "ci-text");
     assert_eq!(
         line,
-        "just ci runs only the text checks (book, reqs, wrap): design/reviews/x.md \
+        "just ci runs only the text checks (book, reqs, wrap, versions): design/reviews/x.md \
          is the only file that differs from origin/main, and it is text"
     );
 }
@@ -359,10 +359,19 @@ fn recipe(name: &str) -> Vec<String> {
 
 #[test]
 fn the_text_recipe_of_the_justfile_runs_no_code_check() {
-    assert_eq!(recipe("ci-text"), ["book", "reqs", "wrap"]);
+    assert_eq!(recipe("ci-text"), ["book", "reqs", "wrap", "versions"]);
     assert_eq!(
         recipe("ci-checks"),
-        ["fmt-check", "lint", "test", "doc", "book", "reqs", "wrap"]
+        [
+            "fmt-check",
+            "lint",
+            "test",
+            "doc",
+            "book",
+            "reqs",
+            "wrap",
+            "versions"
+        ]
     );
     assert!(recipe("ci").is_empty(), "ci has no fixed checks");
     assert!(recipe("ci-full").is_empty(), "ci-full takes the lock first");

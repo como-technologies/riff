@@ -1,4 +1,4 @@
-//! The [`Runtime`] of riff 3.0 on Linux: rootless podman (#715,
+//! The [`Runtime`] of riff on Linux: rootless podman (#715,
 //! 01M4Z60B7QDWEFQ96H448RE9N2). riff builds it only for
 //! `target_os = "linux"` (01M4Z60B7GTV4HHF9R3TMZRS7J).
 //!

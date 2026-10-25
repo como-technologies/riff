@@ -3,7 +3,8 @@
 //! the book in DIR with `mdbook` and checks it. `hygiene wrap [DIR]`
 //! checks the wrap of each Markdown file in DIR. `hygiene blank PATH...`
 //! finds two blank lines in a row in each Markdown file in each PATH and
-//! its subfolders. `hygiene ci [BASE]`
+//! its subfolders. `hygiene versions [ROOT]` finds the name of a version
+//! of riff in the code and the book. `hygiene ci [BASE]`
 //! prints the recipe that `just ci` runs. `hygiene crates [BASE]` prints
 //! the arguments of `cargo test` that `just check` runs. `hygiene
 //! test-part I/N` runs part I of N of the tests. See the library docs.
@@ -16,8 +17,9 @@ use hygiene::{Issue, PullRequest};
 use serde::de::DeserializeOwned;
 
 const USAGE: &str = "usage: hygiene pr NUMBER | hygiene commit [REV] | hygiene book [DIR] \
-                     | hygiene wrap [DIR] | hygiene blank PATH... | hygiene ci [BASE] \
-                     | hygiene crates [BASE] | hygiene test-part I/N";
+                     | hygiene wrap [DIR] | hygiene blank PATH... \
+                     | hygiene versions [ROOT] | hygiene ci [BASE] | hygiene crates [BASE] \
+                     | hygiene test-part I/N";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -30,6 +32,8 @@ fn main() -> ExitCode {
         ["wrap"] => wrap("docs/src"),
         ["wrap", dir] => wrap(dir),
         ["blank", ref paths @ ..] if !paths.is_empty() => blank(paths),
+        ["versions"] => versions("."),
+        ["versions", root] => versions(root),
         ["ci"] => ci("origin/main"),
         ["ci", base] => ci(base),
         ["crates"] => crates("origin/main"),
@@ -195,6 +199,28 @@ fn markdown(dir: &Path, pages: &mut Vec<PathBuf>) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Finds the names of versions of riff under `root` that the allow list
+/// does not allow, and the lines of the list that allow nothing.
+fn versions(root: &str) -> ExitCode {
+    let root = Path::new(root);
+    let allow = root.join(hygiene::versions::ALLOW_FILE);
+    let source = match std::fs::read_to_string(&allow) {
+        Ok(source) => source,
+        Err(e) => return tool_error(&format!("{}: {e}", allow.display())),
+    };
+    let files = match hygiene::versions::scan(root) {
+        Ok(files) => files,
+        Err(e) => return tool_error(&format!("{}: {e}", root.display())),
+    };
+    let (allow, mut errors) = hygiene::versions::parse_allow(&source);
+    errors.extend(hygiene::versions::check(&files, &allow));
+    report(
+        &format!("the version names in {}", root.display()),
+        &errors,
+        VERSIONS,
+    )
 }
 
 /// Prints the recipe that `just ci` runs for the diff from the merge
@@ -456,6 +482,10 @@ const WRAP: &str = "rule(s) of the wrap check. See \"Check the wrap of the book\
 
 /// The end of the report of a broken rule of the blank check.
 const BLANK: &str = "rule(s) of the blank check. See \"Check the wrap of the book\" in the book.";
+
+/// The end of the report of a broken rule of the versions check.
+const VERSIONS: &str =
+    "rule(s) of the versions check. See \"Check the version names\" in the book.";
 
 /// Prints each error, and then how many rules `what` breaks and where to
 /// read about them (`rules`). Exit status 1 when there is one.

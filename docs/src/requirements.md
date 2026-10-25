@@ -5380,6 +5380,21 @@ riff 3.0 replaces them. Each of them ends with "Superseded by 3.0
   (`common::start_signed`), and signs in the command with
   `common::sign_in`. The server notes each call with no token, and the
   test fails when it ends.
+- **01M5R2XVDN99TE9NEJYY1GJE91** A text of riff, a line of rustdoc, a
+  comment, a test and a page of the book name no version of riff as the
+  riff of today: they say "riff runs each session in a container", not
+  "riff N runs ...". A version name stays in only four places: a
+  requirement, which is a dated statement; the release notes on GitHub;
+  a rule between versions, with its tests; and the code that removes
+  what a named old release left on a machine, with its texts and
+  how-tos.
+- **01M5R2XVGMTB2HC9PRMS85ZWTY** `just versions` runs `hygiene
+  versions`. It fails on `riff N` or `riff N.M`, also `riff-server N`,
+  in each file of `crates/*/src`, `crates/*/tests` and `docs/src`, but
+  `docs/src/requirements.md` (`versions`). Each use that must stay is a
+  line `PATH | TEXT | REASON` in `crates/hygiene/versions.allow`. It
+  fails on a line of the list that allows no name. `just check`, `just
+  ci-text` and the job Checks of the Gate run it.
 
 ## The phone app
 
@@ -5513,9 +5528,10 @@ items are #962, #963, #977, #964 and #965.
 ## riff 3.0
 
 riff 3.0 is the design of #699. riff 1.x runs today. Each
-requirement of this section holds for riff 3.0. The book page
-[riff 3.0](riff-3.md) has the picture and the table of what sessions
-share. The re-cut of #953 changes the plan: see the next part.
+requirement of this section holds for riff 3.0. The book part
+[Sessions in containers](how-it-works.md#sessions-in-containers) has
+the picture and the table of what sessions share. The re-cut of #953
+changes the plan: see the next part.
 
 ### The re-cut: isolation by default
 
@@ -7970,14 +7986,12 @@ requirement of Wave B (01M53NGW9FH02EM74GKY829808).
 ### Wave C: what goes and what stays
 
 The requirements of Wave C (#879) say how riff 3.0 ends riff-server and
-the cloud parts of riff. The book page
-[Design: no cloud, a later plan](riff-3-no-cloud.md) has the order and
-the steps
-of a person. A requirement of Wave C holds when the item of Wave C that
-builds it merges, or when its step is done. A requirement that ends
-with "Superseded by Wave C (ID)." holds until then. The re-cut puts the
-items of Wave C that end riff-server in the Backlog
-(01M53NGWN190T2MYB1EZAD36VB).
+the cloud parts of riff. The book has no page for this plan: its items
+wait in the Backlog (#881 to #889). A requirement of Wave C holds when
+the item of Wave C that builds it merges, or when its step is done. A
+requirement that ends with "Superseded by Wave C (ID)." holds until
+then. The re-cut puts the items of Wave C that end riff-server in the
+Backlog (01M53NGWN190T2MYB1EZAD36VB).
 
 - **01M51R8FXQFXWHRD374577HZ3H** Wave C removes riff-server and each
   part that exists only for it: the crate and the binary `riff-server`;

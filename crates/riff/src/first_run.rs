@@ -1,4 +1,4 @@
-//! The first run of riff 3.0 on a machine (#721): `riff init`
+//! The first run of riff on a machine (#721): `riff init`
 //! (01M4ZJN6R68YBD3XMM725ZRJ7W).
 //!
 //! # Design

@@ -1,5 +1,5 @@
 //! The riff daemon (#716, 01M4Z60B7FCREZDCTVR73WWRY1): it owns the
-//! sessions of riff 3.0 on this machine. A systemd user unit runs it
+//! sessions of riff on this machine. A systemd user unit runs it
 //! ([`crate::service`]).
 //!
 //! # Design
@@ -48,10 +48,9 @@
 //! | `limit.json` | The limit of the host ([`crate::room`]), when `riff daemon limit` set it. |
 //! | `waves.json` | The waves that the daemon runs ([`crate::wave`]). |
 //!
-//! riff 1.6 to 1.8 kept the state of the riff of peers in this folder
-//! too: `state/`, each `state.lost-MS/`, `invites.json` and
-//! `forges.json`. The daemon of riff 3.0 does not read, change or delete
-//! them (01M53NGWFBWR1WMJWC2DHVHJ3T).
+//! The old riff of peers kept its state in this folder too: `state/`,
+//! each `state.lost-MS/`, `invites.json` and `forges.json`. The daemon
+//! does not read, change or delete them (01M53NGWFBWR1WMJWC2DHVHJ3T).
 //!
 //! The daemon binds the folder of a session at [`IN_SESSION`] in its
 //! container, with write, and sets [`SOCKET_VAR`]
@@ -864,7 +863,7 @@ pub enum SessionAsk {
         held: bool,
         /// True when the relay interrupts the turn of `claude` at a
         /// [`Say::Hold`] with `interrupt` (01M51KJ1V0STB4QCN4N5SBYGSP).
-        /// A relay of riff 1.5 and before has no such field.
+        /// A relay from before the interrupts has no such field.
         #[serde(default)]
         interrupts: bool,
     },
@@ -1300,9 +1299,9 @@ pub enum Say {
     /// the container at its end.
     Hold {
         /// True to send `claude` an interrupt before the close: it ends
-        /// its turn at once (01M51KJ1V0STB4QCN4N5SBYGSP). A relay of
-        /// riff 1.5 and before skips the field, and waits for the end of
-        /// the turn.
+        /// its turn at once (01M51KJ1V0STB4QCN4N5SBYGSP). A relay
+        /// from before the interrupts skips the field, and waits for the
+        /// end of the turn.
         #[serde(default)]
         interrupt: bool,
     },
@@ -2238,7 +2237,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The world of the waves and of the sessions: the forge and
-    /// riff-server 1.x ([`crate::wave::Live`]), or the world of a test.
+    /// riff-server ([`crate::wave::Live`]), or the world of a test.
     pub(crate) fn world(&self) -> Arc<dyn World> {
         self.world.clone()
     }
@@ -3403,7 +3402,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The riff tools of the session of `record`. They act on the
-    /// riff-server of the session, as in riff 1.x, with the sign-in of
+    /// riff-server of the session, with the sign-in of
     /// the person on this machine (01M4ZHSZV46RF3XDXDTQXWGXRG). That
     /// session is the worker session
     /// of `riff run` or of a wave, which holds the claim of the item. The
@@ -5943,8 +5942,8 @@ mod tests {
             .unwrap(),
             r#"{"ask":"relay","protocol":2,"inputs":1,"closed":false,"held":false,"interrupts":true}"#
         );
-        // The hello of a relay of protocol 3 has no held, and a relay of
-        // riff 1.5 has no interrupts.
+        // The hello of a relay of protocol 3 has no held, and a relay from
+        // before the interrupts has no interrupts.
         assert_eq!(
             serde_json::from_str::<SessionAsk>(
                 r#"{"ask":"relay","protocol":3,"inputs":1,"closed":true}"#
@@ -5958,8 +5957,8 @@ mod tests {
                 interrupts: false,
             }
         );
-        // The hold of riff 1.5 waits for the end of the turn. A relay of
-        // riff 1.5 reads the new hold as its own hold.
+        // The hold from before the interrupts waits for the end of the turn. A
+        // relay from before the interrupts reads the new hold as its own hold.
         assert_eq!(
             serde_json::from_str::<Say>(r#"{"say":"hold"}"#).unwrap(),
             Say::Hold { interrupt: false }
@@ -5977,7 +5976,7 @@ mod tests {
             serde_json::from_str::<Old>(r#"{"say":"hold","interrupt":true}"#),
             Ok(Old::Hold)
         ));
-        // The takeover of riff 1.5 has no at_end: it interrupts.
+        // The takeover from before at_end has no at_end: it interrupts.
         let line = format!(r#"{{"protocol":{PROTOCOL},"ask":{{"ask":"takeover","name":"n"}}}}"#);
         let Ok(Ask::Takeover { at_end, .. }) = hello(&line) else {
             panic!("{line}")
@@ -7170,7 +7169,7 @@ mod tests {
         assert_eq!(relay.next().await, at_end);
         assert!(!record_of(&here.dir, &name).interrupt);
 
-        // A relay of riff 1.5: its hello has no interrupts.
+        // A relay from before the interrupts: its hello has no interrupts.
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
         let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
         let (_client, name) = here.started(start).await;
@@ -7228,7 +7227,7 @@ mod tests {
         };
         // No relay yet.
         assert_eq!(take_over(&here.dir, &name).await.1, refused);
-        // A relay of riff 3.0 before the takeover.
+        // A relay of protocol 3, before the takeover.
         let socket = session_dir(&here.dir, &name);
         let old = SessionAsk::Relay {
             protocol: 3,

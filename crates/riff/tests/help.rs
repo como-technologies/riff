@@ -15,7 +15,7 @@ const HEADINGS: [&str; 5] = [
     "Members:",
 ];
 
-/// The commands of riff 4.0 that do not exist (01M59BXNPR3AZ0HAS9GQCZ4PH2).
+/// The commands that riff does not have (01M59BXNPR3AZ0HAS9GQCZ4PH2).
 const REMOVED: [&str; 7] = [
     "connect",
     "enable",
@@ -203,15 +203,13 @@ fn riff_has_no_command_that_retires_a_line() {
 }
 
 /// 01M56N6KSMFJ46PW99Z80GF9DM, 01M56N6KVZRGT3W7CEK05DHR57: the book
-/// names no `riff retire`. The how-to "Retire a release line" and
-/// `riff-3.md` say that the releases of a retired line stay normal
-/// releases, and the how-to edits no release.
+/// names no `riff retire`. The how-to "Retire a release line" says that
+/// the releases of a retired line stay normal releases, and edits no
+/// release.
 #[test]
 fn the_book_keeps_the_releases_of_a_retired_line_normal() {
-    for name in ["development.md", "riff-3.md"] {
-        assert!(!book::page(name).contains("riff retire"), "{name}");
-    }
     let page = book::page("development.md");
+    assert!(!page.contains("riff retire"));
     let start = page
         .find("\n### Retire a release line\n")
         .expect("development.md has \"### Retire a release line\"");
@@ -226,11 +224,6 @@ fn the_book_keeps_the_releases_of_a_retired_line_normal() {
     assert_eq!(
         book::commands_in(howto),
         ["gh release list --repo como-technologies/riff"]
-    );
-    let line = book::part("riff-3.md", "riff 3.0.0 and the line 1.x");
-    assert!(
-        words(&line).contains("Its GitHub releases stay normal releases"),
-        "{line}"
     );
 }
 

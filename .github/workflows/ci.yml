@@ -106,7 +106,7 @@ jobs:
         with:
           tool: just,mdbook,mdbook-gruvbox,mdbook-mermaid
 
-      - run: just fmt-check doc book reqs wrap
+      - run: just fmt-check doc book reqs wrap versions
 
   gate:
     # A skipped required check counts as a pass on GitHub. So the Gate

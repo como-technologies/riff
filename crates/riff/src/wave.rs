@@ -197,7 +197,7 @@
 //!
 //! A job does the steps of the host of `riff run` itself
 //! ([`crate::run`]), with the sign-in of the person on this machine: a
-//! new worker session on riff-server 1.x, the claim, the keep-alive,
+//! new worker session on riff-server, the claim, the keep-alive,
 //! the clone, the start text, and the start of the container in the
 //! room that the loop took. The [`Record`] of the session holds the
 //! [`Job`], so a new daemon goes on with the keep-alive and does the
@@ -247,7 +247,7 @@
 //! # The world
 //!
 //! The loop reaches the forge and riff-server through a [`World`]. The
-//! daemon uses [`Live`]: `gh` and riff-server 1.x. A test gives a fake
+//! daemon uses [`Live`]: `gh` and riff-server. A test gives a fake
 //! world, with the fake runtime ([`crate::runtime::Fake`]). The daemon
 //! also keeps the session of the lead alive through it, and follows the
 //! wakes of a session for `riff relay watch` ([`World::wake`]).
@@ -1316,7 +1316,7 @@ pub fn verdict(result: &str) -> Option<(Verdict, String)> {
 }
 
 /// The forge and the riff of the waves on this machine: `gh` with the
-/// sign-in of the person, riff-server 1.x with the sign-in of riff, and
+/// sign-in of the person, riff-server with the sign-in of riff, and
 /// git.
 #[derive(Default)]
 pub struct Live {
