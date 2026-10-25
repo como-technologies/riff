@@ -219,6 +219,20 @@ fi
     script(&bin.join("claude"), &body.replace("GHTOKEN", GH_TOKEN));
 }
 
+/// A fake `systemd-run` that logs each call to `bin/systemd-run.log`, and
+/// runs the command after the `--` in its place, as `systemd-run --scope`
+/// does (01M5RG2AS2CYJPWGKTV7N2HNYP).
+fn fake_systemd_run(bin: &Path) {
+    let body = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "systemd-run $*" >> "$dir/systemd-run.log"
+while [ "$1" != -- ]; do shift; done
+shift
+exec "$@"
+"#;
+    script(&bin.join("systemd-run"), body);
+}
+
 /// A fake `systemctl --user` that logs each call to `bin/systemctl.log`.
 /// `restart riff.service` starts `$FAKE_RIFF daemon` in the background,
 /// as systemd does, and writes its pid to `bin/daemon.pid`. `disable
@@ -417,6 +431,7 @@ impl Machine {
         let bin = tempfile::tempdir().unwrap();
         fake_gh(bin.path());
         fake_podman(bin.path());
+        fake_systemd_run(bin.path());
         fake_claude(bin.path());
         fake_systemctl(bin.path());
         std::fs::write(bin.path().join("events"), events()).unwrap();
@@ -774,6 +789,16 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     // The daemon runs podman with no INVOCATION_ID of systemd, so
     // conmon is not in the cgroup of the daemon.
     assert_eq!(machine.read("run.invocation"), "");
+    // 01M5RG2AS2CYJPWGKTV7N2HNYP: the daemon runs in a unit, so it starts
+    // podman in a scope of its own. Else pasta, the network of the
+    // container, stays in the cgroup of the unit.
+    assert_eq!(
+        machine.read("systemd-run.log").lines().next().unwrap(),
+        format!(
+            "systemd-run --user --scope --collect --quiet -- podman {}",
+            args.join(" ")
+        )
+    );
     // The socket folder of the session goes at its end.
     assert!(!machine.socket_dir(&name).exists());
 
@@ -1438,6 +1463,9 @@ async fn a_restart_of_the_daemon_loses_no_event_and_riff_run_goes_on() {
     let taken = format!("The riff daemon takes up the session in the container {name}");
     wait_for(&machine.bin.path().join("daemon.out"), &taken).await;
     wait_for(&log, "I read the issue.").await;
+    // The take-up starts no podman: the one scope of the first daemon
+    // holds the container (01M5RG2AS2CYJPWGKTV7N2HNYP).
+    assert_eq!(machine.read("systemd-run.log").lines().count(), 1);
 
     // riff daemon events shows the session from its start.
     let shown = machine.bin.path().join("events.out");
@@ -1915,6 +1943,15 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
     let args = machine.read("run.args");
     let args: Vec<&str> = args.lines().collect();
     assert_eq!(args[..5], ["run", "--rm", "-d", "-i", "-t"]);
+    // 01M5RG2AS2CYJPWGKTV7N2HNYP: in a scope of its own, so a stop of the
+    // unit leaves the network of the lead.
+    assert_eq!(
+        machine.read("systemd-run.log").trim_end(),
+        format!(
+            "systemd-run --user --scope --collect --quiet -- podman {}",
+            args.join(" ")
+        )
+    );
     let at = args.iter().position(|a| *a == "/opt/riff/riff").unwrap();
     assert_eq!(
         args[at..at + 5],

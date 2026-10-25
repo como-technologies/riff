@@ -10,6 +10,7 @@
 //!
 //! | Part of the spec | The argument of `podman run` |
 //! |---|---|
+//! | (the daemon in a unit) | the start is `systemd-run --user --scope --collect --quiet -- podman run ...`: pasta runs in a scope of its own ([`start_command`], 01M5RG2AS2CYJPWGKTV7N2HNYP) |
 //! | (each spec) | `--sig-proxy=false` |
 //! | `name` | `--name NAME` |
 //! | The user | `--userns=keep-id` |
@@ -38,18 +39,35 @@
 //! 01M4Z60B83ZH10HYKW7X1C0SSS).
 //!
 //! conmon, the monitor of podman, holds the container. A stop of the
-//! daemon stops no container (01M4Z60B7Z24WBD6HV6ER0WN9K,
-//! 01M4ZDTW00B7N6T9P3MK066KA7):
+//! daemon stops no container, and leaves its network
+//! (01M4Z60B7Z24WBD6HV6ER0WN9K, 01M4ZDTW00B7N6T9P3MK066KA7,
+//! 01M5RG2AS2CYJPWGKTV7N2HNYP):
 //!
 //! - riff starts each `podman` with no `INVOCATION_ID`. systemd sets it
 //!   in each process of a unit, and with it podman keeps conmon in the
 //!   cgroup of the unit of the daemon. With no `INVOCATION_ID`, podman
 //!   puts conmon in a scope of its own, so a stop of the unit does not
 //!   end it.
+//! - pasta, the network process of podman, stays in the cgroup of the
+//!   process that ran `podman run`. So when the daemon runs in a unit
+//!   (it has an `INVOCATION_ID`), [`start_command`] runs each `podman
+//!   run` in a scope of its own, with `systemd-run --user --scope`. A
+//!   stop of the unit does not end pasta, and the container keeps its
+//!   network. The scope ends with the container.
 //! - `--sig-proxy=false`: the `podman run` of riff passes no signal to
-//!   the container. So the SIGTERM of a stop of the unit ends that
-//!   `podman run`, not the container. riff stops a container only with
+//!   the container. In a scope, a stop of the unit sends no SIGTERM to
+//!   that `podman run`: it ends when the daemon closes its pipes, or
+//!   with the container. riff stops a container only with
 //!   [`Runtime::stop`].
+//!
+//! ```mermaid
+//! flowchart TD
+//!     U["riff.service"] --> D["riff daemon"]
+//!     D -- "systemd-run --user --scope" --> S["scope run-pNNN.scope"]
+//!     S --> P["podman run"]
+//!     S --> N["pasta: the network"]
+//!     P -- "conmon, in a scope of its own" --> C["the container"]
+//! ```
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -251,6 +269,93 @@ fn podman() -> tokio::process::Command {
     command
 }
 
+/// The program that puts a command in a systemd scope.
+pub const SYSTEMD_RUN: &str = "systemd-run";
+
+/// The arguments of [`SYSTEMD_RUN`] before the command: a scope in the
+/// manager of the user that systemd removes when it ends, and says
+/// nothing.
+pub const SCOPE: [&str; 5] = ["--user", "--scope", "--collect", "--quiet", "--"];
+
+/// True when this process runs in a systemd unit: systemd sets
+/// [`INVOCATION_ID`] in each process of a unit.
+fn in_unit() -> bool {
+    std::env::var_os(INVOCATION_ID).is_some()
+}
+
+/// The program that [`start_command`] runs.
+fn starter(in_unit: bool) -> &'static str {
+    if in_unit { SYSTEMD_RUN } else { PODMAN }
+}
+
+/// The command that starts `podman` with `args`, the arguments of `run`,
+/// and with no [`INVOCATION_ID`]. In a unit (`in_unit`), it starts in a
+/// systemd scope of its own: pasta, the network process of podman, is
+/// then not in the cgroup of the unit, and a stop of the unit leaves the
+/// network of the container (01M5RG2AS2CYJPWGKTV7N2HNYP).
+///
+/// ```
+/// use riff::podman::{run_args, start_command, terminal_args};
+/// use riff::runtime::SessionSpec;
+///
+/// let spec = SessionSpec {
+///     name: "riff-lead-o-r".into(),
+///     image: "img".into(),
+///     home: "/home/mike".into(),
+///     workdir: "/data/clone".into(),
+///     binds: vec![],
+///     env: vec![],
+///     memory: "8g".into(),
+///     cpus: 4,
+///     command: vec!["claude".into()],
+/// };
+/// let words = |command: &tokio::process::Command| -> String {
+///     let command = command.as_std();
+///     std::iter::once(command.get_program())
+///         .chain(command.get_args())
+///         .map(|a| a.to_string_lossy().into_owned())
+///         .collect::<Vec<_>>()
+///         .join(" ")
+/// };
+///
+/// // A session of a worker, in a unit.
+/// let worker = start_command(&run_args(&spec)?, true);
+/// assert!(
+///     words(&worker).starts_with(
+///         "systemd-run --user --scope --collect --quiet -- podman run --rm -i --sig-proxy=false "
+///     ),
+///     "{}",
+///     words(&worker)
+/// );
+/// // The lead, in a unit.
+/// let lead = start_command(&terminal_args(&spec)?, true);
+/// assert!(
+///     words(&lead).starts_with(
+///         "systemd-run --user --scope --collect --quiet -- podman run --rm -d -i -t "
+///     ),
+///     "{}",
+///     words(&lead)
+/// );
+/// // Out of a unit, podman starts as it is.
+/// let plain = start_command(&terminal_args(&spec)?, false);
+/// assert!(words(&plain).starts_with("podman run --rm -d -i -t "));
+///
+/// // None of them has an INVOCATION_ID.
+/// for command in [&worker, &lead, &plain] {
+///     let envs: Vec<_> = command.as_std().get_envs().collect();
+///     assert!(envs.contains(&("INVOCATION_ID".as_ref(), None)));
+/// }
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn start_command(args: &[OsString], in_unit: bool) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(starter(in_unit));
+    if in_unit {
+        command.args(SCOPE).arg(PODMAN);
+    }
+    command.args(args).env_remove(INVOCATION_ID);
+    command
+}
+
 /// Runs `podman ARGS` with no stdin and no stdout, and gives its exit.
 /// podman shows its progress and its errors on stderr.
 async fn quiet(args: &[&str]) -> Result<ExitStatus> {
@@ -285,14 +390,14 @@ impl Runtime for Podman {
     /// environment (01M4Z60B89BHXQVJ2MGRRQ2CKJ).
     async fn start(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<Running> {
         spec.check_values(values)?;
-        let mut child = podman()
-            .args(run_args(spec)?)
+        let in_unit = in_unit();
+        let mut child = start_command(&run_args(spec)?, in_unit)
             .envs(values.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .with_context(|| text::no_program(PODMAN))?;
+            .with_context(|| text::no_program(starter(in_unit)))?;
         let input = child.stdin.take().context("the stdin of podman")?;
         let events = child.stdout.take().context("the stdout of podman")?;
         let errors = child.stderr.take().context("the stderr of podman")?;
@@ -371,13 +476,13 @@ impl Runtime for Podman {
     /// the container went before the wait.
     async fn start_terminal(&self, spec: &SessionSpec, values: &[(String, String)]) -> Result<End> {
         spec.check_values(values)?;
-        let out = podman()
-            .args(terminal_args(spec)?)
+        let in_unit = in_unit();
+        let out = start_command(&terminal_args(spec)?, in_unit)
             .envs(values.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::null())
             .output()
             .await
-            .with_context(|| text::no_program(PODMAN))?;
+            .with_context(|| text::no_program(starter(in_unit)))?;
         if !out.status.success() {
             bail!(
                 "podman run {}: {}",
@@ -486,6 +591,53 @@ mod tests {
                 let error = run_args(&spec).unwrap_err().to_string();
                 assert!(error.contains("comma or a colon"), "{error}");
             }
+        }
+    }
+
+    /// The program and the arguments of `command`, as words.
+    fn words(command: &tokio::process::Command) -> Vec<String> {
+        let command = command.as_std();
+        std::iter::once(command.get_program())
+            .chain(command.get_args())
+            .map(|word| word.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn in_a_unit_podman_run_starts_in_a_scope_of_its_own() {
+        for args in [run_args(&spec()).unwrap(), terminal_args(&spec()).unwrap()] {
+            let words = words(&start_command(&args, true));
+            let scope = [
+                "systemd-run",
+                "--user",
+                "--scope",
+                "--collect",
+                "--quiet",
+                "--",
+            ];
+            assert_eq!(words[..scope.len()], scope, "{words:?}");
+            assert_eq!(words[scope.len()], "podman", "{words:?}");
+            let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into()).collect();
+            assert_eq!(words[scope.len() + 1..], args, "{words:?}");
+        }
+    }
+
+    #[test]
+    fn out_of_a_unit_podman_run_starts_as_it_is() {
+        let args = run_args(&spec()).unwrap();
+        let words = words(&start_command(&args, false));
+        assert_eq!(words[0], "podman");
+        assert_eq!(words[1], "run");
+        assert!(!words.iter().any(|w| w == "systemd-run" || w == "--scope"));
+    }
+
+    #[test]
+    fn podman_starts_with_no_invocation_id_in_a_unit_or_out_of_it() {
+        let args = run_args(&spec()).unwrap();
+        for in_unit in [true, false] {
+            let command = start_command(&args, in_unit);
+            let envs: Vec<_> = command.as_std().get_envs().collect();
+            assert!(envs.contains(&("INVOCATION_ID".as_ref(), None)), "{envs:?}");
         }
     }
 

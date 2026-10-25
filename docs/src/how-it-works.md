@@ -749,6 +749,19 @@ When the daemon runs no session, it starts again at once:
 The riff daemon runs no session. It starts again on the new riff now.
 ```
 
+A session keeps its network over a start of the daemon again. riff
+runs each `podman run` in a systemd scope of its own. So `pasta`, the
+network process of podman, is not in the cgroup of `riff.service`, and
+the stop of the unit does not end it:
+
+```mermaid
+flowchart LR
+    U["riff.service"] --> D["riff daemon"]
+    D -- "systemd-run --user --scope" --> S["scope of the session: podman run, pasta"]
+    S --> C["the container, with its network"]
+    U -. "a stop ends the daemon only" .-> D
+```
+
 The stop of the daemon stops no container. Still, riff starts the
 daemon again only when it owns no session, no start of `riff run`
 waits for room, and no job of a wave runs. A start of a wave that waits

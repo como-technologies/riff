@@ -6353,6 +6353,14 @@ part when they merge.
   01M5NVKNS35SC8P514GYDJSRQM, with each branch that it pushed. It posts
   no note at the next sweep. This supersedes 01M5NVKNGZPK0GG7B7ZWBS0DFE
   in part.
+- **01M5RG2AS2CYJPWGKTV7N2HNYP** A stop or a restart of the daemon
+  leaves the network of each container that runs
+  (01M4ZDTW00B7N6T9P3MK066KA7). When the daemon has an `INVOCATION_ID`,
+  it runs in a systemd unit, and it starts each `podman run` as
+  `systemd-run --user --scope --collect --quiet -- podman run ...`. So
+  pasta, the network process of podman, runs in a scope of its own, not
+  in the cgroup of the unit, and a stop of the unit does not end it.
+  With no `INVOCATION_ID`, the daemon starts `podman run` itself.
 
 ### riff relay
 

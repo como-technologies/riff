@@ -727,12 +727,42 @@ A stop or a restart of the daemon stops no container. conmon, the
 monitor of podman, holds each container. While the daemon is away,
 `riff relay` keeps `claude` running and keeps its events. A new daemon
 takes up each session that runs, and the relay sends it the kept
-events. No event is lost.
+events. No event is lost. Each container also keeps its network:
+`pasta`, the network process of podman, runs in a scope of systemd of
+its own, not in the cgroup of `riff.service`.
 
 `riff run` says that the daemon went away, and waits up to 10 minutes
 for a new daemon. Then it shows the session again from the next event.
 When no daemon comes back in that time, `riff run` says so, and
 releases the item. The session runs on.
+
+### Check that a session keeps its network
+
+The test starts a container from a unit of systemd, as the daemon does.
+It stops the unit, and looks up `api.anthropic.com` in the container.
+It needs rootless podman, the manager of systemd for your user, the
+session image of this repository and a DNS. Else it says `skip:` and
+why:
+
+```sh
+cargo test -p riff --test all network:: -- --nocapture
+```
+
+### Fix a session that lost its network
+
+A container that an older riff started has `pasta` in the cgroup of
+`riff.service`. A start of the daemon again ends `pasta`, and the
+container cannot look up a host. For the lead, stop its container, and
+start the lead again in a terminal with no session. Use the name
+`riff-lead-OWNER-REPO` of your repository:
+
+```sh
+podman stop riff-lead-como-technologies-riff
+riff lead start
+```
+
+In the new lead, `/resume` finds the old conversation. The notes of the
+lead stay.
 
 ### Uninstall the daemon
 
