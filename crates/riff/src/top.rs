@@ -1002,7 +1002,7 @@ impl Top<'_> {
                 .iter()
                 .find(|d| Some(d.user.as_str()) == user && d.host == row.key);
             if let Some(d) = daemon {
-                for parts in text::daemon_facts(&d.facts) {
+                for parts in text::daemon_facts(&d.facts, false) {
                     lines.push(Line::new(more.clone(), parts));
                 }
             }
@@ -1336,6 +1336,7 @@ mod tests {
             ..info(uri, SessionState::Idle)
         };
         let session = |item: &str| Session {
+            digest: String::new(),
             name: format!("riff-{item}-1a2b3c4d"),
             item: item.into(),
             phase: Phase::Works,
@@ -1795,7 +1796,7 @@ mod tests {
             machine: Some(machine),
             ..Facts::default()
         };
-        let daemon = &crate::text::daemon_facts(&facts)[1][0];
+        let daemon = &crate::text::daemon_facts(&facts, false)[1][0];
         assert_eq!(daemon.0, "load 0.1/32 threads");
         let monitor = Numbers {
             on: true,
@@ -1834,7 +1835,7 @@ mod tests {
             machine: Some(busy),
             ..none
         };
-        assert_eq!(crate::text::daemon_facts(&facts)[1][0].1, WARNING);
+        assert_eq!(crate::text::daemon_facts(&facts, false)[1][0].1, WARNING);
         assert_eq!(numbers(&none)[0].1, WARNING);
         // Over 24 but under 32: only the monitor limit is over.
         let load5 = HostStatus {

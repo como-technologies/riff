@@ -49,6 +49,7 @@
 //!     item: "issue-12".into(),
 //!     image: "riff-session".into(),
 //!     since_ms: 0,
+//!     digest: String::new(),
 //!     phase: Phase::Works,
 //!     last: String::new(),
 //!     lead: false,
@@ -104,6 +105,10 @@ pub struct Live {
     pub item: String,
     /// The image.
     pub image: String,
+    /// The short digest of the image that the container runs, from podman,
+    /// or empty before the daemon asks podman.
+    #[serde(default)]
+    pub digest: String,
     /// The start, in milliseconds since the epoch.
     pub since_ms: i64,
     /// What the session does now.
@@ -460,6 +465,7 @@ mod tests {
 
     fn live(name: &str, session: &str, phase: Phase) -> Live {
         Live {
+            digest: String::new(),
             name: name.into(),
             session: session.into(),
             item: "issue-12".into(),

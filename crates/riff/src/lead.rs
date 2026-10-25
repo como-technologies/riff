@@ -216,6 +216,7 @@ fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Sess
 ///     name: "riff-lead-o-r".into(),
 ///     session: "s".into(),
 ///     item: "lead".into(),
+///     digest: String::new(),
 ///     image: "i".into(),
 ///     since_ms: 0,
 ///     phase: Phase::Terminal,
@@ -388,6 +389,7 @@ pub async fn old(runtime: &impl Runtime, name: &str) -> bool {
 ///         session: "s1".into(),
 ///         item: "lead".into(),
 ///         image: "i".into(),
+///         digest: String::new(),
 ///         since_ms: 0,
 ///         phase: Phase::Terminal,
 ///         last: String::new(),
@@ -1162,6 +1164,7 @@ mod tests {
     fn record_in(dir: &Path) -> daemon::Record {
         daemon::Record {
             live: riff_client::sessions::Live {
+                digest: String::new(),
                 name: NAME.into(),
                 session: "s1".into(),
                 item: ITEM.into(),

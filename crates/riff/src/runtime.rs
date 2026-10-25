@@ -39,6 +39,7 @@
 //! | Start with a terminal | [`Runtime::start_terminal`] | `podman run --rm -d -i -t ...` ([`crate::podman::terminal_args`]), then `podman wait NAME` |
 //! | Run a command with a terminal | [`Runtime::exec`] | `podman exec -it NAME COMMAND` |
 //! | Find out if a live session reaches the network | [`Runtime::reaches`] | `podman exec NAME getent hosts api.anthropic.com` |
+//! | Find the image digest of a live session | [`Runtime::digest`] | `podman container inspect --format {{.ImageDigest}} NAME` |
 //!
 //! A session with a terminal is the lead (01M4Z60B81RTZT71PN5HV0GZHX).
 //! The runtime holds its terminal: conmon on podman. A person attaches to
@@ -364,6 +365,12 @@ pub trait Runtime: Send + Sync {
     /// lost its network process runs on with no network
     /// (01M5SMQBTA3HQXPKKK01ZGFB4H). Fails when the runtime cannot say.
     fn reaches(&self, name: &str) -> impl Future<Output = Result<bool>> + Send;
+
+    /// The digest of the image that the container `name` runs, as
+    /// `sha256:` and 64 hex digits. It is the digest of the image that
+    /// the runtime has, not the digest that the spec named
+    /// (01M5TKPG5WZ1T58FNAMZNP6CJ5). Fails when the runtime cannot say.
+    fn digest(&self, name: &str) -> impl Future<Output = Result<String>> + Send;
 }
 
 /// The host that [`Runtime::reaches`] looks up: the API of `claude`.
@@ -431,6 +438,10 @@ struct Book {
     exit_in_attach: bool,
     /// The sessions with no network ([`Runtime::reaches`]).
     offline: BTreeSet<String>,
+    /// The digest that the container of a session runs, by name
+    /// ([`Fake::with_digest`]). A session with none runs the digest of
+    /// its image.
+    digests: BTreeMap<String, String>,
     /// The sessions that do not start ([`Fake::refuse_start`]).
     refused: BTreeSet<String>,
 }
@@ -492,6 +503,45 @@ impl Fake {
     /// types `/exit` in the `claude` of the lead.
     pub fn with_exit_in_attach(self) -> Self {
         self.lock().exit_in_attach = true;
+        self
+    }
+
+    /// The container of the session `name` runs the image with the digest
+    /// `digest`, as `sha256:` and 64 hex digits ([`Runtime::digest`]).
+    /// A session with none runs the digest of the image of its spec.
+    ///
+    /// ```
+    /// use riff::runtime::{Fake, Runtime, SessionSpec};
+    ///
+    /// let spec = |name: &str| SessionSpec {
+    ///     name: name.into(),
+    ///     image: format!("ghcr.io/o/i@sha256:{}", "0".repeat(64)),
+    ///     home: "/h".into(),
+    ///     workdir: "/w".into(),
+    ///     binds: vec![],
+    ///     env: vec![],
+    ///     memory: "8g".into(),
+    ///     cpus: 4,
+    ///     command: vec![],
+    /// };
+    /// let new = format!("sha256:{}", "1".repeat(64));
+    /// let fake = Fake::default()
+    ///     .with_image(&spec("s1").image)
+    ///     .with_digest("s2", &new);
+    /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+    ///     let _s1 = fake.start(&spec("s1"), &[]).await?;
+    ///     let _s2 = fake.start(&spec("s2"), &[]).await?;
+    ///     assert_eq!(fake.digest("s1").await?, format!("sha256:{}", "0".repeat(64)));
+    ///     assert_eq!(fake.digest("s2").await?, new);
+    ///     assert!(fake.digest("s3").await.is_err());
+    ///     Ok::<(), anyhow::Error>(())
+    /// })?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_digest(self, name: &str, digest: &str) -> Self {
+        self.lock()
+            .digests
+            .insert(name.to_owned(), digest.to_owned());
         self
     }
 
@@ -737,6 +787,25 @@ impl Runtime for Fake {
             bail!("no session {name} runs");
         }
         Ok(!book.offline.contains(name))
+    }
+
+    async fn digest(&self, name: &str) -> Result<String> {
+        let book = self.lock();
+        if book.no_answer {
+            bail!("podman does not answer");
+        }
+        let Some(played) = book.sessions.get(name).filter(|p| p.exit.is_none()) else {
+            bail!("no session {name} runs");
+        };
+        match book.digests.get(name) {
+            Some(digest) => Ok(digest.clone()),
+            None => played
+                .spec
+                .image
+                .split_once('@')
+                .map(|(_, digest)| digest.to_owned())
+                .ok_or_else(|| anyhow!("the image {} has no digest", played.spec.image)),
+        }
     }
 }
 

@@ -10,11 +10,13 @@
 //! ([`riff_client::daemons`]). The facts are:
 //!
 //! - from the status of the daemon: the riff build, the limit and the
-//!   floor, the live sessions with their item, phase and last step, the
-//!   starts that wait, and the state of each wave ([`of_status`]);
+//!   floor, the live sessions with their item, phase, last step and the
+//!   digest of the image of their container, the starts that wait, and
+//!   the state of each wave ([`of_status`]);
 //! - from the host: the load, the free memory, the disk of the session
-//!   folders, the version of podman, and the session image that the
-//!   repository pins ([`look`]);
+//!   folders, the version of podman, and the merged pin of each wave
+//!   with whether podman has it ([`look`], [`pins`],
+//!   01M5TKPG5WZ1T58FNAMZNP6CJ5);
 //! - the sign-ins of riff, `gh` and `claude` (01M57D3FGV57W96A7SWTEFRCGW),
 //!   and whether the token of `riff claude-token` is set
 //!   (01M58B7HA8CRCW0MJ17QP3R5QG).
@@ -94,7 +96,8 @@ pub fn every() -> Duration {
 ///     "pid": 7, "build": "3.1.0", "since_ms": 0, "dir": "/d",
 ///     "sessions": [
 ///         {"name": "riff-issue-12-1a2b3c4d", "session": "1a2b3c4d", "item": "issue-12",
-///          "image": "i", "since_ms": 0, "phase": "works", "last": "> Bash: just check"},
+///          "image": "i", "digest": "0123456789ab", "since_ms": 0, "phase": "works",
+///          "last": "> Bash: just check"},
 ///         {"name": "riff-lead-o-r", "session": "l1", "item": "lead",
 ///          "image": "i", "since_ms": 0, "phase": "terminal"},
 ///     ],
@@ -108,6 +111,7 @@ pub fn every() -> Duration {
 /// assert_eq!((facts.build.as_str(), facts.limit, facts.floor_gb), ("3.1.0", 4, 8));
 /// assert_eq!(facts.sessions.len(), 1);
 /// assert_eq!(facts.sessions[0].last, "> Bash: just check");
+/// assert_eq!(facts.sessions[0].digest, "0123456789ab");
 /// assert_eq!(facts.waiting, ["riff-issue-13-2b3c4d5e"]);
 /// assert_eq!(facts.waves[0].word, "started issue-12");
 /// assert_eq!(facts.test.as_ref().map(|t| t.secs), Some(185));
@@ -125,6 +129,7 @@ pub fn of_status(status: &Status) -> Facts {
             .iter()
             .filter(|live| live.phase != riff_client::sessions::Phase::Terminal)
             .map(|live| daemons::Session {
+                digest: live.digest.clone(),
                 name: live.name.clone(),
                 item: live.item.clone(),
                 phase: live.phase,
@@ -138,6 +143,7 @@ pub fn of_status(status: &Status) -> Facts {
             .map(|w| daemons::Wave {
                 repo: w.repo.clone(),
                 word: w.word.clone(),
+                image: None,
             })
             .collect(),
         test: status.test.clone(),
@@ -153,23 +159,25 @@ pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
     let mut facts = of_status(&super::status(dir).await?);
     let (dir, main) = (dir.to_owned(), wave.main.clone());
     let server = wave.server.clone();
+    let mut waves = std::mem::take(&mut facts.waves);
     let host = tokio::task::spawn_blocking(move || {
+        pins(&dir, &mut waves, podman_has);
         (
             crate::machine::here(),
             crate::disk::here(&dir),
             podman(),
-            image(&main),
+            waves,
             gh(&main),
             claude(crate::run::now_ms()),
             riff_client::login::stored(&server),
         )
     })
     .await?;
-    let (machine, disk, podman, image, gh, claude, stored) = host;
+    let (machine, disk, podman, waves, gh, claude, stored) = host;
     facts.machine = Some(machine);
     facts.disk = disk;
     facts.podman = podman;
-    facts.image = image;
+    facts.waves = waves;
     facts.gh = gh;
     facts.claude = claude;
     facts.riff = match api.has_sign_in().await {
@@ -186,20 +194,94 @@ fn podman() -> Option<String> {
     Some(out.rsplit(' ').next().unwrap_or(&out).to_owned())
 }
 
-/// The session image that the main clone `main` pins, and whether
-/// podman has it. `None` when the clone pins none.
-fn image(main: &Path) -> Option<Image> {
-    let image = session_image::Image::of_repository(main).ok()?;
-    let here = crate::run::output(
-        "podman",
-        Path::new("/"),
-        &["image", "exists", &image.to_string()],
-    )
-    .is_ok();
+/// The merged pin of the main clone `main` (01M5TKPG5WZ1T58FNAMZNP6CJ5):
+/// the short digest of the image, and whether `has` says that the host
+/// has the image. `None` when the clone has no good merged pin.
+fn image(main: &Path, has: impl Fn(&str) -> bool) -> Option<Image> {
+    let image = session_image::merged_here(main).ok()?;
     Some(Image {
-        name: image.name().to_owned(),
-        here,
+        digest: daemons::short(image.digest()),
+        here: has(&image.to_string()),
     })
+}
+
+/// True when podman has the image `image` on this host.
+fn podman_has(image: &str) -> bool {
+    crate::run::output("podman", Path::new("/"), &["image", "exists", image]).is_ok()
+}
+
+/// Gives each wave of `waves` its merged pin: the pin of the main clone
+/// that the daemon keeps for the repository of the wave in
+/// [`crate::wave::WAVES_FILE`] of the folder `dir`. `has` says whether
+/// the host has an image. A wave that the file does not know has none.
+///
+/// Two repositories of one host pin two images, and the host has only the
+/// first one:
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use std::process::Command;
+/// use riff::daemon::facts::pins;
+/// use riff::session_image::FILE;
+/// use riff::wave::{Wave as Known, write_waves};
+/// use riff_client::daemons::{Image, Wave};
+///
+/// let root = tempfile::tempdir()?;
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let status = Command::new("git")
+///         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+///         .arg("-C")
+///         .arg(dir)
+///         .args(args)
+///         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+///         .status()
+///         .unwrap();
+///     assert!(status.success(), "git {args:?}");
+/// };
+/// let pin = |n: &str| format!("ghcr.io/o/i@sha256:{}", n.repeat(64));
+/// // A main clone whose origin has the pin `n`.
+/// let clone = |name: &str, n: &str| -> std::io::Result<std::path::PathBuf> {
+///     let (origin, main) = (root.path().join(format!("{name}.git")), root.path().join(name));
+///     git(root.path(), &["init", "-q", "--bare", "-b", "main", origin.to_str().unwrap()]);
+///     git(root.path(), &["init", "-q", "-b", "main", main.to_str().unwrap()]);
+///     std::fs::write(main.join(FILE), format!("[session]\nimage = \"{}\"\n", pin(n)))?;
+///     git(&main, &["add", FILE]);
+///     git(&main, &["commit", "-q", "-m", "pin"]);
+///     git(&main, &["remote", "add", "origin", origin.to_str().unwrap()]);
+///     git(&main, &["push", "-q", "origin", "main"]);
+///     git(&main, &["remote", "set-head", "origin", "main"]);
+///     Ok(main)
+/// };
+/// let known = |repo: &str, main| Known {
+///     repo: repo.into(),
+///     main,
+///     server: "http://127.0.0.1:1".into(),
+///     host: "thelio".into(),
+/// };
+/// let (riff, sens) = (clone("riff", "a")?, clone("sens", "b")?);
+/// let folder = root.path().join("daemon");
+/// std::fs::create_dir(&folder)?;
+/// write_waves(&folder, &BTreeMap::from([
+///     ("o/riff".to_owned(), known("o/riff", riff)),
+///     ("o/sens".to_owned(), known("o/sens", sens)),
+/// ]))?;
+///
+/// let wave = |repo: &str| Wave { repo: repo.into(), word: "waits".into(), image: None };
+/// let mut waves = vec![wave("o/riff"), wave("o/sens"), wave("o/other")];
+/// pins(&folder, &mut waves, |image| image == pin("a"));
+/// let image = |digit: &str, here| Some(Image { digest: digit.repeat(12), here });
+/// assert_eq!(waves[0].image, image("a", true));
+/// assert_eq!(waves[1].image, image("b", false));
+/// assert_eq!(waves[2].image, None, "the daemon keeps no main clone for it");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn pins(dir: &Path, waves: &mut [daemons::Wave], has: impl Fn(&str) -> bool + Copy) {
+    let known = crate::wave::read_waves(dir).unwrap_or_default();
+    for wave in waves {
+        wave.image = known
+            .get(&wave.repo)
+            .and_then(|known| image(&known.main, has));
+    }
 }
 
 /// The sign-in of `gh` in the main clone `main`: it gives a token, or
@@ -344,5 +426,90 @@ impl News {
     pub fn take(&self, repo: &str) -> Vec<String> {
         let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         all.remove(repo).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wave(repo: &str) -> daemons::Wave {
+        daemons::Wave {
+            repo: repo.into(),
+            word: "waits".into(),
+            image: None,
+        }
+    }
+
+    fn known(repo: &str, main: &Path) -> Wave {
+        Wave {
+            repo: repo.into(),
+            main: main.to_owned(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        }
+    }
+
+    /// 01M5TKPG5WZ1T58FNAMZNP6CJ5: each wave gets the pin of its own main
+    /// clone, and `has` is asked with the full reference of that pin.
+    #[test]
+    fn each_wave_gets_the_pin_of_its_own_main_clone() {
+        let pin = |n: &str| format!("ghcr.io/o/i@sha256:{}", n.repeat(64));
+        let config = |n: &str| format!("[session]\nimage = \"{}\"\n", pin(n));
+        let (_one, one, _) = session_image::test_clone(&config("a"));
+        let (_two, two, _) = session_image::test_clone(&config("b"));
+        let folder = tempfile::tempdir().unwrap();
+        crate::wave::write_waves(
+            folder.path(),
+            &BTreeMap::from([
+                ("o/one".to_owned(), known("o/one", &one)),
+                ("o/two".to_owned(), known("o/two", &two)),
+            ]),
+        )
+        .unwrap();
+
+        let asked = Mutex::new(Vec::new());
+        let has = |image: &str| {
+            asked.lock().unwrap().push(image.to_owned());
+            image == pin("b")
+        };
+        let mut waves = vec![wave("o/one"), wave("o/two")];
+        pins(folder.path(), &mut waves, has);
+        let digest = |n: &str| daemons::short(&format!("sha256:{}", n.repeat(64)));
+        assert_eq!(
+            waves[0].image,
+            Some(Image {
+                digest: digest("a"),
+                here: false
+            })
+        );
+        assert_eq!(
+            waves[1].image,
+            Some(Image {
+                digest: digest("b"),
+                here: true
+            })
+        );
+        assert_eq!(*asked.lock().unwrap(), [pin("a"), pin("b")]);
+    }
+
+    /// A main clone that has no merged pin gives no image: the host line
+    /// says `no session image` for that wave.
+    #[test]
+    fn a_clone_with_no_merged_pin_gives_no_image() {
+        let (_dir, main, _) = session_image::test_clone("[release]\n");
+        let folder = tempfile::tempdir().unwrap();
+        crate::wave::write_waves(
+            folder.path(),
+            &BTreeMap::from([("o/r".to_owned(), known("o/r", &main))]),
+        )
+        .unwrap();
+        let mut waves = vec![wave("o/r")];
+        pins(folder.path(), &mut waves, |_: &str| true);
+        assert_eq!(waves[0].image, None);
+        // A folder with no waves.json knows no wave.
+        let empty = tempfile::tempdir().unwrap();
+        pins(empty.path(), &mut waves, |_: &str| true);
+        assert_eq!(waves[0].image, None);
     }
 }

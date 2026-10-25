@@ -567,6 +567,10 @@ pub const EXIT_GRACE: Duration = Duration::from_secs(60);
 /// --host` ([`remote::follow_events`]).
 pub const KEEP_END: Duration = Duration::from_secs(5 * 60);
 
+/// The longest time that the status waits for the runtime to say the image
+/// digest of one container ([`Daemon::status`], 01M5TKPG5WZ1T58FNAMZNP6CJ5).
+const DIGEST_LIMIT: Duration = Duration::from_secs(5);
+
 /// The end of a session whose container did not start.
 const START_FAILED: Ended = Ended {
     code: None,
@@ -2853,8 +2857,32 @@ impl<R: Runtime + 'static> Daemon<R> {
         values.push((VAR.into(), Value::Object(servers).to_string()));
     }
 
+    /// Asks the runtime for the digest of the image that the container of
+    /// each session runs, for each session that has none yet
+    /// (01M5TKPG5WZ1T58FNAMZNP6CJ5). A container that the runtime cannot
+    /// say yet gets the question again at the next status.
+    async fn digests(&self) {
+        let owned: Vec<Arc<Owned>> = self.lock().values().cloned().collect();
+        for owned in owned {
+            let name = {
+                let state = owned.lock();
+                let live = &state.record.live;
+                if state.ended || !live.digest.is_empty() {
+                    continue;
+                }
+                live.name.clone()
+            };
+            // A runtime that hangs must not hold the status.
+            let ask = tokio::time::timeout(DIGEST_LIMIT, self.runtime.digest(&name));
+            if let Ok(Ok(digest)) = ask.await {
+                owned.lock().record.live.digest = riff_client::daemons::short(&digest);
+            }
+        }
+    }
+
     /// The state of the daemon.
     pub async fn status(&self) -> Status {
+        self.digests().await;
         let dir = self.dir.clone();
         let claude_token = tokio::task::spawn_blocking(move || crate::claude_token::state(&dir))
             .await
@@ -3502,6 +3530,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let name = spec.name.clone();
         let record = Record {
             live: Live {
+                digest: String::new(),
                 name: name.clone(),
                 session: session.clone(),
                 item: item.clone(),
@@ -6200,6 +6229,7 @@ mod tests {
         let name = "riff-issue-1-aaaaaaaa";
         let mut record = Record {
             live: Live {
+                digest: String::new(),
                 name: name.into(),
                 session: format!("{name}-session"),
                 item: "issue-1".into(),
@@ -6248,6 +6278,7 @@ mod tests {
         private_dir(&dir.join(LIVE)).unwrap();
         let record = Record {
             live: Live {
+                digest: String::new(),
                 name: name.into(),
                 session: format!("{name}-session"),
                 item: "issue-1".into(),
@@ -6403,6 +6434,7 @@ mod tests {
         private_dir(&dir.join(LIVE)).unwrap();
         let record = Record {
             live: Live {
+                digest: String::new(),
                 name: name.into(),
                 session: format!("{name}-session"),
                 item: "issue-1".into(),
@@ -6497,6 +6529,7 @@ mod tests {
             };
             let record = Record {
                 live: Live {
+                    digest: String::new(),
                     name: name.into(),
                     session: start.session.clone(),
                     item: item.into(),
@@ -6617,6 +6650,7 @@ mod tests {
         let name = "riff-issue-1-aaaaaaaa";
         let record = Record {
             live: Live {
+                digest: String::new(),
                 name: name.into(),
                 session: "s".into(),
                 item: "issue-1".into(),
@@ -9994,5 +10028,59 @@ mod tests {
             text.contains("Watches:\n  o/r  the deploy of v1.2.3, for 1m\n"),
             "{text}"
         );
+    }
+
+    /// 01M5TKPG5WZ1T58FNAMZNP6CJ5: the status gives the short digest of the
+    /// image that the container of each session runs, as the runtime says
+    /// it. The facts carry it, and `riff who --long` shows it. A container
+    /// that the runtime cannot say shows `image ?`.
+    #[tokio::test]
+    async fn the_status_gives_the_digest_of_the_image_of_each_session_container() {
+        let old = format!("sha256:{}", "a1b2c3d4e5f6a7b8".repeat(4));
+        let new = format!("sha256:{}", "0123456789abcdef".repeat(4));
+        let fake = Fake::default()
+            .with_image(IMAGE)
+            .with_digest("riff-issue-1-aaaaaaaa", &old)
+            .with_digest("riff-issue-2-bbbbbbbb", &new);
+        let here = Here::new(fake).await;
+        let mut clients = Vec::new();
+        for (name, item) in [
+            ("riff-issue-1-aaaaaaaa", "issue-1"),
+            ("riff-issue-2-bbbbbbbb", "issue-2"),
+            ("riff-issue-3-cccccccc", "issue-3"),
+        ] {
+            clients.push(here.started(here.start(name, item)).await);
+        }
+
+        let status = here.daemon.status().await;
+        let digest = |name: &str| {
+            let live = status.sessions.iter().find(|l| l.name == name);
+            live.unwrap().digest.clone()
+        };
+        assert_eq!(digest("riff-issue-1-aaaaaaaa"), "a1b2c3d4e5f6");
+        assert_eq!(digest("riff-issue-2-bbbbbbbb"), "0123456789ab");
+        assert_eq!(digest("riff-issue-3-cccccccc"), "");
+
+        let facts = facts::of_status(&status);
+        let mut info: riff_core::wire::SessionInfo = serde_json::from_value(serde_json::json!({
+            "uri": "riff://mike@thelio/o/r?session=d1", "live": true,
+        }))
+        .unwrap();
+        info.machine = Some(riff_core::wire::MachineInfo {
+            numbers: facts.line(),
+            age_secs: 5,
+        });
+        let long = crate::view::hosts(&[info.clone()], true);
+        let long = anstream::adapter::strip_str(&long).to_string();
+        for line in [
+            "riff-issue-1-aaaaaaaa  issue-1  works  image a1b2c3d4e5f6",
+            "riff-issue-2-bbbbbbbb  issue-2  works  image 0123456789ab",
+            "riff-issue-3-cccccccc  issue-3  works  image ?",
+        ] {
+            assert!(long.contains(line), "{line}\n{long}");
+        }
+        // Without --long, no digest.
+        let short = crate::view::hosts(&[info], false);
+        assert!(!short.contains("a1b2c3d4e5f6"), "{short}");
     }
 }

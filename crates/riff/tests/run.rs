@@ -111,7 +111,8 @@ esac
 /// `/opt/riff/riff` as the entrypoint, `riff relay`, with the socket of
 /// the bind at `/run/riff`. With `-d` (a terminal), it runs it in the
 /// background, and `wait` waits for its end. `stop` logs, and ends the
-/// `run`. `container inspect` says `true` while the `run` runs. `attach`
+/// `run`. `container inspect` says `true` while the `run` runs, and gives the text of
+/// `bin/digest` as the image digest, or fails with no such file. `attach`
 /// and `exec` log, and end at once. `volume inspect` of `riff-sccache`
 /// gives the folder `bin/volume` when it is there. With `bin/no-network`, the
 /// look-up of `exec ... getent` fails: the container has no network. With
@@ -152,6 +153,8 @@ case "$1" in
     while alive "$pid"; do sleep 0.05; done
     echo 0; exit 0 ;;
   container)
+    # The image digest of the container: the file `digest`, else no answer.
+    if [ "$4" = "{{.ImageDigest}}" ]; then cat "$dir/digest" 2>/dev/null || exit 1; exit 0; fi
     if [ -f "$dir/run.pid" ] && alive "$(cat "$dir/run.pid")"; then
       echo true
     else
@@ -420,6 +423,9 @@ struct Machine {
     /// The time of no write that makes a lead idle for the daemon, when the
     /// test sets one.
     lead_idle: Option<Duration>,
+    /// The time between two looks of the daemon at its facts, when the test
+    /// sets one.
+    facts_every: Option<Duration>,
     /// The name of this host in each command of riff.
     host: &'static str,
 }
@@ -521,6 +527,7 @@ impl Machine {
             daemon: None,
             quiet,
             lead_idle: None,
+            facts_every: None,
             host: "thelio",
         };
         machine.start_daemon().await;
@@ -540,6 +547,12 @@ impl Machine {
         }
         if let Some(idle) = self.lead_idle {
             daemon.env(riff::daemon::LEAD_IDLE_VAR, idle.as_millis().to_string());
+        }
+        if let Some(every) = self.facts_every {
+            daemon.env(
+                riff::daemon::facts::EVERY_VAR,
+                every.as_millis().to_string(),
+            );
         }
         let daemon = daemon
             .env("INVOCATION_ID", "riff-test-unit")
@@ -3057,4 +3070,64 @@ async fn the_prompt_hook_tells_the_daemon_and_prints_nothing() {
         "{}",
         text(&away.stderr)
     );
+}
+
+/// 01M5TKPG5WZ1T58FNAMZNP6CJ5: `riff who --long` shows the merged pin of
+/// the wave and whether the host has it, and the digest of the image that
+/// the container of each session runs, as podman says it. `riff who` shows
+/// no digest. The lead reads the new pin of a worker in it.
+#[tokio::test]
+async fn riff_who_long_shows_the_pin_of_the_wave_and_the_image_of_each_session_container() {
+    let mut machine = Machine::new().await;
+    machine.lead().await;
+    machine.stop_daemon().await;
+    machine.facts_every = Some(Duration::from_millis(200));
+    machine.start_daemon().await;
+    let bin = machine.bin.path();
+    std::fs::write(bin.join("hold"), "").unwrap();
+    std::fs::write(bin.join("wave-issue"), "").unwrap();
+    // podman says that the container runs the pinned digest.
+    let digest = PINNED.split_once('@').unwrap().1;
+    std::fs::write(bin.join("digest"), format!("{digest}\n")).unwrap();
+    machine.ok(None, &["wave", "run"]).await;
+
+    let (wave, session) = (
+        "wave como-technologies/riff: ",
+        "issue-12  works  image 0123456789ab",
+    );
+    let started = Instant::now();
+    let who = loop {
+        let who = machine.ok(None, &["who", "--long"]).await;
+        if who.contains(session) && who.contains("image 0123456789ab here") {
+            break who;
+        }
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "no digest in riff who:\n{who}\n{}",
+            machine.read("daemon.out")
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert!(who.contains(wave), "{who}");
+
+    // Without --long: here, and no digest.
+    let short = machine.ok(None, &["who"]).await;
+    assert!(short.contains("image here"), "{short}");
+    assert!(!short.contains("0123456789ab"), "{short}");
+
+    machine.ok(None, &["wave", "stop"]).await;
+    std::fs::remove_file(bin.join("wave-issue")).unwrap();
+    std::fs::remove_file(bin.join("hold")).unwrap();
+    let started = Instant::now();
+    while machine
+        .ok(None, &["daemon", "status"])
+        .await
+        .contains("riff-issue-12-")
+    {
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "the session did not end"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

@@ -3781,6 +3781,7 @@ mod tests {
         let who = riff_core::name::Who::new("mike", Some("lead1")).unwrap();
         Record {
             live: riff_client::sessions::Live {
+                digest: String::new(),
                 name: "riff-lead-o-r".into(),
                 session: "lead1".into(),
                 item: "lead".into(),
@@ -5091,6 +5092,7 @@ esac
             let dir = tempfile::tempdir().unwrap();
             let record = Record {
                 live: riff_client::sessions::Live {
+                    digest: String::new(),
                     name: "riff-issue-12".into(),
                     session: session.into(),
                     item: "issue-12".into(),

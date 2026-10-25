@@ -547,7 +547,7 @@ impl Items {
     ///     s
     /// };
     /// let runs = |repo: &str| Facts {
-    ///     waves: vec![Wave { repo: repo.into(), word: "no free work now".into() }],
+    ///     waves: vec![Wave { repo: repo.into(), word: "no free work now".into(), image: None }],
     ///     ..Facts::default()
     /// };
     /// let who = vec![
@@ -979,6 +979,7 @@ mod tests {
             waves: vec![Wave {
                 repo: repo.into(),
                 word: "no free work now".into(),
+                image: None,
             }],
             ..Facts::default()
         };
