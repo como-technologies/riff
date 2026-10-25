@@ -5818,6 +5818,16 @@ of this part when they merge.
   verify start text has no part for a release pull request. The probe
   for `deploy/release-check.sh` does not decide it. The `riff.toml` of
   riff has `[release]`. Supersedes 01M58KMMCZCE7HDNVT9PVHVZX2 in part.
+- **01M5TKEH5E2ZQ22PAN9FTT27VW** The daemon of a host decides the
+  release cycle with the merged `riff.toml`, never with the working tree
+  of its main clone. For the request `release test` and the request
+  `build`, it fetches the default branch of `origin` and refuses with
+  the line of 01M5SMPX8NM75P8E38DGQ17W7B when that file has no table
+  `[release]`. A `[release]` that only the working tree has does not
+  count, and a `[release]` that only the merged file has does. A main
+  clone with no `origin/HEAD`, a fetch that fails and a `riff.toml` that
+  is not TOML are errors that name their cause. `riff release` and `riff
+  build` in the clone of a person still read the working tree.
 
 ### The release cycle
 

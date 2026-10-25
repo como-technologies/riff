@@ -807,6 +807,10 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         &r.main,
         &["remote", "add", "origin", &bare.display().to_string()],
     );
+    // 01M5TKEH5E2ZQ22PAN9FTT27VW: the daemon reads the merged `riff.toml`
+    // of the default branch of `origin`.
+    git(&r.main, &["fetch", "-q", "origin"]);
+    git(&r.main, &["remote", "set-head", "origin", "--auto"]);
     let commit = git(&r.main, &["rev-parse", "HEAD"]);
 
     let hold = tmp.path().join("hold");
@@ -936,25 +940,83 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
     assert!(!seen.contains("real-session"), "{seen}");
 }
 
-/// 01M5SMPX8NM75P8E38DGQ17W7B: a repository with no `[release]` in its
-/// `riff.toml` has no real-session test and no `riff build` on the daemon:
-/// both refuse with one line, and the daemon runs no program and calls no
-/// `gh`.
+/// `git ARGS` in `dir`, with an identity. Gives its output.
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    text(&out.stdout).trim().to_owned()
+}
+
+/// Commits `config` as the `riff.toml` of the clone `dir`. Gives the commit.
+fn commit_config(dir: &Path, config: &str) -> String {
+    std::fs::write(dir.join("riff.toml"), config).unwrap();
+    git(dir, &["commit", "-q", "-a", "-m", "config"]);
+    git(dir, &["rev-parse", "HEAD"])
+}
+
+/// Gives the main clone `main` an `origin`, a bare clone of it in
+/// `tmp/origin.git`, with its `origin/HEAD`. Gives the bare clone.
+fn add_origin(main: &Path, tmp: &Path) -> PathBuf {
+    git(
+        tmp,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &main.display().to_string(),
+            "origin.git",
+        ],
+    );
+    let bare = tmp.join("origin.git");
+    git(
+        main,
+        &["remote", "add", "origin", &bare.display().to_string()],
+    );
+    git(main, &["fetch", "-q", "origin"]);
+    git(main, &["remote", "set-head", "origin", "--auto"]);
+    bare
+}
+
+/// A `just` that makes the riff of the build: the commit that it builds.
+const FAKE_JUST: &str =
+    "#!/bin/sh\nmkdir -p target/static/release\ngit rev-parse HEAD > target/static/release/riff\n";
+
+/// As [`fake_real_session`], with a fake `just` for `riff build` and the
+/// check clone in `dir/check`. Gives the variables for a host.
+fn fake_build(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String)> {
+    let mut extra = fake_real_session(dir, log, code);
+    isolated::write_program(dir.join("bin/just"), FAKE_JUST);
+    extra.push((
+        riff::check::VAR.into(),
+        dir.join("check").display().to_string(),
+    ));
+    extra
+}
+
+/// 01M5SMPX8NM75P8E38DGQ17W7B, 01M5TKEH5E2ZQ22PAN9FTT27VW: a repository
+/// with no `[release]` in the merged `riff.toml` has no real-session test
+/// and no `riff build` on the daemon: both refuse with one line, and the
+/// daemon runs no program and calls no `gh`. The `[release]` of the
+/// working tree of the main clone does not count.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_daemon_refuses_the_test_and_the_build_of_a_repository_with_no_release_table() {
     let tmp = tempfile::tempdir().unwrap();
     let (log, code) = (tmp.path().join("gh.log"), tmp.path().join("code"));
-    let extra = fake_real_session(tmp.path(), &log, &code);
+    let extra = fake_build(tmp.path(), &log, &code);
     let r = riff_env(300, 300, &extra).await;
     std::fs::write(&code, "0").unwrap();
-    std::fs::write(r.main.join("riff.toml"), "[session]\nimage = \"x\"\n").unwrap();
-    let head = Command::new("git")
-        .arg("-C")
-        .arg(&r.main)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .unwrap();
-    let commit = text(&head.stdout).trim().to_owned();
+    // The default branch of `origin` has no `[release]`. The working tree of
+    // the main clone has one.
+    let commit = commit_config(&r.main, "[session]\nimage = \"x\"\n");
+    add_origin(&r.main, tmp.path());
+    std::fs::write(r.main.join("riff.toml"), "[release]\n").unwrap();
 
     let test = remote::Request::ReleaseTest {
         commit,
@@ -981,6 +1043,59 @@ async fn the_daemon_refuses_the_test_and_the_build_of_a_repository_with_no_relea
     assert!(!seen.contains("statuses"), "{seen}");
     assert!(!seen.contains("issue"), "{seen}");
     assert!(!tmp.path().join("server").exists(), "the test ran");
+    assert!(!tmp.path().join("check").exists(), "the build ran");
+}
+
+/// 01M5TKEH5E2ZQ22PAN9FTT27VW: the daemon reads the `[release]` of the
+/// default branch of `origin`, after a fetch. The main clone is older than
+/// the merge of `[release]`: its working tree has none. The real-session
+/// test and the build run all the same, and the daemon moves the working
+/// tree of the main clone not at all.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_daemon_runs_the_test_and_the_build_with_the_release_table_that_origin_has() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (log, code) = (tmp.path().join("gh.log"), tmp.path().join("code"));
+    let extra = fake_build(tmp.path(), &log, &code);
+    let r = riff_env(300, 300, &extra).await;
+    std::fs::write(&code, "0").unwrap();
+    let old = "[session]\nimage = \"x\"\n";
+    commit_config(&r.main, old);
+    let bare = add_origin(&r.main, tmp.path());
+    // Another clone merges `[release]`. The main clone has not fetched it.
+    let other = tmp.path().join("other");
+    git(
+        tmp.path(),
+        &["clone", "-q", &bare.display().to_string(), "other"],
+    );
+    let merged = commit_config(&other, "[release]\n");
+    git(&other, &["push", "-q", "origin", "HEAD"]);
+
+    let asked = remote::Request::ReleaseTest {
+        commit: merged.clone(),
+        tag: TAG.to_owned(),
+    };
+    let wait = Duration::from_secs(30);
+    let reply = remote::ask(&r.api(&r.lead), &r.lead, "a", &asked, wait)
+        .await
+        .unwrap();
+    assert!(reply.contains("started on"), "{reply}");
+    until("the final status", || async {
+        std::fs::read_to_string(&log)
+            .ok()
+            .filter(|l| l.contains("state=success"))
+    })
+    .await;
+
+    let built = remote::ask(&r.api(&r.lead), &r.lead, "a", &remote::Request::Build, wait)
+        .await
+        .unwrap();
+    let riff = tmp.path().join("check/target/static/release/riff");
+    assert_eq!(built, riff.display().to_string());
+    assert_eq!(std::fs::read_to_string(&riff).unwrap().trim(), merged);
+    assert_eq!(
+        std::fs::read_to_string(r.main.join("riff.toml")).unwrap(),
+        old
+    );
 }
 
 /// #1262: a daemon that runs the wave of a repository serves `--host` for
