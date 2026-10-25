@@ -1094,7 +1094,7 @@ enum WaveCommand {
     /// End a wave when each of its items is closed
     ///
     /// riff refuses a wave that has an open item. In a repository with
-    /// deploy/release-check.sh, it also refuses while a merged pull
+    /// [release] in riff.toml, it also refuses while a merged pull
     /// request of the wave is in no checked release: the release cycle
     /// ends each wave with a release.
     ///
