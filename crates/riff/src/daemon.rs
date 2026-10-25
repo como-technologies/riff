@@ -112,6 +112,7 @@
 //! | [`Ask::Sweep`] | [`Say::Line`] for each folder that the daemon removed, and for each folder whose work is over that it kept, or one line that it removed none, then [`Say::Done`] ([`sweep`]) |
 //! | [`Ask::End`] | [`Say::Line`] for the free item and the stop, then [`Say::Done`], or [`Say::Failed`] ([`Daemon::end_session`]) |
 //! | [`Ask::Restart`] | [`Say::Line`] with the decision, then [`Say::Done`] ([`Daemon::restart_now`]) |
+//! | [`Ask::Restarting`] | [`Say::Line`] for each lead on the host that got the note of the new start, then [`Say::Done`] ([`Daemon::tell_leads_restart`]) |
 //! | [`Ask::Serve`] | [`Say::Line`], then [`Say::Done`] when the daemon serves the lead of the repository ([`remote`]), or [`Say::Failed`] |
 //!
 //! After [`Ask::Start`] or [`Ask::Follow`], `riff` can send
@@ -225,6 +226,30 @@
 //!         D->>G: the state of the CI run
 //!     end
 //!     D->>L: one message at the end, then the watch goes
+//! ```
+//!
+//! # The note before a new start
+//!
+//! A new start of the daemon on a new riff cuts the riff tools of the
+//! lead for a moment. So before it, the daemon posts one note to each lead
+//! on its host, as the person of the lead
+//! ([`Daemon::tell_leads_restart`], 01M5SNV7H3739PXW73H14XM4B8). It does
+//! so in each of the three ways to start again: `riff daemon restart`,
+//! its own look at the end of each session
+//! ([`Daemon::restart_when_old`]), and `riff update`, which asks it
+//! first ([`Ask::Restarting`]). A daemon of an older riff knows no such
+//! ask, and `riff update` starts it again all the same.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant U as riff update
+//!     participant D as riff daemon
+//!     participant L as each lead on the host
+//!     participant M as systemd
+//!     U->>D: Ask::Restarting
+//!     D->>L: one note: the daemon starts again, keep your state in your notes
+//!     D-->>U: Say::Done
+//!     U->>M: try-restart riff.service
 //! ```
 //!
 //! # The wakes of a session
@@ -639,6 +664,19 @@ pub fn update_waits(dir: &Path) -> bool {
     crate::local::updating(dir)
 }
 
+/// Posts the note of a new start to the lead of each of `records` that has
+/// a terminal, and gives a line for each (01M5SNV7H3739PXW73H14XM4B8).
+async fn tell_leads_restart(world: &Arc<dyn World>, records: &[Record]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for record in records.iter().filter(|r| r.terminal) {
+        world
+            .note_lead(record, text::LEAD_DAEMON_STARTS_AGAIN)
+            .await;
+        lines.push(text::daemon_told_lead(&record.live.name));
+    }
+    lines
+}
+
 /// The step of `riff update` for the daemon of this machine, whose
 /// folder is `dir`, with the new `riff` on `PATH`: one line for each
 /// change.
@@ -678,6 +716,9 @@ pub async fn after_update(
     }
     match status.busy() {
         0 => {
+            // The leads hear of it first. A daemon of an older riff
+            // knows no such ask: the new start goes on all the same.
+            let _ = ask_done(dir, Ask::Restarting, |_| {}).await;
             manager.try_restart()?;
             lines.push(text::DAEMON_STARTS_AGAIN.to_owned());
         }
@@ -815,6 +856,10 @@ pub enum Ask {
     /// `riff daemon restart`: start again on the new riff when no
     /// session runs ([`Daemon::restart_now`]).
     Restart,
+    /// `riff update` is about to start the daemon again on a new riff: tell
+    /// each lead on this host first ([`Daemon::tell_leads_restart`],
+    /// 01M5SNV7H3739PXW73H14XM4B8). The daemon gives a line for each lead.
+    Restarting,
     /// `riff daemon host`: serve the lead of the repository of `wave`
     /// ([`Daemon::serve_repo`]).
     Serve {
@@ -1066,6 +1111,26 @@ pub enum ServerCall {
         /// The work item, for example `issue-12`.
         item: String,
     },
+    /// Post `body` as the note of a step of a release to each other lead of
+    /// the riff ([`crate::hold::tell_leads`], 01M5SNV75DRFHR26BT2M8243VV).
+    /// Each session may: a worker cuts a release. The answer is the number
+    /// of leads told.
+    ReleaseNews {
+        /// The note.
+        body: String,
+    },
+    /// Hold the version `tag` as the lead of the session, or end its hold
+    /// when `reason` is `None` ([`crate::hold`], 01M5SNV78EBAYY4SZ891DM2MQG).
+    /// Only the lead may. The answer is a [`crate::hold::Held`].
+    ReleaseHold {
+        /// The release tag, `vX.Y.Z`.
+        tag: String,
+        /// Why the lead asks to wait, or `None` to end its hold.
+        reason: Option<String>,
+    },
+    /// Each message of the thread `release` as a list of
+    /// [`crate::hold::Line`], for the holds. Each session may.
+    ReleaseLines,
     /// Register the watch of an async operation that a command of the release
     /// cycle started, for the repository of the session
     /// ([`crate::watches`], 01M5RGCW5NCKQYA61RM63914TX). Each session may:
@@ -1163,6 +1228,25 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         ServerCall::Ends => {
             let records = crate::ends::read(&signed()?, &record.me).await?;
             serde_json::to_value(records)?
+        }
+        ServerCall::ReleaseNews { body } => {
+            let woken = crate::hold::tell_leads(&signed()?, &record.me, true, body).await?;
+            serde_json::to_value(woken.len())?
+        }
+        ServerCall::ReleaseHold { tag, reason } => {
+            if !record.terminal {
+                bail!(text::DAEMON_HOLD_ONLY_LEAD);
+            }
+            let api = signed()?;
+            let held = match reason {
+                Some(reason) => crate::hold::hold(&api, &record.me, tag, reason).await?,
+                None => crate::hold::end(&api, &record.me, tag).await?,
+            };
+            serde_json::to_value(held)?
+        }
+        ServerCall::ReleaseLines => {
+            let lines = crate::hold::read_as_person(&record.server, record.me.place()).await?;
+            serde_json::to_value(lines)?
         }
         ServerCall::CloudLog { .. } => bail!("the daemon reads the log itself"),
         ServerCall::Run { .. } => bail!("the daemon runs the item itself"),
@@ -2307,7 +2391,10 @@ impl<R: Runtime + 'static> Daemon<R> {
         if decided == remote::Restart::Now
             && let Some(again) = self.again.clone()
         {
+            let (world, records) = (self.world.clone(), self.records());
             tokio::spawn(async move {
+                // The leads hear of it first (01M5SNV7H3739PXW73H14XM4B8).
+                tell_leads_restart(&world, &records).await;
                 tokio::time::sleep(RESTART_DELAY).await;
                 if let Err(e) = (again.restart)() {
                     let error = text::daemon_no_restart(&format!("{e:#}"));
@@ -2581,6 +2668,13 @@ impl<R: Runtime + 'static> Daemon<R> {
             .collect()
     }
 
+    /// Tells each lead on this host that the daemon starts again on a new
+    /// riff, with one note for each lead (01M5SNV7H3739PXW73H14XM4B8). It
+    /// gives a line for each lead that it told.
+    pub async fn tell_leads_restart(&self) -> Vec<String> {
+        tell_leads_restart(&self.world, &self.records()).await
+    }
+
     /// Asks for a new start of the daemon with `restart` when it runs an
     /// old riff (`old`) and is idle ([`Status::busy`] is 0,
     /// 01M517BTP6BAGTRBYWPX9GPVE0). It looks at the end of each session
@@ -2596,6 +2690,9 @@ impl<R: Runtime + 'static> Daemon<R> {
             changed.as_mut().enable();
             if self.status().await.busy() == 0 && old() {
                 println!("{}", text::DAEMON_NEW_RIFF);
+                for line in self.tell_leads_restart().await {
+                    println!("{line}");
+                }
                 if let Err(e) = restart() {
                     eprintln!(
                         "riff daemon: {}",
@@ -2829,6 +2926,11 @@ impl<R: Runtime + 'static> Daemon<R> {
                     let line = self.restart_now().await;
                     println!("{line}");
                     say_lines(&out, Ok(vec![line]));
+                }
+                Ok(Ask::Restarting) => {
+                    let lines = self.tell_leads_restart().await;
+                    lines.iter().for_each(|line| println!("{line}"));
+                    say_lines(&out, Ok(lines));
                 }
                 Ok(Ask::Serve { wave }) => {
                     let line = text::daemon_serves(&wave.repo, &wave.host);
@@ -4705,21 +4807,7 @@ mod tests {
 
         /// The [`Start`] of the session `name` of `item`.
         pub(super) fn start(&self, name: &str, item: &str) -> Start {
-            let folder = self.root.path().join("sessions").join(name);
-            let clone = folder.join("clone");
-            std::fs::create_dir_all(&clone).unwrap();
-            Start {
-                session: format!("{name}-session"),
-                item: item.into(),
-                folder,
-                spec: spec(name, &clone),
-                start: "Do it.".into(),
-                values: vec![("GH_TOKEN".into(), "gho_secret1".into())],
-                secrets: vec!["gho_secret1".into()],
-                server: "http://127.0.0.1:1".into(),
-                me: me(name),
-                terminal: false,
-            }
+            start_in(self.root.path(), name, item)
         }
 
         /// Starts `start` as the daemon starts the session of a wave: with
@@ -4770,6 +4858,26 @@ mod tests {
         pub(super) async fn stop(&mut self) {
             let _ = self.stop.take().unwrap().send(());
             (&mut self.served).await.unwrap().unwrap();
+        }
+    }
+
+    /// The [`Start`] of the session `name` of `item`, with its folder in
+    /// `root`.
+    fn start_in(root: &Path, name: &str, item: &str) -> Start {
+        let folder = root.join("sessions").join(name);
+        let clone = folder.join("clone");
+        std::fs::create_dir_all(&clone).unwrap();
+        Start {
+            session: format!("{name}-session"),
+            item: item.into(),
+            folder,
+            spec: spec(name, &clone),
+            start: "Do it.".into(),
+            values: vec![("GH_TOKEN".into(), "gho_secret1".into())],
+            secrets: vec!["gho_secret1".into()],
+            server: "http://127.0.0.1:1".into(),
+            me: me(name),
+            terminal: false,
         }
     }
 
@@ -6684,6 +6792,14 @@ mod tests {
             Box::pin(async move { self.note(format!("chat {}: {body}", record.live.name)) })
         }
 
+        fn note_lead<'a>(
+            &'a self,
+            record: &'a Record,
+            body: &'a str,
+        ) -> crate::wave::BoxFuture<'a, ()> {
+            Box::pin(async move { self.note(format!("note {}: {body}", record.live.name)) })
+        }
+
         fn leave<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, ()> {
             Box::pin(async move { self.note(format!("leave {}", record.live.session)) })
         }
@@ -7921,6 +8037,161 @@ mod tests {
         assert!(lead_in(&session_dir(&here.dir, &name)).await);
     }
 
+    /// Starts the leads `names` on `here`, each with a terminal.
+    async fn leads_on(here: &Here, names: &[&str]) -> Vec<Client> {
+        let mut clients = Vec::new();
+        for name in names {
+            let mut start = here.start(name, "lead");
+            start.terminal = true;
+            clients.push(here.started(start).await.0);
+        }
+        clients
+    }
+
+    /// The notes of the world that tell a lead of the new start of the
+    /// daemon, by the name of the lead.
+    fn restart_notes(server: &Server) -> Vec<String> {
+        server
+            .said()
+            .into_iter()
+            .filter(|s| s.contains(text::LEAD_DAEMON_STARTS_AGAIN))
+            .map(|s| s.split(':').next().unwrap().to_owned())
+            .collect()
+    }
+
+    /// 01M5SNV7H3739PXW73H14XM4B8: `riff update` tells each lead on the
+    /// host first, one note for each, and then starts the daemon again
+    /// on the new riff.
+    #[tokio::test]
+    async fn before_riff_update_starts_the_daemon_again_each_lead_on_the_host_gets_one_note() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let _leads = leads_on(&here, &["riff-lead-o-r", "riff-lead-o-s"]).await;
+        assert!(restart_notes(&server).is_empty());
+
+        let (check, riff) = check_and_new(&here);
+        // The unit of this test moves the notes behind the restart: a note
+        // that comes after the restart shows as a shorter list.
+        struct Behind(Units, Arc<Server>, Mutex<Vec<String>>);
+        impl ServiceManager for Behind {
+            fn install(&self, unit: &Unit) -> Result<PathBuf> {
+                self.0.install(unit)
+            }
+            fn uninstall(&self) -> Result<Option<PathBuf>> {
+                self.0.uninstall()
+            }
+            fn state(&self) -> Result<String> {
+                self.0.state()
+            }
+            fn installed(&self) -> Result<Option<Unit>> {
+                self.0.installed()
+            }
+            fn rewrite(&self, unit: &Unit) -> Result<PathBuf> {
+                self.0.rewrite(unit)
+            }
+            fn try_restart(&self) -> Result<()> {
+                *self.2.lock().unwrap() = restart_notes(&self.1);
+                self.0.try_restart()
+            }
+            fn main_pid(&self) -> Result<Option<u32>> {
+                self.0.main_pid()
+            }
+        }
+        let units = Behind(Units::of(&check), server.clone(), Mutex::default());
+        let lines = after_update(&units, &riff, &here.dir).await.unwrap();
+        assert_eq!(lines.last().unwrap(), text::DAEMON_STARTS_AGAIN);
+        assert_eq!(units.0.calls(), ["rewrite", "try-restart"]);
+        // At the restart, both leads had their note already.
+        let mut at_restart = units.2.lock().unwrap().clone();
+        at_restart.sort();
+        assert_eq!(at_restart, ["note riff-lead-o-r", "note riff-lead-o-s"]);
+        assert_eq!(restart_notes(&server).len(), 2, "one note for each lead");
+    }
+
+    /// 01M5SNV7H3739PXW73H14XM4B8: the daemon that looks at the end of a
+    /// session tells each lead before it asks for its new start.
+    #[tokio::test]
+    async fn before_the_daemon_asks_for_its_new_start_each_lead_gets_one_note() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let _leads = leads_on(&here, &["riff-lead-o-r", "riff-lead-o-s"]).await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let restart = {
+            let (server, seen) = (server.clone(), seen.clone());
+            move || {
+                *seen.lock().unwrap() = restart_notes(&server);
+                Ok(())
+            }
+        };
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            here.daemon.restart_when_old(|| true, restart),
+        )
+        .await
+        .expect("a daemon with only the leads asks at once");
+        let mut at_restart = seen.lock().unwrap().clone();
+        at_restart.sort();
+        assert_eq!(at_restart, ["note riff-lead-o-r", "note riff-lead-o-s"]);
+        assert_eq!(restart_notes(&server).len(), 2);
+    }
+
+    /// 01M5SNV7H3739PXW73H14XM4B8: `riff daemon restart` tells each lead
+    /// at once, before the wait of the reply and the new start.
+    #[tokio::test]
+    async fn a_daemon_restart_tells_each_lead_before_the_new_start() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let again = {
+            let counted = asked.clone();
+            remote::Again {
+                old: Box::new(|| true),
+                restart: Box::new(move || {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                }),
+            }
+        };
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        let listener = listen(&dir).await.unwrap();
+        riff_client::secrets::mock_store();
+        let fake = Fake::default().with_image(IMAGE);
+        let daemon = Arc::new(
+            Daemon::new(fake, dir.clone())
+                .unwrap()
+                .with_relay(static_riff(&dir))
+                .with_world(world)
+                .with_again(again),
+        );
+        let serving = tokio::spawn(daemon.clone().serve(listener, std::future::pending()));
+        let mut start = start_in(root.path(), "riff-lead-o-r", "lead");
+        start.terminal = true;
+        let mut client = Client::connect(&dir).await.unwrap();
+        client.ask(Ask::Start(Box::new(start))).await.unwrap();
+        assert!(matches!(
+            client.next().await.unwrap(),
+            Some(Say::Started { .. })
+        ));
+        let mut lines = Vec::new();
+        ask_done(&dir, Ask::Restart, |line| lines.push(line.to_owned()))
+            .await
+            .unwrap();
+        until(|| restart_notes(&server).len() == 1).await;
+        assert_eq!(restart_notes(&server), ["note riff-lead-o-r"]);
+        assert_eq!(
+            asked.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "after the wait"
+        );
+        serving.abort();
+    }
+
     /// While the daemon runs a session, `riff update` writes the unit and
     /// starts nothing. The daemon looks, and asks for its new start only
     /// at the end of its last session (01M517BTJ9EV4ZGPYRB6HXJJC9,
@@ -8139,6 +8410,120 @@ mod tests {
             .await;
         }
         hosts
+    }
+
+    /// 01M5SNV75DRFHR26BT2M8243VV, 01M5SNV78EBAYY4SZ891DM2MQG: in a
+    /// container, the lead holds a release and ends its hold through the
+    /// socket of its session, and each session reads the holds and posts
+    /// the note of a step. A work session cannot hold. The note and the
+    /// hold wake the lead of the other repository.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_lead_holds_a_release_through_its_socket_and_a_work_session_cannot() {
+        use crate::hold::Held;
+        use crate::reach::Reach;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, riff_server::router()).await.unwrap();
+        });
+        let server = format!("http://{addr}");
+        let api = riff_client::api::Api::new(&server);
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+
+        let mut sockets = Vec::new();
+        let mut others = Vec::new();
+        for (name, item, repo, user, terminal) in [
+            ("riff-lead-o-r", "lead", format!("a/{REPO}"), "mike", true),
+            (
+                "riff-issue-1-aaaaaaaa",
+                "issue-1",
+                format!("a/{REPO}"),
+                "mike",
+                false,
+            ),
+            (
+                "riff-lead-n-s",
+                "lead",
+                "b/n8behavior/sens-o-matic".into(),
+                "nate",
+                true,
+            ),
+        ] {
+            let place = crate::identity::place_from_text(&repo).unwrap();
+            let mut start = here.start(name, item);
+            start.server = server.clone();
+            start.me = SessionUri::new(
+                riff_core::name::Who::new(user, Some(&start.session)).unwrap(),
+                place.clone(),
+            );
+            start.terminal = terminal;
+            api.register(&start.me).await.unwrap();
+            if terminal {
+                let person = SessionUri::new(riff_core::name::Who::new(user, None).unwrap(), place);
+                api.lead(&person, &start.session).await.unwrap();
+            }
+            let me = start.me.clone();
+            let (client, name) = here.started(start).await;
+            drop(client);
+            let reach = Reach::Daemon(session_dir(&here.dir, &name).join(SOCKET));
+            if user == "nate" {
+                others.push(me);
+            } else {
+                sockets.push(reach);
+            }
+        }
+        let worker = sockets.pop().unwrap();
+        let lead = sockets.pop().unwrap();
+        let other = others.pop().unwrap();
+
+        // A work session reads the holds and posts a note, and cannot hold.
+        let refused = worker.release_hold("v3.3.0", Some("x")).await.unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_HOLD_ONLY_LEAD);
+        let refused = worker.release_hold("v3.3.0", None).await.unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_HOLD_ONLY_LEAD);
+
+        // The lead holds: the lead of the other repository is woken.
+        let held = lead
+            .release_hold("v3.3.0", Some("I migrate a database."))
+            .await;
+        assert_eq!(held.unwrap(), Held::Set { told: 1 });
+        for reach in [&lead, &worker] {
+            let lines = reach.release_lines().await.unwrap();
+            let holds = crate::hold::holds(&lines, "v3.3.0");
+            assert_eq!(holds.len(), 1, "{lines:?}");
+            assert_eq!(holds[0].reason, "I migrate a database.");
+            assert_eq!(holds[0].repo, REPO);
+        }
+        let heard = api
+            .read(&other, &crate::hold::thread(), false)
+            .await
+            .unwrap();
+        assert_eq!(heard.len(), 1);
+        assert!(heard[0].message.body.contains("asks to wait for v3.3.0"));
+
+        // A note of a step wakes the lead of the other repository, and not
+        // the lead of the session that posts it.
+        assert_eq!(lead.release_news("a note").await.unwrap(), 1);
+        assert_eq!(worker.release_news("a note").await.unwrap(), 1);
+        assert_eq!(
+            api.read(&other, &crate::hold::thread(), false)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+
+        // The lead ends its hold once.
+        assert_eq!(
+            lead.release_hold("v3.3.0", None).await.unwrap(),
+            Held::Ended { told: 1 }
+        );
+        assert_eq!(
+            lead.release_hold("v3.3.0", None).await.unwrap(),
+            Held::NoHold
+        );
+        let lines = worker.release_lines().await.unwrap();
+        assert!(crate::hold::holds(&lines, "v3.3.0").is_empty());
     }
 
     /// 01M5GVPNAKAPA596K9361HSAAV: a riff command in the container of the

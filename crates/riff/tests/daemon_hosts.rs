@@ -1280,3 +1280,145 @@ async fn daemon_host_with_host_clones_and_serves_but_runs_no_wave() {
     );
     assert_eq!(clones(tmp.path()).len(), 1);
 }
+
+/// A `gh` whose CI run of `TAG` has the state in the file `dir/state`:
+/// `waiting` (the job `Deploy` waits for a person), `success` or
+/// `failure`. Every other call answers with an empty list. Gives the
+/// variables for a host.
+fn fake_deploy(dir: &Path) -> Vec<(String, String)> {
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let url = "https://github.com/o/r/actions/runs/9";
+    let body = format!(
+        "#!/bin/sh\nstate=$(cat {state} 2>/dev/null)\n\
+         case \"$*\" in\n\
+         'run list'*)\n\
+           if [ \"$state\" = waiting ]; then status=waiting; conclusion=; else status=completed; conclusion=$state; fi\n\
+           printf '[{{\"databaseId\":9,\"headBranch\":\"{TAG}\",\"headSha\":\"abc\",\"url\":\"{url}\",\"displayTitle\":\"Release\",\"status\":\"%s\",\"conclusion\":\"%s\"}}]\\n' \"$status\" \"$conclusion\" ;;\n\
+         'run view 9 --json jobs')\n\
+           if [ \"$state\" = waiting ]; then job=waiting; conclusion=; else job=completed; conclusion=$state; fi\n\
+           printf '{{\"jobs\":[{{\"name\":\"Deploy\",\"status\":\"%s\",\"conclusion\":\"%s\",\"startedAt\":\"\"}}]}}\\n' \"$job\" \"$conclusion\" ;;\n\
+         *) echo '[]' ;;\n\
+         esac\n",
+        state = dir.join("state").display()
+    );
+    isolated::write_program(bin.join("gh"), body);
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    vec![("PATH".into(), path)]
+}
+
+/// 01M5SNV75DRFHR26BT2M8243VV: the watch of the daemon gives the lead of
+/// another repository one note when the job `Deploy` waits, one when it
+/// passes and one when it fails, with a real riff-server. The lead of the
+/// release gets its own message, and none of the notes.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
+    let tmp = tempfile::tempdir().unwrap();
+    let extra = fake_deploy(tmp.path());
+    let r = riff_env(300, 300, &extra).await;
+    // The watch fetches the main clone: it needs an origin.
+    let bare = tmp.path().join("origin.git");
+    let git = |dir: &Path, args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &r.main.display().to_string(),
+            "origin.git",
+        ],
+    );
+    git(
+        &r.main,
+        &["remote", "add", "origin", &bare.display().to_string()],
+    );
+    // The second lead of the riff: bob, in another repository.
+    let other: SessionUri = "riff://bob@b/n8behavior/sens-o-matic?session=b1"
+        .parse()
+        .unwrap();
+    r.api(&other).register(&other).await.unwrap();
+    crate::common::name_lead(&r.server.api("bob", None), &other).await;
+
+    let repo = r.lead.place().repo_text();
+    let dir = r.host("a").dir();
+    let state = tmp.path().join("state");
+    let lead = |word: &str| format!("The deploy of {TAG} {word}");
+    let heard = || async {
+        let api = r.api(&other);
+        match api.read(&other, &riff::hold::thread(), true).await {
+            Ok(read) => read.into_iter().map(|m| m.message.body).collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    let expect =
+        |step: riff::hold::Step| riff::text::release_note(step, TAG, &riff::hold::by(&repo));
+    let watch = || {
+        let op = riff::watches::Op::Deploy {
+            tag: TAG.to_owned(),
+            stale: None,
+        };
+        riff::watches::Watches::new(&dir)
+            .register(&repo, op, riff::daemon::now_ms())
+            .unwrap();
+    };
+
+    // The job waits: the lead and the other lead hear it once.
+    std::fs::write(&state, "waiting").unwrap();
+    watch();
+    until("the note of the wait", || async {
+        (heard().await.len() == 1).then_some(())
+    })
+    .await;
+    assert_eq!(heard().await, [expect(riff::hold::Step::Waits)]);
+    until("the message to the lead", || async {
+        (!r.messages(&lead("waits for a person")).await.is_empty()).then_some(())
+    })
+    .await;
+
+    // The job passes: one more note, and the watch goes.
+    std::fs::write(&state, "success").unwrap();
+    until("the note of the pass", || async {
+        (heard().await.len() == 2).then_some(())
+    })
+    .await;
+    assert_eq!(
+        heard().await,
+        [
+            expect(riff::hold::Step::Waits),
+            expect(riff::hold::Step::Deployed)
+        ]
+    );
+    until("the message of the pass", || async {
+        (!r.messages(&lead("passed")).await.is_empty()).then_some(())
+    })
+    .await;
+
+    // Another deploy fails: one more note.
+    std::fs::write(&state, "failure").unwrap();
+    watch();
+    until("the note of the failure", || async {
+        (heard().await.len() == 3).then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
+    assert_eq!(
+        heard().await,
+        [
+            expect(riff::hold::Step::Waits),
+            expect(riff::hold::Step::Deployed),
+            expect(riff::hold::Step::DeployFailed)
+        ],
+        "one note for each step"
+    );
+    assert_eq!(r.messages(&lead("passed")).await.len(), 1);
+    assert_eq!(r.messages(&lead("failed")).await.len(), 1);
+}

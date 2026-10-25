@@ -81,6 +81,7 @@
 //! | `Bash(/opt/riff/riff wave end *)` | allow | lead | session | the same, in a container |
 //! | `Bash(/opt/riff/riff release status)` | allow | lead | session | the state of the release cycle, in a container |
 //! | `Bash(/opt/riff/riff release cut *)` | allow | lead | session | the release pull request, in a container |
+//! | `Bash(/opt/riff/riff release hold *)` | allow | lead | session | the hold of a release by a lead in a critical place, in a container (01M5SNV7KZRDBRC3NM2E5W92KS) |
 //! | `Bash(gh pr create *)` | allow | worker | project, session | open the pull request |
 //! | `Bash(gh pr merge --auto --squash *)` | allow | worker | project, session | turn on auto-merge |
 //! | `Bash(gh pr comment *)` | allow | worker, verifier | project | write a comment on a pull request |
@@ -326,6 +327,7 @@ pub const TABLE: &[Row] = {
         allow("Bash(/opt/riff/riff wave end *)", &[Lead], &[Session]),
         allow("Bash(/opt/riff/riff release status)", &[Lead], &[Session]),
         allow("Bash(/opt/riff/riff release cut *)", &[Lead], &[Session]),
+        allow("Bash(/opt/riff/riff release hold *)", &[Lead], &[Session]),
         allow("Bash(gh pr create *)", &[Worker], &[Project, Session]),
         allow(
             "Bash(gh pr merge --auto --squash *)",
@@ -1625,6 +1627,9 @@ mod tests {
         for step in [
             "/opt/riff/riff release status",
             "/opt/riff/riff release cut 3.3.0",
+            // 01M5SNV7KZRDBRC3NM2E5W92KS
+            "/opt/riff/riff release hold v3.3.0 A demo runs.",
+            "/opt/riff/riff release hold v3.3.0 --end",
         ] {
             assert!(session.allow.iter().any(|r| matches(r, step)), "{step}");
         }

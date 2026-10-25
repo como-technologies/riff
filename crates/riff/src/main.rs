@@ -220,8 +220,9 @@ enum Command {
     /// another session of its user with `--session`, for example a
     /// session that is gone or that does not answer. Then the next
     /// session can claim the item. The subcommands make a release of
-    /// riff: cut, publish, status, approve, check, retry and rollback.
-    /// They need the table [release] in riff.toml.
+    /// riff: cut, publish, status, approve, hold, check, retry and rollback.
+    /// They need the table [release] in riff.toml, but hold: the lead of
+    /// another repository holds a release.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Release {
         /// The thread. The default is your repository thread.
@@ -935,9 +936,35 @@ enum ReleaseCommand {
     /// commit and the run, and a person answers yes or no. On yes, it
     /// pauses the whole riff, which tells each other lead, then approves.
     /// The lead asks no yes or no.
+    ///
+    /// It refuses while a lead holds the version (riff release hold).
+    /// A person in a plain terminal passes --over-holds to approve all
+    /// the same.
     Approve {
         /// The release tag, for example v3.3.0.
         tag: String,
+        /// Approve although a lead holds the version. Only a person in a
+        /// plain terminal may use it: each agent session gets a refusal.
+        #[arg(long)]
+        over_holds: bool,
+    },
+    /// Ask the riff to wait for a release, or end your hold
+    ///
+    /// For the lead of a repository in a critical place, for example a
+    /// migration. Each other lead hears of the hold. riff release status
+    /// shows it, and riff release approve refuses while it stands. End
+    /// your hold with --end when you can go on. Only a lead may hold. Each
+    /// lead holds a version one time: a second hold replaces its reason.
+    /// It needs no [release] in riff.toml.
+    Hold {
+        /// The release tag, for example v3.3.0.
+        tag: String,
+        /// Why the riff must wait, in one line for a person.
+        #[arg(required_unless_present = "end", conflicts_with = "end")]
+        reason: Option<String>,
+        /// End your hold on the release.
+        #[arg(long)]
+        end: bool,
     },
     /// Do the checks after the deploy of a release
     ///
@@ -2981,7 +3008,38 @@ async fn watch_started(reach: &Reach, here: &std::path::Path, op: riff::watches:
     }
 }
 
-/// `riff release cut`, `publish`, `status`, `approve`, `check`, `retry`
+/// Tells each other lead of the riff of the step `step` of the release
+/// `tag` (01M5SNV75DRFHR26BT2M8243VV). A fault does not undo the step: it
+/// is a line on stderr. With other leads, one line says how many.
+async fn tell_other_leads(
+    reach: &Reach,
+    here: &std::path::Path,
+    step: riff::hold::Step,
+    tag: &str,
+) {
+    let told = async {
+        let by = riff::hold::by(&identity::place(here)?.repo_text());
+        reach
+            .release_news(&text::release_note(step, tag, &by))
+            .await
+    };
+    match told.await {
+        Ok(0) => {}
+        Ok(leads) => println!("{}", text::release_leads_told(leads)),
+        Err(e) => eprintln!("{}", text::release_leads_not_told(&format!("{e:#}"))),
+    }
+}
+
+/// The holds on `tag` that stand now (01M5SNV78EBAYY4SZ891DM2MQG).
+async fn holds_on(reach: &Reach, tag: &str) -> Result<Vec<riff::hold::Hold>> {
+    let lines = reach
+        .release_lines()
+        .await
+        .context("cannot read the holds of the release")?;
+    Ok(riff::hold::holds(&lines, tag))
+}
+
+/// `riff release cut`, `publish`, `status`, `approve`, `hold`, `check`, `retry`
 /// and `rollback` (01M58B0HZYMAK1B2AJMWKHCXG0 to
 /// 01M58B0JSQMWNCMSNX19536XT8, 01M58KMKR33P1FSCFDQRZ56A8P to
 /// 01M58KMMP9FKRFYX58ESVRSZQX).
@@ -2989,7 +3047,11 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
     use riff::cycle::{self, Approved, Checked, Forge as _};
     use riff::watches::{Op, Stale};
     let here = identity::working_dir()?;
-    riff::release_config::require(&here)?;
+    // The hold is for the lead of another repository, and that
+    // repository has no release cycle (01M5SSXJNW7CR0E1EE6G4KNFJ4).
+    if !matches!(command, ReleaseCommand::Hold { .. }) {
+        riff::release_config::require(&here)?;
+    }
     let refuse = |command: &str, why: cycle::Refusal| -> ! {
         eprintln!("{}", text::release_refused(command, why));
         std::process::exit(1)
@@ -3044,6 +3106,8 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             if let Err(e) = told.await {
                 eprintln!("riff: cannot post the chat line of the cut: {e:#}");
             }
+            let step = riff::hold::Step::Cut { number: cut.number };
+            tell_other_leads(reach, &here, step, &cycle::tag(version)).await;
             let op = Op::Pull {
                 tag: cycle::tag(version),
                 number: cut.number,
@@ -3096,6 +3160,8 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 Ok(_) => println!("riff told the riff in riff chat."),
                 Err(e) => eprintln!("riff: cannot post the chat line to the owner: {e:#}"),
             }
+            let published = cycle::tag(cycle::tag_version(tag)?);
+            tell_other_leads(reach, &here, riff::hold::Step::Published, &published).await;
             let op = Op::Deploy {
                 tag: cycle::tag(cycle::tag_version(tag)?),
                 stale: None,
@@ -3108,9 +3174,22 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
         }
         ReleaseCommand::Status => {
             let forge = forge()?;
-            print!("{}", cycle::render_status(&cycle::status(&forge)?));
+            let mut status = cycle::status(&forge)?;
+            match reach.release_lines().await {
+                Ok(lines) => {
+                    for tag in cycle::status_tags(&status) {
+                        for hold in riff::hold::holds(&lines, &tag) {
+                            if !status.holds.contains(&hold) {
+                                status.holds.push(hold);
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("{}", text::release_holds_unread(&format!("{e:#}"))),
+            }
+            print!("{}", cycle::render_status(&status));
         }
-        ReleaseCommand::Approve { tag } => {
+        ReleaseCommand::Approve { tag, over_holds } => {
             let first = release_caller(server, false).await;
             let caller = if first.person_step().is_some() && !first.worker {
                 release_caller(server, true).await
@@ -3126,6 +3205,9 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                         refuse("approve", why)
                     }
                     Some(_) => refuse("approve", cycle::Refusal::Agent),
+                }
+                if *over_holds {
+                    refuse("approve --over-holds", cycle::Refusal::Agent);
                 }
                 let roster = reach.roster().await?;
                 let me = roster.user.clone();
@@ -3150,6 +3232,11 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     );
                     return Ok(());
                 };
+                let holds = holds_on(reach, &tag).await?;
+                if !holds.is_empty() {
+                    eprintln!("{}", text::release_held(&tag, &holds));
+                    std::process::exit(1);
+                }
                 println!("{}", reach.pause_riff().await?);
                 cycle::approve_run_said(&forge, &run, seq).with_context(|| {
                     format!(
@@ -3163,6 +3250,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     run.tag, run.url
                 );
                 watch_started(reach, &here, approved(&run)).await;
+                tell_other_leads(reach, &here, riff::hold::Step::Approved, &run.tag).await;
                 println!(
                     "next: the lead runs riff release check {} after the deploy",
                     run.tag
@@ -3171,7 +3259,23 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             }
             let forge = forge()?;
             let answer = &mut std::io::stdin().lock();
-            match cycle::approve(&forge, tag, answer, &mut std::io::stdout())? {
+            let holds = holds_on(reach, &cycle::tag(cycle::tag_version(tag)?)).await?;
+            let done = cycle::approve(
+                &forge,
+                tag,
+                &holds,
+                *over_holds,
+                answer,
+                &mut std::io::stdout(),
+            )?;
+            match done {
+                Approved::Held(holds) => {
+                    eprintln!(
+                        "{}",
+                        text::release_held(&cycle::tag(cycle::tag_version(tag)?), &holds)
+                    );
+                    std::process::exit(1);
+                }
                 Approved::NoRun => println!(
                     "No CI run of {tag} waits for the environment production. riff changed nothing."
                 ),
@@ -3189,6 +3293,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     })?;
                     println!("Approved: the deploy of {} runs: {}", run.tag, run.url);
                     watch_started(reach, &here, approved(&run)).await;
+                    tell_other_leads(reach, &here, riff::hold::Step::Approved, &run.tag).await;
                     println!(
                         "next: the lead runs riff release check {} after the deploy",
                         run.tag
@@ -3210,6 +3315,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                         deploy.url
                     );
                     resume_after_check(reach).await;
+                    tell_other_leads(reach, &here, riff::hold::Step::NotDeployed, tag).await;
                 }
                 Checked::Ran {
                     lines,
@@ -3222,6 +3328,11 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                         println!("riff closed the release issue #{issue}.");
                         resume_after_check(reach).await;
                     }
+                    let step = match passed {
+                        true => riff::hold::Step::Checked,
+                        false => riff::hold::Step::CheckFailed,
+                    };
+                    tell_other_leads(reach, &here, step, tag).await;
                 }
             }
             next(&forge, tag);
@@ -3242,6 +3353,18 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             };
             watch_started(reach, &here, op).await;
             println!("next: a person runs riff release approve {tag} in a terminal");
+        }
+        ReleaseCommand::Hold { tag, reason, end } => {
+            if let Some(why) = release_caller(server, true).await.hold_step() {
+                refuse("hold", why);
+            }
+            let tag = cycle::tag(cycle::tag_version(tag)?);
+            let reason = reason.as_deref().filter(|_| !end);
+            if reason.is_some_and(|r| r.trim().is_empty()) {
+                anyhow::bail!(text::RELEASE_HOLD_NO_REASON);
+            }
+            let held = reach.release_hold(&tag, reason).await?;
+            println!("{}", text::release_hold_done(&tag, &held));
         }
         ReleaseCommand::Test { tag, host } => {
             if let Some(why) = release_caller(server, false).await.test_step() {
@@ -3278,6 +3401,13 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 }),
             };
             watch_started(reach, &here, op).await;
+            tell_other_leads(
+                reach,
+                &here,
+                riff::hold::Step::RolledBack,
+                &cycle::tag(done.to),
+            )
+            .await;
             println!(
                 "next: a person runs riff release approve {} in a terminal",
                 cycle::tag(done.to)

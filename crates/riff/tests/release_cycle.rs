@@ -192,17 +192,29 @@ impl Machine {
     /// `riff ARGS` in the clone, with the fake `gh` first in `PATH`, and
     /// `vars` in its environment.
     async fn run(&self, vars: &[(&str, &str)], args: &[&str], stdin: &str) -> Output {
+        self.run_as("mike", &self.clone(), vars, args, stdin).await
+    }
+
+    /// [`Machine::run`] as the user `user` in the folder `dir`.
+    async fn run_as(
+        &self,
+        user: &str,
+        dir: &Path,
+        vars: &[(&str, &str)],
+        args: &[&str],
+        stdin: &str,
+    ) -> Output {
         let path = format!(
             "{}:{}",
             self.bin().display(),
             std::env::var("PATH").unwrap()
         );
-        crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
+        crate::common::sign_in(&self.server, &self.env.riff_home(), user);
         let mut cmd = self.env.riff();
         cmd.args(args)
-            .current_dir(self.clone())
+            .current_dir(dir)
             .env("RIFF_SERVER", &*self.server)
-            .env("RIFF_USER", "mike")
+            .env("RIFF_USER", user)
             .env("RIFF_HOST", "thelio")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("PATH", path)
@@ -1216,6 +1228,14 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         "#### Know what wakes the lead",
         "`watches.json`",
         "sequenceDiagram",
+        // 01M5SNV75DRFHR26BT2M8243VV, 01M5SNV78EBAYY4SZ891DM2MQG: what the
+        // other leads hear, and the hold of a lead.
+        "#### Know what the other leads hear",
+        "| Step | The note comes from | The other leads hear |",
+        "riff told 1 other lead of this step.",
+        "#### Hold a release",
+        "| Hold |",
+        "H -- \"a lead holds: riff release hold\"",
     ] {
         assert!(cycle.contains(text), "{text} in The release cycle");
     }
@@ -1231,6 +1251,16 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         (
             "#### Check the release after the deploy",
             "riff release check v3.3.0",
+            &cycle,
+        ),
+        (
+            "#### Hold a release",
+            "riff release hold v3.3.0 --end",
+            &cycle,
+        ),
+        (
+            "#### Hold a release",
+            "riff release approve v3.3.0 --over-holds",
             &cycle,
         ),
         (
@@ -1300,6 +1330,15 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         .collect();
     assert!(commands.len() >= 9, "{commands:?}");
     book::each_is_real(&commands);
+    // The hold with a reason has quotes: it is real when its first words are.
+    let hold = section(&cycle, "#### Hold a release");
+    assert!(
+        book::commands_in(&hold)
+            .iter()
+            .any(|c| c.starts_with("riff release hold v3.3.0 \"")),
+        "{hold}"
+    );
+    book::each_is_real(&["riff release hold v3.3.0 REASON".to_owned()]);
     // Start a Riff links the owner to the human gates.
     let start = book::part("start-a-riff.md", "Approve a release");
     assert!(
@@ -1727,6 +1766,7 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
     let (_dir, socket, seen) = lead_daemon(|call| match call {
         "roster" => roster(),
         "watch" => serde_json::json!("new"),
+        "release_news" => serde_json::json!(0),
         _ => serde_json::Value::Null,
     });
     let out = machine
@@ -1734,11 +1774,22 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
         .await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stderr), "");
-    assert_eq!(names(&seen), ["roster", "chat_post", "watch"]);
+    assert_eq!(
+        names(&seen),
+        ["roster", "chat_post", "release_news", "watch"]
+    );
     let body = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
     assert!(body.contains("riff release v3.3.0 is cut"), "{body}");
+    // 01M5SNV75DRFHR26BT2M8243VV: the note to the other leads goes through the socket.
+    let note = seen.lock().unwrap()[2]["body"].as_str().unwrap().to_owned();
+    assert!(
+        note.contains(
+            "the lead of como-technologies/riff cut the release v3.3.0: pull request #1140"
+        ),
+        "{note}"
+    );
     // The watch goes through the daemon of the host (01M5RGCW5NCKQYA61RM63914TX).
-    let op = seen.lock().unwrap()[2]["op"].clone();
+    let op = seen.lock().unwrap()[3]["op"].clone();
     assert_eq!(
         op,
         serde_json::json!({"kind": "pull", "tag": "v3.3.0", "number": 1140})
@@ -1756,6 +1807,7 @@ async fn publish_in_the_lead_container_tells_the_chat_through_the_socket() {
     let (_dir, socket, seen) = lead_daemon(|call| match call {
         "roster" => roster(),
         "watch" => serde_json::json!("new"),
+        "release_news" => serde_json::json!(0),
         _ => serde_json::Value::Null,
     });
     let out = machine
@@ -1767,11 +1819,14 @@ async fn publish_in_the_lead_container_tells_the_chat_through_the_socket() {
         "{}",
         text(&out.stdout)
     );
-    assert_eq!(names(&seen), ["roster", "chat_post", "watch"]);
+    assert_eq!(
+        names(&seen),
+        ["roster", "chat_post", "release_news", "watch"]
+    );
     let body = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
     assert!(body.contains("riff release v3.3.0 is published"), "{body}");
     assert!(!body.contains("Its deploy waits"), "{body}");
-    let op = seen.lock().unwrap()[2]["op"].clone();
+    let op = seen.lock().unwrap()[3]["op"].clone();
     assert_eq!(op, serde_json::json!({"kind": "deploy", "tag": "v3.3.0"}));
 }
 
@@ -1796,8 +1851,10 @@ async fn approve_in_the_lead_container_reads_and_pauses_through_the_socket() {
     let (_dir, socket, seen) = lead_daemon(move |call| match call {
         "roster" => roster(),
         "chat_read" => chat.clone(),
+        "release_lines" => serde_json::json!([]),
         "pause_riff" => serde_json::json!("The riff is paused now."),
         "watch" => serde_json::json!("new"),
+        "release_news" => serde_json::json!(0),
         other => panic!("{other}"),
     });
     let out = machine
@@ -1809,8 +1866,18 @@ async fn approve_in_the_lead_container_reads_and_pauses_through_the_socket() {
         "{}",
         text(&out.stdout)
     );
-    assert_eq!(names(&seen), ["roster", "chat_read", "pause_riff", "watch"]);
-    let op = seen.lock().unwrap()[3]["op"].clone();
+    assert_eq!(
+        names(&seen),
+        [
+            "roster",
+            "chat_read",
+            "release_lines",
+            "pause_riff",
+            "watch",
+            "release_news"
+        ]
+    );
+    let op = seen.lock().unwrap()[4]["op"].clone();
     assert_eq!(
         op,
         serde_json::json!({
@@ -1907,5 +1974,485 @@ async fn a_cut_with_no_daemon_that_serves_the_repository_says_that_the_lead_gets
     assert!(
         stderr.contains("the lead gets no message when it ends"),
         "{stderr}"
+    );
+}
+
+// --- The other leads of the riff (#1453, 01M5SNV75DRFHR26BT2M8243VV) ---
+
+use riff::hold::Step;
+use riff_core::name::SessionUri;
+
+/// The note of `step` for `tag`, from the lead of como-technologies/riff.
+fn note(step: Step, tag: &str) -> String {
+    riff::text::release_note(step, tag, "the lead of como-technologies/riff")
+}
+
+impl Machine {
+    /// A clone of the second repository of the riff, `n8behavior/sens-o-matic`.
+    fn other_clone(&self) -> PathBuf {
+        let clone = self.root.path().join("other");
+        let origin = self.root.path().join("n8behavior/sens-o-matic.git");
+        if clone.join(".git").exists() {
+            return clone;
+        }
+        std::fs::create_dir_all(&clone).unwrap();
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "-q", "--bare", "-b", "main"]);
+        git(&clone, &["init", "-q", "-b", "main"]);
+        git(
+            &clone,
+            &["remote", "add", "origin", &origin.to_string_lossy()],
+        );
+        clone
+    }
+
+    /// The lead of bob in `n8behavior/sens-o-matic`, on the riff-server of
+    /// this machine: the second lead of the riff.
+    async fn other_lead(&self) -> SessionUri {
+        let me: SessionUri = "riff://bob@thelio/n8behavior/sens-o-matic?session=b1"
+            .parse()
+            .unwrap();
+        crate::common::api_of(&self.server, &me)
+            .register(&me)
+            .await
+            .unwrap();
+        let person = crate::common::person_of(&me);
+        crate::common::name_lead(&crate::common::api_of(&self.server, &person), &me).await;
+        me
+    }
+
+    /// The lead of mike in `como-technologies/riff`: the session `s1` of
+    /// [`LEAD`].
+    fn first_lead(&self) -> SessionUri {
+        "riff://mike@thelio/como-technologies/riff?session=s1"
+            .parse()
+            .unwrap()
+    }
+
+    /// The bodies of the messages in the thread `release` that `lead` has
+    /// not read, and marks them read.
+    async fn heard(&self, lead: &SessionUri) -> Vec<String> {
+        let api = crate::common::api_of(&self.server, lead);
+        match api.read(lead, &riff::hold::thread(), false).await {
+            Ok(messages) => messages.into_iter().map(|m| m.message.body).collect(),
+            Err(e) => {
+                let missing = e
+                    .downcast_ref::<riff_client::api::Refusal>()
+                    .is_some_and(|r| r.status == reqwest::StatusCode::NOT_FOUND);
+                assert!(missing, "{e:#}");
+                Vec::new()
+            }
+        }
+    }
+}
+
+/// 01M5SNV75DRFHR26BT2M8243VV: the cut gives the lead of the other
+/// repository one note, with the version, the step and what comes next
+/// for it. The lead that cuts hears no note: it runs the step.
+#[tokio::test]
+async fn the_cut_gives_the_other_lead_one_note() {
+    let machine = Machine::new().await;
+    machine.serve();
+    machine.name_lead(&LEAD).await;
+    let other = machine.other_lead().await;
+    let out = machine.ok(&LEAD, &["release", "cut", "3.3.0"]).await;
+    assert!(
+        out.contains("riff told 1 other lead of this step.\n"),
+        "{out}"
+    );
+    assert_eq!(
+        machine.heard(&other).await,
+        [note(Step::Cut { number: 1140 }, "v3.3.0")]
+    );
+    assert!(machine.heard(&machine.first_lead()).await.is_empty());
+    assert!(
+        machine.heard(&other).await.is_empty(),
+        "one note, read once"
+    );
+}
+
+/// 01M5SNV75DRFHR26BT2M8243VV: the publish and the approval each give the
+/// other lead one note.
+#[tokio::test]
+async fn the_publish_and_the_approval_give_the_other_lead_one_note_each() {
+    let machine = lead_with_a_waiting_run().await;
+    machine.serve();
+    let other = machine.other_lead().await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    assert_eq!(
+        machine.heard(&other).await,
+        [note(Step::Published, "v3.3.0")]
+    );
+
+    machine.ok(&[], &["resume", "--riff"]).await;
+    let out = machine
+        .run(&[], &["release", "approve", "v3.3.0"], "yes\n")
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stdout).contains("riff told 1 other lead of this step.\n"),
+        "{}",
+        text(&out.stdout)
+    );
+    assert_eq!(
+        machine.heard(&other).await,
+        [riff::text::release_note(
+            Step::Approved,
+            "v3.3.0",
+            "the lead of como-technologies/riff"
+        )]
+    );
+}
+
+/// 01M5SNV75DRFHR26BT2M8243VV: a note wakes each other lead, and not the
+/// lead of the user and the repository that runs the step, also when a
+/// person runs it.
+#[tokio::test]
+async fn a_note_wakes_each_other_lead_and_not_the_lead_that_runs_the_step() {
+    let machine = Machine::new().await;
+    machine.name_lead(&LEAD).await;
+    let (first, other) = (machine.first_lead(), machine.other_lead().await);
+    let woken = |woken: Vec<SessionUri>| {
+        woken
+            .iter()
+            .map(|s| s.who().to_string())
+            .collect::<Vec<_>>()
+    };
+    // The lead of the first repository runs the step.
+    let api = crate::common::api_of(&machine.server, &first);
+    let by_lead = riff::hold::tell_leads(&api, &first, true, "a")
+        .await
+        .unwrap();
+    assert_eq!(woken(by_lead), [other.who().to_string()]);
+    // The person of that lead runs it: the lead is still not woken.
+    let person = crate::common::person_of(&first);
+    let api = crate::common::api_of(&machine.server, &person);
+    let by_person = riff::hold::tell_leads(&api, &person, true, "b")
+        .await
+        .unwrap();
+    assert_eq!(woken(by_person), [other.who().to_string()]);
+    // The daemon tells one lead on its host, as the person of the lead.
+    let api = crate::common::api_of(&machine.server, &person);
+    let session = other.who().session().unwrap();
+    let told = riff::hold::tell_session(&api, &person, session, "d")
+        .await
+        .unwrap();
+    assert_eq!(woken(told), [other.who().to_string()]);
+    // Without the skip, both leads hear it, but not the sender.
+    let by_other = riff::hold::tell_leads(
+        &crate::common::api_of(&machine.server, &other),
+        &other,
+        false,
+        "c",
+    )
+    .await
+    .unwrap();
+    assert_eq!(woken(by_other), [first.who().to_string()]);
+}
+
+/// 01M5SNV75DRFHR26BT2M8243VV: the check gives the other lead one note,
+/// whatever its result: the checks passed, or the deploy had failed.
+#[tokio::test]
+async fn the_check_gives_the_other_lead_one_note() {
+    let machine = Machine::new().await;
+    let tag = this_tag();
+    machine.fake_gh(&deployed(&tag, "success"));
+    machine.shared_cloud();
+    machine.name_lead(&LEAD).await;
+    let other = machine.other_lead().await;
+    machine.ok(&LEAD, &["pause", "--riff"]).await;
+    machine.ok(&LEAD, &["release", "check", &tag]).await;
+    assert_eq!(machine.heard(&other).await, [note(Step::Checked, &tag)]);
+
+    // After a failed deploy.
+    let failed = Machine::new().await;
+    failed.shared_cloud();
+    git(
+        &failed.clone(),
+        &["tag", "-a", "v3.3.0", "-m", "Release v3.3.0"],
+    );
+    git(&failed.clone(), &["push", "-q", "origin", "v3.3.0"]);
+    failed.fake_gh(&format!(
+        "{}\n'release list'*) printf '%s\\n' '[{{\"tagName\":\"v3.3.0\"}},{{\"tagName\":\"v3.2.0\"}}]' ;;\n'issue list'*) printf '%s\\n' '[{{\"number\":7,\"title\":\"Release v3.3.0\",\"state\":\"OPEN\",\"comments\":[]}}]' ;;",
+        deployed("v3.3.0", "failure")
+    ));
+    failed.name_lead(&LEAD).await;
+    let other = failed.other_lead().await;
+    failed.ok(&LEAD, &["release", "check", "v3.3.0"]).await;
+    assert_eq!(
+        failed.heard(&other).await,
+        [note(Step::NotDeployed, "v3.3.0")]
+    );
+}
+
+/// 01M5SNV75DRFHR26BT2M8243VV: a rollback gives the other lead one note.
+#[tokio::test]
+async fn the_rollback_gives_the_other_lead_one_note() {
+    let machine = Machine::new().await;
+    machine.fake_gh(&deployed("v3.2.0", "success"));
+    machine.name_lead(&LEAD).await;
+    machine.serve();
+    let other = machine.other_lead().await;
+    machine.ok(&LEAD, &["release", "rollback", "v3.0.0"]).await;
+    assert_eq!(
+        machine.heard(&other).await,
+        [note(Step::RolledBack, "v3.0.0")]
+    );
+}
+
+// --- The hold of a lead (#1453, 01M5SNV78EBAYY4SZ891DM2MQG) ---
+
+const REASON: &str = "I migrate a database.";
+
+/// The hold that the other lead of these tests has.
+fn the_hold() -> riff::hold::Hold {
+    riff::hold::Hold {
+        user: "bob".into(),
+        repo: "n8behavior/sens-o-matic".into(),
+        reason: REASON.into(),
+    }
+}
+
+impl Machine {
+    /// The other lead holds `v3.3.0` with its own command, in its own
+    /// clone.
+    async fn other_holds(&self, extra: &[&str]) -> Output {
+        let mut args = vec!["release", "hold", "v3.3.0"];
+        args.extend(extra);
+        self.run_as(
+            "bob",
+            &self.other_clone(),
+            &[("RIFF_SESSION", "b1")],
+            &args,
+            "",
+        )
+        .await
+    }
+}
+
+/// 01M5SNV78EBAYY4SZ891DM2MQG, 01M5SNV7BC5J58WRZRJ5HS4NSJ: a hold of the
+/// other lead wakes the lead of the release, and shows in
+/// `riff release status` until the lead of the hold ends it.
+#[tokio::test]
+async fn a_hold_wakes_the_lead_of_the_release_and_shows_in_the_status_until_it_ends() {
+    let machine = lead_with_a_waiting_run().await;
+    let other = machine.other_lead().await;
+    let first = machine.first_lead();
+
+    let out = machine.other_holds(&[REASON]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "You hold v3.3.0. riff told 1 lead. next: riff release hold v3.3.0 --end when you can \
+         go on\n"
+    );
+    assert_eq!(
+        machine.heard(&first).await,
+        [riff::hold::hold_body(
+            "n8behavior/sens-o-matic",
+            "v3.3.0",
+            REASON
+        )]
+    );
+    let status = machine.ok(&LEAD, &["release", "status"]).await;
+    assert!(
+        status.contains(&format!("hold: {}\nrelease: v3.3.0", the_hold().line())),
+        "{status}"
+    );
+
+    // A second hold replaces the reason: the status shows one hold.
+    let out = machine.other_holds(&["I migrate two databases."]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let status = machine.ok(&LEAD, &["release", "status"]).await;
+    assert_eq!(status.matches("hold: ").count(), 1, "{status}");
+    assert!(status.contains("I migrate two databases."), "{status}");
+
+    // The end: the lead of the release hears it, and the status shows no hold.
+    let out = machine.other_holds(&["--end"]).await;
+    assert_eq!(
+        text(&out.stdout),
+        "You end your hold on v3.3.0. riff told 1 lead. next: go on with your work\n"
+    );
+    // The status reads as the person: it keeps the unread notes of the
+    // lead, the second hold and the end.
+    let status = machine.ok(&LEAD, &["release", "status"]).await;
+    assert!(!status.contains("hold:"), "{status}");
+    let unread = machine.heard(&first).await;
+    assert_eq!(unread.len(), 2, "{unread:?}");
+    assert!(unread[0].contains("I migrate two databases."), "{unread:?}");
+    assert!(unread[1].contains("ends its wait for v3.3.0"), "{unread:?}");
+    // A second end changes nothing.
+    let out = machine.other_holds(&["--end"]).await;
+    assert_eq!(
+        text(&out.stdout),
+        "You have no hold on v3.3.0. riff changed nothing. next: riff release status\n"
+    );
+    // The lead of the hold hears none of its own messages.
+    assert!(machine.heard(&other).await.is_empty());
+}
+
+/// 01M5SNV7E775DRY9QY60E8JPJR: `riff release approve` of a person refuses
+/// while a hold stands, names the reason and approves nothing. With
+/// `--over-holds` it shows the hold above the question and approves.
+#[tokio::test]
+async fn approve_refuses_while_a_hold_stands_and_over_holds_approves() {
+    let machine = lead_with_a_waiting_run().await;
+    machine.other_lead().await;
+    machine.ok(&[], &["resume", "--riff"]).await;
+    machine.other_holds(&[REASON]).await;
+
+    let out = machine
+        .run(&[], &["release", "approve", "v3.3.0"], "yes\n")
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        text(&out.stderr),
+        format!("{}\n", riff::text::release_held("v3.3.0", &[the_hold()]))
+    );
+    assert!(
+        text(&out.stderr).contains("asks to wait: I migrate a database."),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(text(&out.stdout), "", "no question while a hold stands");
+    assert!(!machine.log().contains("-X POST"), "{}", machine.log());
+
+    let out = machine
+        .run(
+            &[],
+            &["release", "approve", "v3.3.0", "--over-holds"],
+            "yes\n",
+        )
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert!(
+        shown.contains(&format!(
+            "hold: {}\nApprove the deploy of v3.3.0 to production? (yes or no) ",
+            the_hold().line()
+        )),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("Approved: the deploy of v3.3.0 runs"),
+        "{shown}"
+    );
+    assert!(machine.log().contains("-X POST"), "{}", machine.log());
+}
+
+/// 01M5SNV7E775DRY9QY60E8JPJR: the lead of the owner refuses while a hold
+/// stands, never passes `--over-holds`, and approves when the hold ends.
+#[tokio::test]
+async fn the_lead_of_the_owner_waits_for_the_end_of_a_hold_and_never_passes_over_holds() {
+    let machine = lead_with_a_waiting_run().await;
+    machine.other_lead().await;
+    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
+    machine.say("mike", "approve v3.3.0").await;
+    machine.other_holds(&[REASON]).await;
+
+    let out = machine.lead_approves().await;
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        text(&out.stderr),
+        format!("{}\n", riff::text::release_held("v3.3.0", &[the_hold()]))
+    );
+    let out = machine
+        .run(&LEAD, &["release", "approve", "v3.3.0", "--over-holds"], "")
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        text(&out.stderr),
+        format!(
+            "{}\n",
+            riff::text::release_refused("approve --over-holds", Refusal::Agent)
+        )
+    );
+    assert!(!machine.log().contains("-X POST"), "{}", machine.log());
+
+    machine.other_holds(&["--end"]).await;
+    let out = machine.lead_approves().await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(machine.log().contains("-X POST"), "{}", machine.log());
+}
+
+/// 01M5SNV78EBAYY4SZ891DM2MQG: only a lead holds. A worker, a container
+/// session that is no lead, a session that is no lead and a person refuse;
+/// a hold needs a reason; `--end` takes none.
+#[tokio::test]
+async fn hold_refuses_each_session_that_is_no_lead_and_needs_a_reason() {
+    let machine = Machine::new().await;
+    machine.other_lead().await;
+    let socket = machine.no_daemon();
+    for (vars, refusal) in [
+        (
+            &[("RIFF_WORKER", "1"), ("RIFF_SESSION", "w1")][..],
+            Refusal::Worker,
+        ),
+        (
+            &[("RIFF_SOCKET", socket.as_str()), ("RIFF_SESSION", "c1")],
+            Refusal::Container,
+        ),
+        (&[("RIFF_SESSION", "s2")], Refusal::NotTheLead),
+        (&[], Refusal::NotTheLead),
+    ] {
+        let out = machine
+            .run(vars, &["release", "hold", "v3.3.0", "x"], "")
+            .await;
+        assert_eq!(out.status.code(), Some(1), "{vars:?}");
+        assert_eq!(
+            text(&out.stderr),
+            format!("{}\n", riff::text::release_refused("hold", refusal)),
+            "{vars:?}"
+        );
+    }
+    // A member's lead may hold: a hold needs no role.
+    assert!(machine.other_holds(&["x"]).await.status.success());
+    let blank = machine.other_holds(&["  "]).await;
+    assert_eq!(
+        text(&blank.stderr),
+        format!("Error: {}\n", riff::text::RELEASE_HOLD_NO_REASON)
+    );
+    let none = machine.other_holds(&[]).await;
+    assert_eq!(none.status.code(), Some(2), "a hold needs a reason");
+    let both = machine.other_holds(&["x", "--end"]).await;
+    assert_eq!(both.status.code(), Some(2), "--end takes no reason");
+    let bad = machine
+        .run_as(
+            "bob",
+            &machine.other_clone(),
+            &[("RIFF_SESSION", "b1")],
+            &["release", "hold", "3.3", "x"],
+            "",
+        )
+        .await;
+    assert!(!bad.status.success());
+}
+
+/// 01M5SNV78EBAYY4SZ891DM2MQG: in the container of the lead, the hold goes
+/// through the socket of the riff daemon.
+#[tokio::test]
+async fn hold_in_the_lead_container_goes_through_the_socket() {
+    let machine = Machine::new().await;
+    let (_dir, socket, seen) = lead_daemon(|call| match call {
+        "release_hold" => serde_json::json!({"Set": {"told": 2}}),
+        other => panic!("{other}"),
+    });
+    let out = machine
+        .run(
+            &lead_vars(&socket),
+            &["release", "hold", "v3.3.0", "A demo runs."],
+            "",
+        )
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "You hold v3.3.0. riff told 2 leads. next: riff release hold v3.3.0 --end when you can \
+         go on\n"
+    );
+    assert_eq!(names(&seen), ["release_hold"]);
+    assert_eq!(
+        seen.lock().unwrap()[0],
+        serde_json::json!({"call": "release_hold", "tag": "v3.3.0", "reason": "A demo runs."})
     );
 }

@@ -59,6 +59,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::ServerCall;
+use crate::hold::{Held, Line};
 use crate::lifecycle::Source;
 use crate::watches::{Op, Registered, Watches};
 use crate::{identity, session_relay, text};
@@ -405,6 +406,56 @@ impl Reach {
                 Watches::new(&dir).register(repo, op, crate::daemon::now_ms())
             }
             Reach::Daemon(socket) => ask(socket, &ServerCall::Watch { op }).await,
+        }
+    }
+
+    /// Posts `body` as the note of a step of a release to each other lead
+    /// of the riff, and gives the number of leads told
+    /// ([`crate::hold::tell_leads`], 01M5SNV75DRFHR26BT2M8243VV).
+    pub async fn release_news(&self, body: &str) -> Result<usize> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                Ok(crate::hold::tell_leads(&api, &me, true, body).await?.len())
+            }
+            Reach::Daemon(socket) => {
+                let call = ServerCall::ReleaseNews {
+                    body: body.to_owned(),
+                };
+                ask(socket, &call).await
+            }
+        }
+    }
+
+    /// Holds the version `tag` as the lead of this session, or ends its
+    /// hold when `reason` is `None` (01M5SNV78EBAYY4SZ891DM2MQG).
+    pub async fn release_hold(&self, tag: &str, reason: Option<&str>) -> Result<Held> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                match reason {
+                    Some(reason) => crate::hold::hold(&api, &me, tag, reason).await,
+                    None => crate::hold::end(&api, &me, tag).await,
+                }
+            }
+            Reach::Daemon(socket) => {
+                let call = ServerCall::ReleaseHold {
+                    tag: tag.to_owned(),
+                    reason: reason.map(str::to_owned),
+                };
+                ask(socket, &call).await
+            }
+        }
+    }
+
+    /// Each message of the thread `release`, for the holds.
+    pub async fn release_lines(&self) -> Result<Vec<Line>> {
+        match self {
+            Reach::Direct(server) => {
+                let place = identity::place(&identity::working_dir()?)?;
+                crate::hold::read_as_person(server, &place).await
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::ReleaseLines).await,
         }
     }
 
