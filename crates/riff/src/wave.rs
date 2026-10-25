@@ -1692,7 +1692,8 @@ impl Live {
         let folder = run::sessions_dir()?.join(format!("{item}-{}", run::short(session)));
         let clone = folder.join("clone");
         let claude = folder.join("claude");
-        let auto = crate::permissions::Trust::of(me.place().repo(), &wave.server);
+        let sources = session_image::merged_sources(&wave.main)?;
+        let auto = crate::permissions::Trust::of(me.place().repo(), &wave.server, &sources);
         run::claude_folder(&claude, &clone, &host.home.join(".claude.json"), &auto)?;
         let (main, common) = run::main_clone(&wave.main)?;
         let start = match work {

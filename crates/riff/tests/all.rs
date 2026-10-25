@@ -53,6 +53,7 @@ mod network;
 mod no_sign_in;
 mod one_user;
 mod owner;
+mod package_sources;
 mod pause;
 mod pr;
 mod pull_limit;

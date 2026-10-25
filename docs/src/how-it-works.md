@@ -4339,8 +4339,8 @@ gives each session that the daemon starts two Claude Code settings:
 | `autoMode.environment` | `"$defaults"`, then the places of riff work | Auto mode blocks fewer normal steps. `"$defaults"` keeps the entries of Claude Code. |
 
 The places of riff work are the GitHub owner of the repository, the
-repository of riff with its releases, `crates.io`, `ghcr.io` and the
-riff server of the session.
+repository of riff with its releases, `ghcr.io`, the riff server of the
+session and the package sources of the repository.
 
 The session gets them in the `settings.json` of its own Claude folder.
 The lead in a container gets each missing one at each start. Claude
@@ -4352,3 +4352,33 @@ See the entries that auto mode uses in your own session:
 ```sh
 claude auto-mode config
 ```
+
+#### Trust a package source
+
+The package sources come from `riff.toml` of the repository. riff adds
+none by itself: with no `sources`, auto mode trusts no package source.
+The key `sources` of the table `[session]` is a list of hosts. riff
+reads it from the default branch of `origin`, as it reads the session
+image (see
+[Only a merged pin counts](development.md#only-a-merged-pin-counts)).
+So a change counts after its merge, and a session cannot trust a source
+with an edit in its own clone.
+
+```mermaid
+flowchart LR
+    T["riff.toml on origin/main<br/>[session] sources"] -- "riff run, riff lead start,<br/>the wave" --> E["autoMode.environment<br/>one entry for each host"]
+    E --> S["settings.json of the session"]
+```
+
+Add the hosts of the package index of your repository, for example
+PyPI. Run this where `riff.toml` has no `sources` yet:
+
+```sh
+sed -i '/^\[session\]/a sources = ["pypi.org", "files.pythonhosted.org"]' riff.toml
+```
+
+Then merge the change by a pull request. The next session that riff
+starts trusts the hosts. A session that runs keeps its entries.
+
+A host is a name such as `pypi.org`: no `https://`, no path. When
+`sources` has other text, riff starts no session and names the text.
