@@ -926,8 +926,9 @@ async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
 }
 
 /// 01M5R56GN3DC09GAPAF69GENEZ (#1404): `waves.json` and `served.json` of
-/// riff 4.1.1 have no default branch. The daemon of a later riff reads
-/// both, serves the repository, and keeps the session that 4.1.1 gave it.
+/// an older build have no default branch. The daemon of a later build
+/// reads both, serves the repository, and keeps the session that the older
+/// build gave it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_daemon_with_the_served_file_of_an_older_build_serves_host() {
     let server = start_server().await;

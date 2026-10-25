@@ -2368,8 +2368,8 @@ async fn the_look_of_a_repository_with_the_default_branch_master_reads_master() 
     machine.ok(None, &["wave", "stop"]).await;
 }
 
-/// 01M5R56GN3DC09GAPAF69GENEZ (#1404): `waves.json` of riff 4.1.1 has no
-/// default branch. The daemon of a later riff starts with that file, runs
+/// 01M5R56GN3DC09GAPAF69GENEZ (#1404): `waves.json` of an older build has
+/// no default branch. The daemon of a later build starts with that file, runs
 /// the wave, and its look reads the full check of `commits/master`, the
 /// default branch that the forge gives. `riff wave run` reads the old file
 /// too, and the file that it writes has no branch.
@@ -2388,7 +2388,7 @@ async fn a_daemon_with_a_waves_file_of_an_older_build_runs_the_wave_and_the_look
     )
     .unwrap();
 
-    // The daemon stops, and the file of riff 4.1.1 is there when it starts.
+    // The daemon stops, and the file of an older build is there when it starts.
     machine.stop_daemon().await;
     let waves = machine.env.riff_home().join("daemon/waves.json");
     let old = serde_json::json!({"como-technologies/riff": {

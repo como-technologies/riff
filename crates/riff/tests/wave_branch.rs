@@ -84,8 +84,8 @@ fn a_default_branch_that_does_not_read_is_the_error_of_the_look_and_the_next_loo
     assert_eq!(look().unwrap().branch, "master");
 }
 
-/// A wave of riff 4.1.1: `waves.json` had four fields. The daemon of
-/// 4.2.0 reads it, and the wave it writes has the same four.
+/// A wave of an older build: `waves.json` had four fields. The daemon of a
+/// later build reads it, and the wave it writes has the same four.
 #[test]
 fn a_waves_file_of_an_older_build_is_valid_and_the_daemon_writes_no_branch() {
     let dir = tempfile::tempdir().unwrap();

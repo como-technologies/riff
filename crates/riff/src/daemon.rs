@@ -5606,7 +5606,7 @@ mod tests {
     }
 
     /// 01M5R56GN3DC09GAPAF69GENEZ (#1404): the live record of a wave job
-    /// that riff 4.1.1 wrote has a wave of four fields, with no default
+    /// that an older build wrote has a wave of four fields, with no default
     /// branch. A new daemon reads it and takes the session up: its job
     /// goes on with the keep-alive of its claim. It does not remove the
     /// record as one that does not parse.
@@ -5648,7 +5648,7 @@ mod tests {
             takeover: false,
             interrupt: false,
         };
-        // The wave of riff 4.1.1 had these four fields, and no more.
+        // The wave of an older build had these four fields, and no more.
         let old = serde_json::to_value(&record).unwrap();
         let mut fields: Vec<&str> = old["job"]["wave"]
             .as_object()
