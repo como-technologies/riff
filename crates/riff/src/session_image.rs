@@ -63,23 +63,34 @@
 //! ```
 //!
 //! The image of this repository comes from the folder `deploy/session/`
-//! (01M4Z7SP5TGJ3DMWFGE5SN68N1). The workflow "Session image" builds it
-//! on each change of that folder, and pushes it to
-//! `ghcr.io/como-technologies/riff-session` with the tag `tree-ID`. ID is
-//! the git tree of the folder. When that tag is there, the workflow
-//! builds nothing (01M4Z7SP7Y19BQ8QTV1T6AE8SR). It fails when [`FILE`]
-//! does not pin the digest of that tag (01M4Z7SP9YZ5JCHA8YD8R5A4Y9). So a
-//! change of the Dockerfile and the change of its pin go in one pull
+//! (01M4Z7SP5TGJ3DMWFGE5SN68N1). It builds `FROM` the `riff-rust` of
+//! `deploy/rust/`, and that builds `FROM` the `riff-base` of
+//! `deploy/base/` (01M5SNTDW9WVEXZW5D0TKGBA8Z). Each `FROM` pins the
+//! digest of the image before it. The workflow "Session image" builds the
+//! three in order on each change of a folder, and pushes each to its
+//! package on ghcr.io with the tag `tree-ID`. ID is the git tree of the
+//! folder. When that tag is there, the workflow builds nothing
+//! (01M4Z7SP7Y19BQ8QTV1T6AE8SR). It fails at the first `FROM` that pins
+//! another digest, and when [`FILE`] does not pin the digest of the last
+//! image (01M5SNTDZ95BRDCPQEKDTYD2PY, 01M4Z7SP9YZ5JCHA8YD8R5A4Y9). So a
+//! change of a Dockerfile and the change of its pin go in one pull
 //! request.
 //!
 //! ```mermaid
 //! flowchart LR
-//!     D["deploy/session/Dockerfile"] -- "each change" --> W["workflow Session image"]
-//!     W -- "push tree-ID" --> G[("ghcr.io/como-technologies/riff-session")]
-//!     G -- "its digest" --> T["riff.toml: [session] image"]
-//!     T -- "the merged pin" --> R["riff run, riff lead start, the waves"]
-//!     R -- "podman pull NAME@sha256:…" --> G
+//!     B["deploy/base/Dockerfile"] -- "each change" --> W["workflow Session image"]
+//!     R["deploy/rust/Dockerfile<br/>FROM riff-base@sha256:…"] --> W
+//!     D["deploy/session/Dockerfile<br/>FROM riff-rust@sha256:…"] --> W
+//!     W -- "push tree-ID" --> G[("ghcr.io/como-technologies/<br/>riff-base, riff-rust, riff-session")]
+//!     G -- "the digest of riff-session" --> T["riff.toml: [session] image"]
+//!     T -- "the merged pin" --> U["riff run, riff lead start, the waves"]
+//!     U -- "podman pull NAME@sha256:…" --> G
 //! ```
+//!
+//! A new project pins `riff-base`, not the image of this repository:
+//! [`base`] reads it from the `FROM` of `deploy/rust/Dockerfile`, and `riff
+//! init` writes it in `riff.toml` (01M5SNTPEP41NMSP3SEKR7KVB0). The
+//! project adds its toolchain in an image of its own.
 //!
 //! ```
 //! use riff::session_image::Image;

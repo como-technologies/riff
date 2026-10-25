@@ -1543,7 +1543,9 @@ fn start_a_riff_tells_how_to_get_ready_and_how_to_check_only() {
             "riff init",
             "riff init --check",
             "riff init --check",
-            "riff init"
+            "riff init",
+            // "Build the image of a project": pin an image in the first pull request.
+            "riff init --yes --image \"$IMAGE@$DIGEST\""
         ]
     );
     each_is_real(&init);

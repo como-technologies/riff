@@ -1,52 +1,33 @@
-# The session image of this repository (01M4Z60B7JF80TMP6FHQ04MHCZ).
-# It has claude, git, gh, CA certificates, a POSIX shell and the Rust
-# toolchain of rust-toolchain.toml. It also has the tools of
-# `just check`, and a D-Bus with GNOME Keyring for the tests. It holds
-# no riff and no secret.
+# The session image of this repository (01M5SNTDW9WVEXZW5D0TKGBA8Z).
+# It is riff-rust, which is riff-base with Rust, and it adds what only
+# riff needs: rust-analyzer, the tools of `just check`, and a D-Bus with
+# GNOME Keyring for the tests. riff-base has claude, git, gh, CA
+# certificates and a POSIX shell. The image holds no riff and no secret.
 #
 # The workflow "Session image" builds it on each change of this folder,
-# and riff.toml pins its digest (01M4Z7SP7Y19BQ8QTV1T6AE8SR). See
-# "Change the session image" in docs/src/development.md.
-FROM docker.io/library/debian:bookworm-slim
+# checks that the FROM below pins the riff-rust of deploy/rust/, and
+# checks that riff.toml pins this image (01M5SNTDZ95BRDCPQEKDTYD2PY).
+# See "Change the session image" in docs/src/development.md.
+FROM ghcr.io/como-technologies/riff-rust@sha256:eb0c0920825ef44e72e4183bb8a4a93a5add5a09422a4f3e73ec61cde19ccfe1
 
-# The channel and the components of rust-toolchain.toml. A test checks
-# that they agree (01M4Z7SP5TGJ3DMWFGE5SN68N1). The other versions are
-# the versions on pangolin on 2026-10-15.
-ARG RUST_CHANNEL=1.95
-ARG CLAUDE_VERSION=2.1.300
-ARG GH_VERSION=2.102.0
+# The versions are the versions on pangolin on 2026-10-15.
 ARG JUST_VERSION=1.58.0
 ARG MDBOOK_VERSION=0.5.4
 ARG MDBOOK_MERMAID_VERSION=0.17.1
 ARG MDBOOK_GRUVBOX_VERSION=1.2.0
 ARG SCCACHE_VERSION=0.18.0
 
-# procps: ps, for crates/hygiene/ci-lock.sh. gcc and make: the C code
-# of aws-lc-sys. dbus-bin, dbus-daemon and gnome-keyring: the private
-# keyring of the tests of the keyring store (01M556QPPRSQ91HDED128G2X7G).
+# dbus-bin, dbus-daemon and gnome-keyring: the private keyring of the
+# tests of the keyring store (01M556QPPRSQ91HDED128G2X7G).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash ca-certificates curl dbus-bin dbus-daemon gcc git gnome-keyring \
-      libc6-dev make pkg-config procps \
+      dbus-bin dbus-daemon gnome-keyring \
  && rm -rf /var/lib/apt/lists/*
 
-# The toolchain is in the image, with no write for the session. The
-# session gives cargo its own CARGO_HOME (a named volume).
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
-RUN curl -fsSL https://sh.rustup.rs \
-    | sh -s -- -y --no-modify-path --profile minimal \
-        --default-toolchain "$RUST_CHANNEL" \
-        --component rustfmt --component clippy --component rust-analyzer \
+# The component of rust-toolchain.toml that riff-rust does not have. The
+# toolchain stays in the image, with no write for the session.
+RUN rustup component add rust-analyzer \
  && chmod -R a+rX "$RUSTUP_HOME" "$CARGO_HOME"
-
-# gh goes to /usr/bin/gh: the git config of a person names
-# `!/usr/bin/gh auth git-credential` as the credential helper.
-RUN curl -fsSLo /tmp/gh.deb \
-      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb" \
- && dpkg -i /tmp/gh.deb \
- && rm /tmp/gh.deb
 
 # The tools of `just check`, from their releases.
 RUN set -eu; \
@@ -61,15 +42,6 @@ RUN set -eu; \
     get sccache "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz"
 RUN cargo install --locked --root /usr/local "mdbook-gruvbox@${MDBOOK_GRUVBOX_VERSION}" \
  && rm -rf "$CARGO_HOME/registry" "$CARGO_HOME/git"
-
-# claude, from the installer of Anthropic, at a fixed version. The
-# session does not update it.
-RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_VERSION" \
- && install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude \
- && rm -rf /root/.local /root/.claude /root/.claude.json
-ENV DISABLE_AUTOUPDATER=1 \
-    GH_NO_UPDATE_NOTIFIER=1 \
-    GH_PROMPT_DISABLED=1
 
 # /tmp of the container is its own: a write goes to the copy-on-write
 # layer, and goes when the container ends.

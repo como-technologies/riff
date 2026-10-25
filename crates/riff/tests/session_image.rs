@@ -100,9 +100,10 @@ fn workflow_job(workflow: &str, name: &str) -> String {
 /// The components that the `--component` flags of the Dockerfile at
 /// `path` install.
 fn installed(path: &str) -> Vec<String> {
-    read(path)
-        .split("--component ")
+    let text = read(path);
+    text.split("--component ")
         .skip(1)
+        .chain(text.split("rustup component add ").skip(1))
         .map(|rest| rest.split_whitespace().next().unwrap().to_owned())
         .collect()
 }
@@ -519,4 +520,37 @@ fn the_gate_runs_the_tests_in_the_session_image() {
         justfile.contains("\nsession-test *ARGS:\n    deploy/session-test.sh {{ARGS}}\n"),
         "{justfile}"
     );
+}
+
+/// 01M5SNTDW9WVEXZW5D0TKGBA8Z: the session image of this repository
+/// builds `FROM` a digest of `riff-rust`, and adds only what riff needs:
+/// it installs no `claude`, no `gh` and no Rust.
+#[test]
+fn the_session_image_builds_from_a_digest_of_the_rust_image_and_adds_only_what_riff_needs() {
+    let dockerfile = read("deploy/session/Dockerfile");
+    let from: Vec<&str> = dockerfile
+        .lines()
+        .filter(|line| line.starts_with("FROM "))
+        .collect();
+    assert_eq!(from.len(), 1, "{from:?}");
+    let rust: Image = from[0].trim_start_matches("FROM ").parse().unwrap();
+    assert_eq!(rust.name(), "ghcr.io/como-technologies/riff-rust");
+    assert_ne!(
+        rust.digest(),
+        format!("sha256:{}", "0".repeat(64)),
+        "deploy/session/Dockerfile pins the placeholder, not the digest of a build"
+    );
+    for part in [
+        "claude.ai/install.sh",
+        "gh_${GH_VERSION}",
+        "sh.rustup.rs",
+        "ARG CLAUDE_VERSION",
+        "ARG GH_VERSION",
+        "ARG RUST_CHANNEL",
+    ] {
+        assert!(
+            !dockerfile.contains(part),
+            "deploy/session/Dockerfile has {part:?}: riff-base and riff-rust have it"
+        );
+    }
 }

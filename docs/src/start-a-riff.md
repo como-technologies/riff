@@ -382,7 +382,7 @@ each step that is done already:
 | Step | What `riff init` does |
 |---|---|
 | Merge settings | It allows auto-merge and squash merge. |
-| `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins the session image of the riff that you run. |
+| `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins `riff-base`, the image of riff with `claude`, `git` and `gh` and no language. |
 | The Backlog | It makes the `Backlog`. |
 | The first wave | When the repository has no open wave, it makes `Wave 1`. |
 | The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks `riff/verify` and the checks that your CI runs on a pull request. A repository whose CI has no check yet gets the check `Gate`. |
@@ -552,19 +552,19 @@ Each repository of the riff has the file `riff.toml` at its root, on
 its default branch. Its key `image` pins the session image. Without
 the file on the default branch of `origin`, `riff lead start` stops
 with the error `riff.toml is not on origin/main`. It starts no lead and
-no wave. The image of riff has `claude`, `git`, `gh` and Rust, so it is
-good for a Rust project. For another toolchain, see
-[Pin an image with another toolchain](#pin-an-image-with-another-toolchain).
+no wave. The base image of riff, `riff-base`, has `claude`, `git` and
+`gh`, and no language. A project adds its toolchain in an image of its
+own: see [Build the image of a project](#build-the-image-of-a-project).
 
 riff sets no cache and no variable of a tool in a session. A project
 that wants a build cache adds the tables `[session.env]` and
 `[session.volumes]` to `riff.toml`: see
 [Set the env and the volumes of a session](development.md#set-the-env-and-the-volumes-of-a-session).
 
-This command writes `riff.toml` with the image of riff:
+This command writes `riff.toml` with `riff-base`:
 
 ```sh
-IMAGE=$(gh api repos/como-technologies/riff/contents/riff.toml --jq .content | base64 -d | sed -n 's/^image = "\(.*\)"$/\1/p')
+IMAGE=$(gh api repos/como-technologies/riff/contents/deploy/rust/Dockerfile --jq .content | base64 -d | sed -n 's/^FROM //p' | head -n 1)
 printf '[session]\nimage = "%s"\n' "$IMAGE" > riff.toml
 ```
 
@@ -573,7 +573,7 @@ the ruleset: after the ruleset, each change needs a pull request.
 
 ```sh
 git add riff.toml
-git commit -m "Pin the session image of riff"
+git commit -m "Pin the session image"
 git push
 ```
 
@@ -769,16 +769,41 @@ new name. When GitHub does not answer, the wave starts no work at that
 look, and `riff daemon status` says why. The wave looks again each
 minute.
 
-### Pin an image with another toolchain
+### Build the image of a project
 
-The session image of riff has `claude`, `git`, `gh` and Rust. A project
-with another toolchain needs an image of its own. Start from the image
-that `riff.toml` pins now, and add the toolchain. The base is Debian,
-and a package that you install is there in each session. Do not add
-riff to the image: riff binds its own binary into each session.
+riff publishes two images that a project builds its session image
+`FROM`:
+
+| Image | What it has | Use it |
+|---|---|---|
+| `riff-base` | Debian, `bash`, CA certificates, `git`, `curl`, `ps`, `gh` and `claude`. No language, no build tool. | For any project. Install your toolchain on it. |
+| `riff-rust` | `riff-base`, the C linker, and one stable Rust with `rustfmt` and `clippy`. | For a Rust project that can use that Rust. |
+
+```mermaid
+flowchart LR
+    B["riff-base<br/>claude, git, gh"] --> R["riff-rust<br/>+ Rust"]
+    B --> P["your image<br/>+ your toolchain"]
+    R --> P
+    P -- "push, then the digest" --> T["riff.toml<br/>pins the digest"]
+```
+
+Your image adds the toolchain of your project to one of them. Do not add
+riff to the image: riff binds its own binary into each session. A
+session cannot write the toolchain folder of the image, so the toolchain
+must be in the image.
+
+These two commands read the digest of each image from `main` of riff.
+You pin a digest, so a tag cannot move under you:
 
 ```sh
-BASE=$(sed -n 's/^image = "\(.*\)"$/\1/p' riff.toml)
+BASE=$(gh api repos/como-technologies/riff/contents/deploy/rust/Dockerfile --jq .content | base64 -d | sed -n 's/^FROM //p' | head -n 1)
+RUST=$(gh api repos/como-technologies/riff/contents/deploy/session/Dockerfile --jq .content | base64 -d | sed -n 's/^FROM //p' | head -n 1)
+```
+
+The notes of each release of riff name the same two digests. Then write
+the Dockerfile. This one is for a project that needs Node:
+
+```sh
 mkdir -p deploy/session
 cat > deploy/session/Dockerfile <<EOF
 FROM $BASE
@@ -786,22 +811,98 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && r
 EOF
 ```
 
-Build the image, try it, and push it to a registry. Put your owner in
-place of `OWNER`:
+A Rust project has two ways. When its CI uses the Rust of `riff-rust`,
+build `FROM riff-rust` and add what the project needs:
 
 ```sh
-IMAGE=ghcr.io/OWNER/session
-podman build -t "$IMAGE:node" deploy/session
-podman run --rm "$IMAGE:node" node --version
-podman login ghcr.io
-podman push --digestfile /tmp/digest "$IMAGE:node"
+mkdir -p deploy/session
+cat > deploy/session/Dockerfile <<EOF
+FROM $RUST
+RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev && rm -rf /var/lib/apt/lists/*
+EOF
 ```
 
-`podman push` writes the digest of the image to `/tmp/digest`. Pin
-that digest in `riff.toml`. riff refuses a tag:
+When its CI pins another Rust, build `FROM riff-base` and install that
+version. Put the version of `rust-toolchain.toml` in place of `1.88`:
 
 ```sh
-printf '[session]\nimage = "%s@%s"\n' "$IMAGE" "$(cat /tmp/digest)" > riff.toml
+mkdir -p deploy/session
+cat > deploy/session/Dockerfile <<EOF
+FROM $BASE
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev make pkg-config && rm -rf /var/lib/apt/lists/*
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:\$PATH
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.88 --component rustfmt --component clippy && chmod -R a+rX /usr/local/rustup /usr/local/cargo
+EOF
+```
+
+Try the image on your machine before you push it:
+
+```sh
+podman build -t localhost/session:test deploy/session
+podman run --rm localhost/session:test claude --version
+```
+
+### Build the image with a workflow
+
+A workflow builds the image on each change of its folder, and pushes it
+to the registry of GitHub. The package name is the repository name
+with `-session`:
+
+```sh
+mkdir -p .github/workflows
+cat > .github/workflows/session-image.yml <<'EOF'
+name: Session image
+on:
+  push:
+    branches: [main]
+    paths: [deploy/session/**]
+  pull_request:
+    paths: [deploy/session/**]
+permissions:
+  contents: read
+  packages: write
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}-session" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: deploy/session
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          provenance: false
+      - run: echo "image = \"$IMAGE@${{ steps.build.outputs.digest }}\"" >> "$GITHUB_STEP_SUMMARY"
+EOF
+```
+
+Merge the Dockerfile and the workflow with a pull request. A pull
+request from a branch of the repository runs the workflow too, so the
+summary of the run shows the line for `riff.toml`. Show it:
+
+```sh
+gh run list --workflow session-image.yml --limit 1
+gh run view RUN_ID
+```
+
+### Pin the image of the project
+
+Put the digest from the summary in `riff.toml`. Put your owner and your
+repository in place of `OWNER` and `REPO`, and the digest in place of
+`DIGEST`. riff refuses a tag:
+
+```sh
+IMAGE=ghcr.io/OWNER/REPO-session
+DIGEST=sha256:DIGEST
+printf '[session]\nimage = "%s@%s"\n' "$IMAGE" "$DIGEST" > riff.toml
 ```
 
 Merge `riff.toml` into the default branch with a pull request: the
@@ -815,6 +916,13 @@ image:
 
 ```sh
 riff init
+```
+
+For a repository that has no `riff.toml` yet, `riff init --image` pins
+the image in the first pull request:
+
+```sh
+riff init --yes --image "$IMAGE@$DIGEST"
 ```
 
 ### Check that each host can pull the image
@@ -869,5 +977,26 @@ once with the fix. It pulls again each minute:
 ```sh
 riff daemon status
 ```
+
+### Build the image again for a new riff-base
+
+riff needs a version of `claude` and of `gh` at least as new as those of
+its `riff-base`. A new release of riff can need newer tools. At the
+first job of a wave of your repository after the update, the daemon
+reads the version of both tools in your image. When one is too old, the
+lead gets one message. It names the tools and the digest of the new
+`riff-base`. File an item for it, and in the item change the `FROM` line
+of the Dockerfile to the new digest:
+
+```sh
+BASE=$(gh api repos/como-technologies/riff/contents/deploy/rust/Dockerfile --jq .content | base64 -d | sed -n 's/^FROM //p' | head -n 1)
+sed -i "s|^FROM .*|FROM $BASE|" deploy/session/Dockerfile
+```
+
+Merge it. The workflow builds the new image. Then pin its digest in
+`riff.toml`, as in
+[Pin the image of the project](#pin-the-image-of-the-project). A
+project that builds `FROM riff-rust` takes the digest of `riff-rust`
+from the notes of the release, in place of `$BASE`.
 
 To learn more, read [How It Works](how-it-works.md).
