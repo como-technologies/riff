@@ -936,9 +936,10 @@ enum ReleaseCommand {
     ///
     /// A person in a plain terminal may approve. The lead of the owner or
     /// of an admin may approve too, when riff chat has a verified message
-    /// of the owner or of an admin, after the publish, that says approve
-    /// or deploy and names the version. Else it refuses. A worker and
-    /// each other agent session may not. It finds the CI run of the tag
+    /// of the owner or of an admin, after the publish or after the line
+    /// that the deploy waits for the approval, that says approve or
+    /// deploy and names the version. Else it refuses. A worker and each
+    /// other agent session may not. It finds the CI run of the tag
     /// that waits for the environment production, shows the tag, the
     /// commit and the run, and a person answers yes or no. On yes, it
     /// pauses the whole riff, which tells each other lead, then approves.
