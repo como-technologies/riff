@@ -41,13 +41,15 @@
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M5NJ87NXF6077Y9W32840BR8, 01M5NJ87YEHHGJBANM7CRYV56Z |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle (its transcript got no write for 5 minutes: [`quiet`]), and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3 |
 //! | The wave | the wave of the repository on the daemon, when none runs: the lead in a container has no rollout ([`crate::wave::ask`]); a failed ask stops no lead | 01M53NGVE839TRH7XB7CDPQNZE, 01M5515CJ7QDJ639VGR7SJTE08 |
 //!
 //! The clone and the Claude folder stay between the starts of the lead:
 //! the lead keeps the history of its conversations, and a dialog of
 //! `claude` that the person answered once. Each start is a new session
-//! of riff-server and of `claude`. The other spec parts are those of a
-//! worker ([`crate::run::spec`]).
+//! of riff-server and of `claude`, but a start again after `riff update`
+//! keeps the session and resumes the conversation. The other spec parts
+//! are those of a worker ([`crate::run::spec`]).
 
 use std::path::{Path, PathBuf};
 
@@ -143,6 +145,48 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// assert!(!spec.env.iter().any(|e| matches!(e, riff::runtime::Env::Value(n, _) if n == "PATH")));
 /// ```
 pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
+    spec_with(facts, repo, "--session-id", start)
+}
+
+/// [`spec`] for a lead that goes on with its conversation: `claude
+/// --resume ID` in place of `claude --session-id ID`
+/// (01M5TC2919TB9XPF42YFNJBP79). The daemon starts the lead again
+/// with it on a new riff ([`again`]). `start` is its first prompt,
+/// [`text::lead_again`].
+///
+/// ```
+/// use riff::run::Facts;
+///
+/// let facts = Facts {
+///     session: "1a2b3c4d-0000-4000-8000-000000000000".into(),
+///     item: "lead".into(),
+///     image: "img".into(),
+///     home: "/home/mike".into(),
+///     user: "mike".into(),
+///     clone: "/d/riff/leads/o-r/clone".into(),
+///     objects: "/src/r/.git/objects".into(),
+///     claude: "/d/riff/leads/o-r/claude".into(),
+///     sign_in: riff::run::ClaudeSignIn::Token,
+///     gitconfig: None,
+///     gh_config: None,
+///     setup: Default::default(),
+/// };
+/// let spec = riff::lead::spec_again(&facts, "o/r", &riff::text::lead_again("o/r"));
+/// assert_eq!(spec.name, "riff-lead-o-r");
+/// assert_eq!(
+///     spec.command[..4],
+///     ["claude", "--resume", facts.session.as_str(), "--dangerously-skip-permissions"]
+/// );
+/// assert!(!spec.command.iter().any(|a| a == "--session-id"));
+/// // The same clone and the same Claude folder: `claude` finds the conversation.
+/// assert_eq!(spec.workdir, facts.clone);
+/// ```
+pub fn spec_again(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
+    spec_with(facts, repo, "--resume", start)
+}
+
+/// [`spec`], with the flag `session_flag` for the session ID of `claude`.
+fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> SessionSpec {
     let mut spec = run::spec(facts);
     spec.name = name_of(repo);
     // The folder `~/.cache` of the container can belong to root, when a
@@ -154,7 +198,7 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
     ));
     spec.command = vec![
         "claude".into(),
-        "--session-id".into(),
+        session_flag.to_owned(),
         facts.session.clone(),
         "--dangerously-skip-permissions".into(),
         start.to_owned(),
@@ -309,6 +353,79 @@ pub async fn stale(runtime: &impl Runtime, name: &str, home: &Path) -> bool {
     matches!(runtime.links(name, &credentials_of(home)).await, Ok(0))
 }
 
+/// True when the lead `name` runs an old riff (01M5TC24PB3YC2CC8BA275WSEN):
+/// the bind of its container at [`daemon::RELAY_BIN`] holds a file that
+/// `riff update` replaced, so in the container the file has no link. The
+/// path on the host holds the new riff. When the runtime cannot say, the
+/// lead is not old.
+pub async fn old(runtime: &impl Runtime, name: &str) -> bool {
+    matches!(
+        runtime.links(name, Path::new(daemon::RELAY_BIN)).await,
+        Ok(0)
+    )
+}
+
+/// True when no turn of the lead of `record` runs, as far as riff can
+/// see: no write to its transcript in `idle`, and its container started
+/// `idle` ago (01M5TC24PB3YC2CC8BA275WSEN). `claude` writes the transcript
+/// at each message and each tool call, so a turn leaves it quiet for a
+/// short time only. A tool call that runs very long, or a lead that thinks
+/// long, counts as idle after `idle`: the wait is a guess, and a wrong
+/// guess costs one turn.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::daemon::Record;
+/// use riff_client::sessions::{Live, Phase};
+///
+/// let dir = tempfile::tempdir()?;
+/// let project = dir.path().join("claude/projects/-d-clone");
+/// std::fs::create_dir_all(&project)?;
+/// let transcript = std::fs::File::create(project.join("s1.jsonl"))?;
+/// let record = Record {
+///     live: Live {
+///         name: "riff-lead-o-r".into(),
+///         session: "s1".into(),
+///         item: "lead".into(),
+///         image: "i".into(),
+///         since_ms: 0,
+///         phase: Phase::Terminal,
+///         last: String::new(),
+///         lead: true,
+///     },
+///     folder: dir.path().to_owned(),
+///     server: "http://127.0.0.1:1".into(),
+///     me: "riff://mike@thelio/o/r?session=s1".parse().unwrap(),
+///     inputs: vec![],
+///     closed: false,
+///     failed: false,
+///     job: None,
+///     terminal: true,
+///     takeover: false,
+///     interrupt: false,
+/// };
+/// let idle = Duration::from_secs(300);
+/// // A write now: a turn runs.
+/// assert!(!riff::lead::quiet(&record, idle));
+/// // The last write was 10 minutes ago: no turn runs.
+/// transcript.set_modified(std::time::SystemTime::now() - Duration::from_secs(600))?;
+/// assert!(riff::lead::quiet(&record, idle));
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn quiet(record: &daemon::Record, idle: std::time::Duration) -> bool {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let written = crate::usage::transcripts_in(&record.folder.join("claude"), &record.live.session)
+        .iter()
+        .filter_map(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok())
+        .max();
+    let started =
+        UNIX_EPOCH + Duration::from_millis(u64::try_from(record.live.since_ms).unwrap_or(0));
+    let last = written.map_or(started, |written| written.max(started));
+    SystemTime::now()
+        .duration_since(last)
+        .is_ok_and(|age| age >= idle)
+}
+
 /// Attaches the terminal of this process to the lead `name` with
 /// `runtime`, until a detach or the end of the lead. A lead with a
 /// stale sign-in gets the line of [`text::lead_sign_in_stale`] first
@@ -446,39 +563,120 @@ async fn launch(
         }
     };
     println!("{}", text::lead_made(&repo, led.replaced.as_ref()));
-    let existing = |p: PathBuf| p.exists().then_some(p);
-    let facts = Facts {
-        session: session.clone(),
-        item: ITEM.into(),
-        image: image.clone(),
-        home: host.home.clone(),
-        user: host.user.clone(),
-        clone,
-        objects: common.join("objects"),
-        claude,
-        sign_in: host.claude.sign_in(),
-        gitconfig: existing(host.home.join(".gitconfig")),
-        gh_config: existing(host.home.join(".config/gh")),
-        setup: merged.setup,
+    let parts = Parts {
+        repo: &repo,
+        host: &host,
+        merged: &merged,
+        folder: &folder,
+        common,
+        server,
+        session: &session,
+        me: &me,
     };
-    let start = daemon::Start {
-        session: session.clone(),
-        item: ITEM.into(),
-        folder,
-        spec: spec(&facts, &repo, start),
-        start: start.to_owned(),
-        values: host.values(),
-        secrets: host.secrets(),
-        server: server.to_owned(),
-        me: me.clone(),
-        terminal: true,
-    };
+    let start = parts.start(spec, start);
     println!("{}", text::lead_starts(&repo, &name_of(&repo), &session));
     if let Err(e) = ask_start(dir, start).await {
         let _ = api.end(&me).await;
         return Err(e);
     }
     Ok(session)
+}
+
+/// What a start of the lead takes from the host and from the repository:
+/// the same for a new lead ([`launch`]) and for a lead that starts again
+/// ([`again`]).
+struct Parts<'a> {
+    /// The repository, as `OWNER/REPO`.
+    repo: &'a str,
+    /// The facts of the host.
+    host: &'a run::Host,
+    /// The image and the setup of the merged `riff.toml`.
+    merged: &'a session_image::Merged,
+    /// The folder of the lead: `clone/` and `claude/`.
+    folder: &'a Path,
+    /// The git dir of the main clone.
+    common: &'a Path,
+    /// The riff-server of the lead.
+    server: &'a str,
+    /// The session ID of the lead.
+    session: &'a str,
+    /// The URI of the session of the lead.
+    me: &'a SessionUri,
+}
+
+impl Parts<'_> {
+    /// The [`daemon::Start`] of the lead, with the spec that `spec`
+    /// makes ([`spec`], or [`spec_again`]) and the first prompt `prompt`.
+    fn start(&self, spec: fn(&Facts, &str, &str) -> SessionSpec, prompt: &str) -> daemon::Start {
+        let host = self.host;
+        let existing = |p: PathBuf| p.exists().then_some(p);
+        let facts = Facts {
+            session: self.session.to_owned(),
+            item: ITEM.into(),
+            image: self.merged.image.to_string(),
+            home: host.home.clone(),
+            user: host.user.clone(),
+            clone: self.folder.join("clone"),
+            objects: self.common.join("objects"),
+            claude: self.folder.join("claude"),
+            sign_in: host.claude.sign_in(),
+            gitconfig: existing(host.home.join(".gitconfig")),
+            gh_config: existing(host.home.join(".config/gh")),
+            setup: self.merged.setup.clone(),
+        };
+        daemon::Start {
+            session: self.session.to_owned(),
+            item: ITEM.into(),
+            folder: self.folder.to_owned(),
+            spec: spec(&facts, self.repo, prompt),
+            start: prompt.to_owned(),
+            values: host.values(),
+            secrets: host.secrets(),
+            server: self.server.to_owned(),
+            me: self.me.clone(),
+            terminal: true,
+        }
+    }
+}
+
+/// The [`daemon::Start`] of the lead of `record` for a start again on the
+/// riff of this daemon (01M5TC2919TB9XPF42YFNJBP79): the same session, the
+/// same clone and the same Claude folder, and `claude --resume ID`
+/// ([`spec_again`]) with the first prompt [`text::lead_again`]. The
+/// host facts, the image and the setup are those of now, as for a new
+/// lead. It makes no clone and no new session on riff-server. It reads
+/// the host, so call it off the async threads.
+///
+/// `wave` gives the main clone of the repository of the lead.
+pub fn again(wave: &crate::wave::Wave, record: &daemon::Record) -> Result<daemon::Start> {
+    let here = wave.place(None)?;
+    let repo = here.repo_text();
+    let (main, common) = run::main_clone(&wave.main)?;
+    let host = run::host_facts(&main).map_err(|fault| match fault {
+        run::HostFault::SignInEnds(_) => anyhow::anyhow!("{}", text::LEAD_NEEDS_TOKEN),
+        fault => fault.into(),
+    })?;
+    needs_token(&host.claude.sign_in())?;
+    let merged = session_image::merged_config(&main, |_| {})?;
+    let sources = session_image::merged_sources(&main)?;
+    let folder = record.folder.clone();
+    run::claude_folder(
+        &folder.join("claude"),
+        &folder.join("clone"),
+        &host.home.join(".claude.json"),
+        &crate::permissions::Trust::of(here.repo(), &record.server, &sources),
+    )?;
+    let parts = Parts {
+        repo: &repo,
+        host: &host,
+        merged: &merged,
+        folder: &folder,
+        common: &common,
+        server: &record.server,
+        session: &record.live.session,
+        me: &record.me,
+    };
+    Ok(parts.start(spec_again, &text::lead_again(&repo)))
 }
 
 /// What the daemon in the folder `dir` does for `riff lead move`
@@ -822,6 +1020,170 @@ mod tests {
         assert!(!stale(&fake, NAME, home.path()).await);
         let _end = lead(&fake).await;
         assert!(!stale(&fake, NAME, home.path()).await);
+    }
+
+    /// The fake runs the lead `NAME` with a bind of the file `riff`, as
+    /// the daemon binds its own riff at [`daemon::RELAY_BIN`].
+    async fn lead_with_riff(fake: &Fake, riff: &Path) -> End {
+        let mut spec = SessionSpec {
+            name: NAME.into(),
+            image: "img".into(),
+            home: "/home/mike".into(),
+            workdir: "/w".into(),
+            binds: vec![crate::runtime::Bind {
+                source: crate::runtime::Source::Path(riff.to_owned()),
+                target: daemon::RELAY_BIN.into(),
+                write: false,
+            }],
+            env: vec![],
+            memory: "8g".into(),
+            cpus: 4,
+            command: vec![],
+        };
+        spec.command = vec!["claude".into()];
+        fake.start_terminal(&spec, &[]).await.unwrap()
+    }
+
+    /// 01M5TC24PB3YC2CC8BA275WSEN
+    #[tokio::test]
+    async fn a_lead_is_old_when_riff_update_replaced_the_riff_that_its_container_binds() {
+        let dir = tempfile::tempdir().unwrap();
+        let riff = dir.path().join("riff");
+        std::fs::write(&riff, "4.4.0").unwrap();
+        let fake = Fake::default().with_image("img");
+        let _end = lead_with_riff(&fake, &riff).await;
+        assert!(!old(&fake, NAME).await);
+        // `riff update` writes a new file and renames it over the old one.
+        let new = dir.path().join("riff.new");
+        std::fs::write(&new, "4.5.0").unwrap();
+        std::fs::rename(&new, &riff).unwrap();
+        assert!(old(&fake, NAME).await);
+        // A new container binds the new file.
+        fake.stop(NAME).await.unwrap();
+        let _again = lead_with_riff(&fake, &riff).await;
+        assert!(!old(&fake, NAME).await);
+    }
+
+    /// 01M5TC24PB3YC2CC8BA275WSEN
+    #[tokio::test]
+    async fn a_lead_that_does_not_run_or_that_the_runtime_cannot_see_is_not_old() {
+        let fake = Fake::default().with_image("img");
+        assert!(!old(&fake, NAME).await);
+        let dir = tempfile::tempdir().unwrap();
+        let riff = dir.path().join("riff");
+        std::fs::write(&riff, "4.4.0").unwrap();
+        // A lead that binds no riff: the runtime has no such file.
+        let _end = lead(&fake).await;
+        assert!(!old(&fake, NAME).await);
+    }
+
+    /// 01M5TC24PB3YC2CC8BA275WSEN
+    #[test]
+    fn a_lead_is_quiet_after_its_transcript_got_no_write_for_the_idle_time() {
+        use std::time::{Duration, SystemTime};
+        let dir = tempfile::tempdir().unwrap();
+        let mut record = record_in(dir.path());
+        let idle = Duration::from_secs(300);
+        let ago = |secs: u64| SystemTime::now() - Duration::from_secs(secs);
+        // No transcript yet: the start of the lead counts.
+        record.live.since_ms = i64::try_from(
+            ago(10)
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap();
+        assert!(!quiet(&record, idle));
+        record.live.since_ms = 0;
+        assert!(quiet(&record, idle));
+        // A transcript of the lead, and one of another session.
+        let project = dir.path().join("claude/projects/-w-clone");
+        std::fs::create_dir_all(&project).unwrap();
+        let own = std::fs::File::create(project.join("s1.jsonl")).unwrap();
+        let other = std::fs::File::create(project.join("s2.jsonl")).unwrap();
+        other.set_modified(ago(0)).unwrap();
+        own.set_modified(ago(600)).unwrap();
+        assert!(
+            quiet(&record, idle),
+            "a write to another session is no turn of this one"
+        );
+        own.set_modified(ago(30)).unwrap();
+        assert!(!quiet(&record, idle));
+        // The start of a lead after its transcript counts as the last write.
+        own.set_modified(ago(600)).unwrap();
+        record.live.since_ms = i64::try_from(
+            ago(20)
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap();
+        assert!(!quiet(&record, idle));
+    }
+
+    /// 01M5TC2919TB9XPF42YFNJBP79
+    #[test]
+    fn the_spec_of_a_lead_that_starts_again_resumes_the_conversation_in_the_same_place() {
+        let facts = Facts {
+            session: "1a2b3c4d-0000-4000-8000-000000000000".into(),
+            item: ITEM.into(),
+            image: "img".into(),
+            home: "/home/mike".into(),
+            user: "mike".into(),
+            clone: "/d/riff/leads/o-r/clone".into(),
+            objects: "/src/r/.git/objects".into(),
+            claude: "/d/riff/leads/o-r/claude".into(),
+            sign_in: run::ClaudeSignIn::Token,
+            gitconfig: None,
+            gh_config: None,
+            setup: Default::default(),
+        };
+        let first = spec(&facts, "o/r", "start");
+        let again = spec_again(&facts, "o/r", "go on");
+        // Only the session flag and the prompt differ.
+        assert_eq!(again.binds, first.binds);
+        assert_eq!(again.env, first.env);
+        assert_eq!(again.workdir, first.workdir);
+        assert_eq!(again.name, first.name);
+        assert_eq!(first.command[1], "--session-id");
+        assert_eq!(
+            again.command,
+            [
+                "claude",
+                "--resume",
+                &facts.session,
+                "--dangerously-skip-permissions",
+                "go on"
+            ]
+        );
+    }
+
+    /// A record of the lead `NAME` with its folder in `dir`.
+    fn record_in(dir: &Path) -> daemon::Record {
+        daemon::Record {
+            live: riff_client::sessions::Live {
+                name: NAME.into(),
+                session: "s1".into(),
+                item: ITEM.into(),
+                image: "img".into(),
+                since_ms: 0,
+                phase: riff_client::sessions::Phase::Terminal,
+                last: String::new(),
+                lead: true,
+            },
+            folder: dir.to_owned(),
+            server: "http://127.0.0.1:1".into(),
+            me: "riff://mike@thelio/como-technologies/riff?session=s1"
+                .parse()
+                .unwrap(),
+            inputs: vec![],
+            closed: false,
+            failed: false,
+            job: None,
+            terminal: true,
+            takeover: false,
+            interrupt: false,
+        }
     }
 
     /// 01M5NJ87NXF6077Y9W32840BR8

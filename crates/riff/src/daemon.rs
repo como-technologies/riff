@@ -303,6 +303,41 @@
 //! riff-server alive, and at its end it ends that session
 //! ([`World::resume`], [`World::leave`]).
 //!
+//! # The lead on a new riff
+//!
+//! A bind of a file keeps the old file, so a lead keeps the riff that it
+//! started with, also after `riff update`. The daemon starts it again
+//! ([`Daemon::leads_again`], 01M5TC24PB3YC2CC8BA275WSEN,
+//! 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3). A new daemon
+//! looks at its start, when it takes up the sessions that run, and each
+//! [`AGAIN_EVERY`]. A lead is old when the file that its container binds
+//! at [`RELAY_BIN`] has no link in the container ([`crate::lead::old`]).
+//! It is idle when its transcript got no write in [`LEAD_IDLE`]
+//! ([`crate::lead::quiet`]): the daemon sees no turn of a lead, because the
+//! relay of a lead relays no event, but each message and each tool call
+//! of a turn writes the transcript. A lead in a turn waits for the next
+//! look.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     L[look: each lead] --> O{old: the bind has no link?}
+//!     O -- no --> N[nothing to do]
+//!     O -- yes --> I{idle: no write to the transcript in 5 minutes?}
+//!     I -- no --> W[wait for the next look]
+//!     I -- yes --> P[make the start: wave, host, image, relay]
+//!     P -- fault --> F[one line in chat, try again at the next look]
+//!     P -- ok --> S[podman stop, no leave]
+//!     S --> R[podman run: claude --resume ID]
+//!     R -- ok --> C[one line in chat: started again]
+//!     R -- 3 faults --> E[leave, one line in chat: riff lead start]
+//! ```
+//!
+//! The new container has the same name, session, clone and Claude folder.
+//! `claude --resume` gives it the conversation back. Its first prompt
+//! ([`text::lead_again`]) tells the lead to start its Monitor again: the
+//! old one ended with the old container. The session of the lead on
+//! riff-server stays, and so does its place as the lead of the person.
+//!
 //! # A takeover
 //!
 //! A person takes over a worker with [`Ask::Takeover`]
@@ -453,6 +488,31 @@ pub const RESTART_DELAY: Duration = Duration::from_secs(5);
 /// ([`Daemon::stale_leads`]).
 pub const STALE_EVERY: Duration = Duration::from_secs(60);
 
+/// How many times the daemon tries to start a lead again after it stopped
+/// the old container ([`Daemon::lead_again`]).
+const LEAD_STARTS: u32 = 3;
+
+/// The wait between two of those tries: podman removes the old container
+/// a moment after its end.
+const LEAD_START_WAIT: Duration = Duration::from_secs(1);
+
+/// The time between two looks of the daemon at the riff of each lead
+/// ([`Daemon::leads_again`]).
+pub const AGAIN_EVERY: Duration = Duration::from_secs(60);
+
+/// A lead is idle when its transcript got no write for this long
+/// ([`crate::lead::quiet`], 01M5TC24PB3YC2CC8BA275WSEN). A turn writes the
+/// transcript at each message and each tool call.
+pub const LEAD_IDLE: Duration = Duration::from_secs(5 * 60);
+
+/// The variable that gives [`LEAD_IDLE`] of a `riff daemon` in
+/// milliseconds. Only a test sets it.
+///
+/// ```
+/// assert_eq!(riff::daemon::LEAD_IDLE_VAR, "RIFF_DAEMON_LEAD_IDLE_MS");
+/// ```
+pub const LEAD_IDLE_VAR: &str = "RIFF_DAEMON_LEAD_IDLE_MS";
+
 /// The first protocol of a relay that takes [`Say::Hold`].
 pub const TAKEOVER_PROTOCOL: u32 = 4;
 
@@ -522,6 +582,14 @@ fn quiet_limit() -> Duration {
         .ok()
         .and_then(|ms| ms.parse().ok())
         .map_or(QUIET_LIMIT, Duration::from_millis)
+}
+
+/// [`LEAD_IDLE`], or the milliseconds of [`LEAD_IDLE_VAR`].
+fn lead_idle() -> Duration {
+    std::env::var(LEAD_IDLE_VAR)
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map_or(LEAD_IDLE, Duration::from_millis)
 }
 
 /// The folder of the daemon in the data folder `data` of riff.
@@ -870,7 +938,7 @@ pub enum Ask {
 
 /// A session to start. It holds the values of the host and the
 /// secrets, so it has no `Debug`: no log shows it.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Start {
     /// The riff session ID.
     pub session: String,
@@ -1627,6 +1695,14 @@ struct Owned {
     notes: mpsc::UnboundedSender<Note>,
     /// A `riff` asked to stop the container.
     stop: Notify,
+    /// Look at the container now: the daemon stopped the container of a lead
+    /// that it took up ([`Daemon::lead_again`]), and does not wait for
+    /// [`LOOK_EVERY`].
+    look: Notify,
+    /// True while the daemon stops the container of a lead to start it again
+    /// on a new riff: the end of the lead does not end its session on
+    /// riff-server ([`Daemon::leads_again`]).
+    renewing: std::sync::atomic::AtomicBool,
     /// The quiet limit of the session moved: the input of `claude`
     /// closed, or the number of its background tasks changed.
     closing: Notify,
@@ -2123,6 +2199,12 @@ pub struct Daemon<R> {
     /// The session of each lead whose stale sign-in the person heard of
     /// in riff chat ([`Daemon::stale_leads`]).
     stale: Mutex<std::collections::BTreeSet<String>>,
+    /// How long the transcript of a lead stays quiet before the lead counts as
+    /// idle ([`LEAD_IDLE`], [`crate::lead::quiet`]).
+    lead_idle: Duration,
+    /// The session of each lead whose start again on the new riff waits, and
+    /// the person heard of it in riff chat ([`Daemon::leads_again`]).
+    again_told: Mutex<std::collections::BTreeSet<String>>,
     /// The session of each lead that lost its network at the restart of the
     /// daemon: the person heard of it in riff chat, and `riff daemon status`
     /// shows it ([`Daemon::recover`]).
@@ -2242,6 +2324,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             pulls: Mutex::new(BTreeMap::new()),
             gcloud: Arc::default(),
             stale: Mutex::default(),
+            lead_idle: lead_idle(),
+            again_told: Mutex::default(),
             lost: Mutex::default(),
             looked: Mutex::default(),
             lookout: Arc::new(crate::watches::Here),
@@ -2262,6 +2346,14 @@ impl<R: Runtime + 'static> Daemon<R> {
     #[must_use]
     pub fn with_grace(mut self, grace: Duration) -> Self {
         self.grace = grace;
+        self
+    }
+
+    /// The daemon that counts a lead as idle after `idle` in place of
+    /// [`LEAD_IDLE`], for a test.
+    #[must_use]
+    pub fn with_lead_idle(mut self, idle: Duration) -> Self {
+        self.lead_idle = idle;
         self
     }
 
@@ -2525,6 +2617,159 @@ impl<R: Runtime + 'static> Daemon<R> {
                 tokio::time::sleep(STALE_EVERY).await;
             }
         });
+    }
+
+    /// Starts each lead that runs an old riff again on the riff of this
+    /// daemon, when the lead is idle (01M5TC24PB3YC2CC8BA275WSEN). A lead
+    /// runs an old riff when `riff update` replaced the file that its
+    /// container binds at [`RELAY_BIN`] ([`crate::lead::old`]). It is idle
+    /// when its transcript got no write in [`LEAD_IDLE`]
+    /// ([`crate::lead::quiet`]): a lead in a turn waits for the next look.
+    /// It gives one line for each lead that it started again, or that it
+    /// first told the person of: the line is in riff chat too.
+    pub async fn leads_again(self: &Arc<Self>) -> Vec<String> {
+        let mut lines = Vec::new();
+        for record in self.records().into_iter().filter(|r| r.terminal) {
+            if crate::lead::old(&self.runtime, &record.live.name).await
+                && crate::lead::quiet(&record, self.lead_idle)
+                && let Some(line) = self.lead_again(record).await
+            {
+                lines.push(line);
+            }
+        }
+        lines
+    }
+
+    /// Looks at the riff of each lead each [`AGAIN_EVERY`], from now until
+    /// the daemon stops ([`Daemon::leads_again`]).
+    pub fn leads_again_every(self: &Arc<Self>) {
+        let daemon = self.clone();
+        tokio::spawn(async move {
+            loop {
+                for line in daemon.leads_again().await {
+                    println!("riff daemon: {line}");
+                }
+                tokio::time::sleep(AGAIN_EVERY).await;
+            }
+        });
+    }
+
+    /// Starts the lead of `record` again: the same session, the same
+    /// clone and Claude folder, `claude --resume` of its conversation, and
+    /// the bind of the riff of this daemon (01M5TC2919TB9XPF42YFNJBP79).
+    ///
+    /// ```mermaid
+    /// sequenceDiagram
+    ///     participant D as riff daemon
+    ///     participant C as lead container
+    ///     participant S as riff-server
+    ///     D->>D: the start: host facts, image, relay, spec
+    ///     D->>C: podman stop
+    ///     Note over D,S: the lead keeps its session: no leave
+    ///     D->>C: podman run: claude --resume ID
+    ///     D->>S: chat: the lead started again
+    /// ```
+    ///
+    /// All that can fail comes before the stop: the wave of the
+    /// repository for its main clone, the facts of the host, the image,
+    /// the relay. A fault there leaves the lead on the old riff. The
+    /// person hears of it one time, and the daemon tries again at the next
+    /// look ([`text::lead_again_waits`]). After the stop, a start that
+    /// fails three times ends the lead: the daemon ends its session, and
+    /// the person starts it ([`text::lead_again_failed`]). It gives the
+    /// line for the person, or `None` when the lead ended on its own.
+    async fn lead_again(self: &Arc<Self>, record: Record) -> Option<String> {
+        let name = record.live.name.clone();
+        let owned = self.lock().get(&name).cloned()?;
+        let start = match self.lead_start(&record).await {
+            Ok(start) => start,
+            Err(e) => return self.lead_waits(&record, &format!("{e:#}")).await,
+        };
+        println!("{}", text::daemon_stops_lead(&name));
+        owned
+            .renewing
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Err(e) = self.runtime.stop(&name).await {
+            owned
+                .renewing
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            return self.lead_waits(&record, &format!("{e:#}")).await;
+        }
+        // A lead that this daemon took up has no end of its own: it looks.
+        owned.look.notify_one();
+        // The task of the old container closes it: its socket, its record.
+        for _ in 0..300 {
+            if !self.lock().contains_key(&name) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let mut why = String::new();
+        for attempt in 0..LEAD_STARTS {
+            if attempt > 0 {
+                tokio::time::sleep(LEAD_START_WAIT).await;
+            }
+            match self.lead_launch(start.clone()).await {
+                Ok(()) => {
+                    let line = text::lead_started_again(&name);
+                    self.world.chat(&record, &line).await;
+                    return Some(line);
+                }
+                Err(e) => why = e,
+            }
+        }
+        self.world.leave(&record).await;
+        let line = text::lead_again_failed(&name, &why);
+        self.world.chat(&record, &line).await;
+        Some(line)
+    }
+
+    /// The [`Start`] of the lead of `record` on the riff of this daemon,
+    /// with everything that the start needs checked: the daemon refuses
+    /// nothing in it, the image is here and the riff is one that it binds.
+    async fn lead_start(&self, record: &Record) -> Result<Start> {
+        let repo = record.me.place().repo_text();
+        let wave = crate::wave::read_waves(&self.dir)?
+            .remove(&repo)
+            .ok_or_else(|| anyhow!("{}", text::lead_again_no_wave(&repo)))?;
+        let start = self.world.lead_again(&wave, record).await?;
+        self.check(&start.spec)?;
+        self.check_relay()?;
+        self.have_image(&start.spec.image, |_| {}).await?;
+        Ok(start)
+    }
+
+    /// Starts the container of `start`, a lead, and waits until it runs.
+    /// The lead goes on in the task that [`Daemon::launch`] runs.
+    async fn lead_launch(self: &Arc<Self>, start: Start) -> Result<(), String> {
+        let (out, mut said) = Out::keep();
+        let daemon = self.clone();
+        tokio::spawn(async move { daemon.launch(start, None, None, None, &out).await });
+        loop {
+            match said.recv().await {
+                Some(Say::Done) => return Ok(()),
+                Some(Say::Failed { error }) => return Err(error),
+                Some(_) => {}
+                None => return Err(text::DAEMON_GONE.to_owned()),
+            }
+        }
+    }
+
+    /// The lead of `record` cannot start again now: it runs the old riff
+    /// on. The person hears of it one time for each lead (riff chat); the
+    /// next look tries again. It gives the line the first time.
+    async fn lead_waits(&self, record: &Record, why: &str) -> Option<String> {
+        let first = self
+            .again_told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(record.live.session.clone());
+        if !first {
+            return None;
+        }
+        let line = text::lead_again_waits(&record.live.name, why);
+        self.world.chat(record, &line).await;
+        Some(line)
     }
 
     /// Looks at the watches each `every`, until the daemon
@@ -3130,6 +3375,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             }),
             notes,
             stop: Notify::new(),
+            look: Notify::new(),
+            renewing: std::sync::atomic::AtomicBool::new(false),
             closing: Notify::new(),
             door: Mutex::new(None),
         });
@@ -3479,7 +3726,12 @@ impl<R: Runtime + 'static> Daemon<R> {
                 // A session that this daemon took up has no end of its
                 // own. Its relay can have given up before the daemon
                 // came back: then no relay connects.
-                () = tokio::time::sleep(LOOK_EVERY), if end.is_none() => {
+                () = async {
+                    tokio::select! {
+                        () = tokio::time::sleep(LOOK_EVERY) => {}
+                        () = owned.look.notified() => {}
+                    }
+                }, if end.is_none() => {
                     let back = owned.lock().relay.is_some();
                     if !back && !self.runtime.running(&owned.name).await.unwrap_or(true) {
                         break (None, false);
@@ -3523,8 +3775,12 @@ impl<R: Runtime + 'static> Daemon<R> {
         };
         println!("{}", text::daemon_session_ends(&owned.name, code));
         if record.terminal {
-            let world = self.world.clone();
-            tokio::spawn(async move { world.leave(&record).await });
+            // A lead that the daemon starts again on a new riff keeps its
+            // session on riff-server: the next container is the same lead.
+            if !owned.renewing.load(std::sync::atomic::Ordering::SeqCst) {
+                let world = self.world.clone();
+                tokio::spawn(async move { world.leave(&record).await });
+            }
         } else {
             self.count_tokens(&record);
         }
@@ -4517,6 +4773,7 @@ pub async fn serve_here() -> Result<()> {
         daemon.serve_repos();
         daemon.sweep_every();
         daemon.stale_every();
+        daemon.leads_again_every();
         daemon.watch_every(crate::watches::every());
         // The steps of an update of this release: the rules of Claude
         // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
@@ -6591,6 +6848,8 @@ mod tests {
         meter: Option<(PathBuf, crate::pr::Gh)>,
         /// The leave marks of [`World::marks`].
         marks: Option<PathBuf>,
+        /// Why [`World::lead_again`] fails, when it does.
+        again_fault: Mutex<Option<String>>,
     }
 
     impl Server {
@@ -6840,6 +7099,63 @@ mod tests {
 
         fn leave<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, ()> {
             Box::pin(async move { self.note(format!("leave {}", record.live.session)) })
+        }
+
+        /// The start of the lead as the real world makes it ([`crate::lead::again`]):
+        /// the spec of `claude --resume`, with a value for each variable of the host.
+        fn lead_again<'a>(
+            &'a self,
+            _: &'a Wave,
+            record: &'a Record,
+        ) -> crate::wave::BoxFuture<'a, Result<Start>> {
+            Box::pin(async move {
+                self.note(format!("start again {}", record.live.name));
+                if let Some(why) = self
+                    .again_fault
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .as_ref()
+                {
+                    bail!("{why}");
+                }
+                let facts = crate::run::Facts {
+                    session: record.live.session.clone(),
+                    item: crate::lead::ITEM.into(),
+                    image: IMAGE.into(),
+                    home: "/home/mike".into(),
+                    user: "mike".into(),
+                    clone: record.folder.join("clone"),
+                    objects: record.folder.join("objects"),
+                    claude: record.folder.join("claude"),
+                    sign_in: crate::run::ClaudeSignIn::Token,
+                    gitconfig: None,
+                    gh_config: None,
+                    setup: Default::default(),
+                };
+                let repo = record.me.place().repo_text();
+                let mut spec = crate::lead::spec_again(&facts, &repo, &text::lead_again(&repo));
+                spec.name = record.live.name.clone();
+                let values = spec
+                    .env
+                    .iter()
+                    .filter_map(|e| match e {
+                        Env::Host(name) => Some((name.clone(), "v".to_owned())),
+                        Env::Value(..) => None,
+                    })
+                    .collect();
+                Ok(Start {
+                    session: record.live.session.clone(),
+                    item: crate::lead::ITEM.into(),
+                    folder: record.folder.clone(),
+                    start: text::lead_again(&repo),
+                    spec,
+                    values,
+                    secrets: Vec::new(),
+                    server: record.server.clone(),
+                    me: record.me.clone(),
+                    terminal: true,
+                })
+            })
         }
 
         fn free<'a>(&'a self, record: &'a Record) -> crate::wave::BoxFuture<'a, Result<()>> {
@@ -7126,6 +7442,269 @@ mod tests {
             .filter(|s| s.starts_with("chat "))
             .count();
         assert_eq!(chats, 1);
+    }
+
+    /// The lead of `como-technologies/riff` in a test.
+    const LEAD: &str = "riff-lead-como-technologies-riff";
+
+    /// Starts the lead [`LEAD`] on `here`, with the wave of its repository
+    /// in the folder of the daemon. Its container started long ago. It
+    /// gives its record.
+    async fn started_lead(here: &Here) -> Record {
+        let wave = Wave {
+            repo: "como-technologies/riff".into(),
+            main: here.root.path().to_owned(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        crate::wave::write_waves(&here.dir, &BTreeMap::from([(wave.repo.clone(), wave)])).unwrap();
+        let mut start = here.start(LEAD, "lead");
+        start.terminal = true;
+        let (mut client, _) = here.started(start).await;
+        assert_eq!(client.next().await.unwrap(), Some(Say::Done));
+        let owned = here.daemon.lock().get(LEAD).cloned().unwrap();
+        owned.lock().record.live.since_ms = 0;
+        owned.save(&owned.lock()).unwrap();
+        let record = owned.lock().record.clone();
+        drop(owned);
+        record
+    }
+
+    /// The transcript of the lead of `record`: its last write was `secs`
+    /// seconds ago.
+    fn transcript_of(record: &Record, secs: u64) {
+        let project = record.folder.join("claude/projects/-clone");
+        std::fs::create_dir_all(&project).unwrap();
+        let name = format!("{}.jsonl", record.live.session);
+        let file = std::fs::File::create(project.join(name)).unwrap();
+        let ago = std::time::SystemTime::now() - Duration::from_secs(secs);
+        file.set_modified(ago).unwrap();
+    }
+
+    /// `riff update`: a new file of the riff is in the place of the old
+    /// one. A container that bound the old file keeps it.
+    fn update_riff(here: &Here) {
+        let riff = here.dir.with_file_name("static-riff");
+        let new = riff.with_extension("new");
+        crate::release::fake_riff(&new, None);
+        std::fs::rename(&new, &riff).unwrap();
+    }
+
+    /// The lines of `said` that begin with `kind`.
+    fn said_of(server: &Server, kind: &str) -> Vec<String> {
+        let kind = format!("{kind} ");
+        let said = server.said();
+        said.into_iter().filter(|s| s.starts_with(&kind)).collect()
+    }
+
+    /// 01M5TC24PB3YC2CC8BA275WSEN
+    #[tokio::test]
+    async fn an_idle_lead_on_the_old_riff_starts_again_with_claude_resume_and_a_lead_in_a_turn_waits()
+     {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        let terminal = format!("terminal {LEAD}");
+
+        // The riff on disk is the riff of the lead: nothing to do.
+        transcript_of(&record, 3600);
+        assert!(here.daemon.leads_again().await.is_empty());
+
+        // `riff update`. The lead is in a turn: its transcript got a write
+        // 10 s ago. It waits.
+        update_riff(&here);
+        transcript_of(&record, 10);
+        assert!(here.daemon.leads_again().await.is_empty());
+        assert_eq!(here.fake.calls(), std::slice::from_ref(&terminal));
+
+        // The turn ends. The lead is idle: the transcript is quiet.
+        transcript_of(&record, 600);
+        let line = text::lead_started_again(LEAD);
+        assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
+        assert_eq!(
+            here.fake.calls(),
+            [terminal.clone(), format!("stop {LEAD}"), terminal]
+        );
+
+        // The new container: `claude --resume ID` of the same conversation
+        // in the same clone, and the bind of the new riff.
+        let spec = here.fake.spec(LEAD).unwrap();
+        let session = record.live.session.as_str();
+        assert_eq!(
+            spec.command[..5],
+            [RELAY_BIN, "relay", "--terminal", "--", "claude"]
+        );
+        let resume = spec.command.iter().position(|a| a == "--resume");
+        assert_eq!(
+            spec.command[resume.expect("--resume")..],
+            [
+                "--resume",
+                session,
+                "--dangerously-skip-permissions",
+                &text::lead_again("como-technologies/riff")
+            ]
+        );
+        assert!(!spec.command.iter().any(|a| a == "--session-id"));
+        let riff = spec.binds.iter().find(|b| b.target == Path::new(RELAY_BIN));
+        let riff = riff.expect("the bind of the riff");
+        assert_eq!(
+            riff.source,
+            Source::Path(here.dir.with_file_name("static-riff"))
+        );
+        assert_eq!(
+            here.fake.links(LEAD, Path::new(RELAY_BIN)).await.unwrap(),
+            1,
+            "the new container binds the file on disk"
+        );
+
+        // The person heard once, in riff chat. The lead kept its session on
+        // riff-server: no leave, and the keep-alive goes on.
+        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        assert!(said_of(&server, "leave").is_empty(), "{:?}", server.said());
+        assert_eq!(said_of(&server, "resume").len(), 2);
+        let status = status(&here.dir).await.unwrap();
+        assert!(status.sessions.iter().any(|s| s.name == LEAD && s.lead));
+
+        // On the new riff: the next look does nothing.
+        assert!(here.daemon.leads_again().await.is_empty());
+        assert_eq!(said_of(&server, "chat").len(), 1);
+    }
+
+    /// 01M5TC24PB3YC2CC8BA275WSEN
+    #[tokio::test]
+    async fn a_new_daemon_starts_again_the_lead_that_it_takes_up_on_the_old_riff() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let mut here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        transcript_of(&record, 600);
+
+        // `riff update` replaces the riff, and the daemon starts again.
+        update_riff(&here);
+        here.restart().await;
+        here.daemon.recover().await;
+        assert_eq!(here.fake.calls(), [format!("terminal {LEAD}")]);
+
+        // The new daemon owns no container of its own: it looks at the
+        // container, and it takes the lead again at its start.
+        let line = text::lead_started_again(LEAD);
+        assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
+        assert_eq!(
+            here.fake.calls(),
+            [
+                format!("terminal {LEAD}"),
+                format!("stop {LEAD}"),
+                format!("terminal {LEAD}")
+            ]
+        );
+        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        assert!(said_of(&server, "leave").is_empty(), "{:?}", server.said());
+        let status = status(&here.dir).await.unwrap();
+        assert!(status.sessions.iter().any(|s| s.name == LEAD && s.lead));
+        assert!(here.daemon.leads_again().await.is_empty());
+    }
+
+    /// 01M5TC29A4Q94NJP7HFC75XCF3
+    #[tokio::test]
+    async fn a_lead_that_cannot_start_again_runs_on_and_the_person_hears_of_it_one_time() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        transcript_of(&record, 600);
+        update_riff(&here);
+        let terminal = format!("terminal {LEAD}");
+
+        // The daemon knows no main clone: the lead stays on the old riff.
+        let waves = here.dir.join(crate::wave::WAVES_FILE);
+        let kept = std::fs::read(&waves).unwrap();
+        std::fs::remove_file(&waves).unwrap();
+        let no_wave = text::lead_again_no_wave("como-technologies/riff");
+        let line = text::lead_again_waits(LEAD, &no_wave);
+        assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
+        assert_eq!(here.fake.calls(), std::slice::from_ref(&terminal));
+        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+
+        // The host fails the next try: the person heard of it already.
+        std::fs::write(&waves, &kept).unwrap();
+        *server.again_fault.lock().unwrap() = Some("gh is not signed in".into());
+        assert!(here.daemon.leads_again().await.is_empty());
+        assert_eq!(here.fake.calls(), std::slice::from_ref(&terminal));
+        assert_eq!(said_of(&server, "chat").len(), 1);
+
+        // The fault goes: the next look starts the lead again.
+        *server.again_fault.lock().unwrap() = None;
+        let started = text::lead_started_again(LEAD);
+        assert_eq!(
+            here.daemon.leads_again().await,
+            std::slice::from_ref(&started)
+        );
+        let chats = said_of(&server, "chat");
+        assert_eq!(chats.len(), 2, "{chats:?}");
+        assert_eq!(chats[1], format!("chat {LEAD}: {started}"));
+        assert!(said_of(&server, "leave").is_empty());
+    }
+
+    /// 01M5TC29A4Q94NJP7HFC75XCF3
+    #[tokio::test]
+    async fn a_lead_that_stopped_and_cannot_start_again_leaves_riff_server_and_the_person_starts_it()
+     {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        transcript_of(&record, 600);
+        update_riff(&here);
+
+        // podman cannot run the new container.
+        here.fake.refuse_start(LEAD);
+        let why = format!("the fake refuses to start the session {LEAD}");
+        let line = text::lead_again_failed(LEAD, &why);
+        assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
+        let calls = here.fake.calls();
+        assert_eq!(
+            calls[..2],
+            [format!("terminal {LEAD}"), format!("stop {LEAD}")]
+        );
+        assert_eq!(
+            calls[2..],
+            vec![format!("terminal {LEAD}"); 3],
+            "three tries, then the end"
+        );
+        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        assert_eq!(
+            said_of(&server, "leave"),
+            [format!("leave {}", record.live.session)]
+        );
+        assert!(
+            !status(&here.dir)
+                .await
+                .unwrap()
+                .sessions
+                .iter()
+                .any(|s| s.name == LEAD)
+        );
+        assert!(here.daemon.leads_again().await.is_empty());
+    }
+
+    /// 01M5TC24PB3YC2CC8BA275WSEN
+    #[tokio::test]
+    async fn a_worker_on_the_old_riff_is_not_started_again() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let (_client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        update_riff(&here);
+        assert!(here.daemon.leads_again().await.is_empty());
+        assert_eq!(here.fake.calls(), [format!("start {name}")]);
     }
 
     #[tokio::test]

@@ -4212,11 +4212,11 @@ of this part when they merge.
   keeps its events. When the daemon comes back, the relay connects again
   and sends the kept events by sequence number. `claude` does not see
   the break.
-- **01M4Z60B800BH5BHX0H9JVDG6A** An update of riff reaches new sessions
-  only: the bind keeps the old binary in a session that runs. So the
-  protocol between the relay and the daemon stays compatible across one
-  version. The recovery of the sessions after a reboot or a crash of the
-  host is future work.
+- **01M4Z60B800BH5BHX0H9JVDG6A** An update of riff reaches a worker and
+  a verify at their next start only: the bind keeps the old binary in
+  a session that runs. So the protocol between the relay and the
+  daemon stays compatible across one version. The recovery of the
+  sessions after a reboot or a crash of the host is future work.
 - **01M4Z60B81RTZT71PN5HV0GZHX** The lead runs in a container with a
   terminal (`podman run -it`). conmon holds its PTY. The ratatui view of
   riff shows the sessions, and attaches to the lead or to a takeover.
@@ -4548,11 +4548,11 @@ of this part when they merge.
   lead start`, then `/resume`.
 - **01M5SNV7H3739PXW73H14XM4B8** Before the daemon of a host starts
   again on a new riff, it posts one note to each lead on that host. The
-  note says that the daemon starts again on the new riff, that the lead
-  keeps its container, its terminal and its socket, and that the lead
-  keeps its state in its notes. The daemon posts it for `riff daemon
-  restart`, for the look at the end of each session, and for `riff
-  update`.
+  note says that the daemon starts again on the new riff, that riff
+  starts the container of the lead again on the new riff when the lead
+  is idle, and that the lead keeps its state in its notes. The daemon
+  posts it for `riff daemon restart`, for the look at the end of each
+  session, and for `riff update`.
 
 ### riff relay
 
@@ -5081,6 +5081,27 @@ of this part when they merge.
   host, and no compact of the lead. The tidy of the folders of container
   sessions stays (the sweep of the riff daemon). `lead.wake` and
   `lead.notify` stay as keys of the settings file.
+- **01M5TC24PB3YC2CC8BA275WSEN** After an update of riff, the daemon
+  starts each lead again on the new riff. A lead runs an old riff when
+  the file that its container binds at `/opt/riff/riff` is not the file
+  on disk: `riff update` replaced it. The daemon looks when it takes up
+  the sessions that run, and each minute. It starts only a lead that is
+  idle: the transcript of its conversation got no write for 5 minutes. A
+  lead in a turn waits for the end of the turn. Supersedes in part
+  01M4Z60B800BH5BHX0H9JVDG6A and 01M5SNV7H3739PXW73H14XM4B8.
+- **01M5TC2919TB9XPF42YFNJBP79** The daemon stops the container of an
+  old lead and starts it again with the same session, the same clone and
+  the same Claude folder. The new container binds the riff on disk. Its
+  command is `claude --resume ID` of the conversation of the lead, and
+  its first prompt tells the lead to start its Monitor again. The
+  session of the lead on riff-server stays: the daemon does not end it.
+  The person gets one line in riff chat for each lead that started
+  again.
+- **01M5TC29A4Q94NJP7HFC75XCF3** When the daemon cannot start a lead
+  again, it tells the person one time in riff chat. A fault before the
+  stop leaves the lead on the old riff, and the daemon tries again at
+  the next look. A start that fails after the stop ends the lead: the
+  daemon ends its session, and the line says `riff lead start`.
 
 ### The first run
 

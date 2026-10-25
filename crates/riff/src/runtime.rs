@@ -431,6 +431,8 @@ struct Book {
     exit_in_attach: bool,
     /// The sessions with no network ([`Runtime::reaches`]).
     offline: BTreeSet<String>,
+    /// The sessions that do not start ([`Fake::refuse_start`]).
+    refused: BTreeSet<String>,
 }
 
 /// One session of a [`Fake`].
@@ -525,6 +527,37 @@ impl Fake {
     pub fn with_no_network(self, name: &str) -> Self {
         self.lock().offline.insert(name.to_owned());
         self
+    }
+
+    /// The start of the session `name` fails from now on, as when podman
+    /// cannot run the container: the call stays in [`Fake::calls`].
+    ///
+    /// ```
+    /// use riff::runtime::{Fake, Runtime, SessionSpec};
+    ///
+    /// let spec = SessionSpec {
+    ///     name: "s1".into(),
+    ///     image: "i".into(),
+    ///     home: "/h".into(),
+    ///     workdir: "/w".into(),
+    ///     binds: vec![],
+    ///     env: vec![],
+    ///     memory: "8g".into(),
+    ///     cpus: 4,
+    ///     command: vec![],
+    /// };
+    /// let fake = Fake::default().with_image("i");
+    /// fake.refuse_start("s1");
+    /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+    ///     assert!(fake.start_terminal(&spec, &[]).await.is_err());
+    ///     assert!(!fake.running("s1").await?);
+    ///     Ok::<(), anyhow::Error>(())
+    /// })?;
+    /// assert_eq!(fake.calls(), ["terminal s1"]);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn refuse_start(&self, name: &str) {
+        self.lock().refused.insert(name.to_owned());
     }
 
     /// Each pull, start, stop, redraw, attach and exec, in order: for
@@ -719,6 +752,9 @@ impl Fake {
         spec.check_values(values)?;
         let mut book = self.lock();
         book.calls.push(format!("{call} {}", spec.name));
+        if book.refused.contains(&spec.name) {
+            bail!("the fake refuses to start the session {}", spec.name);
+        }
         if !book.local.contains(&spec.image) {
             bail!("this machine has no image {}", spec.image);
         }

@@ -869,6 +869,10 @@ events. No event is lost. Each container also keeps its network:
 `pasta`, the network process of podman, runs in a scope of systemd of
 its own, not in the cgroup of `riff.service`.
 
+An update of riff is the one case where riff stops a container for you:
+it starts an idle lead again on the new riff. See
+[The lead starts again on the new riff](how-it-works.md#the-lead-starts-again-on-the-new-riff).
+
 `riff run` says that the daemon went away, and waits up to 10 minutes
 for a new daemon. Then it shows the session again from the next event.
 When no daemon comes back in that time, `riff run` says so, and
@@ -4824,8 +4828,10 @@ riff checks that:
 
 The lead does not keep its host on the old riff. After an update, the
 riff daemon of a host with only the lead starts again on the new riff.
-The lead keeps its container, its terminal (`riff view`), its socket and
-its riff tools.
+Then the daemon starts the container of the lead again on the new riff,
+when the lead is idle, and the lead goes on with its conversation. You
+stop no container. See
+[The lead starts again on the new riff](how-it-works.md#the-lead-starts-again-on-the-new-riff).
 
 riff writes the result on the release issue. When each check passes,
 riff closes the release issue and resumes the riff. When a check
