@@ -28,10 +28,9 @@
 //! more time. A look that fails shows its fault on stderr one time until
 //! the fault changes, and the wave goes on.
 //!
-//! The rest of this module has no runner since 4.0 removed the `riff
-//! mcp` of a session on the host (#1200): [`once`] and [`run`] send the
-//! facts of the items, look at the blocks and at the release cycle for
-//! a lead session. The server makes `waiting` from the facts of the
+//! The rest of this module has no runner now, because the `riff mcp` of a
+//! session on the host is gone (#1200): [`once`] and [`run`] send the
+//! facts of the items, and look at the blocks, for a lead session. The server makes `waiting` from the facts of the
 //! clients (01M41FZP2C4Z4J6WKRXZ5B31EH, 01M41FZP9A50CH4A2VX344DW49).
 //!
 //! # The blocks
@@ -134,22 +133,9 @@
 //!
 //! # The release cycle
 //!
-//! In a clone with `deploy/release-check.sh`, [`run`] reads the state
-//! of the current release each [`RELEASE_EVERY`] ([`ReleaseWatch`],
-//! 01M58KMMHH70JEMBX3EYT9H3WM): the merge of the release pull
-//! request, a result of the real-session test, a run that waits, the
-//! end of the job `Deploy`. Each new state wakes the lead with the next
-//! step. While the deploy waits for a person, the look reminds the
-//! owner in `riff chat` each [`REMIND_EVERY`]
-//! (01M58KMM3NFGJRW4CCV50KJQB2).
-//!
-//! ```mermaid
-//! flowchart LR
-//!     L["each look"] --> S{"a new state of the release?"}
-//!     S -- yes --> M["message to the lead: the state, next: ..."]
-//!     S -- "no: it waits for a person" --> R{"4 h since the last reminder?"}
-//!     R -- yes --> C["chat line to the owner: riff release approve vX.Y.Z"]
-//! ```
+//! The look has no part in the release cycle. Each riff command that
+//! starts an async operation of the cycle registers a watch, and the
+//! daemon follows it ([`crate::watches`], 01M5RGCW5NCKQYA61RM63914TX).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
@@ -158,13 +144,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use riff_core::build::Semver;
 use riff_core::name::{SessionUri, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{ItemFact, Kind, PullFact, PullState, Unanswered};
 use serde::Deserialize;
 
-use crate::cycle::{self, Stage, State};
 use crate::pr::{
     CheckRun, GATE, Gate, Gh, check_runs, full_state, gate_state, is_success, newest_runs,
 };
@@ -1012,166 +996,6 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
     posted
 }
 
-/// The time between two looks at the release cycle.
-pub const RELEASE_EVERY: Duration = Duration::from_secs(5 * 60);
-
-/// The time between two reminders to the owner while a deploy waits for
-/// the approval (01M58KMM3NFGJRW4CCV50KJQB2).
-pub const REMIND_EVERY: Duration = Duration::from_secs(4 * 60 * 60);
-
-/// What the release cycle tells at one look ([`ReleaseWatch::news`]).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReleaseNews {
-    /// The state of the release changed: a message wakes the lead.
-    Changed(Stage),
-    /// The deploy still waits for a person: a chat line to the owner.
-    Remind(Stage),
-}
-
-/// The last state of the release cycle that the lead got
-/// (01M58KMMHH70JEMBX3EYT9H3WM). The `riff mcp` of the lead keeps it in
-/// memory. The first look after a start tells nothing: it only learns
-/// the state.
-#[derive(Debug, Clone, Default)]
-pub struct ReleaseWatch {
-    told: Option<(Semver, State)>,
-    reminded: Option<Instant>,
-}
-
-impl ReleaseWatch {
-    /// The news of `stage` at `now`.
-    ///
-    /// ```
-    /// use std::time::{Duration, Instant};
-    /// use riff::cycle::{Stage, State, version};
-    /// use riff::look::{REMIND_EVERY, ReleaseNews, ReleaseWatch};
-    ///
-    /// let stage = |state| Stage {
-    ///     version: version("3.3.0").unwrap(), state, pr: None, merge: None, deploy: None,
-    ///     checks_failed: false, test: None, previous: None,
-    /// };
-    /// let now = Instant::now();
-    /// let mut watch = ReleaseWatch::default();
-    /// assert_eq!(watch.news(Some(&stage(State::Merged)), now), None);
-    /// assert_eq!(watch.news(Some(&stage(State::Merged)), now), None);
-    /// assert_eq!(
-    ///     watch.news(Some(&stage(State::Waiting)), now),
-    ///     Some(ReleaseNews::Changed(stage(State::Waiting)))
-    /// );
-    /// assert_eq!(watch.news(Some(&stage(State::Waiting)), now + Duration::from_secs(60)), None);
-    /// assert_eq!(
-    ///     watch.news(Some(&stage(State::Waiting)), now + REMIND_EVERY),
-    ///     Some(ReleaseNews::Remind(stage(State::Waiting)))
-    /// );
-    /// assert_eq!(watch.news(None, now), None);
-    /// ```
-    pub fn news(&mut self, stage: Option<&Stage>, now: Instant) -> Option<ReleaseNews> {
-        let stage = stage?;
-        let key = (stage.version, stage.state);
-        let first = self.told.is_none();
-        if self.told != Some(key) {
-            self.told = Some(key);
-            self.reminded = Some(now);
-            return (!first).then(|| ReleaseNews::Changed(stage.clone()));
-        }
-        let due = self
-            .reminded
-            .is_none_or(|at| now.duration_since(at) >= REMIND_EVERY);
-        if stage.state == State::Waiting && due {
-            self.reminded = Some(now);
-            return Some(ReleaseNews::Remind(stage.clone()));
-        }
-        None
-    }
-}
-
-/// The message to the lead for a new state of the release, and the
-/// chat line to the owner of a reminder.
-///
-/// ```
-/// use riff::cycle::{Stage, State, version};
-/// use riff::look::{ReleaseNews, release_post};
-///
-/// let stage = Stage {
-///     version: version("3.3.0")?, state: State::Deployed, pr: None, merge: None, deploy: None,
-///     checks_failed: false, test: None, previous: None,
-/// };
-/// assert_eq!(
-///     release_post(&ReleaseNews::Changed(stage), "mike"),
-///     "The release v3.3.0 is deployed now. next: riff release check v3.3.0"
-/// );
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub fn release_post(news: &ReleaseNews, owner: &str) -> String {
-    match news {
-        ReleaseNews::Changed(stage) => format!(
-            "The release {} is {} now. next: {}",
-            cycle::tag(stage.version),
-            stage.state.word(),
-            cycle::next(stage)
-        ),
-        ReleaseNews::Remind(stage) => {
-            let tag = cycle::tag(stage.version);
-            let run = stage.deploy.as_ref().map(|d| d.url.as_str());
-            format!(
-                "Reminder: {}",
-                cycle::publish_line(owner, &tag, run).replace(" is published.", " still waits.")
-            )
-        }
-    }
-}
-
-/// One look at the release cycle of the clone `dir` for the lead `me`
-/// (01M58KMMHH70JEMBX3EYT9H3WM): a new state wakes the lead, and a
-/// deploy that waits reminds the owner in the chat each [`REMIND_EVERY`].
-/// When the post does not go out, `watch` forgets the news.
-pub async fn look_at_release(
-    api: &Api,
-    me: &SessionUri,
-    dir: &Path,
-    watch: &mut ReleaseWatch,
-) -> Result<()> {
-    let stage = {
-        let dir = dir.to_owned();
-        tokio::task::spawn_blocking(move || {
-            let forge = cycle::GitHub::new(Gh::default(), &dir)?;
-            cycle::current(&forge)
-        })
-        .await??
-    };
-    let before = watch.clone();
-    let Some(news) = watch.news(stage.as_ref(), Instant::now()) else {
-        return Ok(());
-    };
-    let posted = match &news {
-        ReleaseNews::Changed(_) => {
-            post_as_person(api, me, None, &release_post(&news, ""), Kind::Message).await
-        }
-        ReleaseNews::Remind(_) => {
-            let owner = match api.roster(me, false).await?.owner {
-                riff_core::wire::RiffOwner::Owner { user, .. } => user,
-                _ => String::new(),
-            };
-            let body = release_post(&news, &owner);
-            let person = SessionUri::new(Who::new(me.who().user(), None)?, me.place().clone());
-            let to = crate::chat::wakes(&body, me.who().user());
-            api.post(
-                &person,
-                Some(&crate::chat::thread()),
-                &to,
-                &body,
-                Kind::Message,
-            )
-            .await
-            .map(|_| ())
-        }
-    };
-    if posted.is_err() {
-        *watch = before;
-    }
-    posted
-}
-
 /// Posts `news` as a message, as the person of the lead `me`: to the
 /// session that holds its item, or to the lead.
 async fn tell_news(api: &Api, me: &SessionUri, news: &PullNews) -> Result<()> {
@@ -1341,13 +1165,6 @@ pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf
     let notifier = Notifier::default();
     let mut watch = PullWatch::default();
     let mut main = MainWatch::default();
-    let mut release = ReleaseWatch::default();
-    let mut release_at: Option<Instant> = None;
-    // The release cycle runs in a clone with the check of a release tag.
-    let clone = std::env::current_dir()
-        .ok()
-        .and_then(|here| crate::cloud::top(&here))
-        .filter(|top| top.join(cycle::CHECK).is_file());
     let mut last_error = None;
     loop {
         tokio::time::sleep(LOOK_EVERY).await;
@@ -1363,11 +1180,6 @@ pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf
             // A machine with no desktop gets no notification.
             let notify = (notify && notifier.here()).then_some(&notifier);
             once(&api, &me, &gh, wake, notify, &mut watch, &mut main).await?;
-            let due = release_at.is_none_or(|at| at.elapsed() >= RELEASE_EVERY);
-            if let Some(clone) = clone.as_deref().filter(|_| due) {
-                release_at = Some(Instant::now());
-                look_at_release(&api, &me, clone, &mut release).await?;
-            }
             Ok(())
         };
         match step.await {

@@ -65,6 +65,8 @@ use riff_client::daemons::Test;
 
 use super::remote::Served;
 use crate::cycle::{TestState, status_args};
+use crate::text;
+use crate::watches::{Op, Watches};
 
 /// The folder of the daemon for the clones of the test.
 pub const FOLDER: &str = "real-session";
@@ -168,6 +170,16 @@ pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<Str
     let started = prepare(dir, served, commit);
     match started {
         Ok(clone) => {
+            // The status is `pending`: the watch reads the end of the test
+            // there (01M5RGCW5NCKQYA61RM63914TX).
+            let op = Op::Test {
+                tag: tag.clone(),
+                commit: commit.to_owned(),
+            };
+            let watch = Watches::new(dir)
+                .register(&served.wave.repo, op.clone(), crate::daemon::now_ms())
+                .map(|registered| text::watch_registered(&op.what(), registered))
+                .unwrap_or_else(|e| text::watch_not_registered(&op.what(), &format!("{e:#}")));
             let owned = commit.to_owned();
             let log = clone.with_extension("log");
             let server = served.wave.server.clone();
@@ -177,7 +189,7 @@ pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<Str
             });
             Ok(format!(
                 "The real-session test started on {commit}. It sets the status {} of the \
-                 commit. next: riff release status",
+                 commit. {watch} next: riff release status",
                 crate::cycle::REAL_SESSION
             ))
         }

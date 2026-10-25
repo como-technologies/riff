@@ -56,6 +56,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::daemon::ServerCall;
 use crate::lifecycle::Source;
+use crate::watches::{Op, Registered, Watches};
 use crate::{identity, session_relay, text};
 use riff_client::api::{Api, PauseScope};
 
@@ -351,6 +352,21 @@ impl Reach {
             item: item.to_owned(),
         };
         ask(socket, &call).await
+    }
+
+    /// Registers the watch of `op` in `repo`: the daemon wakes the lead at
+    /// the end of the operation ([`crate::watches`],
+    /// 01M5RGCW5NCKQYA61RM63914TX). On the host, riff writes the file of
+    /// the watches of the daemon itself, so a daemon that is not up reads
+    /// it at its start. Through the socket, the daemon writes it.
+    pub async fn watch(&self, repo: &str, op: Op) -> Result<Registered> {
+        match self {
+            Reach::Direct(_) => {
+                let dir = crate::daemon::dir()?;
+                Watches::new(&dir).register(repo, op, crate::daemon::now_ms())
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::Watch { op }).await,
+        }
     }
 
     /// Pauses the whole riff, and gives the line for the person.

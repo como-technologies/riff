@@ -71,6 +71,7 @@ impl Host {
             )
             .env("RIFF_DISK", format!("disk {free}GB free of 400GB"))
             .env(facts::EVERY_VAR, LOOK_MS.to_string())
+            .env(riff::watches::EVERY_VAR, LOOK_MS.to_string())
             .env_remove("CLAUDE_CODE_SESSION_ID")
             .env_remove("RIFF_WORKER")
             .envs(self.extra.iter().map(|(k, v)| (k, v)));
@@ -535,6 +536,21 @@ impl Host {
 }
 
 impl Riff {
+    /// The bodies of the messages to the lead that start with `start`.
+    async fn messages(&self, start: &str) -> Vec<String> {
+        let thread = self.lead.default_thread().unwrap();
+        let read = self
+            .api(&self.lead)
+            .read_after(&self.lead, &thread, 0)
+            .await
+            .unwrap();
+        read.into_iter()
+            .filter(|m| m.message.kind == Kind::Message)
+            .map(|m| m.message.body)
+            .filter(|body| body.starts_with(start))
+            .collect()
+    }
+
     /// The bodies of the notes of the daemons to the lead that start
     /// with `start`.
     async fn notes(&self, start: &str) -> Vec<String> {
@@ -726,9 +742,15 @@ fn fake_real_session(dir: &Path, log: &Path, code: &Path) -> Vec<(String, String
     let gh = script(
         "gh",
         format!(
-            "echo \"$*\" >> {}\n\nif [ \"$1 $2\" = \"issue list\" ]; then echo '[{{\"number\":7,\"title\":\"Release {TAG}\"}}]'; fi\nif [ \"$1 $2\" = \"issue comment\" ]; then cat >> {}; fi",
+            "echo \"$*\" >> {}\n\nif [ \"$1 $2\" = \"issue list\" ]; then echo '[{{\"number\":7,\"title\":\"Release {TAG}\"}}]'; fi\nif [ \"$1 $2\" = \"issue comment\" ]; then cat >> {}; fi\n\
+             case \"$*\" in\n\
+             *statuses/*) for a in \"$@\"; do case \"$a\" in state=*) echo \"${{a#state=}}\" > {}; esac; done ;;\n\
+             'api repos/{{owner}}/{{repo}}/commits/'*'/status') printf '{{\"statuses\":[{{\"context\":\"riff/real-session\",\"state\":\"%s\"}}]}}\\n' \"$(cat {} 2>/dev/null)\" ;;\n\
+             esac",
             log.display(),
-            dir.join("comment").display()
+            dir.join("comment").display(),
+            dir.join("state").display(),
+            dir.join("state").display()
         ),
     );
     std::fs::rename(gh, bin.join("gh")).unwrap();
@@ -809,6 +831,18 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         .await
         .unwrap();
         assert!(reply.contains("started on"), "{reply}");
+        // 01M5RGCW5NCKQYA61RM63914TX: the request registered the watch of the
+        // test on the daemon of the host.
+        let line = format!("riff watches the real-session test of {TAG} on {commit}.");
+        assert!(reply.contains(&line), "{reply}");
+        let dir = r.host(host).dir();
+        let watches = riff::watches::Watches::new(&dir).read().unwrap();
+        assert_eq!(watches.len(), 1, "{watches:?}");
+        let op = riff::watches::Op::Test {
+            tag: TAG.to_owned(),
+            commit: commit.clone(),
+        };
+        assert_eq!(watches[0].op, op);
         // 01M5QVBTXE8YRY44A1C1VP71QS: the status of the daemon shows the test
         // while it runs, and not after it ended.
         let line = format!(
@@ -836,6 +870,23 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
             (!shown().await.contains("real-session test")).then_some(())
         })
         .await;
+        // The daemon wakes the lead at the end, one time, with the result.
+        let word = if state == "success" {
+            "passed"
+        } else {
+            "failed"
+        };
+        let start = format!("The real-session test of {TAG} {word} on {commit}.");
+        until("the message to the lead", || async {
+            (!r.messages(&start).await.is_empty()).then_some(())
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(LOOK_MS * 10)).await;
+        let told = r.messages(&start).await;
+        assert_eq!(told.len(), 1, "{told:#?}");
+        assert!(told[0].contains("next: "), "{told:#?}");
+        let left = riff::watches::Watches::new(&dir).read().unwrap();
+        assert!(left.is_empty(), "the watch goes: {left:?}");
         let seen = std::fs::read_to_string(&log).unwrap();
         assert!(seen.contains("state=pending"), "{seen}");
         assert!(seen.contains(&format!("statuses/{commit}")), "{seen}");

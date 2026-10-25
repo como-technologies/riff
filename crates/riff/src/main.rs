@@ -2894,12 +2894,29 @@ fn wave_release_gate(number: u64, no_release: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Registers the watch of `op` for the repository of the clone `here`, and
+/// prints one line: the daemon wakes the lead at the end of the operation
+/// (01M5RGCW5NCKQYA61RM63914TX). A fault does not undo the operation. It
+/// is a line on stderr that says what the lead misses.
+async fn watch_started(reach: &Reach, here: &std::path::Path, op: riff::watches::Op) {
+    let what = op.what();
+    let registered = async {
+        let repo = identity::place(here)?.repo_text();
+        reach.watch(&repo, op).await
+    };
+    match registered.await {
+        Ok(registered) => println!("{}", text::watch_registered(&what, registered)),
+        Err(e) => eprintln!("{}", text::watch_not_registered(&what, &format!("{e:#}"))),
+    }
+}
+
 /// `riff release cut`, `publish`, `status`, `approve`, `check`, `retry`
 /// and `rollback` (01M58B0HZYMAK1B2AJMWKHCXG0 to
 /// 01M58B0JSQMWNCMSNX19536XT8, 01M58KMKR33P1FSCFDQRZ56A8P to
 /// 01M58KMMP9FKRFYX58ESVRSZQX).
 async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) -> Result<()> {
-    use riff::cycle::{self, Approved, Checked};
+    use riff::cycle::{self, Approved, Checked, Forge as _};
+    use riff::watches::{Op, Stale};
     let here = identity::working_dir()?;
     let refuse = |command: &str, why: cycle::Refusal| -> ! {
         eprintln!("{}", text::release_refused(command, why));
@@ -2911,6 +2928,14 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
     {
         Ok(stage) => print!("{}", cycle::stage_lines(stage.as_ref())),
         Err(e) => eprintln!("riff: cannot read the state of {tag}: {e:#}"),
+    };
+    // The deploy of an approved run moves from "waits" (01M5RGCW5NCKQYA61RM63914TX).
+    let approved = |run: &cycle::Waiting| Op::Deploy {
+        tag: run.tag.clone(),
+        stale: Some(Stale {
+            run: run.run,
+            state: cycle::DeployState::Waiting,
+        }),
     };
     match command {
         ReleaseCommand::Cut {
@@ -2947,6 +2972,11 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             if let Err(e) = told.await {
                 eprintln!("riff: cannot post the chat line of the cut: {e:#}");
             }
+            let op = Op::Pull {
+                tag: cycle::tag(version),
+                number: cut.number,
+            };
+            watch_started(reach, &here, op).await;
             println!(
                 "next: wait for the verify and the merge of pull request #{}",
                 cut.number
@@ -2958,6 +2988,16 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             println!(
                 "Pull request #{number} passed: the status riff/verify of {head} is a success."
             );
+            let tag = cycle::tag_of_title(&forge.candidate(*number)?.title)?;
+            watch_started(
+                reach,
+                &here,
+                Op::Pull {
+                    tag,
+                    number: *number,
+                },
+            )
+            .await;
             println!("next: the auto-merge merges pull request #{number}");
         }
         ReleaseCommand::Publish { tag } => {
@@ -2984,6 +3024,11 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 Ok(_) => println!("riff told the riff in riff chat."),
                 Err(e) => eprintln!("riff: cannot post the chat line to the owner: {e:#}"),
             }
+            let op = Op::Deploy {
+                tag: cycle::tag(cycle::tag_version(tag)?),
+                stale: None,
+            };
+            watch_started(reach, &here, op).await;
             println!(
                 "next: wait for the jobs of the CI run; then a person runs riff release approve \
                  {tag} in a terminal"
@@ -3045,6 +3090,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     "Approved with message {seq} of the owner: the deploy of {} runs: {}",
                     run.tag, run.url
                 );
+                watch_started(reach, &here, approved(&run)).await;
                 println!(
                     "next: the lead runs riff release check {} after the deploy",
                     run.tag
@@ -3070,6 +3116,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                         )
                     })?;
                     println!("Approved: the deploy of {} runs: {}", run.tag, run.url);
+                    watch_started(reach, &here, approved(&run)).await;
                     println!(
                         "next: the lead runs riff release check {} after the deploy",
                         run.tag
@@ -3114,6 +3161,14 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             let forge = forge()?;
             let deploy = cycle::retry(&forge, tag)?;
             println!("The failed jobs of {} run again.", deploy.url);
+            let op = Op::Deploy {
+                tag: cycle::tag(cycle::tag_version(tag)?),
+                stale: Some(Stale {
+                    run: deploy.run,
+                    state: deploy.state,
+                }),
+            };
+            watch_started(reach, &here, op).await;
             println!("next: a person runs riff release approve {tag} in a terminal");
         }
         ReleaseCommand::Test { tag, host } => {
@@ -3134,12 +3189,23 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 refuse("rollback", why);
             }
             let forge = forge()?;
+            // The older release has a CI run of its own release: the watch
+            // ignores that run until the run by hand starts.
+            let before = forge.deploy(&cycle::tag(cycle::tag_version(tag)?))?;
             let done = cycle::rollback(&forge, tag)?;
             println!(
                 "The deploy of {} to replace {} started.",
                 cycle::tag(done.to),
                 cycle::tag(done.from)
             );
+            let op = Op::Deploy {
+                tag: cycle::tag(done.to),
+                stale: before.map(|d| Stale {
+                    run: d.run,
+                    state: d.state,
+                }),
+            };
+            watch_started(reach, &here, op).await;
             println!(
                 "next: a person runs riff release approve {} in a terminal",
                 cycle::tag(done.to)
