@@ -87,6 +87,14 @@
 //! work of the person. `riff init` reads no file of rules for agents, such
 //! as `CLAUDE.md` or `AGENTS.md` (01M5RN89Z749VYS1CRYJQTKAWY).
 //!
+//! After the first list, `riff init` prints one note when the repository
+//! on GitHub has open issues with no `Done when:` line: the wave starts
+//! no session for them ([`crate::repo_setup::no_done_when`],
+//! [`text::init_no_done_when`], 01M5SMMP7ZW2PZNGK63WWZAC8P). A tracker and
+//! a release issue are not in the note. It is no check: it changes no exit
+//! code, and `--check` prints it too. When `gh` cannot list the issues,
+//! the note says so ([`text::init_issues_unread`]).
+//!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
 //!
@@ -136,6 +144,7 @@
 //!     wide: vec![],
 //!     riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
 //!     github: None,
+//!     no_done_when: None,
 //!     folder: "/home/mike/riff".into(),
 //!     container: false,
 //! };
@@ -259,6 +268,11 @@ pub struct Facts {
     /// ([`crate::repo_setup`]), or why it cannot. `None` when the folder
     /// has no remote `origin` on GitHub: riff checks nothing there.
     pub github: Option<Result<crate::repo_setup::Github, String>>,
+    /// The numbers of the open issues of the repository that have no
+    /// `Done when:` line ([`crate::repo_setup::no_done_when`],
+    /// 01M5SMMP7ZW2PZNGK63WWZAC8P), or why riff cannot list the issues.
+    /// `None` when riff did not read the repository.
+    pub no_done_when: Option<Result<Vec<u64>, String>>,
     /// The folder that riff checks: the clone, where `git pull` runs
     /// after the step of `riff.toml` (01M5RGGD9AYNC12Z2CG5CDZWNA).
     pub folder: PathBuf,
@@ -391,6 +405,11 @@ impl Facts {
     /// The facts of this machine, with the repository of the folder
     /// `dir`.
     pub fn here(dir: &Path) -> Facts {
+        let github = crate::repo_setup::here(dir);
+        let no_done_when = match &github {
+            Some(Ok(_)) => crate::repo_setup::no_done_when_here(dir),
+            _ => None,
+        };
         let etc = dir_of(ETC_VAR, "/etc");
         let cgroup = dir_of(CGROUP_VAR, "/sys/fs/cgroup");
         let uid = nix::unistd::getuid();
@@ -420,7 +439,8 @@ impl Facts {
                 .map_err(|e| format!("{e:#}")),
             wide: Wide::here(dir),
             riff: riff_binary(),
-            github: crate::repo_setup::here(dir),
+            github,
+            no_done_when,
             folder: dir.to_owned(),
             container: crate::cycle::in_container(),
         }
@@ -839,6 +859,15 @@ pub async fn run(
             doable.map_or_else(|| check.line(), |github| check.planned_line(github))
         );
     }
+    if let (Some(Ok(github)), Some(issues)) = (&facts.github, &facts.no_done_when) {
+        match issues {
+            Ok(numbers) if !numbers.is_empty() => {
+                println!("{}", text::init_no_done_when(&github.repo, numbers));
+            }
+            Ok(_) => {}
+            Err(why) => println!("{}", text::init_issues_unread(&github.repo, why)),
+        }
+    }
     if !facts.wide.is_empty() {
         println!("{}", text::init_wide(&facts.wide));
         if mode == Mode::Ask && ask(Question::Remove)? {
@@ -1072,6 +1101,7 @@ mod tests {
             wide: vec![],
             riff: Ok("/home/mike/.cargo/bin/riff is static".into()),
             github: None,
+            no_done_when: None,
             folder: "/nonexistent/clone".into(),
             container: false,
         }

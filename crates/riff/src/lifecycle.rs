@@ -354,9 +354,7 @@ pub fn version_build(line: &str) -> Option<Build> {
 /// that `server` runs ([`server_release`]). When that riff names no
 /// build that riff can read, it prints
 /// [`text::latest_instead`](crate::text::latest_instead) and installs
-/// the Latest release. On a machine with a limit of workers it installs
-/// the pinned `sccache` ([`crate::sccache::ensure`]). Then it looks for
-/// an old riff with
+/// the Latest release. Then it looks for an old riff with
 /// [`old_riff`]. Each command runs in [`run_dir`]. It returns the last
 /// words for the person. `riff` passes
 /// [`DEFAULT_SERVER`](riff_client::api::DEFAULT_SERVER) as `local`.

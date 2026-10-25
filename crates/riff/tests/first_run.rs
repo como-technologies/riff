@@ -1279,6 +1279,107 @@ async fn riff_init_check_passes_a_repository_that_is_set_up() {
     }
 }
 
+/// The open issues of the fake forge: `(number, title, label, body)`.
+fn issues(bin: &Path, open: &[(u64, &str, &str, &str)]) {
+    let list: Vec<serde_json::Value> = open
+        .iter()
+        .map(|(number, title, label, body)| {
+            let labels = if label.is_empty() {
+                serde_json::json!([])
+            } else {
+                serde_json::json!([{ "name": label }])
+            };
+            serde_json::json!({ "number": number, "title": title, "body": body, "labels": labels })
+        })
+        .collect();
+    std::fs::write(bin.join("issues"), serde_json::to_string(&list).unwrap()).unwrap();
+}
+
+/// 01M5SMMP7ZW2PZNGK63WWZAC8P: a repository with 3 open issues, one of them
+/// with the line `Done when:`, and a tracker with no line. The note names
+/// the 2 others, the first run and `--check` print it, and no exit code
+/// changes.
+#[tokio::test]
+async fn riff_init_names_the_open_issues_with_no_done_when_line() {
+    let machine = Machine::new();
+    machine.add_origin();
+    set_up(&machine.bin);
+    issues(
+        &machine.bin,
+        &[
+            (11, "Has the line", "", "Text.\n\nDone when: it works."),
+            (12, "No line", "", "Text only."),
+            (13, "Also no line", "bug", ""),
+            (14, "Tracker: the parts", "tracker", "- #11"),
+        ],
+    );
+    let note = "2 open issues of acme/app have no \"Done when:\" line, so the wave starts no \
+                session for them: #12, #13. Add the line to each issue. See \"Add a Done when \
+                line to an issue\" in the book.";
+    for args in [&["--check"][..], &["--yes"]] {
+        let out = machine.init(&machine.repo, args).await;
+        let stdout = text(&out.stdout);
+        assert_eq!(
+            stdout.lines().filter(|l| *l == note).count(),
+            1,
+            "{args:?}\n{note}\nnot once in\n{stdout}"
+        );
+        assert!(
+            !stdout.contains("#11") && !stdout.contains("#14"),
+            "{stdout}"
+        );
+        assert!(
+            machine.read("calls").contains("issue list --state open"),
+            "{args:?}"
+        );
+        // The note comes after the list of the checks and changes no exit code.
+        assert!(
+            stdout.find("  pass  the checks of a pull request").unwrap()
+                < stdout.find(note).unwrap(),
+            "{stdout}"
+        );
+    }
+    // The book shows the note.
+    assert!(
+        crate::book::page("development.md").contains(note),
+        "the book does not show the note:\n{note}"
+    );
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert!(machine.forge_changes().is_empty());
+}
+
+/// 01M5SMMP7ZW2PZNGK63WWZAC8P: no note when each open issue has the line or
+/// is a tracker, and a note about the read when `gh` cannot list the issues.
+#[tokio::test]
+async fn riff_init_prints_no_note_when_each_open_issue_has_the_line() {
+    let machine = Machine::new();
+    machine.add_origin();
+    set_up(&machine.bin);
+    issues(
+        &machine.bin,
+        &[
+            (11, "Has the line", "", "Done when: it works."),
+            (14, "Tracker: the parts", "", "- #11"),
+        ],
+    );
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(!stdout.contains("Done when"), "{stdout}");
+    assert!(machine.read("calls").contains("issue list --state open"));
+
+    std::fs::write(machine.bin.join("fail"), "issue list").unwrap();
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    let unread = stdout
+        .lines()
+        .find(|l| l.starts_with("riff cannot list the open issues of acme/app"))
+        .unwrap_or_else(|| panic!("no note in\n{stdout}"));
+    assert!(unread.contains("Must have admin rights"), "{unread}");
+}
+
 /// The check of the CI has no step: riff names the fix, and does nothing for
 /// it. A repository with no `CLAUDE.md` has no line for it (01M5RN89Z749VYS1CRYJQTKAWY).
 #[tokio::test]

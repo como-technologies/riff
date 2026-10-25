@@ -19,6 +19,8 @@
 #   fail            a text: a call that has it fails with a 403
 #   branch          the branch riff-setup is there
 #   open_pulls      the JSON list of the open pull requests
+#   issues          the JSON list of the open issues (number, title, body,
+#                   labels); with no file, the list is empty
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
 flag() { [ -f "$dir/$1" ]; }
@@ -93,6 +95,8 @@ case "$*" in
   'api -X POST repos/{owner}/{repo}/milestones -f title='*)
     echo "${last#title=}" >> "$dir/milestones"
     printf '{"number":9,"title":"%s","open_issues":0,"closed_issues":0}' "${last#title=}" ;;
+  'issue list --state open --limit 1000 --json number,title,body,labels')
+    if flag issues; then cat "$dir/issues"; else printf '[]'; fi ;;
   'label create '*) ;;
   *) echo "gh: no such call: $*" >&2; exit 1 ;;
 esac

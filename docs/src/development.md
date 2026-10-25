@@ -1728,6 +1728,38 @@ request and a rebase need no such line. `riff wave move ITEM --to WAVE`
 warns when an item has no line (see
 [Move items to another wave](waves.md#move-items-to-another-wave)).
 
+### Find the issues with no Done when line
+
+`riff init` counts the open issues that have no line that starts with
+`Done when:`, and names them in a note. A tracker and a release issue
+are not in the note: no session does them. Run it in a clone of the
+repository. `--check` changes nothing:
+
+```sh
+riff init --check
+```
+
+The note comes after the list of the checks. It fails no check, and it
+changes no exit code. It names the first 20 issues, and counts the rest.
+For example:
+
+```text
+2 open issues of acme/app have no "Done when:" line, so the wave starts no session for them: #12, #13. Add the line to each issue. See "Add a Done when line to an issue" in the book.
+```
+
+```mermaid
+flowchart LR
+    I["riff init"] --> L["gh issue list:<br/>the open issues"]
+    L --> T{"a tracker, a release issue,<br/>or a Done when: line?"}
+    T -- yes --> O["not in the note"]
+    T -- no --> N["named in the note"]
+```
+
+Add the line to each issue in the note: see
+[Add a Done when line to an issue](#add-a-done-when-line-to-an-issue).
+The note prints nothing when each open issue has the line. When `gh`
+cannot list the open issues, the note says so.
+
 ### Let the rollout of the lead run the wave
 
 You need no command for this. When the current wave has free work, the

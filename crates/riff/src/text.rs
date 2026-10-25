@@ -4204,43 +4204,6 @@ pub fn no_lead_place(server: &str) -> String {
     )
 }
 
-/// The line before riff installs `sccache` (01M4923963S666V9YWTZ46ZZ50).
-///
-/// ```
-/// assert_eq!(
-///     riff::text::sccache_installs("0.18.0"),
-///     "riff: installs sccache 0.18.0 for the compile cache of the workers."
-/// );
-/// ```
-pub fn sccache_installs(version: &str) -> String {
-    format!("riff: installs sccache {version} for the compile cache of the workers.")
-}
-
-/// The note to the lead, and the line of `riff update`, when the
-/// install of `sccache` fails (01M4923963S666V9YWTZ46ZZ50).
-///
-/// ```
-/// let failed = riff::text::sccache_failed("pangolin", "0.18.0", "cargo install exit status: 101");
-/// assert_eq!(
-///     failed,
-///     "riff on pangolin cannot install sccache 0.18.0: cargo install exit status: 101. \
-///      The workers there build with no compile cache. \
-///      To try again, run riff update on pangolin."
-/// );
-/// ```
-pub fn sccache_failed(host: &str, version: &str, error: &str) -> String {
-    format!(
-        "riff on {host} cannot install sccache {version}: {error}. \
-         The workers there build with no compile cache. \
-         To try again, run riff update on {host}."
-    )
-}
-
-/// The line of a worker that starts with no `sccache`
-/// (01M492379BGA3AERT1AM12C650).
-pub const NO_SCCACHE: &str = "riff: this machine has no sccache, so the worker builds with \
-     no compile cache. riff update installs it.";
-
 /// The note of `riff pr wait` on stderr when it starts
 /// (01M3NB6FWMGBQ9VTY6RCBPKBHK).
 pub fn pr_waits(number: u64) -> String {
@@ -6712,6 +6675,68 @@ pub fn init_wide_removed(path: &Path, count: usize) -> String {
 /// `riff init` kept each wide rule: no `y` in a terminal.
 pub const INIT_WIDE_KEPT: &str =
     "riff removed no rule. To remove them, run riff init in a terminal, and answer y.";
+
+/// The most issues that [`init_no_done_when`] names.
+pub const INIT_ISSUES_SHOWN: usize = 20;
+
+/// The note of `riff init` for the open issues of `repo` that have no
+/// line `Done when:` (01M5SMMP7ZW2PZNGK63WWZAC8P): their `numbers`, at most
+/// [`INIT_ISSUES_SHOWN`] of them.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_no_done_when("acme/app", &[2, 3]),
+///     "2 open issues of acme/app have no \"Done when:\" line, so the wave starts no session for \
+///      them: #2, #3. Add the line to each issue. See \"Add a Done when line to an issue\" in the book."
+/// );
+/// let one = riff::text::init_no_done_when("acme/app", &[7]);
+/// assert!(one.starts_with("1 open issue of acme/app has no \"Done when:\" line, so the wave starts no session for it: #7."), "{one}");
+/// let many: Vec<u64> = (1..=23).collect();
+/// let text = riff::text::init_no_done_when("acme/app", &many);
+/// assert!(text.starts_with("23 open issues of acme/app have no"), "{text}");
+/// assert!(text.contains(": #1, #2, "), "{text}");
+/// assert!(text.contains(", #20, and 3 more. Add the line"), "{text}");
+/// assert!(!text.contains("#21"), "{text}");
+/// ```
+pub fn init_no_done_when(repo: &str, numbers: &[u64]) -> String {
+    let count = numbers.len();
+    let (issues, has, them) = if count == 1 {
+        ("issue", "has", "it")
+    } else {
+        ("issues", "have", "them")
+    };
+    let mut named: Vec<String> = numbers
+        .iter()
+        .take(INIT_ISSUES_SHOWN)
+        .map(|n| format!("#{n}"))
+        .collect();
+    if count > INIT_ISSUES_SHOWN {
+        named.push(format!("and {} more", count - INIT_ISSUES_SHOWN));
+    }
+    format!(
+        "{count} open {issues} of {repo} {has} no \"Done when:\" line, so the wave starts no \
+         session for {them}: {}. Add the line to each issue. See \"Add a Done when line to an \
+         issue\" in the book.",
+        named.join(", ")
+    )
+}
+
+/// The note of `riff init` when `gh` cannot list the open issues of
+/// `repo` (01M5SMMP7ZW2PZNGK63WWZAC8P).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_issues_unread("acme/app", "gh: HTTP 502"),
+///     "riff cannot list the open issues of acme/app, so it cannot count the issues with no \"Done when:\" line: gh: HTTP 502"
+/// );
+/// ```
+pub fn init_issues_unread(repo: &str, why: &str) -> String {
+    format!(
+        "riff cannot list the open issues of {repo}, so it cannot count the issues with no \
+         \"Done when:\" line: {}",
+        flat(why)
+    )
+}
 
 /// Some checks of `riff init` failed: `failed` has the name and the fix of
 /// each one, so a person need not search the lists above

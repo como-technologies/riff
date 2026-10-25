@@ -139,6 +139,9 @@ This is the only part of the book that is special to one forge.
 The waves of riff are its
 [milestones](https://github.com/como-technologies/riff/milestones).
 
+The names that riff uses on the forge are in
+[The names riff uses on the forge](#the-names-riff-uses-on-the-forge).
+
 ### See the waves
 
 Run this in a clone of the repository. It shows each open wave in
@@ -266,3 +269,47 @@ To schedule an item, tell your lead: *"Move issue 71 into Wave 4."*
 ```sh
 gh issue create --title "Show the wave in riff who" --body "Done when: riff who shows the wave of each claim."
 ```
+
+### The names riff uses on the forge
+
+riff uses a fixed set of names on the forge. They are rules of riff:
+each repository gets the same names, and no setting changes them. When
+your repository has a milestone or a label with one of these names,
+riff gives it the meaning below. Other milestones and labels are out of
+the waves, and riff ignores them.
+
+| Name | What it is | What riff does with it |
+|---|---|---|
+| `Wave N`, or `Wave N: NAME` | a milestone | A wave. The open wave with the lowest N is the current wave. |
+| `Backlog` | a milestone | The items that riff tracks and does not start. |
+| `Done when:` | the start of a line in the body of an issue | The wave starts a session only for an issue with this line. |
+| `Needs:` | the start of a line in the body of an issue | The issues that must be merged first. |
+| `tracker`, or the title start `Tracker:` | a label | A tracker has no code of its own: the wave starts no session for it. |
+| `broken-main` | a label | A fix item for a broken `main`. It is free work before each other item. |
+| `no-verify` | a label | riff offers no verify for the pull request of the issue. |
+| `release` | a label | A release issue or pull request: the wave starts no session for it. |
+| `worktree-issue-N` | a branch | The branch of the session that works on issue N. |
+
+```mermaid
+flowchart LR
+    R["a milestone, a label,<br/>a line or a branch<br/>of your repository"] --> N{"a name<br/>of riff?"}
+    N -- yes --> U["riff gives it the<br/>meaning of the table"]
+    N -- no --> I["riff ignores it"]
+```
+
+#### See the names that your repository has
+
+Run this in a clone of the repository, before the first wave. The first
+command lists the milestones, and the second lists the labels. A name of
+the table that your repository uses with another meaning is a clash:
+rename it on the forge.
+
+```sh
+gh api 'repos/{owner}/{repo}/milestones?state=all' --jq '.[].title'
+gh label list
+```
+
+`riff init` makes the milestone `Backlog`, and `Wave 1` when the
+repository has no open wave. It also counts the open issues with no
+`Done when:` line: see
+[Find the issues with no Done when line](development.md#find-the-issues-with-no-done-when-line).
