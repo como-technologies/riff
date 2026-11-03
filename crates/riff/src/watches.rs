@@ -60,7 +60,7 @@
 //! ```mermaid
 //! flowchart TD
 //!     R["read the forge"] --> E{"fault?"}
-//!     E -- "yes, a new one" --> F["message to the lead: the fault, one time"]
+//!     E -- "yes, a new one" --> F["one message to the lead for the repository:<br/>the fault, with each watch that failed"]
 //!     E -- "yes, the same" --> K["nothing: try again at the next look"]
 //!     E -- no --> S{"the operation ended?"}
 //!     S -- no --> K
@@ -68,8 +68,10 @@
 //!     P --> G["the watch goes"]
 //! ```
 //!
-//! A message that does not go out stays: the next look posts it. A look
-//! that ends with a fault posts it once, until the fault changes.
+//! A message that does not go out stays: the next look posts it. The
+//! watches of a repository that fail with the same fault give one
+//! message, and the message has a key ([`watch_fault_key`]), so the
+//! fault comes one time for each repository, until the fault changes.
 //!
 //! # A deploy
 //!
@@ -598,9 +600,14 @@ impl Watches {
                 tokio::task::spawn_blocking(move || read_all(&*lookout, &wave, watches, now_ms))
                     .await?
             };
+            let mut failed = Vec::new();
             for (watch, result) in seen {
-                self.settle_one(lookout, &wave, watch, result).await;
+                match result {
+                    Ok(outcome) => self.settle_one(lookout, &wave, watch, outcome).await,
+                    Err(e) => failed.push((watch, format!("{e:#}"))),
+                }
             }
+            self.settle_faults(lookout, &wave, failed).await;
         }
         Ok(slow)
     }
@@ -667,40 +674,81 @@ impl Watches {
         lookout: &Arc<dyn Lookout>,
         wave: &Wave,
         mut watch: Watch,
-        result: Result<Outcome>,
+        outcome: Outcome,
     ) {
-        let saved = match result {
-            Ok(outcome) => {
-                watch.seen.fault = None;
-                for post in &outcome.posts {
-                    if let Err(e) = post_one(&**lookout, wave, post).await {
-                        eprintln!("riff daemon: {}: {e:#}", watch.repo);
-                        // The lead has no message yet: the next look tries again.
-                        if matches!(post, Post::Lead(_) | Post::Once { .. }) {
-                            return;
-                        }
-                    }
-                }
-                self.settle(&watch, outcome.end)
-            }
-            Err(e) => {
-                let fault = format!("{e:#}");
-                if watch.seen.fault.as_deref() == Some(fault.as_str()) {
+        watch.seen.fault = None;
+        for post in &outcome.posts {
+            if let Err(e) = post_one(&**lookout, wave, post).await {
+                eprintln!("riff daemon: {}: {e:#}", watch.repo);
+                // The lead has no message yet: the next look tries again.
+                if matches!(post, Post::Lead(_) | Post::Once { .. }) {
                     return;
                 }
-                let body = crate::text::watch_fault(&watch.op.what(), &fault);
-                if let Err(e) = lookout.tell(wave, &body, None).await {
-                    eprintln!("riff daemon: {}: {e:#}", watch.repo);
-                    return;
-                }
-                watch.seen.fault = Some(fault);
-                self.settle(&watch, false)
             }
-        };
-        if let Err(e) = saved {
+        }
+        if let Err(e) = self.settle(&watch, outcome.end) {
             eprintln!("riff daemon: {e:#}");
         }
     }
+
+    /// Tells the lead the faults of one look at a repository: one message
+    /// for each fault, with the name of each watch that failed with it
+    /// (see "A look" above). A watch that told the fault at a look before
+    /// tells it no more, and no other watch of the repository tells it
+    /// now. The post has a key ([`watch_fault_key`]).
+    async fn settle_faults(
+        &self,
+        lookout: &Arc<dyn Lookout>,
+        wave: &Wave,
+        failed: Vec<(Watch, String)>,
+    ) {
+        let mut by_fault: BTreeMap<String, Vec<Watch>> = BTreeMap::new();
+        for (watch, fault) in failed {
+            by_fault.entry(fault).or_default().push(watch);
+        }
+        for (fault, watches) in by_fault {
+            let told = watches
+                .iter()
+                .any(|w| w.seen.fault.as_deref() == Some(fault.as_str()));
+            if !told {
+                let whats: Vec<String> = watches.iter().map(|w| w.op.what()).collect();
+                let body = crate::text::watch_fault(&whats, &fault);
+                let key = watch_fault_key(&fault);
+                if let Err(e) = lookout.tell(wave, &body, Some(&key)).await {
+                    eprintln!("riff daemon: {}: {e:#}", wave.repo);
+                    continue;
+                }
+            }
+            for mut watch in watches {
+                if watch.seen.fault.as_deref() == Some(fault.as_str()) {
+                    continue;
+                }
+                watch.seen.fault = Some(fault.clone());
+                if let Err(e) = self.settle(&watch, false) {
+                    eprintln!("riff daemon: {e:#}");
+                }
+            }
+        }
+    }
+}
+
+/// The key of the post of a fault (01M6H160E2ZK2AM0PCTQG82V2G):
+/// `watch-fault-` and the start of the SHA-256 sum of the fault. The
+/// watch of each host, and a watch that lost what it saw, make the same
+/// key for the same fault, and riff-server drops the second post.
+///
+/// ```
+/// use riff::watches::watch_fault_key;
+///
+/// let key = watch_fault_key("gh: HTTP 502");
+/// assert!(key.starts_with("watch-fault-"));
+/// assert_eq!(key.len(), "watch-fault-".len() + 16);
+/// assert_eq!(key, watch_fault_key("gh: HTTP 502"));
+/// assert_ne!(key, watch_fault_key("gh: HTTP 503"));
+/// ```
+pub fn watch_fault_key(fault: &str) -> String {
+    let sum = crate::release::sha256(fault.as_bytes());
+    format!("watch-fault-{}", &sum[..16])
 }
 
 /// The result of [`look`] for each of `watches`, with one forge.
@@ -1714,18 +1762,17 @@ mod tests {
         *ground.fault.lock().unwrap() = Some("gh: HTTP 502".into());
 
         look(dir.path(), &ground, MINUTE).await;
-        // Each watch of the repository tells the fault one time.
+        // Two watches of the repository, one fault: one message, with the
+        // name of each watch.
         assert_eq!(
             ground.told(),
             [
-                "riff cannot read the state of the release pull request #1140: gh: HTTP 502. \
-                 riff tries again each minute, and tells you this fault one time.",
-                "riff cannot read the state of the current wave: gh: HTTP 502. riff tries \
-                 again each minute, and tells you this fault one time."
+                "riff cannot read the state of the release pull request #1140 and the current \
+                 wave: gh: HTTP 502. riff tries again each minute, and tells you this fault one \
+                 time."
             ]
         );
-        // The fault is a fact of the host: no key, each host tells it.
-        assert_eq!(ground.keys(), [None, None]);
+        assert_eq!(ground.keys(), [Some(watch_fault_key("gh: HTTP 502"))]);
         look(dir.path(), &ground, 2 * MINUTE).await;
         assert!(ground.told().is_empty(), "the same fault: one message");
         assert_eq!(kept(dir.path()), [pull()], "the watch goes on");
@@ -1736,6 +1783,90 @@ mod tests {
         look(dir.path(), &ground, 3 * MINUTE).await;
         assert_eq!(ground.told().len(), 1);
         assert!(kept(dir.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_watch_that_starts_in_a_known_fault_tells_nothing() {
+        let dir = daemon_dir();
+        let ground = Ground::new(open_pull());
+        *ground.fault.lock().unwrap() = Some("gh: HTTP 502".into());
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(ground.told().len(), 1, "the watch of the wave");
+
+        // A command registers a second watch: it fails with the same fault.
+        watch(dir.path(), pull());
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert!(ground.told().is_empty(), "one fault, one message");
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert!(ground.told().is_empty());
+        let all = Watches::new(dir.path()).read().unwrap();
+        assert!(
+            all.iter()
+                .all(|w| w.seen.fault.as_deref() == Some("gh: HTTP 502"))
+        );
+
+        // A new fault is a new message.
+        *ground.fault.lock().unwrap() = Some("gh: HTTP 503".into());
+        look(dir.path(), &ground, 4 * MINUTE).await;
+        let told = ground.told();
+        assert_eq!(told.len(), 1);
+        assert!(told[0].contains("gh: HTTP 503"), "{told:?}");
+    }
+
+    #[tokio::test]
+    async fn a_watch_that_lost_what_it_saw_sends_the_fault_with_the_same_key() {
+        let dir = daemon_dir();
+        let ground = Ground::new(open_pull());
+        *ground.fault.lock().unwrap() = Some("gh: HTTP 502".into());
+        look(dir.path(), &ground, MINUTE).await;
+        let first = ground.keys();
+        assert_eq!((first.len(), ground.told().len()), (1, 1));
+
+        // The forge answers one time, and fails again: the watch starts
+        // from nothing, and riff-server drops the second post by its key.
+        *ground.fault.lock().unwrap() = None;
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert!(ground.told().is_empty());
+        *ground.fault.lock().unwrap() = Some("gh: HTTP 502".into());
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert_eq!(ground.told().len(), 1);
+        assert_eq!(ground.keys(), first);
+    }
+
+    #[tokio::test]
+    async fn a_fault_that_ends_with_a_dot_has_one_dot() {
+        let dir = daemon_dir();
+        let ground = Ground::new(open_pull());
+        *ground.fault.lock().unwrap() = Some(
+            "gh issue list --state open: GraphQL: API rate limit already exceeded for user ID 1."
+                .into(),
+        );
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            [
+                "riff cannot read the state of the current wave: gh issue list --state open: \
+                 GraphQL: API rate limit already exceeded for user ID 1. riff tries again each \
+                 minute, and tells you this fault one time."
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fault_that_does_not_go_out_stays_for_the_next_look() {
+        let dir = daemon_dir();
+        let ground = Ground::new(open_pull());
+        *ground.fault.lock().unwrap() = Some("gh: HTTP 502".into());
+
+        ground.down.store(true, Ordering::SeqCst);
+        look(dir.path(), &ground, MINUTE).await;
+        assert!(ground.told().is_empty());
+        let all = Watches::new(dir.path()).read().unwrap();
+        assert!(all.iter().all(|w| w.seen.fault.is_none()), "{all:?}");
+
+        ground.down.store(false, Ordering::SeqCst);
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert_eq!(ground.told().len(), 1);
     }
 
     #[tokio::test]

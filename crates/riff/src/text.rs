@@ -8176,20 +8176,34 @@ pub fn watch_not_registered(what: &str, error: &str) -> String {
     )
 }
 
-/// The message to the lead when a watch cannot read the forge
-/// ([`crate::watches::Watches::look_all`]).
+/// The message to the lead when the watches `whats` cannot read the forge
+/// ([`crate::watches::Watches::look_all`]). It adds no dot after an
+/// `error` that ends with one.
 ///
 /// ```
+/// let one = ["the deploy of v4.3.0".to_owned()];
 /// assert_eq!(
-///     riff::text::watch_fault("the deploy of v4.3.0", "gh: HTTP 502"),
+///     riff::text::watch_fault(&one, "gh: HTTP 502"),
 ///     "riff cannot read the state of the deploy of v4.3.0: gh: HTTP 502. riff tries again each \
 ///      minute, and tells you this fault one time."
 /// );
+///
+/// let two = ["the release pull request #7".to_owned(), "the current wave".to_owned()];
+/// assert_eq!(
+///     riff::text::watch_fault(&two, "gh: rate limit exceeded."),
+///     "riff cannot read the state of the release pull request #7 and the current wave: gh: \
+///      rate limit exceeded. riff tries again each minute, and tells you this fault one time."
+/// );
 /// ```
-pub fn watch_fault(what: &str, error: &str) -> String {
+pub fn watch_fault(whats: &[String], error: &str) -> String {
+    let what = match whats {
+        [init @ .., last] if !init.is_empty() => format!("{} and {last}", init.join(", ")),
+        _ => whats.concat(),
+    };
+    let dot = if error.ends_with('.') { "" } else { "." };
     format!(
-        "riff cannot read the state of {what}: {error}. riff tries again each minute, and tells \
-         you this fault one time."
+        "riff cannot read the state of {what}: {error}{dot} riff tries again each minute, and \
+         tells you this fault one time."
     )
 }
 

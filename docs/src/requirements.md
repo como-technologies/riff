@@ -6195,7 +6195,7 @@ of this part when they merge.
   or a failure, the daemon posts one message to the lead of the
   repository: the result, the failed jobs and the next step. Then the
   watch goes, and no second message comes for the same end. A watch
-  whose state riff cannot read posts the fault once, and goes on.
+  whose state riff cannot read goes on.
 - **01M5RGD0XTR4X1MEV726HMCEGQ** The chat line of `riff release publish`
   says that the CI run of the tag builds, and that riff tells the owner
   when the deploy waits. The watch of the tag posts the line "waits for
@@ -6260,6 +6260,16 @@ of this part when they merge.
   the comment fails, the error says that the checks ran, that riff did
   not close the issue or resume the riff, and names `riff release check
   vX.Y.Z` as the next step.
+- **01M6H160E2ZK2AM0PCTQG82V2G** The watches of one repository that
+  cannot read the forge give the lead one message for each fault, with
+  the name of each watch that failed with it. A watch that told the
+  fault tells it no more until a look reads the forge, and a watch that
+  starts in a known fault tells nothing. The post has the key
+  `watch-fault-` and the start of the SHA-256 sum of the fault, so a
+  wave on more hosts, and a watch that lost what it saw, send the fault
+  one time to the lead of the repository while the message is one of the
+  last 200 of its thread. The text adds no dot after an error that ends
+  with one. Supersedes 01M5RGD0RTXYA7FF5K1TH72MGX in part.
 
 ### The real-session test
 
