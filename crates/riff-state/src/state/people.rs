@@ -514,27 +514,18 @@ impl View<'_> {
     /// The `posted` records of a note of the server about the people
     /// (01M3N7K4DVHSF7AQ402F14J26Z): one note in the thread of each
     /// repository of the riff, which wakes no session. Each live lead
-    /// of `tell` gets the same text as a direct message. The records go
-    /// in the chunk of the command that causes the note.
-    fn news(&self, body: &str, tell: &[String], now: Now) -> Vec<Change> {
+    /// of `tell` gets the same text as a direct message. With `chat`,
+    /// the last record is [`View::chat`]. The records go in the chunk of
+    /// the command that causes the note.
+    fn news(&self, body: &str, tell: &[String], chat: bool, now: Now) -> Vec<Change> {
         let server = owner::server_uri();
-        let message = |to: Vec<Selector>, body: String, kind: Kind| Message {
-            seq: 0,
-            from: server.clone(),
-            to,
-            body,
-            at_ms: now.ms,
-            kind,
-            sig: None,
-            payload: None,
-        };
         let mut changes = Vec::new();
         for thread in self.repositories() {
             let to = vec![Selector {
                 repo: Some(thread.to_string()),
                 ..Selector::default()
             }];
-            let note = message(to, body.to_owned(), Kind::Note);
+            let note = server_message(to, body.to_owned(), Kind::Note, now);
             changes.append(&mut self.put(server.who(), thread, note, None, now.at).0);
         }
         let direct = owner::to_lead(body);
@@ -544,10 +535,24 @@ impl View<'_> {
             };
             let to = vec![Selector::session(id)];
             let thread = ThreadName::direct(server.who(), &lead);
-            let told = message(to, direct.clone(), Kind::Message);
+            let told = server_message(to, direct.clone(), Kind::Message, now);
             changes.append(&mut self.put(server.who(), thread, told, None, now.at).0);
         }
+        if chat {
+            changes.append(&mut self.chat(body, now));
+        }
         changes
+    }
+
+    /// The `posted` record of one line of the server in the chat
+    /// (01M6FYH5XZAZYJFPFQVAFQSSVT), for a change that changes who the
+    /// owner is. The line has no `to`: it wakes no session, and a person
+    /// sees it in `riff chat`.
+    fn chat(&self, body: &str, now: Now) -> Vec<Change> {
+        let server = owner::server_uri();
+        let line = server_message(Vec::new(), body.to_owned(), Kind::Message, now);
+        self.put(server.who(), ThreadName::chat(), line, None, now.at)
+            .0
     }
 
     /// The records that keep `old`, the owner who loses the role, an
@@ -582,6 +587,20 @@ fn owner_set(email: Option<&str>) -> Change {
     Change::OwnerSet(OwnerSet {
         email: email.map(str::to_owned),
     })
+}
+
+/// A post of the server (01M3N7K4BC1RPZKQ1XNDTBRPGF): no signature.
+fn server_message(to: Vec<Selector>, body: String, kind: Kind, now: Now) -> Message {
+    Message {
+        seq: 0,
+        from: owner::server_uri(),
+        to,
+        body,
+        at_ms: now.ms,
+        kind,
+        sig: None,
+        payload: None,
+    }
 }
 
 /// The email of a call, as the people keep it. It refuses an email that
@@ -824,6 +843,10 @@ impl Command for SetAdmin {
 /// (01M3JYX8NPZASQY6031R35H39P). The old owner stays an admin and a
 /// member. It ends a request for the owner role that waits. It needs
 /// the owner.
+///
+/// The client posts the note of a pass in the repository threads
+/// (01M3MN14ZCTRVD3T455P6TFK1B). The chunk of the command holds the
+/// line in the chat (01M6FYH5XZAZYJFPFQVAFQSSVT).
 impl Command for PassOwner {
     const KIND: CommandKind = CommandKind::PassOwner;
     type Reply = OwnerPassed;
@@ -836,9 +859,9 @@ impl Command for PassOwner {
 
     fn handle(
         &self,
-        _caller: &Caller,
+        caller: &Caller,
         view: &View<'_>,
-        _now: Now,
+        now: Now,
     ) -> Result<(Vec<Change>, (String, String)), Refused> {
         let people = view.people();
         let email = email(&self.email);
@@ -859,6 +882,8 @@ impl Command for PassOwner {
         }
         let mut changes = view.keeps(old);
         changes.push(owner_set(Some(&email)));
+        let news = owner::passed_news(caller.who().user(), &email, old);
+        changes.append(&mut view.chat(&news, now));
         Ok((changes, (email, old.to_owned())))
     }
 
@@ -884,7 +909,10 @@ impl Command for PassOwner {
 /// changes nothing, and posts no note (01M3WRJAFS6W3J2ZRJ6XSW3SB5).
 ///
 /// The note of the server goes in the chunk of the command, and each
-/// live lead of the owner gets it as a direct message.
+/// live lead of the owner gets it as a direct message. On a riff with
+/// no owner, the chunk also holds one line in the chat
+/// (01M6FYH5XZAZYJFPFQVAFQSSVT). A request that waits posts none: it
+/// changes no owner.
 impl Command for TakeOwner {
     const KIND: CommandKind = CommandKind::TakeOwner;
     type Reply = OwnerAsked;
@@ -910,7 +938,7 @@ impl Command for TakeOwner {
         };
         let Some(owner) = people.owner().map(str::to_owned) else {
             let mut changes = vec![owner_set(Some(&admin))];
-            changes.append(&mut view.news(&owner::took_news(user, &admin), &[], now));
+            changes.append(&mut view.news(&owner::took_news(user, &admin), &[], true, now));
             let asked = OwnerAsked {
                 admin,
                 owner: None,
@@ -944,7 +972,7 @@ impl Command for TakeOwner {
             .map(str::to_owned)
             .into_iter()
             .collect();
-        changes.append(&mut view.news(&news, &tell, now));
+        changes.append(&mut view.news(&news, &tell, false, now));
         let asked = OwnerAsked {
             admin,
             owner: Some(owner),
@@ -961,7 +989,8 @@ impl Command for TakeOwner {
 /// The owner keeps the owner role that an admin asks for
 /// (01M3N7K41N03P26BEFFNX5617K). The note of the server goes in the
 /// chunk of the command, and each live lead of the admin gets it as a
-/// direct message. It needs the owner.
+/// direct message. It posts no line in the chat: the owner stays the
+/// owner (01M6FYH5XZAZYJFPFQVAFQSSVT). It needs the owner.
 impl Command for DenyOwner {
     const KIND: CommandKind = CommandKind::DenyOwner;
     type Reply = OwnerDenied;
@@ -996,7 +1025,7 @@ impl Command for DenyOwner {
             .map(str::to_owned)
             .into_iter()
             .collect();
-        changes.append(&mut view.news(&news, &tell, now));
+        changes.append(&mut view.news(&news, &tell, false, now));
         Ok((changes, OwnerDenied { owner, admin }))
     }
 
@@ -1030,7 +1059,8 @@ pub enum OwnerChange {
 /// time ended with no answer of the owner
 /// (01M3N7K41N03P26BEFFNX5617K). The old owner stays an admin. It
 /// changes nothing when no request waits, or its time did not end yet.
-/// The reply is the change that it made.
+/// The reply is the change that it made. The chunk also holds one line
+/// in the chat (01M6FYH5XZAZYJFPFQVAFQSSVT).
 #[derive(Clone, Copy, Debug)]
 pub struct GrantOwner;
 
@@ -1057,7 +1087,7 @@ impl Command for GrantOwner {
         let mut changes = view.keeps(old);
         changes.push(owner_set(Some(owner)));
         let news = owner::change_news(&change, view.settings.owner_role());
-        changes.append(&mut view.news(&news, &[], now));
+        changes.append(&mut view.news(&news, &[], true, now));
         Ok((changes, Some(change)))
     }
 
@@ -1079,7 +1109,8 @@ impl Command for GrantOwner {
 /// the riff has no owner (01M3Q63NNC6SC03BFCG80M7B4D): the note then
 /// also goes to each live lead of each admin, to ask for a volunteer.
 /// It changes nothing in a riff with no owner. The reply is the change
-/// that it made.
+/// that it made. The chunk also holds one line in the chat, with or
+/// without a new owner (01M6FYH5XZAZYJFPFQVAFQSSVT).
 #[derive(Clone, Copy, Debug)]
 pub struct EndOwner;
 
@@ -1116,7 +1147,7 @@ impl Command for EndOwner {
         let mut changes = view.keeps(old);
         changes.push(owner_set(owner));
         let news = owner::change_news(&change, view.settings.owner_role());
-        changes.append(&mut view.news(&news, &tell, now));
+        changes.append(&mut view.news(&news, &tell, true, now));
         Ok((changes, Some(change)))
     }
 

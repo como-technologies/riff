@@ -3197,6 +3197,15 @@
   token in the `Authorization` header.
 - **R47** Each session connects through `riff`. Direct connections from
   an agent tool are not supported for now.
+- **01M6FYH5XZAZYJFPFQVAFQSSVT** Each change of the owner role that
+  changes who the owner is also posts one line in the chat, as
+  `riff://riff@server`, with the same text as its note: a pass, a grant
+  after N minutes, a gone owner with or without a new owner, and a take
+  on a riff with no owner. A request and a deny change no owner: they
+  post no line. The line has no `to`: it wakes no session. A person sees
+  it in `riff chat`. The server posts the line in the chunk of the
+  command that makes the change, so a replay of the log has it.
+  Supersedes 01M3N7K4DVHSF7AQ402F14J26Z in part.
 
 ## Terminal
 

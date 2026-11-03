@@ -3,7 +3,8 @@
 //! real server with short times (01M3N7K3ZAZFGABN7032AYJWEM,
 //! 01M3N7K41N03P26BEFFNX5617K, 01M3Q5460YESBSQHTV3M15PE53,
 //! 01M3Q546335NBTKG5BHQ27QC93, 01M3Q63NNC6SC03BFCG80M7B4D,
-//! 01M3N7K4BC1RPZKQ1XNDTBRPGF, 01M3N7K4DVHSF7AQ402F14J26Z). The sign-in
+//! 01M3N7K4BC1RPZKQ1XNDTBRPGF, 01M3N7K4DVHSF7AQ402F14J26Z,
+//! 01M6FYH5XZAZYJFPFQVAFQSSVT). The sign-in
 //! is in the mock store of `keyring-core`, so the tests run in process.
 //!
 //! Each riff here has sign-in: a riff with no sign-in has no owner. The
@@ -491,9 +492,14 @@ async fn the_owner_gets_a_warning_one_check_before_the_drop() {
         .read(&lead("bob"), &ThreadName::chat(), true)
         .await
         .unwrap();
+    // The line of the warning, and the line of the gone owner
+    // (01M6FYH5XZAZYJFPFQVAFQSSVT).
     let bodies: Vec<&str> = chat.iter().map(|m| m.message.body.as_str()).collect();
-    assert_eq!(bodies, [warning.message.body.as_str()]);
-    assert_eq!(chat[0].message.from, server_uri());
+    assert_eq!(
+        bodies,
+        [warning.message.body.as_str(), gone.message.body.as_str()]
+    );
+    assert!(chat.iter().all(|m| m.message.from == server_uri()));
 }
 
 /// A call of the owner as a person, for example `riff who`, is a sign
@@ -592,6 +598,108 @@ async fn each_step_posts_one_note() {
     assert_eq!(from_server, starts.len() - 1);
 }
 
+/// The lines of the chat, as the lead of `user` reads them.
+async fn chat_of(api: &Api, user: &str) -> Vec<riff_client::api::Checked> {
+    let read = Api::new(api.base())
+        .read(&lead(user), &ThreadName::chat(), true)
+        .await;
+    match read {
+        Ok(lines) => lines,
+        // Nobody posted in the chat yet: the thread does not exist.
+        Err(error) => {
+            assert!(
+                error.to_string().contains("no thread named chat"),
+                "{error}"
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// A request and a deny change no owner: they post no line in the chat
+/// (01M6FYH5XZAZYJFPFQVAFQSSVT).
+#[tokio::test]
+async fn a_request_and_a_deny_post_no_line_in_the_chat() {
+    let (service, api, _) = start(timing(LONG, LONG, 3)).await;
+    as_person(&service, &api, "bob@gmail.com")
+        .await
+        .take_owner()
+        .await
+        .unwrap();
+    as_person(&service, &api, "ada@gmail.com")
+        .await
+        .deny_owner()
+        .await
+        .unwrap();
+    let chat = chat_of(&api, "ada").await;
+    assert!(chat.is_empty(), "{chat:#?}");
+    // The notes are still there: a request and a deny.
+    let notes = Api::new(api.base())
+        .read(&lead("ada"), &repo(), true)
+        .await
+        .unwrap();
+    assert_eq!(notes.len(), 2, "{notes:#?}");
+}
+
+/// A pass, a grant after N minutes, a gone owner and a take on a riff
+/// with no owner each post one line in the chat, with the text of the
+/// note. A request and a deny post none. The lines come from the
+/// server, have no `to`, and wake no session (01M6FYH5XZAZYJFPFQVAFQSSVT).
+#[tokio::test]
+async fn each_change_of_who_the_owner_is_posts_one_line_in_the_chat() {
+    let answer = Duration::from_millis(1500);
+    let (service, api, _) = start(timing(answer, Duration::from_millis(50), 2)).await;
+    let bob = as_person(&service, &api, "bob@gmail.com").await;
+    bob.take_owner().await.unwrap(); // the request: no line
+    let ada = as_person(&service, &api, "ada@gmail.com").await;
+    ada.pass_owner(&person("ada"), "bob@gmail.com")
+        .await
+        .unwrap(); // the pass: a line
+    let carol = as_person(&service, &api, "carol@gmail.com").await;
+    carol.take_owner().await.unwrap(); // the request: no line
+    let bob = as_person(&service, &api, "bob@gmail.com").await;
+    bob.deny_owner().await.unwrap(); // the deny: no line
+    let carol = as_person(&service, &api, "carol@gmail.com").await;
+    carol.take_owner().await.unwrap(); // the request: no line
+    wait_for("the grant", || {
+        owner(&service).as_deref() == Some("carol@gmail.com")
+    })
+    .await; // the grant: a line
+    Api::new(api.base()).end(&lead("carol")).await.unwrap();
+    wait_for("carol is gone", || owner(&service).is_none()).await; // gone: a line
+    let ada = as_person(&service, &api, "ada@gmail.com").await;
+    ada.take_owner().await.unwrap(); // the volunteer: a line
+
+    let notes = Api::new(api.base())
+        .read(&lead("ada"), &repo(), true)
+        .await
+        .unwrap();
+    let note = |start: &str| {
+        let found = notes.iter().find(|n| n.message.body.starts_with(start));
+        found
+            .unwrap_or_else(|| panic!("no note starts with {start}"))
+            .message
+            .body
+            .clone()
+    };
+    // The warning to the owner is a line in the chat too: it stays.
+    let expected = [
+        note("members: ada passed the owner role to bob@gmail.com."),
+        note("members: the owner bob@gmail.com did not answer"),
+        note("members: the owner carol@gmail.com was not seen at 2 checks"),
+        note("members: the owner carol@gmail.com is gone"),
+        note("members: ada took the owner role. The riff had no owner."),
+    ];
+    let chat = chat_of(&api, "ada").await;
+    let bodies: Vec<&str> = chat.iter().map(|m| m.message.body.as_str()).collect();
+    assert_eq!(bodies, expected);
+    for line in &chat {
+        assert_eq!(line.message.from, server_uri());
+        assert_eq!(line.message.kind, Kind::Message);
+        assert!(line.message.to.is_empty(), "{line:?}");
+    }
+}
+
 /// The owner is gone while a request for the owner role waits: the
 /// admin that asked is the owner at once, with no wait for the answer
 /// time. The old owner stays an admin (01M3Q546335NBTKG5BHQ27QC93).
@@ -643,6 +751,11 @@ async fn a_gone_owner_gives_the_role_to_the_admin_that_asked() {
         ),
         "{last}"
     );
+    // The chat has the same line, also with a new owner
+    // (01M6FYH5XZAZYJFPFQVAFQSSVT).
+    let chat = chat_of(&api, "bob").await;
+    let line = chat.last().map(|m| m.message.body.as_str());
+    assert_eq!(line, Some(last.as_str()));
 }
 
 /// A pass of the owner role to another person ends the request that
@@ -782,11 +895,12 @@ fn the_book_shows_how_to_take_the_owner_role() {
             "riff owner --take",
             "riff owner EMAIL",
             "riff owner --deny",
+            "riff chat",
             "riff who",
             "riff-server --public-url URL --owner EMAIL --owner-take-minutes 30",
         ]
     );
-    each_is_real(&commands[..4]);
+    each_is_real(&commands[..5]);
     let help = Isolated::shared()
         .assert_riff_server()
         .arg("--help")
