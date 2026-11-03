@@ -65,17 +65,20 @@ fn a_clone_with_changes_and_no_pushed_commit_gets_a_wip_commit_on_its_branch() {
 /// signature, so riff saves the work.
 #[test]
 fn a_host_whose_git_signs_each_commit_gets_the_wip_commit() {
+    // A container of riff sets `commit.gpgsign=false` in `GIT_CONFIG_*`.
+    let name = "a_host_whose_git_signs_each_commit_gets_the_wip_commit";
+    if !isolated::rerun_without_git_config(module_path!(), name) {
+        return;
+    }
     let root = tempfile::tempdir().unwrap();
     let (origin, clone) = seeded(root.path());
     git(&clone, &["config", "commit.gpgsign", "true"]);
     git(&clone, &["config", "gpg.program", "false"]);
     std::fs::write(clone.join("work.md"), "work\n").unwrap();
-    // The setup is real: a plain commit fails to sign. A container of riff
-    // sets `commit.gpgsign=false` in `GIT_CONFIG_*`: the check drops it.
+    // The setup is real: a plain commit fails to sign.
     let plain = Command::new("git")
         .current_dir(&clone)
         .args(["commit", "-q", "--allow-empty", "-m", "plain"])
-        .env_remove("GIT_CONFIG_COUNT")
         .output()
         .unwrap();
     assert!(!plain.status.success(), "{plain:?}");

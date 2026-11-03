@@ -41,6 +41,12 @@
 //! - A test that needs a place outside each git repository gets its
 //!   temp dir from [`outside_git`] (01M43B48Z8R0SXAWBQP75CPR55).
 //!
+//! A container of riff sets `commit.gpgsign=false` in `GIT_CONFIG_COUNT`,
+//! `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`, and code under test that
+//! runs git in the test process takes them. A test of such code starts
+//! with [`rerun_without_git_config`], and a doc test with
+//! [`clear_git_config_env`] (01M6FYHS06W0Y98GQTQY6Q37F0).
+//!
 //! A check of a time in a test uses a [`Span`]: it fails only when the
 //! logic is slow, not when the machine is busy. See [`time`].
 //!
@@ -285,6 +291,156 @@ impl Isolated {
 pub fn removed(name: &OsStr) -> bool {
     let name = name.to_string_lossy();
     REMOVED_PREFIXES.iter().any(|p| name.starts_with(p)) || REMOVED.contains(&name.as_ref())
+}
+
+/// True when git reads config from the variable `name`:
+/// `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_N` or `GIT_CONFIG_VALUE_N`.
+///
+/// ```
+/// assert!(isolated::git_config_var("GIT_CONFIG_COUNT".as_ref()));
+/// assert!(isolated::git_config_var("GIT_CONFIG_KEY_0".as_ref()));
+/// assert!(isolated::git_config_var("GIT_CONFIG_VALUE_12".as_ref()));
+/// assert!(!isolated::git_config_var("GIT_CONFIG_KEY_".as_ref()));
+/// assert!(!isolated::git_config_var("GIT_CONFIG_GLOBAL".as_ref()));
+/// assert!(!isolated::git_config_var("GIT_CONFIG_NOSYSTEM".as_ref()));
+/// ```
+pub fn git_config_var(name: &OsStr) -> bool {
+    let name = name.to_string_lossy();
+    let number = |rest: &str| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit());
+    name == "GIT_CONFIG_COUNT"
+        || ["GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"]
+            .iter()
+            .any(|prefix| name.strip_prefix(prefix).is_some_and(number))
+}
+
+/// Removes each [`git_config_var`] from the environment of this process,
+/// and gives their names (01M6FYHS06W0Y98GQTQY6Q37F0).
+///
+/// A container of riff sets `commit.gpgsign=false` in them, and code under
+/// test that runs git takes them from the process. Call it first in a doc
+/// test: each doc test is a process of its own. Never call it in a test
+/// binary with other tests: they run at the same time, and some of them
+/// need the variables. Such a test calls [`rerun_without_git_config`].
+///
+/// ```
+/// // SAFETY: a doc test is one process, and it has one thread here.
+/// unsafe {
+///     std::env::set_var("GIT_CONFIG_COUNT", "1");
+///     std::env::set_var("GIT_CONFIG_KEY_0", "commit.gpgsign");
+///     std::env::set_var("GIT_CONFIG_VALUE_0", "false");
+/// }
+/// let mut cleared = isolated::clear_git_config_env();
+/// cleared.sort();
+/// assert_eq!(cleared, ["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"]);
+/// assert!(std::env::vars_os().all(|(name, _)| !isolated::git_config_var(&name)));
+/// // The next call finds nothing.
+/// assert!(isolated::clear_git_config_env().is_empty());
+/// ```
+pub fn clear_git_config_env() -> Vec<OsString> {
+    let names: Vec<OsString> = std::env::vars_os()
+        .map(|(name, _)| name)
+        .filter(|name| git_config_var(name))
+        .collect();
+    for name in &names {
+        // SAFETY: std holds one lock for the environment, and it holds the
+        // lock when it starts a child. A doc test calls this before its first
+        // git call, and no other code of a doc test reads these variables.
+        unsafe { std::env::remove_var(name) };
+    }
+    names
+}
+
+/// The variable that tells a test that [`rerun_without_git_config`] runs it
+/// for the second time.
+const RERUN: &str = "ISOLATED_RERUN";
+
+/// The name that the test harness gives to the test `test` of the module
+/// `module` (from `module_path!()`): the module with no crate name, then
+/// the test.
+///
+/// ```
+/// assert_eq!(
+///     isolated::test_name("riff::daemon::sweep::tests", "the_sweep"),
+///     "daemon::sweep::tests::the_sweep"
+/// );
+/// assert_eq!(isolated::test_name("all::save", "a_clone"), "save::a_clone");
+/// assert_eq!(isolated::test_name("git_config", "a_test"), "a_test");
+/// ```
+pub fn test_name(module: &str, test: &str) -> String {
+    match module.split_once("::") {
+        Some((_, path)) => format!("{path}::{test}"),
+        None => test.to_owned(),
+    }
+}
+
+/// The command that runs the one test `name` of the test binary `exe`
+/// again, with each [`git_config_var`] of `vars` removed and the marker of
+/// the second run set.
+///
+/// ```
+/// let cmd = isolated::rerun_command(
+///     "/target/deps/all".as_ref(),
+///     "save::a_clone",
+///     ["PATH", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_NOSYSTEM"].map(Into::into),
+/// );
+/// let removed: Vec<_> = cmd.get_envs().filter(|(_, v)| v.is_none()).map(|(k, _)| k).collect();
+/// assert_eq!(removed, ["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0"]);
+/// let args: Vec<_> = cmd.get_args().collect();
+/// assert_eq!(args, ["save::a_clone", "--exact", "--test-threads=1"]);
+/// ```
+pub fn rerun_command(
+    exe: &Path,
+    name: &str,
+    vars: impl IntoIterator<Item = OsString>,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args([name, "--exact", "--test-threads=1"])
+        .env(RERUN, "1");
+    for var in vars.into_iter().filter(|var| git_config_var(var)) {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
+/// For a test whose code under test runs git in the test process
+/// (01M6FYHS06W0Y98GQTQY6Q37F0): in a test binary with other tests, the
+/// variables of git in the process stay, because other tests need them.
+/// So the test runs again, alone, in a child process of its own with no
+/// [`git_config_var`] in its environment. The call in the first run gives
+/// `false` after the child passed, and the test returns. In the child it
+/// gives `true`, and the test goes on. It fails when the child fails, or
+/// when it ran no test (a wrong name).
+///
+/// `module` is `module_path!()`, and `test` the name of the test function.
+///
+/// ```no_run
+/// fn a_host_whose_git_signs_each_commit_gets_the_wip_commit() {
+///     if !isolated::rerun_without_git_config(module_path!(), "a_host_whose_git_signs_each_commit_gets_the_wip_commit") {
+///         return;
+///     }
+///     // From here, the process has no `GIT_CONFIG_COUNT`.
+/// }
+/// ```
+pub fn rerun_without_git_config(module: &str, test: &str) -> bool {
+    if std::env::var_os(RERUN).is_some() {
+        return true;
+    }
+    let name = test_name(module, test);
+    let exe = std::env::current_exe().expect("the path of the test binary");
+    let vars = std::env::vars_os().map(|(var, _)| var);
+    let out = rerun_command(&exe, &name, vars)
+        .output()
+        .expect("the test binary runs again");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.status.success() && text.contains("1 passed"),
+        "the test {name} failed when it ran again with no git config:\n{text}"
+    );
+    false
 }
 
 /// A command that can run in an [`Isolated`] environment.

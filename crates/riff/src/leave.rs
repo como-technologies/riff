@@ -75,6 +75,8 @@ pub const WIP_MESSAGE: &str = "WIP: the session left the riff";
 /// of the host can sign each commit and have no key for riff.
 ///
 /// ```
+/// // A container of riff sets `commit.gpgsign=false` in `GIT_CONFIG_*`: wip takes none.
+/// isolated::clear_git_config_env();
 /// let git = |dir: &std::path::Path, args: &[&str]| {
 ///     let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
 ///     assert!(out.status.success(), "git {args:?}: {out:?}");

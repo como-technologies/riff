@@ -603,6 +603,8 @@ fn other_branches(clone: &Path) -> Result<Vec<String>> {
 /// ```
 /// use riff::daemon::sweep::{Pushed, push_kept};
 ///
+/// // A container of riff sets `commit.gpgsign=false` in `GIT_CONFIG_*`: push_kept takes none.
+/// isolated::clear_git_config_env();
 /// let git = |dir: &std::path::Path, args: &[&str]| {
 ///     let mut git = std::process::Command::new("git");
 ///     git.arg("-C").arg(dir).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null");
@@ -1680,6 +1682,11 @@ pub(crate) mod tests {
     /// no signature, so the sweep keeps the work and the folder goes.
     #[tokio::test]
     async fn the_sweep_pushes_the_work_on_a_host_whose_git_signs_each_commit() {
+        // A container of riff sets `commit.gpgsign=false` in `GIT_CONFIG_*`.
+        let name = "the_sweep_pushes_the_work_on_a_host_whose_git_signs_each_commit";
+        if !isolated::rerun_without_git_config(module_path!(), name) {
+            return;
+        }
         let (here, _) = here(&[(1, Fate::Closed { pull: 41 })]).await;
         let kept = folder(&here, "issue-1-00000001");
         let clone = kept.join("clone");
@@ -1689,13 +1696,11 @@ pub(crate) mod tests {
         std::fs::write(clone.join("tracked.md"), "two").unwrap();
         git(&clone, &["config", "commit.gpgsign", "true"]);
         git(&clone, &["config", "gpg.program", "false"]);
-        // The setup is real: a plain commit fails to sign. A container of
-        // riff sets `commit.gpgsign=false` in `GIT_CONFIG_*`: the check drops it.
+        // The setup is real: a plain commit fails to sign.
         let plain = std::process::Command::new("git")
             .arg("-C")
             .arg(&clone)
             .args(["commit", "-q", "-a", "-m", "plain"])
-            .env_remove("GIT_CONFIG_COUNT")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_AUTHOR_NAME", "riff test")
