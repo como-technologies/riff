@@ -1775,7 +1775,10 @@ A check failed when its run ended with `failure`, `timed_out` or
 `startup_failure`, or when its status is `failure` or `error`. The
 status `riff/verify` is the verify, not a check. A cancelled or skipped
 check did not fail. GitHub does not tell riff which check a rule
-requires, so each failed check counts. A pull request with a conflict
+requires, so each failed check counts. Only the newest run of a check
+counts: a check can run more than one time on one commit, for example
+after a rerun, and an old failed run does not count when a newer run of
+the same check passed. A pull request with a conflict
 gets the rebase first: its new head has new checks.
 
 The session for a failed run of GitHub Actions gets the names of the

@@ -682,6 +682,15 @@
   that lead is `user=U,repo=OWNER/REPO,lead=true`. `riff verify` runs
   from any folder of a clone of the repository, also outside a session.
   A folder that is not the worktree of the test needs `--commit SHA`.
+- **01M6G0BFAJJV9YNQZT502P1KGJ** The look of the wave at the open pull
+  requests reads the check runs of a head by the rule of
+  01M5RGM8HBVQMY25H5PYESK17J: of the runs of one check, only the newest.
+  An old failed run does not count when a newer run of the same check
+  passed, for the fix of checks, for the message to the lead, and for
+  the group stuck of riff top. The end of a session that fixed checks
+  reads the checks the same way. The wave starts no fix session for a
+  pull request that is merged or closed, and sends no message that a
+  check still fails for one.
 
 ## Tokens on GitHub
 

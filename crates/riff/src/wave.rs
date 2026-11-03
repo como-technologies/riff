@@ -186,7 +186,10 @@
 //!   failed run, and to fix the code and push to the same pull request.
 //!   For a known flake it allows one run of the job again. The rollup
 //!   does not say which check a rule requires, so each failed check
-//!   counts. A check that was cancelled or skipped did not fail.
+//!   counts, but only its newest run (#1540,
+//!   [`rollout::Pull::failed_checks`]): an old failed run does not count
+//!   when a newer run of the same check passed. A check that was
+//!   cancelled or skipped did not fail.
 //! - **A failed check of another app** (#1427). The start text reads the
 //!   log with `gh run view` and runs the job again with `gh run rerun`.
 //!   That works for a run of GitHub Actions only
@@ -2023,8 +2026,9 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///   for the next look: with `CONFLICTING` the pull request gets the
 ///   rebase, with `MERGEABLE` the verify.
 /// - A pull request with failed checks is one whose verify passed and
-///   whose head has a failed check ([`rollout::Stuck::Checks`]). It is a
-///   build, with the names of the checks that are runs of GitHub Actions
+///   whose head has a failed check ([`rollout::Stuck::Checks`]), where
+///   only the newest run of a check counts. It is a build, with the names
+///   of the checks that are runs of GitHub Actions
 ///   ([`rollout::Pull::failed_runs`]).
 /// - A pull request in the merge queue ([`rollout::Pull::queued`]) is none
 ///   of these: the wave moves nothing for it (01M5TKPNDET56VR8WZ74FSR71F).
@@ -2059,6 +2063,13 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///     ..Pull::default()
 /// };
 /// let gate = |pull: Pull| Pull { checks: [pull.checks, vec![Check::run("Gate", "FAILURE")]].concat(), ..pull };
+/// let again = |pull: Pull| {
+///     let runs = [
+///         Check::run("Gate", "FAILURE").started("2026-11-03T05:50:00Z"),
+///         Check::run("Gate", "SUCCESS").started("2026-11-03T05:55:00Z"),
+///     ];
+///     Pull { checks: [pull.checks, runs.to_vec()].concat(), ..pull }
+/// };
 /// let circle = || Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9");
 /// let other = |pull: Pull| Pull { checks: [pull.checks, vec![circle()]].concat(), ..pull };
 /// let review = |pull: Pull| Pull { review: Some("REVIEW_REQUIRED".into()), ..pull };
@@ -2078,6 +2089,7 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///         gate(pull(46, 6, Some("SUCCESS"), "MERGEABLE")),
 ///         gate(pull(47, 8, None, "MERGEABLE")),
 ///         other(pull(48, 10, Some("SUCCESS"), "MERGEABLE")),
+///         again(pull(52, 14, Some("SUCCESS"), "MERGEABLE")),
 ///         pull(49, 11, None, "UNKNOWN"),
 ///         review(pull(50, 12, Some("SUCCESS"), "MERGEABLE")),
 ///         fork(pull(51, 13, Some("SUCCESS"), "MERGEABLE")),
@@ -2103,6 +2115,8 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///     (51, Stuck::Approve(hygiene())),
 /// ]);
 /// assert!(!fixes.failed.contains_key(&10), "no session fixes it");
+/// // An old failed run and a newer run that passed (#1540): no fix, no notice.
+/// assert!(!fixes.failed.contains_key(&14) && fixes.notices.iter().all(|n| n.pull != 52));
 /// assert_eq!(fixes.notices[0], Notice { pull: 45, branch: "worktree-issue-5".into(), commit: "c5".into(), stuck: Stuck::AutoMergeOff });
 ///
 /// // The pull request of 11 reads UNKNOWN: its verify waits, and the pull request is no conflict yet.
@@ -2829,6 +2843,9 @@ mod tests {
         /// The issues whose pull request has a failed check of another app
         /// than GitHub Actions ([`OTHER_LINK`]).
         failing_other: BTreeSet<u64>,
+        /// The issues whose pull request has an old failed run of the check
+        /// `Gate` and a newer run of it that passed (#1540).
+        rerun: BTreeSet<u64>,
         /// A rebase and a fix of checks end with no push.
         no_push: bool,
         /// The work of each claim of a session, in order.
@@ -2919,6 +2936,16 @@ mod tests {
                     self.failing_other
                         .contains(n)
                         .then(|| rollout::Check::other("ci", "FAILURE", OTHER_LINK)),
+                )
+                .chain(
+                    self.rerun
+                        .contains(n)
+                        .then_some([
+                            rollout::Check::run("Gate", "FAILURE").started("2026-11-03T05:50:00Z"),
+                            rollout::Check::run("Gate", "SUCCESS").started("2026-11-03T05:55:00Z"),
+                        ])
+                        .into_iter()
+                        .flatten(),
                 )
                 .collect(),
                 mergeable: Some(
@@ -4375,6 +4402,34 @@ mod tests {
         assert_eq!(here.forge().works, [checks("c1"), checks("c1b")]);
     }
 
+    /// #1540, 01M5RGM8HBVQMY25H5PYESK17J: the rollup keeps an old failed
+    /// run of a check next to the newer run of it that passed. The wave
+    /// reads the newest run only: such a pull request gets no fix session
+    /// and no message, as a pull request with no failed check. A pull
+    /// request with a failed check, in the same look, gets its session.
+    #[tokio::test]
+    async fn an_old_failed_run_of_a_check_that_passed_again_gets_no_session_and_no_message() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge.failing.insert(1);
+            forge.pulls.insert(2, Pr::Passed);
+            forge.rerun.insert(2);
+        }
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(
+            forge.works,
+            [checks("c1")],
+            "no session for the pull request #42"
+        );
+        assert!(forge.told.is_empty(), "{:?}", forge.told);
+    }
+
     /// #279: the fix pushes a new head with no failed check: the new head
     /// waits for its verify, and a new session verifies it.
     #[tokio::test]
@@ -5728,6 +5783,66 @@ esac
         ))
         .unwrap();
         assert!(book.contains(&format!("\n{note}\n")), "{note}");
+    }
+
+    /// #1540, 01M5RGM8HBVQMY25H5PYESK17J: the rollup of the pull request
+    /// has an old failed run of `Gate` and a newer run of it that passed.
+    /// The session pushed nothing, and no check fails now: the lead gets a
+    /// note, not a message that the check still fails.
+    #[tokio::test]
+    async fn a_fix_of_checks_with_an_old_failed_run_and_a_newer_passed_run_gives_the_lead_a_note() {
+        let riff = Built::new().await;
+        let gh = gh_with_rollup(
+            &riff,
+            r#"[{"name":"Gate","conclusion":"FAILURE","workflowName":"CI","startedAt":"2026-11-03T05:50:00Z","completedAt":"2026-11-03T05:50:30Z"},
+                {"name":"Gate","conclusion":"SUCCESS","workflowName":"CI","startedAt":"2026-11-03T05:55:00Z","completedAt":"2026-11-03T05:55:30Z"},
+                {"context":"riff/verify","state":"SUCCESS"}]"#,
+        );
+        let checks = ["Gate".to_owned()];
+        let (lines, got) = riff
+            .after(gh, Some(Fix::Checks("1a2b3c4d5e", &checks)))
+            .await;
+        assert_eq!(lines[1], text::run_lead_noted("issue-12"));
+        let [(kind, body)] = &got[..] else {
+            panic!("{got:?}");
+        };
+        assert_eq!(*kind, Kind::Note);
+        assert!(!body.contains("still fails"), "{body}");
+    }
+
+    /// #1540: the pull request merged before the session ended. The wave
+    /// reads no open pull request, so the lead gets no message that a
+    /// check still fails, also when the rollup of the merged head has a
+    /// failed run.
+    #[tokio::test]
+    async fn a_fix_of_checks_for_a_merged_pull_request_sends_no_message_that_a_check_still_fails() {
+        let riff = Built::new().await;
+        let script = format!(
+            r#"#!/bin/sh
+case "$*" in
+"pr view worktree-issue-12 --json number,url,headRefOid,state")
+    echo '{{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"1a2b3c4d5e","state":"MERGED"}}' ;;
+"pr view 40 --json {fields}")
+    echo '{{"number":40,"headRefName":"worktree-issue-12","headRefOid":"1a2b3c4d5e","isDraft":false,"statusCheckRollup":[{{"name":"Gate","conclusion":"FAILURE","workflowName":"CI"}}]}}' ;;
+*) echo "the fake gh has no reply for: $*" >&2; exit 1 ;;
+esac
+"#,
+            fields = rollout::PULL_FIELDS
+        );
+        let gh = pr::Gh::at(isolated::write_program(riff.dir.path().join("gh"), script));
+        let checks = ["Gate".to_owned()];
+        let (lines, got) = riff
+            .after(gh, Some(Fix::Checks("1a2b3c4d5e", &checks)))
+            .await;
+        assert_eq!(lines, [text::run_no_pull("worktree-issue-12")]);
+        assert!(
+            got.iter().all(|(kind, _)| *kind == Kind::Note),
+            "no message: {got:?}"
+        );
+        assert!(
+            got.iter().all(|(_, body)| !body.contains("still fails")),
+            "{got:?}"
+        );
     }
 
     /// #1427: the session fixed the runs of GitHub Actions only. A check
