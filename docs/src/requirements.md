@@ -961,11 +961,12 @@
   session and on the Gate. The helper of the release tests refuses
   another path.
 - **01M6FYHS06W0Y98GQTQY6Q37F0** A test that runs code of riff which
-  calls git calls `isolated::clear_git_config_env` first, also a doc
-  test. It removes `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and
-  `GIT_CONFIG_VALUE_*` from the environment of the test process. So the
-  test gives the same result in a container of riff, in CI and on a
-  host.
+  calls git starts with a helper of `isolated` that removes
+  `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and `GIT_CONFIG_VALUE_*` from
+  the environment of the test process. A test in a shared test binary
+  reruns itself with `isolated::rerun_without_git_config`. A doc test
+  calls `isolated::clear_git_config_env` first. So the test gives the
+  same result in a container of riff, in CI and on a host.
 
 ## Saved state
 
