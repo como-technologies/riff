@@ -321,8 +321,9 @@ pub async fn wait_for(file: &Path, part: &str) {
     {
         assert!(
             started.elapsed() < isolated::HANG,
-            "{} has no {part:?}",
-            file.display()
+            "{} has no {part:?}, it holds:\n{}",
+            file.display(),
+            std::fs::read_to_string(file).unwrap_or_default()
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

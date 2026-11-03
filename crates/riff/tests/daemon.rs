@@ -371,12 +371,11 @@ async fn a_new_start_that_stops_the_systemctl_of_the_daemon_logs_no_failure() {
     assert!(!stopped.contains("Run: riff daemon install"), "{stopped}");
 
     let error = "Failed to try-restart riff.service: Access denied";
-    let failed = format!(
-        "riff daemon: {}",
-        riff::text::daemon_no_restart(&format!(
-            "systemctl --user --no-block try-restart riff.service: {error}"
-        ))
-    );
+    // No "riff daemon: " prefix: stderr has no buffer, so a line of
+    // another thread can come between the prefix and the text.
+    let failed = riff::text::daemon_no_restart(&format!(
+        "systemctl --user --no-block try-restart riff.service: {error}"
+    ));
     let log = the_daemon_of_an_old_unit_starts_again(error, &failed).await;
     assert_eq!(log.matches(no_restart).count(), 1, "{log}");
 }
