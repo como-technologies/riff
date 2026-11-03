@@ -2181,10 +2181,13 @@ flowchart TD
 
 A wave on more hosts sends each message about `main` one time, not one
 time for each host, and a new start of a daemon sends none again. Each
-post has a key: the commit and the state, `broken` or `passes`.
-riff-server drops a post with the key of a message that it keeps from
-the same person, as for a pull request (see
-[When a pull request stops](#when-a-pull-request-stops)).
+post has a key: the commit, the run of the check (its run number and
+its job number) and the state, `broken` or `passes`. riff-server drops a
+post with the key of a message that it keeps from the same person, as
+for a pull request (see
+[When a pull request stops](#when-a-pull-request-stops)). A rerun makes
+a new job, so a commit that breaks, passes on a rerun and breaks again
+gives the lead three messages.
 
 ```mermaid
 sequenceDiagram
@@ -2192,10 +2195,14 @@ sequenceDiagram
     participant B as daemon on thelio
     participant S as riff-server
     participant L as the lead
-    A->>S: post, key main-c60887e-broken
+    A->>S: post, key main-c60887e-38861280871-7-broken
     S->>L: the message
-    B->>S: post, key main-c60887e-broken
+    B->>S: post, key main-c60887e-38861280871-7-broken
     Note over S: it keeps this key: it drops the post
+    A->>S: post, key main-c60887e-38861280871-8-passes (a rerun)
+    S->>L: the note
+    A->>S: post, key main-c60887e-38861280871-9-broken (a second rerun)
+    S->>L: the message
 ```
 
 To see the checks that riff reads, use the required checks of the

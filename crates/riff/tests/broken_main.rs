@@ -58,6 +58,7 @@ case "$1 $2" in
       shift
     done
     touch "$dir/created"
+    rm -f "$dir/closed"
     echo "https://github.com/como-technologies/riff/issues/901" ;;
   "issue comment") ;;
   "issue close") touch "$dir/closed" ;;
@@ -126,8 +127,14 @@ fn forge(dir: &Path) -> Arc<Gh> {
 
 /// The full check of the head `commit` of `main` ended with `conclusion`.
 fn gate(dir: &Path, commit: &str, conclusion: &str) {
+    attempt(dir, commit, conclusion, 1);
+}
+
+/// The full check of the head `commit` of `main` ended with `conclusion`
+/// in the job `job` of the run. A rerun keeps the run and makes a new job.
+fn attempt(dir: &Path, commit: &str, conclusion: &str, job: u64) {
     let json = format!(
-        r#"{{"check_runs":[{{"status":"completed","conclusion":"{conclusion}","head_sha":"{commit}","html_url":"{RUN}/job/1"}}]}}"#
+        r#"{{"check_runs":[{{"status":"completed","conclusion":"{conclusion}","head_sha":"{commit}","html_url":"{RUN}/job/{job}"}}]}}"#
     );
     std::fs::write(dir.join("gate"), json).unwrap();
 }
@@ -374,5 +381,53 @@ async fn two_daemons_that_look_at_the_same_main_give_the_lead_one_message() {
     // main passes: no more post.
     look_at(&api, &lead, &gh, &mut pangolin_pulls, &mut pangolin).await;
     look_at(&api, &lead, &gh, &mut thelio_pulls, &mut thelio).await;
+    assert!(posts(&api, &lead).await.is_empty());
+}
+
+/// One commit of `main` breaks, passes on a rerun and breaks again on a
+/// second rerun: the lead gets all three, and two daemons that look at
+/// each of them still give one post for each (#1538,
+/// 01M6GX8CN4ZTV0X40GD5AWPXH9).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_commit_of_main_that_breaks_again_after_a_rerun_that_passed_tells_the_lead() {
+    let server = start_server().await;
+    let (api, lead) = lead(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(dir.path());
+    let new_pulls = || (PullWatch::default(), MainWatch::default());
+    let ((mut pangolin_pulls, mut pangolin), (mut thelio_pulls, mut thelio)) =
+        (new_pulls(), new_pulls());
+    let mut both = async || {
+        look_at(&api, &lead, &gh, &mut pangolin_pulls, &mut pangolin).await;
+        look_at(&api, &lead, &gh, &mut thelio_pulls, &mut thelio).await;
+        posts(&api, &lead).await
+    };
+
+    // The commit breaks: one message.
+    attempt(dir.path(), "5103311abcdef", "failure", 11);
+    let broken = both().await;
+    assert_eq!(broken.len(), 1, "{broken:?}");
+    assert_eq!(broken[0].0, Kind::Message);
+    assert!(broken[0].1.starts_with("main is broken:"), "{broken:?}");
+
+    // A rerun of the same run passes: one note.
+    attempt(dir.path(), "5103311abcdef", "success", 12);
+    let passes = both().await;
+    assert_eq!(passes.len(), 1, "{passes:?}");
+    assert_eq!(passes[0].0, Kind::Note);
+    assert!(passes[0].1.starts_with("main passes again:"), "{passes:?}");
+
+    // A second rerun breaks the same commit again: one message.
+    attempt(dir.path(), "5103311abcdef", "failure", 13);
+    let again = both().await;
+    assert_eq!(again.len(), 1, "{again:?}");
+    assert_eq!(again[0].0, Kind::Message);
+    assert!(again[0].1.starts_with("main is broken:"), "{again:?}");
+
+    // The same second rerun at the next looks, and a daemon that starts
+    // again: no post.
+    assert!(both().await.is_empty());
+    let (mut again_pulls, mut restarted) = new_pulls();
+    look_at(&api, &lead, &gh, &mut again_pulls, &mut restarted).await;
     assert!(posts(&api, &lead).await.is_empty());
 }

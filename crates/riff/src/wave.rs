@@ -5051,13 +5051,13 @@ esac
         assert_eq!(here.calls("issue close 901").len(), 1);
         here.looks_more(3).await;
         assert_eq!(here.posts().len(), 2);
-        // Each message about main has the key of its commit and its state
-        // (01M6FYH7BFFSZQ2TAJSX8A5QQV).
+        // Each message about main has the key of its commit, its run and its
+        // state (01M6FYH7BFFSZQ2TAJSX8A5QQV, 01M6GX8CN4ZTV0X40GD5AWPXH9).
         assert_eq!(
             here.forge().post_keys,
             [
-                Some("main-5103311abcdef-broken".to_owned()),
-                Some("main-d00d1234-passes".to_owned())
+                Some("main-5103311abcdef-38861280871-1-broken".to_owned()),
+                Some("main-d00d1234-38861280871-1-passes".to_owned())
             ]
         );
         assert_eq!(here.calls("issue close").len(), 1);
