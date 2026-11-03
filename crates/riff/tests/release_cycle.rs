@@ -963,6 +963,113 @@ async fn check_names_the_checks_that_it_could_not_do() {
     assert!(!machine.log().contains("issue close"), "{}", machine.log());
 }
 
+/// A call of `gh` that fails with the 504 of GitHub.
+const GATEWAY: &str = "echo 'HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)' >&2";
+
+/// The variables of a lead session, and a wait of 1 ms before the first
+/// new try of a call of `gh`.
+const QUICK: [(&str, &str); 2] = [("RIFF_SESSION", "s1"), (riff::pr::RETRY_VAR, "1")];
+
+/// 01M6H12ET0FQ553QHGVF5XJMQ9: GitHub answers 504 to the comment one
+/// time. `riff release check` runs the call again, writes the comment,
+/// closes the release issue and resumes the riff.
+#[tokio::test]
+async fn check_tries_the_comment_again_after_a_504_of_github() {
+    let machine = Machine::new().await;
+    let tag = this_tag();
+    machine.fake_gh(&format!(
+        "'issue comment'*) if [ ! -f \"$dir/failed\" ]; then : > \"$dir/failed\"; {GATEWAY}; exit 1; fi; echo ;;\n{}",
+        deployed(&tag, "success")
+    ));
+    machine.shared_cloud();
+    machine.name_lead(&QUICK).await;
+    machine.ok(&QUICK, &["pause", "--riff"]).await;
+    let out = machine.ok(&QUICK, &["release", "check", &tag]).await;
+    assert!(
+        out.starts_with(&format!("riff release check {tag}: passed\n")),
+        "{out}"
+    );
+    assert!(out.contains("riff closed the release issue #7.\n"), "{out}");
+    assert!(out.contains("The riff is running now."), "{out}");
+    let log = machine.log();
+    assert_eq!(log.matches("gh issue comment 7").count(), 2, "{log}");
+    assert!(log.contains("gh issue close 7"), "{log}");
+}
+
+/// 01M6H12QRZFBDTT5D5VQ4FB4C1: GitHub answers 504 to each try of the
+/// comment. `riff release check` has printed the result of each check
+/// before it. Its error says that the checks ran and what to run next.
+/// It closes nothing and does not resume the riff.
+#[tokio::test]
+async fn check_prints_each_result_before_a_comment_that_keeps_failing() {
+    let machine = Machine::new().await;
+    let tag = this_tag();
+    machine.fake_gh(&format!(
+        "'issue comment'*) {GATEWAY}; exit 1 ;;\n{}",
+        deployed(&tag, "success")
+    ));
+    machine.shared_cloud();
+    machine.name_lead(&QUICK).await;
+    machine.ok(&QUICK, &["pause", "--riff"]).await;
+    let out = machine.run(&QUICK, &["release", "check", &tag], "").await;
+    assert!(!out.status.success(), "{out:?}");
+    let shown = text(&out.stdout);
+    assert!(
+        shown.starts_with(&format!(
+            "riff release check {tag}: passed\n\n- riff server shows the build: passed\n"
+        )),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("- each host takes the build: passed\n"),
+        "{shown}"
+    );
+    assert!(!shown.contains("The riff is running now."), "{shown}");
+    let error = text(&out.stderr);
+    assert!(
+        error.contains(&riff::text::release_check_unwritten(&tag, 7)),
+        "{error}"
+    );
+    assert!(error.contains("HTTP 504"), "{error}");
+    assert!(error.contains(&riff::text::gh_tried(4)), "{error}");
+    let log = machine.log();
+    assert_eq!(log.matches("gh issue comment 7").count(), 4, "{log}");
+    assert!(!log.contains("issue close"), "{log}");
+}
+
+/// 01M6H12ET0FQ553QHGVF5XJMQ9: GitHub answers 504 to a read one time.
+/// `riff release status` runs the call again and shows the same lines
+/// as without the fault.
+#[tokio::test]
+async fn status_tries_a_read_again_after_a_504_of_github() {
+    let machine = Machine::new().await;
+    machine.fake_gh(&format!(
+        "'release list'*) if [ ! -f \"$dir/failed\" ]; then : > \"$dir/failed\"; {GATEWAY}; exit 1; fi; \
+         printf '%s\\n' '[{{\"tagName\":\"v3.2.0\"}},{{\"tagName\":\"v3.0.0\"}}]' ;;"
+    ));
+    let out = machine.ok(&QUICK, &["release", "status"]).await;
+    assert!(out.starts_with("version on origin/main: 3.2.0\n"), "{out}");
+    assert!(out.contains("last release: v3.2.0\n"), "{out}");
+    // The two reads of the status, and the one new try.
+    assert_eq!(machine.log().matches("gh release list").count(), 3);
+}
+
+/// A failure that is no 502, 503 or 504 is not tried again.
+#[tokio::test]
+async fn a_failure_of_gh_that_is_no_gateway_fault_is_not_tried_again() {
+    let machine = Machine::new().await;
+    machine
+        .fake_gh("'release list'*) echo 'GraphQL: API rate limit already exceeded' >&2; exit 1 ;;");
+    let out = machine.run(&QUICK, &["release", "status"], "").await;
+    assert!(!out.status.success(), "{out:?}");
+    assert_eq!(machine.log().matches("gh release list").count(), 1);
+    assert!(
+        !text(&out.stderr).contains("riff tried"),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
 /// After a failed job `Deploy`, check files an issue with the log and
 /// resumes the riff: the old revision still serves.
 #[tokio::test]
@@ -1260,6 +1367,13 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         ),
         (
             "#### Check the release after the deploy",
+            "riff release check v3.3.0",
+            &cycle,
+        ),
+        // 01M6H12ET0FQ553QHGVF5XJMQ9, 01M6H12QRZFBDTT5D5VQ4FB4C1: what the lead
+        // does when GitHub still fails a call after the new tries.
+        (
+            "#### When GitHub fails a call of a release command",
             "riff release check v3.3.0",
             &cycle,
         ),

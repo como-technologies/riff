@@ -3000,7 +3000,7 @@ fn wave_release_gate(number: u64, no_release: Option<&str>) -> Result<()> {
     if !riff::release_config::of_repository(&top)? {
         return Ok(());
     }
-    let forge = riff::cycle::GitHub::new(pr::Gh::default(), &top)?;
+    let forge = riff::cycle::GitHub::new(pr::Gh::default().retrying(), &top)?;
     if riff::cycle::wave_gate(&forge, number, no_release)? == riff::cycle::WaveGate::NoRelease {
         println!("Wave {number} ends with no release. The reason is in the wave.");
     }
@@ -3071,7 +3071,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
         eprintln!("{}", text::release_refused(command, why));
         std::process::exit(1)
     };
-    let forge = || cycle::GitHub::new(pr::Gh::default(), &here);
+    let forge = || cycle::GitHub::new(pr::Gh::default().retrying(), &here);
     let next = |forge: &cycle::GitHub, tag: &str| match cycle::tag_version(tag)
         .and_then(|v| cycle::stage(forge, v))
     {
@@ -3323,7 +3323,8 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             let forge = forge()?;
             let served = reach.served().await;
             let log = shared_log(&here, reach);
-            match cycle::check(&forge, tag, &served, log.as_ref())? {
+            let show = &mut |result: &str| print!("{result}");
+            match cycle::check(&forge, tag, &served, log.as_ref(), show)? {
                 Checked::DeployFailed { deploy, issue } => {
                     println!(
                         "The deploy of {tag} failed: {}. The old revision still serves. The issue: #{issue}",
@@ -3337,7 +3338,6 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                     passed,
                     issue,
                 } => {
-                    print!("{}", cycle::check_text(tag, &lines));
                     println!("The result is on the release issue #{issue}.");
                     if passed {
                         println!("riff closed the release issue #{issue}.");

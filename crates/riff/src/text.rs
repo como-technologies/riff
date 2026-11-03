@@ -1522,6 +1522,34 @@ pub fn waves_no_issues(repo: &str) -> String {
     format!("gh gave no open issues of {}", safe(repo))
 }
 
+/// The last words of the error of a call of `gh` that GitHub failed with
+/// a 502, 503 or 504 after `tries` tries (01M6H12ET0FQ553QHGVF5XJMQ9).
+///
+/// ```
+/// assert_eq!(riff::text::gh_tried(4), "riff tried the call 4 times.");
+/// ```
+pub fn gh_tried(tries: u32) -> String {
+    format!("riff tried the call {tries} times.")
+}
+
+/// The context of the error of `riff release check` when the comment on the
+/// release issue `issue` fails after the checks ran
+/// (01M6H12QRZFBDTT5D5VQ4FB4C1).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::release_check_unwritten("v3.3.0", 7),
+///     "riff release check v3.3.0: the checks ran, and the result is above. riff could not write it \
+///      on the release issue #7, so it did not close the issue or resume the riff. next: riff release check v3.3.0"
+/// );
+/// ```
+pub fn release_check_unwritten(tag: &str, issue: u64) -> String {
+    format!(
+        "riff release check {tag}: the checks ran, and the result is above. riff could not write it \
+         on the release issue #{issue}, so it did not close the issue or resume the riff. next: riff release check {tag}"
+    )
+}
+
 /// The error when the call `what` of `gh` fails with the stderr `why`
 /// (01M6GX4HYR3755G6EJW1XHEFVE). The stderr is a text of the forge
 /// ([`forge`]). A `gh` that says nothing gets the reason `no reason`.

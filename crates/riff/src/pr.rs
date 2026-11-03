@@ -46,6 +46,13 @@
 //! that the verifier tested, `HEAD` of its worktree or `--commit`
 //! ([`same_commit`]).
 //!
+//! GitHub sometimes fails a call with a 502, 503 or 504. A [`Gh`] made
+//! with [`Gh::retrying`] runs such a call again, up to [`RETRIES`] times,
+//! after [`RETRY_WAIT`] and double that for each next try
+//! ([`gateway_fault`], 01M6H12ET0FQ553QHGVF5XJMQ9). The release commands
+//! use it. Another failure gets no new try. After the last try, the error
+//! of the call ends with the number of tries.
+//!
 //! The full check of a commit is its one full test run
 //! (01M49HAZ5BZYGAR9PGC089RM3F). In the repository of riff it is the job
 //! `Gate`. In another repository it is each check that the ruleset of the
@@ -112,6 +119,52 @@ pub fn http_status(reply: &str) -> Option<&str> {
     (code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit())).then_some(code)
 }
 
+/// True when a failed call of `gh` ended in a 502, 503 or 504 of GitHub:
+/// `HTTP 504: 504 Gateway Timeout (…/graphql)` of a GraphQL call,
+/// `Bad Gateway (HTTP 502)` of a REST call, or the status line of
+/// `gh api --include` in `stdout`.
+///
+/// ```
+/// use riff::pr::gateway_fault;
+///
+/// assert!(gateway_fault("", "HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)"));
+/// assert!(gateway_fault("", "gh: Bad Gateway (HTTP 502)\n"));
+/// assert!(gateway_fault("HTTP/2.0 503 Service Unavailable\r\n", ""));
+/// assert!(!gateway_fault("", "HTTP 404: Not Found (https://api.github.com/graphql)"));
+/// assert!(!gateway_fault("", "HTTP 5040: no such thing"));
+/// assert!(!gateway_fault("", "GraphQL: API rate limit already exceeded"));
+/// ```
+pub fn gateway_fault(stdout: &str, stderr: &str) -> bool {
+    const CODES: [&str; 3] = ["502", "503", "504"];
+    if http_status(stdout).is_some_and(|code| CODES.contains(&code)) {
+        return true;
+    }
+    stderr.match_indices("HTTP ").any(|(at, word)| {
+        let after = &stderr[at + word.len()..];
+        CODES.iter().any(|code| {
+            after
+                .strip_prefix(code)
+                .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_digit()))
+        })
+    })
+}
+
+/// How many times a `gh` that retries runs a call again after a 502, 503
+/// or 504 of GitHub ([`Gh::retrying`], 01M6H12ET0FQ553QHGVF5XJMQ9).
+pub const RETRIES: u32 = 3;
+
+/// The wait before the first new try of a call. The wait doubles for
+/// each new try: 2 s, 4 s, 8 s.
+pub const RETRY_WAIT: Duration = Duration::from_secs(2);
+
+/// The variable that gives the first wait before a new try in
+/// milliseconds. Only a test sets it.
+///
+/// ```
+/// assert_eq!(riff::pr::RETRY_VAR, "RIFF_GH_RETRY_MS");
+/// ```
+pub const RETRY_VAR: &str = "RIFF_GH_RETRY_MS";
+
 /// The context of the verify status of a commit.
 pub const VERIFY_CONTEXT: &str = "riff/verify";
 
@@ -140,6 +193,11 @@ pub struct Gh {
     /// How old a shared reply can be for [`Gh::read`]. With zero, each
     /// read calls `gh`.
     accepts: Duration,
+    /// How many times a call that GitHub fails with a 502, 503 or 504
+    /// runs again ([`Gh::retrying`]). With zero, it does not.
+    retries: u32,
+    /// The wait before the first new try: it doubles for each next one.
+    retry_wait: Duration,
 }
 
 impl Default for Gh {
@@ -153,6 +211,8 @@ impl Default for Gh {
             calls: None,
             shares: false,
             accepts: Duration::ZERO,
+            retries: 0,
+            retry_wait: RETRY_WAIT,
         }
     }
 }
@@ -293,6 +353,49 @@ impl Gh {
     pub fn with_limit(self, limit: Duration) -> Self {
         Self {
             limit: Some(limit),
+            ..self
+        }
+    }
+
+    /// The same `gh`, whose calls run again after a 502, 503 or 504 of
+    /// GitHub ([`gateway_fault`], 01M6H12ET0FQ553QHGVF5XJMQ9): up to
+    /// [`RETRIES`] new tries, after [`RETRY_WAIT`] and double that for
+    /// each next one. A call that still fails gives the error of `gh`
+    /// and the number of tries. The release commands use it. A call that
+    /// fails in another way is not tried again.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let count = dir.path().join("count");
+    /// let script = format!(
+    ///     "#!/bin/sh\necho x >> {c}\n[ \"$(wc -l < {c})\" -lt 2 ] && {{ echo 'HTTP 504: 504 Gateway Timeout' >&2; exit 1; }}\necho '[]'\n",
+    ///     c = count.display(),
+    /// );
+    /// let gh = isolated::write_program(dir.path().join("gh"), &script);
+    /// let again = riff::pr::Gh::at(&gh).retrying_after(Duration::from_millis(1));
+    /// assert_eq!(again.run(&["issue", "list"], None)?, "[]\n");
+    /// assert_eq!(std::fs::read_to_string(&count)?.lines().count(), 2);
+    /// // Without `retrying`, the first fault is the answer.
+    /// std::fs::remove_file(&count)?;
+    /// assert!(riff::pr::Gh::at(&gh).run(&["issue", "list"], None).is_err());
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn retrying(self) -> Self {
+        let wait = std::env::var(RETRY_VAR)
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+            .map_or(RETRY_WAIT, Duration::from_millis);
+        self.retrying_after(wait)
+    }
+
+    /// [`Gh::retrying`] with the wait `wait` before the first new try.
+    /// [`RETRY_VAR`] gives it to the `riff` of a test.
+    pub fn retrying_after(self, wait: Duration) -> Self {
+        Self {
+            retries: RETRIES,
+            retry_wait: wait,
             ..self
         }
     }
@@ -523,8 +626,33 @@ impl Gh {
         )
     }
 
-    /// Runs `gh ARGS`, and counts the call ([`Gh::with_calls`]).
+    /// Runs `gh ARGS`, and runs it again after a 502, 503 or 504 of
+    /// GitHub when this `gh` retries ([`Gh::retrying`]). The stderr of a
+    /// call that still fails ends with the number of tries.
     fn output(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
+        let mut wait = self.retry_wait;
+        let mut tries = 1;
+        loop {
+            match self.counted(args, input) {
+                Ok((false, stdout, stderr)) if gateway_fault(&stdout, &stderr) => {
+                    if tries > self.retries {
+                        let stderr = match tries {
+                            1 => stderr,
+                            _ => format!("{}\n{}", stderr.trim_end(), text::gh_tried(tries)),
+                        };
+                        return Ok((false, stdout, stderr));
+                    }
+                    std::thread::sleep(wait);
+                    wait = wait.saturating_mul(2);
+                    tries += 1;
+                }
+                result => return result,
+            }
+        }
+    }
+
+    /// Runs `gh ARGS` one time, and counts the call ([`Gh::with_calls`]).
+    fn counted(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
         let result = self.spawn(args, input);
         if let Some(calls) = &self.calls {
             let now = crate::daemon::now_ms();
