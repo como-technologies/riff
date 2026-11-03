@@ -1479,6 +1479,7 @@ async fn two_daemons_of_one_wave_give_the_lead_each_notice_one_time() {
     let mut expected = vec![
         riff::text::wave_no_done_when(1),
         riff::text::wave_stuck(
+            "local/other",
             42,
             "worktree-issue-2",
             "main",
