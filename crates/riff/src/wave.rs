@@ -153,8 +153,8 @@
 //! # A pull request that cannot merge
 //!
 //! A conflict is one reason that a pull request cannot merge by itself
-//! ([`rollout::Stuck`], #279). The wave reads two more from `gh` at each
-//! look, and nobody has to remember to check:
+//! ([`rollout::Stuck`], #279). The wave reads more from `gh` at each look,
+//! and nobody has to remember to check:
 //!
 //! ```mermaid
 //! flowchart TD
@@ -165,7 +165,13 @@
 //!     C -- "yes, a release" --> M["a message to the lead, with the checks"]
 //!     C -- "no" --> A{"auto-merge off?"}
 //!     A -- "yes" --> N["a message to the lead,<br/>with the command gh pr merge --auto --squash N"]
-//!     A -- "no" --> W["it merges by itself"]
+//!     A -- "no" --> E{"reviewDecision<br/>REVIEW_REQUIRED?"}
+//!     E -- "yes" --> H["a message to the lead,<br/>with the command gh pr review N --approve"]
+//!     E -- "no" --> K{"a run of a fork waits<br/>for approval?"}
+//!     K -- "yes" --> Y["a message to the lead for each run,<br/>with the command gh api -X POST .../approve"]
+//!     K -- "no" --> D{"BLOCKED, no check open,<br/>no decision?"}
+//!     D -- "yes" --> H2["a message to the lead:<br/>probably a review (an unattributed author)"]
+//!     D -- "no" --> W["it merges by itself"]
 //!     B -- "a push" --> V["a new full check and a new verify of the new head"]
 //!     B -- "no push, the check still failed" --> L["a message to the lead"]
 //!     B -- "no push, the check runs again" --> T["a note to the lead"]
@@ -197,13 +203,34 @@
 //!   ([`rollout::Pull::conflict`] needs auto-merge). The lead gets one
 //!   message with the reason and the command
 //!   (`gh pr merge --auto --squash N`).
+//! - **A review** (01M6FZ141Y0J8G2AYX0G5HY1CX). A pull request whose verify passed, with
+//!   auto-merge on, can wait for a person. GitHub says `reviewDecision`
+//!   `REVIEW_REQUIRED` when a rule of the branch asks for a review
+//!   ([`rollout::Review::Required`]). It says nothing when the count of
+//!   reviews is 0 and the rule "require extra approval for unattributed
+//!   changes" asks one review for a commit with an author who has no
+//!   GitHub account. Then the merge state is `BLOCKED`, no check failed or
+//!   goes, and no run waits ([`rollout::Review::Blocked`],
+//!   [`rollout::Pull::settled`]). No session approves a pull request. The
+//!   lead gets one message with the reason and the command
+//!   (`gh pr review N --approve`).
+//! - **A run that waits for approval** (01M6FZ144M0BTEDWNB9V4MGWDD). A run of GitHub Actions of
+//!   a pull request from a fork waits in `action_required` for a
+//!   maintainer. It makes no check run, so GitHub counts its required
+//!   check as not reported, and the newest run of a workflow counts. The look
+//!   reads the runs of the head ([`rollout::runs_waiting`]) for a pull
+//!   request that GitHub blocks with no check open
+//!   ([`rollout::Pull::settled`]). The lead gets one message for each run,
+//!   with the run and the command
+//!   (`gh api -X POST repos/OWNER/REPO/actions/runs/RUN/approve`).
 //! - **A release** (01M5QW2M4WX53N29SHRV0S32WM). No session builds a
 //!   release (the label `release`, or a branch `release-…`). A failed
 //!   check of a release pull request gets a message to the lead, with the
 //!   names of the checks, at any state of its verify.
 //!
 //! Each stuck state comes one time. A message is keyed by the pull
-//! request, its head commit and its reason; the build of a failed check
+//! request, its head commit and its reason (and the run, for a run that
+//! waits for approval); the build of a failed check
 //! by the item and the head ([`Work::key`]). So a new head is a new
 //! state. A message is not repeated while the wave runs. A build of a
 //! failed check runs one time for a head in a run of the wave
@@ -681,10 +708,11 @@ pub struct Notice {
 impl Notice {
     /// The key of the message: the pull request, its head and its
     /// reason. A message with the same key goes one time. A failed check
-    /// of another app than GitHub Actions has a message for each check.
+    /// of another app than GitHub Actions has a message for each check, and a
+    /// run that waits for approval one for each run.
     ///
     /// ```
-    /// use riff::rollout::{OtherCheck, Stuck};
+    /// use riff::rollout::{OtherCheck, Review, Run, Stuck};
     /// use riff::wave::Notice;
     ///
     /// let notice = |commit: &str, stuck| Notice { pull: 40, branch: "b".into(), commit: commit.into(), stuck };
@@ -693,11 +721,17 @@ impl Notice {
     /// let other = |name: &str| Stuck::Other(OtherCheck { name: name.into(), app: None, link: None });
     /// assert_eq!(notice("1a2b", other("ci")).key(), "#40@1a2b:checks:ci");
     /// assert_ne!(notice("1a2b", other("ci")).key(), notice("1a2b", other("lint")).key());
+    /// let review = notice("1a2b", Stuck::Review(Review::Required));
+    /// assert_eq!(review.key(), "#40@1a2b:review");
+    /// let run = |id| Stuck::Approve(Run { id, name: "Hygiene".into(), link: None });
+    /// assert_eq!(notice("1a2b", run(7)).key(), "#40@1a2b:approve run:7");
+    /// assert_ne!(notice("1a2b", run(7)).key(), notice("1a2b", run(8)).key());
     /// ```
     pub fn key(&self) -> String {
         let key = format!("#{}@{}:{}", self.pull, self.commit, self.stuck.word());
         match &self.stuck {
             rollout::Stuck::Other(check) => format!("{key}:{}", check.name),
+            rollout::Stuck::Approve(run) => format!("{key}:{}", run.id),
             _ => key,
         }
     }
@@ -1097,6 +1131,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 for notice in &look.fixes.notices {
                     if noticed.insert(notice.key()) {
                         let body = text::wave_stuck(
+                            &wave.repo,
                             notice.pull,
                             &notice.branch,
                             &look.branch,
@@ -2000,7 +2035,10 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///   a release or a tracker with a failed check, and a failed check that
 ///   is no run of GitHub Actions ([`rollout::Stuck::Other`]), one notice
 ///   for each check. No session builds a release (the label `release`) or
-///   a tracker.
+///   a tracker. A verified pull request that waits for a person is a notice
+///   too: a review that GitHub needs ([`rollout::Stuck::Review`], 01M6FZ141Y0J8G2AYX0G5HY1CX), and
+///   a run of a fork that waits for approval, one notice for each run
+///   ([`rollout::Stuck::Approve`]).
 ///
 /// The items `issue-N` of the rebases come after the fix items of a
 /// broken `main` (01M51QEYS538XA58KDRY844T52), before each other item,
@@ -2008,7 +2046,7 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 /// claimed item, as each item.
 ///
 /// ```
-/// use riff::rollout::{Check, Issue, Label, Open, OtherCheck, Pull, Stuck};
+/// use riff::rollout::{Check, Issue, Label, Open, OtherCheck, Pull, Review, Run, Stuck};
 /// use riff::wave::{Conflict, Failed, Notice, fixes};
 ///
 /// let pull = |number, issue: u64, state: Option<&str>, mergeable: &str| Pull {
@@ -2023,6 +2061,9 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 /// let gate = |pull: Pull| Pull { checks: [pull.checks, vec![Check::run("Gate", "FAILURE")]].concat(), ..pull };
 /// let circle = || Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9");
 /// let other = |pull: Pull| Pull { checks: [pull.checks, vec![circle()]].concat(), ..pull };
+/// let review = |pull: Pull| Pull { review: Some("REVIEW_REQUIRED".into()), ..pull };
+/// let hygiene = || Run { id: 7, name: "Hygiene".into(), link: None };
+/// let fork = |pull: Pull| Pull { merge_state: Some("BLOCKED".into()), waiting: vec![hygiene()], ..pull };
 /// let open = Open {
 ///     issues: vec![
 ///         Issue { number: 9, labels: vec![Label { name: "broken-main".into() }], ..Issue::default() },
@@ -2038,6 +2079,8 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///         gate(pull(47, 8, None, "MERGEABLE")),
 ///         other(pull(48, 10, Some("SUCCESS"), "MERGEABLE")),
 ///         pull(49, 11, None, "UNKNOWN"),
+///         review(pull(50, 12, Some("SUCCESS"), "MERGEABLE")),
+///         fork(pull(51, 13, Some("SUCCESS"), "MERGEABLE")),
 ///     ],
 ///     ..Open::default()
 /// };
@@ -2048,10 +2091,17 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 /// assert_eq!(fixes.conflicts.keys().copied().collect::<Vec<_>>(), [1, 2]);
 /// assert_eq!(fixes.conflicts[&1], Conflict { pull: 41, commit: "c1".into() });
 /// assert_eq!(fixes.failed[&6], Failed { pull: 46, commit: "c6".into(), checks: vec!["Gate".into()] });
-/// // The lead hears of 5 (auto-merge off), of the release 8, and of the check of 10: no run of Actions, so no fix.
+/// // The lead hears of 5 (auto-merge off), of the release 8, of the check of 10 (no run of Actions, so no fix),
+/// // of the review of 12, and of the run of the fork of 13.
 /// let told: Vec<(u64, Stuck)> = fixes.notices.iter().map(|n| (n.pull, n.stuck.clone())).collect();
 /// let ci = OtherCheck { name: "ci".into(), app: Some("app.circleci.com".into()), link: Some("https://app.circleci.com/workflow/9".into()) };
-/// assert_eq!(told, [(45, Stuck::AutoMergeOff), (47, Stuck::Checks(vec!["Gate".into()])), (48, Stuck::Other(ci))]);
+/// assert_eq!(told, [
+///     (45, Stuck::AutoMergeOff),
+///     (47, Stuck::Checks(vec!["Gate".into()])),
+///     (48, Stuck::Other(ci)),
+///     (50, Stuck::Review(Review::Required)),
+///     (51, Stuck::Approve(hygiene())),
+/// ]);
 /// assert!(!fixes.failed.contains_key(&10), "no session fixes it");
 /// assert_eq!(fixes.notices[0], Notice { pull: 45, branch: "worktree-issue-5".into(), commit: "c5".into(), stuck: Stuck::AutoMergeOff });
 ///
@@ -2109,6 +2159,18 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
                         branch: p.branch.clone(),
                         commit: p.head.clone(),
                         stuck: rollout::Stuck::Other(other),
+                    });
+                }
+            }
+            // One notice for each run that waits: each run has its own
+            // command.
+            (rollout::Stuck::Approve(_), _) => {
+                for run in &p.waiting {
+                    found.notices.push(Notice {
+                        pull: p.number,
+                        branch: p.branch.clone(),
+                        commit: p.head.clone(),
+                        stuck: rollout::Stuck::Approve(run.clone()),
                     });
                 }
             }
@@ -2753,6 +2815,12 @@ mod tests {
         no_result: bool,
         /// The issues whose pull request has auto-merge off.
         manual: BTreeSet<u64>,
+        /// The issues whose pull request reads `REVIEW_REQUIRED`: GitHub
+        /// waits for an approving review.
+        review: BTreeSet<u64>,
+        /// The issues whose pull request GitHub blocks, and whose runs of
+        /// Actions wait for approval, newest first (a fork).
+        approvals: BTreeMap<u64, Vec<rollout::Run>>,
         /// The place of the pull request of each issue in the merge queue,
         /// else `Queue::Out`.
         queue: BTreeMap<u64, rollout::Queue>,
@@ -2862,6 +2930,9 @@ mod tests {
                     .into(),
                 ),
                 auto_merge: !self.manual.contains(n),
+                review: self.review.contains(n).then(|| "REVIEW_REQUIRED".into()),
+                merge_state: self.approvals.contains_key(n).then(|| "BLOCKED".into()),
+                waiting: self.approvals.get(n).cloned().unwrap_or_default(),
                 queue: self.queue.get(n).cloned().unwrap_or_default(),
                 reasked: *pr == Pr::Reasked,
                 ..rollout::Pull::default()
@@ -4042,7 +4113,7 @@ mod tests {
     /// The message to the lead about the pull request #41 of the item 1
     /// at the head `commit`.
     fn stuck(commit: &str, why: rollout::Stuck) -> String {
-        text::wave_stuck(41, "worktree-issue-1", "main", commit, &why)
+        text::wave_stuck("o/r", 41, "worktree-issue-1", "main", commit, &why)
     }
 
     /// 01M57FJ3WWMQSDBFRRHXN3SMFQ, #279: the conflict of a pull request
@@ -4092,6 +4163,85 @@ mod tests {
         here.idle(3).await;
         let second = stuck("c1b", rollout::Stuck::AutoMergeOff);
         assert_eq!(here.forge().told, [message, second]);
+        assert!(here.forge().works.is_empty());
+    }
+
+    /// 01M6FZ141Y0J8G2AYX0G5HY1CX: a pull request with a passed verify that GitHub holds for an
+    /// approving review (`REVIEW_REQUIRED`) never merges by itself. The
+    /// wave starts no session, and tells the lead one time for each head,
+    /// with the reason and the step of a person. A pull request with no
+    /// review rule gets no message.
+    #[tokio::test]
+    async fn a_verified_pull_request_that_needs_a_review_tells_the_lead_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge.pulls.insert(2, Pr::Passed);
+            forge.review.insert(1);
+        }
+        here.run();
+        here.idle(3).await;
+        let required = rollout::Stuck::Review(rollout::Review::Required);
+        let message = stuck("c1", required.clone());
+        assert!(message.ends_with("gh pr review 41 --approve"), "{message}");
+        assert_eq!(
+            here.forge().told,
+            std::slice::from_ref(&message),
+            "once, for 1 only"
+        );
+        assert!(here.forge().works.is_empty());
+
+        // A new head is a new state.
+        here.forge().heads.insert(1, "c1b".into());
+        here.idle(3).await;
+        let second = stuck("c1b", required);
+        assert_eq!(here.forge().told, [message, second]);
+        assert!(here.forge().works.is_empty());
+    }
+
+    /// 01M6FZ144M0BTEDWNB9V4MGWDD: a run of a pull request from a fork waits for the approval
+    /// of a maintainer. The pull request has a passed verify, and GitHub
+    /// blocks the merge. The lead hears of each run one time, with the run
+    /// and the command. A new run for the same head is a new message.
+    #[tokio::test]
+    async fn a_run_that_waits_for_approval_tells_the_lead_once_for_each_run() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        let run = |id, name: &str| rollout::Run {
+            id,
+            name: name.into(),
+            link: Some(format!("https://github.com/o/r/actions/runs/{id}")),
+        };
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Passed);
+            forge.approvals.insert(1, vec![run(40151175338, "Hygiene")]);
+        }
+        here.run();
+        here.idle(3).await;
+        let first = stuck("c1", rollout::Stuck::Approve(run(40151175338, "Hygiene")));
+        assert!(
+            first.contains("the run Hygiene (run 40151175338)"),
+            "{first}"
+        );
+        assert!(
+            first.ends_with("gh api -X POST repos/o/r/actions/runs/40151175338/approve"),
+            "{first}"
+        );
+        assert_eq!(here.forge().told, std::slice::from_ref(&first), "once");
+        assert!(here.forge().works.is_empty());
+
+        // A second run waits for the same head: one more message. The
+        // first run does not come again.
+        here.forge().approvals.insert(
+            1,
+            vec![run(40151175339, "Gate"), run(40151175338, "Hygiene")],
+        );
+        here.idle(3).await;
+        let second = stuck("c1", rollout::Stuck::Approve(run(40151175339, "Gate")));
+        assert_eq!(here.forge().told, [first, second]);
         assert!(here.forge().works.is_empty());
     }
 

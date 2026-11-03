@@ -4970,6 +4970,26 @@ of this part when they merge.
   auto-merge on again. Else the lead gets one message for the head
   commit, with the reason of GitHub. `riff top` and `riff wave list`
   show `stuck` with the words `removed from queue`.
+- **01M6FZ141Y0J8G2AYX0G5HY1CX** A pull request whose verify passed,
+  with auto-merge on, can wait for a review of a person. The wave of the
+  daemon reads reviewDecision and mergeStateStatus of each open pull
+  request at each look. It starts no session. It tells the lead one time
+  for each head commit, with the reason and the command gh pr review N
+  --approve, when reviewDecision is REVIEW_REQUIRED, or when the merge
+  state is BLOCKED with no decision, no failed check, no check that goes
+  and no run that waits for approval (the likely cause is an author with
+  no GitHub account). riff top and riff wave list show stuck with the
+  word review (#1433).
+- **01M6FZ144M0BTEDWNB9V4MGWDD** A run of GitHub Actions of a pull
+  request from a fork waits in action_required until a maintainer
+  approves it. GitHub counts its required check as not reported. For a
+  pull request whose verify passed, with auto-merge on, that GitHub
+  blocks with no check open, the wave of the daemon reads the runs of
+  the head commit with gh api. For the newest run of each workflow that
+  waits, it tells the lead one time, with the run and the command gh api
+  -X POST repos/OWNER/REPO/actions/runs/RUN/approve. A call that fails
+  reads as no run. riff top and riff wave list show stuck with the words
+  approve run (#1433).
 
 ### The lead, the view and the takeover
 

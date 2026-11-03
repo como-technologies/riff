@@ -555,8 +555,8 @@ pub fn in_verify(pulls: &[Pull]) -> HashSet<u64> {
 ///
 /// assert!(PULL_FIELDS.split(',').all(|f| !CONNECTIONS.contains(&f)));
 /// ```
-pub const PULL_FIELDS: &str =
-    "number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,autoMergeRequest,body";
+pub const PULL_FIELDS: &str = "number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,\
+     mergeStateStatus,reviewDecision,autoMergeRequest,body";
 
 /// The fields of `gh pr list --json` that `gh` expands to a nested
 /// connection of 100 nodes. `gh pr list --limit 100` asks for 100 pull
@@ -622,6 +622,24 @@ pub struct Pull {
     /// push, so it can be `UNKNOWN` for a short time.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub mergeable: Option<String>,
+    /// `BLOCKED`, `CLEAN`, `DIRTY`, `BEHIND`, `UNSTABLE`, `HAS_HOOKS`,
+    /// `DRAFT` or `UNKNOWN`: why GitHub does not merge the pull request
+    /// now. `BLOCKED` is a rule of the branch that is not met.
+    #[serde(
+        rename = "mergeStateStatus",
+        default,
+        deserialize_with = "crate::text::forge_de_opt"
+    )]
+    pub merge_state: Option<String>,
+    /// `REVIEW_REQUIRED`, `CHANGES_REQUESTED` or `APPROVED`. It is empty
+    /// when no rule of the branch counts reviews, and also when only an
+    /// unattributed author needs one (see [`Review::Blocked`]).
+    #[serde(
+        rename = "reviewDecision",
+        default,
+        deserialize_with = "crate::text::forge_de_opt"
+    )]
+    pub review: Option<String>,
     /// True when auto-merge is on.
     #[serde(rename = "autoMergeRequest", default, deserialize_with = "present")]
     pub auto_merge: bool,
@@ -640,6 +658,12 @@ pub struct Pull {
     /// requests ([`queue_of`]).
     #[serde(skip)]
     pub queue: Queue,
+    /// The runs of GitHub Actions of the head that wait for the approval
+    /// of a maintainer ([`Run`]), newest first. `gh pr list` does not
+    /// tell them: [`pulls`] reads them for a verified pull request that
+    /// GitHub blocks with no check open ([`Pull::settled`]).
+    #[serde(skip)]
+    pub waiting: Vec<Run>,
 }
 
 /// True when the first line of the commit message `message` starts with
@@ -858,6 +882,134 @@ impl Check {
             Some("FAILURE" | "TIMED_OUT" | "STARTUP_FAILURE")
         ) || matches!(self.state.as_deref(), Some("FAILURE" | "ERROR"))
     }
+
+    /// True when the check has no end yet: a check run with no
+    /// conclusion, or a status in the state `PENDING` or `EXPECTED`. The
+    /// status `riff/verify` is the verify, not a check ([`Pull::verify`]).
+    ///
+    /// ```
+    /// use riff::rollout::Check;
+    ///
+    /// let status = |state: &str| Check { context: Some("ci/x".into()), state: Some(state.into()), ..Check::default() };
+    /// assert!(Check::run("Gate", "").pending(), "it goes");
+    /// assert!(status("PENDING").pending());
+    /// assert!(status("EXPECTED").pending());
+    /// assert!(!Check::run("Gate", "SUCCESS").pending());
+    /// assert!(!Check::run("Gate", "FAILURE").pending());
+    /// assert!(!status("SUCCESS").pending());
+    /// assert!(!Check::verify("PENDING").pending(), "the verify is no check");
+    /// assert!(!Check::default().pending());
+    /// ```
+    pub fn pending(&self) -> bool {
+        match (&self.context, &self.name) {
+            (Some(context), _) if context == crate::pr::VERIFY_CONTEXT => false,
+            (Some(_), _) => matches!(self.state.as_deref(), Some("PENDING" | "EXPECTED")),
+            (None, Some(_)) => self.conclusion.as_deref().is_none_or(str::is_empty),
+            (None, None) => false,
+        }
+    }
+}
+
+/// A run of GitHub Actions that waits for the approval of a maintainer:
+/// the run of a pull request from a fork waits in `action_required`
+/// until a person approves it (01M6FZ144M0BTEDWNB9V4MGWDD). It makes no check run before, so
+/// the rollup does not show it, and GitHub counts the required check as
+/// not reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    /// The id of the run, for `gh api -X POST repos/OWNER/REPO/actions/runs/ID/approve`.
+    pub id: u64,
+    /// The name of its workflow, for example `Hygiene`.
+    pub name: String,
+    /// The link to its page in the Actions tab.
+    pub link: Option<String>,
+}
+
+/// The runs of GitHub Actions that wait for approval ([`Run`]), from the
+/// reply of `gh api repos/OWNER/REPO/actions/runs?head_sha=COMMIT`,
+/// newest first. GitHub counts the newest run of a workflow: an older
+/// run that waits still does not count when a newer run of the same
+/// workflow went on. A reply that does not parse gives none.
+///
+/// ```
+/// use riff::rollout::{Run, waiting_runs};
+///
+/// let reply = r#"{"total_count": 4, "workflow_runs": [
+///   {"id": 30, "workflow_id": 2, "name": "Hygiene", "status": "completed", "conclusion": "action_required",
+///    "html_url": "https://github.com/o/r/actions/runs/30"},
+///   {"id": 20, "workflow_id": 2, "name": "Hygiene", "status": "completed", "conclusion": "action_required",
+///    "html_url": "https://github.com/o/r/actions/runs/20"},
+///   {"id": 25, "workflow_id": 1, "name": "CI", "status": "completed", "conclusion": "success",
+///    "html_url": "https://github.com/o/r/actions/runs/25"},
+///   {"id": 10, "workflow_id": 1, "name": "CI", "status": "completed", "conclusion": "action_required",
+///    "html_url": "https://github.com/o/r/actions/runs/10"}
+/// ]}"#;
+/// // The newest Hygiene waits. The CI run that waits is old: a newer one passed.
+/// let hygiene = Run { id: 30, name: "Hygiene".into(), link: Some("https://github.com/o/r/actions/runs/30".into()) };
+/// assert_eq!(waiting_runs(reply), [hygiene]);
+/// assert!(waiting_runs("not json").is_empty());
+/// assert!(waiting_runs("{}").is_empty());
+/// ```
+pub fn waiting_runs(reply: &str) -> Vec<Run> {
+    #[derive(Deserialize)]
+    struct Reply {
+        #[serde(default)]
+        workflow_runs: Vec<Raw>,
+    }
+    #[derive(Deserialize)]
+    struct Raw {
+        id: u64,
+        #[serde(default)]
+        workflow_id: u64,
+        #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+        name: Option<String>,
+        #[serde(default)]
+        status: Option<String>,
+        #[serde(default)]
+        conclusion: Option<String>,
+        #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+        html_url: Option<String>,
+    }
+    let Ok(reply) = serde_json::from_str::<Reply>(reply) else {
+        return Vec::new();
+    };
+    // The newest run of each workflow.
+    let mut newest: BTreeMap<u64, Raw> = BTreeMap::new();
+    for run in reply.workflow_runs {
+        match newest.get(&run.workflow_id) {
+            Some(seen) if seen.id > run.id => {}
+            _ => {
+                newest.insert(run.workflow_id, run);
+            }
+        }
+    }
+    let mut runs: Vec<Run> = newest
+        .into_values()
+        .filter(|r| {
+            r.status.as_deref() == Some("action_required")
+                || r.conclusion.as_deref() == Some("action_required")
+        })
+        .map(|r| Run {
+            id: r.id,
+            name: r.name.unwrap_or_else(|| "a workflow".to_owned()),
+            link: r.html_url.filter(|l| !l.is_empty()),
+        })
+        .collect();
+    runs.sort_by_key(|r| std::cmp::Reverse(r.id));
+    runs
+}
+
+/// The runs of the head commit `sha` of the repository `repo`
+/// (`OWNER/REPO`) that wait for approval ([`waiting_runs`]), with one
+/// call of `gh api`. A fault of `gh` gives none, as for [`head_wip`].
+pub fn runs_waiting(gh: &Gh, repo: &str, sha: &str) -> Vec<Run> {
+    if sha.is_empty() {
+        return Vec::new();
+    }
+    let path = format!("repos/{repo}/actions/runs?head_sha={sha}&per_page=100");
+    gh.run(&["api", &path], None)
+        .map(|reply| waiting_runs(&reply))
+        .unwrap_or_default()
 }
 
 /// Where the pull request of an item is on its way to the merge. riff
@@ -893,6 +1045,29 @@ pub enum Stuck {
     /// with this reason of GitHub ([`Queue::Removed`]). Nothing queues it
     /// again.
     Dequeued(String),
+    /// The verify passed, auto-merge is on, and GitHub waits for an
+    /// approving review of a person (01M6FZ141Y0J8G2AYX0G5HY1CX). No session approves a pull
+    /// request.
+    Review(Review),
+    /// The verify passed, auto-merge is on, and this run of a pull request
+    /// from a fork waits for the approval of a maintainer (01M6FZ144M0BTEDWNB9V4MGWDD). The
+    /// required check of the run is not reported, so GitHub blocks the
+    /// merge.
+    Approve(Run),
+}
+
+/// Why GitHub waits for an approving review ([`Stuck::Review`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Review {
+    /// `reviewDecision` is `REVIEW_REQUIRED`: a rule of the branch asks
+    /// for the review.
+    Required,
+    /// GitHub blocks the merge, `reviewDecision` is empty, no check
+    /// failed or goes, and no run waits for approval. The likely cause is
+    /// the rule "require extra approval for unattributed changes": a
+    /// commit has an author with no GitHub account, and the rule asks one
+    /// approving review of a person, although the count of reviews is 0.
+    Blocked,
 }
 
 /// A failed check that is not a run of GitHub Actions: a check run of
@@ -912,7 +1087,7 @@ impl Stuck {
     /// The words for the reason, in `riff top` and `riff wave list`.
     ///
     /// ```
-    /// use riff::rollout::{OtherCheck, Stuck};
+    /// use riff::rollout::{OtherCheck, Review, Run, Stuck};
     ///
     /// assert_eq!(Stuck::Conflict.word(), "conflict");
     /// assert_eq!(Stuck::Checks(vec!["Gate".into()]).word(), "checks");
@@ -920,6 +1095,10 @@ impl Stuck {
     /// assert_eq!(Stuck::Other(other).word(), "checks");
     /// assert_eq!(Stuck::AutoMergeOff.word(), "auto-merge off");
     /// assert_eq!(Stuck::Dequeued("MERGE_CONFLICT".into()).word(), "removed from queue");
+    /// assert_eq!(Stuck::Review(Review::Required).word(), "review");
+    /// assert_eq!(Stuck::Review(Review::Blocked).word(), "review");
+    /// let run = Run { id: 9, name: "Hygiene".into(), link: None };
+    /// assert_eq!(Stuck::Approve(run).word(), "approve run");
     /// ```
     pub fn word(&self) -> &'static str {
         match self {
@@ -927,6 +1106,8 @@ impl Stuck {
             Stuck::Checks(_) | Stuck::Other(_) => "checks",
             Stuck::AutoMergeOff => "auto-merge off",
             Stuck::Dequeued(_) => "removed from queue",
+            Stuck::Review(_) => "review",
+            Stuck::Approve(_) => "approve run",
         }
     }
 }
@@ -1169,6 +1350,38 @@ impl Pull {
         names
     }
 
+    /// True when the verify passed and GitHub blocks the merge, but
+    /// nothing in the rollup explains it: no check failed, none goes, and
+    /// no conflict or merge queue holds the pull request (#1433). A review
+    /// of a person, or the approval of a run of a fork, can be the
+    /// cause. The look reads the runs that wait only for such a pull
+    /// request ([`pulls`]).
+    ///
+    /// ```
+    /// use riff::rollout::{Check, Pull};
+    ///
+    /// let pull = |checks| Pull {
+    ///     number: 40,
+    ///     branch: "worktree-issue-12".into(),
+    ///     checks,
+    ///     merge_state: Some("BLOCKED".into()),
+    ///     ..Pull::default()
+    /// };
+    /// assert!(pull(vec![Check::verify("SUCCESS"), Check::run("Gate", "SUCCESS")]).settled());
+    /// assert!(!pull(vec![Check::verify("SUCCESS"), Check::run("Gate", "")]).settled(), "a check goes");
+    /// assert!(!pull(vec![Check::verify("SUCCESS"), Check::run("Gate", "FAILURE")]).settled());
+    /// assert!(!pull(vec![]).settled(), "no verify yet");
+    /// let clean = Pull { merge_state: Some("CLEAN".into()), ..pull(vec![Check::verify("SUCCESS")]) };
+    /// assert!(!clean.settled());
+    /// ```
+    pub fn settled(&self) -> bool {
+        self.verify() == Some(Verify::Passed)
+            && self.queue == Queue::Out
+            && self.merge_state.as_deref() == Some("BLOCKED")
+            && self.mergeable.as_deref() != Some("CONFLICTING")
+            && self.checks.iter().all(|c| !c.failed() && !c.pending())
+    }
+
     /// Why this pull request cannot merge by itself, when it cannot
     /// (#279). A draft, a WIP head, a failed verify, and a pull request in
     /// the merge queue ([`Pull::queued`]) are none: a failed verify is free
@@ -1187,9 +1400,16 @@ impl Pull {
     /// 4. A passed verify and a removal from the merge queue, with no
     ///    push since: [`Stuck::Dequeued`].
     /// 5. A passed verify and auto-merge off: [`Stuck::AutoMergeOff`].
+    /// 6. A passed verify, auto-merge on, and `reviewDecision`
+    ///    `REVIEW_REQUIRED`: [`Stuck::Review`] (01M6FZ141Y0J8G2AYX0G5HY1CX).
+    /// 7. A passed verify, auto-merge on, and a run of the head that waits
+    ///    for approval ([`Pull::waiting`]): [`Stuck::Approve`].
+    /// 8. A passed verify, auto-merge on, and a pull request that GitHub
+    ///    blocks with no decision and no check open ([`Pull::settled`]):
+    ///    [`Stuck::Review`] with [`Review::Blocked`].
     ///
     /// ```
-    /// use riff::rollout::{Check, Pull, Queue, Stuck};
+    /// use riff::rollout::{Check, Pull, Queue, Review, Run, Stuck};
     ///
     /// let pull = |checks, mergeable: &str, auto_merge| Pull {
     ///     number: 40,
@@ -1251,6 +1471,32 @@ impl Pull {
     ///     removed(pull(vec![passed(), gate("FAILURE")], "MERGEABLE", true)).stuck(false),
     ///     Some(Stuck::Checks(vec!["Gate".into()]))
     /// );
+    ///
+    /// // A review that a rule asks for (01M6FZ141Y0J8G2AYX0G5HY1CX), also with a Gate that goes.
+    /// let review = |decision: &str, pull: Pull| Pull { review: Some(decision.into()), ..pull };
+    /// let needed = review("REVIEW_REQUIRED", pull(vec![passed(), gate("")], "MERGEABLE", true));
+    /// assert_eq!(needed.stuck(false), Some(Stuck::Review(Review::Required)));
+    /// assert_eq!(review("APPROVED", pull(vec![passed()], "MERGEABLE", true)).stuck(false), None);
+    /// // Auto-merge first: the review needs auto-merge on to matter.
+    /// let off = review("REVIEW_REQUIRED", pull(vec![passed()], "MERGEABLE", false));
+    /// assert_eq!(off.stuck(false), Some(Stuck::AutoMergeOff));
+    /// // No review before the verify passed.
+    /// assert_eq!(review("REVIEW_REQUIRED", pull(vec![], "MERGEABLE", true)).stuck(false), None);
+    ///
+    /// // GitHub blocks the merge, asks no review, and no check goes or failed.
+    /// let blocked = |checks| Pull { merge_state: Some("BLOCKED".into()), ..pull(checks, "MERGEABLE", true) };
+    /// assert_eq!(blocked(vec![passed(), gate("SUCCESS")]).stuck(false), Some(Stuck::Review(Review::Blocked)));
+    /// // A Gate that goes explains the block. A failed Gate is the failed check.
+    /// assert_eq!(blocked(vec![passed(), gate("")]).stuck(false), None);
+    /// assert_eq!(blocked(vec![passed(), gate("FAILURE")]).stuck(false), Some(Stuck::Checks(vec!["Gate".into()])));
+    /// // A decision of a person is no unknown block.
+    /// let changes = Pull { review: Some("CHANGES_REQUESTED".into()), ..blocked(vec![passed()]) };
+    /// assert_eq!(changes.stuck(false), None);
+    ///
+    /// // A run of a fork that waits for approval (01M6FZ144M0BTEDWNB9V4MGWDD) is the block.
+    /// let run = Run { id: 9, name: "Hygiene".into(), link: None };
+    /// let fork = Pull { waiting: vec![run.clone()], ..blocked(vec![passed(), gate("SUCCESS")]) };
+    /// assert_eq!(fork.stuck(false), Some(Stuck::Approve(run)));
     /// ```
     pub fn stuck(&self, release: bool) -> Option<Stuck> {
         if self.draft || self.queued() {
@@ -1277,7 +1523,18 @@ impl Pull {
         if let Queue::Removed(reason) = &self.queue {
             return Some(Stuck::Dequeued(reason.clone()));
         }
-        (!self.auto_merge).then_some(Stuck::AutoMergeOff)
+        if !self.auto_merge {
+            return Some(Stuck::AutoMergeOff);
+        }
+        if self.review.as_deref() == Some("REVIEW_REQUIRED") {
+            return Some(Stuck::Review(Review::Required));
+        }
+        if let Some(run) = self.waiting.first() {
+            return Some(Stuck::Approve(run.clone()));
+        }
+        // A review that is approved or asked for changes is a decision.
+        let decided = self.review.as_deref().is_some_and(|r| !r.is_empty());
+        (self.settled() && !decided).then_some(Stuck::Review(Review::Blocked))
     }
 }
 
@@ -1525,7 +1782,9 @@ pub fn queue_of(gh: &Gh, repo: &str) -> HashMap<u64, Queue> {
 /// with `gh`. The head commit of a pull request that waits for a verify
 /// ([`Verify::Asked`]) is read one more time, for [`Pull::wip`]
 /// ([`head_wip`]). Their place in the merge queue is read one time
-/// ([`queue_of`]).
+/// ([`queue_of`]). The runs of Actions that wait for approval are read
+/// for a verified pull request that GitHub blocks with no check open
+/// only ([`Pull::settled`], [`runs_waiting`], 01M6FZ144M0BTEDWNB9V4MGWDD).
 pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
     let mut pulls: Vec<Pull> = gh.json(&[
         "pr",
@@ -1543,6 +1802,9 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
     for pull in &mut pulls {
         pull.wip = pull.verify() == Some(Verify::Asked) && head_wip(gh, repo, &pull.head);
         pull.queue = queue.get(&pull.number).cloned().unwrap_or_default();
+        if pull.settled() {
+            pull.waiting = runs_waiting(gh, repo, &pull.head);
+        }
     }
     Ok(pulls)
 }
@@ -2333,9 +2595,53 @@ mod tests {
             assert!(CONNECTIONS.contains(&field), "{field}");
         }
         // The fields that `Pull` reads are all there.
-        for field in ["headRefOid", "statusCheckRollup", "autoMergeRequest"] {
+        for field in [
+            "headRefOid",
+            "statusCheckRollup",
+            "autoMergeRequest",
+            "mergeStateStatus",
+            "reviewDecision",
+        ] {
             assert!(PULL_FIELDS.split(',').any(|f| f == field), "{field}");
         }
+    }
+
+    /// #1433: the review decision and the merge state of GitHub, as `gh pr
+    /// list` gives them. An empty decision is none.
+    #[test]
+    fn the_review_decision_and_the_merge_state_parse() {
+        let pulls: Vec<Pull> = serde_json::from_str(
+            r#"[{"number":40,"headRefName":"worktree-issue-12","isDraft":false,"statusCheckRollup":[],
+                 "reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"BLOCKED"},
+                {"number":41,"headRefName":"worktree-issue-13","isDraft":false,"statusCheckRollup":[],
+                 "reviewDecision":"","mergeStateStatus":"CLEAN"},
+                {"number":42,"headRefName":"worktree-issue-14","isDraft":false,"statusCheckRollup":[]}]"#,
+        )
+        .unwrap();
+        assert_eq!(pulls[0].review.as_deref(), Some("REVIEW_REQUIRED"));
+        assert_eq!(pulls[0].merge_state.as_deref(), Some("BLOCKED"));
+        assert_eq!(pulls[1].review.as_deref(), Some(""));
+        assert_eq!(pulls[2].review, None);
+        assert_eq!(pulls[2].merge_state, None);
+        assert!(pulls.iter().all(|p| p.waiting.is_empty()));
+    }
+
+    /// The reply of the runs of a commit: the text of the forge is safe,
+    /// and a run with no name or link still counts.
+    #[test]
+    fn a_run_that_waits_has_a_safe_name_and_may_have_no_link() {
+        let reply = r#"{"workflow_runs":[
+            {"id":5,"workflow_id":1,"name":"Hy\u001b[31mgiene","status":"action_required","conclusion":null,"html_url":""},
+            {"id":6,"workflow_id":2,"status":"completed","conclusion":"action_required"}]}"#;
+        let run = |id, name: &str| Run {
+            id,
+            name: name.into(),
+            link: None,
+        };
+        assert_eq!(
+            waiting_runs(reply),
+            [run(6, "a workflow"), run(5, "Hygiene")]
+        );
     }
 
     /// A WIP head is the first line of the message of the head commit.
