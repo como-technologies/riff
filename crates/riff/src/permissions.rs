@@ -91,7 +91,13 @@
 //! | `Bash(gh run rerun *)` | allow | worker | session | run a job again that failed for a known flake (01M5QWJJBY5VW53F0XAWWDQ79K) |
 //! | `Bash(gh issue view *)` | allow | lead, worker, verifier | session | read an issue |
 //! | `Bash(gh issue list *)` | allow | lead, worker, verifier | session | find the items of a wave |
-//! | `Bash(gh issue edit *)` | allow | lead, worker, verifier | session | write the `Done when:` line of an item |
+//! | `Bash(gh issue comment *)` | allow | worker, verifier | session | add to an issue (01M6FZXZ9267YKMH97E6A2Y2EP) |
+//! | `Bash(gh issue edit *)` | allow | lead | session | write the `Done when:` line of an item |
+//! | `Bash(gh*issue edit*--body*)` | deny | worker, verifier | session | never change the body of an issue |
+//! | `Bash(gh*issue edit*--title*)` | deny | worker, verifier | session | never change the title of an issue |
+//! | `Bash(gh*issue edit* -b*)` | deny | worker, verifier | session | the same, as `-b` |
+//! | `Bash(gh*issue edit* -F*)` | deny | worker, verifier | session | the same, as `-F` |
+//! | `Bash(gh*issue edit* -t*)` | deny | worker, verifier | session | the same, as `-t` |
 //! | `Bash(git push * {BRANCH})` | deny | lead, worker, verifier | project | never push to the default branch |
 //! | `Bash(git push * {BRANCH} *)` | deny | lead, worker, verifier | project | the same |
 //! | `Bash(git push *:{BRANCH})` | deny | lead, worker, verifier | project | the same |
@@ -101,6 +107,32 @@
 //! | `Bash(gh pr merge *--admin*)` | deny | lead, worker, verifier | project | never merge as an admin |
 //! | `Bash(gh workflow run *)` | person | - | - | only by hand: `riff release rollback` deploys an older release |
 //! | `Bash(riff release approve *)` | person | - | - | the approval of a deploy: no rule, the guard of riff refuses each session |
+//!
+//! A session gets the rows of the session place for its own role only
+//! ([`session_rules`]). The lead edits the body of an issue. A worker and
+//! a verifier add to an issue with `gh issue comment`, and the deny rules
+//! refuse each `gh issue edit` that sets a body or a title, also with
+//! `gh -R` before the words (01M6FZXZ9267YKMH97E6A2Y2EP). No rule names
+//! `gh api`: a deny rule cannot list each form of an API write (`-X`,
+//! `--method`, `-f`, GraphQL). The guard is that no allow rule matches it
+//! ([`OUT_OF_BOUNDS`]), and the auto mode check judges the call.
+//!
+//! ```
+//! use riff::permissions::{Role, matches, session_rules};
+//!
+//! let edit = "gh issue edit 12 --body-file /tmp/body.md";
+//! let lead = session_rules(Role::Lead);
+//! assert!(lead.allow.iter().any(|r| matches(r, edit)));
+//! assert!(lead.deny.is_empty());
+//! for role in [Role::Worker, Role::Verifier] {
+//!     let rules = session_rules(role);
+//!     assert!(!rules.allow.iter().any(|r| matches(r, edit)));
+//!     assert!(rules.deny.iter().any(|r| matches(r, edit)));
+//!     let comment = "gh issue comment 12 --body-file /tmp/comment.md";
+//!     assert!(rules.allow.iter().any(|r| matches(r, comment)));
+//!     assert!(!rules.deny.iter().any(|r| matches(r, comment)));
+//! }
+//! ```
 //!
 //! When the auto mode check refuses a step, the session writes the step
 //! on the issue of its item, and tells the lead. The fix is a new row of
@@ -306,6 +338,15 @@ const fn deny(rule: &'static str) -> Row {
     }
 }
 
+const fn deny_for(rule: &'static str, roles: &'static [Role], places: &'static [Place]) -> Row {
+    Row {
+        rule,
+        kind: Kind::Deny,
+        roles,
+        places,
+    }
+}
+
 /// The permission rules of each role (01M5084JXTWZQEG7DJHS2E96NQ). The
 /// table in the design of this module shows each row, with the step that
 /// needs it.
@@ -341,7 +382,21 @@ pub const TABLE: &[Row] = {
         allow("Bash(gh run rerun *)", &[Worker], &[Session]),
         allow("Bash(gh issue view *)", ALL, &[Session]),
         allow("Bash(gh issue list *)", ALL, &[Session]),
-        allow("Bash(gh issue edit *)", ALL, &[Session]),
+        allow("Bash(gh issue comment *)", &[Worker, Verifier], &[Session]),
+        allow("Bash(gh issue edit *)", &[Lead], &[Session]),
+        deny_for(
+            "Bash(gh*issue edit*--body*)",
+            &[Worker, Verifier],
+            &[Session],
+        ),
+        deny_for(
+            "Bash(gh*issue edit*--title*)",
+            &[Worker, Verifier],
+            &[Session],
+        ),
+        deny_for("Bash(gh*issue edit* -b*)", &[Worker, Verifier], &[Session]),
+        deny_for("Bash(gh*issue edit* -F*)", &[Worker, Verifier], &[Session]),
+        deny_for("Bash(gh*issue edit* -t*)", &[Worker, Verifier], &[Session]),
         deny("Bash(git push * {BRANCH})"),
         deny("Bash(git push * {BRANCH} *)"),
         deny("Bash(git push *:{BRANCH})"),
@@ -417,6 +472,7 @@ pub const OUT_OF_BOUNDS: &[&str] = &[
     "gh api repos/o/r/issues -f title=x/milestones y",
     "gh api -X PATCH repos/o/r -f description=x/milestones/y",
     "gh api -X PATCH repos/o/r/milestones/3 -f state=closed",
+    "gh api -X PATCH repos/o/r/issues/12 -f body=x",
     "gh api -X POST repos/o/r/statuses/abc -f state=success",
     "gh api -X PUT repos/o/r/rulesets/1 -f enforcement=disabled",
     "gh pr merge 40 --squash",
@@ -443,19 +499,29 @@ fn out_of_bounds(facts: &Facts) -> Vec<String> {
 }
 
 /// The rules of [`TABLE`] for the place `place`, with the facts `facts`.
-/// It leaves out a rule that needs a fact that `facts` does not have.
+/// With a role, only the rows of that role; with `None`, the rows of each
+/// role. It leaves out a rule that needs a fact that `facts` does not
+/// have.
 ///
 /// ```
-/// use riff::permissions::{Facts, Place, rules_of};
+/// use riff::permissions::{Facts, Place, Role, rules_of};
 ///
-/// let session = rules_of(Place::Session, &Facts::default());
-/// assert!(session.allow.contains(&"Bash(gh issue view *)".to_owned()));
-/// assert!(!session.allow.contains(&"Bash(riff *)".to_owned()));
-/// assert!(session.deny.is_empty());
+/// let facts = Facts::default();
+/// let any = rules_of(Place::Session, None, &facts);
+/// assert!(any.allow.contains(&"Bash(gh issue view *)".to_owned()));
+/// assert!(!any.allow.contains(&"Bash(riff *)".to_owned()));
+/// assert!(any.deny.contains(&"Bash(gh*issue edit*--body*)".to_owned()));
+/// let lead = rules_of(Place::Session, Some(Role::Lead), &facts);
+/// assert!(lead.allow.contains(&"Bash(gh issue edit *)".to_owned()));
+/// assert!(lead.deny.is_empty());
 /// ```
-pub fn rules_of(place: Place, facts: &Facts) -> Rules {
+pub fn rules_of(place: Place, role: Option<Role>, facts: &Facts) -> Rules {
     let mut rules = Rules::default();
-    for row in TABLE.iter().filter(|r| r.places.contains(&place)) {
+    let rows = TABLE
+        .iter()
+        .filter(|r| r.places.contains(&place))
+        .filter(|r| role.is_none_or(|role| r.roles.contains(&role)));
+    for row in rows {
         let Some(rule) = row.rule_of(facts) else {
             continue;
         };
@@ -490,19 +556,26 @@ pub fn rules(branch: &str) -> Rules {
         branch: Some(branch),
         ..Facts::default()
     };
-    rules_of(Place::Project, &facts)
+    rules_of(Place::Project, None, &facts)
 }
 
-/// The rules that the daemon writes into the settings of each session
-/// (01M5084K4YQCZF20XA0P2485SG).
+/// The rules that the daemon writes into the settings of each session of
+/// the role `role` (01M5084K4YQCZF20XA0P2485SG,
+/// 01M6FZXZ9267YKMH97E6A2Y2EP).
 ///
 /// ```
-/// let rules = riff::permissions::session_rules();
+/// use riff::permissions::{Role, session_rules};
+///
+/// let rules = session_rules(Role::Worker);
 /// assert!(rules.allow.contains(&"mcp__riff".to_owned()));
 /// assert!(rules.allow.contains(&"Bash(gh pr checks *)".to_owned()));
+/// assert!(rules.allow.contains(&"Bash(gh issue comment *)".to_owned()));
+/// assert!(!rules.allow.contains(&"Bash(gh issue edit *)".to_owned()));
+/// assert!(rules.deny.contains(&"Bash(gh*issue edit*--body*)".to_owned()));
+/// assert!(!rules.allow.iter().any(|r| r.contains("riff wave")));
 /// ```
-pub fn session_rules() -> Rules {
-    rules_of(Place::Session, &Facts::default())
+pub fn session_rules(role: Role) -> Rules {
+    rules_of(Place::Session, Some(role), &Facts::default())
 }
 
 /// The skill of Claude Code that offers the dialog "Teach auto mode
@@ -1458,11 +1531,22 @@ mod tests {
             &"/home/mike/.cache/riff/check/target/static/release/riffx daemon install".into()
         ));
         for place in [Place::Project, Place::Session] {
-            let allow = rules_of(place, &facts).allow;
+            let allow = rules_of(place, None, &facts).allow;
             for command in &commands {
                 let rule = allow.iter().find(|r| matches(r, command));
                 assert_eq!(rule, None, "{} allows `{command}`", place.as_str());
             }
+        }
+        // 01M6FZXZ9267YKMH97E6A2Y2EP: no rule names `gh api`, so a write to
+        // an issue with the API is no allowed step of any role.
+        assert!(commands.contains(&"gh api -X PATCH repos/o/r/issues/12 -f body=x".into()));
+        for role in [Role::Lead, Role::Worker, Role::Verifier] {
+            let rules = session_rules(role);
+            assert!(
+                !rules.allow.iter().any(|r| r.contains("gh api")),
+                "{role:?}"
+            );
+            assert!(!rules.deny.iter().any(|r| r.contains("gh api")), "{role:?}");
         }
         // With no home, the commands that need it are not there.
         let few = out_of_bounds(&Facts::default());
@@ -1602,7 +1686,7 @@ mod tests {
     /// `riff wave move` and `riff wave end` of the lead.
     #[test]
     fn the_session_place_has_the_wave_move_and_end_rules_of_the_lead() {
-        let session = session_rules();
+        let session = session_rules(Role::Lead);
         for (rule, step) in [
             (
                 "Bash(/opt/riff/riff wave move *)",
@@ -1623,7 +1707,7 @@ mod tests {
     /// guard of riff refuses `approve` in each session.
     #[test]
     fn the_session_place_has_the_release_steps_of_the_lead_and_none_for_approve() {
-        let session = session_rules();
+        let session = session_rules(Role::Lead);
         for step in [
             "/opt/riff/riff release status",
             "/opt/riff/riff release cut 3.3.0",
@@ -1769,7 +1853,7 @@ mod tests {
     /// rule of the session place; the `cd` matches none.
     #[test]
     fn a_step_alone_matches_a_session_rule_and_a_cd_to_the_scratchpad_matches_none() {
-        let session = session_rules();
+        let session = session_rules(Role::Lead);
         let allowed = |c: &str| session.allow.iter().any(|r| matches(r, c));
         let scratchpad = "/home/mike/.cache/riff/tmp/e750ad62/scratchpad";
         let refused = format!(
@@ -1791,6 +1875,103 @@ mod tests {
         assert!(!joins_a_step(
             "git diff --cached --quiet || git commit -q -m \"WIP: STEP\""
         ));
+    }
+
+    /// 01M6FZXZ9267YKMH97E6A2Y2EP: the lead may edit the body of an issue;
+    /// a worker and a verifier may not, and may comment.
+    #[test]
+    fn the_lead_edits_an_issue_body_and_a_worker_and_a_verifier_comment() {
+        let edits = [
+            "gh issue edit 12 --body-file /tmp/body.md",
+            "gh issue edit 12 --body text",
+            "gh issue edit 12 --body=text",
+            "gh issue edit 12 -b text",
+            "gh issue edit 12 -btext",
+            "gh issue edit 12 -F /tmp/body.md",
+            "gh issue edit 12 --title New",
+            "gh issue edit 12 --title=New",
+            "gh issue edit 12 -t New",
+            "gh issue edit 12 --add-label x --body-file /tmp/body.md",
+            "gh issue edit 12 --repo o/r --body-file /tmp/body.md",
+            "gh issue edit -b text 12",
+            "gh -R o/r issue edit 12 --body-file /tmp/body.md",
+            "gh --repo o/r issue edit 12 -F /tmp/body.md",
+        ];
+        let lead = session_rules(Role::Lead);
+        assert!(lead.deny.is_empty());
+        for step in &edits[..12] {
+            assert!(lead.allow.iter().any(|r| matches(r, step)), "{step}");
+        }
+        for role in [Role::Worker, Role::Verifier] {
+            let rules = session_rules(role);
+            for step in edits {
+                assert!(
+                    !rules.allow.iter().any(|r| matches(r, step)),
+                    "{role:?} may `{step}`"
+                );
+                assert!(
+                    rules.deny.iter().any(|r| matches(r, step)),
+                    "{role:?} is not refused `{step}`"
+                );
+            }
+            // A comment is how a worker and a verifier add to an issue.
+            for step in [
+                "gh issue comment 12 --body-file /tmp/comment.md",
+                "gh issue comment 12 --repo o/r --body-file /tmp/comment.md",
+                "gh issue view 12 --comments",
+                "gh issue list --state open",
+            ] {
+                assert!(rules.allow.iter().any(|r| matches(r, step)), "{step}");
+                assert!(!rules.deny.iter().any(|r| matches(r, step)), "{step}");
+            }
+            // The other edits of an issue have no rule: the auto mode check
+            // judges them.
+            for step in [
+                "gh issue edit 12 --add-label no-verify",
+                "gh issue edit 12 --remove-label no-verify",
+                "gh issue edit 12 --milestone Backlog",
+                "gh issue edit 12 --add-assignee @me",
+            ] {
+                assert!(!rules.allow.iter().any(|r| matches(r, step)), "{step}");
+                assert!(!rules.deny.iter().any(|r| matches(r, step)), "{step}");
+            }
+        }
+        // The lead has no rule for a comment: only a worker and a verifier.
+        assert!(!lead.allow.iter().any(|r| r.contains("issue comment")));
+    }
+
+    /// 01M6FZXZ9267YKMH97E6A2Y2EP: a session gets the rules of its own
+    /// role, and the deny rules of the session place are in no project
+    /// rule.
+    #[test]
+    fn a_session_gets_the_rules_of_its_role_only() {
+        let lead = session_rules(Role::Lead);
+        let worker = session_rules(Role::Worker);
+        let verifier = session_rules(Role::Verifier);
+        assert!(
+            lead.allow
+                .contains(&"Bash(/opt/riff/riff wave *)".to_owned())
+        );
+        for rules in [&worker, &verifier] {
+            assert!(!rules.allow.iter().any(|r| r.contains("/opt/riff/riff")));
+        }
+        assert!(worker.allow.contains(&"Bash(gh pr create *)".to_owned()));
+        assert!(!verifier.allow.contains(&"Bash(gh pr create *)".to_owned()));
+        assert!(!lead.allow.contains(&"Bash(gh pr create *)".to_owned()));
+        for role in [Role::Lead, Role::Worker, Role::Verifier] {
+            assert!(
+                session_rules(role).allow.contains(&"mcp__riff".to_owned()),
+                "{role:?}"
+            );
+        }
+        // The union of the roles is the rows of the place.
+        let any = rules_of(Place::Session, None, &Facts::default());
+        for rules in [&lead, &worker, &verifier] {
+            assert!(rules.allow.iter().all(|r| any.allow.contains(r)));
+            assert!(rules.deny.iter().all(|r| any.deny.contains(r)));
+        }
+        let project = rules("main");
+        assert!(!project.deny.iter().any(|r| r.contains("issue edit")));
     }
 
     /// 01M5084JXTWZQEG7DJHS2E96NQ: each `riff` and `gh` step of the start
@@ -1860,11 +2041,8 @@ mod tests {
             (Role::Lead, text::MCP_LEAD.to_owned()),
         ];
         for (role, text) in texts {
-            let rules: Vec<String> = TABLE
-                .iter()
-                .filter(|r| r.places.contains(&Place::Session) && r.roles.contains(&role))
-                .filter_map(|r| r.rule_of(&Facts::default()))
-                .collect();
+            let session = session_rules(role);
+            let rules = session.allow;
             let steps = text_steps(&text);
             assert!(!steps.is_empty(), "{text}");
             // The lead in a container plans the waves (01M51K1VJ67KYHRD7DQ86DSX1X).
@@ -1884,6 +2062,11 @@ mod tests {
                 assert!(
                     rules.iter().any(|r| matches(r, step)),
                     "no session rule of the {} matches the step `{step}`",
+                    role.as_str()
+                );
+                assert!(
+                    !session.deny.iter().any(|r| matches(r, step)),
+                    "a deny rule of the {} matches the step `{step}`",
                     role.as_str()
                 );
             }

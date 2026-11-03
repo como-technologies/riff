@@ -535,10 +535,12 @@ pub fn sessions_dir() -> Result<PathBuf> {
 
 /// The `settings.json` of the own Claude folder: `claude` adds no
 /// attribution line to a commit or a pull request, so the trailers end
-/// each one (01M4ZD48DHAKJ1EHX6QHYAQ7ZM). It allows each rule of the
-/// session place of the permission table, so the auto mode check does
-/// not refuse a step of the start text
-/// ([`crate::permissions::session_rules`], 01M5084K4YQCZF20XA0P2485SG).
+/// each one (01M4ZD48DHAKJ1EHX6QHYAQ7ZM). It has the rules of the session
+/// place of the permission table for the role `role`: the allow rules, so
+/// the auto mode check does not refuse a step of the start text, and the
+/// deny rules, so the role does no step that it must not do
+/// ([`crate::permissions::session_rules`], 01M5084K4YQCZF20XA0P2485SG,
+/// 01M6FZXZ9267YKMH97E6A2Y2EP).
 /// It has the auto mode settings of `auto`: no `/auto-mode-setup`, and
 /// the places of riff work ([`crate::permissions::auto_mode`],
 /// 01M516HEX3GVTN9K2QS12A4PG3). It has the hooks `PermissionDenied` and
@@ -546,22 +548,38 @@ pub fn sessions_dir() -> Result<PathBuf> {
 /// riff for its sessions, not a copy of a setting of the person.
 ///
 /// ```
-/// use riff::permissions::{Trust, auto_mode};
+/// use riff::permissions::{Role, Trust, auto_mode, session_rules};
 ///
 /// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878"), sources: &[] };
-/// let settings = riff::run::settings(&auto);
+/// let settings = riff::run::settings(&auto, Role::Worker);
 /// assert_eq!(settings["includeCoAuthoredBy"], false);
 /// assert_eq!(settings["hooks"], riff::run::session_hooks());
 /// let allow = settings["permissions"]["allow"].as_array().unwrap();
 /// assert!(allow.iter().any(|r| r == "Bash(gh issue view *)"));
-/// assert_eq!(allow.len(), riff::permissions::session_rules().allow.len());
+/// assert!(!allow.iter().any(|r| r == "Bash(gh issue edit *)"));
+/// assert_eq!(allow.len(), session_rules(Role::Worker).allow.len());
+/// let deny = settings["permissions"]["deny"].as_array().unwrap();
+/// assert!(deny.iter().any(|r| r == "Bash(gh*issue edit*--body*)"));
+/// assert_eq!(deny.len(), session_rules(Role::Worker).deny.len());
+///
+/// // The lead edits the body of an issue: it has no deny rule for it.
+/// let lead = riff::run::settings(&auto, Role::Lead);
+/// let allow = lead["permissions"]["allow"].as_array().unwrap();
+/// assert!(allow.iter().any(|r| r == "Bash(gh issue edit *)"));
+/// assert!(lead["permissions"].get("deny").is_none());
+///
 /// assert_eq!(settings["skillOverrides"], auto_mode(&auto)["skillOverrides"]);
 /// assert_eq!(settings["autoMode"], auto_mode(&auto)["autoMode"]);
 /// ```
-pub fn settings(auto: &crate::permissions::Trust) -> Value {
+pub fn settings(auto: &crate::permissions::Trust, role: crate::permissions::Role) -> Value {
+    let rules = crate::permissions::session_rules(role);
+    let mut permissions = json!({ "allow": rules.allow });
+    if !rules.deny.is_empty() {
+        permissions["deny"] = json!(rules.deny);
+    }
     let mut settings = json!({
         "includeCoAuthoredBy": false,
-        "permissions": { "allow": crate::permissions::session_rules().allow },
+        "permissions": permissions,
         "hooks": session_hooks(),
     });
     if let (Some(settings), Value::Object(auto)) = (
@@ -667,22 +685,22 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
 /// `.claude.json` of the person at `person`, else `auto`. A key that is
 /// there stays, so the answers of the person stay.
 ///
-/// It writes the `settings.json` of [`settings`] with `auto` when it is
-/// not there. When it is there, it adds each rule of
-/// [`crate::permissions::session_rules`] that it lacks
-/// (01M5084K4YQCZF20XA0P2485SG), and the auto mode settings of `auto`
-/// that it lacks ([`crate::permissions::with_auto_mode`],
-/// 01M516HEX3GVTN9K2QS12A4PG3).
+/// It writes the `settings.json` of [`settings`] with `auto` and `role`
+/// when it is not there. When it is there, it adds each rule of
+/// [`crate::permissions::session_rules`] for `role` that it lacks
+/// (01M5084K4YQCZF20XA0P2485SG, 01M6FZXZ9267YKMH97E6A2Y2EP), and the auto
+/// mode settings of `auto` that it lacks
+/// ([`crate::permissions::with_auto_mode`], 01M516HEX3GVTN9K2QS12A4PG3).
 ///
 /// ```
-/// use riff::permissions::Trust;
+/// use riff::permissions::{Role, Trust};
 ///
 /// let dir = tempfile::tempdir()?;
 /// let claude = dir.path().join("claude");
 /// let person = dir.path().join("person.json");
 /// std::fs::write(&person, r#"{"theme":"dark"}"#)?;
 /// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878"), sources: &[] };
-/// riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto)?;
+/// riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, Role::Worker)?;
 /// let read = |name: &str| -> serde_json::Value {
 ///     serde_json::from_slice(&std::fs::read(claude.join(name)).unwrap()).unwrap()
 /// };
@@ -690,23 +708,23 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
 /// assert_eq!(json["hasCompletedOnboarding"], true);
 /// assert_eq!(json["theme"], "dark");
 /// assert_eq!(json["projects"]["/data/clone"]["hasTrustDialogAccepted"], true);
-/// assert_eq!(read("settings.json"), riff::run::settings(&auto));
+/// assert_eq!(read("settings.json"), riff::run::settings(&auto, Role::Worker));
 ///
 /// // With no config of the person, the theme is auto.
 /// let other = dir.path().join("other");
-/// riff::run::claude_folder(&other, "/data/clone".as_ref(), &dir.path().join("none"), &auto)?;
+/// riff::run::claude_folder(&other, "/data/clone".as_ref(), &dir.path().join("none"), &auto, Role::Verifier)?;
 /// let json: serde_json::Value = serde_json::from_slice(&std::fs::read(other.join(".claude.json"))?)?;
 /// assert_eq!(json["theme"], "auto");
 ///
 /// // A folder of an earlier start gets the missing rules and auto mode
 /// // settings, and keeps its keys.
 /// std::fs::write(claude.join("settings.json"), r#"{"includeCoAuthoredBy":false,"model":"opus"}"#)?;
-/// riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto)?;
+/// riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, Role::Worker)?;
 /// let settings = read("settings.json");
 /// assert_eq!(settings["model"], "opus");
-/// assert_eq!(settings["permissions"], riff::run::settings(&auto)["permissions"]);
-/// assert_eq!(settings["skillOverrides"], riff::run::settings(&auto)["skillOverrides"]);
-/// assert_eq!(settings["autoMode"], riff::run::settings(&auto)["autoMode"]);
+/// assert_eq!(settings["permissions"], riff::run::settings(&auto, Role::Worker)["permissions"]);
+/// assert_eq!(settings["skillOverrides"], riff::run::settings(&auto, Role::Worker)["skillOverrides"]);
+/// assert_eq!(settings["autoMode"], riff::run::settings(&auto, Role::Worker)["autoMode"]);
 /// assert_eq!(settings["hooks"], riff::run::session_hooks());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
@@ -715,6 +733,7 @@ pub fn claude_folder(
     clone: &Path,
     person: &Path,
     auto: &crate::permissions::Trust,
+    role: crate::permissions::Role,
 ) -> Result<()> {
     let read =
         |path: &Path| -> Option<Value> { serde_json::from_slice(&std::fs::read(path).ok()?).ok() };
@@ -748,13 +767,13 @@ pub fn claude_folder(
     std::fs::rename(&tmp, &file).with_context(|| format!("cannot write {}", file.display()))?;
     let settings_file = dir.join("settings.json");
     if settings_file.exists() {
-        crate::permissions::add(&settings_file, &crate::permissions::session_rules())?;
+        crate::permissions::add(&settings_file, &crate::permissions::session_rules(role))?;
         crate::permissions::add_auto_mode(&settings_file, auto)?;
         add_session_hooks(&settings_file)?;
     } else {
         std::fs::write(
             &settings_file,
-            serde_json::to_string_pretty(&settings(auto))?,
+            serde_json::to_string_pretty(&settings(auto, role))?,
         )
         .with_context(|| format!("cannot write {}", settings_file.display()))?;
     }
@@ -1855,7 +1874,13 @@ async fn work(
     let sources = session_image::merged_sources(main)?;
     let auto = crate::permissions::Trust::of(me.place().repo(), server, &sources);
     let home = &checked.host.home;
-    claude_folder(&claude, &clone, &home.join(".claude.json"), &auto)?;
+    claude_folder(
+        &claude,
+        &clone,
+        &home.join(".claude.json"),
+        &auto,
+        crate::permissions::Role::Worker,
+    )?;
     let branch = branch(item);
     let earlier = make_clone(main, &clone, &branch)?;
     let existing = |p: PathBuf| p.exists().then_some(p);
@@ -2179,7 +2204,14 @@ mod tests {
         let person = root.path().join("person.json");
         let config = r#"{"theme":"light-daltonized","numStartups":7}"#;
         std::fs::write(&person, config).unwrap();
-        claude_folder(&facts.claude, &facts.clone, &person, &auto).unwrap();
+        claude_folder(
+            &facts.claude,
+            &facts.clone,
+            &person,
+            &auto,
+            crate::permissions::Role::Worker,
+        )
+        .unwrap();
 
         // claude in the container reads this folder as its config folder.
         let spec = spec(&facts);
@@ -2195,7 +2227,10 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(facts.claude.join(name)).unwrap())
                 .unwrap()
         };
-        assert_eq!(read("settings.json"), settings(&auto));
+        assert_eq!(
+            read("settings.json"),
+            settings(&auto, crate::permissions::Role::Worker)
+        );
         assert_eq!(read("settings.json")["includeCoAuthoredBy"], false);
         // No dialog of auto mode, and the places of riff work.
         assert_eq!(
