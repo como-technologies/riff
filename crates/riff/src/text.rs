@@ -751,11 +751,12 @@ pub fn build_line(server: Option<&Build>) -> String {
 
 /// The answer to `riff pause` and `riff resume`: the new state of the
 /// repository `repository` or of the whole riff, the sessions that
-/// woke, and each pause that still stops work
-/// (01M3XAHZSJ5914BRQBZ2G4ZBSA).
+/// woke, the leads that it told (a lead of a repository with a pause of
+/// its own, 01M6FYGVTCBKC9C8AXMFD7WMW2), and each pause that still stops
+/// work (01M3XAHZSJ5914BRQBZ2G4ZBSA).
 ///
 /// ```
-/// use riff_core::wire::{Posted, RiffReply, RiffState};
+/// use riff_core::wire::{PauseInfo, Posted, RepositoryPause, RiffReply, RiffState};
 ///
 /// let reply = RiffReply { changed: true, ..RiffState::Paused.into() };
 /// let posted = Posted {
@@ -780,6 +781,23 @@ pub fn build_line(server: Option<&Build>) -> String {
 ///     "The repository como-technologies/riff is running now. No other session woke. The \
 ///      whole riff is still paused: the owner or an admin resumes it with `riff resume --riff`."
 /// );
+/// // A resume of the whole riff while a repository has a pause of its own:
+/// // its lead hears it, and no worker of it wakes.
+/// let strata = "como-technologies/strata".parse()?;
+/// let own = RepositoryPause { repository: strata, pause: PauseInfo::default() };
+/// let running = RiffReply { changed: true, repositories: vec![own], ..RiffState::Running.into() };
+/// let lead = Posted {
+///     thread: "como-technologies/strata".parse()?,
+///     seq: 4,
+///     woken: vec!["riff://brett@heron/como-technologies/strata?session=62b2".parse()?],
+///     unmatched: vec![],
+/// };
+/// assert_eq!(
+///     riff::text::riff_set(None, RiffState::Running, &running, &[lead]),
+///     "The riff is running now. Told the lead of como-technologies/strata: brett@heron:strata \
+///      (62b2). Still paused: como-technologies/strata. Its user or its lead resumes it with \
+///      `riff resume`."
+/// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn riff_set(
@@ -791,11 +809,21 @@ pub fn riff_set(
     let subject = riff_client::text::pause_subject(repository);
     let mut out = if reply.changed {
         let mut out = format!("{subject} is {state} now.");
-        let names: Vec<String> = posted.iter().flat_map(|p| &p.woken).map(name).collect();
-        if names.is_empty() {
-            out.push_str(" No other session woke.");
-        } else {
+        // The whole riff tells the lead of a repository with a pause of its own,
+        // and wakes none of its workers (01M6FYGVTCBKC9C8AXMFD7WMW2).
+        let (leads, workers): (Vec<&Posted>, Vec<&Posted>) = posted
+            .iter()
+            .partition(|p| repository.is_none() && reply.repository(&p.thread).is_some());
+        let names: Vec<String> = workers.iter().flat_map(|p| &p.woken).map(name).collect();
+        let told: Vec<&Posted> = leads.into_iter().filter(|p| !p.woken.is_empty()).collect();
+        if !names.is_empty() {
             let _ = write!(out, " Woke {}.", names.join(", "));
+        } else if told.is_empty() {
+            out.push_str(" No other session woke.");
+        }
+        for p in told {
+            let leads: Vec<String> = p.woken.iter().map(name).collect();
+            let _ = write!(out, " Told the lead of {}: {}.", p.thread, leads.join(", "));
         }
         out
     } else {
@@ -5380,6 +5408,12 @@ const RUN_CHECKS: &str = "run the checks that the repository names, when it name
 const CI_DECIDES: &str =
     "The full check of the pull request (its CI) and the verify decide the merge.";
 
+/// The line of the start text of a worker and of a verifier about an
+/// issue: they add to it with a comment, and never change its body or its
+/// title (01M6FZXZ9267YKMH97E6A2Y2EP).
+pub const ISSUE_BY_COMMENT: &str = "Never change the body or the title of an issue. Add to an \
+     issue with a comment: gh issue comment NUMBER --body-file FILE";
+
 /// The start text of a session of `riff run`: the work item, the
 /// branch, and the frame of the body of the pull request
 /// (01M4Z81APKC14AVNJWCGRQKNVW). It tells the session to leave no
@@ -5396,6 +5430,7 @@ const CI_DECIDES: &str =
 /// assert!(text.contains(frame));
 /// assert!(text.contains("Leave no background task at the end of your work"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
+/// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
 /// assert!(text.contains("Run each check in the foreground"));
 /// assert!(text.contains("Commit and push the branch before the end of your work"));
 /// // The text names no file as required and no command (01M5RN89WH3PHV3BHMJ25T3SX4).
@@ -5450,6 +5485,7 @@ pub fn run_start(
          in the background. Never end a turn while a background task runs: a session does not \
          continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
+         {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )
 }
@@ -8325,6 +8361,7 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// assert!(text.contains("Do not open a second pull request"));
 /// assert!(text.contains("turn on auto-merge when it is off: gh pr merge --auto --squash 40"));
 /// assert!(text.contains("New checks and a new verify of the new commit follow"));
+/// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
 /// ```
@@ -8365,6 +8402,7 @@ pub fn wave_rebase_start(
          in the background. Never end a turn while a background task runs: a session does not \
          continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
+         {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )
 }
@@ -8444,6 +8482,7 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(!text.contains("CLAUDE.md names"));
 /// assert!(text.contains("git push origin worktree-issue-12"));
 /// assert!(text.contains("A known flake"));
+/// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
 /// assert!(text.contains("gh run rerun RUN_ID --failed"));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
@@ -8495,27 +8534,31 @@ pub fn wave_checks_start(
          in the background. Never end a turn while a background task runs: a session does not \
          continue after its result. Leave no background task at the end of your work.\n\
          7. Reply with the URL of the pull request in one line.\n\n\
+         {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )
 }
 
 /// The message to the lead about a pull request that cannot merge, and
-/// that no session fixes (#279): `reason` is why. `base` is the default
+/// that no session fixes (#279): `reason` is why. `repo` is
+/// `OWNER/REPO`, for the approval of a run. `base` is the default
 /// branch of the repository, for a conflict (01M5QYBWPAJ219BE8QKVKG1TWW).
 /// Each pull request, head and reason comes one time. A failed check
 /// that is no run of GitHub Actions comes one time for each check, with
-/// its app and its link (#1427).
+/// its app and its link (#1427). A review comes with the step of a
+/// person, and a run that waits for approval one time for each run,
+/// with the command (01M6FZ141Y0J8G2AYX0G5HY1CX, 01M6FZ144M0BTEDWNB9V4MGWDD).
 ///
 /// ```
-/// use riff::rollout::{OtherCheck, Stuck};
+/// use riff::rollout::{OtherCheck, Review, Run, Stuck};
 ///
 /// assert_eq!(
-///     riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::AutoMergeOff),
+///     riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::AutoMergeOff),
 ///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but auto-merge is \
 ///      off, so it never merges. Turn it on: gh pr merge --auto --squash 40"
 /// );
 /// let checks = Stuck::Checks(vec!["Hygiene".into(), "Gate".into()]);
-/// let text = riff::text::wave_stuck(298, "release-v0.8.0", "main", "5e6f7a8b9c", &checks);
+/// let text = riff::text::wave_stuck("o/r", 298, "release-v0.8.0", "main", "5e6f7a8b9c", &checks);
 /// assert!(text.starts_with("PR #298, branch release-v0.8.0, has failed checks Hygiene, Gate at commit 5e6f7a8."));
 /// assert!(text.contains("No session fixes it, so it waits for you."));
 /// assert!(text.contains("gh pr checks 298"));
@@ -8527,17 +8570,17 @@ pub fn wave_checks_start(
 ///     link: Some("https://app.circleci.com/workflow/9".into()),
 /// };
 /// assert_eq!(
-///     riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(circle)),
+///     riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(circle)),
 ///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the check ci of \
 ///      the app app.circleci.com failed. It is not a run of GitHub Actions, so no session fixes \
 ///      it, and it waits for you. Fix the cause with a push to worktree-issue-12, or run the \
 ///      check again in its app. Link: https://app.circleci.com/workflow/9"
 /// );
 /// let bare = OtherCheck { name: "ci/x".into(), app: None, link: None };
-/// let text = riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(bare));
+/// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(bare));
 /// assert!(text.contains("the check ci/x of an unknown app failed."));
 /// assert!(text.ends_with("It has no link: see gh pr checks 40"));
-/// let text = riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Dequeued("CI_FAILURE".into()));
+/// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Dequeued("CI_FAILURE".into()));
 /// assert_eq!(
 ///     text,
 ///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the merge queue \
@@ -8545,21 +8588,45 @@ pub fn wave_checks_start(
 ///      run of the merge group in the Actions of the repository. Queue it again: gh pr merge \
 ///      --auto --squash 40"
 /// );
-/// let text = riff::text::wave_stuck(41, "worktree-issue-1", "master", "aaaa111bbb", &Stuck::Conflict);
+/// let text = riff::text::wave_stuck("o/r", 41, "worktree-issue-1", "master", "aaaa111bbb", &Stuck::Conflict);
 /// assert!(text.contains("has a conflict with master at commit aaaa111."));
 /// assert!(text.contains("Rebase it on master, and push to worktree-issue-1."));
 /// assert!(!text.contains("main"));
+/// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Review(Review::Required));
+/// assert_eq!(
+///     text,
+///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but GitHub needs an \
+///      approving review of a person before it merges. No session approves a pull request, so it \
+///      waits for you. A person other than the author approves it: gh pr review 40 --approve"
+/// );
+/// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Review(Review::Blocked));
+/// assert!(text.contains("but no check failed or goes, and GitHub blocks the merge."));
+/// assert!(text.contains("an author with no GitHub account"));
+/// assert!(text.contains("See the merge box: gh pr view 40 --web."));
+/// assert!(text.ends_with("A person other than the author approves it: gh pr review 40 --approve"));
+/// let run = Run { id: 40151174504, name: "Hygiene".into(), link: Some("https://github.com/o/r/actions/runs/40151174504".into()) };
+/// assert_eq!(
+///     riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Approve(run)),
+///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the run Hygiene \
+///      (run 40151174504) of a pull request from a fork waits for the approval of a maintainer, so \
+///      GitHub counts its required check as not reported and blocks the merge. No session approves \
+///      a run, so it waits for you. Link: https://github.com/o/r/actions/runs/40151174504. Press \
+///      Approve and run in the Actions tab, or run: gh api -X POST \
+///      repos/o/r/actions/runs/40151174504/approve"
+/// );
 /// ```
 pub fn wave_stuck(
+    repo: &str,
     number: u64,
     branch: &str,
     base: &str,
     commit: &str,
     reason: &crate::rollout::Stuck,
 ) -> String {
-    use crate::rollout::Stuck;
+    use crate::rollout::{Review, Stuck};
     let commit = commit.get(..7).unwrap_or(commit);
     let branch = safe(branch);
+    let repo = safe(repo);
     match reason {
         Stuck::AutoMergeOff => format!(
             "PR #{number}, branch {branch}, passed its verify at commit {commit}, but auto-merge \
@@ -8600,6 +8667,35 @@ pub fn wave_stuck(
              merge --auto --squash {number}",
             safe(reason)
         ),
+        Stuck::Review(Review::Required) => format!(
+            "PR #{number}, branch {branch}, passed its verify at commit {commit}, but GitHub \
+             needs an approving review of a person before it merges. No session approves a pull \
+             request, so it waits for you. A person other than the author approves it: gh pr \
+             review {number} --approve"
+        ),
+        Stuck::Review(Review::Blocked) => format!(
+            "PR #{number}, branch {branch}, passed its verify at commit {commit}, but no check \
+             failed or goes, and GitHub blocks the merge. A review is the likely cause: a commit \
+             can have an author with no GitHub account, and the rule of the branch then asks one \
+             approving review of a person. No session approves a pull request, so it waits for \
+             you. See the merge box: gh pr view {number} --web. A person other than the author \
+             approves it: gh pr review {number} --approve"
+        ),
+        Stuck::Approve(run) => {
+            let (name, id) = (safe(&run.name), run.id);
+            let link = match &run.link {
+                Some(link) => format!(" Link: {}.", safe(link)),
+                None => String::new(),
+            };
+            format!(
+                "PR #{number}, branch {branch}, passed its verify at commit {commit}, but the \
+                 run {name} (run {id}) of a pull request from a fork waits for the approval of a \
+                 maintainer, so GitHub counts its required check as not reported and blocks the \
+                 merge. No session approves a run, so it waits for you.{link} Press Approve and \
+                 run in the Actions tab, or run: gh api -X POST \
+                 repos/{repo}/actions/runs/{id}/approve"
+            )
+        }
         Stuck::Conflict => format!(
             "PR #{number}, branch {branch}, has a conflict with {base} at commit {commit}. No \
              session rebases it, so it waits for you. Rebase it on {base}, and push to {branch}."
@@ -8695,6 +8791,7 @@ pub fn wave_checks_rerun(
 /// assert!(!text.contains("CLAUDE.md names"));
 /// assert!(text.contains("Run each test in the foreground"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
+/// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
 /// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, true);
 /// assert!(text.contains("was done: the checks Lint, Test."));
@@ -8761,6 +8858,7 @@ pub fn wave_verify_start(
          PASS or FAIL. Then each criterion: for a pass, what you did to check it; for a fail, \
          the steps to see the failure. The result is public: it holds no secret and no security \
          fault. Tell the lead a security fault with the riff tool tell.\n\n\
+         {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )
 }

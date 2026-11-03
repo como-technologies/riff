@@ -1002,12 +1002,42 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     )
     .unwrap();
     assert_eq!(settings["includeCoAuthoredBy"], false);
-    // The rules of the session place, so the auto mode check does not
-    // refuse a step of the start text (01M5084K4YQCZF20XA0P2485SG).
+    // The rules of the session place for a worker, so the auto mode check
+    // does not refuse a step of the start text
+    // (01M5084K4YQCZF20XA0P2485SG).
+    let worker = riff::permissions::session_rules(riff::permissions::Role::Worker);
     assert_eq!(
         settings["permissions"]["allow"],
-        serde_json::json!(riff::permissions::session_rules().allow)
+        serde_json::json!(worker.allow)
     );
+    // A worker adds to an issue with a comment, and does not change its
+    // body or its title (01M6FZXZ9267YKMH97E6A2Y2EP).
+    assert_eq!(
+        settings["permissions"]["deny"],
+        serde_json::json!(worker.deny)
+    );
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    let deny = settings["permissions"]["deny"].as_array().unwrap();
+    assert!(
+        allow.contains(&"Bash(gh issue comment *)".into()),
+        "{allow:?}"
+    );
+    assert!(
+        !allow.contains(&"Bash(gh issue edit *)".into()),
+        "{allow:?}"
+    );
+    for step in [
+        "gh issue edit 12 --body-file /tmp/body.md",
+        "gh issue edit 12 --title New",
+        "gh issue edit 12 -b text",
+        "gh issue edit 12 -F /tmp/body.md",
+    ] {
+        assert!(
+            deny.iter()
+                .any(|r| riff::permissions::matches(r.as_str().unwrap(), step)),
+            "{step}\nis not denied by\n{deny:?}"
+        );
+    }
     // No dialog of auto mode, and the places of riff work, with the
     // riff server of the session (01M516HEX3GVTN9K2QS12A4PG3).
     assert_eq!(settings["skillOverrides"]["auto-mode-setup"], "off");

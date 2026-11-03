@@ -1248,8 +1248,9 @@ wave with its repository, one line for the `free` items, one for the
 session verifies it, and when no session holds it and its pull request
 waits for a verify or for the merge. An item is in `stuck` when no
 session holds it and its pull request cannot merge by itself: a
-conflict, a failed check, auto-merge off, or a removal from the merge
-queue (see
+conflict, a failed check, auto-merge off, a removal from the merge
+queue, a review that GitHub needs, or a run of a fork that waits for
+approval (see
 [See a pull request that cannot merge](development.md#see-a-pull-request-that-cannot-merge)).
 An item is in `held` when the lead holds it and no session
 claims it: the reason of the hold follows its items. No worker and no
@@ -2314,6 +2315,22 @@ result to the session that holds the issue of the `Issue:` trailer,
 for example `claim=issue-12`. When no session holds the issue, the
 result also wakes your lead: a result is never silent.
 
+#### Report a verify from another folder
+
+`riff verify` works from any folder of a clone of the repository, also
+in a terminal outside a session. In a folder that is not the worktree
+where you tested, `HEAD` is not the tested commit. There, name the
+commit with `--commit`:
+
+```sh
+riff verify pass 40 --file result.md --commit 1a2b3c4
+```
+
+riff takes the repository of the pull request from the folder. A
+person in a terminal has no repository of their own. So the result
+finds the holder of the issue, and the lead of your user, in the
+repository of the pull request.
+
 ### Keep a live security fault out of public text
 
 A live security fault is a security fault in the code of `main`, or
@@ -3206,6 +3223,9 @@ sequenceDiagram
 
 A riff with no sign-in has no owner: each person there can set each
 pause. A pause and a resume wake each session that they stop or start.
+The lead of a repository with a pause of its own hears the pause and
+the resume of the whole riff too (see
+[Tell the lead of a paused repository](#tell-the-lead-of-a-paused-repository)).
 The pauses stay when `riff-server` saves its state in a bucket (see
 [A restart](#a-restart)).
 
@@ -3247,7 +3267,45 @@ riff resume --riff
 ```
 
 A repository that has a pause of its own stays paused. The answer
-names it.
+names it, and the leads that it told.
+
+### Tell the lead of a paused repository
+
+A pause of the whole riff and a resume of the whole riff wake the
+workers of each repository that has no pause of its own. They do not
+wake the workers of a repository that has one: its pause still stops
+them. Its lead is different. The lead keeps the running state, its tools
+work, and it may wait for the resume. So riff posts one message to the
+lead of each such repository, in the thread of that repository. The
+message says that the riff runs again (or is paused), that the pause of
+the repository still stops its workers, and who set that pause.
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant E as riff-server
+    participant W as workers of a free repository
+    participant L as lead of a paused repository
+    participant X as workers of that repository
+    P->>E: riff resume --riff
+    E-->>W: wake: the riff is running again
+    E-->>L: wake: the riff runs, your repository is still paused
+    E--xX: no wake: their repository is paused
+```
+
+Run it as before:
+
+```sh
+riff resume --riff
+```
+
+The answer names the leads that riff told:
+
+```text
+The riff is running now. Woke mike@pangolin:riff (l1). Told the lead of como-technologies/strata: brett@heron:strata (62b2). Still paused: como-technologies/strata. Its user or its lead resumes it with `riff resume`.
+```
+
+The lead resumes its repository with `riff resume`, or you do.
 
 ### Pause a repository of another person
 
@@ -4590,3 +4648,31 @@ starts trusts the hosts. A session that runs keeps its entries.
 
 A host is a name such as `pypi.org`: no `https://`, no path. When
 `sources` has other text, riff starts no session and names the text.
+
+#### Add to an issue
+
+The lead owns the body and the title of an issue: the design, the
+`Done when:` line and the status. Only the lead changes them. A worker
+and a verifier add to an issue with a comment, and a comment keeps the
+history and the author.
+
+```mermaid
+flowchart LR
+    L["lead"] -- "gh issue edit --body-file" --> B["body of the issue"]
+    W["worker, verifier"] -- "gh issue comment --body-file" --> C["comment on the issue"]
+    W -. "refused" .-> B
+```
+
+The settings of a session of a worker or a verifier allow
+`gh issue comment`. They refuse `gh issue edit` with `--body`,
+`--body-file`, `-b`, `-F`, `--title` and `-t`, also after `gh -R`. Write
+the text to a file, and post it:
+
+```sh
+gh issue comment 12 --body-file /home/you/tmp/comment-12.md
+```
+
+A worker has no rule for the other changes of an issue, for example a
+label: the auto mode check judges them. No rule names `gh api`, so a
+write to an issue with the API has no rule either, and the auto mode
+check judges it.

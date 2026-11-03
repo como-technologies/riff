@@ -488,6 +488,16 @@
   line for each co-author of its commits, except the author of the pull
   request. Supersedes 01M3JDRSYEGKYVNGF49SJMACEB and
   01M3JFEXS6M5549TC6MH0G2MS0 in part.
+- **01M6FYR8XH4WPAH2AFW6B0NARJ** The merge wraps each line of the body
+  of a pull request that is longer than 72 characters, with no indent on
+  the wrapped part, and that part is no trailer line. So a line of the
+  last block of trailers that is longer than 72 characters breaks the
+  block in the commit on main. `hygiene pr` predicts the wrap in the
+  squash message (`merge_wrap`), and fails each such line with the rule
+  `trailer-wrap`. The error names the line, its length and the limit.
+  The rule is one of the rules of riff (`rules = "riff"`), and a
+  repository that is not riff does not get it. The book says how long a
+  trailer line may be.
 ## Pull requests on GitHub
 
 - **01M3JFEXG85AJK8ZE8N807EQVB** `just github` sets up the repository
@@ -663,6 +673,15 @@
   merge group commit: success when the head commit of the pull request
   of the group has a passed `riff/verify`, else failure. A verified pull
   request merges through the queue with no new verify.
+- **01M6FYW8NG0E9HYPWTG2RV5EAM** `riff verify` takes the repository of
+  the pull request from its thread, the thread of the post, not from the
+  URI of the verifier. A person in a terminal has no repository in the
+  URI, in any folder. So the repository of the thread decides which
+  session holds the issue (01M3Z9N70J4H79VJN4ZKKH3G6S) and in which
+  repository the lead of the user of the verifier wakes. The selector of
+  that lead is `user=U,repo=OWNER/REPO,lead=true`. `riff verify` runs
+  from any folder of a clone of the repository, also outside a session.
+  A folder that is not the worktree of the test needs `--commit SHA`.
 
 ## Tokens on GitHub
 
@@ -784,8 +803,9 @@
 - **01M3XAHZSJ5914BRQBZ2G4ZBSA** A session that another pause still
   stops does not wake: a resume of a repository in a paused riff wakes
   nobody, and a pause or a resume of the whole riff does not wake the
-  sessions of a repository that has a pause of its own. The answer to
-  a resume names each pause that still stops work.
+  workers of a repository that has a pause of its own
+  (01M6FYGVTCBKC9C8AXMFD7WMW2 tells its lead). The answer to a resume
+  names each pause that still stops work.
 - **01M3XAHZG26ECNARX35JD73YXJ** The record `pause_set` holds a pause
   that is set or ended: `scope` (`"riff"`, or
   `{"repository":"OWNER/REPO"}`) and `state` (`paused` or `running`).
@@ -822,6 +842,13 @@
 - **01M5P1XQ6WTGFHW0P5M114P535** The riff daemon sends no verify request
   for a pull request whose head commit is a WIP commit. The item goes
   back to a build.
+- **01M6FYGVTCBKC9C8AXMFD7WMW2** A pause or a resume of the whole riff
+  that changes the state also posts one message to the lead of each
+  repository that has a pause of its own, in the thread of that
+  repository, to `{repo, lead: true}`. The text says that the riff runs
+  again (or is paused), that the pause of the repository still stops its
+  workers, and who set that pause. The workers of that repository do not
+  wake. The answer to the call names the leads that it told.
 
 ## Service
 
@@ -960,6 +987,13 @@
   `/run/riff/riff.sock`. So a test gives the same result in a container
   session and on the Gate. The helper of the release tests refuses
   another path.
+- **01M6FYHS06W0Y98GQTQY6Q37F0** A test that runs code of riff which
+  calls git starts with a helper of `isolated` that removes
+  `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and `GIT_CONFIG_VALUE_*` from
+  the environment of the test process. A test in a shared test binary
+  reruns itself with `isolated::rerun_without_git_config`. A doc test
+  calls `isolated::clear_git_config_env` first. So the test gives the
+  same result in a container of riff, in CI and on a host.
 
 ## Saved state
 
@@ -3201,6 +3235,15 @@
   token in the `Authorization` header.
 - **R47** Each session connects through `riff`. Direct connections from
   an agent tool are not supported for now.
+- **01M6FYH5XZAZYJFPFQVAFQSSVT** Each change of the owner role that
+  changes who the owner is also posts one line in the chat, as
+  `riff://riff@server`, with the same text as its note: a pass, a grant
+  after N minutes, a gone owner with or without a new owner, and a take
+  on a riff with no owner. A request and a deny change no owner: they
+  post no line. The line has no `to`: it wakes no session. A person sees
+  it in `riff chat`. The server posts the line in the chunk of the
+  command that makes the change, so a replay of the log has it.
+  Supersedes 01M3N7K4DVHSF7AQ402F14J26Z in part.
 
 ## Terminal
 
@@ -4948,6 +4991,26 @@ of this part when they merge.
   auto-merge on again. Else the lead gets one message for the head
   commit, with the reason of GitHub. `riff top` and `riff wave list`
   show `stuck` with the words `removed from queue`.
+- **01M6FZ141Y0J8G2AYX0G5HY1CX** A pull request whose verify passed,
+  with auto-merge on, can wait for a review of a person. The wave of the
+  daemon reads reviewDecision and mergeStateStatus of each open pull
+  request at each look. It starts no session. It tells the lead one time
+  for each head commit, with the reason and the command gh pr review N
+  --approve, when reviewDecision is REVIEW_REQUIRED, or when the merge
+  state is BLOCKED with no decision, no failed check, no check that goes
+  and no run that waits for approval (the likely cause is an author with
+  no GitHub account). riff top and riff wave list show stuck with the
+  word review (#1433).
+- **01M6FZ144M0BTEDWNB9V4MGWDD** A run of GitHub Actions of a pull
+  request from a fork waits in action_required until a maintainer
+  approves it. GitHub counts its required check as not reported. For a
+  pull request whose verify passed, with auto-merge on, that GitHub
+  blocks with no check open, the wave of the daemon reads the runs of
+  the head commit with gh api. For the newest run of each workflow that
+  waits, it tells the lead one time, with the run and the command gh api
+  -X POST repos/OWNER/REPO/actions/runs/RUN/approve. A call that fails
+  reads as no run. riff top and riff wave list show stuck with the words
+  approve run (#1433).
 
 ### The lead, the view and the takeover
 
@@ -5332,9 +5395,9 @@ of this part when they merge.
   row of a person. It also checks that each such step of the start text
   of a session of the daemon matches an allow rule of the session place
   for the role of the session.
-- **01M5084K4YQCZF20XA0P2485SG** The daemon writes the allow rules of
-  the session place into the `settings.json` of the own Claude folder
-  of each session. The Claude folder of the lead stays between its
+- **01M5084K4YQCZF20XA0P2485SG** The daemon writes the rules of the
+  session place into the `settings.json` of the own Claude folder of
+  each session. The Claude folder of the lead stays between its
   starts: at each start, riff adds each rule that it lacks.
 - **01M51K1VJ67KYHRD7DQ86DSX1X** The lead in a container plans the
   waves with `/opt/riff/riff wave`. The session rule
@@ -5440,6 +5503,20 @@ of this part when they merge.
   01M516HETNZCBFBJNHT8BKFB1Y in part: the entry of `crates.io`.
 - **01M5SNV7KZRDBRC3NM2E5W92KS** `riff init` writes the permission rule
   of the lead for `riff release hold`, in the container of the lead.
+- **01M6FZXZ9267YKMH97E6A2Y2EP** A worker and a verifier do not change
+  the body or the title of an issue. They add to an issue with `gh issue
+  comment`. Only the lead edits an issue. The session rules are by role
+  (`riff::permissions::session_rules`): the session place gives `Bash(gh
+  issue edit *)` to the lead only, `Bash(gh issue comment *)` to a
+  worker and a verifier, and to a worker and a verifier it gives deny
+  rules for `gh issue edit` with `--body`, `--body-file`, `-b`, `-F`,
+  `--title` and `-t`, also after `gh -R`. No rule names `gh api`: no
+  allow rule matches a `gh api` call
+  (`riff::permissions::OUT_OF_BOUNDS`), a deny rule cannot list each
+  form of an API write, and the auto mode check judges the call. The
+  start text of a worker and of a verifier says the rule in one line.
+  Supersedes 01M5084K4YQCZF20XA0P2485SG in part: a session gets the
+  allow rules and the deny rules of its own role.
 
 ### The steps of an update
 

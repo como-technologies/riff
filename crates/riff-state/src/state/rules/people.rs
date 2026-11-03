@@ -161,6 +161,36 @@ impl Given {
     }
 }
 
+impl When {
+    /// The command makes `changes`, and posts `lines` in the chat, in
+    /// this order (01M6FYH5XZAZYJFPFQVAFQSSVT). Each line is from the
+    /// server, has no `to`, and wakes no session.
+    fn then_chat(self, changes: &[Change], lines: &[&str]) {
+        let Ok(made) = self.0 else {
+            panic!("refused");
+        };
+        let (chat, rest): (Vec<Change>, Vec<Change>) = made.into_iter().partition(|change| {
+            matches!(change, Change::Posted(posted) if posted.thread == ThreadName::chat())
+        });
+        assert_eq!(rest, changes);
+        let posted: Vec<&Posted> = chat
+            .iter()
+            .filter_map(|change| match change {
+                Change::Posted(posted) => Some(&**posted),
+                _ => None,
+            })
+            .collect();
+        let bodies: Vec<&str> = posted.iter().map(|p| p.message.body.as_str()).collect();
+        assert_eq!(bodies, lines);
+        for line in posted {
+            assert_eq!(line.message.from, server());
+            assert_eq!(line.message.kind, Kind::Message);
+            assert!(line.message.to.is_empty());
+            assert!(line.woken.is_empty());
+        }
+    }
+}
+
 #[test]
 fn the_first_person_that_signs_in_is_the_owner() {
     given(&[])
@@ -371,7 +401,10 @@ fn the_owner_passes_the_role_and_stays_an_admin() {
     let [invited, admin] = ada_stays();
     given(&riff_of_ada())
         .when_person("ada", pass(" Carol@gmail.com"))
-        .then(&[invited.clone(), admin.clone(), owner_set(Some(CAROL))]);
+        .then_chat(
+            &[invited.clone(), admin.clone(), owner_set(Some(CAROL))],
+            &["members: ada passed the owner role to carol@gmail.com. ada@gmail.com stays an admin."],
+        );
     given(&riff_of_ada())
         .when_person("bob", pass(BOB))
         .then_refused_as(
@@ -393,9 +426,10 @@ fn the_owner_passes_the_role_and_stays_an_admin() {
     let state = given(&passed).apply(&[]);
     assert_eq!(state.role("carol"), Role::Owner);
     assert_eq!(state.role("ada"), Role::Admin);
-    given(&passed)
-        .when_person("carol", pass(ADA))
-        .then(&[admin_set(CAROL, true), owner_set(Some(ADA))]);
+    given(&passed).when_person("carol", pass(ADA)).then_chat(
+        &[admin_set(CAROL, true), owner_set(Some(ADA))],
+        &["members: carol passed the owner role to ada@gmail.com. carol@gmail.com stays an admin."],
+    );
 }
 
 #[test]
@@ -471,10 +505,15 @@ fn with_no_answer_in_time_the_admin_that_asked_is_the_owner() {
         .after(Duration::from_secs(3600))
         .when(&server(), GrantOwner)
         .then(&[]);
+    let granted = OwnerChange::Granted {
+        owner: BOB.into(),
+        old: ADA.into(),
+    };
+    let line = crate::owner::change_news(&granted, &crate::owner::Timing::default());
     given(&asked)
         .after(answer())
         .when(&server(), GrantOwner)
-        .then(&[invited, admin, owner_set(Some(BOB))]);
+        .then_chat(&[invited, admin, owner_set(Some(BOB))], &[&line]);
 }
 
 #[test]
@@ -482,14 +521,20 @@ fn an_owner_who_is_gone_leaves_the_role_to_the_admin_that_asked_or_to_nobody() {
     let mut asked = riff_of_ada();
     asked.push(owner_asked(BOB, 9));
     let [invited, admin] = ada_stays();
-    given(&asked).when(&server(), EndOwner).then(&[
-        invited.clone(),
-        admin.clone(),
-        owner_set(Some(BOB)),
-    ]);
+    let timing = crate::owner::Timing::default();
+    let gone = |owner: Option<&str>| OwnerChange::Gone {
+        old: ADA.into(),
+        owner: owner.map(str::to_owned),
+    };
+    let line = crate::owner::change_news(&gone(Some(BOB)), &timing);
+    given(&asked).when(&server(), EndOwner).then_chat(
+        &[invited.clone(), admin.clone(), owner_set(Some(BOB))],
+        &[&line],
+    );
+    let line = crate::owner::change_news(&gone(None), &timing);
     given(&riff_of_ada())
         .when(&server(), EndOwner)
-        .then(&[invited, admin, owner_set(None)]);
+        .then_chat(&[invited, admin, owner_set(None)], &[&line]);
     // A riff with no owner: nothing to end.
     given(&[]).when(&server(), EndOwner).then(&[]);
 }
@@ -521,7 +566,10 @@ fn a_riff_with_no_owner_gets_one_only_from_an_admin_that_asks() {
     // The first admin that asks is the owner at once.
     given(&gone)
         .when_person("bob", wire::TakeOwner {})
-        .then(&[owner_set(Some(BOB))]);
+        .then_chat(
+            &[owner_set(Some(BOB))],
+            &["members: bob took the owner role. The riff had no owner. bob@gmail.com is the owner now."],
+        );
     given(&gone)
         .when_person("carol", wire::TakeOwner {})
         .then_refused_as(Code::NotAllowed, "carol is not an admin");
@@ -665,6 +713,104 @@ fn the_note_of_a_request_is_in_the_chunk_of_the_command() {
     assert_eq!(told.message.kind, Kind::Message);
     assert_eq!(told.woken, BTreeSet::from([ann().who().clone()]));
     assert!(told.message.body.ends_with("Show this to your user."));
+}
+
+/// The people of a riff with repositories: ann is the owner, and bob is
+/// an admin. Both are live.
+fn riff_of_ann_and_bob(tail: &[Change]) -> Vec<Change> {
+    let mut riff = team();
+    riff.extend([
+        person_joined("ann", "ann@acme.io"),
+        owner_set(Some("ann@acme.io")),
+        member_invited("bob@acme.io"),
+        admin_set("bob@acme.io", true),
+        person_joined("bob", "bob@acme.io"),
+    ]);
+    riff.extend_from_slice(tail);
+    riff
+}
+
+/// The posts of a chunk: the thread, and the body.
+fn posts_of(changes: &[Change]) -> Vec<(ThreadName, String)> {
+    changes
+        .iter()
+        .filter_map(|change| match change {
+            Change::Posted(posted) => Some((posted.thread.clone(), posted.message.body.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A deny changes no owner: the owner stays the owner. The chunk holds
+/// the note and the direct message, and no line in the chat
+/// (01M6FYH5XZAZYJFPFQVAFQSSVT).
+#[test]
+fn a_deny_posts_no_line_in_the_chat() {
+    let riff = riff_of_ann_and_bob(&[owner_asked("bob@acme.io", 9)]);
+    let given = given(&riff).live(&[ann(), bob()]);
+    let ann_person: SessionUri = "riff://ann@kite".parse().unwrap();
+    let caller = Caller::of(&ann_person).with_role(given.state.role("ann"));
+    let When(Ok(changes)) = given.when_as(&caller, wire::DenyOwner {}) else {
+        panic!("refused");
+    };
+    let posts = posts_of(&changes);
+    let [(note, _), (told, _)] = &posts[..] else {
+        panic!("{changes:?}");
+    };
+    assert_eq!(note, &repo());
+    assert!(told.is_direct());
+}
+
+/// A take on a riff with no owner makes the admin the owner. The chunk
+/// holds the note in the thread of each repository, and one line in the
+/// chat with the same text. The line has the next seq of the chat, and
+/// a replay of the records has it (01M6FYH5XZAZYJFPFQVAFQSSVT).
+#[test]
+fn a_take_on_a_riff_with_no_owner_posts_one_line_in_the_chat() {
+    let server = server();
+    let earlier = posted(&ThreadName::chat(), message(ann(), 1, &[], "hi"), &[]);
+    let riff = riff_of_ann_and_bob(&[earlier, owner_set(None)]);
+    let start = given(&riff).live(&[ann(), bob()]);
+    let bob_person: SessionUri = "riff://bob@kite".parse().unwrap();
+    let caller = Caller::of(&bob_person).with_role(start.state.role("bob"));
+    let When(Ok(changes)) = start.when_as(&caller, wire::TakeOwner {}) else {
+        panic!("refused");
+    };
+    let line =
+        "members: bob took the owner role. The riff had no owner. bob@acme.io is the owner now.";
+    assert_eq!(
+        posts_of(&changes),
+        [
+            (repo(), line.to_owned()),
+            (ThreadName::chat(), line.to_owned())
+        ]
+    );
+    let Some(Change::Posted(chat)) = changes.last() else {
+        panic!("{changes:?}");
+    };
+    assert_eq!(chat.message.seq, 2);
+    assert_eq!(chat.message.from, server);
+    assert!(chat.message.to.is_empty() && chat.woken.is_empty());
+    // A replay of the log has the line.
+    let mut replayed = riff;
+    replayed.extend(changes);
+    let Given { mut state, now } = given(&replayed);
+    let lines = state.read(&ann(), &ThreadName::chat(), true, now).unwrap();
+    let bodies: Vec<&str> = lines.iter().map(|m| m.body.as_str()).collect();
+    assert_eq!(bodies, ["hi", line]);
+}
+
+/// A riff with no repository has no thread for a note. The chat line
+/// still posts: the people of the riff see the change in `riff chat`.
+#[test]
+fn a_riff_with_no_repository_posts_the_line_in_the_chat() {
+    let mut gone = riff_of_ada();
+    gone.extend(ada_stays());
+    gone.push(owner_set(None));
+    given(&gone).when_person("bob", wire::TakeOwner {}).then_chat(
+        &[owner_set(Some(BOB))],
+        &["members: bob took the owner role. The riff had no owner. bob@gmail.com is the owner now."],
+    );
 }
 
 /// A start from a checkpoint gives the people of a full replay, for a

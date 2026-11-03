@@ -46,10 +46,14 @@
 //!   [`SERVER_USER`], which no person can sign in as
 //!   (01M3N7K4BC1RPZKQ1XNDTBRPGF). A note has no signature.
 //! - Each change posts one note to the thread of each repository of the
-//!   riff. It wakes no session. A change that needs a person also sends
-//!   the same text to each live lead of that person, as a direct
-//!   message: the owner for a request, the admin for a deny, each admin
-//!   when the owner is gone.
+//!   riff. It wakes no session. A change that changes who the owner is
+//!   also posts one line in the chat, with the same text
+//!   (01M6FYH5XZAZYJFPFQVAFQSSVT): a pass, a grant, a gone owner, and a
+//!   take on a riff with no owner. A request and a deny post none. The
+//!   line has no `to`, so it wakes no session. A change that needs a
+//!   person also sends the same text to each live lead of that person,
+//!   as a direct message: the owner for a request, the admin for a deny,
+//!   each admin when the owner is gone.
 //!
 //! The module does no I/O and reads no clock. The caller passes `now`.
 
@@ -277,6 +281,19 @@ pub fn asked_news(user: &str, admin: &str, owner: &str, answer: Duration) -> Str
 /// ```
 pub fn took_news(user: &str, admin: &str) -> String {
     format!("members: {user} took the owner role. The riff had no owner. {admin} is the owner now.")
+}
+
+/// The line of a pass in the chat (01M6FYH5XZAZYJFPFQVAFQSSVT). It has the
+/// text of the note that `riff owner EMAIL` posts in the repository threads.
+///
+/// ```
+/// assert_eq!(
+///     riff_state::owner::passed_news("ada", "bob@gmail.com", "ada@gmail.com"),
+///     "members: ada passed the owner role to bob@gmail.com. ada@gmail.com stays an admin."
+/// );
+/// ```
+pub fn passed_news(user: &str, owner: &str, old: &str) -> String {
+    format!("members: {user} passed the owner role to {owner}. {old} stays an admin.")
 }
 
 /// The note of a deny.

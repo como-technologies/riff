@@ -319,6 +319,24 @@ riff owner --deny
 
 The riff tells the admin.
 
+### See a change of the owner in the chat
+
+A change of who the owner is also posts one line in the chat, as
+`riff@server`. The line has the text of the note. These changes post a
+line: a pass, a grant after the time, a gone owner, and a take on a
+riff with no owner. A request and a deny post none, because the owner
+stays the owner. The line wakes no session. To see it, run:
+
+```sh
+riff chat
+```
+
+A line looks like this:
+
+```text
+members: mike took the owner role. The riff had no owner. mike@example.com is the owner now.
+```
+
 ### An owner who is gone
 
 `riff-server` checks the owner each 10 minutes, while the riff has an

@@ -987,7 +987,8 @@ pub struct PauseInfo { by: Option<By>, at_ms: u64 }
   paused.
 - A pause and a resume wake each session that it changes: the sessions
   of the repository, or each session. A session that another pause
-  still stops does not wake.
+  still stops does not wake. The lead of a repository with a pause of
+  its own hears a pause and a resume of the whole riff.
 - `pause` and `resume` name the repository of the call. The field
   `riff` names the whole riff, and the field `repository` names a
   repository. The reply has the state for the place of the caller,

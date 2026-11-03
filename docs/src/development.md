@@ -1801,7 +1801,11 @@ flowchart TD
     D -- yes --> M2["a message to your lead:<br/>the reason of GitHub"]
     D -- no --> A{"verify passed,<br/>auto-merge off?"}
     A -- yes --> M["a message to your lead"]
-    A -- no --> OK["it merges by itself"]
+    A -- no --> V{"verify passed,<br/>GitHub needs a review?"}
+    V -- yes --> M3["a message to your lead:<br/>the review to approve"]
+    V -- no --> U{"verify passed,<br/>a run of a fork waits<br/>for approval?"}
+    U -- yes --> M4["a message to your lead:<br/>each run to approve"]
+    U -- no --> OK["it merges by itself"]
 ```
 
 | The pull request | What the wave does | In `riff top` |
@@ -1811,6 +1815,8 @@ flowchart TD
 | The verify passed, a check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
 | The verify passed, auto-merge off | Your lead gets one message. No session starts | `stuck: #12 (auto-merge off)` |
 | The verify passed, the merge queue removed it | A conflict: a session rebases it. Else your lead gets one message (see [Queue a pull request that the queue removed](#queue-a-pull-request-that-the-queue-removed)) | `stuck: #12 (removed from queue)` |
+| The verify passed, GitHub needs a review | Your lead gets one message. No session starts (see [Approve a pull request that needs a review](#approve-a-pull-request-that-needs-a-review)) | `stuck: #12 (review)` |
+| The verify passed, a run of a fork waits for approval | Your lead gets one message for each run. No session starts (see [Approve the run of a pull request from a fork](#approve-the-run-of-a-pull-request-from-a-fork)) | `stuck: #12 (approve run)` |
 | A release, a check failed | Your lead gets one message. No session builds a release | `stuck: #7 (checks)` |
 
 A check failed when its run ended with `failure`, `timed_out` or
@@ -1878,6 +1884,62 @@ with a failed check gets a message of the same form: it names the
 checks, and says that no session fixes it. Read the checks with
 `gh pr checks 298`. Fix a check of the text of the pull request with
 `gh pr edit 298`. Fix a check of the code with a push to the branch.
+
+#### Approve a pull request that needs a review
+
+A pull request whose verify passed can wait for a review of a person. A
+rule of the branch can ask for it: GitHub says `REVIEW_REQUIRED`. Your
+lead gets one message for each head commit:
+
+```text
+PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but GitHub needs an approving review of a person before it merges. No session approves a pull request, so it waits for you. A person other than the author approves it: gh pr review 40 --approve
+```
+
+The rule "require extra approval for unattributed changes" can ask for
+a review when the count of reviews is 0. A commit with an author who has
+no GitHub account, for example a co-author that is no person on GitHub,
+needs one approving review then. GitHub shows no review rule for it: it
+says only that the merge is `BLOCKED`. When no check failed or goes and
+no run waits, the wave says that a review is the likely cause:
+
+```text
+PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but no check failed or goes, and GitHub blocks the merge. A review is the likely cause: a commit can have an author with no GitHub account, and the rule of the branch then asks one approving review of a person. No session approves a pull request, so it waits for you. See the merge box: gh pr view 40 --web. A person other than the author approves it: gh pr review 40 --approve
+```
+
+Look at the merge box to see what GitHub waits for. Then a person other
+than the author of the pull request approves it. GitHub refuses the
+approval of the author:
+
+```sh
+gh pr view 40 --web
+gh pr review 40 --approve
+```
+
+#### Approve the run of a pull request from a fork
+
+A run of a pull request from a fork waits for the approval of a
+maintainer. Until then it is in the state `action_required`. It makes no
+check, so the merge box shows the required check as "Expected" and
+"Waiting for status to be reported". The merge stays blocked although
+the verify passed and auto-merge is on. A new run waits again after an
+edit of the pull request, when a workflow runs on `edited`. GitHub
+counts the newest run of a required check, so the older run that passed
+does not help.
+
+The wave reads the runs of a verified pull request that GitHub blocks
+with no check open. Your lead gets one message for each run that waits,
+with the run and the command:
+
+```text
+PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the run Hygiene (run 40151174504) of a pull request from a fork waits for the approval of a maintainer, so GitHub counts its required check as not reported and blocks the merge. No session approves a run, so it waits for you. Link: https://github.com/como-technologies/riff/actions/runs/40151174504. Press Approve and run in the Actions tab, or run: gh api -X POST repos/como-technologies/riff/actions/runs/40151174504/approve
+```
+
+Approve the run with the command of the message, or press "Approve and
+run" in the Actions tab:
+
+```sh
+gh api -X POST repos/como-technologies/riff/actions/runs/40151174504/approve
+```
 
 #### Fix a failed check of another app
 
@@ -3246,6 +3308,8 @@ Milestone: Wave 3
   block, before or after them: `Co-authored-by:`, `Signed-off-by:` and
   `Generated-by:`. A line of text in the block breaks the rule, and so
   does a paragraph of text after it.
+- Keep each trailer line to 72 characters. See
+  [Keep a trailer line short](#keep-a-trailer-line-short).
 - Give the pull request the milestone of its issue. Do not end the
   title with `(#N)`. GitHub adds the number of the pull request.
 
@@ -3290,6 +3354,35 @@ GitHub runs no check on a pull request that has a conflict with
 `main`. When `Hygiene` does not run, rebase your branch on `main` and
 push it again.
 
+### Keep a trailer line short
+
+The squash merge wraps each line of the body that is longer than 72
+characters. It breaks the line at a space, and the rest goes to a new
+line with no indent. The new line has no `Key:`, so it ends the block of
+trailers. The commit on `main` then has no `Issue:` trailer, and
+`hygiene commit` fails it. `hygiene pr` reads the body before the merge,
+so it predicts the wrap: it fails each trailer line over 72 characters
+with the rule `trailer-wrap`. The error names the line and its length.
+
+```mermaid
+flowchart LR
+    B["body: Generated-by: ... final review) (78 characters)"] --> M["squash merge"]
+    M --> L1["Generated-by: ... final"]
+    M --> L2["review)"]
+    L2 -- "no Key:" --> E["the block of trailers ends"]
+    E --> F["hygiene commit: no Issue: trailer"]
+    B -- "hygiene pr" --> T["trailer-wrap, before the merge"]
+```
+
+To fix it, shorten the line in the body, and check the pull request
+again. A line of text outside the block may be longer: the merge wraps
+it, and no rule reads it.
+
+```sh
+gh pr edit 90 --body-file body.md
+just hygiene pr 90
+```
+
 ### Choose the rules of a repository
 
 The form above is the form of riff. riff reads only two parts of it:
@@ -3306,6 +3399,7 @@ it.
 | `keyword` | A closing keyword, for example `Fixes #12` | no | holds |
 | `title` | A title that ends with `(#12)` | no | holds |
 | `milestone-trailer` | No `Milestone:` trailer | no | holds |
+| `trailer-wrap` | A trailer line over 72 characters | no | holds |
 | `milestone` | A pull request or an issue with no milestone | no | holds |
 | `issue-open` | An issue that is closed | no | holds |
 
