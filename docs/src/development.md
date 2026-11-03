@@ -2286,11 +2286,12 @@ fails, the line has the error of `gh`:
 riff: the list has no items and no hosts: gh issue list failed: GraphQL: API rate limit already exceeded for user ID 1.
 ```
 
-Fix the fault of `gh`. For a rate limit, look at the limit and wait for
-its reset. Then run the command again:
+Fix the fault of `gh`. For a rate limit, ask GraphQL for the points that
+are left and the time of the reset. Wait for the reset. Then run the
+command again:
 
 ```sh
-gh api rate_limit --jq .resources.graphql
+gh api graphql -f query='{ rateLimit { remaining resetAt } }'
 riff wave list
 ```
 
