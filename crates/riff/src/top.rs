@@ -26,10 +26,12 @@
 //! with a live session, and of the working directory ([`board_repos`],
 //! 01M42KHN80V49HDDZF953HXDT0).
 //! riff keeps them for [`ISSUES_TTL`], then reads them again. A
-//! repository with no `gh` read has no titles and no board, and no error
-//! line. When a later read of `gh` fails, riff keeps the last issues of
-//! that repository ([`Issues::newest_each`], 01M3ZC09FA9DZPTHK31XECZ566):
-//! a network fault stops `gh` too.
+//! repository with no `gh` read has no titles and no board. When a read
+//! of `gh` fails, the first line of `riff top` names the error of `gh`
+//! ([`crate::text::top_gh_fault`],
+//! 01M6GX4HYR3755G6EJW1XHEFVE), and riff keeps the last issues of that
+//! repository ([`Issues::newest_each`], 01M3ZC09FA9DZPTHK31XECZ566): a
+//! network fault stops `gh` too. The line goes at the next good read.
 //!
 //! The author of a pull request releases its item at the verify
 //! request. So an item with no claim can wait for a verify or for the
@@ -288,17 +290,20 @@ pub fn with_pulls(issues: Issues, pulls: &[crate::rollout::Pull]) -> Issues {
         .with_stuck(stuck)
 }
 
-/// The open issues of `repo` from `gh`. `None` when `gh` is not there
-/// or fails. `riff top` gives each read the same `gh`, whose calls share
-/// one token ([`crate::pr::Gh::with_one_token`],
-/// 01M54510SFK1Z9VPFYBYYSV10F).
-pub fn issues_from_gh(gh: &crate::pr::Gh, repo: &str) -> Option<Issues> {
-    let run = |args: Vec<String>| {
-        let args: Vec<&str> = args.iter().map(String::as_str).collect();
-        gh.run(&args, None).ok()
-    };
-    let issues = parse_issues(&run(issue_args(repo))?)?;
-    Some(match crate::rollout::pulls(gh, repo) {
+/// The open issues of `repo` from `gh`. It fails with the error of `gh`,
+/// for example `gh issue list failed: GraphQL: API rate limit already
+/// exceeded`, when `gh` is not there, fails or gives a text that is not
+/// the issues (01M6GX4HYR3755G6EJW1XHEFVE). A read that works and gives
+/// no issue is `Ok` with no issue. `riff top` gives each read the same
+/// `gh`, whose calls share one token
+/// ([`crate::pr::Gh::with_one_token`], 01M54510SFK1Z9VPFYBYYSV10F).
+pub fn issues_from_gh(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Issues> {
+    let args = issue_args(repo);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let json = gh.run_as("gh issue list", &args)?;
+    let issues =
+        parse_issues(&json).ok_or_else(|| anyhow::anyhow!(crate::text::gh_issues_unreadable()))?;
+    Ok(match crate::rollout::pulls(gh, repo) {
         Ok(pulls) => with_pulls(issues, &pulls),
         Err(_) => issues,
     })

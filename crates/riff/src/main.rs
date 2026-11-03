@@ -3810,6 +3810,9 @@ async fn draw_top(
     };
     let mut issues = std::collections::BTreeMap::new();
     let mut fetched: Option<Instant> = None;
+    // The line of the first read of `gh` that failed at the last read
+    // (01M6GX4HYR3755G6EJW1XHEFVE).
+    let mut gh_fault: Option<String> = None;
     let mut holds = std::collections::BTreeMap::new();
     let mut messages = thread
         .as_ref()
@@ -3850,6 +3853,14 @@ async fn draw_top(
             // (01M3ZC09FA9DZPTHK31XECZ566).
             let repos = riff_client::waves::board_repos(sessions, show, repo.as_deref());
             let read = fetch(repos).await?;
+            gh_fault = read.iter().find_map(|(_, read)| {
+                let e = read.as_ref().err()?;
+                Some(text::top_gh_fault(&format!("{e:#}")))
+            });
+            let read = read
+                .into_iter()
+                .map(|(repo, read)| (repo, read.ok()))
+                .collect();
             issues = riff_client::waves::Issues::newest_each(std::mem::take(&mut issues), read);
             fetched = Some(Instant::now());
         }
@@ -3868,7 +3879,10 @@ async fn draw_top(
             }
         }
         let now = chrono::Local::now();
-        let fault = failed.map(|e| text::top_fault(&e.to_string(), api.base(), at, &now));
+        // A look that failed comes first: the table is old.
+        let fault = failed
+            .map(|e| text::top_fault(&e.to_string(), api.base(), at, &now))
+            .or_else(|| gh_fault.clone());
         let server = riff_client::link::server_build();
         let machines = riff_client::machines::machines(sessions, None);
         let top = riff::top::Top {
