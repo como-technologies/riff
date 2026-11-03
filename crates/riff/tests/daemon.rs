@@ -1270,6 +1270,7 @@ async fn riff_daemon_status_shows_the_calls_of_gh_and_the_points_left() {
                 {"caller": "look", "kind": "api rules/branches/main", "calls": 12, "points": 0},
             ],
             "left": {"remaining": 3716, "reset_at": "2026-11-03T15:00:35Z", "read_ms": now},
+            "waits": [],
         },
     });
     let fake = {
@@ -1299,4 +1300,40 @@ async fn riff_daemon_status_shows_the_calls_of_gh_and_the_points_left() {
         shown.contains("GraphQL points left: 3,716, the counter starts again at 15:00:35 UTC"),
         "{shown}"
     );
+}
+
+/// 01M6H1N30GXWYKX93CHPFZ11H9 (#1557): `riff daemon status` shows each limit
+/// of GitHub that waits for its reset: the resource and the reset time.
+#[tokio::test]
+async fn riff_daemon_status_shows_the_limit_of_github_that_waits_for_its_reset() {
+    let here = Here::new();
+    let dir = here.daemon_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = tokio::net::UnixListener::bind(riff::daemon::socket(&dir)).unwrap();
+    let reset_ms = riff::daemon::now_ms() + 600_000;
+    let status = serde_json::json!({
+        "say": "status", "pid": 7, "build": "4.1.1", "since_ms": 0,
+        "dir": dir, "sessions": [],
+        "github": {
+            "rows": [],
+            "left": null,
+            "waits": [{"resource": "Graphql", "reset_ms": reset_ms}],
+        },
+    });
+    let fake = {
+        let (accept, line) = (listener.accept(), format!("{status}\n"));
+        async move {
+            let (conn, _) = accept.await.unwrap();
+            let (read, mut write) = conn.into_split();
+            let mut lines = tokio::io::BufReader::new(read).lines();
+            lines.next_line().await.unwrap().unwrap();
+            write.write_all(line.as_bytes()).await.unwrap();
+        }
+    };
+    let (_, out) = tokio::join!(fake, here.run(false, &["daemon", "status"]));
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    let at = riff::text::clock_utc(reset_ms);
+    let line = format!("GitHub GraphQL limit: out. riff makes no call of it until {at} (in ");
+    assert!(shown.contains(&line), "{shown}");
 }

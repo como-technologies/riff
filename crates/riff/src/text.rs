@@ -6399,6 +6399,38 @@ pub fn grouped(n: u64) -> String {
     out
 }
 
+/// A time of the clock in UTC, for the reset of a limit: `15:00:35 UTC`.
+///
+/// ```
+/// assert_eq!(riff::text::clock_utc(1_793_718_035_000), "15:00:35 UTC");
+/// ```
+pub fn clock_utc(ms: i64) -> String {
+    DateTime::from_timestamp_millis(ms).map_or_else(
+        || "an unknown time".to_owned(),
+        |at| at.format("%H:%M:%S UTC").to_string(),
+    )
+}
+
+/// The error of a call of `gh` that riff does not make, because the limit
+/// of its resource is out ([`crate::ghcalls::Limited`], #1557).
+///
+/// ```
+/// use riff::ghcalls::{Resource, Wait};
+///
+/// let wait = Wait { resource: Resource::Graphql, reset_ms: 1_793_718_035_000 };
+/// assert_eq!(
+///     riff::text::gh_limited(&wait),
+///     "the GitHub GraphQL limit is out until 15:00:35 UTC: riff makes no call of it before then"
+/// );
+/// ```
+pub fn gh_limited(wait: &crate::ghcalls::Wait) -> String {
+    format!(
+        "the GitHub {} limit is out until {}: riff makes no call of it before then",
+        wait.resource.name(),
+        clock_utc(wait.reset_ms)
+    )
+}
+
 /// The most kinds of call that `riff daemon status` lists for GitHub.
 pub const GITHUB_ROWS: usize = 8;
 
@@ -6414,7 +6446,7 @@ pub const GITHUB_ROWS: usize = 8;
 /// assert_eq!(none, "GitHub, last hour: no call.\n");
 /// let one = Shown {
 ///     rows: vec![Row { caller: "look".into(), kind: "issue view".into(), calls: 1, points: 1 }],
-///     left: None,
+///     ..Shown::default()
 /// };
 /// let text = riff::text::github_use(&one, 0);
 /// assert!(text.starts_with("GitHub, last hour: 1 call, 1 GraphQL point.\n"), "{text}");
@@ -6436,6 +6468,7 @@ pub const GITHUB_ROWS: usize = 8;
 ///         reset_at: "2026-11-03T15:00:35Z".into(),
 ///         read_ms: 0,
 ///     }),
+///     waits: Vec::new(),
 /// };
 /// let text = riff::text::github_use(&shown, 120_000);
 /// assert_eq!(
@@ -6445,6 +6478,17 @@ pub const GITHUB_ROWS: usize = 8;
 ///      \x20 look      pr list                      12 calls       24 points\n\
 ///      \x20 look      api commits/_/check-runs     12 calls        0 points\n\
 ///      GraphQL points left: 3,716, the counter starts again at 15:00:35 UTC (read 2m ago).\n"
+/// );
+///
+/// // A limit that is out (#1557).
+/// let out = Shown {
+///     waits: vec![riff::ghcalls::Wait { resource: riff::ghcalls::Resource::Graphql, reset_ms: 1_793_718_035_000 }],
+///     ..Shown::default()
+/// };
+/// assert_eq!(
+///     riff::text::github_use(&out, 1_793_717_135_000),
+///     "GitHub, last hour: no call.\n\
+///      GitHub GraphQL limit: out. riff makes no call of it until 15:00:35 UTC (in 15m).\n"
 /// );
 /// ```
 pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
@@ -6488,6 +6532,16 @@ pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
             grouped(left.remaining),
             at.trim_end_matches('Z'),
             ago(secs)
+        );
+    }
+    for wait in &shown.waits {
+        let left = u64::try_from((wait.until_ms() - now_ms) / 1000).unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "GitHub {} limit: out. riff makes no call of it until {} (in {}).",
+            wait.resource.name(),
+            clock_utc(wait.reset_ms),
+            ago(left)
         );
     }
     out
@@ -8601,6 +8655,93 @@ pub fn wave_no_report(item: &str, pull: u64, error: &str) -> String {
     format!(
         "{item}: riff could not report the verify of pull request #{pull}: {error}. The pull \
          request waits for a new verify."
+    )
+}
+
+/// The lead hears that a limit of GitHub is out, and that the wave waits
+/// for its reset (#1557). It goes one time for each reset.
+///
+/// ```
+/// use riff::ghcalls::{Resource, Wait};
+///
+/// let wait = Wait { resource: Resource::Graphql, reset_ms: 1_793_718_035_000 };
+/// assert_eq!(
+///     riff::text::wave_limit_waits("o/r", &wait),
+///     "o/r: the GitHub GraphQL limit is out. riff makes no call of it until 15:00:35 UTC. The \
+///      wave starts nothing before then, and a verify that cannot report its result keeps it."
+/// );
+/// ```
+pub fn wave_limit_waits(repo: &str, wait: &crate::ghcalls::Wait) -> String {
+    format!(
+        "{repo}: the GitHub {} limit is out. riff makes no call of it until {}. The wave starts \
+         nothing before then, and a verify that cannot report its result keeps it.",
+        wait.resource.name(),
+        clock_utc(wait.reset_ms)
+    )
+}
+
+/// The word of a wave that waits for the reset of a limit of GitHub.
+pub fn wave_limit_word(wait: &crate::ghcalls::Wait) -> String {
+    format!(
+        "waits for the GitHub {} limit until {}",
+        wait.resource.name(),
+        clock_utc(wait.reset_ms)
+    )
+}
+
+/// The result of a verify of a wave could not go to GitHub, because a limit
+/// is out. riff keeps the result (#1557).
+///
+/// ```
+/// let text = riff::text::wave_report_kept("verify-issue-12", 40, "GraphQL: API rate limit already exceeded");
+/// assert_eq!(
+///     text,
+///     "verify-issue-12: riff could not report the verify of pull request #40: GraphQL: API \
+///      rate limit already exceeded. riff keeps the result, and reports it after the reset."
+/// );
+/// ```
+pub fn wave_report_kept(item: &str, pull: u64, error: &str) -> String {
+    let error = error.trim_end_matches('.');
+    format!(
+        "{item}: riff could not report the verify of pull request #{pull}: {error}. riff keeps \
+         the result, and reports it after the reset."
+    )
+}
+
+/// A build ended while a limit of GitHub is out: riff cannot read its pull
+/// request, and tells the lead that the wave finds it after the reset
+/// (#1557).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_build_limit("issue-12", "worktree-issue-12"),
+///     "issue-12: the session of the wave ended while the GitHub limit is out. riff cannot read \
+///      the pull request of the branch worktree-issue-12. After the reset, the wave looks at it \
+///      and sends the verify."
+/// );
+/// ```
+pub fn wave_build_limit(item: &str, branch: &str) -> String {
+    format!(
+        "{item}: the session of the wave ended while the GitHub limit is out. riff cannot read \
+         the pull request of the branch {branch}. After the reset, the wave looks at it and sends \
+         the verify."
+    )
+}
+
+/// A kept result of a verify goes: the pull request moved on (#1557).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_kept_dropped("verify-issue-12", 40, "1a2b3c4d5e6f"),
+///     "verify-issue-12: the kept result of the verify of pull request #40 at 1a2b3c4 goes: the \
+///      pull request is not open at that commit. The wave starts a new verify."
+/// );
+/// ```
+pub fn wave_kept_dropped(item: &str, pull: u64, commit: &str) -> String {
+    let commit = commit.get(..7).unwrap_or(commit);
+    format!(
+        "{item}: the kept result of the verify of pull request #{pull} at {commit} goes: the pull \
+         request is not open at that commit. The wave starts a new verify."
     )
 }
 

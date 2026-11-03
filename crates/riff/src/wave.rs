@@ -51,6 +51,38 @@
 //!     N -- "a session or a job ends" --> L
 //! ```
 //!
+//! # When the limit of GitHub runs out
+//!
+//! A call of `gh` that fails on a limit of GitHub starts a wait for the
+//! reset of that resource ([`crate::ghcalls`], #1557). Until the reset the
+//! `gh` of the daemon makes no call of the resource, so the loops need no
+//! rule of their own:
+//!
+//! - The loop looks at the wait before it admits to the room (`limit_pause`).
+//!   While a limit waits, it makes no look, no sweep and no report of a kept
+//!   result. It tells the lead one time for each reset, with the key
+//!   [`ghcalls::Wait::key`], and sleeps until the reset. A look that ran into
+//!   the limit does the same at once.
+//! - The look of the daemon (`watch`) sleeps until the reset.
+//! - The watches make no look ([`crate::watches::Lookout::limit`]).
+//! - The end step of a verify (`after_verify`) keeps its result when the
+//!   report fails on a limit ([`crate::kept`]), and the loop reports it
+//!   after the reset ([`World::report_kept`]). The result of a head that
+//!   changed is dropped. A build that ends then cannot read its pull
+//!   request, and the lead gets a note ([`text::wave_build_limit`]).
+//!
+//! ```mermaid
+//! flowchart TD
+//!     F["a look fails:<br/>the limit is out"] --> P{"limit_pause"}
+//!     P -- "a wait" --> T["tell the lead, one time for each reset"]
+//!     T --> S["sleep until the reset:<br/>no look, no sweep, no call"]
+//!     S --> R["report_kept: each kept result of a verify"]
+//!     R --> L["look"]
+//!     E["a verify ends"] --> Q{"the report fails on the limit?"}
+//!     Q -- yes --> K["keep the result, note to the lead"]
+//!     K -.-> R
+//! ```
+//!
 //! # The notices to the lead
 //!
 //! A wave can run on more hosts, and the daemon of each host tells the
@@ -66,6 +98,7 @@
 //! | An issue with no `Done when:` line ([`text::wave_no_done_when`]) | [`no_done_when_key`] | one time |
 //! | A pull request that is stuck ([`text::wave_stuck`]) | [`Notice::post_key`] | one time |
 //! | "Wave N is complete" ([`crate::watches::wave_complete_key`]) | `wave-complete-N` | one time |
+//! | The GitHub limit is out ([`text::wave_limit_waits`]) | [`ghcalls::Wait::key`] | one time for each reset |
 //! | The host waits for a fact, the pull of the image failed, a job failed, an item is spent | none | from each host |
 //!
 //! ```mermaid
@@ -413,7 +446,10 @@ use crate::room::Slot;
 use crate::run::{self, Facts};
 use crate::runtime::Runtime;
 use crate::session_setup::Setup;
-use crate::{identity, look, pr, release_config, repo_setup, rollout, session_image, text, usage};
+use crate::{
+    ghcalls, identity, kept, look, pr, release_config, repo_setup, rollout, session_image, text,
+    usage,
+};
 use riff_client::api::{self, Api};
 
 /// The file of the waves that the daemon runs, in its folder.
@@ -1165,6 +1201,12 @@ pub trait World: Send + Sync {
     /// Tells the sender of `wake` that the session of `record` ended its
     /// work and does not read the message (01M5792DRA12JD032F3H8JVC0Z).
     fn refuse<'a>(&'a self, record: &'a Record, wake: &'a Wake) -> BoxFuture<'a, ()>;
+
+    /// Reports each kept result of a verify of `wave` ([`crate::kept`],
+    /// #1557), and gives a line for each. The default reports none.
+    fn report_kept<'a>(&'a self, _wave: &'a Wave) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async { Vec::new() })
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -1228,6 +1270,30 @@ pub fn look_wait(look: &Look, last: Option<&Look>, picked: bool, running: bool) 
     }
 }
 
+/// How long until riff may call again after the wait `wait` of a limit of
+/// GitHub.
+pub fn until(wait: &ghcalls::Wait) -> Duration {
+    let left = wait.until_ms() - crate::daemon::now_ms();
+    Duration::from_millis(u64::try_from(left).unwrap_or(0))
+}
+
+/// What a wave does while a limit of GitHub is out (#1557): how long it
+/// waits for the reset, and its word. The lead hears of a reset one time:
+/// `told` holds the reset of the last message. `None` when no limit is
+/// out.
+async fn limit_pause(
+    world: &dyn World,
+    wave: &Wave,
+    told: &mut Option<i64>,
+) -> Option<(Duration, String)> {
+    let wait = world.gh(&wave.repo).limit_wait()?;
+    if told.replace(wait.reset_ms) != Some(wait.reset_ms) {
+        let body = text::wave_limit_waits(&wave.repo, &wait);
+        world.tell(wave, &body, Some(&wait.key())).await;
+    }
+    Some((until(&wait), text::wave_limit_word(&wait)))
+}
+
 /// The loop of the wave `wave` in `daemon`, until the daemon stops it.
 /// `taken` holds the items of its jobs before the start, `starts` the
 /// starts of each item, and `word` what it did last.
@@ -1250,7 +1316,23 @@ pub(crate) async fn run<R: Runtime + 'static>(
     let mut waits = false;
     // The facts of the last look, to find an idle wave.
     let mut last: Option<Look> = None;
+    // The reset of the limit of GitHub that the lead heard of.
+    let mut limited: Option<i64> = None;
     loop {
+        let world = daemon.world();
+        // While a limit of GitHub is out, the wave makes no look, no sweep
+        // and no report (#1557).
+        if let Some((pause, word)) = limit_pause(&*world, &wave, &mut limited).await {
+            say(word);
+            tokio::select! {
+                () = tokio::time::sleep(pause) => {}
+                () = daemon.changed() => {}
+            }
+            continue;
+        }
+        for line in world.report_kept(&wave).await {
+            println!("{line}");
+        }
         let slot = daemon
             .room()
             .admit(
@@ -1259,7 +1341,6 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 |full| say(text::wave_full(full)),
             )
             .await;
-        let world = daemon.world();
         for line in daemon.sweep_news(Some(&wave.repo)).await {
             println!("{line}");
         }
@@ -1343,6 +1424,12 @@ pub(crate) async fn run<R: Runtime + 'static>(
             Err(e) => {
                 say(text::wave_no_look(&format!("{e:#}")));
                 last = None;
+                // A look that ran into the limit tells the lead now, and the
+                // wave waits for the reset.
+                if let Some((pause, word)) = limit_pause(&*world, &wave, &mut limited).await {
+                    say(word);
+                    wait = pause;
+                }
                 None
             }
         };
@@ -1376,6 +1463,12 @@ pub(crate) async fn watch<R: Runtime + 'static>(daemon: Arc<Daemon<R>>, wave: Wa
     let mut last_error = None;
     loop {
         let world = daemon.world();
+        // The look makes no call while a limit of GitHub is out (#1557). The
+        // loop of the wave tells the lead.
+        if let Some(wait) = world.gh(&wave.repo).limit_wait() {
+            tokio::time::sleep(until(&wait)).await;
+            continue;
+        }
         // A quiet look of a wave with no session: the next look comes later
         // (#1549). The loop of the wave reads the same issues and pull
         // requests, so this look takes its reply when the reply is not older
@@ -1687,7 +1780,7 @@ pub(crate) async fn post_as_person(
 }
 
 /// Runs `work` on a thread that may block: `gh` and git.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> Result<T> {
     tokio::task::spawn_blocking(work)
@@ -1775,11 +1868,8 @@ async fn after_build(
 ) -> Result<Vec<String>> {
     let branch = branch_of(issue);
     let (view, at) = (gh.clone(), branch.clone());
-    let pull = blocking(move || {
-        Ok(view
-            .json::<run::Pull>(&["pr", "view", &at, "--json", "number,url,headRefOid,state"])
-            .ok()
-            .filter(|p| p.state == "OPEN"))
+    let read = blocking(move || {
+        Ok(view.json::<run::Pull>(&["pr", "view", &at, "--json", "number,url,headRefOid,state"]))
     })
     .await?;
     let me = &record.me;
@@ -1789,6 +1879,17 @@ async fn after_build(
     )];
     let thread = wave.thread()?;
     let item = &record.live.item;
+    let pull = match read {
+        Ok(pull) => Some(pull).filter(|p| p.state == "OPEN"),
+        // A limit of GitHub hides the pull request: it is not missing. The
+        // wave finds it after the reset (#1557).
+        Err(e) if ghcalls::is_limit_error(&e) => {
+            let body = text::wave_build_limit(item, &branch);
+            api.post(me, Some(&thread), &to, &body, Kind::Note).await?;
+            return Ok(vec![body]);
+        }
+        Err(_) => None,
+    };
     let session = run::short(&record.live.session);
     let mut lines = Vec::new();
     let same = |pull: &run::Pull| fix.is_some_and(|f| f.commit() == pull.head_ref_oid);
@@ -1937,7 +2038,12 @@ async fn no_verify(
 /// `ends`, as a build with no pull request does (#1441): the record has
 /// the reason of its `ended` and the last lines of its output, so the
 /// post comes before the folder goes.
+///
+/// A report that fails because a limit of GitHub is out keeps the result in
+/// the folder, and the loop of the wave reports it after the reset
+/// ([`kept`], #1557). The lead gets a note.
 async fn after_verify(
+    gh: pr::Gh,
     api: &Api,
     record: &Record,
     wave: &Wave,
@@ -1966,15 +2072,34 @@ async fn after_verify(
         return Ok(vec![body]);
     };
     let (repo, tested, shown) = (wave.repo.clone(), commit.to_owned(), result.clone());
-    let reported =
-        blocking(move || pr::report(&forge(&repo), &repo, pull, &tested, verdict, &shown)).await;
+    let reported = blocking(move || pr::report(&gh, &repo, pull, &tested, verdict, &shown)).await;
     let reported = match reported {
         Ok(reported) => reported,
         Err(e) => {
-            let _ = std::fs::remove_dir_all(&record.folder);
-            let body = text::wave_no_report(item, pull, &format!("{e:#}"));
-            api.post(me, Some(&thread), &lead, &body, Kind::Message)
-                .await?;
+            let error = format!("{e:#}");
+            let result = kept::Kept {
+                repo: wave.repo.clone(),
+                item: item.clone(),
+                pull,
+                commit: commit.to_owned(),
+                verdict,
+                result,
+            };
+            let (body, kind) = match ghcalls::is_limit_error(&e) {
+                true => match result.keep(&record.folder) {
+                    Ok(()) => (text::wave_report_kept(item, pull, &error), Kind::Note),
+                    Err(keep) => {
+                        let error = format!("{error}. riff could not keep the result: {keep:#}");
+                        let _ = std::fs::remove_dir_all(&record.folder);
+                        (text::wave_no_report(item, pull, &error), Kind::Message)
+                    }
+                },
+                false => {
+                    let _ = std::fs::remove_dir_all(&record.folder);
+                    (text::wave_no_report(item, pull, &error), Kind::Message)
+                }
+            };
+            api.post(me, Some(&thread), &lead, &body, kind).await?;
             return Ok(vec![body]);
         }
     };
@@ -1983,16 +2108,32 @@ async fn after_verify(
     if verdict == Verdict::Fail {
         let _ = std::fs::remove_dir_all(&record.folder);
     }
+    post_report(api, me, &thread, (verdict, pull), &reported, &result).await?;
+    Ok(vec![line])
+}
+
+/// Sends the result of a verify that is on GitHub: the fact of the pull
+/// request, and the result to the holder of the item, and to the lead when
+/// no session holds the item ([`pr::result_to`]). `me` is the verifier, or
+/// the person when the wave reports a kept result ([`kept`]).
+pub(crate) async fn post_report(
+    api: &Api,
+    me: &SessionUri,
+    thread: &ThreadName,
+    (verdict, pull): (Verdict, u64),
+    reported: &pr::Reported,
+    result: &str,
+) -> Result<()> {
     let state = match verdict {
         Verdict::Pass => PullState::Passed,
         Verdict::Fail => PullState::Failed,
     };
-    crate::look::tell_fact(api, me, reported.issue, pull, state).await;
-    let to = pr::result_to(reported.issue, me, &thread, &api.who(me, false).await?);
-    let body = text::verify_post(verdict, pull, &reported, &result);
-    api.post(me, Some(&thread), &to, &body, Kind::Message)
+    look::tell_fact(api, me, reported.issue, pull, state).await;
+    let to = pr::result_to(reported.issue, me, thread, &api.who(me, false).await?);
+    let body = text::verify_post(verdict, pull, reported, result);
+    api.post(me, Some(thread), &to, &body, Kind::Message)
         .await?;
-    Ok(vec![line])
+    Ok(())
 }
 
 impl Live {
@@ -2715,7 +2856,15 @@ impl World for Live {
                     after_build(gh, &api, record, wave, *issue, (fix, None), ended).await
                 }
                 Work::Verify { pull, commit, .. } => {
-                    after_verify(&api, record, wave, (*pull, commit), ended).await
+                    after_verify(
+                        forge(&wave.repo),
+                        &api,
+                        record,
+                        wave,
+                        (*pull, commit),
+                        ended,
+                    )
+                    .await
                 }
             };
             self.end(&api, &record.me, &thread, &record.live.item).await;
@@ -2928,6 +3077,26 @@ impl World for Live {
             }
         })
     }
+
+    fn report_kept<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Vec<String>> {
+        Box::pin(async move {
+            let reported = async {
+                let sessions = run::sessions_dir()?;
+                if kept::find(&sessions, &wave.repo).is_empty() {
+                    return Ok(Vec::new());
+                }
+                // The session of the verify ended: the person reports.
+                let person = identity::person(&wave.place(None)?, &wave.server)?;
+                let api = Api::new(&wave.server).signed_in(None)?;
+                let gh = self.gh(&wave.repo).as_ref().clone().by("wave");
+                Ok::<_, anyhow::Error>(kept::report_all(&gh, &api, &person, wave, &sessions).await)
+            };
+            reported.await.unwrap_or_else(|e| {
+                eprintln!("riff daemon: {}: {e:#}", wave.repo);
+                Vec::new()
+            })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -3059,6 +3228,9 @@ mod tests {
         checked: bool,
         /// The image that the wave pins, else [`IMAGE`].
         image: Option<String>,
+        /// A `gh` that the look calls, with its own count of calls: the look
+        /// fails when it fails (#1557). Else the look calls no `gh`.
+        limit_gh: Option<Arc<pr::Gh>>,
     }
 
     impl Forge {
@@ -3175,6 +3347,10 @@ mod tests {
     impl World for Fakes {
         fn look<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Look>> {
             Box::pin(async move {
+                let limit_gh = lock(&self.forge).limit_gh.clone();
+                if let Some(gh) = limit_gh {
+                    blocking(move || gh.run(&["pr", "list"], None)).await?;
+                }
                 let mut forge = lock(&self.forge);
                 forge.branch_reads += 1;
                 if forge.branch_unread {
@@ -3382,7 +3558,8 @@ mod tests {
         }
 
         fn gh(&self, _: &str) -> Arc<pr::Gh> {
-            self.gh.clone()
+            let limit_gh = lock(&self.forge).limit_gh.clone();
+            limit_gh.unwrap_or_else(|| self.gh.clone())
         }
 
         fn claims<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<HashSet<String>>> {
@@ -5704,7 +5881,11 @@ esac
             code: Some(0),
             failed: false,
         };
-        let lines = after_verify(&built.api, &record, &built.wave, (40, "1a2b3c4"), ended)
+        let gh = pr::Gh::at(isolated::write_program(
+            built.dir.path().join("gh"),
+            "#!/bin/sh\nexit 1\n",
+        ));
+        let lines = after_verify(gh, &built.api, &record, &built.wave, (40, "1a2b3c4"), ended)
             .await
             .unwrap();
         assert_eq!(lines, [text::wave_no_result("verify-issue-12", 40)]);
@@ -5742,6 +5923,22 @@ esac
             crate::ends::why("issue-12", &records),
             text::session_why_none("issue-12")
         );
+    }
+
+    /// 01M6H25QH6FSNBF5F6TE6B1JXM (#1557): a build that ends while a limit of
+    /// GitHub is out cannot read its pull request. The lead gets a note, not
+    /// the message that the branch has no pull request.
+    #[tokio::test]
+    async fn a_build_that_ends_while_the_github_limit_is_out_gets_a_note_and_no_false_report() {
+        let built = Built::new().await;
+        let gh = pr::Gh::at(isolated::write_program(
+            built.dir.path().join("gh"),
+            "#!/bin/sh\necho 'GraphQL: API rate limit already exceeded for user ID 1.' >&2\nexit 1\n",
+        ));
+        let (lines, got) = built.after(gh, None).await;
+        let note = text::wave_build_limit("issue-12", "worktree-issue-12");
+        assert_eq!(got, [(Kind::Note, note.clone())]);
+        assert_eq!(lines, [note]);
     }
 
     /// 01M5A5HXKZTDP5M5HY2FHCEBZA: a build with an open pull request
@@ -6352,5 +6549,308 @@ esac
         let hour = minutes * (wave + look) + watches_ticks * watches;
         assert_eq!(hour, 312);
         assert!(hour <= crate::ghcalls::BUSY_POINTS_AN_HOUR, "{hour}");
+    }
+
+    /// The seconds since the epoch now.
+    fn now_secs() -> i64 {
+        crate::daemon::now_ms() / 1000
+    }
+
+    /// A fake `gh` for the tests of the limit of GitHub (#1557). Each call
+    /// goes in `limit.log`. `gh api rate_limit` says that GraphQL has no
+    /// points until `reset` (seconds since the epoch). Before `reset` each
+    /// other call fails on the limit. After it, `gh pr view --json state`
+    /// gives the head commit `head`, and `gh pr view` the pull request with
+    /// the trailer of issue 12. Each other call works.
+    fn limited_gh(dir: &Path, reset: i64, head: &str) -> pr::Gh {
+        let script = format!(
+            r#"#!/bin/sh
+dir=$(dirname "$0")
+printf '%s\n' "$*" >> "$dir/limit.log"
+if [ "$1 $2" = "api rate_limit" ]; then
+  echo '{{"resources":{{"graphql":{{"limit":5000,"remaining":0,"reset":{reset}}}}}}}'
+  exit 0
+fi
+if [ "$(date +%s)" -lt {reset} ]; then
+  echo 'GraphQL: API rate limit already exceeded for user ID 1.' >&2
+  exit 1
+fi
+case "$1 $2" in
+  "pr view")
+    case "$*" in
+      *state*) printf '%s\n' '{{"number":40,"url":"https://github.com/o/r/pull/40","headRefOid":"{head}","state":"OPEN"}}' ;;
+      *) printf '%s\n' '{{"headRefOid":"{head}","body":"Closes #12\n\nIssue: #12\nMilestone: Wave 1\n"}}' ;;
+    esac ;;
+  "pr comment") echo https://github.com/o/r/pull/40#issuecomment-1 ;;
+  "pr list") echo '[]' ;;
+  *) echo '{{}}' ;;
+esac
+"#
+        );
+        pr::Gh::at(isolated::write_program(dir.join("gh"), script))
+            .with_calls(Arc::new(crate::ghcalls::Calls::default()))
+    }
+
+    /// The calls that `limited_gh` got so far.
+    fn limit_log(dir: &Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("limit.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// 01M6H1N2XYKK6QRCJS02RZJHKZ (#1557): a look that fails on the limit of
+    /// GitHub starts the wait. The wave makes no call until the reset, the
+    /// lead hears of the wait one time with the reset time, and the look
+    /// goes on after the reset.
+    #[tokio::test]
+    async fn a_rate_limit_makes_the_look_wait_until_the_reset_and_the_lead_hears_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 3, free).await;
+        let bin = here._root.path().join("bin");
+        let reset = now_secs() + 2;
+        here.forge().limit_gh = Some(Arc::new(limited_gh(&bin, reset, "c1")));
+        here.run();
+        let wait = crate::ghcalls::Wait {
+            resource: crate::ghcalls::Resource::Graphql,
+            reset_ms: reset * 1000,
+        };
+
+        // The loop and the look of the daemon ran into the limit. The lead
+        // hears of it one time, with the reset.
+        here.until(0, |h| !h.forge().told.is_empty()).await;
+        assert_eq!(here.forge().told, [text::wave_limit_waits("o/r", &wait)]);
+        assert_eq!(here.forge().told_keys, [Some(wait.key())]);
+        let word = here.daemon.waves_shown()[0].word.clone();
+        assert_eq!(word, text::wave_limit_word(&wait));
+        // A call that was on its way when the wait started ends.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let calls = limit_log(&bin);
+        assert!(calls.iter().any(|c| c == "api rate_limit"), "{calls:?}");
+        let pulls = |calls: &[String]| calls.iter().filter(|c| c.starts_with("pr list")).count();
+
+        // The wave looks again at each end of a session, and yet it makes no
+        // call before the reset, and says nothing more.
+        here.idle(0).await;
+        assert_eq!(limit_log(&bin), calls, "no call before the reset");
+        assert_eq!(here.forge().told.len(), 1);
+
+        // After the reset the look calls `gh` again, and the wave has no wait.
+        here.until(0, |_| pulls(&limit_log(&bin)) > pulls(&calls))
+            .await;
+        here.until(0, |h| h.daemon.waves_shown()[0].word == text::WAVE_NO_WORK)
+            .await;
+        assert_eq!(here.forge().told.len(), 1, "no second message");
+    }
+
+    /// 01M6H1N332TZ17CQQ8A5CQKG7B (#1557): a verify whose report fails on the
+    /// limit of GitHub keeps its result, and the loop of the wave reports it
+    /// after the reset, as the end step does.
+    #[tokio::test]
+    async fn a_verify_report_that_fails_on_the_limit_is_kept_and_sent_after_the_reset() {
+        let built = Built::new().await;
+        let sessions = tempfile::tempdir().unwrap();
+        let mut record = built.record.clone();
+        record.live.name = "riff-verify-issue-12".into();
+        record.live.item = "verify-issue-12".into();
+        record.folder = sessions.path().join("verify-issue-12-9f8e7d6c");
+        std::fs::create_dir_all(&record.folder).unwrap();
+        std::fs::write(
+            record.folder.join(crate::daemon::EVENTS),
+            "{\"type\":\"result\",\"result\":\"FAIL\\n\\n1. It does not work.\"}\n",
+        )
+        .unwrap();
+        let reset = now_secs() + 2;
+        let gh = limited_gh(built.dir.path(), reset, "1a2b3c4d5e");
+        let ended = Ended {
+            code: Some(0),
+            failed: false,
+        };
+
+        // The end step: the report fails on the limit.
+        let lines = after_verify(
+            gh.clone(),
+            &built.api,
+            &record,
+            &built.wave,
+            (40, "1a2b3c4"),
+            ended,
+        )
+        .await
+        .unwrap();
+        let [line] = &lines[..] else {
+            panic!("one line: {lines:?}");
+        };
+        assert!(
+            line.starts_with(
+                "verify-issue-12: riff could not report the verify of pull request #40: "
+            ),
+            "{line}"
+        );
+        assert!(
+            line.ends_with("riff keeps the result, and reports it after the reset."),
+            "{line}"
+        );
+        assert_eq!(
+            kept::Kept::read(&record.folder),
+            Some(kept::Kept {
+                repo: "o/r".into(),
+                item: "verify-issue-12".into(),
+                pull: 40,
+                commit: "1a2b3c4".into(),
+                verdict: Verdict::Fail,
+                result: "1. It does not work.".into(),
+            })
+        );
+        let thread = built.wave.thread().unwrap();
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        let [note] = &got[..] else {
+            panic!("one note: {got:?}");
+        };
+        assert_eq!((note.message.kind, &note.message.body), (Kind::Note, line));
+
+        // Before the reset: no call, and the result stays.
+        let calls = limit_log(built.dir.path());
+        assert_eq!(
+            calls,
+            ["pr view 40 --json headRefOid,body", "api rate_limit"]
+        );
+        let report =
+            || kept::report_all(&gh, &built.api, &built.lead, &built.wave, sessions.path());
+        assert!(report().await.is_empty());
+        assert_eq!(
+            limit_log(built.dir.path()),
+            calls,
+            "no call before the reset"
+        );
+        assert!(kept::Kept::read(&record.folder).is_some());
+
+        // After the reset: the comment, the status, and the result to the lead.
+        let started = Instant::now();
+        while gh.limit_wait().is_some() {
+            assert!(started.elapsed() < isolated::HANG, "the wait did not end");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let lines = report().await;
+        let [line] = &lines[..] else {
+            panic!("one line: {lines:?}");
+        };
+        assert!(
+            line.starts_with("Put FAIL for issue-12 on pull request #40"),
+            "{line}"
+        );
+        let after = limit_log(built.dir.path());
+        assert!(
+            after.iter().any(|c| c.starts_with("pr comment 40")),
+            "{after:?}"
+        );
+        assert!(
+            after
+                .iter()
+                .any(|c| c.contains("repos/o/r/statuses/1a2b3c4d5e")),
+            "{after:?}"
+        );
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        let [_, result] = &got[..] else {
+            panic!("the note and the result: {got:?}");
+        };
+        assert_eq!(result.message.kind, Kind::Message);
+        assert!(
+            result.message.body.contains("1. It does not work."),
+            "{result:?}"
+        );
+        assert!(!record.folder.exists(), "the folder of a FAIL goes");
+        assert!(kept::find(sessions.path(), "o/r").is_empty());
+        assert!(report().await.is_empty(), "reported one time");
+    }
+
+    /// 01M6H1N332TZ17CQQ8A5CQKG7B (#1557): a kept result of a pull request
+    /// whose head changed is dropped. The wave starts a new verify, and
+    /// reports nothing.
+    #[tokio::test]
+    async fn a_kept_result_of_an_old_head_is_dropped() {
+        let built = Built::new().await;
+        let sessions = tempfile::tempdir().unwrap();
+        let folder = sessions.path().join("verify-issue-12-9f8e7d6c");
+        std::fs::create_dir_all(&folder).unwrap();
+        let old = kept::Kept {
+            repo: "o/r".into(),
+            item: "verify-issue-12".into(),
+            pull: 40,
+            commit: "1a2b3c4".into(),
+            verdict: Verdict::Pass,
+            result: "- Done.".into(),
+        };
+        old.keep(&folder).unwrap();
+        // A result of another repository stays where it is.
+        let other = sessions.path().join("verify-issue-3-aaaaaaaa");
+        std::fs::create_dir_all(&other).unwrap();
+        kept::Kept {
+            repo: "o/s".into(),
+            ..old.clone()
+        }
+        .keep(&other)
+        .unwrap();
+
+        // The pull request has a new head: a push after the verify.
+        let gh = limited_gh(built.dir.path(), 0, "9f8e7d6c5b4a");
+        let lines =
+            kept::report_all(&gh, &built.api, &built.lead, &built.wave, sessions.path()).await;
+        assert_eq!(
+            lines,
+            [text::wave_kept_dropped("verify-issue-12", 40, "1a2b3c4")]
+        );
+        assert!(!folder.exists(), "the result goes");
+        assert!(kept::Kept::read(&other).is_some());
+        let calls = limit_log(built.dir.path());
+        assert_eq!(
+            calls,
+            ["pr view 40 --json number,url,headRefOid,state"],
+            "no report"
+        );
+        let thread = built.wave.thread().unwrap();
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        assert!(got.is_empty(), "nothing for the lead: {got:?}");
+    }
+
+    /// 01M4ZV3B6R4WSEJXYT7QPRWT6X: a report that fails for another reason
+    /// than a limit keeps nothing: the folder goes, and the lead gets the
+    /// message, as before.
+    #[tokio::test]
+    async fn a_verify_report_that_fails_for_another_reason_is_not_kept() {
+        let built = Built::new().await;
+        let mut record = built.record.clone();
+        record.live.item = "verify-issue-12".into();
+        std::fs::write(
+            record.folder.join(crate::daemon::EVENTS),
+            "{\"type\":\"result\",\"result\":\"PASS\\n\\n- Done.\"}\n",
+        )
+        .unwrap();
+        let gh = pr::Gh::at(isolated::write_program(
+            built.dir.path().join("gh"),
+            "#!/bin/sh\necho 'gh: Bad Gateway (HTTP 502)' >&2\nexit 1\n",
+        ));
+        let ended = Ended {
+            code: Some(0),
+            failed: false,
+        };
+        let lines = after_verify(gh, &built.api, &record, &built.wave, (40, "1a2b3c4"), ended)
+            .await
+            .unwrap();
+        let [line] = &lines[..] else {
+            panic!("one line: {lines:?}");
+        };
+        assert!(
+            line.ends_with("The pull request waits for a new verify."),
+            "{line}"
+        );
+        assert!(!record.folder.exists());
+        let thread = built.wave.thread().unwrap();
+        let got = built.api.read(&built.lead, &thread, true).await.unwrap();
+        let [message] = &got[..] else {
+            panic!("one message: {got:?}");
+        };
+        assert_eq!(message.message.kind, Kind::Message);
     }
 }

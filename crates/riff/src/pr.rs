@@ -101,8 +101,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::SessionInfo;
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::ghcalls::{self, Calls};
@@ -626,6 +626,76 @@ impl Gh {
         )
     }
 
+    /// The wait of the limit of GitHub now, when this `gh` counts its calls
+    /// ([`Gh::with_calls`]) and a resource waits for its reset (#1557).
+    /// With two waits, the one that ends last.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use riff::ghcalls::{Calls, Resource};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let log = dir.path().join("log");
+    /// let script = format!(
+    ///     "#!/bin/sh\necho \"$*\" >> {}\n\
+    ///      case \"$1 $2\" in\n\
+    ///      \"api rate_limit\") echo '{{\"resources\":{{\"graphql\":{{\"remaining\":0,\"reset\":4102444800}}}}}}' ;;\n\
+    ///      *) echo 'GraphQL: API rate limit already exceeded for user ID 1.' >&2; exit 1 ;;\n\
+    ///      esac\n",
+    ///     log.display(),
+    /// );
+    /// let calls = Arc::new(Calls::default());
+    /// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), &script))
+    ///     .with_calls(calls.clone());
+    /// assert!(gh.limit_wait().is_none());
+    /// // The call that finds the limit out fails, and starts the wait.
+    /// assert!(gh.run(&["pr", "view", "40"], None).is_err());
+    /// assert_eq!(gh.limit_wait().unwrap().resource, Resource::Graphql);
+    /// // Until the reset, a call of the resource fails with no call of `gh`.
+    /// let error = gh.run(&["pr", "view", "41"], None).unwrap_err();
+    /// assert!(error.downcast_ref::<riff::ghcalls::Limited>().is_some(), "{error:#}");
+    /// assert_eq!(std::fs::read_to_string(&log)?.lines().count(), 2, "one call and `rate_limit`");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn limit_wait(&self) -> Option<ghcalls::Wait> {
+        self.calls.as_ref()?.limit_wait(crate::daemon::now_ms())
+    }
+
+    /// The error for a call of `gh ARGS` that riff does not make: its
+    /// resource waits for the reset of the limit. A `gh` that counts no
+    /// calls waits for nothing.
+    fn refused(&self, args: &[&str]) -> Option<ghcalls::Limited> {
+        let calls = self.calls.as_ref()?;
+        let resource = ghcalls::Resource::of(args)?;
+        calls
+            .waiting(resource, crate::daemon::now_ms())
+            .map(ghcalls::Limited)
+    }
+
+    /// Starts the wait of the resource of the call `gh ARGS` that failed
+    /// with `stderr`, when `stderr` says that its limit is out (#1557). It
+    /// reads the reset with `gh api rate_limit`, which no limit counts.
+    /// When it cannot read the reset, the wait is [`ghcalls::UNREAD_WAIT_MS`].
+    fn note_limit(&self, args: &[&str], stderr: &str) {
+        let (Some(calls), Some(resource)) = (&self.calls, ghcalls::Resource::of(args)) else {
+            return;
+        };
+        let now = crate::daemon::now_ms();
+        if !ghcalls::is_limit(stderr) || calls.waiting(resource, now).is_some() {
+            return;
+        }
+        let reset = self
+            .spawn(&["api", "rate_limit"], None)
+            .ok()
+            .filter(|(ok, ..)| *ok)
+            .and_then(|(_, out, _)| ghcalls::reset_in(&out, resource, now));
+        calls.start_wait(
+            resource,
+            reset.unwrap_or(now + ghcalls::UNREAD_WAIT_MS),
+            now,
+        );
+    }
+
     /// Runs `gh ARGS`, and runs it again after a 502, 503 or 504 of
     /// GitHub when this `gh` retries ([`Gh::retrying`]). The stderr of a
     /// call that still fails ends with the number of tries.
@@ -652,7 +722,12 @@ impl Gh {
     }
 
     /// Runs `gh ARGS` one time, and counts the call ([`Gh::with_calls`]).
+    /// While the limit of its resource is out, it makes no call and fails
+    /// with [`ghcalls::Limited`].
     fn counted(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
+        if let Some(limited) = self.refused(args) {
+            return Err(limited.into());
+        }
         let result = self.spawn(args, input);
         if let Some(calls) = &self.calls {
             let now = crate::daemon::now_ms();
@@ -665,6 +740,9 @@ impl Gh {
             {
                 calls.keep_left(left);
             }
+        }
+        if let Ok((false, _, stderr)) = &result {
+            self.note_limit(args, stderr);
         }
         result
     }
@@ -1185,7 +1263,7 @@ pub fn wait(gh: &Gh, number: u64, every: Duration) -> Result<String> {
 }
 
 /// The result of a verify.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Verdict {
     /// Each criterion passed.
     Pass,

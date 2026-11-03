@@ -73,6 +73,10 @@
 //! message, and the message has a key ([`watch_fault_key`]), so the
 //! fault comes one time for each repository, until the fault changes.
 //!
+//! While a limit of GitHub is out ([`crate::ghcalls`], #1557), a look makes
+//! no call and tells no fault: the wave tells the lead of the limit one
+//! time, with the reset, and the watches look again after it.
+//!
 //! # A deploy
 //!
 //! The watch of a deploy follows the CI run of the tag ([`Op::Deploy`]).
@@ -354,6 +358,12 @@ pub trait Lookout: Send + Sync {
     /// The holds on `tag` that stand now, as the person
     /// (01M5SNV7BC5J58WRZRJ5HS4NSJ).
     fn holds<'a>(&'a self, wave: &'a Wave, tag: &'a str) -> BoxFuture<'a, Result<Vec<Hold>>>;
+
+    /// The limit of GitHub that waits for its reset now (#1557). The watches
+    /// make no call then. The default has none.
+    fn limit(&self) -> Option<crate::ghcalls::Wait> {
+        None
+    }
 }
 
 /// The [`Lookout`] of the daemon: `gh` with the sign-in of the person,
@@ -417,6 +427,10 @@ impl Lookout for Here {
             let lines = crate::hold::read_as_person(&wave.server, &wave.place(None)?).await?;
             Ok(crate::hold::holds(&lines, tag))
         })
+    }
+
+    fn limit(&self) -> Option<crate::ghcalls::Wait> {
+        crate::ghcalls::Calls::global().limit_wait(crate::daemon::now_ms())
     }
 }
 
@@ -580,6 +594,11 @@ impl Watches {
     /// ([`Watches::pause`], #1549).
     pub async fn look_all(&self, lookout: &Arc<dyn Lookout>, now_ms: i64) -> Result<bool> {
         self.keep_waves(now_ms)?;
+        // No look while a limit of GitHub is out: each call would fail, and
+        // the lead would hear the fault (#1557).
+        if lookout.limit().is_some() {
+            return Ok(false);
+        }
         let mut by_repo: BTreeMap<String, Vec<Watch>> = BTreeMap::new();
         for watch in self.read()? {
             by_repo.entry(watch.repo.clone()).or_default().push(watch);
@@ -702,6 +721,10 @@ impl Watches {
         wave: &Wave,
         failed: Vec<(Watch, String)>,
     ) {
+        // The wave tells the lead of a limit of GitHub (#1557).
+        if lookout.limit().is_some() {
+            return;
+        }
         let mut by_fault: BTreeMap<String, Vec<Watch>> = BTreeMap::new();
         for (watch, fault) in failed {
             by_fault.entry(fault).or_default().push(watch);
@@ -1072,6 +1095,9 @@ mod tests {
         holds: Mutex<Vec<Hold>>,
         /// The `fetch` of each forge that the watches asked for.
         fetches: Mutex<Vec<bool>>,
+        /// The limit of GitHub that waits, and whether it starts only after
+        /// the first forge (a call that runs into the limit).
+        limit: Mutex<Option<(crate::ghcalls::Wait, bool)>>,
     }
 
     impl Ground {
@@ -1086,6 +1112,7 @@ mod tests {
                 leads: Mutex::default(),
                 holds: Mutex::default(),
                 fetches: Mutex::default(),
+                limit: Mutex::default(),
             })
         }
 
@@ -1115,6 +1142,11 @@ mod tests {
     }
 
     impl Lookout for Ground {
+        fn limit(&self) -> Option<crate::ghcalls::Wait> {
+            let (wait, late) = (*self.limit.lock().unwrap())?;
+            (!late || !self.fetches.lock().unwrap().is_empty()).then_some(wait)
+        }
+
         fn forge(&self, _: &Wave, fetch: bool) -> Result<Box<dyn Forge>> {
             self.fetches.lock().unwrap().push(fetch);
             if let Some(fault) = self.fault.lock().unwrap().clone() {
@@ -1783,6 +1815,41 @@ mod tests {
         look(dir.path(), &ground, 3 * MINUTE).await;
         assert_eq!(ground.told().len(), 1);
         assert!(kept(dir.path()).is_empty());
+    }
+
+    /// 01M6H1N2XYKK6QRCJS02RZJHKZ (#1557): while a limit of GitHub is out, a
+    /// look makes no call, and a fault that comes from the limit goes to the
+    /// lead of the wave and not of the watch. After the reset the look goes
+    /// on.
+    #[tokio::test]
+    async fn a_limit_of_github_stops_the_look_and_hides_its_fault() {
+        let wait = crate::ghcalls::Wait {
+            resource: crate::ghcalls::Resource::Graphql,
+            reset_ms: 1_793_718_035_000,
+        };
+        let dir = daemon_dir();
+        let ground = Ground::new(open_pull());
+        watch(dir.path(), pull());
+        *ground.fault.lock().unwrap() = Some("gh: API rate limit already exceeded".into());
+
+        // The limit stands: the look asks for no forge.
+        *ground.limit.lock().unwrap() = Some((wait, false));
+        look(dir.path(), &ground, MINUTE).await;
+        assert!(ground.fetches.lock().unwrap().is_empty(), "no call of gh");
+        assert!(ground.told().is_empty());
+
+        // The limit starts in the look: the call fails, and nobody tells
+        // the fault.
+        *ground.limit.lock().unwrap() = Some((wait, true));
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert!(!ground.fetches.lock().unwrap().is_empty());
+        assert!(ground.told().is_empty(), "the wave tells the limit");
+        assert_eq!(kept(dir.path()), [pull()], "the watch goes on");
+
+        // The limit is over: a fault is a fault again.
+        *ground.limit.lock().unwrap() = None;
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert_eq!(ground.told().len(), 1, "one message for both watches");
     }
 
     #[tokio::test]

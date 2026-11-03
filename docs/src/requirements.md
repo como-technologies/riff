@@ -4864,8 +4864,9 @@ of this part when they merge.
   daemon reads it from `events.jsonl`, and reports it as `riff verify`
   does: the comment on the pull request, the status `riff/verify` of the
   commit, and the result to the holder of the item and to the lead. With
-  no verdict, or when the report fails, the lead gets a message, and the
-  pull request waits for a new verify.
+  no verdict, or when the report fails but for a limit of GitHub
+  (01M6H1N332TZ17CQQ8A5CQKG7B), the lead gets a message, and the pull
+  request waits for a new verify.
 - **01M4ZV3B6S1A64TYK8MTDNRCQ3** At each look, a wave removes the folder
   of each session of its repository that does not run, when the pull
   request of its branch merged. For a pull request with `Refs #N`, it
@@ -5098,6 +5099,33 @@ of this part when they merge.
   about a folder that stays one time in 10 minutes. The sweep of a wave
   deletes no old riff-kept branch. Supersedes 01M5R13DGMTNWPY88A3EG49WWS
   and 01M5R56GN3DC09GAPAF69GENEZ in part.
+- **01M6H1N2XYKK6QRCJS02RZJHKZ** When a call of gh fails because a limit
+  of GitHub is out (a rate limit, GraphQL or REST), the daemon reads the
+  reset time of that resource with gh api rate_limit, and waits for it.
+  Until the reset, no gh of the daemon makes a call of that resource:
+  the call fails at once and costs nothing. A limit that shows points
+  left is a secondary limit, and the wait is one minute. The wave makes
+  no look, no sweep and no report until the reset, the look of the
+  daemon makes no look, and the watches make no look and tell no fault.
+  The lead of each wave hears of the wait one time, with the reset time,
+  in a post whose key names the resource and the reset (#1557).
+- **01M6H1N30GXWYKX93CHPFZ11H9** riff daemon status shows each limit of
+  GitHub that waits: the resource and the reset time (#1557).
+- **01M6H1N332TZ17CQQ8A5CQKG7B** A verify of a wave whose result cannot
+  go to GitHub because a limit is out keeps its result (verdict, tested
+  commit and text) in the file verify-kept.json in the folder of its
+  session, and the lead gets a note. After the reset, the loop of the
+  wave reports each kept result as the end step does: the comment, the
+  status riff/verify, and the result to the holder of the item and the
+  lead. A kept result for a pull request that is not open at the tested
+  commit is dropped, and the wave starts a new verify. A report that
+  fails for another reason is not kept (#1557). Supersedes
+  01M4ZV3B6R4WSEJXYT7QPRWT6X in part.
+- **01M6H25QH6FSNBF5F6TE6B1JXM** A build session of a wave that ends
+  while a limit of GitHub is out cannot read its pull request. The lead
+  gets a note that says so, and not the message that the branch has no
+  open pull request. The wave looks at the pull request after the reset
+  (#1557).
 
 ### The lead, the view and the takeover
 
