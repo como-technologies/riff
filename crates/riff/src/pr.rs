@@ -1153,13 +1153,35 @@ pub fn is_success(conclusion: &str) -> bool {
 /// assert!(newest_runs(&[]).is_empty());
 /// ```
 pub fn newest_runs(runs: &[CheckRun]) -> Vec<&CheckRun> {
-    fn time(run: &CheckRun) -> (Option<&str>, Option<&str>) {
+    newest_by(runs.iter(), |run| {
         (run.started_at.as_deref(), run.completed_at.as_deref())
-    }
-    let Some(newest) = runs.iter().map(time).max() else {
+    })
+}
+
+/// The rule of [`newest_runs`] for any list: the items of `items` with the
+/// latest time, where `time` gives the pair `(started_at, completed_at)` of
+/// an item. The checks of the rollup of a pull request use it too
+/// ([`crate::rollout::Pull::failed_checks`]).
+///
+/// ```
+/// use riff::pr::newest_by;
+///
+/// let runs = [
+///     ("old", Some("2026-10-24T17:00:00Z")),
+///     ("new", Some("2026-10-24T17:20:00Z")),
+///     ("none", None),
+/// ];
+/// let newest = newest_by(runs.iter(), |(_, started)| (*started, None));
+/// assert_eq!(newest, [&("new", Some("2026-10-24T17:20:00Z"))]);
+/// ```
+pub fn newest_by<'a, T>(
+    items: impl Iterator<Item = &'a T> + Clone,
+    time: impl Fn(&T) -> (Option<&str>, Option<&str>),
+) -> Vec<&'a T> {
+    let Some(newest) = items.clone().map(&time).max() else {
         return Vec::new();
     };
-    runs.iter().filter(|run| time(run) == newest).collect()
+    items.filter(|item| time(item) == newest).collect()
 }
 
 /// The state of one check from its check runs. A pass needs one run or

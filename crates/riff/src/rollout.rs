@@ -748,6 +748,21 @@ pub struct Check {
         deserialize_with = "crate::text::forge_de_opt"
     )]
     pub details: Option<String>,
+    /// When the check run, or the status, started, for example
+    /// `2026-10-24T17:04:30Z`.
+    #[serde(
+        rename = "startedAt",
+        default,
+        deserialize_with = "crate::text::forge_de_opt"
+    )]
+    pub started_at: Option<String>,
+    /// When the check run ended. It is empty while the run goes.
+    #[serde(
+        rename = "completedAt",
+        default,
+        deserialize_with = "crate::text::forge_de_opt"
+    )]
+    pub completed_at: Option<String>,
 }
 
 impl Check {
@@ -796,6 +811,27 @@ impl Check {
             details: Some(link.into()),
             ..Self::default()
         }
+    }
+
+    /// The same check, started at `time` (UTC, as GitHub gives it).
+    ///
+    /// ```
+    /// use riff::rollout::Check;
+    ///
+    /// let check = Check::run("Gate", "FAILURE").started("2026-11-03T05:50:00Z");
+    /// assert_eq!(check.started_at.as_deref(), Some("2026-11-03T05:50:00Z"));
+    /// ```
+    pub fn started(self, time: &str) -> Self {
+        Self {
+            started_at: Some(time.into()),
+            ..self
+        }
+    }
+
+    /// When the check started and ended: the time that decides which run
+    /// of a check is the newest ([`crate::pr::newest_by`]).
+    fn time(&self) -> (Option<&str>, Option<&str>) {
+        (self.started_at.as_deref(), self.completed_at.as_deref())
     }
 
     /// True for a check run of GitHub Actions: it has a workflow. Only a
@@ -1253,9 +1289,25 @@ impl Pull {
         self.mergeable.as_deref() == Some("UNKNOWN")
     }
 
+    /// The checks of the head that count: of the runs of one check, only
+    /// the newest (01M5RGM8HBVQMY25H5PYESK17J, [`crate::pr::newest_by`]).
+    /// The rollup keeps each run of a check on the head, so an old failed
+    /// run stays next to the newer run that passed. Runs that tie all
+    /// count. A status has one run for its context.
+    fn newest_checks(&self) -> impl Iterator<Item = &Check> {
+        self.checks.iter().filter(|check| {
+            let same = self.checks.iter().filter(|c| c.title() == check.title());
+            crate::pr::newest_by(same, Check::time)
+                .iter()
+                .any(|newest| std::ptr::eq(*newest, *check))
+        })
+    }
+
     /// The names of the checks of the head that failed ([`Check::failed`]),
     /// each one time, in order. The rollup of `gh` does not say which
-    /// check a rule requires, so each failed check counts.
+    /// check a rule requires, so each failed check counts. Only the newest
+    /// run of a check counts: an old failed run does not, when a newer run
+    /// of the same check passed (01M5RGM8HBVQMY25H5PYESK17J).
     ///
     /// ```
     /// use riff::rollout::{Check, Pull};
@@ -1270,6 +1322,24 @@ impl Pull {
     ///     ..Pull::default()
     /// };
     /// assert_eq!(pull.failed_checks(), ["Gate"]);
+    ///
+    /// // #1540: Hygiene failed two times, and then passed on the same head.
+    /// let run = |conclusion, time| Check::run("Hygiene", conclusion).started(time);
+    /// let pull = Pull {
+    ///     checks: vec![
+    ///         run("FAILURE", "2026-11-03T05:50:00Z"),
+    ///         run("FAILURE", "2026-11-03T05:51:00Z"),
+    ///         run("SUCCESS", "2026-11-03T05:55:00Z"),
+    ///     ],
+    ///     ..Pull::default()
+    /// };
+    /// assert!(pull.failed_checks().is_empty());
+    /// // The order of the list does not matter, and a newer failed run counts.
+    /// let pull = Pull { checks: pull.checks.into_iter().rev().collect(), ..pull };
+    /// assert!(pull.failed_checks().is_empty());
+    /// let again = run("FAILURE", "2026-11-03T06:00:00Z");
+    /// let pull = Pull { checks: [pull.checks, vec![again]].concat(), ..pull };
+    /// assert_eq!(pull.failed_checks(), ["Hygiene"]);
     /// ```
     pub fn failed_checks(&self) -> Vec<String> {
         self.failed_names(|_| true)
@@ -1320,7 +1390,7 @@ impl Pull {
     /// ```
     pub fn failed_others(&self) -> Vec<OtherCheck> {
         let mut others: Vec<OtherCheck> = Vec::new();
-        for check in self.checks.iter().filter(|c| c.failed() && !c.actions()) {
+        for check in self.newest_checks().filter(|c| c.failed() && !c.actions()) {
             let name = check.title().unwrap_or("a check");
             if !others.iter().any(|o| o.name == name) {
                 others.push(OtherCheck {
@@ -1338,8 +1408,7 @@ impl Pull {
     fn failed_names(&self, keep: impl Fn(&Check) -> bool) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         for name in self
-            .checks
-            .iter()
+            .newest_checks()
             .filter(|c| c.failed() && keep(c))
             .map(|c| c.title().unwrap_or("a check"))
         {
@@ -2659,5 +2728,126 @@ mod tests {
         assert_eq!(pull.verify(), Some(Verify::Asked));
         pull.wip = true;
         assert_eq!(pull.verify(), None);
+    }
+
+    /// #1540, 01M5RGM8HBVQMY25H5PYESK17J: the rollup of `gh` keeps each
+    /// run of a check on the head. A check with an old failed run and a
+    /// newer run that passed is no failed check, as the verify reads it.
+    /// The rollup is the one of PR #1530: `Hygiene` failed two times, then
+    /// passed.
+    #[test]
+    fn a_check_with_an_old_failed_run_and_a_newer_passed_run_is_no_failed_check() {
+        let run = |name: &str, conclusion: &str, started: &str, completed: &str| {
+            format!(
+                r#"{{"__typename":"CheckRun","name":"{name}","conclusion":"{conclusion}","workflowName":"CI","detailsUrl":"https://github.com/o/r/actions/runs/1/job/1","startedAt":"{started}","completedAt":"{completed}"}}"#
+            )
+        };
+        let pull = |runs: &[String]| -> Pull {
+            serde_json::from_str(&format!(
+                r#"{{"number":1530,"headRefName":"worktree-issue-1508","headRefOid":"37bf1b0","isDraft":false,"mergeable":"MERGEABLE","autoMergeRequest":{{"enabledAt":"2026-11-03T05:40:00Z"}},
+                     "statusCheckRollup":[{}, {{"__typename":"StatusContext","context":"riff/verify","state":"SUCCESS","startedAt":"2026-11-03T05:58:00Z"}}]}}"#,
+                runs.join(",")
+            ))
+            .unwrap()
+        };
+        let gate = run(
+            "Gate",
+            "SUCCESS",
+            "2026-11-03T05:41:00Z",
+            "2026-11-03T05:49:00Z",
+        );
+        let old = run(
+            "Hygiene",
+            "FAILURE",
+            "2026-11-03T05:50:00Z",
+            "2026-11-03T05:50:30Z",
+        );
+        let old_again = run(
+            "Hygiene",
+            "FAILURE",
+            "2026-11-03T05:50:10Z",
+            "2026-11-03T05:50:40Z",
+        );
+        let new = run(
+            "Hygiene",
+            "SUCCESS",
+            "2026-11-03T05:55:00Z",
+            "2026-11-03T05:55:30Z",
+        );
+
+        // Only the old failed runs: the check failed.
+        let failed = pull(&[gate.clone(), old.clone(), old_again.clone()]);
+        assert_eq!(failed.failed_checks(), ["Hygiene"]);
+        assert_eq!(failed.failed_runs(), ["Hygiene"]);
+        assert_eq!(
+            failed.stuck(false),
+            Some(Stuck::Checks(vec!["Hygiene".into()]))
+        );
+
+        // A newer run passed, in any order of the rollup: no failed check.
+        for runs in [
+            [gate.clone(), old.clone(), old_again.clone(), new.clone()],
+            [new.clone(), old_again.clone(), old.clone(), gate.clone()],
+        ] {
+            let passed = pull(&runs);
+            assert!(passed.failed_checks().is_empty(), "{runs:?}");
+            assert!(passed.failed_runs().is_empty());
+            assert!(passed.failed_others().is_empty());
+            assert_eq!(passed.stuck(false), None);
+        }
+
+        // A newer run that failed counts, and an older run that passed does not.
+        let again = run(
+            "Hygiene",
+            "FAILURE",
+            "2026-11-03T06:00:00Z",
+            "2026-11-03T06:00:30Z",
+        );
+        let failed_again = pull(&[gate.clone(), new.clone(), again]);
+        assert_eq!(failed_again.failed_checks(), ["Hygiene"]);
+
+        // A newer run that still goes is no failure yet.
+        let going = run(
+            "Hygiene",
+            "",
+            "2026-11-03T06:00:00Z",
+            "0001-01-01T00:00:00Z",
+        );
+        assert!(pull(&[gate, old, going]).failed_checks().is_empty());
+    }
+
+    /// #1540: the rule holds for a check of another app, and for a
+    /// status. Another check with a failed run stays failed.
+    #[test]
+    fn the_newest_run_decides_also_for_another_app_and_for_a_status() {
+        let ci = |conclusion: &str, started: &str| {
+            Check::other("ci", conclusion, "https://app.circleci.com/workflow/9").started(started)
+        };
+        let status = |state: &str, started: &str| {
+            Check {
+                context: Some("ci/legacy".into()),
+                state: Some(state.into()),
+                ..Check::default()
+            }
+            .started(started)
+        };
+        let pull = Pull {
+            checks: vec![
+                ci("FAILURE", "2026-11-03T05:50:00Z"),
+                ci("SUCCESS", "2026-11-03T05:55:00Z"),
+                status("FAILURE", "2026-11-03T05:50:00Z"),
+                status("SUCCESS", "2026-11-03T05:55:00Z"),
+                Check::run("Gate", "FAILURE").started("2026-11-03T05:50:00Z"),
+            ],
+            ..Pull::default()
+        };
+        assert_eq!(pull.failed_checks(), ["Gate"]);
+        assert!(pull.failed_others().is_empty());
+        // Two checks with one name and no time tie: both count.
+        let tie = Pull {
+            checks: vec![Check::run("Gate", "SUCCESS"), Check::run("Gate", "FAILURE")],
+            ..Pull::default()
+        };
+        assert_eq!(tie.failed_checks(), ["Gate"]);
     }
 }
