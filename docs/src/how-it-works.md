@@ -3222,6 +3222,9 @@ sequenceDiagram
 
 A riff with no sign-in has no owner: each person there can set each
 pause. A pause and a resume wake each session that they stop or start.
+The lead of a repository with a pause of its own hears the pause and
+the resume of the whole riff too (see
+[Tell the lead of a paused repository](#tell-the-lead-of-a-paused-repository)).
 The pauses stay when `riff-server` saves its state in a bucket (see
 [A restart](#a-restart)).
 
@@ -3263,7 +3266,45 @@ riff resume --riff
 ```
 
 A repository that has a pause of its own stays paused. The answer
-names it.
+names it, and the leads that it told.
+
+### Tell the lead of a paused repository
+
+A pause of the whole riff and a resume of the whole riff wake the
+workers of each repository that has no pause of its own. They do not
+wake the workers of a repository that has one: its pause still stops
+them. Its lead is different. The lead keeps the running state, its tools
+work, and it may wait for the resume. So riff posts one message to the
+lead of each such repository, in the thread of that repository. The
+message says that the riff runs again (or is paused), that the pause of
+the repository still stops its workers, and who set that pause.
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant E as riff-server
+    participant W as workers of a free repository
+    participant L as lead of a paused repository
+    participant X as workers of that repository
+    P->>E: riff resume --riff
+    E-->>W: wake: the riff is running again
+    E-->>L: wake: the riff runs, your repository is still paused
+    E--xX: no wake: their repository is paused
+```
+
+Run it as before:
+
+```sh
+riff resume --riff
+```
+
+The answer names the leads that riff told:
+
+```text
+The riff is running now. Woke mike@pangolin:riff (l1). Told the lead of como-technologies/strata: brett@heron:strata (62b2). Still paused: como-technologies/strata. Its user or its lead resumes it with `riff resume`.
+```
+
+The lead resumes its repository with `riff resume`, or you do.
 
 ### Pause a repository of another person
 

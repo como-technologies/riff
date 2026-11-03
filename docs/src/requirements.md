@@ -793,8 +793,9 @@
 - **01M3XAHZSJ5914BRQBZ2G4ZBSA** A session that another pause still
   stops does not wake: a resume of a repository in a paused riff wakes
   nobody, and a pause or a resume of the whole riff does not wake the
-  sessions of a repository that has a pause of its own. The answer to
-  a resume names each pause that still stops work.
+  workers of a repository that has a pause of its own
+  (01M6FYGVTCBKC9C8AXMFD7WMW2 tells its lead). The answer to a resume
+  names each pause that still stops work.
 - **01M3XAHZG26ECNARX35JD73YXJ** The record `pause_set` holds a pause
   that is set or ended: `scope` (`"riff"`, or
   `{"repository":"OWNER/REPO"}`) and `state` (`paused` or `running`).
@@ -831,6 +832,13 @@
 - **01M5P1XQ6WTGFHW0P5M114P535** The riff daemon sends no verify request
   for a pull request whose head commit is a WIP commit. The item goes
   back to a build.
+- **01M6FYGVTCBKC9C8AXMFD7WMW2** A pause or a resume of the whole riff
+  that changes the state also posts one message to the lead of each
+  repository that has a pause of its own, in the thread of that
+  repository, to `{repo, lead: true}`. The text says that the riff runs
+  again (or is paused), that the pause of the repository still stops its
+  workers, and who set that pause. The workers of that repository do not
+  wake. The answer to the call names the leads that it told.
 
 ## Service
 

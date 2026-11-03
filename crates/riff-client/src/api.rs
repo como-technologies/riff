@@ -1800,6 +1800,9 @@ impl Api {
     /// thread of the repository, to that repository. For the whole
     /// riff, it posts to each repository of a session that is not
     /// paused. A session that another pause still stops does not wake.
+    /// A repository with a pause of its own gets
+    /// [`text::riff_lead_news`] instead, to its lead only
+    /// (01M6FYGVTCBKC9C8AXMFD7WMW2): the lead keeps the running state.
     pub async fn set_pause(
         &self,
         me: &SessionUri,
@@ -1837,17 +1840,35 @@ impl Api {
         }
         let thread = scope.repository(me);
         let body = text::riff_news(thread.as_ref(), state);
+        let mut own = Vec::new();
         let repos = match thread {
             // The whole riff is paused: its sessions stay paused.
             Some(_) if reply.riff.is_some() => Vec::new(),
             Some(thread) => vec![thread],
             None => {
-                let mut repos = self.repos(me, false).await?;
-                repos.retain(|repo| reply.repository(repo).is_none());
-                repos
+                let repos = self.repos(me, false).await?;
+                let (paused, free) = repos
+                    .into_iter()
+                    .partition::<Vec<_>, _>(|repo| reply.repository(repo).is_some());
+                own = paused;
+                free
             }
         };
-        let posted = self.post_to_repos(me, repos, &body, Kind::Message).await?;
+        let mut posted = self.post_to_repos(me, repos, &body, Kind::Message).await?;
+        // A repository with a pause of its own: only its lead hears it.
+        for repo in own {
+            let pause = reply.repository(&repo).cloned().unwrap_or_default();
+            let to = Selector {
+                repo: Some(repo.to_string()),
+                lead: Some(true),
+                ..Selector::default()
+            };
+            let body = text::riff_lead_news(&repo, state, &pause);
+            posted.push(
+                self.post(me, Some(&repo), &[to], &body, Kind::Message)
+                    .await?,
+            );
+        }
         Ok((reply, posted))
     }
 
@@ -2550,6 +2571,96 @@ mod tests {
             .map(Result::unwrap)
             .collect();
         assert_eq!(items, [2, 4]);
+    }
+
+    /// A fake server for the resume of the whole riff: two sessions in two
+    /// repositories, and strata has a pause of its own. Each post it gets
+    /// goes to the list, as JSON.
+    async fn resume_of_the_riff() -> (Api, Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
+        use axum::Json;
+        use serde_json::{Value, json};
+
+        let posts: Arc<std::sync::Mutex<Vec<Value>>> = Arc::default();
+        let kept = posts.clone();
+        let router = axum::Router::new()
+            .route(
+                "/v1/who",
+                axum::routing::post(|| async {
+                    Json(json!({"sessions": [
+                        {"uri": "riff://mike@pangolin/como-technologies/riff?session=l1", "live": true},
+                        {"uri": "riff://brett@heron/como-technologies/strata?session=b1", "live": true},
+                    ]}))
+                }),
+            )
+            .route(
+                "/v1/resume",
+                axum::routing::post(|| async {
+                    Json(json!({"state": "running", "changed": true, "repositories": [
+                        {"repository": "como-technologies/strata", "by": {"session": "brett/b1"}, "at_ms": 7},
+                    ]}))
+                }),
+            )
+            .route(
+                "/v1/post",
+                axum::routing::post(move |Json(post): Json<Value>| async move {
+                    let reply = json!({"thread": post["thread"], "seq": 1});
+                    kept.lock().unwrap().push(post);
+                    Json(reply)
+                }),
+            )
+            .layer(axum::middleware::map_response(
+                |mut r: axum::response::Response| async move {
+                    let build = axum::http::HeaderValue::from_static(build::VERSION);
+                    r.headers_mut().insert(build::HEADER, build);
+                    r
+                },
+            ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (Api::new(&url), posts)
+    }
+
+    /// A resume of the whole riff posts to the repository without a pause
+    /// of its own as before, and to the lead only of the repository with
+    /// one (01M6FYGVTCBKC9C8AXMFD7WMW2).
+    #[tokio::test]
+    async fn the_resume_of_the_riff_tells_the_lead_of_a_repository_with_a_pause() {
+        let (api, posts) = resume_of_the_riff().await;
+        let mike: SessionUri = "riff://mike@pangolin".parse().unwrap();
+        let (reply, posted) = api.set_riff(&mike, RiffState::Running).await.unwrap();
+        assert!(reply.changed);
+        let posts = posts.lock().unwrap();
+        assert_eq!(posted.len(), 2);
+        assert_eq!(posts.len(), 2);
+
+        let riff = &posts[0];
+        assert_eq!(riff["thread"], "como-technologies/riff");
+        assert_eq!(
+            riff["to"],
+            serde_json::json!([{"repo": "como-technologies/riff"}])
+        );
+        assert_eq!(riff["body"], text::riff_news(None, RiffState::Running));
+
+        let strata = &posts[1];
+        assert_eq!(strata["thread"], "como-technologies/strata");
+        assert_eq!(
+            strata["to"],
+            serde_json::json!([{"repo": "como-technologies/strata", "lead": true}])
+        );
+        let thread = "como-technologies/strata".parse().unwrap();
+        let pause = reply.repository(&thread).unwrap();
+        assert_eq!(
+            strata["body"],
+            text::riff_lead_news(&thread, RiffState::Running, pause)
+        );
+        assert!(
+            strata["body"]
+                .as_str()
+                .unwrap()
+                .contains("by the session brett/b1"),
+            "{strata}"
+        );
     }
 
     #[tokio::test]
