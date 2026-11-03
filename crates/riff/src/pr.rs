@@ -91,7 +91,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use riff_core::name::SessionUri;
+use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::SessionInfo;
 use serde::Deserialize;
@@ -913,12 +913,16 @@ pub struct Reported {
 
 /// The sessions that the result of a verify of `issue` wakes: the
 /// holder of the issue. When no session of `sessions` holds the issue
-/// in the repository of the verifier `me`, also the lead of the user of
-/// `me` there (01M3Z9N70J4H79VJN4ZKKH3G6S). `sessions` is the list of
-/// `who`: it has no session that is gone.
+/// in the repository of the pull request, also the lead of the user of
+/// `me` there (01M3Z9N70J4H79VJN4ZKKH3G6S). `thread` is the thread of
+/// the post: the repository of the pull request. The repository of `me`
+/// does not count: a person in a terminal has none
+/// (01M6FYW8NG0E9HYPWTG2RV5EAM). `sessions` is the list of `who`: it
+/// has no session that is gone.
 ///
 /// ```
 /// use riff::pr::result_to;
+/// use riff_core::name::ThreadName;
 /// use riff_core::wire::SessionInfo;
 ///
 /// let info = |uri: &str| SessionInfo {
@@ -939,22 +943,34 @@ pub struct Reported {
 ///     step: None,
 ///     machine: None,
 /// };
-/// let to = |sessions: &[SessionInfo]| -> Vec<String> {
-///     let me = "riff://mike@pangolin/o/r?session=v1&claim=verify-issue-12".parse().unwrap();
-///     result_to(12, &me, sessions).iter().map(ToString::to_string).collect()
+/// let thread: ThreadName = "o/r".parse().unwrap();
+/// let to = |me: &str, sessions: &[SessionInfo]| -> Vec<String> {
+///     let me = me.parse().unwrap();
+///     result_to(12, &me, &thread, sessions).iter().map(ToString::to_string).collect()
 /// };
+/// let session = "riff://mike@pangolin/o/r?session=v1&claim=verify-issue-12";
 /// let holder = info("riff://mike@thelio/o/r?session=a1&claim=issue-12");
-/// assert_eq!(to(&[holder]), ["claim=issue-12"]);
+/// assert_eq!(to(session, &[holder]), ["claim=issue-12"]);
 /// // The author released the item, or the claim is in another
 /// // repository: the lead wakes.
 /// let lead = ["claim=issue-12", "user=mike,repo=o/r,lead=true"];
-/// assert_eq!(to(&[]), lead);
-/// assert_eq!(to(&[info("riff://mike@thelio/o/r?session=a1")]), lead);
-/// assert_eq!(to(&[info("riff://mike@thelio/o/s?session=a1&claim=issue-12")]), lead);
+/// assert_eq!(to(session, &[]), lead);
+/// assert_eq!(to(session, &[info("riff://mike@thelio/o/r?session=a1")]), lead);
+/// assert_eq!(to(session, &[info("riff://mike@thelio/o/s?session=a1&claim=issue-12")]), lead);
+/// // A person in a terminal has no repository: the thread gives it.
+/// let person = "riff://mike@pangolin";
+/// assert_eq!(to(person, &[]), lead);
+/// let holder = info("riff://mike@thelio/o/r?session=a1&claim=issue-12");
+/// assert_eq!(to(person, &[holder]), ["claim=issue-12"]);
 /// ```
-pub fn result_to(issue: u64, me: &SessionUri, sessions: &[SessionInfo]) -> Vec<Selector> {
+pub fn result_to(
+    issue: u64,
+    me: &SessionUri,
+    thread: &ThreadName,
+    sessions: &[SessionInfo],
+) -> Vec<Selector> {
     let item = format!("issue-{issue}");
-    let repo = me.place().repo_text();
+    let repo = thread.to_string();
     let held = sessions
         .iter()
         .any(|s| s.uri.place().repo_text() == repo && s.uri.claims().contains(&item));

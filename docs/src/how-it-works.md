@@ -2314,6 +2314,22 @@ result to the session that holds the issue of the `Issue:` trailer,
 for example `claim=issue-12`. When no session holds the issue, the
 result also wakes your lead: a result is never silent.
 
+#### Report a verify from another folder
+
+`riff verify` works from any folder of a clone of the repository, also
+in a terminal outside a session. In a folder that is not the worktree
+where you tested, `HEAD` is not the tested commit. There, name the
+commit with `--commit`:
+
+```sh
+riff verify pass 40 --file result.md --commit 1a2b3c4
+```
+
+riff takes the repository of the pull request from the folder. A
+person in a terminal has no repository of their own. So the result
+finds the holder of the issue, and the lead of your user, in the
+repository of the pull request.
+
 ### Keep a live security fault out of public text
 
 A live security fault is a security fault in the code of `main`, or

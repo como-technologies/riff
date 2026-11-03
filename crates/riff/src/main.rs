@@ -484,8 +484,9 @@ enum Command {
         #[arg(long)]
         file: std::path::PathBuf,
         /// The commit that you tested. The default is HEAD of this
-        /// directory. riff reports nothing when it is not the head of the
-        /// pull request.
+        /// directory: in a folder that is not the worktree where you
+        /// tested, give it. riff reports nothing when it is not the head
+        /// of the pull request.
         #[arg(long, value_name = "SHA")]
         commit: Option<String>,
     },
@@ -2261,7 +2262,7 @@ async fn main() -> Result<()> {
                 pr::Verdict::Fail => PullState::Failed,
             };
             riff::look::tell_fact(&api, &me, reported.issue, number, state).await;
-            let to = pr::result_to(reported.issue, &me, &api.who(&me, false).await?);
+            let to = pr::result_to(reported.issue, &me, &thread, &api.who(&me, false).await?);
             let body = text::verify_post(verdict, number, &reported, &result);
             let posted = api
                 .post(&me, Some(&thread), &to, &body, Kind::Message)

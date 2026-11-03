@@ -663,6 +663,15 @@
   merge group commit: success when the head commit of the pull request
   of the group has a passed `riff/verify`, else failure. A verified pull
   request merges through the queue with no new verify.
+- **01M6FYW8NG0E9HYPWTG2RV5EAM** `riff verify` takes the repository of
+  the pull request from its thread, the thread of the post, not from the
+  URI of the verifier. A person in a terminal has no repository in the
+  URI, in any folder. So the repository of the thread decides which
+  session holds the issue (01M3Z9N70J4H79VJN4ZKKH3G6S) and in which
+  repository the lead of the user of the verifier wakes. The selector of
+  that lead is `user=U,repo=OWNER/REPO,lead=true`. `riff verify` runs
+  from any folder of a clone of the repository, also outside a session.
+  A folder that is not the worktree of the test needs `--commit SHA`.
 
 ## Tokens on GitHub
 
