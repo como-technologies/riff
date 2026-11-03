@@ -1378,6 +1378,10 @@ pub struct Status {
     /// none.
     #[serde(default)]
     pub lost: Vec<LostShown>,
+    /// The calls of `gh` in the last hour, and the GraphQL points that are
+    /// left (#1549). An old daemon gives none.
+    #[serde(default)]
+    pub github: crate::ghcalls::Shown,
 }
 
 impl Status {
@@ -2783,7 +2787,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// Looks at the watches each `every`, until the daemon
-    /// stops ([`crate::watches`], 01M5RGD0RTXYA7FF5K1TH72MGX). A look that
+    /// stops ([`crate::watches`], 01M5RGD0RTXYA7FF5K1TH72MGX). When the
+    /// watch of a wave is the only watch, it looks less often
+    /// ([`crate::watches::Watches::pause`]). A look that
     /// fails shows its fault on stderr one time until the fault changes.
     /// A test stops the loop with the task that it gives.
     pub fn watch_every(self: &Arc<Self>, every: Duration) -> JoinHandle<()> {
@@ -2792,17 +2798,21 @@ impl<R: Runtime + 'static> Daemon<R> {
             let watches = crate::watches::Watches::new(&daemon.dir);
             let mut last_error = None;
             loop {
-                match watches.look_all(&daemon.lookout, now_ms()).await {
-                    Ok(()) => last_error = None,
+                let slow = match watches.look_all(&daemon.lookout, now_ms()).await {
+                    Ok(slow) => {
+                        last_error = None;
+                        slow
+                    }
                     Err(e) => {
                         let e = format!("{e:#}");
                         if last_error.as_ref() != Some(&e) {
                             eprintln!("riff daemon: watches: {e}");
                         }
                         last_error = Some(e);
+                        false
                     }
-                }
-                tokio::time::sleep(every).await;
+                };
+                watches.pause(every, slow).await;
             }
         })
     }
@@ -2920,6 +2930,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             claude_token,
             watches: self.watches_shown(),
             lost,
+            github: crate::ghcalls::Calls::global().shown(now_ms()),
         }
     }
 
@@ -7054,12 +7065,13 @@ mod tests {
 
         fn fate<'a>(
             &'a self,
-            _: &'a str,
+            repo: &'a str,
             issue: u64,
         ) -> crate::wave::BoxFuture<'a, Result<sweep::Fate>> {
             if let Some(gh) = self.gh.clone() {
+                let repo = repo.to_owned();
                 return Box::pin(async move {
-                    tokio::task::spawn_blocking(move || sweep::fate_on(&gh, issue)).await?
+                    tokio::task::spawn_blocking(move || sweep::fate_on(&gh, &repo, issue)).await?
                 });
             }
             let fate = self
@@ -10033,6 +10045,43 @@ mod tests {
             text.contains("Watches:\n  o/r  the deploy of v1.2.3, for 1m\n"),
             "{text}"
         );
+    }
+
+    /// 01M6GYN0CSFRBSHGE5CEBHDVZH (#1549): the status of the daemon has the
+    /// calls of `gh` of the last hour, and `riff daemon status` shows them
+    /// with the points that GitHub says are left. A `gh` of the daemon
+    /// counts its calls in the count of the process.
+    #[tokio::test]
+    async fn the_status_shows_the_calls_of_gh_of_the_last_hour() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let dir = tempfile::tempdir().unwrap();
+        let reply = r#"{"data":{"rateLimit":{"cost":1,"remaining":4300,"resetAt":"2026-11-03T15:00:00Z"}}}"#;
+        let gh = isolated::write_program(
+            dir.path().join("gh"),
+            format!("#!/bin/sh\necho '{reply}'\n"),
+        );
+        crate::pr::Gh::at(gh)
+            .by("unit-test")
+            .with_calls(crate::ghcalls::Calls::global().clone())
+            .run(&["api", "graphql", "-f", "query=x"], None)
+            .unwrap();
+
+        let status = here.daemon.status().await;
+        let row = status
+            .github
+            .rows
+            .iter()
+            .find(|r| r.caller == "unit-test")
+            .expect("the call is in the status");
+        assert_eq!(
+            (row.kind.as_str(), row.calls, row.points),
+            ("api graphql", 1, 1)
+        );
+        assert!(status.github.left.is_some());
+        let text = text::daemon_status(&status, now_ms());
+        assert!(text.contains("GitHub, last hour: "), "{text}");
+        assert!(text.contains("unit-test  api graphql"), "{text}");
+        assert!(text.contains("GraphQL points left: "), "{text}");
     }
 
     /// 01M5TKPG5WZ1T58FNAMZNP6CJ5: the status gives the short digest of the

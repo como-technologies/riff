@@ -1248,3 +1248,55 @@ async fn riff_daemon_status_shows_the_real_session_test_that_runs() {
     assert!(shown[0].contains("Sessions: none."), "{}", shown[0]);
     assert!(!shown[1].contains("real-session"), "{}", shown[1]);
 }
+
+/// 01M6GYN0CSFRBSHGE5CEBHDVZH (#1549): `riff daemon status` shows the
+/// calls of `gh` of the last hour for each caller and kind, with their
+/// GraphQL points, and the points that GitHub says are left. A fake daemon
+/// on the control socket says the status.
+#[tokio::test]
+async fn riff_daemon_status_shows_the_calls_of_gh_and_the_points_left() {
+    let here = Here::new();
+    let dir = here.daemon_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = tokio::net::UnixListener::bind(riff::daemon::socket(&dir)).unwrap();
+    let now = riff::daemon::now_ms();
+    let status = serde_json::json!({
+        "say": "status", "pid": 7, "build": "4.1.1", "since_ms": 0,
+        "dir": dir, "sessions": [],
+        "github": {
+            "rows": [
+                {"caller": "look", "kind": "issue list", "calls": 12, "points": 48},
+                {"caller": "wave", "kind": "pr list", "calls": 12, "points": 24},
+                {"caller": "look", "kind": "api rules/branches/main", "calls": 12, "points": 0},
+            ],
+            "left": {"remaining": 3716, "reset_at": "2026-11-03T15:00:35Z", "read_ms": now},
+        },
+    });
+    let fake = {
+        let (accept, line) = (listener.accept(), format!("{status}\n"));
+        async move {
+            let (conn, _) = accept.await.unwrap();
+            let (read, mut write) = conn.into_split();
+            let mut lines = tokio::io::BufReader::new(read).lines();
+            lines.next_line().await.unwrap().unwrap();
+            write.write_all(line.as_bytes()).await.unwrap();
+        }
+    };
+    let (_, out) = tokio::join!(fake, here.run(false, &["daemon", "status"]));
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert!(
+        shown.contains("GitHub, last hour: 36 calls, 72 GraphQL points.\n"),
+        "{shown}"
+    );
+    assert!(
+        shown.lines().any(|l| l.starts_with("  look")
+            && l.contains("issue list")
+            && l.ends_with("48 points")),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("GraphQL points left: 3,716, the counter starts again at 15:00:35 UTC"),
+        "{shown}"
+    );
+}

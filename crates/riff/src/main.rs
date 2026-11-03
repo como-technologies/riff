@@ -1210,8 +1210,10 @@ enum DaemonCommand {
     ///
     /// It shows the process, the build and the folder of the daemon, the
     /// limit of the host, each session, each start that waits for room,
-    /// and each wave. It exits with 1 when no daemon answers, and shows
-    /// the state of the unit riff.service.
+    /// and each wave. Last it shows the calls of gh of the last hour,
+    /// with their GraphQL points, and the points that GitHub says are
+    /// left. It exits with 1 when no daemon answers, and shows the state
+    /// of the unit riff.service.
     Status {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this

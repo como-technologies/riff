@@ -4898,8 +4898,8 @@ of this part when they merge.
   the commit, not the ref, so a push to the pull request after the look
   does not change what the verify reads.
 - **01M5QVH3MAEPPJN9PPVDX6N2EY** The riff daemon runs the look of the
-  repository of each wave that it runs, each minute, until `riff wave
-  stop`: it reads the open pull requests and the Gate of `main` with
+  repository of each wave that it runs until `riff wave stop`: it reads
+  the open pull requests and the Gate of `main` with
   "gh", and posts as the person. The messages of
   01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q316RXNATJP587DWGDNCD and
   01M51QEYKTD7ZEB0YA0C3MQTPN come from this look, and the steps of
@@ -4951,8 +4951,9 @@ of this part when they merge.
 - **01M5R13DGMTNWPY88A3EG49WWS** The look of the daemon watches the head
   commit of `main` with the full check of the repository
   (01M5QYDE41FVFX26EC8K5QGYH4), not with the check run `Gate`. It reads
-  the required checks of the default branch at each look, and the check
-  runs of each of them on `main`. `main` is broken when a check ended
+  the required checks of the default branch
+  (01M6GYN97HH70E4C1FGM6HA2B0), and the check runs of each of them on
+  `main` at each look. `main` is broken when a check ended
   with `failure` or `timed_out`, and passed when each check passed. A
   check that runs, a cancelled check and a head with no run of any check
   give nothing. The messages, the fix item and the note say "the full
@@ -4977,14 +4978,14 @@ of this part when they merge.
   does not answer. Refs 01M5QYBWPAJ219BE8QKVKG1TWW.
 - **01M5R56GN3DC09GAPAF69GENEZ** The wave keeps the default branch of
   the repository in no file. The loop of the wave and its look read the
-  branch from the forge at each look, and a build, a rebase and a verify
-  read it at their start. So `waves.json`, `served.json` and the record
-  of a session have no branch, and the files of an older build stay
-  valid after an update: a machine takes each release with no step of a
-  person. A branch that does not read gives the error of the look: the
-  wave starts no work at that look, and reads again at the next one.
-  `riff wave run` reads no branch. Supersedes 01M5QYBWPAJ219BE8QKVKG1TWW
-  in part.
+  branch from the forge (01M6GYN97HH70E4C1FGM6HA2B0), and a build, a
+  rebase and a verify read it at their start. So `waves.json`,
+  `served.json` and the record of a session have no branch, and the
+  files of an older build stay valid after an update: a machine takes
+  each release with no step of a person. A branch that does not read
+  gives the error of the look: the wave starts no work at that look, and
+  reads again at the next one. `riff wave run` reads no branch.
+  Supersedes 01M5QYBWPAJ219BE8QKVKG1TWW in part.
 - **01M5SN0PY23JDWND8DGGAF9XMB** A failed check of a pull request whose
   verify passed starts a build session only when the check is a run of
   GitHub Actions: a check run with a workflow. For each other failed
@@ -5054,6 +5055,39 @@ of this part when they merge.
   -X POST repos/OWNER/REPO/actions/runs/RUN/approve. A call that fails
   reads as no run. riff top and riff wave list show stuck with the words
   approve run (#1433).
+- **01M6GYN0CSFRBSHGE5CEBHDVZH** The riff daemon counts each call of gh
+  by its caller (the wave, the look, the watches, the sweep and the
+  usage meter), by its kind, and by the GraphQL points it cost. The
+  points come from a table of the queries that gh sends, and from the
+  cost that a reply with rateLimit gives. The daemon keeps the last
+  hour. riff daemon status shows the calls and the points of that hour
+  for each caller and kind, and the GraphQL points that GitHub says are
+  left with the time of their reset.
+- **01M6GYN92N3Z99GPXTYHDDWF4R** The looks, the watches and the sweeps
+  of the daemon use the GraphQL points of the token of a person within a
+  target: two waves with no work use at most 300 points an hour, and one
+  wave with 8 sessions at most 1,500. One token has 5,000 points an hour
+  for each session, look and lead of its person (#1549).
+- **01M6GYN9526HAYVKJC4HS858TH** A wave that has no work, no session and
+  no change since its last look looks each 5 minutes, not each minute. A
+  session that ends, a job that ends and a start of the wave look at
+  once. A paused wave looks each minute. The look of the daemon at the
+  pull requests and at main waits 5 minutes after a look that told
+  nothing while no session of the wave runs. The watch of a wave waits 5
+  minutes after a look while it is the only watch, and a new watch ends
+  the wait. Supersedes 01M5QVH3MAEPPJN9PPVDX6N2EY and
+  01M5RGD0RTXYA7FF5K1TH72MGX in part.
+- **01M6GYN97HH70E4C1FGM6HA2B0** The loop of a wave, the look of the
+  daemon and the sweep read the open issues and the open pull requests
+  with the same call of gh. The reply of one read serves the others
+  when it is not older than the wait of the loop that asks. The loop of
+  a wave takes no old reply: it sees the forge as it is. The default
+  branch and its rules are read one time in 10 minutes, and the message
+  of a commit one time. The sweep makes no call for a folder whose
+  branch has an open pull request in such a reply, and asks the forge
+  about a folder that stays one time in 10 minutes. The sweep of a wave
+  deletes no old riff-kept branch. Supersedes 01M5R13DGMTNWPY88A3EG49WWS
+  and 01M5R56GN3DC09GAPAF69GENEZ in part.
 
 ### The lead, the view and the takeover
 
@@ -6156,11 +6190,12 @@ of this part when they merge.
   approve`, `retry` and `rollback`), and the end of the current wave.
 - **01M5RGD0RTXYA7FF5K1TH72MGX** The daemon keeps its watches in
   `watches.json` of its folder, so a restart keeps them. It looks at
-  each watch each minute. When an operation ends, with a success or a
-  failure, the daemon posts one message to the lead of the repository:
-  the result, the failed jobs and the next step. Then the watch goes,
-  and no second message comes for the same end. A watch whose state riff
-  cannot read posts the fault once, and goes on.
+  each watch each minute, but at the watch of a wave alone
+  (01M6GYN9526HAYVKJC4HS858TH). When an operation ends, with a success
+  or a failure, the daemon posts one message to the lead of the
+  repository: the result, the failed jobs and the next step. Then the
+  watch goes, and no second message comes for the same end. A watch
+  whose state riff cannot read posts the fault once, and goes on.
 - **01M5RGD0XTR4X1MEV726HMCEGQ** The chat line of `riff release publish`
   says that the CI run of the tag builds, and that riff tells the owner
   when the deploy waits. The watch of the tag posts the line "waits for

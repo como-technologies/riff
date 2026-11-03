@@ -530,6 +530,7 @@ mod tests {
             claude_token: Default::default(),
             watches: vec![],
             lost: vec![],
+            github: Default::default(),
         }
     }
 

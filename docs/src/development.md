@@ -1546,9 +1546,9 @@ pins. It pulls the image when it is not on the machine. When podman
 does not run, or the pull fails, `riff wave run` says why, and the
 daemon runs no wave.
 
-The wave reads the default branch of the repository from GitHub at
-each look. Below, `main` is that branch, also when it has another name
-(see [Use any default branch](start-a-riff.md#use-any-default-branch)).
+The wave reads the default branch of the repository from GitHub. Below,
+`main` is that branch, also when it has another name (see
+[Use any default branch](start-a-riff.md#use-any-default-branch)).
 
 The daemon keeps the wave, also over its own restart, until you stop
 it. The rollout of your lead runs it for you: see
@@ -1562,8 +1562,10 @@ riff wave run --host thelio
 
 See [Add a host to the wave](#add-a-host-to-the-wave).
 
-Each minute the daemon also looks at the forge for the wave. It tells
-your lead when a pull request stops (see
+The daemon also looks at the forge for the wave, each minute while the
+wave has work or a session (see
+[See how the daemon uses the GitHub limit](#see-how-the-daemon-uses-the-github-limit)).
+It tells your lead when a pull request stops (see
 [When a pull request stops](how-it-works.md#when-a-pull-request-stops))
 or when `main` breaks (see
 [When main breaks](how-it-works.md#when-main-breaks)).
@@ -1602,6 +1604,68 @@ issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). 
 
 To start the rebase of the same commit again, see
 [Start a spent item again](#start-a-spent-item-again).
+
+#### See how the daemon uses the GitHub limit
+
+Each session, each look and each lead of one person use the token of
+that person. GitHub gives that token 5,000 GraphQL points an hour. When
+the points are gone, each `gh` call with GraphQL fails until the
+counter starts again, also the report of a verify. One query of the
+daemon costs 1 or 2 points for each 100 items that it reads.
+
+So the daemon keeps its use low. It has a target: the looks and the
+watches of two waves with no work use at most 300 points an hour, and
+one wave with 8 sessions uses at most 1,500.
+
+- The loop of the wave, the look at the pull requests and `main`, and
+  the sweep read the same open issues and pull requests. One read
+  serves them all. The loop of the wave always reads the forge as it is.
+- The watch of the wave looks each 5 minutes while it is the only
+  watch. A watch of a release, or a new watch, makes it look each
+  minute.
+- A wave with no work, no session and no change since its last look
+  looks each 5 minutes. It looks each minute again when something
+  changes. A session that ends, a job that ends, and a new
+  `riff wave run` in your clone make it look at once.
+- The default branch and its rules are read one time in 10 minutes. The
+  message of a commit is read one time.
+- The sweep asks GitHub about a folder that stays one time in 10
+  minutes. A branch with an open pull request needs no call.
+
+```mermaid
+flowchart LR
+    W["the loop of the wave<br/>each minute, each 5 minutes when idle"] -- "reads" --> R["one reply of GitHub:<br/>issues, pull requests, queue"]
+    L["the look at the pull requests and main"] -- "takes it" --> R
+    S["the sweep of the folders"] -- "takes it" --> R
+    W --> C["the count of the calls"]
+    L --> C
+    S --> C
+    C --> D["riff daemon status"]
+```
+
+To see what the daemon spent in the last hour, and the points that
+GitHub says are left:
+
+```sh
+riff daemon status
+```
+
+The last lines of the answer show the use of GitHub:
+
+```text
+GitHub, last hour: 36 calls, 72 GraphQL points.
+  wave      issue list                   12 calls       48 points
+  look      pr list                      12 calls       24 points
+  look      api commits/_/check-runs     12 calls        0 points
+GraphQL points left: 3,716, the counter starts again at 15:00:35 UTC (read 2m ago).
+```
+
+Each row has the caller and the kind of the call. The caller is `wave`
+(the loop and the jobs of the wave), `look`, `watches`, `sweep` or
+`usage`. A call of REST costs no GraphQL point. The points of a row are
+an estimate from the query that `gh` sends. The last line comes from
+GitHub: it is the counter that answered. GitHub keeps more than one
+counter for one token, so two reads can differ.
 
 #### Merge the pull requests of a wave with a merge queue
 
@@ -2651,6 +2715,7 @@ GitHub merges the pull request.
 Before each look, the daemon removes the folders of the sessions of
 the repository whose work is over (see
 [Remove the folders of old sessions](#remove-the-folders-of-old-sessions)).
+It asks GitHub about a folder that stays one time in 10 minutes.
 For a merged pull request with `Refs #N`, it first adds the comment
 `Merged in #PR (COMMIT)` to the issue, so the item is not free work
 again.

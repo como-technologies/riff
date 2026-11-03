@@ -138,6 +138,12 @@ const LOCK: &str = "watches.lock";
 /// ```
 pub const EVERY_VAR: &str = "RIFF_WATCHES_EVERY_MS";
 
+/// How many times longer an idle loop of the daemon waits between two
+/// looks (#1549): the look of a wave that has no work, no session and no
+/// change, and the look at the watch of a wave when it is the only watch.
+/// With a look each minute, an idle loop looks each 5 minutes.
+pub const IDLE_FACTOR: u32 = 5;
+
 /// The time between two looks at the watches: [`crate::look::LOOK_EVERY`],
 /// or the milliseconds of [`EVERY_VAR`].
 pub fn every() -> Duration {
@@ -355,7 +361,7 @@ pub struct Here;
 
 impl Lookout for Here {
     fn forge(&self, wave: &Wave, fetch: bool) -> Result<Box<dyn Forge>> {
-        let gh = crate::daemon::sweep::gh(&wave.repo);
+        let gh = crate::daemon::sweep::gh(&wave.repo).by("watches");
         Ok(match fetch {
             true => Box::new(cycle::GitHub::new(gh, &wave.main)?),
             false => Box::new(cycle::GitHub::at(gh, &wave.main)),
@@ -566,13 +572,19 @@ impl Watches {
     }
 
     /// One look at each watch (see "A look" above). It posts through
-    /// `lookout`. The error is a file that riff cannot read or write.
-    pub async fn look_all(&self, lookout: &Arc<dyn Lookout>, now_ms: i64) -> Result<()> {
+    /// `lookout`. The error is a file that riff cannot read or write. It
+    /// gives `true` when no watch but the watch of a wave stands: that
+    /// watch ends at no time, and it needs no quick look
+    /// ([`Watches::pause`], #1549).
+    pub async fn look_all(&self, lookout: &Arc<dyn Lookout>, now_ms: i64) -> Result<bool> {
         self.keep_waves(now_ms)?;
         let mut by_repo: BTreeMap<String, Vec<Watch>> = BTreeMap::new();
         for watch in self.read()? {
             by_repo.entry(watch.repo.clone()).or_default().push(watch);
         }
+        let slow = by_repo
+            .values()
+            .all(|watches| watches.iter().all(|w| w.op == Op::Wave));
         for (repo, watches) in by_repo {
             let wave = match wave_of(&self.dir, &repo) {
                 Ok(wave) => wave,
@@ -590,7 +602,48 @@ impl Watches {
                 self.settle_one(lookout, &wave, watch, result).await;
             }
         }
-        Ok(())
+        Ok(slow)
+    }
+
+    /// How long the daemon waits after a look that gave `slow`: the time
+    /// `every` between two looks, and for a look at the watch of a wave
+    /// alone [`IDLE_FACTOR`] times that (#1549).
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use riff::watches::Watches;
+    ///
+    /// let every = Duration::from_secs(60);
+    /// assert_eq!(Watches::wait(every, false), every);
+    /// assert_eq!(Watches::wait(every, true), Duration::from_secs(300));
+    /// ```
+    pub fn wait(every: Duration, slow: bool) -> Duration {
+        match slow {
+            true => every * IDLE_FACTOR,
+            false => every,
+        }
+    }
+
+    /// Waits [`Watches::wait`] after a look. A slow wait looks at the
+    /// file each `every`: a command that registers a watch in that time
+    /// ends the wait, so the new watch gets its first look at once, and
+    /// not after 5 minutes (#1549).
+    pub async fn pause(&self, every: Duration, slow: bool) {
+        let stamp = || {
+            std::fs::metadata(self.path())
+                .ok()
+                .map(|m| (m.modified().ok(), m.len()))
+        };
+        let seen = stamp();
+        let mut left = Self::wait(every, slow);
+        while !left.is_zero() {
+            let step = left.min(every);
+            tokio::time::sleep(step).await;
+            left -= step;
+            if slow && stamp() != seen {
+                break;
+            }
+        }
     }
 
     /// The watches of a repository whose clone the daemon does not know
@@ -1592,6 +1645,54 @@ mod tests {
         watch(dir.path(), deploy_op(None));
         look(dir.path(), &ground, 2 * MINUTE).await;
         assert_eq!(*ground.fetches.lock().unwrap(), [false, true]);
+    }
+
+    /// 01M6GYN9526HAYVKJC4HS858TH (#1549): a look says it is slow while the
+    /// watch of a wave is the only watch. The daemon then waits 5 times as
+    /// long for the next look.
+    #[tokio::test]
+    async fn the_look_is_slow_while_the_watch_of_a_wave_is_the_only_watch() {
+        let dir = daemon_dir();
+        let ground: Arc<dyn Lookout> = Ground::new(open_pull());
+        let watches = Watches::new(dir.path());
+        assert!(watches.look_all(&ground, MINUTE).await.unwrap());
+        watch(dir.path(), pull());
+        assert!(!watches.look_all(&ground, 2 * MINUTE).await.unwrap());
+    }
+
+    /// 01M6GYN9526HAYVKJC4HS858TH (#1549): a slow wait ends when a command
+    /// registers a watch, so the new watch gets its first look in one
+    /// step, not after the whole wait.
+    #[tokio::test(start_paused = true)]
+    async fn a_new_watch_ends_the_slow_wait() {
+        let dir = daemon_dir();
+        let ground: Arc<dyn Lookout> = Ground::new(open_pull());
+        let watches = Watches::new(dir.path());
+        assert!(watches.look_all(&ground, MINUTE).await.unwrap());
+
+        let every = Duration::from_millis(200);
+        let registers = {
+            let dir = dir.path().to_owned();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                watch(&dir, pull());
+            })
+        };
+        let start = tokio::time::Instant::now();
+        watches.pause(every, true).await;
+        // The watch came in the second step: the wait ends at 400 ms, not
+        // at 1,000 ms.
+        assert_eq!(start.elapsed(), Duration::from_millis(400));
+        registers.await.unwrap();
+
+        // With no change in the file, a slow wait lasts 5 steps, and a
+        // quick wait one.
+        let start = tokio::time::Instant::now();
+        watches.pause(every, true).await;
+        assert_eq!(start.elapsed(), 5 * every);
+        let start = tokio::time::Instant::now();
+        watches.pause(every, false).await;
+        assert_eq!(start.elapsed(), every);
     }
 
     #[tokio::test]

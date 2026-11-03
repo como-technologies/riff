@@ -13,14 +13,16 @@
 //! - at its start, after it took up its sessions, and then each
 //!   [`EVERY`], also when no wave runs ([`Daemon::sweep_every`]);
 //! - at each look of a wave, for the folders of its repository
-//!   ([`crate::wave`]);
+//!   ([`crate::wave`]). It asks the forge about a folder that stays one
+//!   time in [`EVERY`] only, and it deletes no old `riff-kept` branch
+//!   (#1549);
 //! - at once, for `riff daemon sweep` ([`Ask::Sweep`](super::Ask::Sweep)).
 //!
 //! The forge gives the fate of a folder ([`World::fate`], [`Fate::of`]):
 //!
 //! | The branch `worktree-ITEM` and the issue | The folder |
 //! |---|---|
-//! | An open pull request | stays |
+//! | An open pull request | stays, with no call when a look read the open pull requests in [`EVERY`] ([`fate_on`]) |
 //! | No open pull request, a merged one | goes |
 //! | No open pull request, a closed one | goes |
 //! | No pull request, and the issue is closed | goes |
@@ -138,7 +140,7 @@ pub const GH_LIMIT: Duration = Duration::from_secs(30);
 /// assert_eq!(gh("o/r").limit(), Some(GH_LIMIT));
 /// ```
 pub fn gh(repo: &str) -> pr::Gh {
-    pr::Gh::for_repo(repo).with_limit(GH_LIMIT)
+    pr::Gh::for_repo(repo).by("sweep").with_limit(GH_LIMIT)
 }
 
 /// The fate of the folder of a session that does not run, from the
@@ -258,11 +260,19 @@ struct Comments {
     comments: Vec<rollout::Comment>,
 }
 
-/// The fate of the folder of a session of the issue `issue` with `gh`
-/// ([`Fate::of`]): the pull requests of its branch, and the state of the
-/// issue when the branch has none.
-pub fn fate_on(gh: &pr::Gh, issue: u64) -> Result<Fate> {
+/// The fate of the folder of a session of the issue `issue` of the
+/// repository `repo` with `gh` ([`Fate::of`]): the pull requests of its
+/// branch, and the state of the issue when the branch has none.
+///
+/// A branch with an open pull request in a list that a look of the wave
+/// read in [`EVERY`] stays, and this call makes no `gh` call for it
+/// (#1549). Without that, each folder with an open pull request would cost
+/// a call at each sweep.
+pub fn fate_on(gh: &pr::Gh, repo: &str, issue: u64) -> Result<Fate> {
     let branch = run::branch(&format!("issue-{issue}"));
+    if rollout::open_in_kept(gh, repo, &branch, EVERY) {
+        return Ok(Fate::Stays);
+    }
     let pulls: Vec<BranchPull> = gh.json(&[
         "pr",
         "list",
@@ -841,9 +851,29 @@ pub struct Folders {
     /// The last line of each kept folder that the log got
     /// ([`Daemon::sweep_news`]).
     said: Mutex<BTreeMap<PathBuf, String>>,
+    /// When the forge last said that a folder stays ([`Fate::Stays`]). The
+    /// sweep at a look of a wave asks the forge again after [`EVERY`] only
+    /// (#1549).
+    stays: Mutex<BTreeMap<PathBuf, std::time::Instant>>,
 }
 
 impl Folders {
+    /// True when the forge said in the last [`EVERY`] that `folder` stays.
+    fn stayed(&self, folder: &Path) -> bool {
+        let stays = self.stays.lock().unwrap_or_else(PoisonError::into_inner);
+        stays.get(folder).is_some_and(|at| at.elapsed() < EVERY)
+    }
+
+    /// Keeps the answer of the forge for `folder`: it stays, or it does
+    /// not.
+    fn stays(&self, folder: &Path, stays: bool) {
+        let mut all = self.stays.lock().unwrap_or_else(PoisonError::into_inner);
+        match stays {
+            true => all.insert(folder.to_owned(), std::time::Instant::now()),
+            false => all.remove(folder),
+        };
+    }
+
     fn jobs(&self) -> MutexGuard<'_, BTreeMap<String, usize>> {
         self.jobs.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -938,7 +968,14 @@ impl<R: Runtime + 'static> Daemon<R> {
                 Err(e) => eprintln!("riff daemon: {e:#}"),
             }
         }
-        for repo in repos {
+        // The old branches of `riff-kept` go at the sweep of the daemon, not
+        // at each look of a wave (#1549): they are 30 days old.
+        let old_branches = if repo.is_none() {
+            repos
+        } else {
+            BTreeSet::new()
+        };
+        for repo in old_branches {
             match self.world.delete_old_kept(&repo).await {
                 Ok(names) => swept.extend(names.into_iter().map(|name| Swept {
                     line: text::swept_branch_deleted(&name, KEPT_DAYS),
@@ -1033,6 +1070,12 @@ impl<R: Runtime + 'static> Daemon<R> {
                 digest: None,
             })
         };
+        // The sweep at a look of a wave asks the forge about a folder that
+        // stays one time in [`EVERY`]: the sweep of the daemon asks each
+        // time (#1549).
+        if only.is_some() && self.folders.stayed(folder) {
+            return Ok(None);
+        }
         // A fault of the forge, for example a `gh` with no answer in
         // GH_LIMIT, keeps the folder: the next sweep tries again.
         let forge = async {
@@ -1054,6 +1097,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 return Ok(kept(line, None));
             }
         };
+        self.folders.stays(folder, fate == Fate::Stays);
         let Some(over) = text::swept_why(issue, &fate) else {
             return Ok(None);
         };
@@ -1797,6 +1841,56 @@ esac
                 },
             ]
         );
+    }
+
+    /// 01M6GYN97HH70E4C1FGM6HA2B0 (#1549): the sweep at a look of a wave
+    /// asks the forge about a folder that stays one time in [`EVERY`]; the
+    /// sweep of the daemon asks each time. A branch with an open pull
+    /// request in a reply that a look read makes no call.
+    #[tokio::test]
+    async fn the_sweep_of_a_wave_asks_the_forge_about_a_folder_that_stays_one_time() {
+        let root = tempfile::tempdir().unwrap();
+        let log = root.path().join("log");
+        let script = format!(
+            r#"#!/bin/sh
+echo "$*" >> {}
+case "$*" in
+'pr list --repo o/r'*) echo '[{{"number":41,"headRefName":"worktree-issue-2","headRefOid":"abc","isDraft":false,"statusCheckRollup":[]}}]' ;;
+'pr list --head'*) echo '[]' ;;
+'issue view'*) echo '{{"state":"OPEN"}}' ;;
+*) echo '{{}}' ;;
+esac
+"#,
+            log.display()
+        );
+        let gh = pr::Gh::at(isolated::write_program(root.path().join("gh"), &script))
+            .with_shared_reads();
+        // A look of the wave read the open pull requests.
+        rollout::pulls(&gh, "o/r").unwrap();
+        let (here, _) = with(Server::with_gh(gh)).await;
+        // Issue 1 has no pull request and an open issue. Issue 2 has an open
+        // pull request in the reply of the look.
+        let (one, two) = (
+            folder(&here, "issue-1-00000001"),
+            folder(&here, "issue-2-00000002"),
+        );
+        let asked = |branch: &str| {
+            let log = std::fs::read_to_string(&log).unwrap();
+            log.lines().filter(|l| l.contains(branch)).count()
+        };
+
+        here.daemon.sweep(Some("o/r")).await;
+        assert_eq!(asked("--head worktree-issue-1 "), 1);
+        assert_eq!(asked("issue view 1 "), 1);
+        assert_eq!(asked("worktree-issue-2 --state"), 0, "an open pull request");
+        // The second sweep of the wave asks nothing.
+        here.daemon.sweep(Some("o/r")).await;
+        assert_eq!(asked("--head worktree-issue-1 "), 1);
+        // The sweep of the daemon asks again.
+        here.daemon.sweep(None).await;
+        assert_eq!(asked("--head worktree-issue-1 "), 2);
+        assert_eq!(asked("worktree-issue-2 --state"), 0);
+        assert!(one.exists() && two.exists());
     }
 
     /// 01M53S7WDPQ2GWHJWJ6SZXZ5PN: a session of a job that ended while

@@ -850,8 +850,15 @@ pub fn required(gh: &Gh, repo: &str) -> anyhow::Result<Vec<String>> {
         #[serde(deserialize_with = "crate::text::forge_de")]
         default_branch: String,
     }
-    let branch: Branch = gh.json(&["api", &format!("repos/{repo}")])?;
-    let rules: Vec<Rule> = gh.json(&["api", &rules_path(repo, &branch.default_branch)])?;
+    // The rules of a repository change rarely: the daemon reads them one
+    // time in [`Gh::SLOW`] (#1549).
+    let read = |path: &str| -> anyhow::Result<String> { gh.read_within(&["api", path], Gh::SLOW) };
+    let path = format!("repos/{repo}");
+    let branch: Branch =
+        serde_json::from_str(&read(&path)?).with_context(|| format!("gh api {path}"))?;
+    let path = rules_path(repo, &branch.default_branch);
+    let rules: Vec<Rule> =
+        serde_json::from_str(&read(&path)?).with_context(|| format!("gh api {path}"))?;
     Ok(rules.iter().flat_map(Rule::required).collect())
 }
 

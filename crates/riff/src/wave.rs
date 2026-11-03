@@ -24,9 +24,31 @@
 //!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the full check of each waiting pull request"]
 //!     L --> P{"pick"}
 //!     P -- "an item, and a fact of the host fails" --> W
-//!     P -- "no work" --> W["give the room back; wait for an end, or LOOK_EVERY"] --> A
+//!     P -- "no work" --> W["give the room back; wait for an end,<br/>LOOK_EVERY, or IDLE_LOOK_EVERY"] --> A
 //!     P -- "an item" --> J["a job: claim, clone, start, wait for the end,<br/>the steps after the end, release"]
 //!     J -.-> A
+//! ```
+//!
+//! # The look and the limit of GitHub
+//!
+//! The token of a person has 5,000 GraphQL points an hour for all its
+//! sessions, looks and leads (#1549, [`crate::ghcalls`]). A wave that has
+//! no work, no session and no change since its last look waits
+//! [`IDLE_LOOK_EVERY`] for the next look, not [`LOOK_EVERY`]. The end of a
+//! session or of a job wakes it at once.
+//! A paused wave calls no `gh`, so it keeps [`LOOK_EVERY`]. The look of the
+//! loop reads the forge as it is. The look of the daemon at the pull
+//! requests and at `main` takes the reads of the loop
+//! ([`crate::pr::Gh::read`]), and waits as long, so an idle wave makes one
+//! read of its issues and its pull requests in each wait.
+//!
+//! ```mermaid
+//! flowchart TD
+//!     L["a look"] --> Q{"no work, no session,<br/>the same facts as the last look?"}
+//!     Q -- yes --> I["wait IDLE_LOOK_EVERY"]
+//!     Q -- no --> N["wait LOOK_EVERY"]
+//!     I -- "a session or a job ends" --> L
+//!     N -- "a session or a job ends" --> L
 //! ```
 //!
 //! # The notices to the lead
@@ -115,10 +137,10 @@
 //!
 //! `main` is the default branch of the repository, also in the start text
 //! of a verify and in the look of the Gate. The wave reads it from the forge
-//! at each look ([`Look::branch`], [`pr::default_branch`],
-//! 01M5R56GN3DC09GAPAF69GENEZ), so `master` and `trunk` work the same, and
-//! `waves.json` has no branch. A branch that does not read is the error
-//! of the look: the wave starts no work at that look.
+//! ([`Look::branch`], [`pr::default_branch`], 01M5R56GN3DC09GAPAF69GENEZ),
+//! and keeps the read for [`pr::Gh::SLOW`] (#1549), so `master` and `trunk`
+//! work the same, and `waves.json` has no branch. A branch that does not
+//! read is the error of the look: the wave starts no work at that look.
 //!
 //! A pull request of an item with auto-merge on and a conflict with
 //! `main` ([`rollout::Pull::conflict`]) cannot merge, also after its
@@ -399,6 +421,13 @@ pub const WAVES_FILE: &str = "waves.json";
 
 /// How often a wave looks for free work when nothing ends.
 pub const LOOK_EVERY: Duration = Duration::from_secs(60);
+
+/// How often an idle wave looks (#1549, [`crate::ghcalls`]): no session of
+/// the wave runs, no work is free, and the look saw the same facts as the
+/// look before ([`look_wait`]). A session that ends, and a job that ends,
+/// wake the wave at once.
+pub const IDLE_LOOK_EVERY: Duration =
+    Duration::from_secs(LOOK_EVERY.as_secs() * crate::watches::IDLE_FACTOR as u64);
 
 /// The most starts of one item in one run of a wave.
 pub const STARTS: u32 = 3;
@@ -853,8 +882,9 @@ pub struct Look {
     /// ([`rollout::Open::no_done_when`]). The lead hears of each once.
     pub no_done_when: BTreeSet<u64>,
     /// The default branch of the repository on the forge, for example
-    /// `main` or `master`. The look reads it at each look, and keeps it
-    /// in no file (01M5R56GN3DC09GAPAF69GENEZ).
+    /// `main` or `master`. The look reads it from the forge (a read of the
+    /// last [`pr::Gh::SLOW`] serves), and keeps it in no file
+    /// (01M5R56GN3DC09GAPAF69GENEZ).
     pub branch: String,
 }
 
@@ -1159,6 +1189,45 @@ fn running<R: Runtime + 'static>(
     items
 }
 
+/// The `gh` of the loop and the jobs of a wave for `repo`: its calls are
+/// the calls of the caller `wave` in the count of the daemon
+/// ([`crate::ghcalls`]).
+fn forge(repo: &str) -> pr::Gh {
+    pr::Gh::for_repo(repo).by("wave")
+}
+
+/// How long the wave waits after the look `look` (#1549). The wave is idle
+/// when the look has the same facts as the `last` look, the pick found no
+/// work (`picked` is false), and no session or job of the wave runs
+/// (`running` is false): it waits [`IDLE_LOOK_EVERY`]. Else it waits
+/// [`LOOK_EVERY`]. A paused wave calls no `gh`, and it starts at once on a
+/// resume, so it is never idle. An end of a session or of a job wakes the
+/// wave in each case.
+///
+/// ```
+/// use riff::wave::{IDLE_LOOK_EVERY, LOOK_EVERY, Look, look_wait};
+///
+/// let look = Look { free: vec!["issue-12".into()], ..Look::default() };
+/// // The first look, and a look that changed, wait one minute.
+/// assert_eq!(look_wait(&look, None, false, false), LOOK_EVERY);
+/// let other = Look { free: vec!["issue-13".into()], ..Look::default() };
+/// assert_eq!(look_wait(&other, Some(&look), false, false), LOOK_EVERY);
+/// // Nothing changed, no work, nothing runs: five minutes.
+/// assert_eq!(look_wait(&look, Some(&look), false, false), IDLE_LOOK_EVERY);
+/// // Work, or a session that runs, keeps the minute.
+/// assert_eq!(look_wait(&look, Some(&look), true, false), LOOK_EVERY);
+/// assert_eq!(look_wait(&look, Some(&look), false, true), LOOK_EVERY);
+/// // A paused wave looks each minute.
+/// let paused = Look { paused: true, ..Look::default() };
+/// assert_eq!(look_wait(&paused, Some(&paused), false, false), LOOK_EVERY);
+/// ```
+pub fn look_wait(look: &Look, last: Option<&Look>, picked: bool, running: bool) -> Duration {
+    match !picked && !running && !look.paused && last == Some(look) {
+        true => IDLE_LOOK_EVERY,
+        false => LOOK_EVERY,
+    }
+}
+
 /// The loop of the wave `wave` in `daemon`, until the daemon stops it.
 /// `taken` holds the items of its jobs before the start, `starts` the
 /// starts of each item, and `word` what it did last.
@@ -1179,6 +1248,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
     // True while the wave waits for a fact of the host: the lead heard
     // of it.
     let mut waits = false;
+    // The facts of the last look, to find an idle wave.
+    let mut last: Option<Look> = None;
     loop {
         let slot = daemon
             .room()
@@ -1192,6 +1263,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
         for line in daemon.sweep_news(Some(&wave.repo)).await {
             println!("{line}");
         }
+        let mut wait = LOOK_EVERY;
         let next = match world.look(&wave).await {
             Ok(look) => {
                 let spent: Vec<String> = spent(&look, &lock(&starts)).cloned().collect();
@@ -1259,10 +1331,18 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     (Some(work), None) => text::wave_started(&work.item()),
                     (None, _) => text::WAVE_NO_WORK.into(),
                 });
+                wait = look_wait(
+                    &look,
+                    last.as_ref(),
+                    next.is_some(),
+                    !running(&daemon, &wave, &taken).is_empty(),
+                );
+                last = Some(look);
                 next.filter(|_| fault.is_none() && !pulling)
             }
             Err(e) => {
                 say(text::wave_no_look(&format!("{e:#}")));
+                last = None;
                 None
             }
         };
@@ -1277,7 +1357,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
             None => {
                 drop(slot);
                 tokio::select! {
-                    () = tokio::time::sleep(LOOK_EVERY) => {}
+                    () = tokio::time::sleep(wait) => {}
                     () = daemon.changed() => {}
                 }
             }
@@ -1292,21 +1372,46 @@ pub(crate) async fn run<R: Runtime + 'static>(
 /// time until the fault changes.
 pub(crate) async fn watch<R: Runtime + 'static>(daemon: Arc<Daemon<R>>, wave: Wave) {
     let mut watch = look::Watch::default();
+    watch.accepts = daemon.look_every();
     let mut last_error = None;
     loop {
         let world = daemon.world();
-        match look::look_wave(&*world, &wave, &mut watch).await {
-            Ok(()) => last_error = None,
+        // A quiet look of a wave with no session: the next look comes later
+        // (#1549). The loop of the wave reads the same issues and pull
+        // requests, so this look takes its reply when the reply is not older
+        // than the wait and one more look.
+        let quiet = match look::look_wave(&*world, &wave, &mut watch).await {
+            Ok(told) => {
+                last_error = None;
+                !told
+            }
             Err(e) => {
                 let e = format!("{e:#}");
                 if last_error.as_ref() != Some(&e) {
                     eprintln!("riff daemon: {}: {}", wave.repo, text::wave_no_look(&e));
                 }
                 last_error = Some(e);
+                false
             }
-        }
-        tokio::time::sleep(daemon.look_every()).await;
+        };
+        let every = daemon.look_every();
+        let idle = quiet && !has_session(&daemon, &wave);
+        let wait = if idle {
+            every * crate::watches::IDLE_FACTOR
+        } else {
+            every
+        };
+        watch.accepts = wait + every;
+        tokio::time::sleep(wait).await;
     }
+}
+
+/// True when a session of the wave `wave` runs in `daemon`.
+fn has_session<R: Runtime + 'static>(daemon: &Daemon<R>, wave: &Wave) -> bool {
+    daemon
+        .records()
+        .iter()
+        .any(|r| r.job.as_ref().is_some_and(|j| j.wave.repo == wave.repo))
 }
 
 /// The starts of each item in one run of a wave, shared by its loop and
@@ -1861,17 +1966,8 @@ async fn after_verify(
         return Ok(vec![body]);
     };
     let (repo, tested, shown) = (wave.repo.clone(), commit.to_owned(), result.clone());
-    let reported = blocking(move || {
-        pr::report(
-            &pr::Gh::for_repo(&repo),
-            &repo,
-            pull,
-            &tested,
-            verdict,
-            &shown,
-        )
-    })
-    .await;
+    let reported =
+        blocking(move || pr::report(&forge(&repo), &repo, pull, &tested, verdict, &shown)).await;
     let reported = match reported {
         Ok(reported) => reported,
         Err(e) => {
@@ -1964,7 +2060,7 @@ impl Live {
                     blocking(move || run::make_clone(&main, &at, &branch)).await?
                 };
                 let failed = blocking(move || {
-                    let pulls = rollout::pulls(&pr::Gh::for_repo(&repo), &repo)?;
+                    let pulls = rollout::pulls(&forge(&repo), &repo)?;
                     Ok(failed_verify(&pulls, issue))
                 })
                 .await
@@ -2012,9 +2108,7 @@ impl Live {
                 let (main_at, pull_at) = (main.clone(), *pull);
                 blocking(move || clone_at(&main_at, &at, pull_at, &commit_at)).await?;
                 let repo = wave.repo.clone();
-                let checks =
-                    blocking(move || repo_setup::full_check(&pr::Gh::for_repo(&repo), &repo))
-                        .await?;
+                let checks = blocking(move || repo_setup::full_check(&forge(&repo), &repo)).await?;
                 let main_at = main.clone();
                 let release = blocking(move || Ok(release_config::merged(&main_at))).await?;
                 text::wave_verify_start(&wave.repo, base, *issue, *pull, commit, &checks, release)
@@ -2486,8 +2580,7 @@ impl World for Live {
                 .unwrap_or_default();
             let asked = reasked(&bodies.iter().map(String::as_str).collect::<Vec<_>>());
             let repo = wave.repo.clone();
-            blocking(move || look_with(&pr::Gh::for_repo(&repo), &repo, claims, holds, &asked))
-                .await
+            blocking(move || look_with(&forge(&repo), &repo, claims, holds, &asked)).await
         })
     }
 
@@ -2523,12 +2616,12 @@ impl World for Live {
             let host = blocking(move || Ok(run::host_facts(&main)?)).await?;
             let base = {
                 let repo = wave.repo.clone();
-                blocking(move || pr::default_branch(&pr::Gh::for_repo(&repo), &repo)).await?
+                blocking(move || pr::default_branch(&forge(&repo), &repo)).await?
             };
             let milestone = match work {
                 Work::Build { issue } => {
                     let (repo, issue) = (wave.repo.clone(), *issue);
-                    Some(blocking(move || run::milestone(&pr::Gh::for_repo(&repo), issue)).await?)
+                    Some(blocking(move || run::milestone(&forge(&repo), issue)).await?)
                 }
                 Work::Verify { .. } | Work::Rebase { .. } | Work::Checks { .. } => None,
             };
@@ -2593,7 +2686,7 @@ impl World for Live {
             );
             let done = match &job.work {
                 Work::Build { issue } => {
-                    let gh = pr::Gh::for_repo(&wave.repo);
+                    let gh = forge(&wave.repo);
                     let saved = save_work(record, *issue).await;
                     after_build(
                         gh,
@@ -2607,7 +2700,7 @@ impl World for Live {
                     .await
                 }
                 Work::Rebase { issue, commit, .. } => {
-                    let gh = pr::Gh::for_repo(&wave.repo);
+                    let gh = forge(&wave.repo);
                     let fix = Some(Fix::Rebase(commit));
                     after_build(gh, &api, record, wave, *issue, (fix, None), ended).await
                 }
@@ -2617,7 +2710,7 @@ impl World for Live {
                     checks,
                     ..
                 } => {
-                    let gh = pr::Gh::for_repo(&wave.repo);
+                    let gh = forge(&wave.repo);
                     let fix = Some(Fix::Checks(commit, checks));
                     after_build(gh, &api, record, wave, *issue, (fix, None), ended).await
                 }
@@ -2633,7 +2726,7 @@ impl World for Live {
     fn meter(&self, repo: &str) -> Option<usage::Meter> {
         Some(usage::Meter {
             dir: crate::local::marks()?,
-            gh: sweep::gh(repo),
+            gh: sweep::gh(repo).by("usage"),
         })
     }
 
@@ -2642,8 +2735,8 @@ impl World for Live {
     }
 
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>> {
-        let gh = sweep::gh(repo);
-        Box::pin(blocking(move || sweep::fate_on(&gh, issue)))
+        let (gh, repo) = (sweep::gh(repo), repo.to_owned());
+        Box::pin(blocking(move || sweep::fate_on(&gh, &repo, issue)))
     }
 
     fn delete_old_kept<'a>(&'a self, repo: &'a str) -> BoxFuture<'a, Result<Vec<String>>> {
@@ -2784,7 +2877,7 @@ impl World for Live {
     fn gh(&self, repo: &str) -> Arc<pr::Gh> {
         lock(&self.ghs)
             .entry(repo.to_owned())
-            .or_insert_with(|| Arc::new(sweep::gh(repo).with_one_token()))
+            .or_insert_with(|| Arc::new(sweep::gh(repo).by("look").with_one_token()))
             .clone()
     }
 
@@ -6044,5 +6137,220 @@ esac
                 )
             )]
         );
+    }
+
+    /// A fake `gh` for the repository `o/r` that logs nothing and answers
+    /// from the files of its folder: the open pull requests, the open
+    /// issues, the milestones, the rules and the Gate of `main`. It
+    /// answers the query of the merge queue with the cost of the query.
+    const READS_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+case "$1 $2" in
+  "api graphql") cat "$dir/queue" ;;
+  api*)
+    case "$2" in
+      repos/o/r) case "$*" in *--jq*) echo main ;; *) echo '{"default_branch":"main"}' ;; esac ;;
+      */rules/branches/main*) cat "$dir/rules" ;;
+      */commits/main/check-runs*) cat "$dir/gate" ;;
+      */milestones*) cat "$dir/milestones" ;;
+      *) exit 1 ;;
+    esac ;;
+  "pr list") cat "$dir/pulls" ;;
+  "issue list") cat "$dir/issues" ;;
+  *) exit 1 ;;
+esac
+"#;
+
+    /// The forge of [`READS_GH`]: `pulls` open pull requests, each with its
+    /// verify passed and its Gate running, and 20 open issues, one in the
+    /// current wave for each pull request. The files are in the new
+    /// folder.
+    fn reads_forge(pulls: u64) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        isolated::write_program(dir.path().join("gh"), READS_GH);
+        let put = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+        let pull = |n: u64| {
+            format!(
+                r#"{{"number":{},"headRefName":"worktree-issue-{n}","headRefOid":"1a2b3c4d{n}","isDraft":false,
+"statusCheckRollup":[{{"context":"riff/verify","state":"SUCCESS"}},{{"__typename":"CheckRun","name":"Gate","status":"IN_PROGRESS"}}],
+"mergeable":"MERGEABLE","autoMergeRequest":{{"enabledAt":"2026-11-03T05:00:00Z"}},"body":"Closes #{n}\n"}}"#,
+                40 + n
+            )
+        };
+        let pulls: Vec<String> = (1..=pulls).map(pull).collect();
+        put("pulls", &format!("[{}]", pulls.join(",")));
+        let issue = |n: u64| {
+            let wave = if n <= 8 { "Wave 1" } else { "Backlog" };
+            format!(
+                r#"{{"number":{n},"title":"item {n}","body":"Done when: it works.","comments":[],"milestone":{{"title":"{wave}"}},"labels":[]}}"#
+            )
+        };
+        let issues: Vec<String> = (1..=20).map(issue).collect();
+        put("issues", &format!("[{}]", issues.join(",")));
+        put(
+            "milestones",
+            r#"[{"number":1,"title":"Wave 1","open_issues":8,"closed_issues":0},
+{"number":2,"title":"Backlog","open_issues":12,"closed_issues":0}]"#,
+        );
+        put("rules", GATE_RULES);
+        put(
+            "gate",
+            r#"{"check_runs":[{"status":"in_progress","conclusion":null,"head_sha":"c0ffee1"}]}"#,
+        );
+        put(
+            "queue",
+            r#"{"data":{"rateLimit":{"cost":1,"remaining":4300,"resetAt":"2026-11-03T15:00:00Z"},
+"repository":{"pullRequests":{"nodes":[]}}}}"#,
+        );
+        dir
+    }
+
+    /// The calls and the GraphQL points of each caller so far.
+    fn spent(calls: &crate::ghcalls::Calls) -> BTreeMap<String, (u32, u32)> {
+        let mut by_caller: BTreeMap<String, (u32, u32)> = BTreeMap::new();
+        for row in calls.shown(crate::daemon::now_ms()).rows {
+            let sum = by_caller.entry(row.caller).or_default();
+            sum.0 += row.calls;
+            sum.1 += row.points;
+        }
+        by_caller
+    }
+
+    /// One tick of a wave with no session, as the daemon makes it: the
+    /// look of the loop of the wave (`wave`), the look of the daemon
+    /// (`look`), and the look at the watches (`watches`), all with the
+    /// `gh` of `forge`. It gives the calls and the points of each caller.
+    async fn tick(
+        forge: &tempfile::TempDir,
+        gh: &pr::Gh,
+        calls: &crate::ghcalls::Calls,
+        watch: &mut look::Watch,
+    ) -> BTreeMap<String, (u32, u32)> {
+        use crate::cycle::Forge as _;
+        let before = spent(calls);
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: forge.path().join("main"),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        let world = Fakes {
+            root: forge.path().to_owned(),
+            forge: Mutex::default(),
+            gh: Arc::new(gh.clone().by("look")),
+        };
+        let none = BTreeSet::new();
+        look_with(
+            &gh.clone().by("wave"),
+            "o/r",
+            none.clone(),
+            none,
+            &HashSet::new(),
+        )
+        .unwrap();
+        let told = look::look_wave(&world, &wave, watch).await.unwrap();
+        assert!(!told, "nothing changed: a quiet look");
+        let watches = crate::cycle::GitHub::at(gh.clone().by("watches"), &wave.main);
+        watches.wave_open().unwrap();
+        let mut spent = spent(calls);
+        for (caller, (calls, points)) in &before {
+            let sum = spent.entry(caller.clone()).or_default();
+            *sum = (sum.0 - calls, sum.1 - points);
+        }
+        spent
+    }
+
+    /// The calls and the points of all callers in `tick`.
+    fn sum(tick: &BTreeMap<String, (u32, u32)>) -> (u32, u32) {
+        tick.values()
+            .fold((0, 0), |(c, p), (calls, points)| (c + calls, p + points))
+    }
+
+    /// 01M6GYN97HH70E4C1FGM6HA2B0, 01M6GYN92N3Z99GPXTYHDDWF4R (#1549): a wave
+    /// with no session, 1 open pull request and 20 open issues reads the
+    /// forge with 10 calls and 6 GraphQL points at its first tick. The
+    /// look of the daemon takes the reads of the loop of the wave. A second
+    /// tick with no change makes 7 calls: it reads the default branch and
+    /// the rules one time. A daemon that shares no read made 14 calls
+    /// and 11 points in each tick. With a tick each 5 minutes the two waves
+    /// of an idle host use 144 points an hour, under the target of 300.
+    #[tokio::test]
+    async fn an_idle_wave_reads_the_forge_with_few_calls_and_fewer_at_the_second_tick() {
+        let forge = reads_forge(1);
+        let calls = Arc::new(crate::ghcalls::Calls::default());
+        let gh = pr::Gh::at(forge.path().join("gh"))
+            .with_shared_reads()
+            .with_calls(calls.clone());
+        // The look of the daemon takes a reply of the wave that is not older
+        // than the wait and one more look.
+        let mut watch = look::Watch::default();
+        watch.accepts = 2 * LOOK_EVERY;
+
+        let first = tick(&forge, &gh, &calls, &mut watch).await;
+        assert_eq!(first["wave"], (5, 5), "{first:?}");
+        // The look of the daemon reads the rules and the Gate of `main`
+        // only: the issues and the pull requests came from the wave.
+        assert_eq!(first["look"], (3, 0), "{first:?}");
+        assert_eq!(first["watches"], (2, 1), "{first:?}");
+        assert_eq!(sum(&first), (10, 6));
+
+        let second = tick(&forge, &gh, &calls, &mut watch).await;
+        assert_eq!(sum(&second), (7, 6), "{second:?}");
+        assert!(sum(&second).0 < sum(&first).0);
+
+        // The same tick of a daemon that shares no read: each loop reads
+        // the issues and the pull requests, and the default branch each time.
+        let alone_calls = Arc::new(crate::ghcalls::Calls::default());
+        let alone = pr::Gh::at(forge.path().join("gh")).with_calls(alone_calls.clone());
+        let mut watch = look::Watch::default();
+        let before = tick(&forge, &alone, &alone_calls, &mut watch).await;
+        assert_eq!(sum(&before), (14, 11), "{before:?}");
+
+        // The target of two idle waves: one tick each 5 minutes.
+        let ticks = 3600 / IDLE_LOOK_EVERY.as_secs() as u32;
+        let hour = 2 * ticks * sum(&second).1;
+        assert_eq!(hour, 144);
+        assert!(hour <= crate::ghcalls::IDLE_POINTS_AN_HOUR, "{hour}");
+        // A daemon that shares no read and looks each minute.
+        assert!(2 * 60 * sum(&before).1 > crate::ghcalls::IDLE_POINTS_AN_HOUR);
+    }
+
+    /// 01M6GYN92N3Z99GPXTYHDDWF4R, 01M6GYN97HH70E4C1FGM6HA2B0 (#1549): a wave
+    /// with 8 sessions has 8 open pull requests, and a folder for each. The
+    /// loop of the wave looks each minute, the look of the daemon takes its
+    /// reads, the watch of the wave looks each 5 minutes, and the sweep of
+    /// the folders makes no call: each branch has an open pull request in the
+    /// reply of the wave. That is 312 GraphQL points an hour, under the
+    /// target of 1,500.
+    #[tokio::test]
+    async fn a_wave_with_eight_sessions_stays_under_its_target() {
+        let forge = reads_forge(8);
+        let calls = Arc::new(crate::ghcalls::Calls::default());
+        let gh = pr::Gh::at(forge.path().join("gh"))
+            .with_shared_reads()
+            .with_calls(calls.clone());
+        let mut watch = look::Watch::default();
+        watch.accepts = 2 * LOOK_EVERY;
+        tick(&forge, &gh, &calls, &mut watch).await;
+        let second = tick(&forge, &gh, &calls, &mut watch).await;
+        let (wave, look, watches) = (second["wave"].1, second["look"].1, second["watches"].1);
+        assert_eq!((wave, look, watches), (5, 0, 1), "{second:?}");
+
+        // The sweep: 8 folders, 8 branches with an open pull request.
+        let before = spent(&calls);
+        let sweeper = gh.clone().by("sweep");
+        for issue in 1..=8 {
+            let fate = sweep::fate_on(&sweeper, "o/r", issue).unwrap();
+            assert_eq!(fate, Fate::Stays);
+        }
+        assert_eq!(spent(&calls), before, "the sweep made a call");
+
+        // A look each minute for the wave and the daemon, a look each 5
+        // minutes for the watch.
+        let minutes = 3600 / LOOK_EVERY.as_secs() as u32;
+        let watches_ticks = 3600 / IDLE_LOOK_EVERY.as_secs() as u32;
+        let hour = minutes * (wave + look) + watches_ticks * watches;
+        assert_eq!(hour, 312);
+        assert!(hour <= crate::ghcalls::BUSY_POINTS_AN_HOUR, "{hour}");
     }
 }
