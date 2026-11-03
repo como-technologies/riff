@@ -3484,6 +3484,27 @@ gh pr edit 90 --body-file body.md
 just hygiene pr 90
 ```
 
+A line `Tests: ...` at the end of a summary is a trailer line too. A
+long one breaks the rule. Write tests and results as a plain sentence
+in a paragraph of their own, not as a line `Key: value`:
+
+```text
+Tests: unit tests of the permissions, the book, the doc tests ...   (too long)
+
+I ran the unit tests of the permissions and the book. They pass.    (a sentence)
+```
+
+`riff pr open` runs this check first. When a line of the last block is
+too long, it opens nothing, and the error names the rule, the line and
+its length. Fix `summary.md`, and run the command again:
+
+```sh
+riff pr open --title "Show the wave" --file summary.md
+```
+
+The start text of a worker says the same in one line, so a worker
+writes its summary in sentences from the start.
+
 ### Choose the rules of a repository
 
 The form above is the form of riff. riff reads only two parts of it:

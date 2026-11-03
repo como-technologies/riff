@@ -701,6 +701,16 @@
   the same way. The wave starts no fix session for a
   pull request that is merged or closed, and sends no message that a
   check still fails for one.
+- **01M6H3EK1J3DEEV09FAKKKFPEB** A body of `riff pr open` that ends with
+  a line `Key: value` of more than 72 characters, for example a line
+  `Tests: ...`, breaks the rule `trailer-wrap`
+  (01M6FYR8XH4WPAH2AFW6B0NARJ). `riff pr open` refuses it before the
+  pull request opens, names the rule, and opens nothing. The same text
+  as a plain sentence passes. The start text of a worker says in one
+  line: write tests and results in plain sentences, not as a `Key:
+  value` line, and keep each trailer line to 72 characters. The how-to
+  "Keep a trailer line short" says that `riff pr open` checks the body
+  first.
 
 ## Tokens on GitHub
 

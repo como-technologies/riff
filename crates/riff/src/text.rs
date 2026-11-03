@@ -5546,10 +5546,24 @@ const CI_DECIDES: &str =
 pub const ISSUE_BY_COMMENT: &str = "Never change the body or the title of an issue. Add to an \
      issue with a comment: gh issue comment NUMBER --body-file FILE";
 
+/// The line of the start text of a worker about the body of the pull
+/// request: a line `Key: value` at its end is a trailer line, and the
+/// merge wraps a trailer line over [`hygiene::MERGE_WIDTH`] characters
+/// (01M6H3EK1J3DEEV09FAKKKFPEB).
+pub fn body_in_sentences() -> String {
+    format!(
+        "Write tests and results in plain sentences, not as a `Key: value` line, and keep each \
+         trailer line to {} characters.",
+        hygiene::MERGE_WIDTH
+    )
+}
+
 /// The start text of a session of `riff run`: the work item, the
 /// branch, and the frame of the body of the pull request
 /// (01M4Z81APKC14AVNJWCGRQKNVW). It tells the session to leave no
-/// background task at the end of its work (01M4ZSZXBXM6T6MGQ00ACQA66X).
+/// background task at the end of its work (01M4ZSZXBXM6T6MGQ00ACQA66X),
+/// and to write tests and results in plain sentences, not as a line
+/// `Key: value` (01M6H3EK1J3DEEV09FAKKKFPEB).
 ///
 /// ```
 /// let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
@@ -5560,6 +5574,11 @@ pub const ISSUE_BY_COMMENT: &str = "Never change the body or the title of an iss
 /// assert!(text.contains("--trailer \"Riff-Session: 1a2b\""));
 /// assert!(text.contains("gh pr create --title \"TITLE\" --milestone \"Wave 3\" --body-file FILE"));
 /// assert!(text.contains(frame));
+/// assert!(text.contains(
+///     "Write tests and results in plain sentences, not as a `Key: value` line, and keep each \
+///      trailer line to 72 characters."
+/// ));
+/// assert_eq!(text.matches("plain sentences").count(), 1);
 /// assert!(text.contains("Leave no background task at the end of your work"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
 /// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
@@ -5591,6 +5610,7 @@ pub fn run_start(
     } else {
         ""
     };
+    let sentences = body_in_sentences();
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
          branch {branch}. Do the work item issue-{issue}, then stop. riff does the claim, the \
@@ -5608,7 +5628,7 @@ pub fn run_start(
          done: git push -u origin {branch}\n   \
          Never push to {base}.\n\
          6. Write the body of the pull request to a file. Put your summary in place of \
-         SUMMARY. Keep each other line:\n\n{frame}\n\
+         SUMMARY. Keep each other line:\n\n{frame}\n   {sentences}\n\
          7. Open the pull request, and turn on auto-merge at once:\n   \
          gh pr create --title \"TITLE\" --milestone \"{milestone}\" --body-file FILE\n   \
          gh pr merge --auto --squash NUMBER\n   \
@@ -10351,6 +10371,36 @@ mod tests {
         }
         let names: std::collections::BTreeSet<_> = LEAD_RULES.iter().map(|rule| rule.0).collect();
         assert_eq!(names.len(), LEAD_RULES.len());
+    }
+
+    /// #1572 (01M6H3EK1J3DEEV09FAKKKFPEB): the start text of a worker
+    /// has the line about the body of the pull request one time, in the
+    /// step that writes the body, before the step that opens the pull
+    /// request. The width in it is the width of the merge. The other start
+    /// texts have no such line: they write no body.
+    #[test]
+    fn the_start_text_of_a_worker_says_to_write_tests_in_plain_sentences() {
+        let line = body_in_sentences();
+        assert!(line.contains(&format!("to {} characters.", hygiene::MERGE_WIDTH)));
+        let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
+        for earlier in [false, true] {
+            let text = run_start("o/r", "main", 12, "b", "1a", frame, "Wave 3", earlier);
+            assert_eq!(text.matches(&line).count(), 1, "{text}");
+            let at = text.find(&line).unwrap();
+            assert!(text.find("6. Write the body").unwrap() < at, "{text}");
+            assert!(
+                at < text.find("7. Open the pull request").unwrap(),
+                "{text}"
+            );
+        }
+        let checks = ["CI".to_owned()];
+        for text in [
+            wave_rebase_start("o/r", "main", 12, 40, "1a2b3c4", "b", "1a"),
+            wave_checks_start("o/r", "main", 12, 40, "1a2b3c4", &checks, "b", "1a"),
+            wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, true),
+        ] {
+            assert!(!text.contains("plain sentences"), "{text}");
+        }
     }
 
     /// #1354 (01M5R580VCRCHJM8FY7NT485R1): the start texts of the
