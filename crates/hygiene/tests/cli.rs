@@ -274,3 +274,61 @@ fn a_squash_commit_with_the_trailers_before_a_paragraph_of_text_fails() {
         assert!(stderr.contains(rule), "no {rule} in:\n{stderr}");
     }
 }
+
+/// The line `Generated-by:` of the outside pull request #1348, on one
+/// line of 78 characters.
+const LONG_TRAILER: &str =
+    "Generated-by: GLM-5.3-Flash (brief, implementation, task review, final review)";
+
+/// The merge wraps a body line over 72 characters, and the wrapped part is
+/// no trailer line. `hygiene pr` fails the line before the merge, and
+/// names the reason (01M6FYR8XH4WPAH2AFW6B0NARJ).
+#[test]
+fn a_pull_request_with_a_trailer_line_over_the_wrap_fails_with_the_reason() {
+    let body = format!("{GOOD}{LONG_TRAILER}\n");
+    let gh = fake_gh(
+        &pr_json(&body, Some("Wave 3")),
+        &[issue_json(77, "OPEN", Some("Wave 3"))],
+    );
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    for line in [
+        "error: trailer-wrap: the trailer line `Generated-by: GLM-5.3-Flash (brief,",
+        "has 78 characters, and the merge wraps a line over 72",
+        "keep the line to 72 characters",
+        "pull request #90 breaks 1 rule(s) of issue hygiene.",
+    ] {
+        assert!(stderr.contains(line), "no {line:?} in:\n{stderr}");
+    }
+}
+
+/// The same pull request passes with a trailer line of 72 characters.
+#[test]
+fn a_pull_request_with_a_short_trailer_line_passes() {
+    let body = format!("{GOOD}Generated-by: GLM-5.3-Flash (brief, implementation, task review)\n");
+    assert!(body.lines().all(|l| l.len() <= 72));
+    let gh = fake_gh(
+        &pr_json(&body, Some("Wave 3")),
+        &[issue_json(77, "OPEN", Some("Wave 3"))],
+    );
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+}
+
+/// c60887ef, the squash of the outside pull request #1348: the merge
+/// wrapped the line `Generated-by:`, so the commit has no trailer `Issue:`.
+#[test]
+fn the_commit_with_a_wrapped_trailer_line_fails() {
+    let dir = repo(
+        "Pause and resume the riff (#90)\n\nCloses #77\n\nIssue: #77\nMilestone: Wave 3\n\
+         Generated-by: GLM-5.3-Flash (brief, implementation, task review, final\nreview)\n\n\
+         Co-authored-by: GLM-5.3-Flash <noreply@z.ai>\n",
+    );
+    let out = hygiene(&["commit"], None, Some(dir.path()));
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    for rule in ["issue-trailer:", "milestone-trailer:"] {
+        assert!(stderr.contains(rule), "no {rule} in:\n{stderr}");
+    }
+}

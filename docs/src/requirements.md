@@ -488,6 +488,16 @@
   line for each co-author of its commits, except the author of the pull
   request. Supersedes 01M3JDRSYEGKYVNGF49SJMACEB and
   01M3JFEXS6M5549TC6MH0G2MS0 in part.
+- **01M6FYR8XH4WPAH2AFW6B0NARJ** The merge wraps each line of the body
+  of a pull request that is longer than 72 characters, with no indent on
+  the wrapped part, and that part is no trailer line. So a line of the
+  last block of trailers that is longer than 72 characters breaks the
+  block in the commit on main. `hygiene pr` predicts the wrap in the
+  squash message (`merge_wrap`), and fails each such line with the rule
+  `trailer-wrap`. The error names the line, its length and the limit.
+  The rule is one of the rules of riff (`rules = "riff"`), and a
+  repository that is not riff does not get it. The book says how long a
+  trailer line may be.
 ## Pull requests on GitHub
 
 - **01M3JFEXG85AJK8ZE8N807EQVB** `just github` sets up the repository
