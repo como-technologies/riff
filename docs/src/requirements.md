@@ -2681,11 +2681,10 @@
   daemon sends none of them again while the message is one of the last
   200 of the repository thread.
 - **01M6FYH7BFFSZQ2TAJSX8A5QQV** The look of a daemon posts each message
-  about `main` with a key: the commit and the state, broken or passes.
-  So a wave on more hosts sends each of these messages one time to the
-  lead of the repository. A new start of the daemon sends none of them
-  again while the message is one of the last 200 of the repository
-  thread.
+  about `main` with a key (01M6GX8CN4ZTV0X40GD5AWPXH9). So a wave on
+  more hosts sends each of these messages one time to the lead of the
+  repository. A new start of the daemon sends none of them again while
+  the message is one of the last 200 of the repository thread.
 - **01M6FZY6NABXGXVRYF6W1509XE** The wave of a daemon posts the notices
   that come from the facts of the repository with a key: an issue with
   no `Done when:` line (`no-done-when-N`), a pull request that is stuck
@@ -2706,6 +2705,13 @@
   requirement and no page of the book sends a reader to a Claude Code
   skill: riff installs none. A test checks the code of each crate, the
   requirements and the pages of the book.
+- **01M6GX8CN4ZTV0X40GD5AWPXH9** The key of a post about `main` holds
+  the commit, the run of the check and the state, broken or passes. The
+  run is the number of the run and the number of the job of the check
+  that the message names. So a rerun of the same commit gives a new key:
+  `main` that breaks, passes on a rerun and breaks again gives the lead
+  three messages. A second look at the same run gives the same key.
+  Supersedes 01M6FYH7BFFSZQ2TAJSX8A5QQV in part.
 
 ## Threads
 

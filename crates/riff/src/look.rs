@@ -154,10 +154,13 @@
 //!
 //! A wave can run on more hosts, and each daemon has a watch of its own,
 //! so each post about `main` has a key too ([`MainNews::key`],
-//! 01M6FYH7BFFSZQ2TAJSX8A5QQV): the commit and the state, `broken` or
-//! `passes`. `riff-server` drops a post with the key of a message that it
-//! keeps from the same user in the thread. So the lead gets each message
-//! about `main` one time, also after a new start of a daemon.
+//! 01M6FYH7BFFSZQ2TAJSX8A5QQV, 01M6GX8CN4ZTV0X40GD5AWPXH9): the commit,
+//! the run of the check (its run number and its job number) and the
+//! state, `broken` or `passes`. `riff-server` drops a post with the key
+//! of a message that it keeps from the same user in the thread. So the
+//! lead gets each message about `main` one time, also after a new start
+//! of a daemon. A rerun makes a new job, so a commit that breaks, passes
+//! on a rerun and breaks again gives the lead three messages.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -165,10 +168,14 @@
 //!     participant B as the daemon of thelio
 //!     participant S as riff-server
 //!     participant L as the lead
-//!     A->>S: post, key main-c60887e-broken
+//!     A->>S: post, key main-c60887e-38861280871-7-broken
 //!     S->>L: the message
-//!     B->>S: post, key main-c60887e-broken
+//!     B->>S: post, key main-c60887e-38861280871-7-broken
 //!     Note over S: it keeps this key: it drops the post
+//!     A->>S: post, key main-c60887e-38861280871-8-passes (a rerun)
+//!     S->>L: the note
+//!     A->>S: post, key main-c60887e-38861280871-9-broken (a second rerun)
+//!     S->>L: the message
 //! ```
 //!
 //! # The release cycle
@@ -509,6 +516,9 @@ pub struct MainGate {
     /// The page of the run of the check that did not pass, or of the
     /// first check, for example `https://github.com/o/r/actions/runs/38861280871`.
     pub run: Option<String>,
+    /// The number of the job of that check in the run, for example `7`. A
+    /// rerun of a run keeps the run and makes new jobs ([`job_of`]).
+    pub job: Option<String>,
 }
 
 impl MainGate {
@@ -535,6 +545,7 @@ impl MainGate {
     /// assert_eq!(main.commit, "5103311abc");
     /// assert_eq!(main.gate, Gate::Ended("failure".into()));
     /// assert_eq!(main.run.as_deref(), Some("https://github.com/o/r/actions/runs/2"));
+    /// assert_eq!(main.job.as_deref(), Some("7"));
     /// assert!(main.broken());
     /// // A check with no run yet: the full check has not started.
     /// let waits = MainGate::of(&[vec![run("success", 1)], vec![]]).unwrap();
@@ -573,14 +584,12 @@ impl MainGate {
             .find(|r| r.conclusion.as_deref().is_some_and(|c| !is_success(c)))
             .or(newest.first().copied())
             .unwrap_or(first);
+        let page = shown.html_url.as_deref();
         Some(Self {
             commit: commit.to_owned(),
             gate,
-            run: shown
-                .html_url
-                .as_deref()
-                .and_then(run_of)
-                .map(str::to_owned),
+            run: page.and_then(run_of).map(str::to_owned),
+            job: page.and_then(job_of).map(str::to_owned),
         })
     }
 
@@ -605,6 +614,33 @@ impl MainGate {
 pub fn run_of(job: &str) -> Option<&str> {
     let (run, _) = job.split_once("/job/")?;
     run.contains("/actions/runs/").then_some(run)
+}
+
+/// The number of the job in the page of a job of a run. A rerun of a run
+/// keeps the number of the run and makes new jobs, so the job tells one
+/// attempt from the next.
+///
+/// ```
+/// use riff::look::job_of;
+///
+/// assert_eq!(job_of("https://github.com/o/r/actions/runs/38861280871/job/7"), Some("7"));
+/// assert_eq!(job_of("https://github.com/o/r/actions/runs/38861280871/job/7/steps"), Some("7"));
+/// assert_eq!(job_of("https://github.com/o/r/runs/2"), None);
+/// ```
+pub fn job_of(job: &str) -> Option<&str> {
+    run_of(job)?;
+    let (_, tail) = job.split_once("/job/")?;
+    let end = tail
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(tail.len());
+    (end > 0).then(|| &tail[..end])
+}
+
+/// The number at the end of the page of a run.
+fn number_of(run: &str) -> Option<&str> {
+    run.rsplit('/')
+        .next()
+        .filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Reads the full check of the head of `branch`, the default branch, in
@@ -664,11 +700,7 @@ pub fn failed_jobs(jobs: &[Job]) -> Vec<String> {
 /// Reads the failed jobs of the run `run` in `repo` with `gh`
 /// ([`failed_jobs`]).
 pub fn read_failed_jobs(gh: &Gh, repo: &str, run: &str) -> Result<Vec<String>> {
-    let id = run
-        .rsplit('/')
-        .next()
-        .filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
-        .ok_or_else(|| anyhow!("no run number in {run}"))?;
+    let id = number_of(run).ok_or_else(|| anyhow!("no run number in {run}"))?;
     let path = format!("repos/{repo}/actions/runs/{id}/jobs?per_page=100");
     let jobs: Vec<Job> = gh.json(&["api", &path, "--jq", ".jobs"])?;
     Ok(failed_jobs(&jobs))
@@ -687,25 +719,50 @@ pub enum MainNews {
 }
 
 impl MainNews {
-    /// The key of the post of the news (01M5TKG2K1AYK1KE7C2AA2W9DS): the
-    /// commit of `main` and the state, `broken` or `passes`. The look of
-    /// each host makes the same key for the same news, and riff-server
-    /// drops the second post.
+    /// The key of the post of the news (01M5TKG2K1AYK1KE7C2AA2W9DS,
+    /// 01M6GX8CN4ZTV0X40GD5AWPXH9): the commit of `main`, the run of the
+    /// check that the message names (the number of the run and of its job)
+    /// and the state, `broken` or `passes`. The look of each host makes the
+    /// same key for the same news, and riff-server drops the second post.
+    /// A rerun of the same commit has a new job, so it has a new key. A
+    /// check with no page of a run in Actions gives a key with no run.
     ///
     /// ```
     /// use riff::look::{MainGate, MainNews};
     /// use riff::pr::Gate;
     ///
-    /// let main = |gate| MainGate { commit: "c60887e1".into(), gate, run: None };
-    /// let broken = MainNews::Broken { main: main(Gate::Ended("failure".into())), first: true };
+    /// let main = |gate, job: &str| MainGate {
+    ///     commit: "c60887e1".into(),
+    ///     gate,
+    ///     run: Some("https://github.com/o/r/actions/runs/38861280871".into()),
+    ///     job: Some(job.into()),
+    /// };
+    /// let failure = Gate::Ended("failure".into());
+    /// let broken = MainNews::Broken { main: main(failure.clone(), "7"), first: true };
+    /// assert_eq!(broken.key(), "main-c60887e1-38861280871-7-broken");
+    /// let passes = MainNews::Passed { main: main(Gate::Passed, "8"), again: true };
+    /// assert_eq!(passes.key(), "main-c60887e1-38861280871-8-passes");
+    /// // It breaks again on a second rerun: a new job, a new key.
+    /// let again = MainNews::Broken { main: main(failure.clone(), "9"), first: true };
+    /// assert_eq!(again.key(), "main-c60887e1-38861280871-9-broken");
+    ///
+    /// let outside = MainGate { commit: "c60887e1".into(), gate: failure, run: None, job: None };
+    /// let broken = MainNews::Broken { main: outside, first: true };
     /// assert_eq!(broken.key(), "main-c60887e1-broken");
-    /// let passes = MainNews::Passed { main: main(Gate::Passed), again: true };
-    /// assert_eq!(passes.key(), "main-c60887e1-passes");
     /// ```
     pub fn key(&self) -> String {
-        match self {
-            MainNews::Broken { main, .. } => format!("main-{}-broken", main.commit),
-            MainNews::Passed { main, .. } => format!("main-{}-passes", main.commit),
+        let (main, state) = match self {
+            MainNews::Broken { main, .. } => (main, "broken"),
+            MainNews::Passed { main, .. } => (main, "passes"),
+        };
+        let ran = main
+            .run
+            .as_deref()
+            .and_then(number_of)
+            .zip(main.job.as_deref());
+        match ran {
+            Some((run, job)) => format!("main-{}-{run}-{job}-{state}", main.commit),
+            None => format!("main-{}-{state}", main.commit),
         }
     }
 }
@@ -728,7 +785,7 @@ impl MainWatch {
     /// use riff::look::{MainGate, MainNews, MainWatch};
     /// use riff::pr::Gate;
     ///
-    /// let main = |commit: &str, gate: Gate| MainGate { commit: commit.into(), gate, run: None };
+    /// let main = |commit: &str, gate: Gate| MainGate { commit: commit.into(), gate, run: None, job: None };
     /// let failed = |commit: &str| main(commit, Gate::Ended("failure".into()));
     /// let mut watch = MainWatch::default();
     ///
@@ -1382,6 +1439,7 @@ mod tests {
             commit: "5103311abc".into(),
             gate,
             run: None,
+            job: None,
         }
     }
 
@@ -1415,6 +1473,49 @@ mod tests {
             main.run.as_deref(),
             Some("https://github.com/o/r/actions/runs/4")
         );
+    }
+
+    /// 01M6GX8CN4ZTV0X40GD5AWPXH9: one commit of `main` that breaks, passes
+    /// on a rerun and breaks again on a second rerun gives three keys. A
+    /// rerun of a run keeps the run and makes a new job. A second look at
+    /// the same run gives the same key.
+    #[test]
+    fn a_rerun_of_the_same_commit_of_main_gives_a_new_key() {
+        let attempt = |conclusion: &str, run: u64, job: u64, started: &str| CheckRun {
+            status: "completed".into(),
+            conclusion: Some(conclusion.into()),
+            head_sha: "5103311abc".into(),
+            html_url: Some(format!(
+                "https://github.com/o/r/actions/runs/{run}/job/{job}"
+            )),
+            started_at: Some(started.into()),
+            ..CheckRun::default()
+        };
+        let keys_of = |attempts: &[CheckRun]| {
+            let mut watch = MainWatch::default();
+            let main = MainGate::of(&[attempts.to_vec()]).unwrap();
+            watch.news(&main).map(|news| news.key())
+        };
+        let first = attempt("failure", 50, 1, "2026-10-24T17:00:00Z");
+        let second = attempt("success", 50, 2, "2026-10-24T17:20:00Z");
+        let third = attempt("failure", 50, 3, "2026-10-24T17:40:00Z");
+        let fourth = attempt("failure", 51, 4, "2026-10-24T18:00:00Z");
+        let keys: Vec<Option<String>> = [
+            vec![first.clone()],
+            vec![first.clone(), second.clone()],
+            vec![first.clone(), second.clone(), third.clone()],
+            vec![first.clone(), second.clone(), third.clone(), fourth],
+        ]
+        .iter()
+        .map(|attempts| keys_of(attempts))
+        .collect();
+        let [a, b, c, d] = <[Option<String>; 4]>::try_from(keys).unwrap();
+        assert_eq!(a.as_deref(), Some("main-5103311abc-50-1-broken"));
+        assert_eq!(b.as_deref(), Some("main-5103311abc-50-2-passes"));
+        assert_eq!(c.as_deref(), Some("main-5103311abc-50-3-broken"));
+        assert_eq!(d.as_deref(), Some("main-5103311abc-51-4-broken"));
+        // The same attempts again: the same key.
+        assert_eq!(keys_of(&[first]), a);
     }
 
     /// riff cannot file the fix item: the lead still gets the message
