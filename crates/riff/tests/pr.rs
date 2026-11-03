@@ -1100,6 +1100,54 @@ async fn pr_open_refuses_a_title_that_breaks_the_hygiene_check() {
     assert!(!log(machine.bin.path()).contains("gh pr create"));
 }
 
+/// A worker writes `Tests: ...` at the end of its summary, and the
+/// rule reads the line as a trailer. A line of 300 characters stops the
+/// pull request with the rule `trailer-wrap`, and riff opens nothing. The
+/// same text as a plain sentence opens it (01M6H3EK1J3DEEV09FAKKKFPEB).
+#[tokio::test]
+async fn pr_open_refuses_a_tests_line_of_300_characters_and_takes_the_same_text_as_a_sentence() {
+    let tests = format!("{}done", "unit tests pass, ".repeat(17));
+    let line = format!("Tests: {tests}");
+    assert_eq!(line.chars().count(), 300);
+
+    let machine = Machine::new(OPEN).await;
+    machine.claim("author", "issue-12").await;
+    let summary = machine.write("summary.md", &format!("Show the wave.\n\n{line}\n"));
+    let out = machine
+        .run(
+            "author",
+            &["pr", "open", "--title", "Show the wave", "--file", &summary],
+        )
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(err.contains("trailer-wrap: "), "{err}");
+    assert!(err.contains("has 300 characters"), "{err}");
+    assert!(err.contains(&line), "{err}");
+    assert!(!log(machine.bin.path()).contains("gh pr create"));
+
+    // The same text as a plain sentence.
+    let sentence = format!("I ran the checks, and {tests}.");
+    let machine = Machine::new(OPEN).await;
+    machine.claim("author", "issue-12").await;
+    let summary = machine.write("summary.md", &format!("Show the wave.\n\n{sentence}\n"));
+    let out = machine
+        .ok(
+            "author",
+            &["pr", "open", "--title", "Show the wave", "--file", &summary],
+        )
+        .await;
+    assert!(out.starts_with("Opened pull request #40"), "{out}");
+    let (_, body) = created(machine.bin.path());
+    assert_eq!(
+        body,
+        format!("Closes #12\n\nShow the wave.\n\n{sentence}\n\nIssue: #12\nMilestone: Wave 3\n")
+    );
+    let pr = hygiene::PullRequest::new("Show the wave", &body, Some("Wave 3"));
+    let issue = hygiene::Issue::new(12, "OPEN", Some("Wave 3"));
+    assert_eq!(hygiene::check_pr(&pr, Some(&issue)), []);
+}
+
 /// The issue 12 of the fake `gh` has no milestone.
 const OPEN_NO_WAVE: &str = r#"*'issue view 12 --json number,state,milestone'*) echo '{"number":12,"state":"OPEN","milestone":null}' ;;
 *'pr create'*) echo 'https://github.com/como-technologies/riff/pull/40' ;;"#;

@@ -943,6 +943,55 @@ pub fn claimed_issue(claims: &[String]) -> Result<u64> {
     }
 }
 
+/// Refuses a pull request that breaks a rule of `rules`, with the error
+/// of each broken rule. `riff pr open` runs it before `gh pr create`, so a
+/// body that `hygiene pr` would fail opens nothing
+/// (01M6H3EK1J3DEEV09FAKKKFPEB).
+///
+/// A line `Tests: ...` at the end of the summary is a trailer line. When
+/// it has more than 72 characters, the merge wraps it, and the rule
+/// `trailer-wrap` refuses it. The same text as a plain sentence passes.
+/// Only `rules = "riff"` has this rule.
+///
+/// ```
+/// use hygiene::{Issue, Link, Rules};
+///
+/// let issue = Issue::new(12, "OPEN", Some("Wave 3"));
+/// let tests = format!("{}done", "unit tests pass, ".repeat(17));
+/// let line = format!("Tests: {tests}");
+/// assert_eq!(line.chars().count(), 300);
+///
+/// let body = riff::pr::body(Link::Closes(12), &format!("Show it.\n\n{line}\n"), "Wave 3")?;
+/// let error = riff::pr::check(Rules::All, "Show it", &body, &issue).unwrap_err();
+/// assert!(error.to_string().contains("trailer-wrap: the trailer line `Tests: "), "{error}");
+/// assert!(error.to_string().contains("has 300 characters"), "{error}");
+///
+/// // The same text as a plain sentence.
+/// let body = riff::pr::body(Link::Closes(12), &format!("Show it.\n\nI ran the tests: {tests}\n"), "Wave 3")?;
+/// assert!(riff::pr::check(Rules::All, "Show it", &body, &issue).is_ok());
+///
+/// // A repository that is not riff has no such rule.
+/// let body = riff::pr::body_for(Link::Closes(12), &format!("Show it.\n\n{line}\n"), None)?;
+/// assert!(riff::pr::check(Rules::Read, "Show it", &body, &issue).is_ok());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn check(rules: hygiene::Rules, title: &str, body: &str, issue: &hygiene::Issue) -> Result<()> {
+    let milestone = issue.milestone.as_ref().map(|m| m.title.as_str());
+    let errors = hygiene::check_pr_for(
+        rules,
+        &hygiene::PullRequest::new(title, body, milestone),
+        Some(issue),
+    );
+    if errors.is_empty() {
+        return Ok(());
+    }
+    let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
+    bail!(
+        "the pull request breaks issue hygiene:\n{}",
+        lines.join("\n")
+    )
+}
+
 /// Opens the pull request of the current branch for issue `issue`, and
 /// turns on auto-merge with a squash (01M3NB6FTGPD0S5JTXXXNGNNDT). The
 /// pull request is against the default branch. Returns its number and
@@ -990,18 +1039,7 @@ pub fn open(
         .as_deref()
         .filter(|_| rules == hygiene::Rules::All);
     let body = body_for(link, summary, wave)?;
-    let errors = hygiene::check_pr_for(
-        rules,
-        &hygiene::PullRequest::new(title, &body, milestone.as_deref()),
-        Some(&found),
-    );
-    if !errors.is_empty() {
-        let lines: Vec<String> = errors.iter().map(ToString::to_string).collect();
-        bail!(
-            "the pull request breaks issue hygiene:\n{}",
-            lines.join("\n")
-        );
-    }
+    check(rules, title, &body, &found)?;
     let mut args = vec!["pr", "create", "--title", title];
     if let Some(milestone) = &milestone {
         args.extend(["--milestone", milestone]);
@@ -1835,9 +1873,9 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
-    use hygiene::Link;
+    use hygiene::{Issue, Link, Rules};
 
-    use super::{CheckRun, Gate, Gh, body, full_state, gate_state};
+    use super::{CheckRun, Gate, Gh, body, body_for, check, full_state, gate_state};
     use crate::text;
 
     const FULL: &str = "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
@@ -2023,6 +2061,36 @@ mod tests {
     fn a_line_that_the_body_has_two_times_stays() {
         let twice = "Closes #12\nCloses #12\n\nIssue: #12\nIssue: #12\nMilestone: Wave 3\n";
         assert_eq!(body(Link::Closes(12), twice, "Wave 3").unwrap(), twice);
+    }
+
+    /// 01M6H3EK1J3DEEV09FAKKKFPEB: a line `Tests: ...` at the end of the
+    /// summary is a trailer line. At 73 characters the check refuses it
+    /// with the rule `trailer-wrap`; at 72 it passes. Text in a paragraph
+    /// that is no block of trailers passes at any length. A repository
+    /// that is not riff has no such rule.
+    #[test]
+    fn a_tests_line_over_72_characters_is_refused_before_the_pull_request_opens() {
+        let issue = Issue::new(12, "OPEN", Some("Wave 3"));
+        let tests_line = |length: usize| format!("Tests: {}", "x".repeat(length - "Tests: ".len()));
+        let checked = |rules, summary: &str| {
+            let body = body_for(Link::Closes(12), summary, Some("Wave 3")).unwrap();
+            check(rules, "Show the wave", &body, &issue)
+        };
+
+        let summary = |line: &str| format!("Show the wave.\n\n{line}\n");
+        assert!(checked(Rules::All, &summary(&tests_line(72))).is_ok());
+        let error = checked(Rules::All, &summary(&tests_line(73))).unwrap_err();
+        let error = error.to_string();
+        assert!(error.starts_with("the pull request breaks issue hygiene:\ntrailer-wrap: "));
+        assert!(error.contains(&format!("`{}` has 73 characters", tests_line(73))));
+        assert_eq!(error.matches("trailer-wrap").count(), 1, "{error}");
+
+        // A sentence in a paragraph of its own is no trailer line.
+        let sentence = format!("I ran the tests, and {}.", "all pass, ".repeat(30));
+        assert!(checked(Rules::All, &summary(&sentence)).is_ok());
+
+        // Another repository keeps only the rules that riff reads.
+        assert!(checked(Rules::Read, &summary(&tests_line(300))).is_ok());
     }
 
     /// At the end of its time limit, a `gh` stops with each process that
