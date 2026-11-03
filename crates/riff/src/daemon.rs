@@ -10058,7 +10058,7 @@ mod tests {
         let reply = r#"{"data":{"rateLimit":{"cost":1,"remaining":4300,"resetAt":"2026-11-03T15:00:00Z"}}}"#;
         let gh = isolated::write_program(
             dir.path().join("gh"),
-            &format!("#!/bin/sh\necho '{reply}'\n"),
+            format!("#!/bin/sh\necho '{reply}'\n"),
         );
         crate::pr::Gh::at(gh)
             .by("unit-test")

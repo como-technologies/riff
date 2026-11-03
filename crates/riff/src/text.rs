@@ -6260,6 +6260,12 @@ pub const GITHUB_ROWS: usize = 8;
 ///
 /// let none = riff::text::github_use(&Shown::default(), 0);
 /// assert_eq!(none, "GitHub, last hour: no call.\n");
+/// let one = Shown {
+///     rows: vec![Row { caller: "look".into(), kind: "issue view".into(), calls: 1, points: 1 }],
+///     left: None,
+/// };
+/// let text = riff::text::github_use(&one, 0);
+/// assert!(text.starts_with("GitHub, last hour: 1 call, 1 GraphQL point.\n"), "{text}");
 ///
 /// let row = |caller: &str, kind: &str, calls, points| Row {
 ///     caller: caller.into(),
@@ -6294,8 +6300,10 @@ pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
     let mut out = match calls {
         0 => "GitHub, last hour: no call.\n".to_owned(),
         _ => format!(
-            "GitHub, last hour: {calls} calls, {} GraphQL points.\n",
-            grouped(points.into())
+            "GitHub, last hour: {calls} {}, {} GraphQL {}.\n",
+            if calls == 1 { "call" } else { "calls" },
+            grouped(points.into()),
+            if points == 1 { "point" } else { "points" },
         ),
     };
     let width = shown

@@ -422,10 +422,10 @@ pub const WAVES_FILE: &str = "waves.json";
 /// How often a wave looks for free work when nothing ends.
 pub const LOOK_EVERY: Duration = Duration::from_secs(60);
 
-/// How often an idle wave looks (#1549, "Use the limit of GitHub" in the
-/// design of `crate::ghcalls`): no session of the wave runs, no work is
-/// free, and the look saw the same facts as the look before. A session
-/// that ends, and a job that ends, wake the wave at once.
+/// How often an idle wave looks (#1549, [`crate::ghcalls`]): no session of
+/// the wave runs, no work is free, and the look saw the same facts as the
+/// look before ([`look_wait`]). A session that ends, and a job that ends,
+/// wake the wave at once.
 pub const IDLE_LOOK_EVERY: Duration =
     Duration::from_secs(LOOK_EVERY.as_secs() * crate::watches::IDLE_FACTOR as u64);
 
@@ -6271,7 +6271,7 @@ esac
     /// forge with 10 calls and 6 GraphQL points at its first tick. The
     /// look of the daemon takes the reads of the loop of the wave. A second
     /// tick with no change makes 7 calls: it reads the default branch and
-    /// the rules one time. The daemon of the first version made 14 calls
+    /// the rules one time. A daemon that shares no read made 14 calls
     /// and 11 points in each tick. With a tick each 5 minutes the two waves
     /// of an idle host use 144 points an hour, under the target of 300.
     #[tokio::test]
@@ -6311,7 +6311,7 @@ esac
         let hour = 2 * ticks * sum(&second).1;
         assert_eq!(hour, 144);
         assert!(hour <= crate::ghcalls::IDLE_POINTS_AN_HOUR, "{hour}");
-        // The daemon of the first version: one tick each minute.
+        // A daemon that shares no read and looks each minute.
         assert!(2 * 60 * sum(&before).1 > crate::ghcalls::IDLE_POINTS_AN_HOUR);
     }
 
