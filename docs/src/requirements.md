@@ -2497,8 +2497,10 @@
   with `Merged in #`.
 - **01M49Q30XMVRFX42YTM1PHX0RZ** When the look of the lead sees an open
   pull request of an item with auto-merge on and the state
-  `CONFLICTING`, it sends a message to the session that holds the item.
-  When no session holds the item, the message goes to the lead.
+  `CONFLICTING`, and the pull request is not in the merge queue
+  (01M5TKPNDET56VR8WZ74FSR71F), it sends a message to the session that
+  holds the item. When no session holds the item, the message goes to
+  the lead.
 - **01M49Q316RXNATJP587DWGDNCD** When the look of the lead sees a pull
   request that waits for a verify, and no session claims its `verify-`
   item, for 30 minutes, it sends a message to the lead. A `verify-`
@@ -3852,11 +3854,12 @@ of this part when they merge.
   (01M4ZV3B6PSRH40EYQEVYH2MBA). A spent item then starts again.
 - **01M57FJ3WWMQSDBFRRHXN3SMFQ** The wave of the daemon starts a build
   session for the item of an open pull request with auto-merge on and
-  a conflict with `main`, also after its verify passed. A pull request
-  whose verify failed is free work as a build already. The start text
-  tells the session to rebase the branch on `main`, resolve the
-  conflict, run the checks, and push to the same pull request. Such an
-  item comes after the fix items of a broken `main`
+  a conflict with `main`, also after its verify passed, when the pull
+  request is not in the merge queue (01M5TKPNDET56VR8WZ74FSR71F). A
+  pull request whose verify failed is free work as a build already. The
+  start text tells the session to rebase the branch on `main`, resolve
+  the conflict, run the checks, and push to the same pull request. Such
+  an item comes after the fix items of a broken `main`
   (01M51QEYS538XA58KDRY844T52), before each other item. The wave
   starts no verify of a head commit with a conflict. Each head commit
   with a conflict starts one session in a run of the wave. A start that
@@ -4920,7 +4923,8 @@ of this part when they merge.
   merge queue: no rebase, no verify, no notice of a conflict or of
   auto-merge off (01M5TKPHDNHY75BHPD4XVBJRN9). The wave reads the queue
   with one GraphQL call for all open pull requests. A call that fails
-  reads as no queue.
+  reads as no queue. Supersedes 01M49Q30XMVRFX42YTM1PHX0RZ and
+  01M57FJ3WWMQSDBFRRHXN3SMFQ in part.
 - **01M5TKPNGG27Z1SQKTA296D9H7** A pull request that the merge queue
   removed, with no push to it since, and whose verify passed: with a
   conflict with the default branch, the wave starts one rebase session
