@@ -1667,6 +1667,73 @@ an estimate from the query that `gh` sends. The last line comes from
 GitHub: it is the counter that answered. GitHub keeps more than one
 counter for one token, so two reads can differ.
 
+When the points are gone, see
+[Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out).
+
+#### Know what the daemon does when the GitHub limit runs out
+
+When the points of GitHub are gone, the daemon does not try again each
+minute. Each try costs a call, and the limit stays out until the
+counter starts again. So the daemon reads the time of the reset, and
+waits for it. GraphQL and REST have a limit each. Until the reset, the
+daemon makes no call of the resource that ran out.
+
+- The wave makes no look until the reset. The look at the pull requests
+  and `main` waits too. The watches make no look and tell no fault.
+- Your lead gets one message with the reset time.
+- A verify that ends in this time keeps its result in the folder of its
+  session. After the reset, the wave reports it: the comment on the pull
+  request, the status `riff/verify`, and the result to the holder of the
+  item and to your lead. Your lead gets a note when the verify keeps its
+  result.
+- A build session that ends in this time cannot read its pull request.
+  Your lead gets a note, and the wave looks at the pull request after
+  the reset.
+- A kept result counts only for its commit. When the pull request has a
+  new head commit, or it is not open, the wave drops the result and
+  starts a new verify.
+- A limit that still shows points is a secondary limit of GitHub. The
+  daemon waits one minute for it.
+
+```mermaid
+flowchart TD
+    C["a call of gh fails:<br/>the limit is out"] --> R["the daemon reads the reset<br/>with gh api rate_limit"]
+    R --> W["no call of that resource<br/>until the reset"]
+    W --> M["your lead gets one message"]
+    W --> K["a verify that ends now<br/>keeps its result"]
+    W --> A["the reset comes"]
+    A --> L["the wave looks again<br/>and reports each kept result"]
+```
+
+To see the wait:
+
+```sh
+riff daemon status
+```
+
+The last lines of the answer name the resource and the reset time:
+
+```text
+GitHub, last hour: 12 calls, 14 GraphQL points.
+  wave      issue list                    4 calls        8 points
+  look      pr list                       8 calls        6 points
+GitHub GraphQL limit: out. riff makes no call of it until 15:00:35 UTC (in 41m).
+```
+
+Your lead gets this message one time:
+
+```text
+como-technologies/riff: the GitHub GraphQL limit is out. riff makes no call of it until 15:00:35 UTC. The wave starts nothing before then, and a verify that cannot report its result keeps it.
+```
+
+When a verify ends in this time, your lead also gets this note:
+
+```text
+verify-issue-12: riff could not report the verify of pull request #40: gh pr view 40 --json headRefOid,body: GraphQL: API rate limit already exceeded for user ID 1. riff keeps the result, and reports it after the reset.
+```
+
+After the reset, the wave looks again at once, and the status line goes.
+
 #### Merge the pull requests of a wave with a merge queue
 
 When `main` moves after each merge, the other pull requests of a full

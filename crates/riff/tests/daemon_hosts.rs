@@ -1387,7 +1387,7 @@ fn fake_wave_forge(tmp: &Path) -> Vec<(String, String)> {
          \"pr list\") cat {forge}/pulls ;;\n\
          \"issue list\")\n\
            case \"$*\" in\n\
-             *--milestone*) if [ -e {forge}/limit ]; then echo \"GraphQL: API rate limit already exceeded for user ID 1.\" >&2; exit 1; fi ;;\n\
+             *--milestone*) if [ -e {forge}/fault ]; then echo \"GraphQL: Something went wrong while executing your query for user ID 1.\" >&2; exit 1; fi ;;\n\
            esac\n\
            cat {forge}/issues ;;\n\
          *) exit 1 ;;\n\
@@ -1524,16 +1524,17 @@ async fn two_daemons_of_one_wave_give_the_lead_each_notice_one_time() {
     assert_eq!(told, ["Wave 7 is complete: next riff wave end 7"]);
 }
 
-/// #1550, 01M6H160E2ZK2AM0PCTQG82V2G: the wave runs on two hosts, and the
-/// GraphQL limit of the token is out: `gh issue list` of the watch of the
-/// wave fails on both hosts, at each look. The lead gets the fault one
-/// time, with one dot at the end of the error.
+/// #1550, 01M6H160E2ZK2AM0PCTQG82V2G: the wave runs on two hosts, and
+/// GraphQL fails for the token: `gh issue list` of the watch of the wave
+/// fails on both hosts, at each look. The lead gets the fault one time,
+/// with one dot at the end of the error. The fault is not a limit of
+/// GitHub: a limit makes the watches wait (#1557).
 #[tokio::test(flavor = "multi_thread")]
 async fn two_daemons_that_cannot_read_the_wave_give_the_lead_the_fault_one_time() {
     let tmp = tempfile::tempdir().unwrap();
     let other = origin(&tmp.path().join("origins"), "other");
     let env = fake_wave_forge(tmp.path());
-    std::fs::write(tmp.path().join("forge").join("limit"), "").unwrap();
+    std::fs::write(tmp.path().join("forge").join("fault"), "").unwrap();
     let r = riff_env(300, 300, &env).await;
     let lead = session(&other, "mike", "a", "l2");
     r.api(&lead).register(&lead).await.unwrap();
