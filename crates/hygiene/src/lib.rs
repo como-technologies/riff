@@ -37,6 +37,11 @@
 //!   the commits, in a paragraph of its own. So `hygiene pr` checks the
 //!   message that the squash will make ([`PullRequest::squash_message`]),
 //!   not only the body.
+//! - The merge wraps each line of the body over 72 characters
+//!   ([`merge_wrap`]). The tail of a trailer line goes to a line with no
+//!   `Key:`, and that line ends the block of trailers. So `hygiene pr`
+//!   fails a trailer line over the width (`trailer-wrap`) before the
+//!   merge.
 //!
 //! `hygiene pr N` reads pull request N and its issue with `gh`, and runs
 //! [`check_pr`]. `hygiene commit [REV]` reads the message of a commit
@@ -49,6 +54,7 @@
 //! | `title` | A title of a pull request that ends with `(#N)`. GitHub adds the number of the pull request. |
 //! | `issue-trailer` | No `Issue: #N` trailer, more than one, or one that names another issue than the link line. |
 //! | `milestone-trailer` | No `Milestone:` trailer, more than one, or one that names another wave than the pull request. |
+//! | `trailer-wrap` | A line of the last block of trailers over 72 characters. The merge wraps it, and the wrapped part is no trailer line ([`merge_wrap`]). |
 //! | `milestone` | A pull request or an issue with no milestone, or two different milestones. |
 //! | `issue-open` | An issue that is closed. |
 //! | `commit-title` | A commit title that does not end with `(#PR)`, or that names the issue in place of the pull request. |
@@ -199,10 +205,11 @@ impl PullRequest {
         lines
     }
 
-    /// The message that the squash will make from the body: the body, then
-    /// the lines of [`PullRequest::co_authors`] in a paragraph of their
-    /// own. GitHub adds them after a blank line, also when the body ends
-    /// with trailers.
+    /// The message that the squash will make from the body: the body, with
+    /// each line over [`MERGE_WIDTH`] wrapped as the merge wraps it
+    /// ([`merge_wrap`]), then the lines of [`PullRequest::co_authors`] in a
+    /// paragraph of their own. GitHub adds them after a blank line, also
+    /// when the body ends with trailers.
     ///
     /// ```
     /// use hygiene::{Person, PullRequest};
@@ -214,7 +221,17 @@ impl PullRequest {
     /// );
     /// ```
     pub fn squash_message(&self) -> String {
-        let mut message = self.body.replace("\r\n", "\n");
+        self.with_co_authors(merge_wrap(&self.body.replace("\r\n", "\n")))
+    }
+
+    /// The message of [`PullRequest::squash_message`] as the author wrote
+    /// it, before the merge wraps its long lines.
+    fn written_message(&self) -> String {
+        self.with_co_authors(self.body.replace("\r\n", "\n"))
+    }
+
+    /// `body`, then the lines of [`PullRequest::co_authors`].
+    fn with_co_authors(&self, mut message: String) -> String {
         let co_authors = self.co_authors();
         if !co_authors.is_empty() {
             message.truncate(message.trim_end().len());
@@ -459,6 +476,15 @@ fn names_issue(word: &str) -> bool {
 ///     .all(|(k, _)| k != "Issue"));
 /// ```
 pub fn trailers(text: &str) -> Vec<(String, String)> {
+    trailer_block(text)
+        .into_iter()
+        .filter_map(trailer_line)
+        .collect()
+}
+
+/// The lines of the last block of trailers of a message, each one a line
+/// `Key: value` ([`trailers`]).
+fn trailer_block(text: &str) -> Vec<&str> {
     let mut paragraphs: Vec<Vec<&str>> = Vec::new();
     let mut open = false;
     for line in text.lines().map(str::trim_end) {
@@ -473,16 +499,79 @@ pub fn trailers(text: &str) -> Vec<(String, String)> {
     }
     let mut found = Vec::new();
     for paragraph in paragraphs.iter().rev() {
-        let Some(lines) = paragraph
-            .iter()
-            .map(|line| trailer_line(line))
-            .collect::<Option<Vec<_>>>()
-        else {
+        if !paragraph.iter().all(|line| trailer_line(line).is_some()) {
             break;
-        };
-        found.splice(0..0, lines);
+        }
+        found.splice(0..0, paragraph.iter().copied());
     }
     found
+}
+
+/// The width of a line in the message of a squash commit: the merge
+/// wraps a longer line ([`merge_wrap`]).
+pub const MERGE_WIDTH: usize = 72;
+
+/// The text as the squash merge of GitHub leaves it: a line of
+/// [`MERGE_WIDTH`] characters or fewer stays as it is. A longer line loses
+/// its indent and its double spaces, and is filled again with whole words
+/// up to [`MERGE_WIDTH`] characters. The wrapped lines have no indent, and
+/// the next line does not join them. A word longer than the width stays on
+/// a line of its own.
+///
+/// So a trailer line over the width is no trailer line in the commit: the
+/// second line of it has no `Key:`, and it ends the block of trailers
+/// (`trailer-wrap`, 01M6FYR8XH4WPAH2AFW6B0NARJ).
+///
+/// ```
+/// let line = "Generated-by: GLM-5.3-Flash (brief, implementation, task review, final review)";
+/// assert_eq!(
+///     hygiene::merge_wrap(line),
+///     "Generated-by: GLM-5.3-Flash (brief, implementation, task review, final\nreview)"
+/// );
+///
+/// // A line of 72 characters stays. The next line stays too.
+/// let kept = format!("{}\n  indent\n", "word ".repeat(14) + "wo");
+/// assert_eq!(hygiene::merge_wrap(&kept), kept);
+///
+/// // A long line with an indent loses it.
+/// let item = "  ".to_owned() + &"word ".repeat(15);
+/// assert!(!hygiene::merge_wrap(&item).starts_with(' '));
+/// ```
+pub fn merge_wrap(text: &str) -> String {
+    let mut wrapped = String::with_capacity(text.len());
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            wrapped.push('\n');
+        }
+        if line.chars().count() <= MERGE_WIDTH {
+            wrapped.push_str(line);
+            continue;
+        }
+        let mut width = 0;
+        for word in line.split_whitespace() {
+            let length = word.chars().count();
+            if width == 0 {
+                // The first word of a line.
+            } else if width + 1 + length <= MERGE_WIDTH {
+                wrapped.push(' ');
+                width += 1;
+            } else {
+                wrapped.push('\n');
+                width = 0;
+            }
+            wrapped.push_str(word);
+            width += length;
+        }
+    }
+    wrapped
+}
+
+/// Each line of the last block of trailers of `text` that the merge wraps.
+fn wrapped_trailer_lines(text: &str) -> Vec<&str> {
+    trailer_block(text)
+        .into_iter()
+        .filter(|line| line.chars().count() > MERGE_WIDTH)
+        .collect()
 }
 
 /// The key and the value of a line `Key: value`, or `None`.
@@ -706,7 +795,9 @@ fn all_errors(pr: &PullRequest, issue: Option<&Issue>) -> Vec<Error> {
         ));
     }
 
-    let trailers = trailers(&pr.squash_message());
+    // The other rules judge the trailers as the author wrote them. A line
+    // that the merge wraps has its own error.
+    let trailers = trailers(&pr.written_message());
     let named = issue_trailer(&trailers, &mut errors);
     if let (Some(named), Some(link)) = (named, link)
         && named != link.issue()
@@ -727,6 +818,16 @@ fn all_errors(pr: &PullRequest, issue: Option<&Issue>) -> Vec<Error> {
         errors.push(Error::new(
             "milestone-trailer",
             format!("`Milestone: {wave}` is not the milestone of the pull request ({own})"),
+        ));
+    }
+
+    for line in wrapped_trailer_lines(&body) {
+        errors.push(Error::new(
+            "trailer-wrap",
+            format!(
+                "the trailer line `{line}` has {} characters, and the merge wraps a line over {MERGE_WIDTH}: the wrapped part is no trailer line, and the block of trailers ends there; keep the line to {MERGE_WIDTH} characters",
+                line.chars().count()
+            ),
         ));
     }
 
@@ -1115,6 +1216,128 @@ mod tests {
             let rules: Vec<_> = check_commit(message).iter().map(|e| e.rule).collect();
             assert_eq!(rules, ["issue-trailer", "milestone-trailer"], "{message}");
         }
+    }
+
+    /// The body of the outside pull request #1348 in short, as its author wrote it:
+    /// the trailer `Generated-by:` is on one line of 78 characters.
+    const BODY_1348: &str = "Closes #692\n\n\
+        The count check accepts `tries` or `tries + 1` accepts. The call still ends after its budget, with the text `no_reply`, after at least 2 tries, each on a new connection. Nothing else changed.\n\n\
+        Issue: #692\nMilestone: Wave 41\n\
+        Generated-by: GLM-5.3-Flash (brief, implementation, task review, final review)\n";
+
+    /// The commit that the merge made from the whole body (c60887ef).
+    const COMMIT_1348: &str = "The link test counts an accepted connection with no read (#1348)\n\n\
+        Closes #692\n\n\
+        The count check accepts `tries` or `tries + 1` accepts. The call still\n\
+        ends after its budget, with the text `no_reply`, after at least 2 tries,\n\
+        each on a new connection. Nothing else changed.\n\n\
+        Issue: #692\nMilestone: Wave 41\n\
+        Generated-by: GLM-5.3-Flash (brief, implementation, task review, final\nreview)\n\n\
+        Co-authored-by: GLM-5.3-Flash <noreply@z.ai>\n";
+
+    #[test]
+    fn the_merge_wraps_a_long_line_as_it_did_for_the_commit_1348() {
+        let pr = PullRequest::new(
+            "The link test counts an accepted connection with no read",
+            BODY_1348,
+            Some("Wave 41"),
+        )
+        .with_commit_by(person("GLM-5.3-Flash", "noreply@z.ai"));
+        let title_and_body = format!("{} (#1348)\n\n{}", pr.title, pr.squash_message());
+        assert_eq!(title_and_body, COMMIT_1348);
+    }
+
+    #[test]
+    fn the_commit_1348_fails_the_commit_rule() {
+        let rules: Vec<_> = check_commit(COMMIT_1348).iter().map(|e| e.rule).collect();
+        assert_eq!(rules, ["issue-trailer", "milestone-trailer"]);
+    }
+
+    #[test]
+    fn the_pull_request_1348_fails_with_the_reason_before_the_merge() {
+        let pr = PullRequest::new(
+            "The link test counts an accepted connection with no read",
+            BODY_1348,
+            Some("Wave 41"),
+        )
+        .with_commit_by(person("GLM-5.3-Flash", "noreply@z.ai"));
+        let issue = Issue::new(692, "OPEN", Some("Wave 41"));
+        let errors = check_pr(&pr, Some(&issue));
+        let rules: Vec<_> = errors.iter().map(|e| e.rule).collect();
+        assert_eq!(rules, ["trailer-wrap"], "{errors:?}");
+        let text = errors[0].to_string();
+        assert!(
+            text.contains("Generated-by: GLM-5.3-Flash (brief"),
+            "{text}"
+        );
+        assert!(text.contains("78 characters"), "{text}");
+        assert!(text.contains("keep the line to 72 characters"), "{text}");
+    }
+
+    #[test]
+    fn a_trailer_line_of_the_width_passes_and_one_character_more_fails() {
+        let value = |n: usize| "x".repeat(n - "Generated-by: ".len());
+        for (length, rules_found) in [
+            (MERGE_WIDTH, vec![]),
+            (MERGE_WIDTH + 1, vec!["trailer-wrap"]),
+        ] {
+            let body = format!("{GOOD}Generated-by: {}\n", value(length));
+            assert_eq!(
+                rules(&pr(&body, Some("Wave 3")), &open(Some("Wave 3"))),
+                rules_found,
+                "{length}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_long_trailer_line_has_an_error() {
+        let long = "word ".repeat(15);
+        let body = format!("{GOOD}Generated-by: {long}\nSigned-off-by: {long}\n");
+        assert_eq!(
+            rules(&pr(&body, Some("Wave 3")), &open(Some("Wave 3"))),
+            ["trailer-wrap", "trailer-wrap"]
+        );
+    }
+
+    #[test]
+    fn a_long_line_of_text_is_no_error() {
+        let text = format!(
+            "Closes #77\n\n{}\n\nIssue: #77\nMilestone: Wave 3\n",
+            "word ".repeat(30)
+        );
+        assert_eq!(
+            check_pr(&pr(&text, Some("Wave 3")), Some(&open(Some("Wave 3")))),
+            []
+        );
+    }
+
+    #[test]
+    fn the_merge_leaves_a_line_of_the_width_and_the_lines_after_it() {
+        assert_eq!(merge_wrap(GOOD), GOOD);
+        let kept = format!("{}\n  indent  two\n", "word ".repeat(14) + "wo");
+        assert_eq!(merge_wrap(&kept), kept);
+    }
+
+    #[test]
+    fn the_merge_fills_a_long_line_again_with_whole_words() {
+        let line = format!("  {}", "word ".repeat(30));
+        let wrapped = merge_wrap(&line);
+        assert!(wrapped.lines().count() > 1);
+        for wrapped_line in wrapped.lines() {
+            assert!(
+                wrapped_line.chars().count() <= MERGE_WIDTH,
+                "{wrapped_line}"
+            );
+            assert!(wrapped_line.starts_with("word") && wrapped_line.ends_with("word"));
+        }
+        assert_eq!(wrapped.split_whitespace().count(), 30);
+        // A word over the width stays whole on its line.
+        let url = "u".repeat(80);
+        assert_eq!(
+            merge_wrap(&format!("see {url} here")),
+            format!("see\n{url}\nhere")
+        );
     }
 
     #[test]

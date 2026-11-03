@@ -3260,6 +3260,8 @@ Milestone: Wave 3
   block, before or after them: `Co-authored-by:`, `Signed-off-by:` and
   `Generated-by:`. A line of text in the block breaks the rule, and so
   does a paragraph of text after it.
+- Keep each trailer line to 72 characters. See
+  [Keep a trailer line short](#keep-a-trailer-line-short).
 - Give the pull request the milestone of its issue. Do not end the
   title with `(#N)`. GitHub adds the number of the pull request.
 
@@ -3304,6 +3306,35 @@ GitHub runs no check on a pull request that has a conflict with
 `main`. When `Hygiene` does not run, rebase your branch on `main` and
 push it again.
 
+### Keep a trailer line short
+
+The squash merge wraps each line of the body that is longer than 72
+characters. It breaks the line at a space, and the rest goes to a new
+line with no indent. The new line has no `Key:`, so it ends the block of
+trailers. The commit on `main` then has no `Issue:` trailer, and
+`hygiene commit` fails it. `hygiene pr` reads the body before the merge,
+so it predicts the wrap: it fails each trailer line over 72 characters
+with the rule `trailer-wrap`. The error names the line and its length.
+
+```mermaid
+flowchart LR
+    B["body: Generated-by: ... final review) (78 characters)"] --> M["squash merge"]
+    M --> L1["Generated-by: ... final"]
+    M --> L2["review)"]
+    L2 -- "no Key:" --> E["the block of trailers ends"]
+    E --> F["hygiene commit: no Issue: trailer"]
+    B -- "hygiene pr" --> T["trailer-wrap, before the merge"]
+```
+
+To fix it, shorten the line in the body, and check the pull request
+again. A line of text outside the block may be longer: the merge wraps
+it, and no rule reads it.
+
+```sh
+gh pr edit 90 --body-file body.md
+just hygiene pr 90
+```
+
 ### Choose the rules of a repository
 
 The form above is the form of riff. riff reads only two parts of it:
@@ -3320,6 +3351,7 @@ it.
 | `keyword` | A closing keyword, for example `Fixes #12` | no | holds |
 | `title` | A title that ends with `(#12)` | no | holds |
 | `milestone-trailer` | No `Milestone:` trailer | no | holds |
+| `trailer-wrap` | A trailer line over 72 characters | no | holds |
 | `milestone` | A pull request or an issue with no milestone | no | holds |
 | `issue-open` | An issue that is closed | no | holds |
 
