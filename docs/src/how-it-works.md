@@ -2085,8 +2085,9 @@ see
 ### When a pull request stops
 
 A pull request can stop with no sign. The riff daemon looks at the open
-pull requests of each wave that it runs, each minute, and sends a
-message in two cases (see [Run the wave](development.md#run-the-wave)):
+pull requests of each wave that it runs, each minute (each 5 minutes
+while the wave is idle), and sends a message in two cases (see
+[Run the wave](development.md#run-the-wave)):
 
 ```mermaid
 flowchart TD
@@ -2144,7 +2145,8 @@ A pull request merges when the full check of its own head passed, also
 when `main` moved after that. So two pull requests that each pass their
 full check can break `main` together. Then the full check of each later
 pull request fails too. The riff daemon looks at the full check of the
-head of `main` of each wave that it runs, each minute (see
+head of `main` of each wave that it runs, each minute, or each 5
+minutes while the wave is idle (see
 [Run the wave](development.md#run-the-wave)). Here `main` is the
 default branch of the repository, also when it has another name, for
 example `master`. The daemon reads the same checks as a verify does:

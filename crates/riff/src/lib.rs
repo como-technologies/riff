@@ -73,6 +73,7 @@ pub mod dropped;
 pub mod ends;
 
 pub mod first_run;
+pub mod ghcalls;
 pub mod help;
 pub mod hold;
 pub mod home;

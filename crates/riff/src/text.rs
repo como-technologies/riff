@@ -6228,6 +6228,111 @@ pub fn real_session_test(test: &riff_client::daemons::Test) -> String {
     )
 }
 
+/// A number with a comma for each 3 digits: `3,716`.
+///
+/// ```
+/// assert_eq!(riff::text::grouped(7), "7");
+/// assert_eq!(riff::text::grouped(3716), "3,716");
+/// assert_eq!(riff::text::grouped(1_250_000), "1,250,000");
+/// ```
+pub fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// The most kinds of call that `riff daemon status` lists for GitHub.
+pub const GITHUB_ROWS: usize = 8;
+
+/// The use of GitHub by the daemon in the last hour, for `riff daemon
+/// status` (#1549): the calls and the GraphQL points of each caller and
+/// kind of call, the most points first, and the points that GitHub says
+/// are left.
+///
+/// ```
+/// use riff::ghcalls::{Left, Row, Shown};
+///
+/// let none = riff::text::github_use(&Shown::default(), 0);
+/// assert_eq!(none, "GitHub, last hour: no call.\n");
+///
+/// let row = |caller: &str, kind: &str, calls, points| Row {
+///     caller: caller.into(),
+///     kind: kind.into(),
+///     calls,
+///     points,
+/// };
+/// let shown = Shown {
+///     rows: vec![
+///         row("wave", "issue list", 12, 48),
+///         row("look", "pr list", 12, 24),
+///         row("look", "api commits/_/check-runs", 12, 0),
+///     ],
+///     left: Some(Left {
+///         remaining: 3716,
+///         reset_at: "2026-11-03T15:00:35Z".into(),
+///         read_ms: 0,
+///     }),
+/// };
+/// let text = riff::text::github_use(&shown, 120_000);
+/// assert_eq!(
+///     text,
+///     "GitHub, last hour: 36 calls, 72 GraphQL points.\n\
+///      \x20 wave      issue list                   12 calls       48 points\n\
+///      \x20 look      pr list                      12 calls       24 points\n\
+///      \x20 look      api commits/_/check-runs     12 calls        0 points\n\
+///      GraphQL points left: 3,716, the counter starts again at 15:00:35 UTC (read 2m ago).\n"
+/// );
+/// ```
+pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
+    let (calls, points) = shown.total();
+    let mut out = match calls {
+        0 => "GitHub, last hour: no call.\n".to_owned(),
+        _ => format!(
+            "GitHub, last hour: {calls} calls, {} GraphQL points.\n",
+            grouped(points.into())
+        ),
+    };
+    let width = shown
+        .rows
+        .iter()
+        .take(GITHUB_ROWS)
+        .map(|row| safe(&row.kind).chars().count())
+        .max()
+        .unwrap_or_default();
+    for row in shown.rows.iter().take(GITHUB_ROWS) {
+        let _ = writeln!(
+            out,
+            "  {:<8}  {:<width$}  {:>5} calls  {:>7} points",
+            safe(&row.caller),
+            safe(&row.kind),
+            row.calls,
+            grouped(row.points.into()),
+        );
+    }
+    if shown.rows.len() > GITHUB_ROWS {
+        let _ = writeln!(out, "  and {} more.", shown.rows.len() - GITHUB_ROWS);
+    }
+    if let Some(left) = &shown.left {
+        let at = safe(&left.reset_at);
+        let at = at.split_once('T').map_or(at.as_str(), |(_, time)| time);
+        let secs = u64::try_from((now_ms - left.read_ms) / 1000).unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "GraphQL points left: {}, the counter starts again at {} UTC (read {} ago).",
+            grouped(left.remaining),
+            at.trim_end_matches('Z'),
+            ago(secs)
+        );
+    }
+    out
+}
+
 /// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S,
 /// 01M501PADKZNRHBZD9XPMJGW06).
 ///
@@ -6251,6 +6356,7 @@ pub fn real_session_test(test: &riff_client::daemons::Test) -> String {
 ///     claude_token: riff_client::daemons::Token::NotSet,
 ///     watches: vec![],
 ///     lost: vec![],
+///     github: Default::default(),
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -6387,6 +6493,7 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
             );
         }
     }
+    out.push_str(&github_use(&status.github, now_ms));
     out
 }
 
@@ -7360,6 +7467,7 @@ pub const INIT_CONTAINER_DONE: &str =
 ///     claude_token: Default::default(),
 ///     watches: vec![],
 ///     lost: vec![],
+///     github: Default::default(),
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");

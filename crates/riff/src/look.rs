@@ -4,7 +4,8 @@
 //! # Who runs the look
 //!
 //! The riff daemon runs the look of the repository of each wave that it
-//! runs, once each [`LOOK_EVERY`], until `riff wave stop`
+//! runs, once each [`LOOK_EVERY`] (each 5 minutes while the wave has no
+//! session and the look told nothing, #1549), until `riff wave stop`
 //! (`crate::wave::watch`, 01M5QVH3MAEPPJN9PPVDX6N2EY). It reads the
 //! forge with the `gh` of the person, and posts as the person: to the
 //! lead, or to the session that holds an item.
@@ -281,18 +282,7 @@ pub fn item_facts(issues: &[Issue], pulls: &[Pull]) -> Vec<ItemFact> {
 /// of `repo` with `gh`.
 pub fn read_forge(gh: &Gh, repo: &str) -> Result<(Vec<Issue>, Vec<Pull>)> {
     let pulls = crate::rollout::pulls(gh, repo)?;
-    let issues: Vec<Issue> = gh.json(&[
-        "issue",
-        "list",
-        "--repo",
-        repo,
-        "--state",
-        "open",
-        "--limit",
-        "1000",
-        "--json",
-        "number,body,comments,labels",
-    ])?;
+    let issues = crate::rollout::issues(gh, repo)?;
     Ok((issues, pulls))
 }
 
@@ -1047,6 +1037,11 @@ pub async fn look_at_main(
 pub struct Watch {
     pulls: PullWatch,
     main: MainWatch,
+    /// How old a reply of an earlier read of the forge can be, for the
+    /// next look ([`look_wave`]). The loop of the wave reads the same
+    /// issues and pull requests, so the look takes its reply and calls no
+    /// `gh` for them (#1549). Zero: the look reads the forge itself.
+    pub accepts: Duration,
 }
 
 /// One look of the daemon at the repository of `wave`
@@ -1059,14 +1054,20 @@ pub struct Watch {
 /// answer is the error. So is a default branch that does not read
 /// ([`crate::pr::default_branch`]): the wave reads it at each look, and
 /// keeps it in no file (01M5R56GN3DC09GAPAF69GENEZ).
-pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Result<()> {
-    let gh = world.gh(&wave.repo);
+///
+/// The look takes the reply of an earlier read of the issues and the pull
+/// requests, when it is not older than [`Watch::accepts`]: the loop of the
+/// wave reads them too. It gives `true` when it posted something, and
+/// `false` for a quiet look.
+pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Result<bool> {
+    let gh = Arc::new(Gh::clone(&world.gh(&wave.repo)).accepting(watch.accepts));
     let (issues, pulls) = {
         let (gh, repo) = (gh.clone(), wave.repo.clone());
         tokio::task::spawn_blocking(move || read_forge(&gh, &repo)).await??
     };
     let claims = world.claims(wave).await?;
     let news = watch.pulls.news(&pulls, &claims, Instant::now());
+    let mut told = !news.is_empty();
     for (at, one) in news.iter().enumerate() {
         let item = one.to.as_deref();
         let key = one.key();
@@ -1088,14 +1089,17 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
     let repo = &wave.repo;
     let posted = match main_post(&gh, repo, &branch, (issues, pulls), claims, &mut watch.main).await
     {
-        Ok(Some((body, kind, key))) => world.post(wave, None, &body, kind, Some(&key)).await,
+        Ok(Some((body, kind, key))) => {
+            told = true;
+            world.post(wave, None, &body, kind, Some(&key)).await
+        }
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };
     if posted.is_err() {
         watch.main = before;
     }
-    posted
+    posted.map(|()| told)
 }
 
 /// Posts `news` as a message, as the person of the lead `me`: to the

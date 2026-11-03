@@ -98,6 +98,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use zeroize::Zeroizing;
 
+use crate::ghcalls::{self, Calls};
 use crate::registry;
 use crate::repo_setup;
 use crate::session_image;
@@ -128,6 +129,17 @@ pub struct Gh {
     /// ([`Gh::with_token_kept`]). With none, each call of `gh` reads its
     /// token itself.
     token: Option<Shared>,
+    /// Who calls: the name in the count of the calls ([`Gh::by`]).
+    caller: &'static str,
+    /// Where the count of the calls goes ([`Gh::with_calls`]). With
+    /// none, the calls are not counted.
+    calls: Option<Arc<Calls>>,
+    /// True when the reads of this `gh` share their replies with the other
+    /// `gh` of the process ([`Gh::read`]).
+    shares: bool,
+    /// How old a shared reply can be for [`Gh::read`]. With zero, each
+    /// read calls `gh`.
+    accepts: Duration,
 }
 
 impl Default for Gh {
@@ -137,6 +149,10 @@ impl Default for Gh {
             repo: None,
             limit: None,
             token: None,
+            caller: ghcalls::OTHER,
+            calls: None,
+            shares: false,
+            accepts: Duration::ZERO,
         }
     }
 }
@@ -176,6 +192,14 @@ const TOKEN_VARS: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
 const LIMIT_POLL: Duration = Duration::from_millis(20);
 
 impl Gh {
+    /// How long a shared reply of a fact that never changes stays: the
+    /// message of a commit ([`Gh::read_within`]).
+    pub const LONG: Duration = Duration::from_secs(3600);
+
+    /// How long a shared reply of a fact that changes rarely stays: the
+    /// default branch and the rules of a repository.
+    pub const SLOW: Duration = Duration::from_secs(600);
+
     /// The `gh` at `program`, for tests.
     pub fn at(program: impl Into<PathBuf>) -> Self {
         Self {
@@ -186,11 +210,66 @@ impl Gh {
 
     /// The `gh` of the machine for the repository `repo` (`OWNER/REPO`)
     /// from each folder: it sets `GH_REPO`. The riff daemon uses it: it
-    /// runs in no clone (#719).
+    /// runs in no clone (#719). Its calls go to the count of the daemon
+    /// ([`Calls::global`]), and its reads share their replies
+    /// ([`Gh::read`]).
     pub fn for_repo(repo: &str) -> Self {
         Self {
             repo: Some(repo.to_owned()),
+            calls: Some(Calls::global().clone()),
+            shares: true,
             ..Self::default()
+        }
+    }
+
+    /// The same `gh` for the caller `caller` in the count of the calls:
+    /// `wave`, `look`, `watches`, `sweep` or `usage`
+    /// ([`crate::ghcalls`]).
+    pub fn by(self, caller: &'static str) -> Self {
+        Self { caller, ..self }
+    }
+
+    /// The same `gh` with the count `calls` for its calls.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use riff::ghcalls::Calls;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let gh = isolated::write_program(dir.path().join("gh"), "#!/bin/sh\necho '[]'\n");
+    /// let calls = Arc::new(Calls::default());
+    /// let gh = riff::pr::Gh::at(gh).by("look").with_calls(calls.clone());
+    /// gh.run(&["pr", "list", "--json", "number,statusCheckRollup"], None)?;
+    /// gh.run(&["api", "repos/o/r"], None)?;
+    /// let shown = calls.shown(riff::daemon::now_ms());
+    /// assert_eq!(shown.total(), (2, 2));
+    /// assert_eq!((shown.rows[0].caller.as_str(), shown.rows[0].kind.as_str()), ("look", "pr list"));
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_calls(self, calls: Arc<Calls>) -> Self {
+        Self {
+            calls: Some(calls),
+            ..self
+        }
+    }
+
+    /// The same `gh` whose reads share their replies ([`Gh::read`]), for
+    /// a test: [`Gh::for_repo`] does it already.
+    pub fn with_shared_reads(self) -> Self {
+        Self {
+            shares: true,
+            ..self
+        }
+    }
+
+    /// The same `gh` whose [`Gh::read`] takes a shared reply that is not
+    /// older than `age`. A look that must see the forge as it is now
+    /// takes none (the default). A look that repeats the read of another
+    /// loop takes the reply of that loop.
+    pub fn accepting(self, age: Duration) -> Self {
+        Self {
+            accepts: age,
+            ..self
         }
     }
 
@@ -362,10 +441,99 @@ impl Gh {
         serde_json::from_str(&out).with_context(|| format!("gh {}", args.join(" ")))
     }
 
+    /// Reads with `gh ARGS` a fact that more than one loop of the daemon
+    /// needs (#1549). It takes the reply of an earlier read of the same
+    /// call in this process when that reply is not older than the age
+    /// that [`Gh::accepting`] gave. Else it runs `gh`, and keeps the
+    /// reply for the next read. A `gh` that shares no reads (the default,
+    /// see [`Gh::with_shared_reads`]) just runs `gh`. A read that fails
+    /// keeps nothing.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let log = dir.path().join("log");
+    /// let script = format!("#!/bin/sh\necho x >> {}\necho '[]'\n", log.display());
+    /// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), &script))
+    ///     .with_shared_reads();
+    /// let args = ["pr", "list", "--repo", "o/r"];
+    /// // A read that accepts nothing runs `gh`, and keeps the reply.
+    /// gh.read(&args)?;
+    /// // A read that accepts a minute takes the reply that is there.
+    /// let later = gh.clone().accepting(Duration::from_secs(60));
+    /// assert_eq!(later.read(&args)?, "[]\n");
+    /// assert_eq!(std::fs::read_to_string(&log)?.lines().count(), 1);
+    /// // A read that accepts nothing runs `gh` each time.
+    /// gh.read(&args)?;
+    /// assert_eq!(std::fs::read_to_string(&log)?.lines().count(), 2);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn read(&self, args: &[&str]) -> Result<String> {
+        self.read_within(args, self.accepts)
+    }
+
+    /// [`Gh::read`] that takes a reply of any `gh` of the process not older
+    /// than `age`, whatever [`Gh::accepting`] says. A fact that never
+    /// changes, or that changes rarely, asks for a long age.
+    pub fn read_within(&self, args: &[&str], age: Duration) -> Result<String> {
+        if !self.shares {
+            return self.run(args, None);
+        }
+        let key = self.key(args);
+        if let Some(reply) = replies::get(&key, age) {
+            return Ok(reply);
+        }
+        let reply = self.run(args, None)?;
+        replies::put(key, &reply);
+        Ok(reply)
+    }
+
+    /// [`Gh::read`] and the JSON of its reply.
+    pub fn read_json<T: DeserializeOwned>(&self, args: &[&str]) -> Result<T> {
+        let out = self.read(args)?;
+        serde_json::from_str(&out).with_context(|| format!("gh {}", args.join(" ")))
+    }
+
+    /// The reply that an earlier read of `gh ARGS` kept, when it is not
+    /// older than `age`. It calls no `gh`.
+    pub fn peek(&self, args: &[&str], age: Duration) -> Option<String> {
+        self.shares.then(|| replies::get(&self.key(args), age))?
+    }
+
+    /// The key of the shared reply of `gh ARGS`: the program, the
+    /// repository and the arguments.
+    fn key(&self, args: &[&str]) -> String {
+        format!(
+            "{}\u{1f}{}\u{1f}{}",
+            self.program.display(),
+            self.repo.as_deref().unwrap_or_default(),
+            args.join("\u{1f}")
+        )
+    }
+
+    /// Runs `gh ARGS`, and counts the call ([`Gh::with_calls`]).
+    fn output(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
+        let result = self.spawn(args, input);
+        if let Some(calls) = &self.calls {
+            let now = crate::daemon::now_ms();
+            let kind = ghcalls::kind_of(args);
+            let stdout = result.as_ref().map_or("", |(_, out, _)| out.as_str());
+            calls.record(now, self.caller, &kind, ghcalls::points_of(args, stdout));
+            if kind == "api graphql"
+                && stdout.contains("\"rateLimit\"")
+                && let Some(left) = ghcalls::left_in(stdout, now)
+            {
+                calls.keep_left(left);
+            }
+        }
+        result
+    }
+
     /// Runs `gh ARGS`: whether it exits with status 0, its stdout and its
     /// stderr. With a time limit, it fails at the end of the limit
     /// ([`Gh::with_limit`]).
-    fn output(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
+    fn spawn(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
         use std::os::unix::process::CommandExt;
         let mut command = Command::new(&self.program);
         if let Some(repo) = &self.repo {
@@ -439,6 +607,40 @@ impl Gh {
             String::from_utf8_lossy(&pipe.join().unwrap_or_default()).into_owned()
         };
         Ok((status.success(), text(stdout), text(stderr)))
+    }
+}
+
+/// The replies of the reads that the loops of the daemon share
+/// ([`Gh::read`], #1549). The wave, its look and its watches read the same
+/// pull requests and issues: one reply serves the loops that ask within the
+/// age they accept.
+mod replies {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex, PoisonError};
+    use std::time::{Duration, Instant};
+
+    /// How long a reply stays, whatever age a read accepts.
+    const KEEP: Duration = Duration::from_secs(3600);
+
+    static REPLIES: LazyLock<Mutex<HashMap<String, (Instant, String)>>> =
+        LazyLock::new(Mutex::default);
+
+    /// The reply of `key`, when it is not older than `age`. With an age of
+    /// zero there is none.
+    pub(super) fn get(key: &str, age: Duration) -> Option<String> {
+        if age.is_zero() {
+            return None;
+        }
+        let replies = REPLIES.lock().unwrap_or_else(PoisonError::into_inner);
+        let (at, reply) = replies.get(key)?;
+        (at.elapsed() <= age).then(|| reply.clone())
+    }
+
+    /// Keeps `reply` for `key`, and forgets the replies older than [`KEEP`].
+    pub(super) fn put(key: String, reply: &str) {
+        let mut replies = REPLIES.lock().unwrap_or_else(PoisonError::into_inner);
+        replies.retain(|_, (at, _)| at.elapsed() < KEEP);
+        replies.insert(key, (Instant::now(), reply.to_owned()));
     }
 }
 
@@ -1048,7 +1250,9 @@ pub fn same_commit(head: &str, tested: &str) -> Result<()> {
 /// ```
 pub fn default_branch(gh: &Gh, repo: &str) -> Result<String> {
     let path = format!("repos/{repo}");
-    let branch = gh.run(&["api", &path, "--jq", ".default_branch"], None)?;
+    // The default branch changes rarely: the daemon reads it one time in
+    // [`Gh::SLOW`] (#1549).
+    let branch = gh.read_within(&["api", &path, "--jq", ".default_branch"], Gh::SLOW)?;
     match text::forge(branch.trim()) {
         branch if branch.is_empty() || branch == "null" => {
             bail!("gh api {path}: the repository has no default branch")

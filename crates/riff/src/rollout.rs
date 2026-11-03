@@ -691,7 +691,8 @@ pub fn head_wip(gh: &Gh, repo: &str, sha: &str) -> bool {
         return false;
     }
     let path = format!("repos/{repo}/commits/{sha}");
-    gh.run(&["api", &path, "--jq", ".commit.message"], None)
+    // The message of a commit never changes: the daemon reads it one time.
+    gh.read_within(&["api", &path, "--jq", ".commit.message"], Gh::LONG)
         .is_ok_and(|message| wip(&message))
 }
 
@@ -1043,7 +1044,7 @@ pub fn runs_waiting(gh: &Gh, repo: &str, sha: &str) -> Vec<Run> {
         return Vec::new();
     }
     let path = format!("repos/{repo}/actions/runs?head_sha={sha}&per_page=100");
-    gh.run(&["api", &path], None)
+    gh.read(&["api", &path])
         .map(|reply| waiting_runs(&reply))
         .unwrap_or_default()
 }
@@ -1765,8 +1766,11 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 /// The GraphQL query of [`queue_of`]: for each open pull request, whether
 /// it is in the merge queue, and the last event that tells the queue or a
 /// push. A removal is the last of them only when nobody pushed to the pull
-/// request since.
+/// request since. The query also asks for `rateLimit`: its reply tells the
+/// cost of the query and the points that are left, with no more call
+/// ([`crate::ghcalls`], #1549).
 pub const QUEUE_QUERY: &str = "query($owner: String!, $name: String!) { \
+    rateLimit { cost remaining resetAt } \
     repository(owner: $owner, name: $name) { \
     pullRequests(states: OPEN, first: 100) { nodes { number isInMergeQueue \
     timelineItems(last: 1, itemTypes: [PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, \
@@ -1842,20 +1846,17 @@ pub fn queue_of(gh: &Gh, repo: &str) -> HashMap<u64, Queue> {
         "-f",
         &format!("name={name}"),
     ];
-    gh.run(&args, None)
+    gh.read(&args)
         .map(|reply| queue_from(&reply))
         .unwrap_or_default()
 }
 
-/// The open pull requests of the repository `repo` (`OWNER/REPO`),
-/// with `gh`. The head commit of a pull request that waits for a verify
-/// ([`Verify::Asked`]) is read one more time, for [`Pull::wip`]
-/// ([`head_wip`]). Their place in the merge queue is read one time
-/// ([`queue_of`]). The runs of Actions that wait for approval are read
-/// for a verified pull request that GitHub blocks with no check open
-/// only ([`Pull::settled`], [`runs_waiting`], 01M6FZ144M0BTEDWNB9V4MGWDD).
-pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
-    let mut pulls: Vec<Pull> = gh.json(&[
+/// The arguments of `gh` for the open pull requests of `repo`. The look
+/// of the wave, its watch and the sweep read them with these same
+/// arguments, so that the reply of one serves the others
+/// ([`Gh::read`], #1549).
+fn pull_args(repo: &str) -> [&str; 10] {
+    [
         "pr",
         "list",
         "--repo",
@@ -1866,7 +1867,34 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
         "100",
         "--json",
         PULL_FIELDS,
-    ])?;
+    ]
+}
+
+/// True when the reply that an earlier read of the open pull requests of
+/// `repo` kept, not older than `age`, has a pull request from `branch`.
+/// It calls no `gh`: with no earlier read it says `false`.
+pub fn open_in_kept(gh: &Gh, repo: &str, branch: &str, age: std::time::Duration) -> bool {
+    #[derive(Deserialize)]
+    struct Head {
+        #[serde(rename = "headRefName")]
+        branch: String,
+    }
+    gh.peek(&pull_args(repo), age)
+        .and_then(|reply| serde_json::from_str::<Vec<Head>>(&reply).ok())
+        .is_some_and(|pulls| pulls.iter().any(|p| p.branch == branch))
+}
+
+/// The open pull requests of the repository `repo` (`OWNER/REPO`),
+/// with `gh`. The head commit of a pull request that waits for a verify
+/// ([`Verify::Asked`]) is read one more time, for [`Pull::wip`]
+/// ([`head_wip`]). Their place in the merge queue is read one time
+/// ([`queue_of`]). The runs of Actions that wait for approval are read
+/// for a verified pull request that GitHub blocks with no check open
+/// only ([`Pull::settled`], [`runs_waiting`], 01M6FZ144M0BTEDWNB9V4MGWDD).
+/// Each read is a [`Gh::read`]: a `gh` that accepts an older reply takes
+/// the reply of the look that just ran.
+pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
+    let mut pulls: Vec<Pull> = gh.read_json(&pull_args(repo))?;
     let queue = queue_of(gh, repo);
     for pull in &mut pulls {
         pull.wip = pull.verify() == Some(Verify::Asked) && head_wip(gh, repo, &pull.head);
@@ -1876,6 +1904,29 @@ pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
         }
     }
     Ok(pulls)
+}
+
+/// The `--json` fields of the open issues that the wave reads
+/// ([`issues`]).
+pub const ISSUE_FIELDS: &str = "number,title,body,comments,milestone,labels";
+
+/// The open issues of the repository `repo` (`OWNER/REPO`), with `gh`.
+/// The look of the wave and its watch read them with these same
+/// arguments, so that the reply of one serves the other
+/// ([`Gh::read`], #1549).
+pub fn issues(gh: &Gh, repo: &str) -> Result<Vec<Issue>> {
+    gh.read_json(&[
+        "issue",
+        "list",
+        "--repo",
+        repo,
+        "--state",
+        "open",
+        "--limit",
+        "1000",
+        "--json",
+        ISSUE_FIELDS,
+    ])
 }
 
 /// The open milestones, issues and pull requests of a repository: the
@@ -1896,18 +1947,7 @@ impl Open {
             &format!("repos/{repo}/milestones?state=open&per_page=100"),
         ])?;
         let pulls = pulls(gh, repo)?;
-        let issues: Vec<Issue> = gh.json(&[
-            "issue",
-            "list",
-            "--repo",
-            repo,
-            "--state",
-            "open",
-            "--limit",
-            "1000",
-            "--json",
-            "number,title,body,comments,milestone,labels",
-        ])?;
+        let issues = issues(gh, repo)?;
         Ok(Self {
             milestones,
             issues,
