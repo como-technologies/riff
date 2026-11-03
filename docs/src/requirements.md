@@ -6250,6 +6250,16 @@ of this part when they merge.
   the host, the riff stays paused, and the lead that reads the note
   waits for the next note. The note says nothing of a failure or a
   rollback. Only a failed check gives the note of a failed check.
+- **01M6H12ET0FQ553QHGVF5XJMQ9** A call of `gh` in the release commands
+  runs again after a 502, 503 or 504 of GitHub: up to 3 new tries, after
+  2 s, 4 s and 8 s. A call that still fails gives the error of GitHub
+  and the number of tries. A write that GitHub did before it answered
+  504 can show twice.
+- **01M6H12QRZFBDTT5D5VQ4FB4C1** `riff release check` prints the result
+  of each check before it writes the comment on the release issue. When
+  the comment fails, the error says that the checks ran, that riff did
+  not close the issue or resume the riff, and names `riff release check
+  vX.Y.Z` as the next step.
 
 ### The real-session test
 

@@ -5210,11 +5210,13 @@ when the lead is idle, and the lead goes on with its conversation. You
 stop no container. See
 [The lead starts again on the new riff](how-it-works.md#the-lead-starts-again-on-the-new-riff).
 
-riff writes the result on the release issue. When each check passes,
-riff closes the release issue and resumes the riff. When a check
-fails, the lead fixes forward with a patch release, or rolls back.
-When the job `Deploy` failed, the old revision still serves: riff files
-an issue with the failed jobs and the run, and resumes the riff.
+riff prints the result of each check, and writes it on the release
+issue. When each check passes, riff closes the release issue and
+resumes the riff. When a check fails, the lead fixes forward with a
+patch release, or rolls back. When the job `Deploy` failed, the old
+revision still serves: riff files an issue with the failed jobs and the
+run, and resumes the riff. When GitHub fails a call, see
+[When GitHub fails a call of a release command](#when-github-fails-a-call-of-a-release-command).
 
 riff reads the log with the `gcloud` of the host and the cloud settings
 `shared` (see
@@ -5224,6 +5226,41 @@ the host signs in again:
 ```sh
 gcloud auth login
 ```
+
+#### When GitHub fails a call of a release command
+
+GitHub sometimes answers a call with a 502, 503 or 504. A release
+command (`riff release …`, and the release gate of `riff wave end`)
+runs the call of `gh` again after such an answer: up to 3 new tries,
+after 2 s, 4 s and 8 s. Most of the time you see nothing. Another
+failure, for example a limit of GitHub, gets no new try.
+
+```mermaid
+flowchart TD
+    A["riff release check: the checks run"] --> B["the result of each check is on your screen"]
+    B --> C["the comment on the release issue"]
+    C -- "502, 503 or 504" --> D{"3 new tries left?"}
+    D -- yes --> C
+    D -- no --> E["error: the checks ran, riff did not close the issue or resume the riff"]
+    C -- ok --> F["riff closes the release issue, resumes the riff"]
+```
+
+When a call still fails, the command stops with the error of GitHub
+and the line `riff tried the call 4 times.`
+
+`riff release check` prints the result of each check before it writes
+the comment. When the comment fails, the result is on your screen
+already. riff did not write it on the release issue, did not close the
+issue and did not resume the riff. Wait a short time, then run the
+check again:
+
+```sh
+riff release check v3.3.0
+```
+
+A write that GitHub did before it answered 504 can show twice. For
+example, the release issue can have the comment of the check two
+times. The second comment does no harm.
 
 #### End the wave of the release
 

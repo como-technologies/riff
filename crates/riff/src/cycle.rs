@@ -78,6 +78,12 @@
 //! of the lead [`crate::reach::DaemonLog`] asks the riff daemon of the host
 //! to run it (#1247).
 //!
+//! A command of the cycle calls `gh` through [`Gh::retrying`]: a 502, 503
+//! or 504 of GitHub runs the call again, up to 3 times
+//! (01M6H12ET0FQ553QHGVF5XJMQ9). [`check`] gives the result of the checks
+//! to its caller before it writes the comment, so a fault of the comment
+//! hides nothing (01M6H12QRZFBDTT5D5VQ4FB4C1).
+//!
 //! ```
 //! use riff::cycle::{level, version};
 //!
@@ -2181,11 +2187,17 @@ pub fn check_text(tag: &str, lines: &[(&'static str, Verdict)]) -> String {
 /// wave. Else it runs [`checks`], and writes the result on the release
 /// issue. When each check passed, it closes the release issue. The
 /// caller resumes the riff after a failed deploy, and after a pass.
+///
+/// It gives the text of the result ([`check_text`]) to `show` before it
+/// writes the comment (01M6H12QRZFBDTT5D5VQ4FB4C1). So a fault of the
+/// comment does not hide the result: the error says that the checks ran,
+/// and names `riff release check` as the next step.
 pub fn check(
     forge: &dyn Forge,
     tag_text: &str,
     served: &Served,
     log: &dyn CloudLog,
+    show: &mut dyn FnMut(&str),
 ) -> Result<Checked> {
     let version = tag_version(tag_text)?;
     let tag = tag(version);
@@ -2227,7 +2239,11 @@ pub fn check(
         DeployState::Passed => {
             let lines = checks(version, &deploy.at, served, log);
             let passed = lines.iter().all(|(_, v)| *v == Verdict::Passed);
-            forge.comment(issue, &check_text(&tag, &lines))?;
+            let result = check_text(&tag, &lines);
+            show(&result);
+            forge
+                .comment(issue, &result)
+                .with_context(|| text::release_check_unwritten(&tag, issue))?;
             if passed {
                 forge.close(issue)?;
             }
@@ -3511,6 +3527,8 @@ pub(crate) mod tests {
         pub(crate) wave_open: Option<(String, usize)>,
         /// True when the repository has the table `[release]`.
         pub(crate) has_release: bool,
+        /// True when the comment on an issue fails.
+        pub(crate) comment_fails: bool,
     }
 
     impl Fake {
@@ -3662,6 +3680,9 @@ pub(crate) mod tests {
             Ok(self.issue.clone())
         }
         fn comment(&self, issue: u64, body: &str) -> Result<()> {
+            if self.comment_fails {
+                bail!("gh issue comment {issue} --body-file -: HTTP 504");
+            }
             self.write(format!("comment #{issue}\n{body}"));
             Ok(())
         }
@@ -4556,7 +4577,7 @@ pub(crate) mod tests {
             "503",
             vec![line(0, "new"), line(3, "new"), line(10, "new")],
         )]));
-        let done = check(&forge, "v3.3.0", &served("3.3.0"), &log).unwrap();
+        let done = check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |_| {}).unwrap();
         let Checked::Ran { passed, issue, .. } = done else {
             panic!("{done:?}")
         };
@@ -4568,6 +4589,58 @@ pub(crate) mod tests {
             "{log:?}"
         );
         assert_eq!(log[1], "close #7");
+    }
+
+    /// 01M6H12QRZFBDTT5D5VQ4FB4C1: the result goes to `show` before the
+    /// comment. A comment that fails hides nothing, closes nothing and
+    /// names the next step.
+    #[test]
+    fn check_shows_the_result_before_it_writes_the_comment() {
+        let ready = |comment_fails| Fake {
+            tags: vec!["v3.3.0".into()],
+            deploy: Some(deploy(DeployState::Passed)),
+            issue: Some(ReleaseIssue {
+                number: 7,
+                open: true,
+                comments: vec![],
+            }),
+            comment_fails,
+            ..Fake::ready("3.3.0")
+        };
+        let log = Log(Ok(vec![(
+            "503",
+            vec![line(0, "new"), line(3, "new"), line(10, "new")],
+        )]));
+        let forge = ready(false);
+        let mut shown = Vec::new();
+        check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |text| {
+            forge.write("show".into());
+            shown.push(text.to_owned());
+        })
+        .unwrap();
+        let log_of = forge.log();
+        assert_eq!(log_of[0], "show", "{log_of:?}");
+        assert!(log_of[1].starts_with("comment #7\n"), "{log_of:?}");
+        assert_eq!(shown.len(), 1);
+        assert!(log_of[1].ends_with(&shown[0]), "{log_of:?}");
+
+        let forge = ready(true);
+        let mut shown = Vec::new();
+        let error = check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |text| {
+            shown.push(text.to_owned())
+        })
+        .unwrap_err();
+        assert_eq!(shown.len(), 1, "the result was shown before the fault");
+        assert!(
+            shown[0].starts_with("riff release check v3.3.0: passed\n"),
+            "{shown:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            text::release_check_unwritten("v3.3.0", 7)
+        );
+        assert!(format!("{error:#}").contains("HTTP 504"), "{error:#}");
+        assert!(forge.log().is_empty(), "{:?}", forge.log());
     }
 
     #[test]
@@ -4626,7 +4699,7 @@ pub(crate) mod tests {
         ];
         for (served, log, want) in cases {
             let forge = ready();
-            let done = check(&forge, "v3.3.0", &served, &log).unwrap();
+            let done = check(&forge, "v3.3.0", &served, &log, &mut |_| {}).unwrap();
             assert!(matches!(done, Checked::Ran { passed: false, .. }), "{want}");
             let log = forge.log();
             assert!(
@@ -4660,7 +4733,7 @@ pub(crate) mod tests {
                 ("status=500", vec![line(40, on)]),
             ]));
             let forge = forge();
-            let done = check(&forge, "v3.3.0", &served("3.3.0"), &log).unwrap();
+            let done = check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |_| {}).unwrap();
             assert!(
                 matches!(done, Checked::Ran { passed: p, .. } if p == passed),
                 "a 500 of {on}: {done:?}"
@@ -4684,7 +4757,7 @@ pub(crate) mod tests {
             ..Fake::ready("3.3.0")
         };
         let log = Log(Err("gcloud: Reauthentication failed"));
-        let done = check(&forge, "v3.3.0", &served("3.3.0"), &log).unwrap();
+        let done = check(&forge, "v3.3.0", &served("3.3.0"), &log, &mut |_| {}).unwrap();
         let Checked::Ran {
             lines,
             passed: false,
@@ -4780,7 +4853,14 @@ pub(crate) mod tests {
             }),
             ..Fake::ready("3.3.0")
         };
-        let done = check(&forge, "v3.3.0", &served("3.2.0"), &Log(Ok(vec![]))).unwrap();
+        let done = check(
+            &forge,
+            "v3.3.0",
+            &served("3.2.0"),
+            &Log(Ok(vec![])),
+            &mut |_| {},
+        )
+        .unwrap();
         assert!(
             matches!(done, Checked::DeployFailed { issue: 88, .. }),
             "{done:?}"
@@ -4822,15 +4902,27 @@ pub(crate) mod tests {
                 issue: Some(ReleaseIssue::default()),
                 ..Fake::ready("3.3.0")
             };
-            let error = check(&forge, "v3.3.0", &served("3.3.0"), &Log(Ok(vec![])))
-                .unwrap_err()
-                .to_string();
+            let error = check(
+                &forge,
+                "v3.3.0",
+                &served("3.3.0"),
+                &Log(Ok(vec![])),
+                &mut |_| {},
+            )
+            .unwrap_err()
+            .to_string();
             assert!(error.contains(want), "{want}: {error}");
             assert!(forge.log().is_empty());
         }
-        let error = check(&Fake::new(), "v3.3.0", &served("3.3.0"), &Log(Ok(vec![])))
-            .unwrap_err()
-            .to_string();
+        let error = check(
+            &Fake::new(),
+            "v3.3.0",
+            &served("3.3.0"),
+            &Log(Ok(vec![])),
+            &mut |_| {},
+        )
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("no CI run deploys v3.3.0"), "{error}");
     }
 
