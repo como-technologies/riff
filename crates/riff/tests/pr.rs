@@ -87,6 +87,12 @@ impl Machine {
     /// Runs `riff ARGS` as the session `session` of mike, with the fake
     /// `gh` first in `PATH`, away from the runtime of the server.
     async fn run(&self, session: &str, args: &[&str]) -> Output {
+        self.run_in(self.repo.path(), session, args).await
+    }
+
+    /// Runs `riff ARGS` as `session` in the folder `dir`. An empty
+    /// `session` is a person in a terminal.
+    async fn run_in(&self, dir: &Path, session: &str, args: &[&str]) -> Output {
         let path = format!(
             "{}:{}",
             self.bin.path().display(),
@@ -95,7 +101,7 @@ impl Machine {
         crate::common::sign_in(&self.server, &self.env.riff_home(), "mike");
         let mut cmd = self.env.riff();
         cmd.args(args)
-            .current_dir(self.repo.path())
+            .current_dir(dir)
             .env("RIFF_SERVER", &*self.server)
             .env("RIFF_USER", "mike")
             .env("RIFF_HOST", "thelio")
@@ -326,6 +332,45 @@ async fn a_verify_result_wakes_the_lead_when_no_session_holds_the_item() {
     // A session holds the item: only it wakes.
     machine.ok("author", &["claim", "issue-12"]).await;
     let out = machine.ok("verifier", &verify).await;
+    assert!(out.contains("Woke mike@thelio:riff (author)"), "{out}");
+    assert!(!out.contains("(lead)"), "{out}");
+    assert!(!out.contains("No session matches"), "{out}");
+}
+
+/// A person in a terminal has no repository in the URI, in any folder
+/// (01M6FYW8NG0E9HYPWTG2RV5EAM). The thread of the pull request gives
+/// the repository: with no holder, the lead of the user wakes in it.
+/// With a holder in the repository, only the holder wakes. The person
+/// runs in a folder of its own, not in the clone of a session.
+#[tokio::test]
+async fn a_verify_from_a_terminal_in_another_folder_wakes_the_lead_of_the_repository() {
+    let machine = Machine::new(VERIFY).await;
+    machine.ok("lead", &["whoami"]).await;
+    machine.ok("", &["lead", "--session", "lead"]).await;
+    machine.ok("lead", &["resume", "--riff"]).await;
+    let terminal = repo();
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let verify = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let run = || machine.run_in(terminal.path(), "", &verify);
+
+    let out = run().await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let out = text(&out.stdout);
+    assert!(out.contains("Woke mike@thelio:riff (lead)"), "{out}");
+    assert!(!out.contains("repo=-"), "{out}");
+    let inbox = machine.ok("lead", &["read"]).await;
+    assert!(
+        inbox.contains("verify result: PASS for issue-12, PR #40, commit 1a2b3c4d."),
+        "{inbox}"
+    );
+
+    // A session holds the item in the repository: only it wakes.
+    machine.ok("author", &["claim", "issue-12"]).await;
+    let out = run().await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let out = text(&out.stdout);
     assert!(out.contains("Woke mike@thelio:riff (author)"), "{out}");
     assert!(!out.contains("(lead)"), "{out}");
     assert!(!out.contains("No session matches"), "{out}");

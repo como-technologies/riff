@@ -1769,7 +1769,7 @@ async fn after_verify(
         Verdict::Fail => PullState::Failed,
     };
     crate::look::tell_fact(api, me, reported.issue, pull, state).await;
-    let to = pr::result_to(reported.issue, me, &api.who(me, false).await?);
+    let to = pr::result_to(reported.issue, me, &thread, &api.who(me, false).await?);
     let body = text::verify_post(verdict, pull, &reported, &result);
     api.post(me, Some(&thread), &to, &body, Kind::Message)
         .await?;
