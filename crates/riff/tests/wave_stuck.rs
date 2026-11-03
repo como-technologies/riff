@@ -854,3 +854,99 @@ fn a_run_that_waits_for_approval_is_a_notice_with_the_run_and_the_step() {
     let issues = riff::top::issues_from_gh(&gh, REPO).unwrap();
     assert_eq!(issues.stuck[&1], "approve run");
 }
+
+/// The check run `name` of GitHub Actions with `conclusion`, started at
+/// `started`. The rollup keeps each run of a check on the head.
+fn run_at(name: &str, conclusion: &str, started: &str) -> String {
+    format!(
+        r#"{{"__typename":"CheckRun","name":"{name}","conclusion":"{conclusion}","workflowName":"CI","detailsUrl":"https://github.com/o/r/actions/runs/9/job/1","startedAt":"{started}","completedAt":"{started}"}}"#
+    )
+}
+
+/// #1548, 01M6G0BFAJJV9YNQZT502P1KGJ: the rollup keeps an old failed run
+/// next to the newer run of the same check that passed. Such a pull
+/// request is settled, as one with no old run: the look reads the runs of
+/// its head, and the lead hears of the run that waits for approval one
+/// time. A pull request whose newest run failed is not settled: it gets a
+/// build, and the look reads no runs for it.
+#[test]
+fn a_run_that_waits_for_approval_tells_the_lead_once_next_to_an_old_failed_run_of_a_passed_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let gate_old = || run_at("Gate", "FAILURE", "2026-11-03T05:50:00Z");
+    let gate_new = || run_at("Gate", "SUCCESS", "2026-11-03T05:55:00Z");
+    let gh = forge(
+        dir.path(),
+        &[
+            // Each check has an old failed run and a newer passed run.
+            pull_held(
+                1,
+                "aaaa111",
+                &[
+                    run_at("Hygiene", "FAILURE", "2026-11-03T05:51:00Z"),
+                    verify("SUCCESS"),
+                    gate_old(),
+                    run_at("Hygiene", "SUCCESS", "2026-11-03T05:56:00Z"),
+                    gate_new(),
+                ],
+                "",
+                "BLOCKED",
+            ),
+            // The newest run of the Gate failed.
+            pull_held(
+                2,
+                "bbbb222",
+                &[
+                    verify("SUCCESS"),
+                    gate_old(),
+                    gate_new(),
+                    run_at("Gate", "FAILURE", "2026-11-03T06:00:00Z"),
+                ],
+                "",
+                "BLOCKED",
+            ),
+        ],
+    );
+    runs(
+        dir.path(),
+        r#"{"total_count":1,"workflow_runs":[
+            {"id":40151175338,"workflow_id":2,"name":"Hygiene","status":"completed","conclusion":"action_required","html_url":"https://github.com/o/r/actions/runs/40151175338"}]}"#,
+    );
+    let look = looks(&gh);
+    let hygiene = Run {
+        id: 40151175338,
+        name: "Hygiene".into(),
+        link: Some("https://github.com/o/r/actions/runs/40151175338".into()),
+    };
+    assert_eq!(
+        look.fixes.notices,
+        [Notice {
+            pull: 41,
+            branch: "worktree-issue-1".into(),
+            commit: "aaaa111".into(),
+            stuck: Stuck::Approve(hygiene),
+        }]
+    );
+    assert_eq!(
+        look.fixes.failed,
+        BTreeMap::from([(
+            2,
+            Failed {
+                pull: 42,
+                commit: "bbbb222".into(),
+                checks: vec!["Gate".into()]
+            }
+        )]),
+        "the newest run of the Gate failed"
+    );
+    // The look read the runs of the settled head only.
+    assert_eq!(read_runs(dir.path()), ["aaaa111"]);
+
+    // The next look gives the same key: the lead hears of the run one time.
+    let key = look.fixes.notices[0].key();
+    assert_eq!(key, "#41@aaaa111:approve run:40151175338");
+    assert_eq!(looks(&gh).fixes.notices[0].key(), key);
+
+    // `riff top` shows the item in the group `stuck`.
+    let issues = riff::top::issues_from_gh(&gh, REPO).unwrap();
+    assert_eq!(issues.stuck[&1], "approve run");
+}

@@ -686,9 +686,11 @@
   requests reads the check runs of a head by the rule of
   01M5RGM8HBVQMY25H5PYESK17J: of the runs of one check, only the newest.
   An old failed run does not count when a newer run of the same check
-  passed, for the fix of checks, for the message to the lead, and for
-  the group stuck of riff top. The end of a session that fixed checks
-  reads the checks the same way. The wave starts no fix session for a
+  passed, for the fix of checks, for the message to the lead, for the
+  group stuck of riff top, and for settled (01M6FZ144M0BTEDWNB9V4MGWDD):
+  the look reads the runs that wait for approval of a settled pull
+  request only. The end of a session that fixed checks reads the checks
+  the same way. The wave starts no fix session for a
   pull request that is merged or closed, and sends no message that a
   check still fails for one.
 
