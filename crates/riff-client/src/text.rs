@@ -2,7 +2,7 @@
 //! the notes that its calls post.
 
 use riff_core::name::ThreadName;
-use riff_core::wire::{AdminSet, Invited, OwnerPassed, Removed, RiffState};
+use riff_core::wire::{AdminSet, Invited, OwnerPassed, PauseInfo, Removed, RiffState};
 
 /// The end of the refusal of the `leave` tool when riff has no
 /// directory for the mark of the leave (01M3XQVK05FAT3PR43W8RNEYHY).
@@ -46,6 +46,47 @@ pub fn riff_news(repository: Option<&ThreadName>, state: RiffState) -> String {
         RiffState::Running => format!(
             "{subject} is running again. Go on from where you stopped. A session with no work \
              follows the start routine."
+        ),
+    }
+}
+
+/// The message to the lead of the repository `repository`, after a pause
+/// or a resume of the whole riff, when the repository has the pause
+/// `pause` of its own: the lead keeps the running state, and its workers
+/// do not wake.
+///
+/// ```
+/// use riff_core::record::By;
+/// use riff_core::wire::{PauseInfo, RiffState};
+///
+/// let strata = "como-technologies/strata".parse()?;
+/// let pause = PauseInfo { by: Some(By::Person("mike".into())), at_ms: 7 };
+/// assert_eq!(
+///     riff_client::text::riff_lead_news(&strata, RiffState::Running, &pause),
+///     "The riff is running again. The repository como-technologies/strata is still paused by \
+///      the person mike, so its workers did not wake. Your user or you resume it with `riff \
+///      resume`."
+/// );
+/// assert_eq!(
+///     riff_client::text::riff_lead_news(&strata, RiffState::Paused, &PauseInfo::default()),
+///     "The riff is paused. The repository como-technologies/strata was paused already, so its \
+///      workers did not wake. Your messages and tools still work."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn riff_lead_news(repository: &ThreadName, state: RiffState, pause: &PauseInfo) -> String {
+    let by = pause
+        .by
+        .as_ref()
+        .map_or_else(String::new, |by| format!(" by {by}"));
+    match state {
+        RiffState::Paused => format!(
+            "The riff is paused. The repository {repository} was paused already{by}, so its \
+             workers did not wake. Your messages and tools still work."
+        ),
+        RiffState::Running => format!(
+            "The riff is running again. The repository {repository} is still paused{by}, so its \
+             workers did not wake. Your user or you resume it with `riff resume`."
         ),
     }
 }

@@ -363,14 +363,14 @@ async fn a_resume_of_a_repository_in_a_paused_riff_wakes_nobody() {
         .unwrap();
     assert_eq!(woken(&posted), ["w1"]);
 
-    // The pause of the riff wakes only the sessions that it stops: the
-    // repository of mike is paused already.
+    // The pause of the riff wakes only the sessions that it stops. The
+    // lead of the repository of mike, which is paused already, hears it.
     let (reply, posted) = common::api_of(&server, &mike)
         .set_riff(&mike, RiffState::Paused)
         .await
         .unwrap();
     assert!(reply.changed && reply.riff.is_some());
-    assert_eq!(woken(&posted), ["b1", "b2"]);
+    assert_eq!(woken(&posted), ["b1", "b2", "l1"]);
 
     let (reply, posted) = common::api_of(&server, &lead)
         .set_pause(&lead, &PauseScope::Here, RiffState::Running)
@@ -434,8 +434,16 @@ async fn a_resume_of_the_riff_leaves_a_paused_repository_paused() {
         .set_riff(&mike, RiffState::Running)
         .await
         .unwrap();
-    assert_eq!(woken(&posted), ["l1", "w1"], "strata stays paused");
+    assert_eq!(
+        woken(&posted),
+        ["b1", "l1", "w1"],
+        "strata stays paused: only its lead hears it"
+    );
     let answer = text::riff_set(None, RiffState::Running, &reply, &posted);
+    assert!(
+        answer.contains("Told the lead of como-technologies/strata: brett@kadomony:strata (b1)."),
+        "{answer}"
+    );
     assert!(
         answer.ends_with(
             "Still paused: como-technologies/strata. Its user or its lead resumes it with \
@@ -457,6 +465,104 @@ async fn a_resume_of_the_riff_leaves_a_paused_repository_paused() {
             .unwrap(),
         RiffState::Running
     );
+}
+
+/// The lead of strata paused its repository. A pause and a resume of
+/// the whole riff each post one message to that lead only, in the thread
+/// of strata. It says that the riff changed, that the pause of strata
+/// still stops its workers, and who set that pause. No worker of strata
+/// wakes (01M6FYGVTCBKC9C8AXMFD7WMW2).
+#[tokio::test]
+async fn a_pause_and_a_resume_of_the_riff_tell_the_lead_of_a_paused_repository() {
+    let server = common::start_signed().await;
+    let (lead, worker, mike) = sessions();
+    let (strata_lead, strata_worker) = strata_sessions();
+    for me in [&lead, &worker, &strata_lead, &strata_worker] {
+        common::api_of(&server, me).register(me).await.unwrap();
+    }
+    for me in [&lead, &strata_lead] {
+        common::name_lead(&common::api_of(&server, &common::person_of(me)), me).await;
+    }
+    common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Running)
+        .await
+        .unwrap();
+    common::api_of(&server, &strata_lead)
+        .set_pause(&strata_lead, &PauseScope::Here, RiffState::Paused)
+        .await
+        .unwrap();
+
+    for state in [RiffState::Paused, RiffState::Running] {
+        let (reply, posted) = common::api_of(&server, &mike)
+            .set_riff(&mike, state)
+            .await
+            .unwrap();
+        assert!(reply.changed);
+        let to_strata: Vec<&Posted> = posted.iter().filter(|p| p.thread == strata()).collect();
+        assert_eq!(to_strata.len(), 1, "one message to the lead: {posted:?}");
+        assert_eq!(
+            woken(&[to_strata[0].clone()]),
+            ["b1"],
+            "the lead of strata, no worker of strata"
+        );
+        assert_eq!(woken(&posted), ["b1", "l1", "w1"]);
+
+        let pause = reply.repository(&strata()).unwrap();
+        let messages = common::api_of(&server, &strata_lead)
+            .read(&strata_lead, &strata(), true)
+            .await
+            .unwrap();
+        let last = &messages.last().unwrap().message;
+        assert_eq!(
+            last.body,
+            riff_client::text::riff_lead_news(&strata(), state, pause)
+        );
+        assert!(
+            last.body.contains("by the session brett/b1"),
+            "{}",
+            last.body
+        );
+        let to = last.to[0].clone();
+        assert_eq!(to.repo.as_deref(), Some("como-technologies/strata"));
+        assert_eq!(to.lead, Some(true));
+
+        let answer = text::riff_set(None, state, &reply, &posted);
+        assert!(
+            answer
+                .contains("Told the lead of como-technologies/strata: brett@kadomony:strata (b1)."),
+            "{answer}"
+        );
+    }
+    // The pause of strata stays: its worker is paused, and nobody woke it.
+    assert_eq!(
+        common::api_of(&server, &strata_worker)
+            .riff(&strata_worker)
+            .await
+            .unwrap(),
+        RiffState::Paused
+    );
+}
+
+/// The whole riff runs or is paused, and no repository has a pause of
+/// its own: no lead gets the message for a paused repository.
+#[tokio::test]
+async fn a_pause_of_the_riff_tells_no_lead_when_no_repository_is_paused() {
+    let server = common::start_signed().await;
+    let (lead, worker, mike) = sessions();
+    for me in [&lead, &worker] {
+        common::api_of(&server, me).register(me).await.unwrap();
+    }
+    common::name_lead(&common::api_of(&server, &common::person_of(&lead)), &lead).await;
+
+    let (reply, posted) = common::api_of(&server, &mike)
+        .set_riff(&mike, RiffState::Running)
+        .await
+        .unwrap();
+    assert!(reply.repositories.is_empty());
+    assert_eq!(posted.len(), 1, "one message to the repository");
+    assert_eq!(woken(&posted), ["l1", "w1"]);
+    let answer = text::riff_set(None, RiffState::Running, &reply, &posted);
+    assert!(!answer.contains("Told the lead"), "{answer}");
 }
 
 /// mike has live sessions on hosts `a` and `b`. A resume on `b` gives

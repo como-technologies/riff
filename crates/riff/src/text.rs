@@ -751,11 +751,12 @@ pub fn build_line(server: Option<&Build>) -> String {
 
 /// The answer to `riff pause` and `riff resume`: the new state of the
 /// repository `repository` or of the whole riff, the sessions that
-/// woke, and each pause that still stops work
-/// (01M3XAHZSJ5914BRQBZ2G4ZBSA).
+/// woke, the leads that it told (a lead of a repository with a pause of
+/// its own, 01M6FYGVTCBKC9C8AXMFD7WMW2), and each pause that still stops
+/// work (01M3XAHZSJ5914BRQBZ2G4ZBSA).
 ///
 /// ```
-/// use riff_core::wire::{Posted, RiffReply, RiffState};
+/// use riff_core::wire::{PauseInfo, Posted, RepositoryPause, RiffReply, RiffState};
 ///
 /// let reply = RiffReply { changed: true, ..RiffState::Paused.into() };
 /// let posted = Posted {
@@ -780,6 +781,23 @@ pub fn build_line(server: Option<&Build>) -> String {
 ///     "The repository como-technologies/riff is running now. No other session woke. The \
 ///      whole riff is still paused: the owner or an admin resumes it with `riff resume --riff`."
 /// );
+/// // A resume of the whole riff while a repository has a pause of its own:
+/// // its lead hears it, and no worker of it wakes.
+/// let strata = "como-technologies/strata".parse()?;
+/// let own = RepositoryPause { repository: strata, pause: PauseInfo::default() };
+/// let running = RiffReply { changed: true, repositories: vec![own], ..RiffState::Running.into() };
+/// let lead = Posted {
+///     thread: "como-technologies/strata".parse()?,
+///     seq: 4,
+///     woken: vec!["riff://brett@heron/como-technologies/strata?session=62b2".parse()?],
+///     unmatched: vec![],
+/// };
+/// assert_eq!(
+///     riff::text::riff_set(None, RiffState::Running, &running, &[lead]),
+///     "The riff is running now. Told the lead of como-technologies/strata: brett@heron:strata \
+///      (62b2). Still paused: como-technologies/strata. Its user or its lead resumes it with \
+///      `riff resume`."
+/// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn riff_set(
@@ -791,11 +809,21 @@ pub fn riff_set(
     let subject = riff_client::text::pause_subject(repository);
     let mut out = if reply.changed {
         let mut out = format!("{subject} is {state} now.");
-        let names: Vec<String> = posted.iter().flat_map(|p| &p.woken).map(name).collect();
-        if names.is_empty() {
-            out.push_str(" No other session woke.");
-        } else {
+        // The whole riff tells the lead of a repository with a pause of its own,
+        // and wakes none of its workers (01M6FYGVTCBKC9C8AXMFD7WMW2).
+        let (leads, workers): (Vec<&Posted>, Vec<&Posted>) = posted
+            .iter()
+            .partition(|p| repository.is_none() && reply.repository(&p.thread).is_some());
+        let names: Vec<String> = workers.iter().flat_map(|p| &p.woken).map(name).collect();
+        let told: Vec<&Posted> = leads.into_iter().filter(|p| !p.woken.is_empty()).collect();
+        if !names.is_empty() {
             let _ = write!(out, " Woke {}.", names.join(", "));
+        } else if told.is_empty() {
+            out.push_str(" No other session woke.");
+        }
+        for p in told {
+            let leads: Vec<String> = p.woken.iter().map(name).collect();
+            let _ = write!(out, " Told the lead of {}: {}.", p.thread, leads.join(", "));
         }
         out
     } else {
