@@ -603,6 +603,28 @@ impl Work {
         }
     }
 
+    /// The role of the session that does this work: a verify is a
+    /// verifier, each build is a worker (01M6FZXZ9267YKMH97E6A2Y2EP).
+    ///
+    /// ```
+    /// use riff::permissions::Role;
+    /// use riff::wave::Work;
+    ///
+    /// assert_eq!(Work::Build { issue: 12 }.role(), Role::Worker);
+    /// let verify = Work::Verify { issue: 12, pull: 40, commit: "1a2b".into() };
+    /// assert_eq!(verify.role(), Role::Verifier);
+    /// let rebase = Work::Rebase { issue: 12, pull: 40, commit: "1a2b".into() };
+    /// assert_eq!(rebase.role(), Role::Worker);
+    /// ```
+    pub fn role(&self) -> crate::permissions::Role {
+        match self {
+            Work::Verify { .. } => crate::permissions::Role::Verifier,
+            Work::Build { .. } | Work::Rebase { .. } | Work::Checks { .. } => {
+                crate::permissions::Role::Worker
+            }
+        }
+    }
+
     /// The issue.
     pub fn issue(&self) -> u64 {
         match self {
@@ -1858,7 +1880,13 @@ impl Live {
         let claude = folder.join("claude");
         let sources = session_image::merged_sources(&wave.main)?;
         let auto = crate::permissions::Trust::of(me.place().repo(), &wave.server, &sources);
-        run::claude_folder(&claude, &clone, &host.home.join(".claude.json"), &auto)?;
+        run::claude_folder(
+            &claude,
+            &clone,
+            &host.home.join(".claude.json"),
+            &auto,
+            work.role(),
+        )?;
         let (main, common) = run::main_clone(&wave.main)?;
         let start = match work {
             Work::Build { issue } => {

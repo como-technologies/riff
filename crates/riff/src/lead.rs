@@ -548,6 +548,7 @@ async fn launch(
         &clone,
         &host.home.join(".claude.json"),
         &crate::permissions::Trust::of(here.repo(), server, &sources),
+        crate::permissions::Role::Lead,
     )?;
 
     let session = identity::new_session_id();
@@ -667,6 +668,7 @@ pub fn again(wave: &crate::wave::Wave, record: &daemon::Record) -> Result<daemon
         &folder.join("clone"),
         &host.home.join(".claude.json"),
         &crate::permissions::Trust::of(here.repo(), &record.server, &sources),
+        crate::permissions::Role::Lead,
     )?;
     let parts = Parts {
         repo: &repo,

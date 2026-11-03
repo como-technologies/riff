@@ -5408,6 +5408,12 @@ const RUN_CHECKS: &str = "run the checks that the repository names, when it name
 const CI_DECIDES: &str =
     "The full check of the pull request (its CI) and the verify decide the merge.";
 
+/// The line of the start text of a worker and of a verifier about an
+/// issue: they add to it with a comment, and never change its body or its
+/// title (01M6FZXZ9267YKMH97E6A2Y2EP).
+pub const ISSUE_BY_COMMENT: &str = "Never change the body or the title of an issue. Add to an \
+     issue with a comment: gh issue comment NUMBER --body-file FILE";
+
 /// The start text of a session of `riff run`: the work item, the
 /// branch, and the frame of the body of the pull request
 /// (01M4Z81APKC14AVNJWCGRQKNVW). It tells the session to leave no
@@ -5424,6 +5430,7 @@ const CI_DECIDES: &str =
 /// assert!(text.contains(frame));
 /// assert!(text.contains("Leave no background task at the end of your work"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
+/// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
 /// assert!(text.contains("Run each check in the foreground"));
 /// assert!(text.contains("Commit and push the branch before the end of your work"));
 /// // The text names no file as required and no command (01M5RN89WH3PHV3BHMJ25T3SX4).
@@ -5478,6 +5485,7 @@ pub fn run_start(
          in the background. Never end a turn while a background task runs: a session does not \
          continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
+         {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )
 }
@@ -8353,6 +8361,7 @@ pub fn wave_failed_verify(number: u64, commit: &str, url: &str) -> String {
 /// assert!(text.contains("Do not open a second pull request"));
 /// assert!(text.contains("turn on auto-merge when it is off: gh pr merge --auto --squash 40"));
 /// assert!(text.contains("New checks and a new verify of the new commit follow"));
+/// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
 /// ```
@@ -8393,6 +8402,7 @@ pub fn wave_rebase_start(
          in the background. Never end a turn while a background task runs: a session does not \
          continue after its result. Leave no background task at the end of your work.\n\
          9. Reply with the URL of the pull request in one line.\n\n\
+         {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )
 }
@@ -8472,6 +8482,7 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(!text.contains("CLAUDE.md names"));
 /// assert!(text.contains("git push origin worktree-issue-12"));
 /// assert!(text.contains("A known flake"));
+/// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
 /// assert!(text.contains("gh run rerun RUN_ID --failed"));
 /// assert!(text.contains("--trailer \"Riff-Session: 9f8e\""));
 /// assert!(!text.contains("gh pr create"));
@@ -8523,6 +8534,7 @@ pub fn wave_checks_start(
          in the background. Never end a turn while a background task runs: a session does not \
          continue after its result. Leave no background task at the end of your work.\n\
          7. Reply with the URL of the pull request in one line.\n\n\
+         {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )
 }
@@ -8779,6 +8791,7 @@ pub fn wave_checks_rerun(
 /// assert!(!text.contains("CLAUDE.md names"));
 /// assert!(text.contains("Run each test in the foreground"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
+/// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
 /// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, true);
 /// assert!(text.contains("was done: the checks Lint, Test."));
@@ -8845,6 +8858,7 @@ pub fn wave_verify_start(
          PASS or FAIL. Then each criterion: for a pass, what you did to check it; for a fail, \
          the steps to see the failure. The result is public: it holds no secret and no security \
          fault. Tell the lead a security fault with the riff tool tell.\n\n\
+         {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )
 }

@@ -4648,3 +4648,31 @@ starts trusts the hosts. A session that runs keeps its entries.
 
 A host is a name such as `pypi.org`: no `https://`, no path. When
 `sources` has other text, riff starts no session and names the text.
+
+#### Add to an issue
+
+The lead owns the body and the title of an issue: the design, the
+`Done when:` line and the status. Only the lead changes them. A worker
+and a verifier add to an issue with a comment, and a comment keeps the
+history and the author.
+
+```mermaid
+flowchart LR
+    L["lead"] -- "gh issue edit --body-file" --> B["body of the issue"]
+    W["worker, verifier"] -- "gh issue comment --body-file" --> C["comment on the issue"]
+    W -. "refused" .-> B
+```
+
+The settings of a session of a worker or a verifier allow
+`gh issue comment`. They refuse `gh issue edit` with `--body`,
+`--body-file`, `-b`, `-F`, `--title` and `-t`, also after `gh -R`. Write
+the text to a file, and post it:
+
+```sh
+gh issue comment 12 --body-file /home/you/tmp/comment-12.md
+```
+
+A worker has no rule for the other changes of an issue, for example a
+label: the auto mode check judges them. No rule names `gh api`, so a
+write to an issue with the API has no rule either, and the auto mode
+check judges it.

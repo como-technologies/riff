@@ -83,6 +83,7 @@ fn trusted(main: &Path) -> Vec<String> {
         &folder.path().join("clone"),
         &folder.path().join("none.json"),
         &trust,
+        riff::permissions::Role::Worker,
     )
     .unwrap();
     let settings: Value =

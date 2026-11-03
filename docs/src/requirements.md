@@ -5385,9 +5385,9 @@ of this part when they merge.
   row of a person. It also checks that each such step of the start text
   of a session of the daemon matches an allow rule of the session place
   for the role of the session.
-- **01M5084K4YQCZF20XA0P2485SG** The daemon writes the allow rules of
-  the session place into the `settings.json` of the own Claude folder
-  of each session. The Claude folder of the lead stays between its
+- **01M5084K4YQCZF20XA0P2485SG** The daemon writes the rules of the
+  session place into the `settings.json` of the own Claude folder of
+  each session. The Claude folder of the lead stays between its
   starts: at each start, riff adds each rule that it lacks.
 - **01M51K1VJ67KYHRD7DQ86DSX1X** The lead in a container plans the
   waves with `/opt/riff/riff wave`. The session rule
@@ -5493,6 +5493,20 @@ of this part when they merge.
   01M516HETNZCBFBJNHT8BKFB1Y in part: the entry of `crates.io`.
 - **01M5SNV7KZRDBRC3NM2E5W92KS** `riff init` writes the permission rule
   of the lead for `riff release hold`, in the container of the lead.
+- **01M6FZXZ9267YKMH97E6A2Y2EP** A worker and a verifier do not change
+  the body or the title of an issue. They add to an issue with `gh issue
+  comment`. Only the lead edits an issue. The session rules are by role
+  (`riff::permissions::session_rules`): the session place gives `Bash(gh
+  issue edit *)` to the lead only, `Bash(gh issue comment *)` to a
+  worker and a verifier, and to a worker and a verifier it gives deny
+  rules for `gh issue edit` with `--body`, `--body-file`, `-b`, `-F`,
+  `--title` and `-t`, also after `gh -R`. No rule names `gh api`: no
+  allow rule matches a `gh api` call
+  (`riff::permissions::OUT_OF_BOUNDS`), a deny rule cannot list each
+  form of an API write, and the auto mode check judges the call. The
+  start text of a worker and of a verifier says the rule in one line.
+  Supersedes 01M5084K4YQCZF20XA0P2485SG in part: a session gets the
+  allow rules and the deny rules of its own role.
 
 ### The steps of an update
 
