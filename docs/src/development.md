@@ -1808,7 +1808,9 @@ each host:
   [When a pull request stops](how-it-works.md#when-a-pull-request-stops));
 - `main` that is broken, and `main` that passes again (see
   [When main breaks](how-it-works.md#when-main-breaks));
-- "Wave N is complete".
+- "Wave N is complete";
+- a fault when riff cannot read the state of the forge (see
+  [See the watches of the daemon](#see-the-watches-of-the-daemon)).
 
 A notice about one host comes from each host, because each host has its
 own fact:
@@ -5015,9 +5017,10 @@ chat` each 4 hours.
 
 The daemon keeps the watches in the file `watches.json` of its folder,
 so a restart of the daemon keeps them. A watch that cannot read the
-state of its operation, for example when GitHub does not answer, tells
-the lead the fault one time, and goes on. The lead can read the fault
-and the next step in the message.
+state of its operation, for example when GitHub does not answer, goes
+on and tries again. The lead gets the fault one time for each
+repository: the watches of the repository that fail with the same fault
+give one message, and it names each of them.
 
 A command prints the line `riff watches ...` after it starts the
 operation. When the daemon of the host does not serve the repository,
@@ -5035,7 +5038,14 @@ riff daemon status
 
 In a container, the same command shows the daemon of the host. The
 part `Watches:` has one line for each watch, with the repository, the
-operation and its age.
+operation and its age. The part `Waves:` shows each wave, and the
+watch of its current wave has no line in `Watches:`.
+
+A fault of the forge comes one time for each repository, also with
+more watches. The message holds the error of `gh` and the name of
+each watch that failed. While that message is one of the last 200
+messages of the repository thread, the lead gets no second message
+of the same fault.
 
 The lead may run `riff release cut`, `publish`, `status`, `check`,
 `retry` and `rollback`: the riff daemon gives its session the

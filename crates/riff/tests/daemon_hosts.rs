@@ -1385,7 +1385,11 @@ fn fake_wave_forge(tmp: &Path) -> Vec<(String, String)> {
              *) exit 1 ;;\n\
            esac ;;\n\
          \"pr list\") cat {forge}/pulls ;;\n\
-         \"issue list\") cat {forge}/issues ;;\n\
+         \"issue list\")\n\
+           case \"$*\" in\n\
+             *--milestone*) if [ -e {forge}/limit ]; then echo \"GraphQL: API rate limit already exceeded for user ID 1.\" >&2; exit 1; fi ;;\n\
+           esac\n\
+           cat {forge}/issues ;;\n\
          *) exit 1 ;;\n\
          esac\n",
         log = tmp.join("gh.log").display(),
@@ -1518,6 +1522,68 @@ async fn two_daemons_of_one_wave_give_the_lead_each_notice_one_time() {
     let mut told = told.into_inner().unwrap();
     told.extend(person_posts(&api, &lead).await);
     assert_eq!(told, ["Wave 7 is complete: next riff wave end 7"]);
+}
+
+/// #1550, 01M6H160E2ZK2AM0PCTQG82V2G: the wave runs on two hosts, and the
+/// GraphQL limit of the token is out: `gh issue list` of the watch of the
+/// wave fails on both hosts, at each look. The lead gets the fault one
+/// time, with one dot at the end of the error.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_daemons_that_cannot_read_the_wave_give_the_lead_the_fault_one_time() {
+    let tmp = tempfile::tempdir().unwrap();
+    let other = origin(&tmp.path().join("origins"), "other");
+    let env = fake_wave_forge(tmp.path());
+    std::fs::write(tmp.path().join("forge").join("limit"), "").unwrap();
+    let r = riff_env(300, 300, &env).await;
+    let lead = session(&other, "mike", "a", "l2");
+    r.api(&lead).register(&lead).await.unwrap();
+    crate::common::name_lead(&r.server.api("mike", None), &lead).await;
+    r.api(&lead)
+        .set_riff(&lead, RiffState::Running)
+        .await
+        .unwrap();
+    let api = r.api(&lead);
+    person_posts(&api, &lead).await;
+
+    for host in ["a", "b"] {
+        let out =
+            r.a.run(&other, &["wave", "run", "--host", host], Some("l2"))
+                .await;
+        assert!(out.status.success(), "{out:?}\n{}", r.host(host).output());
+    }
+
+    // Each watch fails at its first look, and again at its second look.
+    until("both watches fail two times", || async {
+        let fails = |host| gh_calls(tmp.path(), host, "--milestone") >= 2;
+        (fails("a") && fails("b")).then_some(())
+    })
+    .await;
+    let told = std::sync::Mutex::new(Vec::new());
+    until("the lead hears the fault", || async {
+        let posts = person_posts(&api, &lead).await;
+        let mut told = told.lock().unwrap();
+        told.extend(posts);
+        told.iter()
+            .any(|m: &String| m.contains("cannot read the state"))
+            .then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let mut told = told.into_inner().unwrap();
+    told.extend(person_posts(&api, &lead).await);
+    let faults: Vec<_> = told
+        .iter()
+        .filter(|m| m.contains("cannot read the state"))
+        .collect();
+    assert_eq!(faults.len(), 1, "one message, from two daemons: {told:?}");
+    assert!(
+        faults[0].starts_with("riff cannot read the state of the current wave: "),
+        "{faults:?}"
+    );
+    assert!(
+        faults[0].contains("user ID 1. riff tries again each minute"),
+        "one dot: {faults:?}"
+    );
 }
 
 /// #1430, 01M5SN561BM9SK24SS0AVJ3P5J: `riff daemon host --host b` makes
