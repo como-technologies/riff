@@ -30,6 +30,13 @@
 //! The same watch is one watch: a second `riff release verify` of the
 //! same pull request registers nothing new ([`Registered::Kept`]).
 //!
+//! A wave can run on more hosts, and the daemon of each host has the
+//! watch of the wave. Its message "Wave N is complete" has a key
+//! ([`wave_complete_key`], 01M6FZY6NABXGXVRYF6W1509XE): `riff-server` drops
+//! a post with the key of a message that it keeps from the same user in
+//! the thread, so the lead gets it one time. The other watches run on the
+//! host of their command: their messages have no key.
+//!
 //! # The file
 //!
 //! The daemon keeps the watches in [`FILE`] of its folder
@@ -275,6 +282,16 @@ pub struct Outcome {
 pub enum Post {
     /// A message that wakes the lead of the repository.
     Lead(String),
+    /// A message that wakes the lead of the repository, with a key
+    /// (01M6FZY6NABXGXVRYF6W1509XE): the watch of each host makes the
+    /// same message for the same facts, and riff-server drops the second
+    /// post.
+    Once {
+        /// The text.
+        body: String,
+        /// The key of the post.
+        key: String,
+    },
     /// A note to each other lead of the riff: the step of the release
     /// that the watch saw ([`crate::hold::tell_leads`],
     /// 01M5SNV75DRFHR26BT2M8243VV).
@@ -301,8 +318,14 @@ pub trait Lookout: Send + Sync {
     fn forge(&self, wave: &Wave, fetch: bool) -> Result<Box<dyn Forge>>;
 
     /// Posts `body` as a message to the lead of the repository of
-    /// `wave`, as the person.
-    fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, Result<()>>;
+    /// `wave`, as the person. The post has `key`, when there is one
+    /// (01M5TKG2K1AYK1KE7C2AA2W9DS).
+    fn tell<'a>(
+        &'a self,
+        wave: &'a Wave,
+        body: &'a str,
+        key: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<()>>;
 
     /// Writes the line that `line` makes in `riff chat`, as the person.
     /// `line` gets the USER of the owner of the riff, or an empty text
@@ -339,13 +362,18 @@ impl Lookout for Here {
         })
     }
 
-    fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn tell<'a>(
+        &'a self,
+        wave: &'a Wave,
+        body: &'a str,
+        key: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(crate::wave::post_as_person(
             wave,
             None,
             body,
             Kind::Message,
-            None,
+            key,
         ))
     }
 
@@ -595,7 +623,7 @@ impl Watches {
                     if let Err(e) = post_one(&**lookout, wave, post).await {
                         eprintln!("riff daemon: {}: {e:#}", watch.repo);
                         // The lead has no message yet: the next look tries again.
-                        if matches!(post, Post::Lead(_)) {
+                        if matches!(post, Post::Lead(_) | Post::Once { .. }) {
                             return;
                         }
                     }
@@ -608,7 +636,7 @@ impl Watches {
                     return;
                 }
                 let body = crate::text::watch_fault(&watch.op.what(), &fault);
-                if let Err(e) = lookout.tell(wave, &body).await {
+                if let Err(e) = lookout.tell(wave, &body, None).await {
                     eprintln!("riff daemon: {}: {e:#}", watch.repo);
                     return;
                 }
@@ -651,7 +679,8 @@ fn read_all(
 
 async fn post_one(lookout: &dyn Lookout, wave: &Wave, post: &Post) -> Result<()> {
     match post {
-        Post::Lead(body) => lookout.tell(wave, body).await,
+        Post::Lead(body) => lookout.tell(wave, body, None).await,
+        Post::Once { body, key } => lookout.tell(wave, body, Some(key)).await,
         Post::Leads(body) => lookout.leads(wave, body).await,
         Post::Owner { tag, run, reminder } => {
             // A hold that riff cannot read leaves the line as it was.
@@ -891,10 +920,24 @@ fn look_wave(forge: &dyn Forge, seen: &mut Seen) -> Result<Outcome> {
         true => format!("riff release cut X.Y.Z, or riff wave end {number} --no-release TEXT"),
         false => format!("riff wave end {number}"),
     };
-    Ok(say(
-        format!("Wave {number} is complete: next {next}"),
-        false,
-    ))
+    Ok(Outcome {
+        posts: vec![Post::Once {
+            body: format!("Wave {number} is complete: next {next}"),
+            key: wave_complete_key(number),
+        }],
+        end: false,
+    })
+}
+
+/// The key of the post "Wave N is complete" (01M6FZY6NABXGXVRYF6W1509XE).
+/// The watch of the wave on each host makes the same key for the same wave,
+/// and riff-server drops the second post.
+///
+/// ```
+/// assert_eq!(riff::watches::wave_complete_key(45), "wave-complete-45");
+/// ```
+pub fn wave_complete_key(number: u64) -> String {
+    format!("wave-complete-{number}")
 }
 
 #[cfg(test)]
@@ -920,6 +963,8 @@ mod tests {
         down: AtomicBool,
         told: Mutex<Vec<String>>,
         chats: Mutex<Vec<String>>,
+        /// The key of each message to the lead.
+        keys: Mutex<Vec<Option<String>>>,
         /// The notes to each other lead.
         leads: Mutex<Vec<String>>,
         /// The holds that stand.
@@ -935,6 +980,7 @@ mod tests {
                 fault: Mutex::new(None),
                 down: AtomicBool::new(false),
                 told: Mutex::default(),
+                keys: Mutex::default(),
                 chats: Mutex::default(),
                 leads: Mutex::default(),
                 holds: Mutex::default(),
@@ -949,6 +995,11 @@ mod tests {
         /// The messages to the lead since the last call.
         fn told(&self) -> Vec<String> {
             std::mem::take(&mut self.told.lock().unwrap())
+        }
+
+        /// The key of each message to the lead since the last call.
+        fn keys(&self) -> Vec<Option<String>> {
+            std::mem::take(&mut self.keys.lock().unwrap())
         }
 
         /// The lines to the owner since the last call.
@@ -971,12 +1022,18 @@ mod tests {
             Ok(Box::new(self.forge.lock().unwrap().clone()))
         }
 
-        fn tell<'a>(&'a self, _: &'a Wave, body: &'a str) -> BoxFuture<'a, Result<()>> {
+        fn tell<'a>(
+            &'a self,
+            _: &'a Wave,
+            body: &'a str,
+            key: Option<&'a str>,
+        ) -> BoxFuture<'a, Result<()>> {
             Box::pin(async move {
                 if self.down.load(Ordering::SeqCst) {
                     return Err(anyhow!("riff-server does not answer"));
                 }
                 self.told.lock().unwrap().push(body.to_owned());
+                self.keys.lock().unwrap().push(key.map(str::to_owned));
                 Ok(())
             })
         }
@@ -1499,10 +1556,13 @@ mod tests {
                  --no-release TEXT"
             ]
         );
+        // The watch of each host makes this key, and riff-server keeps one post
+        // (01M6FZY6NABXGXVRYF6W1509XE).
+        assert_eq!(ground.keys(), [Some("wave-complete-41".to_owned())]);
         look(dir.path(), &ground, 4 * MINUTE).await;
         assert!(ground.told().is_empty(), "once");
 
-        // A new item, then its close: a new completion.
+        // A new item, then its close: the watch tells again, with the same key.
         ground.forge(|f| f.wave_open.as_mut().unwrap().1 = 1);
         look(dir.path(), &ground, 5 * MINUTE).await;
         ground.forge(|f| f.wave_open.as_mut().unwrap().1 = 0);
@@ -1563,6 +1623,8 @@ mod tests {
                  again each minute, and tells you this fault one time."
             ]
         );
+        // The fault is a fact of the host: no key, each host tells it.
+        assert_eq!(ground.keys(), [None, None]);
         look(dir.path(), &ground, 2 * MINUTE).await;
         assert!(ground.told().is_empty(), "the same fault: one message");
         assert_eq!(kept(dir.path()), [pull()], "the watch goes on");

@@ -3322,7 +3322,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
         if !old.is_empty() {
             let note = text::image_old_tools(&wave.repo, &old, &crate::session_image::base());
-            self.world.tell(wave, &note).await;
+            self.world.tell(wave, &note, None).await;
         }
     }
 
@@ -7097,7 +7097,12 @@ mod tests {
             })
         }
 
-        fn tell<'a>(&'a self, _: &'a Wave, _: &'a str) -> crate::wave::BoxFuture<'a, ()> {
+        fn tell<'a>(
+            &'a self,
+            _: &'a Wave,
+            _: &'a str,
+            _: Option<&'a str>,
+        ) -> crate::wave::BoxFuture<'a, ()> {
             Box::pin(async {})
         }
 

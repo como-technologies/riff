@@ -1567,6 +1567,8 @@ your lead when a pull request stops (see
 [When a pull request stops](how-it-works.md#when-a-pull-request-stops))
 or when `main` breaks (see
 [When main breaks](how-it-works.md#when-main-breaks)).
+When the wave runs on more hosts, see
+[Know which notices come from each host](#know-which-notices-come-from-each-host).
 
 A pull request with auto-merge on can get a conflict with `main` when
 `main` moves. Then it cannot merge, also after its verify passed. The
@@ -1728,6 +1730,52 @@ yours with a daemon that does not serve the repository, and exits with
 ```text
 riff: a lead container runs no wave itself. Your hosts that do not run the wave of como-technologies/riff: thelio. To add one, run riff wave run --host thelio.
 ```
+
+#### Know which notices come from each host
+
+When the wave runs on more hosts, each host looks at the forge. Your
+lead gets each notice about the repository one time, not one time for
+each host:
+
+- an issue with no `Done when:` line;
+- a pull request that is stuck (see
+  [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge));
+- a pull request with a conflict, or with no verify (see
+  [When a pull request stops](how-it-works.md#when-a-pull-request-stops));
+- `main` that is broken, and `main` that passes again (see
+  [When main breaks](how-it-works.md#when-main-breaks));
+- "Wave N is complete".
+
+A notice about one host comes from each host, because each host has its
+own fact:
+
+- the host waits for a fact, for example a sign-in of `claude` that ends
+  soon;
+- the pull of the session image failed;
+- a job of the wave failed;
+- an item started 3 times and is still free work.
+
+```mermaid
+sequenceDiagram
+    participant A as daemon on pangolin
+    participant B as daemon on thelio
+    participant S as riff-server
+    participant L as your lead
+    A->>S: issue 12 has no Done when: line
+    S->>L: the notice
+    B->>S: issue 12 has no Done when: line
+    Note over S: it has this notice: it drops the post
+    A->>S: the sign-in of claude ends soon
+    S->>L: the notice
+    B->>S: the sign-in of claude ends soon
+    S->>L: the notice
+```
+
+A new start of a daemon sends none of the notices of the first list
+again. riff-server keeps the key of a notice while the notice is one of
+the last 200 messages of the repository thread. A wave that completes
+again after a new item closes gets no new "Wave N is complete" in that
+time.
 
 ### See a pull request that cannot merge
 

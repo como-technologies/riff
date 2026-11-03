@@ -2635,6 +2635,16 @@
   lead of the repository. A new start of the daemon sends none of them
   again while the message is one of the last 200 of the repository
   thread.
+- **01M6FZY6NABXGXVRYF6W1509XE** The wave of a daemon posts the notices
+  that come from the facts of the repository with a key: an issue with
+  no `Done when:` line (`no-done-when-N`), a pull request that is stuck
+  (`stuck-` and the pull request, its head commit and the reason) and
+  "Wave N is complete" (`wave-complete-N`). So a wave on more hosts
+  sends each of these notices one time to the lead of the repository. A
+  new start of the daemon sends none of them again while the message is
+  one of the last 200 of the repository thread. The notices about one
+  host have no key and come from each host: the host waits for a fact,
+  the pull of the image failed, a job failed or an item is spent.
 
 ## Threads
 

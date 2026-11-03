@@ -1341,6 +1341,184 @@ async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_t
     assert_eq!(clones(tmp.path()).len(), 1);
 }
 
+/// The repository `local/other` for two daemons that run its wave (#1439):
+/// a `gh` that clones it, and that answers from the files `milestones`,
+/// `issues` and `pulls` in `tmp/forge`, and a `podman` that has each image.
+/// It logs `HOST CALL` for each call in `tmp/gh.log`. The wave 7 has the
+/// issue 1, with no `Done when:` line, and the issue 2, whose pull request
+/// has a passed verify and auto-merge off. Gives the variables for a host.
+fn fake_wave_forge(tmp: &Path) -> Vec<(String, String)> {
+    let bin = tmp.join("forge-bin");
+    let forge = tmp.join("forge");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&forge).unwrap();
+    let issue = |n: u64, body: &str| {
+        format!(
+            r#"{{"number":{n},"title":"t{n}","body":"{body}","comments":[],"milestone":{{"title":"Wave 7"}},"labels":[]}}"#
+        )
+    };
+    let pull = r#"{"number":42,"headRefName":"worktree-issue-2","headRefOid":"1a2b3c4","isDraft":false,"statusCheckRollup":[{"__typename":"StatusContext","context":"riff/verify","state":"SUCCESS"}],"mergeable":"MERGEABLE","autoMergeRequest":null,"body":"Closes #2\n\nIssue: #2\nMilestone: Wave 7\n"}"#;
+    let files = [
+        (
+            "milestones",
+            r#"[{"number":7,"title":"Wave 7","open_issues":2,"closed_issues":0}]"#.to_owned(),
+        ),
+        (
+            "issues",
+            format!("[{},{}]", issue(1, "No line."), issue(2, "Done when: x.")),
+        ),
+        ("pulls", format!("[{pull}]")),
+    ];
+    for (name, text) in files {
+        std::fs::write(forge.join(name), text).unwrap();
+    }
+    let gh = format!(
+        "#!/bin/sh\necho \"$RIFF_HOST $*\" >> {log}\n\
+         case \"$1 $2\" in\n\
+         \"repo clone\") exec git clone -q {origins}/\"${{3#local/}}\" \"$4\" ;;\n\
+         api*)\n\
+           case \"$2\" in\n\
+             repos/local/other) case \"$*\" in *--jq*) echo main ;; *) echo '{{\"default_branch\":\"main\"}}' ;; esac ;;\n\
+             */rules/branches/main*) echo '[]' ;;\n\
+             */milestones*) cat {forge}/milestones ;;\n\
+             */check-runs*) echo '{{\"check_runs\":[{{\"status\":\"completed\",\"conclusion\":\"success\",\"head_sha\":\"x\"}}]}}' ;;\n\
+             *) exit 1 ;;\n\
+           esac ;;\n\
+         \"pr list\") cat {forge}/pulls ;;\n\
+         \"issue list\") cat {forge}/issues ;;\n\
+         *) exit 1 ;;\n\
+         esac\n",
+        log = tmp.join("gh.log").display(),
+        origins = tmp.join("origins").display(),
+        forge = forge.display(),
+    );
+    isolated::write_program(bin.join("gh"), gh);
+    isolated::write_program(bin.join("podman"), "#!/bin/sh\nexit 0\n");
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    vec![("PATH".into(), path)]
+}
+
+/// The lines of `tmp/gh.log` of `host` that name `call`.
+fn gh_calls(tmp: &Path, host: &str, call: &str) -> usize {
+    std::fs::read_to_string(tmp.join("gh.log"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.starts_with(&format!("{host} ")) && l.contains(call))
+        .count()
+}
+
+/// Each post of the person to the lead `lead`, since the last call.
+async fn person_posts(api: &Api, lead: &SessionUri) -> Vec<String> {
+    api.inbox(lead, None, false)
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|i| i.messages)
+        .map(|c| c.message)
+        .filter(|m| m.from.who().session().is_none())
+        .map(|m| m.body)
+        .collect()
+}
+
+/// #1439, 01M6FZY6NABXGXVRYF6W1509XE: the wave of the repository runs on
+/// two hosts, with a daemon on each, on one riff-server. Both daemons
+/// look at an issue with no `Done when:` line, a pull request that is
+/// stuck, and the wave that is complete. The lead gets each of the three
+/// messages one time, not one time for each host.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_daemons_of_one_wave_give_the_lead_each_notice_one_time() {
+    let tmp = tempfile::tempdir().unwrap();
+    let other = origin(&tmp.path().join("origins"), "other");
+    let r = riff_env(300, 300, &fake_wave_forge(tmp.path())).await;
+    let lead = session(&other, "mike", "a", "l2");
+    r.api(&lead).register(&lead).await.unwrap();
+    crate::common::name_lead(&r.server.api("mike", None), &lead).await;
+    r.api(&lead)
+        .set_riff(&lead, RiffState::Running)
+        .await
+        .unwrap();
+    let api = r.api(&lead);
+    // The lead has no unread message before the wave.
+    person_posts(&api, &lead).await;
+
+    for host in ["a", "b"] {
+        let out =
+            r.a.run(&other, &["wave", "run", "--host", host], Some("l2"))
+                .await;
+        assert!(out.status.success(), "{out:?}\n{}", r.host(host).output());
+    }
+
+    // Both daemons look at the wave, and the watch of each one reads it.
+    let both = |call: &str, n: usize| {
+        let (a, b) = (
+            gh_calls(tmp.path(), "a", call),
+            gh_calls(tmp.path(), "b", call),
+        );
+        (a >= n && b >= n).then_some(())
+    };
+    let milestone = "--milestone";
+    until("both daemons look at the wave", || async {
+        both("issue list", 1)
+            .and(both(milestone, 1))
+            .and(both("pr list", 1))
+    })
+    .await;
+    // The first post of a daemon has gone out when the second one posts.
+    let told = std::sync::Mutex::new(Vec::new());
+    until("the lead hears of both", || async {
+        let posts = person_posts(&api, &lead).await;
+        let mut told = told.lock().unwrap();
+        told.extend(posts);
+        (told.len() >= 2).then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let mut told = told.into_inner().unwrap();
+    told.extend(person_posts(&api, &lead).await);
+    told.sort();
+    let mut expected = vec![
+        riff::text::wave_no_done_when(1),
+        riff::text::wave_stuck(
+            42,
+            "worktree-issue-2",
+            "main",
+            "1a2b3c4",
+            &riff::rollout::Stuck::AutoMergeOff,
+        ),
+    ];
+    expected.sort();
+    assert_eq!(told, expected, "one message for each, from two daemons");
+
+    // The last item closes: both watches see the wave complete.
+    let seen = [
+        gh_calls(tmp.path(), "a", milestone),
+        gh_calls(tmp.path(), "b", milestone),
+    ];
+    let forge = tmp.path().join("forge");
+    std::fs::write(forge.join("issues"), "[]").unwrap();
+    std::fs::write(forge.join("pulls"), "[]").unwrap();
+    until("both watches look at the closed wave", || async {
+        let (a, b) = (
+            gh_calls(tmp.path(), "a", milestone),
+            gh_calls(tmp.path(), "b", milestone),
+        );
+        (a >= seen[0] + 3 && b >= seen[1] + 3).then_some(())
+    })
+    .await;
+    let told = std::sync::Mutex::new(Vec::new());
+    until("the lead hears that the wave is complete", || async {
+        let posts = person_posts(&api, &lead).await;
+        let mut told = told.lock().unwrap();
+        told.extend(posts);
+        (!told.is_empty()).then_some(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let mut told = told.into_inner().unwrap();
+    told.extend(person_posts(&api, &lead).await);
+    assert_eq!(told, ["Wave 7 is complete: next riff wave end 7"]);
+}
+
 /// #1430, 01M5SN561BM9SK24SS0AVJ3P5J: `riff daemon host --host b` makes
 /// the main clone and serves the repository, and runs no wave. A host
 /// with no daemon of the user fails with the words of riff.
