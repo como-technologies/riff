@@ -1424,7 +1424,8 @@ impl Pull {
     /// no conflict or merge queue holds the pull request (#1433). A review
     /// of a person, or the approval of a run of a fork, can be the
     /// cause. The look reads the runs that wait only for such a pull
-    /// request ([`pulls`]).
+    /// request ([`pulls`]). Only the newest run of a check counts, as for
+    /// [`Pull::failed_checks`] (01M6G0BFAJJV9YNQZT502P1KGJ).
     ///
     /// ```
     /// use riff::rollout::{Check, Pull};
@@ -1442,13 +1443,22 @@ impl Pull {
     /// assert!(!pull(vec![]).settled(), "no verify yet");
     /// let clean = Pull { merge_state: Some("CLEAN".into()), ..pull(vec![Check::verify("SUCCESS")]) };
     /// assert!(!clean.settled());
+    ///
+    /// // #1548: Gate failed, and then passed on the same head.
+    /// let gate = |conclusion, time| Check::run("Gate", conclusion).started(time);
+    /// let old = gate("FAILURE", "2026-11-03T05:50:00Z");
+    /// let new = gate("SUCCESS", "2026-11-03T05:55:00Z");
+    /// let again = gate("FAILURE", "2026-11-03T06:00:00Z");
+    /// let held = |checks: Vec<Check>| pull([vec![Check::verify("SUCCESS")], checks].concat());
+    /// assert!(held(vec![old.clone(), new.clone()]).settled());
+    /// assert!(!held(vec![old, new, again]).settled(), "the newest run failed");
     /// ```
     pub fn settled(&self) -> bool {
         self.verify() == Some(Verify::Passed)
             && self.queue == Queue::Out
             && self.merge_state.as_deref() == Some("BLOCKED")
             && self.mergeable.as_deref() != Some("CONFLICTING")
-            && self.checks.iter().all(|c| !c.failed() && !c.pending())
+            && self.newest_checks().all(|c| !c.failed() && !c.pending())
     }
 
     /// Why this pull request cannot merge by itself, when it cannot
@@ -2849,5 +2859,49 @@ mod tests {
             ..Pull::default()
         };
         assert_eq!(tie.failed_checks(), ["Gate"]);
+    }
+
+    /// #1548, 01M6G0BFAJJV9YNQZT502P1KGJ: the rollup keeps an old failed
+    /// run next to the newer run of the same check that passed. A verified
+    /// pull request that GitHub blocks, with a newest run of each check
+    /// that passed, is settled: the look reads its runs that wait for
+    /// approval. A newest run that failed or that goes is not settled.
+    #[test]
+    fn a_pull_request_with_an_old_failed_run_and_a_newer_passed_run_of_each_check_is_settled() {
+        let run = |name: &str, conclusion: &str, started: &str| {
+            Check::run(name, conclusion).started(started)
+        };
+        let pull = |checks: &[Check]| Pull {
+            number: 1530,
+            branch: "worktree-issue-1508".into(),
+            checks: [vec![Check::verify("SUCCESS")], checks.to_vec()].concat(),
+            merge_state: Some("BLOCKED".into()),
+            mergeable: Some("MERGEABLE".into()),
+            ..Pull::default()
+        };
+        let gate_old = run("Gate", "FAILURE", "2026-11-03T05:50:00Z");
+        let gate_new = run("Gate", "SUCCESS", "2026-11-03T05:55:00Z");
+        let hygiene_old = run("Hygiene", "FAILURE", "2026-11-03T05:51:00Z");
+        let hygiene_new = run("Hygiene", "SUCCESS", "2026-11-03T05:56:00Z");
+
+        // Each check has an old failed run and a newer passed run, in any
+        // order of the rollup.
+        for checks in [
+            [&gate_old, &gate_new, &hygiene_old, &hygiene_new],
+            [&hygiene_new, &hygiene_old, &gate_new, &gate_old],
+        ] {
+            let checks: Vec<Check> = checks.into_iter().cloned().collect();
+            assert!(pull(&checks).settled(), "{checks:?}");
+        }
+
+        // Only the old failed runs: not settled.
+        assert!(!pull(&[gate_old.clone(), hygiene_old.clone()]).settled());
+        // One check has only its old failed run: not settled.
+        assert!(!pull(&[gate_old.clone(), gate_new.clone(), hygiene_old]).settled());
+        // A newer run that failed again, or that goes: not settled.
+        let failed = run("Gate", "FAILURE", "2026-11-03T06:00:00Z");
+        assert!(!pull(&[gate_old.clone(), gate_new.clone(), failed]).settled());
+        let going = run("Gate", "", "2026-11-03T06:00:00Z");
+        assert!(!pull(&[gate_old, gate_new, going]).settled());
     }
 }
