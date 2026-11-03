@@ -494,7 +494,7 @@ commit and pushes the branch. Then it frees your claims, and you leave `who`. Ea
 
     #[tool(
         description = "Join the riff again after a leave. Call it when your user runs /riff:join \
-or says \"join the riff\". Then start the watch and follow the start routine of the riff skill."
+or says \"join the riff\". Then start the watch and follow \"Start routine\" in the instructions of the riff tools."
     )]
     async fn join(&self) -> ToolResult {
         let me = self.me();

@@ -52,6 +52,7 @@ mod members;
 #[cfg(target_os = "linux")]
 mod network;
 mod no_sign_in;
+mod no_skill;
 mod one_user;
 mod owner;
 mod package_sources;

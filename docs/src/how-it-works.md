@@ -1752,8 +1752,11 @@ riff claim issue-12
 
 ```text
 You hold issue-12 in como-technologies/riff.
-Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at 1a2b3c4 (a WIP commit, 2 hours ago); the worktree /home/mike/src/riff/.claude/worktrees/issue-12 (3 files not committed, 1 commit not pushed). Go on from it, and do not start again: see "Pick up dropped work" in the riff skill.
+Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at 1a2b3c4 (a WIP commit, 2 hours ago); the worktree /home/mike/src/riff/.claude/worktrees/issue-12 (3 files not committed, 1 commit not pushed). Go on from it, and do not start again: see "Pick up dropped work" in the instructions of the riff tools.
 ```
+
+The instructions of the riff tools hold "Pick up dropped work". A
+session goes on from the earlier work, and does not start again.
 
 - riff fetches from `origin` first, for at most 5 seconds.
 - A worktree can hold files that are not committed. They are the only
@@ -1908,8 +1911,8 @@ riff claim issue-12
 
 ```text
 You hold issue-12 in como-technologies/riff.
-Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at 1a2b3c4 (2 hours ago). Go on from it, and do not start again: see "Pick up dropped work" in the riff skill.
-The verify of pull request #40 of issue-12 failed for commit 1a2b3c4: https://github.com/como-technologies/riff/pull/40#issuecomment-7. Read the result, go on from the branch, and send a new verify request: see "Pick up dropped work" in the riff skill.
+Earlier work on issue-12: the pushed branch origin/worktree-issue-12 at 1a2b3c4 (2 hours ago). Go on from it, and do not start again: see "Pick up dropped work" in the instructions of the riff tools.
+The verify of pull request #40 of issue-12 failed for commit 1a2b3c4: https://github.com/como-technologies/riff/pull/40#issuecomment-7. Read the result, go on from the branch, and send a new verify request: see "Pick up dropped work" in the instructions of the riff tools.
 ```
 
 The line says when the item is no work for a build:
@@ -3181,16 +3184,19 @@ riff has two pauses:
   paused, so no session takes work before you say so.
 
 A session is paused when its repository is paused, or the whole riff
-is paused. While a session is paused:
+is paused. The wake of a pause sends each session to "Pause" in the
+instructions of its riff tools. While a session is paused:
 
 - Each claim fails. The sessions keep the claims that they hold.
-- A new session says hello to the lead, and waits.
-- A session with work stops at its next step. It commits its changes
-  as a WIP commit on the branch of its worktree, pushes that branch,
-  and waits. It pushes nothing to the default branch.
-- A container session of `riff daemon` ends after its WIP push. The
-  daemon sends no verify request for a WIP head. The lead gets this
-  note:
+- A new session on a host claims nothing. It says hello to the lead,
+  and waits. The resume wakes it.
+- A session on a host with work stops at its next step. It lets a
+  command that runs finish. It commits each change as a WIP commit on
+  the branch of its worktree, and pushes that branch. It pushes
+  nothing to the default branch, and waits.
+- A container session of `riff daemon` stops at its next step in the
+  same way, and ends after its WIP push. The daemon sends no verify
+  request for a WIP head. The lead gets this note:
 
   ```text
   issue-12: the session of the wave ended, and the item is free. The head of PR #40, branch worktree-issue-12, is the WIP commit 1a2b3c4 (session 9f8e7d6c). The riff daemon sends no verify request. The item goes back to a build when the riff runs again.
@@ -3198,8 +3204,10 @@ is paused. While a session is paused:
 
   At the resume, the daemon starts a new build of the item. The build
   has the start text of a resume and goes on from the WIP commit.
-- Messages still flow. The sessions answer a status request and the
-  lead.
+- The lead tells its person that the riff is paused. It calls
+  `resume` only when the person says so.
+- Messages still flow. A session on a host answers a status request
+  and the lead.
 
 ```mermaid
 sequenceDiagram

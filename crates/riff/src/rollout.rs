@@ -1688,7 +1688,7 @@ pub const PULL_WAIT: Duration = Duration::from_secs(5);
 ///     claim_line("issue-12", &[pull(vec![failed])]).unwrap(),
 ///     "The verify of pull request #40 of issue-12 failed for commit 1a2b3c4: https://c. Read the \
 ///      result, go on from the branch, and send a new verify request: see \"Pick up dropped \
-///      work\" in the riff skill."
+///      work\" in the instructions of the riff tools."
 /// );
 /// assert_eq!(
 ///     claim_line("issue-12", &[pull(vec![])]).unwrap(),
@@ -1721,7 +1721,7 @@ pub fn claim_line(item: &str, pulls: &[Pull]) -> Option<String> {
             format!(
                 "The verify of pull request #{number} of {item} failed for commit {commit}{result}. \
                  Read the result, go on from the branch, and send a new verify request: see \
-                 \"Pick up dropped work\" in the riff skill."
+                 \"Pick up dropped work\" in the instructions of the riff tools."
             )
         }
         Verify::Asked => format!(

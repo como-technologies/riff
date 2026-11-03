@@ -29,7 +29,9 @@ pub fn pause_subject(repository: Option<&ThreadName>) -> String {
 /// ```
 /// use riff_core::wire::RiffState;
 ///
-/// assert!(riff_client::text::riff_news(None, RiffState::Paused).contains("\"Pause\""));
+/// let paused = riff_client::text::riff_news(None, RiffState::Paused);
+/// assert!(paused.ends_with("see \"Pause\" in the instructions of the riff tools."), "{paused}");
+/// assert!(!paused.contains("skill"));
 /// assert!(riff_client::text::riff_news(None, RiffState::Running).contains("from where you stopped"));
 /// let strata = "como-technologies/strata".parse()?;
 /// let news = riff_client::text::riff_news(Some(&strata), RiffState::Paused);
@@ -40,13 +42,10 @@ pub fn riff_news(repository: Option<&ThreadName>, state: RiffState) -> String {
     let subject = pause_subject(repository);
     match state {
         RiffState::Paused => format!(
-            "{subject} is paused. Stop at your next step and wait: see \"Pause\" in the riff \
-             skill."
+            "{subject} is paused. Stop at your next step and wait: see \"Pause\" in the \
+             instructions of the riff tools."
         ),
-        RiffState::Running => format!(
-            "{subject} is running again. Go on from where you stopped. A session with no work \
-             follows the start routine."
-        ),
+        RiffState::Running => format!("{subject} is running again. Go on from where you stopped."),
     }
 }
 
