@@ -2627,6 +2627,12 @@
   messages one time to the lead of the repository. A new start of the
   daemon sends none of them again while the message is one of the last
   200 of the repository thread.
+- **01M6FYH7BFFSZQ2TAJSX8A5QQV** The look of a daemon posts each message
+  about `main` with a key: the commit and the state, broken or passes.
+  So a wave on more hosts sends each of these messages one time to the
+  lead of the repository. A new start of the daemon sends none of them
+  again while the message is one of the last 200 of the repository
+  thread.
 
 ## Threads
 

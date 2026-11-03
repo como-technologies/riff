@@ -311,3 +311,68 @@ async fn a_newer_failed_gate_comments_on_the_fix_item_and_a_claimed_fix_item_sta
     );
     assert!(calls(dir.path(), "issue close").is_empty());
 }
+
+/// The waves of two hosts run two daemons, and each has its own watch in
+/// memory. Both look at the same broken `main`, and the lead gets one
+/// message. Both look at a newer failed commit, and the lead gets one
+/// note. Both look at `main` that passes again, and the lead gets one
+/// note. A daemon that starts again tells nothing again, and a new commit
+/// is new news (#1511, 01M6FYH7BFFSZQ2TAJSX8A5QQV).
+#[tokio::test(flavor = "multi_thread")]
+async fn two_daemons_that_look_at_the_same_main_give_the_lead_one_message() {
+    let server = start_server().await;
+    let (api, lead) = lead(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(dir.path());
+    let new_pulls = || (PullWatch::default(), MainWatch::default());
+    let ((mut pangolin_pulls, mut pangolin), (mut thelio_pulls, mut thelio)) =
+        (new_pulls(), new_pulls());
+
+    // The same broken main: one message.
+    look_at(&api, &lead, &gh, &mut pangolin_pulls, &mut pangolin).await;
+    look_at(&api, &lead, &gh, &mut thelio_pulls, &mut thelio).await;
+    let told = posts(&api, &lead).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].0, Kind::Message);
+    assert!(
+        told[0]
+            .1
+            .starts_with("main is broken: the full check failed at commit 5103311"),
+        "{told:?}"
+    );
+
+    // A daemon that starts again has no memory: the server still has the key.
+    let (mut again_pulls, mut again) = new_pulls();
+    look_at(&api, &lead, &gh, &mut again_pulls, &mut again).await;
+    assert!(posts(&api, &lead).await.is_empty());
+
+    // A newer failed commit is new news: both daemons tell it, and the lead
+    // gets one note.
+    gate(dir.path(), "c0ffee1234", "failure");
+    look_at(&api, &lead, &gh, &mut pangolin_pulls, &mut pangolin).await;
+    look_at(&api, &lead, &gh, &mut thelio_pulls, &mut thelio).await;
+    let still = posts(&api, &lead).await;
+    assert_eq!(still.len(), 1, "{still:?}");
+    assert_eq!(still[0].0, Kind::Note);
+    assert!(still[0].1.contains("at commit c0ffee1"), "{still:?}");
+
+    // The same main that passes again: one note.
+    gate(dir.path(), "d00d1234", "success");
+    look_at(&api, &lead, &gh, &mut pangolin_pulls, &mut pangolin).await;
+    look_at(&api, &lead, &gh, &mut thelio_pulls, &mut thelio).await;
+    let passes = posts(&api, &lead).await;
+    assert_eq!(passes.len(), 1, "{passes:?}");
+    assert_eq!(passes[0].0, Kind::Note);
+    assert!(
+        passes[0]
+            .1
+            .starts_with("main passes again: the full check passed at commit d00d123"),
+        "{passes:?}"
+    );
+    assert_eq!(calls(dir.path(), "issue close 901").len(), 1);
+
+    // main passes: no more post.
+    look_at(&api, &lead, &gh, &mut pangolin_pulls, &mut pangolin).await;
+    look_at(&api, &lead, &gh, &mut thelio_pulls, &mut thelio).await;
+    assert!(posts(&api, &lead).await.is_empty());
+}

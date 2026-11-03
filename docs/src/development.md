@@ -1735,7 +1735,9 @@ A pull request can stop on its way to the merge after its verify
 passed. At each look, the wave reads each open pull request of an item
 and acts for it, one time for each head commit. You do not have to
 check them. When the wave runs on more hosts, your lead gets each
-message one time, not one time for each host.
+message one time, not one time for each host. The same holds for the
+messages about a broken `main`, and for the note when `main` passes
+again (see [When main breaks](how-it-works.md#when-main-breaks)).
 
 ```mermaid
 flowchart TD
