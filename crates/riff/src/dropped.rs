@@ -169,13 +169,14 @@ impl Earlier {
     /// assert_eq!(
     ///     earlier.claim_line(),
     ///     "Earlier work on issue-12: the worktree /w/issue-12 (each file committed and pushed). \
-    ///      Go on from it, and do not start again: see \"Pick up dropped work\" in the riff skill."
+    ///      Go on from it, and do not start again: see \"Pick up dropped work\" in the \
+    ///      instructions of the riff tools."
     /// );
     /// ```
     pub fn claim_line(&self) -> String {
         format!(
             "Earlier work on {}. Go on from it, and do not start again: see \"Pick up dropped \
-             work\" in the riff skill.",
+             work\" in the instructions of the riff tools.",
             self.text()
         )
     }
@@ -381,7 +382,7 @@ pub fn start_lines(free: &[Earlier]) -> Option<String> {
     let mut out = String::from(
         "- This clone has earlier work that no live session owns. When you claim one of these \
          items, go on from that work, and do not start again: see \"Pick up dropped work\" in \
-         the riff skill.\n",
+         the instructions of the riff tools.\n",
     );
     for earlier in free.iter().take(SHOWN) {
         out.push_str(&format!("  - {}\n", earlier.text()));

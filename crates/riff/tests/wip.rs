@@ -218,7 +218,7 @@ async fn the_claim_tool_names_the_earlier_work() {
         format!(
             "You hold issue-12 in como-technologies/riff.\nEarlier work on issue-12: the \
              worktree {} (1 file not committed). Go on from it, and do not start again: see \
-             \"Pick up dropped work\" in the riff skill.",
+             \"Pick up dropped work\" in the instructions of the riff tools.",
             work.display()
         )
     );

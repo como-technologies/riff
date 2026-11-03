@@ -45,8 +45,8 @@
 //! # The table
 //!
 //! Each step of the start text of a session of the daemon matches
-//! a rule of the session place for its role. A step that the skill
-//! forbids matches a deny rule. A step of a person has no rule: the auto
+//! a rule of the session place for its role. A step that the texts
+//! forbid matches a deny rule. A step of a person has no rule: the auto
 //! mode check judges it. The tests check each step with [`matches()`].
 //! `{HOME}` and `{BRANCH}` take the [`Facts`] of the person and of the
 //! project.
@@ -65,15 +65,14 @@
 //! Claude Code matches a rule to each part of a Bash call. A `cd` out of
 //! the working folders matches no rule, and then the auto mode check
 //! judges the whole call. So a session runs each step alone, with each
-//! file by its absolute path, and the skill says so. A test checks that
-//! no code line of the skill joins a step to another command
+//! file by its absolute path, and the instructions of the lead say so
 //! (01M51V0Q5E7MNPWP9T7TSJFT5W).
 //!
 //! | Rule | Kind | Roles | Places | The step |
 //! |---|---|---|---|---|
 //! | `mcp__riff` | allow | lead, worker, verifier | project, session | each riff tool of a worker, and of a session of the daemon |
 //! | `Bash(riff)` | allow | lead, worker, verifier | project | `riff` |
-//! | `Bash(riff *)` | allow | lead, worker, verifier | project | each `riff` command of the skill |
+//! | `Bash(riff *)` | allow | lead, worker, verifier | project | each `riff` command of the start texts and of the instructions of the lead |
 //! | `Bash(/opt/riff/riff relay watch)` | allow | lead | session | the wakes of the lead in a container |
 //! | `Bash(/opt/riff/riff relay watch --follow)` | allow | lead | session | the wakes of the lead, one watch that never ends |
 //! | `Bash(/opt/riff/riff wave *)` | allow | lead | session | the steps of the waves of the lead in a container |
@@ -136,8 +135,8 @@
 //!
 //! When the auto mode check refuses a step, the session writes the step
 //! on the issue of its item, and tells the lead. The fix is a new row of
-//! the table (the step is in bounds), or a change of the skill (it is
-//! not). It is never a step that a person types by hand
+//! the table (the step is in bounds), or a change of the text of the
+//! session (it is not). It is never a step that a person types by hand
 //! (01M5084K9J566981EXZ7YJRGRR).
 //!
 //! # Wide rules

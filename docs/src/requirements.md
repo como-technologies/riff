@@ -35,13 +35,12 @@
   must be. The criteria follow ASD-STE100.
 - **01M3PRHM97CJ16FZD9ZK48ERAD** A session writes all prose in
   ASD-STE100: each message, status, issue, pull request, commit,
-  release note, doc and answer to its user. This is rule 1 of the
-  skill. The level line of a release uses plain words that a person
-  understands.
+  release note, doc and answer to its user. The level line of a
+  release uses plain words that a person understands.
 - **01M58BCCKMNG6V495YF8AM9P5C** A session uses natural tenses for
   things in time: the future with "will" for a future action, and the
   past for a past event. It never writes a future action in the
-  present tense. Rule 1 of the skill and `CLAUDE.md` say so.
+  present tense. `CLAUDE.md` and the instructions of the lead say so.
 - **R173** After a session claims an issue, it reads the issue. When the
   `Done when:` line is missing or cannot be tested, the session does
   not start work. It writes the criteria, adds them to the issue, posts
@@ -73,7 +72,7 @@
   the pull request again. When the base commit cannot show the fault,
   it reads and runs a test of the guard on a sample, uses the control
   of the author on the issue, or checks by a read. The result says
-  which way it used. The skill says so.
+  which way it used.
 - **R192** The verifier posts the result to the author with the
   selector `claim=ITEM`. A pass names each criterion and how the
   verifier checked it. A fail names each criterion that failed and the
@@ -105,10 +104,11 @@
   a fail, it releases at once. The item is then free with its earlier
   work (01M3WFYEP1H3VPW8G90KQDE6FW): the next session that claims it
   reads the result, goes on from the branch, and sends a new verify
-  request for the same pull request. The skill says so.
+  request for the same pull request. "Pick up dropped work" in the
+  instructions of the riff tools says so.
 - **01M3Z9N6NFNMW62JZ796RV4643** A session that is not a worker keeps
   its claim after its verify request, and does the steps after the
-  merge itself (R193). The skill says so.
+  merge itself (R193).
 - **01M3Z9MY0CDBB1G749XBVMVV8X** riff makes the state of the pull
   request of an item from the status `riff/verify` of its head commit.
   The pull request is open, is not a draft, and names the issue
@@ -325,7 +325,7 @@
   `plan_seen` came for `PLAN_TTL` (10 minutes). The time of the last
   look is in memory: after a new start of the server, the count starts
   at the start.
-- **R222** The skill, the requirements and the book name the concept
+- **R222** The requirements and the book name the concept
   of waves first. Each keeps the form of a forge in one part of its
   own. A new forge needs no change to the concept. Outside these
   parts, no text names the objects of a forge that hold a wave.
@@ -367,8 +367,9 @@
 - **01M518A0BEQBX9RH9H0CEFYF9Q** `riff wave rename N NAME` gives the
   open milestone of the wave with the number N the title
   `Wave N: NAME`. The number stays. riff refuses a blank name, and a
-  number that no open wave has. Then it changes nothing. The skill and
-  the page "Waves" give it as the step to rename a wave.
+  number that no open wave has. Then it changes nothing. The
+  instructions of the lead and the page "Waves" give it as the step to
+  rename a wave.
 - **01M509TJXE04CTG5D1K751WXJY** `riff wave end N` closes the open
   milestone of the wave with the number N. riff refuses when no open
   wave has the number, and when the milestone has an open issue or an
@@ -395,8 +396,7 @@
   milestone `Wave N` or `Wave N: NAME`. riff refuses a wave that
   matches no milestone, and names the open waves. It refuses a number
   of more than one milestone, and names them. Then it shows no tokens
-  and checks no rule. The skill says that `gh` takes only the full
-  title.
+  and checks no rule.
 - **01M3Q5QE2EWGKVD57Y6YCWA4BR** The rollout of workers
   (01M3Q5QE01DB0FJQJWFKR450KQ) reads its free work with `gh`. The
   current wave is the open milestone `Wave N` with the lowest N. A free
@@ -519,8 +519,8 @@
   the shared riff runs is marked "Latest". A release of another line is
   not, also when its version is higher.
 - **01M3JFEXJG2D651PWA30DNRGWF** No session pushes to `main` or runs
-  `gh pr merge --admin`. The project settings of Claude Code deny both,
-  and the skill says it.
+  `gh pr merge --admin`. The project settings of Claude Code deny
+  both.
 - **01M3JN4QVR3JCRWC8TFJJTCPHF** Each session uses the GitHub account
   of our user, so the author of a pull request can set `riff/verify`
   on its own commit. We accept this gap until the sessions act with
@@ -844,8 +844,8 @@
   still flow. A session answers a status request and a question from
   the lead. The watch runs, so the session stays live.
 - **01M3JCG46KKK97VD00KQ4DW6HK** When the riff resumes, each session
-  goes on from where it stopped. A new session follows the start
-  routine.
+  goes on from where it stopped. A new session on a host follows
+  "Start routine" in the instructions of the riff tools.
 - **01M3JCG4AV80MHFP73CWDY5E3M** `riff who`, `riff whoami` and the
   `whoami` tool show the state of the riff.
 - **01M5P1XQ6WTGFHW0P5M114P535** The riff daemon sends no verify request
@@ -858,6 +858,12 @@
   again (or is paused), that the pause of the repository still stops its
   workers, and who set that pause. The workers of that repository do not
   wake. The answer to the call names the leads that it told.
+- **01M6GXACQVG2EZBAGYXG3D5ED7** The instructions of the riff tools hold
+  "Pause" for each kind of session: the session on a host, the session
+  in a container, and the lead. "Pause" says what a session does while
+  the riff or its repository is paused, and what the resume does. Each
+  text of riff that names "Pause" names these instructions. A doc test
+  of each instruction text checks the part.
 
 ## Service
 
@@ -2010,8 +2016,8 @@
   commit and pushes its branch before each long run (`just ci`, a test
   loop, a build) and at each change of step. A WIP commit has `WIP` in
   its subject. The pull request merges with a squash, so no WIP commit
-  shows on the default branch. The skill says so in the start routine
-  and in "Push your work as WIP". A WIP push needs no rebase
+  shows on the default branch. "Start routine" in the instructions of
+  the riff tools says so. A WIP push needs no rebase
   (01M3MNP39172Y463WGQAW125KW).
 - **01M3WFYEP1H3VPW8G90KQDE6FW** A session that claims an item with a
   pushed branch, or with a worktree of a session that is gone, goes on
@@ -2072,7 +2078,7 @@
   lead for all people.
 - **01M3JD5QCVCB3VEK4KP955JSEA** The lead takes no claims: no work
   item and no verify. A verify request waits for a free session that
-  is not the lead. The skill teaches this to the lead.
+  is not the lead. The instructions of the lead say so.
 - **R230** A request is a direct message from the lead of the person
   of a session. A verified request (R199) counts as a scope from that
   person. A request that is not verified, or that comes from a session
@@ -2428,10 +2434,11 @@
   An automatic step does not end a block of the lead
   (01M41FZPGEK4TNPSM2051W4VMS). A call that `riff-server` refuses sets
   no step.
-- **01M3Q555NV8ZCQ8PVPBXQ7J82C** The skill, the start hook and the
-  `status` tool do not tell a session to set its status for a fact
-  that riff derives: a claim, a release, a pause, an idle worker, its
-  work, or a wait for a verify, a merge or a need.
+- **01M3Q555NV8ZCQ8PVPBXQ7J82C** The instructions of the riff tools,
+  the start hook and the `status` tool do not tell a session to set
+  its status for a fact that riff derives: a claim, a release, a
+  pause, an idle worker, its work, or a wait for a verify, a merge or a
+  need.
 - **01M41FZQVEF8S2W9RCM4V87C3D** The first state that matches wins:
   `offline` (no open watch stream, and not a lead or a session in a
   container that is not gone, 01M510MG0CKDXAKF6YJ768K7E8),
@@ -2572,8 +2579,9 @@
   wave of the daemon. It is free work also outside the current wave and
   outside each wave, when no session claims it, it has no comment
   `Merged in #`, no pull request of it waits for a verify or the merge,
-  each issue of its `Needs:` line is closed, and no lead holds it. The
-  skill tells a session that picks its own item to take it first.
+  each issue of its `Needs:` line is closed, and no lead holds it.
+  "Start routine" in the instructions of the riff tools tells a session
+  that picks its own item to take it first.
 - **01M51QEYVQN74Q1VDTVHB0445Q** When the Gate of `main` passes, riff
   closes each open issue with the label `broken-main` that no session
   claims and that no open pull request names, with a comment that names
@@ -2688,6 +2696,16 @@
   one of the last 200 of the repository thread. The notices about one
   host have no key and come from each host: the host waits for a fact,
   the pull of the image failed, a job failed or an item is spent.
+- **01M6GXAFYJYG9JC76W651KF2KT** The instructions of the riff tools of a
+  session on a host hold "Start routine" and "Pick up dropped work".
+  Each text of riff that names one of these steps names these
+  instructions: the result of `claim`, the notice of a freed claim, the
+  context of a new start and the result of `join`. A doc test checks
+  each part.
+- **01M6GXAG10W6EJ89AQA5B4HHPJ** No text of riff for a session, no
+  requirement and no page of the book sends a reader to a Claude Code
+  skill: riff installs none. A test checks the code of each crate, the
+  requirements and the pages of the book.
 
 ## Threads
 
@@ -2764,13 +2782,13 @@
   `lead=true` that matches no live session matches each live session
   with no claim that its other fields match. So a verify request
   reaches a free session of the author's user when that user has no
-  live lead. With a live lead, it wakes only the lead. The skill and
-  the book say so.
+  live lead. With a live lead, it wakes only the lead. The book says
+  so.
 - **01M58AQX46RH9KFP91QAFS43N7** The sender of a post counts as a live
   session for the fallback of 01M3JY1TBPQHH6WPPBTF42T64H. A lead that
   posts to its own `lead=true` selector wakes no other session for that
   selector, and the post result names no unmatched selector for it.
-  The skill and the book say so.
+  The book says so.
 - **R186** The wake line and `read` show that a message is a status
   request. A session that a status request wakes answers with `status`.
   It does not post a reply.
@@ -2793,8 +2811,8 @@
   chat has no private channels, no nick changes and no files.
 - **01M3NB5N0D99JB5CE6RB4VEYPF** A chat line wakes the lead of the
   sender, unless it names a lead: `@lead` wakes the lead of the sender,
-  and `@USER` wakes the lead of USER. The skill tells a lead to
-  answer a chat line with a post to the thread `chat`.
+  and `@USER` wakes the lead of USER. The instructions of the lead
+  tell a lead to answer a chat line with a post to the thread `chat`.
 - **01M3NJD39JVJHY5G71CD79JBY3** In a terminal, `riff chat` has a
   prompt line at the bottom. A new line prints above the prompt, and
   the typed text stays. After Enter, the typed line goes away, so the
@@ -2876,7 +2894,7 @@
   judgment: it acts on advice, asks about it, or says no.
 - **01M3JEJW019FFEVQ0ZX17362EW** The start hook, the MCP server
   instructions and the head of each `read` state the rule of R10 in
-  the same words. The skill states it in its rules.
+  the same words.
 - **R11** Messages do not carry secrets.
 - **R195** Each message carries a signature from the device key of its
   sender (R18). A message from the command line (R65) carries the
@@ -3361,8 +3379,8 @@
 - **01M3N73E7YTHFX2J2KXT7017QX** A patch release (`0.3.0` to `0.3.1`)
   changes nothing that another machine or session can notice: a fix
   that restores the intended behavior, the docs, an output format, the
-  tests, or words of the skill or of a requirement that make a rule
-  clearer with no change in behavior.
+  tests, or words of the instructions of the riff tools or of a
+  requirement that make a rule clearer with no change in behavior.
 - **01M3N73EAAD1G88TG7SNFWE4P1** A minor release (`0.3.x` to `0.4.0`)
   has a change that another machine or session can notice:
   - the wire: a route or a field that a client needs, a removed one,
@@ -3370,9 +3388,9 @@
   - the saved state of `riff-server`;
   - the plugin contract: the hook input, and the names and arguments
     of the riff tools;
-  - the behavior: a change of the skill or of a requirement that
-    changes what a session does, for example the pull request flow,
-    the verify, the claims, the waves or the pause.
+  - the behavior: a change of the instructions of the riff tools or of
+    a requirement that changes what a session does, for example the
+    pull request flow, the verify, the claims, the waves or the pause.
 
   A wire change stays additive for one line, so that `riff-server`
   serves the line before its own (01M3MX1E1EY1M7JGNCN6FCEVQK). Riff
@@ -5399,11 +5417,10 @@ of this part when they merge.
   (`riff::permissions::TABLE`). Each row has the rule, its kind (allow,
   deny, or the step of a person), the roles that need it (lead, worker,
   verifier), and its places: the project settings (`riff setup`) and the
-  settings of each session of the daemon. A test checks that each `riff`
-  and `gh` step of the skill matches an allow rule, a deny rule, or the
-  row of a person. It also checks that each such step of the start text
-  of a session of the daemon matches an allow rule of the session place
-  for the role of the session.
+  settings of each session of the daemon. A test checks that each
+  `riff` and `gh` step of the start text of a session of the daemon,
+  and of the instructions of the lead, matches an allow rule of the
+  session place for the role of the session.
 - **01M5084K4YQCZF20XA0P2485SG** The daemon writes the rules of the
   session place into the `settings.json` of the own Claude folder of
   each session. The Claude folder of the lead stays between its
@@ -5422,9 +5439,9 @@ of this part when they merge.
   check in `~/.cache/riff/check`. When the folder is not there, it
   clones the `origin` of the repository of its folder into it. Then it
   fetches `origin`, puts the clone on the default branch and runs `just
-  static`. It prints the path of the riff of the build. The skill tells
-  a check to run `riff build`, and names no git step in the clone: a
-  session in a worktree runs no git step in another folder.
+  static`. It prints the path of the riff of the build. A session in a
+  worktree runs no git step in another folder, so no text of riff
+  names a git step in that clone.
 - **01M509TJNREVNYR9MNN4P9P4RA** Each allow rule of the table names its
   program and its words. Its only `*` is at its end, after a space. No
   allow rule names a path of the API of the forge: the steps of the
@@ -5465,14 +5482,14 @@ of this part when they merge.
   step, the session stops that step, writes the command and the reason
   on the issue of its item, and tells the lead. It does not try the
   step again in another form. The fix is a new rule in the table (the
-  step is in bounds) or a change of the skill (the step is out of
-  bounds). The fix is never that a person does the refused step by
-  hand.
+  step is in bounds) or a change of the text of the session (the step
+  is out of bounds). The fix is never that a person does the refused
+  step by hand.
 - **01M51V0Q5E7MNPWP9T7TSJFT5W** A session runs each `riff` and `gh`
   step alone, in its own Bash call, and gives each file of the step by
   its absolute path. No `cd` comes before the step, and no `&&`, `||`
-  or `;` joins another command to it. The skill says so. A test checks
-  that no code line of the skill joins a step to another command.
+  or `;` joins another command to it. The instructions of the lead
+  say so.
 - **01M516HETNZCBFBJNHT8BKFB1Y** riff gives each session that it starts
   the auto mode settings of one place in its code
   (`riff::permissions::auto_mode`): `skillOverrides` with
@@ -5932,8 +5949,8 @@ of this part when they merge.
   (`CLAUDECODE`), also a `!` command. The lead of the owner may approve
   with a message of the owner in the thread `chat`
   (01M594XQJMXAXY3JXP66Y8EVQ7). A lead in a container may publish
-  (01M59269HHZ5C82DR3RG3QHAM3). The lead skill makes each release with
-  these commands, and has no tag line and no `gh release` line.
+  (01M59269HHZ5C82DR3RG3QHAM3). The instructions of the lead have no
+  tag line and no `gh release` line.
 - **01M59269HHZ5C82DR3RG3QHAM3** `riff release publish`, `check`,
   `retry` and `rollback` allow the lead of the owner or of an admin
   in a container (`riff lead start`). The daemon tells the lead from
@@ -6278,9 +6295,8 @@ of this part when they merge.
   (01M53YP97S9BDMFBN0X5G444MY). So the daemon of the test has its own
   socket and its own session folders, and keeps them for the next run.
   The daemon of the machine keeps running. The test does not talk to it,
-  and no step of the test, the book or the skill stops, starts or
-  changes it. Step 5 fails only when a daemon of the test answers before
-  the start.
+  and no step of the test or the book stops, starts or changes it.
+  Step 5 fails only when a daemon of the test answers before the start.
 - **01M4ZCFGKDKH16KGKR5NBEK3Y4** Before each tag, an admin runs
   `just real-session` on the merge commit of the release pull request,
   on a host with podman. It passes before the tag.
@@ -6516,8 +6532,8 @@ that builds it merges.
   notes and on GitHub, never only in the Claude memory of the host.
 - **01M592593NSC1DE7A653Q8PCPS** The instructions of the lead
   (`text::MCP_LEAD`) hold each rule of the lead (`text::LEAD_RULES`).
-  No rule stays only in the skill or in the Claude memory of one
-  host, and a test checks each rule. A rule for each agent of the
+  No rule stays only in the Claude memory of one host, and a test
+  checks each rule. A rule for each agent of the
   repository goes in `CLAUDE.md` or here. A choice of one person or one
   host, and the running state, go in the notes of the lead.
 - **01M596DH64SQ5AJ4Y6BETGTPSK** `riff lead move HOST` moves the lead

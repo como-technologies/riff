@@ -712,8 +712,8 @@ pub enum Dropped {
 ///     dropped(&Dropped::Start(StartReason::Clear), &[freed("issue-12")]),
 ///     "claims: a new start of this session (/clear) freed your claim issue-12 in \
 ///      como-technologies/riff. Another session can take it. To go on with it, claim \
-///      it again, then see \"Pick up dropped work\" in the riff skill. Else stop the \
-///      work on it."
+///      it again, then see \"Pick up dropped work\" in the instructions of the riff \
+///      tools. Else stop the work on it."
 /// );
 /// let two = [freed("issue-12"), freed("verify-issue-7")];
 /// let text = dropped(&Dropped::Start(StartReason::Process), &two);
@@ -753,7 +753,8 @@ pub fn dropped(why: &Dropped, freed: &[Freed]) -> String {
             format!(
                 "claims: a new start of this session ({start}) freed your {claims} {items}. \
                  Another session can take {them}. To go on with {one}, claim it again, then \
-                 see \"Pick up dropped work\" in the riff skill. Else stop the work on it."
+                 see \"Pick up dropped work\" in the instructions of the riff tools. Else stop the \
+                 work on it."
             )
         }
         Dropped::Lead(lead) => format!(

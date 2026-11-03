@@ -401,7 +401,7 @@ async fn a_claim_names_the_pull_request_of_the_item_and_its_verify() {
             "The verify of pull request #40 of issue-12 failed for commit 1a2b3c4: \
              https://github.com/como-technologies/riff/pull/40#issuecomment-7. Read the result, \
              go on from the branch, and send a new verify request: see \"Pick up dropped work\" \
-             in the riff skill.",
+             in the instructions of the riff tools.",
         ),
         (
             String::new(),
