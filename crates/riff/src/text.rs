@@ -1464,6 +1464,52 @@ pub fn waves_no_issues(repo: &str) -> String {
     format!("gh gave no open issues of {}", safe(repo))
 }
 
+/// The error when the call `what` of `gh` fails with the stderr `why`
+/// (01M6GX4HYR3755G6EJW1XHEFVE). The stderr is a text of the forge
+/// ([`forge`]). A `gh` that says nothing gets the reason `no reason`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::gh_failed("gh issue list", "GraphQL: API rate limit already exceeded\n"),
+///     "gh issue list failed: GraphQL: API rate limit already exceeded"
+/// );
+/// assert_eq!(riff::text::gh_failed("gh issue list", ""), "gh issue list failed: no reason");
+/// ```
+pub fn gh_failed(what: &str, why: &str) -> String {
+    let why = forge(why);
+    let why = why.trim();
+    format!(
+        "{what} failed: {}",
+        if why.is_empty() { "no reason" } else { why }
+    )
+}
+
+/// The error when `gh issue list` works and its text is not the JSON of
+/// the issues (01M6GX4HYR3755G6EJW1XHEFVE).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::gh_issues_unreadable(),
+///     "gh issue list gave a text that riff cannot read"
+/// );
+/// ```
+pub fn gh_issues_unreadable() -> &'static str {
+    "gh issue list gave a text that riff cannot read"
+}
+
+/// The first line of `riff top` when a read of the issues fails: `why` is
+/// the error of `gh`. The line is short, so that it fits in 80 columns:
+/// it does not name the repository. `riff top` keeps the last issues
+/// (01M6GX4HYR3755G6EJW1XHEFVE, 01M3ZC09FA9DZPTHK31XECZ566).
+///
+/// ```
+/// let line = riff::text::top_gh_fault("gh issue list failed: HTTP 504: Gateway Timeout");
+/// assert_eq!(line, "riff: gh issue list failed: HTTP 504: Gateway Timeout");
+/// ```
+pub fn top_gh_fault(why: &str) -> String {
+    format!("riff: {}", safe(why))
+}
+
 /// The answer to `riff wave make` (01M509TJTV7TC32EKXW0TEQ5NZ).
 ///
 /// ```

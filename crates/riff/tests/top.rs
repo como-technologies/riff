@@ -837,6 +837,123 @@ async fn a_person_sees_the_groups_of_the_wave_in_riff_wave_list() {
     );
 }
 
+/// The stdout and the stderr of `cmd`, after its exit with status 0.
+async fn output_both(mut cmd: Command) -> (String, String) {
+    let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())
+        .await
+        .unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(out.status.success(), "{stderr}");
+    (String::from_utf8(out.stdout).unwrap(), stderr)
+}
+
+/// A fake `gh` in `dir`: the open milestone Wave 3 with 1 open issue,
+/// and a `gh issue list` that fails with `why` on stderr.
+fn failing_gh(dir: &Path, why: &str) {
+    let wave = r#"[{"number":3,"title":"Wave 3","open_issues":1,"closed_issues":0}]"#;
+    script(
+        dir,
+        "gh",
+        &format!(
+            "case \"$1 $2\" in\n  api*) echo '{wave}' ;;\n  'issue list') echo '{why}' >&2; exit 1 ;;\n  *) echo '[]' ;;\nesac"
+        ),
+    );
+}
+
+/// 01M6GX4HYR3755G6EJW1XHEFVE: a `gh` that fails is no `gh` that gave no
+/// issues. The line of `riff wave list` names the error of `gh`, so the
+/// output does not change with each fault of GitHub.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_wave_list_names_the_error_of_gh_when_gh_fails() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    let why = "GraphQL: API rate limit already exceeded for user ID 1.";
+    failing_gh(bin.path(), why);
+
+    let mut list = riff(&server, dir, None, bin.path(), &["wave", "list"]);
+    list.env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    let (list, stderr) = output_both(list).await;
+    assert_eq!(list, "Wave 3  current  1 open, 0 closed\n");
+    assert_eq!(
+        stderr,
+        format!("riff: the list has no items and no hosts: gh issue list failed: {why}\n")
+    );
+}
+
+/// 01M6GX4HYR3755G6EJW1XHEFVE: `gh gave no open issues` only for a read
+/// that worked and gave none.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_wave_list_says_gh_gave_no_open_issues_when_it_gave_none() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    wave_gh(bin.path(), &[]);
+
+    let mut list = riff(&server, dir, None, bin.path(), &["wave", "list"]);
+    list.env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    let (list, stderr) = output_both(list).await;
+    assert_eq!(list, "Wave 3  current  0 open, 1 closed\n");
+    assert_eq!(
+        stderr,
+        "riff: the list has no items and no hosts: gh gave no open issues of \
+         como-technologies/riff\n"
+    );
+}
+
+/// 01M6GX4HYR3755G6EJW1XHEFVE: `riff top` reads the issues in the same
+/// way. The first line of its table names the error of `gh`.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_top_names_the_error_of_gh_when_gh_fails() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    failing_gh(bin.path(), "GraphQL: API rate limit already exceeded");
+    live(&server, "pangolin", "a1").await;
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert_eq!(
+        top.lines().next().unwrap(),
+        "riff: gh issue list failed: GraphQL: API rate limit already exceeded"
+    );
+    assert!(top.contains("a1"), "{top}");
+}
+
+/// 01M6GX4HYR3755G6EJW1XHEFVE: the error of `issues_from_gh` is the
+/// error of `gh`, a text that is not the issues, or a `gh` that is not
+/// there. A read that worked and gave no issue is `Ok`.
+#[test]
+fn issues_from_gh_fails_with_the_error_of_gh() {
+    let bin = tempfile::tempdir().unwrap();
+    let read = |body: &str| {
+        script(bin.path(), "gh", body);
+        riff::top::issues_from_gh(&riff::pr::Gh::at(bin.path().join("gh")), "o/r")
+    };
+    let error = read("echo 'HTTP 504: Gateway Timeout' >&2; exit 1").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "gh issue list failed: HTTP 504: Gateway Timeout"
+    );
+    let error = read("exit 1").unwrap_err();
+    assert_eq!(error.to_string(), "gh issue list failed: no reason");
+    let error = read("echo 'not json'").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "gh issue list gave a text that riff cannot read"
+    );
+    let issues = read("echo '[]'").unwrap();
+    assert!(issues.titles.is_empty());
+    let nowhere = riff::pr::Gh::at(bin.path().join("no-gh"));
+    let error = riff::top::issues_from_gh(&nowhere, "o/r").unwrap_err();
+    assert!(error.to_string().contains("cannot run"), "{error}");
+}
+
 /// In the container of the lead, `riff wave list` has `RIFF_SOCKET` and
 /// no `RIFF_SERVER`: it reads the sessions and the holds through the
 /// riff daemon (01M5GVPNAKAPA596K9361HSAAV). A fake daemon answers with

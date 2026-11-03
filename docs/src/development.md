@@ -2276,6 +2276,36 @@ the groups: the items are held, claimed, in verify, stuck or trackers.
 The lead runs the same command in its container. There, riff reads
 the sessions and the holds through the riff daemon of the host.
 
+#### Find why the list has no items
+
+When riff cannot read the open issues, `riff wave list` shows the waves
+with no items and no hosts. One line on stderr says why. When `gh`
+fails, the line has the error of `gh`:
+
+```text
+riff: the list has no items and no hosts: gh issue list failed: GraphQL: API rate limit already exceeded for user ID 1.
+```
+
+Fix the fault of `gh`. For a rate limit, look at the limit and wait for
+its reset. Then run the command again:
+
+```sh
+gh api rate_limit --jq .resources.graphql
+riff wave list
+```
+
+The line "gh gave no open issues of como-technologies/riff" means that
+`gh` worked and the repository has no open issue.
+
+`riff top` reads the issues in the same way. When `gh` fails, it keeps
+the last issues, and its first line has the error of `gh`:
+
+```text
+riff: gh issue list failed: GraphQL: API rate limit already exceeded
+```
+
+The line goes at the next good read.
+
 ### Stop the wave
 
 In your clone of the repository:

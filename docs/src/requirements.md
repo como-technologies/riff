@@ -443,6 +443,14 @@
   and `no-verify`, the line `Done when:` and the branch
   `worktree-issue-N`. The book lists them in one place: the part "The
   names riff uses on the forge" of the page about waves.
+- **01M6GX4HYR3755G6EJW1XHEFVE** A read of `gh` that fails is not a read
+  that gave no issues. `riff wave list` names the error of `gh` in its
+  line on stderr: `riff: the list has no items and no hosts: gh issue
+  list failed: ERROR`. It says `gh gave no open issues of REPO` only
+  when `gh` read the issues and gave none. `riff top` reads the issues
+  in the same way. When the read fails, it keeps the last issues, and
+  its first line names the error. This adds to
+  01M58ATZ6FA5PJMD3D848CEWBJ and 01M3ZC09FA9DZPTHK31XECZ566.
 
 ## Issue hygiene on GitHub
 

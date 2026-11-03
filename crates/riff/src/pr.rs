@@ -320,6 +320,17 @@ impl Gh {
         Ok(stdout)
     }
 
+    /// [`Gh::run`] with no input, for a call that names itself: when `gh`
+    /// fails, the error is `WHAT failed: STDERR`, with the stderr of
+    /// `gh` and not its arguments ([`crate::text::gh_failed`]).
+    pub fn run_as(&self, what: &str, args: &[&str]) -> Result<String> {
+        let (ok, stdout, stderr) = self.output(args, None)?;
+        if !ok {
+            bail!(text::gh_failed(what, stderr.trim()));
+        }
+        Ok(stdout)
+    }
+
     /// Sends `body` with `gh api -X METHOD PATH`, and returns the reply
     /// with its headers. The body goes in a file, not on stdin: a body
     /// on stdin can get lost (#566, 01M49HF057R08DGW6X5A8EHR42). It

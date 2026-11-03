@@ -590,6 +590,10 @@ impl Items {
 /// The items of the repository `thread`, the repository of the folder
 /// (01M58ATZ408RBCX0PM0D0ZCY4B): its open issues and pull requests from
 /// `gh`, and its sessions and holds from riff-server, by the way `reach`.
+/// It fails with the error of `gh` when `gh` fails
+/// ([`crate::top::issues_from_gh`]), and with `gh gave no open issues`
+/// only when `gh` read the issues and gave none
+/// (01M6GX4HYR3755G6EJW1XHEFVE).
 pub async fn items(reach: &Reach, thread: Option<ThreadName>, gh: &Gh) -> Result<Items> {
     let Some(thread) = thread else {
         bail!(text::waves_no_repo());
@@ -597,9 +601,10 @@ pub async fn items(reach: &Reach, thread: Option<ThreadName>, gh: &Gh) -> Result
     let repo = thread.to_string();
     let who = reach.who(false).await?;
     let holds = reach.holds(&thread).await?;
-    let Some(issues) = crate::top::issues_from_gh(gh, &repo) else {
+    let issues = crate::top::issues_from_gh(gh, &repo)?;
+    if issues.titles.is_empty() {
         bail!(text::waves_no_issues(&repo));
-    };
+    }
     Ok(Items::of(&repo, &issues, who, &holds))
 }
 
