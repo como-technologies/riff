@@ -8500,22 +8500,25 @@ pub fn wave_checks_start(
 }
 
 /// The message to the lead about a pull request that cannot merge, and
-/// that no session fixes (#279): `reason` is why. `base` is the default
+/// that no session fixes (#279): `reason` is why. `repo` is
+/// `OWNER/REPO`, for the approval of a run. `base` is the default
 /// branch of the repository, for a conflict (01M5QYBWPAJ219BE8QKVKG1TWW).
 /// Each pull request, head and reason comes one time. A failed check
 /// that is no run of GitHub Actions comes one time for each check, with
-/// its app and its link (#1427).
+/// its app and its link (#1427). A review comes with the step of a
+/// person, and a run that waits for approval one time for each run,
+/// with the command (01M6FZ141Y0J8G2AYX0G5HY1CX, 01M6FZ144M0BTEDWNB9V4MGWDD).
 ///
 /// ```
-/// use riff::rollout::{OtherCheck, Stuck};
+/// use riff::rollout::{OtherCheck, Review, Run, Stuck};
 ///
 /// assert_eq!(
-///     riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::AutoMergeOff),
+///     riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::AutoMergeOff),
 ///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but auto-merge is \
 ///      off, so it never merges. Turn it on: gh pr merge --auto --squash 40"
 /// );
 /// let checks = Stuck::Checks(vec!["Hygiene".into(), "Gate".into()]);
-/// let text = riff::text::wave_stuck(298, "release-v0.8.0", "main", "5e6f7a8b9c", &checks);
+/// let text = riff::text::wave_stuck("o/r", 298, "release-v0.8.0", "main", "5e6f7a8b9c", &checks);
 /// assert!(text.starts_with("PR #298, branch release-v0.8.0, has failed checks Hygiene, Gate at commit 5e6f7a8."));
 /// assert!(text.contains("No session fixes it, so it waits for you."));
 /// assert!(text.contains("gh pr checks 298"));
@@ -8527,17 +8530,17 @@ pub fn wave_checks_start(
 ///     link: Some("https://app.circleci.com/workflow/9".into()),
 /// };
 /// assert_eq!(
-///     riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(circle)),
+///     riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(circle)),
 ///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the check ci of \
 ///      the app app.circleci.com failed. It is not a run of GitHub Actions, so no session fixes \
 ///      it, and it waits for you. Fix the cause with a push to worktree-issue-12, or run the \
 ///      check again in its app. Link: https://app.circleci.com/workflow/9"
 /// );
 /// let bare = OtherCheck { name: "ci/x".into(), app: None, link: None };
-/// let text = riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(bare));
+/// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(bare));
 /// assert!(text.contains("the check ci/x of an unknown app failed."));
 /// assert!(text.ends_with("It has no link: see gh pr checks 40"));
-/// let text = riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Dequeued("CI_FAILURE".into()));
+/// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Dequeued("CI_FAILURE".into()));
 /// assert_eq!(
 ///     text,
 ///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the merge queue \
@@ -8545,21 +8548,45 @@ pub fn wave_checks_start(
 ///      run of the merge group in the Actions of the repository. Queue it again: gh pr merge \
 ///      --auto --squash 40"
 /// );
-/// let text = riff::text::wave_stuck(41, "worktree-issue-1", "master", "aaaa111bbb", &Stuck::Conflict);
+/// let text = riff::text::wave_stuck("o/r", 41, "worktree-issue-1", "master", "aaaa111bbb", &Stuck::Conflict);
 /// assert!(text.contains("has a conflict with master at commit aaaa111."));
 /// assert!(text.contains("Rebase it on master, and push to worktree-issue-1."));
 /// assert!(!text.contains("main"));
+/// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Review(Review::Required));
+/// assert_eq!(
+///     text,
+///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but GitHub needs an \
+///      approving review of a person before it merges. No session approves a pull request, so it \
+///      waits for you. A person other than the author approves it: gh pr review 40 --approve"
+/// );
+/// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Review(Review::Blocked));
+/// assert!(text.contains("but no check failed or goes, and GitHub blocks the merge."));
+/// assert!(text.contains("an author with no GitHub account"));
+/// assert!(text.contains("See the merge box: gh pr view 40 --web."));
+/// assert!(text.ends_with("A person other than the author approves it: gh pr review 40 --approve"));
+/// let run = Run { id: 40151174504, name: "Hygiene".into(), link: Some("https://github.com/o/r/actions/runs/40151174504".into()) };
+/// assert_eq!(
+///     riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Approve(run)),
+///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the run Hygiene \
+///      (run 40151174504) of a pull request from a fork waits for the approval of a maintainer, so \
+///      GitHub counts its required check as not reported and blocks the merge. No session approves \
+///      a run, so it waits for you. Link: https://github.com/o/r/actions/runs/40151174504. Press \
+///      Approve and run in the Actions tab, or run: gh api -X POST \
+///      repos/o/r/actions/runs/40151174504/approve"
+/// );
 /// ```
 pub fn wave_stuck(
+    repo: &str,
     number: u64,
     branch: &str,
     base: &str,
     commit: &str,
     reason: &crate::rollout::Stuck,
 ) -> String {
-    use crate::rollout::Stuck;
+    use crate::rollout::{Review, Stuck};
     let commit = commit.get(..7).unwrap_or(commit);
     let branch = safe(branch);
+    let repo = safe(repo);
     match reason {
         Stuck::AutoMergeOff => format!(
             "PR #{number}, branch {branch}, passed its verify at commit {commit}, but auto-merge \
@@ -8600,6 +8627,35 @@ pub fn wave_stuck(
              merge --auto --squash {number}",
             safe(reason)
         ),
+        Stuck::Review(Review::Required) => format!(
+            "PR #{number}, branch {branch}, passed its verify at commit {commit}, but GitHub \
+             needs an approving review of a person before it merges. No session approves a pull \
+             request, so it waits for you. A person other than the author approves it: gh pr \
+             review {number} --approve"
+        ),
+        Stuck::Review(Review::Blocked) => format!(
+            "PR #{number}, branch {branch}, passed its verify at commit {commit}, but no check \
+             failed or goes, and GitHub blocks the merge. A review is the likely cause: a commit \
+             can have an author with no GitHub account, and the rule of the branch then asks one \
+             approving review of a person. No session approves a pull request, so it waits for \
+             you. See the merge box: gh pr view {number} --web. A person other than the author \
+             approves it: gh pr review {number} --approve"
+        ),
+        Stuck::Approve(run) => {
+            let (name, id) = (safe(&run.name), run.id);
+            let link = match &run.link {
+                Some(link) => format!(" Link: {}.", safe(link)),
+                None => String::new(),
+            };
+            format!(
+                "PR #{number}, branch {branch}, passed its verify at commit {commit}, but the \
+                 run {name} (run {id}) of a pull request from a fork waits for the approval of a \
+                 maintainer, so GitHub counts its required check as not reported and blocks the \
+                 merge. No session approves a run, so it waits for you.{link} Press Approve and \
+                 run in the Actions tab, or run: gh api -X POST \
+                 repos/{repo}/actions/runs/{id}/approve"
+            )
+        }
         Stuck::Conflict => format!(
             "PR #{number}, branch {branch}, has a conflict with {base} at commit {commit}. No \
              session rebases it, so it waits for you. Rebase it on {base}, and push to {branch}."

@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use riff::pr::Gh;
-use riff::rollout::{OtherCheck, Stuck};
+use riff::rollout::{OtherCheck, Review, Run, Stuck};
 use riff::wave::{self, Conflict, Failed, Notice, Work};
 use riff_client::sessions::Sessions;
 use riff_client::waves::Board;
@@ -18,7 +18,9 @@ use riff_client::waves::Board;
 const REPO: &str = "o/r";
 
 /// A fake `gh`: the milestones, the file `pulls` for `pr list`, the file
-/// `issues` for `issue list`, and a passed Gate for each commit.
+/// `issues` for `issue list`, a passed Gate for each commit, the file `runs`
+/// for the runs of Actions of a commit, and the file `calls` with each read
+/// of them.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 case "$1 $2" in
@@ -28,6 +30,7 @@ case "$1 $2" in
       */rules/branches/main*) echo '[]' ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
       */check-runs*) echo '{"check_runs":[{"status":"completed","conclusion":"success","head_sha":"x"}]}' ;;
+      */actions/runs*) echo "$2" >> "$dir/calls"; cat "$dir/runs" ;;
       *) exit 1 ;;
     esac ;;
   "pr list") cat "$dir/pulls" ;;
@@ -89,6 +92,17 @@ fn pull_on(
     };
     format!(
         r#"{{"number":{},"headRefName":"{branch}","headRefOid":"{head}","isDraft":false,"statusCheckRollup":[{}],"mergeable":"{mergeable}","autoMergeRequest":{auto},"body":"Closes #{issue}\n\nIssue: #{issue}\nMilestone: Wave 1\n"}}"#,
+        40 + issue,
+        checks.join(",")
+    )
+}
+
+/// A pull request for `issue` at `head`, with auto-merge on and no conflict,
+/// the rollup `checks`, and what GitHub says of the merge: `reviewDecision`
+/// `review` and `mergeStateStatus` `state`.
+fn pull_held(issue: u64, head: &str, checks: &[String], review: &str, state: &str) -> String {
+    format!(
+        r#"{{"number":{},"headRefName":"worktree-issue-{issue}","headRefOid":"{head}","isDraft":false,"statusCheckRollup":[{}],"mergeable":"MERGEABLE","mergeStateStatus":"{state}","reviewDecision":"{review}","autoMergeRequest":{{"enabledAt":"2026-10-18T08:00:00Z","mergeMethod":"SQUASH"}},"body":"Closes #{issue}\n\nIssue: #{issue}\nMilestone: Wave 1\n"}}"#,
         40 + issue,
         checks.join(",")
     )
@@ -267,6 +281,7 @@ fn a_verified_pull_request_with_auto_merge_off_is_a_notice_for_the_lead() {
     assert_eq!(look.free, ["verify-issue-2", "issue-6"]);
     // Each notice is a message with the reason and the command.
     let body = riff::text::wave_stuck(
+        REPO,
         41,
         "worktree-issue-1",
         "main",
@@ -429,6 +444,7 @@ fn a_failed_check_of_another_app_is_a_notice_with_its_link_and_no_build() {
 
     // The message names the check, the app and the link.
     let body = riff::text::wave_stuck(
+        REPO,
         41,
         "worktree-issue-1",
         "main",
@@ -448,7 +464,14 @@ fn a_failed_check_of_another_app_is_a_notice_with_its_link_and_no_build() {
         app: Some("app.circleci.com".into()),
         link: Some("https://app.circleci.com/workflow/9".into()),
     });
-    let message = riff::text::wave_stuck(40, "worktree-issue-12", "main", "1a2b3c4d5e", &example);
+    let message = riff::text::wave_stuck(
+        REPO,
+        40,
+        "worktree-issue-12",
+        "main",
+        "1a2b3c4d5e",
+        &example,
+    );
     let book = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../docs/src/development.md"
@@ -562,4 +585,272 @@ fn the_board_shows_a_stuck_pull_request_with_its_reason() {
     let board = Board::of(REPO, &issues, &sessions, &BTreeMap::new()).unwrap();
     assert_eq!(board.claimed, [1]);
     assert_eq!(board.stuck.len(), 2);
+}
+
+/// The runs of Actions that the fake `gh` gives for each commit.
+fn runs(dir: &Path, json: &str) {
+    std::fs::write(dir.join("runs"), json).unwrap();
+}
+
+/// The commits whose runs the look read, one for each read.
+fn read_runs(dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(dir.join("calls"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.split(['=', '&']).nth(1).unwrap_or(l).to_owned())
+        .collect()
+}
+
+/// #1433: a pull request with a passed verify that GitHub holds for a
+/// review never merges by itself. The look reads `reviewDecision` and the
+/// merge state, and the lead gets a notice with the reason and the step
+/// of a person, as the book shows. A pull request with no review rule, one
+/// that is approved, one whose Gate goes, and one that waits for its
+/// verify, have none.
+#[test]
+fn a_verified_pull_request_that_needs_a_review_is_a_notice_with_the_step_of_a_person() {
+    let dir = tempfile::tempdir().unwrap();
+    let held = pull_held;
+    let gate = || run("Gate", "SUCCESS");
+    let gh = forge(
+        dir.path(),
+        &[
+            held(
+                1,
+                "aaaa111",
+                &[verify("SUCCESS"), gate()],
+                "REVIEW_REQUIRED",
+                "BLOCKED",
+            ),
+            // The count of reviews is 0, and a commit has an author with no
+            // GitHub account: GitHub says no decision and blocks the merge.
+            held(2, "bbbb222", &[verify("SUCCESS"), gate()], "", "BLOCKED"),
+            // The Gate goes: it explains the block.
+            held(
+                3,
+                "cccc333",
+                &[verify("SUCCESS"), run("Gate", "")],
+                "",
+                "BLOCKED",
+            ),
+            // The review came.
+            held(
+                4,
+                "dddd444",
+                &[verify("SUCCESS"), gate()],
+                "APPROVED",
+                "CLEAN",
+            ),
+            // It waits for its verify: no message yet.
+            held(6, "ffff666", &[gate()], "REVIEW_REQUIRED", "BLOCKED"),
+        ],
+    );
+    // No run of Actions waits.
+    runs(dir.path(), r#"{"total_count":0,"workflow_runs":[]}"#);
+    let look = looks(&gh);
+    let notice = |pull, issue, commit: &str, why| Notice {
+        pull,
+        branch: format!("worktree-issue-{issue}"),
+        commit: commit.into(),
+        stuck: Stuck::Review(why),
+    };
+    assert_eq!(
+        look.fixes.notices,
+        [
+            notice(41, 1, "aaaa111", Review::Required),
+            notice(42, 2, "bbbb222", Review::Blocked)
+        ]
+    );
+    // No session starts for them: no rebase, no build, no verify.
+    assert!(look.fixes.conflicts.is_empty());
+    assert!(look.fixes.failed.is_empty());
+    assert_eq!(look.free, ["verify-issue-6"]);
+    // One key for each pull request and head: the reason is the word.
+    assert_eq!(look.fixes.notices[0].key(), "#41@aaaa111:review");
+    // The look read the runs of the commits that GitHub blocks with no
+    // check open, and of no other.
+    assert_eq!(read_runs(dir.path()), ["aaaa111", "bbbb222"]);
+
+    // The message has the reason and the step.
+    let body = riff::text::wave_stuck(
+        REPO,
+        41,
+        "worktree-issue-1",
+        "main",
+        "aaaa111",
+        &look.fixes.notices[0].stuck,
+    );
+    assert!(
+        body.contains("needs an approving review of a person"),
+        "{body}"
+    );
+    assert!(body.ends_with("gh pr review 41 --approve"), "{body}");
+    let body = riff::text::wave_stuck(
+        REPO,
+        42,
+        "worktree-issue-2",
+        "main",
+        "bbbb222",
+        &look.fixes.notices[1].stuck,
+    );
+    assert!(body.contains("an author with no GitHub account"), "{body}");
+
+    // "See a pull request that cannot merge" in the book shows the message.
+    let message = riff::text::wave_stuck(
+        REPO,
+        40,
+        "worktree-issue-12",
+        "main",
+        "1a2b3c4d5e",
+        &Stuck::Review(Review::Required),
+    );
+    let book = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/src/development.md"
+    ))
+    .unwrap();
+    assert!(book.contains(&format!("\n{message}\n")), "{message}");
+    assert!(book.contains("\ngh pr review 40 --approve\n"));
+    let message = riff::text::wave_stuck(
+        REPO,
+        40,
+        "worktree-issue-12",
+        "main",
+        "1a2b3c4d5e",
+        &Stuck::Review(Review::Blocked),
+    );
+    assert!(book.contains(&format!("\n{message}\n")), "{message}");
+
+    // `riff top` and `riff wave list` show the review in the group `stuck`.
+    let issues = riff::top::issues_from_gh(&gh, REPO).unwrap();
+    assert_eq!(issues.stuck[&1], "review");
+    assert_eq!(issues.stuck[&2], "review");
+    assert!(!issues.stuck.contains_key(&3), "the Gate goes");
+    assert!(!issues.stuck.contains_key(&4), "it is approved");
+    let sessions = Sessions::new(vec![], vec![]);
+    let board = Board::of(REPO, &issues, &sessions, &BTreeMap::new()).unwrap();
+    assert!(
+        board
+            .groups(false)
+            .contains(&"stuck: #1 #2 (review)".to_owned())
+    );
+}
+
+/// #1433: the run of a pull request from a fork waits in `action_required`
+/// for a maintainer. It makes no check run, so GitHub counts its required
+/// check as not reported, and blocks the merge. The look reads the runs of
+/// the head, and the lead gets a notice with the run and the step. Only
+/// the newest run of a workflow counts.
+#[test]
+fn a_run_that_waits_for_approval_is_a_notice_with_the_run_and_the_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let gate = || run("Gate", "SUCCESS");
+    let gh = forge(
+        dir.path(),
+        &[pull_held(
+            1,
+            "aaaa111",
+            &[verify("SUCCESS"), gate()],
+            "",
+            "BLOCKED",
+        )],
+    );
+    // The newest Hygiene (40151175338) waits. The older run passed, and an
+    // older run of the Gate waits still, but a newer one passed.
+    runs(
+        dir.path(),
+        r#"{"total_count":4,"workflow_runs":[
+            {"id":40151175338,"workflow_id":2,"name":"Hygiene","status":"completed","conclusion":"action_required","html_url":"https://github.com/o/r/actions/runs/40151175338"},
+            {"id":40151174504,"workflow_id":2,"name":"Hygiene","status":"completed","conclusion":"action_required","html_url":"https://github.com/o/r/actions/runs/40151174504"},
+            {"id":40100000002,"workflow_id":1,"name":"CI","status":"completed","conclusion":"success","html_url":"https://github.com/o/r/actions/runs/40100000002"},
+            {"id":40100000001,"workflow_id":1,"name":"CI","status":"completed","conclusion":"action_required","html_url":"https://github.com/o/r/actions/runs/40100000001"}]}"#,
+    );
+    let look = looks(&gh);
+    let hygiene = Run {
+        id: 40151175338,
+        name: "Hygiene".into(),
+        link: Some("https://github.com/o/r/actions/runs/40151175338".into()),
+    };
+    assert_eq!(
+        look.fixes.notices,
+        [Notice {
+            pull: 41,
+            branch: "worktree-issue-1".into(),
+            commit: "aaaa111".into(),
+            stuck: Stuck::Approve(hygiene),
+        }]
+    );
+    assert_eq!(
+        look.fixes.notices[0].key(),
+        "#41@aaaa111:approve run:40151175338"
+    );
+    assert!(look.fixes.failed.is_empty());
+    assert_eq!(read_runs(dir.path()), ["aaaa111"]);
+
+    // The message has the run and the step.
+    let body = riff::text::wave_stuck(
+        REPO,
+        41,
+        "worktree-issue-1",
+        "main",
+        "aaaa111",
+        &look.fixes.notices[0].stuck,
+    );
+    assert!(
+        body.contains("the run Hygiene (run 40151175338) of a pull request from a fork"),
+        "{body}"
+    );
+    assert!(
+        body.ends_with("gh api -X POST repos/o/r/actions/runs/40151175338/approve"),
+        "{body}"
+    );
+
+    // "See a pull request that cannot merge" in the book shows the message
+    // and the step.
+    let example = Stuck::Approve(Run {
+        id: 40151174504,
+        name: "Hygiene".into(),
+        link: Some("https://github.com/como-technologies/riff/actions/runs/40151174504".into()),
+    });
+    let message = riff::text::wave_stuck(
+        "como-technologies/riff",
+        40,
+        "worktree-issue-12",
+        "main",
+        "1a2b3c4d5e",
+        &example,
+    );
+    let book = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/src/development.md"
+    ))
+    .unwrap();
+    assert!(book.contains(&format!("\n{message}\n")), "{message}");
+    assert!(book.contains(
+        "\ngh api -X POST repos/como-technologies/riff/actions/runs/40151174504/approve\n"
+    ));
+
+    // After the approval the run goes on: no run waits, and the pull
+    // request is a block with no cause for the wave (a review, likely).
+    runs(
+        dir.path(),
+        r#"{"total_count":1,"workflow_runs":[{"id":40151175338,"workflow_id":2,"name":"Hygiene","status":"in_progress","conclusion":null}]}"#,
+    );
+    let look = looks(&gh);
+    assert_eq!(look.fixes.notices[0].stuck, Stuck::Review(Review::Blocked));
+
+    // A fault of `gh` for the runs gives no run, and no fault of the look.
+    std::fs::remove_file(dir.path().join("runs")).unwrap();
+    assert_eq!(
+        looks(&gh).fixes.notices[0].stuck,
+        Stuck::Review(Review::Blocked)
+    );
+
+    // `riff top` shows the item in the group `stuck`.
+    runs(
+        dir.path(),
+        r#"{"workflow_runs":[{"id":9,"workflow_id":2,"name":"Hygiene","status":"completed","conclusion":"action_required"}]}"#,
+    );
+    let issues = riff::top::issues_from_gh(&gh, REPO).unwrap();
+    assert_eq!(issues.stuck[&1], "approve run");
 }
