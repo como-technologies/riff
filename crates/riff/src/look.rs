@@ -149,8 +149,27 @@
 //!
 //! The daemon keeps the last broken commit that it told in memory
 //! ([`Watch`]), as for the pull requests. When `main` is still broken at a
-//! new start of it, the lead gets the message again, and the open fix
+//! new start of it, the daemon posts the message again, and the open fix
 //! item gets a comment.
+//!
+//! A wave can run on more hosts, and each daemon has a watch of its own,
+//! so each post about `main` has a key too ([`MainNews::key`],
+//! 01M6FYH7BFFSZQ2TAJSX8A5QQV): the commit and the state, `broken` or
+//! `passes`. `riff-server` drops a post with the key of a message that it
+//! keeps from the same user in the thread. So the lead gets each message
+//! about `main` one time, also after a new start of a daemon.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant A as the daemon of pangolin
+//!     participant B as the daemon of thelio
+//!     participant S as riff-server
+//!     participant L as the lead
+//!     A->>S: post, key main-c60887e-broken
+//!     S->>L: the message
+//!     B->>S: post, key main-c60887e-broken
+//!     Note over S: it keeps this key: it drops the post
+//! ```
 //!
 //! # The release cycle
 //!
@@ -667,6 +686,30 @@ pub enum MainNews {
     Passed { main: MainGate, again: bool },
 }
 
+impl MainNews {
+    /// The key of the post of the news (01M5TKG2K1AYK1KE7C2AA2W9DS): the
+    /// commit of `main` and the state, `broken` or `passes`. The look of
+    /// each host makes the same key for the same news, and riff-server
+    /// drops the second post.
+    ///
+    /// ```
+    /// use riff::look::{MainGate, MainNews};
+    /// use riff::pr::Gate;
+    ///
+    /// let main = |gate| MainGate { commit: "c60887e1".into(), gate, run: None };
+    /// let broken = MainNews::Broken { main: main(Gate::Ended("failure".into())), first: true };
+    /// assert_eq!(broken.key(), "main-c60887e1-broken");
+    /// let passes = MainNews::Passed { main: main(Gate::Passed), again: true };
+    /// assert_eq!(passes.key(), "main-c60887e1-passes");
+    /// ```
+    pub fn key(&self) -> String {
+        match self {
+            MainNews::Broken { main, .. } => format!("main-{}-broken", main.commit),
+            MainNews::Passed { main, .. } => format!("main-{}-passes", main.commit),
+        }
+    }
+}
+
 /// The last broken commit of `main` that the lead got
 /// (01M51QEYKTD7ZEB0YA0C3MQTPN). The `riff mcp` of the lead keeps it in
 /// memory.
@@ -899,8 +942,9 @@ pub fn main_steps(
 /// One look at the full check of the default branch `branch` of `repo`,
 /// with the open `issues` and `pulls` and the `claims` of this look: it
 /// reads the full check, and does the steps of the forge
-/// ([`main_steps`]). It gives the post to the lead and its kind: a
-/// message that wakes the lead, or a note. `watch` now holds the news:
+/// ([`main_steps`]). It gives the post to the lead, its kind (a
+/// message that wakes the lead, or a note) and its key
+/// ([`MainNews::key`]). `watch` now holds the news:
 /// when the post does not go out, the caller sets it back to what it
 /// was, and the next look does it again.
 ///
@@ -931,10 +975,11 @@ pub fn main_steps(
 ///
 /// // The default branch of the repository is `master`. The full check failed at a
 /// // new commit: a message for the lead, with the fix item.
-/// let (body, kind) = main_post(&gh, "o/r", "master", (vec![], vec![]), Default::default(), &mut watch)
+/// let (body, kind, key) = main_post(&gh, "o/r", "master", (vec![], vec![]), Default::default(), &mut watch)
 ///     .await?
 ///     .unwrap();
 /// assert_eq!(kind, Kind::Message);
+/// assert_eq!(key, "main-5103311abc-broken");
 /// assert!(body.starts_with("main is broken: the full check failed at commit 5103311."), "{body}");
 /// assert!(body.contains("The fix item is #901"), "{body}");
 /// // The same commit at the next look: nothing.
@@ -950,7 +995,7 @@ pub async fn main_post(
     forge: (Vec<Issue>, Vec<Pull>),
     claims: HashSet<String>,
     watch: &mut MainWatch,
-) -> Result<Option<(String, Kind)>> {
+) -> Result<Option<(String, Kind, String)>> {
     let main = {
         let (gh, repo, branch) = (gh.clone(), repo.to_owned(), branch.to_owned());
         tokio::task::spawn_blocking(move || read_main(&gh, &repo, &branch)).await??
@@ -961,13 +1006,14 @@ pub async fn main_post(
     let Some(news) = watch.news(&main) else {
         return Ok(None);
     };
+    let key = news.key();
     let (gh, repo) = (gh.clone(), repo.to_owned());
     let steps = tokio::task::spawn_blocking(move || {
         let (issues, pulls) = forge;
         main_steps(&gh, &repo, &issues, &pulls, &claims, &news)
     })
     .await??;
-    Ok(steps.map(|(body, wake)| (body, if wake { Kind::Message } else { Kind::Note })))
+    Ok(steps.map(|(body, wake)| (body, if wake { Kind::Message } else { Kind::Note }, key)))
 }
 
 /// One look at the full check of the default branch `branch` of the lead
@@ -984,7 +1030,7 @@ pub async fn look_at_main(
 ) -> Result<()> {
     let before = watch.clone();
     let posted = match main_post(gh, &me.place().repo_text(), branch, forge, claims, watch).await {
-        Ok(Some((body, kind))) => post_as_person(api, me, None, &body, kind, None).await,
+        Ok(Some((body, kind, key))) => post_as_person(api, me, None, &body, kind, Some(&key)).await,
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };
@@ -1042,7 +1088,7 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
     let repo = &wave.repo;
     let posted = match main_post(&gh, repo, &branch, (issues, pulls), claims, &mut watch.main).await
     {
-        Ok(Some((body, kind))) => world.post(wave, None, &body, kind, None).await,
+        Ok(Some((body, kind, key))) => world.post(wave, None, &body, kind, Some(&key)).await,
         Ok(None) => Ok(()),
         Err(e) => Err(e),
     };

@@ -2175,6 +2175,25 @@ flowchart TD
 - **When main passes again.** riff closes each fix item that no session
   claims and that no open pull request names. The lead gets a note.
 
+A wave on more hosts sends each message about `main` one time, not one
+time for each host, and a new start of a daemon sends none again. Each
+post has a key: the commit and the state, `broken` or `passes`.
+riff-server drops a post with the key of a message that it keeps from
+the same person, as for a pull request (see
+[When a pull request stops](#when-a-pull-request-stops)).
+
+```mermaid
+sequenceDiagram
+    participant A as daemon on pangolin
+    participant B as daemon on thelio
+    participant S as riff-server
+    participant L as the lead
+    A->>S: post, key main-c60887e-broken
+    S->>L: the message
+    B->>S: post, key main-c60887e-broken
+    Note over S: it keeps this key: it drops the post
+```
+
 To see the checks that riff reads, use the required checks of the
 ruleset of the default branch. The full check is each of them but
 `riff/verify`. BRANCH is the default branch of the repository:
