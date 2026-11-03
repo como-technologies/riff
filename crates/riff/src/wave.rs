@@ -29,6 +29,35 @@
 //!     J -.-> A
 //! ```
 //!
+//! # The notices to the lead
+//!
+//! A wave can run on more hosts, and the daemon of each host tells the
+//! lead ([`World::tell`]). A notice that comes from the facts of the
+//! repository has a key from those facts, so the lead gets it one time.
+//! `riff-server` drops a post with the key of a message that it keeps
+//! from the same user in the thread (01M5TKG2K1AYK1KE7C2AA2W9DS,
+//! 01M6FZY6NABXGXVRYF6W1509XE). A notice about one host has no key: each
+//! host tells it.
+//!
+//! | Notice | Key | The lead gets it |
+//! |---|---|---|
+//! | An issue with no `Done when:` line ([`text::wave_no_done_when`]) | [`no_done_when_key`] | one time |
+//! | A pull request that is stuck ([`text::wave_stuck`]) | [`Notice::post_key`] | one time |
+//! | "Wave N is complete" ([`crate::watches::wave_complete_key`]) | `wave-complete-N` | one time |
+//! | The host waits for a fact, the pull of the image failed, a job failed, an item is spent | none | from each host |
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant A as the daemon of pangolin
+//!     participant B as the daemon of thelio
+//!     participant S as riff-server
+//!     participant L as the lead
+//!     A->>S: post, key no-done-when-12
+//!     S->>L: the message
+//!     B->>S: post, key no-done-when-12
+//!     Note over S: it keeps this key: it drops the post
+//! ```
+//!
 //! # The pick
 //!
 //! [`pick`] takes the first item of the free work of the look
@@ -760,6 +789,33 @@ impl Notice {
             _ => key,
         }
     }
+
+    /// The key of the post of the message (01M6FZY6NABXGXVRYF6W1509XE):
+    /// `stuck-` and [`Notice::key`]. The wave of each host makes the same
+    /// key for the same facts, and riff-server drops the second post.
+    ///
+    /// ```
+    /// use riff::rollout::Stuck;
+    /// use riff::wave::Notice;
+    ///
+    /// let notice = Notice { pull: 40, branch: "b".into(), commit: "1a2b".into(), stuck: Stuck::AutoMergeOff };
+    /// assert_eq!(notice.post_key(), "stuck-#40@1a2b:auto-merge off");
+    /// ```
+    pub fn post_key(&self) -> String {
+        format!("stuck-{}", self.key())
+    }
+}
+
+/// The key of the post of the message for an issue with no `Done when:`
+/// line (01M6FZY6NABXGXVRYF6W1509XE, [`text::wave_no_done_when`]). The wave
+/// of each host makes the same key for the same issue, and riff-server
+/// drops the second post.
+///
+/// ```
+/// assert_eq!(riff::wave::no_done_when_key(12), "no-done-when-12");
+/// ```
+pub fn no_done_when_key(issue: u64) -> String {
+    format!("no-done-when-{issue}")
 }
 
 /// The pull requests that cannot merge by themselves, by what the wave
@@ -1005,8 +1061,13 @@ pub trait World: Send + Sync {
         commit: &'a str,
     ) -> BoxFuture<'a, Result<()>>;
 
-    /// Tells the lead of the wave `body`, as a message.
-    fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, ()>;
+    /// Tells the lead of the wave `body`, as a message. The post has `key`,
+    /// when there is one: riff-server drops a post with the key of a kept
+    /// message of the person in the thread of the wave
+    /// (01M5TKG2K1AYK1KE7C2AA2W9DS). A notice that the wave of each host
+    /// makes from the same facts has a key, so the lead hears it one time.
+    fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str, key: Option<&'a str>)
+    -> BoxFuture<'a, ()>;
 
     /// The `gh` of the repository `repo` for the look
     /// ([`crate::look::look_wave`]).
@@ -1142,7 +1203,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                             .last_end(&item)
                             .unwrap_or_else(|| text::WAVE_END_UNKNOWN.to_owned());
                         let body = text::wave_spent(&item, STARTS, &reason);
-                        world.tell(&wave, &body).await;
+                        world.tell(&wave, &body, None).await;
                     }
                 }
                 // An issue that got the line, or left the free work, can come
@@ -1150,7 +1211,9 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 bare.retain(|n| look.no_done_when.contains(n));
                 for n in &look.no_done_when {
                     if bare.insert(*n) {
-                        world.tell(&wave, &text::wave_no_done_when(*n)).await;
+                        let key = no_done_when_key(*n);
+                        let body = text::wave_no_done_when(*n);
+                        world.tell(&wave, &body, Some(&key)).await;
                     }
                 }
                 for notice in &look.fixes.notices {
@@ -1163,7 +1226,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                             &notice.commit,
                             &notice.stuck,
                         );
-                        world.tell(&wave, &body).await;
+                        world.tell(&wave, &body, Some(&notice.post_key())).await;
                     }
                 }
                 let next = pick(&look, &running(&daemon, &wave, &taken), &lock(&starts));
@@ -1177,7 +1240,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     Some(fault) if !waits => {
                         waits = true;
                         let body = text::wave_host_waits(&wave.repo, &fault.wave_text());
-                        world.tell(&wave, &body).await;
+                        world.tell(&wave, &body, None).await;
                     }
                     Some(_) => {}
                     None if next.is_some() => waits = false,
@@ -1313,7 +1376,7 @@ pub(crate) async fn job<R: Runtime + 'static>(
             take_back(&starts, &work);
             if daemon.pull_failed(&wave.repo, pull) && !asked {
                 let body = text::wave_pull_failed(&wave.repo, &pull.image, &pull.reason);
-                daemon.world().tell(&wave, &body).await;
+                daemon.world().tell(&wave, &body, None).await;
             }
             Some(error)
         }
@@ -1323,7 +1386,7 @@ pub(crate) async fn job<R: Runtime + 'static>(
             daemon.note_end(&item, text::wave_no_start(&error));
             if !asked {
                 let body = text::wave_job_failed(&item, &error);
-                daemon.world().tell(&wave, &body).await;
+                daemon.world().tell(&wave, &body, None).await;
             }
             Some(error)
         }
@@ -1331,7 +1394,7 @@ pub(crate) async fn job<R: Runtime + 'static>(
     if let (true, Some(why)) = (asked, no_start) {
         daemon
             .world()
-            .tell(&wave, &text::run_job_failed(&item, &why))
+            .tell(&wave, &text::run_job_failed(&item, &why), None)
             .await;
     }
     lock(&taken).remove(&item);
@@ -2699,12 +2762,17 @@ impl World for Live {
         })
     }
 
-    fn tell<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, ()> {
+    fn tell<'a>(
+        &'a self,
+        wave: &'a Wave,
+        body: &'a str,
+        key: Option<&'a str>,
+    ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             if lock(&self.told).get(&wave.repo).is_some_and(|t| t == body) {
                 return;
             }
-            match post_as_person(wave, None, body, Kind::Message, None).await {
+            match post_as_person(wave, None, body, Kind::Message, key).await {
                 Ok(()) => {
                     lock(&self.told).insert(wave.repo.clone(), body.to_owned());
                 }
@@ -2819,6 +2887,8 @@ mod tests {
         finished: Vec<String>,
         /// Each message to the lead.
         told: Vec<String>,
+        /// The key of each message to the lead.
+        told_keys: Vec<Option<String>>,
         sessions: u64,
         /// A build ends with no pull request.
         no_pull: bool,
@@ -3205,8 +3275,17 @@ mod tests {
             Box::pin(async { Ok(()) })
         }
 
-        fn tell<'a>(&'a self, _: &'a Wave, body: &'a str) -> BoxFuture<'a, ()> {
-            Box::pin(async move { lock(&self.forge).told.push(body.to_owned()) })
+        fn tell<'a>(
+            &'a self,
+            _: &'a Wave,
+            body: &'a str,
+            key: Option<&'a str>,
+        ) -> BoxFuture<'a, ()> {
+            Box::pin(async move {
+                let mut forge = lock(&self.forge);
+                forge.told.push(body.to_owned());
+                forge.told_keys.push(key.map(str::to_owned));
+            })
         }
 
         fn gh(&self, _: &str) -> Arc<pr::Gh> {
@@ -3564,6 +3643,7 @@ mod tests {
                 "no build of issue-1"
             );
             assert_eq!(forge.told, [text::wave_no_done_when(1)], "one message");
+            assert_eq!(forge.told_keys, [Some("no-done-when-1".to_owned())]);
         }
 
         // The line comes: the same issue is free work at the next look.
@@ -3667,6 +3747,13 @@ mod tests {
         let count = |text: &str| forge.told.iter().filter(|t| *t == text).count();
         assert_eq!(count(&failed), STARTS as usize, "{:?}", forge.told);
         assert_eq!(count(&spent), 1, "{:?}", forge.told);
+        // The notices about one host have no key: each host tells them
+        // (01M6FZY6NABXGXVRYF6W1509XE).
+        assert!(
+            forge.told_keys.iter().all(Option::is_none),
+            "{:?}",
+            forge.told_keys
+        );
     }
 
     /// 01M57A7A1W2K9440WZA1QZ3M9T: the sign-in of `claude` on the host
@@ -3694,6 +3781,7 @@ mod tests {
             assert!(forge.refused.is_empty(), "{forge:?}");
             assert_eq!(forge.told, [text::wave_host_waits("o/r", &why)]);
             assert!(!forge.told[0].contains("riff run "), "{:?}", forge.told);
+            assert_eq!(forge.told_keys, [None]);
         }
         here.forge().minutes = Some(60);
         here.until(3, |h| h.running("issue-1").is_some()).await;
@@ -4218,6 +4306,15 @@ mod tests {
         here.idle(3).await;
         let second = stuck("c1b", rollout::Stuck::AutoMergeOff);
         assert_eq!(here.forge().told, [message, second]);
+        // The key has the pull request, the head and the reason: a new head
+        // is a new key.
+        assert_eq!(
+            here.forge().told_keys,
+            [
+                Some("stuck-#41@c1:auto-merge off".to_owned()),
+                Some("stuck-#41@c1b:auto-merge off".to_owned())
+            ]
+        );
         assert!(here.forge().works.is_empty());
     }
 
