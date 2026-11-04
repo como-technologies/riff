@@ -59,6 +59,7 @@ pub mod audit;
 pub mod auto_update;
 pub mod binary;
 pub mod catch_up;
+pub mod changes;
 pub mod chat;
 pub mod check;
 pub mod claude_settings;

@@ -1650,7 +1650,9 @@ one wave with 8 sessions uses at most 1,500.
 
 - The loop of the wave, the look at the pull requests and `main`, and
   the sweep read the same open issues and pull requests. One read
-  serves them all. The loop of the wave always reads the forge as it is.
+  serves them all. The loop of the wave reads the forge itself. When
+  nothing changed, it asks GitHub first and reads nothing (see
+  [Know how an idle wave reads GitHub](#know-how-an-idle-wave-reads-github)).
 - The watch of the wave looks each 5 minutes while it is the only
   watch. A watch of a release, or a new watch, makes it look each
   minute.
@@ -1700,6 +1702,60 @@ counter for one token, so two reads can differ.
 
 When the points are gone, see
 [Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out).
+
+#### Know how an idle wave reads GitHub
+
+A full look reads all open issues and pull requests with GraphQL. So the
+look of the wave asks GitHub a cheap question first: did anything
+change? It sends two reads of REST. One names the issue that changed
+last, and one names the pull request that changed last. Each read sends
+the `ETag` of its last answer. When GitHub answers `304 Not Modified` to
+both, the look reads nothing else. It uses the facts of its last full
+read, and it costs no GraphQL point.
+
+```mermaid
+flowchart TD
+    L["a look of the wave"] --> A["two cheap reads:<br/>the newest issue, the newest pull request"]
+    A --> C{"both 304, no pull request open,<br/>last full read less than 30 minutes ago?"}
+    C -- yes --> K["the facts of the last full read:<br/>no GraphQL point"]
+    C -- no --> F["the full read"]
+```
+
+The look reads in full in these cases:
+
+- An issue or a pull request changed.
+- A pull request is open. The checks and the merge state of a pull
+  request do not change its update time, so GitHub cannot tell that they
+  changed.
+- The last full read is 30 minutes old, whatever GitHub answers. A
+  rename of a wave on GitHub changes no issue, so the look sees it at
+  this read.
+- A cheap read failed, or GitHub sent no `ETag`.
+
+To see the cheap reads in the count of the daemon:
+
+```sh
+riff daemon status
+```
+
+The rows `api issues` and `api pulls` of the caller `wave` are the cheap
+reads. They cost no point. An idle wave has few other rows of the caller
+`wave`: one full read each 30 minutes.
+
+```text
+GitHub, last hour: 54 calls, 22 GraphQL points.
+  watches   issue list                   12 calls       12 points
+  wave      issue list                    2 calls        4 points
+  wave      pr list                       2 calls        4 points
+  wave      api graphql                   2 calls        2 points
+  wave      api issues                   12 calls        0 points
+  wave      api pulls                    12 calls        0 points
+  look      api commits/_/check-runs     12 calls        0 points
+GraphQL points left: 4,978, the counter starts again at 15:00:35 UTC (read 2m ago).
+```
+
+The watch of the wave (`watches`) reads its own list of the open items,
+so it still costs one point at each look.
 
 #### Know what the daemon does when the GitHub limit runs out
 

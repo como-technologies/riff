@@ -1853,23 +1853,43 @@ pub fn queue_from(reply: &str) -> HashMap<u64, Queue> {
 /// gives nothing, as for [`head_wip`]: the wave then acts as if no queue
 /// was there.
 pub fn queue_of(gh: &Gh, repo: &str) -> HashMap<u64, Queue> {
-    let Some((owner, name)) = repo.split_once('/') else {
+    let Some(args) = queue_args(repo) else {
         return HashMap::new();
     };
-    let query = format!("query={QUEUE_QUERY}");
-    let args = [
-        "api",
-        "graphql",
-        "-f",
-        &query,
-        "-f",
-        &format!("owner={owner}"),
-        "-f",
-        &format!("name={name}"),
-    ];
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     gh.read(&args)
         .map(|reply| queue_from(&reply))
         .unwrap_or_default()
+}
+
+/// The arguments of `gh` for the merge queue of `repo`, or `None` for a
+/// name that is not `OWNER/REPO`.
+fn queue_args(repo: &str) -> Option<[String; 8]> {
+    let (owner, name) = repo.split_once('/')?;
+    Some([
+        "api".to_owned(),
+        "graphql".to_owned(),
+        "-f".to_owned(),
+        format!("query={QUEUE_QUERY}"),
+        "-f".to_owned(),
+        format!("owner={owner}"),
+        "-f".to_owned(),
+        format!("name={name}"),
+    ])
+}
+
+/// Makes the kept replies of the open pull requests, the open issues and
+/// the merge queue of `repo` as new as now (#1566). The look of the wave
+/// calls it when GitHub says that nothing changed since it read them
+/// ([`crate::changes`]), so the look of the daemon and the sweep go on
+/// with the same replies. It calls no `gh`.
+pub fn renew_open(gh: &Gh, repo: &str) {
+    gh.renew(&pull_args(repo));
+    gh.renew(&issue_args(repo));
+    if let Some(args) = queue_args(repo) {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        gh.renew(&args);
+    }
 }
 
 /// The arguments of `gh` for the open pull requests of `repo`. The look
@@ -1936,7 +1956,12 @@ pub const ISSUE_FIELDS: &str = "number,title,body,comments,milestone,labels";
 /// arguments, so that the reply of one serves the other
 /// ([`Gh::read`], #1549).
 pub fn issues(gh: &Gh, repo: &str) -> Result<Vec<Issue>> {
-    gh.read_json(&[
+    gh.read_json(&issue_args(repo))
+}
+
+/// The arguments of `gh` for the open issues of `repo`.
+fn issue_args(repo: &str) -> [&str; 10] {
+    [
         "issue",
         "list",
         "--repo",
@@ -1947,7 +1972,7 @@ pub fn issues(gh: &Gh, repo: &str) -> Result<Vec<Issue>> {
         "1000",
         "--json",
         ISSUE_FIELDS,
-    ])
+    ]
 }
 
 /// The open milestones, issues and pull requests of a repository: the

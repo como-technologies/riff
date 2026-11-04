@@ -5103,7 +5103,7 @@ of this part when they merge.
   daemon and the sweep read the open issues and the open pull requests
   with the same call of gh. The reply of one read serves the others
   when it is not older than the wait of the loop that asks. The loop of
-  a wave takes no old reply: it sees the forge as it is. The default
+  a wave takes no old reply of the other loops. The default
   branch and its rules are read one time in 10 minutes, and the message
   of a commit one time. The sweep makes no call for a folder whose
   branch has an open pull request in such a reply, and asks the forge
@@ -5159,6 +5159,21 @@ of this part when they merge.
   wave starts no verify of that head, and the verify comes after the
   fix. Supersedes 01M5QYDHN27RC5SRHAB56PFKK0, 01M5QW2KVAS05Q72630RNW47G0
   and 01M5SN0PY23JDWND8DGGAF9XMB in part.
+- **01M6JFJQD4H4GG0H0TFSW5G1PD** The look of a wave asks GitHub first
+  whether anything changed. It sends two conditional reads of REST, each
+  with the ETag of its last answer in If-None-Match: the issue and the
+  pull request of the repository that changed last, in any state. When
+  both answer 304, no pull request was open at the last full read, and
+  that read began less than 30 minutes ago, the look reads nothing else
+  and takes the facts of that read. So an idle look costs no GraphQL
+  point. A 304 is no fault. It makes the shared replies of the open
+  issues, the open pull requests and the merge queue as new as now, so
+  the look of the daemon and the sweep go on to take them. While a pull
+  request is open the look reads in full, because the checks and the
+  mergeable state of a pull request do not change its update time. A
+  rename of a wave on GitHub shows at the next full read. A conditional
+  read that fails, or that gives no ETag, counts as a change (#1566).
+  Supersedes 01M6GYN97HH70E4C1FGM6HA2B0 in part.
 
 ### The lead, the view and the takeover
 

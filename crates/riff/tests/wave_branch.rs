@@ -73,12 +73,11 @@ fn a_default_branch_that_does_not_read_is_the_error_of_the_look_and_the_next_loo
     std::fs::write(dir.path().join("branch-fails"), "").unwrap();
     let error = format!("{:#}", look().unwrap_err());
     assert!(error.contains("repos/o/r"), "{error}");
-    // The look read nothing else.
-    assert_eq!(
-        calls(dir.path()),
-        ["api repos/o/r --jq .default_branch"],
-        "{error}"
-    );
+    // The look read nothing else but the conditional reads of the look
+    // (#1566), which this fake `gh` fails.
+    let calls = calls(dir.path());
+    let reads: Vec<&String> = calls.iter().filter(|c| !c.starts_with("api -i ")).collect();
+    assert_eq!(reads, ["api repos/o/r --jq .default_branch"], "{error}");
 
     std::fs::remove_file(dir.path().join("branch-fails")).unwrap();
     assert_eq!(look().unwrap().branch, "master");

@@ -133,6 +133,40 @@ pub fn http_status(reply: &str) -> Option<&str> {
     (code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit())).then_some(code)
 }
 
+/// The answer to a conditional read ([`Gh::ask`], #1566).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    /// GitHub answered `304`: the reply is still the one of the `ETag` that
+    /// the ask sent.
+    Same,
+    /// GitHub gave a reply, so the reply is new. `etag` is its `ETag`, when
+    /// the headers have one.
+    Changed { etag: Option<String> },
+}
+
+/// The `ETag` in the headers of a reply that `gh api --include` printed.
+///
+/// ```
+/// use riff::pr::etag_of;
+///
+/// let reply = "HTTP/2.0 200 OK\r\nContent-Type: x\r\nEtag: W/\"a1\"\r\n\r\n[]";
+/// assert_eq!(etag_of(reply), Some("W/\"a1\"".to_owned()));
+/// // A line of the body is no header.
+/// assert_eq!(etag_of("HTTP/2.0 200 OK\r\n\r\netag: body"), None);
+/// assert_eq!(etag_of(""), None);
+/// ```
+pub fn etag_of(reply: &str) -> Option<String> {
+    reply
+        .lines()
+        .skip(1)
+        .take_while(|line| !line.trim().is_empty())
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            let value = value.trim();
+            (name.eq_ignore_ascii_case("etag") && !value.is_empty()).then(|| value.to_owned())
+        })
+}
+
 /// True when a failed call of `gh` ended in a 502, 503 or 504 of GitHub:
 /// `HTTP 504: 504 Gateway Timeout (…/graphql)` of a GraphQL call,
 /// `Bad Gateway (HTTP 502)` of a REST call, or the status line of
@@ -640,6 +674,76 @@ impl Gh {
         )
     }
 
+    /// The key of this `gh` and its repository, for what a loop of the
+    /// daemon keeps between two looks ([`crate::changes`]).
+    pub(crate) fn scope(&self) -> String {
+        self.key(&[])
+    }
+
+    /// Makes the reply that an earlier read of `gh ARGS` kept as new as
+    /// now. The caller knows that the reply still holds: a conditional
+    /// read answered `304` ([`Gh::ask`], #1566). It calls no `gh`.
+    pub fn renew(&self, args: &[&str]) {
+        if self.shares {
+            replies::renew(&self.key(args));
+        }
+    }
+
+    /// Asks GitHub with `gh api -i PATH` whether the reply of `PATH`
+    /// changed since the answer with the `ETag` `etag` (#1566). The `ETag`
+    /// goes in `If-None-Match`. A `304` costs no point. `gh` exits with 1
+    /// for it and prints `gh: HTTP 304`: riff reads it as [`Answer::Same`],
+    /// not as a fault. With no `etag` the answer is always
+    /// [`Answer::Changed`], and it has the `ETag` to ask with the next
+    /// time.
+    ///
+    /// ```
+    /// use riff::pr::{Answer, Gh};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let script = r#"#!/bin/sh
+    /// case "$*" in
+    ///   *'If-None-Match: W/"v1"'*)
+    ///     printf 'HTTP/2.0 304 Not Modified\r\nEtag: W/"v1"\r\n\r\n'
+    ///     echo 'gh: HTTP 304' >&2
+    ///     exit 1 ;;
+    ///   *'If-None-Match'*) printf 'HTTP/2.0 200 OK\r\nEtag: W/"v2"\r\n\r\n[]\n' ;;
+    ///   *) printf 'HTTP/2.0 200 OK\r\nEtag: W/"v1"\r\n\r\n[]\n' ;;
+    /// esac
+    /// "#;
+    /// let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+    /// let path = "repos/o/r/issues?state=all&sort=updated&direction=desc&per_page=1";
+    /// // The first ask has no `ETag`: the answer is new, with its `ETag`.
+    /// assert_eq!(gh.ask(path, None)?, Answer::Changed { etag: Some(r#"W/"v1""#.into()) });
+    /// // Nothing changed: a `304` is no fault.
+    /// assert_eq!(gh.ask(path, Some(r#"W/"v1""#))?, Answer::Same);
+    /// // Something changed: the answer has the new `ETag`.
+    /// let changed = gh.ask(path, Some(r#"W/"v0""#))?;
+    /// assert_eq!(changed, Answer::Changed { etag: Some(r#"W/"v2""#.into()) });
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn ask(&self, path: &str, etag: Option<&str>) -> Result<Answer> {
+        let header = etag.map(|etag| format!("If-None-Match: {etag}"));
+        let mut args = vec!["api", "-i"];
+        if let Some(header) = &header {
+            args.extend(["-H", header]);
+        }
+        args.push(path);
+        let (ok, stdout, stderr) = self.output(&args, None)?;
+        if ok {
+            return Ok(Answer::Changed {
+                etag: etag_of(&stdout),
+            });
+        }
+        if http_status(&stdout) == Some("304") || stderr.contains("HTTP 304") {
+            return Ok(Answer::Same);
+        }
+        let status = http_status(&stdout)
+            .map(|s| format!("HTTP {s}: "))
+            .unwrap_or_default();
+        bail!("gh api {path}: {status}{}", text::forge(stderr.trim()))
+    }
+
     /// The wait of the limit of GitHub now, when this `gh` counts its calls
     /// ([`Gh::with_calls`]) and a resource waits for its reset (#1557).
     /// With two waits, the one that ends last.
@@ -954,6 +1058,14 @@ mod replies {
         let replies = REPLIES.lock().unwrap_or_else(PoisonError::into_inner);
         let (at, reply) = replies.get(key)?;
         (at.elapsed() <= age).then(|| reply.clone())
+    }
+
+    /// Makes the reply of `key`, when there is one, as new as now.
+    pub(super) fn renew(key: &str) {
+        let mut replies = REPLIES.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((at, _)) = replies.get_mut(key) {
+            *at = Instant::now();
+        }
     }
 
     /// Keeps `reply` for `key`, and forgets the replies older than [`KEEP`].
@@ -2166,6 +2278,48 @@ mod tests {
     use crate::text;
 
     const FULL: &str = "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
+
+    /// #1566: a `304` renews the kept reply, so a read that accepts a short
+    /// age takes it. A reply that nobody kept, and a `gh` that shares no
+    /// read, have nothing to renew.
+    #[test]
+    fn a_renewed_reply_is_as_new_as_now() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = Gh::at(isolated::write_program(
+            dir.path().join("gh"),
+            "#!/bin/sh\necho '[]'\n",
+        ))
+        .with_shared_reads();
+        let args = ["issue", "list", "--repo", "o/renew"];
+        let age = Duration::from_millis(250);
+        gh.renew(&args);
+        assert!(gh.peek(&args, age).is_none(), "nothing was kept");
+        gh.read(&args).unwrap();
+        assert!(gh.peek(&args, age).is_some());
+        std::thread::sleep(2 * age);
+        assert!(gh.peek(&args, age).is_none(), "the reply is old");
+        gh.renew(&args);
+        assert!(gh.peek(&args, age).is_some(), "the reply is as new as now");
+        // A `gh` that shares no read keeps and renews nothing.
+        let alone = Gh::at(dir.path().join("gh"));
+        alone.renew(&args);
+        assert!(alone.peek(&args, age).is_none());
+    }
+
+    /// #1566: a conditional read that fails with something other than a
+    /// `304` is a fault, with the status when `gh` printed one.
+    #[test]
+    fn a_conditional_read_that_fails_is_a_fault_and_not_a_304() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = "#!/bin/sh\n\
+            printf 'HTTP/2.0 404 Not Found\\r\\n\\r\\n'\n\
+            echo 'gh: Not Found (HTTP 404)' >&2\n\
+            exit 1\n";
+        let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+        let error = gh.ask("repos/o/gone/issues", None).unwrap_err().to_string();
+        assert!(error.contains("HTTP 404"), "{error}");
+        assert!(!error.contains("304"), "{error}");
+    }
 
     fn run(started: Option<&str>, completed: Option<&str>, conclusion: Option<&str>) -> CheckRun {
         CheckRun {
