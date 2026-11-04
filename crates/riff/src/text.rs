@@ -8912,10 +8912,10 @@ fn check_names(checks: &[String]) -> String {
 }
 
 /// The start text of a build session of a wave that fixes the failed
-/// `checks` of the pull request `pull` of `issue`: its verify passed, and
-/// the checks failed at its head `commit` (#279). For a known flake it
-/// allows one run of the job again. `base` is the default branch of the
-/// repository (01M5QYBWPAJ219BE8QKVKG1TWW).
+/// `checks` of the pull request `pull` of `issue`: the checks failed at its
+/// head `commit`, and its verify passed or waits (#279, #1575). For a
+/// known flake it allows one run of the job again. `base` is the default
+/// branch of the repository (01M5QYBWPAJ219BE8QKVKG1TWW).
 ///
 /// ```
 /// let checks = ["Gate".to_owned()];
@@ -8923,7 +8923,8 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(text.contains("Never push to master."));
 /// assert!(!text.contains("main"));
 /// assert!(text.contains("on the branch worktree-issue-12 of pull request #40"));
-/// assert!(text.contains("The verify of the pull request passed"));
+/// assert!(text.contains("The pull request cannot merge: the check Gate failed"));
+/// assert!(!text.contains("verify of the pull request passed"));
 /// assert!(text.contains("the check Gate failed at commit 1a2b3c4"));
 /// assert!(text.contains("gh issue view 12 --comments"));
 /// assert!(text.contains("gh pr checks 40"));
@@ -8955,9 +8956,9 @@ pub fn wave_checks_start(
     let names = check_names(checks);
     format!(
         "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
-         branch {branch} of pull request #{pull}. The verify of the pull request passed, but \
-         {names} failed at commit {commit}, so it cannot merge. Make the pull request pass its \
-         checks, then stop. riff does the claim, the release and the verify request for you. \
+         branch {branch} of pull request #{pull}. The pull request cannot merge: {names} \
+         failed at commit {commit}. Make the pull request pass its checks, then stop. riff \
+         does the claim, the release and the verify request for you. \
          Your riff tools only talk: whoami, who, threads, read, post, tell, status and \
          blocked.\n\n\
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
@@ -9021,8 +9022,8 @@ pub fn wave_checks_start(
 /// };
 /// assert_eq!(
 ///     riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(circle)),
-///     "PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the check ci of \
-///      the app app.circleci.com failed. It is not a run of GitHub Actions, so no session fixes \
+///     "PR #40, branch worktree-issue-12, cannot merge at commit 1a2b3c4: the check ci of the \
+///      app app.circleci.com failed. It is not a run of GitHub Actions, so no session fixes \
 ///      it, and it waits for you. Fix the cause with a push to worktree-issue-12, or run the \
 ///      check again in its app. Link: https://app.circleci.com/workflow/9"
 /// );
@@ -9104,8 +9105,8 @@ pub fn wave_stuck(
                 None => format!("It has no link: see gh pr checks {number}"),
             };
             format!(
-                "PR #{number}, branch {branch}, passed its verify at commit {commit}, but the \
-                 check {name} of {app} failed. It is not a run of GitHub Actions, so no session \
+                "PR #{number}, branch {branch}, cannot merge at commit {commit}: the check \
+                 {name} of {app} failed. It is not a run of GitHub Actions, so no session \
                  fixes it, and it waits for you. Fix the cause with a push to {branch}, or run \
                  the check again in its app. {link}"
             )
@@ -9195,7 +9196,9 @@ pub fn wave_checks_not_fixed(
 /// let note = riff::text::wave_checks_rerun("issue-12", 40, "worktree-issue-12", "1a2b3c4d5e", "9f8e7d6c");
 /// assert!(note.starts_with("issue-12: the session of the wave for the failed checks of PR #40 pushed nothing (session 9f8e7d6c)."));
 /// assert!(note.contains("still has the head commit 1a2b3c4, and no check fails now: the job runs again"));
-/// assert!(note.contains("The pull request merges when its checks pass."));
+/// assert!(note.contains("the wave starts a verify of this commit when it has none"));
+/// assert!(note.contains("The pull request merges when its checks and its verify pass."));
+/// assert!(!note.contains("the verify of this commit passed"));
 /// assert!(note.contains("riff top shows stuck"));
 /// ```
 pub fn wave_checks_rerun(
@@ -9210,8 +9213,8 @@ pub fn wave_checks_rerun(
         "{item}: the session of the wave for the failed checks of PR #{number} pushed nothing \
          (session {session}). PR #{number}, branch {branch}, still has the head commit {commit}, and no \
          check fails now: the job runs again. The riff daemon sends \
-         no verify request: the verify of this commit passed. The pull request merges when its \
-         checks pass. When a check fails again, the wave starts no second session for this \
+         no verify request: the wave starts a verify of this commit when it has none. The pull \
+         request merges when its checks and its verify pass. When a check fails again, the wave starts no second session for this \
          commit, and riff top shows stuck for the item. Run riff wave run to start the fix again."
     )
 }

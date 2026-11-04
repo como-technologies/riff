@@ -142,7 +142,11 @@
 //!   its own item (01M4ZV3B6NKPEZ5FNE27X95GF0);
 //! - a verify before the full check of the head commit is done: each
 //!   check that the rules of the default branch require, but `riff/verify`
-//!   ([`repo_setup::full_check`], 01M5QYDHN27RC5SRHAB56PFKK0);
+//!   ([`repo_setup::full_check`], 01M5QYDHN27RC5SRHAB56PFKK0), has a run,
+//!   and each newest run is completed ([`pr::full_done`]). A check with no
+//!   run is not done, also when another check failed (#1575);
+//! - a verify of a head with a failed check: the fix of the checks comes
+//!   first (see "A pull request that cannot merge", #1575);
 //! - an item that started [`STARTS`] times in this run of the wave. The
 //!   lead gets one message for it. A start whose claim riff-server
 //!   refused for a pause does not count (01M558EYCXPFW8CJV3XJ7HK3NR).
@@ -242,7 +246,7 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     P["an open pull request,<br/>the verify passed"] --> C{"a check of the head failed?<br/>(statusCheckRollup)"}
+//!     P["an open pull request,<br/>the verify passed or waits"] --> C{"a check of the head failed?<br/>(statusCheckRollup)"}
 //!     C -- "yes, an item" --> R{"a run of<br/>GitHub Actions?"}
 //!     R -- "yes" --> B["a build: Work::Checks at the head commit,<br/>with the names of the checks"]
 //!     R -- "no, another app" --> O["a message to the lead:<br/>the check, its app and its link"]
@@ -261,10 +265,13 @@
 //!     B -- "no push, the check runs again" --> T["a note to the lead"]
 //! ```
 //!
-//! - **A failed check after a pass** (01M5QW2KVAS05Q72630RNW47G0).
+//! - **A failed check** (01M5QW2KVAS05Q72630RNW47G0).
 //!   [`rollout::Pull::verify`] reads only the status `riff/verify`. A
 //!   check of the rollup that failed ([`rollout::Check::failed`]), for
-//!   example the `Gate`, is no free work: the item has a passed verify.
+//!   example the `Gate` or `Hygiene`, is no free work for a verify: the
+//!   verify of that head can only fail (#1575). The job `Gate` has no run
+//!   until the other jobs end, so `Hygiene` can fail while the `Gate` has
+//!   none. The fix starts at once, before or after a verify.
 //!   The wave starts a build session for the item with the start text
 //!   [`text::wave_checks_start`]: it names the checks, tells to read the
 //!   failed run, and to fix the code and push to the same pull request.
@@ -785,7 +792,9 @@ pub struct Waiting {
     pub pull: u64,
     /// Its head commit.
     pub commit: String,
-    /// True when the full check of the head is done: passed, or ended.
+    /// True when the full check of the head is done: each required check
+    /// has a run, and each newest run is completed, with a success or not
+    /// ([`pr::full_done`], 01M5QYDHN27RC5SRHAB56PFKK0).
     pub gate_done: bool,
 }
 
@@ -2354,11 +2363,13 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///   after each push, and after each move of `main`. The verify waits
 ///   for the next look: with `CONFLICTING` the pull request gets the
 ///   rebase, with `MERGEABLE` the verify.
-/// - A pull request with failed checks is one whose verify passed and
-///   whose head has a failed check ([`rollout::Stuck::Checks`]), where
-///   only the newest run of a check counts. It is a build, with the names
-///   of the checks that are runs of GitHub Actions
-///   ([`rollout::Pull::failed_runs`]).
+/// - A pull request with failed checks is one whose head has a failed
+///   check ([`rollout::Stuck::Checks`]), where only the newest run of a
+///   check counts, and whose verify passed or waits. It is a build, with
+///   the names of the checks that are runs of GitHub Actions
+///   ([`rollout::Pull::failed_runs`]). The free work has no verify of such
+///   a head (#1575): a failed check fails the verify, so the fix comes
+///   first, and the verify of the new head after it.
 /// - A pull request in the merge queue ([`rollout::Pull::queued`]) is none
 ///   of these: the wave moves nothing for it (01M5TKPNDET56VR8WZ74FSR71F).
 ///   One that the queue removed, with a conflict, is a pull request to
@@ -2460,6 +2471,18 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 /// let (free, fixes) = riff::wave::fixes(&next("CONFLICTING"), waiting());
 /// assert_eq!(free, ["issue-11"]);
 /// assert!(fixes.conflicts.contains_key(&11));
+///
+/// // #1575: the pull request of 16 waits for a verify, and its Gate failed: the fix, and no verify.
+/// let waits = Open { pulls: vec![gate(pull(53, 16, None, "MERGEABLE"))], ..Open::default() };
+/// let (free, fixes) = riff::wave::fixes(&waits, vec!["verify-issue-16".to_owned()]);
+/// assert_eq!(free, ["issue-16"]);
+/// assert_eq!(fixes.failed[&16], Failed { pull: 53, commit: "c16".into(), checks: vec!["Gate".into()] });
+/// // A check that goes did not fail: the verify waits for the full check, as before.
+/// let goes = |pull: Pull| Pull { checks: vec![Check::run("Gate", "")], ..pull };
+/// let waits = Open { pulls: vec![goes(pull(53, 16, None, "MERGEABLE"))], ..Open::default() };
+/// let (free, fixes) = riff::wave::fixes(&waits, vec!["verify-issue-16".to_owned()]);
+/// assert_eq!(free, ["verify-issue-16"]);
+/// assert!(fixes.failed.is_empty());
 /// ```
 pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
     // No session builds a release or a tracker.
@@ -2470,8 +2493,14 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
         .map(|i| i.number)
         .collect();
     let mut found = Fixes::default();
+    // The items whose head has a failed check: their verify waits for the
+    // fix, as it would fail (#1575).
+    let mut failing: HashSet<u64> = HashSet::new();
     for (p, stuck) in open.stuck() {
         let item = p.issue().filter(|n| !no_build.contains(n));
+        if matches!(stuck, rollout::Stuck::Checks(_)) {
+            failing.extend(p.issue());
+        }
         match (stuck, item) {
             // A conflict has an issue: its verify is not `None`.
             (rollout::Stuck::Conflict, _) => {
@@ -2543,7 +2572,9 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
     let mut free: Vec<String> = free
         .into_iter()
         .filter(|item| {
-            verify_issue(item).is_none_or(|n| !found.conflicts.contains_key(&n) && !unknown(n))
+            verify_issue(item).is_none_or(|n| {
+                !found.conflicts.contains_key(&n) && !unknown(n) && !failing.contains(&n)
+            })
         })
         .collect();
     let at = free.iter().take_while(|item| fix(item)).count();
@@ -2679,13 +2710,13 @@ fn waiting(
         if checks.is_none() {
             checks = Some(repo_setup::full_check(gh, repo)?);
         }
-        let gate = pr::gate_of(gh, repo, checks.as_deref().unwrap_or_default(), &pull.head)?;
+        let states = pr::gate_states(gh, repo, checks.as_deref().unwrap_or_default(), &pull.head)?;
         pulls.insert(
             issue,
             Waiting {
                 pull: pull.number,
                 commit: pull.head.clone(),
-                gate_done: matches!(gate, pr::Gate::Passed | pr::Gate::Ended(_)),
+                gate_done: pr::full_done(&states),
             },
         );
     }
@@ -4851,7 +4882,8 @@ mod tests {
 
     /// #279: a pull request with a conflict and a failed check gets the
     /// rebase first. A held item gets no fix of its checks. A failed
-    /// check with no verify yet, and a failed verify, are no fix of checks.
+    /// verify is no fix of checks. A failed check with no verify yet gets
+    /// its fix, and no verify (#1575).
     #[tokio::test]
     async fn a_conflict_comes_before_the_failed_check_and_a_hold_stops_the_fix() {
         let here = conflict(Pr::Passed).await;
@@ -4874,12 +4906,68 @@ mod tests {
             forge.items.retain(|n| *n != 3);
         }
         here.run();
-        here.until(3, |h| h.running("verify-issue-2").is_some())
-            .await;
+        here.until(3, |h| h.running("issue-2").is_some()).await;
         here.idle(3).await;
         let forge = here.forge();
-        let started: Vec<String> = forge.works.iter().map(Work::item).collect();
-        assert_eq!(started, ["verify-issue-2"], "{:?}", forge.works);
+        let fix = Work::Checks {
+            issue: 2,
+            pull: 42,
+            commit: "c2".into(),
+            checks: vec!["Gate".into()],
+        };
+        assert_eq!(
+            forge.works,
+            [fix],
+            "no verify of the head with a failed check"
+        );
+    }
+
+    /// #1575: the pull request waits for a verify, and a check of its head
+    /// failed (the job `Hygiene` failed, and the `Gate` has no run yet).
+    /// The wave starts the fix of the check, not the verify. The fix
+    /// pushes a new head with no failed check, and a new session verifies
+    /// it.
+    #[tokio::test]
+    async fn a_failed_check_before_the_verify_gets_the_fix_and_then_the_verify() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().pulls.insert(1, Pr::Asked);
+        here.forge().failing.insert(1);
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [checks("c1")], "no verify of c1");
+        here.end("issue-1").await;
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1f".into(),
+        };
+        assert_eq!(here.forge().works, [checks("c1"), verify]);
+        assert!(here.forge().told.is_empty(), "{:?}", here.forge().told);
+    }
+
+    /// #1575: the fix of the failed check pushes nothing, and the check
+    /// still fails: the wave starts no verify of the head, and no second
+    /// fix for it.
+    #[tokio::test]
+    async fn a_failed_check_before_the_verify_that_stays_failed_starts_no_verify() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Asked);
+            forge.failing.insert(1);
+            forge.no_push = true;
+        }
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.end("issue-1").await;
+        here.until(3, |h| h.forge().finished == ["issue-1"]).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, [checks("c1")], "no verify, no second fix");
     }
 
     /// #279: no session builds a release. A failed check of a release
