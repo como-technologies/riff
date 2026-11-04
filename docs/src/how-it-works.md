@@ -2088,10 +2088,12 @@ the issue: see
 
 Each look costs 3 GraphQL points of the token of your account, and all
 your sessions share that token. So `riff pr wait` looks every 30
-seconds for the first 2 minutes, and then every 5 minutes. One pull
-request that waits uses at most 60 points an hour. `--every SECONDS`
-sets the time of the first 2 minutes. The time after that is 5
-minutes, or `--every` when that is longer:
+seconds for the first 2 minutes, and then every 5 minutes. At this
+default pace, one pull request uses at most 60 points an hour.
+`--every SECONDS` sets the time of the first 2 minutes. The time after
+that is 5 minutes, or `--every` when that is longer. A shorter
+`--every` costs more. This example looks every 10 seconds, and it uses
+72 points in the first hour:
 
 ```sh
 riff pr wait 40 --every 10

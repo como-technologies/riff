@@ -716,7 +716,9 @@
   N each `--every` seconds (default 30) for its first 2 minutes. After
   that it looks each 5 minutes, or each `--every` seconds when that is
   longer. A look is one `gh pr view` and one `gh pr checks`: 3 GraphQL
-  points. So one pull request that waits uses at most 60 points an hour.
+  points. So one pull request that waits uses at most 60 points an hour
+  at the default pace. A shorter `--every` costs more: `--every 10` uses
+  72 points in the first hour.
 
 ## Tokens on GitHub
 
