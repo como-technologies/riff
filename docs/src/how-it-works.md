@@ -2223,6 +2223,7 @@ sequenceDiagram
     participant B as daemon on thelio
     participant S as riff-server
     participant L as the lead
+    Note over A,S: the other check stays in job 6,<br/>the check that failed runs in jobs 7 to 10
     A->>S: post, key main-c60887e-38861280871-7-broken
     S->>L: the message
     B->>S: post, key main-c60887e-38861280871-7-broken
