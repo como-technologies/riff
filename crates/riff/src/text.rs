@@ -6417,7 +6417,7 @@ pub fn clock_utc(ms: i64) -> String {
 /// ```
 /// use riff::ghcalls::{Resource, Wait};
 ///
-/// let wait = Wait { resource: Resource::Graphql, reset_ms: 1_793_718_035_000 };
+/// let wait = Wait::until(Resource::Graphql, 1_793_718_035_000);
 /// assert_eq!(
 ///     riff::text::gh_limited(&wait),
 ///     "the GitHub GraphQL limit is out until 15:00:35 UTC: riff makes no call of it before then"
@@ -6482,13 +6482,24 @@ pub const GITHUB_ROWS: usize = 8;
 ///
 /// // A limit that is out (#1557).
 /// let out = Shown {
-///     waits: vec![riff::ghcalls::Wait { resource: riff::ghcalls::Resource::Graphql, reset_ms: 1_793_718_035_000 }],
+///     waits: vec![riff::ghcalls::Wait::until(riff::ghcalls::Resource::Graphql, 1_793_718_035_000)],
 ///     ..Shown::default()
 /// };
 /// assert_eq!(
 ///     riff::text::github_use(&out, 1_793_717_135_000),
 ///     "GitHub, last hour: no call.\n\
 ///      GitHub GraphQL limit: out. riff makes no call of it until 15:00:35 UTC (in 15m).\n"
+/// );
+///
+/// // No counter showed the reset: the time is a guess (#1581).
+/// let mut guess = riff::ghcalls::Wait::until(riff::ghcalls::Resource::Graphql, 1_793_718_035_000);
+/// guess.guessed = true;
+/// let out = Shown { waits: vec![guess], ..Shown::default() };
+/// assert_eq!(
+///     riff::text::github_use(&out, 1_793_717_135_000),
+///     "GitHub, last hour: no call.\n\
+///      GitHub GraphQL limit: out. riff makes no call of it until 15:00:35 UTC (in 15m). riff \
+///      cannot read the reset: this time is the end of the hour of the counter that it saw.\n"
 /// );
 /// ```
 pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
@@ -6538,14 +6549,20 @@ pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
         let left = u64::try_from((wait.until_ms() - now_ms) / 1000).unwrap_or(0);
         let _ = writeln!(
             out,
-            "GitHub {} limit: out. riff makes no call of it until {} (in {}).",
+            "GitHub {} limit: out. riff makes no call of it until {} (in {}).{}",
             wait.resource.name(),
             clock_utc(wait.reset_ms),
-            ago(left)
+            ago(left),
+            if wait.guessed { LIMIT_GUESS } else { "" }
         );
     }
     out
 }
+
+/// What the status and the message to the lead add when riff found no
+/// reset of the counter that is out (#1581).
+const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of the hour of the \
+                           counter that it saw.";
 
 /// The state of a daemon and its sessions (01M4ZDTVNBKDM64043GGWQEV4S,
 /// 01M501PADKZNRHBZD9XPMJGW06).
@@ -8659,24 +8676,34 @@ pub fn wave_no_report(item: &str, pull: u64, error: &str) -> String {
 }
 
 /// The lead hears that a limit of GitHub is out, and that the wave waits
-/// for its reset (#1557). It goes one time for each reset.
+/// for its reset (#1557). It goes one time for each outage: the key is
+/// [`crate::ghcalls::Wait::key`] (#1581). When riff found no reset of the
+/// counter that is out, the message says so.
 ///
 /// ```
 /// use riff::ghcalls::{Resource, Wait};
 ///
-/// let wait = Wait { resource: Resource::Graphql, reset_ms: 1_793_718_035_000 };
+/// let mut wait = Wait::until(Resource::Graphql, 1_793_718_035_000);
 /// assert_eq!(
 ///     riff::text::wave_limit_waits("o/r", &wait),
 ///     "o/r: the GitHub GraphQL limit is out. riff makes no call of it until 15:00:35 UTC. The \
 ///      wave starts nothing before then, and a verify that cannot report its result keeps it."
 /// );
+/// wait.guessed = true;
+/// assert_eq!(
+///     riff::text::wave_limit_waits("o/r", &wait),
+///     "o/r: the GitHub GraphQL limit is out. riff makes no call of it until 15:00:35 UTC. riff \
+///      cannot read the reset: this time is the end of the hour of the counter that it saw. The \
+///      wave starts nothing before then, and a verify that cannot report its result keeps it."
+/// );
 /// ```
 pub fn wave_limit_waits(repo: &str, wait: &crate::ghcalls::Wait) -> String {
     format!(
-        "{repo}: the GitHub {} limit is out. riff makes no call of it until {}. The wave starts \
-         nothing before then, and a verify that cannot report its result keeps it.",
+        "{repo}: the GitHub {} limit is out. riff makes no call of it until {}.{} The wave \
+         starts nothing before then, and a verify that cannot report its result keeps it.",
         wait.resource.name(),
-        clock_utc(wait.reset_ms)
+        clock_utc(wait.reset_ms),
+        if wait.guessed { LIMIT_GUESS } else { "" }
     )
 }
 

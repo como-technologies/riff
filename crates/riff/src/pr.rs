@@ -673,10 +673,9 @@ impl Gh {
     }
 
     /// Starts the wait of the resource of the call `gh ARGS` that failed
-    /// with `stderr`, when `stderr` says that its limit is out (#1557). It
-    /// reads the reset with `gh api rate_limit`, which no limit counts.
-    /// When it cannot read the reset, the wait is [`ghcalls::UNREAD_WAIT_MS`].
-    fn note_limit(&self, args: &[&str], stderr: &str) {
+    /// with `stdout` and `stderr`, when `stderr` says that its limit is out
+    /// (#1557). The reset comes from [`Gh::wait_for`].
+    fn note_limit(&self, args: &[&str], stdout: &str, stderr: &str) {
         let (Some(calls), Some(resource)) = (&self.calls, ghcalls::Resource::of(args)) else {
             return;
         };
@@ -684,16 +683,106 @@ impl Gh {
         if !ghcalls::is_limit(stderr) || calls.waiting(resource, now).is_some() {
             return;
         }
-        let reset = self
-            .spawn(&["api", "rate_limit"], None)
-            .ok()
-            .filter(|(ok, ..)| *ok)
-            .and_then(|(_, out, _)| ghcalls::reset_in(&out, resource, now));
-        calls.start_wait(
+        calls.start_wait(self.wait_for(resource, stdout, stderr, now), now);
+    }
+
+    /// The wait for the limit of `resource` that the call with `stdout` and
+    /// `stderr` found out at `now`. GitHub keeps more than one counter for a
+    /// token, and a read can answer from a counter that has points while
+    /// the call failed on the counter that is out (#1581). So the reset
+    /// comes from the call that failed, in this order:
+    ///
+    /// 1. The header `x-ratelimit-reset` in its answer.
+    /// 2. A secondary limit waits [`ghcalls::SECONDARY_WAIT_MS`].
+    /// 3. A counter that shows no points left: `gh api rate_limit`, and
+    ///    for GraphQL some reads of `rateLimit` ([`ghcalls::PROBES`]).
+    /// 4. Else the latest reset that it saw, the end of the hour of that
+    ///    counter, as a guess ([`ghcalls::Wait::guessed`]). With no reading
+    ///    at all the guess is [`ghcalls::UNREAD_WAIT_MS`].
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use riff::ghcalls::{Calls, Resource};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// // The counter of `rate_limit` has points left. The first read of
+    /// // GraphQL lands on it too, the second on the counter that is out.
+    /// let script = "#!/bin/sh\n\
+    ///      case \"$1 $2\" in\n\
+    ///      \"api rate_limit\") echo '{\"resources\":{\"graphql\":{\"remaining\":3204,\"reset\":4102444849}}}' ;;\n\
+    ///      \"api graphql\")\n\
+    ///        if [ -e \"$0.seen\" ]; then echo '{\"data\":{\"rateLimit\":{\"remaining\":0,\"resetAt\":\"2100-01-01T00:00:15Z\"}}}'\n\
+    ///        else touch \"$0.seen\"; echo '{\"data\":{\"rateLimit\":{\"remaining\":3204,\"resetAt\":\"2100-01-01T00:00:49Z\"}}}'; fi ;;\n\
+    ///      *) echo 'GraphQL: API rate limit already exceeded for user ID 1.' >&2; exit 1 ;;\n\
+    ///      esac\n";
+    /// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), script))
+    ///     .with_calls(Arc::new(Calls::default()));
+    /// assert!(gh.run(&["pr", "view", "40"], None).is_err());
+    /// let wait = gh.limit_wait().unwrap();
+    /// assert_eq!(wait.resource, Resource::Graphql);
+    /// // The reset of the counter that is out, not the one of `rate_limit`.
+    /// assert_eq!(wait.reset_ms, 4_102_444_815_000);
+    /// assert!(!wait.guessed);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    fn wait_for(
+        &self,
+        resource: ghcalls::Resource,
+        stdout: &str,
+        stderr: &str,
+        now: i64,
+    ) -> ghcalls::Wait {
+        let known = |reset_ms: i64| ghcalls::Wait::until(resource, reset_ms.max(now));
+        if let Some(reset_ms) =
+            ghcalls::header_reset(stdout).or_else(|| ghcalls::header_reset(stderr))
+        {
+            return known(reset_ms);
+        }
+        if ghcalls::is_secondary(stderr) {
+            return known(now + ghcalls::SECONDARY_WAIT_MS);
+        }
+        // The latest reset of a counter that has points left.
+        let mut seen: Option<i64> = None;
+        let mut out = |counter: Option<ghcalls::Counter>| {
+            let counter = counter?;
+            seen = seen.max(Some(counter.reset_ms));
+            (counter.remaining == 0).then_some(counter.reset_ms)
+        };
+        if let Some(reset_ms) = out(self.read_counter(resource)) {
+            return known(reset_ms);
+        }
+        if resource == ghcalls::Resource::Graphql {
+            for _ in 0..ghcalls::PROBES {
+                if let Some(reset_ms) = out(self.probe()) {
+                    return known(reset_ms);
+                }
+            }
+        }
+        ghcalls::Wait {
             resource,
-            reset.unwrap_or(now + ghcalls::UNREAD_WAIT_MS),
-            now,
-        );
+            reset_ms: seen.map_or(now + ghcalls::UNREAD_WAIT_MS, |reset_ms| reset_ms.max(now)),
+            guessed: true,
+        }
+    }
+
+    /// The counter of `resource` in `gh api rate_limit`, which no limit
+    /// counts.
+    fn read_counter(&self, resource: ghcalls::Resource) -> Option<ghcalls::Counter> {
+        let (_, out, _) = self.spawn(&["api", "rate_limit"], None).ok()?;
+        ghcalls::counter_in(&out, resource)
+    }
+
+    /// The counter that one read of `rateLimit` of GraphQL lands on. It
+    /// costs a point of a counter that has points, and counts as a call.
+    fn probe(&self) -> Option<ghcalls::Counter> {
+        let query = format!("query={}", ghcalls::PROBE_QUERY);
+        let (_, out, _) = self
+            .spawn(&["api", "graphql", "-f", query.as_str()], None)
+            .ok()?;
+        if let Some(calls) = &self.calls {
+            calls.record(crate::daemon::now_ms(), self.caller, "api graphql", 1);
+        }
+        ghcalls::probe_in(&out)
     }
 
     /// Runs `gh ARGS`, and runs it again after a 502, 503 or 504 of
@@ -741,8 +830,8 @@ impl Gh {
                 calls.keep_left(left);
             }
         }
-        if let Ok((false, _, stderr)) = &result {
-            self.note_limit(args, stderr);
+        if let Ok((false, stdout, stderr)) = &result {
+            self.note_limit(args, stdout, stderr);
         }
         result
     }
@@ -2213,5 +2302,157 @@ mod tests {
         assert!(!ok);
         assert_eq!(stdout, big);
         assert_eq!(stderr, "issue comment\n");
+    }
+
+    /// A `gh` that counts its calls, with a fake whose body is `body`. Each
+    /// call goes in `gh.log`. A call that no case of `body` takes fails on
+    /// the primary limit.
+    fn limited_gh(dir: &std::path::Path, body: &str) -> Gh {
+        let script = format!(
+            "#!/bin/sh\necho \"$*\" >> \"$0.log\"\n{body}\n\
+             echo 'GraphQL: API rate limit already exceeded for user ID 1.' >&2\nexit 1\n"
+        );
+        Gh::at(isolated::write_program(dir.join("gh"), script))
+            .with_calls(std::sync::Arc::new(crate::ghcalls::Calls::default()))
+    }
+
+    /// The calls that `limited_gh` got.
+    fn logged(dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_to_string(dir.join("gh.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// 01M6H1N2XYKK6QRCJS02RZJHKZ (#1581): the reset of a wait comes from
+    /// the answer of the call that failed. A header `x-ratelimit-reset` in
+    /// it wins over any read: `gh api rate_limit` answers from a counter
+    /// that has points.
+    #[test]
+    fn the_reset_of_a_wait_is_the_header_of_the_call_that_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = limited_gh(
+            dir.path(),
+            "case \"$1 $2\" in \"api rate_limit\") \
+             echo '{\"resources\":{\"graphql\":{\"remaining\":3204,\"reset\":4102444849}}}'; exit 0 ;; esac\n\
+             printf '< X-Ratelimit-Remaining: 0\\n< X-Ratelimit-Reset: 4102444815\\n' >&2",
+        );
+        assert!(gh.run(&["pr", "view", "40"], None).is_err());
+        let wait = gh.limit_wait().unwrap();
+        assert_eq!((wait.reset_ms, wait.guessed), (4_102_444_815_000, false));
+        assert_eq!(logged(dir.path()), ["pr view 40"], "no read");
+    }
+
+    /// 01M6H1N2XYKK6QRCJS02RZJHKZ (#1581): GitHub keeps more than one
+    /// counter for a token. `gh api rate_limit` and the first reads of
+    /// `rateLimit` land on the counter that has points; a later read lands
+    /// on the counter that is out, and its reset is the reset of the wait.
+    #[test]
+    fn a_read_of_the_counter_that_is_out_gives_the_reset_of_the_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = r#"{"data":{"rateLimit":{"remaining":3204,"resetAt":"2100-01-01T00:00:49Z"}}}"#;
+        let out = r#"{"data":{"rateLimit":{"remaining":0,"resetAt":"2100-01-01T00:00:15Z"}}}"#;
+        let gh = limited_gh(
+            dir.path(),
+            &format!(
+                "case \"$1 $2\" in\n\
+                 \"api rate_limit\") echo '{{\"resources\":{{\"graphql\":{{\"remaining\":3204,\"reset\":4102444849}}}}}}'; exit 0 ;;\n\
+                 \"api graphql\") if [ \"$(grep -c 'api graphql' \"$0.log\")\" -lt 3 ]; then echo '{good}'; else echo '{out}'; fi; exit 0 ;;\n\
+                 esac"
+            ),
+        );
+        assert!(gh.run(&["pr", "view", "40"], None).is_err());
+        let wait = gh.limit_wait().unwrap();
+        assert_eq!((wait.reset_ms, wait.guessed), (4_102_444_815_000, false));
+        let calls = logged(dir.path());
+        assert_eq!(calls.len(), 5, "{calls:?}");
+        assert!(calls[1].starts_with("api rate_limit"), "{calls:?}");
+        assert!(calls[2..].iter().all(|c| c.starts_with("api graphql")));
+        // Each read of `rateLimit` counts as a call of GraphQL: 1 point.
+        let shown = gh.calls.as_ref().unwrap().shown(crate::daemon::now_ms());
+        let reads = shown.rows.iter().find(|row| row.kind == "api graphql");
+        assert_eq!(
+            reads.map(|row| (row.calls, row.points)),
+            Some((3, 3)),
+            "{shown:?}"
+        );
+    }
+
+    /// 01M6H1N2XYKK6QRCJS02RZJHKZ (#1581): when no read shows a counter
+    /// that is out, the wait is the latest reset that riff saw, and the wait
+    /// says that it is a guess.
+    #[test]
+    fn no_counter_that_is_out_gives_the_end_of_the_hour_as_a_guess() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = limited_gh(
+            dir.path(),
+            "case \"$1 $2\" in\n\
+             \"api rate_limit\") echo '{\"resources\":{\"graphql\":{\"remaining\":3204,\"reset\":4102444849}}}'; exit 0 ;;\n\
+             \"api graphql\") echo '{\"data\":{\"rateLimit\":{\"remaining\":3000,\"resetAt\":\"2100-01-01T00:00:55Z\"}}}'; exit 0 ;;\n\
+             esac",
+        );
+        assert!(gh.run(&["pr", "view", "40"], None).is_err());
+        let wait = gh.limit_wait().unwrap();
+        assert_eq!((wait.reset_ms, wait.guessed), (4_102_444_855_000, true));
+        let reads = logged(dir.path()).len();
+        assert_eq!(
+            reads,
+            2 + crate::ghcalls::PROBES,
+            "the call, the read, the probes"
+        );
+    }
+
+    /// 01M6H1N2XYKK6QRCJS02RZJHKZ (#1581): REST has no read of `rateLimit`.
+    /// A counter with points left gives a guess, and a read that fails
+    /// gives the wait for a read that cannot be done.
+    #[test]
+    fn a_limit_of_rest_and_an_unreadable_counter_give_a_guess() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = limited_gh(
+            dir.path(),
+            "case \"$1 $2\" in \"api rate_limit\") \
+             echo '{\"resources\":{\"core\":{\"remaining\":100,\"reset\":4102444849}}}'; exit 0 ;; esac",
+        );
+        assert!(gh.run(&["api", "repos/o/r"], None).is_err());
+        let wait = gh.limit_wait().unwrap();
+        assert_eq!(wait.resource, crate::ghcalls::Resource::Rest);
+        assert_eq!((wait.reset_ms, wait.guessed), (4_102_444_849_000, true));
+        assert_eq!(logged(dir.path()).len(), 2, "no read of GraphQL");
+
+        let dir = tempfile::tempdir().unwrap();
+        let gh = limited_gh(dir.path(), "");
+        let before = crate::daemon::now_ms();
+        assert!(gh.run(&["pr", "view", "40"], None).is_err());
+        let wait = gh.limit_wait().unwrap();
+        assert!(wait.guessed);
+        let unread = wait.reset_ms - before;
+        assert!(
+            (crate::ghcalls::UNREAD_WAIT_MS..crate::ghcalls::UNREAD_WAIT_MS + 60_000)
+                .contains(&unread),
+            "{unread}"
+        );
+    }
+
+    /// 01M6H1N2XYKK6QRCJS02RZJHKZ (#1581): a secondary limit has no reset.
+    /// The wait is one minute, and riff reads no counter.
+    #[test]
+    fn a_secondary_limit_waits_one_minute_and_reads_no_counter() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = "#!/bin/sh\necho \"$*\" >> \"$0.log\"\n\
+                      echo 'You have exceeded a secondary rate limit.' >&2\nexit 1\n";
+        let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script))
+            .with_calls(std::sync::Arc::new(crate::ghcalls::Calls::default()));
+        let before = crate::daemon::now_ms();
+        assert!(gh.run(&["pr", "view", "40"], None).is_err());
+        let wait = gh.limit_wait().unwrap();
+        assert!(!wait.guessed);
+        let span = wait.reset_ms - before;
+        assert!(
+            (crate::ghcalls::SECONDARY_WAIT_MS..crate::ghcalls::SECONDARY_WAIT_MS + 60_000)
+                .contains(&span),
+            "{span}"
+        );
+        assert_eq!(logged(dir.path()), ["pr view 40"]);
     }
 }

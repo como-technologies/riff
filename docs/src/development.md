@@ -1674,13 +1674,14 @@ When the points are gone, see
 
 When the points of GitHub are gone, the daemon does not try again each
 minute. Each try costs a call, and the limit stays out until the
-counter starts again. So the daemon reads the time of the reset, and
+counter starts again. So the daemon finds the time of the reset, and
 waits for it. GraphQL and REST have a limit each. Until the reset, the
 daemon makes no call of the resource that ran out.
 
 - The wave makes no look until the reset. The look at the pull requests
   and `main` waits too. The watches make no look and tell no fault.
-- Your lead gets one message with the reset time.
+- Your lead gets one message for the outage, with the reset time. A
+  second call that fails in the same outage gives no new message.
 - A verify that ends in this time keeps its result in the folder of its
   session. After the reset, the wave reports it: the comment on the pull
   request, the status `riff/verify`, and the result to the holder of the
@@ -1692,14 +1693,32 @@ daemon makes no call of the resource that ran out.
 - A kept result counts only for its commit. When the pull request has a
   new head commit, or it is not open, the wave drops the result and
   starts a new verify.
-- A limit that still shows points is a secondary limit of GitHub. The
-  daemon waits one minute for it.
+
+GitHub keeps more than one counter for one token. A read of your points
+can answer from a counter that still has points, while the call that
+failed used the counter that is out. So the daemon takes the reset from
+the call that failed:
+
+1. The header `x-ratelimit-reset` in the answer of the call.
+2. A counter that shows no points left. The daemon reads
+   `gh api rate_limit`, and for GraphQL it reads `rateLimit` some times,
+   because each read can land on another counter.
+3. When no read shows a counter that is out, the daemon waits for the
+   latest reset that it saw: the end of the hour of that counter. It
+   says that this time is a guess.
+
+A secondary limit of GitHub has no reset. The daemon waits one minute
+for it.
 
 ```mermaid
 flowchart TD
-    C["a call of gh fails:<br/>the limit is out"] --> R["the daemon reads the reset<br/>with gh api rate_limit"]
-    R --> W["no call of that resource<br/>until the reset"]
-    W --> M["your lead gets one message"]
+    C["a call of gh fails:<br/>the limit is out"] --> H{"the reset<br/>in its answer?"}
+    H -- yes --> W["no call of that resource<br/>until the reset"]
+    H -- no --> R{"a counter with no points:<br/>gh api rate_limit, rateLimit reads?"}
+    R -- yes --> W
+    R -- no --> G["the end of the hour of the counter<br/>that the daemon saw: a guess"]
+    G --> W
+    W --> M["your lead gets one message<br/>for the outage"]
     W --> K["a verify that ends now<br/>keeps its result"]
     W --> A["the reset comes"]
     A --> L["the wave looks again<br/>and reports each kept result"]
@@ -1720,10 +1739,17 @@ GitHub, last hour: 12 calls, 14 GraphQL points.
 GitHub GraphQL limit: out. riff makes no call of it until 15:00:35 UTC (in 41m).
 ```
 
-Your lead gets this message one time:
+Your lead gets this message one time for the outage:
 
 ```text
 como-technologies/riff: the GitHub GraphQL limit is out. riff makes no call of it until 15:00:35 UTC. The wave starts nothing before then, and a verify that cannot report its result keeps it.
+```
+
+When the daemon finds no counter that is out, the status and the
+message add that the time is a guess:
+
+```text
+GitHub GraphQL limit: out. riff makes no call of it until 15:00:49 UTC (in 7m). riff cannot read the reset: this time is the end of the hour of the counter that it saw.
 ```
 
 When a verify ends in this time, your lead also gets this note:
