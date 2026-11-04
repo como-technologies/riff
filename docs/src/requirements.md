@@ -571,10 +571,11 @@
   trailer `Issue:` or `Milestone:`, that is not the one of the pull
   request, it names the line, opens nothing, and exits with status 1.
 - **01M3NB6FWMGBQ9VTY6RCBPKBHK** `riff pr wait N` looks at pull
-  request N with `gh` each `--every` seconds (default 30), until it is
-  merged. Then it prints the merge commit and exits with status 0. It
-  exits with status 1 and the reason when the pull request is closed
-  and not merged, or when a required check fails.
+  request N with `gh` until it is merged
+  (01M6JE9ME6YSHV538GNPH7ZRGQ gives the pace). Then it prints the merge
+  commit and exits with status 0. It exits with status 1 and the reason
+  when the pull request is closed and not merged, or when a required
+  check fails.
 - **01M3Z8GG5EGEYAVEXG0HS46ACT** After one good look, `riff pr wait`
   goes on when a look of `gh` fails. It prints one line with the error
   on stderr, one time until the next good look, and looks again at its
@@ -711,6 +712,11 @@
   value` line, and keep each trailer line to 72 characters. The how-to
   "Keep a trailer line short" says that `riff pr open` checks the body
   first.
+- **01M6JE9ME6YSHV538GNPH7ZRGQ** `riff pr wait N` looks at pull request
+  N each `--every` seconds (default 30) for its first 2 minutes. After
+  that it looks each 5 minutes, or each `--every` seconds when that is
+  longer. A look is one `gh pr view` and one `gh pr checks`: 3 GraphQL
+  points. So one pull request that waits uses at most 60 points an hour.
 
 ## Tokens on GitHub
 

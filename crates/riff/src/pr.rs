@@ -11,7 +11,7 @@
 //! | Command | `gh` calls |
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
-//! | `riff pr wait N` | `pr view`, `pr checks --required`, again each `--every` seconds. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
+//! | `riff pr wait N` | `pr view`, `pr checks --required`, again at the [`pace`] of `--every`. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
 //! | `riff verify pass\|fail N` | `pr view`, `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs` and `api …/pulls/N/files` (a pass), `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
@@ -36,6 +36,19 @@
 //! prints the merge commit. It stops with an error when the pull request
 //! closes unmerged or a required check fails ([`Wait`],
 //! 01M3NB6FWMGBQ9VTY6RCBPKBHK).
+//!
+//! The command runs in its own process, so the count of the daemon
+//! ([`crate::ghcalls`]) cannot see its calls, and it uses the token of
+//! the person like all other sessions. A look is 3 GraphQL points, so
+//! the pace is slow: each `--every` seconds (30) for the first 2
+//! minutes, then each 5 minutes ([`pace`]). One pull request that
+//! waits uses at most [`WAIT_POINTS_AN_HOUR`] points an hour
+//! (01M6JE9ME6YSHV538GNPH7ZRGQ).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     A["0 to 2 minutes:<br/>a look each 30 s"] --> B["after 2 minutes:<br/>a look each 5 min"]
+//! ```
 //!
 //! `riff verify pass|fail N` puts the result on the pull request as a
 //! comment that names the head commit, sets the status `riff/verify` of
@@ -1213,17 +1226,78 @@ pub fn wait_state(pr: &PrState, checks: &[Check]) -> Wait {
     }
 }
 
-/// Looks at pull request `number` each `every` until it is merged
-/// (01M3NB6FWMGBQ9VTY6RCBPKBHK). Returns the merge commit. Fails when
-/// it closes unmerged or a required check fails.
+/// How long `riff pr wait` looks each `every`, from its start. After
+/// that it looks each [`SLOW_EVERY`] (01M6JE9ME6YSHV538GNPH7ZRGQ).
+pub const FAST_WAIT: Duration = Duration::from_secs(120);
+
+/// The time between two looks of `riff pr wait` after [`FAST_WAIT`].
+/// `--every` can make it longer, never shorter.
+pub const SLOW_EVERY: Duration = Duration::from_secs(300);
+
+/// The GraphQL points of one look: `pr view` costs 1 and `pr checks`
+/// costs 2 ([`crate::ghcalls`]).
+pub const LOOK_POINTS: u32 = 3;
+
+/// The most GraphQL points that `riff pr wait` uses in one hour for one
+/// pull request (01M6JE9ME6YSHV538GNPH7ZRGQ). The limit of a token is
+/// 5,000 an hour for all its sessions.
+pub const WAIT_POINTS_AN_HOUR: u32 = 60;
+
+/// How long `riff pr wait` waits after a look, when it waits `elapsed`
+/// already: `every` in the first [`FAST_WAIT`], then [`SLOW_EVERY`], or
+/// `every` when that is longer (01M6JE9ME6YSHV538GNPH7ZRGQ).
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::pr::{FAST_WAIT, LOOK_POINTS, WAIT_POINTS_AN_HOUR, pace};
+///
+/// let secs = Duration::from_secs;
+/// let every = secs(30);
+/// assert_eq!(pace(every, secs(0)), secs(30));
+/// assert_eq!(pace(every, FAST_WAIT - secs(1)), secs(30));
+/// assert_eq!(pace(every, FAST_WAIT), secs(300));
+/// assert_eq!(pace(secs(600), FAST_WAIT), secs(600));
+///
+/// // The first hour has the most looks: 5 fast ones, then 11 slow ones.
+/// let (mut at, mut looks) = (secs(0), 0);
+/// while at < secs(3600) {
+///     looks += 1;
+///     at += pace(every, at);
+/// }
+/// assert_eq!(looks, 16);
+/// assert!(looks * LOOK_POINTS <= WAIT_POINTS_AN_HOUR);
+/// ```
+pub fn pace(every: Duration, elapsed: Duration) -> Duration {
+    if elapsed < FAST_WAIT {
+        every
+    } else {
+        every.max(SLOW_EVERY)
+    }
+}
+
+/// Looks at pull request `number` until it is merged
+/// (01M3NB6FWMGBQ9VTY6RCBPKBHK), at the [`pace`] of `every`. Returns the
+/// merge commit. Fails when it closes unmerged or a required check
+/// fails.
 ///
 /// A look of `gh` can fail for a short time, for example while the
 /// network is away. After one good look, a failed look does not end the
 /// wait (01M3Z8GG5EGEYAVEXG0HS46ACT): it prints
 /// [`text::pr_look_failed`] on stderr, one time until the next good
-/// look, and looks again after `every`. When the first look fails, the
-/// wait ends with its error: `gh` cannot see the pull request.
+/// look, and looks again after the [`pace`]. When the first look fails,
+/// the wait ends with its error: `gh` cannot see the pull request.
 pub fn wait(gh: &Gh, number: u64, every: Duration) -> Result<String> {
+    wait_with(gh, number, every, std::thread::sleep)
+}
+
+/// [`wait`] with `sleep` for each wait between two looks. A test gives a
+/// `sleep` that moves a clock and does not wait.
+pub fn wait_with(
+    gh: &Gh,
+    number: u64,
+    every: Duration,
+    mut sleep: impl FnMut(Duration),
+) -> Result<String> {
     let n = number.to_string();
     let look = || {
         let pr: PrState = gh.json(&["pr", "view", &n, "--json", "state,mergeCommit"])?;
@@ -1237,7 +1311,9 @@ pub fn wait(gh: &Gh, number: u64, every: Duration) -> Result<String> {
     };
     let mut looked = false;
     let mut told = false;
+    let mut elapsed = Duration::ZERO;
     loop {
+        let next = pace(every, elapsed);
         match look() {
             Ok(Wait::Merged(commit)) => return Ok(commit),
             Ok(Wait::Closed) => bail!("pull request #{number} is closed, and not merged"),
@@ -1252,13 +1328,14 @@ pub fn wait(gh: &Gh, number: u64, every: Duration) -> Result<String> {
             Err(e) if looked => {
                 if !told {
                     let error = format!("{e:#}");
-                    eprintln!("{}", text::pr_look_failed(number, &error, every.as_secs()));
+                    eprintln!("{}", text::pr_look_failed(number, &error, next.as_secs()));
                     told = true;
                 }
             }
             Err(e) => return Err(e),
         }
-        std::thread::sleep(every);
+        sleep(next);
+        elapsed += next;
     }
 }
 

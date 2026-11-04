@@ -1060,11 +1060,13 @@ enum Pr {
     ///
     /// When pull request NUMBER is merged, it prints its merge commit. It
     /// exits with status 1 when the pull request closes unmerged or a
-    /// required check fails.
+    /// required check fails. It looks each --every seconds for 2 minutes,
+    /// then each 5 minutes.
     Wait {
         /// The number of the pull request.
         number: u64,
-        /// The seconds between two looks at the pull request.
+        /// The seconds between two looks in the first 2 minutes. After that
+        /// the time is 5 minutes, or this value when it is longer.
         #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
         every: u64,
     },
