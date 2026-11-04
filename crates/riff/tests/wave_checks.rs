@@ -2,21 +2,23 @@
 //! `Gate` (#698, 01M5QYDHN27RC5SRHAB56PFKK0): the look of the wave reads
 //! the required checks of the ruleset of the default branch from a fake
 //! `gh`, and the wave starts the verify of a pull request when each of
-//! them is done on its head. The repository has no check run `Gate`.
+//! them is done on its head. The repository has no check run `Gate`. A
+//! head with a failed check gets the fix of the check, not a verify
+//! (#1575).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use riff::pr::Gh;
-use riff::wave::{self, Work};
+use riff::wave::{self, Failed, Work};
 
 const REPO: &str = "o/r";
 
 /// A fake `gh` for the repository `o/r` with a ruleset that requires four
 /// checks and `riff/verify`. It logs each call to the file `calls`. The
-/// file `docs` holds the check runs of `checks / docs`, and the file
-/// `rules` the rules of `main`. The three other checks passed, and the
-/// head has no check run `Gate`.
+/// file `docs` holds the check runs of `checks / docs`, the file `hygiene`
+/// those of `Hygiene`, and the file `rules` the rules of `main`. The three
+/// other checks passed, and the head has no check run `Gate`.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
@@ -27,6 +29,7 @@ case "$1 $2" in
       */rules/branches/main*) cat "$dir/rules" ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
       *check_name=Gate) echo '{"total_count":0,"check_runs":[]}' ;;
+      *check_name=Hygiene) cat "$dir/hygiene" ;;
       *check_name=checks%20%2F%20docs) cat "$dir/docs" ;;
       *check_name=checks%20%2F%20*) echo '{"check_runs":[{"status":"completed","conclusion":"success"}]}' ;;
       *) exit 1 ;;
@@ -68,6 +71,7 @@ fn forge(dir: &Path) -> Gh {
     .unwrap();
     std::fs::write(dir.join("rules"), RULES).unwrap();
     std::fs::write(dir.join("docs"), docs("completed", r#""success""#)).unwrap();
+    std::fs::write(dir.join("hygiene"), docs("completed", r#""success""#)).unwrap();
     Gh::at(path)
 }
 
@@ -117,7 +121,8 @@ fn the_wave_starts_the_verify_when_the_required_checks_of_the_default_branch_are
     assert!(passed.pulls[&5].gate_done);
     assert_eq!(wave::pick(&passed, &none, &starts), Some(verify.clone()));
 
-    // One failed: the check is done, so the wave starts the verify.
+    // One ended with a failure, and the rollup of the pull request shows no
+    // failed check: the check is done, so the wave starts the verify.
     std::fs::write(dir.path().join("docs"), docs("completed", r#""failure""#)).unwrap();
     assert_eq!(
         wave::pick(&look(&gh).unwrap(), &none, &starts),
@@ -185,4 +190,83 @@ fn the_look_reads_the_rules_only_for_a_verify_and_says_why_when_it_cannot() {
         why.starts_with("riff cannot read the required checks of the default branch of o/r"),
         "{why}"
     );
+}
+
+/// The rules of `main` for #1575: the jobs `Hygiene` and `Gate`, and
+/// `riff/verify`.
+const RULES_GATE: &str = r#"[
+{"type":"required_status_checks","parameters":{"required_status_checks":[
+  {"context":"Hygiene"},{"context":"Gate"},{"context":"riff/verify"}]}}]"#;
+
+/// The pull request 45 of issue 5 at `eeee555` with the check run
+/// `Hygiene` in its rollup, with `conclusion`.
+fn pull_with_hygiene(dir: &Path, conclusion: &str) {
+    let run = format!(
+        r#"{{"__typename":"CheckRun","name":"Hygiene","conclusion":"{conclusion}","workflowName":"Hygiene","detailsUrl":"https://github.com/o/r/actions/runs/9/job/1"}}"#
+    );
+    std::fs::write(
+        dir.join("pulls"),
+        format!(
+            r#"[{{"number":45,"headRefName":"worktree-issue-5","headRefOid":"eeee555","isDraft":false,"statusCheckRollup":[{run}],"mergeable":"MERGEABLE","autoMergeRequest":{{"enabledAt":"2026-10-24T08:00:00Z","mergeMethod":"SQUASH"}},"body":"Closes #5\n\nIssue: #5\nMilestone: Wave 1\n"}}]"#
+        ),
+    )
+    .unwrap();
+}
+
+/// #1575, PR #1573 at its commit cfed717: `Hygiene` failed, and the job
+/// `Gate` had no run yet, as it starts when each other job ended. A failed
+/// check next to a check with no run was "done", and the wave started a
+/// verify that could only fail. Now the wave starts no verify of the head:
+/// it starts the fix of the failed check. After the fix, the verify waits
+/// for the `Gate`.
+#[test]
+fn a_failed_check_next_to_a_check_with_no_run_gets_its_fix_and_no_verify() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(dir.path());
+    std::fs::write(dir.path().join("rules"), RULES_GATE).unwrap();
+    std::fs::write(
+        dir.path().join("hygiene"),
+        docs("completed", r#""failure""#),
+    )
+    .unwrap();
+    pull_with_hygiene(dir.path(), "FAILURE");
+    let none = BTreeSet::new();
+    let starts = BTreeMap::new();
+
+    // `Hygiene` failed, `Gate` has no run: the fix, and no verify.
+    let failed = look(&gh).unwrap();
+    assert_eq!(failed.free, ["issue-5"]);
+    assert!(failed.pulls.is_empty(), "{:?}", failed.pulls);
+    assert_eq!(
+        failed.fixes.failed[&5],
+        Failed {
+            pull: 45,
+            commit: "eeee555".into(),
+            checks: vec!["Hygiene".into()],
+        }
+    );
+    let fix = Work::Checks {
+        issue: 5,
+        pull: 45,
+        commit: "eeee555".into(),
+        checks: vec!["Hygiene".into()],
+    };
+    assert_eq!(wave::pick(&failed, &none, &starts), Some(fix.clone()));
+    // The same head gets one fix.
+    let spent = [(fix.key(), 1)].into();
+    assert_eq!(wave::pick(&failed, &none, &spent), None);
+
+    // The fix pushed: the new head has `Hygiene` passed and no `Gate` run.
+    // The verify waits for the `Gate`.
+    std::fs::write(
+        dir.path().join("hygiene"),
+        docs("completed", r#""success""#),
+    )
+    .unwrap();
+    pull_with_hygiene(dir.path(), "SUCCESS");
+    let waiting = look(&gh).unwrap();
+    assert_eq!(waiting.free, ["verify-issue-5"]);
+    assert!(!waiting.pulls[&5].gate_done);
+    assert_eq!(wave::pick(&waiting, &none, &starts), None);
+    assert!(waiting.fixes.failed.is_empty());
 }

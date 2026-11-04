@@ -2344,7 +2344,9 @@ the same question before the pull request: see
 [Check that each host can pull the image](start-a-riff.md#check-that-each-host-can-pull-the-image).
 
 The wave starts the verify of a pull request in the same way: it waits
-until each check of the full check passed or ended on the head commit.
+until each check of the full check has a run that ended on the head
+commit, and it fixes a failed check first (see
+[See why a verify waits](development.md#see-why-a-verify-waits)).
 To see the checks of another repository, see
 [Use the checks that you have](start-a-riff.md#use-the-checks-that-you-have).
 

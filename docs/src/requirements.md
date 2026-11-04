@@ -4931,17 +4931,17 @@ of this part when they merge.
   the item of a pull request with a conflict. The daemon keeps what it
   told in memory only. The wave goes on when the look fails: the daemon
   prints the fault one time until it changes.
-- **01M5QW2KVAS05Q72630RNW47G0** A pull request whose verify passed can
-  fail a check of its head commit: a check run that ended with failure,
-  timed out or startup failure, or a status in failure or error, except
-  riff/verify. The wave of the daemon reads the rollup of each open pull
-  request at each look. For the item of such a pull request, it starts a
-  build session with the names of the failed runs of GitHub Actions in
-  the start text. The text tells the session to read the failed run, to
-  fix the work and push to the same pull request, and, for a known
-  flake, to run the job again one time. Each head commit starts one such
-  session in a run of the wave. A pull request with a conflict gets the
-  rebase first. A cancelled or skipped check did not fail.
+- **01M5QW2KVAS05Q72630RNW47G0** A pull request can fail a check of its
+  head commit: a check run that ended with failure, timed out or startup
+  failure, or a status in failure or error, except riff/verify. The wave
+  of the daemon reads the rollup of each open pull request at each look.
+  For the item of such a pull request, it starts a build session with
+  the names of the failed runs of GitHub Actions in the start text. The
+  text tells the session to read the failed run, to fix the work and
+  push to the same pull request, and, for a known flake, to run the job
+  again one time. Each head commit starts one such session in a run of
+  the wave. A pull request with a conflict gets the rebase first. A
+  cancelled or skipped check did not fail.
 - **01M5QW2KYFM4C287D9NMSPH8TA** When a session of a wave for failed
   checks ends with the same head commit, the daemon sends no verify
   request. It reads the checks of the pull request. The lead gets a
@@ -4962,10 +4962,9 @@ of this part when they merge.
   group comes after verify.
 - **01M5QYDHN27RC5SRHAB56PFKK0** A wave starts the verify of an item
   when the full check of the head commit of its pull request is done
-  (01M5QYDE41FVFX26EC8K5QGYH4). It gets its verify when each required
-  check of the default branch but `riff/verify` passed or ended. A wave
-  that cannot read the required checks fails its look, and says why.
-  Supersedes 01M4ZV3B6NKPEZ5FNE27X95GF0 in part.
+  (01M5QYDE41FVFX26EC8K5QGYH4). A wave that cannot read the required
+  checks fails its look, and says why. Supersedes
+  01M4ZV3B6NKPEZ5FNE27X95GF0 in part.
 - **01M5R0QFM265CCKTADK4T5XREQ** While the last background_tasks_changed
   event of a session of a wave lists one task or more, the daemon uses
   the quiet limit for it, not the grace (01M5P26VPJA73WCPVZY6CPG9HD).
@@ -5009,17 +5008,17 @@ of this part when they merge.
   gives the error of the look: the wave starts no work at that look, and
   reads again at the next one. `riff wave run` reads no branch.
   Supersedes 01M5QYBWPAJ219BE8QKVKG1TWW in part.
-- **01M5SN0PY23JDWND8DGGAF9XMB** A failed check of a pull request whose
-  verify passed starts a build session only when the check is a run of
-  GitHub Actions: a check run with a workflow. For each other failed
-  check, a check run of another app or a status, the wave starts no
-  session. The lead gets one message for each such check and head
-  commit, with the name of the check, its app and its link. The app is
-  the host of the link. A pull request with both kinds gets the session
-  for its runs of Actions, and the message for each other check. When a
-  session of a wave for failed checks ends with the same head commit,
-  only the runs of Actions count as failed. Supersedes
-  01M5QW2KVAS05Q72630RNW47G0 and 01M5QW2KYFM4C287D9NMSPH8TA in part.
+- **01M5SN0PY23JDWND8DGGAF9XMB** A failed check of a pull request starts
+  a build session only when the check is a run of GitHub Actions: a
+  check run with a workflow. For each other failed check, a check run of
+  another app or a status, the wave starts no session. The lead gets one
+  message for each such check and head commit, with the name of the
+  check, its app and its link. The app is the host of the link. A pull
+  request with both kinds gets the session for its runs of Actions, and
+  the message for each other check. When a session of a wave for failed
+  checks ends with the same head commit, only the runs of Actions count
+  as failed. Supersedes 01M5QW2KVAS05Q72630RNW47G0 and
+  01M5QW2KYFM4C287D9NMSPH8TA in part.
 - **01M5SMSB3H1E9NXMBDN8ZDJ6CD** When podman cannot pull the session
   image of a wave, the daemon starts no item of that wave for one
   minute, and no start counts. Then it tries the pull again. `riff
@@ -5152,6 +5151,14 @@ of this part when they merge.
   time: the lead hears of an outage one time, and a second failed call
   in the same outage gives no message (#1581). Supersedes
   01M6H1N2XYKK6QRCJS02RZJHKZ in part.
+- **01M6JEQEQ45YMNR1WTX2RRTQ5B** A check with no run is not done. The
+  full check of a head commit is done when each of its checks has a run,
+  and each newest run ended, also when another check failed. A pull
+  request whose head has a failed check gets the fix of the failed
+  checks (01M5QW2KVAS05Q72630RNW47G0) also when its verify waits: the
+  wave starts no verify of that head, and the verify comes after the
+  fix. Supersedes 01M5QYDHN27RC5SRHAB56PFKK0, 01M5QW2KVAS05Q72630RNW47G0
+  and 01M5SN0PY23JDWND8DGGAF9XMB in part.
 
 ### The lead, the view and the takeover
 

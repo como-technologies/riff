@@ -1605,6 +1605,37 @@ issue-12: the rebase session of the wave ended with no push (session 9f8e7d6c). 
 To start the rebase of the same commit again, see
 [Start a spent item again](#start-a-spent-item-again).
 
+#### See why a verify waits
+
+The wave starts the verify of a pull request when the full check of its
+head commit is done. The full check is each check that the ruleset of
+`main` requires, but `riff/verify`. It is done when each of them has a
+run, and each newest run ended. A check with no run is not done: the
+job `Gate` has no run until the other jobs end. A failed check next to
+a check with no run is not done either.
+
+A failed check gets its fix before the verify, because the verify of a
+head with a failed check can only fail. The wave starts no verify of
+that head. It starts a session that fixes the failed checks (see
+[See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)).
+After its push, the new head gets a new full check, and then its verify.
+
+```mermaid
+flowchart TD
+    P["pull request: no verify yet"] --> F{"a check of the head failed?"}
+    F -- yes --> X["a session fixes the checks:<br/>no verify of this head"]
+    F -- no --> D{"each required check has a run<br/>and each newest run ended?"}
+    D -- no --> W["the verify waits for the next look"]
+    D -- yes --> V["the verify starts"]
+    X -- "a push" --> P
+```
+
+To see the checks of a pull request, and the check that has no run yet:
+
+```sh
+gh pr checks 40
+```
+
 #### See how the daemon uses the GitHub limit
 
 Each session, each look and each lead of one person use the token of
@@ -1938,8 +1969,8 @@ time.
 
 ### See a pull request that cannot merge
 
-A pull request can stop on its way to the merge after its verify
-passed. At each look, the wave reads each open pull request of an item
+A pull request can stop on its way to the merge, before or after its
+verify. At each look, the wave reads each open pull request of an item
 and acts for it, one time for each head commit. You do not have to
 check them. When the wave runs on more hosts, your lead gets each
 message one time, not one time for each host. The same holds for the
@@ -1952,7 +1983,7 @@ flowchart TD
     Q -- yes --> W["the wave does nothing:<br/>the queue merges it"]
     Q -- no --> C{"a conflict with main,<br/>auto-merge on or<br/>removed from the queue?"}
     C -- yes --> R["a session rebases the branch"]
-    C -- no --> F{"verify passed,<br/>a check failed?"}
+    C -- no --> F{"verify passed or waits,<br/>a check failed?"}
     F -- yes --> G{"a run of<br/>GitHub Actions?"}
     G -- yes --> B["a session fixes the check"]
     G -- "no, another app" --> N["a message to your lead:<br/>the check, its app, its link"]
@@ -1970,8 +2001,8 @@ flowchart TD
 | The pull request | What the wave does | In `riff top` |
 |---|---|---|
 | A conflict, auto-merge on | A session rebases it (see [Run the wave](#run-the-wave)) | `stuck: #12 (conflict)` |
-| The verify passed, a run of GitHub Actions failed | A session fixes the check | `stuck: #12 (checks)` |
-| The verify passed, a check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
+| The verify passed or waits, a run of GitHub Actions failed | A session fixes the check. The wave starts no verify of this commit (see [See why a verify waits](#see-why-a-verify-waits)) | `stuck: #12 (checks)` |
+| The verify passed or waits, a check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
 | The verify passed, auto-merge off | Your lead gets one message. No session starts | `stuck: #12 (auto-merge off)` |
 | The verify passed, the merge queue removed it | A conflict: a session rebases it. Else your lead gets one message (see [Queue a pull request that the queue removed](#queue-a-pull-request-that-the-queue-removed)) | `stuck: #12 (removed from queue)` |
 | The verify passed, GitHub needs a review | Your lead gets one message. No session starts (see [Approve a pull request that needs a review](#approve-a-pull-request-that-needs-a-review)) | `stuck: #12 (review)` |
@@ -1996,8 +2027,8 @@ known flake, it runs the job again one time and pushes nothing. Each
 head commit starts one such session in a run of the wave.
 
 When that session ends with the same head commit, the daemon reads the
-checks of the pull request. It sends no verify request: the verify of
-this commit passed. Your lead gets a message when a check still fails:
+checks of the pull request. It sends no verify request. Your lead gets
+a message when a check still fails:
 
 ```text
 issue-12: the session of the wave for the failed checks of PR #40 ended with no push (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, and the check Gate still fails. The riff daemon sends no verify request, and the wave starts no second session for this commit. Give the item to a session to fix, or run riff wave run to start the fix again. The item is free.
@@ -2007,7 +2038,7 @@ Your lead gets a note when no check fails because the session ran the
 job again:
 
 ```text
-issue-12: the session of the wave for the failed checks of PR #40 pushed nothing (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, and no check fails now: the job runs again. The riff daemon sends no verify request: the verify of this commit passed. The pull request merges when its checks pass. When a check fails again, the wave starts no second session for this commit, and riff top shows stuck for the item. Run riff wave run to start the fix again.
+issue-12: the session of the wave for the failed checks of PR #40 pushed nothing (session 9f8e7d6c). PR #40, branch worktree-issue-12, still has the head commit 1a2b3c4, and no check fails now: the job runs again. The riff daemon sends no verify request: the wave starts a verify of this commit when it has none. The pull request merges when its checks and its verify pass. When a check fails again, the wave starts no second session for this commit, and riff top shows stuck for the item. Run riff wave run to start the fix again.
 ```
 
 To see the stuck pull requests of the current wave, in your clone of
@@ -2113,7 +2144,7 @@ message for each check and head commit, with the name of the check, its
 app and its link:
 
 ```text
-PR #40, branch worktree-issue-12, passed its verify at commit 1a2b3c4, but the check ci of the app app.circleci.com failed. It is not a run of GitHub Actions, so no session fixes it, and it waits for you. Fix the cause with a push to worktree-issue-12, or run the check again in its app. Link: https://app.circleci.com/workflow/9
+PR #40, branch worktree-issue-12, cannot merge at commit 1a2b3c4: the check ci of the app app.circleci.com failed. It is not a run of GitHub Actions, so no session fixes it, and it waits for you. Fix the cause with a push to worktree-issue-12, or run the check again in its app. Link: https://app.circleci.com/workflow/9
 ```
 
 The app is the host of the link. A check with no link says so, and
@@ -2778,10 +2809,12 @@ first free work:
    never starts a held item, or an item that a session claims.
 3. It starts the verify of an item only when no session holds the
    item, and the full check of the head commit is done: each check that
-   the ruleset of the default branch requires, but `riff/verify`. A
-   repository with no CI has no such check, and its verify starts at
-   once. The verify is a new session: an author never verifies its own
-   item.
+   the ruleset of the default branch requires, but `riff/verify`, has a
+   run that ended. A check with no run is not done. A repository with no
+   CI has no such check, and its verify starts at once. With a failed
+   check on the head, it starts the fix of the check first (see
+   [See why a verify waits](#see-why-a-verify-waits)). The verify is a
+   new session: an author never verifies its own item.
 4. It starts one item at most 3 times in a run of the wave. Then your
    lead gets a message, and the item waits for you (see
    [Start a spent item again](#start-a-spent-item-again)).

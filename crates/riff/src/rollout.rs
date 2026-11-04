@@ -1071,10 +1071,12 @@ pub enum Verify {
 pub enum Stuck {
     /// Auto-merge is on and the head has a conflict with `main`.
     Conflict,
-    /// The verify passed, and these checks of the head failed.
+    /// These checks of the head failed, and the verify passed or waits
+    /// (#1575).
     Checks(Vec<String>),
-    /// The verify passed, and this check of the head failed. It is not a
-    /// run of GitHub Actions ([`Check::actions`]), so no session fixes it.
+    /// This check of the head failed, and the verify passed or waits. It is
+    /// not a run of GitHub Actions ([`Check::actions`]), so no session fixes
+    /// it.
     Other(OtherCheck),
     /// The verify passed, and auto-merge is off: nothing merges it.
     AutoMergeOff,
@@ -1476,7 +1478,10 @@ impl Pull {
     ///    from the merge queue, and a verify that did not fail:
     ///    [`Stuck::Conflict`]. A release has none: the wave rebases no
     ///    release.
-    /// 3. A passed verify and a failed check: [`Stuck::Checks`].
+    /// 3. A failed check, with a verify that passed or waits:
+    ///    [`Stuck::Checks`]. A verify that waits tests a head that cannot
+    ///    merge, and a failed check fails it (#1575): the fix of the check
+    ///    comes first, and the verify of the new head after it.
     /// 4. A passed verify and a removal from the merge queue, with no
     ///    push since: [`Stuck::Dequeued`].
     /// 5. A passed verify and auto-merge off: [`Stuck::AutoMergeOff`].
@@ -1519,8 +1524,14 @@ impl Pull {
     /// );
     /// // A conflict with auto-merge off is a pull request that nothing merges.
     /// assert_eq!(pull(vec![passed()], "CONFLICTING", false).stuck(false), Some(Stuck::AutoMergeOff));
-    /// // No verify yet: a conflict only. A failed verify: free work.
-    /// assert_eq!(pull(vec![gate("FAILURE")], "MERGEABLE", true).stuck(false), None);
+    /// // No verify yet: a failed check is the fix first (#1575), and so is a conflict. A failed verify: free work.
+    /// assert_eq!(
+    ///     pull(vec![gate("FAILURE")], "MERGEABLE", true).stuck(false),
+    ///     Some(Stuck::Checks(vec!["Gate".into()]))
+    /// );
+    /// assert_eq!(pull(vec![gate("")], "MERGEABLE", true).stuck(false), None, "a check that goes did not fail");
+    /// assert_eq!(pull(vec![gate("FAILURE")], "CONFLICTING", true).stuck(false), Some(Stuck::Conflict));
+    /// assert_eq!(pull(vec![Check::verify("FAILURE"), gate("FAILURE")], "MERGEABLE", true).stuck(false), None);
     /// assert_eq!(pull(vec![], "CONFLICTING", true).stuck(false), Some(Stuck::Conflict));
     /// assert_eq!(pull(vec![Check::verify("FAILURE")], "CONFLICTING", true).stuck(false), None);
     /// // A release hears of a failed check at any verify, and has no rebase.
@@ -1594,11 +1605,11 @@ impl Pull {
         if self.conflict() {
             return (!release).then_some(Stuck::Conflict);
         }
-        if verify != Verify::Passed {
-            return None;
-        }
         if !failed.is_empty() {
             return Some(Stuck::Checks(failed));
+        }
+        if verify != Verify::Passed {
+            return None;
         }
         if let Queue::Removed(reason) = &self.queue {
             return Some(Stuck::Dequeued(reason.clone()));

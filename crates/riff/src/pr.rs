@@ -1948,15 +1948,45 @@ pub fn check_runs(gh: &Gh, repo: &str, commit: &str, check: &str) -> Result<Vec<
     Ok(runs.check_runs)
 }
 
+/// True when the full check is done, from the state of each of its
+/// checks ([`gate_state`]): each check has a run, and each newest run is
+/// completed, with a success or not (01M5QYDHN27RC5SRHAB56PFKK0). A check
+/// with no run has not ended, so a failed check next to it is not done.
+/// [`full_state`] gives a failure first: it tells that a check failed,
+/// and `full_done` tells that each check ended.
+///
+/// ```
+/// use riff::pr::{Gate, full_done};
+///
+/// let failed = Gate::Ended("failure".into());
+/// assert!(full_done(&[Gate::Passed, Gate::Passed]));
+/// assert!(full_done(&[Gate::Passed, failed.clone()]));
+/// assert!(full_done(&[]));
+/// // A failed check next to a check with no run, or a run that goes.
+/// assert!(!full_done(&[failed.clone(), Gate::Missing]));
+/// assert!(!full_done(&[Gate::Passed, Gate::Missing]));
+/// assert!(!full_done(&[failed, Gate::Running]));
+/// ```
+pub fn full_done(states: &[Gate]) -> bool {
+    states
+        .iter()
+        .all(|state| matches!(state, Gate::Passed | Gate::Ended(_)))
+}
+
+/// The state of each check of `checks` on `commit` in `repo`, in order
+/// ([`gate_state`] of its check runs).
+pub fn gate_states(gh: &Gh, repo: &str, checks: &[String], commit: &str) -> Result<Vec<Gate>> {
+    checks
+        .iter()
+        .map(|check| Ok(gate_state(&check_runs(gh, repo, commit, check)?)))
+        .collect()
+}
+
 /// The state of the full check `checks` of `commit` in `repo`
 /// ([`repo_setup::full_check`]): the state of the check runs of each name
-/// ([`gate_state`]), and the state of all of them ([`full_state`]).
+/// ([`gate_states`]), and the state of all of them ([`full_state`]).
 pub fn gate_of(gh: &Gh, repo: &str, checks: &[String], commit: &str) -> Result<Gate> {
-    let mut states = Vec::new();
-    for check in checks {
-        states.push(gate_state(&check_runs(gh, repo, commit, check)?));
-    }
-    Ok(full_state(states))
+    Ok(full_state(gate_states(gh, repo, checks, commit)?))
 }
 
 /// The text of the file `path` in `repo` at `git_ref` (a commit or a
@@ -2132,7 +2162,7 @@ mod tests {
 
     use hygiene::{Issue, Link, Rules};
 
-    use super::{CheckRun, Gate, Gh, body, body_for, check, full_state, gate_state};
+    use super::{CheckRun, Gate, Gh, body, body_for, check, full_done, full_state, gate_state};
     use crate::text;
 
     const FULL: &str = "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
@@ -2235,6 +2265,53 @@ mod tests {
         ];
         let state = full_state([gate_state(&lint), gate_state(&docs)]);
         assert_eq!(state, Gate::Ended("cancelled".into()));
+    }
+
+    /// #1575: `Hygiene` failed and the job `Gate` has no run yet, as on
+    /// the commit cfed717 of #1573. The state is the failure, but the full
+    /// check is not done.
+    #[test]
+    fn a_failed_check_next_to_a_check_with_no_run_is_not_done() {
+        let hygiene = [run(
+            Some("2026-11-03T16:06:14Z"),
+            Some("2026-11-03T16:06:36Z"),
+            Some("failure"),
+        )];
+        let tests = [run(
+            Some("2026-11-03T16:06:20Z"),
+            Some("2026-11-03T16:10:53Z"),
+            Some("success"),
+        )];
+        let states = [gate_state(&hygiene), gate_state(&tests), gate_state(&[])];
+        assert_eq!(
+            full_state(states.clone()),
+            Gate::Ended("failure".into()),
+            "the state still gives the failure"
+        );
+        assert!(!full_done(&states));
+
+        // The job `Gate` runs, and then it ends.
+        let states = [
+            gate_state(&hygiene),
+            gate_state(&tests),
+            gate_state(&[run(None, None, None)]),
+        ];
+        assert!(!full_done(&states));
+        let states = [
+            gate_state(&hygiene),
+            gate_state(&tests),
+            gate_state(&[run(None, None, Some("failure"))]),
+        ];
+        assert!(full_done(&states));
+    }
+
+    #[test]
+    fn a_full_check_with_each_check_completed_is_done() {
+        let at = |c| [run(Some("2026-10-24T17:05:00Z"), None, Some(c))];
+        let states = [gate_state(&at("success")), gate_state(&at("skipped"))];
+        assert!(full_done(&states));
+        let states = [gate_state(&at("success")), gate_state(&at("cancelled"))];
+        assert!(full_done(&states));
     }
 
     fn refused(link: Link, summary: &str) -> String {
