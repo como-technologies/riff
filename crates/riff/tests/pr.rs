@@ -9,8 +9,13 @@
 
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::Arc;
+use std::time::Duration;
 
 use isolated::Isolated;
+
+use riff::ghcalls::Calls;
+use riff::pr::{self, Gh};
 
 use crate::book;
 
@@ -241,6 +246,61 @@ async fn pr_wait_fails_for_a_failed_required_check() {
         "{}",
         text(&out.stderr)
     );
+}
+
+/// One pull request that waits an hour uses at most 60 GraphQL points
+/// (01M6JE9ME6YSHV538GNPH7ZRGQ). The fake `gh` stays open and pending
+/// for a clock of one hour that moves with each wait and never sleeps,
+/// and `Calls` counts the points of each call. The one look that sees
+/// the merge is in the count.
+#[test]
+fn pr_wait_uses_at_most_60_points_in_an_hour() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_gh(
+        bin.path(),
+        r#"*'pr view 40 --json state,mergeCommit'*)
+    if [ -e "$dir/merged" ]; then echo '{"state":"MERGED","mergeCommit":{"oid":"9f8e7d6c"}}'
+    else echo '{"state":"OPEN","mergeCommit":null}'; fi ;;
+*'pr checks 40 --required --json name,bucket'*) echo '[{"name":"Gate","bucket":"pass"},{"name":"riff/verify","bucket":"pending"}]' ;;"#,
+    );
+    let calls = Arc::new(Calls::default());
+    let gh = Gh::at(bin.path().join("gh")).with_calls(calls.clone());
+    let mut clock = Duration::ZERO;
+    let mut sleeps = Vec::new();
+    let commit = pr::wait_with(&gh, 40, Duration::from_secs(30), |wait| {
+        sleeps.push(wait.as_secs());
+        clock += wait;
+        if clock >= Duration::from_secs(3600) {
+            std::fs::write(bin.path().join("merged"), "").unwrap();
+        }
+    })
+    .unwrap();
+    assert_eq!(commit, "9f8e7d6c");
+    // 4 waits of 30 s, then waits of 5 minutes.
+    assert_eq!(&sleeps[..6], [30, 30, 30, 30, 300, 300]);
+    assert!(sleeps[4..].iter().all(|s| *s == 300), "{sleeps:?}");
+    let (count, points) = calls.shown(riff::daemon::now_ms()).total();
+    assert_eq!(count, 2 * (sleeps.len() as u32 + 1), "{sleeps:?}");
+    assert!(points <= pr::WAIT_POINTS_AN_HOUR, "{points} points");
+    assert_eq!(points, pr::LOOK_POINTS * (sleeps.len() as u32 + 1));
+}
+
+/// A wait with a long `--every` is never faster than `--every`.
+#[test]
+fn pr_wait_with_a_long_every_waits_that_long() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_gh(
+        bin.path(),
+        r#"*'pr view 40 --json state,mergeCommit'*)
+    n=$(cat "$dir/views" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$dir/views"
+    if [ $n -lt 4 ]; then echo '{"state":"OPEN","mergeCommit":null}'
+    else echo '{"state":"MERGED","mergeCommit":{"oid":"9f8e7d6c"}}'; fi ;;"#,
+    );
+    let gh = Gh::at(bin.path().join("gh"));
+    let mut sleeps = Vec::new();
+    let every = Duration::from_secs(600);
+    pr::wait_with(&gh, 40, every, |wait| sleeps.push(wait.as_secs())).unwrap();
+    assert_eq!(sleeps, [600, 600, 600]);
 }
 
 const VERIFY: &str = r#"*'pr view 40 --json headRefOid,body'*) printf '%s' '{"headRefOid":"1a2b3c4d","body":"Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n"}' ;;
@@ -1473,6 +1533,10 @@ fn the_book_has_a_how_to_for_each_command() {
         ),
         ("Wait for the merge", &["riff pr wait 40"]),
         (
+            "Set how often a wait looks",
+            &["riff pr wait 40 --every 10"],
+        ),
+        (
             "Report a verify",
             &[
                 "gh pr checks 40",
@@ -1510,5 +1574,8 @@ fn the_book_has_a_how_to_for_each_command() {
     assert!(verify.contains("--commit <SHA>"), "{verify}");
     assert!(how_to("Report a verify").contains("`--commit 1a2b3c4`"));
     assert!(how_to("Open a pull request").contains("`--issue 12`"));
-    assert!(how_to("Wait for the merge").contains("`--every SECONDS`"));
+    let pace = how_to("Set how often a wait looks");
+    assert!(pace.contains("`--every SECONDS`"), "{pace}");
+    let points = format!("at most {} points an hour", pr::WAIT_POINTS_AN_HOUR);
+    assert!(pace.contains(&points), "{pace}");
 }

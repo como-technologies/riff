@@ -2075,15 +2075,32 @@ riff pr open --title "Show the wave" --file summary.md --refs
 riff pr wait 40
 ```
 
-It looks at pull request 40 every 30 seconds (`--every SECONDS`) until
-GitHub merges it, and then prints the merge commit. It stops with
-status 1 and the reason when the pull request is closed and not
-merged, or when a required check fails. A session runs it as a
-background task. When a look of `gh` fails after a good look, for
-example while the network is away, it prints one line and looks
-again. After the merge, it adds the total of the tokens to the issue:
-see
+It looks at pull request 40 until GitHub merges it, and then prints the
+merge commit. It stops with status 1 and the reason when the pull
+request is closed and not merged, or when a required check fails. A
+session runs it as a background task. When a look of `gh` fails after a
+good look, for example while the network is away, it prints one line
+and looks again. After the merge, it adds the total of the tokens to
+the issue: see
 [See the tokens of an issue](development.md#see-the-tokens-of-an-issue).
+
+### Set how often a wait looks
+
+Each look costs 3 GraphQL points of the token of your account, and all
+your sessions share that token. So `riff pr wait` looks every 30
+seconds for the first 2 minutes, and then every 5 minutes. One pull
+request that waits uses at most 60 points an hour. `--every SECONDS`
+sets the time of the first 2 minutes. The time after that is 5
+minutes, or `--every` when that is longer:
+
+```sh
+riff pr wait 40 --every 10
+```
+
+```mermaid
+flowchart LR
+    A["0 to 2 minutes:<br/>a look each --every seconds (30)"] --> B["after 2 minutes:<br/>a look each 5 minutes"]
+```
 
 ### When a pull request stops
 
