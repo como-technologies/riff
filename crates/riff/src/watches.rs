@@ -1823,10 +1823,8 @@ mod tests {
     /// on.
     #[tokio::test]
     async fn a_limit_of_github_stops_the_look_and_hides_its_fault() {
-        let wait = crate::ghcalls::Wait {
-            resource: crate::ghcalls::Resource::Graphql,
-            reset_ms: 1_793_718_035_000,
-        };
+        let wait =
+            crate::ghcalls::Wait::until(crate::ghcalls::Resource::Graphql, 1_793_718_035_000);
         let dir = daemon_dir();
         let ground = Ground::new(open_pull());
         watch(dir.path(), pull());

@@ -60,7 +60,7 @@
 //!
 //! - The loop looks at the wait before it admits to the room (`limit_pause`).
 //!   While a limit waits, it makes no look, no sweep and no report of a kept
-//!   result. It tells the lead one time for each reset, with the key
+//!   result. It tells the lead one time for each outage, with the key
 //!   [`ghcalls::Wait::key`], and sleeps until the reset. A look that ran into
 //!   the limit does the same at once.
 //! - The look of the daemon (`watch`) sleeps until the reset.
@@ -74,7 +74,7 @@
 //! ```mermaid
 //! flowchart TD
 //!     F["a look fails:<br/>the limit is out"] --> P{"limit_pause"}
-//!     P -- "a wait" --> T["tell the lead, one time for each reset"]
+//!     P -- "a wait" --> T["tell the lead, one time for each outage"]
 //!     T --> S["sleep until the reset:<br/>no look, no sweep, no call"]
 //!     S --> R["report_kept: each kept result of a verify"]
 //!     R --> L["look"]
@@ -98,7 +98,7 @@
 //! | An issue with no `Done when:` line ([`text::wave_no_done_when`]) | [`no_done_when_key`] | one time |
 //! | A pull request that is stuck ([`text::wave_stuck`]) | [`Notice::post_key`] | one time |
 //! | "Wave N is complete" ([`crate::watches::wave_complete_key`]) | `wave-complete-N` | one time |
-//! | The GitHub limit is out ([`text::wave_limit_waits`]) | [`ghcalls::Wait::key`] | one time for each reset |
+//! | The GitHub limit is out ([`text::wave_limit_waits`]) | [`ghcalls::Wait::key`] | one time for each outage |
 //! | The host waits for a fact, the pull of the image failed, a job failed, an item is spent | none | from each host |
 //!
 //! ```mermaid
@@ -1278,18 +1278,21 @@ pub fn until(wait: &ghcalls::Wait) -> Duration {
 }
 
 /// What a wave does while a limit of GitHub is out (#1557): how long it
-/// waits for the reset, and its word. The lead hears of a reset one time:
-/// `told` holds the reset of the last message. `None` when no limit is
-/// out.
+/// waits for the reset, and its word. The lead hears of an outage one
+/// time: `told` holds the key of the last message ([`ghcalls::Wait::key`]),
+/// and a new wait in the same outage has the same key (#1581). `None` when
+/// no limit is out.
 async fn limit_pause(
     world: &dyn World,
     wave: &Wave,
-    told: &mut Option<i64>,
+    told: &mut Option<String>,
 ) -> Option<(Duration, String)> {
     let wait = world.gh(&wave.repo).limit_wait()?;
-    if told.replace(wait.reset_ms) != Some(wait.reset_ms) {
+    let key = wait.key();
+    if told.as_ref() != Some(&key) {
         let body = text::wave_limit_waits(&wave.repo, &wait);
-        world.tell(wave, &body, Some(&wait.key())).await;
+        world.tell(wave, &body, Some(&key)).await;
+        *told = Some(key);
     }
     Some((until(&wait), text::wave_limit_word(&wait)))
 }
@@ -1316,8 +1319,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
     let mut waits = false;
     // The facts of the last look, to find an idle wave.
     let mut last: Option<Look> = None;
-    // The reset of the limit of GitHub that the lead heard of.
-    let mut limited: Option<i64> = None;
+    // The key of the limit of GitHub that the lead heard of.
+    let mut limited: Option<String> = None;
     loop {
         let world = daemon.world();
         // While a limit of GitHub is out, the wave makes no look, no sweep
@@ -6612,10 +6615,7 @@ esac
         let reset = now_secs() + 2;
         here.forge().limit_gh = Some(Arc::new(limited_gh(&bin, reset, "c1")));
         here.run();
-        let wait = crate::ghcalls::Wait {
-            resource: crate::ghcalls::Resource::Graphql,
-            reset_ms: reset * 1000,
-        };
+        let wait = crate::ghcalls::Wait::until(crate::ghcalls::Resource::Graphql, reset * 1000);
 
         // The loop and the look of the daemon ran into the limit. The lead
         // hears of it one time, with the reset.
@@ -6642,6 +6642,97 @@ esac
         here.until(0, |h| h.daemon.waves_shown()[0].word == text::WAVE_NO_WORK)
             .await;
         assert_eq!(here.forge().told.len(), 1, "no second message");
+    }
+
+    /// A fake `gh` for the tests of #1581: GitHub keeps two counters for the
+    /// token. `gh api rate_limit` answers from the counter that has points
+    /// (it resets at `other`). The first read of `rateLimit` lands on that
+    /// counter too, each later read on the counter that is out (it resets at
+    /// `reset`). Each other call fails on the limit until `fails_until`, and
+    /// the failures go in `limit.failed` with their second.
+    fn split_gh(dir: &Path, reset: i64, other: i64, fails_until: i64) -> pr::Gh {
+        let at = |secs: i64| {
+            chrono::DateTime::from_timestamp(secs, 0)
+                .unwrap()
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        };
+        let (good, out) = (at(other), at(reset));
+        let script = format!(
+            r#"#!/bin/sh
+dir=$(dirname "$0")
+printf '%s\n' "$*" >> "$dir/limit.log"
+case "$1 $2" in
+  "api rate_limit")
+    echo '{{"resources":{{"graphql":{{"limit":5000,"remaining":3204,"reset":{other}}}}}}}'
+    exit 0 ;;
+  "api graphql")
+    if [ "$(grep -c 'api graphql' "$dir/limit.log")" -lt 2 ]; then
+      echo '{{"data":{{"rateLimit":{{"remaining":3204,"resetAt":"{good}"}}}}}}'
+    else
+      echo '{{"data":{{"rateLimit":{{"remaining":0,"resetAt":"{out}"}}}}}}'
+    fi
+    exit 0 ;;
+esac
+if [ "$(date +%s)" -lt {fails_until} ]; then
+  printf '%s %s\n' "$(date +%s)" "$*" >> "$dir/limit.failed"
+  echo 'GraphQL: API rate limit already exceeded for user ID 1.' >&2
+  exit 1
+fi
+case "$1 $2" in
+  "pr list") echo '[]' ;;
+  *) echo '{{}}' ;;
+esac
+"#
+        );
+        pr::Gh::at(isolated::write_program(dir.join("gh"), script))
+            .with_calls(Arc::new(crate::ghcalls::Calls::default()))
+    }
+
+    /// 01M6H1N2XYKK6QRCJS02RZJHKZ (#1581): a call fails on the counter that
+    /// is out, and `gh api rate_limit` shows points left. The wave waits for
+    /// the reset of the counter that failed, and the lead hears one time. A
+    /// second call that fails in the same outage starts a new wait, and
+    /// gives no message.
+    #[tokio::test]
+    async fn the_wait_ends_at_the_reset_of_the_counter_that_failed_and_the_lead_hears_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 3, free).await;
+        let bin = here._root.path().join("bin");
+        let reset = now_secs() + 2;
+        // The counter of `rate_limit` resets 34 seconds later, and the
+        // counter that failed still fails 2 seconds after its reset.
+        let gh = split_gh(&bin, reset, reset + 34, reset + 3);
+        here.forge().limit_gh = Some(Arc::new(gh));
+        here.run();
+        let wait = crate::ghcalls::Wait::until(crate::ghcalls::Resource::Graphql, reset * 1000);
+
+        // The lead hears of the wait with the reset of the counter that
+        // failed, not the reset of the counter that `rate_limit` shows.
+        here.until(0, |h| !h.forge().told.is_empty()).await;
+        assert_eq!(here.forge().told, [text::wave_limit_waits("o/r", &wait)]);
+        assert_eq!(here.forge().told_keys, [Some(wait.key())]);
+        let word = here.daemon.waves_shown()[0].word.clone();
+        assert_eq!(word, text::wave_limit_word(&wait));
+        let calls = limit_log(&bin);
+        assert!(
+            calls.iter().any(|c| c.starts_with("api graphql")),
+            "{calls:?}"
+        );
+
+        // The wait ends one second after the reset, and the call fails
+        // again: the counter is not over yet. It is the same outage.
+        let failed_after_reset = |dir: &Path| {
+            std::fs::read_to_string(dir.join("limit.failed"))
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| line.split_once(' ')?.0.parse::<i64>().ok())
+                .any(|at| at > reset)
+        };
+        here.until(0, |_| failed_after_reset(&bin)).await;
+        here.until(0, |h| h.daemon.waves_shown()[0].word == text::WAVE_NO_WORK)
+            .await;
+        assert_eq!(here.forge().told.len(), 1, "no second message");
+        assert_eq!(here.forge().told_keys, [Some(wait.key())]);
     }
 
     /// 01M6H1N332TZ17CQQ8A5CQKG7B (#1557): a verify whose report fails on the

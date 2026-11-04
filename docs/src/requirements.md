@@ -5106,15 +5106,14 @@ of this part when they merge.
   deletes no old riff-kept branch. Supersedes 01M5R13DGMTNWPY88A3EG49WWS
   and 01M5R56GN3DC09GAPAF69GENEZ in part.
 - **01M6H1N2XYKK6QRCJS02RZJHKZ** When a call of gh fails because a limit
-  of GitHub is out (a rate limit, GraphQL or REST), the daemon reads the
-  reset time of that resource with gh api rate_limit, and waits for it.
-  Until the reset, no gh of the daemon makes a call of that resource:
-  the call fails at once and costs nothing. A limit that shows points
-  left is a secondary limit, and the wait is one minute. The wave makes
-  no look, no sweep and no report until the reset, the look of the
-  daemon makes no look, and the watches make no look and tell no fault.
-  The lead of each wave hears of the wait one time, with the reset time,
-  in a post whose key names the resource and the reset (#1557).
+  of GitHub is out (a rate limit, GraphQL or REST), the daemon waits for
+  the reset of that resource. The reset comes from the call that failed
+  (01M6JEQ2HQBNYVRH75ZS8XQPBB). Until the reset, no gh of the daemon
+  makes a call of that resource: the call fails at once and costs
+  nothing. The wave makes no look, no sweep and no report until the
+  reset, the look of the daemon makes no look, and the watches make no
+  look and tell no fault. The lead of each wave hears of the wait one
+  time, with the reset time (#1557).
 - **01M6H1N30GXWYKX93CHPFZ11H9** riff daemon status shows each limit of
   GitHub that waits: the resource and the reset time (#1557).
 - **01M6H1N332TZ17CQQ8A5CQKG7B** A verify of a wave whose result cannot
@@ -5132,6 +5131,21 @@ of this part when they merge.
   gets a note that says so, and not the message that the branch has no
   open pull request. The wave looks at the pull request after the reset
   (#1557).
+- **01M6JEQ2HQBNYVRH75ZS8XQPBB** The reset of the wait for a limit of
+  GitHub comes from the call that failed, and not from any read, as
+  GitHub keeps more than one counter for a token and a read can land on
+  a counter that has points. The order is: the header x-ratelimit-reset
+  in the answer of the failed call; a secondary limit, which has no
+  reset, waits one minute; a counter that shows no points left, read
+  with gh api rate_limit and, for GraphQL, with some reads of rateLimit
+  { remaining resetAt }. When no read shows a counter that is out, the
+  wait ends at the latest reset that riff saw, the end of the hour of
+  that counter, and riff daemon status and the message to the lead say
+  that the time is a guess. The key of the post to the lead names the
+  outage, the resource and the hour of the counter, and not the reset
+  time: the lead hears of an outage one time, and a second failed call
+  in the same outage gives no message (#1581). Supersedes
+  01M6H1N2XYKK6QRCJS02RZJHKZ in part.
 
 ### The lead, the view and the takeover
 

@@ -53,24 +53,46 @@
 //!
 //! When a call of `gh` fails because a limit of GitHub is out, riff does
 //! not try again each minute: each try costs a call, and the limit stays
-//! out until its reset (#1557). [`Gh`](crate::pr::Gh) reads the reset with
-//! `gh api rate_limit`, which no limit counts, and [`Calls`] keeps a
-//! [`Wait`] for the resource: GraphQL and REST have a limit each
-//! ([`Resource`]). Until the reset the `gh` of the daemon makes no call of
-//! that resource, and the call fails at once with [`Limited`]. The loops
-//! of the daemon look at the wait first: the wave waits for the reset and
-//! tells the lead one time, the look and the watches wait, and the end
-//! step of a verify keeps its result (see [`crate::wave`]). When the
-//! counter still has points, the limit is a secondary limit of GitHub, and
-//! riff waits [`SECONDARY_WAIT_MS`] only.
+//! out until its reset (#1557). [`Calls`] keeps a [`Wait`] for the
+//! resource: GraphQL and REST have a limit each ([`Resource`]). Until the
+//! reset the `gh` of the daemon makes no call of that resource, and the
+//! call fails at once with [`Limited`]. The loops of the daemon look at the
+//! wait first: the wave waits for the reset and tells the lead one time,
+//! the look and the watches wait, and the end step of a verify keeps its
+//! result (see [`crate::wave`]).
+//!
+//! GitHub keeps more than one counter for one token. A read can answer
+//! from a counter that still has points while the call failed on the
+//! counter that is out (#1581). So the reset comes from the call that
+//! failed, and not from any read ([`Gh`](crate::pr::Gh)):
+//!
+//! 1. A header `x-ratelimit-reset` in the answer of the failed call
+//!    ([`header_reset`]), as `gh api -i` and `GH_DEBUG=api` show it.
+//! 2. A secondary limit ([`is_secondary`]) has no reset: riff waits
+//!    [`SECONDARY_WAIT_MS`].
+//! 3. A counter that shows no points: the reply of `gh api rate_limit`
+//!    ([`counter_in`]), or for GraphQL a few reads of
+//!    `rateLimit { remaining resetAt }` ([`probe_in`]), as each read can
+//!    land on another counter.
+//! 4. When no counter shows no points, riff waits for the latest reset
+//!    that it saw: the end of the hour of that counter. The [`Wait`] says
+//!    that it is a guess ([`Wait::guessed`]), and so does the message to
+//!    the lead.
+//!
+//! The key of the message to the lead names the outage, not the reset
+//! time: the resource and the hour of the counter ([`Wait::key`]).
 //!
 //! ```mermaid
 //! flowchart TD
 //!     C["a call of gh"] --> W{"a wait for its resource?"}
 //!     W -- yes --> R["fails at once: Limited, no call"]
 //!     W -- no --> G["gh"]
-//!     G -- "fails: rate limit" --> A["gh api rate_limit:<br/>the reset of the resource"]
-//!     A --> K["Calls keeps the Wait"]
+//!     G -- "fails: rate limit" --> H{"a reset in its answer,<br/>or a secondary limit?"}
+//!     H -- yes --> K["Calls keeps the Wait"]
+//!     H -- no --> A{"a counter with no points:<br/>gh api rate_limit, rateLimit reads?"}
+//!     A -- yes --> K
+//!     A -- no --> E["the end of the hour of the counter<br/>that riff saw: a guess"]
+//!     E --> K
 //!     K --> S["riff daemon status shows it"]
 //! ```
 
@@ -100,13 +122,19 @@ pub const OTHER: &str = "other";
 /// whole seconds, and a call in the same second can still fail.
 pub const RESET_SLACK_MS: i64 = 1_000;
 
-/// How long riff waits for a limit when it cannot read the reset.
+/// How long riff waits for a limit when it cannot read any counter.
 pub const UNREAD_WAIT_MS: i64 = 300_000;
 
-/// How long riff waits for a secondary limit of GitHub: the counter of the
-/// resource still has points, but GitHub refuses the calls for a short
-/// time.
+/// How long riff waits for a secondary limit of GitHub: GitHub refuses the
+/// calls for a short time, and has no reset for it.
 pub const SECONDARY_WAIT_MS: i64 = 60_000;
+
+/// How many times riff reads `rateLimit` of GraphQL to find the counter
+/// that is out: each read can land on another counter (#1581).
+pub const PROBES: usize = 4;
+
+/// The query of a read of the GraphQL counter.
+pub const PROBE_QUERY: &str = "{ rateLimit { remaining resetAt } }";
 
 /// One call of `gh`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,8 +156,8 @@ pub struct Calls {
 struct Inner {
     calls: VecDeque<Call>,
     left: Option<Left>,
-    /// The reset of each resource that waits.
-    waits: BTreeMap<Resource, i64>,
+    /// The wait of each resource that waits.
+    waits: BTreeMap<Resource, Wait>,
 }
 
 /// A limit of GitHub. GraphQL and REST count apart.
@@ -190,30 +218,51 @@ pub struct Wait {
     pub resource: Resource,
     /// When the limit starts again, in milliseconds since the epoch.
     pub reset_ms: i64,
+    /// True when riff found no reset of the counter that is out: the wait
+    /// is the end of the hour of a counter that it saw (#1581).
+    #[serde(default)]
+    pub guessed: bool,
 }
 
 impl Wait {
+    /// A wait for a reset that riff read.
+    pub fn until(resource: Resource, reset_ms: i64) -> Self {
+        Self {
+            resource,
+            reset_ms,
+            guessed: false,
+        }
+    }
+
     /// When riff may call again: [`RESET_SLACK_MS`] after the reset.
     pub fn until_ms(&self) -> i64 {
         self.reset_ms + RESET_SLACK_MS
     }
 
-    /// The key of the post that tells the lead of this wait. Each host
-    /// of one person reads the same reset, so the lead gets one message
-    /// (01M5TKG2K1AYK1KE7C2AA2W9DS).
+    /// The key of the post that tells the lead of this wait. It names the
+    /// outage: the resource and the hour of the counter. The counters of
+    /// one token and the waits of one outage give the same key, and each
+    /// host of one person reads the same hour, so the lead gets one
+    /// message (01M5TKG2K1AYK1KE7C2AA2W9DS, #1581).
     ///
     /// ```
     /// use riff::ghcalls::{Resource, Wait};
     ///
-    /// let wait = Wait { resource: Resource::Graphql, reset_ms: 1_793_718_035_000 };
-    /// assert_eq!(wait.key(), "github-limit-graphql-1793718035");
+    /// let wait = Wait::until(Resource::Graphql, 1_793_718_035_000);
+    /// assert_eq!(wait.key(), "github-limit-graphql-2026110315");
+    /// // Two counters of one token, 34 seconds apart: the same outage.
+    /// let other = Wait::until(Resource::Graphql, 1_793_718_069_000);
+    /// assert_eq!(other.key(), wait.key());
+    /// // The next hour is a new outage, and REST has its own.
+    /// assert_ne!(Wait::until(Resource::Graphql, 1_793_721_635_000).key(), wait.key());
+    /// assert_ne!(Wait::until(Resource::Rest, 1_793_718_035_000).key(), wait.key());
     /// ```
     pub fn key(&self) -> String {
-        format!(
-            "github-limit-{}-{}",
-            self.resource.key(),
-            self.reset_ms / 1000
-        )
+        // Half an hour on: the resets of the counters of one token are
+        // some minutes apart at the most, and they share the nearest hour.
+        let hour = chrono::DateTime::from_timestamp_millis(self.reset_ms + 1_800_000)
+            .map_or_else(String::new, |at| at.format("%Y%m%d%H").to_string());
+        format!("github-limit-{}-{hour}", self.resource.key())
     }
 }
 
@@ -253,30 +302,99 @@ pub fn is_limit_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<Limited>().is_some() || is_limit(&format!("{error:#}"))
 }
 
-/// The reset of `resource` in the reply `stdout` of `gh api rate_limit`,
-/// in milliseconds since the epoch. When the counter still has points, the
-/// limit is a secondary limit, and the wait is [`SECONDARY_WAIT_MS`] from
-/// `now_ms`.
+/// What one reading shows of a counter of GitHub.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Counter {
+    /// The points or requests left in the counter that answered.
+    pub remaining: u64,
+    /// When that counter starts again, in milliseconds since the epoch.
+    pub reset_ms: i64,
+}
+
+/// The counter of `resource` in the reply `stdout` of `gh api rate_limit`.
+/// The reply comes from one counter of the token: it can show points left
+/// while another counter is out (#1581).
 ///
 /// ```
-/// use riff::ghcalls::{Resource, reset_in};
+/// use riff::ghcalls::{Counter, Resource, counter_in};
 ///
 /// let reply = r#"{"resources":{
 ///     "core":{"limit":5000,"remaining":4000,"reset":1793718035},
 ///     "graphql":{"limit":5000,"remaining":0,"reset":1793718035}}}"#;
-/// assert_eq!(reset_in(reply, Resource::Graphql, 1_793_717_000_000), Some(1_793_718_035_000));
-/// // REST has points left: GitHub refused for a secondary limit.
-/// assert_eq!(reset_in(reply, Resource::Rest, 1_793_717_000_000), Some(1_793_717_060_000));
-/// assert_eq!(reset_in("not json", Resource::Rest, 0), None);
+/// let out = Counter { remaining: 0, reset_ms: 1_793_718_035_000 };
+/// assert_eq!(counter_in(reply, Resource::Graphql), Some(out));
+/// assert_eq!(counter_in(reply, Resource::Rest).unwrap().remaining, 4000);
+/// assert_eq!(counter_in("not json", Resource::Rest), None);
 /// ```
-pub fn reset_in(stdout: &str, resource: Resource, now_ms: i64) -> Option<i64> {
+pub fn counter_in(stdout: &str, resource: Resource) -> Option<Counter> {
     let reply: serde_json::Value = serde_json::from_str(stdout).ok()?;
     let counter = &reply["resources"][resource.key()];
-    let reset_ms = counter["reset"].as_i64()?.checked_mul(1000)?;
-    if counter["remaining"].as_u64()? > 0 {
-        return Some(now_ms + SECONDARY_WAIT_MS);
+    Some(Counter {
+        remaining: counter["remaining"].as_u64()?,
+        reset_ms: counter["reset"].as_i64()?.checked_mul(1000)?,
+    })
+}
+
+/// The counter in a reply of GraphQL that asked for
+/// `rateLimit { remaining resetAt }` ([`PROBE_QUERY`]). Each read can
+/// answer from another counter of the token (#1581).
+///
+/// ```
+/// use riff::ghcalls::{Counter, probe_in};
+///
+/// let reply = r#"{"data":{"rateLimit":{"remaining":0,"resetAt":"2026-11-03T15:00:35Z"}}}"#;
+/// let out = Counter { remaining: 0, reset_ms: 1_793_718_035_000 };
+/// assert_eq!(probe_in(reply), Some(out));
+/// assert_eq!(probe_in(r#"{"data":{}}"#), None);
+/// ```
+pub fn probe_in(stdout: &str) -> Option<Counter> {
+    let left = left_in(stdout, 0)?;
+    let at = chrono::DateTime::parse_from_rfc3339(&left.reset_at).ok()?;
+    Some(Counter {
+        remaining: left.remaining,
+        reset_ms: at.timestamp_millis(),
+    })
+}
+
+/// The reset in the header `x-ratelimit-reset` of the answer of a call, in
+/// milliseconds since the epoch. `gh api -i` writes the headers to stdout,
+/// and `GH_DEBUG=api` writes them to stderr. A header `x-ratelimit-remaining`
+/// above zero says that the counter is not out: there is no reset then.
+///
+/// ```
+/// use riff::ghcalls::header_reset;
+///
+/// let debug = "< HTTP/2.0 403 Forbidden\n< X-Ratelimit-Remaining: 0\n< X-Ratelimit-Reset: 1793718015\n";
+/// assert_eq!(header_reset(debug), Some(1_793_718_015_000));
+/// assert_eq!(header_reset("x-ratelimit-reset: 1793718015\r\n"), Some(1_793_718_015_000));
+/// assert_eq!(header_reset("x-ratelimit-remaining: 3204\nx-ratelimit-reset: 1793718049\n"), None);
+/// assert_eq!(header_reset("GraphQL: API rate limit already exceeded"), None);
+/// ```
+pub fn header_reset(text: &str) -> Option<i64> {
+    let header = |name: &str| {
+        text.lines().find_map(|line| {
+            let line = line.trim_start_matches(['<', ' ']).to_ascii_lowercase();
+            let value = line.strip_prefix(name)?.strip_prefix(':')?;
+            value.trim().parse::<i64>().ok()
+        })
+    };
+    if header("x-ratelimit-remaining").is_some_and(|left| left > 0) {
+        return None;
     }
-    Some(reset_ms.max(now_ms))
+    header("x-ratelimit-reset")?.checked_mul(1000)
+}
+
+/// True when `stderr` of a failed `gh` says that the limit is a secondary
+/// limit of GitHub. It has no reset: it ends after a short time.
+///
+/// ```
+/// use riff::ghcalls::is_secondary;
+///
+/// assert!(is_secondary("You have exceeded a secondary rate limit."));
+/// assert!(!is_secondary("GraphQL: API rate limit already exceeded for user ID 1."));
+/// ```
+pub fn is_secondary(stderr: &str) -> bool {
+    stderr.to_ascii_lowercase().contains("secondary rate limit")
 }
 
 /// The GraphQL points that GitHub said are left, in the reply of a query
@@ -407,30 +525,30 @@ impl Calls {
         }
     }
 
-    /// Starts the wait of `resource` for its reset at `reset_ms`. It
-    /// gives `true` when this starts the wait, and `false` when the
-    /// resource waits already: a call that was on its way when the limit
-    /// ran out fails later, and it starts no second wait.
+    /// Starts `wait` for the reset of its resource. It gives `true` when
+    /// this starts the wait, and `false` when the resource waits already:
+    /// a call that was on its way when the limit ran out fails later, and
+    /// it starts no second wait.
     ///
     /// ```
-    /// use riff::ghcalls::{Calls, Resource};
+    /// use riff::ghcalls::{Calls, Resource, Wait};
     ///
     /// let calls = Calls::default();
-    /// assert!(calls.start_wait(Resource::Graphql, 60_000, 0));
-    /// assert!(!calls.start_wait(Resource::Graphql, 90_000, 1_000));
+    /// assert!(calls.start_wait(Wait::until(Resource::Graphql, 60_000), 0));
+    /// assert!(!calls.start_wait(Wait::until(Resource::Graphql, 90_000), 1_000));
     /// // The wait ends one second after the reset. REST has no wait.
     /// assert!(calls.waiting(Resource::Graphql, 60_999).is_some());
     /// assert!(calls.waiting(Resource::Graphql, 61_000).is_none());
     /// assert!(calls.waiting(Resource::Rest, 0).is_none());
     /// // The wait is over: a new limit starts a new wait.
-    /// assert!(calls.start_wait(Resource::Graphql, 7_260_000, 3_700_000));
+    /// assert!(calls.start_wait(Wait::until(Resource::Graphql, 7_260_000), 3_700_000));
     /// ```
-    pub fn start_wait(&self, resource: Resource, reset_ms: i64, now_ms: i64) -> bool {
+    pub fn start_wait(&self, wait: Wait, now_ms: i64) -> bool {
         let mut inner = self.lock();
-        if inner.waiting(resource, now_ms).is_some() {
+        if inner.waiting(wait.resource, now_ms).is_some() {
             return false;
         }
-        inner.waits.insert(resource, reset_ms);
+        inner.waits.insert(wait.resource, wait);
         true
     }
 
@@ -451,8 +569,7 @@ impl Calls {
 
 impl Inner {
     fn waiting(&self, resource: Resource, now_ms: i64) -> Option<Wait> {
-        let reset_ms = *self.waits.get(&resource)?;
-        let wait = Wait { resource, reset_ms };
+        let wait = *self.waits.get(&resource)?;
         (wait.until_ms() > now_ms).then_some(wait)
     }
 
@@ -701,19 +818,13 @@ mod tests {
     fn a_wait_shows_until_its_reset_and_the_last_one_counts() {
         let calls = Calls::default();
         assert_eq!(calls.limit_wait(0), None);
-        calls.start_wait(Resource::Rest, 30_000, 0);
-        calls.start_wait(Resource::Graphql, 90_000, 0);
-        let last = Wait {
-            resource: Resource::Graphql,
-            reset_ms: 90_000,
-        };
+        calls.start_wait(Wait::until(Resource::Rest, 30_000), 0);
+        calls.start_wait(Wait::until(Resource::Graphql, 90_000), 0);
+        let last = Wait::until(Resource::Graphql, 90_000);
         assert_eq!(calls.limit_wait(10_000), Some(last));
         assert_eq!(calls.shown(10_000).waits.len(), 2);
         // REST starts again first: the wait that stands is GraphQL.
-        let rest = Wait {
-            resource: Resource::Rest,
-            reset_ms: 30_000,
-        };
+        let rest = Wait::until(Resource::Rest, 30_000);
         assert_eq!(calls.waiting(Resource::Rest, 31_000), None, "{rest:?}");
         assert_eq!(calls.shown(31_000).waits, [last]);
         assert_eq!(calls.limit_wait(91_000), None);
@@ -722,10 +833,7 @@ mod tests {
 
     #[test]
     fn a_limit_is_found_in_the_error_of_gh_and_in_a_refused_call() {
-        let limited = anyhow::Error::new(Limited(Wait {
-            resource: Resource::Rest,
-            reset_ms: 0,
-        }));
+        let limited = anyhow::Error::new(Limited(Wait::until(Resource::Rest, 0)));
         assert!(is_limit_error(&limited));
         let gh = anyhow::anyhow!(
             "gh pr view 40: GraphQL: API rate limit already exceeded for user ID 1."
