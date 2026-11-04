@@ -41,9 +41,10 @@
 //! ([`crate::ghcalls`]) cannot see its calls, and it uses the token of
 //! the person like all other sessions. A look is 3 GraphQL points, so
 //! the pace is slow: each `--every` seconds (30) for the first 2
-//! minutes, then each 5 minutes ([`pace`]). One pull request that
-//! waits uses at most [`WAIT_POINTS_AN_HOUR`] points an hour
-//! (01M6JE9ME6YSHV538GNPH7ZRGQ).
+//! minutes, then each 5 minutes ([`pace`]). At that default pace, one
+//! pull request that waits uses at most [`WAIT_POINTS_AN_HOUR`] points
+//! an hour. A shorter `--every` costs more: `--every 10` uses 72
+//! points in the first hour (01M6JE9ME6YSHV538GNPH7ZRGQ).
 //!
 //! ```mermaid
 //! flowchart LR
@@ -1328,8 +1329,9 @@ pub const SLOW_EVERY: Duration = Duration::from_secs(300);
 pub const LOOK_POINTS: u32 = 3;
 
 /// The most GraphQL points that `riff pr wait` uses in one hour for one
-/// pull request (01M6JE9ME6YSHV538GNPH7ZRGQ). The limit of a token is
-/// 5,000 an hour for all its sessions.
+/// pull request at the default `--every` of 30 seconds
+/// (01M6JE9ME6YSHV538GNPH7ZRGQ). The limit of a token is 5,000 an hour
+/// for all its sessions.
 pub const WAIT_POINTS_AN_HOUR: u32 = 60;
 
 /// How long `riff pr wait` waits after a look, when it waits `elapsed`
@@ -1347,14 +1349,25 @@ pub const WAIT_POINTS_AN_HOUR: u32 = 60;
 /// assert_eq!(pace(every, FAST_WAIT), secs(300));
 /// assert_eq!(pace(secs(600), FAST_WAIT), secs(600));
 ///
-/// // The first hour has the most looks: 5 fast ones, then 11 slow ones.
-/// let (mut at, mut looks) = (secs(0), 0);
-/// while at < secs(3600) {
-///     looks += 1;
-///     at += pace(every, at);
-/// }
-/// assert_eq!(looks, 16);
-/// assert!(looks * LOOK_POINTS <= WAIT_POINTS_AN_HOUR);
+/// // The looks of the first hour.
+/// let looks_in_an_hour = |every| {
+///     let (mut at, mut looks) = (secs(0), 0);
+///     while at < secs(3600) {
+///         looks += 1;
+///         at += pace(every, at);
+///     }
+///     looks
+/// };
+///
+/// // The default pace has the most looks in the first hour: 5 fast
+/// // ones, then 11 slow ones. It stays under the bound.
+/// assert_eq!(looks_in_an_hour(secs(30)), 16);
+/// assert!(16 * LOOK_POINTS <= WAIT_POINTS_AN_HOUR);
+///
+/// // A shorter `--every` breaks the bound: 24 looks, 72 points.
+/// assert_eq!(looks_in_an_hour(secs(10)), 24);
+/// assert_eq!(24 * LOOK_POINTS, 72);
+/// assert!(24 * LOOK_POINTS > WAIT_POINTS_AN_HOUR);
 /// ```
 pub fn pace(every: Duration, elapsed: Duration) -> Duration {
     if elapsed < FAST_WAIT {

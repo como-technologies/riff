@@ -248,13 +248,13 @@ async fn pr_wait_fails_for_a_failed_required_check() {
     );
 }
 
-/// One pull request that waits an hour uses at most 60 GraphQL points
-/// (01M6JE9ME6YSHV538GNPH7ZRGQ). The fake `gh` stays open and pending
-/// for a clock of one hour that moves with each wait and never sleeps,
-/// and `Calls` counts the points of each call. The one look that sees
-/// the merge is in the count.
-#[test]
-fn pr_wait_uses_at_most_60_points_in_an_hour() {
+/// A wait of one hour for a pull request that stays open and pending,
+/// at `--every` of `every` seconds (01M6JE9ME6YSHV538GNPH7ZRGQ). The fake
+/// `gh` stays open for a clock of one hour that moves with each wait
+/// and never sleeps, and `Calls` counts the points of each call. The one
+/// look that sees the merge is in the count. Returns the seconds of each
+/// wait and the points.
+fn wait_an_hour(every: u64) -> (Vec<u64>, u32) {
     let bin = tempfile::tempdir().unwrap();
     fake_gh(
         bin.path(),
@@ -267,7 +267,7 @@ fn pr_wait_uses_at_most_60_points_in_an_hour() {
     let gh = Gh::at(bin.path().join("gh")).with_calls(calls.clone());
     let mut clock = Duration::ZERO;
     let mut sleeps = Vec::new();
-    let commit = pr::wait_with(&gh, 40, Duration::from_secs(30), |wait| {
+    let commit = pr::wait_with(&gh, 40, Duration::from_secs(every), |wait| {
         sleeps.push(wait.as_secs());
         clock += wait;
         if clock >= Duration::from_secs(3600) {
@@ -276,13 +276,38 @@ fn pr_wait_uses_at_most_60_points_in_an_hour() {
     })
     .unwrap();
     assert_eq!(commit, "9f8e7d6c");
+    let (count, points) = calls.shown(riff::daemon::now_ms()).total();
+    assert_eq!(count, 2 * (sleeps.len() as u32 + 1), "{sleeps:?}");
+    assert_eq!(points, pr::LOOK_POINTS * (sleeps.len() as u32 + 1));
+    (sleeps, points)
+}
+
+/// At the default pace, one pull request that waits an hour uses at most
+/// 60 GraphQL points (01M6JE9ME6YSHV538GNPH7ZRGQ).
+#[test]
+fn pr_wait_uses_at_most_60_points_in_an_hour_at_the_default_pace() {
+    let (sleeps, points) = wait_an_hour(30);
     // 4 waits of 30 s, then waits of 5 minutes.
     assert_eq!(&sleeps[..6], [30, 30, 30, 30, 300, 300]);
     assert!(sleeps[4..].iter().all(|s| *s == 300), "{sleeps:?}");
-    let (count, points) = calls.shown(riff::daemon::now_ms()).total();
-    assert_eq!(count, 2 * (sleeps.len() as u32 + 1), "{sleeps:?}");
     assert!(points <= pr::WAIT_POINTS_AN_HOUR, "{points} points");
-    assert_eq!(points, pr::LOOK_POINTS * (sleeps.len() as u32 + 1));
+}
+
+/// A shorter `--every` costs more: the example of the book, `--every
+/// 10`, uses 72 points in the first hour, over the bound of the default
+/// pace (01M6JE9ME6YSHV538GNPH7ZRGQ).
+#[test]
+fn pr_wait_with_every_10_uses_72_points_in_the_first_hour() {
+    let (sleeps, points) = wait_an_hour(10);
+    // 12 waits of 10 s in the first 2 minutes, then waits of 5 minutes.
+    assert!(sleeps[..12].iter().all(|s| *s == 10), "{sleeps:?}");
+    assert!(sleeps[12..].iter().all(|s| *s == 300), "{sleeps:?}");
+    // 24 looks in the first hour, and the look after it that sees the
+    // merge.
+    assert_eq!(sleeps.len(), 24, "{sleeps:?}");
+    assert_eq!(pr::LOOK_POINTS * sleeps.len() as u32, 72);
+    assert_eq!(points, 72 + pr::LOOK_POINTS);
+    assert!(points - pr::LOOK_POINTS > pr::WAIT_POINTS_AN_HOUR);
 }
 
 /// A wait with a long `--every` is never faster than `--every`.
@@ -1578,4 +1603,6 @@ fn the_book_has_a_how_to_for_each_command() {
     assert!(pace.contains("`--every SECONDS`"), "{pace}");
     let points = format!("at most {} points an hour", pr::WAIT_POINTS_AN_HOUR);
     assert!(pace.contains(&points), "{pace}");
+    assert!(pace.contains("default pace"), "{pace}");
+    assert!(pace.contains("72 points in the first hour"), "{pace}");
 }
