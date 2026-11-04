@@ -1791,7 +1791,7 @@ pub fn claims(sessions: &[SessionInfo]) -> HashSet<String> {
 /// cost of the query and the points that are left, with no more call
 /// ([`crate::ghcalls`], #1549).
 pub const QUEUE_QUERY: &str = "query($owner: String!, $name: String!) { \
-    rateLimit { cost remaining resetAt } \
+    rateLimit { cost limit remaining resetAt } \
     repository(owner: $owner, name: $name) { \
     pullRequests(states: OPEN, first: 100) { nodes { number isInMergeQueue \
     timelineItems(last: 1, itemTypes: [PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT, \

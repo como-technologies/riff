@@ -235,6 +235,9 @@ pub struct Gh {
     /// Where the count of the calls goes ([`Gh::with_calls`]). With
     /// none, the calls are not counted.
     calls: Option<Arc<Calls>>,
+    /// Where a riff process other than the daemon adds its calls
+    /// ([`Gh::here`], #1582). With none, the calls are not added.
+    tally: Option<ghcalls::Tally>,
     /// True when the reads of this `gh` share their replies with the other
     /// `gh` of the process ([`Gh::read`]).
     shares: bool,
@@ -257,6 +260,7 @@ impl Default for Gh {
             token: None,
             caller: ghcalls::OTHER,
             calls: None,
+            tally: None,
             shares: false,
             accepts: Duration::ZERO,
             retries: 0,
@@ -335,6 +339,52 @@ impl Gh {
     /// ([`crate::ghcalls`]).
     pub fn by(self, caller: &'static str) -> Self {
         Self { caller, ..self }
+    }
+
+    /// The `gh` of a command of `riff` (`riff top`, `riff pr wait`, ...)
+    /// that runs in a process of its own. Its calls go to the tally of the
+    /// daemon, under the name `caller`, so that `riff daemon status` shows
+    /// them ([`ghcalls::Tally`], #1582). A process on the host writes the
+    /// folder of the daemon. A process in a container sends its calls to
+    /// the daemon on the socket of its session.
+    ///
+    /// ```
+    /// let gh = riff::pr::Gh::here("top");
+    /// assert_eq!(gh.caller(), "top");
+    /// ```
+    pub fn here(caller: &'static str) -> Self {
+        Self::default()
+            .by(caller)
+            .with_tally(ghcalls::Tally::here())
+    }
+
+    /// The same `gh` whose calls go to `tally` ([`Gh::here`]). A `gh` that
+    /// counts its calls tells the real `gh` so
+    /// ([`crate::gh_wrapper::COUNTED_VAR`]): the wrapper of a container
+    /// counts the call no more.
+    ///
+    /// ```
+    /// use riff::ghcalls::Tally;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let gh = isolated::write_program(dir.path().join("gh"), "#!/bin/sh\necho '[]'\n");
+    /// let tally = Tally::in_folder(dir.path());
+    /// let gh = riff::pr::Gh::at(gh).by("pr wait").with_tally(Some(tally.clone()));
+    /// gh.run(&["pr", "view", "40", "--json", "state"], None)?;
+    /// gh.run(&["auth", "status"], None)?;
+    /// let calls = tally.read(riff::daemon::now_ms());
+    /// // `gh auth` uses no limit: one call.
+    /// assert_eq!(calls.len(), 1);
+    /// assert_eq!((calls[0].caller.as_str(), calls[0].kind.as_str(), calls[0].points), ("pr wait", "pr view", 1));
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_tally(self, tally: Option<ghcalls::Tally>) -> Self {
+        Self { tally, ..self }
+    }
+
+    /// The name of the caller in the count of the calls ([`Gh::by`]).
+    pub fn caller(&self) -> &'static str {
+        self.caller
     }
 
     /// The same `gh` with the count `calls` for its calls.
@@ -948,6 +998,16 @@ impl Gh {
                 calls.keep_left(left);
             }
         }
+        if let Some(tally) = &self.tally
+            && ghcalls::Resource::of(args).is_some()
+        {
+            let stdout = result.as_ref().map_or("", |(_, out, _)| out.as_str());
+            tally.record(
+                self.caller,
+                &ghcalls::kind_of(args),
+                ghcalls::points_of(args, stdout),
+            );
+        }
         if let Ok((false, stdout, stderr)) = &result {
             self.note_limit(args, stdout, stderr);
         }
@@ -965,6 +1025,9 @@ impl Gh {
         }
         if let Some(token) = self.token() {
             command.env("GH_TOKEN", token.as_str());
+        }
+        if self.tally.is_some() {
+            command.env(crate::gh_wrapper::COUNTED_VAR, "1");
         }
         command
             .args(args)
@@ -2775,5 +2838,29 @@ mod tests {
             "{span}"
         );
         assert_eq!(logged(dir.path()), ["pr view 40"]);
+    }
+
+    /// 01M6JGF7265VX2SDXZ4EJAGXVB (#1582): a `gh` that counts its calls
+    /// tells the real `gh` so ([`crate::gh_wrapper::COUNTED_VAR`]): the
+    /// wrapper of a container counts the call no more. A `gh` that counts
+    /// none does not.
+    #[test]
+    fn a_gh_that_counts_its_calls_tells_the_real_gh() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = "#!/bin/sh\necho \"${RIFF_GH_COUNTED:-unset}\"\n";
+        let program = isolated::write_program(dir.path().join("gh"), script);
+        assert_eq!(
+            Gh::at(&program).run(&["pr", "view", "1"], None).unwrap(),
+            "unset\n"
+        );
+        let tally = crate::ghcalls::Tally::in_folder(dir.path());
+        let counting = Gh::at(&program).by("top").with_tally(Some(tally.clone()));
+        assert_eq!(counting.run(&["pr", "view", "1"], None).unwrap(), "1\n");
+        let calls = tally.read(crate::daemon::now_ms());
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert_eq!(
+            (calls[0].caller.as_str(), calls[0].kind.as_str()),
+            ("top", "pr view")
+        );
     }
 }

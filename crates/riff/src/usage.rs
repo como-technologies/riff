@@ -1237,7 +1237,7 @@ impl Meter {
     pub fn here() -> Option<Meter> {
         Some(Meter {
             dir: crate::local::marks()?,
-            gh: Gh::default(),
+            gh: Gh::here("usage"),
         })
     }
 

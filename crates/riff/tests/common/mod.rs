@@ -223,6 +223,11 @@ pub fn session_socket(
             let mut line = String::new();
             let _ = std::io::BufReader::new(&conn).read_line(&mut line);
             let ask: Value = serde_json::from_str(&line).unwrap();
+            // The count of a call of `gh` (#1582): the daemon takes it, and
+            // the log holds the calls on riff-server only.
+            if ask["ask"] == "gh_calls" {
+                continue;
+            }
             assert_eq!(ask["ask"], "server", "{ask}");
             log.lock().unwrap().push(ask["call"].clone());
             let say = match reply(&ask["call"]) {
