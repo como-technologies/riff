@@ -1606,3 +1606,49 @@ fn the_book_has_a_how_to_for_each_command() {
     assert!(pace.contains("default pace"), "{pace}");
     assert!(pace.contains("72 points in the first hour"), "{pace}");
 }
+
+/// 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 (#1582): the calls of `gh` of `riff pr wait`
+/// are in the tally of the daemon, as the caller `pr wait`, with their kind
+/// and GraphQL points. `riff daemon status` shows the tally.
+#[tokio::test]
+async fn pr_wait_adds_its_calls_to_the_tally_of_the_daemon() {
+    let open_then_merged = r#"*'pr view 40 --json state,mergeCommit'*)
+    n=$(cat "$dir/views" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$dir/views"
+    if [ $n -lt 2 ]; then echo '{"state":"OPEN","mergeCommit":null}'
+    else echo '{"state":"MERGED","mergeCommit":{"oid":"9f8e7d6c"}}'; fi ;;
+*'pr checks 40 --required --json name,bucket'*) echo '[{"name":"Gate","bucket":"pass"}]' ;;"#;
+    let machine = Machine::new(open_then_merged).await;
+    let out = machine
+        .run("s1", &["pr", "wait", "40", "--every", "1"])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+
+    let folder = machine.env.riff_home().join("daemon");
+    let calls = riff::ghcalls::Tally::in_folder(&folder).read(riff::daemon::now_ms());
+    let kinds = |caller: &str| -> Vec<(&str, u32)> {
+        calls
+            .iter()
+            .filter(|c| c.caller == caller)
+            .map(|c| (c.kind.as_str(), c.points))
+            .collect()
+    };
+    // The two looks, and the read of the issue after the merge.
+    let wait = kinds("pr wait");
+    assert_eq!(
+        wait.iter().filter(|c| **c == ("pr view", 1)).count(),
+        3,
+        "{calls:?}"
+    );
+    assert_eq!(
+        wait.iter().filter(|c| **c == ("pr checks", 2)).count(),
+        2,
+        "{calls:?}"
+    );
+    // The total of the tokens after the merge is the usage meter.
+    assert_eq!(kinds("usage"), [("pr view", 1)], "{calls:?}");
+    // Each call of `gh` that uses a limit is in the tally one time.
+    let log = log(machine.bin.path());
+    assert_eq!(log.matches("gh pr view 40").count(), 4, "{log}");
+    assert_eq!(log.matches("gh pr checks 40").count(), 2, "{log}");
+    assert_eq!(calls.len(), 6, "{calls:?}");
+}

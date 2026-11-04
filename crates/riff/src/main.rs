@@ -1596,8 +1596,18 @@ impl Command {
     }
 }
 
+fn main() -> Result<()> {
+    // The binary of riff at the path of `gh` in a container session
+    // counts the call, and runs the real `gh` (#1582). It starts no
+    // runtime: a `gh` is a call of a script.
+    if riff::gh_wrapper::invoked_as_gh() {
+        riff::gh_wrapper::main();
+    }
+    cli()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn cli() -> Result<()> {
     riff::platform::install();
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
@@ -1766,13 +1776,13 @@ async fn main() -> Result<()> {
     {
         eprintln!("{}", text::pr_waits(*number));
         let every = Duration::from_secs(*every);
-        println!("{}", pr::wait(&pr::Gh::default(), *number, every)?);
+        println!("{}", pr::wait(&pr::Gh::here("pr wait"), *number, every)?);
         // The merge is a fact of the item (01M41FZP2C4Z4J6WKRXZ5B31EH).
         // It never fails the wait.
         let api = Api::new(&server);
         let me =
             identity::here(cli.place.as_ref()).and_then(|here| identity::me(&here, api.base()));
-        if let (Ok(me), Ok(issue)) = (me, pr::issue_of(&pr::Gh::default(), *number))
+        if let (Ok(me), Ok(issue)) = (me, pr::issue_of(&pr::Gh::here("pr wait"), *number))
             && let Ok(api) = api.signed_in(me.who().session())
         {
             riff::look::tell_fact(&api, &me, issue, *number, PullState::Merged).await;
@@ -1785,7 +1795,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     if let Command::Wave { command } = &cli.command {
-        let gh = pr::Gh::default();
+        let gh = pr::Gh::here("waves");
         let line = match command {
             WaveCommand::Make { title } => {
                 let made = riff::waves::make(&gh, &title.join(" "))?;
@@ -1871,7 +1881,7 @@ async fn main() -> Result<()> {
         Command::Audit { wave } => {
             let here = identity::place(&identity::working_dir()?)?;
             let repo = audit::repo_of(&here)?;
-            let gh = pr::Gh::default();
+            let gh = pr::Gh::here("audit");
             let wave = riff::waves::title(&gh, &here.repo_text(), wave)?;
             let log = reach.log(&repo).await?;
             let forge = audit::Forge::read(&gh, &here.repo_text(), &wave)?;
@@ -2234,7 +2244,14 @@ async fn main() -> Result<()> {
                 None => String::new(),
             };
             let rules = riff::hygiene_rules::of_folder(&identity::working_dir()?)?;
-            let (number, url) = pr::open(&pr::Gh::default(), &title, &summary, issue, refs, rules)?;
+            let (number, url) = pr::open(
+                &pr::Gh::here("pr open"),
+                &title,
+                &summary,
+                issue,
+                refs,
+                rules,
+            )?;
             println!("{}", text::pr_opened(number, &url));
             riff::look::tell_fact(&api, &me, issue, number, PullState::Asked).await;
         }
@@ -2253,7 +2270,7 @@ async fn main() -> Result<()> {
             let thread = thread_or_default(None, &here)?;
             let verdict = verdict.into();
             let reported = pr::report(
-                &pr::Gh::default(),
+                &pr::Gh::here("verify"),
                 &thread.to_string(),
                 number,
                 &tested,
@@ -3002,7 +3019,7 @@ fn wave_release_gate(number: u64, no_release: Option<&str>) -> Result<()> {
     if !riff::release_config::of_repository(&top)? {
         return Ok(());
     }
-    let forge = riff::cycle::GitHub::new(pr::Gh::default().retrying(), &top)?;
+    let forge = riff::cycle::GitHub::new(pr::Gh::here("release").retrying(), &top)?;
     if riff::cycle::wave_gate(&forge, number, no_release)? == riff::cycle::WaveGate::NoRelease {
         println!("Wave {number} ends with no release. The reason is in the wave.");
     }
@@ -3073,7 +3090,7 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
         eprintln!("{}", text::release_refused(command, why));
         std::process::exit(1)
     };
-    let forge = || cycle::GitHub::new(pr::Gh::default().retrying(), &here);
+    let forge = || cycle::GitHub::new(pr::Gh::here("release").retrying(), &here);
     let next = |forge: &cycle::GitHub, tag: &str| match cycle::tag_version(tag)
         .and_then(|v| cycle::stage(forge, v))
     {
@@ -3461,7 +3478,7 @@ fn usage_text(issue: Option<&str>, wave: Option<&str>, total: bool) -> Result<St
         .default_thread()
         .context("run riff usage in a git repository")?
         .to_string();
-    let gh = pr::Gh::default();
+    let gh = pr::Gh::here("usage");
     let forge =
         usage::Forge::of(&gh, &thread).with_context(|| format!("{thread} is no repository"))?;
     if let Some(issue) = issue {
@@ -3708,7 +3725,7 @@ async fn wave_move(
     to: &str,
 ) -> Result<()> {
     let claimed = claimed_here(reach, here).await?;
-    let moved = riff::waves::move_items(&pr::Gh::default(), items, to, &claimed)?;
+    let moved = riff::waves::move_items(&pr::Gh::here("waves"), items, to, &claimed)?;
     println!("{}", text::waves_moved(items, &moved.title));
     if !moved.no_done_when.is_empty() {
         let warning = riff::style::WARNING;
@@ -3727,7 +3744,7 @@ async fn wave_end_moving(
 ) -> Result<()> {
     let claimed = claimed_here(reach, here).await?;
     wave_release_gate(number, no_release)?;
-    let (ended, moved) = riff::waves::end_moving_open(&pr::Gh::default(), number, &claimed)?;
+    let (ended, moved) = riff::waves::end_moving_open(&pr::Gh::here("waves"), number, &claimed)?;
     println!("{}", text::waves_ended_moving(&ended.title, &moved));
     Ok(())
 }
@@ -3754,7 +3771,7 @@ async fn wave_run_in_container(reach: &Reach, here: &Place) -> Result<()> {
 /// cannot read them, one line on stderr says why
 /// (01M58ATZ6FA5PJMD3D848CEWBJ).
 async fn wave_list(reach: &Reach, here: &riff_core::name::Place) -> Result<()> {
-    let gh = pr::Gh::default();
+    let gh = pr::Gh::here("waves");
     let milestones = riff::waves::open(&gh)?;
     let items = riff::waves::items(reach, here.default_thread(), &gh).await;
     let items = items
@@ -3799,7 +3816,7 @@ async fn draw_top(
     // One read of `gh` for each repository with a live session
     // (01M42KHN80V49HDDZF953HXDT0). The calls share one token
     // (01M54510SFK1Z9VPFYBYYSV10F).
-    let gh = pr::Gh::default().with_one_token();
+    let gh = pr::Gh::here("top").with_one_token();
     let fetch = |repos: std::collections::BTreeSet<String>| {
         let gh = gh.clone();
         tokio::task::spawn_blocking(move || {

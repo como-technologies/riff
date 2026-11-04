@@ -146,6 +146,45 @@ async fn riff_daemon_install_writes_the_unit_and_starts_the_daemon() {
     wait_for(&here.bin.path().join("daemon.out"), "The riff daemon stops").await;
 }
 
+/// 01M6JGF6Z6Y8FP86Q9VAS3NPZ7, 01M6JGF755TSQKWJBBZNEAW1GP (#1582): the
+/// status of a daemon that runs shows the calls that other riff processes
+/// added to its folder, each caller in a row of its own.
+#[tokio::test]
+async fn riff_daemon_status_shows_the_calls_of_the_other_riff_processes() {
+    let here = Here::new();
+    let out = here.run(true, &["daemon", "install"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+
+    // `riff top`, `riff pr wait` and a `gh` of a session add their calls.
+    let tally = riff::ghcalls::Tally::in_folder(&here.data().join("daemon"));
+    let now = riff::daemon::now_ms();
+    tally.record_at(now - 5_000, "top", "pr list", 2);
+    tally.record_at(now - 4_000, "pr wait", "pr view", 1);
+    tally.record_at(now - 3_000, "pr wait", "pr view", 1);
+    tally.record_at(now - 2_000, "session", "api graphql", 1);
+
+    let out = here.run(true, &["daemon", "status"]).await;
+    let status = text(&out.stdout);
+    assert!(out.status.success(), "{status}");
+    assert!(
+        status.contains("GitHub, last hour: 4 calls, 5 GraphQL points.\n"),
+        "{status}"
+    );
+    let row = |caller: &str| {
+        status
+            .lines()
+            .find(|l| l.starts_with(&format!("  {caller} ")))
+            .unwrap_or_else(|| panic!("{caller}: {status}"))
+    };
+    assert!(row("top").contains("pr list") && row("top").ends_with("2 points"));
+    assert!(row("pr wait").contains("2 calls") && row("pr wait").ends_with("2 points"));
+    assert!(row("session").contains("api graphql"));
+
+    let old: u32 = here.read("daemon.pid").trim().parse().unwrap();
+    term(old);
+    wait_for(&here.bin.path().join("daemon.out"), "The riff daemon stops").await;
+}
+
 /// 01M51QARV45MGEKC6KGWX1N5NS, 01M51M3ZKWQYBBPD97R0G9QAX0,
 /// 01M51M3ZTV61C9BMFT3J1M06NF: a daemon with `RIFF_RELEASES` and its own
 /// SHA-256 in `SHA256SUMS` there changes no user settings of Claude Code,
@@ -1298,6 +1337,54 @@ async fn riff_daemon_status_shows_the_calls_of_gh_and_the_points_left() {
     );
     assert!(
         shown.contains("GraphQL points left: 3,716, the counter starts again at 15:00:35 UTC"),
+        "{shown}"
+    );
+}
+
+/// 01M6JGF755TSQKWJBBZNEAW1GP (#1582): `riff daemon status` shows the other
+/// line: the points of the counter that no riff process used.
+#[tokio::test]
+async fn riff_daemon_status_shows_the_points_that_no_riff_process_used() {
+    let here = Here::new();
+    let dir = here.daemon_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = tokio::net::UnixListener::bind(riff::daemon::socket(&dir)).unwrap();
+    let since_ms: i64 = 1_793_743_217_000; // 2026-11-03T22:00:17Z
+    let read_ms = since_ms + 28 * 60_000;
+    let status = serde_json::json!({
+        "say": "status", "pid": 7, "build": "4.1.1", "since_ms": 0,
+        "dir": dir, "sessions": [],
+        "github": {
+            "rows": [{"caller": "wave", "kind": "issue list", "calls": 12, "points": 48}],
+            "left": {
+                "remaining": 2222, "reset_at": "2026-11-03T23:00:17Z",
+                "read_ms": read_ms, "limit": 5000,
+            },
+            "waits": [],
+            "other": {
+                "points": 2570, "used": 2778, "counted": 208,
+                "since_ms": since_ms, "read_ms": read_ms,
+            },
+        },
+    });
+    let fake = {
+        let (accept, line) = (listener.accept(), format!("{status}\n"));
+        async move {
+            let (conn, _) = accept.await.unwrap();
+            let (read, mut write) = conn.into_split();
+            let mut lines = tokio::io::BufReader::new(read).lines();
+            lines.next_line().await.unwrap().unwrap();
+            write.write_all(line.as_bytes()).await.unwrap();
+        }
+    };
+    let (_, out) = tokio::join!(fake, here.run(false, &["daemon", "status"]));
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert!(
+        shown.contains(
+            "Other callers: 2,570 GraphQL points since 22:00:17 UTC, about 91 a minute. \
+             The counter used 2,778, and riff counted 208.\n"
+        ),
         "{shown}"
     );
 }

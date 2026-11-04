@@ -1376,7 +1376,7 @@ pub async fn once(
 /// lead. It prints an error once, not again until the error changes.
 pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf>) {
     // The calls of `gh` share one token (01M54510SFK1Z9VPFYBYYSV10F).
-    let gh = Arc::new(Gh::default().with_one_token());
+    let gh = Arc::new(Gh::here("look").with_one_token());
     let notifier = Notifier::default();
     let mut watch = PullWatch::default();
     let mut main = MainWatch::default();

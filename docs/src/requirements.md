@@ -5174,6 +5174,33 @@ of this part when they merge.
   rename of a wave on GitHub shows at the next full read. A conditional
   read that fails, or that gives no ETag, counts as a change (#1566).
   Supersedes 01M6GYN97HH70E4C1FGM6HA2B0 in part.
+- **01M6JGF6Z6Y8FP86Q9VAS3NPZ7** Each riff process that calls gh adds
+  its calls to the tally of the daemon, the folder gh-calls in the
+  folder of the daemon, by caller, kind and GraphQL points: riff top,
+  riff pr open, riff pr wait, riff verify, riff wave, the release
+  commands, riff audit, riff usage and the look of a lead. A process on
+  the host appends to the folder. A process in a container sends its
+  calls to the daemon on the socket of its session, and the daemon
+  appends them: it keeps the caller only when it is a name that riff
+  knows, cuts the kind, and limits the points and the number of calls of
+  one send. A count never fails or delays a call (#1582).
+- **01M6JGF7265VX2SDXZ4EJAGXVB** The daemon binds its own binary at
+  /usr/local/bin/gh in each container session. The binary of riff that
+  runs under the name gh adds the call to the tally as the caller
+  session, and replaces itself with /usr/bin/gh, so the terminal, the
+  output, the exit code and the signals are those of gh. It counts a
+  call before it runs, with the points of the table of the arguments. It
+  counts nothing for a call that uses no limit, as gh auth, and for a
+  call that a command of riff made and counted already: that command
+  sets RIFF_GH_COUNTED. The daemon starts no session with a bind at that
+  path (#1582).
+- **01M6JGF755TSQKWJBBZNEAW1GP** riff daemon status adds the tally to
+  its own calls, and shows the other line: the GraphQL points that the
+  counter used since it started, the limit less the points left of the
+  last reading, less the points of the calls that riff counted from the
+  start of the counter to that reading, with the average for each
+  minute. The line shows only while that counter has not started again
+  (#1582).
 
 ### The lead, the view and the takeover
 

@@ -995,6 +995,10 @@ async fn riff_wave_list_in_a_container_reads_riff_server_through_the_socket() {
             let mut lines = BufReader::new(read).lines();
             let ask: serde_json::Value =
                 serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            // The count of a call of `gh` (#1582): the daemon takes it.
+            if ask["ask"] == "gh_calls" {
+                continue;
+            }
             assert_eq!(ask["ask"], "server", "{ask}");
             let call = ask["call"]["call"].as_str().unwrap().to_owned();
             let reply = match call.as_str() {
@@ -1056,6 +1060,10 @@ async fn riff_wave_move_in_a_container_reads_the_claims_through_the_socket() {
             let mut lines = BufReader::new(read).lines();
             let ask: serde_json::Value =
                 serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            // The count of a call of `gh` (#1582): the daemon takes it.
+            if ask["ask"] == "gh_calls" {
+                continue;
+            }
             assert_eq!(ask["ask"], "server", "{ask}");
             let call = ask["call"]["call"].as_str().unwrap().to_owned();
             assert_eq!(call, "who");
@@ -1935,4 +1943,35 @@ async fn riff_daemon_status_in_a_container_asks_the_socket_of_the_session() {
     assert!(shown.contains("4242"), "{shown}");
     assert!(!shown.contains("daemon install"), "{shown}");
     assert!(!shown.contains("riff.service"), "{shown}");
+}
+
+/// 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 (#1582): the calls of `gh` of `riff top` are in
+/// the tally of the daemon, as the caller `top`.
+#[tokio::test(flavor = "multi_thread")]
+async fn top_adds_its_calls_of_gh_to_the_tally_of_the_daemon() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(true);
+    three_sessions(&server, dir, bin.path()).await;
+    // The sessions of the setup make no call of `gh`.
+    let folder = dir.join("daemon");
+    let before = riff::ghcalls::Tally::in_folder(&folder).read(riff::daemon::now_ms());
+    assert!(before.iter().all(|c| c.caller != "top"), "{before:?}");
+
+    output(riff(
+        &server,
+        dir,
+        Some("a1"),
+        bin.path(),
+        &["top", "--once"],
+    ))
+    .await;
+    let calls = riff::ghcalls::Tally::in_folder(&folder).read(riff::daemon::now_ms());
+    let top: Vec<_> = calls.iter().filter(|c| c.caller == "top").collect();
+    assert!(!top.is_empty(), "{calls:?}");
+    assert!(
+        top.iter().all(|c| c.at_ms > 0 && !c.kind.is_empty()),
+        "{top:?}"
+    );
 }

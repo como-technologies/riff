@@ -5884,6 +5884,14 @@ pub fn daemon_bind_in_session(target: &Path) -> String {
     )
 }
 
+/// A spec with a bind at the path of the `gh` of the container.
+pub fn daemon_bind_gh(target: &Path) -> String {
+    format!(
+        "The riff daemon starts no session with a bind at {}: the gh of the session goes there.",
+        target.display()
+    )
+}
+
 /// A spec whose bind shows the folder of the daemon
 /// (01M4ZDTVQEHD87WD5TSN93XFSS).
 pub fn daemon_bind_shows(source: &Path) -> String {
@@ -6467,8 +6475,10 @@ pub const GITHUB_ROWS: usize = 8;
 ///         remaining: 3716,
 ///         reset_at: "2026-11-03T15:00:35Z".into(),
 ///         read_ms: 0,
+///         limit: 5000,
 ///     }),
 ///     waits: Vec::new(),
+///     other: None,
 /// };
 /// let text = riff::text::github_use(&shown, 120_000);
 /// assert_eq!(
@@ -6478,6 +6488,25 @@ pub const GITHUB_ROWS: usize = 8;
 ///      \x20 look      pr list                      12 calls       24 points\n\
 ///      \x20 look      api commits/_/check-runs     12 calls        0 points\n\
 ///      GraphQL points left: 3,716, the counter starts again at 15:00:35 UTC (read 2m ago).\n"
+/// );
+///
+/// // The points that no riff process used (#1582).
+/// let since_ms = 1_793_714_435_000;
+/// let other = riff::ghcalls::Other {
+///     points: 1_212,
+///     used: 1_284,
+///     counted: 72,
+///     since_ms,
+///     read_ms: since_ms + 28 * 60_000,
+/// };
+/// let shown = Shown { other: Some(other), ..shown };
+/// let text = riff::text::github_use(&shown, since_ms + 30 * 60_000);
+/// assert!(
+///     text.ends_with(
+///         "Other callers: 1,212 GraphQL points since 14:00:35 UTC, about 43 a minute. \
+///          The counter used 1,284, and riff counted 72.\n"
+///     ),
+///     "{text}"
 /// );
 ///
 /// // A limit that is out (#1557).
@@ -6543,6 +6572,19 @@ pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
             grouped(left.remaining),
             at.trim_end_matches('Z'),
             ago(secs)
+        );
+    }
+    if let Some(other) = &shown.other {
+        let _ = writeln!(
+            out,
+            "Other callers: {} GraphQL {} since {}, about {} a minute. The counter used {}, and riff \
+             counted {}.",
+            grouped(other.points),
+            if other.points == 1 { "point" } else { "points" },
+            clock_utc(other.since_ms),
+            grouped(other.a_minute()),
+            grouped(other.used),
+            grouped(other.counted),
         );
     }
     for wait in &shown.waits {

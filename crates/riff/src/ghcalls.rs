@@ -1,4 +1,4 @@
-//! The count of the calls of `gh` that the riff daemon makes (#1549).
+//! The count of the calls of `gh` that riff makes (#1549, #1582).
 //!
 //! # Design
 //!
@@ -22,6 +22,38 @@
 //!     L --> C
 //!     C --> S["riff daemon status"]
 //! ```
+//!
+//! # The other riff processes
+//!
+//! The daemon is not the only caller. `riff top`, `riff pr wait`, the
+//! release commands and each other command of `riff` call `gh` in a
+//! process of their own, with the same token, and so does each `gh` in
+//! a container session. Each of them adds its calls to the [`Tally`]: a
+//! folder of the daemon, one record on a line ([`Tally::record`]). A
+//! process on the host writes the folder itself. A process in a container
+//! has no access to it: it sends the records on the socket of its
+//! session, and the daemon writes them ([`Record`],
+//! [`SessionAsk::GhCalls`](crate::daemon::SessionAsk::GhCalls)). The
+//! `gh` in a container is the binary of riff, which the daemon binds at
+//! the path of `gh` ([`crate::gh_wrapper`]). `riff daemon status` adds the
+//! folder to the calls of the daemon.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     H["riff top, riff pr wait, riff verify, ...<br/>on the host"] -- "append" --> F["gh-calls/ in the folder of the daemon"]
+//!     C["Gh::here and the gh wrapper<br/>in a container"] -- "SessionAsk::GhCalls" --> D["riff daemon"]
+//!     D -- "append" --> F
+//!     F --> S["riff daemon status"]
+//!     M["the Calls of the daemon"] --> S
+//! ```
+//!
+//! # The other callers
+//!
+//! The counter of GitHub counts every call of the token, also the calls
+//! of a tool that is not riff. When the reply of a query shows the points
+//! that the counter used ([`Left`]), riff takes from them the points of
+//! the calls that it counted since the counter started. What is left is
+//! [`Other`]: the calls of a caller that riff does not see.
 //!
 //! # The points
 //!
@@ -105,8 +137,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::text;
 
+mod tally;
+
+pub use tally::{CALLERS, MAX_RECORDS, Record, SESSION, Tally, clean};
+
 /// How long a record stays: the count of `riff daemon status`.
 pub const WINDOW_MS: i64 = 3_600_000;
+
+/// The points of the GraphQL counter of a token, when a reading does not
+/// say its limit.
+pub const GRAPHQL_LIMIT: u64 = 5_000;
 
 /// The target for the looks and the watches of two waves that have no
 /// work: at most this many GraphQL points an hour (#1549).
@@ -135,15 +175,19 @@ pub const SECONDARY_WAIT_MS: i64 = 60_000;
 pub const PROBES: usize = 4;
 
 /// The query of a read of the GraphQL counter.
-pub const PROBE_QUERY: &str = "{ rateLimit { remaining resetAt } }";
+pub const PROBE_QUERY: &str = "{ rateLimit { limit remaining resetAt } }";
 
-/// One call of `gh`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Call {
-    at_ms: i64,
-    caller: &'static str,
-    kind: String,
-    points: u32,
+/// One call of `gh`: a line of the [`Tally`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Call {
+    /// When the call ended, in milliseconds since the epoch.
+    pub at_ms: i64,
+    /// Who called ([`Row::caller`]).
+    pub caller: String,
+    /// The kind of call ([`kind_of`]).
+    pub kind: String,
+    /// The GraphQL points that it cost ([`points_of`]).
+    pub points: u32,
 }
 
 /// The records of the calls of the last hour, and the last reading of the
@@ -161,6 +205,17 @@ struct Inner {
     waits: BTreeMap<Resource, Wait>,
 }
 
+/// The commands of `gh` that read nothing of GitHub: they use no limit.
+const NO_LIMIT: &[&str] = &[
+    "auth",
+    "alias",
+    "completion",
+    "config",
+    "extension",
+    "help",
+    "version",
+];
+
 /// A limit of GitHub. GraphQL and REST count apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Resource {
@@ -172,7 +227,8 @@ pub enum Resource {
 
 impl Resource {
     /// The resource that the call `gh ARGS` uses, and `None` for a call
-    /// that uses no limit: `gh auth` reads the token.
+    /// that uses no limit: `gh auth` reads the token, and `gh --version`,
+    /// `gh help` and `gh config` read nothing of GitHub.
     ///
     /// ```
     /// use riff::ghcalls::Resource;
@@ -182,15 +238,21 @@ impl Resource {
     /// assert_eq!(Resource::of(&["api", "repos/o/r"]), Some(Resource::Rest));
     /// assert_eq!(Resource::of(&["run", "view", "1"]), Some(Resource::Rest));
     /// assert_eq!(Resource::of(&["auth", "token"]), None);
+    /// assert_eq!(Resource::of(&["--version"]), None);
+    /// assert_eq!(Resource::of(&["config", "get", "editor"]), None);
+    /// assert_eq!(Resource::of(&[]), None);
     /// ```
     pub fn of(args: &[&str]) -> Option<Self> {
+        let first = args.first()?;
+        if first.starts_with('-') || NO_LIMIT.contains(first) {
+            return None;
+        }
         let kind = kind_of(args);
         match kind.as_str() {
             "api graphql" | "release list" | "release view" | "repo view" | "repo clone" => {
                 Some(Self::Graphql)
             }
             other if other.starts_with("pr ") || other.starts_with("issue ") => Some(Self::Graphql),
-            other if other == "auth" || other.starts_with("auth ") => None,
             _ => Some(Self::Rest),
         }
     }
@@ -409,13 +471,87 @@ pub struct Left {
     pub reset_at: String,
     /// When riff read it, in milliseconds since the epoch.
     pub read_ms: i64,
+    /// The points of the counter in one hour ([`GRAPHQL_LIMIT`] when the
+    /// reply does not say it).
+    #[serde(default = "graphql_limit")]
+    pub limit: u64,
+}
+
+fn graphql_limit() -> u64 {
+    GRAPHQL_LIMIT
+}
+
+impl Left {
+    /// When the counter that answered started, in milliseconds since the
+    /// epoch: one hour before its reset.
+    ///
+    /// ```
+    /// use riff::ghcalls::Left;
+    ///
+    /// let left = Left { remaining: 10, reset_at: "2026-11-03T15:00:35Z".into(), read_ms: 0, limit: 5000 };
+    /// assert_eq!(left.reset_ms(), Some(1_793_718_035_000));
+    /// assert_eq!(left.started_ms(), Some(1_793_714_435_000));
+    /// let bad = Left { reset_at: "soon".into(), ..left };
+    /// assert_eq!(bad.started_ms(), None);
+    /// ```
+    pub fn started_ms(&self) -> Option<i64> {
+        Some(self.reset_ms()? - WINDOW_MS)
+    }
+
+    /// When the counter that answered starts again, in milliseconds
+    /// since the epoch.
+    pub fn reset_ms(&self) -> Option<i64> {
+        chrono::DateTime::parse_from_rfc3339(&self.reset_at)
+            .ok()
+            .map(|at| at.timestamp_millis())
+    }
+}
+
+/// The GraphQL points of the counter that riff did not count: the calls
+/// of a caller that no riff process sees (#1582).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Other {
+    /// The points of the counter that the other callers used: what the
+    /// counter used, less what riff counted.
+    pub points: u64,
+    /// The points that the counter had used when riff read it.
+    pub used: u64,
+    /// The points of the calls that riff counted from the start of the
+    /// counter to that reading.
+    pub counted: u64,
+    /// When the counter started, in milliseconds since the epoch.
+    pub since_ms: i64,
+    /// When riff read the counter, in milliseconds since the epoch.
+    pub read_ms: i64,
+}
+
+impl Other {
+    /// The points that the other callers used in a minute, on average,
+    /// from the start of the counter to the reading. At least one minute
+    /// counts.
+    ///
+    /// ```
+    /// use riff::ghcalls::Other;
+    ///
+    /// let other = Other { points: 2_570, used: 2_778, counted: 208, since_ms: 0, read_ms: 28 * 60_000 };
+    /// assert_eq!(other.a_minute(), 91);
+    /// let new = Other { points: 30, since_ms: 0, read_ms: 5_000, ..other };
+    /// assert_eq!(new.a_minute(), 30);
+    /// ```
+    pub fn a_minute(&self) -> u64 {
+        let minutes = u64::try_from((self.read_ms - self.since_ms) / 60_000)
+            .unwrap_or(0)
+            .max(1);
+        self.points / minutes
+    }
 }
 
 /// The calls of one caller and one kind in the last hour.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Row {
-    /// Who called: `wave`, `look`, `watches`, `sweep`, `usage` or
-    /// [`OTHER`].
+    /// Who called: `wave`, `look`, `watches`, `sweep`, `usage`, the name of
+    /// a command of `riff` (`top`, `pr wait`, ...), `session` for a `gh`
+    /// in a container, or [`OTHER`].
     pub caller: String,
     /// The kind of call ([`kind_of`]).
     pub kind: String,
@@ -434,6 +570,10 @@ pub struct Shown {
     pub left: Option<Left>,
     /// The resources that wait for the reset of their limit (#1557).
     pub waits: Vec<Wait>,
+    /// The points of the counter that no riff process used (#1582). It
+    /// needs a reading of the counter that has not ended.
+    #[serde(default)]
+    pub other: Option<Other>,
 }
 
 impl Shown {
@@ -482,12 +622,12 @@ impl Calls {
     /// // An hour later the first record is gone.
     /// assert_eq!(calls.shown(3_600_500).total(), (2, 3));
     /// ```
-    pub fn record(&self, now_ms: i64, caller: &'static str, kind: &str, points: u32) {
+    pub fn record(&self, now_ms: i64, caller: &str, kind: &str, points: u32) {
         let mut inner = self.lock();
         forget(&mut inner.calls, now_ms);
         inner.calls.push_back(Call {
             at_ms: now_ms,
-            caller,
+            caller: caller.to_owned(),
             kind: kind.to_owned(),
             points,
         });
@@ -501,11 +641,45 @@ impl Calls {
     /// The calls of the last hour at `now_ms`, one row for each caller and
     /// kind, the most points first, then the most calls.
     pub fn shown(&self, now_ms: i64) -> Shown {
+        self.shown_with(now_ms, Vec::new())
+    }
+
+    /// [`Calls::shown`] with the calls of the other riff processes
+    /// ([`Tally::read`]) added to the calls of this process (#1582).
+    ///
+    /// ```
+    /// use riff::ghcalls::{Calls, Left, Tally};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let calls = Calls::default();
+    /// calls.record(10_000, "look", "pr list", 2);
+    /// // A `riff top` on the host adds its calls to the folder.
+    /// let tally = Tally::in_folder(dir.path());
+    /// tally.record_at(20_000, "top", "pr list", 2);
+    /// tally.record_at(30_000, "pr wait", "pr view", 1);
+    /// let shown = calls.shown_with(40_000, tally.read(40_000));
+    /// assert_eq!(shown.total(), (3, 5));
+    /// assert!(shown.rows.iter().any(|row| row.caller == "pr wait"));
+    ///
+    /// // The counter used 100 points since it started: riff counted 5.
+    /// let left = Left {
+    ///     remaining: 4_900,
+    ///     reset_at: "1970-01-01T01:00:00Z".into(),
+    ///     read_ms: 40_000,
+    ///     limit: 5_000,
+    /// };
+    /// calls.keep_left(left);
+    /// let other = calls.shown_with(41_000, tally.read(41_000)).other.unwrap();
+    /// assert_eq!((other.used, other.counted, other.points), (100, 5, 95));
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn shown_with(&self, now_ms: i64, others: Vec<Call>) -> Shown {
         let mut inner = self.lock();
         forget(&mut inner.calls, now_ms);
+        let calls: Vec<&Call> = inner.calls.iter().chain(others.iter()).collect();
         let mut sums: BTreeMap<(&str, &str), (u32, u32)> = BTreeMap::new();
-        for call in &inner.calls {
-            let sum = sums.entry((call.caller, &call.kind)).or_default();
+        for call in &calls {
+            let sum = sums.entry((&call.caller, &call.kind)).or_default();
             sum.0 += 1;
             sum.1 += call.points;
         }
@@ -519,10 +693,15 @@ impl Calls {
             })
             .collect();
         rows.sort_by_key(|row| std::cmp::Reverse((row.points, row.calls)));
+        let other = inner
+            .left
+            .as_ref()
+            .and_then(|left| other_of(left, &calls, now_ms));
         Shown {
             rows,
             left: inner.left.clone(),
             waits: inner.waits(now_ms),
+            other,
         }
     }
 
@@ -580,6 +759,30 @@ impl Inner {
             .filter_map(|resource| self.waiting(*resource, now_ms))
             .collect()
     }
+}
+
+/// The points of the counter of `left` that none of `calls` used, when the
+/// counter has not ended at `now_ms` (#1582). The counter used `limit`
+/// less `remaining` points when riff read it. The calls that riff counted
+/// from the start of the counter to that reading used some of them.
+fn other_of(left: &Left, calls: &[&Call], now_ms: i64) -> Option<Other> {
+    let since_ms = left.started_ms()?;
+    if now_ms >= left.reset_ms()? {
+        return None;
+    }
+    let used = left.limit.saturating_sub(left.remaining);
+    let counted: u64 = calls
+        .iter()
+        .filter(|call| call.at_ms >= since_ms && call.at_ms <= left.read_ms)
+        .map(|call| u64::from(call.points))
+        .sum();
+    Some(Other {
+        points: used.saturating_sub(counted),
+        used,
+        counted,
+        since_ms,
+        read_ms: left.read_ms,
+    })
 }
 
 /// Drops the records that are older than [`WINDOW_MS`] at `now_ms`.
@@ -755,7 +958,8 @@ pub fn points_of(args: &[&str], stdout: &str) -> u32 {
 }
 
 /// The reading of the limit in a reply of GraphQL that asked for
-/// `rateLimit { remaining resetAt }`. `read_ms` is the time of the reading.
+/// `rateLimit { limit remaining resetAt }`. `read_ms` is the time of the
+/// reading. A reply with no `limit` gets [`GRAPHQL_LIMIT`].
 ///
 /// ```
 /// use riff::ghcalls::left_in;
@@ -763,6 +967,9 @@ pub fn points_of(args: &[&str], stdout: &str) -> u32 {
 /// let reply = r#"{"data":{"rateLimit":{"cost":1,"remaining":3716,"resetAt":"2026-11-03T15:00:35Z"}}}"#;
 /// let left = left_in(reply, 7).unwrap();
 /// assert_eq!((left.remaining, left.reset_at.as_str(), left.read_ms), (3716, "2026-11-03T15:00:35Z", 7));
+/// assert_eq!(left.limit, 5000);
+/// let own = r#"{"data":{"rateLimit":{"limit":12500,"remaining":3716,"resetAt":"2026-11-03T15:00:35Z"}}}"#;
+/// assert_eq!(left_in(own, 7).unwrap().limit, 12500);
 /// assert_eq!(left_in(r#"{"data":{}}"#, 7), None);
 /// assert_eq!(left_in("not json", 7), None);
 /// ```
@@ -773,6 +980,7 @@ pub fn left_in(stdout: &str, read_ms: i64) -> Option<Left> {
         remaining: limit["remaining"].as_u64()?,
         reset_at: limit["resetAt"].as_str()?.to_owned(),
         read_ms,
+        limit: limit["limit"].as_u64().unwrap_or(GRAPHQL_LIMIT),
     })
 }
 
@@ -860,8 +1068,122 @@ mod tests {
             remaining: 10,
             reset_at: "2026-11-03T15:00:35Z".into(),
             read_ms: 5,
+            limit: GRAPHQL_LIMIT,
         };
         calls.keep_left(left.clone());
         assert_eq!(calls.shown(WINDOW_MS * 3).left, Some(left));
+    }
+
+    /// The counter of 22:00:17 to 23:00:17 UTC of the issue: the reading at
+    /// 22:28 shows 2,222 points left, so it used 2,778.
+    fn counter() -> (Left, i64) {
+        let start = 1_793_743_217_000; // 2026-11-03T22:00:17Z
+        let left = Left {
+            remaining: 2_222,
+            reset_at: "2026-11-03T23:00:17Z".into(),
+            read_ms: start + 28 * 60_000,
+            limit: GRAPHQL_LIMIT,
+        };
+        (left, start)
+    }
+
+    /// 01M6JGF755TSQKWJBBZNEAW1GP (#1582): the points that the counter used
+    /// less the points that riff counted from the start of the counter to
+    /// the reading are the points of the other callers.
+    #[test]
+    fn the_other_callers_are_the_counter_less_the_calls_that_riff_counted() {
+        let (left, start) = counter();
+        assert_eq!(left.started_ms(), Some(start));
+        let calls = Calls::default();
+        calls.keep_left(left.clone());
+        // 208 points of riff in the counter: the daemon and a riff top.
+        calls.record(start + 60_000, "wave", "issue list", 100);
+        let tally = [
+            Call {
+                at_ms: start + 120_000,
+                caller: "top".into(),
+                kind: "pr list".into(),
+                points: 100,
+            },
+            Call {
+                at_ms: start + 130_000,
+                caller: "pr wait".into(),
+                kind: "pr view".into(),
+                points: 8,
+            },
+        ];
+        // A call before the counter started, and one after the reading, are
+        // not in this counter.
+        let outside = [
+            Call {
+                at_ms: start - 1,
+                caller: "top".into(),
+                kind: "pr list".into(),
+                points: 50,
+            },
+            Call {
+                at_ms: left.read_ms + 1,
+                caller: "top".into(),
+                kind: "pr list".into(),
+                points: 50,
+            },
+        ];
+        let calls_in = [tally.as_slice(), outside.as_slice()].concat();
+        let shown = calls.shown_with(left.read_ms + 60_000, calls_in);
+        let other = shown.other.unwrap();
+        assert_eq!(
+            (other.used, other.counted, other.points),
+            (2_778, 208, 2_570)
+        );
+        assert_eq!(other.a_minute(), 91);
+        assert_eq!(other.since_ms, start);
+        assert_eq!(other.read_ms, left.read_ms);
+    }
+
+    /// There is no other line without a reading, and none after the counter
+    /// started again: the reading is of the old counter.
+    #[test]
+    fn the_other_line_needs_a_counter_that_has_not_ended() {
+        let (left, start) = counter();
+        let calls = Calls::default();
+        assert_eq!(calls.shown(start).other, None);
+        calls.keep_left(left.clone());
+        assert!(calls.shown(left.read_ms).other.is_some());
+        let reset = left.reset_ms().unwrap();
+        assert!(calls.shown(reset - 1).other.is_some());
+        assert_eq!(calls.shown(reset).other, None);
+        // A reading with a reset that riff cannot read gives none.
+        calls.keep_left(Left {
+            reset_at: "soon".into(),
+            ..left
+        });
+        assert_eq!(calls.shown(start).other, None);
+    }
+
+    /// More points counted than the counter used (the counter that answered
+    /// is not the one that the calls used): the other callers used none.
+    #[test]
+    fn the_other_callers_never_use_less_than_nothing() {
+        let (left, start) = counter();
+        let calls = Calls::default();
+        calls.keep_left(Left {
+            remaining: GRAPHQL_LIMIT - 10,
+            ..left
+        });
+        calls.record(start + 1_000, "wave", "issue list", 30);
+        let other = calls.shown(start + 2_000).other.unwrap();
+        assert_eq!((other.used, other.counted, other.points), (10, 30, 0));
+    }
+
+    /// A reading from an old daemon has no limit: the limit of a token.
+    #[test]
+    fn a_reading_with_no_limit_gets_the_limit_of_a_token() {
+        let left: Left = serde_json::from_str(
+            r#"{"remaining":10,"reset_at":"2026-11-03T15:00:35Z","read_ms":5}"#,
+        )
+        .unwrap();
+        assert_eq!(left.limit, GRAPHQL_LIMIT);
+        let shown: Shown = serde_json::from_str(r#"{"rows":[],"left":null,"waits":[]}"#).unwrap();
+        assert_eq!(shown.other, None);
     }
 }

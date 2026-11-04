@@ -838,6 +838,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         &format!("{socket}:/run/riff"),
         "-v",
         &format!("{riff}:/opt/riff/riff:ro"),
+        // The same binary is the gh of the container (#1582).
+        "-v",
+        &format!("{riff}:/usr/local/bin/gh:ro"),
         "-e",
         &format!("HOME={h}"),
         "-e",

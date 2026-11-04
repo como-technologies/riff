@@ -1676,8 +1676,27 @@ flowchart LR
     C --> D["riff daemon status"]
 ```
 
-To see what the daemon spent in the last hour, and the points that
-GitHub says are left:
+The daemon is not the only caller. The token of your account also pays
+for `riff top`, `riff pr wait`, `riff verify`, the release commands,
+the look of your lead, and each `gh` that a session runs in its
+container. Each of them counts its calls too, and the daemon adds them
+to its own. A command on the host writes its calls to the folder
+`gh-calls` in the folder of the daemon. A session in a container sends
+them to the daemon on its socket. In a container, the `gh` is the
+binary of riff, which the daemon binds at `/usr/local/bin/gh`: it
+counts the call and runs the real `gh` at once. It changes nothing of
+the call. A count never fails or delays a `gh`.
+
+```mermaid
+flowchart LR
+    D["the loops of the daemon"] --> S["riff daemon status"]
+    H["riff top, riff pr wait, riff verify, ...<br/>on the host"] -- "gh-calls folder" --> S
+    C["gh in a container session"] -- "the socket of the session" --> S
+    S --> O["other: what the counter used<br/>less what riff counted"]
+```
+
+To see what riff spent in the last hour, and the points that GitHub
+says are left:
 
 ```sh
 riff daemon status
@@ -1686,19 +1705,33 @@ riff daemon status
 The last lines of the answer show the use of GitHub:
 
 ```text
-GitHub, last hour: 36 calls, 72 GraphQL points.
+GitHub, last hour: 75 calls, 111 GraphQL points.
   wave      issue list                   12 calls       48 points
-  look      pr list                      12 calls       24 points
+  top       pr list                      12 calls       24 points
+  pr wait   pr view                      30 calls       30 points
+  session   pr view                       9 calls        9 points
   look      api commits/_/check-runs     12 calls        0 points
-GraphQL points left: 3,716, the counter starts again at 15:00:35 UTC (read 2m ago).
+GraphQL points left: 2,222, the counter starts again at 23:00:17 UTC (read 2m ago).
+Other callers: 2,670 GraphQL points since 22:00:17 UTC, about 95 a minute. The counter used 2,778, and riff counted 108.
 ```
 
 Each row has the caller and the kind of the call. The caller is `wave`
-(the loop and the jobs of the wave), `look`, `watches`, `sweep` or
-`usage`. A call of REST costs no GraphQL point. The points of a row are
-an estimate from the query that `gh` sends. The last line comes from
-GitHub: it is the counter that answered. GitHub keeps more than one
-counter for one token, so two reads can differ.
+(the loop and the jobs of the wave), `look` (the look of the daemon, and
+the look of a lead), `watches`, `sweep`, `usage`, or the command of
+`riff` that made the call: `top`, `pr open`, `pr wait`, `verify`,
+`release`, `waves` (`riff wave ...`) or `audit`. The caller `session`
+is a `gh` that a session runs in its container. A call of REST costs no
+GraphQL point. The points of a row are an estimate from the query that
+`gh` sends. The line with the points left comes from GitHub: it is the
+counter that answered. GitHub keeps more than one counter for one
+token, so two reads can differ.
+
+The last line, `Other callers`, shows what riff does not see. The
+counter used 2,778 points since it started, and riff counted 108 of
+them. The other 2,670 points went to a caller that is not a riff
+process: a script, an editor, another tool, or riff on another
+machine, with the same token. The line shows only while the counter
+has not started again.
 
 When the points are gone, see
 [Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out).

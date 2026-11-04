@@ -138,6 +138,7 @@
 //! | [`SessionAsk::Follow`] | says [`Say::Line`] at each wake of the session, until the relay leaves ([`World::wakes`]) |
 //! | [`SessionAsk::Denied`] | posts the refusals of auto mode of the session, and says [`Say::Posted`] ([`Daemon::post_denials`]) |
 //! | [`SessionAsk::Prompt`] | ends the block of the lead on riff-server, and says [`Say::Done`] ([`Daemon::prompted`]) |
+//! | [`SessionAsk::GhCalls`] | adds the calls of `gh` of the session to the tally of the calls, and says [`Say::Done`] ([`Daemon::tally_calls`], [`crate::ghcalls`]) |
 //!
 //! # A session
 //!
@@ -471,7 +472,7 @@ use crate::run::{Scrub, user_line};
 use crate::runtime::{Bind, End, Env, Runtime, SessionSpec, Source};
 use crate::session_relay::Up;
 use crate::wave::{Job, Wave, World};
-use crate::{text, usage};
+use crate::{ghcalls, text, usage};
 use riff_client::sessions::{Live, Phase};
 
 pub mod facts;
@@ -1058,6 +1059,17 @@ pub enum SessionAsk {
         protocol: u32,
         /// The call.
         call: ServerCall,
+    },
+    /// The calls of `gh` that a process in the session made: the `gh` of
+    /// the container, and the commands of `riff`. The daemon adds them to
+    /// the tally of the calls that `riff daemon status` shows (#1582,
+    /// [`crate::ghcalls`]). The answer is [`Say::Done`], and a process does
+    /// not wait for it.
+    GhCalls {
+        /// [`PROTOCOL`] of the session.
+        protocol: u32,
+        /// The calls, with no time: the daemon gives them its own.
+        calls: Vec<crate::ghcalls::Record>,
     },
 }
 
@@ -2930,7 +2942,11 @@ impl<R: Runtime + 'static> Daemon<R> {
             claude_token,
             watches: self.watches_shown(),
             lost,
-            github: crate::ghcalls::Calls::global().shown(now_ms()),
+            github: {
+                let now = now_ms();
+                ghcalls::Calls::global()
+                    .shown_with(now, ghcalls::Tally::in_folder(&self.dir).read(now))
+            },
         }
     }
 
@@ -3351,13 +3367,17 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// Refuses a spec that would show the folder of the daemon to the
     /// session: a bind of the folder, of a folder above it, or of a path
-    /// in it, or a bind at [`IN_SESSION`] or at [`RELAY_BIN`]
+    /// in it, or a bind at [`IN_SESSION`], at [`RELAY_BIN`] or at the path of
+    /// the `gh` of the container ([`crate::gh_wrapper::BIND`])
     /// (01M4ZDTVQEHD87WD5TSN93XFSS).
     pub fn check(&self, spec: &SessionSpec) -> Result<()> {
         let ours = resolved(&self.dir);
         for bind in &spec.binds {
             if bind.target.starts_with(IN_SESSION) || bind.target.starts_with(RELAY_BIN) {
                 bail!("{}", text::daemon_bind_in_session(&bind.target));
+            }
+            if bind.target.starts_with(crate::gh_wrapper::BIND) {
+                bail!("{}", text::daemon_bind_gh(&bind.target));
             }
             if let Source::Path(source) = &bind.source {
                 let source = resolved(source);
@@ -3594,6 +3614,13 @@ impl<R: Runtime + 'static> Daemon<R> {
         spec.binds.push(Bind {
             source: Source::Path(self.relay_bin.clone()),
             target: RELAY_BIN.into(),
+            write: false,
+        });
+        // The same binary is the `gh` of the container: it counts each
+        // call and runs the real `gh` (#1582, [`crate::gh_wrapper`]).
+        spec.binds.push(Bind {
+            source: Source::Path(self.relay_bin.clone()),
+            target: crate::gh_wrapper::BIND.into(),
             write: false,
         });
         spec.env.push(Env::Value(
@@ -3977,6 +4004,13 @@ impl<R: Runtime + 'static> Daemon<R> {
                 drop(out);
                 let _ = written.await;
             }
+            Ok(SessionAsk::GhCalls { calls, .. }) => {
+                self.tally_calls(calls);
+                let (out, written) = writer(write);
+                out.say(Say::Done);
+                drop(out);
+                let _ = written.await;
+            }
             Ok(SessionAsk::Caller { .. }) => {
                 let (out, written) = writer(write);
                 let record = owned.lock().record.clone();
@@ -4241,6 +4275,21 @@ impl<R: Runtime + 'static> Daemon<R> {
             riff_client::api::Api::new(&record.server).signed_in(Some(&record.live.session))?;
         api.prompted_in_container(&record.me).await?;
         Ok(())
+    }
+
+    /// Adds the calls of `gh` that a process in a session made to the
+    /// tally of the daemon (#1582, [`crate::ghcalls::Tally`]). A session
+    /// cannot write the folder of the daemon, so the daemon writes it.
+    /// It cleans the records first: the caller is a name that riff knows,
+    /// and a send has at most [`ghcalls::MAX_RECORDS`] of them
+    /// ([`ghcalls::clean`]). The time is the time of the daemon.
+    pub fn tally_calls(&self, calls: Vec<ghcalls::Record>) {
+        let records: Vec<ghcalls::Record> = calls
+            .into_iter()
+            .take(ghcalls::MAX_RECORDS)
+            .map(ghcalls::clean)
+            .collect();
+        ghcalls::Tally::in_folder(&self.dir).record_all(now_ms(), records);
     }
 
     /// Posts each refusal of auto mode of `denials` as the session of
@@ -6051,6 +6100,16 @@ mod tests {
                 spec.env
                     .contains(&Env::Value(SOCKET_VAR.into(), "/run/riff/riff.sock".into()))
             );
+            // The binary of riff is the `gh` of the container, with no
+            // write (01M6JGF7265VX2SDXZ4EJAGXVB).
+            let riff = |target: &str| {
+                spec.binds
+                    .iter()
+                    .find(|b| b.target == Path::new(target))
+                    .map(|b| (b.source.clone(), b.write))
+            };
+            assert_eq!(riff(crate::gh_wrapper::BIND), riff(RELAY_BIN));
+            assert_eq!(riff(RELAY_BIN).map(|(_, write)| write), Some(false));
             // No bind shows the folder of the daemon, other than its own
             // socket folder.
             for bind in &spec.binds {
@@ -6153,7 +6212,7 @@ mod tests {
         }
         // A bind at the place of the socket or of the relay in the
         // session.
-        for target in ["/run/riff", RELAY_BIN] {
+        for target in ["/run/riff", RELAY_BIN, crate::gh_wrapper::BIND] {
             let mut start = here.start("riff-issue-2-bbbbbbbb", "issue-2");
             start.spec.binds[0].target = target.into();
             let mut client = Client::connect(&here.dir).await.unwrap();
@@ -10082,6 +10141,121 @@ mod tests {
         assert!(text.contains("GitHub, last hour: "), "{text}");
         assert!(text.contains("unit-test  api graphql"), "{text}");
         assert!(text.contains("GraphQL points left: "), "{text}");
+    }
+
+    /// 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 (#1582): a process in a container sends
+    /// its calls of `gh` on the socket of its session. The daemon cleans
+    /// them and adds them to the tally, and the status shows them with the
+    /// calls of the daemon. A caller that riff does not know is a session.
+    #[tokio::test]
+    async fn a_session_sends_its_calls_of_gh_and_the_status_shows_them() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (_client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let call = |caller: &str, kind: &str, points| ghcalls::Record {
+            caller: caller.into(),
+            kind: kind.into(),
+            points,
+        };
+        let mut calls = vec![
+            call("pr wait", "pr view", 1),
+            call("pr wait", "pr view", 1),
+            call("a name of my own", "api graphql", 1_000_000),
+            call("session", "pr\nlist", 2),
+        ];
+        // Past the most of one send: dropped.
+        calls.extend((0..200).map(|_| call("session", "issue view", 1)));
+        let ask = SessionAsk::GhCalls {
+            protocol: PROTOCOL,
+            calls,
+        };
+        let conn = connect_in(&session_dir(&here.dir, &name), SOCKET)
+            .await
+            .unwrap();
+        let (read, mut write) = conn.into_split();
+        write
+            .write_all(format!("{}\n", serde_json::to_string(&ask).unwrap()).as_bytes())
+            .await
+            .unwrap();
+        let line = BufReader::new(read).lines().next_line().await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Say>(&line.unwrap()).unwrap(),
+            Say::Done
+        );
+
+        let status = here.daemon.status().await;
+        let rows: Vec<(&str, &str, u32, u32)> = status
+            .github
+            .rows
+            .iter()
+            .filter(|r| r.caller == "pr wait" || r.caller == "session")
+            .map(|r| (r.caller.as_str(), r.kind.as_str(), r.calls, r.points))
+            .collect();
+        assert!(rows.contains(&("pr wait", "pr view", 2, 2)), "{rows:?}");
+        // The unknown name is a session, and the points are cut to 100.
+        assert!(
+            rows.contains(&("session", "api graphql", 1, 100)),
+            "{rows:?}"
+        );
+        assert!(rows.contains(&("session", "pr list", 1, 2)), "{rows:?}");
+        // 4 calls, and 60 of the 200: the send has at most 64.
+        let total: u32 = rows.iter().map(|r| r.2).sum();
+        assert_eq!(
+            total,
+            u32::try_from(ghcalls::MAX_RECORDS).unwrap(),
+            "{rows:?}"
+        );
+        let shown = text::daemon_status(&status, now_ms());
+        let line = shown
+            .lines()
+            .find(|l| l.contains("pr wait"))
+            .expect("a row");
+        assert!(
+            line.contains("pr view") && line.ends_with("2 points"),
+            "{shown}"
+        );
+    }
+
+    /// 01M6JGF6Z6Y8FP86Q9VAS3NPZ7, 01M6JGF755TSQKWJBBZNEAW1GP (#1582): a
+    /// call of `gh` that `riff top` and `riff pr wait` wrote to the folder
+    /// of the daemon is in the status, with the calls of the daemon, and the
+    /// other line shows the points of the counter that no riff process used.
+    #[tokio::test]
+    async fn the_status_adds_the_tally_of_the_other_processes_and_shows_the_other_points() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let tally = ghcalls::Tally::in_folder(&here.dir);
+        let now = now_ms();
+        tally.record_at(now - 60_000, "top", "pr list", 2);
+        tally.record_at(now - 30_000, "pr wait", "pr view", 1);
+        // A counter that started 20 minutes ago: it used 400 points.
+        let reset = chrono::DateTime::from_timestamp_millis(now + 40 * 60_000)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        ghcalls::Calls::global().keep_left(ghcalls::Left {
+            remaining: ghcalls::GRAPHQL_LIMIT - 400,
+            reset_at: reset,
+            read_ms: now,
+            limit: ghcalls::GRAPHQL_LIMIT,
+        });
+        let status = here.daemon.status().await;
+        let rows = &status.github.rows;
+        for (caller, kind) in [("top", "pr list"), ("pr wait", "pr view")] {
+            assert!(
+                rows.iter().any(|r| r.caller == caller && r.kind == kind),
+                "{caller}: {rows:?}"
+            );
+        }
+        let other = status.github.other.expect("the other line");
+        assert_eq!(other.used, 400);
+        // riff counted at least the 3 points of the two processes.
+        assert!(other.counted >= 3 && other.points <= 397, "{other:?}");
+        let shown = text::daemon_status(&status, now_ms());
+        assert!(shown.contains("Other callers: "), "{shown}");
+        assert!(
+            shown.contains("The counter used 400, and riff counted "),
+            "{shown}"
+        );
     }
 
     /// 01M5TKPG5WZ1T58FNAMZNP6CJ5: the status gives the short digest of the
