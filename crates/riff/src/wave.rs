@@ -37,10 +37,15 @@
 //! [`IDLE_LOOK_EVERY`] for the next look, not [`LOOK_EVERY`]. The end of a
 //! session or of a job wakes it at once.
 //! A paused wave calls no `gh`, so it keeps [`LOOK_EVERY`]. The look of the
-//! loop reads the forge as it is. The look of the daemon at the pull
+//! loop asks GitHub first whether anything changed, with two conditional
+//! reads that cost no GraphQL point. When both answer `304`, no pull
+//! request is open and the last full read is less than 30 minutes old, it
+//! reads nothing else ([`crate::changes`], 01M6JFJQD4H4GG0H0TFSW5G1PD).
+//! Else it reads the forge as it is. The look of the daemon at the pull
 //! requests and at `main` takes the reads of the loop
 //! ([`crate::pr::Gh::read`]), and waits as long, so an idle wave makes one
-//! read of its issues and its pull requests in each wait.
+//! read of its issues and its pull requests in each wait. A `304` renews
+//! those reads.
 //!
 //! ```mermaid
 //! flowchart TD
@@ -454,8 +459,8 @@ use crate::run::{self, Facts};
 use crate::runtime::Runtime;
 use crate::session_setup::Setup;
 use crate::{
-    ghcalls, identity, kept, look, pr, release_config, repo_setup, rollout, session_image, text,
-    usage,
+    changes, ghcalls, identity, kept, look, pr, release_config, repo_setup, rollout, session_image,
+    text, usage,
 };
 use riff_client::api::{self, Api};
 
@@ -2666,12 +2671,17 @@ pub fn look_with(
     holds: BTreeSet<String>,
     asked: &HashSet<(u64, String)>,
 ) -> Result<Look> {
-    // A branch that does not read is the error of the look: the wave starts
-    // no work, and reads it again at the next look.
-    let branch = pr::default_branch(gh, repo)?;
+    // GitHub is asked first whether anything changed (#1566). A branch that
+    // does not read is the error of the look: the wave starts no work, and
+    // reads it again at the next look.
+    let changes::Facts { branch, mut open } = changes::facts(gh, repo, || {
+        Ok(changes::Facts {
+            branch: pr::default_branch(gh, repo)?,
+            open: rollout::Open::of(gh, repo)?,
+        })
+    })?;
     let claimed: HashSet<String> = claims.iter().cloned().collect();
     let held: HashSet<String> = holds.iter().cloned().collect();
-    let mut open = rollout::Open::of(gh, repo)?;
     for pull in &mut open.pulls {
         let commit: String = pull.head.chars().take(7).collect();
         pull.reasked = pull.issue().is_some_and(|n| asked.contains(&(n, commit)));
@@ -6431,10 +6441,19 @@ esac
     /// from the files of its folder: the open pull requests, the open
     /// issues, the milestones, the rules and the Gate of `main`. It
     /// answers the query of the merge queue with the cost of the query.
+    /// It answers the conditional reads of the look as GitHub does
+    /// (#1566): `304` for the `ETag` in the file `etag-issues` or
+    /// `etag-pulls`, else `200` with that `ETag`.
     const READS_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 case "$1 $2" in
   "api graphql") cat "$dir/queue" ;;
+  "api -i")
+    case "$*" in *issues*) tag=$(cat "$dir/etag-issues") ;; *) tag=$(cat "$dir/etag-pulls") ;; esac
+    case "$*" in
+      *"If-None-Match: $tag"*) echo 'gh: HTTP 304' >&2; exit 1 ;;
+      *) printf 'HTTP/2.0 200 OK\r\nEtag: %s\r\n\r\n[]\n' "$tag" ;;
+    esac ;;
   api*)
     case "$2" in
       repos/o/r) case "$*" in *--jq*) echo main ;; *) echo '{"default_branch":"main"}' ;; esac ;;
@@ -6490,6 +6509,8 @@ esac
             r#"{"data":{"rateLimit":{"cost":1,"remaining":4300,"resetAt":"2026-11-03T15:00:00Z"},
 "repository":{"pullRequests":{"nodes":[]}}}}"#,
         );
+        put("etag-issues", r#"W/"issues-1""#);
+        put("etag-pulls", r#"W/"pulls-1""#);
         dir
     }
 
@@ -6556,12 +6577,16 @@ esac
 
     /// 01M6GYN97HH70E4C1FGM6HA2B0, 01M6GYN92N3Z99GPXTYHDDWF4R (#1549): a wave
     /// with no session, 1 open pull request and 20 open issues reads the
-    /// forge with 10 calls and 6 GraphQL points at its first tick. The
-    /// look of the daemon takes the reads of the loop of the wave. A second
-    /// tick with no change makes 7 calls: it reads the default branch and
-    /// the rules one time. A daemon that shares no read made 14 calls
-    /// and 11 points in each tick. With a tick each 5 minutes the two waves
-    /// of an idle host use 144 points an hour, under the target of 300.
+    /// forge with 12 calls and 6 GraphQL points at its first tick: two of
+    /// them are the conditional reads of the look (#1566), which cost no
+    /// point. The look of the daemon takes the reads of the loop of the
+    /// wave. A second tick with no change makes 9 calls: it reads the
+    /// default branch and the rules one time. A pull request is open, so
+    /// the conditional reads save nothing here: see
+    /// `an_idle_wave_with_no_pull_request_asks_github_first_and_reads_nothing`.
+    /// A daemon that shares no read made 16 calls and 11 points in each
+    /// tick. With a tick each 5 minutes the two waves of an idle host use
+    /// 144 points an hour, under the target of 300.
     #[tokio::test]
     async fn an_idle_wave_reads_the_forge_with_few_calls_and_fewer_at_the_second_tick() {
         let forge = reads_forge(1);
@@ -6575,15 +6600,15 @@ esac
         watch.accepts = 2 * LOOK_EVERY;
 
         let first = tick(&forge, &gh, &calls, &mut watch).await;
-        assert_eq!(first["wave"], (5, 5), "{first:?}");
+        assert_eq!(first["wave"], (7, 5), "{first:?}");
         // The look of the daemon reads the rules and the Gate of `main`
         // only: the issues and the pull requests came from the wave.
         assert_eq!(first["look"], (3, 0), "{first:?}");
         assert_eq!(first["watches"], (2, 1), "{first:?}");
-        assert_eq!(sum(&first), (10, 6));
+        assert_eq!(sum(&first), (12, 6));
 
         let second = tick(&forge, &gh, &calls, &mut watch).await;
-        assert_eq!(sum(&second), (7, 6), "{second:?}");
+        assert_eq!(sum(&second), (9, 6), "{second:?}");
         assert!(sum(&second).0 < sum(&first).0);
 
         // The same tick of a daemon that shares no read: each loop reads
@@ -6592,7 +6617,7 @@ esac
         let alone = pr::Gh::at(forge.path().join("gh")).with_calls(alone_calls.clone());
         let mut watch = look::Watch::default();
         let before = tick(&forge, &alone, &alone_calls, &mut watch).await;
-        assert_eq!(sum(&before), (14, 11), "{before:?}");
+        assert_eq!(sum(&before), (16, 11), "{before:?}");
 
         // The target of two idle waves: one tick each 5 minutes.
         let ticks = 3600 / IDLE_LOOK_EVERY.as_secs() as u32;
@@ -6640,6 +6665,50 @@ esac
         let hour = minutes * (wave + look) + watches_ticks * watches;
         assert_eq!(hour, 312);
         assert!(hour <= crate::ghcalls::BUSY_POINTS_AN_HOUR, "{hour}");
+    }
+
+    /// 01M6JFJQD4H4GG0H0TFSW5G1PD (#1566): a wave with no session, no pull
+    /// request and 20 open issues asks GitHub first at each look. At its
+    /// second tick the conditional reads answer `304`: the loop of the wave
+    /// makes 2 calls and no GraphQL point, and the look of the daemon
+    /// takes the replies of the first tick, which the `304` renewed. Only
+    /// the watch of the wave still reads one point.
+    #[tokio::test]
+    async fn an_idle_wave_with_no_pull_request_asks_github_first_and_reads_nothing() {
+        let forge = reads_forge(0);
+        let calls = Arc::new(crate::ghcalls::Calls::default());
+        let gh = pr::Gh::at(forge.path().join("gh"))
+            .with_shared_reads()
+            .with_calls(calls.clone());
+        // The look of the daemon accepts a reply that is not older than a
+        // quarter of a second: only a renewed reply is so new.
+        let mut watch = look::Watch::default();
+        watch.accepts = Duration::from_millis(250);
+
+        let first = tick(&forge, &gh, &calls, &mut watch).await;
+        assert_eq!(first["wave"], (7, 5), "{first:?}");
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        let second = tick(&forge, &gh, &calls, &mut watch).await;
+        assert_eq!(second["wave"], (2, 0), "{second:?}");
+        assert_eq!(second["look"].1, 0, "{second:?}");
+        assert_eq!(second["watches"].1, 1, "{second:?}");
+        let kinds: Vec<String> = calls
+            .shown(crate::daemon::now_ms())
+            .rows
+            .into_iter()
+            .filter(|row| row.caller == "wave")
+            .map(|row| row.kind)
+            .collect();
+        assert!(kinds.contains(&"api issues".to_owned()), "{kinds:?}");
+        assert!(kinds.contains(&"api pulls".to_owned()), "{kinds:?}");
+
+        // A new issue changes the newest issue and its `ETag`: the next look
+        // reads in full again.
+        std::fs::write(forge.path().join("etag-issues"), r#"W/"issues-2""#).unwrap();
+        let third = tick(&forge, &gh, &calls, &mut watch).await;
+        // The default branch is a shared reply of the first tick.
+        assert_eq!(third["wave"], (6, 5), "{third:?}");
     }
 
     /// The seconds since the epoch now.

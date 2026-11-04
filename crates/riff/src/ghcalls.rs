@@ -42,6 +42,7 @@
 //! | a write: `pr create`, `pr merge`, a comment, `issue close` | 2 |
 //! | `gh api graphql` | the `cost` in the reply, else 1 |
 //! | `gh api PATH` of REST, `gh run`, `gh auth` | 0, the REST limit counts them |
+//! | `gh api -i -H 'If-None-Match: ETAG' PATH`, the conditional read of the look ([`crate::changes`], #1566) | 0, also when `gh` shows its `304` as a failed call |
 //!
 //! The reply of a query that asks for `rateLimit` also says how many
 //! points are left and when they come back. riff keeps the last one
