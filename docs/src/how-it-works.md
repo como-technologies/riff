@@ -2191,6 +2191,13 @@ for a pull request (see
 a new job, so a commit that breaks, passes on a rerun and breaks again
 gives the lead three messages.
 
+When `main` requires more than one check, the key of a message that
+`main` is broken names the check that failed. The key of a note that
+`main` passes names the check with the highest job number, which is the
+check that ran last. So a rerun of any one check gives a new key, also
+when the other checks do not run again. In the diagram, the other check
+stays in job 6, and the check that failed runs again.
+
 ```mermaid
 sequenceDiagram
     participant A as daemon on pangolin
@@ -2205,6 +2212,8 @@ sequenceDiagram
     S->>L: the note
     A->>S: post, key main-c60887e-38861280871-9-broken (a second rerun)
     S->>L: the message
+    A->>S: post, key main-c60887e-38861280871-10-passes (a third rerun)
+    S->>L: the note
 ```
 
 To see the checks that riff reads, use the required checks of the

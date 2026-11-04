@@ -20,10 +20,14 @@ const REPO: &str = "como-technologies/riff";
 
 const RUN: &str = "https://github.com/como-technologies/riff/actions/runs/38861280871";
 
+const HYGIENE_RUN: &str = "https://github.com/como-technologies/riff/actions/runs/38861280999";
+
 /// A fake `gh` that logs each call to `gh.log` on one line. The file
 /// `gate` holds the check runs of the head of the default branch, which
-/// is `master`, and `jobs` the jobs of the run. The file `pulls` holds the
-/// open pull requests.
+/// is `master`, and `jobs` the jobs of the run. The default branch
+/// requires two checks, `Gate` and `Hygiene`: the file `hygiene` holds the
+/// runs of `Hygiene`, and without it `Hygiene` has the runs of `Gate`.
+/// The file `pulls` holds the open pull requests.
 /// `issue list` gives the file `issues`, and the file `with-fix` after
 /// `issue create` and before `issue close`.
 const FAKE_GH: &str = r#"#!/bin/sh
@@ -38,7 +42,9 @@ case "$1 $2" in
           *--jq*) echo master ;;
           *) echo '{"default_branch":"master"}' ;;
         esac ;;
-      */rules/branches/master*) echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]' ;;
+      */rules/branches/master*) echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"Hygiene"},{"context":"riff/verify"}]}}]' ;;
+      */commits/master/check-runs*check_name=Hygiene*)
+        if [ -e "$dir/hygiene" ]; then cat "$dir/hygiene"; else cat "$dir/gate"; fi ;;
       */commits/master/check-runs*) cat "$dir/gate" ;;
       */actions/runs/38861280871/jobs*) cat "$dir/jobs" ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
@@ -137,6 +143,15 @@ fn attempt(dir: &Path, commit: &str, conclusion: &str, job: u64) {
         r#"{{"check_runs":[{{"status":"completed","conclusion":"{conclusion}","head_sha":"{commit}","html_url":"{RUN}/job/{job}"}}]}}"#
     );
     std::fs::write(dir.join("gate"), json).unwrap();
+}
+
+/// The check `Hygiene` ended with `conclusion` in the job `job` of its
+/// own run, which is not the run of `Gate`.
+fn hygiene(dir: &Path, commit: &str, conclusion: &str, job: u64) {
+    let json = format!(
+        r#"{{"check_runs":[{{"status":"completed","conclusion":"{conclusion}","head_sha":"{commit}","html_url":"{HYGIENE_RUN}/job/{job}"}}]}}"#
+    );
+    std::fs::write(dir.join("hygiene"), json).unwrap();
 }
 
 /// The lines of the log of the fake `gh` that start with `call`.
@@ -426,6 +441,66 @@ async fn a_commit_of_main_that_breaks_again_after_a_rerun_that_passed_tells_the_
 
     // The same second rerun at the next looks, and a daemon that starts
     // again: no post.
+    assert!(both().await.is_empty());
+    let (mut again_pulls, mut restarted) = new_pulls();
+    look_at(&api, &lead, &gh, &mut again_pulls, &mut restarted).await;
+    assert!(posts(&api, &lead).await.is_empty());
+}
+
+/// `main` requires two checks, and only the second one runs again: it
+/// breaks, passes, breaks again and passes again at one commit. The lead
+/// gets both notes that `main` passes, and two daemons that look at each
+/// of them still give one post for each (#1564, 01M6GX8CN4ZTV0X40GD5AWPXH9).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_pass_of_main_with_two_required_checks_tells_the_lead() {
+    let server = start_server().await;
+    let (api, lead) = lead(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(dir.path());
+    let new_pulls = || (PullWatch::default(), MainWatch::default());
+    let ((mut pangolin_pulls, mut pangolin), (mut thelio_pulls, mut thelio)) =
+        (new_pulls(), new_pulls());
+    let mut both = async || {
+        look_at(&api, &lead, &gh, &mut pangolin_pulls, &mut pangolin).await;
+        look_at(&api, &lead, &gh, &mut thelio_pulls, &mut thelio).await;
+        posts(&api, &lead).await
+    };
+    let commit = "5103311abcdef";
+    // `Gate` passes in its job 1 and does not run again.
+    attempt(dir.path(), commit, "success", 1);
+
+    // `Hygiene` breaks: one message.
+    hygiene(dir.path(), commit, "failure", 2);
+    let broken = both().await;
+    assert_eq!(broken.len(), 1, "{broken:?}");
+    assert_eq!(broken[0].0, Kind::Message);
+    assert!(broken[0].1.starts_with("main is broken:"), "{broken:?}");
+
+    // A rerun of `Hygiene` passes: one note.
+    hygiene(dir.path(), commit, "success", 3);
+    let passes = both().await;
+    assert_eq!(passes.len(), 1, "{passes:?}");
+    assert_eq!(passes[0].0, Kind::Note);
+    assert!(passes[0].1.starts_with("main passes again:"), "{passes:?}");
+
+    // A second rerun of `Hygiene` breaks the commit again: one message.
+    hygiene(dir.path(), commit, "failure", 4);
+    let again = both().await;
+    assert_eq!(again.len(), 1, "{again:?}");
+    assert_eq!(again[0].0, Kind::Message);
+    assert!(again[0].1.starts_with("main is broken:"), "{again:?}");
+
+    // A third rerun of `Hygiene` passes: a second note. Its key has the
+    // job of `Hygiene`, not the job 1 of `Gate` that the first note had.
+    hygiene(dir.path(), commit, "success", 5);
+    let passes = both().await;
+    assert_eq!(passes.len(), 1, "{passes:?}");
+    assert_eq!(passes[0].0, Kind::Note);
+    assert!(passes[0].1.starts_with("main passes again:"), "{passes:?}");
+    assert!(passes[0].1.contains(HYGIENE_RUN), "{passes:?}");
+
+    // The same runs at the next looks, and a daemon that starts again:
+    // no post.
     assert!(both().await.is_empty());
     let (mut again_pulls, mut restarted) = new_pulls();
     look_at(&api, &lead, &gh, &mut again_pulls, &mut restarted).await;

@@ -2728,10 +2728,14 @@
 - **01M6GX8CN4ZTV0X40GD5AWPXH9** The key of a post about `main` holds
   the commit, the run of the check and the state, broken or passes. The
   run is the number of the run and the number of the job of the check
-  that the message names. So a rerun of the same commit gives a new key:
-  `main` that breaks, passes on a rerun and breaks again gives the lead
-  three messages. A second look at the same run gives the same key.
-  Supersedes 01M6FYH7BFFSZQ2TAJSX8A5QQV in part.
+  that the message names. For a message that `main` is broken, it is the
+  check that failed. For a note that `main` passes, it is the required
+  check with the highest job number, so a rerun of any one check gives a
+  new key, also when the first check does not run again. So a rerun of
+  the same commit gives a new key: `main` that breaks, passes on a rerun
+  and breaks again gives the lead three messages. A second look at the
+  same run gives the same key. Supersedes 01M6FYH7BFFSZQ2TAJSX8A5QQV in
+  part.
 
 ## Threads
 

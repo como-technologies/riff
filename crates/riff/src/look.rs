@@ -161,7 +161,10 @@
 //! of a message that it keeps from the same user in the thread. So the
 //! lead gets each message about `main` one time, also after a new start
 //! of a daemon. A rerun makes a new job, so a commit that breaks, passes
-//! on a rerun and breaks again gives the lead three messages.
+//! on a rerun and breaks again gives the lead three messages. A message
+//! that `main` passes names the check with the highest job among the
+//! required checks, so a rerun of any one check gives a new key, also when
+//! the first check does not run again.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -503,8 +506,9 @@ pub struct MainGate {
     pub commit: String,
     /// The state of its full check ([`full_state`]).
     pub gate: Gate,
-    /// The page of the run of the check that did not pass, or of the
-    /// first check, for example `https://github.com/o/r/actions/runs/38861280871`.
+    /// The page of the run of the check that did not pass, or of the check
+    /// with the newest job when all passed, for example
+    /// `https://github.com/o/r/actions/runs/38861280871`.
     pub run: Option<String>,
     /// The number of the job of that check in the run, for example `7`. A
     /// rerun of a run keeps the run and makes new jobs ([`job_of`]).
@@ -518,7 +522,9 @@ impl MainGate {
     /// commit of the first run, and a run of another commit does not
     /// count: `main` moved between two calls. Of the runs of one check,
     /// only the newest count ([`newest_runs`], 01M5RGM8HBVQMY25H5PYESK17J).
-    /// The run is the newest run that did not pass, or the first one.
+    /// The run is the first newest run that did not pass. When all passed,
+    /// it is the newest run with the highest job number, so a rerun of any
+    /// one check changes it (01M6GX8CN4ZTV0X40GD5AWPXH9).
     ///
     /// ```
     /// use riff::look::MainGate;
@@ -553,6 +559,15 @@ impl MainGate {
     /// assert_eq!(main.gate, Gate::Passed);
     /// assert_eq!(main.run.as_deref(), Some("https://github.com/o/r/actions/runs/5"));
     /// assert_eq!(MainGate::of(&[vec![new, old]]).unwrap().gate, Gate::Passed);
+    /// // Two checks that passed: the run is the one with the highest job, so
+    /// // a rerun of the second check shows, and not only a rerun of the first.
+    /// let at_job = |id: u64, job: u64| CheckRun {
+    ///     html_url: Some(format!("https://github.com/o/r/actions/runs/{id}/job/{job}")),
+    ///     ..run("success", id)
+    /// };
+    /// let main = MainGate::of(&[vec![at_job(6, 20)], vec![at_job(7, 30)]]).unwrap();
+    /// assert_eq!(main.run.as_deref(), Some("https://github.com/o/r/actions/runs/7"));
+    /// assert_eq!(main.job.as_deref(), Some("30"));
     /// ```
     pub fn of(checks: &[Vec<CheckRun>]) -> Option<Self> {
         let first = checks.iter().flatten().next()?;
@@ -568,11 +583,26 @@ impl MainGate {
             .collect();
         let gate = full_state(at_head.iter().map(|runs| gate_state(runs)));
         let newest: Vec<&CheckRun> = at_head.iter().flat_map(|runs| newest_runs(runs)).collect();
+        let job_number = |r: &CheckRun| {
+            r.html_url
+                .as_deref()
+                .and_then(job_of)
+                .and_then(|job| job.parse::<u64>().ok())
+        };
         let shown = newest
             .iter()
             .copied()
             .find(|r| r.conclusion.as_deref().is_some_and(|c| !is_success(c)))
-            .or(newest.first().copied())
+            // A tie keeps the first check.
+            .or_else(|| {
+                newest.iter().copied().reduce(|best, r| {
+                    if job_number(r) > job_number(best) {
+                        r
+                    } else {
+                        best
+                    }
+                })
+            })
             .unwrap_or(first);
         let page = shown.html_url.as_deref();
         Some(Self {
@@ -712,10 +742,14 @@ impl MainNews {
     /// The key of the post of the news (01M5TKG2K1AYK1KE7C2AA2W9DS,
     /// 01M6GX8CN4ZTV0X40GD5AWPXH9): the commit of `main`, the run of the
     /// check that the message names (the number of the run and of its job)
-    /// and the state, `broken` or `passes`. The look of each host makes the
-    /// same key for the same news, and riff-server drops the second post.
-    /// A rerun of the same commit has a new job, so it has a new key. A
-    /// check with no page of a run in Actions gives a key with no run.
+    /// and the state, `broken` or `passes`. A broken note names the check
+    /// that failed. A note that `main` passes names the check with the
+    /// highest job among the required checks ([`MainGate::of`]). The look
+    /// of each host makes the same key for the same news, and riff-server
+    /// drops the second post. A rerun of the same commit has a new job,
+    /// and a job is higher than the jobs before it, so a rerun of any one
+    /// check gives a new key. A check with no page of a run in Actions
+    /// gives a key with no run.
     ///
     /// ```
     /// use riff::look::{MainGate, MainNews};
@@ -1520,6 +1554,51 @@ mod tests {
         assert_eq!(d.as_deref(), Some("main-5103311abc-51-4-broken"));
         // The same attempts again: the same key.
         assert_eq!(keys_of(&[first]), a);
+    }
+
+    /// 01M6GX8CN4ZTV0X40GD5AWPXH9: `main` requires two checks, and only the
+    /// second one runs again. The key of a note that `main` passes holds
+    /// the job of the newest run of any check, so the second pass of one
+    /// commit gets a key of its own. A second look at the same runs gives
+    /// the same key.
+    #[test]
+    fn a_rerun_of_the_second_check_of_main_gives_a_new_key_for_a_pass() {
+        let attempt = |conclusion: &str, run: u64, job: u64, started: &str| CheckRun {
+            status: "completed".into(),
+            conclusion: Some(conclusion.into()),
+            head_sha: "5103311abc".into(),
+            html_url: Some(format!(
+                "https://github.com/o/r/actions/runs/{run}/job/{job}"
+            )),
+            started_at: Some(started.into()),
+            ..CheckRun::default()
+        };
+        let gate = attempt("success", 50, 1, "2026-10-24T17:00:00Z");
+        let hygiene = [
+            attempt("failure", 51, 2, "2026-10-24T17:01:00Z"),
+            attempt("success", 51, 3, "2026-10-24T17:20:00Z"),
+            attempt("failure", 51, 4, "2026-10-24T17:40:00Z"),
+            attempt("success", 51, 5, "2026-10-24T18:00:00Z"),
+        ];
+        let mut watch = MainWatch::default();
+        let mut keys = Vec::new();
+        for count in 1..=hygiene.len() {
+            let main = MainGate::of(&[vec![gate.clone()], hygiene[..count].to_vec()]).unwrap();
+            keys.push(watch.news(&main).map(|news| news.key()));
+        }
+        assert_eq!(
+            keys,
+            [
+                Some("main-5103311abc-51-2-broken".to_owned()),
+                Some("main-5103311abc-51-3-passes".to_owned()),
+                Some("main-5103311abc-51-4-broken".to_owned()),
+                Some("main-5103311abc-51-5-passes".to_owned()),
+            ]
+        );
+        // The same runs again: the same key.
+        let main = MainGate::of(&[vec![gate], hygiene.to_vec()]).unwrap();
+        let again = MainWatch::default().news(&main).map(|news| news.key());
+        assert_eq!(again.as_deref(), Some("main-5103311abc-51-5-passes"));
     }
 
     /// riff cannot file the fix item: the lead still gets the message
