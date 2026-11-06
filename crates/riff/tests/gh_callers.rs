@@ -1,8 +1,9 @@
 //! Each `gh` call of riff outside a test is counted under a caller name
 //! that the tally knows (#1597). A `Gh::default()` counts nothing, so
 //! `riff daemon status` would show its calls as the calls of "other
-//! callers" (#1582). The code is the source of each crate: the check reads
-//! the files, as `no_skill.rs` does.
+//! callers" (#1582). A `Gh::for_repo(..)` with no `.by(..)` counts as
+//! "other" too (#1629). The code is the source of each crate: the check
+//! reads the files, as `no_skill.rs` does.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -98,6 +99,71 @@ fn uncounted(source: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
+/// The start of a `Gh` for a repository, which counts as "other" until a
+/// `.by(NAME)` names the caller.
+const FOR_REPO: &str = "Gh::for_repo(";
+
+/// The text of `rest` after the `)` that closes the `(` that `rest` starts
+/// with.
+fn after_parens(rest: &str) -> &str {
+    let mut depth = 0;
+    for (at, c) in rest.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &rest[at + 1..];
+                }
+            }
+            _ => {}
+        }
+    }
+    ""
+}
+
+/// The names of the methods of the chain that starts `rest`: `.a(..)?.b`
+/// gives `a` and `b`. The chain may span lines.
+fn chain(mut rest: &str) -> Vec<&str> {
+    let mut methods = Vec::new();
+    loop {
+        rest = rest.trim_start().trim_start_matches('?').trim_start();
+        let Some(after) = rest.strip_prefix('.') else {
+            return methods;
+        };
+        let end = after
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        methods.push(&after[..end]);
+        rest = &after[end..];
+        if rest.starts_with('(') {
+            rest = after_parens(rest);
+        }
+    }
+}
+
+/// Each `Gh::for_repo(..)` in the code of `source` outside its tests whose
+/// chain of methods has no `.by(..)`: the number of the line, and the text
+/// of the line.
+fn nameless(source: &str) -> Vec<(usize, String)> {
+    let mut code = String::new();
+    let mut starts = Vec::new();
+    for (n, line) in outside_tests(source) {
+        starts.push((code.len(), n, line));
+        code.push_str(line);
+        code.push('\n');
+    }
+    let mut out = Vec::new();
+    for (at, _) in code.match_indices(FOR_REPO) {
+        let rest = &code[at + FOR_REPO.len() - 1..];
+        if !chain(after_parens(rest)).contains(&"by") {
+            let (_, n, line) = starts[starts.partition_point(|(start, ..)| *start <= at) - 1];
+            out.push((n, line.trim().to_owned()));
+        }
+    }
+    out
+}
+
 /// Each caller name that the code of `source` outside its tests gives to a
 /// `gh`: `Gh::here("NAME")`, `Gh::in_daemon("NAME")` and `.by("NAME")`.
 fn names(source: &str) -> Vec<String> {
@@ -151,6 +217,59 @@ fn the_check_reads_the_names_of_the_callers() {
     let source = "let a = Gh::here(\"pr wait\"); let b = Gh::in_daemon(\"clone\").by(\"look\");\n\
                   // Gh::here(\"nothing\")\n";
     assert_eq!(names(source), ["pr wait", "clone", "look"]);
+}
+
+#[test]
+fn the_check_reads_the_chain_of_a_for_repo() {
+    let source = "\
+fn a() { Gh::for_repo(repo).by(\"sweep\") }
+fn b() { Gh::for_repo(repo) }
+fn c() {
+    let gh = pr::Gh::for_repo(&format!(\"{}/{}\", owner, name))
+        .with_limit(LIMIT)
+        .by(\"wave\");
+}
+fn d() {
+    let gh = Gh::for_repo(repo)
+        .with_limit(LIMIT);
+    gh.by(\"look\");
+}
+// Gh::for_repo(repo)
+#[cfg(test)]
+fn e() {
+    Gh::for_repo(repo)
+}
+fn f() { Gh::for_repo(repo).with_limit(by(1)) }
+fn g() { Gh::for_repo(repo)?.by(\"look\") }
+";
+    assert_eq!(
+        nameless(source),
+        [
+            (2, "fn b() { Gh::for_repo(repo) }".to_owned()),
+            (9, "let gh = Gh::for_repo(repo)".to_owned()),
+            (
+                18,
+                "fn f() { Gh::for_repo(repo).with_limit(by(1)) }".to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn each_for_repo_outside_a_test_has_a_caller_name() {
+    let mut found = Vec::new();
+    for path in sources() {
+        let source = fs::read_to_string(&path).unwrap();
+        for (n, line) in nameless(&source) {
+            found.push(format!("{}:{n}: {line}", path.display()));
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "give each of these a caller name: Gh::for_repo(REPO).by(NAME), with NAME one of \
+         DAEMON:\n{}",
+        found.join("\n")
+    );
 }
 
 #[test]
@@ -216,4 +335,15 @@ fn the_guide_names_each_caller_of_the_tally() {
             "the section \"See how the daemon uses the GitHub limit\" names no caller `{name}`"
         );
     }
+}
+
+#[test]
+fn the_guide_names_no_call_that_counts_as_other() {
+    let other = riff::ghcalls::OTHER;
+    assert!(!CALLERS.contains(&other) && !DAEMON.contains(&other));
+    assert!(
+        !limit_section().contains(&format!("`{other}`")),
+        "the section \"See how the daemon uses the GitHub limit\" names a caller `{other}`: \
+         each call of riff has a name"
+    );
 }

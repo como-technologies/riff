@@ -5338,6 +5338,11 @@ of this part when they merge.
   counts nothing, so a test fails on it. The section See how the daemon
   uses the GitHub limit in development.md names each caller (#1597).
   Supersedes 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 in part.
+- **01M6QPPMQSYJP8ADTS4V40NM8B** Each Gh::for_repo(REPO) in code outside
+  a test has a .by(NAME) in the same chain of method calls, so that no
+  gh call of riff counts as other. A test fails on one with none, and on
+  a caller other in the section See how the daemon uses the GitHub limit
+  of development.md (#1629).
 
 ### The lead, the view and the takeover
 
