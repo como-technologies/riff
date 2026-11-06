@@ -1955,8 +1955,9 @@ claim. The next session that claims the issue reviews the criteria.
 ## Verify finished work
 
 A session never verifies its own work. Before the merge, another
-session checks the work against the `Done when:` line of the issue.
-Only one session verifies: it claims `verify-ITEM`.
+session checks the work against the `Done when:` line of the issue. A
+heading `## Done when` counts too. Only one session verifies: it claims
+`verify-ITEM`.
 
 No session merges, and no session pushes to `main`. The author opens a
 pull request with auto-merge on. The verifier sets the status

@@ -513,6 +513,11 @@
   heading `## Done when`. The note of `riff init` for the open issues
   with no "Done when" line says both forms too. Supersedes
   01M5SMMP7ZW2PZNGK63WWZAC8P in part.
+- **01M6QFZ9JHR19Y8F1PWH2HVQ07** The start text of a verify session
+  names both forms of a "Done when" line: the line `Done when:` and the
+  heading `## Done when`. The start routine in the MCP instructions of a
+  session names both forms too. Supersedes 01M4ZV3B6R4WSEJXYT7QPRWT6X in
+  part.
 
 ## Issue hygiene on GitHub
 
@@ -4958,12 +4963,12 @@ of this part when they merge.
   clone.
 - **01M4ZV3B6R4WSEJXYT7QPRWT6X** A verify session has a clone at the
   head commit of the pull request, detached. Its start text says to
-  check the work against the `Done when:` line and to change nothing.
-  Its last reply is the result: the first line is `PASS` or `FAIL`. The
-  daemon reads it from `events.jsonl`, and reports it as `riff verify`
-  does: the comment on the pull request, the status `riff/verify` of the
-  commit, and the result to the holder of the item and to the lead. With
-  no verdict, or when the report fails but for a limit of GitHub
+  check the work and to change nothing. Its last reply is the result:
+  the first line is `PASS` or `FAIL`. The daemon reads it from
+  `events.jsonl`, and reports it as `riff verify` does: the comment on
+  the pull request, the status `riff/verify` of the commit, and the
+  result to the holder of the item and to the lead. With no verdict, or
+  when the report fails but for a limit of GitHub
   (01M6H1N332TZ17CQQ8A5CQKG7B), the lead gets a message, and the pull
   request waits for a new verify.
 - **01M4ZV3B6S1A64TYK8MTDNRCQ3** At each look, a wave removes the folder
