@@ -2904,10 +2904,14 @@ first free work:
    check on the head, it starts the fix of the check first (see
    [See why a verify waits](#see-why-a-verify-waits)). The verify is a
    new session: an author never verifies its own item.
-4. It starts one item at most 3 times in a run of the wave. Then your
+4. It starts the rebase of a pull request, or the fix of its failed
+   check, only when no verify of the same item runs. The verify tests
+   the head that the fix replaces. The rebase or the fix starts after
+   the verify ends.
+5. It starts one item at most 3 times in a run of the wave. Then your
    lead gets a message, and the item waits for you (see
    [Start a spent item again](#start-a-spent-item-again)).
-5. It starts nothing while a fact of the machine fails: the sign-in of
+6. It starts nothing while a fact of the machine fails: the sign-in of
    `gh`, or the sign-in of `claude` with 60 minutes or more left. No
    start counts (see
    [When the sign-in of claude ends soon](#when-the-sign-in-of-claude-ends-soon)).

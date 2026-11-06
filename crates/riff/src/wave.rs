@@ -145,6 +145,10 @@
 //! - the verify of an item while a session holds the item: its author
 //!   still works. The verify is a new session: an author never verifies
 //!   its own item (01M4ZV3B6NKPEZ5FNE27X95GF0);
+//! - a rebase or the fix of the checks of an item while a verify of the
+//!   item runs (01M6QC6KV25VMRREXXFBJD7NEJ, #1593): the verify tests the
+//!   head that the fix replaces, so its result would be for an old head.
+//!   The fix or the rebase starts at the look after the verify ends;
 //! - a verify before the full check of the head commit is done: each
 //!   check that the rules of the default branch require, but `riff/verify`
 //!   ([`repo_setup::full_check`], 01M5QYDHN27RC5SRHAB56PFKK0), has a run,
@@ -276,7 +280,8 @@
 //!   example the `Gate` or `Hygiene`, is no free work for a verify: the
 //!   verify of that head can only fail (#1575). The job `Gate` has no run
 //!   until the other jobs end, so `Hygiene` can fail while the `Gate` has
-//!   none. The fix starts at once, before or after a verify.
+//!   none. The fix starts before or after a verify, not while a verify
+//!   of the item runs.
 //!   The wave starts a build session for the item with the start text
 //!   [`text::wave_checks_start`]: it names the checks, tells to read the
 //!   failed run, and to fix the code and push to the same pull request.
@@ -975,7 +980,15 @@ fn verify_issue(item: &str) -> Option<u64> {
 /// assert_eq!(pick(&look, &none, &BTreeMap::new()), Some(rebase.clone()));
 /// assert_eq!(pick(&look, &none, &[(rebase.key(), 1)].into()), None);
 /// // The starts of the build do not stop the rebase.
-/// assert_eq!(pick(&look, &none, &[("issue-14".to_owned(), 3)].into()), Some(rebase));
+/// assert_eq!(pick(&look, &none, &[("issue-14".to_owned(), 3)].into()), Some(rebase.clone()));
+/// // A verify of 14 runs, in this daemon or by a claim: the rebase waits.
+/// let verifying: BTreeSet<String> = ["verify-issue-14".to_owned()].into();
+/// assert_eq!(pick(&look, &verifying, &BTreeMap::new()), None);
+/// let claimed = Look { claims: verifying, ..look.clone() };
+/// assert_eq!(pick(&claimed, &none, &BTreeMap::new()), None);
+/// // The verify of another item does not stop it.
+/// let other: BTreeSet<String> = ["verify-issue-9".to_owned()].into();
+/// assert_eq!(pick(&look, &other, &BTreeMap::new()), Some(rebase));
 ///
 /// // The checks of the pull request of 15 failed after a pass: one fix for its head.
 /// let failed = Failed { pull: 55, commit: "7a8b".into(), checks: vec!["Gate".into()] };
@@ -983,6 +996,9 @@ fn verify_issue(item: &str) -> Option<u64> {
 /// let fix = Work::Checks { issue: 15, pull: 55, commit: "7a8b".into(), checks: vec!["Gate".into()] };
 /// assert_eq!(pick(&look, &none, &BTreeMap::new()), Some(fix.clone()));
 /// assert_eq!(pick(&look, &none, &[(fix.key(), 1)].into()), None);
+/// // A verify of 15 runs: the fix waits for its end.
+/// let verifying: BTreeSet<String> = ["verify-issue-15".to_owned()].into();
+/// assert_eq!(pick(&look, &verifying, &BTreeMap::new()), None);
 /// ```
 pub fn pick(
     look: &Look,
@@ -1010,6 +1026,10 @@ pub fn pick(
             }
         } else {
             let issue = item.strip_prefix("issue-")?.parse().ok()?;
+            // A verify of the item tests the head that a fix replaces.
+            if fix_of(look, item) && busy(&format!("verify-issue-{issue}")) {
+                return None;
+            }
             match (
                 look.fixes.conflicts.get(&issue),
                 look.fixes.failed.get(&issue),
@@ -5092,6 +5112,65 @@ mod tests {
         assert_ne!(rebaser, verifier, "the verify is a new session");
     }
 
+    /// 01M6QC6KV25VMRREXXFBJD7NEJ, #1593: `main` moves while the verify of
+    /// the item runs, and the pull request gets a conflict. The wave
+    /// starts no rebase while the verify runs: its result would be for
+    /// the head that the rebase replaces. The rebase starts after the
+    /// verify ends.
+    #[tokio::test]
+    async fn a_conflict_that_comes_while_a_verify_runs_gets_the_rebase_after_the_verify() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().pulls.insert(1, Pr::Asked);
+        here.run();
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        here.forge().conflicting.insert(1);
+        here.idle(3).await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1".into(),
+        };
+        assert_eq!(
+            here.forge().works,
+            std::slice::from_ref(&verify),
+            "no rebase yet"
+        );
+        here.end("verify-issue-1").await;
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [verify, rebase("c1")]);
+    }
+
+    /// 01M6QC6KV25VMRREXXFBJD7NEJ, #1593: a check of the head fails while
+    /// the verify of the item runs (a rerun, or a check that GitHub
+    /// starts late). The wave starts no fix while the verify runs. The
+    /// fix starts after the verify ends.
+    #[tokio::test]
+    async fn a_failed_check_that_comes_while_a_verify_runs_gets_the_fix_after_the_verify() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        here.forge().pulls.insert(1, Pr::Asked);
+        here.run();
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        here.forge().failing.insert(1);
+        here.idle(3).await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1".into(),
+        };
+        assert_eq!(
+            here.forge().works,
+            std::slice::from_ref(&verify),
+            "no fix yet"
+        );
+        here.end("verify-issue-1").await;
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        assert_eq!(here.forge().works, [verify, checks("c1")]);
+    }
+
     /// #1464, #1468: the cause of three verifies of a head with a
     /// conflict. When a merge moves `main`, GitHub gives `UNKNOWN` for the
     /// other open pull requests until it has looked at them. `UNKNOWN` is
@@ -5626,6 +5705,73 @@ esac
             pick(&look, &running, &BTreeMap::new()),
             Some(Work::Build { issue: 12 })
         );
+    }
+
+    /// 01M6QC6KV25VMRREXXFBJD7NEJ, #1593: a running verify of an item
+    /// stops the rebase and the fix of the checks of that item, whether a
+    /// job of the wave runs the verify or a session claims it. They start
+    /// after the verify ends. The verify of another item stops neither,
+    /// and the build of the item is no fix.
+    #[test]
+    fn the_pick_starts_no_fix_and_no_rebase_while_a_verify_of_the_item_runs() {
+        let rebase = Work::Rebase {
+            issue: 1,
+            pull: 41,
+            commit: "c1".into(),
+        };
+        let checks = Work::Checks {
+            issue: 2,
+            pull: 42,
+            commit: "c2".into(),
+            checks: vec!["Gate".into()],
+        };
+        let look = Look {
+            free: vec!["issue-1".into(), "issue-2".into(), "issue-3".into()],
+            fixes: Fixes {
+                conflicts: [(
+                    1,
+                    Conflict {
+                        pull: 41,
+                        commit: "c1".into(),
+                    },
+                )]
+                .into(),
+                failed: [(
+                    2,
+                    Failed {
+                        pull: 42,
+                        commit: "c2".into(),
+                        checks: vec!["Gate".into()],
+                    },
+                )]
+                .into(),
+                ..Fixes::default()
+            },
+            ..Look::default()
+        };
+        let none = BTreeSet::new();
+        let starts = BTreeMap::new();
+        assert_eq!(pick(&look, &none, &starts), Some(rebase.clone()));
+        let verify = |n: u64| -> BTreeSet<String> { [format!("verify-issue-{n}")].into() };
+        // The verify of 1 runs: the rebase of 1 waits, the fix of 2 goes.
+        assert_eq!(pick(&look, &verify(1), &starts), Some(checks.clone()));
+        // The verify of 2 runs too: the build of 3 goes.
+        let both: BTreeSet<String> = verify(1).into_iter().chain(verify(2)).collect();
+        assert_eq!(pick(&look, &both, &starts), Some(Work::Build { issue: 3 }));
+        // A claim of the verify, from another host, stops the same.
+        let claimed = Look {
+            claims: both.clone(),
+            ..look.clone()
+        };
+        assert_eq!(
+            pick(&claimed, &none, &starts),
+            Some(Work::Build { issue: 3 })
+        );
+        // The verify of 3 stops neither fix.
+        assert_eq!(pick(&look, &verify(3), &starts), Some(rebase.clone()));
+        // The verify ends: the rebase starts, then the fix.
+        let after: BTreeMap<String, u32> = [(rebase.key(), 1)].into();
+        assert_eq!(pick(&look, &none, &after), Some(checks));
     }
 
     #[test]
