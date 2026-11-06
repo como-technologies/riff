@@ -36,7 +36,9 @@
 //! [`SessionAsk::GhCalls`](crate::daemon::SessionAsk::GhCalls)). The
 //! `gh` in a container is the binary of riff, which the daemon binds at
 //! the path of `gh` ([`crate::gh_wrapper`]). `riff daemon status` adds the
-//! folder to the calls of the daemon.
+//! folder to the calls of the daemon. Each call keeps the ID of its
+//! process, so `riff ps` shows the calls on the process ([`Call::pid`],
+//! [`crate::ps`], #1610).
 //!
 //! ```mermaid
 //! flowchart LR

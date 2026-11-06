@@ -31,6 +31,12 @@
 //! A count never fails the call: when riff cannot write the record, it
 //! drops it.
 //!
+//! Each record carries the ID of the process that made the call
+//! ([`Record::pid`]). The daemon adds the name of the container, which it
+//! takes from the socket of the session ([`Tally::record_for`]): a session
+//! cannot name another container. `riff ps` finds the calls of a process by
+//! the two ([`crate::ps::count_calls`], #1610).
+//!
 //! ```mermaid
 //! flowchart LR
 //!     T["riff top, riff pr wait, ..."] -- "Tally::Folder" --> F["gh-calls/HOUR.jsonl"]

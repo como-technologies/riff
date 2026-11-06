@@ -6076,6 +6076,19 @@ pub fn ps_no_list(why: &str) -> String {
     )
 }
 
+/// Why `riff ps` has no list of the processes of a container: the runtime
+/// gave none in `limit` (#1610).
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let why = riff::text::ps_silent(Duration::from_secs(5));
+/// assert_eq!(why, "the runtime gave no answer in 5 s");
+/// ```
+pub fn ps_silent(limit: std::time::Duration) -> String {
+    format!("the runtime gave no answer in {} s", limit.as_secs())
+}
+
 /// The line of `riff ps` for the processes of a container that it does not
 /// show (#1610).
 ///

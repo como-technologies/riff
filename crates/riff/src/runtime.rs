@@ -454,6 +454,9 @@ struct Book {
     refused: BTreeSet<String>,
     /// The processes of each session ([`Fake::with_processes`]).
     processes: BTreeMap<String, Vec<Proc>>,
+    /// The sessions whose list of processes never comes
+    /// ([`Fake::with_hung_processes`]).
+    hung: BTreeSet<String>,
 }
 
 /// One session of a [`Fake`].
@@ -586,6 +589,13 @@ impl Fake {
     /// ```
     pub fn with_processes(self, name: &str, procs: Vec<Proc>) -> Self {
         self.lock().processes.insert(name.to_owned(), procs);
+        self
+    }
+
+    /// [`Runtime::processes`] of the session `name` never answers, as
+    /// `podman top` does not when podman hangs.
+    pub fn with_hung_processes(self, name: &str) -> Self {
+        self.lock().hung.insert(name.to_owned());
         self
     }
 
@@ -853,6 +863,9 @@ impl Runtime for Fake {
     }
 
     async fn processes(&self, name: &str) -> Result<Vec<Proc>> {
+        if self.lock().hung.contains(name) {
+            std::future::pending::<()>().await;
+        }
         let book = self.lock();
         if book.no_answer {
             bail!("podman does not answer");

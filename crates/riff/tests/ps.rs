@@ -26,9 +26,10 @@ fn line_of(shown: &str, pid: u32) -> &str {
         .unwrap_or_else(|| panic!("no line for {pid}: {shown}"))
 }
 
-/// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): the daemon reads the processes of the host. `riff ps` shows the
-/// daemon, the containers, and the riff command that asks, with its parent
-/// up to the first process that is not riff: here the test.
+/// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): the daemon reads the processes of
+/// the host. `riff ps` shows the daemon, the containers, and the riff
+/// command that asks, with its parent up to the first process that is not
+/// riff: here the test.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_ps_shows_the_daemon_and_a_riff_command_with_its_parent() {
     let here = Here::new();
@@ -64,8 +65,9 @@ async fn riff_ps_shows_the_daemon_and_a_riff_command_with_its_parent() {
     stop(daemon).await;
 }
 
-/// 01M6QBXNY8GM1DRN4RR9TPSEZH (#1610): with no daemon, `riff ps` says so, shows the state of the unit
-/// and how to start the daemon, and exits with 1.
+/// 01M6QBXNY8GM1DRN4RR9TPSEZH (#1610): with no daemon, `riff ps` says so,
+/// shows the state of the unit and how to start the daemon, and exits
+/// with 1.
 #[tokio::test]
 async fn riff_ps_with_no_daemon_says_so_and_how_to_start_it() {
     let here = Here::new();
@@ -110,9 +112,10 @@ fn answer() -> serde_json::Value {
     })
 }
 
-/// 01M6QBXNQC6X7NJVR03M92V0Q8, 01M6QBXNTMH7B2SNXBHAFKCN81 (#1610): in the container of the lead, `riff ps` asks the daemon on the
-/// socket of the session, and draws the answer. The line of a process
-/// that made calls ends with them.
+/// 01M6QBXNQC6X7NJVR03M92V0Q8, 01M6QBXNTMH7B2SNXBHAFKCN81 (#1610): in the
+/// container of the lead, `riff ps` asks the daemon on the socket of the
+/// session, and draws the answer. The line of a process that made calls
+/// ends with them.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_ps_in_the_lead_container_draws_the_answer_of_the_daemon() {
     let here = Here::new();
@@ -131,7 +134,7 @@ async fn riff_ps_in_the_lead_container_draws_the_answer_of_the_daemon() {
         "Daemon:\n\
          \x20 812  3d  riff daemon\n\
          Containers:\n\
-         \x20 riff-lead-o-r  lead  lead  session s0\n\
+         \x20 riff-lead-o-r  lead  session s0\n\
          \x20   1  10m  riff relay --terminal -- claude\n\
          \x20 riff-verify-issue-12-2b3c4d5e  verify  verify-issue-12  session s2\n\
          \x20   No list of processes: podman does not answer\n\
@@ -141,8 +144,8 @@ async fn riff_ps_in_the_lead_container_draws_the_answer_of_the_daemon() {
     );
 }
 
-/// 01M6QBXNQC6X7NJVR03M92V0Q8 (#1610): a session that is not the lead gets the refusal of the daemon,
-/// and `riff ps` exits with 1.
+/// 01M6QBXNQC6X7NJVR03M92V0Q8 (#1610): a session that is not the lead
+/// gets the refusal of the daemon, and `riff ps` exits with 1.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_ps_in_a_worker_container_shows_the_refusal() {
     let here = Here::new();

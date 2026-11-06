@@ -889,7 +889,8 @@ when you send the output to a pipe.
 - **Containers** lists each session container: its name, its kind
   (lead, work item or verify), its session ID and the processes in it.
   The process IDs are those in the container. A container with more
-  than 60 processes shows the first 60.
+  than 60 processes shows the first 60. When podman gives no list in
+  5 s, the container shows why, and the others show.
 - **Outside a container** lists each riff command on the host, for
   example `riff top`, `riff view` or `riff wave list`. Each shows its
   parents up to the first process that is not riff, for example

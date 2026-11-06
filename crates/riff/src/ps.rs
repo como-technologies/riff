@@ -1,5 +1,6 @@
 //! `riff ps`: the riff processes of this host as a tree (#1610,
-//! 01M6QBXNMEBANX439DF7J1PQ3S, 01M6QBXNQC6X7NJVR03M92V0Q8, 01M6QBXNTMH7B2SNXBHAFKCN81, 01M6QBXNY8GM1DRN4RR9TPSEZH).
+//! 01M6QBXNMEBANX439DF7J1PQ3S, 01M6QBXNQC6X7NJVR03M92V0Q8,
+//! 01M6QBXNTMH7B2SNXBHAFKCN81, 01M6QBXNY8GM1DRN4RR9TPSEZH).
 //!
 //! # Design
 //!
@@ -497,11 +498,15 @@ pub fn draw(ps: &Ps, width: usize) -> String {
         out.push_str("Containers:\n");
     }
     for container in &ps.containers {
+        // The item of the lead is its name, `lead`: it says nothing more.
+        let item = match container.kind {
+            Kind::Lead => String::new(),
+            _ => format!("  {}", container.item),
+        };
         let line = format!(
-            "  {}  {}  {}  session {}",
+            "  {}  {}{item}  session {}",
             container.name,
             container.kind.word(),
-            container.item,
             container.session
         );
         let _ = writeln!(out, "{}", cut(&line, width, ""));
@@ -680,8 +685,9 @@ mod tests {
         list.into_iter().map(|raw| (raw.pid, raw)).collect()
     }
 
-    /// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): a riff command shows with its parents up to the first
-    /// process that is not riff, and nothing above it.
+    /// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): a riff command shows with its
+    /// parents up to the first process that is not riff, and nothing above
+    /// it.
     #[test]
     fn a_riff_command_shows_with_its_parents_up_to_the_first_that_is_not_riff() {
         let procs = all(vec![
@@ -755,8 +761,8 @@ mod tests {
         assert!(parse_top("PID PPID ELAPSED COMMAND\nUSER x y z\n\n").is_empty());
     }
 
-    /// 01M6QBXNTMH7B2SNXBHAFKCN81 (#1610): a call counts for the process with its ID in its
-    /// container.
+    /// 01M6QBXNTMH7B2SNXBHAFKCN81 (#1610): a call counts for the process
+    /// with its ID in its container.
     #[test]
     fn the_calls_of_a_process_in_a_container_need_the_same_container() {
         let mut procs = vec![Proc {
@@ -777,10 +783,10 @@ mod tests {
         assert_eq!((procs[0].calls, procs[0].points), (1, 3));
     }
 
-    /// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): a process in a container shows in the `/proc` of the host.
-    /// `riff ps` leaves it to the part of the container: it shows the
-    /// daemon and a command outside a container only. The scope of conmon
-    /// is not a container.
+    /// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): a process in a container shows
+    /// in the `/proc` of the host. `riff ps` leaves it to the part of the
+    /// container: it shows the daemon and a command outside a container
+    /// only. The scope of conmon is not a container.
     #[test]
     fn a_process_in_a_container_is_not_a_command_outside_it() {
         let root = tempfile::tempdir().unwrap();
@@ -861,7 +867,7 @@ mod tests {
         assert_eq!(
             text,
             "Daemon:\n  The riff daemon answers, but riff cannot read its process.\nContainers:\n  \
-             riff-lead-o-r  lead  lead  session s1\n    No list of processes: podman does not \
+             riff-lead-o-r  lead  session s1\n    No list of processes: podman does not \
              answer\nOutside a container: no other riff process.\n"
         );
     }
