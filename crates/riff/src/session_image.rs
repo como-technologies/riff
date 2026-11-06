@@ -42,7 +42,7 @@
 //! The pin that counts is the merged pin ([`merged`],
 //! 01M51STPHXSSZMHF9T7Z85097R): [`FILE`] on the default branch of
 //! `origin`, after a fetch of that branch in the main clone. The wave of
-//! the daemon, `riff wave run`, `riff run`, `riff lead start` and the
+//! the daemon, `riff join`, `riff run`, `riff lead start` and the
 //! image step of an update use only it. So an edit of [`FILE`] that is
 //! not merged, in the main clone or on a branch that is checked out
 //! there, never chooses the image that riff pulls and runs. When the
@@ -57,7 +57,7 @@
 //!     M["the main clone"] -- "git fetch origin BRANCH" --> O["origin/HEAD, for example origin/main"]
 //!     O -- "git show origin/main:riff.toml" --> P["the merged pin"]
 //!     M -- "riff.toml on disk" --> L["the pin of the working tree"]
-//!     P --> U["the wave, riff wave run, riff run,<br/>riff lead start, the update step"]
+//!     P --> U["the wave, riff join, riff run,<br/>riff lead start, the update step"]
 //!     L -- "another image: one line" --> U
 //!     L --> F["riff image, riff init"]
 //! ```

@@ -104,6 +104,7 @@ pub fn every() -> Duration {
 ///     "limit": {"sessions": 4, "floor_gb": 8, "cpus": 8, "memory_gb": 8},
 ///     "waiting": ["riff-issue-13-2b3c4d5e"],
 ///     "waves": [{"repo": "o/r", "word": "started issue-12"}],
+///     "parts": [{"repo": "o/r", "workers": true, "lead": true}],
 ///     "test": {"tag": "v4.1.1", "commit": "90e36bfd", "secs": 185},
 ///     "claude_token": "set",
 /// }))?;
@@ -114,6 +115,7 @@ pub fn every() -> Duration {
 /// assert_eq!(facts.sessions[0].digest, "0123456789ab");
 /// assert_eq!(facts.waiting, ["riff-issue-13-2b3c4d5e"]);
 /// assert_eq!(facts.waves[0].word, "started issue-12");
+/// assert_eq!(facts.parts[0].parts.word(), "workers and lead");
 /// assert_eq!(facts.test.as_ref().map(|t| t.secs), Some(185));
 /// assert_eq!(facts.claude_token, riff_client::daemons::Token::Set);
 /// # Ok::<(), serde_json::Error>(())
@@ -146,6 +148,7 @@ pub fn of_status(status: &Status) -> Facts {
                 image: None,
             })
             .collect(),
+        parts: status.parts.clone(),
         test: status.test.clone(),
         claude_token: status.claude_token,
         ..Facts::default()

@@ -1934,6 +1934,13 @@ page [Requirements](requirements.md) holds the rules of today.
   tool with a text that says why. Superseded by
   01M4ZV3B6T2KB09WJ59F07HXET.
 
+### The waves of the daemon
+
+- **01M5515CFHRA6AJG4GKX0ZV77W** `riff wave stop` stops the wave of the
+  daemon until the next look of the rollout with free work. To keep it
+  stopped, a person pauses the repository. Superseded by
+  01M6QRDB7KVR8954B00RTETEK4 and 01M6QRDBAD4ZH2P1Y9BMW3VE2Q.
+
 ### The lead, the view and the takeover
 
 - **01M51KJ1V0STB4QCN4N5SBYGSP** `hold` has the field `interrupt`.

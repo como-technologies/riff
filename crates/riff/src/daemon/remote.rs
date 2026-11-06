@@ -5,15 +5,16 @@
 //!
 //! The daemon of a host has a session of its own on riff-server for each
 //! repository that it serves, as `riff workers host` has
-//! (01M579Z9JE6HY9HG3PWR1RR0RQ). It serves a repository after `riff wave
-//! run` or `riff daemon host` in its main clone on that host. It keeps
+//! (01M579Z9JE6HY9HG3PWR1RR0RQ). It serves a repository after `riff join`
+//! on that host, and while the host has a part in it
+//! ([`super::parts`], #1643). It keeps
 //! each one in [`SERVED_FILE`] in its folder, with its session ID, so a
 //! new start of the daemon serves with the same session. Its status is
 //! [`PREFIX`] with its pid and its build: the lead finds it in `who`.
 //!
 //! `riff daemon status`, `riff daemon limit`, `riff daemon cache`, `riff
 //! daemon events`, `riff daemon sweep`, `riff daemon end`, `riff daemon
-//! restart`, `riff wave run` and `riff wave stop` take `--host HOST`
+//! restart`, `riff join` and `riff leave` take `--host HOST`
 //! (01M579Z9MPS86MX7890T6HV18S). With it, riff posts the [`Request`] as
 //! a direct message to the session of the daemon of HOST ([`ask`]).
 //! The daemon judges it ([`judge`]), does it through its own control
@@ -79,29 +80,36 @@
 //! message of a session that is not the lead, for example a worker.
 //!
 //! A host that does not serve a repository has no session of its own for
-//! it. `riff wave run --host HOST` and `riff daemon host --host HOST` for
-//! such a repository go to the session of another daemon of the same user
-//! on HOST ([`route`]), as [`Request::Host`]. That daemon clones the
-//! repository with the `gh` of the user, into [`CLONES`] in its folder,
-//! serves it, and with `run` runs its wave ([`clone_main`], #1430,
-//! 01M5SN561BM9SK24SS0AVJ3P5J). It clones nothing when it serves the
-//! repository already, so a second request changes nothing. The lead of
-//! the repository of the request acts on it, also when the daemon
-//! serves another repository ([`judge`], 01M5SN5644YVEPF3D452ZA2JVD).
+//! it. `riff join --host HOST` for such a repository goes to the session
+//! of another daemon of the same user on HOST ([`route`]), as
+//! [`Request::Join`]. That daemon clones the repository with the `gh` of
+//! the user, into [`CLONES`] in its folder, serves it, and runs its wave
+//! ([`clone_main`], #1430, 01M5SN561BM9SK24SS0AVJ3P5J). It clones nothing
+//! when it serves the repository already, so a second request changes
+//! nothing. The lead of the repository of the request acts on it, also
+//! when the daemon serves another repository ([`judge`],
+//! 01M5SN5644YVEPF3D452ZA2JVD).
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant L as lead of o/r on pangolin
 //!     participant S as riff-server
 //!     participant D as riff daemon on thelio (serves o/other)
-//!     L->>S: riff wave run --host thelio
+//!     L->>S: riff join --host thelio
 //!     Note over L: no daemon of o/r on thelio: route to the daemon of o/other
-//!     S->>D: wake: "host o/r --run"
+//!     S->>D: wake: "join o/r"
 //!     D->>D: gh repo clone o/r into clones/o/r
-//!     D->>D: serve o/r, run its wave
+//!     D->>D: serve o/r, get the part workers, run its wave
 //!     D->>S: a direct note to the lead: "done"
 //!     S-->>L: riff prints the reply
 //! ```
+//!
+//! `riff leave --host HOST` goes to the daemon that serves the repository.
+//! It takes the part workers from the host. When the host has no other
+//! part there, the daemon stops serving the repository, and removes the
+//! main clone that it made ([`remove_clone`], [`super::Daemon::retire`]).
+//! Its session on riff-server ends at its second look after the leave, so
+//! the reply to the leave goes out first ([`serve`]).
 //!
 //! `riff daemon restart` asks the daemon to start again on the new riff
 //! on disk ([`Again`], 01M579Z9SAN24QGN1VV5C7EHM9). It does so only when
@@ -150,7 +158,7 @@ pub const PREFIX: &str = "daemon host:";
 pub const REFRESH: Duration = riff_client::daemons::EVERY;
 
 /// The longest wait of riff for the reply of the daemon of another
-/// host. A `wave run` can pull the session image first.
+/// host. A `join` can pull the session image first.
 pub const REPLY_WAIT: Duration = Duration::from_secs(600);
 
 /// How often riff reads the thread for the reply.
@@ -225,12 +233,159 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
         session,
     };
     served.insert(wave.repo.clone(), entry.clone());
+    write_served(dir, &served)?;
+    Ok(entry)
+}
+
+/// Writes `served` to [`SERVED_FILE`] in the folder `dir`, in place of
+/// the old file.
+fn write_served(dir: &Path, served: &BTreeMap<String, Served>) -> Result<()> {
     let path = dir.join(SERVED_FILE);
     let tmp = path.with_extension("json.new");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(&served)?)
+    std::fs::write(&tmp, serde_json::to_vec_pretty(served)?)
         .with_context(|| format!("cannot write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))?;
-    Ok(entry)
+    std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+}
+
+/// Removes `repo` from [`SERVED_FILE`] in the folder `dir`, and gives its
+/// entry: the daemon serves it no more (#1643). The task of its session
+/// on riff-server ends by itself ([`serve`]).
+///
+/// ```
+/// use riff::daemon::remote::{read_served, serve_in_file, unserve_in_file};
+/// use riff::wave::Wave;
+///
+/// let dir = tempfile::tempdir()?;
+/// let wave = Wave {
+///     repo: "o/r".into(),
+///     main: "/src/r".into(),
+///     server: "http://127.0.0.1:1".into(),
+///     host: "thelio".into(),
+/// };
+/// let served = serve_in_file(dir.path(), &wave)?;
+/// assert_eq!(unserve_in_file(dir.path(), "o/r")?, Some(served));
+/// assert!(read_served(dir.path())?.is_empty());
+/// assert_eq!(unserve_in_file(dir.path(), "o/r")?, None);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn unserve_in_file(dir: &Path, repo: &str) -> Result<Option<Served>> {
+    let mut served = read_served(dir)?;
+    let gone = served.remove(repo);
+    if gone.is_some() {
+        write_served(dir, &served)?;
+    }
+    Ok(gone)
+}
+
+/// Ends the session of `served` on riff-server: the daemon serves the
+/// repository no more, or a new join made a new session for it (#1643).
+/// A fault changes nothing: the session goes stale by itself.
+pub async fn end_served(dir: PathBuf, served: Served) {
+    if let Ok(session) = Session::new(&dir, &served) {
+        let _ = session.api.end(&session.me).await;
+    }
+}
+
+/// True when the folder `clone` has a `.git/objects/info/alternates` that
+/// names the main clone `main`: its objects live in `main`.
+fn links_to(clone: &Path, main: &Path) -> bool {
+    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    };
+    crate::lead::linked_main(clone).is_ok_and(|linked| same(&linked, main))
+}
+
+/// The clones that link to the main clone `main`: the clone of each session
+/// folder, and the clone of each lead, in the data folder `data` of riff
+/// (#1643). A clone that links to it has no objects without it.
+///
+/// ```
+/// use riff::daemon::remote::linked_clones;
+///
+/// let root = tempfile::tempdir()?;
+/// let main = root.path().join("daemon/clones/o/r");
+/// std::fs::create_dir_all(main.join(".git/objects"))?;
+/// let clone = |path: &str, objects: &std::path::Path| -> std::io::Result<()> {
+///     let info = root.path().join(path).join("clone/.git/objects/info");
+///     std::fs::create_dir_all(&info)?;
+///     std::fs::write(info.join("alternates"), format!("{}\n", objects.display()))
+/// };
+/// clone("data/sessions/issue-1-1a2b3c4d", &main.join(".git/objects"))?;
+/// clone("data/leads/o-r", &main.join(".git/objects"))?;
+/// clone("data/sessions/issue-2-2b3c4d5e", &root.path().join("other/.git/objects"))?;
+/// assert_eq!(linked_clones(&root.path().join("data"), &main), 2);
+/// assert_eq!(linked_clones(&root.path().join("none"), &main), 0);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn linked_clones(data: &Path, main: &Path) -> usize {
+    let folders = |root: PathBuf| -> Vec<PathBuf> {
+        std::fs::read_dir(root)
+            .map(|entries| entries.flatten().map(|e| e.path().join("clone")).collect())
+            .unwrap_or_default()
+    };
+    folders(data.join("sessions"))
+        .into_iter()
+        .chain(folders(data.join("leads")))
+        .filter(|clone| links_to(clone, main))
+        .count()
+}
+
+/// Removes the main clone that the daemon made for `wave` (#1643), and
+/// gives a line for what it did. It removes only a clone in [`CLONES`] of
+/// its folder `dir`: the clone of a person stays. It keeps the clone while
+/// a session folder or a lead in the data folder `data` of riff links to
+/// it ([`linked_clones`]).
+///
+/// ```
+/// use riff::daemon::remote::{CLONES, remove_clone};
+/// use riff::wave::Wave;
+///
+/// let dir = tempfile::tempdir()?;
+/// let data = dir.path().join("data");
+/// let made = dir.path().join(CLONES).join("o/r");
+/// std::fs::create_dir_all(made.join(".git"))?;
+/// let wave = |main: &std::path::Path| Wave {
+///     repo: "o/r".into(),
+///     main: main.to_owned(),
+///     server: "http://127.0.0.1:1".into(),
+///     host: "thelio".into(),
+/// };
+/// // A clone of a person stays.
+/// let mine = dir.path().join("mine");
+/// std::fs::create_dir_all(mine.join(".git"))?;
+/// assert!(remove_clone(dir.path(), &data, &wave(&mine)).is_empty());
+/// assert!(mine.exists());
+/// // A clone of a session folder links to the clone that the daemon made:
+/// // it stays.
+/// let info = data.join("sessions/issue-1-1a2b3c4d/clone/.git/objects/info");
+/// std::fs::create_dir_all(&info)?;
+/// std::fs::write(info.join("alternates"), format!("{}\n", made.join(".git/objects").display()))?;
+/// assert!(remove_clone(dir.path(), &data, &wave(&made))[0].contains("keeps its main clone"));
+/// assert!(made.exists());
+/// // With no such clone, the clone that the daemon made goes.
+/// std::fs::remove_dir_all(data.join("sessions"))?;
+/// assert_eq!(remove_clone(dir.path(), &data, &wave(&made)).len(), 1);
+/// assert!(!made.exists());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
+    let main = &wave.main;
+    if !main.starts_with(dir.join(CLONES)) || !main.exists() {
+        return Vec::new();
+    }
+    let linked = linked_clones(data, main);
+    if linked > 0 {
+        return vec![text::retire_keeps(&wave.repo, main, linked)];
+    }
+    match std::fs::remove_dir_all(main) {
+        Ok(()) => {
+            // The folder of the owner, when it has no other clone.
+            let _ = main.parent().map(std::fs::remove_dir);
+            vec![text::retire_removes(&wave.repo, main)]
+        }
+        Err(e) => vec![text::retire_no_remove(main, &e.to_string())],
+    }
 }
 
 /// A request of the lead to the daemon of a host: the body of its
@@ -256,10 +411,9 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 ///     "daemon sweep --remove issue-12-1a2b3c4d --force",
 ///     "daemon end riff-issue-12-1a2b3c4d",
 ///     "daemon restart",
-///     "wave run",
-///     "wave stop",
-///     "host o/r",
-///     "host o/r --run",
+///     "join o/r",
+///     "leave o/r",
+///     "leave o/r --now",
 ///     "release test 0123abc v3.3.0",
 ///     "build",
 ///     "lead move",
@@ -276,11 +430,15 @@ pub fn serve_in_file(dir: &Path, wave: &Wave) -> Result<Served> {
 /// assert!("daemon events n --after 7 --notes x".parse::<Request>().is_err());
 /// assert!("daemon cache 20G".parse::<Request>().is_err());
 /// assert!("daemon cache 20G --clear".parse::<Request>().is_err());
+/// assert_eq!("join o/r".parse(), Ok(Request::Join { repo: "o/r".into() }));
 /// assert_eq!(
-///     "host o/r --run".parse(),
-///     Ok(Request::Host { repo: "o/r".into(), run: true })
+///     "leave o/r --now".parse(),
+///     Ok(Request::Leave { repo: "o/r".into(), now: true })
 /// );
-/// for bad in ["host", "host o", "host o/r/s", "host ../r", "host o/.. --run", "host -o/r", "host o/r --go"] {
+/// for bad in [
+///     "join", "join o", "join o/r/s", "join ../r", "join -o/r", "join o/r --now",
+///     "leave", "leave o", "leave ../r", "leave o/r --go", "leave --now",
+/// ] {
 ///     assert!(bad.parse::<Request>().is_err(), "{bad}");
 /// }
 /// assert!("workers start 2".parse::<Request>().is_err());
@@ -325,19 +483,20 @@ pub enum Request {
     End(String),
     /// `riff daemon restart`.
     Restart,
-    /// `riff wave run` in the repository.
-    WaveRun,
-    /// `riff wave stop` in the repository.
-    WaveStop,
-    /// `riff daemon host --host`: the daemon serves `repo`, and clones it
-    /// first when it has no main clone of it (#1430,
-    /// 01M5SN561BM9SK24SS0AVJ3P5J). With `run`, it runs the wave too, as
-    /// `riff wave run --host` does.
-    Host {
+    /// `riff join`: the host gives workers to `repo`. The daemon serves
+    /// it, and clones it first when it has no main clone of it (#1430,
+    /// #1643), then runs its wave.
+    Join {
         /// The repository, as `OWNER/REPO`.
         repo: String,
-        /// True runs the wave of the repository.
-        run: bool,
+    },
+    /// `riff leave`: the host gives no more workers to `repo`, and with
+    /// `now` ends its sessions (#1643).
+    Leave {
+        /// The repository, as `OWNER/REPO`.
+        repo: String,
+        /// True for `--now`.
+        now: bool,
     },
     /// `riff release test` on the commit of the release `tag`: the
     /// real-session test (01M5924C8BTT6CW05Q0YZJ1GCY). The daemon writes
@@ -391,15 +550,16 @@ impl FromStr for Request {
             }),
             ["daemon", "end", name] => Ok(Request::End(name.to_owned())),
             ["daemon", "restart"] => Ok(Request::Restart),
-            ["wave", "run"] => Ok(Request::WaveRun),
-            ["wave", "stop"] => Ok(Request::WaveStop),
-            ["host", repo] if is_repo(repo) => Ok(Request::Host {
+            ["join", repo] if is_repo(repo) => Ok(Request::Join {
                 repo: repo.to_owned(),
-                run: false,
             }),
-            ["host", repo, "--run"] if is_repo(repo) => Ok(Request::Host {
+            ["leave", repo] if is_repo(repo) => Ok(Request::Leave {
                 repo: repo.to_owned(),
-                run: true,
+                now: false,
+            }),
+            ["leave", repo, "--now"] if is_repo(repo) => Ok(Request::Leave {
+                repo: repo.to_owned(),
+                now: true,
             }),
             ["lead", "move"] => Ok(Request::LeadMove),
             ["build"] => Ok(Request::Build),
@@ -489,10 +649,9 @@ impl fmt::Display for Request {
             }
             Request::End(name) => write!(f, "daemon end {name}"),
             Request::Restart => write!(f, "daemon restart"),
-            Request::WaveRun => write!(f, "wave run"),
-            Request::WaveStop => write!(f, "wave stop"),
-            Request::Host { repo, run: false } => write!(f, "host {repo}"),
-            Request::Host { repo, run: true } => write!(f, "host {repo} --run"),
+            Request::Join { repo } => write!(f, "join {repo}"),
+            Request::Leave { repo, now: false } => write!(f, "leave {repo}"),
+            Request::Leave { repo, now: true } => write!(f, "leave {repo} --now"),
             Request::LeadMove => write!(f, "lead move"),
             Request::Build => write!(f, "build"),
             Request::ReleaseTest { commit, tag } => write!(f, "release test {commit} {tag}"),
@@ -529,7 +688,8 @@ impl fmt::Display for Request {
 /// let lead = "riff://mike@pangolin/como-technologies/riff?session=l1&lead=true";
 /// let person = "riff://mike@pangolin/como-technologies/riff";
 /// assert_eq!(judge(&from(lead, "d1", "daemon status", true), &daemon), Some(Ok(Request::Status)));
-/// assert_eq!(judge(&from(person, "d1", "wave stop", true), &daemon), Some(Ok(Request::WaveStop)));
+/// let leave = Request::Leave { repo: "como-technologies/riff".into(), now: false };
+/// assert_eq!(judge(&from(person, "d1", "leave como-technologies/riff", true), &daemon), Some(Ok(leave)));
 /// assert!(judge(&from(lead, "d1", "daemon status", false), &daemon).unwrap().is_err());
 /// let worker = "riff://mike@pangolin/como-technologies/riff?session=w1";
 /// assert!(judge(&from(worker, "d1", "daemon sweep", true), &daemon).unwrap().is_err());
@@ -540,12 +700,14 @@ impl fmt::Display for Request {
 /// // A request to another daemon, and a message that is no request.
 /// assert_eq!(judge(&from(lead, "d2", "daemon status", true), &daemon), None);
 /// assert_eq!(judge(&from(lead, "d1", "hello", true), &daemon), None);
-/// // The lead of another repository serves its own repository on this host.
-/// let host = "host como-technologies/other --run";
-/// let request = Request::Host { repo: "como-technologies/other".into(), run: true };
-/// assert_eq!(judge(&from(other_repo, "d1", host, true), &daemon), Some(Ok(request)));
-/// assert!(judge(&from(lead, "d1", host, true), &daemon).unwrap().is_err());
-/// assert!(judge(&from(other_repo, "d1", "host como-technologies/riff", true), &daemon).unwrap().is_err());
+/// // The lead of another repository joins its own repository on this host.
+/// let join = "join como-technologies/other";
+/// let request = Request::Join { repo: "como-technologies/other".into() };
+/// assert_eq!(judge(&from(other_repo, "d1", join, true), &daemon), Some(Ok(request)));
+/// assert!(judge(&from(lead, "d1", join, true), &daemon).unwrap().is_err());
+/// assert!(judge(&from(other_repo, "d1", "join como-technologies/riff", true), &daemon).unwrap().is_err());
+/// // It leaves only its own repository too.
+/// assert!(judge(&from(other_repo, "d1", "leave como-technologies/riff", true), &daemon).unwrap().is_err());
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn judge(checked: &Checked, me: &SessionUri) -> Option<std::result::Result<Request, String>> {
@@ -565,11 +727,14 @@ pub fn judge(checked: &Checked, me: &SessionUri) -> Option<std::result::Result<R
     }
     let user = from.who().user() == me.who().user();
     let person = from.who().session().is_none();
-    // A request to serve a repository comes from the lead of that
-    // repository, also to a daemon that serves another one (#1430).
+    // A request to join or to leave a repository comes from the lead of
+    // that repository, also to a daemon that serves another one (#1430,
+    // #1643).
     let lead = from.lead()
         && match &request {
-            Request::Host { repo, .. } => from.place().repo_text() == *repo,
+            Request::Join { repo } | Request::Leave { repo, .. } => {
+                from.place().repo_text() == *repo
+            }
             _ => from.place().repo() == me.place().repo(),
         };
     if !user || !(person || lead) {
@@ -737,24 +902,50 @@ pub fn is_repo(text: &str) -> bool {
         .is_some_and(|(owner, name)| part(owner) && part(name))
 }
 
-/// The [`Request::Host`] for `repo`, or the error when `repo` is no
+/// The [`Request::Join`] for `repo`, or the error when `repo` is no
 /// `OWNER/REPO` that the daemon takes.
-pub fn host_request(repo: &str, run: bool) -> Result<Request> {
+///
+/// ```
+/// use riff::daemon::remote::{join_request, Request};
+///
+/// assert_eq!(join_request("o/r")?, Request::Join { repo: "o/r".into() });
+/// assert!(join_request("o/../r").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn join_request(repo: &str) -> Result<Request> {
     if !is_repo(repo) {
         bail!("{}", text::daemon_bad_repo(repo));
     }
-    Ok(Request::Host {
+    Ok(Request::Join {
         repo: repo.to_owned(),
-        run,
+    })
+}
+
+/// The [`Request::Leave`] for `repo`, or the error when `repo` is no
+/// `OWNER/REPO` that the daemon takes.
+///
+/// ```
+/// use riff::daemon::remote::{leave_request, Request};
+///
+/// assert_eq!(leave_request("o/r", true)?, Request::Leave { repo: "o/r".into(), now: true });
+/// assert!(leave_request("-o/r", false).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn leave_request(repo: &str, now: bool) -> Result<Request> {
+    if !is_repo(repo) {
+        bail!("{}", text::daemon_bad_repo(repo));
+    }
+    Ok(Request::Leave {
+        repo: repo.to_owned(),
+        now,
     })
 }
 
 /// The session that gets `request` on `host`, and the request to send
 /// (#1430). The daemon of `user` on `host` that serves `repo` gets
-/// `request` as it is. For `riff wave run` and `riff daemon host`, when
-/// no daemon there serves `repo`, another daemon of `user` on `host`
-/// gets a [`Request::Host`]: it serves `repo` and clones it first. Else
-/// none.
+/// `request` as it is. For `riff join`, when no daemon there serves
+/// `repo`, another daemon of `user` on `host` gets the same
+/// [`Request::Join`]: it serves `repo` and clones it first. Else none.
 ///
 /// ```
 /// use riff::daemon::remote::{route, status_line, Request};
@@ -769,14 +960,17 @@ pub fn host_request(repo: &str, run: bool) -> Result<Request> {
 ///     s
 /// };
 /// let sessions = [daemon("riff://mike@thelio/o/other?session=d2")];
-/// let host = |run| Request::Host { repo: "o/r".into(), run };
-/// assert_eq!(route(&sessions, "mike", "o/r", "thelio", &Request::WaveRun), Some(("d2", host(true))));
-/// assert_eq!(route(&sessions, "mike", "o/r", "thelio", &host(false)), Some(("d2", host(false))));
-/// assert_eq!(route(&sessions, "mike", "o/other", "thelio", &Request::WaveRun), Some(("d2", Request::WaveRun)));
+/// let join = Request::Join { repo: "o/r".into() };
+/// assert_eq!(route(&sessions, "mike", "o/r", "thelio", &join), Some(("d2", join.clone())));
+/// let other = Request::Join { repo: "o/other".into() };
+/// assert_eq!(route(&sessions, "mike", "o/other", "thelio", &other), Some(("d2", other)));
+/// // A host that does not serve the repository has nothing to leave.
+/// let leave = Request::Leave { repo: "o/r".into(), now: false };
+/// assert_eq!(route(&sessions, "mike", "o/r", "thelio", &leave), None);
 /// // Another request, another user, another host: no daemon.
 /// assert_eq!(route(&sessions, "mike", "o/r", "thelio", &Request::Status), None);
-/// assert_eq!(route(&sessions, "ada", "o/r", "thelio", &Request::WaveRun), None);
-/// assert_eq!(route(&sessions, "mike", "o/r", "kadomony", &Request::WaveRun), None);
+/// assert_eq!(route(&sessions, "ada", "o/r", "thelio", &join), None);
+/// assert_eq!(route(&sessions, "mike", "o/r", "kadomony", &join), None);
 /// ```
 pub fn route<'a>(
     sessions: &'a [SessionInfo],
@@ -788,13 +982,11 @@ pub fn route<'a>(
     if let Some(to) = find(sessions, user, repo, host) {
         return Some((to, request.clone()));
     }
-    let run = match request {
-        Request::WaveRun => true,
-        Request::Host { run, .. } => *run,
-        _ => return None,
-    };
+    if !matches!(request, Request::Join { .. }) {
+        return None;
+    }
     let to = find_any(sessions, user, host)?;
-    Some((to, host_request(repo, run).ok()?))
+    Some((to, join_request(repo).ok()?))
 }
 
 /// Asks the daemon of `host` for `request` as `me`, in the repository
@@ -813,7 +1005,14 @@ pub async fn ask(
     let sessions = api.who(me, false).await?;
     let repo = me.place().repo_text();
     let Some((to, request)) = route(&sessions, me.who().user(), &repo, host, request) else {
-        bail!("{}", text::no_daemon_host(host, &repo));
+        // A host with no daemon for the repository gives it no workers.
+        bail!(
+            "{}",
+            match request {
+                Request::Leave { .. } => text::no_daemon_leave(host, &repo),
+                _ => text::no_daemon_host(host, &repo),
+            }
+        );
     };
     let to = to.to_owned();
     let request = &request;
@@ -922,8 +1121,14 @@ pub async fn answer(
         }
         Request::End(name) => lines_of(dir, Ask::End { name: name.clone() }).await,
         Request::Restart => lines_of(dir, Ask::Restart).await,
-        Request::WaveRun => wave_run(dir, &served.wave).await,
-        Request::Host { repo, run } => join(dir, served, repo, *run).await,
+        Request::Join { repo } => join(dir, served, repo).await,
+        Request::Leave { repo, now } => {
+            let ask = Ask::Leave {
+                repo: repo.clone(),
+                now: *now,
+            };
+            lines_of(dir, ask).await
+        }
         Request::LeadMove => crate::lead::take(dir, &served.wave).await,
         Request::ReleaseTest { commit, tag } => {
             let (dir, served) = (dir.to_owned(), served.clone());
@@ -951,24 +1156,12 @@ pub async fn answer(
             .map_err(anyhow::Error::from)
             .and_then(|done| done)
         }
-        Request::WaveStop => {
-            let repo = served.wave.repo.clone();
-            lines_of(dir, Ask::WaveStop { repo: repo.clone() })
-                .await
-                .map(|lines| {
-                    let stops = text::wave_stops(&repo);
-                    if lines.is_empty() {
-                        stops
-                    } else {
-                        format!("{lines}\n{stops}")
-                    }
-                })
-        }
     };
     done.map_err(|e| format!("{e:#}"))
 }
 
-/// `riff wave run` of the repository of `wave`, in its main clone.
+/// The join of the repository of `wave` in its main clone: the daemon
+/// gets the session image, serves the repository, and runs its wave.
 async fn wave_run(dir: &Path, wave: &Wave) -> Result<String> {
     let here = wave.place(None)?;
     let mut lines = Vec::new();
@@ -980,13 +1173,12 @@ async fn wave_run(dir: &Path, wave: &Wave) -> Result<String> {
     Ok(lines.join("\n"))
 }
 
-/// `riff daemon host --host` and `riff wave run --host` for `repo`
-/// (#1430): the daemon in the folder `dir` serves `repo`, and with `run`
-/// runs its wave. A repository that it serves keeps its main clone.
-/// Else the daemon makes a main clone with [`clone_main`] and serves
-/// that one, with the riff-server and the host name of `served`: the
-/// request came through that riff-server.
-async fn join(dir: &Path, served: &Served, repo: &str, run: bool) -> Result<String> {
+/// `riff join --host` for `repo` (#1430, #1643): the daemon in the folder
+/// `dir` serves `repo` and runs its wave. A repository that it serves
+/// keeps its main clone. Else the daemon makes a main clone with
+/// [`clone_main`] and serves that one, with the riff-server and the host
+/// name of `served`: the request came through that riff-server.
+async fn join(dir: &Path, served: &Served, repo: &str) -> Result<String> {
     let mut lines = Vec::new();
     let known = read_served(dir)?.remove(repo);
     let wave = match known {
@@ -1012,11 +1204,7 @@ async fn join(dir: &Path, served: &Served, repo: &str, run: bool) -> Result<Stri
             }
         }
     };
-    if run {
-        lines.push(wave_run(dir, &wave).await?);
-    } else {
-        lines.push(lines_of(dir, Ask::Serve { wave }).await?);
-    }
+    lines.push(wave_run(dir, &wave).await?);
     Ok(lines.join("\n"))
 }
 
@@ -1335,6 +1523,8 @@ pub async fn serve(dir: PathBuf, served: Served, news: News) {
     let mut wakes = Box::pin(follow(|| session.api.watch(&session.me), STREAM_RETRY));
     let mut refresh = tokio::time::interval(super::facts::every());
     let mut short = Short::default();
+    // The looks in a row where the repository is not in `served.json`.
+    let mut gone = 0;
     loop {
         let look = tokio::select! {
             wake = wakes.next() => {
@@ -1350,12 +1540,35 @@ pub async fn serve(dir: PathBuf, served: Served, news: News) {
         }
         session.answer().await;
         if look {
+            // The host has no part in the repository any more
+            // (`Daemon::retire`). It waits one look, so the reply to the
+            // leave goes out first.
+            if is_served(&dir, &served) {
+                gone = 0;
+            } else {
+                gone += 1;
+                if gone >= 2 {
+                    println!("{}", text::daemon_serves_no_more(&repo));
+                    let _ = session.api.end(&session.me).await;
+                    return;
+                }
+            }
             session.send_facts(&mut short).await;
             for note in news.take(&repo) {
                 session.note_lead(&note).await;
             }
         }
     }
+}
+
+/// False when [`SERVED_FILE`] in the folder `dir` has no entry for the
+/// repository of `served` with its session. A file that cannot be read
+/// counts as served.
+fn is_served(dir: &Path, served: &Served) -> bool {
+    read_served(dir).map_or(true, |all| {
+        all.get(&served.wave.repo)
+            .is_some_and(|s| s.session == served.session)
+    })
 }
 
 /// Ends a task when it drops.

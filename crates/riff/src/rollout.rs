@@ -6,17 +6,20 @@
 //! So the start of work does not wait for an agent that remembers a
 //! step. Once each [`INTERVAL`], it looks at the riff, and asks the riff
 //! daemon of its machine to run the wave of the repository
-//! ([`crate::wave`], 01M53NGVE839TRH7XB7CDPQNZE). The daemon runs each
-//! item in a container.//!
+//! ([`crate::wave`], 01M53NGVE839TRH7XB7CDPQNZE), only when the host
+//! has the part workers in the repository (`riff join`, #1643). The
+//! daemon runs each item in a container.
+//!
 //! ```mermaid
 //! flowchart TD
 //!     T["each interval"] --> L{"this session is the lead?"}
 //!     L -- no --> T
 //!     L -- yes --> R{"the riff and the repository run?"}
 //!     R -- "no: paused" --> T
-//!     R -- yes --> D["the daemon of this machine, at most 5 s:<br/>does a wave of the repository run?"]
+//!     R -- yes --> D["the daemon of this machine, at most 5 s:<br/>does a wave of the repository run?<br/>does the host have the part workers?"]
 //!     D -- "it runs" --> T
-//!     D -- "no" --> W["free work (gh): a fix item of a broken main first,<br/>pull requests that wait for a verify,<br/>free items of the current wave, no held item"]
+//!     D -- "no part workers: riff leave, or no riff join" --> T
+//!     D -- "part workers, and no wave" --> W["free work (gh): a fix item of a broken main first,<br/>pull requests that wait for a verify,<br/>free items of the current wave, no held item"]
 //!     W --> I{"free work?"}
 //!     I -- no --> T
 //!     I -- yes --> C["ask the daemon: have the session image<br/>(podman, and a pull when it is missing)"]
@@ -85,7 +88,9 @@
 //!   the sessions of a person from one item
 //!   (01M53NGWTNC3655ZZJ76M1R5R7). The limit of the containers is the
 //!   limit of the daemon (01M4ZV3B6HAFTSC2K63FMC5FYA). A second machine
-//!   runs its own wave with `riff wave run` (01M53NGVH8A19QS3CQ79ENVVXT).
+//!   runs its own wave with `riff join` (01M53NGVH8A19QS3CQ79ENVVXT).
+//!   A host with no part workers ([`WaveState::NoWorkers`]) gets no ask
+//!   and no note: the lead on it only watches.
 //! - **A machine that cannot run a container**
 //!   (01M558EYAJFZK7Y822NVWGBS9H). Before it asks for the wave, the
 //!   rollout asks the daemon to have the session image: podman runs, and
@@ -99,10 +104,9 @@
 //!   gets one note with the reason ([`text::rollout_no_wave`]), and the
 //!   rollout asks again at each look. The next note comes for a new
 //!   reason, or after an ask that worked.
-//! - **A stop of the wave** (01M5515CFHRA6AJG4GKX0ZV77W). `riff wave
-//!   stop` stops the wave of the daemon. The rollout asks for it again
-//!   at its next look with free work. To keep it stopped, pause the
-//!   repository.
+//! - **A leave** (#1643). `riff leave` takes the part workers from the
+//!   host. The rollout asks for no wave there, at no look, until `riff
+//!   join`. To stop the work on each host, pause the repository.
 //! - **Pause** (01M3Q5QEBTNM90SPYXNVTT7RJA). A pause stops the rollout
 //!   within one look. A look that started before the pause can ask for
 //!   the wave one more time. The wave then starts nothing while the
@@ -151,7 +155,11 @@ pub struct View {
 /// machine, at one look ([`crate::wave::runs`]).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum WaveState {
-    /// The daemon runs no wave of the repository.
+    /// The host gives no workers to the repository: it never joined, or it
+    /// left (#1643). The rollout asks nothing and says nothing.
+    NoWorkers,
+    /// The host gives workers to the repository, and the daemon runs no
+    /// wave of it.
     #[default]
     None,
     /// The daemon runs a wave of the repository.
@@ -167,9 +175,40 @@ pub enum WaveState {
 /// on with no daemon facts.
 pub async fn wave_state(dir: &Path, repo: &str, limit: Duration) -> WaveState {
     match crate::daemon::status_within(dir, limit).await {
-        Ok(status) if crate::wave::runs(&status, repo) => WaveState::Runs,
-        Ok(_) => WaveState::None,
+        Ok(status) => wave_state_of(&status, repo),
         Err(e) => WaveState::NoDaemon(format!("{e:#}")),
+    }
+}
+
+/// The wave of `repo` in the status of a daemon: it runs, or the host has
+/// the part workers and the daemon runs no wave, or the host has no part
+/// workers (#1643).
+///
+/// ```
+/// use riff::rollout::{WaveState, wave_state_of};
+///
+/// let status = |waves: serde_json::Value, parts: serde_json::Value| {
+///     serde_json::from_value::<riff::daemon::Status>(serde_json::json!({
+///         "pid": 1, "build": "b", "since_ms": 0, "dir": "/d", "sessions": [],
+///         "waves": waves, "parts": parts,
+///     }))
+///     .unwrap()
+/// };
+/// let (none, workers) = (serde_json::json!([]), serde_json::json!([{"repo": "o/r", "workers": true, "lead": false}]));
+/// let lead = serde_json::json!([{"repo": "o/r", "workers": false, "lead": true}]);
+/// let runs = serde_json::json!([{"repo": "o/r", "word": "waits"}]);
+/// assert_eq!(wave_state_of(&status(runs, workers.clone()), "o/r"), WaveState::Runs);
+/// assert_eq!(wave_state_of(&status(none.clone(), workers), "o/r"), WaveState::None);
+/// assert_eq!(wave_state_of(&status(none.clone(), lead), "o/r"), WaveState::NoWorkers);
+/// assert_eq!(wave_state_of(&status(none.clone(), none), "o/r"), WaveState::NoWorkers);
+/// ```
+pub fn wave_state_of(status: &crate::daemon::Status, repo: &str) -> WaveState {
+    if crate::wave::runs(status, repo) {
+        WaveState::Runs
+    } else if crate::wave::gives_workers(status, repo) {
+        WaveState::None
+    } else {
+        WaveState::NoWorkers
     }
 }
 
@@ -211,6 +250,7 @@ pub async fn run(env: impl Env) {
                     no_wave = None;
                     return Ok(());
                 }
+                WaveState::NoWorkers => return Ok(()),
                 WaveState::NoDaemon(why) => why.clone(),
                 WaveState::None if view.work > 0 => match env.run_wave().await {
                     Ok(()) => {
@@ -2597,6 +2637,22 @@ mod tests {
         });
         run_for(&fake, 120).await;
         assert!(fake.with(|w| w.asks.is_empty() && w.told.is_empty()));
+    }
+
+    /// #1643, 01M6QRDBAD4ZH2P1Y9BMW3VE2Q: the host has no part workers (it
+    /// never joined, or it left): the lead on it only watches. No ask, no
+    /// note, also with free work. After a join, the rollout asks again.
+    #[tokio::test(start_paused = true)]
+    async fn no_ask_and_no_note_on_a_host_with_no_part_workers() {
+        let fake = Fake::new(World {
+            wave: WaveState::NoWorkers,
+            ..world(3)
+        });
+        run_for(&fake, 120).await;
+        assert!(fake.with(|w| w.asks.is_empty() && w.told.is_empty()));
+        fake.with(|w| w.wave = WaveState::None);
+        run_for(&fake, 20).await;
+        assert!(fake.with(|w| w.asks.len() == 1 && w.told.len() == 1));
     }
 
     #[tokio::test(start_paused = true)]

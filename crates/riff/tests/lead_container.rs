@@ -333,13 +333,13 @@ async fn plan_hold_and_free_show_the_refusal_of_the_daemon() {
     }
 }
 
-/// #1430, 01M5SN566ZH5ZQ52NYT24WYA4P: `riff wave run` in the container of
+/// #1430, 01M5SN566ZH5ZQ52NYT24WYA4P: `riff join` in the container of
 /// the lead starts no wave:
 /// the container has no daemon of its own. It names the hosts of the user
-/// with a daemon that does not serve the repository, and `riff wave run
+/// with a daemon that does not serve the repository, and `riff join
 /// --host` as the way to add one.
 #[tokio::test(flavor = "multi_thread")]
-async fn wave_run_names_the_hosts_that_do_not_run_the_wave() {
+async fn join_names_the_hosts_that_give_no_workers() {
     let container = Container::new();
     let daemon = |uri: &str| {
         json!({
@@ -365,14 +365,30 @@ async fn wave_run_names_the_hosts_that_do_not_run_the_wave() {
         Some("who") => Ok(json!({"sessions": sessions})),
         _ => Err(format!("unexpected call {call}")),
     });
-    let out = container.riff(&socket, &["wave", "run"]).await;
+    let out = container.riff(&socket, &["join"]).await;
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let hosts = ["pangolin".to_owned()];
     assert_eq!(
         text(&out.stderr).trim(),
-        riff::text::wave_run_in_container("como-technologies/riff", &hosts)
+        riff::text::join_in_container("como-technologies/riff", &hosts)
     );
     assert_eq!(common::call_names(&asked), ["roster", "who"]);
+}
+
+/// #1643: `riff leave` in the container of the lead stops no workers: the
+/// container has no daemon of its own. It names `riff leave --host`.
+#[tokio::test(flavor = "multi_thread")]
+async fn leave_in_a_container_names_the_host_flag() {
+    let container = Container::new();
+    let (_dir, socket, asked) =
+        common::session_socket(|call| Err(format!("unexpected call {call}")));
+    let out = container.riff(&socket, &["leave"]).await;
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(
+        text(&out.stderr).trim(),
+        riff::text::leave_in_container("como-technologies/riff")
+    );
+    assert!(common::call_names(&asked).is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]

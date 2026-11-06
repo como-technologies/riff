@@ -102,6 +102,33 @@ impl Host {
         self.env.riff_home().join("daemon")
     }
 
+    /// Ends the daemon of this host, as a restart does: its files stay.
+    fn stop(&mut self) {
+        if let Some(mut child) = self.daemon.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    /// What a lead on this host leaves in the folder of its daemon (#1643):
+    /// the daemon serves the repository of `main`, and the host has the part
+    /// lead and not the part workers. The daemon of a host that never
+    /// joined serves a repository only for its lead.
+    fn serve_lead(&self, main: &Path) {
+        let repo = riff::identity::place_in(main, self.name)
+            .unwrap()
+            .repo_text();
+        std::fs::create_dir_all(self.dir()).unwrap();
+        let wave = serde_json::json!({
+            "repo": repo, "main": main, "server": &self.server, "host": self.name,
+        });
+        let session = riff::identity::new_session_id();
+        let served = serde_json::json!({repo.clone(): {"wave": wave, "session": session}});
+        std::fs::write(self.dir().join("served.json"), served.to_string()).unwrap();
+        let parts = serde_json::json!({repo: {"workers": false, "lead": true}});
+        std::fs::write(self.dir().join("parts.json"), parts.to_string()).unwrap();
+    }
+
     /// Starts the daemon of this host, and waits until it listens. As a
     /// systemd unit, it sets no `RIFF_SERVER`: the daemon takes the
     /// riff-server of each repository from `served.json`.
@@ -229,14 +256,9 @@ async fn riff_env(a_minutes: i64, b_minutes: i64, extra: &[(String, String)]) ->
     a.claude_ends_in(a_minutes);
     b.claude_ends_in(b_minutes);
     for host in [&mut a, &mut b] {
+        // A lead runs on the host: it serves the repository for the lead.
+        host.serve_lead(&main);
         host.start().await;
-        // The person serves the lead from the main clone, once.
-        let out = host.run(&main, &["daemon", "host"], None).await;
-        assert!(out.status.success(), "{out:?}");
-        assert!(
-            text(&out.stdout).contains("The riff daemon serves the lead of"),
-            "{out:?}"
-        );
     }
     let riff = Riff {
         server,
@@ -361,14 +383,15 @@ async fn each_daemon_command_with_host_reaches_the_daemon_of_that_host() {
                 "{out:?}"
             );
         }
-        let out = r.lead(&["wave", "stop"], name).await;
+        let out = r.lead(&["leave"], name).await;
         assert!(!out.status.success(), "{out:?}");
+        // The host has the part lead only: it gives no workers to leave.
         assert!(
-            text(&out.stderr).contains("does not run the wave"),
+            text(&out.stderr).contains("gives no workers to local/riff"),
             "{out:?}"
         );
         // The main clone pins no session image: the daemon starts no wave.
-        let out = r.lead(&["wave", "run"], name).await;
+        let out = r.lead(&["join"], name).await;
         assert!(!out.status.success(), "{out:?}");
         assert!(!text(&out.stderr).contains("no daemon"), "{out:?}");
     }
@@ -632,6 +655,8 @@ async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
         // (01M5TKPG5WZ1T58FNAMZNP6CJ5).
         assert!(!part.contains("image"), "{host}: {part}");
         assert!(part.contains("riff on"), "{host}: {part}");
+        // The parts of the host in the repository (#1643).
+        assert!(part.contains("parts local/riff lead"), "{host}: {part}");
         // The gh of a test has no sign-in.
         assert!(part.contains("gh off"), "{host}: {part}");
         assert!(part.contains(left), "{host}: {part}");
@@ -1109,7 +1134,7 @@ async fn the_daemon_runs_the_test_and_the_build_with_the_release_table_that_orig
 }
 
 /// #1262: a daemon that runs the wave of a repository serves `--host` for
-/// it at its start, with no `riff daemon host`: it writes `served.json`
+/// it at its start, with no `riff join`: it writes `served.json`
 /// from `waves.json`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_daemon_with_a_wave_and_no_served_file_serves_host() {
@@ -1245,7 +1270,7 @@ fn clones(tmp: &Path) -> Vec<String> {
 }
 
 /// #1430, 01M5SN561BM9SK24SS0AVJ3P5J, 01M5SN5644YVEPF3D452ZA2JVD:
-/// `riff wave run --host b` for a repository that `b` does not serve.
+/// `riff join --host b` for a repository that `b` does not serve.
 /// The daemon of `b` makes the main clone with the `gh` of the user,
 /// serves the repository and runs its wave. A second call changes
 /// nothing: no new clone, the same session, the same files.
@@ -1268,9 +1293,7 @@ async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_t
     let clone = r.b.dir().join("clones/local/other");
     assert!(!clone.exists());
 
-    let out =
-        r.a.run(&other, &["wave", "run", "--host", "b"], Some("l2"))
-            .await;
+    let out = r.a.run(&other, &["join", "--host", "b"], Some("l2")).await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stdout}\n{stderr}\n{}", r.b.output());
     assert!(
@@ -1306,7 +1329,8 @@ async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_t
 
     // A second call changes nothing.
     let files = |host: &Host| {
-        ["served.json", "waves.json"].map(|f| std::fs::read_to_string(host.dir().join(f)).unwrap())
+        ["served.json", "waves.json", "parts.json"]
+            .map(|f| std::fs::read_to_string(host.dir().join(f)).unwrap())
     };
     let before = files(&r.b);
     let head = |dir: &Path| {
@@ -1322,9 +1346,7 @@ async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_t
         head(&clone),
         std::fs::metadata(&clone).unwrap().modified().unwrap(),
     );
-    let out =
-        r.a.run(&other, &["wave", "run", "--host", "b"], Some("l2"))
-            .await;
+    let out = r.a.run(&other, &["join", "--host", "b"], Some("l2")).await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
     assert!(out.status.success(), "{stdout}\n{stderr}\n{}", r.b.output());
     assert!(!stdout.contains("cloned"), "{stdout}");
@@ -1344,7 +1366,7 @@ async fn wave_run_with_host_makes_the_main_clone_on_a_host_that_does_not_serve_t
     );
 
     // The person asks for it from a terminal too, for a host that is served.
-    let out = r.a.run(&other, &["wave", "run", "--host", "b"], None).await;
+    let out = r.a.run(&other, &["join", "--host", "b"], None).await;
     assert!(out.status.success(), "{out:?}");
     assert_eq!(clones(tmp.path()).len(), 1);
 }
@@ -1454,9 +1476,7 @@ async fn two_daemons_of_one_wave_give_the_lead_each_notice_one_time() {
     person_posts(&api, &lead).await;
 
     for host in ["a", "b"] {
-        let out =
-            r.a.run(&other, &["wave", "run", "--host", host], Some("l2"))
-                .await;
+        let out = r.a.run(&other, &["join", "--host", host], Some("l2")).await;
         assert!(out.status.success(), "{out:?}\n{}", r.host(host).output());
     }
 
@@ -1555,9 +1575,7 @@ async fn two_daemons_that_cannot_read_the_wave_give_the_lead_the_fault_one_time(
     person_posts(&api, &lead).await;
 
     for host in ["a", "b"] {
-        let out =
-            r.a.run(&other, &["wave", "run", "--host", host], Some("l2"))
-                .await;
+        let out = r.a.run(&other, &["join", "--host", host], Some("l2")).await;
         assert!(out.status.success(), "{out:?}\n{}", r.host(host).output());
     }
 
@@ -1595,55 +1613,94 @@ async fn two_daemons_that_cannot_read_the_wave_give_the_lead_the_fault_one_time(
     );
 }
 
-/// #1430, 01M5SN561BM9SK24SS0AVJ3P5J: `riff daemon host --host b` makes
-/// the main clone and serves the repository, and runs no wave. A host
-/// with no daemon of the user fails with the words of riff.
+/// #1643: `riff join --host b` gives `b` the part workers, and `riff
+/// leave --host b` takes them. A host with no other part stops serving the
+/// repository and removes the main clone that its daemon made. The leave
+/// holds over a restart of the daemon. A host with no daemon of the user
+/// fails with the words of riff.
 #[tokio::test(flavor = "multi_thread")]
-async fn daemon_host_with_host_clones_and_serves_but_runs_no_wave() {
+async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_made() {
     let tmp = tempfile::tempdir().unwrap();
     let third = origin(&tmp.path().join("origins"), "third");
-    let r = riff_env(300, 300, &fake_forge(tmp.path())).await;
+    let mut r = riff_env(300, 300, &fake_forge(tmp.path())).await;
     let repo = "local/third";
+    let clone = r.b.dir().join("clones/local/third");
 
     // The person asks from a terminal in the clone.
-    let out =
-        r.a.run(&third, &["daemon", "host", "--host", "b"], None)
-            .await;
+    let out = r.a.run(&third, &["join", "--host", "b"], None).await;
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{out:?}\n{}", r.b.output());
-    let clone = r.b.dir().join("clones/local/third");
     assert!(
         stdout.contains(&riff::text::daemon_cloned(repo, "b", &clone)),
         "{stdout}"
     );
-    assert!(
-        stdout.contains(&riff::text::daemon_serves(repo, "b")),
-        "{stdout}"
-    );
     assert!(clone.join("riff.toml").exists());
     assert!(remote::read_served(&r.b.dir()).unwrap().contains_key(repo));
-    assert!(riff::wave::read_waves(&r.b.dir()).unwrap().is_empty());
+    assert!(
+        riff::daemon::parts::of(&r.b.dir(), repo).workers,
+        "the host has the part workers"
+    );
     assert_eq!(clones(tmp.path()).len(), 1);
-
-    // Again: no clone, the same session.
-    let session = remote::read_served(&r.b.dir()).unwrap()[repo]
-        .session
-        .clone();
-    let out =
-        r.a.run(&third, &["daemon", "host", "--host", "b"], None)
-            .await;
-    assert!(out.status.success(), "{out:?}");
-    assert!(!text(&out.stdout).contains("cloned"), "{out:?}");
-    assert_eq!(clones(tmp.path()).len(), 1);
-    assert_eq!(
-        remote::read_served(&r.b.dir()).unwrap()[repo].session,
-        session
+    // `riff who` shows the parts of the host.
+    let who = until("the parts of b in riff who", || async {
+        let out = r.a.run(&r.main, &["who"], Some("l1")).await;
+        let who = text(&out.stdout);
+        who.contains("local/third workers").then_some(who)
+    })
+    .await;
+    assert!(
+        who.contains("parts local/riff lead, local/third workers"),
+        "{who}"
     );
 
+    // The leave takes the part workers, and the host has no other part.
+    let out = r.a.run(&third, &["leave", "--host", "b"], None).await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}\n{}", r.b.output());
+    assert!(stdout.contains(&riff::text::leave_stops(repo)), "{stdout}");
+    assert!(stdout.contains(&riff::text::retire_stops(repo)), "{stdout}");
+    assert!(
+        stdout.contains(&riff::text::retire_removes(repo, &clone)),
+        "{stdout}"
+    );
+    assert!(!clone.exists());
+    assert!(!remote::read_served(&r.b.dir()).unwrap().contains_key(repo));
+    assert!(riff::wave::read_waves(&r.b.dir()).unwrap().is_empty());
+    assert!(riff::daemon::parts::of(&r.b.dir(), repo).none());
+    // Its session on riff-server ends.
+    let lead = session(&third, "mike", "a", "l3");
+    r.api(&lead).register(&lead).await.unwrap();
+    until(
+        "the daemon of b ends its session for the repository",
+        || async {
+            let who = r.api(&lead).who(&lead, false).await.ok()?;
+            remote::find(&who, "mike", repo, "b")
+                .is_none()
+                .then_some(())
+        },
+    )
+    .await;
+
+    // A second leave: the host has nothing to leave.
+    let out = r.a.run(&third, &["leave", "--host", "b"], None).await;
+    assert!(!out.status.success(), "{out:?}");
+    assert_eq!(
+        text(&out.stderr).trim(),
+        riff::text::no_daemon_leave("b", repo)
+    );
+
+    // The leave holds over a restart of the daemon.
+    r.b.stop();
+    r.b.start().await;
+    tokio::time::sleep(Duration::from_millis(LOOK_MS * 5)).await;
+    assert!(!remote::read_served(&r.b.dir()).unwrap().contains_key(repo));
+    assert!(riff::wave::read_waves(&r.b.dir()).unwrap().is_empty());
+    assert!(riff::daemon::parts::of(&r.b.dir(), repo).none());
+    let status = r.lead(&["daemon", "status"], "b").await;
+    assert!(!text(&status.stdout).contains(repo), "{status:?}");
+
     // A host with no daemon of the user.
-    let out =
-        r.a.run(&third, &["daemon", "host", "--host", "c"], None)
-            .await;
+    let out = r.a.run(&third, &["join", "--host", "c"], None).await;
     assert!(!out.status.success(), "{out:?}");
     assert_eq!(
         text(&out.stderr).trim(),

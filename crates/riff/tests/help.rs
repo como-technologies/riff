@@ -118,6 +118,50 @@ fn the_help_lists_none_of_the_removed_commands() {
     }
 }
 
+/// #1643: `riff --help` lists `join` and `leave`. `riff wave run`, `riff
+/// wave stop` and `riff daemon host` are gone, with no shim: the help of
+/// `riff wave` and of `riff daemon` lists none of them, and each one fails.
+#[test]
+fn the_help_lists_join_and_leave_and_not_wave_run_wave_stop_or_daemon_host() {
+    let help = riff(&["--help"]);
+    for line in [
+        "  join          Give workers to this repository from this host\n",
+        "  leave         Stop the workers of this host in this repository\n",
+    ] {
+        assert!(help.contains(line), "{line}: {help}");
+    }
+    let wave = riff(&["wave", "--help"]);
+    let daemon = riff(&["daemon", "--help"]);
+    for (parent, help, gone) in [
+        ("wave", &wave, ["run", "stop"]),
+        ("daemon", &daemon, ["host", "host"]),
+    ] {
+        for name in gone {
+            assert!(
+                !help
+                    .lines()
+                    .any(|l| l.trim_start().starts_with(&format!("{name} "))),
+                "riff {parent} {name}: {help}"
+            );
+            let out = Isolated::shared()
+                .riff()
+                .args([parent, name])
+                .output()
+                .unwrap();
+            assert!(!out.status.success(), "riff {parent} {name} exists");
+        }
+    }
+    // The help of the two commands says what they do.
+    let join = words(&riff(&["join", "--help"]));
+    for word in ["--host <HOST>", "part workers", "riff leave"] {
+        assert!(join.contains(word), "{word}: {join}");
+    }
+    let leave = words(&riff(&["leave", "--help"]));
+    for word in ["--host <HOST>", "--now", "riff join"] {
+        assert!(leave.contains(word), "{word}: {leave}");
+    }
+}
+
 #[test]
 fn riff_help_of_a_command_shows_the_long_text() {
     let help = riff(&["help", "invite"]);
@@ -137,21 +181,6 @@ fn riff_help_of_a_command_shows_the_long_text() {
 /// with no flag `--email` (01M588J2QAF288ZB3M9PBN71ZS).
 #[test]
 fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
-    let help = riff(&["--help"]);
-    for name in ["join", "leave"] {
-        assert!(
-            !help
-                .lines()
-                .any(|l| l.trim_start().starts_with(&format!("{name} "))),
-            "{name}: {help}"
-        );
-        let out = Isolated::shared()
-            .riff()
-            .args([name, "--help"])
-            .output()
-            .unwrap();
-        assert!(!out.status.success(), "riff {name} --help: {out:?}");
-    }
     for (name, usage) in [
         ("invite", "Usage: riff invite [OPTIONS] <EMAIL>"),
         ("remove", "Usage: riff remove [OPTIONS] <EMAIL>"),
@@ -170,7 +199,7 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
             assert!(!help.contains(word), "riff {name} --help: {word}: {help}");
         }
     }
-    for args in [&["run", "--help"][..], &["wave", "run", "--help"]] {
+    for args in [&["run", "--help"][..], &["join", "--help"]] {
         let help = riff(args);
         assert!(!help.contains("--peers"), "riff {args:?}: {help}");
     }
@@ -307,9 +336,8 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
         (&["daemon", "sweep"], daemon),
         (&["daemon", "end"], daemon),
         (&["daemon", "restart"], daemon),
-        (&["daemon", "host"], daemon),
-        (&["wave", "run"], daemon),
-        (&["wave", "stop"], daemon),
+        (&["join"], daemon),
+        (&["leave"], daemon),
         (&["view"], daemon),
     ] {
         for flag in ["--help", "-h"] {

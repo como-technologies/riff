@@ -776,6 +776,8 @@ async fn the_daemon_in_a_dotfiles_home_tells_the_lead_of_the_served_repository()
     let dir = riff::daemon::dir_in(&machine.env.riff_home());
     std::fs::create_dir_all(&dir).unwrap();
     riff::daemon::remote::serve_in_file(&dir, &wave).unwrap();
+    // The host has a part there (#1643): a daemon serves no other repository.
+    riff::daemon::parts::set(&dir, &wave.repo, |p| p.lead = true).unwrap();
     machine.run("w", &["update", "--auto", "on"]).await;
 
     let mut daemon = machine.riff("", &["daemon"]);
