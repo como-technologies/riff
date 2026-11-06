@@ -5588,8 +5588,10 @@ watch of its current wave has no line in `Watches:`.
 
 The message of a merge names the step after the merge. When the release
 pull request merged, `next:` is `riff release test`, not "wait for the
-merge". GitHub can show the old state for a minute, so the daemon takes
-the merge as a fact and does not read the state of the release again.
+merge". GitHub can show the old state for a minute. The daemon reads the
+state of the release, and it does not trust a read that lags behind the
+merge: when the read shows `cut`, or no release, the release counts as
+`merged`.
 
 A fault of the forge comes one time for each repository, also with
 more watches. The message holds the error of `gh` and the name of
