@@ -2747,46 +2747,243 @@ async fn riff_lead_start_keeps_a_clone_that_git_cannot_fast_forward_and_starts_t
     until_the_lead_ends().await;
 }
 
-/// 01M53NGVE839TRH7XB7CDPQNZE: the lead in a container has no rollout,
-/// so `riff lead start` starts the wave of the repository on the daemon
-/// when none runs. The daemon is real, and the fake `podman` of this file
-/// is its runtime. A second `riff lead start` sees the wave, and asks
-/// the daemon nothing: the daemon takes one ask of the wave.
+/// #1644, 01M6QVSJC4V3Z3NB6MJW4XGJSR, 01M6QVSWQZE41BMQ6YN2963C4V: `riff
+/// lead start` on a host with no part workers starts the lead and no wave,
+/// and no session for an item, although issue 12 is free. It says that
+/// `riff join` gives workers. The daemon serves the repository while the
+/// lead runs. Then `riff join` gives the workers, and the wave starts
+/// issue 12. The daemon is real, and the fake `podman` of this file is its
+/// runtime.
 #[tokio::test]
-async fn riff_lead_start_starts_the_wave_when_none_runs_and_none_when_one_runs() {
+async fn riff_lead_start_starts_no_worker_and_riff_join_gives_the_workers() {
     let machine = Machine::new().await;
     machine.lead().await;
     machine.claude_token();
-    std::fs::write(machine.bin.path().join("hold"), "").unwrap();
+    let bin = machine.bin.path();
+    std::fs::write(bin.join("hold"), "").unwrap();
+    std::fs::write(bin.join("wave-issue"), "").unwrap();
     let (repo, name) = ("como-technologies/riff", "riff-lead-como-technologies-riff");
+    let dir = machine.env.riff_home().join("daemon");
 
     let out = machine.ok(None, &["lead", "start"]).await;
-    assert!(out.contains(&riff::text::wave_asked(repo)), "{out}");
+    assert!(
+        out.contains(&riff::text::lead_gives_no_workers(repo)),
+        "{out}"
+    );
+    assert!(!out.contains(&riff::text::wave_asked(repo)), "{out}");
     let status = machine.ok(None, &["daemon", "status"]).await;
-    assert!(status.contains(&format!("Waves:\n  {repo}  ")), "{status}");
     assert!(status.contains(name), "{status}");
+    assert!(!status.contains("Waves:"), "{status}");
+    assert!(
+        status.contains(&format!("Parts of this host:\n  {repo}  lead\n")),
+        "{status}"
+    );
+    // The daemon serves the repository, so --host reaches the host.
+    assert!(
+        riff::daemon::remote::read_served(&dir)
+            .unwrap()
+            .contains_key(repo)
+    );
+    assert!(riff::wave::read_waves(&dir).unwrap().is_empty());
+    // Issue 12 is free, and no session starts for it.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains("riff-issue-"), "{status}");
+    assert!(!machine.read("daemon.out").contains("starts: issue-12"));
 
+    // A second start attaches again, and says nothing of the workers.
     let again = machine.ok(None, &["lead", "start"]).await;
-    assert!(again.contains(&riff::text::wave_runs(repo)), "{again}");
-    assert!(!again.contains(&riff::text::wave_asked(repo)), "{again}");
     assert!(
         again.contains(&riff::text::lead_runs(repo, name)),
         "{again}"
     );
-    let log = machine.read("daemon.out");
-    assert_eq!(
-        log.matches(&riff::text::wave_runs(repo)).count(),
-        1,
-        "{log}"
+    assert!(!again.contains(&riff::text::wave_asked(repo)), "{again}");
+
+    // `riff join` gives the workers, and the wave starts the item.
+    let joined = machine.ok(None, &["join"]).await;
+    assert!(joined.contains(&riff::text::wave_asked(repo)), "{joined}");
+    wait_for(&bin.join("daemon.out"), "starts: issue-12").await;
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(
+        status.contains(&format!(
+            "Parts of this host:\n  {repo}  workers and lead\n"
+        )),
+        "{status}"
     );
 
     machine.ok(None, &["leave"]).await;
-    std::fs::remove_file(machine.bin.path().join("hold")).unwrap();
+    std::fs::remove_file(bin.join("wave-issue")).unwrap();
+    std::fs::remove_file(bin.join("hold")).unwrap();
     let started = Instant::now();
-    while machine.ok(None, &["daemon", "status"]).await.contains(name) {
-        assert!(started.elapsed() < isolated::HANG, "the lead did not end");
+    loop {
+        let status = machine.ok(None, &["daemon", "status"]).await;
+        if !status.contains("riff-issue-") && !status.contains(name) {
+            break;
+        }
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "a session did not end: {status}"
+        );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// The lead plays along with `riff lead stop`: it waits for the ask for its
+/// notes, sees that its container still runs, and writes its notes as the
+/// person does.
+async fn the_lead_writes_its_notes(machine: &Machine, session: &str, name: &str) {
+    let started = Instant::now();
+    loop {
+        let thread = machine.ok(Some(session), &["read", "--all"]).await;
+        if thread.contains(&riff::text::lead_stop_ask()) {
+            break;
+        }
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "the lead got no ask for its notes: {thread}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // The daemon ends the container after the notes, not before.
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(status.contains(name), "{status}");
+    let file = machine.env.path().join("lead-notes.md");
+    std::fs::write(&file, "Notes: wave 49 runs.").unwrap();
+    let file = file.to_str().unwrap();
+    machine
+        .ok(None, &["lead", "notes", "edit", "--file", file])
+        .await;
+}
+
+/// The session ID of the lead that the last `riff lead start` ran.
+fn lead_session_of(machine: &Machine) -> String {
+    let args = machine.read("run.args");
+    let args: Vec<&str> = args.lines().collect();
+    args[args.iter().position(|a| *a == "--session-id").unwrap() + 1].to_owned()
+}
+
+/// #1644, 01M6QVSWTARPKP59X8AJBBK69X, 01M6QVSWWM3EA4ZS47XCKV38D0: `riff lead
+/// start` on a host with no part workers starts no work session. `riff
+/// lead stop` asks the lead for its notes, waits for them, and the daemon
+/// ends the container of the lead. The host loses the part lead and stops
+/// serving the repository, and the session of the lead leaves riff-server.
+/// An update does not start the lead again.
+#[tokio::test]
+async fn riff_lead_stop_ends_the_lead_after_its_notes_and_an_update_does_not_start_it_again() {
+    let mut machine = Machine::new().await;
+    machine.lead().await;
+    machine.claude_token();
+    let bin = machine.bin.path().to_owned();
+    std::fs::write(bin.join("hold"), "").unwrap();
+    std::fs::write(bin.join("wave-issue"), "").unwrap();
+    let (repo, name) = ("como-technologies/riff", "riff-lead-como-technologies-riff");
+    let dir = machine.env.riff_home().join("daemon");
+    machine.ok(None, &["lead", "start"]).await;
+    let session = lead_session_of(&machine);
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains("riff-issue-"), "{status}");
+
+    let (out, ()) = tokio::join!(
+        machine.ok(None, &["lead", "stop"]),
+        the_lead_writes_its_notes(&machine, &session, name),
+    );
+    assert!(out.contains(&riff::text::lead_stopped(name)), "{out}");
+    assert!(out.contains(&riff::text::lead_stop_done("thelio")), "{out}");
+    assert!(
+        machine
+            .read("podman.log")
+            .contains(&format!("podman stop {name}"))
+    );
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains(name), "{status}");
+    assert!(!status.contains("Parts of this host:"), "{status}");
+    assert!(riff::daemon::parts::of(&dir, repo).none());
+    assert!(
+        !riff::daemon::remote::read_served(&dir)
+            .unwrap()
+            .contains_key(repo)
+    );
+    // The notes are there, and the session of the lead left riff-server.
+    let notes = machine.ok(None, &["lead", "notes"]).await;
+    assert!(notes.contains("Notes: wave 49 runs."), "{notes}");
+    let started = Instant::now();
+    loop {
+        let who = machine.ok(None, &["who", "--all", "--long"]).await;
+        let line = who
+            .lines()
+            .find(|l| l.contains(&format!("session={session}")));
+        if line.is_none_or(|l| l.contains("offline")) {
+            break;
+        }
+        assert!(
+            started.elapsed() < isolated::HANG,
+            "the lead did not leave: {who}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // A host with no lead has nothing to stop.
+    let again = machine.run(None, &["lead", "stop"]).await;
+    assert_eq!(again.status.code(), Some(1), "{again:?}");
+    assert!(
+        text(&again.stderr).contains(&riff::text::lead_stop_none(repo)),
+        "{}",
+        text(&again.stderr)
+    );
+
+    // `riff update`: the new daemon starts no lead. No container, no record.
+    let stopped = machine.stop_daemon().await;
+    assert!(stopped.success(), "{stopped}");
+    std::fs::remove_file(bin.join("run.args")).unwrap();
+    std::fs::write(bin.join("links"), "0\n").unwrap();
+    machine.lead_idle = Some(Duration::from_millis(1));
+    machine.start_daemon().await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(machine.read("run.args").is_empty());
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains(name), "{status}");
+    let out = machine.read("daemon.out");
+    assert!(
+        !out.contains(&riff::text::lead_started_again(name)),
+        "{out}"
+    );
+}
+
+/// #1644: `riff lead stop --host HOST` asks the daemon of HOST through
+/// riff-server, after the notes of the lead. A lead that only watches, on a
+/// host that gave no workers, is served: the commands with `--host` reach
+/// it.
+#[tokio::test]
+async fn riff_lead_stop_with_host_asks_the_daemon_of_that_host() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    machine.claude_token();
+    let bin = machine.bin.path();
+    std::fs::write(bin.join("hold"), "").unwrap();
+    let name = "riff-lead-como-technologies-riff";
+    machine.ok(None, &["lead", "start"]).await;
+    let session = lead_session_of(&machine);
+    // The daemon of the host has its session on riff-server.
+    let started = Instant::now();
+    loop {
+        let status = machine
+            .ok(None, &["daemon", "status", "--host", "thelio"])
+            .await;
+        if status.contains(name) {
+            break;
+        }
+        assert!(started.elapsed() < isolated::HANG, "no daemon: {status}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let (out, ()) = tokio::join!(
+        machine.ok(None, &["lead", "stop", "--host", "thelio"]),
+        the_lead_writes_its_notes(&machine, &session, name),
+    );
+    assert!(out.contains(&riff::text::lead_stopped(name)), "{out}");
+    assert!(out.contains(&riff::text::lead_stop_done("thelio")), "{out}");
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains(name), "{status}");
 }
 
 /// 01M53NGVH8A19QS3CQ79ENVVXT, 01M53NGWTNC3655ZZJ76M1R5R7: two machines
@@ -3421,12 +3618,13 @@ async fn riff_who_long_shows_the_pin_of_the_wave_and_the_image_of_each_session_c
     }
 }
 
-/// 01M6QB89JJEM9Z1V3RVZYHKYT0 (#1606): the host runs no wave of the
-/// repository, because `riff leave` ended it. The new daemon starts the
-/// idle lead again on the new riff all the same: `claude --resume` of the
-/// same session, with no wave run and no session for an item.
+/// 01M6QB89JJEM9Z1V3RVZYHKYT0 (#1606), 01M6QVSWWM3EA4ZS47XCKV38D0 (#1644):
+/// the host has the part lead and no part workers: `riff lead start` does
+/// not join it. The new daemon starts the idle lead again on the new riff
+/// all the same: `claude --resume` of the same session, with no wave run
+/// and no session for an item.
 #[tokio::test]
-async fn a_new_daemon_starts_the_lead_again_when_the_host_runs_no_wave_of_the_repository() {
+async fn a_new_daemon_starts_the_lead_again_on_a_host_with_the_part_lead_and_no_part_workers() {
     let mut machine = Machine::new().await;
     machine.lead().await;
     machine.claude_token();
@@ -3439,13 +3637,11 @@ async fn a_new_daemon_starts_the_lead_again_when_the_host_runs_no_wave_of_the_re
     wait_for(&machine.bin.path().join("claude.args"), "--mcp-config").await;
     std::fs::remove_file(machine.bin.path().join("claude.args")).unwrap();
 
-    // `riff lead start` asked for the wave. The person stops it: the
-    // daemon keeps no wave of the repository.
+    // `riff lead start` ran no wave: the host has the part lead only.
     let dir = machine.env.riff_home().join("daemon");
     let repo = "como-technologies/riff";
-    assert!(riff::wave::read_waves(&dir).unwrap().contains_key(repo));
-    machine.ok(None, &["leave"]).await;
     assert!(riff::wave::read_waves(&dir).unwrap().is_empty());
+    assert_eq!(riff::daemon::parts::of(&dir, repo).word(), "lead");
 
     // `riff update`: the daemon starts again on the new riff, and takes up
     // the lead. Its container binds the old riff. The lead is idle.
@@ -3477,8 +3673,10 @@ async fn a_new_daemon_starts_the_lead_again_when_the_host_runs_no_wave_of_the_re
     );
 
     // The restart ran no wave, and the daemon holds the lead only: no
-    // session for any item.
+    // session for any item, and the host keeps the part lead and no part
+    // workers.
     assert!(riff::wave::read_waves(&dir).unwrap().is_empty());
+    assert_eq!(riff::daemon::parts::of(&dir, repo).word(), "lead");
     std::fs::write(machine.bin.path().join("links"), "1\n").unwrap();
     let status = machine.ok(None, &["daemon", "status"]).await;
     assert!(status.contains(name), "{status}");

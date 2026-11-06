@@ -162,6 +162,36 @@ fn the_help_lists_join_and_leave_and_not_wave_run_wave_stop_or_daemon_host() {
     }
 }
 
+/// #1644: `riff lead --help` lists `stop`, with `start`, `move` and
+/// `notes`. The help of `riff lead stop` says what it does, and
+/// `riff daemon end` names it in its help.
+#[test]
+fn the_help_of_lead_lists_stop() {
+    let help = riff(&["lead", "--help"]);
+    for line in [
+        "  start  Start the lead of this repository in a container\n",
+        "  stop   Stop the lead of this repository, and end its container\n",
+        "  move   Move the lead of this repository to another host\n",
+    ] {
+        assert!(help.contains(line), "{line}: {help}");
+    }
+    let stop = words(&riff(&["lead", "stop", "--help"]));
+    for word in [
+        "--host <HOST>",
+        "write its notes",
+        "part lead",
+        "riff lead start",
+    ] {
+        assert!(stop.contains(word), "{word}: {stop}");
+    }
+    let start = words(&riff(&["lead", "start", "--help"]));
+    for word in ["starts no workers", "riff join"] {
+        assert!(start.contains(word), "{word}: {start}");
+    }
+    let end = words(&riff(&["daemon", "end", "--help"]));
+    assert!(end.contains("stop it with riff lead stop"), "{end}");
+}
+
 #[test]
 fn riff_help_of_a_command_shows_the_long_text() {
     let help = riff(&["help", "invite"]);
@@ -208,10 +238,9 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
 }
 
 /// 01M53NGW6F5HP1DZ9QRGP50MGT, 01M57D4FZGCVE62AP4MVG59HM4,
-/// 01M53NGVE839TRH7XB7CDPQNZE: `riff view` shows the sessions of this
+/// 01M6QVSJC4V3Z3NB6MJW4XGJSR: `riff view` shows the sessions of this
 /// machine, or with `--host` of another host through riff-server, and
-/// `riff lead start` asks the riff daemon to run the wave when none
-/// runs.
+/// `riff lead start` asks the riff daemon for no wave.
 #[test]
 fn the_help_of_view_and_lead_start_says_what_they_do_in_riff_3() {
     // The words, with no line breaks of the wrap.
@@ -226,11 +255,10 @@ fn the_help_of_view_and_lead_start_says_what_they_do_in_riff_3() {
     }
     let lead = words(&["lead", "start", "--help"]);
     assert!(
-        lead.contains(
-            "When no wave of this repository runs, riff first asks the riff daemon to run the wave"
-        ),
+        lead.contains("starts no workers and does not join the host"),
         "{lead}"
     );
+    assert!(!lead.contains("run the wave"), "{lead}");
 }
 
 #[test]
@@ -338,6 +366,7 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
         (&["daemon", "restart"], daemon),
         (&["join"], daemon),
         (&["leave"], daemon),
+        (&["lead", "stop"], daemon),
         (&["view"], daemon),
     ] {
         for flag in ["--help", "-h"] {
@@ -359,6 +388,7 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
             daemon,
         ),
         ("development.md", "### Add a host to the wave", daemon),
+        ("start-a-riff.md", "### Stop the lead", daemon),
     ] {
         let text = words(&under(name, heading));
         assert!(text.contains(who), "{name} {heading}: {text}");

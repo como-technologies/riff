@@ -54,9 +54,17 @@ flowchart TD
 
 ## Use it
 
-In your project, run `riff lead start`. Your lead runs in a container.
-The riff daemon starts the other sessions in containers too. Ask the
-lead: *"Who else is in the riff?"* The sessions ask their questions
+In your project, run these two commands. The first gives workers: the
+riff daemon of this machine runs each work item in a container. The
+second starts your lead, in a container too:
+
+```sh
+riff join
+riff lead start
+```
+
+`riff lead start` gives no workers, and `riff join` starts no lead. Ask
+the lead: *"Who else is in the riff?"* The sessions ask their questions
 there. See [The lead](how-it-works.md#the-lead). The lead starts at
 effort xhigh.
 
@@ -228,13 +236,16 @@ runs each free item and each verify in a container, in the limit of the
 machine. The lead gets a note.
 
 To run your lead in a container too, run this in your clone of the
-project. It also starts the wave of the repository, when none runs.
-The lead needs the claude token of this machine: see
+project. The lead needs the claude token of this machine: see
 [Start the lead](development.md#start-the-lead).
 
 ```sh
 riff lead start
 ```
+
+`riff lead start` gives no workers, and it does not join the host. It
+says so when the host gave no workers. A host gives workers after
+`riff join`: see [Give workers from a host](#give-workers-from-a-host).
 
 When another session of you is the lead, `riff lead start` makes the
 new session the lead. It prints which session was the lead before. In
@@ -308,6 +319,50 @@ When the host has no other part in the repository, for example a lead,
 its daemon stops serving the repository. Add `--host thelio` to do it
 for another host of yours. See
 [Stop the wave](development.md#stop-the-wave).
+
+### Stop the lead
+
+To end the lead on this host, run this in your clone of the project:
+
+```sh
+riff lead stop
+```
+
+riff asks the lead to write its notes, and waits up to 5 minutes for
+them. Then the riff daemon ends the container of the lead, and the host
+loses the part lead. An update starts the lead no more. The workers of
+the host go on: `riff lead stop` does not take the part workers. To
+start the lead again:
+
+```sh
+riff lead start
+```
+
+```mermaid
+sequenceDiagram
+    participant P as you: riff lead stop
+    participant L as the lead
+    participant D as the riff daemon
+    P->>L: write your notes
+    L->>P: the notes change (5 minutes at most)
+    P->>D: end the container of the lead
+    D-->>P: done: the host has no part lead
+```
+
+To stop the lead on another host of yours, with no login there:
+
+```sh
+riff lead stop --host thelio
+```
+
+Only you in a terminal and your lead in this repository can use
+`--host`. The daemon of HOST refuses each other session, for example a
+worker. In the container of the lead, name the host with `--host`, and
+write your notes first.
+
+When the host has no other part in the repository, its daemon stops
+serving it. To take the part workers too, see
+[Take the workers from a host](#take-the-workers-from-a-host).
 
 ### Get the static riff
 

@@ -1,7 +1,8 @@
 //! `riff lead move HOST` (#1163, 01M596DH64SQ5AJ4Y6BETGTPSK,
 //! 01M596DH8G4A5XQFHJFBX1X379): the handover, the daemon of the host,
-//! the new lead and the message to the old lead. The old lead and the
-//! daemon of `thelio` are tasks on a real riff-server.
+//! the new lead and the message to the old lead. The notes step of `riff
+//! lead stop` (#1644, 01M6QVSWTARPKP59X8AJBBK69X) is here too. The old lead
+//! and the daemon of `thelio` are tasks on a real riff-server.
 
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -86,7 +87,10 @@ impl World {
                 for inbox in api.inbox(&me, None, false).await.unwrap_or_default() {
                     for checked in inbox.messages {
                         let body = checked.message.body;
-                        if body.contains("Write your handover") && !silent {
+                        if (body.contains("Write your handover")
+                            || body.contains("Write your notes now"))
+                            && !silent
+                        {
                             api.notes_set(&me, &thread, "Handover: wave 36 runs.")
                                 .await
                                 .unwrap();
@@ -274,6 +278,88 @@ async fn a_host_with_no_daemon_or_the_same_host_fails_and_the_old_lead_stays() {
     );
 
     assert_eq!(w.leads(&person).await, ["l1"]);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(got.lock().unwrap().is_empty());
+}
+
+/// #1644, 01M6QVSWTARPKP59X8AJBBK69X: the notes step of `riff lead stop`.
+/// The lead on the host writes its notes when asked, and the step ends
+/// after them.
+#[tokio::test]
+async fn the_stop_asks_the_lead_on_the_host_for_its_notes_and_waits_for_them() {
+    let w = world().await;
+    let lead = w.session("thelio", "l1", true).await;
+    let got = w.old_lead(lead, false);
+    let person = w.uri("mike", "thelio", None);
+
+    riff::lead::stop_notes(&w.api(None), &person, "thelio", WAIT)
+        .await
+        .unwrap();
+
+    let notes = w
+        .api(None)
+        .notes_show(&person, &person.default_thread().unwrap(), None, false)
+        .await
+        .unwrap();
+    assert_eq!(notes.text, "Handover: wave 36 runs.");
+    assert_eq!(
+        got.lock().unwrap().as_slice(),
+        [riff::text::lead_stop_ask()]
+    );
+    assert_eq!(w.leads(&person).await, ["l1"]);
+}
+
+/// A lead that writes no notes in time does not stop the stop.
+#[tokio::test]
+async fn a_lead_that_writes_no_notes_in_time_is_stopped_with_the_notes_as_they_are() {
+    let w = world().await;
+    let lead = w.session("thelio", "l1", true).await;
+    w.old_lead(lead, true);
+    let person = w.uri("mike", "thelio", None);
+
+    let started = std::time::Instant::now();
+    riff::lead::stop_notes(&w.api(None), &person, "thelio", Duration::from_millis(600))
+        .await
+        .unwrap();
+
+    assert!(started.elapsed() >= Duration::from_millis(600));
+}
+
+/// The lead that runs the command asks nobody, and the lead on another
+/// host is not asked for the container of this host: the container there
+/// may be a lead that a move left behind, and the notes are those of the
+/// new lead.
+#[tokio::test]
+async fn the_stop_asks_nobody_when_the_lead_runs_it_or_runs_on_another_host() {
+    let w = world().await;
+    let lead = w.session("pangolin", "l1", true).await;
+    let got = w.old_lead(lead.clone(), false);
+
+    riff::lead::stop_notes(&w.api(lead.who().session()), &lead, "pangolin", WAIT)
+        .await
+        .unwrap();
+    let person = w.uri("mike", "pangolin", None);
+    riff::lead::stop_notes(&w.api(None), &person, "thelio", WAIT)
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(got.lock().unwrap().is_empty());
+}
+
+/// A session that is not the lead cannot stop the lead.
+#[tokio::test]
+async fn a_session_that_is_not_the_lead_cannot_stop_the_lead() {
+    let w = world().await;
+    let lead = w.session("thelio", "l1", true).await;
+    let got = w.old_lead(lead, false);
+    let worker = w.session("thelio", "w1", false).await;
+
+    let err = riff::lead::stop_notes(&w.api(worker.who().session()), &worker, "thelio", WAIT)
+        .await
+        .unwrap_err();
+
+    assert_eq!(format!("{err:#}"), riff::text::LEAD_STOP_NOT_LEAD);
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert!(got.lock().unwrap().is_empty());
 }

@@ -8513,8 +8513,15 @@ pub fn daemon_serves(repo: &str, host: &str) -> String {
 }
 
 /// The refusal of `riff daemon end` for the lead.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_end_lead("riff-lead-o-r"),
+///     "The session in the container riff-lead-o-r is the lead. End it with riff lead stop."
+/// );
+/// ```
 pub fn daemon_end_lead(name: &str) -> String {
-    format!("The session in the container {name} is the lead. End it in its terminal with /exit.")
+    format!("The session in the container {name} is the lead. End it with riff lead stop.")
 }
 
 /// The item of a session that a person ends is free
@@ -10395,6 +10402,100 @@ pub fn lead_move_done(host: &str, session: &str) -> String {
     )
 }
 
+/// `riff lead stop`: the direct message to the lead. It writes its notes
+/// before riff ends its container (#1644).
+///
+/// ```
+/// let text = riff::text::lead_stop_ask();
+/// assert!(text.contains("stops your container"));
+/// assert!(text.contains("notes tool"));
+/// ```
+pub fn lead_stop_ask() -> String {
+    "Your person stops this lead. riff stops your container when you write your notes. Write \
+     your notes now with the notes tool: the open items, what waits for the person, and the \
+     next steps. Keep the rules and the state that the notes hold already. Write nothing else, \
+     and do not start new work."
+        .to_owned()
+}
+
+/// `riff lead stop`: the refusal for a session that is not the lead.
+pub const LEAD_STOP_NOT_LEAD: &str =
+    "riff: only the lead stops the lead. This session is not the lead of its repository.";
+
+/// `riff lead stop` in the container of a lead, with no `--host`: the
+/// container has no daemon of the host.
+pub const LEAD_STOP_IN_CONTAINER: &str = "riff: a lead container cannot stop a lead with no \
+     host. Write your notes, then run riff lead stop --host HOST. HOST is the host of the \
+     lead: riff whoami shows it.";
+
+/// `riff lead stop`: the lead wrote no notes in `wait`. riff stops the
+/// lead with the notes as they are.
+///
+/// ```
+/// use std::time::Duration;
+/// let text = riff::text::lead_stop_no_notes(Duration::from_secs(300));
+/// assert!(text.contains("wrote no notes in 5m"));
+/// ```
+pub fn lead_stop_no_notes(wait: std::time::Duration) -> String {
+    format!(
+        "riff: the lead wrote no notes in {}. riff stops the lead with the notes as they are.",
+        ago(wait.as_secs())
+    )
+}
+
+/// `riff lead stop`: the end, on `host`.
+///
+/// ```
+/// let text = riff::text::lead_stop_done("thelio");
+/// assert_eq!(
+///     text,
+///     "The lead on thelio ended. To start a lead there again, run riff lead start on thelio."
+/// );
+/// ```
+pub fn lead_stop_done(host: &str) -> String {
+    format!("The lead on {host} ended. To start a lead there again, run riff lead start on {host}.")
+}
+
+/// The daemon runs no lead of `repo`: `riff lead stop` has nothing to
+/// end.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_stop_none("o/r"),
+///     "No lead of o/r runs on this host. riff daemon status shows the sessions."
+/// );
+/// ```
+pub fn lead_stop_none(repo: &str) -> String {
+    format!("No lead of {repo} runs on this host. riff daemon status shows the sessions.")
+}
+
+/// The container of the lead `name` did not end in `wait`.
+///
+/// ```
+/// use std::time::Duration;
+/// let text = riff::text::lead_stop_slow("riff-lead-o-r", Duration::from_secs(30));
+/// assert!(text.starts_with("The lead riff-lead-o-r did not end in 30s."));
+/// assert!(text.ends_with("podman stop riff-lead-o-r"));
+/// ```
+pub fn lead_stop_slow(name: &str, wait: std::time::Duration) -> String {
+    format!(
+        "The lead {name} did not end in {}. To stop its container by hand, run: podman stop {name}",
+        ago(wait.as_secs())
+    )
+}
+
+/// The daemon stopped the container of the lead `name`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_stopped("riff-lead-o-r"),
+///     "The riff daemon stopped the lead riff-lead-o-r. The host has no part lead any more."
+/// );
+/// ```
+pub fn lead_stopped(name: &str) -> String {
+    format!("The riff daemon stopped the lead {name}. The host has no part lead any more.")
+}
+
 /// The answer of the `notes` tool and of `riff lead notes`
 /// (01M59258NTXPMWV18TKRKWNTYN): the notes with who wrote them and
 /// when, and with `history` each old text, the oldest first.
@@ -10554,22 +10655,17 @@ pub fn takeover_session_ended(name: &str) -> String {
     format!("The session in the container {name} ended before a takeover.")
 }
 
-/// `riff lead start`: the daemon does not run the wave of `repo`, for
-/// the reason `why`. The lead starts (01M5515CJ7QDJ639VGR7SJTE08).
+/// `riff lead start`: the host gives no workers to `repo`. The lead
+/// starts all the same (#1644).
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::lead_no_wave("o/r", "no pin."),
-///     "The riff daemon does not run the wave of o/r: no pin. The lead starts. To run the \
-///      wave: riff join"
+///     riff::text::lead_gives_no_workers("o/r"),
+///     "This host gives no workers to o/r. To give workers, run riff join."
 /// );
 /// ```
-pub fn lead_no_wave(repo: &str, why: &str) -> String {
-    format!(
-        "The riff daemon does not run the wave of {repo}: {}. The lead starts. To run the \
-         wave: riff join",
-        why.trim_end_matches('.')
-    )
+pub fn lead_gives_no_workers(repo: &str) -> String {
+    format!("This host gives no workers to {repo}. To give workers, run riff join.")
 }
 
 /// `riff lead start`: the lead of the repository runs already.

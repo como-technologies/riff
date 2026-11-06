@@ -4080,11 +4080,7 @@ of this part when they merge.
   work, it asks the daemon of its machine to run the wave of the
   repository, when the host has the part `workers` there and no wave of
   that repository runs there (01M6QRDBAD4ZH2P1Y9BMW3VE2Q). It starts no
-  worker in tmux by itself. `riff lead start` also starts the wave of
-  the repository on its daemon, when no wave of it runs.
-- **01M5515CJ7QDJ639VGR7SJTE08** When `riff lead start` cannot start the
-  wave of the repository, it prints the reason and the step
-  `riff join`, and it starts the lead.
+  worker in tmux by itself.
 - **01M558EY88CACNZ55FWMRT8RP7** Each look of the rollout waits at most
   5 seconds for the status of the daemon of its machine. A daemon that
   gives no answer in that time runs no wave for that look. The look
@@ -4360,9 +4356,8 @@ of this part when they merge.
   error names `riff.toml`, the branch and the fix. The fix adds
   `riff.toml` with the key `image` in the table `[session]`, and points
   to the how-to "Add another repository to the riff". `riff lead start`
-  checks the merged pin before it asks the wave and before it prints
-  that the lead starts: with no merged pin, it prints no line that the
-  lead starts.
+  checks the merged pin before it prints that the lead starts: with no
+  merged pin, it prints no line that the lead starts.
 - **01M5SMVVC4GQS310CVK3H9CMQ7** The table `[session.env]` of
   `riff.toml` gives the variables of the environment of a session, and
   the table `[session.volumes]` gives its named volumes: the key is the
@@ -5765,6 +5760,39 @@ of this part when they merge.
   session. riff-server still lets only a lead of the repository thread,
   the owner and an admin hold and free, and gives a work session
   `not_allowed` (#1619).
+- **01M6QVSJC4V3Z3NB6MJW4XGJSR** `riff lead start` starts the lead of
+  the repository on the host and attaches, and the host gets the part
+  `lead`. It starts no wave, no worker and no session of an item, and it
+  does not join the host: the host gives workers only after `riff join`.
+  When the host has no part `workers`, a new lead gets one line that
+  names `riff join`. This supersedes 01M5515CJ7QDJ639VGR7SJTE08 in full,
+  and 01M53NGVE839TRH7XB7CDPQNZE and 01M5QY976MTPRX5J4N1MKXAGDK in part.
+- **01M6QVSWQZE41BMQ6YN2963C4V** While a lead runs on a host, the daemon
+  of the host serves the repository of the lead (`served.json`), also
+  when the host gave no workers. The main clone of the repository is the
+  main clone that the clone of the lead links to. A repository that the
+  daemon serves already keeps its main clone. So `riff who` shows the
+  host, and the commands with `--host` reach it.
+- **01M6QVSWTARPKP59X8AJBBK69X** `riff lead stop` ends the lead on this
+  host, and `riff lead stop --host HOST` asks the daemon of HOST through
+  riff-server. First riff asks the lead on that host to write its notes,
+  and waits up to 5 minutes for a change of the notes, as `riff lead
+  move` does. A lead that writes no notes in that time gets a warning,
+  and the stop goes on. The lead that runs the command asks nobody: it
+  writes its notes first. Then the daemon stops the container of the
+  lead and waits for its end. The session of the lead leaves
+  riff-server, and the host loses the part `lead`. A host with no other
+  part stops serving the repository (01M6QRDBG1JTX5NV1C8TB7AG36). A host
+  with no lead of the repository fails with a line. Only the person and
+  the lead of the person act on it. In a lead container, `riff lead
+  stop` needs `--host`.
+- **01M6QVSWWM3EA4ZS47XCKV38D0** An update restarts the lead on each
+  host with the part `lead`, with or without the part `workers`
+  (01M6QB89JJEM9Z1V3RVZYHKYT0). A lead that `riff lead stop` ended has
+  no container and no record, so no update starts it again.
+- **01M6QVSWYXKZ2MJ54AFK62SZAY** `riff daemon end` keeps its refusal of
+  the lead (01M579Z9VRD12FRK6DSYVKDHQB), and its text names `riff lead
+  stop`.
 
 ### The first run
 
