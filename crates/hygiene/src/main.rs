@@ -7,7 +7,10 @@
 //! of riff in the code and the book. `hygiene ci [BASE]`
 //! prints the recipe that `just ci` runs. `hygiene crates [BASE]` prints
 //! the arguments of `cargo test` that `just check` runs. `hygiene
-//! test-part I/N` runs part I of N of the tests. See the library docs.
+//! test-part I/N` runs part I of N of the tests. `hygiene test-build DIR`
+//! builds the test binaries once and packs them into DIR, and `hygiene
+//! test-part I/N --archive DIR` runs part I of N from DIR with no build.
+//! See the library docs.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -19,7 +22,7 @@ use serde::de::DeserializeOwned;
 const USAGE: &str = "usage: hygiene pr NUMBER | hygiene commit [REV] | hygiene book [DIR] \
                      | hygiene wrap [DIR] | hygiene blank PATH... \
                      | hygiene versions [ROOT] | hygiene ci [BASE] | hygiene crates [BASE] \
-                     | hygiene test-part I/N";
+                     | hygiene test-part I/N [--archive DIR] | hygiene test-build DIR";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -39,6 +42,8 @@ fn main() -> ExitCode {
         ["crates"] => crates("origin/main"),
         ["crates", base] => crates(base),
         ["test-part", part] => test_part(part),
+        ["test-part", part, "--archive", dir] => test_archive(part, Path::new(dir)),
+        ["test-build", dir] => test_build(Path::new(dir)),
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(2)
@@ -311,6 +316,201 @@ fn test_part(part: &str) -> ExitCode {
         match Command::new(&cargo).args(&run).status() {
             Ok(status) => failed |= !status.success(),
             Err(e) => return tool_error(&format!("cargo {}: {e}", run[..3].join(" "))),
+        }
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// The `TMPDIR` of each test run: `.cargo/config.toml` forces it for
+/// each cargo run (01M49NP2907J4SH4S6MAY09VXE), and a test binary that
+/// runs with no cargo gets it here.
+const TMPDIR: &str = "/var/tmp";
+
+/// The test build of the Gate (01M6QQ1NXY0CXMZEEEP413W4PK): builds each
+/// binary and each test binary of the workspace, runs the doc tests,
+/// and writes `tests.tar` and `manifest.json` in `dir`. The exit status
+/// is 1 when a cargo command fails, and 2 when the archive cannot be
+/// written.
+fn test_build(dir: &Path) -> ExitCode {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let top = match std::env::current_dir() {
+        Ok(top) => top,
+        Err(e) => return tool_error(&format!("the current folder: {e}")),
+    };
+    let json = "--message-format=json-render-diagnostics";
+    let mut messages = String::new();
+    for args in [
+        ["build", "--workspace", "--bins", json],
+        ["test", "--workspace", "--no-run", json],
+    ] {
+        let out = match Command::new(&cargo)
+            .args(args)
+            .stderr(Stdio::inherit())
+            .output()
+        {
+            Ok(out) => out,
+            Err(e) => return tool_error(&format!("cargo {}: {e}", args[..3].join(" "))),
+        };
+        if !out.status.success() {
+            eprintln!("error: cargo {}: {}", args[..3].join(" "), out.status);
+            return ExitCode::FAILURE;
+        }
+        messages.push_str(&String::from_utf8_lossy(&out.stdout));
+    }
+    let manifest =
+        hygiene::archive::Manifest::new(&top, hygiene::archive::artifacts(&messages, &top));
+    if manifest.tests.is_empty() {
+        return tool_error("cargo test --no-run built no test binary");
+    }
+    if let Some(file) = manifest
+        .files()
+        .into_iter()
+        .find(|f| Path::new(f).is_absolute())
+    {
+        return tool_error(&format!(
+            "{file} is outside {}. Build in a target folder of the checkout",
+            top.display()
+        ));
+    }
+    // rustdoc compiles each doc test when it runs: no part can run one
+    // from the archive, so the build runs them.
+    let doc = ["test", "--workspace", "--doc", "--no-fail-fast"];
+    match Command::new(&cargo).args(doc).status() {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            eprintln!("error: cargo {}: {status}", doc[..3].join(" "));
+            return ExitCode::FAILURE;
+        }
+        Err(e) => return tool_error(&format!("cargo {}: {e}", doc[..3].join(" "))),
+    }
+    if let Err(e) = write_archive(&top, dir, &manifest) {
+        return tool_error(&e);
+    }
+    eprintln!(
+        "hygiene test-build: {} test binaries and {} binaries in {}",
+        manifest.tests.len(),
+        manifest.bins.len(),
+        dir.join("tests.tar").display()
+    );
+    ExitCode::SUCCESS
+}
+
+/// Writes `manifest.json` and `tests.tar` of `manifest` in `dir`. The
+/// tar holds the files from the top `top` of the checkout.
+fn write_archive(
+    top: &Path,
+    dir: &Path,
+    manifest: &hygiene::archive::Manifest,
+) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let json = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())?;
+    let path = dir.join("manifest.json");
+    std::fs::write(&path, json + "\n").map_err(|e| format!("{}: {e}", path.display()))?;
+    let tar = std::fs::canonicalize(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .join("tests.tar");
+    let out = Command::new("tar")
+        .arg("-cf")
+        .arg(&tar)
+        .arg("-C")
+        .arg(top)
+        .arg("--")
+        .args(manifest.files())
+        .output()
+        .map_err(|e| format!("tar: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("tar {}: {}", tar.display(), stderr.trim()));
+    }
+    Ok(())
+}
+
+/// Runs part `part` of the tests from the archive in `dir`, with no
+/// build (01M6QQ1P5YCT0JX90X5FCKM4W1). It lists the tests of each test
+/// binary, and runs the tests whose name falls in the part. The exit
+/// status is 1 when a test binary fails, and 2 when the archive is
+/// not there, is for another folder, or lists no test.
+fn test_archive(part: &str, dir: &Path) -> ExitCode {
+    let part: hygiene::part::Part = match part.parse() {
+        Ok(part) => part,
+        Err(e) => {
+            eprintln!("error: {e}\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    let path = dir.join("manifest.json");
+    let manifest: hygiene::archive::Manifest = match std::fs::read(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
+    {
+        Ok(manifest) => manifest,
+        Err(e) => return tool_error(&format!("{}: {e}", path.display())),
+    };
+    let top = match std::env::current_dir() {
+        Ok(top) => top,
+        Err(e) => return tool_error(&format!("the current folder: {e}")),
+    };
+    if let Err(e) = manifest
+        .check_root(&top)
+        .and_then(|()| manifest.check_files(&top))
+    {
+        return tool_error(&e);
+    }
+    let mut plans = Vec::new();
+    let (mut run, mut all) = (0, 0);
+    for test in &manifest.tests {
+        let crate_dir = top.join(&test.dir);
+        let list = match Command::new(top.join(&test.exe))
+            .args(["--list", "--format", "terse"])
+            .current_dir(&crate_dir)
+            .env("CARGO_MANIFEST_DIR", &crate_dir)
+            .env("TMPDIR", TMPDIR)
+            .stderr(Stdio::inherit())
+            .output()
+        {
+            Ok(out) if out.status.success() => out,
+            Ok(out) => {
+                return tool_error(&format!("{} --list: {}", test.exe, out.status));
+            }
+            Err(e) => return tool_error(&format!("{} --list: {e}", test.exe)),
+        };
+        let names = hygiene::part::names(&String::from_utf8_lossy(&list.stdout));
+        let chosen: Vec<String> = part
+            .plan(&names)
+            .tests
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        all += names.len();
+        run += chosen.len();
+        plans.push((test, chosen));
+    }
+    if all == 0 {
+        return tool_error(&format!("the archive in {} lists no test", dir.display()));
+    }
+    eprintln!("{}", hygiene::archive::summary(part, run, all));
+    let mut failed = false;
+    for (test, names) in plans {
+        // With no name, the binary would run each test.
+        if names.is_empty() {
+            continue;
+        }
+        let crate_dir = top.join(&test.dir);
+        eprintln!("     Running {} ({})", test.name, test.exe);
+        let status = Command::new(top.join(&test.exe))
+            .arg("--exact")
+            .args(&names)
+            .current_dir(&crate_dir)
+            .env("CARGO_MANIFEST_DIR", &crate_dir)
+            .env("TMPDIR", TMPDIR)
+            .status();
+        match status {
+            Ok(status) => failed |= !status.success(),
+            Err(e) => return tool_error(&format!("{}: {e}", test.exe)),
         }
     }
     if failed {

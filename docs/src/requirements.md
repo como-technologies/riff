@@ -3769,15 +3769,18 @@
   that names the tests and the reason. `just check` holds the lock of
   01M43DKYVAX0TJ2F5YYGYFSZ4G.
 - **01M513W2K3HNRWPQTQNBQPT8MZ** The Gate on GitHub runs its checks as
-  jobs at the same time: `Clippy` runs `just lint`, `Tests I/N` runs
-  part I of N of the tests in the session image, and `Checks` runs
-  `just fmt-check doc book reqs wrap`. Together they run each check of
-  `just ci-full`. The last job, `Gate`, needs each of them. Each of
-  them has the condition
+  jobs: `Build` runs `just ci-build` in the session image, which is
+  `fmt-check`, `reqs`, `wrap`, `versions`, `book`, `lint`, `doc` and the
+  test build (01M6QQ1NXY0CXMZEEEP413W4PK), and `Tests I/N` runs part I
+  of N of the tests (01M6QQ1P5YCT0JX90X5FCKM4W1). Together they run
+  each check of `just ci-full`. The last job, `Gate`, needs each of
+  them. `Tests I/N` has the condition
   `github.event_name != 'schedule' && github.ref_type != 'tag'`, and
-  `Gate` has `always()` and the same condition. So `Gate` runs also
-  when one of them fails or is cancelled, and it passes only when each
-  of them passed. The ruleset needs only `Gate`.
+  `Build` has the condition `github.event_name != 'schedule'`: a tag
+  takes its release binaries from `Build` (01M6QQ1P8H32E2TQ0CYA87R02V).
+  `Gate` has `always()` and the same condition as `Tests I/N`. So
+  `Gate` runs also when one of them fails or is cancelled, and it
+  passes only when each of them passed. The ruleset needs only `Gate`.
 - **01M513W2NSE303E6XAM18BW7T6** `just test-part I/N` lists each test of
   the workspace, also each doc test, with `cargo test -- --list`. Of
   the tests that are not doc tests, it runs each test whose name has
@@ -3786,7 +3789,9 @@
   with `cargo test --doc --no-fail-fast`: the name of a doc test has
   spaces, and rustdoc splits a filter at each space. It prints one line
   with the count of its tests and of all tests. A list with no test
-  fails. The N parts together run each test.
+  fails. The N parts together run each test. The Gate runs the same
+  split from the archive of `Build`, and runs the doc tests in `Build`
+  (01M6QQ1P5YCT0JX90X5FCKM4W1).
 - **01M513W2RERJES76ZXKKHCV0DP** Each job of the CI workflow runs on the
   runner that the repository variable `RIFF_RUNNER` names. With no
   `RIFF_RUNNER`, the runner is `ubuntu-latest`.
@@ -3871,6 +3876,37 @@
   server end when the server ends. A later server at the same URL, for
   example on a port that the OS gave again, gets no old sign-in of an
   earlier test. A machine at an open riff-server holds no sign-in.
+- **01M6QQ1NXY0CXMZEEEP413W4PK** CI compiles the code of a tree two
+  times: one test build and one release build. Both run in the job
+  `Build`. The test build makes the test binaries of the workspace in
+  the session image. The release build makes the static `riff` and
+  `riff-server`. The job `Build` also runs `fmt-check`, `lint`, `doc`,
+  `book`, `reqs`, `wrap`, `versions` and the doc tests on the build
+  folder of the test build. Each other job of the CI workflow compiles
+  no crate of the workspace.
+- **01M6QQ1P0GH9AGCDA5N8EMEFGF** `Build` keeps its binaries as artifacts
+  that the git tree of the commit names, `git rev-parse HEAD^{tree}`.
+  The artifact `tests-TREE` holds the test binaries and the archive
+  manifest. The artifact `static-PROFILE-TREE` holds the static `riff`
+  and `riff-server` of the profile. `deploy/build-plan.sh` looks for
+  each artifact before the build. When an artifact is there, `Build`
+  does not make it again, and the jobs after it take it from the run
+  that made it. The plan trusts only an artifact of a run on a branch of
+  this repository, never of a fork. A run keeps an artifact only after
+  each step of `Build` passed.
+- **01M6QQ1P37XW7N465MQGPHCXZM** A push to `main`, a merge group and a
+  tag take the artifacts of their tree. When a passed `Build` made the
+  artifacts of the same tree, for example for the head of a pull
+  request, `Build` compiles nothing. A tree with no artifact is built as
+  a pull request is built. When the artifacts of both profiles are
+  there, the plan takes the static binaries of the profile `release`.
+- **01M6QQ1P5YCT0JX90X5FCKM4W1** The jobs `Tests I/N` take the artifact
+  `tests-TREE`, unpack it and run part I of N in the session image with
+  `hygiene test-part I/N --archive`. They compile nothing. The archive
+  names the path of the checkout, and the run fails when the checkout is
+  at another path. The doc tests run in `Build`, not in a part. `just
+  test-part I/N` keeps the plain run with cargo, for a machine of a
+  person.
 
 ## The phone app
 
@@ -4191,10 +4227,11 @@ of this part when they merge.
   `rust:CHANNEL-alpine`, where CHANNEL is the channel of
   `rust-toolchain.toml`. `just static` builds them with podman, else
   docker, into `target/static`. The ELF of each has no interpreter.
-- **01M4ZPJ06QYVA23N9SQ45T8WQC** The CI job "Static riff" builds the
-  static binaries of each pull request and each push. It fails when an
-  ELF has an interpreter, or when `riff --version` does not run in the
-  session image that `riff.toml` pins, with `riff` bound at
+- **01M4ZPJ06QYVA23N9SQ45T8WQC** The CI job `Build` builds the static
+  binaries of each pull request and each push
+  (01M6QQ1NXY0CXMZEEEP413W4PK). The CI job "Static riff" fails when an
+  ELF of them has an interpreter, or when `riff --version` does not run
+  in the session image that `riff.toml` pins, with `riff` bound at
   `/opt/riff/riff` with no write.
 - **01M51117NDKF11FNZ915TTQED4** `just session-test` runs the tests of
   `crates/riff` in a container of the session image that `riff.toml`
@@ -4206,23 +4243,27 @@ of this part when they merge.
 - **01M56Q4AVRM8F7Y585TSGD53K3** `just session-test` keeps `--cpus 4`
   and `--memory 8g`: a runner of the Gate has 4 CPUs. These are not
   the caps of a session of the host (01M56Q4AQ86V99RC8CA1KGCMSZ).
-- **01M515Z3Y7GSFNTJGXJD727MQK** The jobs `Tests I/N` of the Gate run
-  `deploy/session-test.sh --part I/N`: part I of N of the tests of the
-  workspace, in the container of 01M51117NDKF11FNZ915TTQED4, with
-  docker and a cache of `target/session`. The key of the cache is the
-  hash of `riff.toml`, `rust-toolchain.toml` and `Cargo.lock`. No other
-  job runs the tests in the session image.
+- **01M515Z3Y7GSFNTJGXJD727MQK** The job `Build` of the Gate runs
+  `deploy/session-test.sh --build` in the container of
+  01M51117NDKF11FNZ915TTQED4, with docker and a cache of
+  `target/session`. The key of the cache is the hash of `riff.toml`,
+  `rust-toolchain.toml` and `Cargo.lock`. The jobs `Tests I/N` run
+  `deploy/session-test.sh --archive I/N`: part I of N of the tests of
+  the workspace, in the same container, with no cache
+  (01M6QQ1P5YCT0JX90X5FCKM4W1). No other job runs the tests in the
+  session image.
 - **01M511FGMFF17G2G8RV6ST9070** Before the tests, `just cargo-test`
   builds each binary of the workspace. So a test of one crate finds the
   binary of another crate, for example `riff-server` in a test of
   `riff`, also in a new clone with no `target/`.
 - **01M513W2V4G94R7F4D4Q3M2RA1** For a pull request and a push to a
-  branch, the CI job "Static riff" builds the profile `dev`, with a
-  cache of `target/static` and of the downloaded crates. The key of the
-  cache is the hash of `rust-toolchain.toml` and `Cargo.lock`. For a
-  tag, it builds the profile `release` with no cache. `build.sh` keeps
-  the downloaded crates in the volume `riff-static-cargo`, or in the
-  volume or the absolute folder that `RIFF_STATIC_CARGO` names.
+  branch, the CI job `Build` builds the profile `dev`, with a cache of
+  `target/static` and of the downloaded crates. The key of the cache is
+  the hash of `rust-toolchain.toml` and `Cargo.lock`. A build of the
+  profile `release` uses no cache (01M6QQ1P8H32E2TQ0CYA87R02V).
+  `build.sh` keeps the downloaded crates in the volume
+  `riff-static-cargo`, or in the volume or the absolute folder that
+  `RIFF_STATIC_CARGO` names.
 - **01M4ZPJ091W3NYV1V0FJS9K6MS** For a release tag, the CI job "Static
   riff release" adds `riff-x86_64-unknown-linux-musl`,
   `riff-server-x86_64-unknown-linux-musl` and `SHA256SUMS` to the GitHub
@@ -4393,6 +4434,25 @@ of this part when they merge.
   seconds apart, before the first `run`. After 3 failures it says that
   the pull of the image failed, names the image, and exits with 1. So
   one failed pull fails no test part of the Gate.
+- **01M6QQ1P8H32E2TQ0CYA87R02V** For a pull request with the label
+  `release`, the job `Build` builds the static binaries of the profile
+  `release` with no cache, so each release binary comes from a clean
+  build. A tag takes the artifact `static-release-TREE` of the same
+  tree, checks it with `deploy/static/check.sh` and adds it to the
+  release. A tag whose tree has no such artifact builds the profile
+  `release` with no cache.
+- **01M6QQ1PB372MQ7M527HVT323F** The jobs `Deploy` and `Stage` of the CI
+  workflow compile nothing. The image of `riff-server` is a `FROM
+  scratch` image with the CA certificates and the static `riff-server`
+  of the release. The job `Stage` takes the static `riff-server` of the
+  build of the commit. `deploy/cloud/image.sh` builds the image, fails
+  when the SHA-256 of `/riff-server` in the image is not the SHA-256 of
+  the file, and pushes it. Each job runs `riff cloud deploy` with the
+  static `riff` of the same release or build.
+- **01M6QQ1PDNMHQ47FG8TD85P7CN** `just real-session` takes the static
+  `riff` and `riff-server` of the tree of `HEAD` from the artifact of
+  CI, else from the file of the release of a tag on `HEAD`. It builds
+  them with `just static dev` only when it finds neither.
 
 ### Sessions
 

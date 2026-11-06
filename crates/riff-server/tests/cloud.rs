@@ -346,7 +346,7 @@ fn stage_push(git_ref: &'static str, gate: &'static str) -> Ctx {
 fn each_push_to_main_deploys_the_stage_and_runs_the_smoke_test() {
     let job = ci_job("stage");
     for part in [
-        "needs: [gate]",
+        "needs: [gate, build]",
         "id-token: write",
         "group: stage",
         "COMMIT: ${{ github.sha }}",
@@ -497,7 +497,7 @@ fn the_deploy_takes_only_a_release_tag() {
     let (_, job) = ci_parts();
     let checkout = job.find("ref: refs/tags/${{ env.TAG }}").unwrap();
     let check = job.find("run: deploy/release-check.sh \"$TAG\"").unwrap();
-    let build = job.find("docker/build-push-action@").unwrap();
+    let build = job.find("run: deploy/cloud/image.sh").unwrap();
     assert!(checkout < check && check < build, "{job}");
     assert!(
         job.contains("TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}"),
@@ -560,17 +560,193 @@ fn the_tag_check_fails_a_tag_of_another_version() {
     );
 }
 
+/// The image of `riff cloud deploy NAME` with no tag (the Dockerfile of the
+/// root) and the image of CI (`deploy/cloud/Dockerfile`,
+/// 01M6QQ1PB372MQ7M527HVT323F) hold only the binary and the certificates.
 #[test]
 fn the_image_holds_only_the_binary_and_the_certificates() {
-    let text = fs::read_to_string(deploy().join("../Dockerfile")).unwrap();
-    let last = text.rsplit_once("\nFROM ").unwrap().1;
-    assert!(last.starts_with("scratch\n"), "{last}");
-    let copies: Vec<&str> = last.lines().filter(|l| l.starts_with("COPY")).collect();
-    assert_eq!(copies.len(), 2, "{copies:?}");
-    assert!(copies.iter().any(|c| c.ends_with(" /riff-server")));
-    assert!(copies.iter().any(|c| c.contains("ca-certificates.crt")));
-    let user = last.lines().find(|l| l.starts_with("USER ")).unwrap();
-    assert!(!user.contains(" 0") && !user.contains("root"), "{user}");
+    for file in ["Dockerfile", "deploy/cloud/Dockerfile"] {
+        let text = fs::read_to_string(deploy().join("..").join(file)).unwrap();
+        let last = text.rsplit_once("\nFROM ").unwrap().1;
+        assert!(last.starts_with("scratch\n"), "{file}: {last}");
+        let copies: Vec<&str> = last.lines().filter(|l| l.starts_with("COPY")).collect();
+        assert_eq!(copies.len(), 2, "{file}: {copies:?}");
+        assert!(
+            copies.iter().any(|c| c.ends_with(" /riff-server")),
+            "{file}"
+        );
+        assert!(
+            copies.iter().any(|c| c.contains("ca-certificates.crt")),
+            "{file}"
+        );
+        let user = last.lines().find(|l| l.starts_with("USER ")).unwrap();
+        assert!(!user.contains(" 0") && !user.contains("root"), "{user}");
+    }
+}
+
+/// 01M6QQ1PB372MQ7M527HVT323F: the image of CI compiles nothing. Its
+/// `riff-server` is a file from outside the build: the stage context
+/// holds the file that the job gives, and no stage runs `cargo`.
+#[test]
+fn the_image_of_ci_copies_a_binary_and_compiles_nothing() {
+    let text = fs::read_to_string(deploy().join("cloud/Dockerfile")).unwrap();
+    assert!(!text.contains("cargo"), "{text}");
+    assert!(!text.contains("rust:"), "{text}");
+    assert!(text.contains("\nCOPY riff-server /riff-server\n"), "{text}");
+}
+
+/// A fake engine in `dir`: it logs each call to `calls`. `build` keeps
+/// the file `riff-server` of its context, `cp` writes that file out as
+/// the file of the image, or `other` bytes when the file `corrupt` is
+/// there.
+fn fake_engine(dir: &Path) {
+    isolated::write_program(
+        dir.join("docker"),
+        "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/calls\"\n\
+         case \"$1\" in\n\
+         build) for last; do :; done; cp \"$last/riff-server\" \"$dir/image\" ;;\n\
+         create) echo c0ffee ;;\n\
+         cp) if [ -f \"$dir/corrupt\" ]; then printf other > \"$3\"; else cp \"$dir/image\" \"$3\"; fi ;;\n\
+         esac\n",
+    );
+}
+
+fn image_script(dir: &Path, args: &[&str]) -> std::process::Output {
+    let path = format!(
+        "{}:{}",
+        dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    Command::new("bash")
+        .arg(deploy().join("cloud/image.sh"))
+        .args(args)
+        .env("PATH", path)
+        .env_remove("RIFF_ENGINE")
+        .output()
+        .unwrap()
+}
+
+/// 01M6QQ1PB372MQ7M527HVT323F: `image.sh` builds the image from a file,
+/// checks that `/riff-server` in the image has the SHA-256 of the file,
+/// and pushes the image.
+#[test]
+fn the_image_script_checks_the_file_in_the_image_and_pushes() {
+    let dir = tempfile::tempdir().unwrap();
+    fake_engine(dir.path());
+    let binary = dir.path().join("riff-server-x86_64-unknown-linux-musl");
+    fs::write(&binary, "a static riff-server").unwrap();
+    let image = "r-docker.pkg.dev/p/riff/riff-server:v1.0.0";
+    let out = image_script(dir.path(), &[image, binary.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let calls = fs::read_to_string(dir.path().join("calls")).unwrap();
+    let calls: Vec<&str> = calls.lines().collect();
+    assert!(
+        calls[0].starts_with(&format!(
+            "build --tag {image} --file deploy/cloud/Dockerfile /"
+        )),
+        "{calls:?}"
+    );
+    assert_eq!(calls[1], format!("create {image}"));
+    assert!(calls[2].starts_with("cp c0ffee:/riff-server "), "{calls:?}");
+    assert_eq!(calls[3], "rm c0ffee");
+    assert_eq!(calls[4], format!("push {image}"));
+    assert_eq!(calls.len(), 5, "{calls:?}");
+    let sums = Command::new("sha256sum").arg(&binary).output().unwrap();
+    let sum = String::from_utf8_lossy(&sums.stdout);
+    let sum = sum.split_whitespace().next().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(&format!("{image} has the SHA-256 {sum}, the SHA-256 of ")),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_image_script_pushes_nothing_when_the_file_in_the_image_differs() {
+    let dir = tempfile::tempdir().unwrap();
+    fake_engine(dir.path());
+    fs::write(dir.path().join("corrupt"), "").unwrap();
+    let binary = dir.path().join("riff-server");
+    fs::write(&binary, "a static riff-server").unwrap();
+    let out = image_script(dir.path(), &["img:v1", binary.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("/riff-server in img:v1 has the SHA-256 "),
+        "{stderr}"
+    );
+    let calls = fs::read_to_string(dir.path().join("calls")).unwrap();
+    assert!(!calls.contains("push"), "{calls}");
+
+    // --no-push builds and checks, and pushes nothing.
+    fs::remove_file(dir.path().join("corrupt")).unwrap();
+    fs::remove_file(dir.path().join("calls")).unwrap();
+    let out = image_script(
+        dir.path(),
+        &["img:v1", binary.to_str().unwrap(), "--no-push"],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let calls = fs::read_to_string(dir.path().join("calls")).unwrap();
+    assert!(!calls.contains("push"), "{calls}");
+}
+
+#[test]
+fn the_image_script_needs_an_image_and_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    fake_engine(dir.path());
+    let out = image_script(dir.path(), &["img:v1"]);
+    assert_eq!(out.status.code(), Some(2));
+    let out = image_script(dir.path(), &["img:v1", "/nowhere/riff-server"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("/nowhere/riff-server is not a file."),
+        "{out:?}"
+    );
+    assert!(!dir.path().join("calls").exists());
+}
+
+/// 01M6QQ1PB372MQ7M527HVT323F: the jobs Deploy and Stage compile nothing.
+/// Deploy takes the files of the release, and checks them against
+/// `SHA256SUMS`. Stage takes the binaries of the job Build.
+#[test]
+fn the_deploy_and_the_stage_compile_nothing() {
+    for name in ["deploy", "stage"] {
+        let job = ci_job(name);
+        for compile in [
+            "cargo",
+            "rustup",
+            "rust-cache",
+            "build-push-action",
+            "build-id.sh",
+            "setup-buildx",
+        ] {
+            assert!(!job.contains(compile), "{compile} is in the job {name}");
+        }
+        assert!(
+            job.contains("run: deploy/cloud/image.sh \"$IMAGE\" "),
+            "{job}"
+        );
+    }
+    let deploy = ci_job("deploy");
+    for part in [
+        "gh release download \"$TAG\"",
+        "sha256sum --check SHA256SUMS",
+        "dist/riff-server-x86_64-unknown-linux-musl",
+        "run: dist/riff-x86_64-unknown-linux-musl cloud deploy shared \"$TAG\" --confirm shared",
+    ] {
+        assert!(deploy.contains(part), "{part} is not in:\n{deploy}");
+    }
+    let stage = ci_job("stage");
+    for part in [
+        "actions/download-artifact@",
+        "name: static-${{ needs.build.outputs.static_profile }}-${{ needs.build.outputs.tree }}",
+        "run: deploy/cloud/image.sh \"$IMAGE\" static/riff-server",
+        "run: static/riff cloud deploy stage \"$COMMIT\"",
+        "run: static/riff cloud smoke stage",
+    ] {
+        assert!(stage.contains(part), "{part} is not in:\n{stage}");
+    }
 }
 
 /// The generated notes of the GitHub releases are the changelog: they

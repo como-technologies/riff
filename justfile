@@ -41,6 +41,13 @@ ci-full:
 [private]
 ci-checks: fmt-check lint test doc book reqs wrap versions
 
+# The job Build of the Gate runs these checks, and the test build, in the
+# session image (01M6QQ1NXY0CXMZEEEP413W4PK). Its checks and the parts of
+# the tests together are the checks of ci-checks. The cheap checks come
+# first, so a broken one stops the job before the long builds.
+[private]
+ci-build: fmt-check reqs wrap versions book lint doc test-build
+
 # The Gate is the one full run of each commit (01M49HAZ5BZYGAR9PGC089RM3F).
 # hygiene crates prints the cargo test arguments for the crates of the
 # diff and their dependents, and one line that says why
@@ -121,6 +128,24 @@ test-part PART:
     cargo build -q -p hygiene
     {{test_env}} "${CARGO_TARGET_DIR:-target}/debug/hygiene" test-part {{PART}}
 
+# The Gate builds the test binaries one time, in the job Build, and packs
+# them into target/test-archive (01M6QQ1NXY0CXMZEEEP413W4PK). The doc
+# tests run here, because rustdoc compiles each of them when it runs.
+# The job keeps the folder as the artifact tests-TREE
+# (01M6QQ1P0GH9AGCDA5N8EMEFGF).
+# Build the test binaries one time, run the doc tests, and pack the binaries into target/test-archive
+test-build:
+    {{test_env}} cargo run -q -p hygiene -- test-build target/test-archive
+
+# The jobs Tests I/N of the Gate download the artifact tests-TREE into
+# target/test-archive, unpack it in the checkout, and run part I of N from
+# it with no build (01M6QQ1P5YCT0JX90X5FCKM4W1). hygiene is a binary of
+# the archive.
+# Unpack the archive of test-build, and run part I of N of the tests from it, for example: just test-archived 2/4
+test-archived PART:
+    tar -xf target/test-archive/tests.tar
+    {{test_env}} "${CARGO_TARGET_DIR:-target}/debug/hygiene" test-part {{PART}} --archive target/test-archive
+
 # cargo test ARGS for test and check, in the environment of the tests.
 # 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.
 # 01M511FGMFF17G2G8RV6ST9070: first each binary of the workspace, so a test
@@ -192,12 +217,17 @@ session-test *ARGS:
 # The real-session test of a release (01M4ZCFGCY301G2ARFMRXV7XDR): the
 # static riff of this tree (01M4ZPJ0FXTC78Z8GG2QA65167) runs one scratch
 # item with riff run, the session image of riff.toml and a real claude. It
-# needs podman. ARGS: --skip PATH, --gate-wait SECONDS.
+# needs podman. fetch.sh takes the static riff of the commit from the
+# artifacts of CI, or from the release, and builds it only when it finds
+# neither (01M6QQ1PDNMHQ47FG8TD85P7CN). ARGS: --skip PATH, --gate-wait
+# SECONDS.
 # Run the real-session test on this host: one scratch item to a pull request
 real-session *ARGS:
-    just static dev
+    #!/usr/bin/env bash
+    set -euo pipefail
+    static=$(deploy/static/fetch.sh)
     cargo build -q -p real-session
-    target/debug/real-session --riff target/static/debug/riff {{ARGS}}
+    target/debug/real-session --riff "$static/riff" {{ARGS}}
 
 # Set up the GitHub repository for pull requests: auto-merge, squash only, the rulesets on main and the tags
 github REPO="como-technologies/riff":

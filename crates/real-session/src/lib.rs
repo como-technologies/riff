@@ -96,8 +96,10 @@
 //! another line of riff than the tree: the first release of a new major
 //! line fails against it with "this riff and its riff-server do not
 //! match". So at the end of step 1, the test starts the `riff-server` that
-//! sits beside the riff binary of the tree (`target/static/debug`), in
-//! memory, on a free loopback port. It reads the address from the log of
+//! sits beside the riff binary of the tree, in memory, on a free loopback
+//! port. `deploy/static/fetch.sh` gives both binaries: the build that CI
+//! made for the tree, or a build with the profile `dev`
+//! (01M6QQ1PDNMHQ47FG8TD85P7CN). It reads the address from the log of
 //! the server ([`listen_address`]). The test gives it as `RIFF_SERVER`
 //! ([`SERVER_VAR`]) to each `riff` of the test ([`Riff`]), and so to the
 //! daemon of the test. The clean-up stops the server last. A
