@@ -41,6 +41,12 @@
 //! its process, so `riff ps` shows the calls on the process
 //! ([`Call::pid`], [`crate::ps`], #1610).
 //!
+//! Each `gh` of riff has a caller name: [`CALLERS`] for a command of `riff`
+//! (`Gh::here`), [`DAEMON`] for the daemon. A `Gh::default()` outside a test
+//! counts nothing, so its calls would show as the calls of the other
+//! callers ([`Other`]) and the hunt for a caller outside riff would get a
+//! wrong number. The test `tests/gh_callers.rs` fails on it (#1597).
+//!
 //! ```mermaid
 //! flowchart LR
 //!     H["riff top, riff pr wait, riff verify, ...<br/>on the host"] -- "append" --> F["gh-calls/ in the folder of the daemon"]
@@ -186,6 +192,29 @@ pub const BUSY_POINTS_AN_HOUR: u32 = 1_500;
 
 /// The caller of a `gh` that has no name.
 pub const OTHER: &str = "other";
+
+/// The names of the callers that the daemon gives to its own `gh`
+/// ([`Gh::by`](crate::pr::Gh::by), [`Gh::in_daemon`](crate::pr::Gh::in_daemon)):
+/// its loops, the clone of a main clone, and the real-session test. Their
+/// calls go to [`Calls`] and not through a send, so a session never gives
+/// them. `usage` is also in [`CALLERS`]: a command of `riff` runs it
+/// too.
+///
+/// ```
+/// use riff::ghcalls::{CALLERS, DAEMON};
+///
+/// let both: Vec<_> = DAEMON.iter().filter(|name| CALLERS.contains(name)).collect();
+/// assert_eq!(both, [&"usage"]);
+/// ```
+pub const DAEMON: &[&str] = &[
+    "wave",
+    "look",
+    "watches",
+    "sweep",
+    "usage",
+    "clone",
+    "release test",
+];
 
 /// How long riff waits after the reset that GitHub names: the reset is in
 /// whole seconds, and a call in the same second can still fail.

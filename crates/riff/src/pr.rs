@@ -336,16 +336,43 @@ impl Gh {
     /// ([`Gh::read`]).
     pub fn for_repo(repo: &str) -> Self {
         Self {
-            repo: Some(repo.to_owned()),
-            calls: Some(Calls::global().clone()),
             shares: true,
-            ..Self::default()
+            ..Self::in_daemon(ghcalls::OTHER).with_repo(repo)
         }
     }
 
-    /// The same `gh` for the caller `caller` in the count of the calls:
-    /// `wave`, `look`, `watches`, `sweep` or `usage`
-    /// ([`crate::ghcalls`]).
+    /// The `gh` of the riff daemon with no repository, for the caller
+    /// `caller`: a step of the daemon that runs in no clone, such as the
+    /// clone of a main clone. Its calls go to the count of the daemon
+    /// ([`Calls::global`]).
+    ///
+    /// ```
+    /// let gh = riff::pr::Gh::in_daemon("clone");
+    /// assert_eq!(gh.caller(), "clone");
+    /// ```
+    pub fn in_daemon(caller: &'static str) -> Self {
+        Self::default()
+            .by(caller)
+            .with_calls(Calls::global().clone())
+    }
+
+    /// The same `gh` for the repository `repo` (`OWNER/REPO`) from each
+    /// folder: it sets `GH_REPO`.
+    ///
+    /// ```
+    /// let gh = riff::pr::Gh::here("init").with_repo("o/r");
+    /// assert_eq!(gh.caller(), "init");
+    /// ```
+    pub fn with_repo(self, repo: &str) -> Self {
+        Self {
+            repo: Some(repo.to_owned()),
+            ..self
+        }
+    }
+
+    /// The same `gh` for the caller `caller` in the count of the calls: a
+    /// name of [`ghcalls::DAEMON`] or [`ghcalls::CALLERS`]. A test fails on
+    /// a `gh` with no name, as `Gh::default()` in code outside tests.
     pub fn by(self, caller: &'static str) -> Self {
         Self { caller, ..self }
     }

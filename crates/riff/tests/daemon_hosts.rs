@@ -889,6 +889,14 @@ async fn the_daemon_runs_the_real_session_test_and_sets_the_status() {
         assert!(told[0].contains("next: "), "{told:#?}");
         let left = riff::watches::Watches::new(&dir).read().unwrap();
         assert!(left.is_empty(), "the watch goes: {left:?}");
+        // #1597: the calls of `gh` of the test are in the count of the daemon.
+        let status = shown().await;
+        assert!(
+            status
+                .lines()
+                .any(|l| l.trim_start().starts_with("release test ")),
+            "{status}"
+        );
         let seen = std::fs::read_to_string(&log).unwrap();
         assert!(seen.contains("state=pending"), "{seen}");
         assert!(seen.contains(&format!("statuses/{commit}")), "{seen}");

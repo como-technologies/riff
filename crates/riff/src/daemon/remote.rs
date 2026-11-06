@@ -995,7 +995,7 @@ async fn join(dir: &Path, served: &Served, repo: &str, run: bool) -> Result<Stri
             let (gh_dir, name) = (dir.to_owned(), repo.to_owned());
             let (main, made) = tokio::task::spawn_blocking(move || {
                 clone_main(
-                    &crate::pr::Gh::default().with_limit(CLONE_LIMIT),
+                    &crate::pr::Gh::in_daemon("clone").with_limit(CLONE_LIMIT),
                     &gh_dir,
                     &name,
                 )

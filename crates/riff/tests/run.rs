@@ -1277,6 +1277,32 @@ async fn riff_run_sends_no_verify_request_for_an_issue_with_the_label_no_verify(
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
+/// 01M6QCDH3VXFFEFEWJT1H2HQT0 (#1597): the calls of `gh` of `riff run` are
+/// in the tally of the daemon as the caller `run`: the milestone of the
+/// issue before the claim, and the pull request after the session. No call
+/// is left with the name `other`.
+#[tokio::test]
+async fn riff_run_adds_its_calls_of_gh_to_the_tally_of_the_daemon() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+
+    let folder = machine.env.riff_home().join("daemon");
+    let calls = riff::ghcalls::Tally::in_folder(&folder).read(riff::daemon::now_ms());
+    let kinds: Vec<_> = calls
+        .iter()
+        .filter(|c| c.caller == "run")
+        .map(|c| (c.kind.as_str(), c.points))
+        .collect();
+    assert!(kinds.contains(&("issue view", 1)), "{calls:?}");
+    assert!(kinds.contains(&("pr view", 1)), "{calls:?}");
+    assert!(calls.iter().all(|c| c.caller != "other"), "{calls:?}");
+}
+
 #[tokio::test]
 async fn riff_run_goes_on_from_the_branch_of_an_earlier_session() {
     let machine = Machine::new().await;

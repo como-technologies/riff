@@ -214,7 +214,7 @@ impl Default for Waits {
 
 /// The forge that the steps change: the `gh` of the repository, and
 /// how long riff waits for it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Forge {
     /// The `gh` of the repository.
     pub gh: Gh,
@@ -225,12 +225,27 @@ pub struct Forge {
     pub image: Option<session_image::Image>,
 }
 
+impl Default for Forge {
+    /// A forge with the `gh` of the machine and no repository: the repository
+    /// of the current folder. Its calls are counted as `init`.
+    fn default() -> Self {
+        Forge {
+            gh: Gh::here("init"),
+            waits: Waits::default(),
+            image: None,
+        }
+    }
+}
+
 impl Forge {
     /// The forge of the repository `repo` (`OWNER/REPO`), with the `gh`
-    /// of the machine.
+    /// of the machine. Its calls are counted as `init`.
     pub fn of(repo: &str) -> Forge {
         Forge {
-            gh: Gh::for_repo(repo).with_limit(LIMIT),
+            gh: Gh::here("init")
+                .with_repo(repo)
+                .with_shared_reads()
+                .with_limit(LIMIT),
             waits: Waits::default(),
             image: None,
         }
@@ -1143,6 +1158,14 @@ mod tests {
 
     fn lines(github: &Github) -> Vec<String> {
         checks(github).iter().map(Check::line).collect()
+    }
+
+    /// #1597: the calls of `riff init` are in the tally of the daemon, as
+    /// the caller `init`, also when the folder has no repository yet.
+    #[test]
+    fn the_forge_of_riff_init_counts_its_calls_as_init() {
+        assert_eq!(Forge::of("acme/app").gh.caller(), "init");
+        assert_eq!(Forge::default().gh.caller(), "init");
     }
 
     #[test]
