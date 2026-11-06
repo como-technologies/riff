@@ -1738,14 +1738,14 @@ flowchart LR
 
 The daemon is not the only caller. The token of your account also pays
 for `riff top`, `riff pr wait`, `riff verify`, the release commands,
-the look of your lead, and each `gh` that a session runs in its
-container. Each of them counts its calls too, and the daemon adds them
-to its own. A command on the host writes its calls to the folder
-`gh-calls` in the folder of the daemon. A session in a container sends
-them to the daemon on its socket. In a container, the `gh` is the
-binary of riff, which the daemon binds at `/usr/local/bin/gh`: it
-counts the call and runs the real `gh` at once. It changes nothing of
-the call. A count never fails or delays a `gh`.
+and each `gh` that a session runs in its container. Each of them
+counts its calls too, and the daemon adds them to its own. A command
+on the host writes its calls to the folder `gh-calls` in the folder of
+the daemon. A session in a container sends them to the daemon on its
+socket. In a container, the `gh` is the binary of riff, which the
+daemon binds at `/usr/local/bin/gh`: it counts the call and runs the
+real `gh` at once. It changes nothing of the call. A count never fails
+or delays a `gh`.
 
 ```mermaid
 flowchart LR
@@ -1776,11 +1776,11 @@ Other callers: 2,670 GraphQL points since 22:00:17 UTC, about 95 a minute. The c
 ```
 
 Each row has the caller and the kind of the call. The caller is `wave`
-(the loop and the jobs of the wave), `look` (the look of the daemon, and
-the look of a lead), `watches`, `sweep`, `usage`, or the command of
-`riff` that made the call: `top`, `pr open`, `pr wait`, `verify`,
-`release`, `waves` (`riff wave ...`) or `audit`. The caller `session`
-is a `gh` that a session runs in its container. A call of REST costs no
+(the loop and the jobs of the wave), `look` (the look of the daemon),
+`watches`, `sweep`, `usage`, or the command of `riff` that made the
+call: `top`, `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff
+wave ...`) or `audit`. The caller `session` is a `gh` that a session
+runs in its container. A call of REST costs no
 GraphQL point. The points of a row are an estimate from the query that
 `gh` sends. The line with the points left comes from GitHub: it is the
 counter that answered. GitHub keeps more than one counter for one

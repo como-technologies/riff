@@ -31,9 +31,10 @@
 //! stderr one time until the fault changes, and the wave goes on.
 //!
 //! The rest of this module has no runner now, because the `riff mcp` of a
-//! session on the host is gone (#1200): [`once`] and [`run`] send the
-//! facts of the items, and look at the blocks, for a lead session. The server makes `waiting` from the facts of the
-//! clients (01M41FZP2C4Z4J6WKRXZ5B31EH, 01M41FZP9A50CH4A2VX344DW49).
+//! session on the host is gone (#1200): [`once`] sends the facts of the
+//! items, and looks at the blocks, for a lead session, and nothing calls
+//! it but its tests (#1384). The server makes `waiting` from the facts of
+//! the clients (01M41FZP2C4Z4J6WKRXZ5B31EH, 01M41FZP9A50CH4A2VX344DW49).
 //!
 //! # The blocks
 //!
@@ -190,7 +191,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -1370,69 +1371,6 @@ pub async fn once(
         }
     }
     Ok(unanswered)
-}
-
-/// Runs the look while the tools run. It acts only while `me` is the
-/// lead. It prints an error once, not again until the error changes.
-pub async fn run(api: Api, me: impl Fn() -> SessionUri, settings: Option<PathBuf>) {
-    // The calls of `gh` share one token (01M54510SFK1Z9VPFYBYYSV10F).
-    let gh = Arc::new(Gh::here("look").with_one_token());
-    let notifier = Notifier::default();
-    let mut watch = PullWatch::default();
-    let mut main = MainWatch::default();
-    let mut last_error = None;
-    loop {
-        tokio::time::sleep(LOOK_EVERY).await;
-        if api.left() {
-            continue;
-        }
-        let me = me();
-        let step = async {
-            if !is_lead(&api, &me).await? {
-                return anyhow::Ok(());
-            }
-            let (wake, notify) = read_settings(settings.as_deref());
-            // A machine with no desktop gets no notification.
-            let notify = (notify && notifier.here()).then_some(&notifier);
-            once(&api, &me, &gh, wake, notify, &mut watch, &mut main).await?;
-            Ok(())
-        };
-        match step.await {
-            Ok(()) => last_error = None,
-            Err(e) => {
-                let e = format!("{e:#}");
-                if last_error.as_ref() != Some(&e) {
-                    eprintln!("riff: the look of the lead: {e}");
-                }
-                last_error = Some(e);
-            }
-        }
-    }
-}
-
-/// True when `me` is the lead now.
-async fn is_lead(api: &Api, me: &SessionUri) -> Result<bool> {
-    let sessions = api.who(me, false).await?;
-    Ok(sessions
-        .iter()
-        .any(|s| s.uri.who() == me.who() && s.uri.lead()))
-}
-
-/// The wake time and the notify switch of the settings at `path`, or of
-/// this machine. A setting that does not read gives its default.
-fn read_settings(path: Option<&Path>) -> (Duration, bool) {
-    let path = path
-        .map(Path::to_path_buf)
-        .or_else(|| crate::settings::path().ok());
-    let minutes = path
-        .as_deref()
-        .and_then(|p| crate::settings::lead_wake(p).ok())
-        .unwrap_or(crate::settings::LEAD_WAKE);
-    let notify = path
-        .as_deref()
-        .and_then(|p| crate::settings::lead_notify(p).ok())
-        .unwrap_or(true);
-    (Duration::from_secs(minutes * 60), notify)
 }
 
 #[cfg(test)]
