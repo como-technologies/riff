@@ -4,7 +4,7 @@
 
 use crate::common;
 
-use riff_core::wire::{NotesReply, REFUSED_HEADER, SetNotesReply};
+use riff_core::wire::{NotesReply, REFUSED_HEADER, SetNotesReply, WhoReply};
 use serde_json::{Value, json};
 
 const ANN: &str = "riff://ann@heron/acme/app?session=a1";
@@ -89,4 +89,30 @@ async fn a_worker_gets_not_allowed_for_the_notes() {
     let refused = call(&base, "/v1/notes/set", send).await;
     assert_eq!(refused.status(), 403);
     assert_eq!(refused.headers()[REFUSED_HEADER], "not_allowed");
+}
+
+/// The repositories of a reply of `who`.
+fn repos(who: &WhoReply) -> Vec<String> {
+    who.repos.iter().map(ToString::to_string).collect()
+}
+
+/// `who` names the repositories of the caller (#1666): the repository of
+/// each session of the caller, and each repository with notes of the
+/// caller. A session and the notes of another user add none.
+#[tokio::test]
+async fn who_names_the_repositories_of_the_caller() {
+    let (_service, base) = common::start(false, &[]).await;
+    let other = "riff://ann@heron/acme/other?session=a2";
+    let bob = "riff://bob@heron/acme/bobs?session=b1";
+    for uri in [ANN, other, bob] {
+        let _: Value = ok(&base, "/v1/register", json!({ "me": uri })).await;
+    }
+    let _: SetNotesReply = ok(&base, "/v1/notes/set", set("Wave 36 runs.")).await;
+    let bob_notes = json!({"me": bob, "thread": "acme/bob-notes", "text": "Bob's notes."});
+    let _: SetNotesReply = ok(&base, "/v1/notes/set", bob_notes).await;
+
+    let ann: WhoReply = ok(&base, "/v1/who", json!({ "me": ANN })).await;
+    assert_eq!(repos(&ann), ["acme/app", "acme/other"]);
+    let bob_who: WhoReply = ok(&base, "/v1/who", json!({ "me": bob })).await;
+    assert_eq!(repos(&bob_who), ["acme/bob-notes", "acme/bobs"]);
 }

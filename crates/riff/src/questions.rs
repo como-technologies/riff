@@ -1,15 +1,21 @@
 //! `riff questions`: the open questions for a person, in all the
-//! repositories of the riff (#1605).
+//! repositories of the person (#1605, #1666, 01M6QQJHV8THJG36XFT95S3Q84,
+//! 01M6QQJHXNAVYNNJ86WYY3C8EG).
 //!
 //! # Design
 //!
 //! A lead that needs a decision of a person writes the questions in the
 //! body of the issue, and adds the label `question`
 //! ([`riff_client::waves::QUESTION`]). `riff questions` lists the open
-//! issues with that label in each repository of the riff: the repository
-//! of each session on riff-server, and the repository of the folder
-//! ([`repos`]). Each line has the repository, the number, the title and
-//! the link ([`crate::text::questions_list`]).
+//! issues with that label in each repository of the person at the
+//! terminal: not of the riff. riff-server tells which ones: each
+//! repository with a session of the person (live or gone), with a lead
+//! of the person, or with the notes of a lead of the person. The daemon
+//! of the person has a session for each repository that it serves, so
+//! these are in the first kind. The repository of the folder is the last
+//! one ([`repos`]). A session of another person adds nothing. Each line
+//! has the repository, the number, the title and the link
+//! ([`crate::text::questions_list`]).
 //!
 //! `riff questions --web` opens one GitHub search in the browser, as `gh
 //! issue view --web` does: `is:open label:question` over the same
@@ -17,23 +23,28 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     W["riff-server: who"] --> R["the repositories of the riff"]
+//!     W["riff-server: who,<br/>the repos of the person"] --> R["the repositories of the person"]
 //!     F["the folder: its repository"] --> R
 //!     R -- "gh issue list --label question,<br/>one call for each repository" --> L["the lines of riff questions"]
 //!     R -- "--web" --> U["one search: is:open label:question<br/>repo:A repo:B"] --> B["the browser"]
 //! ```
 //!
-//! A repository that `gh` cannot read gets one line on stderr, and the
-//! list shows the other repositories. The command then exits with 1.
+//! A repository with its issues turned off is no error: riff skips it. A
+//! repository that `gh` cannot read gets no line of its own. One line on
+//! stderr at the end names them all ([`crate::text::questions_faults`]).
+//! The command exits with 0 when it read at least one repository, and
+//! with 1 when it read none and `gh` failed for each.
 
 use std::collections::BTreeSet;
 
 use anyhow::Result;
-use riff_core::name::Repo;
-use riff_core::wire::SessionInfo;
+use riff_core::wire::WhoReply;
 use serde::Deserialize;
 
 use crate::pr::Gh;
+
+/// The text of `gh` for a repository with its issues turned off.
+const ISSUES_OFF: &str = "has disabled issues";
 
 /// An open issue with the label `question`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -48,32 +59,27 @@ pub struct Question {
     pub url: String,
 }
 
-/// The repositories of the riff, `OWNER/REPO`: the repository of each
-/// session of `who` (the gone sessions too, when the caller read them),
-/// and `here`, the repository of the folder. A session outside git has
-/// none.
+/// The repositories of the person at the terminal, `OWNER/REPO`: the
+/// `repos` of the reply of riff-server to `who`, and `here`, the
+/// repository of the folder. riff-server names the repositories of the
+/// caller only: a session of another person adds none, and a repository
+/// with the notes of a lead of the person and no session is there.
 ///
 /// ```
 /// use riff::questions::repos;
-/// use riff_core::wire::SessionInfo;
+/// use riff_core::wire::WhoReply;
 ///
-/// let session = |uri: &str| -> SessionInfo {
-///     serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap()
-/// };
-/// let who = [
-///     session("riff://mike@thelio/o/r?session=a1"),
-///     session("riff://mike@thelio/o/s?session=a2&claim=issue-3"),
-///     session("riff://brett@pangolin/o/r?session=b1"),
-///     session("riff://brett@pangolin?session=b2"),
-/// ];
+/// let reply = |json: serde_json::Value| -> WhoReply { serde_json::from_value(json).unwrap() };
+/// let who = reply(serde_json::json!({ "sessions": [], "repos": ["o/r", "o/s"] }));
 /// assert_eq!(repos(&who, None), ["o/r".to_owned(), "o/s".to_owned()].into());
 /// assert_eq!(repos(&who, Some("o/t")).len(), 3);
-/// assert!(repos(&[], None).is_empty());
+/// assert_eq!(repos(&who, Some("o/r")).len(), 2);
+/// assert!(repos(&reply(serde_json::json!({ "sessions": [] })), None).is_empty());
 /// ```
-pub fn repos(who: &[SessionInfo], here: Option<&str>) -> BTreeSet<String> {
-    who.iter()
-        .filter(|s| matches!(s.uri.place().repo(), Repo::Git { .. }))
-        .map(|s| s.uri.place().repo_text())
+pub fn repos(who: &WhoReply, here: Option<&str>) -> BTreeSet<String> {
+    who.repos
+        .iter()
+        .map(ToString::to_string)
         .chain(here.map(str::to_owned))
         .collect()
 }
@@ -97,10 +103,15 @@ fn args(repo: &str) -> [&str; 12] {
     ]
 }
 
-/// The open issues of `repo` with the label `question`, from `gh`. It
-/// fails with the error of `gh`.
+/// The open issues of `repo` with the label `question`, from `gh`. A
+/// repository with its issues turned off has none. It fails with the
+/// error of `gh` for any other fault.
 pub fn read(gh: &Gh, repo: &str) -> Result<Vec<Question>> {
-    let mut found: Vec<Question> = gh.json(&args(repo))?;
+    let mut found: Vec<Question> = match gh.json(&args(repo)) {
+        Ok(found) => found,
+        Err(e) if issues_off(&e) => Vec::new(),
+        Err(e) => return Err(e),
+    };
     for question in &mut found {
         question.repo = repo.to_owned();
     }
@@ -108,23 +119,78 @@ pub fn read(gh: &Gh, repo: &str) -> Result<Vec<Question>> {
     Ok(found)
 }
 
+/// True when the error of `gh` says that the repository turned its
+/// issues off.
+///
+/// ```
+/// use riff::questions::issues_off;
+///
+/// let off = anyhow::anyhow!("gh issue list: the 'o/r' repository has disabled issues");
+/// assert!(issues_off(&off));
+/// assert!(!issues_off(&anyhow::anyhow!("gh issue list: HTTP 404: Not Found")));
+/// ```
+pub fn issues_off(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains(ISSUES_OFF)
+}
+
 /// What `riff questions` read: the questions of each repository in its
-/// order, and the repositories that `gh` could not read, each with its
-/// error.
+/// order, the repositories that `gh` could not read, and how many
+/// repositories it read.
 #[derive(Debug, Default)]
 pub struct Found {
     pub questions: Vec<Question>,
-    pub faults: Vec<(String, String)>,
+    /// Each repository that `gh` could not read.
+    pub faults: Vec<String>,
+    /// The repositories that `gh` read, also with no question.
+    pub read: usize,
+}
+
+impl Found {
+    /// True when `gh` failed for each repository: the command has
+    /// nothing to list.
+    pub fn failed(&self) -> bool {
+        self.read == 0 && !self.faults.is_empty()
+    }
 }
 
 /// [`read`] for each of `repos`, one call of `gh` for each. A repository
 /// that fails is a fault, and the others stay.
+///
+/// ```
+/// use riff::questions::list;
+///
+/// let dir = tempfile::tempdir()?;
+/// let script = r#"#!/bin/sh
+/// case "$*" in
+///   *"--repo o/off "*) echo "the 'o/off' repository has disabled issues" >&2; exit 1 ;;
+///   *"--repo o/gone "*|*"--repo o/lost "*) echo "HTTP 404: Not Found" >&2; exit 1 ;;
+/// esac
+/// echo '[{"number":3,"title":"Who owns it?","url":"https://github.com/o/r/issues/3"}]'
+/// "#;
+/// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), script)).by("questions");
+///
+/// let repos = ["o/gone", "o/lost", "o/off", "o/r"].map(String::from).into();
+/// let found = list(&gh, &repos);
+/// assert_eq!(found.questions.len(), 1);
+/// assert_eq!(found.questions[0].repo, "o/r");
+/// assert_eq!(found.faults, ["o/gone", "o/lost"]);
+/// assert_eq!(found.read, 2);
+/// assert!(!found.failed());
+///
+/// let found = list(&gh, &["o/gone".to_owned()].into());
+/// assert!(found.failed());
+/// assert!(!list(&gh, &Default::default()).failed());
+/// # Ok::<(), std::io::Error>(())
+/// ```
 pub fn list(gh: &Gh, repos: &BTreeSet<String>) -> Found {
     let mut found = Found::default();
     for repo in repos {
         match read(gh, repo) {
-            Ok(questions) => found.questions.extend(questions),
-            Err(e) => found.faults.push((repo.clone(), format!("{e:#}"))),
+            Ok(questions) => {
+                found.read += 1;
+                found.questions.extend(questions);
+            }
+            Err(_) => found.faults.push(repo.clone()),
         }
     }
     found

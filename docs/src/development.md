@@ -2865,28 +2865,53 @@ flowchart LR
 
 ### See all your open questions
 
-To see each open question for you, in all the repositories of the riff,
-run this in any folder:
+To see each open question for you, in all your repositories, run this in
+any folder:
 
 ```sh
 riff questions
 ```
 
-It lists the open issues with the label `question` in the repository of
-each session of the riff, and in the repository of your folder. Each
-line has the repository, the number, the title and the link:
+It lists the open issues with the label `question` in your repositories.
+These are the repositories that riff-server knows for you:
+
+- each repository where you have a session, live or gone
+- each repository where you have a lead, or the notes of a lead
+- each repository that a daemon of yours serves
+- the repository of your folder
+
+The sessions of other people in the riff add no repository. A
+repository where you have the notes of a lead is there also when it has
+no session now. Each line has the repository, the number, the title and
+the link:
 
 ```text
 como-technologies/riff  #1596  Which design for the board?  https://github.com/como-technologies/riff/issues/1596
 o/other  #3  Who owns it?  https://github.com/o/other/issues/3
 ```
 
-When `gh` cannot read a repository, one line on stderr names it, and
-the command exits with 1 after it lists the other repositories. To see
-the same issues in the browser, in one GitHub search:
+riff skips a repository with its issues turned off. When `gh` cannot
+read a repository, riff writes no line for it at once. One last line on
+stderr names all of them:
+
+```text
+riff could not read 2 repositories: A/a, B/b
+```
+
+The command exits with 0 when it read at least one repository. It exits
+with 1 when `gh` failed for each repository. To see the same issues in
+the browser, in one GitHub search over the same repositories:
 
 ```sh
 riff questions --web
+```
+
+```mermaid
+flowchart LR
+    S["riff-server: your sessions,<br/>leads and notes"] --> R["your repositories"]
+    F["your folder"] --> R
+    R -- "gh issue list --label question" --> L["the lines"]
+    R -- "--web" --> B["one search in the browser"]
 ```
 
 ### Set the limit of the host

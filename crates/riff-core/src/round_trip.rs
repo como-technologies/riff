@@ -453,6 +453,7 @@ mod tests {
                     person(PersonRole::Admin),
                     person(PersonRole::Member),
                 ],
+                repos: vec![thread()],
             });
         }
         c.trip(&MeReply {

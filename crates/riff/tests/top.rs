@@ -1146,7 +1146,7 @@ async fn riff_wave_list_in_a_container_reads_riff_server_through_the_socket() {
         .parse()
         .unwrap();
     let thread = "como-technologies/riff".parse().unwrap();
-    let who = serde_json::to_value(api(&me).who(&me, false).await.unwrap()).unwrap();
+    let who = serde_json::to_value(api(&me).roster(&me, false).await.unwrap()).unwrap();
     let holds =
         serde_json::to_value(api(&me).plan_show(&me, &thread).await.unwrap().holds).unwrap();
 
@@ -1213,7 +1213,7 @@ async fn riff_wave_move_in_a_container_reads_the_claims_through_the_socket() {
     let me: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1"
         .parse()
         .unwrap();
-    let who = serde_json::to_value(api(&me).who(&me, false).await.unwrap()).unwrap();
+    let who = serde_json::to_value(api(&me).roster(&me, false).await.unwrap()).unwrap();
 
     let sockets = tempfile::tempdir().unwrap();
     let socket = sockets.path().join("riff.sock");

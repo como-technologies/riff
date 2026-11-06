@@ -2566,6 +2566,7 @@ async fn who(
 ) -> Reply<WhoReply> {
     let trusted = s.config.trusted();
     let caller = admit(&s, &proof, &r.me)?;
+    let user = caller.who().user().to_owned();
     let reply = s
         .engine
         .query(&caller, |state| {
@@ -2595,6 +2596,7 @@ async fn who(
                 sessions: state.who(now, now_ms, r.all),
                 owner,
                 people,
+                repos: state.repos_of(&user),
             }
         })
         .await?;

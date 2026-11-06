@@ -1563,12 +1563,12 @@ pub fn waves_no_repo() -> String {
 /// );
 /// assert_eq!(
 ///     riff::text::questions_list(&[]),
-///     "No open question in the repositories of the riff."
+///     "No open question in your repositories."
 /// );
 /// ```
 pub fn questions_list(questions: &[crate::questions::Question]) -> String {
     if questions.is_empty() {
-        return "No open question in the repositories of the riff.".into();
+        return "No open question in your repositories.".into();
     }
     let lines: Vec<String> = questions
         .iter()
@@ -1585,20 +1585,30 @@ pub fn questions_list(questions: &[crate::questions::Question]) -> String {
     lines.join("\n")
 }
 
-/// The line on stderr of `riff questions` for a repository that `gh`
-/// cannot read.
+/// The last line on stderr of `riff questions` when `gh` could not read
+/// some repositories (#1666): it names them all.
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::questions_fault("o/r", "gh issue list failed: HTTP 404"),
-///     "riff: cannot read the questions of o/r: gh issue list failed: HTTP 404"
+///     riff::text::questions_faults(&["A/a".to_owned(), "B/b".to_owned()]),
+///     "riff could not read 2 repositories: A/a, B/b"
+/// );
+/// assert_eq!(
+///     riff::text::questions_faults(&["A/a".to_owned()]),
+///     "riff could not read 1 repository: A/a"
 /// );
 /// ```
-pub fn questions_fault(repo: &str, why: &str) -> String {
+pub fn questions_faults(repos: &[String]) -> String {
+    let names: Vec<String> = repos.iter().map(|r| safe(r)).collect();
     format!(
-        "riff: cannot read the questions of {}: {}",
-        safe(repo),
-        safe(why)
+        "riff could not read {} {}: {}",
+        repos.len(),
+        if repos.len() == 1 {
+            "repository"
+        } else {
+            "repositories"
+        },
+        names.join(", ")
     )
 }
 

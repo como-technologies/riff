@@ -688,10 +688,13 @@ enum Command {
     ///
     /// A lead that needs an answer of you writes its questions in the body
     /// of an issue and adds the label question. This command lists each
-    /// open issue with that label, in the repository of each session of the
-    /// riff and in the repository of this folder. Each line has the
-    /// repository, the number, the title and the link. A repository that gh
-    /// cannot read gets a line on stderr, and the command exits with 1.
+    /// open issue with that label, in your repositories: each one with a
+    /// session of yours (live or gone), a lead of yours or the notes of a
+    /// lead of yours, and the repository of this folder. Each line has the
+    /// repository, the number, the title and the link. A repository with
+    /// its issues turned off is skipped. One last line on stderr names the
+    /// repositories that gh cannot read, and the command exits with 1 only
+    /// when it read none.
     Questions {
         /// Open one GitHub search for these issues in the browser, as gh
         /// issue view --web does, and list nothing.
@@ -1924,7 +1927,9 @@ async fn cli() -> Result<()> {
             let here = identity::place(&identity::working_dir()?)?;
             let here =
                 matches!(here.repo(), riff_core::name::Repo::Git { .. }).then(|| here.repo_text());
-            let repos = riff::questions::repos(&reach.who(true).await?, here.as_deref());
+            // The repos of the reply do not depend on `all`: ask for the
+            // live sessions only.
+            let repos = riff::questions::repos(&reach.who_reply(false).await?, here.as_deref());
             if *web {
                 let url = riff::questions::web_url(&repos);
                 eprintln!("{}", text::questions_web(&url));
@@ -1932,11 +1937,13 @@ async fn cli() -> Result<()> {
                 return Ok(());
             }
             let found = riff::questions::list(&pr::Gh::here("questions"), &repos);
-            println!("{}", text::questions_list(&found.questions));
-            for (repo, why) in &found.faults {
-                eprintln!("{}", text::questions_fault(repo, why));
+            if !found.failed() {
+                println!("{}", text::questions_list(&found.questions));
             }
             if !found.faults.is_empty() {
+                eprintln!("{}", text::questions_faults(&found.faults));
+            }
+            if found.failed() {
                 std::process::exit(1);
             }
             return Ok(());

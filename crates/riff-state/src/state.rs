@@ -2165,6 +2165,47 @@ impl State {
         Ok(notes::reply(self.written.plans(), thread, user, history))
     }
 
+    /// Each repository thread of `user` (#1666): each one with a session
+    /// of the user, live or gone, a lead of the user, or the notes of a
+    /// lead of the user. A forgotten session takes its lead with it, and
+    /// its notes stay. A session outside git has no repository.
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_state::state::State;
+    ///
+    /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a1".parse()?;
+    /// let other: SessionUri = "riff://mike@pangolin/o/other?session=a2".parse()?;
+    /// let outside: SessionUri = "riff://mike@pangolin?session=a3".parse()?;
+    /// let brett: SessionUri = "riff://brett@thelio/o/brett?session=b1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// assert!(state.repos_of("mike").is_empty());
+    /// for session in [&mike, &other, &outside, &brett] {
+    ///     state.register(session, now);
+    /// }
+    /// state.lead(&mike, now).unwrap();
+    /// let repos: Vec<String> = state.repos_of("mike").iter().map(|t| t.to_string()).collect();
+    /// assert_eq!(repos, ["como-technologies/riff", "o/other"]);
+    /// assert_eq!(state.repos_of("brett").len(), 1);
+    /// assert!(state.repos_of("ann").is_empty());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn repos_of(&self, user: &str) -> Vec<ThreadName> {
+        let sessions = self
+            .presence
+            .sessions
+            .iter()
+            .filter(|(who, _)| who.user() == user)
+            .filter_map(|(_, session)| session.place.default_thread());
+        let leads = self.written.work().lead_threads(user).cloned();
+        let notes = self.written.plans().notes_threads(user).cloned();
+        let repos: std::collections::BTreeSet<ThreadName> =
+            sessions.chain(leads).chain(notes).collect();
+        repos.into_iter().collect()
+    }
+
     /// The plan of `thread` and its holds, as the query `plan` gives
     /// them (01M4A4Z1NKPDBXV2PRZCG86G6A).
     pub fn plan(&self, thread: &ThreadName, now: Instant, now_ms: u64) -> PlanReply {
@@ -2976,7 +3017,7 @@ mod tests {
     use super::*;
     use riff_core::name::Place;
     use riff_core::record::Forgotten;
-    use riff_core::wire::{Kind, PullFact, PullState, RiffBinary};
+    use riff_core::wire::{Kind, PullFact, PullState, RiffBinary, SetNotes};
     use std::collections::BTreeSet;
 
     fn uri(text: &str) -> SessionUri {
@@ -5745,6 +5786,49 @@ mod tests {
             .unwrap();
         assert!(stale(&state, &brett, t(2)));
         assert!(!stale(&state, &docs(), t(2)));
+    }
+
+    /// The notes of a lead stay after the server forgets its session, and
+    /// so does the repository in `repos_of` (#1666). The lead goes with
+    /// the session. Emptied notes name no repository.
+    #[test]
+    fn a_repository_with_notes_of_the_user_stays_after_its_session_is_forgotten() {
+        let now = Instant::now();
+        let mut state = State::load(None, [], now, T0);
+        // A state with a writer counts a record as written after its chunk.
+        let settle = |state: &mut State| {
+            let made = state.take_queue();
+            state.written(&made);
+        };
+        let notes = |me: &SessionUri, text: &str| SetNotes {
+            me: me.clone(),
+            thread: me.default_thread().unwrap(),
+            text: text.to_owned(),
+        };
+        let mike = uri("riff://mike@pangolin/o/notes?session=m1");
+        let ann = uri("riff://ann@pangolin/o/blank?session=a1");
+        for session in [&mike, &ann] {
+            state.register(session, now);
+            state.lead(session, now).unwrap();
+        }
+        state
+            .ask(&mike, &notes(&mike, "Prefer thelio."), now)
+            .unwrap();
+        state
+            .ask(&ann, &notes(&ann, "Prefer pangolin."), now)
+            .unwrap();
+        state.ask(&ann, &notes(&ann, ""), now).unwrap();
+        settle(&mut state);
+        assert_eq!(state.repos_of("mike"), [mike.default_thread().unwrap()]);
+
+        let later = now + SESSION_EXPIRY + Duration::from_secs(600);
+        assert_eq!(state.forget_expired(later), 2);
+        settle(&mut state);
+        assert!(state.who(later, T0, true).is_empty());
+        assert!(state.written.work().lead_threads("mike").next().is_none());
+        assert_eq!(state.repos_of("mike"), [mike.default_thread().unwrap()]);
+        assert!(state.repos_of("ann").is_empty());
+        assert!(state.repos_of("brett").is_empty());
     }
 }
 
