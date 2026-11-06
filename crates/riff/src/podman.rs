@@ -76,6 +76,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 
+use crate::ps::Proc;
 use crate::runtime::{Bind, End, Env, Exit, REACH_HOST, Running, Runtime, SessionSpec, Source};
 use crate::text;
 
@@ -324,6 +325,19 @@ pub fn digest_of(printed: &[u8]) -> Option<String> {
     let hex = digest.strip_prefix("sha256:")?;
     (hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
         .then(|| digest.to_owned())
+}
+
+/// The arguments of `podman` for [`Runtime::processes`] of the container
+/// `name`: the process ID in the container, the ID of the parent, the run
+/// time and the command line (#1610). `podman top` reads them on the host,
+/// so the image needs no `ps`.
+///
+/// ```
+/// let args = riff::podman::top_args("riff-issue-12-1a2b3c4d");
+/// assert_eq!(args, ["top", "riff-issue-12-1a2b3c4d", "pid", "ppid", "etime", "args"]);
+/// ```
+pub fn top_args(name: &str) -> [&str; 6] {
+    ["top", name, "pid", "ppid", "etime", "args"]
 }
 
 /// The arguments of `podman` for [`Runtime::output`]: `run` of the image
@@ -743,6 +757,23 @@ impl Runtime for Podman {
             .then(|| digest_of(&out.stdout))
             .flatten()
             .ok_or_else(|| anyhow!("podman does not say the image digest of {name}"))
+    }
+
+    /// `podman top NAME pid ppid etime args` ([`top_args`]).
+    async fn processes(&self, name: &str) -> Result<Vec<Proc>> {
+        let out = podman()
+            .args(top_args(name))
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .with_context(|| text::no_program(PODMAN))?;
+        if !out.status.success() {
+            bail!(
+                "podman top {name}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(crate::ps::parse_top(&String::from_utf8_lossy(&out.stdout)))
     }
 }
 

@@ -4719,6 +4719,31 @@ of this part when they merge.
   `who` tool of a session show the digests. `riff who` and `riff top`
   show only `here` or `not here` for each wave. This supersedes
   01M57D3F50347RD8ED79KEA9V7 in part.
+- **01M6QBXNMEBANX439DF7J1PQ3S** riff ps prints the riff processes of
+  this host as a tree: the riff daemon, each session container with its
+  name, its kind (lead, work item or verify), its session ID and its
+  processes, and each riff command outside a container with its parents
+  up to the first process that is not riff. Each line shows the process
+  ID, the run time and the command line, cut to the width of the
+  terminal and not cut for a pipe. The daemon reads the processes of its
+  own user from /proc, leaves out the processes of the containers, and
+  asks the runtime for the processes of each container (podman top),
+  with the process IDs that they have in the container (#1610).
+- **01M6QBXNQC6X7NJVR03M92V0Q8** riff ps works in the container of the
+  lead: the lead asks the daemon on the socket of its session
+  (ServerCall::Ps), and draws the answer. A session that is not the lead
+  gets a refusal, because the answer holds command lines of the host
+  (#1610).
+- **01M6QBXNTMH7B2SNXBHAFKCN81** Each riff process sends its process ID
+  with its calls of gh: the tally keeps the ID and, for a process in a
+  container, the name of the container that the socket of the session
+  gives. riff ps shows the calls and the GraphQL points of the last hour
+  on each process that made calls. A call counts for a process with the
+  same ID, in the same container, that started before the call ended, so
+  a new process with an old ID shows none of the old calls (#1610).
+- **01M6QBXNY8GM1DRN4RR9TPSEZH** When no daemon answers, riff ps says so
+  on stderr, shows the state of the unit of the daemon and how to start
+  it, and exits with 1 (#1610).
 
 ### riff relay
 

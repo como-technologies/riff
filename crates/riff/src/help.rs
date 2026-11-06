@@ -81,6 +81,7 @@ pub const GROUPS: &[Group] = &[
             "wave",
             "view",
             "takeover",
+            "ps",
             "daemon",
             "claude-token",
             "image",

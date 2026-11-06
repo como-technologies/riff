@@ -178,7 +178,7 @@ pub const PROBES: usize = 4;
 pub const PROBE_QUERY: &str = "{ rateLimit { limit remaining resetAt } }";
 
 /// One call of `gh`: a line of the [`Tally`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Call {
     /// When the call ended, in milliseconds since the epoch.
     pub at_ms: i64,
@@ -188,6 +188,14 @@ pub struct Call {
     pub kind: String,
     /// The GraphQL points that it cost ([`points_of`]).
     pub points: u32,
+    /// The process that called: its ID on the host, or in its container
+    /// when [`Call::session`] names one (#1610). `riff ps` shows the calls
+    /// on that process. A line from an older riff has 0.
+    #[serde(default)]
+    pub pid: u32,
+    /// The container of the process, or empty for a process on the host.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub session: String,
 }
 
 /// The records of the calls of the last hour, and the last reading of the
@@ -630,7 +638,28 @@ impl Calls {
             caller: caller.to_owned(),
             kind: kind.to_owned(),
             points,
+            pid: std::process::id(),
+            session: String::new(),
         });
+    }
+
+    /// The calls of this process in the last hour at `now_ms`, oldest
+    /// first (#1610).
+    ///
+    /// ```
+    /// use riff::ghcalls::Calls;
+    ///
+    /// let calls = Calls::default();
+    /// calls.record(0, "look", "pr list", 2);
+    /// calls.record(4_000_000, "look", "pr list", 2);
+    /// let recent = calls.recent(4_000_000);
+    /// assert_eq!(recent.len(), 1);
+    /// assert_eq!(recent[0].pid, std::process::id());
+    /// ```
+    pub fn recent(&self, now_ms: i64) -> Vec<Call> {
+        let mut inner = self.lock();
+        forget(&mut inner.calls, now_ms);
+        inner.calls.iter().cloned().collect()
     }
 
     /// Keeps the reading of the limit that a reply gave.
@@ -1104,12 +1133,14 @@ mod tests {
                 caller: "top".into(),
                 kind: "pr list".into(),
                 points: 100,
+                ..Call::default()
             },
             Call {
                 at_ms: start + 130_000,
                 caller: "pr wait".into(),
                 kind: "pr view".into(),
                 points: 8,
+                ..Call::default()
             },
         ];
         // A call before the counter started, and one after the reading, are
@@ -1120,12 +1151,14 @@ mod tests {
                 caller: "top".into(),
                 kind: "pr list".into(),
                 points: 50,
+                ..Call::default()
             },
             Call {
                 at_ms: left.read_ms + 1,
                 caller: "top".into(),
                 kind: "pr list".into(),
                 points: 50,
+                ..Call::default()
             },
         ];
         let calls_in = [tally.as_slice(), outside.as_slice()].concat();

@@ -59,6 +59,7 @@ mod owner;
 mod package_sources;
 mod pause;
 mod pr;
+mod ps;
 mod pull_limit;
 mod read_length;
 mod release;

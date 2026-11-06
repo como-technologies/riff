@@ -6032,6 +6032,64 @@ pub const DAEMON_LOG_ONLY_LEAD: &str =
 pub const DAEMON_AUDIT_ONLY_LEAD: &str =
     "Only the lead can read the log for riff audit through the riff daemon.";
 
+/// A session that is not the lead asks the daemon for its processes, for
+/// `riff ps` (#1610): the answer holds command lines of the host.
+pub const DAEMON_PS_ONLY_LEAD: &str =
+    "Only the lead can read the processes of the host for riff ps through the riff daemon.";
+
+/// `riff ps` does not find the daemon among the processes: the daemon
+/// runs under another user, or `/proc` hides it (#1610).
+pub const PS_DAEMON_NOT_SEEN: &str = "The riff daemon answers, but riff cannot read its process.";
+
+/// The part of a line of `riff ps` that says the calls of `gh` that a
+/// process made in the last hour, or nothing for none (#1610).
+///
+/// ```
+/// use riff::text::ps_calls;
+///
+/// assert_eq!(ps_calls(0, 0), "");
+/// assert_eq!(ps_calls(1, 1), "  GitHub, last hour: 1 call, 1 point");
+/// assert_eq!(ps_calls(12, 24), "  GitHub, last hour: 12 calls, 24 points");
+/// ```
+pub fn ps_calls(calls: u32, points: u32) -> String {
+    if calls == 0 {
+        return String::new();
+    }
+    format!(
+        "  GitHub, last hour: {calls} {}, {points} {}",
+        if calls == 1 { "call" } else { "calls" },
+        if points == 1 { "point" } else { "points" },
+    )
+}
+
+/// The line of `riff ps` for a container whose processes the runtime
+/// cannot give (#1610).
+///
+/// ```
+/// let line = riff::text::ps_no_list("podman does not answer\nTry again.");
+/// assert_eq!(line, "No list of processes: podman does not answer Try again.");
+/// ```
+pub fn ps_no_list(why: &str) -> String {
+    format!(
+        "No list of processes: {}",
+        safe(why).split_whitespace().collect::<Vec<_>>().join(" ")
+    )
+}
+
+/// The line of `riff ps` for the processes of a container that it does not
+/// show (#1610).
+///
+/// ```
+/// assert_eq!(riff::text::ps_more(1), "and 1 more process.");
+/// assert_eq!(riff::text::ps_more(10), "and 10 more processes.");
+/// ```
+pub fn ps_more(count: usize) -> String {
+    format!(
+        "and {count} more {}.",
+        if count == 1 { "process" } else { "processes" }
+    )
+}
+
 /// A session that is not the lead asks the daemon to run an item
 /// (#1338).
 pub const DAEMON_RUN_ONLY_LEAD: &str = "Only the lead can run an item through the riff daemon.";

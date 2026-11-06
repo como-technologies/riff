@@ -83,7 +83,7 @@ const SEND_WAIT: Duration = Duration::from_millis(300);
 
 /// One call, as a process sends it to the daemon: the daemon adds the
 /// time.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     /// Who called ([`super::Row::caller`]).
     pub caller: String,
@@ -91,6 +91,10 @@ pub struct Record {
     pub kind: String,
     /// The GraphQL points that it cost ([`super::points_of`]).
     pub points: u32,
+    /// The ID of the process that called, in its own container for a
+    /// process in a session (#1610). `riff ps` shows the calls on it.
+    #[serde(default)]
+    pub pid: u32,
 }
 
 /// The record `record` of a session, as the daemon keeps it: the caller
@@ -104,6 +108,7 @@ pub struct Record {
 ///     caller: caller.into(),
 ///     kind: kind.into(),
 ///     points,
+///     pid: 42,
 /// };
 /// assert_eq!(clean(record("pr wait", "pr view", 1)), record("pr wait", "pr view", 1));
 /// // A name that riff does not know is a session.
@@ -138,6 +143,7 @@ pub fn clean(record: Record) -> Record {
             kind
         },
         points: record.points.min(MAX_POINTS),
+        pid: record.pid,
     }
 }
 
@@ -200,6 +206,7 @@ impl Tally {
             caller: caller.to_owned(),
             kind: kind.to_owned(),
             points,
+            pid: std::process::id(),
         };
         self.record_all(at_ms, vec![record]);
     }
@@ -208,8 +215,16 @@ impl Tally {
     /// they are. The daemon cleans the records of a session first
     /// ([`clean`]).
     pub fn record_all(&self, at_ms: i64, records: Vec<Record>) {
+        self.record_for("", at_ms, records);
+    }
+
+    /// [`Tally::record_all`] for the processes of the container `session`
+    /// (#1610): the daemon names the container, so that `riff ps` finds a
+    /// record by the container and the process ID in it. A session sends
+    /// no name of its own.
+    pub fn record_for(&self, session: &str, at_ms: i64, records: Vec<Record>) {
         let _ = match self {
-            Self::Folder(dir) => append(dir, at_ms, &records),
+            Self::Folder(dir) => append(dir, at_ms, session, &records),
             Self::Socket(socket) => send(socket, records),
         };
     }
@@ -248,8 +263,9 @@ fn file_of(folder: &Path, hour: i64) -> PathBuf {
 }
 
 /// Adds `records` at `at_ms` to the file of its hour in the tally of the
-/// daemon folder `dir`.
-fn append(dir: &Path, at_ms: i64, records: &[Record]) -> std::io::Result<()> {
+/// daemon folder `dir`. `session` names the container of the processes,
+/// or is empty for processes on the host.
+fn append(dir: &Path, at_ms: i64, session: &str, records: &[Record]) -> std::io::Result<()> {
     if records.is_empty() {
         return Ok(());
     }
@@ -270,6 +286,8 @@ fn append(dir: &Path, at_ms: i64, records: &[Record]) -> std::io::Result<()> {
             caller: record.caller.clone(),
             kind: record.kind.clone(),
             points: record.points,
+            pid: record.pid,
+            session: session.to_owned(),
         };
         text.push_str(&serde_json::to_string(&call)?);
         text.push('\n');
@@ -463,7 +481,8 @@ mod tests {
             [Record {
                 caller: "pr wait".into(),
                 kind: "pr view".into(),
-                points: 1
+                points: 1,
+                pid: std::process::id(),
             }]
         );
     }

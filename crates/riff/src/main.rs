@@ -631,6 +631,17 @@ enum Command {
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,
     },
+    /// Show the riff processes of this host as a tree
+    ///
+    /// It shows the riff daemon, each session container with its name, its
+    /// kind (lead, work item or verify), its session ID and its
+    /// processes, and each riff command outside a container, for example
+    /// riff top, with its parents up to the first process that is not riff.
+    /// Each line shows the process ID, the run time and the command line,
+    /// cut to the width of the terminal. A process that called GitHub shows
+    /// its calls and GraphQL points of the last hour. The riff daemon reads
+    /// the processes, so riff ps works in the container of the lead too.
+    Ps,
     /// Run the riff daemon, or install, remove or show it
     ///
     /// The riff daemon owns the containers of riff run on this machine.
@@ -1648,6 +1659,9 @@ async fn cli() -> Result<()> {
     if let Command::Daemon { command } = &cli.command {
         return daemon_command(command.as_ref(), cli.server.as_deref()).await;
     }
+    if let Command::Ps = cli.command {
+        return ps_command().await;
+    }
     if let Command::Init { check, yes, image } = cli.command {
         use riff::first_run::Mode;
         let image = image
@@ -2326,6 +2340,7 @@ async fn cli() -> Result<()> {
         }
         | Command::View { .. }
         | Command::Takeover { .. }
+        | Command::Ps
         | Command::Pr {
             command: Pr::Wait { .. },
         }
@@ -2503,6 +2518,36 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             riff::daemon::ask_serve(&dir, &work, &here, &server).await
         }
     }
+}
+
+/// `riff ps`: the riff processes of this host (#1610). In a container, the
+/// lead asks the daemon on the socket of its session. A line is cut to the
+/// terminal, and not cut when the output goes to a pipe.
+async fn ps_command() -> Result<()> {
+    use std::io::IsTerminal;
+    let width = if std::io::stdout().is_terminal() {
+        textwrap::termwidth()
+    } else {
+        usize::MAX
+    };
+    if let Ok(socket) = riff::session_relay::socket_here() {
+        return match Reach::daemon_ps(&socket).await {
+            Ok(ps) => {
+                print!("{}", riff::ps::draw(&ps, width));
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("{e:#}");
+                std::process::exit(1);
+            }
+        };
+    }
+    let manager = riff::service::Systemd::here()?;
+    let code = riff::daemon::show_ps(&riff::daemon::dir()?, &manager, width).await;
+    if code != 0 {
+        std::process::exit(code);
+    }
+    Ok(())
 }
 
 /// `riff daemon status` in a container: asks the daemon on the socket of
