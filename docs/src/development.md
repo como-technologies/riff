@@ -2505,15 +2505,17 @@ container: the riff daemon of the host reads riff-server for it.
 riff session why issue-1203
 ```
 
-It shows the last record of the item, and how many sessions of the item
-ended with no pull request. The message "started 3 times" to your lead
-names the same reason. A session that ends with an open pull request
-leaves no record.
+It shows one line for each session of the item that ended with no pull
+request, and the last lines of the output of the last one. The message
+"started 3 times" to your lead names the same reason. A session that
+ends with an open pull request leaves no record.
 
 A verify session can end with no PASS or FAIL. Your lead gets the
 message "ended with no PASS or FAIL", and the pull request waits for a
 new verify. The daemon leaves a record for it too, under the item
-`verify-issue-N`. It shows the same facts as the record of a build:
+`verify-issue-N`. It shows the same facts as the record of a build, and
+the head commit that the session tested: see
+[See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head).
 
 ```sh
 riff session why verify-issue-1203
@@ -2527,11 +2529,64 @@ flowchart LR
     N --> W["riff session why verify-issue-N"]
 ```
 
+### See why a verify stopped for a head
+
+The wave counts the starts of a verify for each head commit of the pull
+request. A pull request that gets a new head, for example after a
+rebase, starts a new count. A verify with a PASS or a FAIL that riff put
+on the pull request does not count. The wave starts a verify of one head
+3 times at most in a run of the wave, and only the sessions that ended
+with no PASS or FAIL use these starts.
+
+```mermaid
+flowchart TD
+    H["a pull request has a head commit"] --> S["a verify session starts:<br/>the count of the head is +1"]
+    S --> R{"riff put a PASS or a FAIL<br/>on the pull request?"}
+    R -- yes --> B["the count of the head is -1:<br/>the verify does not count"]
+    R -- no --> C{"the count of the head is 3?"}
+    C -- no --> S
+    C -- yes --> M["one message that names the head,<br/>and no more start for this head"]
+    N["a new head"] --> H
+```
+
+When 3 sessions of one head ended with no PASS or FAIL, your lead gets
+one message. It names the head. The wave sends it after the last
+session ended, and only for the head that the pull request has then, so
+your lead gets none for an old head:
+
+```text
+The riff daemon started verify-issue-1597 3 times for the head 988cb7b of its pull request, and it is still free work. The last session ended: exit code 0, and no PASS or FAIL. It starts no more session for this head until riff wave run again. A new head starts a new count. Read why: riff session why verify-issue-1597
+```
+
+To read each of these sessions, run this on any machine:
+
+```sh
+riff session why verify-issue-1597
+```
+
+It shows one line for each session, with its session ID and the head
+commit that it tested, and the last lines of the output of the last one:
+
+```text
+verify-issue-1597: 3 sessions ended with no PASS or FAIL.
+- 1a2b3c4d, for the head 988cb7b, ended: exit code 0, and no PASS or FAIL.
+- 5e6f7a8b, for the head 988cb7b, ended: exit code 0, and no PASS or FAIL.
+- 9c0d1e2f, for the head 988cb7b, ended: exit code 0, and no PASS or FAIL.
+The last one is 9c0d1e2f. Its last 2 lines of output:
+...
+```
+
+The wave starts the verify of a new head by itself. To start the verify
+of the same head again, see
+[Start a spent item again](#start-a-spent-item-again).
+
 ### Start a spent item again
 
 The wave starts one item at most 3 times in a run of the wave. Then
 your lead gets a message, and the wave starts no more session for the
-item. Read the cause first: [See why a session ended with no pull
+item. A verify counts for each head commit of its pull request: see
+[See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head).
+Read the cause first: [See why a session ended with no pull
 request](#see-why-a-session-ended-with-no-pull-request). When you fixed
 it, run this in your clone of the repository:
 
@@ -3171,8 +3226,11 @@ first free work:
    check, only when no verify of the same item runs. The verify tests
    the head that the fix replaces. The rebase or the fix starts after
    the verify ends.
-5. It starts one item at most 3 times in a run of the wave. Then your
-   lead gets a message, and the item waits for you (see
+5. It starts one item at most 3 times in a run of the wave. A verify
+   counts for each head commit of its pull request, and a verify with a
+   PASS or FAIL does not count (see
+   [See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head)).
+   Then your lead gets a message, and the item waits for you (see
    [Start a spent item again](#start-a-spent-item-again)).
 6. It starts nothing while a fact of the machine fails: the sign-in of
    `gh`, or the sign-in of `claude` with 60 minutes or more left. No

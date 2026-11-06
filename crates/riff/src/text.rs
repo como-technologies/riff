@@ -8767,19 +8767,36 @@ pub fn wave_host_fault(repo: &str, item: &str, why: &str) -> String {
 }
 
 /// An item of a wave started `starts` times, and the last session ended
-/// for `reason` (01M5A5HXRH4PFQDFA7XPFFRHWS).
+/// for `reason` (01M5A5HXRH4PFQDFA7XPFFRHWS). The starts of a verify are
+/// for one head commit `head` of its pull request: the text names it, and
+/// says that a new head starts a new count (#1651).
 ///
 /// ```
-/// let text = riff::text::wave_spent("issue-1", 3, "exit code 1");
+/// let text = riff::text::wave_spent("issue-1", None, 3, "exit code 1");
 /// assert!(text.contains("The last session ended: exit code 1."));
 /// assert!(text.ends_with("Read why: riff session why issue-1"));
+///
+/// let text = riff::text::wave_spent("verify-issue-1", Some("988cb7b1a2"), 3, "exit code 0, and no PASS or FAIL");
+/// assert!(text.starts_with("The riff daemon started verify-issue-1 3 times for the head 988cb7b of its pull request"));
+/// assert!(text.contains("It starts no more session for this head until riff wave run again."));
+/// assert!(text.contains("A new head starts a new count."));
+/// assert!(text.ends_with("Read why: riff session why verify-issue-1"));
 /// ```
-pub fn wave_spent(item: &str, starts: u32, reason: &str) -> String {
-    format!(
-        "The riff daemon started {item} {starts} times for the wave, and it is still free work. \
-         The last session ended: {reason}. It starts no more session for it until riff wave run \
-         again. Read why: riff session why {item}"
-    )
+pub fn wave_spent(item: &str, head: Option<&str>, starts: u32, reason: &str) -> String {
+    match head {
+        None => format!(
+            "The riff daemon started {item} {starts} times for the wave, and it is still free \
+             work. The last session ended: {reason}. It starts no more session for it until riff \
+             wave run again. Read why: riff session why {item}"
+        ),
+        Some(head) => format!(
+            "The riff daemon started {item} {starts} times for the head {} of its pull request, \
+             and it is still free work. The last session ended: {reason}. It starts no more \
+             session for this head until riff wave run again. A new head starts a new count. \
+             Read why: riff session why {item}",
+            head.get(..7).unwrap_or(head)
+        ),
+    }
 }
 
 /// The message to the lead for an issue whose body has no `Done when:`
@@ -8836,38 +8853,60 @@ pub fn session_why_none(item: &str) -> String {
     )
 }
 
-/// `riff session why` for `item`: its last record `last` of `count`.
+/// `riff session why` for `item`: each of its records `mine`, oldest
+/// first, one line for each session with its head commit (#1651), then the
+/// last lines of the output of the last session.
 ///
 /// ```
 /// use riff::ends::Record;
 ///
-/// let record = Record::parse("ended item=issue-1 session=1a2b3c4d code=1 failed=yes denied=0: exit code 1\nlast", 0).unwrap();
+/// let record = Record::parse("ended item=issue-1 session=1a2b3c4d head=- code=1 failed=yes denied=0: exit code 1\nlast", 0).unwrap();
 /// assert_eq!(
-///     riff::text::session_why("issue-1", 3, &record),
-///     "issue-1: 3 sessions ended with no pull request. The last one, 1a2b3c4d, ended: exit code 1.\n\
-///      Its last 1 lines of output:\nlast"
+///     riff::text::session_why("issue-1", &[&record]),
+///     "issue-1: 1 session ended with no pull request.\n\
+///      - 1a2b3c4d ended: exit code 1.\n\
+///      The last one is 1a2b3c4d. Its last 1 line of output:\nlast"
 /// );
 ///
-/// let record = Record::parse("ended item=verify-issue-1 session=5e6f7a8b code=0 failed=no denied=0: exit code 0, and no PASS or FAIL\nlast", 0).unwrap();
+/// let first = Record::parse("ended item=verify-issue-1 session=5e6f7a8b head=988cb7b code=0 failed=no denied=0: exit code 0, and no PASS or FAIL\nfirst", 0).unwrap();
+/// let last = Record::parse("ended item=verify-issue-1 session=9c0d1e2f head=3dfbec5 code=0 failed=no denied=0: exit code 0, and no PASS or FAIL\none\ntwo", 0).unwrap();
 /// assert_eq!(
-///     riff::text::session_why("verify-issue-1", 1, &record),
-///     "verify-issue-1: 1 session ended with no PASS or FAIL. The last one, 5e6f7a8b, ended: exit code 0, and no PASS or FAIL.\n\
-///      Its last 1 lines of output:\nlast"
+///     riff::text::session_why("verify-issue-1", &[&first, &last]),
+///     "verify-issue-1: 2 sessions ended with no PASS or FAIL.\n\
+///      - 5e6f7a8b, for the head 988cb7b, ended: exit code 0, and no PASS or FAIL.\n\
+///      - 9c0d1e2f, for the head 3dfbec5, ended: exit code 0, and no PASS or FAIL.\n\
+///      The last one is 9c0d1e2f. Its last 2 lines of output:\none\ntwo"
 /// );
 /// ```
-pub fn session_why(item: &str, count: usize, last: &crate::ends::Record) -> String {
+pub fn session_why(item: &str, mine: &[&crate::ends::Record]) -> String {
+    let count = mine.len();
     let sessions = if count == 1 { "session" } else { "sessions" };
     let mut text = format!(
-        "{item}: {count} {sessions} ended with no {}. The last one, {}, ended: {}.\n\
-         Its last {} lines of output:",
-        crate::ends::lacks(item),
-        last.tag("session"),
-        last.reason,
-        last.tail.len()
+        "{item}: {count} {sessions} ended with no {}.",
+        crate::ends::lacks(item)
     );
-    for line in &last.tail {
-        text.push('\n');
-        text.push_str(line);
+    for record in mine {
+        let head = match record.tag("head") {
+            "-" => String::new(),
+            head => format!(", for the head {head},"),
+        };
+        text.push_str(&format!(
+            "\n- {}{head} ended: {}.",
+            record.tag("session"),
+            record.reason
+        ));
+    }
+    if let Some(last) = mine.last() {
+        let lines = last.tail.len();
+        let noun = if lines == 1 { "line" } else { "lines" };
+        text.push_str(&format!(
+            "\nThe last one is {}. Its last {lines} {noun} of output:",
+            last.tag("session")
+        ));
+        for line in &last.tail {
+            text.push('\n');
+            text.push_str(line);
+        }
     }
     text
 }
