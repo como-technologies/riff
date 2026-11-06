@@ -5223,12 +5223,12 @@ of this part when they merge.
   its calls to the tally of the daemon, the folder gh-calls in the
   folder of the daemon, by caller, kind and GraphQL points: riff top,
   riff pr open, riff pr wait, riff verify, riff wave, the release
-  commands, riff audit, riff usage and the look of a lead. A process on
-  the host appends to the folder. A process in a container sends its
-  calls to the daemon on the socket of its session, and the daemon
-  appends them: it keeps the caller only when it is a name that riff
-  knows, cuts the kind, and limits the points and the number of calls of
-  one send. A count never fails or delays a call (#1582).
+  commands, riff audit and riff usage. A process on the host appends to
+  the folder. A process in a container sends its calls to the daemon on
+  the socket of its session, and the daemon appends them: it keeps the
+  caller only when it is a name that riff knows, cuts the kind, and
+  limits the points and the number of calls of one send. A count never
+  fails or delays a call (#1582).
 - **01M6JGF7265VX2SDXZ4EJAGXVB** The daemon binds its own binary at
   /usr/local/bin/gh in each container session. The binary of riff that
   runs under the name gh adds the call to the tally as the caller
@@ -5250,6 +5250,10 @@ of this part when they merge.
   checks for an item while a verify of the same item runs: a session
   claims `verify-issue-N`, or a job of the wave runs it. The rebase or
   the fix starts at the first look after the verify ends.
+- **01M6QBP23SQJV3FJB8SWDQWT1Z** The look of a lead has no runner, so it
+  is no caller of gh in the tally. The look of the daemon counts its
+  calls in memory, as the caller look, and a session cannot give that
+  caller. Supersedes 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 in part (#1598).
 
 ### The lead, the view and the takeover
 

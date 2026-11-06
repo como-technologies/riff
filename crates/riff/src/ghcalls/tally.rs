@@ -5,10 +5,9 @@
 //!
 //! The daemon counts its own calls in memory ([`Calls`](super::Calls)).
 //! The other callers are processes of their own: `riff top`, `riff pr
-//! wait`, `riff verify`, the release commands, the look of a lead, and
-//! each `gh` in a container session. They add their calls to one folder
-//! of the daemon, `gh-calls`. The daemon reads it when it builds the
-//! status.
+//! wait`, `riff verify`, the release commands, and each `gh` in a
+//! container session. They add their calls to one folder of the daemon,
+//! `gh-calls`. The daemon reads it when it builds the status.
 //!
 //! | Where the process runs | [`Tally`] | How a call gets to the folder |
 //! |---|---|---|
@@ -67,7 +66,7 @@ pub const SESSION: &str = "session";
 /// commands of `riff` that call `gh`, and [`SESSION`]. A session cannot
 /// add a new row to the status with a name of its own.
 pub const CALLERS: &[&str] = &[
-    SESSION, "top", "pr open", "pr wait", "verify", "release", "waves", "audit", "usage", "look",
+    SESSION, "top", "pr open", "pr wait", "verify", "release", "waves", "audit", "usage",
 ];
 
 /// The most records in one send of a session.
@@ -119,6 +118,8 @@ pub struct Record {
 /// assert_eq!(clean(record("pr wait", "pr view", 1)), record("pr wait", "pr view", 1));
 /// // A name that riff does not know is a session.
 /// assert_eq!(clean(record("not a name", "pr view", 1)).caller, "session");
+/// // The daemon counts its look in memory: a session cannot give that name.
+/// assert_eq!(clean(record("look", "pr view", 1)).caller, "session");
 /// // A kind has no control character and is short.
 /// assert_eq!(clean(record("top", "pr\nview\u{1b}[31m", 1)).kind, "pr view [31m");
 /// assert_eq!(clean(record("top", &"x".repeat(500), 1)).kind.chars().count(), 80);
@@ -362,6 +363,23 @@ fn send(socket: &Path, records: Vec<Record>) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 01M6QBP23SQJV3FJB8SWDQWT1Z (#1598): no process of the host runs as
+    /// the caller `look`: the daemon counts its look in memory. So a
+    /// record with that name is a `gh` of a session, as any name that riff
+    /// does not know.
+    #[test]
+    fn the_look_of_the_daemon_is_no_caller_of_a_session() {
+        let record = |caller: &str| Record {
+            caller: caller.into(),
+            kind: "pr list".into(),
+            points: 2,
+            pid: 42,
+        };
+        assert_eq!(clean(record("look")).caller, SESSION);
+        assert!(!CALLERS.contains(&"look"));
+        assert_eq!(clean(record("pr wait")).caller, "pr wait");
+    }
 
     /// 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 (#1582): the calls of the other riff
     /// processes add up in one folder, and a reader sees the last hour.

@@ -1776,11 +1776,11 @@ Other callers: 2,670 GraphQL points since 22:00:17 UTC, about 95 a minute. The c
 ```
 
 Each row has the caller and the kind of the call. The caller is `wave`
-(the loop and the jobs of the wave), `look` (the look of the daemon, and
-the look of a lead), `watches`, `sweep`, `usage`, or the command of
-`riff` that made the call: `top`, `pr open`, `pr wait`, `verify`,
-`release`, `waves` (`riff wave ...`) or `audit`. The caller `session`
-is a `gh` that a session runs in its container. A call of REST costs no
+(the loop and the jobs of the wave), `look` (the look of the daemon),
+`watches`, `sweep`, `usage`, or the command of `riff` that made the
+call: `top`, `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff
+wave ...`) or `audit`. The caller `session` is a `gh` that a session
+runs in its container. A call of REST costs no
 GraphQL point. The points of a row are an estimate from the query that
 `gh` sends. The line with the points left comes from GitHub: it is the
 counter that answered. GitHub keeps more than one counter for one
