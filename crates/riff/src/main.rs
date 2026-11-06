@@ -169,6 +169,10 @@ enum Command {
         /// riff gives it (01M3NT6WXGCNKW3EQ7MBJDQTR4).
         #[arg(long, hide = true)]
         after: Option<u64>,
+        /// The text that the person typed and did not send before an
+        /// update. Only riff gives it (#1665).
+        #[arg(long, hide = true, allow_hyphen_values = true)]
+        draft: Option<String>,
     },
     /// Show a live table of each session
     ///
@@ -1905,9 +1909,9 @@ async fn cli() -> Result<()> {
             print_members_news(&changed.news);
             return Ok(());
         }
-        Command::Chat { after } => {
+        Command::Chat { after, draft } => {
             let me = person(&api)?;
-            return riff::chat::run(&api.signed_in(None)?, &me, *after).await;
+            return riff::chat::run(&api.signed_in(None)?, &me, *after, draft.as_deref()).await;
         }
         Command::Members => {
             anstream::print!("{}", view::members(&reach.members().await?));

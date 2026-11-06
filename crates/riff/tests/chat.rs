@@ -700,7 +700,7 @@ struct Tty {
     _child: Child,
     master: std::fs::File,
     screen: Arc<Mutex<vt100::Parser>>,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
 }
 
 impl Tty {
@@ -761,7 +761,7 @@ impl Tty {
             _child: child,
             master,
             screen,
-            _dir: dir,
+            dir,
         };
         tty.shows(|rows| rows.last().is_some_and(|row| row == PROMPT.trim_end()))
             .await;
@@ -779,6 +779,24 @@ impl Tty {
             self.master.flush().unwrap();
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    }
+
+    /// Presses one key that the terminal sends as an escape sequence,
+    /// for example `\x1b[D` for the left arrow: one write.
+    async fn press(&mut self, sequence: &str) {
+        self.master.write_all(sequence.as_bytes()).unwrap();
+        self.master.flush().unwrap();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    /// `RIFF_HOME` of the chat.
+    fn home(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+
+    /// The cursor of the screen: its row and its column.
+    fn cursor(&self) -> (u16, u16) {
+        self.screen.lock().unwrap().screen().cursor_position()
     }
 
     /// The rows of the screen, with no empty rows at the end, once
@@ -862,6 +880,134 @@ async fn in_a_terminal_a_new_line_prints_above_what_you_type() {
     assert!(is_line(&line, "mike@thelio", "half a line"), "{line:?}");
 }
 
+/// A line that comes while the person types does not change the typed
+/// text or the cursor (#1665). The typed line is longer than one row, and
+/// the cursor is in the middle of it.
+#[tokio::test]
+async fn in_a_terminal_a_new_line_keeps_the_typed_text_and_the_cursor() {
+    let server = crate::common::start_signed().await;
+    let mut mike = Tty::start(&server, "mike", "thelio").await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+
+    let typed = "0123456789".repeat(8);
+    mike.keys(&typed).await;
+    for _ in 0..3 {
+        mike.press("\x1b[D").await;
+    }
+    let shown = format!("{PROMPT}{typed}");
+    let wrapped = |rows: &[String]| rows.join("").ends_with(&shown);
+    let before = mike.shows(|rows| wrapped(rows)).await;
+    let cursor = mike.cursor();
+
+    brett.say("a line from brett").await;
+    let long = "word ".repeat(30);
+    brett.say(&long).await;
+    let after = mike
+        .shows(|rows| rows.iter().any(|row| row.contains("word word")))
+        .await;
+    assert!(wrapped(&after), "{after:#?}");
+    // The prompt moved down by the rows of the new lines, and the cursor
+    // with it.
+    let moved = u16::try_from(after.len() - before.len()).unwrap();
+    assert!(moved >= 4, "{after:#?}");
+    assert_eq!(mike.cursor(), (cursor.0 + moved, cursor.1), "{after:#?}");
+
+    // The cursor is where it was: the next key goes in at the cursor.
+    mike.keys("X\r").await;
+    let line = brett.shows("0123456789").await;
+    let want = format!(
+        "{}X{}",
+        &typed[..typed.len() - 3],
+        &typed[typed.len() - 3..]
+    );
+    assert!(is_line(&line, "mike@thelio", &want), "{line:?}");
+}
+
+/// A server that names a build and holds each post for `wait`: the
+/// reply of a post comes a while after the post.
+struct Deploy {
+    newer: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Deploy {
+    /// The server, and the switch that makes it name a newer release.
+    async fn start(wait: Duration) -> (Deploy, crate::common::Signed) {
+        use axum::extract::Request;
+        use axum::http::HeaderValue;
+        use axum::middleware::{Next, from_fn};
+        use riff_core::build::{Build, HEADER};
+
+        let newer = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let switch = Arc::clone(&newer);
+        let version = Build::this().semver().unwrap();
+        let build = Build {
+            version: format!("{}.{}.0", version.major, version.minor + 1),
+            ..Build::this()
+        };
+        let build = HeaderValue::from_str(&build.to_string()).unwrap();
+        let server = crate::common::start_signed_with(move |router| {
+            router.layer(from_fn(move |request: Request, next: Next| {
+                let (switch, build) = (Arc::clone(&switch), build.clone());
+                async move {
+                    let post = request.uri().path() == "/v1/post";
+                    let mut reply = next.run(request).await;
+                    if post {
+                        tokio::time::sleep(wait).await;
+                    }
+                    if switch.load(std::sync::atomic::Ordering::SeqCst) {
+                        reply.headers_mut().insert(HEADER, build);
+                    }
+                    reply
+                }
+            }))
+        })
+        .await;
+        (Deploy { newer }, server)
+    }
+
+    fn deploy(&self) {
+        self.newer.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// A notice of riff itself shows above the prompt, and the typed text
+/// stays (#1665). The server runs a newer release, and the update by
+/// itself is on: the first reply that names the release starts the
+/// update, and riff says so while the person types.
+#[tokio::test]
+async fn in_a_terminal_a_notice_of_riff_prints_above_what_you_type() {
+    let (deploy, server) = Deploy::start(Duration::from_millis(600)).await;
+    let bin = tempfile::tempdir().unwrap();
+    let cargo = bin.path().join("cargo");
+    isolated::write_program(&cargo, "#!/bin/sh\nexit 0\n");
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let mut riff = Isolated::shared().tokio_riff();
+    riff.env("PATH", path);
+    let mut mike = Tty::start_with(&server, "mike", "thelio", riff).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+    std::fs::write(mike.home().join("config.toml"), "[update]\nauto = true\n").unwrap();
+
+    // The reply to this line names the newer release 600 ms later.
+    deploy.deploy();
+    mike.keys("one\r").await;
+    mike.keys("half a li").await;
+    let rows = mike
+        .shows(|rows| rows.iter().any(|row| row.contains("installs it now")))
+        .await;
+    let n = rows.len();
+    assert_eq!(rows[n - 1], format!("{PROMPT}half a li"), "{rows:#?}");
+    let prompts = rows.iter().filter(|row| row.contains(PROMPT)).count();
+    assert_eq!(prompts, 1, "{rows:#?}");
+
+    mike.keys("ne\r").await;
+    let line = brett.shows("half a line").await;
+    assert!(is_line(&line, "mike@thelio", "half a line"), "{line:?}");
+}
+
 /// Puts a copy of `from` at `to` as `cargo install` does: a new file
 /// beside it, then a rename. A child process copies, so that no fork of
 /// a parallel test holds a write fd of the file.
@@ -926,6 +1072,50 @@ async fn a_chat_runs_the_new_binary_and_shows_the_next_line_once() {
         is_line(&line, "mike@thelio", "hello from the new riff"),
         "{line:?}"
     );
+}
+
+/// A chat that runs a new binary gives the new chat the text that the
+/// person typed and did not send (#1665, 01M6QR3JMCZ63ZYSRFBSWJ6WD7): it
+/// shows after the prompt, and Enter sends all of it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_runs_the_new_binary_and_keeps_what_you_type() {
+    let server = crate::common::start_signed().await;
+    let bin = tempfile::tempdir().unwrap();
+    let binary = bin.path().join("riff");
+    let riff = Isolated::shared().riff_path();
+    install(&riff, &binary);
+    let command = tokio::process::Command::from(Isolated::shared().command(&binary));
+    let mut mike = Tty::start_with(&server, "mike", "thelio", command).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+
+    // A text with a leading hyphen and a quote is no option of the command.
+    mike.keys("--half a \"li").await;
+    mike.shows(|rows| {
+        rows.last()
+            .is_some_and(|row| row.ends_with("> --half a \"li"))
+    })
+    .await;
+    install(&riff, &binary);
+    mike.shows(|rows| rows.iter().any(|row| row.contains("a new riff is on disk")))
+        .await;
+    brett.say("after the update").await;
+    let rows = mike
+        .shows(|rows| {
+            rows.iter().any(|row| row.contains("after the update"))
+                && rows
+                    .last()
+                    .is_some_and(|row| row == &format!("{PROMPT}--half a \"li"))
+        })
+        .await;
+    let start = rows
+        .iter()
+        .filter(|row| row.starts_with("riff: chat as"))
+        .count();
+    assert_eq!(start, 1, "{rows:#?}");
+
+    mike.keys("ne\r").await;
+    let line = brett.shows("half a").await;
+    assert!(is_line(&line, "mike@thelio", "--half a \"line"), "{line:?}");
 }
 
 /// A TCP proxy in front of a riff server. It can cut each connection,
