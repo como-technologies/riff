@@ -3020,7 +3020,8 @@ fn wave_release_gate(number: u64, no_release: Option<&str>) -> Result<()> {
     if !riff::release_config::of_repository(&top)? {
         return Ok(());
     }
-    let forge = riff::cycle::GitHub::new(pr::Gh::here("release").retrying(), &top)?;
+    let forge =
+        riff::cycle::GitHub::new(pr::Gh::here("release").retrying().stopping_on_limit(), &top)?;
     if riff::cycle::wave_gate(&forge, number, no_release)? == riff::cycle::WaveGate::NoRelease {
         println!("Wave {number} ends with no release. The reason is in the wave.");
     }
@@ -3091,7 +3092,12 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
         eprintln!("{}", text::release_refused(command, why));
         std::process::exit(1)
     };
-    let forge = || cycle::GitHub::new(pr::Gh::here("release").retrying(), &here);
+    let forge = || {
+        cycle::GitHub::new(
+            pr::Gh::here("release").retrying().stopping_on_limit(),
+            &here,
+        )
+    };
     let next = |forge: &cycle::GitHub, tag: &str| match cycle::tag_version(tag)
         .and_then(|v| cycle::stage(forge, v))
     {

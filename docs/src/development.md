@@ -5542,7 +5542,8 @@ GitHub sometimes answers a call with a 502, 503 or 504. A release
 command (`riff release …`, and the release gate of `riff wave end`)
 runs the call of `gh` again after such an answer: up to 3 new tries,
 after 2 s, 4 s and 8 s. Most of the time you see nothing. Another
-failure, for example a limit of GitHub, gets no new try.
+failure gets no new try. A limit of GitHub has its own how-to: see
+[When the GitHub limit is out for a release command](#when-the-github-limit-is-out-for-a-release-command).
 
 ```mermaid
 flowchart TD
@@ -5570,6 +5571,46 @@ riff release check v3.3.0
 A write that GitHub did before it answered 504 can show twice. For
 example, the release issue can have the comment of the check two
 times. The second comment does no harm.
+
+#### When the GitHub limit is out for a release command
+
+GitHub counts the calls of your token. GraphQL and REST have a limit
+each. When a call of a release command (`riff release …`, and the
+release gate of `riff wave end`) meets a limit that is out, the command
+makes no new try: a new try costs a call, and the limit stays out until
+the counter starts again. The command finds the reset of the counter
+that failed, as the daemon does (see
+[Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out)).
+Then it stops with exit code 1, and it says when to run it again.
+
+```mermaid
+flowchart TD
+    A["a release command calls gh"] --> B{"the limit of the call is out?"}
+    B -- no --> C["the command goes on"]
+    B -- yes --> D["riff finds the reset of the counter that failed"]
+    D --> E["exit code 1: the time of the reset"]
+    E --> F["you wait for the reset"]
+    F --> G["you run the same command again"]
+```
+
+The error looks like this:
+
+```text
+the GitHub GraphQL limit is out. It starts again at 07:00:43 UTC (in 41m). Run the same command again then.
+```
+
+When riff cannot read the reset, the time is the end of the hour of the
+counter that it saw. The error says so:
+`riff cannot read the reset: this time is the end of the hour of the counter that it saw.`
+
+Wait for the time. Then run the same command again, for example:
+
+```sh
+riff release publish v3.3.0
+```
+
+A command that stopped on the limit may have done a step before it.
+`riff release status` shows the state of the release after the reset.
 
 #### End the wave of the release
 
