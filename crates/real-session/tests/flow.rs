@@ -192,6 +192,15 @@ run)
 esac
 "#;
 
+/// The script of a fake, with its `ID8` and its control folder. The
+/// control folder goes in last: the random name of its folder can hold
+/// the text `ID8`.
+fn fill(script: &str, ctl: &Path) -> String {
+    script
+        .replace("ID8", ID8)
+        .replace("CTL", &ctl.display().to_string())
+}
+
 impl Fake {
     fn new() -> Fake {
         let env = Isolated::new();
@@ -237,10 +246,7 @@ impl Fake {
             ("riff", RIFF),
             ("riff-server", SERVER),
         ] {
-            let text = script
-                .replace("CTL", &fake.ctl.display().to_string())
-                .replace("ID8", ID8);
-            isolated::write_program(fake.bin.join(name), text);
+            isolated::write_program(fake.bin.join(name), fill(script, &fake.ctl));
         }
         fake
     }
@@ -465,6 +471,14 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
         "{log:#?}"
     );
     assert_clean(&fake);
+}
+
+/// A control folder with `ID8` in its name stays as it is.
+#[test]
+fn a_control_folder_with_id8_in_its_name_is_not_changed() {
+    let ctl = Path::new("/var/tmp/.tmpID8Vap/ctl");
+    let text = fill("c='CTL'\nd=\"$2-ID8\"\n", ctl);
+    assert_eq!(text, "c='/var/tmp/.tmpID8Vap/ctl'\nd=\"$2-1a2b3c4d\"\n");
 }
 
 /// A worker runs the test: its hold of the verify fails
