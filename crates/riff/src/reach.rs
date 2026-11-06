@@ -170,16 +170,23 @@ impl Reach {
         }
     }
 
-    /// The sessions of the riff, as `riff who` reads them. `all` adds the
+    /// What riff-server says to `who`: the sessions of the riff, and the
+    /// repositories of the leads of the caller (#1666). `all` adds the
     /// gone sessions.
-    pub async fn who(&self, all: bool) -> Result<Vec<SessionInfo>> {
+    pub async fn who_reply(&self, all: bool) -> Result<WhoReply> {
         match self {
             Reach::Direct(server) => {
                 let (api, me) = signed(server)?;
-                api.who(&me, all).await
+                api.roster(&me, all).await
             }
             Reach::Daemon(socket) => ask(socket, &ServerCall::Who { all }).await,
         }
+    }
+
+    /// The sessions of the riff, as `riff who` reads them. `all` adds the
+    /// gone sessions.
+    pub async fn who(&self, all: bool) -> Result<Vec<SessionInfo>> {
+        Ok(self.who_reply(all).await?.sessions)
     }
 
     /// The holds of the thread `thread`, by their item.

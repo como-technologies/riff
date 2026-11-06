@@ -88,6 +88,17 @@ impl Work {
         self.claims.get(&(thread.clone(), item.to_owned()))
     }
 
+    /// Each thread where `user` has a lead (#1666).
+    pub(super) fn lead_threads<'a>(
+        &'a self,
+        user: &'a str,
+    ) -> impl Iterator<Item = &'a ThreadName> {
+        self.leads
+            .keys()
+            .filter(move |(lead, _)| lead == user)
+            .map(|(_, thread)| thread)
+    }
+
     /// Each item that `who` holds.
     pub(super) fn items_of(&self, who: &Who) -> Vec<String> {
         self.claims

@@ -425,6 +425,13 @@ pub struct WhoReply {
     /// (01M3NT4M3A4E3K5S2NM7MS6PQD). A riff with no sign-in has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub people: Vec<Person>,
+    /// The repository threads of the caller (#1666): each one with a
+    /// session of the caller, live or gone, a lead of the caller, or the
+    /// notes of a lead of the caller. The notes stay after the session of
+    /// their lead is forgotten, so a repository can be here with no
+    /// session in `sessions`. It does not depend on `all`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repos: Vec<ThreadName>,
 }
 
 /// The reply to `GET /v1/me`: only the session of the caller, and the

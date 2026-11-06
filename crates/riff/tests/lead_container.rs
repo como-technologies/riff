@@ -266,7 +266,7 @@ async fn wave_run_names_the_hosts_that_do_not_run_the_wave() {
         Some("roster") => {
             Ok(json!({"user": "mike", "owner": {"kind": "no_sign_in"}, "people": []}))
         }
-        Some("who") => Ok(sessions.clone()),
+        Some("who") => Ok(json!({"sessions": sessions})),
         _ => Err(format!("unexpected call {call}")),
     });
     let out = container.riff(&socket, &["wave", "run"]).await;

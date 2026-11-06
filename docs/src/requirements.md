@@ -501,13 +501,10 @@
   with the first wave, when the repository has none. It never changes a
   label that is there.
 - **01M6QBJJ3R5CNTHT4FAPZ5DDSW** `riff questions` lists the open issues
-  with the label `question` in each repository of the riff: the
-  repository of each session on riff-server, and the repository of the
-  folder. Each line has the repository, the number, the title and the
-  link. A repository that `gh` cannot read gets one line on stderr, and
-  the command exits with 1 after it lists the others. `riff questions
-  --web` opens one GitHub search for `is:issue is:open label:question`
-  over the same repositories in the browser, and lists nothing.
+  with the label `question`. Each line has the repository, the number,
+  the title and the link. `riff questions --web` opens one GitHub search
+  for `is:issue is:open label:question` in the browser, and lists
+  nothing.
 - **01M6QCXGC42AG1RY5QNGT47GVV** The start text of a work session names
   both forms of a "Done when" line: the line `Done when:` and the
   heading `## Done when`. The note of `riff init` for the open issues
@@ -518,6 +515,21 @@
   heading `## Done when`. The start routine in the MCP instructions of a
   session names both forms too. Supersedes 01M4ZV3B6R4WSEJXYT7QPRWT6X in
   part.
+- **01M6QQJHV8THJG36XFT95S3Q84** `riff questions` reads the repositories
+  of the person at the terminal, not of the riff: each repository where
+  riff-server has a session of the person (live or gone), a lead of the
+  person or the notes of a lead of the person, each repository that a
+  daemon of the person serves, and the repository of the folder.
+  riff-server names them in the reply to `who`, in the field `repos`: a
+  session of another person adds none, and a repository with the notes
+  of a lead and no session is in it. `riff questions --web` searches the
+  same repositories. Supersedes 01M6QBJJ3R5CNTHT4FAPZ5DDSW in part.
+- **01M6QQJHXNAVYNNJ86WYY3C8EG** `riff questions` skips a repository
+  with its issues turned off, with no line. A repository that `gh`
+  cannot read gets no line of its own: one last line on stderr, `riff
+  could not read N repositories: A, B`, names them all. The command
+  exits with 0 when it read at least one repository, and with 1 when
+  `gh` failed for each. Supersedes 01M6QBJJ3R5CNTHT4FAPZ5DDSW in part.
 
 ## Issue hygiene on GitHub
 

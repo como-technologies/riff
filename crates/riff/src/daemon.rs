@@ -1112,8 +1112,10 @@ pub enum ServerCall {
     /// The version of the build of riff-server, or `null` when it names
     /// none.
     Build,
-    /// The sessions of the riff, as `riff who` reads them. `all` adds
-    /// the gone sessions.
+    /// The reply of riff-server to `who`: the sessions of the riff, and
+    /// the repositories of the leads of the caller
+    /// ([`riff_core::wire::WhoReply`], #1666). `all` adds the gone
+    /// sessions.
     Who {
         /// True for the gone sessions too.
         all: bool,
@@ -1255,7 +1257,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
             let probe = api.probe(crate::lifecycle::PROBE_WAIT).await?;
             serde_json::to_value(probe.build.map(|b| b.version.to_string()))?
         }
-        ServerCall::Who { all } => serde_json::to_value(signed()?.who(&record.me, *all).await?)?,
+        ServerCall::Who { all } => serde_json::to_value(signed()?.roster(&record.me, *all).await?)?,
         ServerCall::Holds { thread } => {
             serde_json::to_value(signed()?.plan_show(&record.me, thread).await?.holds)?
         }
