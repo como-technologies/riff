@@ -16,7 +16,7 @@
 //!
 //! | Command | `gh` calls |
 //! |---|---|
-//! | `riff wave list` (01M509TJRBE2J7HYKKHRJ1ZFR0) | `api repos/{owner}/{repo}/milestones?state=open&per_page=100`, then `issue list` and `pr list` for the items ([`items`]) |
+//! | `riff wave list` (01M509TJRBE2J7HYKKHRJ1ZFR0) | `api repos/{owner}/{repo}/milestones?state=open&per_page=100`, then `issue list` and `pr list` for the items ([`items`]). The read of GitHub is kept 60 seconds on the host ([`crate::wave_list`], #1609) |
 //! | `riff wave make TITLE` (01M509TJTV7TC32EKXW0TEQ5NZ) | the list, `label create tracker ... --force` (01M5ND16V2SVN8A9K7W90VC6X9), `api -X POST repos/{owner}/{repo}/milestones -f title=TITLE`, then the same POST with `-f title=Backlog` when the list has no `Backlog` (01M5QVF58KEC9WNHAJ8WTZ18EP) |
 //! | `riff wave rename N NAME` (01M518A0BEQBX9RH9H0CEFYF9Q) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f title=TITLE` |
 //! | `riff wave end N` (01M509TJXE04CTG5D1K751WXJY) | the list, then `api -X PATCH repos/{owner}/{repo}/milestones/NUMBER -f state=closed` |
@@ -589,20 +589,24 @@ impl Items {
 }
 
 /// The items of the repository `thread`, the repository of the folder
-/// (01M58ATZ408RBCX0PM0D0ZCY4B): its open issues and pull requests from
-/// `gh`, and its sessions and holds from riff-server, by the way `reach`.
-/// It fails with the error of `gh` when `gh` fails
-/// ([`crate::top::issues_from_gh`]), and with `gh gave no open issues`
-/// only when `gh` read the issues and gave none
-/// (01M6GX4HYR3755G6EJW1XHEFVE).
-pub async fn items(reach: &Reach, thread: Option<ThreadName>, gh: &Gh) -> Result<Items> {
+/// (01M58ATZ408RBCX0PM0D0ZCY4B): its open issues and pull requests, as
+/// `riff wave list` read them from `gh` ([`crate::wave_list`]), and its
+/// sessions and holds from riff-server, by the way `reach`. It fails with
+/// the error of `gh` when `gh` failed ([`crate::top::issues_from_gh`]), and
+/// with `gh gave no open issues` only when `gh` read the issues and gave
+/// none (01M6GX4HYR3755G6EJW1XHEFVE).
+pub async fn items(
+    reach: &Reach,
+    thread: Option<ThreadName>,
+    issues: Result<Issues, String>,
+) -> Result<Items> {
     let Some(thread) = thread else {
         bail!(text::waves_no_repo());
     };
     let repo = thread.to_string();
     let who = reach.who(false).await?;
     let holds = reach.holds(&thread).await?;
-    let issues = crate::top::issues_from_gh(gh, &repo)?;
+    let issues = issues.map_err(anyhow::Error::msg)?;
     if issues.titles.is_empty() {
         bail!(text::waves_no_issues(&repo));
     }

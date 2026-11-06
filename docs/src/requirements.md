@@ -457,6 +457,20 @@
   warning of `riff wave move` and the message of the wave for an issue
   with no such line say both forms. Supersedes
   01M5R0HEP1MXWYY643F1N1DWEM and 01M5R0HERC566W14SEJ3ZCG6V5 in part.
+- **01M6QBEV0PNMAESMW620AF5HH7** `riff wave list` keeps its read of
+  GitHub for 60 seconds for each repository, in a file in the folder of
+  the riff daemon of the host. Each run of the command in that time
+  shows that read and calls no gh. A run with an older read asks GitHub
+  first with the two conditional reads of the idle look
+  (01M6JFJQD4H4GG0H0TFSW5G1PD). When both answer 304, no pull request
+  was open at the last full read, and that read began less than 30
+  minutes ago, the run keeps the issues and the pull requests of that
+  read, reads the open milestones again, and costs no GraphQL point. It
+  reads in full when the milestones are not the same. A read that fails
+  is not kept. The output names the age of the read when it is older
+  than 10 seconds. `riff wave list --fresh` reads GitHub in full at
+  once. `riff wave make`, `rename`, `end` and `move` delete the kept
+  read of their repository (#1609).
 
 ## Issue hygiene on GitHub
 

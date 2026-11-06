@@ -837,6 +837,108 @@ async fn a_person_sees_the_groups_of_the_wave_in_riff_wave_list() {
     );
 }
 
+/// #1609: a `watch riff wave list` reads GitHub once in 60 seconds. The
+/// runs in that time share the read of the host and make no call of
+/// `gh`. A read that is older than 10 seconds names its age, and
+/// `--fresh` reads GitHub at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_wave_list_keeps_its_read_of_github_for_60_seconds() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    wave_gh(bin.path(), &[12, 13]);
+    let plain = std::fs::read_to_string(bin.path().join("gh")).unwrap();
+    // The same `gh`, with a log of each call.
+    let logging = plain.replacen(
+        "#!/bin/sh\n",
+        "#!/bin/sh\necho \"$*\" >> \"${0%/*}/calls\"\n",
+        1,
+    );
+    isolated::write_program(bin.path().join("gh"), logging);
+    let calls = || {
+        let file = bin.path().join("calls");
+        let calls = std::fs::read_to_string(&file).unwrap_or_default();
+        let _ = std::fs::remove_file(&file);
+        calls.lines().count()
+    };
+    let list = |extra: &[&str]| {
+        let mut args = vec!["wave", "list"];
+        args.extend(extra);
+        let mut list = riff(&server, dir, None, bin.path(), &args);
+        list.env_remove("RIFF_SESSION")
+            .env_remove("CLAUDE_CODE_SESSION_ID");
+        output(list)
+    };
+
+    let first = list(&[]).await;
+    assert_eq!(
+        first,
+        "Wave 3  current  2 open, 1 closed\n  free: #12 #13\n"
+    );
+    assert!(calls() > 0);
+
+    // The second run shares the read: no call of `gh`, and no age line.
+    assert_eq!(list(&[]).await, first);
+    assert_eq!(calls(), 0);
+
+    // A read 30 seconds old names its age on the last line.
+    let file = dir.join("daemon/wave-list/como-technologies~riff.json");
+    let mut kept: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let ago = riff::daemon::now_ms() - 30_000;
+    kept["at_ms"] = ago.into();
+    std::fs::write(&file, kept.to_string()).unwrap();
+    let old = list(&[]).await;
+    assert_eq!(calls(), 0);
+    let (table, age) = old.split_once("\nThis list").unwrap();
+    assert_eq!(format!("{table}\n"), first);
+    assert!(
+        age.starts_with(" is from a read of GitHub 3") && age.ends_with("riff wave list --fresh\n"),
+        "{age}"
+    );
+
+    // `--fresh` reads GitHub at once, and the next run shares that read.
+    assert_eq!(list(&["--fresh"]).await, first);
+    assert!(calls() > 0);
+    assert_eq!(list(&[]).await, first);
+    assert_eq!(calls(), 0);
+}
+
+/// #1609: a step that changes the waves deletes the kept read, so the
+/// next `riff wave list` shows the step and not the read of a minute ago.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_wave_make_deletes_the_kept_read_of_riff_wave_list() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    let wave = r#"[{"number":3,"title":"Wave 3","open_issues":1,"closed_issues":0}]"#;
+    let made = r#"{"number":4,"title":"Wave 4","open_issues":0,"closed_issues":0}"#;
+    script(
+        bin.path(),
+        "gh",
+        &format!(
+            "case \"$1 $2\" in\n  'api -X') echo '{made}' ;;\n  'label create') ;;\n  api*) echo '{wave}' ;;\n  pr*) echo '[]' ;;\n  *) echo '[{{\"number\": 12, \"title\": \"t\", \"milestone\": {{\"title\": \"Wave 3\"}}}}]' ;;\nesac"
+        ),
+    );
+    let run = |args: &[&str]| {
+        let mut cmd = riff(&server, dir, None, bin.path(), args);
+        cmd.env_remove("RIFF_SESSION")
+            .env_remove("CLAUDE_CODE_SESSION_ID");
+        output(cmd)
+    };
+    let file = dir.join("daemon/wave-list/como-technologies~riff.json");
+
+    run(&["wave", "list"]).await;
+    assert!(file.exists());
+    run(&["wave", "list", "--fresh"]).await;
+    assert!(file.exists());
+    let made = run(&["wave", "make", "Wave", "4"]).await;
+    assert!(made.starts_with("Made the wave Wave 4."), "{made}");
+    assert!(!file.exists());
+}
+
 /// The stdout and the stderr of `cmd`, after its exit with status 0.
 async fn output_both(mut cmd: Command) -> (String, String) {
     let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())

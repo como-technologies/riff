@@ -298,14 +298,24 @@ pub fn with_pulls(issues: Issues, pulls: &[crate::rollout::Pull]) -> Issues {
 /// `gh`, whose calls share one token
 /// ([`crate::pr::Gh::with_one_token`], 01M54510SFK1Z9VPFYBYYSV10F).
 pub fn issues_from_gh(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Issues> {
+    issues_and_pulls(gh, repo).map(|(issues, _)| issues)
+}
+
+/// [`issues_from_gh`] and whether the read saw no open pull request. A
+/// read of the pull requests that fails counts as a sight of one: the
+/// answer is `false` ([`crate::wave_list`]).
+pub fn issues_and_pulls(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<(Issues, bool)> {
     let args = issue_args(repo);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let json = gh.run_as("gh issue list", &args)?;
     let issues =
         parse_issues(&json).ok_or_else(|| anyhow::anyhow!(crate::text::gh_issues_unreadable()))?;
     Ok(match crate::rollout::pulls(gh, repo) {
-        Ok(pulls) => with_pulls(issues, &pulls),
-        Err(_) => issues,
+        Ok(pulls) => {
+            let none = pulls.is_empty();
+            (with_pulls(issues, &pulls), none)
+        }
+        Err(_) => (issues, false),
     })
 }
 

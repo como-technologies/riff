@@ -88,6 +88,7 @@ mod wave_checks;
 mod wave_conflict;
 mod wave_done_when;
 mod wave_idle;
+mod wave_list;
 mod wave_queue;
 mod wave_stuck;
 mod waves;
