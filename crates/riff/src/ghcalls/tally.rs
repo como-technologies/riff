@@ -68,8 +68,19 @@ pub const SESSION: &str = "session";
 /// [`SESSION`]. A session cannot add a new row to the status with a name
 /// of its own.
 pub const CALLERS: &[&str] = &[
-    SESSION, "top", "pr open", "pr wait", "verify", "release", "waves", "audit", "usage", "run",
-    "claim", "init",
+    SESSION,
+    "top",
+    "pr open",
+    "pr wait",
+    "verify",
+    "release",
+    "waves",
+    "audit",
+    "usage",
+    "run",
+    "claim",
+    "init",
+    "questions",
 ];
 
 /// The most records in one send of a session.

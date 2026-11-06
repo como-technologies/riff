@@ -5331,7 +5331,7 @@ of this part when they merge.
   goes through a Gh that counts it under a caller name that the tally
   knows: Gh::here(NAME) in a command of riff, with NAME one of CALLERS
   (top, pr open, pr wait, verify, release, waves, audit, usage, run,
-  claim, init), and Gh::in_daemon(NAME) or
+  claim, init, questions), and Gh::in_daemon(NAME) or
   Gh::for_repo(REPO).by(NAME) in the daemon, with NAME one of DAEMON
   (wave, look, watches, sweep, usage, clone, release test). A gh built
   with Gh::default(), Gh::at or Command::new("gh") in code outside tests
