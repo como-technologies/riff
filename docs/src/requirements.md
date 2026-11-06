@@ -5221,6 +5221,10 @@ of this part when they merge.
   start of the counter to that reading, with the average for each
   minute. The line shows only while that counter has not started again
   (#1582).
+- **01M6QC6KV25VMRREXXFBJD7NEJ** A wave starts no rebase and no fix of
+  checks for an item while a verify of the same item runs: a session
+  claims `verify-issue-N`, or a job of the wave runs it. The rebase or
+  the fix starts at the first look after the verify ends.
 
 ### The lead, the view and the takeover
 
