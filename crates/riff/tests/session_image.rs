@@ -324,8 +324,18 @@ fn session_test_in(env: &Isolated, args: &[&str], bin: &Path, engine: Option<&st
 fn session_test(args: &[&str], bin: &Path, engine: Option<&str>) -> Vec<String> {
     let out = session_test_output(args, bin, engine);
     assert!(out.status.success(), "{out:?}");
+    logged_after_the_pull(bin)
+}
+
+/// The arguments that the fake engine of `bin` logged in `podman.log`,
+/// one on each line, after the pull of the image: the pull comes first
+/// (01M6QPKG1X8VZTDF8RTTKFW67C).
+fn logged_after_the_pull(bin: &Path) -> Vec<String> {
     let log = fs::read_to_string(bin.join("podman.log")).unwrap();
-    log.lines().map(str::to_owned).collect()
+    let lines: Vec<String> = log.lines().map(str::to_owned).collect();
+    let image = Image::of_repository(&top()).unwrap().to_string();
+    assert_eq!(lines[..2], ["pull", image.as_str()], "{lines:?}");
+    lines[2..].to_vec()
 }
 
 /// The command that the container runs: the arguments after `bash`.
@@ -398,6 +408,121 @@ fn the_session_tests_run_one_part_of_the_tests_of_the_workspace() {
         );
         assert!(!bin.path().join("podman.log").exists(), "{bad:?}");
     }
+}
+
+/// A fake engine `name` in `bin` whose first `fails` pulls fail with the
+/// exit 125 of the engine, and a fake `sleep`. Both log one line for each
+/// call to `bin/engine.log`: its arguments, and `sleep 10` for a wait.
+fn flaky_engine(bin: &Path, name: &str, fails: u32) {
+    let log = bin.join("engine.log");
+    let count = bin.join("pulls");
+    isolated::write_program(
+        bin.join(name),
+        format!(
+            "#!/bin/sh\necho \"$*\" >> {log}\n\
+             case \"$1\" in\n\
+             pull) n=$(cat {count} 2>/dev/null || echo 0); echo $((n + 1)) > {count}\n\
+             if [ $((n + 1)) -le {fails} ]; then\n\
+             echo 'failed to copy: httpReadSeeker: failed open' >&2; exit 125; fi ;;\n\
+             esac\n",
+            log = log.display(),
+            count = count.display(),
+        ),
+    );
+    isolated::write_program(
+        bin.join("sleep"),
+        format!("#!/bin/sh\necho \"sleep $*\" >> {}\n", log.display()),
+    );
+}
+
+/// The lines that [`flaky_engine`] logged to `bin/engine.log`.
+fn engine_calls(bin: &Path) -> Vec<String> {
+    let log = fs::read_to_string(bin.join("engine.log")).unwrap();
+    log.lines().map(str::to_owned).collect()
+}
+
+/// 01M6QPKG1X8VZTDF8RTTKFW67C (#1634): a pull of the image that fails
+/// once fails no test. The script pulls the image first, waits 10
+/// seconds after a failed pull, and pulls again. The tests run after the
+/// pull that works.
+#[test]
+fn the_session_tests_pull_the_image_again_after_a_pull_that_failed() {
+    let image = Image::of_repository(&top()).unwrap().to_string();
+    let pull = format!("pull {image}");
+    for (name, runs) in [("podman", "run --rm --init"), ("docker", "run --rm")] {
+        let bin = tempfile::tempdir().unwrap();
+        flaky_engine(bin.path(), name, 1);
+        let env = Isolated::new();
+        let out = session_test_in(&env, &["--part", "2/4"], bin.path(), Some(name));
+        assert!(out.status.success(), "{name}: {out:?}");
+        let calls = engine_calls(bin.path());
+        assert_eq!(
+            calls[..3],
+            [pull.as_str(), "sleep 10", pull.as_str()],
+            "{calls:?}"
+        );
+        assert!(calls[3].starts_with(&format!("{runs} ")), "{calls:?}");
+        assert_eq!(calls.iter().filter(|c| **c == pull).count(), 2, "{calls:?}");
+        assert!(
+            calls.last().unwrap().ends_with("just test-part 2/4"),
+            "{calls:?}"
+        );
+        let error = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            error.contains(&format!("the pull of the image {image} failed")),
+            "{error}"
+        );
+    }
+}
+
+/// 01M6QPKG1X8VZTDF8RTTKFW67C: a pull that works the first time waits
+/// for nothing.
+#[test]
+fn the_session_tests_wait_for_no_pull_that_works() {
+    let bin = tempfile::tempdir().unwrap();
+    flaky_engine(bin.path(), "podman", 0);
+    let out = session_test_output(&["--part", "1/4"], bin.path(), Some("podman"));
+    assert!(out.status.success(), "{out:?}");
+    let calls = engine_calls(bin.path());
+    assert!(calls[0].starts_with("pull "), "{calls:?}");
+    assert!(calls.iter().all(|c| !c.starts_with("sleep")), "{calls:?}");
+    assert_eq!(calls.len(), 2, "{calls:?}");
+}
+
+/// 01M6QPKG1X8VZTDF8RTTKFW67C: after 3 failed pulls, the script says that
+/// the pull of the image failed, names the image, exits with 1, and runs
+/// no test. It waits between the pulls only: twice.
+#[test]
+fn the_session_tests_stop_after_3_pulls_that_failed() {
+    let image = Image::of_repository(&top()).unwrap().to_string();
+    let pull = format!("pull {image}");
+    let bin = tempfile::tempdir().unwrap();
+    flaky_engine(bin.path(), "podman", 3);
+    let out = session_test_output(&[], bin.path(), Some("podman"));
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let error = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        error.contains(&format!("the pull of the image {image} failed 3 times.")),
+        "{error}"
+    );
+    let calls = engine_calls(bin.path());
+    let pull = pull.as_str();
+    assert_eq!(calls, [pull, "sleep 10", pull, "sleep 10", pull]);
+}
+
+/// 01M6QPKG1X8VZTDF8RTTKFW67C, 01M6QPKG4MSK9AF70V6SZHSBKZ: "How the Gate
+/// runs" says that the tests pull the session image up to 3 times, and
+/// has the `sh` block that runs the failed jobs of a run again.
+#[test]
+fn the_book_says_how_the_gate_pulls_the_image_and_runs_failed_jobs_again() {
+    let book = read("docs/src/development.md");
+    let gate = book.split_once("\n## How the Gate runs\n").unwrap().1;
+    let gate = gate.split_once("\n## ").unwrap().0;
+    assert!(gate.contains("pulls again, up to 3 times"), "{gate}");
+    assert!(
+        gate.contains("```sh\ngh run rerun RUN --failed\n```\n"),
+        "{gate}"
+    );
 }
 
 /// 01M51117NDKF11FNZ915TTQED4: docker has no `--userns=keep-id`, so the
@@ -476,8 +601,7 @@ fn host_id(flag: &str) -> String {
 fn in_docker(env: &Isolated, bin: &Path) -> Vec<String> {
     let out = session_test_in(env, &[], bin, Some("docker"));
     assert!(out.status.success(), "{out:?}");
-    let log = fs::read_to_string(bin.join("podman.log")).unwrap();
-    log.lines().map(str::to_owned).collect()
+    logged_after_the_pull(bin)
 }
 
 /// The file that the arguments `run` bind with no write over

@@ -9258,6 +9258,8 @@ fn check_names(checks: &[String]) -> String {
 /// assert!(text.contains("Before a push, run the checks that the repository names, when it names some"));
 /// assert!(!text.contains("CLAUDE.md names"));
 /// assert!(text.contains("git push origin worktree-issue-12"));
+/// assert!(text.contains("A failed pull of the session image: the only failure of the check is the pull of the image"));
+/// assert!(text.contains("Change no code. Run the failed jobs again one time"));
 /// assert!(text.contains("A known flake"));
 /// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
 /// assert!(text.contains("gh run rerun RUN_ID --failed"));
@@ -9302,15 +9304,21 @@ pub fn wave_checks_start(
          Never push to {base}. Do not open a second pull request. New checks and a new verify \
          of the new commit follow. Another session does the verify: do not verify your own \
          work.\n\
-         5. A known flake: the failed test has no link to the diff, and the issue, the pull \
+         5. A failed pull of the session image: the only failure of the check is the pull of \
+         the image, for example \"Unable to find image\" and \"failed to copy\" with exit code \
+         125, and no test ran. It is no fault of the work. Change no code. Run the failed jobs \
+         again one time:\n   \
+         gh run rerun RUN_ID --failed\n   \
+         Push nothing then, and say in your reply that you ran the jobs again, and why.\n\
+         6. A known flake: the failed test has no link to the diff, and the issue, the pull \
          request or an earlier run shows that it failed before. Run the job again one time:\n   \
          gh run rerun RUN_ID --failed\n   \
          Push nothing then, and say in your reply that you ran the job again, and why. Do not \
          run it a second time.\n\
-         6. Stop each background task that you started, for example a Monitor or a command \
+         7. Stop each background task that you started, for example a Monitor or a command \
          in the background. Never end a turn while a background task runs: a session does not \
          continue after its result. Leave no background task at the end of your work.\n\
-         7. Reply with the URL of the pull request in one line.\n\n\
+         8. Reply with the URL of the pull request in one line.\n\n\
          {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )

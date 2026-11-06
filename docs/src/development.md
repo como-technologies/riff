@@ -163,6 +163,34 @@ The rules of `main` need only the check `Gate`. So a fail of each job
 fails the Gate. While the other jobs run, `gh pr checks` shows no
 `Gate`.
 
+A job `Tests I/N` pulls the session image before its tests. When the
+pull fails, the job waits 10 seconds and pulls again, up to 3 times.
+After 3 failures it says that the pull of the image failed, names the
+image, and exits with 1. `just session-test` pulls the same way.
+
+```mermaid
+flowchart LR
+    A["pull the<br/>session image"] -- works --> T["run the tests"]
+    A -- "fails, try 1 or 2" --> W["wait 10 seconds"] --> A
+    A -- "fails, try 3" --> F["the job fails and<br/>names the image"]
+```
+
+### Run the failed jobs of a run again
+
+A job can fail with no fault of the code, for example when the pull of
+the session image failed 3 times. Its log has `Unable to find image` or
+`failed to copy`, and no test ran. Change no code then. Run the failed
+jobs of the run again. `RUN` is the run ID in the URL of the run (see
+`gh pr checks N`):
+
+```sh
+gh run rerun RUN --failed
+```
+
+The session that fixes a failed check of a wave does the same when the
+pull of the image is the only failure (see
+[See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)).
+
 ### Keep the actions up to date
 
 Dependabot checks the actions of `.github/workflows` each week
@@ -2257,8 +2285,12 @@ The session for a failed run of GitHub Actions gets the names of the
 runs. It reads
 the log of the failed run, fixes the work, and pushes to the same pull
 request. New checks and a new verify of the new commit follow. For a
-known flake, it runs the job again one time and pushes nothing. Each
-head commit starts one such session in a run of the wave.
+known flake, it runs the job again one time and pushes nothing. When
+the only failure of a check is the pull of the session image, it
+changes no code, pushes nothing, and runs the failed jobs again one
+time (see
+[Run the failed jobs of a run again](#run-the-failed-jobs-of-a-run-again)).
+Each head commit starts one such session in a run of the wave.
 
 When that session ends with the same head commit, the daemon reads the
 checks of the pull request. It sends no verify request. Your lead gets

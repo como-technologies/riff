@@ -14,8 +14,9 @@
 # it runs `just test-part I/N` in place of the tests of crates/riff: part
 # I of N of the tests of the workspace, as the jobs Tests I/N of the Gate
 # run them (01M515Z3Y7GSFNTJGXJD727MQK). It runs podman, else docker, or
-# the engine in RIFF_ENGINE. The image has a toolchain of its own, so the
-# build goes to target/session.
+# the engine in RIFF_ENGINE. It pulls the image first, up to 3 times
+# (01M6QPKG1X8VZTDF8RTTKFW67C). The image has a toolchain of its own, so
+# the build goes to target/session.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."
 
@@ -48,6 +49,20 @@ if [ -z "$IMAGE" ]; then
     echo "session-test.sh: riff.toml pins no session image." >&2
     exit 1
 fi
+
+# Pull the image first, up to 3 times, 10 seconds apart: a pull that
+# fails once on the network must not fail a test part of the Gate.
+for try in 1 2 3; do
+    if "$ENGINE" pull "$IMAGE"; then
+        break
+    fi
+    if [ "$try" -eq 3 ]; then
+        echo "session-test.sh: the pull of the image $IMAGE failed 3 times." >&2
+        exit 1
+    fi
+    echo "session-test.sh: the pull of the image $IMAGE failed. Try $((try + 1)) of 3 in 10 seconds." >&2
+    sleep 10
+done
 
 # The user of this machine, so the files in target/session are its own.
 # docker has no keep-id. So the container gets a passwd and a group file
