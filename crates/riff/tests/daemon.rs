@@ -1383,10 +1383,61 @@ async fn riff_daemon_status_shows_the_points_that_no_riff_process_used() {
     assert!(
         shown.contains(
             "Other callers: 2,570 GraphQL points since 22:00:17 UTC, about 91 a minute. \
-             The counter used 2,778, and riff counted 208.\n"
+             At 22:28:17 UTC the counter used 2,778, and riff counted 208.\n"
         ),
         "{shown}"
     );
+}
+
+/// 01M6QBRR7Q2NXCARHE21572GQ5 (#1607): when riff counted more points than
+/// the counter used, `riff daemon status` does not say 0 for the other
+/// callers. It says that the points of riff are estimates, with both
+/// numbers and the time of the reading.
+#[tokio::test]
+async fn riff_daemon_status_says_when_riff_counted_more_than_the_counter_used() {
+    let here = Here::new();
+    let dir = here.daemon_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = tokio::net::UnixListener::bind(riff::daemon::socket(&dir)).unwrap();
+    let since_ms: i64 = 1_793_743_217_000; // 2026-11-03T22:00:17Z
+    let read_ms = since_ms + 8 * 60_000;
+    let status = serde_json::json!({
+        "say": "status", "pid": 7, "build": "4.1.1", "since_ms": 0,
+        "dir": dir, "sessions": [],
+        "github": {
+            "rows": [{"caller": "waves", "kind": "pr list", "calls": 600, "points": 1201}],
+            "left": {
+                "remaining": 4668, "reset_at": "2026-11-03T23:00:17Z",
+                "read_ms": read_ms, "limit": 5000,
+            },
+            "waits": [],
+            "other": {
+                "points": 0, "used": 332, "counted": 1201,
+                "since_ms": since_ms, "read_ms": read_ms,
+            },
+        },
+    });
+    let fake = {
+        let (accept, line) = (listener.accept(), format!("{status}\n"));
+        async move {
+            let (conn, _) = accept.await.unwrap();
+            let (read, mut write) = conn.into_split();
+            let mut lines = tokio::io::BufReader::new(read).lines();
+            lines.next_line().await.unwrap().unwrap();
+            write.write_all(line.as_bytes()).await.unwrap();
+        }
+    };
+    let (_, out) = tokio::join!(fake, here.run(false, &["daemon", "status"]));
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let shown = text(&out.stdout);
+    assert!(
+        shown.contains(
+            "Other callers: not known. riff counted more than GitHub used: the points of riff \
+             are estimates. At 22:08:17 UTC the counter used 332, and riff counted 1,201.\n"
+        ),
+        "{shown}"
+    );
+    assert!(!shown.contains("0 GraphQL points"), "{shown}");
 }
 
 /// 01M6H1N30GXWYKX93CHPFZ11H9 (#1557): `riff daemon status` shows each limit

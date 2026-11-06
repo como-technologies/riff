@@ -406,7 +406,7 @@ impl Gh {
     /// let gh = isolated::write_program(dir.path().join("gh"), "#!/bin/sh\necho '[]'\n");
     /// let calls = Arc::new(Calls::default());
     /// let gh = riff::pr::Gh::at(gh).by("look").with_calls(calls.clone());
-    /// gh.run(&["pr", "list", "--json", "number,statusCheckRollup"], None)?;
+    /// gh.run(&["pr", "list", "--limit", "100", "--json", "number,statusCheckRollup"], None)?;
     /// gh.run(&["api", "repos/o/r"], None)?;
     /// let shown = calls.shown(riff::daemon::now_ms());
     /// assert_eq!(shown.total(), (2, 2));
@@ -988,15 +988,16 @@ impl Gh {
         ghcalls::counter_in(&out, resource)
     }
 
-    /// The counter that one read of `rateLimit` of GraphQL lands on. It
-    /// costs a point of a counter that has points, and counts as a call.
+    /// The counter that one read of `rateLimit` of GraphQL lands on. It counts
+    /// as a call, and costs no point: GitHub charges nothing for a query that
+    /// asks for `rateLimit` alone (#1607).
     fn probe(&self) -> Option<ghcalls::Counter> {
         let query = format!("query={}", ghcalls::PROBE_QUERY);
-        let (_, out, _) = self
-            .spawn(&["api", "graphql", "-f", query.as_str()], None)
-            .ok()?;
+        let args = ["api", "graphql", "-f", query.as_str()];
+        let (_, out, _) = self.spawn(&args, None).ok()?;
         if let Some(calls) = &self.calls {
-            calls.record(crate::daemon::now_ms(), self.caller, "api graphql", 1);
+            let points = ghcalls::points_of(&args, &out);
+            calls.record(crate::daemon::now_ms(), self.caller, "api graphql", points);
         }
         ghcalls::probe_in(&out)
     }
@@ -2817,12 +2818,13 @@ mod tests {
         assert_eq!(calls.len(), 5, "{calls:?}");
         assert!(calls[1].starts_with("api rate_limit"), "{calls:?}");
         assert!(calls[2..].iter().all(|c| c.starts_with("api graphql")));
-        // Each read of `rateLimit` counts as a call of GraphQL: 1 point.
+        // Each read of `rateLimit` counts as a call of GraphQL, and costs no
+        // point: GitHub charges nothing for a query that asks for it alone.
         let shown = gh.calls.as_ref().unwrap().shown(crate::daemon::now_ms());
         let reads = shown.rows.iter().find(|row| row.kind == "api graphql");
         assert_eq!(
             reads.map(|row| (row.calls, row.points)),
-            Some((3, 3)),
+            Some((3, 0)),
             "{shown:?}"
         );
     }
