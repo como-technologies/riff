@@ -871,6 +871,55 @@ pub fn next(stage: &Stage) -> String {
     }
 }
 
+/// The stage of a release whose release pull request `pr` merged
+/// (01M6QBEJYHKS8G26CM46P4P077). The merge is a fact that the caller has,
+/// and [`stage`] can lag behind it: the list of merged pull requests is a
+/// search, and the list of open ones can still hold `pr`. So `stage` that
+/// reads the release before the merge (or reads none) gives way to the
+/// state [`State::Merged`]. A `stage` after the merge stays.
+///
+/// ```
+/// use riff::cycle::{Stage, State, after_merge, next, version};
+///
+/// let v = version("3.3.0")?;
+/// // The read of the stage lags: no release pull request, or an open one.
+/// assert_eq!(
+///     next(&after_merge(None, v, 1140)),
+///     "riff release test v3.3.0 --host HOST, or just real-session on origin/main"
+/// );
+/// let cut = Stage {
+///     version: v, state: State::Cut, pr: Some(1140), merge: None,
+///     deploy: None, checks_failed: false, test: None, previous: Some(version("3.2.0")?),
+/// };
+/// let merged = after_merge(Some(cut.clone()), v, 1140);
+/// assert_eq!(merged.state, State::Merged);
+/// assert_eq!(merged.previous, cut.previous);
+/// // A stage after the merge stays.
+/// let tested = Stage { state: State::Tested, ..cut };
+/// assert_eq!(after_merge(Some(tested.clone()), v, 1140), tested);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn after_merge(read: Option<Stage>, version: Semver, pr: u64) -> Stage {
+    match read {
+        Some(stage) if stage.state != State::Cut => stage,
+        Some(stage) => Stage {
+            state: State::Merged,
+            pr: Some(pr),
+            ..stage
+        },
+        None => Stage {
+            version,
+            state: State::Merged,
+            pr: Some(pr),
+            merge: None,
+            deploy: None,
+            checks_failed: false,
+            test: None,
+            previous: None,
+        },
+    }
+}
+
 /// The lines `release:` and `next:` of `stage`.
 ///
 /// ```
