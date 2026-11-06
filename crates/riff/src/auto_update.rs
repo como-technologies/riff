@@ -100,6 +100,7 @@ use anyhow::{Context, Result};
 use riff_core::build::Build;
 use riff_core::name::Place;
 
+use crate::chat::notice;
 use crate::wave::Wave;
 use crate::{identity, lifecycle, local, release, settings, text};
 
@@ -252,9 +253,9 @@ pub fn begin(url: &str, server: &Build) {
         return;
     }
     match start(&dir, &tag, url) {
-        Ok(()) if fix => eprintln!("riff: {}", text::auto_update_static_started(&tag)),
-        Ok(()) => eprintln!("riff: {}", text::auto_update_started(&tag)),
-        Err(e) => eprintln!("riff: cannot start the update of riff: {e:#}"),
+        Ok(()) if fix => notice(&format!("riff: {}", text::auto_update_static_started(&tag))),
+        Ok(()) => notice(&format!("riff: {}", text::auto_update_started(&tag))),
+        Err(e) => notice(&format!("riff: cannot start the update of riff: {e:#}")),
     }
     *started = Some(mark);
 }

@@ -13,13 +13,31 @@
 //! or `[USER SESSION]` (01M3NJD3BR0XAYNNFTEY0CG761). With a pipe, the
 //! chat has no prompt and no line editor.
 //!
+//! A line of riff itself prints above the prompt too, and the typed text
+//! and the cursor stay (01M6QR3JHMC305AV29HPCA0X1Y). Code that runs in
+//! the chat calls [`notice`] for it, and never writes to the terminal on
+//! its own: the line editor owns the prompt line.
+//!
 //! After an update, the chat runs the new `riff` in place
 //! (01M3NT6WXGCNKW3EQ7MBJDQTR4), between two lines. It gives the new
 //! chat the last line that it showed in the hidden option [`AFTER`], so
-//! the new chat shows no line again. In a terminal, the old chat puts
-//! the terminal back in its normal mode first, and the new chat draws
-//! its prompt again. The text that the person typed but did not send
-//! is lost.
+//! the new chat shows no line again, and the text that the person typed
+//! and did not send in the hidden option [`DRAFT`]
+//! (01M6QR3JMCZ63ZYSRFBSWJ6WD7). In a terminal, the old chat puts the
+//! terminal back in its normal mode first, and the new chat draws its
+//! prompt again, with that text after it.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant P as the person
+//!     participant O as the old chat
+//!     participant N as the new chat
+//!     P->>O: types "half a li"
+//!     O->>O: a line of riff itself: prints above the prompt
+//!     Note over O: a new riff is on disk
+//!     O->>N: run in place: --after 41 --draft "half a li"
+//!     N->>P: [riff] > half a li
+//! ```
 //!
 //! `/me TEXT` posts an action line: a plain message with the body
 //! `/me TEXT` (01M3NJD37CNQX580YC24S7K6ES), so an older riff reads it
@@ -77,6 +95,11 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::Kind;
 use rustyline::ExternalPrinter;
+use rustyline::completion::Completer;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::history::DefaultHistory;
+use rustyline::validate::Validator;
 use tokio::sync::mpsc;
 
 use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
@@ -101,6 +124,10 @@ pub const PROMPT: &str = "[riff] > ";
 /// The hidden option that gives a new chat the last line that the old
 /// chat showed, after an update.
 pub const AFTER: &str = "--after";
+
+/// The hidden option that gives a new chat the text that the person
+/// typed and did not send, after an update (#1665).
+pub const DRAFT: &str = "--draft";
 
 /// The chat thread.
 ///
@@ -548,8 +575,10 @@ where
 ///
 /// With `after`, the chat runs after an update: it shows no start line
 /// and no line up to `after`, the last line that the old chat showed.
-/// On a new binary, it runs it in place, between two lines
-/// (01M3NT6WXGCNKW3EQ7MBJDQTR4).
+/// With `draft`, in a terminal, the prompt starts with that text, the
+/// text that the person typed and did not send. On a new binary, it
+/// runs it in place, between two lines (01M3NT6WXGCNKW3EQ7MBJDQTR4,
+/// 01M6QR3JMCZ63ZYSRFBSWJ6WD7).
 ///
 /// While `riff-server` starts again, it shows the line
 /// [`riff_client::link::WAITING`] above the prompt, and keeps its screen
@@ -559,14 +588,12 @@ where
 /// (01M4A804AWYEHPYZ966A6PXRPF). So the screen takes input while a post
 /// waits for its budget. At the end, it waits for the posts of the lines
 /// that the person typed.
-pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
-    // The wait line goes to the screen, once there is one.
-    let lines = Arc::new(OnceLock::<Lines>::new());
-    let screen_lines = Arc::clone(&lines);
-    let api = &api.clone().waits_to(move |line| match screen_lines.get() {
-        Some(lines) => lines.warn(line),
-        None => anstream::eprintln!("{line}"),
-    });
+pub async fn run(
+    api: &Api,
+    me: &SessionUri,
+    after: Option<u64>,
+    draft: Option<&str>,
+) -> Result<()> {
     let thread = thread();
     api.join(me, &thread).await?;
     if after.is_none() {
@@ -597,8 +624,8 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     let first = catch_up::connect(api, me, thread, &shown).await?;
     let again = catch_up::follow_thread(api, me, thread, Arc::clone(&shown), STREAM_RETRY);
     let mut stream = Box::pin(first.chain(again));
-    let (screen, mut input) = Screen::start()?;
-    let _ = lines.set(screen.lines.clone());
+    let (screen, mut input) = Screen::start(draft)?;
+    let _ = LINES.set(screen.lines.clone());
     let (send, posts) = posts(api, me, thread, screen.lines.clone());
     let mut link = crate::view::Reconnect::default();
     let follow = Follow::this();
@@ -607,10 +634,12 @@ pub async fn run(api: &Api, me: &SessionUri, after: Option<u64>) -> Result<()> {
     loop {
         tokio::select! {
             () = &mut update => {
+                let draft = screen.draft();
                 screen.leave();
                 let args = with_place(std::env::args_os().skip(1), me.place());
                 let last = shown.lock().map_or(None, |s| s.last()).or(after).unwrap_or(0);
-                follow.run(with_last(args, AFTER, last.to_string()));
+                let args = with_last(args, AFTER, last.to_string());
+                follow.run(with_last(args, DRAFT, draft));
                 break;
             }
             typed_line = input.recv() => {
@@ -694,6 +723,25 @@ async fn receivers(api: &Api, me: &SessionUri, body: &str) -> Result<Vec<Selecto
 /// The printer of the line editor: it prints above the prompt.
 type Printer = Arc<Mutex<Box<dyn ExternalPrinter + Send>>>;
 
+/// Where the chat of this process prints, once it has a screen.
+static LINES: OnceLock<Lines> = OnceLock::new();
+
+/// Prints a line of riff itself, for example the note of a new release
+/// at the server. While `riff chat` has a prompt, the line prints above
+/// the prompt and the typed text stays (#1665). Else it goes to stderr.
+/// Code that runs in `riff chat` calls this, and not `eprintln!`: a
+/// direct write breaks the prompt line.
+///
+/// ```
+/// riff::chat::notice("riff: a new release is at the server.");
+/// ```
+pub fn notice(text: &str) {
+    match LINES.get() {
+        Some(lines) => lines.warn(text),
+        None => anstream::eprintln!("{text}"),
+    }
+}
+
 /// Where the chat prints its lines.
 #[derive(Clone)]
 enum Lines {
@@ -731,19 +779,63 @@ impl Lines {
     }
 }
 
+/// A copy of the text that the person is typing. The line editor lives
+/// on a thread of its own and has no call to read its line, but it asks
+/// a hinter for a hint after each edit. This hinter keeps the line and
+/// gives no hint.
+#[derive(Clone, Default)]
+struct Typing(Arc<Mutex<String>>);
+
+impl Typing {
+    /// The text now.
+    fn text(&self) -> String {
+        self.0.lock().map(|text| text.clone()).unwrap_or_default()
+    }
+
+    /// Keeps `line` as the text now.
+    fn set(&self, line: &str) {
+        if let Ok(mut text) = self.0.lock() {
+            line.clone_into(&mut text);
+        }
+    }
+}
+
+impl Hinter for Typing {
+    type Hint = String;
+
+    fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
+        self.set(line);
+        None
+    }
+}
+
+impl Completer for Typing {
+    type Candidate = String;
+}
+
+impl Highlighter for Typing {}
+
+impl Validator for Typing {}
+
+impl rustyline::Helper for Typing {}
+
 /// The screen of the chat.
 struct Screen {
     lines: Lines,
     /// The mode of the terminal before the line editor.
     normal: Option<Termios>,
+    /// The text that the person types now.
+    typing: Typing,
 }
 
 impl Screen {
     /// Starts to read the typed lines: with a line editor when stdin and
     /// stdout are a terminal, else line by line. The lines come on the
     /// receiver. It closes when stdin ends, on Ctrl-C or Ctrl-D, and
-    /// after [`QUIT`], so the terminal is back in its normal mode.
-    fn start() -> Result<(Screen, mpsc::Receiver<String>)> {
+    /// after [`QUIT`], so the terminal is back in its normal mode. In a
+    /// terminal, the prompt starts with `draft`, the text that the
+    /// person typed in the chat before an update.
+    fn start(draft: Option<&str>) -> Result<(Screen, mpsc::Receiver<String>)> {
         let (tx, rx) = mpsc::channel(16);
         if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
             // A thread, not a task: a read of stdin that waits does not
@@ -759,15 +851,27 @@ impl Screen {
             let screen = Screen {
                 lines: Lines::Plain,
                 normal: None,
+                typing: Typing::default(),
             };
             return Ok((screen, rx));
         }
         let normal = tcgetattr(std::io::stdin()).ok();
-        let mut editor = rustyline::DefaultEditor::new()?;
+        let typing = Typing::default();
+        let mut editor = rustyline::Editor::<Typing, DefaultHistory>::new()?;
+        editor.set_helper(Some(typing.clone()));
         let printer: Printer = Arc::new(Mutex::new(Box::new(editor.create_external_printer()?)));
         let held = Arc::clone(&printer);
+        let mut draft = draft.unwrap_or_default().to_owned();
+        let typed_now = typing.clone();
         std::thread::spawn(move || {
-            while let Ok(line) = editor.readline(PROMPT) {
+            loop {
+                let read = if draft.is_empty() {
+                    editor.readline(PROMPT)
+                } else {
+                    editor.readline_with_initial(PROMPT, (&std::mem::take(&mut draft), ""))
+                };
+                let Ok(line) = read else { break };
+                typed_now.set("");
                 {
                     // No chat line prints between the typed line and its
                     // clear.
@@ -786,8 +890,15 @@ impl Screen {
         let screen = Screen {
             lines: Lines::Editor { printer, color },
             normal,
+            typing,
         };
         Ok((screen, rx))
+    }
+
+    /// The text that the person typed and did not send. A NUL byte
+    /// cannot go in an argument, so the text has none.
+    fn draft(&self) -> String {
+        self.typing.text().replace('\0', "")
     }
 
     /// Makes the terminal ready for another program: it clears the
@@ -844,5 +955,34 @@ impl Day {
         let line = line(l, &at, self.0);
         self.0 = Some(at.date_naive());
         line
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustyline::history::{DefaultHistory, History};
+
+    use super::*;
+
+    #[test]
+    fn typing_keeps_the_last_line_that_the_editor_hints_for() {
+        let typing = Typing::default();
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history as &dyn History);
+        assert_eq!(typing.text(), "");
+        assert_eq!(typing.hint("half a li", 9, &ctx), None);
+        assert_eq!(typing.text(), "half a li");
+        assert_eq!(typing.hint("half", 4, &ctx), None);
+        assert_eq!(typing.text(), "half");
+        typing.set("");
+        assert_eq!(typing.text(), "");
+    }
+
+    #[test]
+    fn a_clone_of_typing_sees_the_same_line() {
+        let typing = Typing::default();
+        let other = typing.clone();
+        typing.set("a draft");
+        assert_eq!(other.text(), "a draft");
     }
 }

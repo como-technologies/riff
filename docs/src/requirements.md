@@ -3005,6 +3005,12 @@
   with the seq of the first message. The signature does not cover the
   key. The kept messages are the last 200 of the thread
   (01M3TBZBT7MME9BG1RWX5SZAZ6).
+- **01M6QR3JHMC305AV29HPCA0X1Y** In a terminal, a line of riff itself in
+  `riff chat` prints above the prompt, as a chat line does, and the
+  typed text and the cursor stay. This holds for the note that the
+  server runs a newer release, the line that riff starts an update, and
+  the wait line. Code that runs in `riff chat` never writes to the
+  terminal on its own while the prompt shows.
 
 ## Security
 
@@ -3685,6 +3691,10 @@
   rule for a pair of lines that is two lines apart. The rule of
   01M5RG6BXBQVFABA1N4NRZBMQF is the only rule of lines that talk. This
   supersedes 01M5A72C25A1FDZPW3FK2R1F92 in full.
+- **01M6QR3JMCZ63ZYSRFBSWJ6WD7** When `riff chat` in a terminal runs a
+  new binary in place, it gives the new chat the text that the person
+  typed and did not send, in the hidden option `--draft`. The new chat
+  shows that text after its prompt.
 
 ## Code
 

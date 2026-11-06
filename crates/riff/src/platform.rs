@@ -10,8 +10,8 @@
 //! | The folder of the leave marks | [`local::marks`] |
 //! | The name of the machine | [`identity::this_host`] |
 //! | The riff of the process | [`binary::this_riff`] |
-//! | A wait line | Dim, on stderr |
-//! | A reply of another build | [`auto_update::begin`]; one note on stderr, none in the update in the background ([`auto_update::in_background`]) |
+//! | A wait line | Dim, on stderr; above the prompt in `riff chat` ([`chat::notice`]) |
+//! | A reply of another build | [`auto_update::begin`]; one note on stderr, or above the prompt in `riff chat`, none in the update in the background ([`auto_update::in_background`]) |
 //!
 //! ```standalone_crate
 //! riff::platform::install();
@@ -27,6 +27,7 @@ use riff_client::platform::Platform;
 use riff_core::build::Build;
 use riff_core::wire::RiffBinary;
 
+use crate::chat;
 use crate::style::{DIM, styled};
 use crate::{auto_update, binary, identity, local};
 
@@ -63,7 +64,7 @@ impl Platform for Terminal {
     }
 
     fn show_wait(&self, line: &str) {
-        anstream::eprintln!("{line}");
+        chat::notice(line);
     }
 
     fn server_build(&self, base: &str, server: &Build) {
@@ -72,7 +73,7 @@ impl Platform for Terminal {
 
     fn other_build(&self, note: &str) {
         if !auto_update::in_background() {
-            eprintln!("riff: {note}");
+            chat::notice(&format!("riff: {note}"));
         }
     }
 }

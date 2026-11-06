@@ -402,7 +402,8 @@ They go on with no restart, in the same repository and worktree. This
 is also true when you removed their worktree.
 
 - `riff chat` keeps its lines on the screen, and draws its prompt
-  again. Text that you typed but did not send is lost.
+  again. Text that you typed but did not send shows again after the
+  prompt.
 
 ### When riff cannot read its directory
 
@@ -2704,6 +2705,42 @@ same way.
 
 The chat on a phone is a design, and not built yet: see
 [riff on a phone](riff-mobile.md).
+
+### Type while lines come in
+
+A line that comes while you type does not change your typed text or
+your cursor. The chat prints the line above the prompt, and your text
+stays after the prompt. A line of riff itself does the same, for
+example the note that the server runs a newer release. Start the chat,
+type a part of a line, and wait for a line of another person:
+
+```sh
+riff chat
+```
+
+```text
+14:03 <brett@heron> not yet. @lead is #207 merged?
+[riff] > is the rel
+```
+
+Type the rest of the line, and press Enter. The chat sends the whole
+line:
+
+```mermaid
+sequenceDiagram
+    participant Y as you
+    participant C as riff chat
+    participant S as riff-server
+    Y->>C: type "is the rel"
+    S-->>C: <brett@heron> not yet
+    C-->>Y: the line above the prompt
+    Note over Y,C: "is the rel" and the cursor stay
+    Y->>C: type "ease out?" and Enter
+    C->>S: is the release out?
+```
+
+When a new riff is on disk, the chat runs it in place. It keeps your
+typed text then too: the text shows again after the new prompt.
 
 ### Ask a lead in the chat
 
