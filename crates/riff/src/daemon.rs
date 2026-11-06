@@ -2249,6 +2249,9 @@ pub struct Daemon<R> {
     /// The repositories and images whose tools the daemon looked at since it
     /// started ([`Daemon::check_tools`]).
     looked: Mutex<BTreeSet<String>>,
+    /// The images whose `gh` the daemon probed, and whether the image has
+    /// its own `gh` at [`crate::gh_wrapper::BIND`] ([`Daemon::has_own_gh`]).
+    own_gh: Mutex<BTreeMap<String, bool>>,
     /// The forge and the posts of the watches ([`crate::watches`]).
     lookout: Arc<dyn crate::watches::Lookout>,
 }
@@ -2365,6 +2368,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             again_told: Mutex::default(),
             lost: Mutex::default(),
             looked: Mutex::default(),
+            own_gh: Mutex::default(),
             lookout: Arc::new(crate::watches::Here),
         })
     }
@@ -2960,8 +2964,10 @@ impl<R: Runtime + 'static> Daemon<R> {
             lost,
             github: {
                 let now = now_ms();
-                ghcalls::Calls::global()
-                    .shown_with(now, ghcalls::Tally::in_folder(&self.dir).read(now))
+                let mut shown = ghcalls::Calls::global()
+                    .shown_with(now, ghcalls::Tally::in_folder(&self.dir).read(now));
+                shown.own_gh = self.own_gh_images();
+                shown
             },
         }
     }
@@ -3355,6 +3361,47 @@ impl<R: Runtime + 'static> Daemon<R> {
         Ok(())
     }
 
+    /// True when the image `image` has its own `gh` at
+    /// [`crate::gh_wrapper::BIND`]. A bind of the wrapper there would hide
+    /// that `gh`, so the daemon binds no wrapper in a session of such an
+    /// image, and counts no `gh` call of it (#1595). It runs the file in
+    /// the image once, and keeps the answer until the daemon stops. An
+    /// image that this machine does not have gives false, and the daemon
+    /// keeps no answer.
+    async fn has_own_gh(&self, image: &str) -> bool {
+        let known = self
+            .own_gh
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(image)
+            .copied();
+        if let Some(known) = known {
+            return known;
+        }
+        if !self.runtime.has_image(image).await.unwrap_or(false) {
+            return false;
+        }
+        let command = [crate::gh_wrapper::BIND, "--version"];
+        let own = self.runtime.output(image, &command).await.is_ok();
+        self.own_gh
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(image.to_owned(), own);
+        own
+    }
+
+    /// The images with their own `gh` at [`crate::gh_wrapper::BIND`] that
+    /// the daemon found ([`Daemon::has_own_gh`]), for `riff daemon status`.
+    fn own_gh_images(&self) -> Vec<String> {
+        self.own_gh
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|(_, own)| **own)
+            .map(|(image, _)| image.clone())
+            .collect()
+    }
+
     /// Keeps the failed pull `pull` for the wave of `repo`. True when the
     /// lead has not heard of this image yet: the first failure, or the
     /// first one after a pull that worked
@@ -3692,12 +3739,15 @@ impl<R: Runtime + 'static> Daemon<R> {
             write: false,
         });
         // The same binary is the `gh` of the container: it counts each
-        // call and runs the real `gh` (#1582, [`crate::gh_wrapper`]).
-        spec.binds.push(Bind {
-            source: Source::Path(self.relay_bin.clone()),
-            target: crate::gh_wrapper::BIND.into(),
-            write: false,
-        });
+        // call and runs the real `gh` (#1582, [`crate::gh_wrapper`]). An
+        // image with its own `gh` there keeps it (#1595).
+        if !self.has_own_gh(&spec.image).await {
+            spec.binds.push(Bind {
+                source: Source::Path(self.relay_bin.clone()),
+                target: crate::gh_wrapper::BIND.into(),
+                write: false,
+            });
+        }
         spec.env.push(Env::Value(
             SOCKET_VAR.into(),
             in_session().to_string_lossy().into_owned(),
@@ -6191,6 +6241,82 @@ mod tests {
         assert!(status(&here.dir).await.unwrap().sessions.is_empty());
         assert!(!session_dir(&here.dir, &name).exists());
         assert!(!record_path(&here.dir, &name).exists());
+    }
+
+    /// #1595: an image with its own `gh` at the path of the wrapper keeps
+    /// it. The daemon binds no wrapper in its sessions, but the relay, and
+    /// `riff daemon status` names the image. A session of an image with no
+    /// `gh` there gets the wrapper, and the status names nothing.
+    #[tokio::test]
+    async fn a_session_of_an_image_with_its_own_gh_at_the_bind_path_gets_no_wrapper() {
+        const OTHER: &str = "localhost/other:latest";
+        let fake = Fake::default()
+            .with_image(IMAGE)
+            .with_image(OTHER)
+            .with_tool(
+                IMAGE,
+                crate::gh_wrapper::BIND,
+                "gh version 2.102.0 (2026-10-01)\nhttps://github.com/cli/cli\n",
+            );
+        let here = Here::new(fake).await;
+        let bound = |name: &str, target: &str| {
+            let spec = here.fake.spec(name).unwrap();
+            spec.binds.iter().any(|b| b.target == Path::new(target))
+        };
+
+        let (_one, own) = here
+            .started(here.start("riff-issue-1-aaaaaaaa", "issue-1"))
+            .await;
+        assert!(!bound(&own, crate::gh_wrapper::BIND));
+        assert!(bound(&own, RELAY_BIN));
+        assert!(bound(&own, "/run/riff"));
+        let status = here.daemon.status().await;
+        assert_eq!(status.github.own_gh, [IMAGE]);
+        let shown = text::daemon_status(&status, 0);
+        assert!(
+            shown.contains(&format!(
+                "riff counts no gh call of a session of these images, as they have their own gh \
+                 at /usr/local/bin/gh: {IMAGE}.\n"
+            )),
+            "{shown}"
+        );
+
+        let mut start = here.start("riff-issue-2-bbbbbbbb", "issue-2");
+        start.spec.image = OTHER.into();
+        let (_two, plain) = here.started(start).await;
+        assert!(bound(&plain, crate::gh_wrapper::BIND));
+        assert_eq!(here.daemon.status().await.github.own_gh, [IMAGE]);
+    }
+
+    /// #1595: the daemon asks an image only after this machine has it, and
+    /// once: it keeps the answer.
+    #[tokio::test]
+    async fn the_daemon_asks_an_image_for_its_own_gh_once() {
+        let fake = Fake::default().with_registry(IMAGE);
+        let here = Here::new(fake.clone()).await;
+        let daemon = &here.daemon;
+        fake.clone()
+            .with_tool(IMAGE, crate::gh_wrapper::BIND, "gh version 2.102.0\n");
+
+        // No image on this machine: no answer, and none kept.
+        assert!(!daemon.has_own_gh(IMAGE).await);
+        assert!(daemon.own_gh.lock().unwrap().is_empty());
+
+        // The pull brings the image: the daemon asks, and the file runs.
+        daemon.have_image(IMAGE, |_| {}).await.unwrap();
+        assert!(daemon.has_own_gh(IMAGE).await);
+        assert_eq!(daemon.own_gh_images(), [IMAGE]);
+
+        // An image with no such file is plain, also when a file comes
+        // later: the daemon does not ask again.
+        let other = Fake::default().with_image(IMAGE);
+        let plain = Here::new(other.clone()).await;
+        assert!(!plain.daemon.has_own_gh(IMAGE).await);
+        other
+            .clone()
+            .with_tool(IMAGE, crate::gh_wrapper::BIND, "gh\n");
+        assert!(!plain.daemon.has_own_gh(IMAGE).await);
+        assert!(plain.daemon.own_gh_images().is_empty());
     }
 
     #[tokio::test]

@@ -1755,6 +1755,22 @@ flowchart LR
     S --> O["other: what the counter used<br/>less what riff counted"]
 ```
 
+The count needs the daemon to bind its `gh` at `/usr/local/bin/gh`. An
+image that has its own `gh` at that path would lose it under the bind.
+So, before the first session of an image, the daemon runs
+`/usr/local/bin/gh --version` in that image. When it works, the daemon
+binds nothing there: the `gh` of the image runs as it is, and riff
+counts none of its calls. An image with its `gh` at `/usr/bin/gh`, as
+the images that come from `riff-base`, or at another place on the
+`PATH`, gets the count.
+
+```mermaid
+flowchart TD
+    S["a session starts"] --> Q{"does /usr/local/bin/gh --version<br/>work in the image?"}
+    Q -- "no" --> B["the daemon binds the binary of riff there:<br/>riff counts the calls of gh"]
+    Q -- "yes: the image has its own gh" --> K["no bind: the gh of the image runs as it is,<br/>no count"]
+```
+
 To see what riff spent in the last hour, and the points that GitHub
 says are left:
 
@@ -1801,6 +1817,14 @@ only while the counter has not started again.
 To find the process behind a caller, see
 [See the riff processes of this host](#see-the-riff-processes-of-this-host).
 It shows the calls and the points of the last hour on each process.
+
+An image with its own `gh` at `/usr/local/bin/gh` has a line in the
+answer. riff counts no `gh` call of a session of that image, so the
+`session` rows have none of its calls:
+
+```text
+riff counts no gh call of a session of these images, as they have their own gh at /usr/local/bin/gh: ghcr.io/o/image@sha256:3f1a…
+```
 
 When the points are gone, see
 [Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out).

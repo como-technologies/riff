@@ -37,14 +37,39 @@
 //!     R["riff pr wait in the container"] -- "RIFF_GH_COUNTED=1" --> W
 //!     R -- "SessionAsk::GhCalls, as pr wait" --> D
 //! ```
+//!
+//! # An image with its own `gh` at the bind path
+//!
+//! A bind hides the file below it. An image that has its `gh` at [`BIND`]
+//! (from the tarball of a release, or `install gh /usr/local/bin`) would
+//! lose it: the wrapper cannot run a `gh` that it hides, and each `gh`
+//! call of the session would fail. So the daemon binds the wrapper only
+//! in a session of an image that has no `gh` at [`BIND`]. It asks once
+//! for each image, with `/usr/local/bin/gh --version` in a container with
+//! no network ([`crate::runtime::Runtime::output`]), and keeps the answer
+//! until the daemon stops. In a session of an image with its own
+//! `gh` there, `gh` is that file, and riff counts none of its calls.
+//! `riff daemon status` lists those images
+//! ([`Shown::own_gh`](crate::ghcalls::Shown::own_gh)).
+//!
+//! An image with its `gh` at any other path, `/usr/bin/gh` or a folder of
+//! `PATH`, gets the wrapper, which runs that `gh` ([`real_in`]).
+//!
+//! ```mermaid
+//! flowchart TD
+//!     S["a session starts"] --> Q{"/usr/local/bin/gh --version<br/>works in the image?"}
+//!     Q -- "no" --> B["bind the wrapper at /usr/local/bin/gh:<br/>the calls are counted"]
+//!     Q -- "yes: the image has its own gh" --> K["no bind: its gh runs as it is,<br/>riff daemon status names the image"]
+//! ```
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use crate::ghcalls::{self, Resource, SESSION, Tally};
 
-/// Where the daemon binds the wrapper in each container: the place of
-/// the `gh` that the shell finds first on a `PATH` of a Debian image.
+/// Where the daemon binds the wrapper in a container: the place of the
+/// `gh` that the shell finds first on a `PATH` of a Debian image. It binds
+/// nothing there when the image has its own `gh` there.
 pub const BIND: &str = "/usr/local/bin/gh";
 
 /// The real `gh` in the image of a session (01M5SNT57ANM99NQS5SNB8XPWV).
@@ -133,8 +158,9 @@ fn real() -> PathBuf {
 /// The path of the real `gh`: `var` (the value of [`REAL_VAR`]) when it is
 /// set, else `default` ([`REAL`]) when the image has it there. An image
 /// that has `gh` at another place gets the first `gh` on `path` that is
-/// not the file `me`, which is the wrapper itself. So the bind at
-/// [`BIND`] never hides the only `gh` of an image.
+/// not the file `me`, which is the wrapper itself. The daemon binds the
+/// wrapper at [`BIND`] only when the image has no `gh` there, so the bind
+/// never hides the only `gh` of an image (#1595).
 ///
 /// ```
 /// use std::ffi::OsString;

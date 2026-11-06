@@ -35,10 +35,11 @@
 //! session, and the daemon writes them ([`Record`],
 //! [`SessionAsk::GhCalls`](crate::daemon::SessionAsk::GhCalls)). The
 //! `gh` in a container is the binary of riff, which the daemon binds at
-//! the path of `gh` ([`crate::gh_wrapper`]). `riff daemon status` adds the
-//! folder to the calls of the daemon. Each call keeps the ID of its
-//! process, so `riff ps` shows the calls on the process ([`Call::pid`],
-//! [`crate::ps`], #1610).
+//! the path of `gh` ([`crate::gh_wrapper`]), but not in a session of an
+//! image with its own `gh` there ([`Shown::own_gh`]). `riff daemon status`
+//! adds the folder to the calls of the daemon. Each call keeps the ID of
+//! its process, so `riff ps` shows the calls on the process
+//! ([`Call::pid`], [`crate::ps`], #1610).
 //!
 //! ```mermaid
 //! flowchart LR
@@ -646,6 +647,11 @@ pub struct Shown {
     /// needs a reading of the counter that has not ended.
     #[serde(default)]
     pub other: Option<Other>,
+    /// The session images with their own `gh` at the path of the wrapper:
+    /// the daemon binds no wrapper in their sessions, so it counts none of
+    /// their `gh` calls (#1595). An old daemon gives none.
+    #[serde(default)]
+    pub own_gh: Vec<String>,
 }
 
 impl Shown {
@@ -795,6 +801,7 @@ impl Calls {
             left: inner.left.clone(),
             waits: inner.waits(now_ms),
             other,
+            own_gh: Vec::new(),
         }
     }
 
