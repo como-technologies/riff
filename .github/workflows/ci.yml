@@ -34,45 +34,121 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# Least privilege: CI only reads the repo.
+# Least privilege: CI only reads the repo, and the artifacts of its
+# runs. A job takes an artifact of another run with actions: read.
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  # The Gate runs its checks as jobs at the same time
-  # (01M513W2K3HNRWPQTQNBQPT8MZ): Clippy, the tests in parts in the
-  # session image, and the other checks. Together they run each check of
-  # just ci-full (01M3WNN7VQJKN5MJH7JN50VF4D). The last job, Gate, needs
-  # each of them.
+  # CI compiles the code of a tree two times, both in the job Build: the
+  # test build and the release build (01M6QQ1NXY0CXMZEEEP413W4PK). Each
+  # other job takes the binaries of Build from its artifacts. The
+  # artifacts have the git tree of the commit in their name, so a push to
+  # main, a merge group and a tag take the binaries that the pull request
+  # with the same tree made (01M6QQ1P0GH9AGCDA5N8EMEFGF,
+  # 01M6QQ1P37XW7N465MQGPHCXZM).
+  #
+  # The Gate runs its checks as jobs (01M513W2K3HNRWPQTQNBQPT8MZ): Build,
+  # and the tests in parts. Together they run each check of just ci-full
+  # (01M3WNN7VQJKN5MJH7JN50VF4D). The last job, Gate, needs each of them.
   # Each job runs on the runner of the repository variable RIFF_RUNNER,
   # with the default ubuntu-latest (01M513W2RERJES76ZXKKHCV0DP).
-  lint:
-    name: Clippy
-    if: github.event_name != 'schedule' && github.ref_type != 'tag'
+  build:
+    # The plan finds the artifacts of the tree. A step builds only what is
+    # missing: the checks and the test build run in the session image, as
+    # the tests run (01M515Z3Y7GSFNTJGXJD727MQK), and the static build
+    # runs in rust:CHANNEL-alpine (01M4ZPJ04D9MJHNPAV0WN1KCES). A pull
+    # request with the label release and a tag build the profile release
+    # with no cache, so each release binary comes from a clean build
+    # (01M6QQ1P8H32E2TQ0CYA87R02V). A tag needs no test binary. The job
+    # keeps each artifact only after each step passed.
+    name: Build
+    if: github.event_name != 'schedule'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
+    outputs:
+      tree: ${{ steps.plan.outputs.tree }}
+      tests_run: ${{ steps.plan.outputs.tests_run }}
+      static_profile: ${{ steps.plan.outputs.static_profile }}
+      static_run: ${{ steps.plan.outputs.static_run }}
+    env:
+      RIFF_ENGINE: docker
+      RIFF_STATIC_CARGO: ${{ github.workspace }}/target/static-cargo
+      CARGO_INCREMENTAL: 0
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PROFILE: ${{ (github.ref_type == 'tag' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release'))) && 'release' || 'dev' }}
+      TESTS: ${{ github.ref_type != 'tag' }}
     steps:
+      # build-id.sh reads the last commit that changed the code.
       - uses: actions/checkout@v7
-
-      # rust-toolchain.toml pins the toolchain; rustup reads it.
-      - run: rustup show
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: taiki-e/install-action@v2
         with:
-          tool: just
+          fetch-depth: 0
 
-      - run: just lint
+      - name: Plan the build
+        id: plan
+        run: deploy/build-plan.sh
+
+      - name: Cache the test build
+        if: steps.plan.outputs.build_tests == 'true'
+        uses: actions/cache@v6
+        with:
+          path: target/session
+          key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: session-
+
+      - name: Check the code and build the tests
+        if: steps.plan.outputs.build_tests == 'true'
+        run: deploy/session-test.sh --build
+
+      - name: Cache the static build
+        if: steps.plan.outputs.build_static == 'true' && steps.plan.outputs.static_profile != 'release'
+        uses: actions/cache@v6
+        with:
+          path: |
+            target/static
+            target/static-cargo
+          key: static-dev-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: static-dev-
+
+      - name: Build the static riff
+        if: steps.plan.outputs.build_static == 'true'
+        env:
+          STATIC_PROFILE: ${{ steps.plan.outputs.static_profile }}
+        run: deploy/static/build.sh "$STATIC_PROFILE"
+
+      # The container writes as root. The cache saves the files at the
+      # end of the job as the runner user.
+      - name: Give the files of the build to the runner user
+        if: steps.plan.outputs.build_static == 'true' && steps.plan.outputs.static_profile != 'release'
+        run: sudo chown -R "$(id -u):$(id -g)" target/static target/static-cargo
+
+      - uses: actions/upload-artifact@v7
+        if: steps.plan.outputs.build_tests == 'true'
+        with:
+          name: tests-${{ steps.plan.outputs.tree }}
+          path: target/test-archive/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: steps.plan.outputs.build_static == 'true'
+        with:
+          name: static-${{ steps.plan.outputs.static_profile }}-${{ steps.plan.outputs.tree }}
+          path: |
+            target/static/${{ steps.plan.outputs.static_profile == 'release' && 'release' || 'debug' }}/riff
+            target/static/${{ steps.plan.outputs.static_profile == 'release' && 'release' || 'debug' }}/riff-server
+          if-no-files-found: error
 
   test:
     # Each part runs the tests whose name falls in it, so the parts
-    # together run each test (01M513W2NSE303E6XAM18BW7T6). They run in a
-    # container of the session image that riff.toml pins, as a session
-    # runs them: --init, the user of the runner, a home of its own and the
-    # limits of a session (01M515Z3Y7GSFNTJGXJD727MQK,
-    # 01M51117NDKF11FNZ915TTQED4). The image has its own toolchain, so the
-    # cache holds target/session.
+    # together run each test (01M513W2NSE303E6XAM18BW7T6). A part takes
+    # the test binaries of Build, and compiles nothing
+    # (01M6QQ1P5YCT0JX90X5FCKM4W1). It runs in a container of the session
+    # image that riff.toml pins, as a session runs the tests: --init, the
+    # user of the runner, a home of its own and the limits of a session
+    # (01M515Z3Y7GSFNTJGXJD727MQK, 01M51117NDKF11FNZ915TTQED4).
     name: Tests ${{ matrix.part }}
+    needs: [build]
     if: github.event_name != 'schedule' && github.ref_type != 'tag'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     strategy:
@@ -81,47 +157,33 @@ jobs:
         part: ["1/4", "2/4", "3/4", "4/4"]
     env:
       RIFF_ENGINE: docker
-      CARGO_INCREMENTAL: 0
     steps:
+      # The same history as Build: a test that reads the git history of
+      # the checkout finds what the build found.
       - uses: actions/checkout@v7
-
-      - name: Cache the build
-        uses: actions/cache@v6
         with:
-          path: target/session
-          key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock') }}
-          restore-keys: session-
+          fetch-depth: 0
 
-      - run: deploy/session-test.sh --part ${{ matrix.part }}
-
-  checks:
-    name: Checks
-    if: github.event_name != 'schedule' && github.ref_type != 'tag'
-    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@v7
-
-      - run: rustup show
-
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: taiki-e/install-action@v2
+      - uses: actions/download-artifact@v8
         with:
-          tool: just,mdbook,mdbook-gruvbox,mdbook-mermaid
+          name: tests-${{ needs.build.outputs.tree }}
+          run-id: ${{ needs.build.outputs.tests_run }}
+          github-token: ${{ github.token }}
+          path: target/test-archive
 
-      - run: just fmt-check doc book reqs wrap versions
+      - run: deploy/session-test.sh --archive ${{ matrix.part }}
 
   gate:
     # A skipped required check counts as a pass on GitHub. So the Gate
     # runs also when a part fails or is cancelled, and fails then.
     name: Gate
-    needs: [lint, test, checks]
+    needs: [build, test]
     if: always() && github.event_name != 'schedule' && github.ref_type != 'tag'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Each part passed
         env:
-          RESULTS: lint=${{ needs.lint.result }} test=${{ needs.test.result }} checks=${{ needs.checks.result }}
+          RESULTS: build=${{ needs.build.result }} test=${{ needs.test.result }}
         run: |
           echo "The parts of the Gate: $RESULTS"
           for result in $RESULTS; do
@@ -155,50 +217,35 @@ jobs:
       - run: deploy/merge-group-verify.sh "$HEAD_REF" "$HEAD_SHA"
 
   static:
-    # The static riff and riff-server of each pull request and each push
-    # (01M4ZPJ04D9MJHNPAV0WN1KCES): a build in rust:CHANNEL-alpine, then
-    # the check: no interpreter in each ELF, and riff --version runs in the
-    # session image of riff.toml (01M4ZPJ06QYVA23N9SQ45T8WQC). A pull
-    # request and a push build the profile dev with a cache of the build
-    # and of the downloaded crates. A tag builds the profile release with
-    # no cache, so each release binary comes from a clean build
-    # (01M513W2V4G94R7F4D4Q3M2RA1). For a tag, it keeps the binaries for
-    # the job Static riff release.
+    # The check of the static riff and riff-server of each pull request
+    # and each push (01M4ZPJ06QYVA23N9SQ45T8WQC). The job Build made them,
+    # or took them from the run that made them for the same tree: no ELF
+    # has an interpreter, and riff --version runs in the session image of
+    # riff.toml. A tag takes the profile release of its tree, and keeps
+    # the binaries for the job Static riff release.
     name: Static riff
+    needs: [build]
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     env:
       RIFF_ENGINE: docker
-      RIFF_STATIC_CARGO: ${{ github.workspace }}/target/static-cargo
-      CARGO_INCREMENTAL: 0
-      PROFILE: ${{ github.ref_type == 'tag' && 'release' || 'dev' }}
+      PROFILE: ${{ needs.build.outputs.static_profile }}
     steps:
-      # build-id.sh reads the last commit that changed the code.
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
-      - name: Cache the build
-        if: github.ref_type != 'tag'
-        uses: actions/cache@v6
+      - uses: actions/download-artifact@v8
         with:
-          path: |
-            target/static
-            target/static-cargo
-          key: static-dev-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-          restore-keys: static-dev-
+          name: static-${{ needs.build.outputs.static_profile }}-${{ needs.build.outputs.tree }}
+          run-id: ${{ needs.build.outputs.static_run }}
+          github-token: ${{ github.token }}
+          path: target/static/${{ needs.build.outputs.static_profile == 'release' && 'release' || 'debug' }}
 
-      - name: Build
-        run: deploy/static/build.sh "$PROFILE"
+      # An artifact has no file mode.
+      - name: Make the files run
+        run: chmod +x target/static/*/riff target/static/*/riff-server
 
       - name: Check
         run: deploy/static/check.sh "$PROFILE"
-
-      # The container writes as root. The cache saves the files at the
-      # end of the job as the runner user.
-      - name: Give the files of the build to the runner user
-        if: github.ref_type != 'tag'
-        run: sudo chown -R "$(id -u):$(id -g)" target/static target/static-cargo
 
       - name: Name the files of the release
         if: github.ref_type == 'tag'
@@ -265,6 +312,7 @@ jobs:
       - name: Check the release tag
         run: deploy/release-check.sh "$GITHUB_REF_NAME"
 
+
   deploy:
     # A push of a release tag, after its Release check, or a run of this
     # workflow by hand on main with the input tag, after the gate, builds
@@ -280,7 +328,10 @@ jobs:
     # in the GitHub environment production, so it waits for the approval
     # of its reviewer (01M496K1KN392S11YEH33JGK9N). A tag deploys only
     # after its static binaries are on its release, so a machine that sees
-    # the new server can download them (01M4ZPJ091W3NYV1V0FJS9K6MS).
+    # the new server can download them (01M4ZPJ091W3NYV1V0FJS9K6MS). The
+    # job compiles nothing (01M6QQ1PB372MQ7M527HVT323F): the image holds
+    # the riff-server of the release, and the deploy is the riff of the
+    # release.
     name: Deploy
     needs: [gate, release, static_release]
     if: >-
@@ -297,6 +348,7 @@ jobs:
       cancel-in-progress: false
     env:
       TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -311,7 +363,16 @@ jobs:
           grep -E '^[A-Z_]+=' deploy/cloud/shared.env >> "$GITHUB_ENV"
           . deploy/cloud/shared.env
           echo "IMAGE=$CLOUD_REGION-docker.pkg.dev/$CLOUD_PROJECT/$CLOUD_REPOSITORY/riff-server:$TAG" >> "$GITHUB_ENV"
-          deploy/build-id.sh >> "$GITHUB_ENV"
+
+      # The files of the release: the job Static riff release put them
+      # there, and the SHA-256 of each file is in SHA256SUMS.
+      - name: Take the files of the release
+        run: |
+          mkdir dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern '*-x86_64-unknown-linux-musl' --pattern SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
+          chmod +x dist/*-x86_64-unknown-linux-musl
 
       - uses: google-github-actions/auth@v3
         with:
@@ -323,29 +384,15 @@ jobs:
       - name: Let Docker push to the image repository
         run: gcloud auth configure-docker "$CLOUD_REGION-docker.pkg.dev" --quiet
 
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          tags: ${{ env.IMAGE }}
-          build-args: |
-            RIFF_COMMIT=${{ env.RIFF_COMMIT }}
-            RIFF_COMMIT_TIME=${{ env.RIFF_COMMIT_TIME }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build and push the image of the release
+        run: deploy/cloud/image.sh "$IMAGE" dist/riff-server-x86_64-unknown-linux-musl
 
       # The deploy is the riff cloud deploy of a person
       # (01M4262E0QJHCZXNH7EFG7FXN2), of the riff of the tag.
-      - run: rustup show
-
-      - uses: Swatinem/rust-cache@v2
-
       - name: Deploy
         env:
           RIFF_OWNER: ${{ vars.RIFF_OWNER }}
-        run: cargo run --locked -q -p riff -- cloud deploy shared "$TAG" --confirm shared
+        run: dist/riff-x86_64-unknown-linux-musl cloud deploy shared "$TAG" --confirm shared
 
   stage:
     # Each push to main, after its gate, builds the image of the commit
@@ -357,9 +404,11 @@ jobs:
     # RIFF_SMOKE_TOKEN of the environment stage, and checks the stage
     # (01M496JTHN19BZ7YN94993R35X). It never deploys the shared riff
     # (01M3NJAZ8HSE87H0GZ8SNGWN31). One stage deploy runs at a time; a
-    # newer run waits for it.
+    # newer run waits for it. The job compiles nothing
+    # (01M6QQ1PB372MQ7M527HVT323F): it takes the static binaries that the
+    # job Build made, or took, for the tree of the commit.
     name: Stage
-    needs: [gate]
+    needs: [gate, build]
     if: >-
       vars.STAGE_DEPLOY == 'true' && github.event_name == 'push' &&
       github.ref == 'refs/heads/main' && needs.gate.result == 'success'
@@ -367,6 +416,7 @@ jobs:
     environment: stage
     permissions:
       contents: read
+      actions: read
       id-token: write
     concurrency:
       group: stage
@@ -375,15 +425,23 @@ jobs:
       COMMIT: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Read the cloud settings
         run: |
           grep -E '^[A-Z_]+=' deploy/cloud/stage.env >> "$GITHUB_ENV"
           . deploy/cloud/stage.env
           echo "IMAGE=$CLOUD_REGION-docker.pkg.dev/$CLOUD_PROJECT/$CLOUD_REPOSITORY/riff-server:$COMMIT" >> "$GITHUB_ENV"
-          deploy/build-id.sh >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: static-${{ needs.build.outputs.static_profile }}-${{ needs.build.outputs.tree }}
+          run-id: ${{ needs.build.outputs.static_run }}
+          github-token: ${{ github.token }}
+          path: static
+
+      # An artifact has no file mode.
+      - name: Make the files run
+        run: chmod +x static/riff static/riff-server
 
       - uses: google-github-actions/auth@v3
         with:
@@ -395,33 +453,19 @@ jobs:
       - name: Let Docker push to the image repository
         run: gcloud auth configure-docker "$CLOUD_REGION-docker.pkg.dev" --quiet
 
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          tags: ${{ env.IMAGE }}
-          build-args: |
-            RIFF_COMMIT=${{ env.RIFF_COMMIT }}
-            RIFF_COMMIT_TIME=${{ env.RIFF_COMMIT_TIME }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - run: rustup show
-
-      - uses: Swatinem/rust-cache@v2
+      - name: Build and push the image of the commit
+        run: deploy/cloud/image.sh "$IMAGE" static/riff-server
 
       - name: Deploy
         env:
           RIFF_OWNER: ${{ vars.RIFF_OWNER }}
-        run: cargo run --locked -q -p riff -- cloud deploy stage "$COMMIT"
+        run: static/riff cloud deploy stage "$COMMIT"
 
       - name: Smoke test
         env:
           RIFF_SMOKE_TOKEN: ${{ secrets.RIFF_SMOKE_TOKEN }}
           RIFF_HOME: ${{ runner.temp }}/riff-home
-        run: cargo run --locked -q -p riff -- cloud smoke stage
+        run: static/riff cloud smoke stage
 
   audit:
     # A separate job, so a new advisory cannot hide a code failure (and the

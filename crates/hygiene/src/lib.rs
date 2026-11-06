@@ -1,9 +1,10 @@
 //! Issue hygiene of this repository: the form of a pull request, and of
-//! a commit on `main`. The module [`book`] checks the book, [`wrap`]
-//! checks the wrap of its pages, [`blank`] finds two blank lines in a
-//! row, [`versions`] finds the name of a version of riff, [`ci`] picks
-//! the checks that `just ci` runs, and [`terminal`] finds the crates of
-//! the terminal in the dependencies of a crate.
+//! a commit on `main`. The module [`archive`] packs the test binaries
+//! of the Gate, [`part`] splits the tests in parts, [`book`] checks the
+//! book, [`wrap`] checks the wrap of its pages, [`blank`] finds two
+//! blank lines in a row, [`versions`] finds the name of a version of
+//! riff, [`ci`] picks the checks that `just ci` runs, and [`terminal`]
+//! finds the crates of the terminal in the dependencies of a crate.
 //!
 //! # Design
 //!
@@ -78,6 +79,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
+pub mod archive;
 pub mod blank;
 pub mod book;
 pub mod ci;

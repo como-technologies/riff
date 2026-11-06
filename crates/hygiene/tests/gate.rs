@@ -1,8 +1,9 @@
-//! The Gate on GitHub: its parts run at the same time, together they run
-//! each check of `just ci-full`, and the job `Gate` fails when a part
-//! does not pass (01M3WNN7VQJKN5MJH7JN50VF4D, 01M513W2K3HNRWPQTQNBQPT8MZ,
+//! The Gate on GitHub: its parts run as jobs, together they run each check
+//! of `just ci-full`, and the job `Gate` fails when a part does not pass
+//! (01M3WNN7VQJKN5MJH7JN50VF4D, 01M513W2K3HNRWPQTQNBQPT8MZ,
 //! 01M513W2NSE303E6XAM18BW7T6, 01M513W2RERJES76ZXKKHCV0DP,
-//! 01M515Z3Y7GSFNTJGXJD727MQK). The tests read
+//! 01M515Z3Y7GSFNTJGXJD727MQK, 01M6QQ1NXY0CXMZEEEP413W4PK,
+//! 01M6QQ1P5YCT0JX90X5FCKM4W1). The tests read
 //! `.github/workflows/ci.yml`, the justfile and `deploy/session-test.sh`.
 
 use std::collections::BTreeSet;
@@ -10,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// The parts of the Gate: the jobs that the job `gate` needs.
-const PARTS: [&str; 3] = ["lint", "test", "checks"];
+const PARTS: [&str; 2] = ["build", "test"];
 
 fn top() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -60,13 +61,28 @@ fn recipe(name: &str) -> Vec<String> {
         .collect()
 }
 
-/// The step of the job `test`: a part of the tests in the session image,
-/// with `just test-part` (01M515Z3Y7GSFNTJGXJD727MQK).
-const TEST_STEP: &str = "\n      - run: deploy/session-test.sh --part ${{ matrix.part }}\n";
+/// The step of the job `test`: a part of the tests from the archive of the
+/// job `build`, in the session image (01M515Z3Y7GSFNTJGXJD727MQK,
+/// 01M6QQ1P5YCT0JX90X5FCKM4W1).
+const TEST_STEP: &str = "\n      - run: deploy/session-test.sh --archive ${{ matrix.part }}\n";
 
-/// The recipes that the steps `run: just ...` of `job` name. The
-/// recipe `test-part`, and [`TEST_STEP`], run a part of `test`.
+/// The step of the job `build`: the checks and the test build in the
+/// session image, as `just ci-build` runs them (01M6QQ1NXY0CXMZEEEP413W4PK).
+const BUILD_STEP: &str = "\n        run: deploy/session-test.sh --build\n";
+
+/// The recipes that the steps of `job` run. [`BUILD_STEP`] runs the checks
+/// that `ci-build` names. It builds the test binaries with `test-build`
+/// and runs no part of the tests. [`TEST_STEP`] runs each part, so it is
+/// the check `test`.
 fn recipes(job: &str) -> Vec<String> {
+    let build: Vec<String> = if job.contains(BUILD_STEP) {
+        recipe("ci-build")
+            .into_iter()
+            .filter(|word| word != "test-build")
+            .collect()
+    } else {
+        Vec::new()
+    };
     job.lines()
         .filter_map(|line| line.trim().strip_prefix("- run: just "))
         .flat_map(|line| {
@@ -74,8 +90,8 @@ fn recipes(job: &str) -> Vec<String> {
                 .take_while(|w| !w.starts_with("${{"))
         })
         .chain(job.contains(TEST_STEP).then_some("test"))
-        .map(|word| if word == "test-part" { "test" } else { word })
         .map(str::to_owned)
+        .chain(build)
         .collect()
 }
 
@@ -103,9 +119,14 @@ fn the_gate_needs_each_part_and_runs_on_the_same_events() {
     // A skipped job counts as a pass of a required check, so the Gate
     // runs when a part fails.
     assert_eq!(field(&gate, "if"), format!("always() && {when}"));
-    for part in PARTS {
-        assert_eq!(field(&job(part), "if"), when, "the job {part}");
-    }
+    assert_eq!(field(&job("test"), "if"), when);
+    // The job Build runs for a tag too: the tag takes the release binaries
+    // of its tree, or builds them (01M6QQ1P8H32E2TQ0CYA87R02V).
+    assert_eq!(
+        field(&job("build"), "if"),
+        "github.event_name != 'schedule'"
+    );
+    assert_eq!(field(&job("test"), "needs"), "[build]");
 }
 
 #[test]
@@ -114,11 +135,15 @@ fn the_tests_run_in_parts_that_together_hold_each_test() {
     assert_eq!(field(&test, "name"), "Tests ${{ matrix.part }}");
     assert!(test.contains("\n      fail-fast: false\n"), "{test}");
     assert!(test.contains(TEST_STEP), "{test}");
+    assert!(job("build").contains(BUILD_STEP), "{}", job("build"));
     let script = std::fs::read_to_string(top().join("deploy/session-test.sh")).unwrap();
-    assert!(
-        script.contains("    run=(just test-part \"$2\")\n"),
-        "{script}"
-    );
+    for line in [
+        "    run=(just test-part \"$2\")\n",
+        "    run=(just test-archived \"$2\")\n",
+        "    run=(just ci-build)\n",
+    ] {
+        assert!(script.contains(line), "{line} is not in {script}");
+    }
     let parts = test
         .split_once("\n        part: [")
         .unwrap_or_else(|| panic!("no matrix part:\n{test}"))

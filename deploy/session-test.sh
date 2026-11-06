@@ -9,11 +9,17 @@
 #
 #   deploy/session-test.sh [ARGS]
 #   deploy/session-test.sh --part I/N
+#   deploy/session-test.sh --build
+#   deploy/session-test.sh --archive I/N
 #
 # ARGS go to cargo test, for example the name of one test. With --part,
 # it runs `just test-part I/N` in place of the tests of crates/riff: part
-# I of N of the tests of the workspace, as the jobs Tests I/N of the Gate
-# run them (01M515Z3Y7GSFNTJGXJD727MQK). It runs podman, else docker, or
+# I of N of the tests of the workspace, with cargo. The Gate builds the
+# test binaries one time (01M6QQ1NXY0CXMZEEEP413W4PK): the job Build runs
+# --build, which is `just ci-build`: the checks and the test build. Each
+# job Tests I/N unpacks the archive of the build, and runs --archive I/N,
+# which is `just test-archived I/N`: part I of N from the archive, with
+# no build (01M6QQ1P5YCT0JX90X5FCKM4W1). It runs podman, else docker, or
 # the engine in RIFF_ENGINE. It pulls the image first, up to 3 times
 # (01M6QPKG1X8VZTDF8RTTKFW67C). The image has a toolchain of its own, so
 # the build goes to target/session.
@@ -26,6 +32,18 @@ if [ "${1:-}" = --part ]; then
         exit 2
     fi
     run=(just test-part "$2")
+elif [ "${1:-}" = --archive ]; then
+    if [ $# -ne 2 ]; then
+        echo "session-test.sh: give one part, for example --archive 2/4." >&2
+        exit 2
+    fi
+    run=(just test-archived "$2")
+elif [ "${1:-}" = --build ]; then
+    if [ $# -ne 1 ]; then
+        echo "session-test.sh: --build takes no argument." >&2
+        exit 2
+    fi
+    run=(just ci-build)
 else
     run=(just cargo-test -p riff "$@")
 fi

@@ -525,6 +525,53 @@ fn the_book_says_how_the_gate_pulls_the_image_and_runs_failed_jobs_again() {
     );
 }
 
+/// 01M6QQ1NXY0CXMZEEEP413W4PK, 01M6QQ1P5YCT0JX90X5FCKM4W1: with `--build`,
+/// the container runs `just ci-build`, the checks and the test build of
+/// the job Build. With `--archive I/N`, it runs part I of N from the
+/// archive of that build. Each has the container of the tests, and each
+/// takes its own values.
+#[test]
+fn the_session_tests_build_once_and_run_a_part_from_the_archive() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_engine(bin.path());
+    let args = session_test(&["--build"], bin.path(), None);
+    assert_eq!(args[..3], ["run", "--rm", "--init"], "{args:?}");
+    assert_eq!(command_of(&args), ["just", "ci-build"], "{args:?}");
+    assert!(args.windows(2).any(|w| w == ["-e", "CARGO_INCREMENTAL"]));
+
+    let bin = tempfile::tempdir().unwrap();
+    fake_engine(bin.path());
+    let args = session_test(&["--archive", "3/4"], bin.path(), None);
+    assert_eq!(args[..3], ["run", "--rm", "--init"], "{args:?}");
+    assert_eq!(
+        command_of(&args),
+        ["just", "test-archived", "3/4"],
+        "{args:?}"
+    );
+
+    for (bad, said) in [
+        (
+            &["--archive"][..],
+            "give one part, for example --archive 2/4",
+        ),
+        (
+            &["--archive", "1/4", "2/4"],
+            "give one part, for example --archive 2/4",
+        ),
+        (&["--build", "1/4"], "--build takes no argument"),
+    ] {
+        let bin = tempfile::tempdir().unwrap();
+        fake_engine(bin.path());
+        let out = session_test_output(bad, bin.path(), None);
+        assert_eq!(out.status.code(), Some(2), "{bad:?}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(said),
+            "{out:?}"
+        );
+        assert!(!bin.path().join("podman.log").exists(), "{bad:?}");
+    }
+}
+
 /// 01M51117NDKF11FNZ915TTQED4: docker has no `--userns=keep-id`, so the
 /// tests run there as the user and the group of the host. The container
 /// gets the passwd and the group file of the image, in a new folder of
@@ -620,24 +667,41 @@ fn bound(run: &[String], file: &str) -> String {
     fs::read_to_string(bind_source(run, file)).unwrap()
 }
 
-/// 01M515Z3Y7GSFNTJGXJD727MQK: the jobs "Tests I/N" of the Gate run each
-/// part of the tests in the session image, with docker and a cache of
-/// `target/session`. No other job runs the session tests.
+/// 01M515Z3Y7GSFNTJGXJD727MQK, 01M6QQ1NXY0CXMZEEEP413W4PK,
+/// 01M6QQ1P5YCT0JX90X5FCKM4W1: the job Build builds the tests in the
+/// session image, with docker and a cache of `target/session`, and the
+/// jobs "Tests I/N" of the Gate run each part from its archive in the
+/// same image. No other job runs the session tests.
 #[test]
 fn the_gate_runs_the_tests_in_the_session_image() {
-    let job = ci_job("test");
+    let build = ci_job("build");
     for part in [
         "RIFF_ENGINE: docker\n",
         "CARGO_INCREMENTAL: 0\n",
         "uses: actions/cache@",
         "path: target/session\n",
         "key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock') }}\n",
-        "run: deploy/session-test.sh --part ${{ matrix.part }}\n",
+        "run: deploy/session-test.sh --build\n",
+        "path: target/test-archive/\n",
+    ] {
+        assert!(
+            build.contains(part),
+            "{part} is not in the job build:\n{build}"
+        );
+    }
+    let job = ci_job("test");
+    for part in [
+        "RIFF_ENGINE: docker\n",
+        "path: target/test-archive\n",
+        "run: deploy/session-test.sh --archive ${{ matrix.part }}\n",
     ] {
         assert!(job.contains(part), "{part} is not in the job test:\n{job}");
     }
+    // The parts compile nothing: no cache of a build, no cargo.
+    assert!(!job.contains("actions/cache"), "{job}");
+    assert!(!job.contains("cargo"), "{job}");
     let workflow = read(".github/workflows/ci.yml");
-    assert_eq!(workflow.matches("deploy/session-test.sh").count(), 1);
+    assert_eq!(workflow.matches("deploy/session-test.sh").count(), 2);
     assert!(!workflow.contains("\n  session_tests:\n"), "{workflow}");
     let justfile = read("justfile");
     assert!(

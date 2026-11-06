@@ -29,6 +29,11 @@
 //! run. The hash of a name does not change with the other names, so a
 //! new test moves no other test to another part.
 //!
+//! The Gate does not run this flow. The job `Build` builds the test
+//! binaries one time, and each part runs from them with `hygiene
+//! test-part I/N --archive DIR`, with no cargo (see [`crate::archive`],
+//! 01M6QQ1P5YCT0JX90X5FCKM4W1). The split by [`Part::has`] is the same.
+//!
 //! ```mermaid
 //! flowchart LR
 //!     L["cargo test -- --list:<br/>each name"] --> D{"a doc test?"}

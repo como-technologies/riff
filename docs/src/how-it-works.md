@@ -320,6 +320,12 @@ A build of `riff` or `riff-server` is the crate version, the last
 commit that changed the code, and the time of that commit. A commit
 that changes only the book keeps the build.
 
+CI builds each tree one time, in the pull request. The commit on
+`main` and the release take that build. So the build of a release names
+the last commit of the pull request that changed the code, and not the
+squash commit on `main`. The version is the same (see
+[Build once for each tree](development.md#build-once-for-each-tree)).
+
 The version is a semantic version, `MAJOR.MINOR.PATCH`. It tells which
 versions can talk. The line of a version is its major, and its minor
 while the major is 0: `0.4.1` is on the line `0.4`, and `1.2.0` is on

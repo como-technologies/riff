@@ -130,15 +130,15 @@ test in the Gate.
 
 ## How the Gate runs
 
-The Gate on GitHub runs the checks of `just ci-full` as jobs at the
-same time. Each job has a runner of its own:
+The Gate on GitHub runs the checks of `just ci-full` as jobs. The job
+`Build` runs first. The jobs with the tests start when it ends:
 
 | Job | Runs |
 |---|---|
-| `Clippy` | `just lint` |
-| `Tests 1/4` to `Tests 4/4` | `just test-part 1/4` to `just test-part 4/4`, in the session image |
-| `Checks` | `just fmt-check doc book reqs wrap versions` |
-| `Gate` | Starts when each other job ended. It passes only when each of them passed. |
+| `Build` | In the session image: `fmt-check`, `reqs`, `wrap`, `versions`, `book`, `lint`, `doc`, the test build and the doc tests. Then the static build, in `rust:CHANNEL-alpine`. |
+| `Tests 1/4` to `Tests 4/4` | Part 1 to part 4 of the tests, from the test binaries of `Build`, in the session image. They compile nothing. |
+| `Static riff` | Checks the static `riff` and `riff-server` of `Build`: no interpreter, and `riff --version` runs in the session image. |
+| `Gate` | Starts when `Build` and the tests ended. It passes only when each of them passed. |
 
 The tests run in a container of the session image, as a session runs
 them (see
@@ -146,12 +146,10 @@ them (see
 
 ```mermaid
 flowchart LR
-    P["a push or a<br/>pull request"] --> C["Clippy"]
-    P --> T["Tests 1/4 … 4/4<br/>in the session image"]
-    P --> K["Checks: fmt, doc, book,<br/>reqs, wrap, versions"]
-    C --> G{"Gate: did each<br/>job pass?"}
-    T --> G
-    K --> G
+    P["a push or a<br/>pull request"] --> B["Build: checks, test build,<br/>doc tests, static build"]
+    B --> T["Tests 1/4 … 4/4<br/>no compile"]
+    T --> G{"Gate: did each<br/>job pass?"}
+    B --> G
     G -- yes --> S["Gate passes"]
     G -- no --> F["Gate fails"]
 ```
@@ -191,6 +189,104 @@ The session that fixes a failed check of a wave does the same when the
 pull of the image is the only failure (see
 [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)).
 
+### Build once for each tree
+
+CI compiles the code of a tree two times, and no more:
+
+- the **test build**: the test binaries of the workspace, with
+  `cfg(test)`. The tests cannot run on the release binary.
+- the **release build**: the static `riff` and `riff-server` that ship.
+
+Both builds run in the job `Build`. Clippy, rustdoc and the doc tests
+run there too, on the same build folder. No other job of CI compiles a
+crate of the workspace. A test part, the static check, the tag and the
+deploy take the binaries of `Build`.
+
+`Build` keeps its binaries as artifacts. The name of an artifact has
+the git tree of the commit, `git rev-parse HEAD^{tree}`. A commit of
+`main` and the pull request that made it have the same tree, so they
+have the same artifacts:
+
+| Artifact | Holds |
+|---|---|
+| `tests-TREE` | The test binaries, and the manifest that names them |
+| `static-dev-TREE` | The static `riff` and `riff-server` of the profile `dev` |
+| `static-release-TREE` | The static `riff` and `riff-server` of the profile `release` |
+
+Before each build, `Build` asks for the artifacts of its tree. It
+builds only what is missing:
+
+```mermaid
+flowchart LR
+    B["Build (once for each tree)<br/>test binaries + static binaries<br/>+ clippy + rustdoc"] --> T1["Tests 1/4"]
+    B --> T2["Tests 2/4"]
+    B --> T3["Tests 3/4"]
+    B --> T4["Tests 4/4"]
+    B --> S["Static riff: the check"]
+    B -- "same tree" --> M["push to main: no build"]
+    B -- "same tree" --> R["tag: the release files"]
+    R --> D["Deploy: image from the static riff-server,<br/>deploy with the static riff"]
+    B -- "same tree" --> X["real-session test: the static riff of the commit"]
+```
+
+- A pull request builds both. A pull request with the label `release`
+  builds the profile `release` with no cache, so each release binary
+  comes from a clean build. Another pull request builds the profile
+  `dev`, with a cache.
+- A push to `main`, and a merge group, find the artifacts of the pull
+  request with the same tree, and build nothing. The tests run again
+  with the test binaries of the pull request. With no such artifacts,
+  for example after a push by hand, the run builds as a pull request
+  does. When both profiles are there, it takes `release`.
+- A tag takes `static-release-TREE` of the release pull request. The
+  job `Static riff` checks it, and the job `Static riff release` adds
+  it to the release. With no such artifacts, `Build` builds the profile
+  `release` with no cache. A tag needs no test binary.
+- The jobs `Deploy` and `Stage` build no binary and no `riff`: see
+  [Check that the image holds the release binary](#check-that-the-image-holds-the-release-binary).
+- A person takes the same binaries for the real-session test: see
+  [Take the static riff of CI](#take-the-static-riff-of-ci).
+
+An artifact of a run on a fork does not count. A run keeps its
+artifacts only after each step of `Build` passed.
+
+A binary that `Build` made for a pull request names the last commit of
+that pull request that changed the code. It does not name the squash
+commit on `main`. The version is the same, and only the version
+decides which builds can talk (see [Builds](how-it-works.md#builds)).
+
+### See what Build would build
+
+To see which artifacts exist for the tree of your commit, and what
+`Build` would build, run the plan of the job. You need `gh` signed in.
+`PROFILE` is `dev` or `release`:
+
+```sh
+GH_REPO=como-technologies/riff PROFILE=dev deploy/build-plan.sh
+```
+
+The plan prints one line `name=value` for each of `tree`,
+`build_tests`, `tests_run`, `build_static`, `static_profile` and
+`static_run`. Its other lines say why. For a tree that a pull request
+built already:
+
+```text
+tree=3cb7dddbeb60394627c1d84282741051f80ee960
+build-plan: tests-3cb7dddb… is in run 42167961348: no test build.
+build_tests=false
+tests_run=42167961348
+build-plan: static-dev-3cb7dddb… is in run 42167961348: no static build.
+build_static=false
+static_profile=dev
+static_run=42167961348
+```
+
+A tag builds the profile `release` and needs no test binary:
+
+```sh
+GH_REPO=como-technologies/riff PROFILE=release TESTS=false deploy/build-plan.sh
+```
+
 ### Keep the actions up to date
 
 Dependabot checks the actions of `.github/workflows` each week
@@ -199,11 +295,11 @@ opens a pull request. Merge it like any other pull request.
 
 ### Run one part of the tests
 
-The Gate runs the tests in 4 parts. Each part lists each test of the
-workspace. It runs only the tests whose name falls in its part. The
-hash of the name gives the part. Part 1 also runs each doc test. So
-the 4 parts together run each test, and a new test moves no other
-test.
+The Gate runs the tests in 4 parts. Each part lists the tests of each
+test binary. It runs only the tests whose name falls in its part. The
+hash of the name gives the part. `Build` runs the doc tests. So the 4
+parts and `Build` together run each test, and a new test moves no
+other test.
 
 To run one part on your machine, for example a part that failed on
 GitHub:
@@ -218,11 +314,48 @@ It first prints one line:
 just test-part 2/4 runs 571 of 2280 tests
 ```
 
-To run the part in the session image, as the Gate runs it:
+This run builds the tests with cargo, as you do for a change. To run
+the part in the session image, as a session runs it:
 
 ```sh
 just session-test --part 2/4
 ```
+
+### Run a part from the test binaries of Build
+
+The Gate builds the test binaries one time, in the job `Build`, and
+each part runs from them. To do the same in the session image, build
+once. This runs the checks of `Build`, the test build and the doc
+tests, and packs the test binaries into `target/test-archive`:
+
+```sh
+just session-test --build
+```
+
+Then run each part from the archive. It compiles nothing:
+
+```sh
+just session-test --archive 2/4
+```
+
+The first line says that the part runs from the archive:
+
+```text
+just test-part 2/4 runs 695 of 2734 tests of the archive
+```
+
+On a machine with no container, build and run the same way with the
+tools of your machine:
+
+```sh
+just test-build
+just test-archived 2/4
+```
+
+A test binary reads files with the path of the build. So the archive
+runs only in a checkout at the path that built it. At another path the
+run fails and says so. This is also why you cannot run the artifact of
+a CI run in your clone: build the archive in your clone.
 
 ### Choose the runner of CI
 
@@ -438,18 +571,23 @@ older libc.
 
 ```mermaid
 flowchart LR
-    T["tag vX.Y.Z"] --> J["CI job Static riff<br/>in rust:CHANNEL-alpine"]
-    J -- "riff-x86_64-unknown-linux-musl<br/>riff-server-…, SHA256SUMS" --> R["GitHub release vX.Y.Z"]
+    P["pull request with the label release"] --> J["CI job Build<br/>in rust:CHANNEL-alpine,<br/>profile release, no cache"]
+    J -- "artifact static-release-TREE" --> K["CI job Static riff:<br/>check, name the files"]
+    T["tag vX.Y.Z, same tree"] --> K
+    K -- "riff-x86_64-unknown-linux-musl<br/>riff-server-…, SHA256SUMS" --> R["GitHub release vX.Y.Z"]
     R -- "riff update:<br/>check SHA-256 and ELF" --> B["~/.cargo/bin/riff"]
     B -- "bound at /opt/riff/riff" --> C["session container:<br/>riff relay"]
 ```
 
-The CI job `Static riff` builds and checks the static binaries of each
-pull request and each push, with the profile `dev`. It keeps a cache
-of the build and of the downloaded crates, so it compiles only the
-crates of riff again. For a release tag, it builds the profile
-`release` with no cache, so each release binary comes from a clean
-build. Then it adds them to the release (see
+The CI job `Build` builds the static binaries of each pull request and
+each push, with the profile `dev`. It keeps a cache of the build and of
+the downloaded crates, so it compiles only the crates of riff again.
+The job `Static riff` checks them. For a pull request with the label
+`release`, `Build` builds the profile `release` with no cache, so each
+release binary comes from a clean build. The tag of that release has
+the same tree, so its jobs take those binaries, check them and add
+them to the release. They build nothing (see
+[Build once for each tree](#build-once-for-each-tree) and
 [Make a release](#make-a-release)).
 
 ### Build the static riff
@@ -741,10 +879,11 @@ To run one test, give its name:
 just session-test run::riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it
 ```
 
-The jobs `Tests 1/4` to `Tests 4/4` of the Gate run each test of the
-workspace in the session image, for each pull request (see
-[How the Gate runs](#how-the-gate-runs)). When you pin a new digest,
-they run the tests in the new image. To run one part of them, see
+The job `Build` of the Gate builds the tests of the workspace in the
+session image, and the jobs `Tests 1/4` to `Tests 4/4` run them there,
+for each pull request (see [How the Gate runs](#how-the-gate-runs)).
+When you pin a new digest, they run the tests in the new image. To run
+one part of them, see
 [Run one part of the tests](#run-one-part-of-the-tests).
 
 ## Set the env and the volumes of a session
@@ -3543,9 +3682,10 @@ real home. The static riff of your clone does one scratch item with
 `riff run`, the session image that `riff.toml` pins, and a real
 `claude`. The tests of `just ci` cannot do this: they give riff a fake
 home. Run it before each tag (see [Make a release](#make-a-release)).
-First it builds the static riff of your clone with the profile `dev`
-(see [Build the static riff](#build-the-static-riff)), because the
-daemon runs that binary in the container as `riff relay`.
+First it takes the static riff of your commit, because the daemon runs
+that binary in the container as `riff relay`. CI built it for the tree
+of the commit, so the test builds nothing when CI did (see
+[Take the static riff of CI](#take-the-static-riff-of-ci)).
 
 The test needs podman and the sign-ins of `riff run`: see
 [Get ready to run an item](#get-ready-to-run-an-item). In your clone:
@@ -3622,6 +3762,35 @@ cleans up when you press Ctrl-C. A second Ctrl-C stops it at once: then
 stop the daemon of the test yourself, with the process ID that step 5
 shows.
 
+### Take the static riff of CI
+
+`just real-session` runs `deploy/static/fetch.sh` first. It takes the
+static `riff` and `riff-server` of the commit of `HEAD`, in this
+order:
+
+1. The artifact `static-release-TREE`, else `static-dev-TREE`, of a CI
+   run on a branch of this repository. `TREE` is the git tree of
+   `HEAD` (see [Build once for each tree](#build-once-for-each-tree)).
+2. The files of the GitHub release of a tag `vX.Y.Z` on `HEAD`. The
+   script checks their SHA-256 against `SHA256SUMS`.
+3. A build on this host with `just static dev`, when it finds neither.
+   A host that is not Linux on x86-64 always builds.
+
+To take the files and no more, run the script. It prints the folder of
+the files, and says in which step it found them:
+
+```sh
+deploy/static/fetch.sh
+```
+
+```text
+fetch.sh: taking static-dev-3cb7dddb… of the CI run 42167961348
+target/static/fetched
+```
+
+A commit that CI did not build, for example one that you did not push,
+gets a build on your host.
+
 ### See the test run on a host
 
 The test runs in the daemon of the host, so it has no session of
@@ -3648,8 +3817,9 @@ The test never uses the shared riff-server, and it ignores your
 `RIFF_SERVER`. The shared server can run an older line of riff than
 your clone. Then the first release of a new major line cannot pass: riff
 stops with "this riff and its riff-server do not match". So at the end
-of step 1, the test starts the `riff-server` that `just static dev`
-built beside the static riff (`target/static/debug/riff-server`). It
+of step 1, the test starts the `riff-server` that sits beside the
+static riff of the commit (see
+[Take the static riff of CI](#take-the-static-riff-of-ci)). It
 runs in memory, on a free port of `127.0.0.1`. The test gives its
 address to the daemon of the test and to each `riff` of the test. A
 new riff starts paused, so the test then runs `riff resume --riff` on
@@ -6173,10 +6343,13 @@ riff build
 ```
 
 CI runs the job `Release check` for the tag. It fails when the tag is
-not the version of the crates. The job `Static riff` builds the static
-`riff` and `riff-server` of the tag. Then the job
+not the version of the crates. The job `Build` takes the static `riff`
+and `riff-server` that it built for the release pull request: the tag
+has the same tree. The job `Static riff` checks them. Then the job
 `Static riff release` adds them to the release, with `SHA256SUMS` (see
-[How riff is built and installed](#how-riff-is-built-and-installed)).
+[How riff is built and installed](#how-riff-is-built-and-installed),
+and
+[See which job builds each binary of a release](#see-which-job-builds-each-binary-of-a-release)).
 When both jobs pass, the job `Deploy` waits for the approval of the
 environment `production`. See
 [Deploy the shared server at the end of a wave](#deploy-the-shared-server-at-the-end-of-a-wave).
@@ -6206,6 +6379,54 @@ deploy: `riff release check` resumes the riff. When no run waits, riff
 says so and changes nothing. When the approval fails, the riff stays
 paused: run `riff release approve v3.3.0` again, or `riff resume
 --riff`.
+
+### See which job builds each binary of a release
+
+A release compiles its code two times, both in the job `Build` of the
+release pull request. Each other job takes the result:
+
+| Binary | Built by | Taken by |
+|---|---|---|
+| The test binaries | `Build` of the release pull request | `Tests 1/4` to `Tests 4/4` |
+| The static `riff` and `riff-server`, profile `release`, no cache | `Build` of the release pull request, which has the label `release` | `Static riff` of the tag checks them. `Static riff release` puts them on the release. |
+| The image of `riff-server` | `deploy/cloud/image.sh` in the job `Deploy`, with no compile | The shared riff |
+| The `riff` that deploys | The release: the file `riff-x86_64-unknown-linux-musl` | The job `Deploy` |
+
+When the tag has another tree than the release pull request, for
+example because a merge came between them, `Build` of the tag builds
+the profile `release` with no cache. The release is the same, only the
+job that builds it is another one.
+
+### Check that the image holds the release binary
+
+The job `Deploy` makes the image of `riff-server` `FROM scratch`, with
+the CA certificates and the file `riff-server-x86_64-unknown-linux-musl`
+of the release. It compiles nothing. `deploy/cloud/image.sh` compares
+the SHA-256 of `/riff-server` in the image with the SHA-256 of the file,
+and pushes nothing when they differ.
+
+To compare them yourself, after the deploy of the tag `v3.3.0`:
+
+```sh
+TAG=v3.3.0
+. deploy/cloud/shared.env
+IMAGE="$CLOUD_REGION-docker.pkg.dev/$CLOUD_PROJECT/$CLOUD_REPOSITORY/riff-server:$TAG"
+gcloud auth configure-docker "$CLOUD_REGION-docker.pkg.dev" --quiet
+gh release download "$TAG" --pattern 'riff-server-*' --pattern SHA256SUMS
+id=$(docker create "$IMAGE")
+docker cp "$id:/riff-server" riff-server-in-image
+docker rm "$id"
+sha256sum riff-server-in-image
+grep riff-server-x86_64-unknown-linux-musl SHA256SUMS
+```
+
+The two lines have the same SHA-256.
+
+To build the image from a file on your machine, with no push:
+
+```sh
+deploy/cloud/image.sh riff-server:check riff-server-x86_64-unknown-linux-musl --no-push
+```
 
 ### Deploy the shared server at the end of a wave
 
@@ -6488,6 +6709,10 @@ riff refuses a tag that is not a published release older than the
 newest one. After the deploy, the lead runs
 `riff release check v3.2.0`, and files an issue with the facts.
 
+The job `Deploy` compiles nothing: it takes `riff-server` and `riff`
+from the GitHub release of the tag. A release with no static files has
+no image to deploy, and the job fails at the step that takes them.
+
 A rollback to a release with no call ID loses the calls that the
 server keeps. For 24 hours after it, a command that `riff` sends again
 can run two times: for example, a post can show two times.
@@ -6745,7 +6970,11 @@ gh variable set STAGE_DEPLOY --body true
 ### See the stage result of a merge
 
 The job `Stage` of the CI run of the merge deploys the merge commit and
-runs the smoke test. The smoke test prints one line for each step:
+runs the smoke test. It compiles nothing: it takes the static
+`riff-server` and `riff` that `Build` made for the tree of the merge,
+or took from the pull request with the same tree. That is the profile
+`dev`, and the profile `release` for the merge of a release pull
+request. The smoke test prints one line for each step:
 sign in, post, read, build and end. See the last run on `main`, and the
 log of the job:
 

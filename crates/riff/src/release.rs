@@ -11,12 +11,14 @@
 //!
 //! `just static` builds the static `riff` and `riff-server` of a tree in
 //! the image `rust:CHANNEL-alpine` (01M4ZPJ04D9MJHNPAV0WN1KCES). The CI
-//! job "Static riff" builds them for each pull request and each push,
-//! and checks that each ELF has no interpreter and that `riff --version`
+//! job "Build" builds them for each pull request and each push, one time
+//! for each tree (01M6QQ1NXY0CXMZEEEP413W4PK). The job "Static riff"
+//! checks that each ELF has no interpreter and that `riff --version`
 //! runs in the session image that `riff.toml` pins
-//! (01M4ZPJ06QYVA23N9SQ45T8WQC). For a release tag, it adds them to the
-//! GitHub release of the tag, with [`SUMS`] (01M4ZPJ091W3NYV1V0FJS9K6MS).
-//! The names of the files are [`asset`].
+//! (01M4ZPJ06QYVA23N9SQ45T8WQC). For a release tag, the release binaries
+//! of the same tree go to the GitHub release of the tag, with [`SUMS`]
+//! (01M4ZPJ091W3NYV1V0FJS9K6MS, 01M6QQ1P8H32E2TQ0CYA87R02V). The names
+//! of the files are [`asset`].
 //!
 //! `riff update` installs these files on a machine with a [`TARGET`]
 //! ([`install`], 01M4ZPJ0BAQZ6AN06FGXS5D4FP). It checks the SHA-256 of

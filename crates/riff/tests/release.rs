@@ -1,11 +1,12 @@
 //! The static riff of a release: `deploy/static/build.sh` builds it in
 //! the Rust image of the channel of the repository
 //! (01M4ZPJ04D9MJHNPAV0WN1KCES), `deploy/static/check.sh` refuses a
-//! binary with an interpreter, the CI job "Static riff" runs both for
-//! each pull request (01M4ZPJ06QYVA23N9SQ45T8WQC), and the job "Static
-//! riff release" adds the files that `riff update` downloads to the
-//! release of a tag (01M4ZPJ091W3NYV1V0FJS9K6MS). The scripts run a fake
-//! container engine that logs its arguments.
+//! binary with an interpreter, the CI job "Build" runs the build for each
+//! pull request and each push (01M6QQ1NXY0CXMZEEEP413W4PK), the job
+//! "Static riff" runs the check (01M4ZPJ06QYVA23N9SQ45T8WQC), and the job
+//! "Static riff release" adds the files that `riff update` downloads to
+//! the release of a tag (01M4ZPJ091W3NYV1V0FJS9K6MS). The scripts run a
+//! fake container engine that logs its arguments.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -176,19 +177,37 @@ fn the_static_check_refuses_a_binary_with_an_interpreter() {
     assert!(!bin.path().join("podman.log").exists());
 }
 
-/// 01M4ZPJ06QYVA23N9SQ45T8WQC, 01M513W2V4G94R7F4D4Q3M2RA1: CI builds
-/// and checks the static riff of each pull request and each push. A tag
-/// builds the profile release, each other run the profile dev.
+/// 01M4ZPJ06QYVA23N9SQ45T8WQC, 01M513W2V4G94R7F4D4Q3M2RA1,
+/// 01M6QQ1P8H32E2TQ0CYA87R02V: the job Build builds the static riff of
+/// each pull request and each push, and the job Static riff checks it. A
+/// tag and a pull request with the label release build the profile
+/// release, each other run the profile dev. The check compiles nothing.
 #[test]
 fn ci_builds_and_checks_the_static_riff_of_each_pull_request() {
+    let build = ci_job("build");
+    for part in [
+        "name: Build\n",
+        "fetch-depth: 0\n",
+        "PROFILE: ${{ (github.ref_type == 'tag' || (github.event_name == 'pull_request' && \
+         contains(github.event.pull_request.labels.*.name, 'release'))) && 'release' || 'dev' }}\n",
+        "TESTS: ${{ github.ref_type != 'tag' }}\n",
+        "run: deploy/build-plan.sh\n",
+        "run: deploy/static/build.sh \"$STATIC_PROFILE\"\n",
+    ] {
+        assert!(
+            build.contains(part),
+            "{part} is not in the job build:\n{build}"
+        );
+    }
+    assert!(!build.contains("contents: write"), "{build}");
+
     let job = ci_job("static");
     for part in [
         "name: Static riff\n",
+        "needs: [build]\n",
         "if: github.event_name == 'push' || github.event_name == 'pull_request'\n",
-        "fetch-depth: 0\n",
-        "PROFILE: ${{ github.ref_type == 'tag' && 'release' || 'dev' }}\n",
-        "run: deploy/static/build.sh \"$PROFILE\"\n",
         "run: deploy/static/check.sh \"$PROFILE\"\n",
+        "actions/download-artifact@",
     ] {
         assert!(
             job.contains(part),
@@ -196,24 +215,29 @@ fn ci_builds_and_checks_the_static_riff_of_each_pull_request() {
         );
     }
     assert!(!job.contains("contents: write"), "{job}");
+    assert!(!job.contains("build.sh"), "the check builds:\n{job}");
 }
 
-/// 01M513W2V4G94R7F4D4Q3M2RA1: the job static keeps a cache of the build
-/// and of the downloaded crates, keyed by the toolchain and `Cargo.lock`.
-/// A tag uses no cache, so each release binary comes from a clean build.
+/// 01M513W2V4G94R7F4D4Q3M2RA1, 01M6QQ1P8H32E2TQ0CYA87R02V: the job Build
+/// keeps a cache of the static build and of the downloaded crates, keyed
+/// by the toolchain and `Cargo.lock`. A build of the profile release uses
+/// no cache, so each release binary comes from a clean build.
 #[test]
-fn the_static_build_of_ci_has_a_cache_and_a_tag_uses_none() {
-    let job = ci_job("static");
+fn the_static_build_of_ci_has_a_cache_and_a_release_build_uses_none() {
+    let job = ci_job("build");
     let cache = job
-        .split_once("uses: actions/cache@")
-        .unwrap_or_else(|| panic!("the job static has no cache:\n{job}"));
-    let before = cache.0.rsplit_once("\n      - ").unwrap().1;
+        .split_once("name: Cache the static build\n")
+        .unwrap_or_else(|| panic!("the job build has no cache of the static build:\n{job}"));
     let step = cache.1.split_once("\n\n").unwrap().0;
     assert!(
-        before.contains("if: github.ref_type != 'tag'\n"),
-        "the cache step runs for a tag:\n{before}"
+        step.contains(
+            "if: steps.plan.outputs.build_static == 'true' && \
+             steps.plan.outputs.static_profile != 'release'\n"
+        ),
+        "the cache step runs for a release build:\n{step}"
     );
     for part in [
+        "uses: actions/cache@",
         "target/static\n",
         "target/static-cargo\n",
         "key: static-dev-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}\n",
@@ -221,7 +245,8 @@ fn the_static_build_of_ci_has_a_cache_and_a_tag_uses_none() {
     ] {
         assert!(step.contains(part), "{part} is not in:\n{step}");
     }
-    assert_eq!(job.matches("actions/cache").count(), 1, "{job}");
+    // The other cache is the cache of the test build.
+    assert_eq!(job.matches("actions/cache").count(), 2, "{job}");
     assert!(
         job.contains("RIFF_STATIC_CARGO: ${{ github.workspace }}/target/static-cargo\n"),
         "{job}"
@@ -236,7 +261,7 @@ fn the_static_build_of_ci_has_a_cache_and_a_tag_uses_none() {
             .rsplit_once("\n      - ")
             .unwrap()
             .1
-            .contains("if: github.ref_type != 'tag'\n"),
+            .contains("steps.plan.outputs.static_profile != 'release'\n"),
         "{job}"
     );
 }
