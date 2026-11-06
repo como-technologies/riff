@@ -103,6 +103,7 @@
 //! | Ask | The daemon says |
 //! |---|---|
 //! | [`Ask::Status`] | [`Say::Status`] |
+//! | [`Ask::Ps`] | [`Say::Ps`]: the riff processes of the host and of each container ([`Daemon::ps`], [`crate::ps`]) |
 //! | [`Ask::Image`] | [`Say::Line`] for a pull, then [`Say::Done`] or [`Say::Failed`] |
 //! | [`Ask::Start`] | [`Say::Started`], each [`Say::Event`] and [`Say::Stderr`], then [`Say::Ended`] or [`Say::Failed`] |
 //! | [`Ask::Follow`] | each [`Say::Event`] after a number, and each [`Say::Line`] of the daemon about the session in its place, then as [`Ask::Start`]. For a session that ended in the last [`KEEP_END`]: then [`Say::Ended`] |
@@ -519,6 +520,11 @@ pub const LEAD_IDLE: Duration = Duration::from_secs(5 * 60);
 /// ```
 pub const LEAD_IDLE_VAR: &str = "RIFF_DAEMON_LEAD_IDLE_MS";
 
+/// The longest wait of `riff ps` for the processes of one container
+/// ([`Runtime::processes`], #1610): a container whose list takes longer
+/// shows why, and the others show.
+pub const PROCESSES_WAIT: Duration = Duration::from_secs(5);
+
 /// The first protocol of a relay that takes [`Say::Hold`].
 pub const TAKEOVER_PROTOCOL: u32 = 4;
 
@@ -875,6 +881,9 @@ pub struct Hello {
 pub enum Ask {
     /// The state of the daemon and its sessions.
     Status,
+    /// `riff ps`: the riff processes of the host and of each session
+    /// container ([`Daemon::ps`], #1610).
+    Ps,
     /// Have the image on this machine: pull it when it is not here.
     Image {
         /// The image.
@@ -1137,6 +1146,10 @@ pub enum ServerCall {
     /// The [`Status`] of this daemon, for `riff daemon status` in a
     /// container (#1239). A session that is not the lead may ask it.
     Status,
+    /// The [`crate::ps::Ps`] of this daemon, for `riff ps` in a container
+    /// (#1610, 01M6QBXNQC6X7NJVR03M92V0Q8). Only the lead may: the answer
+    /// holds command lines of the host.
+    Ps,
     /// One [`remote::Page`] of the events of the session `name` of this
     /// daemon, after the event `after` and the line `notes` of the
     /// daemon, as `riff daemon events NAME` follows it in a container
@@ -1337,6 +1350,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         ServerCall::Run { .. } => bail!("the daemon runs the item itself"),
         ServerCall::Watch { .. } => bail!("the daemon watches itself"),
         ServerCall::Status => bail!("the daemon answers the status itself"),
+        ServerCall::Ps => bail!("the daemon answers the processes itself"),
         ServerCall::Events { .. } => bail!("the daemon answers the events itself"),
     })
 }
@@ -1519,6 +1533,8 @@ pub enum Say {
     Ended(Ended),
     /// The state of the daemon.
     Status(Box<Status>),
+    /// The answer to [`Ask::Ps`].
+    Ps(Box<crate::ps::Ps>),
     /// On the socket of a session: who that session is.
     Session {
         /// The riff session ID.
@@ -2950,6 +2966,64 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
+    /// The riff processes of this host and of each session container, for
+    /// `riff ps` (#1610, [`crate::ps`]). The daemon reads `/proc`, asks the
+    /// runtime for the processes of each container, and puts on each
+    /// process the calls of `gh` that it made in the last hour. A container
+    /// whose processes the runtime cannot give shows why.
+    pub async fn ps(&self) -> crate::ps::Ps {
+        self.ps_at(Path::new("/proc")).await
+    }
+
+    /// [`Daemon::ps`] with the processes of the host in `proc`, a folder
+    /// with the layout of `/proc`.
+    pub async fn ps_at(&self, proc: &Path) -> crate::ps::Ps {
+        self.ps_within(proc, PROCESSES_WAIT).await
+    }
+
+    /// [`Daemon::ps_at`] that waits for the processes of one container at
+    /// most `wait`.
+    async fn ps_within(&self, proc: &Path, wait: Duration) -> crate::ps::Ps {
+        let now = now_ms();
+        let daemon = std::process::id();
+        let (root, dir) = (proc.to_owned(), self.dir.clone());
+        let (mut host, calls) = tokio::task::spawn_blocking(move || {
+            let host = crate::ps::read_host(&root, daemon);
+            let mut calls = ghcalls::Calls::global().recent(now);
+            calls.extend(ghcalls::Tally::in_folder(&dir).read(now));
+            (host, calls)
+        })
+        .await
+        .unwrap_or_default();
+        crate::ps::count_calls(&mut host, "", &calls, now);
+        let mut records = self.records();
+        records.sort_by(|a, b| a.live.name.cmp(&b.live.name));
+        let mut containers = Vec::new();
+        for record in records {
+            let live = record.live;
+            let listed = tokio::time::timeout(wait, self.runtime.processes(&live.name)).await;
+            let (mut procs, error) = match listed {
+                Ok(Ok(procs)) => (procs, None),
+                Ok(Err(e)) => (Vec::new(), Some(format!("{e:#}"))),
+                Err(_) => (Vec::new(), Some(text::ps_silent(wait))),
+            };
+            crate::ps::count_calls(&mut procs, &live.name, &calls, now);
+            containers.push(crate::ps::Container {
+                kind: crate::ps::Kind::of(&live.item, live.lead),
+                name: live.name,
+                item: live.item,
+                session: live.session,
+                procs,
+                error,
+            });
+        }
+        crate::ps::Ps {
+            daemon,
+            host,
+            containers,
+        }
+    }
+
     /// The leads that run with no network ([`Daemon::lost_network`]).
     fn lost_shown(&self) -> Vec<LostShown> {
         let lost = self.lost.lock().unwrap_or_else(PoisonError::into_inner);
@@ -3174,6 +3248,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         if let Some(first) = lines.next_line().await? {
             match hello(&first) {
                 Ok(Ask::Status) => out.say(Say::Status(Box::new(self.status().await))),
+                Ok(Ask::Ps) => out.say(Say::Ps(Box::new(self.ps().await))),
                 Ok(Ask::Image { image }) => self.image(&image, &out).await,
                 Ok(Ask::Start(start)) => self.start(*start, lines, &out).await,
                 Ok(Ask::Follow { name, after }) => self.follow(&name, after, lines, &out),
@@ -4005,7 +4080,8 @@ impl<R: Runtime + 'static> Daemon<R> {
                 let _ = written.await;
             }
             Ok(SessionAsk::GhCalls { calls, .. }) => {
-                self.tally_calls(calls);
+                let name = owned.lock().record.live.name.clone();
+                self.tally_calls(&name, calls);
                 let (out, written) = writer(write);
                 out.say(Say::Done);
                 drop(out);
@@ -4025,6 +4101,8 @@ impl<R: Runtime + 'static> Daemon<R> {
                     ServerCall::Status => {
                         serde_json::to_value(self.status().await).map_err(Into::into)
                     }
+                    ServerCall::Ps if !record.terminal => Err(anyhow!(text::DAEMON_PS_ONLY_LEAD)),
+                    ServerCall::Ps => serde_json::to_value(self.ps().await).map_err(Into::into),
                     ServerCall::CloudLog {
                         service,
                         project,
@@ -4282,14 +4360,16 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// cannot write the folder of the daemon, so the daemon writes it.
     /// It cleans the records first: the caller is a name that riff knows,
     /// and a send has at most [`ghcalls::MAX_RECORDS`] of them
-    /// ([`ghcalls::clean`]). The time is the time of the daemon.
-    pub fn tally_calls(&self, calls: Vec<ghcalls::Record>) {
+    /// ([`ghcalls::clean`]). The time is the time of the daemon, and the
+    /// container `session` is the one whose socket sent the records
+    /// (#1610): `riff ps` finds the calls of a process by it.
+    pub fn tally_calls(&self, session: &str, calls: Vec<ghcalls::Record>) {
         let records: Vec<ghcalls::Record> = calls
             .into_iter()
             .take(ghcalls::MAX_RECORDS)
             .map(ghcalls::clean)
             .collect();
-        ghcalls::Tally::in_folder(&self.dir).record_all(now_ms(), records);
+        ghcalls::Tally::in_folder(&self.dir).record_for(session, now_ms(), records);
     }
 
     /// Posts each refusal of auto mode of `denials` as the session of
@@ -4779,6 +4859,42 @@ pub async fn status_within(dir: &Path, limit: Duration) -> Result<Status> {
     tokio::time::timeout(limit, status(dir))
         .await
         .map_err(|_| anyhow!("{}", text::daemon_silent(limit)))?
+}
+
+/// The riff processes of the daemon in the folder `dir`, as `riff ps`
+/// asks them (#1610).
+pub async fn ps(dir: &Path) -> Result<crate::ps::Ps> {
+    let mut client = Client::connect(dir).await?;
+    client.ask(Ask::Ps).await?;
+    match client.next().await? {
+        Some(Say::Ps(ps)) => Ok(*ps),
+        Some(Say::Failed { error }) => bail!("{error}"),
+        _ => bail!("{}", text::DAEMON_GONE),
+    }
+}
+
+/// `riff ps` on the host: prints the tree of the processes in `width`
+/// columns, and gives the exit code. When no daemon answers, it says so,
+/// shows the state of the unit with the way to start it, and gives 1.
+pub async fn show_ps(
+    dir: &Path,
+    manager: &impl crate::service::ServiceManager,
+    width: usize,
+) -> i32 {
+    match ps(dir).await {
+        Ok(ps) => {
+            print!("{}", crate::ps::draw(&ps, width));
+            0
+        }
+        Err(e) => {
+            eprintln!("{e:#}");
+            match manager.state() {
+                Ok(state) => eprintln!("{}", text::daemon_unit_state(&state)),
+                Err(e) => eprintln!("{e:#}"),
+            }
+            1
+        }
+    }
 }
 
 /// Asks the daemon in the folder `dir` to have the image `image`. It
@@ -10190,6 +10306,7 @@ mod tests {
             caller: caller.into(),
             kind: kind.into(),
             points,
+            pid: 7,
         };
         let mut calls = vec![
             call("pr wait", "pr view", 1),
@@ -10248,6 +10365,189 @@ mod tests {
             line.contains("pr view") && line.ends_with("2 points"),
             "{shown}"
         );
+    }
+
+    /// 01M6QBXNMEBANX439DF7J1PQ3S, 01M6QBXNTMH7B2SNXBHAFKCN81 (#1610): the
+    /// daemon answers `riff ps` with the riff processes of the host and,
+    /// for each session container, its kind and its processes with the PID
+    /// in the container. A process shows the calls of `gh` that it made: a
+    /// process in a container sends its PID with its calls on the socket of
+    /// its session, and a process on the host writes the tally.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_daemon_answers_riff_ps_with_the_processes_and_their_calls() {
+        use crate::ps::{Kind, Proc, fake_process};
+        let proc = |pid, ppid, secs, args: &str| Proc {
+            pid,
+            ppid,
+            secs,
+            args: args.into(),
+            ..Proc::default()
+        };
+        let work = "riff-issue-12-1a2b3c4d";
+        let verify = "riff-verify-issue-12-2b3c4d5e";
+        let fake = Fake::default()
+            .with_image(IMAGE)
+            .with_processes(
+                work,
+                vec![
+                    proc(1, 0, 600, "/opt/riff/riff relay -- claude -p"),
+                    proc(14, 1, 30, "riff pr wait"),
+                ],
+            )
+            .with_processes(
+                verify,
+                vec![proc(1, 0, 60, "/opt/riff/riff relay -- claude -p")],
+            );
+        let here = Here::new(fake).await;
+        let (_work, work_name) = here.started(here.start(work, "issue-12")).await;
+        let (_verify, verify_name) = here.started(here.start(verify, "verify-issue-12")).await;
+        let mut lead = here.start("riff-lead-o-r", "lead");
+        lead.terminal = true;
+        let (_lead, lead_name) = here.started(lead).await;
+
+        // `riff pr wait` in the work container (PID 14) made 2 calls.
+        let call = |pid| ghcalls::Record {
+            caller: "pr wait".into(),
+            kind: "pr view".into(),
+            points: 1,
+            pid,
+        };
+        let ask = SessionAsk::GhCalls {
+            protocol: PROTOCOL,
+            calls: vec![call(14), call(14), call(1)],
+        };
+        let conn = connect_in(&session_dir(&here.dir, &work_name), SOCKET)
+            .await
+            .unwrap();
+        let (read, mut write) = conn.into_split();
+        write
+            .write_all(format!("{}\n", serde_json::to_string(&ask).unwrap()).as_bytes())
+            .await
+            .unwrap();
+        BufReader::new(read).lines().next_line().await.unwrap();
+        // `riff wave list` on the host (PID 3002) made 1 call.
+        let now = now_ms();
+        let host_call = ghcalls::Record {
+            caller: "waves".into(),
+            kind: "issue list".into(),
+            points: 2,
+            pid: 3002,
+        };
+        ghcalls::Tally::in_folder(&here.dir).record_all(now, vec![host_call]);
+
+        // The host: the daemon, and `watch` with its `riff wave list`.
+        let root = tempfile::tempdir().unwrap();
+        let me = std::process::id();
+        fake_process(root.path(), (me, 1), "riff", "riff daemon", 10_000);
+        fake_process(
+            root.path(),
+            (3001, 900),
+            "watch",
+            "watch -n 5 riff wave list",
+            50_000,
+        );
+        fake_process(root.path(), (3002, 3001), "riff", "riff wave list", 99_000);
+        fake_process(root.path(), (900, 1), "bash", "bash", 20_000);
+        let ps = here.daemon.ps_at(root.path()).await;
+
+        assert_eq!(ps.daemon, me);
+        // In the order of the PIDs. `bash` is no riff process and has no riff
+        // child.
+        let mut host: Vec<(u32, u32, &str)> = ps
+            .host
+            .iter()
+            .map(|p| (p.pid, p.ppid, p.args.as_str()))
+            .collect();
+        let mut expected = vec![
+            (me, 1, "riff daemon"),
+            (3001, 900, "watch -n 5 riff wave list"),
+            (3002, 3001, "riff wave list"),
+        ];
+        host.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(host, expected);
+        let wave = ps.host.iter().find(|p| p.pid == 3002).unwrap();
+        assert_eq!((wave.calls, wave.points), (1, 2));
+        let names: Vec<(&str, Kind)> = ps
+            .containers
+            .iter()
+            .map(|c| (c.name.as_str(), c.kind))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                (work, Kind::Work),
+                ("riff-lead-o-r", Kind::Lead),
+                (verify, Kind::Verify)
+            ]
+        );
+        let container = &ps.containers[0];
+        assert_eq!(container.session, format!("{work}-session"));
+        let counts: Vec<(u32, u32, u32)> = container
+            .procs
+            .iter()
+            .map(|p| (p.pid, p.calls, p.points))
+            .collect();
+        // The PID in the container: 14 made 2 calls, and 1 made 1.
+        assert_eq!(counts, [(1, 1, 1), (14, 2, 2)]);
+        // The verify container has the same PIDs, and none of those calls.
+        assert!(ps.containers[2].procs.iter().all(|p| p.calls == 0));
+
+        // The lead reads the answer on its socket, and a worker may not.
+        let lead = crate::reach::Reach::daemon_ps(&session_dir(&here.dir, &lead_name).join(SOCKET))
+            .await
+            .unwrap();
+        assert_eq!(lead.daemon, me);
+        assert_eq!(lead.containers.len(), 3);
+        let refused =
+            crate::reach::Reach::daemon_ps(&session_dir(&here.dir, &verify_name).join(SOCKET))
+                .await
+                .unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_PS_ONLY_LEAD);
+    }
+
+    /// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): a container whose list of
+    /// processes does not come in time shows why, and the other containers
+    /// show.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_container_that_gives_no_list_does_not_stop_riff_ps() {
+        let hung = "riff-issue-12-1a2b3c4d";
+        let fake = Fake::default().with_image(IMAGE).with_hung_processes(hung);
+        let here = Here::new(fake).await;
+        let (_a, _) = here.started(here.start(hung, "issue-12")).await;
+        let (_b, _) = here
+            .started(here.start("riff-issue-13-2b3c4d5e", "issue-13"))
+            .await;
+        let root = tempfile::tempdir().unwrap();
+        let ps = here
+            .daemon
+            .ps_within(root.path(), Duration::from_millis(50))
+            .await;
+        assert_eq!(ps.containers.len(), 2);
+        assert_eq!(
+            ps.containers[0].error.as_deref(),
+            Some("the runtime gave no answer in 0 s")
+        );
+        assert!(ps.containers[0].procs.is_empty());
+        assert_eq!(ps.containers[1].error, None);
+        assert_eq!(ps.containers[1].procs[0].args, "riff relay");
+    }
+
+    /// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): the control socket answers
+    /// [`Ask::Ps`] with the containers that run, and a session that the
+    /// runtime lists gets `riff relay` only.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn riff_ps_asks_the_control_socket() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let none = ps(&here.dir).await.unwrap();
+        assert!(none.containers.is_empty(), "{none:?}");
+        let (_client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let shown = ps(&here.dir).await.unwrap();
+        assert_eq!(shown.containers.len(), 1);
+        assert_eq!(shown.containers[0].name, name);
+        assert_eq!(shown.containers[0].procs[0].args, "riff relay");
     }
 
     /// 01M6JGF6Z6Y8FP86Q9VAS3NPZ7, 01M6JGF755TSQKWJBBZNEAW1GP (#1582): a

@@ -857,6 +857,66 @@ To see the log of the daemon:
 journalctl --user -u riff -f
 ```
 
+### See the riff processes of this host
+
+```sh
+riff ps
+```
+
+It shows the riff processes of this host as a tree. Use it to find the
+process behind a caller of `riff daemon status`. For example, a `watch`
+that runs `riff wave list` each second uses the GitHub limit, and
+`riff daemon status` names only the caller `waves`.
+
+```text
+Daemon:
+  812  3d  riff daemon
+Containers:
+  riff-issue-12-1a2b3c4d  work item  issue-12  session 1a2b3c4d-0000-4000-8000-000000000000
+    1  10m  /opt/riff/riff relay -- claude -p
+    └─ 14  9m  claude -p
+       └─ 90  5s  riff pr wait  GitHub, last hour: 2 calls, 2 points
+Outside a container:
+  3001  2h  watch -n 1 riff wave list
+  └─ 3002  1s  riff wave list  GitHub, last hour: 12 calls, 24 points
+```
+
+Each line has the process ID, the run time and the command line. riff
+cuts the command line to the width of your terminal. It cuts nothing
+when you send the output to a pipe.
+
+- **Daemon** is the riff daemon.
+- **Containers** lists each session container: its name, its kind
+  (lead, work item or verify), its session ID and the processes in it.
+  The process IDs are those in the container. A container with more
+  than 60 processes shows the first 60. When podman gives no list in
+  5 s, the container shows why, and the others show.
+- **Outside a container** lists each riff command on the host, for
+  example `riff top`, `riff view` or `riff wave list`. Each shows its
+  parents up to the first process that is not riff, for example
+  `watch`, a shell or `tmux`.
+
+A process that called GitHub shows its calls and its GraphQL points of
+the last hour. See
+[See how the daemon uses the GitHub limit](#see-how-the-daemon-uses-the-github-limit)
+for the points. A process that ended shows no more.
+
+```mermaid
+flowchart LR
+    H["riff ps on the host"] -- "control socket" --> D["riff daemon"]
+    L["riff ps in the container of the lead"] -- "socket of the session" --> D
+    D -- "reads /proc" --> P["riff processes outside a container"]
+    D -- "podman top" --> C["processes of each container"]
+    D -- "the count of the gh calls" --> G["calls on each process"]
+```
+
+The daemon reads the processes of your own user, so `riff ps` works in
+the container of the lead too. A session that is not the lead gets a
+refusal: the answer holds command lines of the host.
+
+When no daemon answers, `riff ps` says so, shows the state of the unit
+and exits with 1. Start the daemon with `riff daemon install`.
+
 ### Restart or stop the daemon
 
 ```sh
@@ -1732,6 +1792,10 @@ them. The other 2,670 points went to a caller that is not a riff
 process: a script, an editor, another tool, or riff on another
 machine, with the same token. The line shows only while the counter
 has not started again.
+
+To find the process behind a caller, see
+[See the riff processes of this host](#see-the-riff-processes-of-this-host).
+It shows the calls and the points of the last hour on each process.
 
 When the points are gone, see
 [Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out).

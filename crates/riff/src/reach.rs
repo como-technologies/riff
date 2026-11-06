@@ -225,6 +225,12 @@ impl Reach {
         ask(socket, &ServerCall::Status).await
     }
 
+    /// The riff processes of the host of the daemon on the socket, for
+    /// `riff ps` in a container (#1610). Only the lead may.
+    pub async fn daemon_ps(socket: &std::path::Path) -> Result<crate::ps::Ps> {
+        ask(socket, &ServerCall::Ps).await
+    }
+
     /// The reply of the daemon of `host` to `request`, through the
     /// daemon on the socket (#1239). Only the lead may.
     pub async fn host(

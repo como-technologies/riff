@@ -40,6 +40,7 @@
 //! | Run a command with a terminal | [`Runtime::exec`] | `podman exec -it NAME COMMAND` |
 //! | Find out if a live session reaches the network | [`Runtime::reaches`] | `podman exec NAME getent hosts api.anthropic.com` |
 //! | Find the image digest of a live session | [`Runtime::digest`] | `podman container inspect --format {{.ImageDigest}} NAME` |
+//! | List the processes of a live session | [`Runtime::processes`] | `podman top NAME pid ppid etime args` ([`crate::podman::top_args`]) |
 //!
 //! A session with a terminal is the lead (01M4Z60B81RTZT71PN5HV0GZHX).
 //! The runtime holds its terminal: conmon on podman. A person attaches to
@@ -64,6 +65,8 @@ use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{mpsc, oneshot};
+
+use crate::ps::Proc;
 
 /// Where a bind comes from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -371,6 +374,11 @@ pub trait Runtime: Send + Sync {
     /// the runtime has, not the digest that the spec named
     /// (01M5TKPG5WZ1T58FNAMZNP6CJ5). Fails when the runtime cannot say.
     fn digest(&self, name: &str) -> impl Future<Output = Result<String>> + Send;
+
+    /// The processes of the live session `name`, with the process IDs
+    /// that they have in the container (#1610). Fails when the runtime
+    /// cannot say.
+    fn processes(&self, name: &str) -> impl Future<Output = Result<Vec<Proc>>> + Send;
 }
 
 /// The host that [`Runtime::reaches`] looks up: the API of `claude`.
@@ -444,6 +452,11 @@ struct Book {
     digests: BTreeMap<String, String>,
     /// The sessions that do not start ([`Fake::refuse_start`]).
     refused: BTreeSet<String>,
+    /// The processes of each session ([`Fake::with_processes`]).
+    processes: BTreeMap<String, Vec<Proc>>,
+    /// The sessions whose list of processes never comes
+    /// ([`Fake::with_hung_processes`]).
+    hung: BTreeSet<String>,
 }
 
 /// One session of a [`Fake`].
@@ -542,6 +555,47 @@ impl Fake {
         self.lock()
             .digests
             .insert(name.to_owned(), digest.to_owned());
+        self
+    }
+
+    /// The session `name` runs the processes `procs`: [`Runtime::processes`]
+    /// says them. A session with none runs `riff relay` only.
+    ///
+    /// ```
+    /// use riff::ps::Proc;
+    /// use riff::runtime::{Fake, Runtime, SessionSpec};
+    ///
+    /// let spec = SessionSpec {
+    ///     name: "s1".into(),
+    ///     image: "i".into(),
+    ///     home: "/h".into(),
+    ///     workdir: "/w".into(),
+    ///     binds: vec![],
+    ///     env: vec![],
+    ///     memory: "8g".into(),
+    ///     cpus: 4,
+    ///     command: vec![],
+    /// };
+    /// let relay = Proc { pid: 1, args: "riff relay".into(), ..Proc::default() };
+    /// let fake = Fake::default().with_image("i").with_processes("s1", vec![relay.clone()]);
+    /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+    ///     // No process list for a session that does not run.
+    ///     assert!(fake.processes("s1").await.is_err());
+    ///     let _running = fake.start(&spec, &[]).await?;
+    ///     assert_eq!(fake.processes("s1").await?, [relay]);
+    ///     Ok::<(), anyhow::Error>(())
+    /// })?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_processes(self, name: &str, procs: Vec<Proc>) -> Self {
+        self.lock().processes.insert(name.to_owned(), procs);
+        self
+    }
+
+    /// [`Runtime::processes`] of the session `name` never answers, as
+    /// `podman top` does not when podman hangs.
+    pub fn with_hung_processes(self, name: &str) -> Self {
+        self.lock().hung.insert(name.to_owned());
         self
     }
 
@@ -806,6 +860,26 @@ impl Runtime for Fake {
                 .map(|(_, digest)| digest.to_owned())
                 .ok_or_else(|| anyhow!("the image {} has no digest", played.spec.image)),
         }
+    }
+
+    async fn processes(&self, name: &str) -> Result<Vec<Proc>> {
+        if self.lock().hung.contains(name) {
+            std::future::pending::<()>().await;
+        }
+        let book = self.lock();
+        if book.no_answer {
+            bail!("podman does not answer");
+        }
+        if book.sessions.get(name).is_none_or(|p| p.exit.is_some()) {
+            bail!("no session {name} runs");
+        }
+        Ok(book.processes.get(name).cloned().unwrap_or_else(|| {
+            vec![Proc {
+                pid: 1,
+                args: "riff relay".into(),
+                ..Proc::default()
+            }]
+        }))
     }
 }
 
