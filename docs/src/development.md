@@ -1738,14 +1738,14 @@ flowchart LR
 
 The daemon is not the only caller. The token of your account also pays
 for `riff top`, `riff pr wait`, `riff verify`, the release commands,
-the look of your lead, and each `gh` that a session runs in its
-container. Each of them counts its calls too, and the daemon adds them
-to its own. A command on the host writes its calls to the folder
-`gh-calls` in the folder of the daemon. A session in a container sends
-them to the daemon on its socket. In a container, the `gh` is the
-binary of riff, which the daemon binds at `/usr/local/bin/gh`: it
-counts the call and runs the real `gh` at once. It changes nothing of
-the call. A count never fails or delays a `gh`.
+and each `gh` that a session runs in its container. Each of them
+counts its calls too, and the daemon adds them to its own. A command
+on the host writes its calls to the folder `gh-calls` in the folder of
+the daemon. A session in a container sends them to the daemon on its
+socket. In a container, the `gh` is the binary of riff, which the
+daemon binds at `/usr/local/bin/gh`: it counts the call and runs the
+real `gh` at once. It changes nothing of the call. A count never fails
+or delays a `gh`.
 
 ```mermaid
 flowchart LR
