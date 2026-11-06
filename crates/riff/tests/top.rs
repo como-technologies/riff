@@ -1851,7 +1851,8 @@ esac"#
     assert_eq!(
         said,
         "Moved #13 #14 to Wave 4: Next.\n#14 has no \"Done when:\" line. The wave takes only an \
-         issue with that line: add it to the body of the issue.\n"
+         issue with that line, or with a heading \"## Done when\": add one to the body of the \
+         issue.\n"
     );
     let (ok, said) = run(&["wave", "move", "13", "--to", "Backlog"]).await;
     assert!(ok, "{said}");

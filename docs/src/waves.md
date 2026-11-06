@@ -282,7 +282,7 @@ the waves, and riff ignores them.
 |---|---|---|
 | `Wave N`, or `Wave N: NAME` | a milestone | A wave. The open wave with the lowest N is the current wave. |
 | `Backlog` | a milestone | The items that riff tracks and does not start. |
-| `Done when:` | the start of a line in the body of an issue | The wave starts a session only for an issue with this line. |
+| `Done when:` | the start of a line in the body of an issue, or a heading `## Done when` | The wave starts a session only for an issue with this line. |
 | `Needs:` | the start of a line in the body of an issue | The issues that must be merged first. |
 | `tracker`, or the title start `Tracker:` | a label | A tracker has no code of its own: the wave starts no session for it. |
 | `broken-main` | a label | A fix item for a broken `main`. It is free work before each other item. |

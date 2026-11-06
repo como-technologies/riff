@@ -1731,15 +1731,15 @@ fn numbers(items: &[u64]) -> String {
 /// ```
 /// assert_eq!(
 ///     riff::text::waves_no_done_when(&[71]),
-///     "#71 has no \"Done when:\" line. The wave takes only an issue with that line: add it to the body of the issue."
+///     "#71 has no \"Done when:\" line. The wave takes only an issue with that line, or with a heading \"## Done when\": add one to the body of the issue."
 /// );
 /// assert!(riff::text::waves_no_done_when(&[71, 72]).starts_with("#71 #72 have no \"Done when:\" line."));
 /// ```
 pub fn waves_no_done_when(items: &[u64]) -> String {
     let verb = if items.len() == 1 { "has" } else { "have" };
     format!(
-        "{} {verb} no \"Done when:\" line. The wave takes only an issue with that line: add it to \
-         the body of the issue.",
+        "{} {verb} no \"Done when:\" line. The wave takes only an issue with that line, or with a \
+         heading \"## Done when\": add one to the body of the issue.",
         numbers(items)
     )
 }
@@ -8536,13 +8536,14 @@ pub fn wave_spent(item: &str, starts: u32, reason: &str) -> String {
 /// let text = riff::text::wave_no_done_when(12);
 /// assert!(text.starts_with("The riff daemon did not start issue-12:"));
 /// assert!(text.contains("no \"Done when:\" line"));
+/// assert!(text.contains("no \"## Done when\" heading"));
 /// assert!(text.ends_with("The wave will take the issue at its next look."));
 /// ```
 pub fn wave_no_done_when(issue: u64) -> String {
     format!(
         "The riff daemon did not start issue-{issue}: the body of the issue has no \"Done when:\" \
-         line, and a session stops at once without it. Add the line to the body of the issue. \
-         The wave will take the issue at its next look."
+         line and no \"## Done when\" heading, and a session stops at once without one. Add the \
+         line to the body of the issue. The wave will take the issue at its next look."
     )
 }
 

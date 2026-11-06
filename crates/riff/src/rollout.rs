@@ -31,8 +31,9 @@
 //!   `Wave N` with the lowest N. A free item is an open issue of it that
 //!   no session claims, that has no comment `Merged in #`, whose
 //!   `Needs:` issues are all closed, and whose body has a line that
-//!   starts with `Done when:` ([`Issue::has_done_when`],
-//!   01M5R0HEP1MXWYY643F1N1DWEM). An issue with no such line is no build:
+//!   starts with `Done when:`, or a heading of `Done when`
+//!   ([`Issue::has_done_when`], 01M5R0HEP1MXWYY643F1N1DWEM,
+//!   01M6QB0T4AR4M06W34994TMNH4). An issue with no such line is no build:
 //!   a session stops at once without it ([`no_done_when_of`]). A pull
 //!   request waits for a verify when it names an issue ([`Pull::issue`]),
 //!   it is not a draft, its head has no status `riff/verify`, and no
@@ -283,6 +284,24 @@ pub const BROKEN_MAIN: &str = "broken-main";
 /// (R172): the acceptance criteria.
 pub const DONE_WHEN: &str = "Done when:";
 
+/// True when `line` is a "Done when" line: it starts with [`DONE_WHEN`], or
+/// it is a Markdown heading of `Done when` (one to six `#`, a space), with
+/// or without the colon (01M6QB0T4AR4M06W34994TMNH4).
+fn done_when_line(line: &str) -> bool {
+    let line = line.trim_start();
+    if line.starts_with(DONE_WHEN) {
+        return true;
+    }
+    let text = line.trim_start_matches('#');
+    let marks = line.len() - text.len();
+    let Some(text) = text.strip_prefix(' ').filter(|_| (1..=6).contains(&marks)) else {
+        return false;
+    };
+    text.trim_start()
+        .strip_prefix("Done when")
+        .is_some_and(|rest| rest.trim_end().is_empty() || rest.starts_with(':'))
+}
+
 /// An open issue, as `gh issue list --json
 /// number,title,body,comments,milestone,labels` gives it.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -328,9 +347,11 @@ impl Issue {
         self.labels.iter().any(|l| l.name == NO_VERIFY)
     }
 
-    /// True when the body has a line that starts with [`DONE_WHEN`]
-    /// (01M5R0HEP1MXWYY643F1N1DWEM). A session stops at once without it,
-    /// so the wave starts no build of an issue without it.
+    /// True when the body has a line that starts with [`DONE_WHEN`], or a
+    /// Markdown heading of `Done when`, with or without the colon
+    /// (01M5R0HEP1MXWYY643F1N1DWEM, 01M6QB0T4AR4M06W34994TMNH4). A session
+    /// stops at once without it, so the wave starts no build of an issue
+    /// without it.
     ///
     /// ```
     /// use riff::rollout::Issue;
@@ -338,13 +359,15 @@ impl Issue {
     /// let issue = |body: &str| Issue { body: body.into(), ..Issue::default() };
     /// assert!(issue("Text.\n\nDone when: it works.\n").has_done_when());
     /// assert!(issue("  Done when:\n- it works").has_done_when());
+    /// assert!(issue("Text.\n\n## Done when:\n- it works").has_done_when());
+    /// assert!(issue("### Done when\n- it works").has_done_when());
     /// assert!(!issue("It is done when it works.").has_done_when());
+    /// assert!(!issue("Done").has_done_when());
+    /// assert!(!issue("Not done when: it works.").has_done_when());
     /// assert!(!issue("").has_done_when());
     /// ```
     pub fn has_done_when(&self) -> bool {
-        self.body
-            .lines()
-            .any(|l| l.trim_start().starts_with(DONE_WHEN))
+        self.body.lines().any(done_when_line)
     }
 
     /// True when the issue is the release issue of a release: it has
@@ -2979,5 +3002,47 @@ mod tests {
         assert!(!pull(&[gate_old.clone(), gate_new.clone(), failed]).settled());
         let going = run("Gate", "", "2026-11-03T06:00:00Z");
         assert!(!pull(&[gate_old, gate_new, going]).settled());
+    }
+
+    /// #1611, 01M6QB0T4AR4M06W34994TMNH4: a heading of `Done when` counts,
+    /// with one to six marks and with or without the colon.
+    #[test]
+    fn a_done_when_line_is_a_line_or_a_heading_of_one_to_six_marks() {
+        let has = |body: &str| {
+            Issue {
+                body: body.into(),
+                ..Issue::default()
+            }
+            .has_done_when()
+        };
+        for yes in [
+            "Done when: it works.",
+            "  Done when:",
+            "Text.\n\nDone when:\n- it works",
+            "# Done when",
+            "## Done when:",
+            "### Done when",
+            "###### Done when:",
+            "## Done when: it works",
+            "  ## Done when  ",
+            "Text.\r\n## Done when\r\n- it works",
+        ] {
+            assert!(has(yes), "{yes:?}");
+        }
+        for no in [
+            "",
+            "Done",
+            "Done when",
+            "Not done when:",
+            "It is done when it works.",
+            "## Not done when:",
+            "## Done whenever",
+            "## Done",
+            "##Done when",
+            "####### Done when",
+            "- ## Done when",
+        ] {
+            assert!(!has(no), "{no:?}");
+        }
     }
 }

@@ -1130,7 +1130,8 @@ enum WaveCommand {
     /// moves nothing.
     ///
     /// To a wave, riff warns for an item with no "Done when:" line in its
-    /// body, and moves it. The wave takes only an issue with that line.
+    /// body, and moves it. The wave takes only an issue with that line, or
+    /// with a heading "## Done when".
     Move {
         /// The numbers of the issues, for example 71 72.
         #[arg(required = true)]

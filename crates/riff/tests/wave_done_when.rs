@@ -70,11 +70,18 @@ fn an_issue_with_no_done_when_line_is_not_free_work_and_the_same_issue_with_the_
         issue(4, "No line either."),
         issue(5, "Done when:\\n- it works"),
         issue(6, "It is done when it works."),
+        // A heading counts, with or without the colon (#1611).
+        issue(7, "Text.\\n\\n## Done when:\\n- it works"),
+        issue(8, "### Done when\\n- it works"),
+        issue(9, "## Done\\n- it works"),
     ];
     let gh = forge(dir.path(), &issues, PULL);
     let look = looks(&gh, &[]);
-    assert_eq!(look.free, ["verify-issue-4", "issue-1", "issue-5"]);
-    assert_eq!(look.no_done_when, BTreeSet::from([2, 6]));
+    assert_eq!(
+        look.free,
+        ["verify-issue-4", "issue-1", "issue-5", "issue-7", "issue-8"]
+    );
+    assert_eq!(look.no_done_when, BTreeSet::from([2, 6, 9]));
     // The verify comes first. While it runs, the first build is issue 1.
     let none = BTreeSet::new();
     let verify = Work::Verify {

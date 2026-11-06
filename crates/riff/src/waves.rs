@@ -49,9 +49,10 @@
 //!   claim on riff-server before they change any item. The lead needs
 //!   no `gh issue edit` for the waves.
 //! - `riff wave move ITEM... --to WAVE` warns for each item whose body has
-//!   no line that starts with `Done when:`, and moves it
-//!   (01M5R0HERC566W14SEJ3ZCG6V5). The wave of the daemon takes only an
-//!   issue with that line (01M5R0HEP1MXWYY643F1N1DWEM). `--to Backlog`
+//!   no line that starts with `Done when:` and no heading of `Done when`,
+//!   and moves it (01M5R0HERC566W14SEJ3ZCG6V5, 01M6QB0T4AR4M06W34994TMNH4).
+//!   The wave of the daemon takes only an issue with that line
+//!   (01M5R0HEP1MXWYY643F1N1DWEM). `--to Backlog`
 //!   reads no body and gives no warning.
 //! - `--wave` takes the number of the wave, `33` or `Wave 33`, as each
 //!   other step does ([`title`]). `gh issue list --milestone` matches
@@ -655,6 +656,7 @@ mod tests {
              'api -X PATCH '*) printf '%s' '{{\"number\":32,\"title\":\"Wave 27: Cloud\",\"open_issues\":0,\"closed_issues\":9}}' ;;\n\
              'api repos/{{owner}}/{{repo}}/issues?milestone=33&state=open&per_page=100') printf '%s' '[{{\"number\":71}},{{\"number\":72}}]' ;;\n\
              'issue view 72 '*) printf '%s' '{{\"number\":72,\"body\":\"No line.\"}}' ;;\n\
+             'issue view 73 '*) printf '%s' '{{\"number\":73,\"body\":\"Text.\\n\\n## Done when\\n- x\"}}' ;;\n\
              'issue view '*) printf '%s' '{{\"number\":71,\"body\":\"Text.\\n\\nDone when: x.\"}}' ;;\n\
              'issue edit '*) ;;\n\
              'label create '*) ;;\n\
@@ -828,6 +830,14 @@ mod tests {
     fn move_of_an_item_with_a_line_names_no_item() {
         let dir = tempfile::tempdir().unwrap();
         let moved = move_items(&fake_gh(dir.path()), &[71], "27", &[]).unwrap();
+        assert!(moved.no_done_when.is_empty());
+    }
+
+    /// #1611: a heading of `Done when` is a line.
+    #[test]
+    fn move_of_an_item_with_a_heading_of_done_when_names_no_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let moved = move_items(&fake_gh(dir.path()), &[73], "27", &[]).unwrap();
         assert!(moved.no_done_when.is_empty());
     }
 
