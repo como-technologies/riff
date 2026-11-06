@@ -6714,7 +6714,20 @@ pub const GITHUB_ROWS: usize = 8;
 /// assert!(
 ///     text.ends_with(
 ///         "Other callers: 1,212 GraphQL points since 14:00:35 UTC, about 43 a minute. \
-///          The counter used 1,284, and riff counted 72.\n"
+///          At 14:28:35 UTC the counter used 1,284, and riff counted 72.\n"
+///     ),
+///     "{text}"
+/// );
+///
+/// // riff counted more than the counter used: the line does not say 0
+/// // for the other callers, which are not known (#1607).
+/// let more = riff::ghcalls::Other { points: 0, used: 332, counted: 1_201, ..other };
+/// let shown = Shown { other: Some(more), ..shown };
+/// let text = riff::text::github_use(&shown, since_ms + 30 * 60_000);
+/// assert!(
+///     text.ends_with(
+///         "Other callers: not known. riff counted more than GitHub used: the points of riff \
+///          are estimates. At 14:28:35 UTC the counter used 332, and riff counted 1,201.\n"
 ///     ),
 ///     "{text}"
 /// );
@@ -6785,17 +6798,25 @@ pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
         );
     }
     if let Some(other) = &shown.other {
-        let _ = writeln!(
-            out,
-            "Other callers: {} GraphQL {} since {}, about {} a minute. The counter used {}, and riff \
-             counted {}.",
-            grouped(other.points),
-            if other.points == 1 { "point" } else { "points" },
-            clock_utc(other.since_ms),
-            grouped(other.a_minute()),
-            grouped(other.used),
-            grouped(other.counted),
-        );
+        let at = clock_utc(other.read_ms);
+        let (used, counted) = (grouped(other.used), grouped(other.counted));
+        if other.counted_more() {
+            let _ = writeln!(
+                out,
+                "Other callers: not known. riff counted more than GitHub used: the points of riff \
+                 are estimates. At {at} the counter used {used}, and riff counted {counted}.",
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "Other callers: {} GraphQL {} since {}, about {} a minute. At {at} the counter \
+                 used {used}, and riff counted {counted}.",
+                grouped(other.points),
+                if other.points == 1 { "point" } else { "points" },
+                clock_utc(other.since_ms),
+                grouped(other.a_minute()),
+            );
+        }
     }
     for wait in &shown.waits {
         let left = u64::try_from((wait.until_ms() - now_ms) / 1000).unwrap_or(0);

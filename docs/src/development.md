@@ -1772,7 +1772,7 @@ GitHub, last hour: 75 calls, 111 GraphQL points.
   session   pr view                       9 calls        9 points
   look      api commits/_/check-runs     12 calls        0 points
 GraphQL points left: 2,222, the counter starts again at 23:00:17 UTC (read 2m ago).
-Other callers: 2,670 GraphQL points since 22:00:17 UTC, about 95 a minute. The counter used 2,778, and riff counted 108.
+Other callers: 2,670 GraphQL points since 22:00:17 UTC, about 95 a minute. At 22:28:17 UTC the counter used 2,778, and riff counted 108.
 ```
 
 Each row has the caller and the kind of the call. The caller is `wave`
@@ -1780,18 +1780,23 @@ Each row has the caller and the kind of the call. The caller is `wave`
 `watches`, `sweep`, `usage`, or the command of `riff` that made the
 call: `top`, `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff
 wave ...`) or `audit`. The caller `session` is a `gh` that a session
-runs in its container. A call of REST costs no
-GraphQL point. The points of a row are an estimate from the query that
-`gh` sends. The line with the points left comes from GitHub: it is the
-counter that answered. GitHub keeps more than one counter for one
-token, so two reads can differ.
+runs in its container. A call of REST costs no GraphQL point. The
+points of a row are an estimate: riff takes them from a table of the
+cost of each query that `gh` sends (see
+[Measure the cost of a query again](#measure-the-cost-of-a-query-again)).
+The line with the points left comes from GitHub: it is the counter that
+answered. GitHub keeps more than one counter for one token, so two
+reads can differ.
 
-The last line, `Other callers`, shows what riff does not see. The
-counter used 2,778 points since it started, and riff counted 108 of
-them. The other 2,670 points went to a caller that is not a riff
-process: a script, an editor, another tool, or riff on another
-machine, with the same token. The line shows only while the counter
-has not started again.
+The last line, `Other callers`, shows what riff does not see. It
+compares two numbers from one time, the time of the last reading of the
+counter (22:28:17 UTC here). At that time the counter had used 2,778
+points since it started, and riff had counted 108 of them. The other
+2,670 points went to a caller that is not a riff process: a script, an
+editor, another tool, or riff on another machine, with the same token.
+A reading can be old (see "read 2m ago" above), so the line says the
+time of the reading, and not the time of the status. The line shows
+only while the counter has not started again.
 
 To find the process behind a caller, see
 [See the riff processes of this host](#see-the-riff-processes-of-this-host).
@@ -1799,6 +1804,50 @@ It shows the calls and the points of the last hour on each process.
 
 When the points are gone, see
 [Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out).
+
+#### Know why riff counted more than GitHub used
+
+Sometimes riff counts more points than the counter used. Then the last
+line does not say 0 points for the other callers, because it cannot
+know them:
+
+```sh
+riff daemon status
+```
+
+```text
+GraphQL points left: 4,668, the counter starts again at 23:02:33 UTC (read 12m ago).
+Other callers: not known. riff counted more than GitHub used: the points of riff are estimates. At 22:10:00 UTC the counter used 332, and riff counted 1,201.
+```
+
+GitHub keeps more than one counter for one token, and each call lands
+on one of them. A reading shows one counter, but riff counts the calls
+of all of them. So the points of riff are estimates, and they can be
+higher than the use of the one counter that answered. The next reading
+can come from another counter, and the line can change.
+
+```mermaid
+flowchart LR
+    R["the calls of riff:<br/>1,201 points counted"] --> A["counter A"]
+    R --> B["counter B"]
+    A --> S["the reading:<br/>counter A used 332"]
+    S --> L["riff counted more than GitHub used:<br/>the points of riff are estimates"]
+```
+
+#### Measure the cost of a query again
+
+The points of `gh pr list` and `gh issue list` come from a record of
+what GitHub says: the `cost` of the query in `rateLimit(dryRun: true)`
+for each page. The record is `crates/riff/src/ghcalls/costs.txt`. A
+test compares the points of riff with it. To ask GitHub again, with a
+`gh` that is signed in (it makes about 40 calls of 1 point each):
+
+```sh
+cargo test -p riff --test all gh_costs:: -- --ignored --nocapture
+```
+
+The test fails when GitHub changes a cost. Then change the record and
+the table of `points_of`.
 
 #### Know how an idle wave reads GitHub
 

@@ -154,7 +154,14 @@ fn the_wrapper_counts_nothing_for_a_call_with_no_limit_or_one_that_riff_counted(
     // The last call is counted. The daemon takes the connections in order,
     // so the earlier calls would be in the asks before it.
     container.gh(
-        &["pr", "list", "--json", "number,statusCheckRollup"],
+        &[
+            "pr",
+            "list",
+            "--limit",
+            "100",
+            "--json",
+            "number,statusCheckRollup",
+        ],
         "",
         &[],
     );

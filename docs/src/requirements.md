@@ -5296,6 +5296,23 @@ of this part when they merge.
   is no caller of gh in the tally. The look of the daemon counts its
   calls in memory, as the caller look, and a session cannot give that
   caller. Supersedes 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 in part (#1598).
+- **01M6QBRR4GDSNZ9YPTDR3AJ0KA** The GraphQL points that riff counts for
+  a list of pull requests or issues come from a measurement: the cost
+  that GitHub gives for the query of gh in rateLimit(dryRun: true),
+  recorded in a file that a test compares with the points of the call,
+  with the drop of the real counter as a check. A page costs the
+  requests of its query, 1 for the list and 1 for each list inside each
+  item, divided by 100, rounded to the nearest whole number, and 1 at
+  the least. gh asks for 100 items in a page and for the rest of the
+  limit in the last page; a call with no limit reads 30 items. A query
+  that asks for rateLimit and nothing else costs no point (#1607).
+- **01M6QBRR7Q2NXCARHE21572GQ5** The other line of riff daemon status
+  says the time of the reading at which it compares the points that the
+  counter used with the points that riff counted. When riff counted more
+  points than the counter used, the line does not say 0 points for the
+  other callers. It says that they are not known: riff counted more than
+  GitHub used: the points of riff are estimates. GitHub keeps more than
+  one counter for one token, and a reading shows one of them (#1607).
 
 ### The lead, the view and the takeover
 

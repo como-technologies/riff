@@ -54,27 +54,52 @@
 //! The counter of GitHub counts every call of the token, also the calls
 //! of a tool that is not riff. When the reply of a query shows the points
 //! that the counter used ([`Left`]), riff takes from them the points of
-//! the calls that it counted since the counter started. What is left is
-//! [`Other`]: the calls of a caller that riff does not see.
+//! the calls that it counted since the counter started, up to the time of
+//! that reading. What is left is [`Other`]: the calls of a caller that
+//! riff does not see. Both numbers are from the time of the reading, and
+//! the line of the status says that time, because the reading can be old
+//! (01M6QBRR7Q2NXCARHE21572GQ5, #1607).
+//!
+//! GitHub keeps more than one counter for one token, and each call lands
+//! on one of them. A reading shows one counter, but riff counted the
+//! calls of all of them. So riff can count more than the counter used. The
+//! line then says that the points of riff are estimates, and not that the
+//! other callers used 0 ([`Other::counted_more`]).
+//!
+//! ```mermaid
+//! flowchart TD
+//!     R["a reading of the counter:<br/>used, at the time T"] --> C["the calls of riff<br/>from the start of the counter to T"]
+//!     C --> M{"counted more<br/>than used?"}
+//!     M -- no --> O["Other callers: used less counted"]
+//!     M -- yes --> E["Other callers: unknown, the points of riff are estimates"]
+//! ```
 //!
 //! # The points
 //!
-//! GitHub counts the points of a GraphQL query, not the calls: one
-//! point for each 100 requests that the query needs, at the most it
-//! could ask. A `gh` call has no header that says its cost, so riff
-//! takes the cost from a table of the queries that `gh` sends, from
-//! `rateLimit(dryRun: true) { cost }` (#1549):
+//! GitHub counts the points of a GraphQL query, not the calls: it adds
+//! the requests that the query could need (1 for the list, and for each
+//! item of the list 1 for each list inside it), divides by 100, rounds to
+//! the nearest whole number, and charges 1 at the least. A `gh` call has
+//! no header that says its cost, so riff takes the cost from a table of
+//! the queries that `gh` sends. The table comes from a measurement
+//! (01M6QBRR4GDSNZ9YPTDR3AJ0KA, #1607): the `cost` that GitHub gives for
+//! each query in `rateLimit(dryRun: true) { cost }`, recorded in
+//! `ghcalls/costs.txt`, with the drop of the real counter as a check. A
+//! test compares [`points_of`] with that record. `gh` asks for 100 items
+//! in a page, or for the rest of `--limit` (30 when the call has none),
+//! so the cost follows `--limit` and the fields:
 //!
-//! | Call | Points |
+//! | Call | Points for each page |
 //! |---|---|
-//! | `gh pr list --json statusCheckRollup` | 2 for each 100 pull requests |
-//! | `gh pr list --head BRANCH` | 1 |
-//! | `gh issue list --json comments` | 2 for each 100 issues |
-//! | `gh issue list` with no `comments` | 1 for each 100 issues |
+//! | `gh pr list --json statusCheckRollup` | 2 for a page of 75 or more pull requests, else 1 |
+//! | `gh pr list` with no list inside, `gh pr list --head BRANCH` | 1 |
+//! | `gh issue list --json comments,labels` | 2 for a page of 75 or more issues, else 1 |
+//! | `gh issue list` with no `comments`, `gh issue list` alone | 1 |
 //! | `gh issue view`, `gh pr view` | 1 |
 //! | `gh pr checks` | 2 |
 //! | a write: `pr create`, `pr merge`, a comment, `issue close` | 2 |
 //! | `gh api graphql` | the `cost` in the reply, else 1 |
+//! | `gh api graphql` that asks for `rateLimit` and nothing else | 0: it says `cost: 1`, and the counter does not move |
 //! | `gh api PATH` of REST, `gh run`, `gh auth` | 0, the REST limit counts them |
 //! | `gh api -i -H 'If-None-Match: ETAG' PATH`, the conditional read of the look ([`crate::changes`], #1566) | 0, also when `gh` shows its `304` as a failed call |
 //!
@@ -540,7 +565,8 @@ impl Left {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Other {
     /// The points of the counter that the other callers used: what the
-    /// counter used, less what riff counted.
+    /// counter used, less what riff counted, and 0 when riff counted more
+    /// ([`Other::counted_more`]).
     pub points: u64,
     /// The points that the counter had used when riff read it.
     pub used: u64,
@@ -554,6 +580,24 @@ pub struct Other {
 }
 
 impl Other {
+    /// True when riff counted more points than the counter used, both at
+    /// the time of the reading (#1607). The points of the other callers
+    /// are then not known: the counter that answered is one of several,
+    /// or the points of riff are too high. `points` is 0, and it says
+    /// nothing.
+    ///
+    /// ```
+    /// use riff::ghcalls::Other;
+    ///
+    /// let other = Other { points: 0, used: 332, counted: 1_201, since_ms: 0, read_ms: 8 * 60_000 };
+    /// assert!(other.counted_more());
+    /// let same = Other { used: 1_201, ..other };
+    /// assert!(!same.counted_more());
+    /// ```
+    pub fn counted_more(&self) -> bool {
+        self.counted > self.used
+    }
+
     /// The points that the other callers used in a minute, on average,
     /// from the start of the counter to the reading. At least one minute
     /// counts.
@@ -938,23 +982,99 @@ fn api_kind(args: &[&str]) -> String {
 /// 100 items in each query.
 fn pages(stdout: &str) -> u32 {
     let items = serde_json::from_str::<Vec<serde::de::IgnoredAny>>(stdout).map_or(0, |v| v.len());
-    u32::try_from(items.div_ceil(100))
+    u32::try_from(items.div_ceil(PAGE))
         .unwrap_or(u32::MAX)
         .max(1)
 }
 
-/// True when the `--json` of `args` names `field`.
-fn has_field(args: &[&str], field: &str) -> bool {
-    args.iter()
-        .position(|a| *a == "--json")
-        .and_then(|at| args.get(at + 1))
-        .is_some_and(|fields| fields.split(',').any(|f| f == field))
+/// The items that `gh` asks for in one query of a list.
+const PAGE: usize = 100;
+
+/// The items that `gh pr list` and `gh issue list` read when the call has
+/// no `--limit`.
+const DEFAULT_LIMIT: usize = 30;
+
+/// The fields of `--json` that open a list inside each item, with the
+/// lists that each of them opens. The cost of a page counts one request
+/// for each of them in each item. `statusCheckRollup` is the commits of
+/// the pull request and the checks of the last one.
+const LISTS: &[(&str, usize)] = &[
+    ("statusCheckRollup", 2),
+    ("assignees", 1),
+    ("comments", 1),
+    ("files", 1),
+    ("labels", 1),
+    ("latestReviews", 1),
+    ("projectItems", 1),
+    ("reviewRequests", 1),
+    ("reviews", 1),
+];
+
+/// The value of the option `names` in `args`, as `--limit 5`,
+/// `-L 5` or `--limit=5`.
+fn option_of<'a>(args: &[&'a str], names: &[&str]) -> Option<&'a str> {
+    args.iter().enumerate().find_map(|(at, arg)| {
+        if names.contains(arg) {
+            return args.get(at + 1).copied();
+        }
+        let (name, value) = arg.split_once('=')?;
+        names.contains(&name).then_some(value)
+    })
+}
+
+/// The lists inside each item that the call `gh KIND ARGS` of a list
+/// asks for. A list of issues without `--json` asks for the labels.
+fn lists_in(kind: &str, args: &[&str]) -> usize {
+    match option_of(args, &["--json"]) {
+        Some(fields) => fields
+            .split(',')
+            .filter_map(|field| LISTS.iter().find(|(name, _)| *name == field))
+            .map(|(_, lists)| lists)
+            .sum(),
+        None => usize::from(kind == "issue list"),
+    }
+}
+
+/// The points of the pages of the list that `gh KIND ARGS` read, with the
+/// reply `stdout` (#1607). A page of `first` items costs the requests of
+/// the query, 1 for the list and the lists inside each item for each
+/// item, divided by 100 and rounded to the nearest whole number, and 1 at
+/// the least. `gh` asks for 100 items in a page and for the rest of
+/// `--limit` in the last one.
+fn list_points(kind: &str, args: &[&str], stdout: &str) -> u32 {
+    let limit = option_of(args, &["--limit", "-L"])
+        .and_then(|limit| limit.parse().ok())
+        .unwrap_or(DEFAULT_LIMIT);
+    let lists = lists_in(kind, args);
+    (0..pages(stdout) as usize)
+        .map(|page| {
+            let first = limit.saturating_sub(page * PAGE).clamp(1, PAGE);
+            let requests = 1 + first * lists;
+            u32::try_from((requests + 50) / 100)
+                .unwrap_or(u32::MAX)
+                .max(1)
+        })
+        .sum()
 }
 
 /// The `cost` that a reply of GraphQL gives in `rateLimit`.
 fn cost_in(stdout: &str) -> Option<u32> {
     let reply: serde_json::Value = serde_json::from_str(stdout).ok()?;
     u32::try_from(reply["data"]["rateLimit"]["cost"].as_u64()?).ok()
+}
+
+/// True when a reply of GraphQL holds `rateLimit` and nothing else. GitHub
+/// charges no point for such a query, though its `cost` says 1: the
+/// counter does not move (#1607).
+fn only_rate_limit(stdout: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(stdout)
+        .ok()
+        .and_then(|reply| {
+            reply["data"]
+                .as_object()
+                .map(|data| data.keys().eq(["rateLimit"]))
+        })
+        .unwrap_or(false)
 }
 
 /// The GraphQL points that the call `gh ARGS` with the output `stdout`
@@ -964,39 +1084,37 @@ fn cost_in(stdout: &str) -> Option<u32> {
 /// use riff::ghcalls::points_of;
 ///
 /// // 100 pull requests with their checks: 2 points. A second page: 4.
-/// let pulls = ["pr", "list", "--json", "number,statusCheckRollup"];
+/// let pulls = ["pr", "list", "--limit", "1000", "--json", "number,statusCheckRollup"];
 /// assert_eq!(points_of(&pulls, "[]"), 2);
 /// let page = format!("[{}]", vec!["{}"; 101].join(","));
 /// assert_eq!(points_of(&pulls, &page), 4);
+/// // The cost follows the page: 30 pull requests (the default) cost 1.
+/// assert_eq!(points_of(&["pr", "list", "--json", "number,statusCheckRollup"], "[]"), 1);
 /// assert_eq!(points_of(&["pr", "list", "--head", "b", "--json", "number,state"], "[]"), 1);
-/// assert_eq!(points_of(&["issue", "list", "--json", "number,comments"], "[]"), 2);
+/// let issues = ["issue", "list", "--limit", "100", "--json", "number,comments"];
+/// assert_eq!(points_of(&issues, "[]"), 1);
+/// let labels = ["issue", "list", "--limit", "100", "--json", "comments,labels"];
+/// assert_eq!(points_of(&labels, "[]"), 2);
 /// assert_eq!(points_of(&["issue", "list", "--json", "title,labels"], "[]"), 1);
 /// assert_eq!(points_of(&["issue", "view", "12"], ""), 1);
 /// assert_eq!(points_of(&["pr", "checks", "40"], ""), 2);
 /// assert_eq!(points_of(&["issue", "close", "7"], ""), 2);
 /// // A query that asks for `rateLimit` gives its own cost.
-/// let reply = r#"{"data":{"rateLimit":{"cost":3,"remaining":10,"resetAt":"x"}}}"#;
+/// let reply = r#"{"data":{"rateLimit":{"cost":3,"remaining":10,"resetAt":"x"},"repository":{}}}"#;
 /// assert_eq!(points_of(&["api", "graphql", "-f", "query=x"], reply), 3);
 /// assert_eq!(points_of(&["api", "graphql", "-f", "query=x"], "{}"), 1);
+/// // A query that asks for nothing else costs nothing, though it says 1.
+/// let read = r#"{"data":{"rateLimit":{"cost":1,"remaining":10,"resetAt":"x"}}}"#;
+/// assert_eq!(points_of(&["api", "graphql", "-f", "query=x"], read), 0);
 /// assert_eq!(points_of(&["api", "repos/o/r"], "{}"), 0);
 /// assert_eq!(points_of(&["run", "view", "1"], ""), 0);
 /// ```
 pub fn points_of(args: &[&str], stdout: &str) -> u32 {
     let kind = kind_of(args);
     match kind.as_str() {
+        "api graphql" if only_rate_limit(stdout) => 0,
         "api graphql" => cost_in(stdout).unwrap_or(1),
-        "pr list" => {
-            let each = if has_field(args, "statusCheckRollup") {
-                2
-            } else {
-                1
-            };
-            each * pages(stdout)
-        }
-        "issue list" => {
-            let each = if has_field(args, "comments") { 2 } else { 1 };
-            each * pages(stdout)
-        }
+        "pr list" | "issue list" => list_points(&kind, args, stdout),
         "pr checks" => 2,
         "pr create" | "pr merge" | "pr comment" | "pr edit" | "issue create" | "issue edit"
         | "issue comment" | "issue close" | "issue reopen" | "pr close" | "pr ready" => 2,
@@ -1214,7 +1332,8 @@ mod tests {
     }
 
     /// More points counted than the counter used (the counter that answered
-    /// is not the one that the calls used): the other callers used none.
+    /// is not the one that the calls used): the points of the other callers
+    /// are 0, and `counted_more` says that 0 means nothing (#1607).
     #[test]
     fn the_other_callers_never_use_less_than_nothing() {
         let (left, start) = counter();
@@ -1226,6 +1345,60 @@ mod tests {
         calls.record(start + 1_000, "wave", "issue list", 30);
         let other = calls.shown(start + 2_000).other.unwrap();
         assert_eq!((other.used, other.counted, other.points), (10, 30, 0));
+        assert!(other.counted_more());
+    }
+
+    /// 01M6QBRR4GDSNZ9YPTDR3AJ0KA (#1607): a page costs the requests of its
+    /// query, so the points of a list follow `--limit` in each form, the
+    /// size of the last page, and the lists inside each item.
+    #[test]
+    fn a_list_costs_the_requests_of_each_page() {
+        let reply = |items: usize| format!("[{}]", vec!["{}"; items].join(","));
+        let checks = "number,statusCheckRollup";
+        let pulls = |limit: &[&'static str]| {
+            let mut args = vec!["pr", "list"];
+            args.extend(limit);
+            args.extend(["--json", checks]);
+            args
+        };
+        // 1 + 2 x 74 = 149 requests: 1. 1 + 2 x 75 = 151: 2.
+        assert_eq!(points_of(&pulls(&["--limit", "74"]), "[]"), 1);
+        assert_eq!(points_of(&pulls(&["--limit", "75"]), "[]"), 2);
+        assert_eq!(points_of(&pulls(&["-L", "75"]), "[]"), 2);
+        assert_eq!(points_of(&pulls(&["--limit=75"]), "[]"), 2);
+        // A limit that is no number is no limit: 30.
+        assert_eq!(points_of(&pulls(&["--limit", "many"]), "[]"), 1);
+        // The last page asks for the rest of the limit: 100, then 20.
+        let limit = ["--limit", "120"];
+        assert_eq!(points_of(&pulls(&limit), &reply(100)), 2);
+        assert_eq!(points_of(&pulls(&limit), &reply(120)), 2 + 1);
+        // Two full pages of a limit of 1,000.
+        let limit = ["--limit", "1000"];
+        assert_eq!(points_of(&pulls(&limit), &reply(150)), 2 + 2);
+        // A list of issues without `--json` asks for the labels; a list of
+        // pull requests without `--json` asks for no list.
+        assert_eq!(points_of(&["issue", "list", "--limit", "100"], "[]"), 1);
+        assert_eq!(lists_in("issue list", &["issue", "list"]), 1);
+        assert_eq!(lists_in("pr list", &["pr", "list"]), 0);
+        assert_eq!(
+            lists_in("issue list", &["--json", "comments,labels,body,milestone"]),
+            2
+        );
+    }
+
+    /// 01M6QBRR4GDSNZ9YPTDR3AJ0KA (#1607): a query that asks for `rateLimit`
+    /// and nothing else costs no point. A query with more costs its `cost`.
+    #[test]
+    fn a_read_of_the_counter_alone_costs_no_point() {
+        let args = ["api", "graphql", "-f", "query=x"];
+        let alone = r#"{"data":{"rateLimit":{"limit":5000,"remaining":4341,"resetAt":"x"}}}"#;
+        assert_eq!(points_of(&args, alone), 0);
+        let with_cost = r#"{"data":{"rateLimit":{"cost":1,"remaining":4341,"resetAt":"x"}}}"#;
+        assert_eq!(points_of(&args, with_cost), 0);
+        let queue =
+            r#"{"data":{"rateLimit":{"cost":2,"remaining":4341,"resetAt":"x"},"repository":{}}}"#;
+        assert_eq!(points_of(&args, queue), 2);
+        assert_eq!(points_of(&args, "not json"), 1);
     }
 
     /// A reading from an old daemon has no limit: the limit of a token.

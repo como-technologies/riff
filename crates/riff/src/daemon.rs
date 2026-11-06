@@ -10272,7 +10272,7 @@ mod tests {
     async fn the_status_shows_the_calls_of_gh_of_the_last_hour() {
         let here = Here::new(Fake::default().with_image(IMAGE)).await;
         let dir = tempfile::tempdir().unwrap();
-        let reply = r#"{"data":{"rateLimit":{"cost":1,"remaining":4300,"resetAt":"2026-11-03T15:00:00Z"}}}"#;
+        let reply = r#"{"data":{"rateLimit":{"cost":1,"remaining":4300,"resetAt":"2026-11-03T15:00:00Z"},"repository":{}}}"#;
         let gh = isolated::write_program(
             dir.path().join("gh"),
             format!("#!/bin/sh\necho '{reply}'\n"),
@@ -10595,7 +10595,7 @@ mod tests {
         let shown = text::daemon_status(&status, now_ms());
         assert!(shown.contains("Other callers: "), "{shown}");
         assert!(
-            shown.contains("The counter used 400, and riff counted "),
+            shown.contains("the counter used 400, and riff counted "),
             "{shown}"
         );
     }
