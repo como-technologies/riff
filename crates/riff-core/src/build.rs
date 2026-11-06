@@ -3,12 +3,16 @@
 //!
 //! # Design
 //!
-//! A build is the crate version, the last commit that changed the code
-//! (`crates`, `Cargo.toml` or `Cargo.lock`), and the UTC time of that
-//! commit. `build.rs` finds the commit. The image build of
-//! `riff-server` has no repository: it gives `RIFF_COMMIT` and
-//! `RIFF_COMMIT_TIME`, from `deploy/build-id.sh`, which runs the same
-//! command.
+//! A build is the crate version, the id of the code, and the UTC time of
+//! the last commit that changed the code (01M6QV4SRYYAH06WSYMF6KHY7S).
+//! The id is the short hash of the trees of `crates`, `Cargo.toml` and
+//! `Cargo.lock`, so each commit with the same code has the same id: a
+//! binary that CI made for a pull request is the same build on `main`
+//! and in the release. The time is no part of the identity. It only
+//! orders builds of different code. `build.rs` finds both. The image
+//! build of `riff-server` has no repository: it gives `RIFF_BUILD` and
+//! `RIFF_BUILD_TIME`, from `deploy/build-id.sh`, which runs the same
+//! commands.
 //!
 //! The crate version is a semantic version, and it says what a build
 //! can talk to (01M3MX1DYY6AVDW946NR0B9T2C). The line of a version is
@@ -63,7 +67,7 @@ pub const HEADER: &str = "riff-build";
 pub const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " ",
-    env!("RIFF_BUILD_COMMIT"),
+    env!("RIFF_BUILD_ID"),
     " ",
     env!("RIFF_BUILD_TIME"),
 );
@@ -242,13 +246,14 @@ impl std::str::FromStr for Semver {
     }
 }
 
-/// One build of riff: the crate version, the commit and its UTC time.
+/// One build of riff: the crate version, the id of the code, and the
+/// UTC time of the last commit that changed it.
 ///
 /// ```
 /// use riff_core::build::Build;
 ///
 /// let b: Build = "0.4.1 929605821e54 2026-09-27T22:03:01Z".parse().unwrap();
-/// assert_eq!(b.commit, "929605821e54");
+/// assert_eq!(b.id, "929605821e54");
 /// assert_eq!(b.semver().unwrap().minor, 4);
 /// assert_eq!(b.to_string(), "0.4.1 929605821e54 2026-09-27T22:03:01Z");
 /// // A build of an older form, or with no semantic version, is not a build.
@@ -259,9 +264,9 @@ impl std::str::FromStr for Semver {
 pub struct Build {
     /// The crate version.
     pub version: String,
-    /// The last commit that changed the code.
-    pub commit: String,
-    /// The time of that commit, in UTC.
+    /// The id of the code: the short hash of its trees.
+    pub id: String,
+    /// The time of the last commit that changed the code, in UTC.
     pub time: String,
 }
 
@@ -271,12 +276,12 @@ impl Build {
     /// ```
     /// let me = riff_core::build::Build::this();
     /// assert_eq!(me.version, env!("CARGO_PKG_VERSION"));
-    /// assert!(!me.commit.is_empty());
+    /// assert!(!me.id.is_empty());
     /// ```
     pub fn this() -> Build {
         Build {
             version: env!("CARGO_PKG_VERSION").into(),
-            commit: env!("RIFF_BUILD_COMMIT").into(),
+            id: env!("RIFF_BUILD_ID").into(),
             time: env!("RIFF_BUILD_TIME").into(),
         }
     }
@@ -293,25 +298,30 @@ impl Build {
         self.version.parse().ok()
     }
 
-    /// True when the two are the same build: the same version and
-    /// commit.
+    /// True when the two are the same build: the same version and id.
+    /// The time is no part of it: one binary is the build of each
+    /// commit with the same code.
     ///
     /// ```
     /// use riff_core::build::Build;
     ///
     /// let a: Build = "0.4.0 aaaa 2026-09-27T10:00:00Z".parse().unwrap();
     /// let b: Build = "0.4.0 bbbb 2026-09-27T11:00:00Z".parse().unwrap();
+    /// let later: Build = "0.4.0 aaaa 2026-09-28T09:00:00Z".parse().unwrap();
     /// assert!(a.matches(&a.clone()));
     /// assert!(!a.matches(&b));
+    /// assert!(a.matches(&later));
     /// ```
     pub fn matches(&self, other: &Build) -> bool {
-        self.version == other.version && self.commit == other.commit
+        self.version == other.version && self.id == other.id
     }
 
     /// True when this build is older than `other`: a lower version, or
-    /// the same version from an older commit (01M514C19H3WQP1FSX9RBVSC69).
-    /// The times are UTC in one form, so their text has the order of
-    /// time. With no semantic version on a side, it is false.
+    /// the same version and another id, from an older time
+    /// (01M514C19H3WQP1FSX9RBVSC69). The times are UTC in one form, so
+    /// their text has the order of time. The same version and id are
+    /// never older, also with another time. With no semantic version on
+    /// a side, it is false.
     ///
     /// ```
     /// use riff_core::build::Build;
@@ -321,6 +331,8 @@ impl Build {
     /// assert!(b("1.3.1 aaaa 2026-10-14T10:00:00Z").older_than(&server));
     /// assert!(b("1.4.0 bbbb 2026-10-15T20:00:00Z").older_than(&server));
     /// assert!(!server.older_than(&server));
+    /// // The same code, built from another commit.
+    /// assert!(!b("1.4.0 122daab96637 2026-10-15T20:00:00Z").older_than(&server));
     /// assert!(!b("1.4.0 cccc 2026-10-16T01:00:00Z").older_than(&server));
     /// // A higher version from an older commit is not older.
     /// assert!(!b("1.5.0 dddd 2026-10-01T00:00:00Z").older_than(&server));
@@ -329,6 +341,9 @@ impl Build {
         let (Some(mine), Some(theirs)) = (self.semver(), other.semver()) else {
             return false;
         };
+        if mine == theirs && self.id == other.id {
+            return false;
+        }
         (mine, &self.time) < (theirs, &other.time)
     }
 }
@@ -370,7 +385,7 @@ pub fn compatible(riff: &Build, server: &Build) -> bool {
 
 impl fmt::Display for Build {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} {}", self.version, self.commit, self.time)
+        write!(f, "{} {} {}", self.version, self.id, self.time)
     }
 }
 
@@ -380,11 +395,11 @@ impl std::str::FromStr for Build {
     fn from_str(s: &str) -> Result<Self, String> {
         let parts: Vec<&str> = s.split_whitespace().collect();
         match parts[..] {
-            [version, commit, time] => {
+            [version, id, time] => {
                 version.parse::<Semver>()?;
                 Ok(Build {
                     version: version.into(),
-                    commit: commit.into(),
+                    id: id.into(),
                     time: time.into(),
                 })
             }
@@ -532,9 +547,9 @@ fn and_list(items: &[String]) -> String {
 /// use riff_core::build::{Build, Semver, other_build};
 ///
 /// let this = Build::this().semver().unwrap();
-/// let at = |version: Semver, commit: &str, time: &str| Build {
+/// let at = |version: Semver, id: &str, time: &str| Build {
 ///     version: version.to_string(),
-///     commit: commit.into(),
+///     id: id.into(),
 ///     time: time.into(),
 /// };
 /// // The same line, and the server is newer.

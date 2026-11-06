@@ -250,10 +250,28 @@ flowchart LR
 An artifact of a run on a fork does not count. A run keeps its
 artifacts only after each step of `Build` passed.
 
-A binary that `Build` made for a pull request names the last commit of
-that pull request that changed the code. It does not name the squash
-commit on `main`. The version is the same, and only the version
-decides which builds can talk (see [Builds](how-it-works.md#builds)).
+A binary that `Build` made for a pull request has the id of its code.
+The squash commit on `main` has the same tree, so it has the same id:
+the binary is the same build. Its time is the time of the last commit of
+the pull request that changed the code. Only the version decides which
+builds can talk (see [Builds](how-it-works.md#builds)).
+
+### See the build id of a checkout
+
+To see the id and the time that a build of your commit gets, run the
+script that the image build and the static build use:
+
+```sh
+deploy/build-id.sh
+```
+
+It prints two lines. Each commit with the same code gives the same
+`RIFF_BUILD`:
+
+```text
+RIFF_BUILD=422706bd93b5
+RIFF_BUILD_TIME=2026-11-06T07:00:05Z
+```
 
 ### See what Build would build
 

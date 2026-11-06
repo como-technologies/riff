@@ -340,7 +340,7 @@ fn loopback_host(host: &str) -> bool {
 /// use riff::lifecycle::version_build;
 ///
 /// let b = version_build("riff-server 0.4.1 929605821e54 2026-09-27T22:03:01Z\n").unwrap();
-/// assert_eq!(b.commit, "929605821e54");
+/// assert_eq!(b.id, "929605821e54");
 /// assert!(version_build("riff-server").is_none());
 /// ```
 pub fn version_build(line: &str) -> Option<Build> {

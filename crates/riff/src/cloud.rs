@@ -1399,32 +1399,56 @@ pub fn commit_tag(tag: &str) -> bool {
     tag.len() == 40 && tag.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
 }
 
-/// The build of the tree at `top`: the last commit that changed the
-/// code, and its UTC time, as `RIFF_COMMIT` and `RIFF_COMMIT_TIME`
-/// lines. Cloud Build gets the source with no git, so the image reads
-/// the build from this file (01M3JEE7YXQPWS65FBVTASAEBX).
+/// The build of the tree at `top`: the hash of the trees of the code,
+/// and the UTC time of the last commit that changed it, as `RIFF_BUILD`
+/// and `RIFF_BUILD_TIME` lines. Cloud Build gets the source with no
+/// git, so the image reads the build from this file
+/// (01M3JEE7YXQPWS65FBVTASAEBX, 01M6QV4SRYYAH06WSYMF6KHY7S). It runs the
+/// git commands of `deploy/build-id.sh`.
 pub fn build_id(top: &Path) -> Result<String> {
-    let out = Command::new("git")
-        .args([
+    let git = |args: &[&str], input: Option<&str>| -> Result<String> {
+        let mut child = Command::new("git")
+            .args(args)
+            .env("TZ", "UTC")
+            .current_dir(top)
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("cannot run git")?;
+        if let (Some(input), Some(stdin)) = (input, child.stdin.as_mut()) {
+            stdin.write_all(input.as_bytes())?;
+        }
+        let out = child.wait_with_output().context("cannot run git")?;
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+    };
+    let code = ["crates", "Cargo.toml", "Cargo.lock"];
+    let trees = git(&[&["ls-tree", "HEAD", "--"][..], &code].concat(), None)?;
+    // `git` trims the output: the script hashes the lines with their end.
+    let id = git(&["hash-object", "--stdin"], Some(&format!("{trees}\n")))?;
+    let log = [
+        &[
             "log",
             "-1",
-            "--abbrev=12",
             "--date=format-local:%Y-%m-%dT%H:%M:%SZ",
-            "--format=%h %cd",
+            "--format=%cd",
             "--",
-            "crates",
-            "Cargo.toml",
-            "Cargo.lock",
-        ])
-        .env("TZ", "UTC")
-        .current_dir(top)
-        .output()
-        .context("cannot run git")?;
-    let line = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    let Some((commit, time)) = line.split_once(' ') else {
-        bail!("git log of {} gave no commit", top.display());
-    };
-    Ok(format!("RIFF_COMMIT={commit}\nRIFF_COMMIT_TIME={time}\n"))
+        ][..],
+        &code,
+    ]
+    .concat();
+    let time = git(&log, None)?;
+    if trees.is_empty() || id.is_empty() || time.is_empty() {
+        bail!("git log of {} gave no commit of the code", top.display());
+    }
+    Ok(format!(
+        "RIFF_BUILD={}\nRIFF_BUILD_TIME={time}\n",
+        id.chars().take(12).collect::<String>()
+    ))
 }
 
 /// Deploys riff-server of `source` to the service of `s` (R5, R6, R29,

@@ -17,11 +17,11 @@ fn this() -> Semver {
     Build::this().semver().unwrap()
 }
 
-/// A build of `version` with another commit.
+/// A build of `version` with another id.
 fn at(version: Semver) -> Build {
     Build {
         version: version.to_string(),
-        commit: "0000deadbeef".into(),
+        id: "0000deadbeef".into(),
         time: "2000-01-01T00:00:00Z".into(),
     }
 }
@@ -181,7 +181,9 @@ async fn a_riff_with_no_build_is_refused() {
 }
 
 /// The image build gets its build from `deploy/build-id.sh`. It names
-/// the same commit and time as `build.rs` (01M3JEE7YXQPWS65FBVTASAEBX).
+/// the same id as `build.rs`, and a UTC time (01M3JEE7YXQPWS65FBVTASAEBX,
+/// 01M6QV4SRYYAH06WSYMF6KHY7S). The time is the time of a commit, so a
+/// binary that another commit of the same tree made names another time.
 #[test]
 fn the_script_of_the_image_build_names_this_build() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -190,11 +192,116 @@ fn the_script_of_the_image_build_names_this_build() {
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     let this = Build::this();
-    let expected = format!(
-        "RIFF_COMMIT={}\nRIFF_COMMIT_TIME={}\n",
-        this.commit, this.time
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut lines = text.lines();
+    assert_eq!(
+        lines.next(),
+        Some(format!("RIFF_BUILD={}", this.id).as_str())
     );
-    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+    let time = lines
+        .next()
+        .unwrap()
+        .strip_prefix("RIFF_BUILD_TIME=")
+        .unwrap();
+    assert!(
+        time.len() == 20 && time.ends_with('Z') && time.as_bytes()[10] == b'T',
+        "{time}"
+    );
+    assert_eq!(lines.next(), None, "{text}");
+}
+
+/// Runs `git` in `dir` with a fixed author and the committer time `at`.
+fn git(dir: &std::path::Path, at: &str, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args([
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "init.defaultBranch=main",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_COMMITTER_DATE", at)
+        .env("GIT_AUTHOR_DATE", at)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// 01M6QV4SRYYAH06WSYMF6KHY7S: the id of the build names the code. The
+/// squash commit of a pull request has the tree of the head of the pull
+/// request, so it has the same id, also with another time. A commit that
+/// changes the code, or only the book, differs as the code does.
+#[test]
+fn the_id_of_the_build_is_the_same_for_each_commit_of_the_same_code() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repo = tempfile::tempdir().unwrap();
+    let dir = repo.path();
+    std::fs::create_dir_all(dir.join("deploy")).unwrap();
+    std::fs::copy(
+        root.join("deploy/build-id.sh"),
+        dir.join("deploy/build-id.sh"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("crates")).unwrap();
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text).unwrap();
+    let id = |at: &str| -> String {
+        let out = std::process::Command::new(dir.join("deploy/build-id.sh"))
+            .env("GIT_COMMITTER_DATE", at)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    git(dir, "2026-11-06T06:00:00Z", &["init", "-q"]);
+    write("Cargo.toml", "[workspace]\n");
+    write("crates/a", "one\n");
+    git(dir, "2026-11-06T06:00:00Z", &["add", "-A"]);
+    git(dir, "2026-11-06T06:00:00Z", &["commit", "-qm", "base"]);
+    let base = git(dir, "", &["rev-parse", "HEAD"]);
+
+    // The head of the pull request.
+    git(dir, "", &["checkout", "-qb", "pr"]);
+    write("crates/a", "two\n");
+    git(dir, "2026-11-06T06:43:01Z", &["commit", "-qam", "head"]);
+    let head = id("");
+    assert!(
+        head.ends_with("RIFF_BUILD_TIME=2026-11-06T06:43:01Z\n"),
+        "{head}"
+    );
+
+    // The squash commit: the same tree on another parent, 17 minutes later.
+    git(dir, "", &["checkout", "-q", &base]);
+    git(dir, "", &["checkout", "pr", "--", "."]);
+    git(dir, "2026-11-06T07:00:05Z", &["commit", "-qm", "squash"]);
+    let squash = id("");
+    assert!(
+        squash.ends_with("RIFF_BUILD_TIME=2026-11-06T07:00:05Z\n"),
+        "{squash}"
+    );
+    let (head_id, squash_id) = (head.lines().next(), squash.lines().next());
+    assert!(head_id.unwrap().starts_with("RIFF_BUILD="), "{head}");
+    assert_eq!(head_id, squash_id);
+
+    // A commit of the book keeps the build.
+    write("docs", "text\n");
+    git(dir, "", &["add", "-A"]);
+    git(dir, "2026-11-06T08:00:00Z", &["commit", "-qm", "book"]);
+    assert_eq!(id(""), squash);
+
+    // A commit of the code changes the id.
+    write("crates/a", "three\n");
+    git(dir, "2026-11-06T09:00:00Z", &["commit", "-qam", "code"]);
+    let code = id("");
+    assert_ne!(code.lines().next(), squash_id);
+    assert!(
+        code.ends_with("RIFF_BUILD_TIME=2026-11-06T09:00:00Z\n"),
+        "{code}"
+    );
 }
 
 #[tokio::test]

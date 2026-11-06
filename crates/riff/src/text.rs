@@ -733,7 +733,7 @@ pub fn riff_state(pauses: &RiffReply, here: Option<&ThreadName>) -> String {
 /// let line = riff::text::build_line(None);
 /// let start = format!("riff and riff-server have the build {version} ");
 /// assert!(line.starts_with(&start), "{line}");
-/// let other = Build { commit: "0000deadbeef".into(), ..Build::this() };
+/// let other = Build { id: "0000deadbeef".into(), ..Build::this() };
 /// let line = riff::text::build_line(Some(&other));
 /// assert!(line.starts_with(&format!("riff has the build {version} ")), "{line}");
 /// let server = format!("; riff-server has the build {version} 0000deadbeef ");
@@ -3955,7 +3955,7 @@ where
 ///          server      http://127.0.0.1:7878  (the default: the riff of this machine)\n  \
 ///            release   {release}  same build ✓\n  \
 ///            sign-in   none: the riff trusts its network",
-///         &this.commit[..7],
+///         &this.id[..7],
 ///         &this.time[..10],
 ///     )
 /// );
@@ -3989,7 +3989,7 @@ where
 ///     used: Seen {
 ///         url: "http://127.0.0.1:7878".into(),
 ///         answer: Ok(Probe {
-///             build: Some(Build { commit: "0000deadbeef".into(), time: time.into(), ..Build::this() }),
+///             build: Some(Build { id: "0000deadbeef".into(), time: time.into(), ..Build::this() }),
 ///             sign_in: Some(false),
 ///         }),
 ///         user: None,
@@ -4112,13 +4112,13 @@ fn row(label: &str, value: &str) -> String {
     format!("{label:<SERVER_LABEL$}{value}")
 }
 
-/// The release of `build`, with its commit and date short in brackets,
+/// The release of `build`, with its id and date short in brackets,
 /// for example `v0.6.0  (75209ac, 2026-09-29)`.
 pub(crate) fn build_facts(build: &Build) -> String {
-    let commit: String = build.commit.chars().take(7).collect();
+    let id: String = build.id.chars().take(7).collect();
     let date: String = build.time.chars().take(10).collect();
     format!(
-        "{}  ({commit}, {date})",
+        "{}  ({id}, {date})",
         crate::lifecycle::release_tag(&build.version)
     )
 }

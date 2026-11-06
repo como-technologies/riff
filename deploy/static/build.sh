@@ -42,7 +42,7 @@ fi
 CHANNEL=$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' rust-toolchain.toml)
 IMAGE="docker.io/library/rust:$CHANNEL-alpine"
 
-# The container has no git, so the build takes its commit from
+# The container has no git, so the build takes its id and time from
 # build-id.sh (01M3JEE7YXQPWS65FBVTASAEBX).
 while IFS='=' read -r name value; do
     export "$name=$value"
@@ -55,7 +55,7 @@ done < <(deploy/build-id.sh)
     -v "${RIFF_STATIC_CARGO:-riff-static-cargo}:/usr/local/cargo/registry" \
     -e CARGO_TARGET_DIR=/src/target/static \
     -e CARGO_BUILD_JOBS -e CARGO_INCREMENTAL \
-    -e RIFF_COMMIT -e RIFF_COMMIT_TIME \
+    -e RIFF_BUILD -e RIFF_BUILD_TIME \
     "$IMAGE" \
     sh -euc '
         apk add -q --no-cache musl-dev linux-headers

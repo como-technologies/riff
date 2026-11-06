@@ -23,11 +23,11 @@ fn this() -> Semver {
     Build::this().semver().unwrap()
 }
 
-/// A build of `version` with another commit.
+/// A build of `version` with another id.
 fn at(version: Semver) -> Build {
     Build {
         version: version.to_string(),
-        commit: "0000deadbeef".into(),
+        id: "0000deadbeef".into(),
         time: "2000-01-01T00:00:00Z".into(),
     }
 }
@@ -221,8 +221,8 @@ async fn works_and_notes_once(theirs: Build, note: &str) {
         1,
         "{stderr}"
     );
-    let commit: String = theirs.commit.chars().take(7).collect();
-    let line = format!("\nriff-server  v{}  ({commit}, ", theirs.version);
+    let id: String = theirs.id.chars().take(7).collect();
+    let line = format!("\nriff-server  v{}  ({id}, ", theirs.version);
     assert!(stdout.contains(&line), "{stdout}");
     assert!(
         stdout.contains("  another build; the versions can talk\n"),

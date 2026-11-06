@@ -22,7 +22,7 @@ fn lines_before() -> (Semver, Semver) {
 fn at(version: Semver) -> Build {
     Build {
         version: version.to_string(),
-        commit: format!("c{}", version.to_string().replace('.', "")),
+        id: format!("c{}", version.to_string().replace('.', "")),
         time: "2026-09-28T12:00:00Z".into(),
     }
 }
@@ -147,7 +147,7 @@ fn the_same_line_and_a_newer_riff_note_the_older_server() {
     // The same version from an older commit is the older side too.
     let older = Build {
         time: "2026-09-27T12:00:00Z".into(),
-        commit: "old".into(),
+        id: "old".into(),
         ..at(this())
     };
     let newer = Build {

@@ -726,6 +726,35 @@ fn deploy_with_no_tag_builds_this_tree() {
     assert!(!cloud.top.path().join("build-id.env").exists());
 }
 
+/// 01M6QV4SRYYAH06WSYMF6KHY7S: the file `build-id.env` that the deploy
+/// writes names the same build as `deploy/build-id.sh`: the hash of the
+/// trees of the code, and the time of its last commit.
+#[test]
+fn the_build_id_of_the_deploy_is_the_output_of_the_script() {
+    let top = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let script = Command::new(top.join("deploy/build-id.sh"))
+        .output()
+        .unwrap();
+    assert!(script.status.success(), "{script:?}");
+    assert_eq!(
+        riff::cloud::build_id(&top).unwrap(),
+        String::from_utf8_lossy(&script.stdout)
+    );
+
+    // A tree that has only a directory of code.
+    let cloud = Cloud::new().tree();
+    let id = riff::cloud::build_id(cloud.top.path()).unwrap();
+    let lines: Vec<&str> = id.lines().collect();
+    let hash = lines[0].strip_prefix("RIFF_BUILD=").unwrap();
+    assert!(
+        hash.len() == 12 && hash.chars().all(|c| c.is_ascii_hexdigit()),
+        "{id}"
+    );
+    let time = lines[1].strip_prefix("RIFF_BUILD_TIME=").unwrap();
+    assert!(time.ends_with('Z') && time.len() == 20, "{id}");
+    assert_eq!(lines.len(), 2, "{id}");
+}
+
 /// The cloud riff needs an owner (01M3JN3ASSV9SA0QZKXXJ0RTEV). With
 /// no `RIFF_OWNER`, the deploy stops before it calls gcloud.
 #[test]
