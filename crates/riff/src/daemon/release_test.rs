@@ -57,7 +57,6 @@
 //! the riff-server of the repository, also when it is not on the host
 //! (01M5MR8CM887EFGMKZM5BQA9JJ). See [`command`].
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -68,6 +67,7 @@ use riff_client::daemons::Test;
 
 use super::remote::Served;
 use crate::cycle::{TestState, status_args};
+use crate::pr::Gh;
 use crate::text;
 use crate::watches::{Op, Watches};
 
@@ -144,10 +144,16 @@ fn run(dir: &Path, program: &str, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
-fn set_status(clone: &Path, commit: &str, state: TestState, why: &str) -> Result<()> {
+/// The `gh` of the test for the repository `repo`: it counts its calls as
+/// `release test` ([`crate::ghcalls::DAEMON`]).
+fn gh_of(repo: &str) -> Gh {
+    Gh::for_repo(repo).by("release test")
+}
+
+fn set_status(gh: &Gh, commit: &str, state: TestState, why: &str) -> Result<()> {
     let args = status_args(commit, state, why);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    run(clone, "gh", &args).map(drop)
+    gh.run(&args, None).map(drop)
 }
 
 /// Starts the test on `commit` in the folder `dir` of the daemon: a
@@ -171,7 +177,8 @@ pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<Str
             at: Instant::now(),
         });
     }
-    let started = prepare(dir, served, commit);
+    let gh = gh_of(&served.wave.repo);
+    let started = prepare(dir, served, &gh, commit);
     match started {
         Ok(clone) => {
             // The status is `pending`: the watch reads the end of the test
@@ -188,7 +195,7 @@ pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<Str
             let log = clone.with_extension("log");
             let server = served.wave.server.clone();
             std::thread::spawn(move || {
-                finish(&clone, &log, (&owned, &tag), &server);
+                finish(&gh, &clone, &log, (&owned, &tag), &server);
                 *running_lock() = None;
             });
             Ok(format!(
@@ -204,7 +211,7 @@ pub fn start(dir: &Path, served: &Served, commit: &str, tag: &str) -> Result<Str
     }
 }
 
-fn prepare(dir: &Path, served: &Served, commit: &str) -> Result<PathBuf> {
+fn prepare(dir: &Path, served: &Served, gh: &Gh, commit: &str) -> Result<PathBuf> {
     let folder = dir.join(FOLDER);
     std::fs::create_dir_all(&folder)?;
     let clone = folder.join(commit);
@@ -221,7 +228,7 @@ fn prepare(dir: &Path, served: &Served, commit: &str) -> Result<PathBuf> {
     run(&clone, "git", &["checkout", "-q", "--detach", commit])?;
     let host = &served.wave.host;
     set_status(
-        &clone,
+        gh,
         commit,
         TestState::Running,
         &format!("running on {host}"),
@@ -233,7 +240,7 @@ fn prepare(dir: &Path, served: &Served, commit: &str) -> Result<PathBuf> {
 /// final status and removes the clone. A fail goes on the release issue
 /// of the tag with the failed step and the end of the log, and its step
 /// is the description of the status (#1255).
-fn finish(clone: &Path, log: &Path, (commit, tag): (&str, &str), server: &str) {
+fn finish(gh: &Gh, clone: &Path, log: &Path, (commit, tag): (&str, &str), server: &str) {
     let (state, why) = match run_test(clone, log, server) {
         Ok(true) => (TestState::Passed, "passed".to_owned()),
         Ok(false) => {
@@ -241,7 +248,7 @@ fn finish(clone: &Path, log: &Path, (commit, tag): (&str, &str), server: &str) {
             let step = failed_step(&text)
                 .unwrap_or_else(|| "the test ended with a failure, see the comment".to_owned());
             let comment = fail_comment(tag, commit, &step, &text, TAIL_LINES);
-            if let Err(e) = comment_failure(clone, tag, &comment) {
+            if let Err(e) = comment_failure(gh, tag, &comment) {
                 eprintln!("riff daemon: cannot write the fail of the test on the issue: {e:#}");
             }
             (TestState::Failed, format!("FAIL at {}", redact(&step)))
@@ -249,13 +256,13 @@ fn finish(clone: &Path, log: &Path, (commit, tag): (&str, &str), server: &str) {
         Err(e) => {
             let step = format!("{e:#}");
             let comment = fail_comment(tag, commit, &step, "", TAIL_LINES);
-            if let Err(e) = comment_failure(clone, tag, &comment) {
+            if let Err(e) = comment_failure(gh, tag, &comment) {
                 eprintln!("riff daemon: cannot write the fail of the test on the issue: {e:#}");
             }
             (TestState::Failed, format!("FAIL: {}", redact(&step)))
         }
     };
-    if let Err(e) = set_status(clone, commit, state, &why) {
+    if let Err(e) = set_status(gh, commit, state, &why) {
         eprintln!("riff daemon: cannot set the status of the real-session test: {e:#}");
     }
     let _ = std::fs::remove_dir_all(clone);
@@ -356,12 +363,10 @@ pub fn fail_comment(tag: &str, commit: &str, step: &str, log: &str, lines: usize
 
 /// Writes the reason of a fail on the release issue of `tag`. It gives
 /// the number of the issue.
-fn comment_failure(clone: &Path, tag: &str, body: &str) -> Result<u64> {
+fn comment_failure(gh: &Gh, tag: &str, body: &str) -> Result<u64> {
     let title = crate::cycle::title(crate::cycle::tag_version(tag)?);
     let search = format!("\"{title}\" in:title");
-    let list = run(
-        clone,
-        "gh",
+    let list = gh.run(
         &[
             "issue",
             "list",
@@ -374,6 +379,7 @@ fn comment_failure(clone: &Path, tag: &str, body: &str) -> Result<u64> {
             "--json",
             "number,title",
         ],
+        None,
     )?;
     let found: Vec<serde_json::Value> = serde_json::from_str(&list)?;
     let number = found
@@ -381,26 +387,10 @@ fn comment_failure(clone: &Path, tag: &str, body: &str) -> Result<u64> {
         .find(|i| i["title"] == title.as_str())
         .and_then(|i| i["number"].as_u64())
         .with_context(|| format!("no release issue \"{title}\""))?;
-    let mut child = Command::new("gh")
-        .args(["issue", "comment", &number.to_string(), "--body-file", "-"])
-        .current_dir(clone)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("cannot run gh")?;
-    child
-        .stdin
-        .take()
-        .context("no stdin")?
-        .write_all(body.as_bytes())?;
-    let out = child.wait_with_output()?;
-    if !out.status.success() {
-        bail!(
-            "gh issue comment failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
+    gh.run(
+        &["issue", "comment", &number.to_string(), "--body-file", "-"],
+        Some(body),
+    )?;
     Ok(number)
 }
 

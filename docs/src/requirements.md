@@ -5268,14 +5268,12 @@ of this part when they merge.
   Supersedes 01M6GYN97HH70E4C1FGM6HA2B0 in part.
 - **01M6JGF6Z6Y8FP86Q9VAS3NPZ7** Each riff process that calls gh adds
   its calls to the tally of the daemon, the folder gh-calls in the
-  folder of the daemon, by caller, kind and GraphQL points: riff top,
-  riff pr open, riff pr wait, riff verify, riff wave, the release
-  commands, riff audit and riff usage. A process on the host appends to
-  the folder. A process in a container sends its calls to the daemon on
-  the socket of its session, and the daemon appends them: it keeps the
-  caller only when it is a name that riff knows, cuts the kind, and
-  limits the points and the number of calls of one send. A count never
-  fails or delays a call (#1582).
+  folder of the daemon, by caller, kind and GraphQL points. A process on
+  the host appends to the folder. A process in a container sends its
+  calls to the daemon on the socket of its session, and the daemon
+  appends them: it keeps the caller only when it is a name that riff
+  knows, cuts the kind, and limits the points and the number of calls of
+  one send. A count never fails or delays a call (#1582).
 - **01M6JGF7265VX2SDXZ4EJAGXVB** The daemon binds its own binary at
   /usr/local/bin/gh in a container session. The binary of riff that
   runs under the name gh adds the call to the tally as the caller
@@ -5329,6 +5327,17 @@ of this part when they merge.
   each image with its own gh there. An image with its gh at another path
   gets the wrapper, which runs that gh (#1595). Supersedes
   01M6JGF7265VX2SDXZ4EJAGXVB in part.
+- **01M6QCDH3VXFFEFEWJT1H2HQT0** Each gh call of riff outside a test
+  goes through a Gh that counts it under a caller name that the tally
+  knows: Gh::here(NAME) in a command of riff, with NAME one of CALLERS
+  (top, pr open, pr wait, verify, release, waves, audit, usage, run,
+  claim, init, questions), and Gh::in_daemon(NAME) or
+  Gh::for_repo(REPO).by(NAME) in the daemon, with NAME one of DAEMON
+  (wave, look, watches, sweep, usage, clone, release test). A gh built
+  with Gh::default(), Gh::at or Command::new("gh") in code outside tests
+  counts nothing, so a test fails on it. The section See how the daemon
+  uses the GitHub limit in development.md names each caller (#1597).
+  Supersedes 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 in part.
 
 ### The lead, the view and the takeover
 

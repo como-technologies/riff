@@ -26,6 +26,7 @@ mod daemon;
 mod daemon_hosts;
 mod first_run;
 mod forge_text;
+mod gh_callers;
 mod gh_costs;
 mod gh_wrapper;
 mod git_fault;

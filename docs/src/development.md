@@ -1737,15 +1737,16 @@ flowchart LR
 ```
 
 The daemon is not the only caller. The token of your account also pays
-for `riff top`, `riff pr wait`, `riff verify`, the release commands,
-and each `gh` that a session runs in its container. Each of them
-counts its calls too, and the daemon adds them to its own. A command
-on the host writes its calls to the folder `gh-calls` in the folder of
-the daemon. A session in a container sends them to the daemon on its
-socket. In a container, the `gh` is the binary of riff, which the
-daemon binds at `/usr/local/bin/gh`: it counts the call and runs the
-real `gh` at once. It changes nothing of the call. A count never fails
-or delays a `gh`.
+for `riff top`, `riff pr wait`, `riff verify`, `riff run`, `riff init`,
+the release commands, and each `gh` that a session runs in its
+container. Each of them counts its calls too, and
+the daemon adds them to its own. Each `gh` call of riff has a caller
+name, and a test fails on a `gh` with none. A command on the host writes
+its calls to the folder `gh-calls` in the folder of the daemon. A
+session in a container sends them to the daemon on its socket. In a
+container, the `gh` is the binary of riff, which the daemon binds at
+`/usr/local/bin/gh`: it counts the call and runs the real `gh` at once.
+It changes nothing of the call. A count never fails or delays a `gh`.
 
 ```mermaid
 flowchart LR
@@ -1793,12 +1794,15 @@ Other callers: 2,670 GraphQL points since 22:00:17 UTC, about 95 a minute. At 22
 
 Each row has the caller and the kind of the call. The caller is `wave`
 (the loop and the jobs of the wave), `look` (the look of the daemon),
-`watches`, `sweep`, `usage`, or the command of `riff` that made the
-call: `top`, `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff
-wave ...`) or `audit`. The caller `session` is a `gh` that a session
-runs in its container. A call of REST costs no GraphQL point. The
-points of a row are an estimate: riff takes them from a table of the
-cost of each query that `gh` sends (see
+`watches`, `sweep`, `usage`, `clone` (the clone of a repository that
+the daemon starts to serve), `release test` (the real-session test of a
+release), or the command of `riff` that made the call: `top`,
+`pr open`, `pr wait`, `verify`, `release`, `waves` (`riff wave ...`),
+`audit`, `questions`, `run`, `init`, or `claim` (the pull request line
+of a claim). The caller `session` is a `gh` that a session runs in its
+container. A call of REST costs no GraphQL point. The points of a row
+are an estimate: riff takes them from a table of the cost of each query
+that `gh` sends (see
 [Measure the cost of a query again](#measure-the-cost-of-a-query-again)).
 The line with the points left comes from GitHub: it is the counter that
 answered. GitHub keeps more than one counter for one token, so two

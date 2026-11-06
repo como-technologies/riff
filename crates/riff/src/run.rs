@@ -1379,7 +1379,7 @@ async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Ch
     daemon::image(daemon, image, |line| println!("{line}")).await?;
     let host = host_facts(main)?;
     Ok(Checked {
-        milestone: milestone(&pr::Gh::default(), issue)?,
+        milestone: milestone(&pr::Gh::here("run"), issue)?,
         host,
     })
 }
@@ -1940,7 +1940,7 @@ async fn work(
     )
     .await?;
 
-    let pull = pr::Gh::default()
+    let pull = pr::Gh::here("run")
         .json::<Pull>(&[
             "pr",
             "view",
@@ -1963,7 +1963,7 @@ async fn work(
             let to = [Selector::lead(me.who().user(), &repo)];
             let ending = api.with_budget(END_BUDGET);
             let ask = async {
-                let gh = pr::Gh::default();
+                let gh = pr::Gh::here("run");
                 if let Some(why) = no_verify_now(&ending, me, thread, gh, item, issue).await? {
                     println!("{}", text::run_no_verify(item, &why));
                     return Ok(());

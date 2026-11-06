@@ -1805,7 +1805,7 @@ pub async fn at_claim(dir: &Path, repo: &str, item: &str) -> Option<String> {
     let (dir, repo, item) = (dir.to_owned(), repo.to_owned(), item.to_owned());
     let look = tokio::task::spawn_blocking(move || {
         crate::dropped::find(&dir, &item).filter(|earlier| !earlier.pushed.is_empty())?;
-        let pulls = pulls(&Gh::default(), &repo).ok()?;
+        let pulls = pulls(&Gh::here("claim"), &repo).ok()?;
         claim_line(&item, &pulls)
     });
     tokio::time::timeout(PULL_WAIT, look).await.ok()?.ok()?

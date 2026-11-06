@@ -62,11 +62,25 @@ pub const FOLDER: &str = "gh-calls";
 /// runs, and not a command of `riff`.
 pub const SESSION: &str = "session";
 
-/// The names of the callers that a session can give. They are the
-/// commands of `riff` that call `gh`, and [`SESSION`]. A session cannot
-/// add a new row to the status with a name of its own.
+/// The names of the callers that a process of `riff` gives to its `gh`
+/// ([`Gh::here`](crate::pr::Gh::here)): the commands of `riff` that call
+/// `gh`, the claim line (`claim`, which runs in a session too), and
+/// [`SESSION`]. A session cannot add a new row to the status with a name
+/// of its own.
 pub const CALLERS: &[&str] = &[
-    SESSION, "top", "pr open", "pr wait", "verify", "release", "waves", "audit", "usage",
+    SESSION,
+    "top",
+    "pr open",
+    "pr wait",
+    "verify",
+    "release",
+    "waves",
+    "audit",
+    "usage",
+    "run",
+    "claim",
+    "init",
+    "questions",
 ];
 
 /// The most records in one send of a session.
