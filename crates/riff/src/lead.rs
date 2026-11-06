@@ -35,7 +35,7 @@
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM |
 //! | The command | `claude --session-id ID --dangerously-skip-permissions START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
-//! | The riff commands | `RIFF_SOCKET` and no `RIFF_SERVER`: `riff wave list` and `riff release check` reach riff-server through the daemon ([`crate::reach`]) | 01M5GVPNAKAPA596K9361HSAAV |
+//! | The riff commands | `RIFF_SOCKET` and no `RIFF_SERVER`: `riff wave list`, `riff release check` and `riff plan hold` reach riff-server through the daemon ([`crate::reach`]) | 01M5GVPNAKAPA596K9361HSAAV, 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ |
 //! | The riff command | `riff` is the riff of the container: the relay puts `/opt/riff` first on the `PATH` of `claude` ([`crate::session_relay::riff_first`]), so `! riff who` works in the terminal of the lead. The spec sets no `PATH` of its own, and `/opt/riff/riff` stays for the permission rules | 01M5QVCVXWBBG1BMGRVBQS25W9 |
 //! | The wakes | `/opt/riff/riff relay watch --follow` in the Monitor tool, started once | 01M501PA04NP79RJQEDP4D7YTM, 01M59235BBXEKPZBRH23C39574 |
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |

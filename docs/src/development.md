@@ -2808,7 +2808,8 @@ To start the wave again, resume the repository with `riff resume`.
 The wave never starts a held item. A lead holds an item by its exact
 name: a hold of `issue-12` stops the build, and a hold of
 `verify-issue-12` stops the verify (see
-[Hold an item by hand](how-it-works.md#hold-an-item-by-hand)):
+[Hold an item by hand](how-it-works.md#hold-an-item-by-hand)). Run it
+in the container of the lead, or in a terminal in the repository:
 
 ```sh
 riff plan hold issue-12 waits for the word of Mike

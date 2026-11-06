@@ -2235,15 +2235,17 @@ async fn cli() -> Result<()> {
                 },
         } => {
             let thread = thread_or_default(thread, &here)?;
-            let reply = api.hold(&me, &thread, &item, &reason.join(" ")).await?;
-            println!("{}", text::held(&reply, &thread, &item));
+            // In a container, the daemon holds for the session (#1619).
+            println!(
+                "{}",
+                reach.plan_hold(&thread, &item, &reason.join(" ")).await?
+            );
         }
         Command::Plan {
             command: PlanCommand::Free { thread, item },
         } => {
             let thread = thread_or_default(thread, &here)?;
-            let reply = api.free(&me, &thread, &item).await?;
-            println!("{}", text::freed(reply, &thread, &item));
+            println!("{}", reach.plan_free(&thread, &item).await?);
         }
         Command::Release {
             thread,

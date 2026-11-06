@@ -14,7 +14,8 @@
 //! session, with the sign-in of the person on the host
 //! ([`crate::daemon::ServerCall`]). So do `riff members`, `riff audit`,
 //! `riff session why`, `riff who` and `riff whoami` (#1338,
-//! 01M5QVX8D3JE51FAYRWXMAYFAY, 01M5QW31TFA1W2GWPGRS2Y65GP), and `riff run`
+//! 01M5QVX8D3JE51FAYRWXMAYFAY, 01M5QW31TFA1W2GWPGRS2Y65GP), `riff plan hold`
+//! and `riff plan free` (#1619, 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ), and `riff run`
 //! of the lead (01M5QVX8FFG2FPWZEW61A985CF): the daemon runs the item as a
 //! job of the wave, because the container has no control socket of the
 //! daemon.
@@ -459,6 +460,47 @@ impl Reach {
                 crate::hold::read_as_person(server, &place).await
             }
             Reach::Daemon(socket) => ask(socket, &ServerCall::ReleaseLines).await,
+        }
+    }
+
+    /// Holds `item` of the repository thread `thread` with `reason` as
+    /// this session, and gives the line for the person (#1619,
+    /// 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ). Only a lead of the thread, the owner
+    /// or an admin can: riff-server decides, also through the socket.
+    pub async fn plan_hold(&self, thread: &ThreadName, item: &str, reason: &str) -> Result<String> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                let reply = api.hold(&me, thread, item, reason).await?;
+                Ok(text::held(&reply, thread, item))
+            }
+            Reach::Daemon(socket) => {
+                let call = ServerCall::PlanHold {
+                    thread: thread.clone(),
+                    item: item.to_owned(),
+                    reason: reason.to_owned(),
+                };
+                ask(socket, &call).await
+            }
+        }
+    }
+
+    /// Frees the hold of `item` of the repository thread `thread` as this
+    /// session, and gives the line for the person (#1619).
+    pub async fn plan_free(&self, thread: &ThreadName, item: &str) -> Result<String> {
+        match self {
+            Reach::Direct(server) => {
+                let (api, me) = signed(server)?;
+                let reply = api.free(&me, thread, item).await?;
+                Ok(text::freed(reply, thread, item))
+            }
+            Reach::Daemon(socket) => {
+                let call = ServerCall::PlanFree {
+                    thread: thread.clone(),
+                    item: item.to_owned(),
+                };
+                ask(socket, &call).await
+            }
         }
     }
 
