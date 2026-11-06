@@ -333,7 +333,16 @@ impl Gh {
     /// from each folder: it sets `GH_REPO`. The riff daemon uses it: it
     /// runs in no clone (#719). Its calls go to the count of the daemon
     /// ([`Calls::global`]), and its reads share their replies
-    /// ([`Gh::read`]).
+    /// ([`Gh::read`]). Name the caller with [`Gh::by`]: until then the
+    /// calls count as [`ghcalls::OTHER`], and a test fails on a
+    /// `Gh::for_repo(..)` with no `.by(..)` in code outside tests
+    /// (#1629).
+    ///
+    /// ```
+    /// let gh = riff::pr::Gh::for_repo("o/r");
+    /// assert_eq!(gh.caller(), riff::ghcalls::OTHER);
+    /// assert_eq!(gh.by("sweep").caller(), "sweep");
+    /// ```
     pub fn for_repo(repo: &str) -> Self {
         Self {
             shares: true,
@@ -372,7 +381,8 @@ impl Gh {
 
     /// The same `gh` for the caller `caller` in the count of the calls: a
     /// name of [`ghcalls::DAEMON`] or [`ghcalls::CALLERS`]. A test fails on
-    /// a `gh` with no name, as `Gh::default()` in code outside tests.
+    /// a `gh` with no name, as `Gh::default()` or `Gh::for_repo(..)` with
+    /// no `.by(..)` in code outside tests.
     pub fn by(self, caller: &'static str) -> Self {
         Self { caller, ..self }
     }
