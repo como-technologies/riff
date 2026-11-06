@@ -152,11 +152,28 @@ pub fn marked(body: &str) -> bool {
 ///     S-->>R: posted
 /// ```
 pub async fn post_by_riff(api: &Api, me: &SessionUri, to: &[Selector], body: &str) -> Result<()> {
-    let sent = api.post(me, Some(&thread()), to, body, Kind::Riff).await;
+    post_by_riff_keyed(api, me, to, body, None).await
+}
+
+/// [`post_by_riff`] with a key (01M5TKG2K1AYK1KE7C2AA2W9DS): riff-server
+/// drops the post when a kept message of the same user in the thread has
+/// the key. The line that goes again with the kind `message` has the key
+/// too.
+pub async fn post_by_riff_keyed(
+    api: &Api,
+    me: &SessionUri,
+    to: &[Selector],
+    body: &str,
+    key: Option<&str>,
+) -> Result<()> {
+    let thread = thread();
+    let sent = api
+        .post_keyed(me, Some(&thread), to, body, Kind::Riff, key)
+        .await;
     match sent {
         Err(e) if refuses_kind_riff(&e) => {
             let marked = format!("{BY_RIFF}{body}");
-            api.post(me, Some(&thread()), to, &marked, Kind::Message)
+            api.post_keyed(me, Some(&thread), to, &marked, Kind::Message, key)
                 .await?;
             Ok(())
         }

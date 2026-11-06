@@ -348,7 +348,9 @@ pub enum Step {
     /// Make the open milestone [`BACKLOG`]
     /// ([`crate::waves::make_backlog`]).
     Backlog,
-    /// Make the open wave [`FIRST_WAVE`] ([`crate::waves::make_first`]).
+    /// Make the open wave [`FIRST_WAVE`], and the labels `tracker` and
+    /// `question` when they are missing ([`crate::waves::make_first`],
+    /// #1605).
     Wave,
     /// Make the ruleset [`RULESET`] with the checks of the CI:
     /// `gh api -X POST .../rulesets`, or `PUT` when a ruleset named `riff`
@@ -1612,6 +1614,7 @@ mod tests {
                 "api -X DELETE repos/{owner}/{repo}/git/refs/heads/riff-setup",
                 "api -X POST repos/{owner}/{repo}/milestones -f title=Backlog",
                 "label create tracker",
+                "label create question",
                 "api -X POST repos/{owner}/{repo}/milestones -f title=Wave 1",
                 "api -X POST repos/{owner}/{repo}/rulesets",
             ],
@@ -1657,6 +1660,29 @@ mod tests {
         assert!(before > reads);
         assert!(fake.set_up().is_empty());
         assert_eq!(fake.changes().len(), changes.len());
+    }
+
+    /// #1605, 01M6QBJHZBDQ8BB1JPT003RXW7: the step of the first wave makes
+    /// the label `question` with the description of riff, and never forces
+    /// it: `gh label create` fails for a label that is there, so the label
+    /// of GitHub keeps its text. A second run of the step is no check.
+    #[test]
+    fn init_makes_the_label_question_and_never_forces_it() {
+        let fake = Fake::bare();
+        let mut github = fake.github();
+        let done = setup(&fake.forge(), &[Step::Wave], &mut github);
+        assert!(done.iter().all(|(_, done)| done.is_ok()), "{done:?}");
+        let calls = fake.calls();
+        let made: Vec<&String> = calls
+            .iter()
+            .filter(|c| c.starts_with("label create question"))
+            .collect();
+        assert_eq!(made.len(), 1, "{calls:#?}");
+        assert!(made[0].contains(crate::text::QUESTION_LABEL), "{}", made[0]);
+        assert!(!made[0].contains("--force"), "{}", made[0]);
+        // The label of the tracker is still forced, as before.
+        let tracker = calls.iter().find(|c| c.starts_with("label create tracker"));
+        assert!(tracker.is_some_and(|c| c.contains("--force")), "{calls:#?}");
     }
 
     #[test]

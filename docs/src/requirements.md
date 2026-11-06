@@ -471,6 +471,43 @@
   than 10 seconds. `riff wave list --fresh` reads GitHub in full at
   once. `riff wave make`, `rename`, `end` and `move` delete the kept
   read of their repository (#1609).
+- **01M6QBJA0J7PQ0J29HWM1KDVHJ** A lead that needs a decision of a
+  person writes the questions in the body of the issue, in a section
+  "Questions for PERSON", as Q1, Q2 and so on, and adds the label
+  `question`. The person answers in the body or in a comment. The lead
+  records each answer in the body, and as a requirement when it is a
+  decision, and removes the label. One open question keeps the label on.
+  The instructions of the lead name the rule (`text::LEAD_RULES`,
+  #1605).
+- **01M6QBJHM5BQR59QX2K2BMZVYH** The wave starts no build of an issue
+  with the label `question`, as for a hold: the work waits for the
+  answer of the person. It starts no rebase and no fix of checks for it
+  either, and it tells no missing `Done when:` line for it. A verify of
+  an open pull request of such an issue goes on. A claim of a session
+  wins: the item shows as claimed.
+- **01M6QBJHQEJ3C77FA1DEV2GKXG** `riff wave list` and the board of `riff
+  top` show the group `question` with the open items that have the label
+  `question`, next to `held` and `tracker`. A claim, a verify and a
+  stuck pull request win over it, a tracker wins over it, and it wins
+  over a hold. A pause hides no item of the group.
+- **01M6QBJHV7PVV5893Q6RCPENJQ** When the label `question` goes on an
+  issue, the look of the daemon tells the person of the lead one time in
+  riff chat, with the title and the link of the issue. It posts one line
+  for each issue and each time that the label goes on. The post has a
+  key from the issue and the time of the label event, so the look of
+  each host and a new start of the daemon give the person the same line
+  one time. When the label goes off, the look forgets the issue.
+- **01M6QBJHZBDQ8BB1JPT003RXW7** `riff init` makes the label `question`
+  with the first wave, when the repository has none. It never changes a
+  label that is there.
+- **01M6QBJJ3R5CNTHT4FAPZ5DDSW** `riff questions` lists the open issues
+  with the label `question` in each repository of the riff: the
+  repository of each session on riff-server, and the repository of the
+  folder. Each line has the repository, the number, the title and the
+  link. A repository that `gh` cannot read gets one line on stderr, and
+  the command exits with 1 after it lists the others. `riff questions
+  --web` opens one GitHub search for `is:issue is:open label:question`
+  over the same repositories in the browser, and lists nothing.
 
 ## Issue hygiene on GitHub
 

@@ -2089,6 +2089,10 @@ each host:
 - a fault when riff cannot read the state of the forge (see
   [See the watches of the daemon](#see-the-watches-of-the-daemon)).
 
+The line in `riff chat` that tells you that the label `question` went on
+an issue comes one time too, and it goes to you, not to your lead (see
+[Ask the person a question](#ask-the-person-a-question)).
+
 A notice about one host comes from each host, because each host has its
 own fact:
 
@@ -2630,9 +2634,11 @@ riff wave list
 The current wave has the mark `current`, and `runs on HOST` for each
 host whose daemon runs its loop. Under each wave come its open items
 in the groups of the board of `riff top`: `free`, `held`, `claimed`,
-`verify`, `stuck` and `tracker`. A held item has the reason of the lead,
-and the wave does not start it. The wave never starts a tracker (see
-[Track a group of items](waves.md#track-a-group-of-items)). A stuck item
+`verify`, `stuck`, `tracker` and `question`. A held item has the reason
+of the lead, and the wave does not start it. The wave never starts a
+tracker (see [Track a group of items](waves.md#track-a-group-of-items)).
+An item in `question` waits for the answer of a person (see
+[Ask the person a question](#ask-the-person-a-question)). A stuck item
 has a pull request that cannot merge by itself (see
 [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)):
 
@@ -2641,13 +2647,15 @@ Wave 33: Hosts  current  runs on thelio  4 open, 21 closed
   held: #1003 #1008 (VmLck reading at 19:40 UTC)
   claimed: #1103
   tracker: #1248
+  question: #1596
 Wave 34  1 open, 0 closed
   free: #1106
 Backlog  61 open, 4 closed
 ```
 
 When the wave says "no free work now" while items are open, look at
-the groups: the items are held, claimed, in verify, stuck or trackers.
+the groups: the items are held, claimed, in verify, stuck, trackers or
+waiting for an answer.
 
 The lead runs the same command in its container. There, riff reads
 the sessions and the holds through the riff daemon of the host.
@@ -2724,6 +2732,75 @@ A hold of `verify-issue-12`, or the label `no-verify` on the issue,
 also stops the verify request after the build: the lead gets a note
 with the reason (see
 [Keep the verify of an item from the workers](how-it-works.md#keep-the-verify-of-an-item-from-the-workers)).
+
+### Ask the person a question
+
+A lead that needs a decision of a person asks in the issue, not in a
+comment. It writes the questions in the body of the issue, in a section
+"Questions for PERSON", as Q1, Q2, and so on. Then it adds the label
+`question`:
+
+```sh
+gh issue edit 1596 --add-label question
+```
+
+From then on, riff waits for the answer:
+
+- The wave starts no build of the issue, and no rebase or fix of its
+  pull request. A verify of an open pull request of the issue goes on.
+- `riff wave list` and the board of `riff top` show the issue in the
+  group `question`, next to `held` and `tracker` (see
+  [See which wave runs, and where](#see-which-wave-runs-and-where)).
+- The look of the daemon tells the person one time in `riff chat`, with
+  the title and the link of the issue. It tells again only when the
+  label goes on again.
+
+The person answers in the body or in a comment. The lead writes each
+answer in the body, and a decision as a requirement. When no question
+is open, the lead removes the label:
+
+```sh
+gh issue edit 1596 --remove-label question
+```
+
+One open question keeps the label on. The wave takes the issue at its
+next look after the label goes. `riff init` makes the label in a new
+repository, when it is not there.
+
+```mermaid
+flowchart LR
+    L["the lead: the questions in the body,<br/>gh issue edit --add-label question"] --> G["the group question:<br/>no build"]
+    L --> C["one line in riff chat<br/>for the person"]
+    P["the person answers<br/>in the body or in a comment"] --> R["the lead records the answer,<br/>gh issue edit --remove-label question"]
+    G --> P
+    R --> F["the wave takes the issue"]
+```
+
+### See all your open questions
+
+To see each open question for you, in all the repositories of the riff,
+run this in any folder:
+
+```sh
+riff questions
+```
+
+It lists the open issues with the label `question` in the repository of
+each session of the riff, and in the repository of your folder. Each
+line has the repository, the number, the title and the link:
+
+```text
+como-technologies/riff  #1596  Which design for the board?  https://github.com/como-technologies/riff/issues/1596
+o/other  #3  Who owns it?  https://github.com/o/other/issues/3
+```
+
+When `gh` cannot read a repository, one line on stderr names it, and
+the command exits with 1 after it lists the other repositories. To see
+the same issues in the browser, in one GitHub search:
+
+```sh
+riff questions --web
+```
 
 ### Set the limit of the host
 

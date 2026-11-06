@@ -945,6 +945,14 @@ async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing
     assert!(machine.read("files").lines().any(|l| l == "riff.toml"));
     let changes = machine.forge_changes();
     assert!(changes.len() >= 8, "{changes:?}");
+    // #1605: the first wave comes with the label question, and riff never
+    // forces it: a label that is there keeps its text.
+    let question: Vec<&String> = changes
+        .iter()
+        .filter(|c| c.starts_with("label create question"))
+        .collect();
+    assert_eq!(question.len(), 1, "{changes:?}");
+    assert!(!question[0].contains("--force"), "{}", question[0]);
 
     // A second run: the checks pass, nothing changes, and nothing is asked.
     let out = machine.init(&machine.repo, &[]).await;

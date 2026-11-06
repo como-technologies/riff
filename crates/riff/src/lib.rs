@@ -105,6 +105,7 @@ pub mod tools;
 pub mod podman;
 pub mod pr;
 pub mod ps;
+pub mod questions;
 pub mod reach;
 pub mod registry;
 pub mod release;
