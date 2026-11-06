@@ -2690,9 +2690,16 @@ for 60 seconds for each repository on the host. Each run in that time
 shows the same read and calls GitHub no more. So a
 `watch riff wave list` does not use the limit of GitHub. A read that is
 older than 10 seconds has its age on the last line. After 60 seconds, a
-run asks GitHub first whether anything changed, and a read with no
-change costs no GraphQL point. To read GitHub at once, in your clone of
-the repository:
+run asks GitHub first whether anything changed. A run reads in full, and
+costs GraphQL points, in two cases:
+
+- A pull request of the repository is open. GitHub cannot tell that its
+  checks changed.
+- The last full read is 30 minutes old or more.
+
+In both cases a repository has one full read in 60 seconds at the most.
+With no pull request open and no change, a run costs no GraphQL point.
+To read GitHub at once, in your clone of the repository:
 
 ```sh
 riff wave list --fresh
