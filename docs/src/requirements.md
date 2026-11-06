@@ -5573,6 +5573,13 @@ of this part when they merge.
   clone links to no main clone, the line in riff chat says that riff has
   no step that gives the main clone and starts no session, and names
   `riff wave run` (#1606).
+- **01M6QPQZ0FNEZFQ1F4Q9C7FEEQ** In a container, riff plan hold and riff
+  plan free reach riff-server through the riff daemon on the socket of
+  the session (RIFF_SOCKET), as riff who does. They need no RIFF_SERVER
+  and no sign-in in the container. The daemon makes the call as the
+  session. riff-server still lets only a lead of the repository thread,
+  the owner and an admin hold and free, and gives a work session
+  `not_allowed` (#1619).
 
 ### The first run
 

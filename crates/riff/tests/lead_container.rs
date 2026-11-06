@@ -1,5 +1,6 @@
-//! `riff members`, `riff who`, `riff whoami`, `riff session why`, `riff run`
-//! and `riff daemon events` in the container of the lead (#1338, #1441): with
+//! `riff members`, `riff who`, `riff whoami`, `riff session why`, `riff run`,
+//! `riff plan hold`, `riff plan free` and `riff daemon events` in the
+//! container of the lead (#1338, #1441, #1619): with
 //! `RIFF_SOCKET` and no `RIFF_SERVER`, each reads or asks through the socket
 //! of the session, over a fake daemon socket.
 //! Nothing listens at the riff-server of the machine: a command that
@@ -235,6 +236,99 @@ async fn who_reads_the_sessions_and_the_owner_through_the_socket() {
     assert!(shown.contains("paused"), "{shown}");
     assert!(shown.contains("(c1)") && shown.contains("(w1)"), "{shown}");
     assert_eq!(common::call_names(&asked), ["who_facts"]);
+}
+
+/// #1619: `riff plan hold` in the container of the lead holds the item
+/// through the socket, as `riff who` reads through it. It does not call
+/// the riff-server of the machine.
+#[tokio::test(flavor = "multi_thread")]
+async fn plan_hold_holds_the_item_through_the_socket() {
+    let container = Container::new();
+    let line = "issue-12 in como-technologies/riff is on hold now: no worker can claim it. \
+                `riff plan free issue-12` frees it.";
+    let (_dir, socket, asked) = common::session_socket(move |_| Ok(Value::String(line.into())));
+    let out = container
+        .riff(
+            &socket,
+            &[
+                "plan", "hold", "issue-12", "waits", "for", "the", "word", "of", "Mike",
+            ],
+        )
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(text(&out.stdout), format!("{line}\n"));
+    assert_eq!(
+        *asked.lock().unwrap(),
+        [json!({
+            "call": "plan_hold",
+            "thread": "como-technologies/riff",
+            "item": "issue-12",
+            "reason": "waits for the word of Mike",
+        })]
+    );
+}
+
+/// #1619: `riff plan free` in the container of the lead frees the item
+/// through the socket, on the thread that `--thread` names.
+#[tokio::test(flavor = "multi_thread")]
+async fn plan_free_frees_the_item_through_the_socket() {
+    let container = Container::new();
+    let line = "issue-12 in como-technologies/other is free of its hold: a worker can claim it.";
+    let (_dir, socket, asked) = common::session_socket(move |_| Ok(Value::String(line.into())));
+    let out = container.riff(&socket, &["plan", "free", "issue-12"]).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(text(&out.stdout), format!("{line}\n"));
+
+    let out = container
+        .riff(
+            &socket,
+            &[
+                "plan",
+                "free",
+                "--thread",
+                "como-technologies/other",
+                "issue-12",
+            ],
+        )
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        *asked.lock().unwrap(),
+        [
+            json!({
+                "call": "plan_free",
+                "thread": "como-technologies/riff",
+                "item": "issue-12",
+            }),
+            json!({
+                "call": "plan_free",
+                "thread": "como-technologies/other",
+                "item": "issue-12",
+            }),
+        ]
+    );
+}
+
+/// #1619: the refusal of riff-server comes through the socket, also for
+/// a session that is no lead.
+#[tokio::test(flavor = "multi_thread")]
+async fn plan_hold_and_free_show_the_refusal_of_the_daemon() {
+    let container = Container::new();
+    let (_dir, socket, _) = common::session_socket(|_| Err("not_allowed".into()));
+    for args in [
+        &["plan", "hold", "issue-12", "why"][..],
+        &["plan", "free", "issue-12"][..],
+    ] {
+        let out = container.riff(&socket, args).await;
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert!(
+            text(&out.stderr).contains("not_allowed"),
+            "{}",
+            text(&out.stderr)
+        );
+    }
 }
 
 /// #1430, 01M5SN566ZH5ZQ52NYT24WYA4P: `riff wave run` in the container of

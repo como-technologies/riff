@@ -1104,6 +1104,11 @@ pub enum SessionAsk {
 /// assert_eq!(serde_json::to_string(&ServerCall::Ends)?, r#"{"call":"ends"}"#);
 /// let log = ServerCall::Log { repo: "o/r".parse().unwrap() };
 /// assert_eq!(serde_json::to_string(&log)?, r#"{"call":"log","repo":"o/r"}"#);
+/// let free = ServerCall::PlanFree { thread: "o/r".parse().unwrap(), item: "issue-12".into() };
+/// assert_eq!(
+///     serde_json::to_string(&free)?,
+///     r#"{"call":"plan_free","thread":"o/r","item":"issue-12"}"#
+/// );
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1233,6 +1238,30 @@ pub enum ServerCall {
     /// Each message of the thread `release` as a list of
     /// [`crate::hold::Line`], for the holds. Each session may.
     ReleaseLines,
+    /// Hold the item `item` of the repository thread `thread` with
+    /// `reason`, as `riff plan hold` does on a host (#1619,
+    /// 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ). The daemon does not check the
+    /// session: riff-server lets only a lead of the thread, the owner and
+    /// an admin hold, and refuses each other session. The answer is the
+    /// line for the person.
+    PlanHold {
+        /// The repository thread.
+        thread: riff_core::name::ThreadName,
+        /// The work item, for example `issue-12`.
+        item: String,
+        /// Why the item is held.
+        reason: String,
+    },
+    /// Free the item `item` of the repository thread `thread`, as `riff
+    /// plan free` does on a host (#1619). The rules of
+    /// [`ServerCall::PlanHold`] hold. The answer is the line for the
+    /// person.
+    PlanFree {
+        /// The repository thread.
+        thread: riff_core::name::ThreadName,
+        /// The work item, for example `issue-12`.
+        item: String,
+    },
     /// Register the watch of an async operation that a command of the release
     /// cycle started, for the repository of the session
     /// ([`crate::watches`], 01M5RGCW5NCKQYA61RM63914TX). Each session may:
@@ -1345,6 +1374,18 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         ServerCall::ReleaseLines => {
             let lines = crate::hold::read_as_person(&record.server, record.me.place()).await?;
             serde_json::to_value(lines)?
+        }
+        ServerCall::PlanHold {
+            thread,
+            item,
+            reason,
+        } => {
+            let reply = signed()?.hold(&record.me, thread, item, reason).await?;
+            Value::String(text::held(&reply, thread, item))
+        }
+        ServerCall::PlanFree { thread, item } => {
+            let reply = signed()?.free(&record.me, thread, item).await?;
+            Value::String(text::freed(reply, thread, item))
         }
         ServerCall::CloudLog { .. } => bail!("the daemon reads the log itself"),
         ServerCall::Run { .. } => bail!("the daemon runs the item itself"),
@@ -9710,6 +9751,89 @@ mod tests {
         // With no riff-server, the error names the server of the session.
         let dead = Reach::Direct("http://127.0.0.1:9".into());
         assert!(dead.build().await.is_err());
+    }
+
+    /// #1619: `riff plan hold` and `riff plan free` in the container of the
+    /// lead reach riff-server through the socket of the session. The lead
+    /// holds and frees; riff-server refuses a work session.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_lead_holds_and_frees_an_item_through_its_socket() {
+        use crate::reach::Reach;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, riff_server::router()).await.unwrap();
+        });
+        let server = format!("http://{addr}");
+        let api = riff_client::api::Api::new(&server);
+        let place = crate::identity::place_from_text(&format!("a/{REPO}")).unwrap();
+        let user = crate::identity::person(&place, &server).unwrap();
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+
+        let mut sockets = Vec::new();
+        for (name, item, terminal) in [
+            ("riff-lead-o-r", "lead", true),
+            ("riff-issue-1-aaaaaaaa", "issue-1", false),
+        ] {
+            let mut start = here.start(name, item);
+            start.server = server.clone();
+            start.me = SessionUri::new(
+                riff_core::name::Who::new(user.who().user(), Some(&start.session)).unwrap(),
+                place.clone(),
+            );
+            start.terminal = terminal;
+            api.register_as(&start.me, !terminal).await.unwrap();
+            if terminal {
+                api.lead(&user, &start.session).await.unwrap();
+            }
+            let (client, name) = here.started(start).await;
+            drop(client);
+            sockets.push(Reach::Daemon(session_dir(&here.dir, &name).join(SOCKET)));
+        }
+        let worker = sockets.pop().unwrap();
+        let lead = sockets.pop().unwrap();
+        let thread: riff_core::name::ThreadName = REPO.parse().unwrap();
+
+        // A work session is refused by riff-server, and holds nothing.
+        let refused = worker
+            .plan_hold(&thread, "issue-12", "no right")
+            .await
+            .unwrap_err();
+        assert!(
+            refused.to_string().contains("a worker cannot hold an item"),
+            "{refused:#}"
+        );
+        assert!(worker.holds(&thread).await.unwrap().is_empty());
+
+        // The lead holds, replaces the reason, and frees.
+        let line = lead
+            .plan_hold(&thread, "issue-12", "waits for the word of Mike")
+            .await
+            .unwrap();
+        assert!(line.contains("issue-12"), "{line}");
+        assert!(line.contains("is on hold now"), "{line}");
+        let holds = worker.holds(&thread).await.unwrap();
+        assert_eq!(holds["issue-12"].reason, "waits for the word of Mike");
+        let line = lead
+            .plan_hold(&thread, "issue-12", "waits for the word of Mike")
+            .await
+            .unwrap();
+        assert!(
+            line.contains("was on hold with this reason already"),
+            "{line}"
+        );
+
+        let refused = worker.plan_free(&thread, "issue-12").await.unwrap_err();
+        assert!(
+            refused.to_string().contains("a worker cannot free an item"),
+            "{refused:#}"
+        );
+        assert_eq!(worker.holds(&thread).await.unwrap().len(), 1);
+        let line = lead.plan_free(&thread, "issue-12").await.unwrap();
+        assert!(line.contains("is free of its hold"), "{line}");
+        assert!(lead.holds(&thread).await.unwrap().is_empty());
+        let line = lead.plan_free(&thread, "issue-12").await.unwrap();
+        assert!(line.contains("was not on hold"), "{line}");
     }
 
     /// #1338: the lead reads the members and the records of the log

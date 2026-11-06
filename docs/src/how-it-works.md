@@ -3152,8 +3152,8 @@ sequenceDiagram
 
 ### Hold an item by hand
 
-Run it in a terminal in the repository. The reason has 1 to 200
-characters:
+Run it in a terminal in the repository, or in the container of the
+lead. The reason has 1 to 200 characters:
 
 ```sh
 riff plan hold issue-12 waits for the word of Mike
@@ -3165,6 +3165,10 @@ issue-12 in como-technologies/riff is on hold now: no worker can claim it. `riff
 
 A hold of a held item replaces its reason. `-t` (`--thread`) names
 another repository thread.
+
+In the container of the lead, `riff plan hold` and `riff plan free`
+need no `RIFF_SERVER` and no sign-in. The riff daemon of the host
+makes the call for the session, as it does for `riff who`.
 
 ### Free a held item
 
