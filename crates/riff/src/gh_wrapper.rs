@@ -47,7 +47,7 @@
 //! in a session of an image that has no `gh` at [`BIND`]. It asks once
 //! for each image, with `/usr/local/bin/gh --version` in a container with
 //! no network ([`crate::runtime::Runtime::output`]), and keeps the answer
-//! until the next pull of the image. In a session of an image with its own
+//! until the daemon stops. In a session of an image with its own
 //! `gh` there, `gh` is that file, and riff counts none of its calls.
 //! `riff daemon status` lists those images
 //! ([`Shown::own_gh`](crate::ghcalls::Shown::own_gh)).
