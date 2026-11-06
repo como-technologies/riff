@@ -786,6 +786,11 @@
   points. So one pull request that waits uses at most 60 points an hour
   at the default pace. A shorter `--every` costs more: `--every 10` uses
   72 points in the first hour.
+- **01M6QPKG4MSK9AF70V6SZHSBKZ** The start text of the fix of failed
+  checks tells a failed pull of the session image from a failed test.
+  When the only failure of a check is the pull of the image, the session
+  changes no code, pushes nothing, runs the failed jobs again one time
+  with `gh run rerun RUN_ID --failed`, and says so in its reply.
 
 ## Tokens on GitHub
 
@@ -4361,6 +4366,11 @@ of this part when they merge.
   the `riff-rust` that `deploy/session/Dockerfile` pins, and adds their
   digests to the notes of the GitHub release. It waits up to 60 minutes
   for the release.
+- **01M6QPKG1X8VZTDF8RTTKFW67C** `deploy/session-test.sh` pulls the
+  session image first, with `ENGINE pull IMAGE`, up to 3 times, 10
+  seconds apart, before the first `run`. After 3 failures it says that
+  the pull of the image failed, names the image, and exits with 1. So
+  one failed pull fails no test part of the Gate.
 
 ### Sessions
 

@@ -313,6 +313,9 @@
 //!   The wave starts a build session for the item with the start text
 //!   [`text::wave_checks_start`]: it names the checks, tells to read the
 //!   failed run, and to fix the code and push to the same pull request.
+//!   For a failed pull of the session image, with no test run, it tells
+//!   to change no code and to run the failed jobs again one time
+//!   (01M6QPKG4MSK9AF70V6SZHSBKZ).
 //!   For a known flake it allows one run of the job again. The rollup
 //!   does not say which check a rule requires, so each failed check
 //!   counts, but only its newest run (#1540,
