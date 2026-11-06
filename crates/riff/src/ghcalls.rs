@@ -352,6 +352,22 @@ impl fmt::Display for Limited {
 
 impl std::error::Error for Limited {}
 
+/// The error of a command that stops on a limit of GitHub: a call failed
+/// because the limit of its resource is out, and the command makes no new
+/// try ([`Gh::stopping_on_limit`](crate::pr::Gh::stopping_on_limit),
+/// 01M6QB459TJVK6CS9FHWH6EVK2). The [`Wait`] is the reset of the counter
+/// that failed. The release commands use it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LimitOut(pub Wait);
+
+impl fmt::Display for LimitOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&text::gh_limit_out(&self.0, crate::daemon::now_ms()))
+    }
+}
+
+impl std::error::Error for LimitOut {}
+
 /// True when `stderr` of a failed `gh` says that a limit of GitHub is out:
 /// the limit of the primary counter, a secondary limit, or HTTP 429.
 ///
@@ -369,10 +385,12 @@ pub fn is_limit(stderr: &str) -> bool {
 }
 
 /// True when `error` is a call that failed on a limit of GitHub: riff made
-/// no call ([`Limited`]), or `gh` said that the limit is out
-/// ([`is_limit`]).
+/// no call ([`Limited`]), a command stopped on the limit ([`LimitOut`]),
+/// or `gh` said that the limit is out ([`is_limit`]).
 pub fn is_limit_error(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<Limited>().is_some() || is_limit(&format!("{error:#}"))
+    error.downcast_ref::<Limited>().is_some()
+        || error.downcast_ref::<LimitOut>().is_some()
+        || is_limit(&format!("{error:#}"))
 }
 
 /// What one reading shows of a counter of GitHub.

@@ -67,6 +67,11 @@
 //! use it. Another failure gets no new try. After the last try, the error
 //! of the call ends with the number of tries.
 //!
+//! A limit of GitHub is a failure that a new try cannot fix. A [`Gh`] made
+//! with [`Gh::stopping_on_limit`] fails such a call with
+//! [`ghcalls::LimitOut`]: the reset of the counter that failed, and what
+//! to run then (01M6QB459TJVK6CS9FHWH6EVK2). The release commands use it.
+//!
 //! The full check of a commit is its one full test run
 //! (01M49HAZ5BZYGAR9PGC089RM3F). In the repository of riff it is the job
 //! `Gate`. In another repository it is each check that the ruleset of the
@@ -249,6 +254,9 @@ pub struct Gh {
     retries: u32,
     /// The wait before the first new try: it doubles for each next one.
     retry_wait: Duration,
+    /// True when a call that fails on a limit of GitHub fails with
+    /// [`ghcalls::LimitOut`] ([`Gh::stopping_on_limit`]).
+    stops_on_limit: bool,
 }
 
 impl Default for Gh {
@@ -265,6 +273,7 @@ impl Default for Gh {
             accepts: Duration::ZERO,
             retries: 0,
             retry_wait: RETRY_WAIT,
+            stops_on_limit: false,
         }
     }
 }
@@ -494,6 +503,45 @@ impl Gh {
         Self {
             retries: RETRIES,
             retry_wait: wait,
+            ..self
+        }
+    }
+
+    /// The same `gh`, whose call fails with [`ghcalls::LimitOut`] when a
+    /// limit of GitHub is out (01M6QB459TJVK6CS9FHWH6EVK2). It makes no
+    /// new try. The reset comes from the call that failed, as the daemon
+    /// reads it (#1581), so the error says when the counter starts again.
+    /// The release commands use it.
+    ///
+    /// ```
+    /// use riff::ghcalls::{LimitOut, Resource};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let log = dir.path().join("log");
+    /// let script = format!(
+    ///     "#!/bin/sh\necho \"$*\" >> {}\n\
+    ///      case \"$1 $2\" in\n\
+    ///      \"api rate_limit\") echo '{{\"resources\":{{\"graphql\":{{\"remaining\":0,\"reset\":4102444800}}}}}}' ;;\n\
+    ///      *) echo 'GraphQL: API rate limit already exceeded for user ID 1.' >&2; exit 1 ;;\n\
+    ///      esac\n",
+    ///     log.display(),
+    /// );
+    /// let gh = isolated::write_program(dir.path().join("gh"), &script);
+    /// // Without it, the error is the raw error of `gh`.
+    /// let raw = riff::pr::Gh::at(&gh).run(&["pr", "list"], None).unwrap_err();
+    /// assert!(raw.downcast_ref::<LimitOut>().is_none(), "{raw:#}");
+    /// // With it, the error has the reset of the counter that is out.
+    /// let error = riff::pr::Gh::at(&gh).stopping_on_limit().run(&["pr", "list"], None).unwrap_err();
+    /// let out = error.downcast_ref::<LimitOut>().expect("a limit");
+    /// assert_eq!(out.0.resource, Resource::Graphql);
+    /// assert_eq!(out.0.reset_ms, 4_102_444_800_000);
+    /// assert!(riff::ghcalls::is_limit_error(&error));
+    /// assert!(error.to_string().ends_with("Run the same command again then."), "{error:#}");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn stopping_on_limit(self) -> Self {
+        Self {
+            stops_on_limit: true,
             ..self
         }
     }
@@ -955,8 +1003,24 @@ impl Gh {
 
     /// Runs `gh ARGS`, and runs it again after a 502, 503 or 504 of
     /// GitHub when this `gh` retries ([`Gh::retrying`]). The stderr of a
-    /// call that still fails ends with the number of tries.
+    /// call that still fails ends with the number of tries. A call that
+    /// fails on a limit of GitHub fails with [`ghcalls::LimitOut`] when
+    /// this `gh` stops on a limit ([`Gh::stopping_on_limit`]).
     fn output(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
+        let result = self.tried(args, input)?;
+        if self.stops_on_limit
+            && let (false, stdout, stderr) = &result
+            && ghcalls::is_limit(stderr)
+            && let Some(resource) = ghcalls::Resource::of(args)
+        {
+            let wait = self.wait_for(resource, stdout, stderr, crate::daemon::now_ms());
+            return Err(ghcalls::LimitOut(wait).into());
+        }
+        Ok(result)
+    }
+
+    /// [`Gh::output`] with the new tries after a 502, 503 or 504.
+    fn tried(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
         let mut wait = self.retry_wait;
         let mut tries = 1;
         loop {

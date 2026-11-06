@@ -1070,6 +1070,169 @@ async fn a_failure_of_gh_that_is_no_gateway_fault_is_not_tried_again() {
     );
 }
 
+/// The message of GitHub when the GraphQL limit of a token is out.
+const GRAPHQL_OUT: &str = "GraphQL: API rate limit already exceeded for user ID 692218.";
+
+/// The cases of a fake `gh` for a limit that is out (01M6QB459TJVK6CS9FHWH6EVK2):
+/// the call `pattern` fails with `message`, and `gh api rate_limit` shows
+/// the counter `counter` (`graphql` or `core`) with `remaining` points
+/// left, starting again at `reset` (seconds since the epoch).
+fn limit_cases(pattern: &str, message: &str, counter: &str, remaining: u32, reset: i64) -> String {
+    format!(
+        "'api rate_limit') printf '%s\\n' '{{\"resources\":{{\"{counter}\":{{\"remaining\":{remaining},\"reset\":{reset}}}}}}}' ;;\n\
+         {pattern}) echo '{message}' >&2; exit 1 ;;"
+    )
+}
+
+/// A reset 50 minutes from now, in seconds since the epoch.
+fn reset_in_50_minutes() -> i64 {
+    chrono::Utc::now().timestamp() + 3000
+}
+
+/// Checks the error of a release command that met the limit of `resource`
+/// that starts again at `reset`: the exit code 1, the time of the reset
+/// and the next step, and no raw error of `gh`.
+fn assert_limit_out(out: &Output, resource: &str, reset: i64) {
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let error = text(&out.stderr);
+    let clock = riff::text::clock_utc(reset * 1000);
+    assert!(
+        error.contains(&format!(
+            "the GitHub {resource} limit is out. It starts again at {clock} (in "
+        )),
+        "{error}"
+    );
+    assert!(
+        error.contains("(in 49m)") || error.contains("(in 50m)"),
+        "{error}"
+    );
+    assert!(
+        error.contains("Run the same command again then."),
+        "{error}"
+    );
+    assert!(!error.contains("riff tried"), "{error}");
+    assert!(!error.contains("rate limit already exceeded"), "{error}");
+}
+
+/// 01M6QB459TJVK6CS9FHWH6EVK2: the read of the release pull request fails
+/// on the GraphQL limit (#1604). `riff release publish` makes no new try.
+/// It says when the counter starts again and what to run then, and exits
+/// with 1. It tags nothing and makes no release.
+#[tokio::test]
+async fn publish_stops_on_the_graphql_limit_and_says_when_it_starts_again() {
+    let (machine, merge) = merged_release().await;
+    let lead = [("RIFF_SESSION", "s1"), (riff::pr::RETRY_VAR, "1")];
+    machine.name_lead(&lead).await;
+    let reset = reset_in_50_minutes();
+    machine.fake_gh(&format!(
+        "{}\n{}",
+        limit_cases(
+            "'pr list --state merged --label release'*",
+            GRAPHQL_OUT,
+            "graphql",
+            0,
+            reset
+        ),
+        machine.release_cases(&merge, true)
+    ));
+    let out = machine
+        .run(&lead, &["release", "publish", "v3.3.0"], "")
+        .await;
+    assert_limit_out(&out, "GraphQL", reset);
+    let error = text(&out.stderr);
+    assert!(
+        !error.contains("riff cannot read the reset"),
+        "the counter shows the reset: {error}"
+    );
+    let log = machine.log();
+    assert_eq!(
+        log.matches("gh pr list --state merged --label release")
+            .count(),
+        1,
+        "{log}"
+    );
+    assert!(log.contains("gh api rate_limit"), "{log}");
+    assert!(!log.contains("release create"), "{log}");
+    assert_eq!(git(&machine.origin(), &["tag"]), "v3.2.0");
+}
+
+/// 01M6QB459TJVK6CS9FHWH6EVK2: no counter shows that it is out. The reset
+/// is a guess, and the error says so.
+#[tokio::test]
+async fn publish_says_that_the_reset_of_the_limit_is_a_guess() {
+    let (machine, merge) = merged_release().await;
+    let lead = [("RIFF_SESSION", "s1"), (riff::pr::RETRY_VAR, "1")];
+    machine.name_lead(&lead).await;
+    let reset = reset_in_50_minutes();
+    // The counter of `rate_limit` has points left: another counter is out.
+    machine.fake_gh(&format!(
+        "{}\n{}",
+        limit_cases(
+            "'pr list --state merged --label release'*",
+            GRAPHQL_OUT,
+            "graphql",
+            3204,
+            reset
+        ),
+        machine.release_cases(&merge, true)
+    ));
+    let out = machine
+        .run(&lead, &["release", "publish", "v3.3.0"], "")
+        .await;
+    assert_limit_out(&out, "GraphQL", reset);
+    assert!(
+        text(&out.stderr).contains(
+            "riff cannot read the reset: this time is the end of the hour of the counter that it \
+             saw."
+        ),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
+/// 01M6QB459TJVK6CS9FHWH6EVK2: each release command that reads GitHub
+/// stops on a limit in the same way: `status` and `cut` on GraphQL,
+/// `check` on REST, and the release gate of `riff wave end`.
+#[tokio::test]
+async fn the_other_release_commands_stop_on_a_limit_of_github_too() {
+    let lead = [("RIFF_SESSION", "s1"), (riff::pr::RETRY_VAR, "1")];
+    let tag = this_tag();
+    let graphql = |pattern: &str, reset| limit_cases(pattern, GRAPHQL_OUT, "graphql", 0, reset);
+    let rest = |pattern: &str, reset| {
+        limit_cases(
+            pattern,
+            "gh: API rate limit exceeded for user ID 692218. (HTTP 403)",
+            "core",
+            0,
+            reset,
+        )
+    };
+    let reset = reset_in_50_minutes();
+    let machine = Machine::new().await;
+    machine.name_lead(&lead).await;
+
+    machine.fake_gh(&graphql("'release list'*", reset));
+    let out = machine.run(&lead, &["release", "status"], "").await;
+    assert_limit_out(&out, "GraphQL", reset);
+
+    let out = machine.run(&lead, &["release", "cut", "3.3.0"], "").await;
+    assert_limit_out(&out, "GraphQL", reset);
+    assert!(!machine.log().contains("pr create"), "{}", machine.log());
+
+    machine.fake_gh(&graphql("'pr list --state merged --base main'*", reset));
+    let out = machine.run(&[], &["wave", "end", "34"], "").await;
+    assert_limit_out(&out, "GraphQL", reset);
+    assert!(!machine.log().contains("-X PATCH"), "{}", machine.log());
+
+    machine.fake_gh(&rest("'run list --workflow CI --limit'*", reset));
+    machine.shared_cloud();
+    let out = machine.run(&lead, &["release", "check", &tag], "").await;
+    assert_limit_out(&out, "REST", reset);
+    let log = machine.log();
+    assert!(!log.contains("issue comment"), "{log}");
+    assert!(!log.contains("issue close"), "{log}");
+}
+
 /// After a failed job `Deploy`, check files an issue with the log and
 /// resumes the riff: the old revision still serves.
 #[tokio::test]
@@ -1375,6 +1538,13 @@ fn the_book_shows_the_release_cycle_with_its_gates_and_a_how_to_for_each_command
         (
             "#### When GitHub fails a call of a release command",
             "riff release check v3.3.0",
+            &cycle,
+        ),
+        // 01M6QB459TJVK6CS9FHWH6EVK2: what the lead does when a release
+        // command stops on a limit of GitHub.
+        (
+            "#### When the GitHub limit is out for a release command",
+            "riff release publish v3.3.0",
             &cycle,
         ),
         (

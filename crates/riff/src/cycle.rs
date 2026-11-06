@@ -80,9 +80,13 @@
 //!
 //! A command of the cycle calls `gh` through [`Gh::retrying`]: a 502, 503
 //! or 504 of GitHub runs the call again, up to 3 times
-//! (01M6H12ET0FQ553QHGVF5XJMQ9). [`check`] gives the result of the checks
-//! to its caller before it writes the comment, so a fault of the comment
-//! hides nothing (01M6H12QRZFBDTT5D5VQ4FB4C1).
+//! (01M6H12ET0FQ553QHGVF5XJMQ9). A limit of GitHub gets no new try: the
+//! call fails with [`crate::ghcalls::LimitOut`], which says when the
+//! counter starts again and to run the command again then
+//! ([`Gh::stopping_on_limit`], 01M6QB459TJVK6CS9FHWH6EVK2). [`check`]
+//! gives the result of the checks to its caller before it writes the
+//! comment, so a fault of the comment hides nothing
+//! (01M6H12QRZFBDTT5D5VQ4FB4C1).
 //!
 //! ```
 //! use riff::cycle::{level, version};

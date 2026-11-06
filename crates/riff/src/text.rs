@@ -6533,6 +6533,43 @@ pub fn gh_limited(wait: &crate::ghcalls::Wait) -> String {
     )
 }
 
+/// The error of a command that stops on a limit of GitHub: when the
+/// counter starts again, and what to run then
+/// ([`crate::ghcalls::LimitOut`], 01M6QB459TJVK6CS9FHWH6EVK2). `now_ms` is
+/// the time now.
+///
+/// ```
+/// use riff::ghcalls::{Resource, Wait};
+///
+/// let wait = Wait::until(Resource::Graphql, 1_793_718_035_000);
+/// assert_eq!(
+///     riff::text::gh_limit_out(&wait, 1_793_717_135_000),
+///     "the GitHub GraphQL limit is out. It starts again at 15:00:35 UTC (in 15m). \
+///      Run the same command again then."
+/// );
+///
+/// // No counter showed the reset: the time is a guess.
+/// let mut guess = wait;
+/// guess.guessed = true;
+/// assert_eq!(
+///     riff::text::gh_limit_out(&guess, 1_793_717_135_000),
+///     "the GitHub GraphQL limit is out. It starts again at 15:00:35 UTC (in 15m). riff cannot \
+///      read the reset: this time is the end of the hour of the counter that it saw. \
+///      Run the same command again then."
+/// );
+/// ```
+pub fn gh_limit_out(wait: &crate::ghcalls::Wait, now_ms: i64) -> String {
+    let left = u64::try_from((wait.until_ms() - now_ms) / 1000).unwrap_or(0);
+    format!(
+        "the GitHub {} limit is out. It starts again at {} (in {}).{} Run the same command again \
+         then.",
+        wait.resource.name(),
+        clock_utc(wait.reset_ms),
+        ago(left),
+        if wait.guessed { LIMIT_GUESS } else { "" }
+    )
+}
+
 /// The most kinds of call that `riff daemon status` lists for GitHub.
 pub const GITHUB_ROWS: usize = 8;
 

@@ -6447,6 +6447,13 @@ of this part when they merge.
   lag behind it. When that read shows the release before the merge, or
   no release, the next step is the one of a merged release that has no
   test.
+- **01M6QB459TJVK6CS9FHWH6EVK2** A release command (`riff release …`,
+  and the release gate of `riff wave end`) that meets a limit of GitHub
+  (GraphQL or REST) makes no new try. It finds the reset of the counter
+  that failed, as the daemon does, and stops with exit code 1. The error
+  says that the limit is out, the time when it starts again in UTC and
+  in minutes, and "Run the same command again then." When riff cannot
+  read the reset, the time is a guess and the error says so.
 
 ### The real-session test
 
