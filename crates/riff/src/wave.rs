@@ -105,6 +105,7 @@
 //! | "Wave N is complete" ([`crate::watches::wave_complete_key`]) | `wave-complete-N` | one time |
 //! | The GitHub limit is out ([`text::wave_limit_waits`]) | [`ghcalls::Wait::key`] | one time for each outage |
 //! | The host waits for a fact, the pull of the image failed, a job failed, an item is spent | none | from each host |
+//! | The label `question` goes on an issue ([`text::wave_question`], to the person in riff chat) | [`look::question_key`] | one time for each time that the label goes on |
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -116,6 +117,29 @@
 //!     S->>L: the message
 //!     B->>S: post, key no-done-when-12
 //!     Note over S: it keeps this key: it drops the post
+//! ```
+//!
+//! # The question label
+//!
+//! A lead that needs the answer of a person writes the questions in the body
+//! of the issue, and adds the label `question`
+//! ([`riff_client::waves::QUESTION`], 01M6QBJA0J7PQ0J29HWM1KDVHJ). The wave
+//! then starts no build of the issue ([`rollout::Issue::question`],
+//! 01M6QBJHM5BQR59QX2K2BMZVYH), also no rebase and no fix of checks for it:
+//! the work waits for the answer. A verify of its open pull request goes on.
+//! The look of the daemon tells the person of the lead one time in riff chat
+//! when the label goes on ([`look::AskWatch`], [`World::ask_person`],
+//! 01M6QBJHV7PVV5893Q6RCPENJQ). When the person has answered, the lead
+//! removes the label, and the next look takes the issue as free work.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     L["the lead: questions in the body,<br/>label question"] --> F["the forge"]
+//!     F --> W["the look of the wave:<br/>no build of the issue"]
+//!     F --> D["the look of the daemon:<br/>one line in riff chat, with the link"]
+//!     D --> P["the person answers<br/>in the body or in a comment"]
+//!     P --> R["the lead records the answer<br/>and removes the label"]
+//!     R --> W2["the wave takes the issue"]
 //! ```
 //!
 //! # The pick
@@ -135,6 +159,10 @@
 //! - a held item (01M4ZV3B6M7PZRJ39XTXBZP3ZH);
 //! - a tracker issue, its build or its verify: it has no code of its
 //!   own ([`rollout::Issue::tracker`], 01M5ND16V2SVN8A9K7W90VC6X9);
+//! - a build of an issue with the label `question`, as for a hold: the work
+//!   waits for the answer of a person ([`rollout::Issue::question`], #1605).
+//!   The verify of its open pull request goes on, and the lead of the
+//!   person hears of the label one time (see "The question label");
 //! - a build of an issue whose body has no line that starts with
 //!   `Done when:` ([`rollout::Issue::has_done_when`],
 //!   01M5R0HEP1MXWYY643F1N1DWEM): a session stops at once without it. The
@@ -1188,6 +1216,18 @@ pub trait World: Send + Sync {
         body: &'a str,
         kind: Kind,
         key: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<()>>;
+
+    /// Tells the person of the lead of `wave` `body` in riff chat, as a line
+    /// of the kind `riff` to the terminals of the person: no session wakes
+    /// (#1605). The post has `key`: riff-server drops it when a kept message
+    /// of the person has the key, so the person hears it one time from the
+    /// look of each host. The error is a post that did not go out.
+    fn ask_person<'a>(
+        &'a self,
+        wave: &'a Wave,
+        body: &'a str,
+        key: &'a str,
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Writes `body` in riff chat as the person of the lead of `record`,
@@ -2605,11 +2645,20 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
             })
         })
         .collect();
+    // An issue that waits for an answer gets no rebase and no fix of checks
+    // (#1605): its pull request waits as it is.
+    let asking: HashSet<u64> = open
+        .issues
+        .iter()
+        .filter(|i| i.question())
+        .map(|i| i.number)
+        .collect();
     let at = free.iter().take_while(|item| fix(item)).count();
     let new: Vec<String> = found
         .conflicts
         .keys()
         .chain(found.failed.keys())
+        .filter(|n| !asking.contains(n))
         .map(|n| format!("issue-{n}"))
         .filter(|item| !free.contains(item))
         .collect();
@@ -3118,6 +3167,24 @@ impl World for Live {
         Box::pin(post_as_person(wave, item, body, kind, key))
     }
 
+    fn ask_person<'a>(
+        &'a self,
+        wave: &'a Wave,
+        body: &'a str,
+        key: &'a str,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let person = identity::person(&wave.place(None)?, &wave.server)?;
+            let api = Api::new(&wave.server).signed_in(None)?;
+            let to = riff_core::selector::Selector {
+                user: Some(person.who().user().to_owned()),
+                person: Some(true),
+                ..riff_core::selector::Selector::default()
+            };
+            crate::chat::post_by_riff_keyed(&api, &person, &[to], body, Some(key)).await
+        })
+    }
+
     fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let posted = async {
@@ -3290,6 +3357,8 @@ mod tests {
         post_keys: Vec<Option<String>>,
         /// The number of the next posts of the look that fail.
         post_fails: usize,
+        /// Each line to the person in riff chat: the body, and the key.
+        asked: Vec<(String, String)>,
         /// The full check of a pull request is what the fake `gh` tells
         /// ([`FAKE_GH`]), as for the real look. Else each is done.
         checked: bool,
@@ -3624,6 +3693,23 @@ mod tests {
             })
         }
 
+        fn ask_person<'a>(
+            &'a self,
+            _: &'a Wave,
+            body: &'a str,
+            key: &'a str,
+        ) -> BoxFuture<'a, Result<()>> {
+            Box::pin(async move {
+                let mut forge = lock(&self.forge);
+                if forge.post_fails > 0 {
+                    forge.post_fails -= 1;
+                    bail!("riff-server does not answer");
+                }
+                forge.asked.push((body.to_owned(), key.to_owned()));
+                Ok(())
+            })
+        }
+
         fn gh(&self, _: &str) -> Arc<pr::Gh> {
             let limit_gh = lock(&self.forge).limit_gh.clone();
             limit_gh.unwrap_or_else(|| self.gh.clone())
@@ -3953,6 +4039,51 @@ mod tests {
         let forge = here.forge();
         let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
         assert_eq!(started, ["issue-4"], "no build and no verify of a tracker");
+    }
+
+    /// #1605, 01M6QBJHM5BQR59QX2K2BMZVYH: an issue with the label
+    /// `question` gets no build, and no rebase of its pull request, as a
+    /// held item. The verify of an open pull request goes on. The lead
+    /// hears nothing about a missing line of such an issue. After the
+    /// label goes, the issue is free work at the next look.
+    #[tokio::test]
+    async fn an_item_that_waits_for_an_answer_never_starts() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2, 3, 4, 5], 5, free).await;
+        {
+            let mut forge = here.forge();
+            // Waits, no pull request.
+            forge
+                .labels
+                .insert(1, vec!["bug".into(), "question".into()]);
+            // Waits, and its pull request waits for a verify.
+            forge.labels.insert(2, vec!["question".into()]);
+            forge.pulls.insert(2, Pr::Asked);
+            // Waits, and its pull request has a conflict: no rebase.
+            forge.labels.insert(4, vec!["question".into()]);
+            forge.pulls.insert(4, Pr::Passed);
+            forge.conflicting.insert(4);
+            // Waits, and its body has no line.
+            forge.labels.insert(5, vec!["question".into()]);
+            forge.bare.insert(5);
+        }
+        here.run();
+        here.until(5, |h| {
+            h.running("issue-3").is_some() && h.running("verify-issue-2").is_some()
+        })
+        .await;
+        here.idle(5).await;
+        {
+            let forge = here.forge();
+            let mut started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
+            started.sort_unstable();
+            assert_eq!(started, ["issue-3", "verify-issue-2"]);
+            assert!(forge.told.is_empty(), "no message: {:?}", forge.told);
+        }
+
+        // The person answered: the lead removes the label.
+        here.forge().labels.remove(&1);
+        here.until(5, |h| h.running("issue-1").is_some()).await;
     }
 
     /// 01M5R0HEP1MXWYY643F1N1DWEM: the wave starts no build of an issue
@@ -5315,6 +5446,7 @@ case "$1 $2" in
       *check_name=checks%20%2F%20docs) show docs ;;
       *check_name=checks%20%2F%20*) echo '{"check_runs":[{"status":"completed","conclusion":"success"}]}' ;;
       */actions/runs/*/jobs*) show jobs ;;
+      */issues/*/events*) if [ -e "$dir/events" ]; then cat "$dir/events"; else exit 1; fi ;;
       */milestones*) echo '[{"title":"Wave 1"}]' ;;
       *) exit 1 ;;
     esac ;;
@@ -6726,6 +6858,141 @@ esac
     fn sum(tick: &BTreeMap<String, (u32, u32)>) -> (u32, u32) {
         tick.values()
             .fold((0, 0), |(c, p), (calls, points)| (c + calls, p + points))
+    }
+
+    /// The fake world of the look at the issue 12 of `o/r`, in a new
+    /// folder: the file `issues` has its labels ([`Asking::labels`]), and the
+    /// file `events` has the time of each event that added the label
+    /// ([`Asking::events`], #1605).
+    struct Asking {
+        dir: tempfile::TempDir,
+        world: Fakes,
+        wave: Wave,
+        watch: look::Watch,
+    }
+
+    impl Asking {
+        fn new() -> Asking {
+            let dir = tempfile::tempdir().unwrap();
+            let gh = pr::Gh::at(isolated::write_program(dir.path().join("gh"), FAKE_GH));
+            let world = Fakes {
+                root: dir.path().to_owned(),
+                forge: Mutex::default(),
+                gh: Arc::new(gh),
+            };
+            let wave = Wave {
+                repo: "o/r".into(),
+                main: dir.path().join("main"),
+                server: "http://127.0.0.1:1".into(),
+                host: "thelio".into(),
+            };
+            let asking = Asking {
+                dir,
+                world,
+                wave,
+                watch: look::Watch::default(),
+            };
+            asking.labels(&[]);
+            asking
+        }
+
+        /// The issue 12 has these `labels` from now.
+        fn labels(&self, labels: &[&str]) {
+            let labels: Vec<String> = labels
+                .iter()
+                .map(|l| format!(r#"{{"name":"{l}"}}"#))
+                .collect();
+            let issue = format!(
+                r#"[{{"number":12,"title":"Which design?","body":"Done when: x.","comments":[],"milestone":{{"title":"Wave 1"}},"labels":[{}]}}]"#,
+                labels.join(",")
+            );
+            std::fs::write(self.dir.path().join("issues"), issue).unwrap();
+        }
+
+        /// The events of the issue 12, as the filter of `gh` gives them.
+        fn events(&self, events: &str) {
+            std::fs::write(self.dir.path().join("events"), events).unwrap();
+        }
+
+        /// One look of the daemon: true when it posted something.
+        async fn look(&mut self) -> Result<bool> {
+            look::look_wave(&self.world, &self.wave, &mut self.watch).await
+        }
+
+        /// Each line to the person in riff chat since the start.
+        fn asked(&self) -> Vec<(String, String)> {
+            lock(&self.world.forge).asked.clone()
+        }
+    }
+
+    /// #1605, 01M6QBJHV7PVV5893Q6RCPENJQ: the look tells the person of the
+    /// lead one time in riff chat when the label `question` goes on an
+    /// issue, with the title and the link. It has no message for the lead,
+    /// and no more line at the next looks. When the label goes off and on
+    /// again, the person gets a new line.
+    #[tokio::test]
+    async fn the_look_tells_the_person_one_time_when_the_label_question_goes_on() {
+        let mut asking = Asking::new();
+        assert!(!asking.look().await.unwrap(), "no label: a quiet look");
+        assert!(asking.asked().is_empty());
+
+        asking.labels(&["bug", "question"]);
+        asking.events("2026-11-05T20:11:03Z\n");
+        assert!(asking.look().await.unwrap());
+        let line = text::wave_question("o/r", 12, "Which design?");
+        assert!(line.contains("https://github.com/o/r/issues/12"), "{line}");
+        assert_eq!(
+            asking.asked(),
+            [(line.clone(), "question-12-2026-11-05T20:11:03Z".to_owned())]
+        );
+        assert!(
+            lock(&asking.world.forge).posts.is_empty(),
+            "no message to the lead"
+        );
+
+        // The same label at the next looks: no more line.
+        for _ in 0..2 {
+            assert!(!asking.look().await.unwrap());
+        }
+        assert_eq!(asking.asked().len(), 1);
+
+        // The lead removed the label after the answer, and added it later: a
+        // new line, with the key of the new time. The last event counts.
+        asking.labels(&["bug"]);
+        assert!(!asking.look().await.unwrap());
+        asking.labels(&["question"]);
+        asking.events("2026-11-05T20:11:03Z\n2026-11-06T09:30:00Z\n");
+        assert!(asking.look().await.unwrap());
+        let keys: Vec<String> = asking.asked().into_iter().map(|(_, key)| key).collect();
+        assert_eq!(
+            keys,
+            [
+                "question-12-2026-11-05T20:11:03Z",
+                "question-12-2026-11-06T09:30:00Z"
+            ]
+        );
+    }
+
+    /// A read of the events that fails gives a key with no time. A post
+    /// that fails is the error of the look, and the next look posts the
+    /// line again.
+    #[tokio::test]
+    async fn a_line_to_the_person_that_failed_comes_at_the_next_look() {
+        let mut asking = Asking::new();
+        asking.labels(&["question"]);
+        lock(&asking.world.forge).post_fails = 1;
+        assert!(asking.look().await.is_err());
+        assert!(asking.asked().is_empty());
+        assert!(asking.look().await.unwrap());
+        assert_eq!(
+            asking.asked(),
+            [(
+                text::wave_question("o/r", 12, "Which design?"),
+                "question-12".to_owned()
+            )],
+            "no event: no time in the key"
+        );
+        assert!(!asking.look().await.unwrap());
     }
 
     /// 01M6GYN97HH70E4C1FGM6HA2B0, 01M6GYN92N3Z99GPXTYHDDWF4R (#1549): a wave

@@ -40,6 +40,9 @@
 //!   session claims `verify-issue-N` for it. The pull request of an
 //!   issue with the label [`NO_VERIFY`] is no work
 //!   (01M5157V0P92EBHF4M7N9K0RGR).
+//!   An issue with the label `question` waits for the answer of a person:
+//!   it is no build ([`Issue::question`], #1605), and the verify of its pull
+//!   request goes on.
 //! - **The issue of a pull request** ([`Pull::issue`],
 //!   01M51BF5S2YKB8JG10DF6YVT42). Its trailer `Issue: #N` names it, as
 //!   for `riff verify`. With no trailer, its branch names it
@@ -388,6 +391,15 @@ impl Issue {
     /// 01M5ND16V2SVN8A9K7W90VC6X9).
     pub fn tracker(&self) -> bool {
         riff_client::waves::is_tracker(&self.title, self.labels.iter().map(|l| l.name.as_str()))
+    }
+
+    /// True when the issue has the label [`riff_client::waves::QUESTION`]:
+    /// it waits for the answer of a person, so the wave starts no build of
+    /// it, as for a hold (#1605). A verify of its pull request goes on.
+    pub fn question(&self) -> bool {
+        self.labels
+            .iter()
+            .any(|l| l.name == riff_client::waves::QUESTION)
     }
 }
 
@@ -2104,6 +2116,8 @@ pub fn free_work(
 /// item, so a hold of `issue-N` keeps `verify-issue-N` free. A tracker
 /// issue ([`Issue::tracker`]) is no work: no build and no
 /// verify (01M5ND16V2SVN8A9K7W90VC6X9).
+/// An issue with the label `question` ([`Issue::question`], #1605) is no
+/// build, as for a hold of `issue-N`: its verify stays.
 ///
 /// A fix item ([`BROKEN_MAIN`], 01M51QEYS538XA58KDRY844T52) comes before
 /// each other item: its verify first, then the item. It is free work in
@@ -2159,6 +2173,13 @@ pub fn free_work(
 /// assert_eq!(free_work_of(&open, &issues, &pulls, &none, &none), ["issue-1"]);
 /// assert_eq!(free_work_of(&open, &issues, &[], &none, &none), ["issue-1"]);
 ///
+/// // An issue that waits for an answer is no build, and its verify stays (#1605).
+/// let asks = |number| issue(number, "Wave 2", &["question"]);
+/// let issues = [issue(1, "Wave 2", &[]), asks(7), asks(8)];
+/// let pulls = [pull(40, 8)];
+/// assert_eq!(free_work_of(&open, &issues, &pulls, &none, &none), ["verify-issue-8", "issue-1"]);
+/// assert_eq!(free_work_of(&open, &issues, &[], &none, &none), ["issue-1"]);
+///
 /// // An issue with no `Done when:` line is no build (01M5R0HEP1MXWYY643F1N1DWEM).
 /// // Its verify stays: a verify is not changed.
 /// let bare = |number| Issue { body: "No line.".into(), ..issue(number, "Wave 2", &[]) };
@@ -2185,6 +2206,11 @@ pub fn free_work_of(
         .filter(|i| i.broken_main())
         .map(|i| i.number)
         .collect();
+    let asking: HashSet<u64> = issues
+        .iter()
+        .filter(|i| i.question())
+        .map(|i| i.number)
+        .collect();
     let mut work: Vec<String> = waiting_verifies(pulls, claims)
         .iter()
         .filter(|n| !kept.contains(n))
@@ -2201,6 +2227,9 @@ pub fn free_work_of(
                 .map(|n| format!("issue-{n}")),
         )
         .filter(|item| !holds.contains(item))
+        .filter(|item| {
+            !matches!(usage::issue_of(item), Some((n, usage::Kind::Work)) if asking.contains(&n))
+        })
         .collect();
     // A stable sort: the fix items first, each in its order of above.
     work.sort_by_key(|item| !usage::issue_of(item).is_some_and(|(n, _)| fixes.contains(&n)));
@@ -2212,7 +2241,8 @@ pub fn free_work_of(
 /// (01M5R0HEP1MXWYY643F1N1DWEM): an open issue of the current wave, or a
 /// fix item, that no session claims, with no open need and no pull
 /// request that waits. The wave tells the lead of each, once. A held
-/// `issue-N` is not one: the lead holds it.
+/// `issue-N` is not one: the lead holds it. Nor is an issue with the label
+/// `question`: the lead waits for an answer (#1605).
 ///
 /// ```
 /// use std::collections::HashSet;
@@ -2233,11 +2263,12 @@ pub fn free_work_of(
 ///     issue(4, "Wave 2", "No line."),
 ///     issue(5, "Backlog", "No line."),
 ///     issue(6, "Wave 2", "No line."),
+///     Issue { labels: vec![Label { name: "question".into() }], ..issue(7, "Wave 2", "No line.") },
 ///     fix,
 /// ];
 /// let claims: HashSet<String> = ["issue-4".to_owned()].into();
 /// let holds: HashSet<String> = ["issue-6".to_owned()].into();
-/// // 1 has the line. 3 waits for 2. 4 has a claim. 5 is in the backlog. 6 is held.
+/// // 1 has the line. 3 waits for 2. 4 has a claim. 5 is in the backlog. 6 is held. 7 waits for an answer.
 /// assert_eq!(no_done_when_of(&open, &issues, &[], &claims, &holds), [2, 9]);
 ///
 /// // The issue gets the line: it is free work, and the lead hears no more of it.
@@ -2254,7 +2285,9 @@ pub fn no_done_when_of(
 ) -> Vec<u64> {
     let wave = current_wave(open);
     free_of(issues, claims, pulls, false, |i| {
-        i.broken_main() || wave.is_some_and(|w| i.milestone.as_ref().is_some_and(|m| m.title == w))
+        !i.question()
+            && (i.broken_main()
+                || wave.is_some_and(|w| i.milestone.as_ref().is_some_and(|m| m.title == w)))
     })
     .into_iter()
     .filter(|n| !holds.contains(&format!("issue-{n}")))

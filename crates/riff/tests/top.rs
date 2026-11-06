@@ -767,6 +767,70 @@ async fn an_item_whose_pull_request_cannot_merge_by_itself_is_in_stuck() {
     );
 }
 
+/// #1605, 01M6QBJHQEJ3C77FA1DEV2GKXG: an item with the label `question`
+/// is in the group `question` of the board of `riff top` and of
+/// `riff wave list`, never in `free`. A claim wins over the label, and a
+/// pause hides no item of the group.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_item_with_the_label_question_is_in_the_group_question() {
+    let (server, _) = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    let bin = bin(false);
+    let issue = |n: u64, labels: &str| {
+        format!(
+            r#"{{"number": {n}, "title": "t", "milestone": {{"title": "Wave 3"}}, "labels": [{labels}]}}"#
+        )
+    };
+    let ask = r#"{"name": "question"}"#;
+    let wave = r#"[{"number":3,"title":"Wave 3","open_issues":4,"closed_issues":1}]"#;
+    script(
+        bin.path(),
+        "gh",
+        &format!(
+            "case \"$1 $2\" in\n  api*) echo '{wave}' ;;\n  pr*) echo '[]' ;;\n  *) echo '[{}, {}, {}, {}]' ;;\nesac",
+            issue(12, ask),
+            issue(13, ask),
+            issue(14, ""),
+            issue(15, r#"{"name": "bug"}, {"name": "question"}"#),
+        ),
+    );
+    live(&server, "pangolin", "a1").await;
+    name_lead(&server, dir, bin.path(), "a1").await;
+    for args in [&["resume", "--riff"][..], &["claim", "issue-12"]] {
+        output(riff(&server, dir, Some("a1"), bin.path(), args)).await;
+    }
+
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert!(
+        top.contains(
+            "\n\nWave 3 (como-technologies/riff)\n  free: #14\n  claimed: #12\n  question: #13 #15\n\n"
+        ),
+        "{top}"
+    );
+
+    let mut list = riff(&server, dir, None, bin.path(), &["wave", "list"]);
+    list.env_remove("RIFF_SESSION")
+        .env_remove("CLAUDE_CODE_SESSION_ID");
+    let list = output(list).await;
+    assert_eq!(
+        list,
+        "Wave 3  current  4 open, 1 closed\n  free: #14\n  claimed: #12\n  question: #13 #15\n"
+    );
+
+    // A pause hides the group `free`, and keeps `question`.
+    output(riff(&server, dir, Some("a1"), bin.path(), &["pause"])).await;
+    let top = ["top", "--once"];
+    let top = output(riff(&server, dir, Some("a1"), bin.path(), &top)).await;
+    assert!(
+        top.contains(
+            "\n\nWave 3 (como-technologies/riff)  paused\n  claimed: #12\n  question: #13 #15\n\n"
+        ),
+        "{top}"
+    );
+}
+
 /// The board of a paused repository ends its wave line with `paused`
 /// and has no group `free`: nobody can claim its items
 /// (01M588G5K0B58QXD35AA5MTZ6E).

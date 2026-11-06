@@ -214,8 +214,9 @@ pub fn issue_args(repo: &str) -> Vec<String> {
 
 /// The issues ([`Issues`]) in the JSON of `gh issue list --json
 /// number,title,milestone,labels`. A tracker issue
-/// ([`riff_client::waves::is_tracker`]) is in [`Issues::trackers`].
-/// `None` for other text.
+/// ([`riff_client::waves::is_tracker`]) is in [`Issues::trackers`]. An issue
+/// with the label [`riff_client::waves::QUESTION`] is in
+/// [`Issues::questions`]. `None` for other text.
 ///
 /// ```
 /// use riff::top::parse_issues;
@@ -226,11 +227,13 @@ pub fn issue_args(repo: &str) -> Vec<String> {
 ///   {"number": 9, "title": "Old", "milestone": {"title": "Wave 9: Cloud"}},
 ///   {"number": 4, "title": "Kept", "milestone": {"title": "Backlog"}},
 ///   {"number": 5, "title": "New", "milestone": null},
-///   {"number": 6, "title": "The parts", "milestone": null, "labels": [{"name": "tracker"}]}
+///   {"number": 6, "title": "The parts", "milestone": null, "labels": [{"name": "tracker"}]},
+///   {"number": 7, "title": "Which design?", "milestone": null, "labels": [{"name": "question"}]}
 /// ]"#;
 /// let issues = parse_issues(json).unwrap();
 /// assert_eq!(issues.titles[&12], "Show the wave");
 /// assert_eq!(issues.trackers, [6].into());
+/// assert_eq!(issues.questions, [7].into());
 /// assert_eq!(issues.wave(), Some(&("Wave 9: Cloud".into(), vec![9])));
 /// assert_eq!(parse_issues("not json"), None);
 /// ```
@@ -243,6 +246,10 @@ pub fn parse_issues(json: &str) -> Option<Issues> {
                     &i.title,
                     i.labels.iter().map(|l| l.name.as_str()),
                 ),
+                question: i
+                    .labels
+                    .iter()
+                    .any(|l| l.name == riff_client::waves::QUESTION),
                 number: i.number,
                 title: i.title,
                 milestone: i.milestone.map(|m| m.title),

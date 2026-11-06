@@ -956,6 +956,11 @@ pub const BROKEN_MAIN_LABEL: &str = "main is broken: the rollout of riff gives t
 /// ([`riff_client::waves::TRACKER`], 01M5ND16V2SVN8A9K7W90VC6X9).
 pub const TRACKER_LABEL: &str = "a tracker: its parts are separate items, and no session does it";
 
+/// The description of the label `question` that riff makes in a repository
+/// that has none (#1605).
+pub const QUESTION_LABEL: &str =
+    "a lead waits for your answer: the wave starts no build of the issue";
+
 /// The first 7 characters of a commit.
 fn short(commit: &str) -> String {
     commit.chars().take(7).collect()
@@ -1443,6 +1448,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     verify: vec![],
 ///     stuck: vec![],
 ///     tracker: vec![],
+///     question: vec![],
 /// };
 /// let items = Items {
 ///     boards: vec![
@@ -1534,6 +1540,78 @@ pub fn waves_age(age: std::time::Duration) -> Option<String> {
 /// ```
 pub fn waves_no_repo() -> String {
     "this folder is in no git repository".into()
+}
+
+/// The output of `riff questions`: one line for each open issue with the
+/// label `question`, with the repository, the number, the title and the
+/// link (#1605). With no question, one line that says so.
+///
+/// ```
+/// use riff::questions::Question;
+///
+/// let question = |repo: &str, number, title: &str| Question {
+///     repo: repo.into(),
+///     number,
+///     title: title.into(),
+///     url: format!("https://github.com/{repo}/issues/{number}"),
+/// };
+/// assert_eq!(
+///     riff::text::questions_list(&[question("o/r", 12, "Which design?"), question("o/s", 3, "Ship it?")]),
+///     "o/r  #12  Which design?  https://github.com/o/r/issues/12\n\
+///      o/s  #3  Ship it?  https://github.com/o/s/issues/3"
+/// );
+/// assert_eq!(
+///     riff::text::questions_list(&[]),
+///     "No open question in the repositories of the riff."
+/// );
+/// ```
+pub fn questions_list(questions: &[crate::questions::Question]) -> String {
+    if questions.is_empty() {
+        return "No open question in the repositories of the riff.".into();
+    }
+    let lines: Vec<String> = questions
+        .iter()
+        .map(|q| {
+            format!(
+                "{}  #{}  {}  {}",
+                safe(&q.repo),
+                q.number,
+                safe(&q.title),
+                safe(&q.url)
+            )
+        })
+        .collect();
+    lines.join("\n")
+}
+
+/// The line on stderr of `riff questions` for a repository that `gh`
+/// cannot read.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::questions_fault("o/r", "gh issue list failed: HTTP 404"),
+///     "riff: cannot read the questions of o/r: gh issue list failed: HTTP 404"
+/// );
+/// ```
+pub fn questions_fault(repo: &str, why: &str) -> String {
+    format!(
+        "riff: cannot read the questions of {}: {}",
+        safe(repo),
+        safe(why)
+    )
+}
+
+/// The line on stderr of `riff questions --web`: the address that riff
+/// opens in the browser.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::questions_web("https://github.com/issues?q=x"),
+///     "riff: opening https://github.com/issues?q=x in your browser."
+/// );
+/// ```
+pub fn questions_web(url: &str) -> String {
+    format!("riff: opening {} in your browser.", safe(url))
 }
 
 /// The cause when `gh` gives no open issues of `repo`.
@@ -8678,6 +8756,26 @@ pub fn wave_no_done_when(issue: u64) -> String {
     )
 }
 
+/// The line in riff chat for the person of the lead: the issue `issue` of
+/// `repo` got the label `question`, so a lead waits for an answer
+/// (#1605). It has the title of the issue and its link.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_question("o/r", 12, "Which design?"),
+///     "A lead waits for your answer in issue #12, Which design?: https://github.com/o/r/issues/12. \
+///      The wave starts no build of the issue until the label question goes."
+/// );
+/// ```
+pub fn wave_question(repo: &str, issue: u64, title: &str) -> String {
+    format!(
+        "A lead waits for your answer in issue #{issue}, {}: https://github.com/{}/issues/{issue}. \
+         The wave starts no build of the issue until the label question goes.",
+        safe(title),
+        safe(repo)
+    )
+}
+
 /// `riff session why` for an `item` with no record.
 ///
 /// ```
@@ -9741,7 +9839,9 @@ action, file an issue to fix the guard in code: do not work around the refusal. 
 that you read, and say \"I do not know\" for the rest: do not speculate. When your person \
 writes in the riff chat, answer in the riff chat, not only in your terminal: post to the thread `chat` with the selector `{user, host, person: true}`, so that no agent session wakes. Do not name \
 message numbers in the chat: say what the message said. Write a design in the body of the \
-issue, not in comments. A rule that must hold needs a guard in code with a test: a rule in a \
+issue, not in comments. Put each question for a person in the body of the issue, in a section \"Questions for PERSON\" \
+as Q1, Q2 and so on, and add the label `question`: riff shows it, and the wave waits for the \
+answer. Record each answer in the body, and remove the label when no question is open. A rule that must hold needs a guard in code with a test: a rule in a \
 note or in memory is no guard. Use \"I will\" for a future action: never the present tense. \
 When you need a decision of your person, call `blocked` at once. Never delete or overwrite the \
 config of a user without being asked. Do not break the other repositories of the riff. Keep the \
@@ -9758,9 +9858,9 @@ notes."
 /// for (name, phrase) in riff::text::LEAD_RULES {
 ///     assert!(riff::text::MCP_LEAD.contains(phrase), "{name}: {phrase}");
 /// }
-/// assert_eq!(riff::text::LEAD_RULES.len(), 16);
+/// assert_eq!(riff::text::LEAD_RULES.len(), 17);
 /// ```
-pub const LEAD_RULES: [(&str, &str); 16] = [
+pub const LEAD_RULES: [(&str, &str); 17] = [
     ("lead-places-issues", "You place the issues in the waves"),
     ("no-raw-oneliners", "Do not run a raw shell one-liner"),
     ("riff-commands-alone", "Run each riff command alone"),
@@ -9788,6 +9888,10 @@ pub const LEAD_RULES: [(&str, &str); 16] = [
     ),
     ("guards-in-code", "needs a guard in code with a test"),
     ("future-tense-will", "Use \"I will\" for a future action"),
+    (
+        "questions-in-issue",
+        "Put each question for a person in the body of the issue",
+    ),
     ("ask-at-once", "call `blocked` at once"),
     (
         "never-delete-user-config",

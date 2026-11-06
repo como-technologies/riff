@@ -7293,6 +7293,15 @@ mod tests {
             Box::pin(async {})
         }
 
+        fn ask_person<'a>(
+            &'a self,
+            _: &'a Wave,
+            _: &'a str,
+            _: &'a str,
+        ) -> crate::wave::BoxFuture<'a, Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+
         /// The `gh` of the forge, or a `gh` that is not there: no test
         /// reaches the real forge.
         fn gh(&self, _: &str) -> Arc<crate::pr::Gh> {
