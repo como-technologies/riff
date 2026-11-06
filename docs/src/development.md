@@ -2402,13 +2402,14 @@ starts again too, also for the same commit (see
 ### Add a Done when line to an issue
 
 The wave starts a build only for an issue whose body has a line that
-starts with `Done when:`. A session stops at once without that line.
-For an issue with no such line, the wave starts nothing, and your lead
-gets one message for it.
+starts with `Done when:`, or a Markdown heading `Done when`, with or
+without the colon. A session stops at once without that line. For an
+issue with no such line, the wave starts nothing, and your lead gets one
+message for it.
 
 ```mermaid
 flowchart LR
-    I["an issue of the current wave"] --> Q{"a line that starts<br/>with Done when:?"}
+    I["an issue of the current wave"] --> Q{"a line that starts<br/>with Done when:<br/>or a heading Done when?"}
     Q -- yes --> S["the wave starts a session"]
     Q -- no --> M["one message to your lead"]
     M --> A["you add the line"]
@@ -2421,6 +2422,16 @@ body:
 ```sh
 gh issue view 1264 --json body --jq .body > body.md
 printf '\nDone when: riff who shows the wave of each claim.\n' >> body.md
+gh issue edit 1264 --body-file body.md
+```
+
+A heading counts too. It has one to six `#`, a space, and `Done when`,
+with or without the colon. Use it when the body lists the criteria under
+a heading:
+
+```sh
+gh issue view 1264 --json body --jq .body > body.md
+printf '\n## Done when\n\n- riff who shows the wave of each claim.\n' >> body.md
 gh issue edit 1264 --body-file body.md
 ```
 

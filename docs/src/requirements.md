@@ -434,9 +434,9 @@
   passes when the repository has the open milestone `Backlog`. Its step
   makes that milestone, as `riff wave make` does.
 - **01M5R0HERC566W14SEJ3ZCG6V5** `riff wave move ITEM... --to WAVE`
-  warns when an issue has no line that starts with `Done when:`, and
-  moves it. The warning says that the wave takes only an issue with that
-  line. `--to Backlog` gives no warning.
+  warns when an issue has no "Done when" line, and moves it. The
+  warning says that the wave takes only an issue with that line.
+  `--to Backlog` gives no warning.
 - **01M5SMMP561HR1ZQY3ZE4361FD** The names that riff uses on the forge
   are rules of riff, the same for each repository. They are the
   milestones `Wave N` and `Backlog`, the labels `tracker`, `broken-main`
@@ -451,6 +451,12 @@
   in the same way. When the read fails, it keeps the last issues, and
   its first line names the error. This adds to
   01M58ATZ6FA5PJMD3D848CEWBJ and 01M3ZC09FA9DZPTHK31XECZ566.
+- **01M6QB0T4AR4M06W34994TMNH4** A "Done when" line is a line that
+  starts with `Done when:`, or a Markdown heading of `Done when`, with
+  or without the colon: one to six `#`, a space, then `Done when`. The
+  warning of `riff wave move` and the message of the wave for an issue
+  with no such line say both forms. Supersedes
+  01M5R0HEP1MXWYY643F1N1DWEM and 01M5R0HERC566W14SEJ3ZCG6V5 in part.
 
 ## Issue hygiene on GitHub
 
@@ -4981,10 +4987,10 @@ of this part when they merge.
   give nothing. The messages, the fix item and the note say "the full
   check". Supersedes 01M51QEYKTD7ZEB0YA0C3MQTPN in part.
 - **01M5R0HEP1MXWYY643F1N1DWEM** The free work of a wave has no build of
-  an issue whose body has no line that starts with `Done when:`. The
-  wave tells the lead one time for each such issue, with the fix: add
-  the line. The wave takes the issue at its next look after the line
-  comes. A verify and a rebase do not change.
+  an issue whose body has no "Done when" line. The wave tells the lead
+  one time for each such issue, with the fix: add the line. The wave
+  takes the issue at its next look after the line comes. A verify and a
+  rebase do not change.
 - **01M5QYBWPAJ219BE8QKVKG1TWW** A repository can have any default
   branch. `riff wave run` reads the default branch of the repository on
   the forge one time, and the wave keeps it. The start text of a build,
