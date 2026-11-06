@@ -3064,6 +3064,53 @@ It plans the waves with `/opt/riff/riff wave`: see
 and riff tells the old lead. See
 [Name the lead](how-it-works.md#name-the-lead).
 
+#### Update the lead on a host that runs no wave of the repository
+
+After `riff update`, the riff daemon starts the lead again on the new
+riff (see
+[The lead starts again on the new riff](how-it-works.md#the-lead-starts-again-on-the-new-riff)).
+It needs no wave of the repository. So a host that must not run the
+wave of a repository updates its lead too, for example when the other
+person of the repository has a rule that its waves run on other hosts
+only. `riff wave stop` ended the wave there, or no person ran
+`riff wave run`.
+
+```mermaid
+flowchart TD
+    A["the lead runs an old riff, and is idle"] --> W{"does the daemon run a wave<br/>of the repository?"}
+    W -- yes --> M1["main clone: the one of the wave"]
+    W -- no --> M2["main clone: the one that the clone of the lead links to"]
+    M1 --> S["stop the container, start it again:<br/>claude --resume, no session for an item"]
+    M2 --> S
+    M2 -. "no link" .-> F["one line in riff chat: the lead stays on the old riff"]
+```
+
+The start again runs no wave and starts no session for an item. You do
+one step, on the host of the lead:
+
+```sh
+riff update
+```
+
+When the lead is idle, one line in riff chat tells you that the lead
+started again. `riff daemon status` shows the lead, and no wave of the
+repository:
+
+```sh
+riff daemon status
+```
+
+The clone of the lead links to its main clone: riff makes it with
+`git clone --reference`. Suppose a clone has no such link, and the
+daemon runs no wave of the repository. Then the line in riff chat says
+so, and the lead stays on the old riff. riff has no step that gives the
+main clone and starts no session. `riff wave run` in a clone of the
+repository gives it, and starts a session for each free item:
+
+```sh
+riff wave run
+```
+
 #### Run a riff command in the terminal of the lead
 
 In the terminal of the lead, type `!` and a command. Claude Code runs

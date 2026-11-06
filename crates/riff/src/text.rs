@@ -10221,18 +10221,25 @@ pub fn daemon_stops_lead(name: &str) -> String {
     format!("The riff daemon stops the lead {name} to start it again on the new riff.")
 }
 
-/// The daemon knows no wave of the repository `repo`, so it knows no main
-/// clone of it: it cannot start the lead again (01M5TC29A4Q94NJP7HFC75XCF3).
+/// The daemon runs no wave of the repository `repo`, and the clone of the
+/// lead at `clone` links to no main clone: it cannot start the lead again
+/// (01M6QB89JJEM9Z1V3RVZYHKYT0). With a wave, or with that link, it
+/// starts the lead again, so this is the case with neither. The
+/// text says that no step gives the main clone with no session, and
+/// names the step there is.
 ///
 /// ```
-/// let text = riff::text::lead_again_no_wave("o/r");
-/// assert!(text.contains("no main clone of o/r"));
+/// let text = riff::text::lead_again_no_main("o/r", std::path::Path::new("/d/leads/o-r/clone"));
+/// assert!(text.starts_with("the daemon runs no wave of o/r"));
+/// assert!(text.contains("the clone of the lead at /d/leads/o-r/clone links to no main clone"));
 /// assert!(text.ends_with("Run riff wave run in a clone of o/r"));
 /// ```
-pub fn lead_again_no_wave(repo: &str) -> String {
+pub fn lead_again_no_main(repo: &str, clone: &std::path::Path) -> String {
     format!(
-        "the daemon knows no main clone of {repo}: it runs no wave of it. Run riff wave run in a \
-         clone of {repo}"
+        "the daemon runs no wave of {repo}, and the clone of the lead at {} links to no main \
+         clone. riff has no step that gives the main clone and starts no session. Run riff wave \
+         run in a clone of {repo}",
+        clone.display()
     )
 }
 
