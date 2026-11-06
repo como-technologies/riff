@@ -2511,9 +2511,11 @@ warns when an item has no line (see
 ### Find the issues with no Done when line
 
 `riff init` counts the open issues that have no line that starts with
-`Done when:`, and names them in a note. A tracker and a release issue
-are not in the note: no session does them. Run it in a clone of the
-repository. `--check` changes nothing:
+`Done when:` and no heading `## Done when`, and names them in a note. A
+heading `## Done when` counts, with or without the colon, as it does for
+the wave. A tracker and a release issue are not in the note: no session
+does them. Run it in a clone of the repository. `--check` changes
+nothing:
 
 ```sh
 riff init --check
@@ -2524,13 +2526,13 @@ changes no exit code. It names the first 20 issues, and counts the rest.
 For example:
 
 ```text
-2 open issues of acme/app have no "Done when:" line, so the wave starts no session for them: #12, #13. Add the line to each issue. See "Add a Done when line to an issue" in the book.
+2 open issues of acme/app have no "Done when:" line and no "## Done when" heading, so the wave starts no session for them: #12, #13. Add the line to each issue. See "Add a Done when line to an issue" in the book.
 ```
 
 ```mermaid
 flowchart LR
     I["riff init"] --> L["gh issue list:<br/>the open issues"]
-    L --> T{"a tracker, a release issue,<br/>or a Done when: line?"}
+    L --> T{"a tracker, a release issue,<br/>a Done when: line,<br/>or a ## Done when heading?"}
     T -- yes --> O["not in the note"]
     T -- no --> N["named in the note"]
 ```
