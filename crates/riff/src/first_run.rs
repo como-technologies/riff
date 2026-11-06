@@ -88,12 +88,13 @@
 //! as `CLAUDE.md` or `AGENTS.md` (01M5RN89Z749VYS1CRYJQTKAWY).
 //!
 //! After the first list, `riff init` prints one note when the repository
-//! on GitHub has open issues with no `Done when:` line: the wave starts
-//! no session for them ([`crate::repo_setup::no_done_when`],
-//! [`text::init_no_done_when`], 01M5SMMP7ZW2PZNGK63WWZAC8P). A tracker and
-//! a release issue are not in the note. It is no check: it changes no exit
-//! code, and `--check` prints it too. When `gh` cannot list the issues,
-//! the note says so ([`text::init_issues_unread`]).
+//! on GitHub has open issues with no `Done when:` line and no
+//! `## Done when` heading: the wave starts no session for them
+//! ([`crate::repo_setup::no_done_when`], [`text::init_no_done_when`],
+//! 01M5SMMP7ZW2PZNGK63WWZAC8P). A tracker and a release issue are not in
+//! the note. It is no check: it changes no exit code, and `--check` prints
+//! it too. When `gh` cannot list the issues, the note says so
+//! ([`text::init_issues_unread`]).
 //!
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
@@ -269,7 +270,7 @@ pub struct Facts {
     /// has no remote `origin` on GitHub: riff checks nothing there.
     pub github: Option<Result<crate::repo_setup::Github, String>>,
     /// The numbers of the open issues of the repository that have no
-    /// `Done when:` line ([`crate::repo_setup::no_done_when`],
+    /// "Done when" line ([`crate::repo_setup::no_done_when`],
     /// 01M5SMMP7ZW2PZNGK63WWZAC8P), or why riff cannot list the issues.
     /// `None` when riff did not read the repository.
     pub no_done_when: Option<Result<Vec<u64>, String>>,

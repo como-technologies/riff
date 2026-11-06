@@ -508,6 +508,11 @@
   the command exits with 1 after it lists the others. `riff questions
   --web` opens one GitHub search for `is:issue is:open label:question`
   over the same repositories in the browser, and lists nothing.
+- **01M6QCXGC42AG1RY5QNGT47GVV** The start text of a work session names
+  both forms of a "Done when" line: the line `Done when:` and the
+  heading `## Done when`. The note of `riff init` for the open issues
+  with no "Done when" line says both forms too. Supersedes
+  01M5SMMP7ZW2PZNGK63WWZAC8P in part.
 
 ## Issue hygiene on GitHub
 
@@ -5658,11 +5663,11 @@ of this part when they merge.
   installs no daemon and pulls no image: the host has the daemon. On a
   host, the checks stay as 01M4ZJN6TEWCYCB39XTH6BBD9H gives them.
 - **01M5SMMP7ZW2PZNGK63WWZAC8P** `riff init` counts the open issues of
-  the repository that have no line that starts with `Done when:`, and
-  names them in a note, as `riff init --check` does too. A tracker and a
-  release issue are not counted: no session does them. The note changes
-  no exit code, and `riff init` prints nothing when each open issue has
-  the line. When `gh` cannot list the open issues, the note says so.
+  the repository that have no "Done when" line, and names them in a
+  note, as `riff init --check` does too. A tracker and a release issue
+  are not counted: no session does them. The note changes no exit code,
+  and `riff init` prints nothing when each open issue has the line. When
+  `gh` cannot list the open issues, the note says so.
 - **01M5SNTPEP41NMSP3SEKR7KVB0** `riff init` pins `riff-base` in a
   repository that has no `riff.toml`: the digest in the `FROM` of
   `deploy/rust/Dockerfile` at the commit of the build

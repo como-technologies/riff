@@ -953,7 +953,7 @@ pub fn here(dir: &std::path::Path) -> Option<Result<Github, String>> {
 }
 
 /// The numbers of the open issues of the repository of `gh` that have no
-/// line `Done when:`, the least first (01M5SMMP7ZW2PZNGK63WWZAC8P). The wave
+/// "Done when" line, the least first (01M5SMMP7ZW2PZNGK63WWZAC8P). The wave
 /// starts none of them ([`crate::rollout::Issue::has_done_when`]). A
 /// tracker and a release issue are not in the list: no session does
 /// them.

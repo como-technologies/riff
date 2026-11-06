@@ -436,9 +436,9 @@ them, and a repository with none passes. A session reads the rules of
 the repository for agents when it has them. See
 [Write a CLAUDE.md, when you want one](#write-a-claudemd-when-you-want-one).
 
-The wave starts a session only for an issue with a `Done when:` line.
-`riff init` names the open issues that lack it, in a note that fails no
-check. See
+The wave starts a session only for an issue with a `Done when:` line
+or a `## Done when` heading. `riff init` names the open issues that lack
+both, in a note that fails no check. See
 [Find the issues with no Done when line](development.md#find-the-issues-with-no-done-when-line).
 The names that riff uses on the forge are in
 [The names riff uses on the forge](waves.md#the-names-riff-uses-on-the-forge).
