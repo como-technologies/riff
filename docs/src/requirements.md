@@ -5230,7 +5230,7 @@ of this part when they merge.
   limits the points and the number of calls of one send. A count never
   fails or delays a call (#1582).
 - **01M6JGF7265VX2SDXZ4EJAGXVB** The daemon binds its own binary at
-  /usr/local/bin/gh in each container session. The binary of riff that
+  /usr/local/bin/gh in a container session. The binary of riff that
   runs under the name gh adds the call to the tally as the caller
   session, and replaces itself with /usr/bin/gh, so the terminal, the
   output, the exit code and the signals are those of gh. It counts a
@@ -5254,6 +5254,17 @@ of this part when they merge.
   is no caller of gh in the tally. The look of the daemon counts its
   calls in memory, as the caller look, and a session cannot give that
   caller. Supersedes 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 in part (#1598).
+- **01M6QCDHZ5KNMFXQB9X3ZYRF3N** The daemon binds the binary of riff at
+  /usr/local/bin/gh only in a session of an image that has no gh there.
+  Before the first session of an image, it runs /usr/local/bin/gh
+  --version in that image with no network, and keeps the answer until it
+  stops. When the file runs, the image has its own gh there: the daemon
+  binds no wrapper in the sessions of that image, so its gh runs as it
+  is and riff counts none of its calls. An image that this machine does
+  not have gets no answer, and none is kept. riff daemon status names
+  each image with its own gh there. An image with its gh at another path
+  gets the wrapper, which runs that gh (#1595). Supersedes
+  01M6JGF7265VX2SDXZ4EJAGXVB in part.
 
 ### The lead, the view and the takeover
 

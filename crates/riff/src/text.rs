@@ -6610,6 +6610,7 @@ pub const GITHUB_ROWS: usize = 8;
 ///     }),
 ///     waits: Vec::new(),
 ///     other: None,
+///     own_gh: Vec::new(),
 /// };
 /// let text = riff::text::github_use(&shown, 120_000);
 /// assert_eq!(
@@ -6660,6 +6661,15 @@ pub const GITHUB_ROWS: usize = 8;
 ///     "GitHub, last hour: no call.\n\
 ///      GitHub GraphQL limit: out. riff makes no call of it until 15:00:35 UTC (in 15m). riff \
 ///      cannot read the reset: this time is the end of the hour of the counter that it saw.\n"
+/// );
+///
+/// // An image with its own `gh` at the path of the wrapper (#1595).
+/// let own = Shown { own_gh: vec!["ghcr.io/o/a@sha256:1".into(), "b".into()], ..Shown::default() };
+/// assert_eq!(
+///     riff::text::github_use(&own, 0),
+///     "GitHub, last hour: no call.\n\
+///      riff counts no gh call of a session of these images, as they have their own gh at \
+///      /usr/local/bin/gh: ghcr.io/o/a@sha256:1, b.\n"
 /// );
 /// ```
 pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
@@ -6716,6 +6726,16 @@ pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
             grouped(other.a_minute()),
             grouped(other.used),
             grouped(other.counted),
+        );
+    }
+    if !shown.own_gh.is_empty() {
+        let images: Vec<String> = shown.own_gh.iter().map(|image| safe(image)).collect();
+        let _ = writeln!(
+            out,
+            "riff counts no gh call of a session of these images, as they have their own gh at \
+             {}: {}.",
+            crate::gh_wrapper::BIND,
+            images.join(", ")
         );
     }
     for wait in &shown.waits {

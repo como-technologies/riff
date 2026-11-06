@@ -106,7 +106,10 @@ esac
 }
 
 /// A fake `podman`. `image exists` fails when `bin/no-image` is there.
-/// `pull` logs, and fails when `bin/no-pull` is there. `run` logs, and
+/// `pull` logs, and fails when `bin/no-pull` is there. `run` with
+/// `--network=none` prints the version of `claude` and `gh` in the image,
+/// and of `/usr/local/bin/gh` when `bin/own-gh` is there, else it fails as
+/// podman does for a file that is not in the image. `run` logs, and
 /// plays the container on the host: it runs the riff of the bind at
 /// `/opt/riff/riff` as the entrypoint, `riff relay`, with the socket of
 /// the bind at `/run/riff`. With `-d` (a terminal), it runs it in the
@@ -174,6 +177,11 @@ case "$1" in
           if [ -f "$dir/old-claude" ]; then echo "0.0.1 (Claude Code)"
           else echo "999.0.0 (Claude Code)"; fi ;;
         *" --entrypoint gh "*) echo "gh version 999.0.0 (2026-01-01)" ;;
+        # The image has its own gh at /usr/local/bin/gh when the file
+        # `own-gh` is there, else podman finds no such file (#1595).
+        *" --entrypoint /usr/local/bin/gh "*)
+          [ -f "$dir/own-gh" ] || exit 127
+          echo "gh version 2.102.0 (2026-01-01)" ;;
       esac
       exit 0 ;;
     esac ;;
@@ -1077,6 +1085,50 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "{thread}"
     );
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// 01M6QCDHZ5KNMFXQB9X3ZYRF3N (#1595): an image that has its own `gh` at
+/// `/usr/local/bin/gh` keeps it. The daemon asks the image once, binds the
+/// relay but no wrapper there, and `riff daemon status` names the image.
+/// An image with no such file gets the wrapper.
+#[tokio::test]
+async fn riff_run_binds_no_gh_wrapper_over_the_gh_of_an_image_that_has_it_there() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let riff = machine.env.riff_path().display().to_string();
+    let wrapper = format!("{riff}:/usr/local/bin/gh:ro");
+    let note = "riff counts no gh call of a session of these images";
+
+    // An image with no gh at the path: the wrapper is there.
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let args = machine.read("run.args");
+    assert!(args.contains(&wrapper), "{args}");
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(!status.contains(note), "{status}");
+
+    // Another image has the file: the session keeps it.
+    std::fs::write(machine.bin.path().join("own-gh"), "").unwrap();
+    let own = "localhost/riff-own-gh:test";
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", own])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let args = machine.read("run.args");
+    assert!(
+        args.contains(&format!("{riff}:/opt/riff/riff:ro")),
+        "{args}"
+    );
+    assert!(!args.contains("/usr/local/bin/gh"), "{args}");
+    let status = machine.ok(None, &["daemon", "status"]).await;
+    assert!(
+        status.contains(&format!(
+            "{note}, as they have their own gh at /usr/local/bin/gh: {own}.\n"
+        )),
+        "{status}"
+    );
 }
 
 /// A lead holds the verify of the item while the session works. When
