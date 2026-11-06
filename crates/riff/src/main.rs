@@ -1100,7 +1100,15 @@ enum WaveCommand {
     /// the label tracker, or a title that starts with "Tracker:". No
     /// session does it. When riff cannot read riff-server, it shows only
     /// the waves and their numbers.
-    List,
+    ///
+    /// riff keeps its read of GitHub for 60 seconds for each repository on
+    /// this machine, and each run shares it. The list names the age of a
+    /// read that is older than 10 seconds. For a live view, use riff top.
+    List {
+        /// Read GitHub at once, and not the read that riff kept
+        #[arg(long)]
+        fresh: bool,
+    },
     /// Make a wave
     ///
     /// The title is Wave N, or Wave N: NAME. Give N the last number plus
@@ -1806,10 +1814,12 @@ async fn cli() -> Result<()> {
                     Some(Err(why)) => eprintln!("{}", text::waves_no_new_backlog(why)),
                     None => {}
                 }
+                forget_wave_list();
                 return Ok(());
             }
             WaveCommand::Rename { number, name } => {
                 let (old, new) = riff::waves::rename(&gh, *number, &name.join(" "))?;
+                forget_wave_list();
                 Some(text::waves_renamed(&old.title, &new.title))
             }
             WaveCommand::End {
@@ -1819,9 +1829,10 @@ async fn cli() -> Result<()> {
             } => {
                 wave_release_gate(*number, no_release.as_deref())?;
                 let ended = riff::waves::end(&gh, *number)?;
+                forget_wave_list();
                 Some(text::waves_ended(&ended.title, ended.closed_issues))
             }
-            WaveCommand::List
+            WaveCommand::List { .. }
             | WaveCommand::Run { .. }
             | WaveCommand::Stop { .. }
             | WaveCommand::Move { .. }
@@ -2006,7 +2017,7 @@ async fn cli() -> Result<()> {
                 riff::wave::ask_run(&dir, &here, api.base()).await?
             }
             WaveCommand::Stop { host: None } => riff::wave::ask_stop(&dir, &here).await?,
-            WaveCommand::List => wave_list(&reach, &here).await?,
+            WaveCommand::List { fresh } => wave_list(&reach, &here, *fresh).await?,
             WaveCommand::Move { items, to } => wave_move(&reach, &here, items, to).await?,
             WaveCommand::End {
                 number,
@@ -3727,6 +3738,7 @@ async fn wave_move(
 ) -> Result<()> {
     let claimed = claimed_here(reach, here).await?;
     let moved = riff::waves::move_items(&pr::Gh::here("waves"), items, to, &claimed)?;
+    forget_wave_list();
     println!("{}", text::waves_moved(items, &moved.title));
     if !moved.no_done_when.is_empty() {
         let warning = riff::style::WARNING;
@@ -3746,6 +3758,7 @@ async fn wave_end_moving(
     let claimed = claimed_here(reach, here).await?;
     wave_release_gate(number, no_release)?;
     let (ended, moved) = riff::waves::end_moving_open(&pr::Gh::here("waves"), number, &claimed)?;
+    forget_wave_list();
     println!("{}", text::waves_ended_moving(&ended.title, &moved));
     Ok(())
 }
@@ -3771,15 +3784,34 @@ async fn wave_run_in_container(reach: &Reach, here: &Place) -> Result<()> {
 /// caller, straight or through the riff daemon ([`Reach`]). When riff
 /// cannot read them, one line on stderr says why
 /// (01M58ATZ6FA5PJMD3D848CEWBJ).
-async fn wave_list(reach: &Reach, here: &riff_core::name::Place) -> Result<()> {
+async fn wave_list(reach: &Reach, here: &riff_core::name::Place, fresh: bool) -> Result<()> {
     let gh = pr::Gh::here("waves");
-    let milestones = riff::waves::open(&gh)?;
-    let items = riff::waves::items(reach, here.default_thread(), &gh).await;
+    let thread = here.default_thread();
+    // The read of GitHub is kept on the host for 60 seconds (#1609).
+    let repo = thread.as_ref().map(ToString::to_string);
+    let listed = riff::wave_list::read(&gh, repo.as_deref(), fresh)?;
+    let items = riff::waves::items(reach, thread, listed.issues).await;
     let items = items
         .inspect_err(|e| eprintln!("{}", text::waves_no_items(&format!("{e:#}"))))
         .ok();
-    println!("{}", text::waves_list(&milestones, items.as_ref()));
+    println!("{}", text::waves_list(&listed.milestones, items.as_ref()));
+    if let Some(age) = text::waves_age(listed.age) {
+        println!("{age}");
+    }
     Ok(())
+}
+
+/// Deletes the read of GitHub that `riff wave list` kept for the
+/// repository of the folder, after a step that changes the waves, so that
+/// the next list shows the step (#1609). It never fails.
+fn forget_wave_list() {
+    let repo = identity::working_dir()
+        .and_then(|dir| identity::place(&dir))
+        .ok()
+        .and_then(|here| here.default_thread());
+    if let Some(repo) = repo {
+        riff::wave_list::forget(&repo.to_string());
+    }
 }
 
 /// Draws [`riff::top::Top`] once, or again every

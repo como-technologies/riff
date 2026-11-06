@@ -2533,6 +2533,28 @@ for room, and each wave with what it did last. To see the events of a
 session, use `riff daemon events NAME` (see
 [See the events of a session](#see-the-events-of-a-session)).
 
+#### Watch the wave
+
+For a live view, use `riff top`. It updates by itself, and it shows the
+board of the current wave.
+
+`riff wave list` shows the wave at one time. It keeps its read of GitHub
+for 60 seconds for each repository on the host. Each run in that time
+shows the same read and calls GitHub no more. So a
+`watch riff wave list` does not use the limit of GitHub. A read that is
+older than 10 seconds has its age on the last line. After 60 seconds, a
+run asks GitHub first whether anything changed, and a read with no
+change costs no GraphQL point. To read GitHub at once, in your clone of
+the repository:
+
+```sh
+riff wave list --fresh
+```
+
+The steps that change the waves (`riff wave make`, `rename`, `end` and
+`move`) delete the kept read of their repository, so the next
+`riff wave list` shows them.
+
 ### See which wave runs, and where
 
 In your clone of the repository:
@@ -2565,6 +2587,9 @@ the groups: the items are held, claimed, in verify, stuck or trackers.
 
 The lead runs the same command in its container. There, riff reads
 the sessions and the holds through the riff daemon of the host.
+
+The list keeps its read of GitHub for 60 seconds (see
+[Watch the wave](#watch-the-wave)).
 
 #### Find why the list has no items
 

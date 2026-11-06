@@ -1504,6 +1504,29 @@ pub fn waves_no_items(why: &str) -> String {
     format!("riff: the list has no items and no hosts: {}", safe(why))
 }
 
+/// The last line of `riff wave list` when its read of GitHub is older
+/// than 10 seconds (#1609), and nothing when it is not.
+///
+/// ```
+/// use std::time::Duration;
+///
+/// let age = |secs| riff::text::waves_age(Duration::from_secs(secs));
+/// assert_eq!(age(10), None);
+/// assert_eq!(
+///     age(42).unwrap(),
+///     "This list is from a read of GitHub 42 seconds ago. To read GitHub now, run: riff wave list --fresh"
+/// );
+/// ```
+pub fn waves_age(age: std::time::Duration) -> Option<String> {
+    (age > crate::wave_list::SHOW_AGE_FROM).then(|| {
+        format!(
+            "This list is from a read of GitHub {} seconds ago. \
+             To read GitHub now, run: riff wave list --fresh",
+            age.as_secs()
+        )
+    })
+}
+
 /// The cause when the folder of `riff wave list` has no repository.
 ///
 /// ```
