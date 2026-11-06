@@ -4971,7 +4971,8 @@ of this part when they merge.
   verify is a new session, so an author never verifies its own item.
 - **01M4ZV3B6PSRH40EYQEVYH2MBA** A wave starts one item at most 3 times
   in a run of the wave. Then the lead of the person gets one message,
-  and the wave leaves the item.
+  and the wave leaves the item. A verify has its own count for each
+  head commit (01M6QQ7H2B88AT3KS8NGM3DKCZ).
 - **01M4ZV3B6Q0Y6AX0KSKC55S31R** For each item, the daemon does the
   host steps of `riff run` itself: the checks, a new worker session,
   the claim, the keep-alive, the clone and the start. After the end of
@@ -5365,6 +5366,19 @@ of this part when they merge.
   gh call of riff counts as other. A test fails on one with none, and on
   a caller other in the section See how the daemon uses the GitHub limit
   of development.md (#1629).
+- **01M6QQ7H2B88AT3KS8NGM3DKCZ** The wave of the daemon counts the
+  starts of a verify for the head commit of its pull request
+  (`verify-issue-N@COMMIT`), as it does for a rebase
+  (01M57FJ3WWMQSDBFRRHXN3SMFQ). A pull request that gets many heads in a
+  run of the wave gets a verify for each head. A verify whose PASS or
+  FAIL riff put on the pull request does not count toward the 3 starts.
+  Three starts of one head that end with no result stop that head only.
+  Supersedes 01M4ZV3B6PSRH40EYQEVYH2MBA in part.
+- **01M6QQ7NZTF2G4MRXKWWG30CFX** The message "started N times" for a
+  verify names the head commit, and says that a new head starts a new
+  count. The wave sends it after the last session of the item ended, and
+  only for the head that the pull request has at that look, so it sends
+  none for an old head. Supersedes 01M4ZV3B6PSRH40EYQEVYH2MBA in part.
 
 ### The lead, the view and the takeover
 
@@ -6941,9 +6955,10 @@ that builds it merges.
   thread after the post. A session with an open pull request leaves no
   record.
 - **01M5A5HXP9X3AXTS6N3A57DMQM** `riff session why ITEM` reads the
-  thread `ends` and shows the last record of ITEM, and how many records
-  it has. It works in a container: the lead reads the cause there, with
-  no look at the host. An item with no record says so.
+  thread `ends` and shows the records of ITEM
+  (01M6QQ7WCCGYN5X3XZNHEJYKGS). It works in a container: the lead reads
+  the cause there, with no look at the host. An item with no record says
+  so.
 - **01M5A5HXRH4PFQDFA7XPFFRHWS** The message "started N times" to the
   lead names the reason of the last end of the item, and sends the lead
   to `riff session why ITEM`.
@@ -6962,6 +6977,13 @@ that builds it merges.
   may. With `--host HOST` and `RIFF_SOCKET`, it asks the daemon of HOST
   through the socket (`ServerCall::Host`). Neither looks for the socket
   of the daemon on the host, and neither calls riff-server straight.
+- **01M6QQ7WCCGYN5X3XZNHEJYKGS** A record in the thread `ends` has the
+  tag `head`: the first 7 characters of the head commit of a verify, a
+  rebase or a fix of the checks, else `-`. `riff session why ITEM` shows
+  one line for each record of the item, with its session, its head
+  commit and its reason, then the last lines of the output of the last
+  record. So it names each verify session of an item that ended with no
+  PASS or FAIL. Supersedes 01M5A5HXP9X3AXTS6N3A57DMQM in part.
 
 ## Open
 

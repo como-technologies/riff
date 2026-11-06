@@ -106,7 +106,7 @@ async fn session_why_reads_the_records_through_the_socket() {
     let container = Container::new();
     let body = |session: &str, code: i32| {
         format!(
-            "ended item=issue-12 session={session} code={code} failed=yes denied=0: exit code \
+            "ended item=issue-12 session={session} head=- code={code} failed=yes denied=0: exit code \
              {code}\nthe last line"
         )
     };
@@ -124,8 +124,10 @@ async fn session_why_reads_the_records_through_the_socket() {
     assert_eq!(text(&out.stderr), "");
     assert_eq!(
         text(&out.stdout),
-        "issue-12: 2 sessions ended with no pull request. The last one, 5e6f7a8b, ended: exit \
-         code 2.\nIts last 1 lines of output:\nthe last line\n"
+        "issue-12: 2 sessions ended with no pull request.\n\
+         - 1a2b3c4d ended: exit code 1.\n\
+         - 5e6f7a8b ended: exit code 2.\n\
+         The last one is 5e6f7a8b. Its last 1 line of output:\nthe last line\n"
     );
     let out = container
         .riff(&socket, &["session", "why", "issue-13"])
@@ -376,7 +378,7 @@ async fn wave_run_names_the_hosts_that_do_not_run_the_wave() {
 #[tokio::test(flavor = "multi_thread")]
 async fn session_why_of_a_verify_names_the_missing_pass_or_fail() {
     let container = Container::new();
-    let body = "ended item=verify-issue-1 session=1a2b3c4d code=0 failed=no denied=0: exit code \
+    let body = "ended item=verify-issue-1 session=1a2b3c4d head=988cb7b code=0 failed=no denied=0: exit code \
                 0, and no PASS or FAIL\nthe last line";
     let records = [riff::ends::Record::parse(body, 9).unwrap()];
     let reply = serde_json::to_value(records).unwrap();
@@ -389,8 +391,9 @@ async fn session_why_of_a_verify_names_the_missing_pass_or_fail() {
     assert_eq!(text(&out.stderr), "");
     assert_eq!(
         text(&out.stdout),
-        "verify-issue-1: 1 session ended with no PASS or FAIL. The last one, 1a2b3c4d, ended: \
-         exit code 0, and no PASS or FAIL.\nIts last 1 lines of output:\nthe last line\n"
+        "verify-issue-1: 1 session ended with no PASS or FAIL.\n\
+         - 1a2b3c4d, for the head 988cb7b, ended: exit code 0, and no PASS or FAIL.\n\
+         The last one is 1a2b3c4d. Its last 1 line of output:\nthe last line\n"
     );
     let out = container
         .riff(&socket, &["session", "why", "verify-issue-2"])

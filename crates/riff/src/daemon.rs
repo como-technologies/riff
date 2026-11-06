@@ -7387,14 +7387,14 @@ mod tests {
             &'a self,
             record: &'a Record,
             _: Ended,
-        ) -> crate::wave::BoxFuture<'a, Result<Vec<String>>> {
+        ) -> crate::wave::BoxFuture<'a, Result<crate::wave::Finish>> {
             Box::pin(async move {
                 self.note(format!("finish {}", record.live.item));
                 if let Some(gate) = &self.gate {
                     gate.acquire().await?.forget();
                 }
                 self.note(format!("finished {}", record.live.item));
-                Ok(Vec::new())
+                Ok(crate::wave::Finish::default())
             })
         }
 

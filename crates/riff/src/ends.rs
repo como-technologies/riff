@@ -29,11 +29,13 @@
 //!
 //! # The record
 //!
-//! The first line has the tags, then a colon and the reason. The last
-//! lines of the output follow:
+//! The first line has the tags, then a colon and the reason. The tag `head`
+//! is the head commit (7 characters) that a verify, a rebase or a fix of
+//! the checks is for, and `-` for a build (#1651). The last lines of the
+//! output follow:
 //!
 //! ```text
-//! ended item=issue-1202 session=1a2b3c4d code=1 failed=yes denied=2: exit code 1, 2 denied tool calls (Bash, Write)
+//! ended item=issue-1202 session=1a2b3c4d head=- code=1 failed=yes denied=2: exit code 1, 2 denied tool calls (Bash, Write)
 //! {"type":"result","subtype":"error_during_execution"}
 //! ```
 //!
@@ -43,6 +45,7 @@
 //! let end = End {
 //!     item: "issue-1202".into(),
 //!     session: "1a2b3c4d".into(),
+//!     head: None,
 //!     code: Some(1),
 //!     failed: true,
 //!     denied: vec!["Bash".into(), "Write".into(), "Bash".into()],
@@ -54,8 +57,9 @@
 //! assert_eq!(record.reason, end.reason());
 //! assert_eq!(record.tail, ["last line"]);
 //!
-//! let verify = End { item: "verify-issue-1202".into(), code: Some(0), failed: false, denied: vec![], ..end };
+//! let verify = End { item: "verify-issue-1202".into(), head: Some("988cb7b".into()), code: Some(0), failed: false, denied: vec![], ..end };
 //! assert_eq!(verify.reason(), "exit code 0, and no PASS or FAIL");
+//! assert_eq!(Record::parse(&verify.body(), 9).unwrap().tag("head"), "988cb7b");
 //! ```
 
 use std::collections::BTreeMap;
@@ -106,6 +110,9 @@ pub struct End {
     pub item: String,
     /// The start of the session ID.
     pub session: String,
+    /// The head commit (7 characters) of the work of a verify, a rebase or a
+    /// fix of the checks: none for a build (#1651).
+    pub head: Option<String>,
     /// The exit code of `claude`, or none after a signal.
     pub code: Option<i32>,
     /// True when a turn ended with an error, or a stop ended it.
@@ -121,13 +128,21 @@ impl End {
     /// events of the session, and replaces each secret of `scrub`.
     pub fn of(record: &crate::daemon::Record, ended: Ended, scrub: &Scrub) -> End {
         let events = std::fs::read_to_string(record.folder.join(EVENTS)).unwrap_or_default();
-        End::from_events(
-            &record.live.item,
-            &record.live.session,
-            ended,
-            &events,
-            scrub,
-        )
+        let head = record
+            .job
+            .as_ref()
+            .and_then(|job| job.work.commit())
+            .map(|commit| commit.get(..7).unwrap_or(commit).to_owned());
+        End {
+            head,
+            ..End::from_events(
+                &record.live.item,
+                &record.live.session,
+                ended,
+                &events,
+                scrub,
+            )
+        }
     }
 
     /// [`End::of`] for the text `events` of the events file.
@@ -165,6 +180,7 @@ impl End {
         End {
             item: item.to_owned(),
             session: crate::run::short(session).to_owned(),
+            head: None,
             code: ended.code,
             failed: ended.failed,
             denied,
@@ -201,8 +217,9 @@ impl End {
     /// The body of the post.
     pub fn body(&self) -> String {
         let code = self.code.map_or("-".to_owned(), |c| c.to_string());
+        let head = self.head.as_deref().unwrap_or("-");
         let mut body = format!(
-            "ended item={} session={} code={code} failed={} denied={}: {}",
+            "ended item={} session={} head={head} code={code} failed={} denied={}: {}",
             self.item,
             self.session,
             if self.failed { "yes" } else { "no" },
@@ -288,13 +305,14 @@ pub async fn read(api: &Api, me: &SessionUri) -> Result<Vec<Record>> {
 }
 
 /// The text of `riff session why` for `item` and the `records` of the
-/// thread: the last record of the item, and how many it has.
+/// thread: each record of the item, oldest first, with the session and the
+/// head commit of each, and the last lines of the last one.
 pub fn why(item: &str, records: &[Record]) -> String {
     let mine: Vec<&Record> = records.iter().filter(|r| r.tag("item") == item).collect();
-    let Some(last) = mine.last() else {
+    if mine.is_empty() {
         return crate::text::session_why_none(item);
-    };
-    crate::text::session_why(item, mine.len(), last)
+    }
+    crate::text::session_why(item, &mine)
 }
 
 #[cfg(test)]
