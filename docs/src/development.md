@@ -3318,8 +3318,8 @@ shows the daemon, the limit of the host, each start that waits for
 room, and each wave. It draws them again each second. To see another
 host, see
 [See a session on another host](#see-a-session-on-another-host). A
-later release merges `riff view` and `riff top` into one sessions view
-in each UI: see [Design: the UIs of riff](riff-uis.md).
+later release adds one sessions view to each UI, and `riff view` stays:
+see [Design: the UIs of riff](riff-uis.md).
 
 | Key | Does |
 |---|---|

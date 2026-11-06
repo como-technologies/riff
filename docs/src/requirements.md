@@ -6677,8 +6677,8 @@ that builds it merges.
   riff-server.
 - **01M5421633BKPPMANYRVZ76BVP** Each UI shows the sessions in one view:
   the sessions on riff-server and the container sessions of the
-  daemons, in one list. In the TUI, the sessions tab replaces the live
-  table of `riff top` and the view of `riff view`, with each of their
+  daemons, in one list. In the TUI, the sessions tab does what the live
+  table of `riff top` and the view of `riff view` do, with each of their
   actions, also the attach to a session.
 - **01M542165T96VW72HAWFXVD160** The CLI stays complete: it serves
   scripts, agents through the MCP server, and hooks. Each command prints
@@ -6686,10 +6686,6 @@ that builds it merges.
 - **01M542168PYP1WH78D3D9DKEK6** Each command that prints data takes
   `--format text` (the default) or `--format json`. serde makes the JSON
   from the types of the data. It has the same facts as the text.
-- **01M54216BCJQTQFKK5SD1PRJK9** When the TUI ships, `riff top` prints
-  one look of the sessions and ends, as `riff top --once` does. The
-  live view is the sessions tab of the TUI. The TUI design picks a
-  plain alias of `riff top`, or none.
 - **01M54216E2GY49GFV5SNPWTBEB** `riff` with no command starts the TUI
   in a terminal. With no terminal, it prints the help of the CLI.
   `riff --help` stays the help of the CLI, and says that
@@ -6790,6 +6786,12 @@ that builds it merges.
   plain terminal it works as before. When the auto mode checker blocks
   a release command, `riff denials` has a record, and the lead files an
   issue for it.
+- **01M6QEXNM0QCGH6RG4Q8M9VH4W** With the TUI too, `riff top` stays the
+  live table that it draws again in place until Ctrl-C, and `riff top
+  --once` prints one table and exits. `riff top` gets no alias.
+- **01M6QEXNQ4RD5BP8JPDH9DWK5F** Each CLI command keeps its work when
+  the TUI ships, where it makes sense. A command may change to fit the
+  core library and the TUI.
 
 ## The notes of the lead
 
