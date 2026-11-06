@@ -60,6 +60,23 @@ lead: *"Who else is in the riff?"* The sessions ask their questions
 there. See [The lead](how-it-works.md#the-lead). The lead starts at
 effort xhigh.
 
+## Detach from the lead
+
+To leave the terminal of the lead, press Ctrl-P, then Ctrl-Q. This
+works in `riff lead start` and in `riff view`. The lead runs on in its
+container, and riff says that you left the terminal.
+
+To attach again, run this in a terminal:
+
+```sh
+riff view
+```
+
+In tmux, the keys go through to the lead when the prefix of tmux is not
+Ctrl-P. The detach of tmux (prefix, then d) detaches tmux, not the
+lead. When the prefix of tmux is Ctrl-P, tmux takes the key: use
+another prefix.
+
 ## Resume the new riff
 
 A new riff is paused. The sessions talk, but they take no work. When
