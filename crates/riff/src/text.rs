@@ -1192,6 +1192,7 @@ pub fn main_passes(
 /// assert!(text.contains("Start routine. Do this when your session starts, and after `join`."));
 /// assert!(text.contains("Pause. `whoami` and `who` show whether the riff or your repository is paused"));
 /// assert!(text.contains("it commits each change as a WIP commit on the branch of its worktree"));
+/// assert!(text.contains("its `Done when:` line, or its heading `## Done when`, is the test of the work"));
 /// assert!(text.contains("Pick up dropped work. A session can end with no notice"));
 /// assert!(text.contains("Start again only when the earlier work is wrong"));
 /// assert!(!text.contains("skill"));
@@ -1216,10 +1217,10 @@ Start routine. Do this when your session starts, and after `join`. Call `whoami`
 `read` with no thread. While the riff is paused, see \"Pause\". When it runs, find a free work \
 item, and call `claim` with it. An open issue with the label `broken-main` comes first, also \
 from another wave. The result of `claim` names the earlier work on the item: see \
-\"Pick up dropped work\". Read the issue: its `Done when:` line is the test of the work. Work in \
-your own worktree. Push your work as WIP before each long run. Open a pull request with \
-auto-merge on, and ask another session to verify the work. Never merge, and never push to the \
-default branch. When you finish, call `release`.
+\"Pick up dropped work\". Read the issue: its `Done when:` line, or its heading `## Done when`, is \
+the test of the work. Work in your own worktree. Push your work as WIP before each long run. Open \
+a pull request with auto-merge on, and ask another session to verify the work. Never merge, and \
+never push to the default branch. When you finish, call `release`.
 
 Pause. `whoami` and `who` show whether the riff or your repository is paused, and who set the \
 pause. While a pause lasts, a claim fails. A new session claims nothing: it calls `tell` with the \
@@ -9548,7 +9549,7 @@ pub fn wave_checks_rerun(
 /// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, false);
 /// assert!(!text.contains("release pull request"));
 /// assert!(!text.contains("`release`"));
-/// assert!(text.contains("Find its \"Done when:\" line.\n2. Read the rules"));
+/// assert!(text.contains("Find its \"Done when\" line or heading: a line \"Done when:\", or a heading \"## Done when\".\n2. Read the rules"));
 ///
 /// // No CI (01M5SMNKDWBD1J6Y18ENQG87CK): no check to wait for, and none ran.
 /// let none = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &[], true);
@@ -9567,8 +9568,8 @@ pub fn wave_verify_start(
 ) -> String {
     let release = if release {
         "   When the pull request has the label `release`, verify it against the part \"Verify of \
-         the release pull request\" of its issue, and not against the line \"Done when:\": the \
-         release is not published before the merge.\n"
+         the release pull request\" of its issue, and not against the \"Done when\" line or \
+         heading: the release is not published before the merge.\n"
     } else {
         ""
     };
@@ -9586,11 +9587,12 @@ pub fn wave_verify_start(
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
-         against its \"Done when:\" line, then stop. Another session did the work: do not \
-         change it. riff does the claim, the release and the report of your result. Your riff \
+         against its \"Done when\" line or heading, then stop. Another session did the work: do \
+         not change it. riff does the claim, the release and the report of your result. Your riff \
          tools only talk: whoami, who, threads, read, post, tell, status and blocked.\n\n\
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
-         Find its \"Done when:\" line.\n\
+         Find its \"Done when\" line or heading: a line \"Done when:\", or a heading \
+         \"## Done when\".\n\
          {release}\
          2. {READ_RULES}, and obey the rules for a verify.\n\
          3. Read the pull request and its diff: gh pr view {pull} --comments, and git diff \
@@ -10906,6 +10908,55 @@ mod tests {
         assert!(note.contains("\"## Done when\" heading"), "{note}");
         let unread = init_issues_unread("o/r", "boom");
         assert!(unread.contains("\"## Done when\" heading"), "{unread}");
+    }
+
+    /// #1633 (01M6QFZ9JHR19Y8F1PWH2HVQ07): the start text of a verify
+    /// names both forms of a "Done when" line, so a verify of an issue
+    /// with a heading `## Done when` does not read the line as missing.
+    /// The text names the two forms in step 1 and in the part for a
+    /// release pull request, and the intro does not name one form only.
+    #[test]
+    fn the_start_text_of_a_verify_names_the_heading_of_done_when() {
+        let checks = ["CI".to_owned()];
+        for (checks, release) in [(&checks[..], true), (&checks[..], false), (&[][..], true)] {
+            let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", checks, release);
+            let step = text
+                .split("\n2. ")
+                .next()
+                .and_then(|head| head.split("\n1. ").nth(1))
+                .unwrap_or_else(|| panic!("no step 1 in\n{text}"));
+            assert!(step.contains("\"Done when\" line or heading"), "{step}");
+            assert!(step.contains("a line \"Done when:\""), "{step}");
+            assert!(step.contains("a heading \"## Done when\""), "{step}");
+            assert!(
+                text.contains("against its \"Done when\" line or heading, then stop"),
+                "{text}"
+            );
+            assert!(!text.contains("its \"Done when:\" line"), "{text}");
+            assert_eq!(
+                text.contains("not against the \"Done when\" line or heading"),
+                release,
+                "{text}"
+            );
+        }
+    }
+
+    /// #1633 (01M6QFZ9JHR19Y8F1PWH2HVQ07): the start routine in the MCP
+    /// instructions names both forms of a "Done when" line.
+    #[test]
+    fn the_start_routine_of_a_session_names_the_heading_of_done_when() {
+        let routine = MCP_TOOLS
+            .split("Start routine.")
+            .nth(1)
+            .and_then(|rest| rest.split("\n\nPause.").next())
+            .unwrap_or_else(|| panic!("no start routine in\n{MCP_TOOLS}"));
+        assert!(routine.contains("`Done when:` line"), "{routine}");
+        assert!(routine.contains("`## Done when`"), "{routine}");
+        assert!(routine.contains("is the test of the work"), "{routine}");
+        assert!(
+            routine.contains("Pick up dropped work"),
+            "the routine stopped too early: {routine}"
+        );
     }
 
     /// #1354 (01M5R580VCRCHJM8FY7NT485R1): the start texts of the

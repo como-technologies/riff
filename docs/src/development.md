@@ -3155,8 +3155,10 @@ Then the start does not count as one of the 3, and your lead gets no
 message. For each other refusal, your lead gets a message.
 
 A verify session gets a clone at the head commit of the pull request.
-It checks the work against the `Done when:` line of the issue, and
-changes nothing. Its last reply is the result: the first line is
+It checks the work against the `Done when:` line of the issue, or its
+heading `## Done when`, and changes nothing. Its start text names both
+forms, as the start text of a worker does. Its last reply is the
+result: the first line is
 `PASS` or `FAIL`. The daemon reports it as `riff verify` does: a
 comment on the pull request, the status `riff/verify` of the commit,
 and a message to the holder of the item and to your lead. On a pass,
