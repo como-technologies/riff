@@ -945,6 +945,14 @@ async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing
     assert!(machine.read("files").lines().any(|l| l == "riff.toml"));
     let changes = machine.forge_changes();
     assert!(changes.len() >= 8, "{changes:?}");
+    // #1605: the first wave comes with the label question, and riff never
+    // forces it: a label that is there keeps its text.
+    let question: Vec<&String> = changes
+        .iter()
+        .filter(|c| c.starts_with("label create question"))
+        .collect();
+    assert_eq!(question.len(), 1, "{changes:?}");
+    assert!(!question[0].contains("--force"), "{}", question[0]);
 
     // A second run: the checks pass, nothing changes, and nothing is asked.
     let out = machine.init(&machine.repo, &[]).await;
@@ -1385,10 +1393,10 @@ fn issues(bin: &Path, open: &[(u64, &str, &str, &str)]) {
     std::fs::write(bin.join("issues"), serde_json::to_string(&list).unwrap()).unwrap();
 }
 
-/// 01M5SMMP7ZW2PZNGK63WWZAC8P: a repository with 3 open issues, one of them
-/// with the line `Done when:`, and a tracker with no line. The note names
-/// the 2 others, the first run and `--check` print it, and no exit code
-/// changes.
+/// 01M5SMMP7ZW2PZNGK63WWZAC8P, 01M6QCXGC42AG1RY5QNGT47GVV: a repository with
+/// 4 open issues, one of them with the line `Done when:`, one with the
+/// heading `## Done when`, and a tracker with no line. The note names the 2
+/// others, the first run and `--check` print it, and no exit code changes.
 #[tokio::test]
 async fn riff_init_names_the_open_issues_with_no_done_when_line() {
     let machine = Machine::new();
@@ -1398,14 +1406,20 @@ async fn riff_init_names_the_open_issues_with_no_done_when_line() {
         &machine.bin,
         &[
             (11, "Has the line", "", "Text.\n\nDone when: it works."),
+            (
+                15,
+                "Has the heading",
+                "",
+                "Text.\n\n## Done when\n- it works",
+            ),
             (12, "No line", "", "Text only."),
             (13, "Also no line", "bug", ""),
             (14, "Tracker: the parts", "tracker", "- #11"),
         ],
     );
-    let note = "2 open issues of acme/app have no \"Done when:\" line, so the wave starts no \
-                session for them: #12, #13. Add the line to each issue. See \"Add a Done when \
-                line to an issue\" in the book.";
+    let note = "2 open issues of acme/app have no \"Done when:\" line and no \"## Done when\" \
+                heading, so the wave starts no session for them: #12, #13. Add the line to each \
+                issue. See \"Add a Done when line to an issue\" in the book.";
     for args in [&["--check"][..], &["--yes"]] {
         let out = machine.init(&machine.repo, args).await;
         let stdout = text(&out.stdout);
@@ -1415,7 +1429,7 @@ async fn riff_init_names_the_open_issues_with_no_done_when_line() {
             "{args:?}\n{note}\nnot once in\n{stdout}"
         );
         assert!(
-            !stdout.contains("#11") && !stdout.contains("#14"),
+            !stdout.contains("#11") && !stdout.contains("#14") && !stdout.contains("#15"),
             "{stdout}"
         );
         assert!(

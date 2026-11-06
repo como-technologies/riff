@@ -403,7 +403,7 @@ each step that is done already:
 | Merge settings | It allows auto-merge and squash merge. |
 | `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins `riff-base`, the image of riff with `claude`, `git` and `gh` and no language. |
 | The Backlog | It makes the `Backlog`. |
-| The first wave | When the repository has no open wave, it makes `Wave 1`. |
+| The first wave | When the repository has no open wave, it makes `Wave 1`, and the label `question` when the repository has none. |
 | The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks that your CI runs on a pull request, and `riff/verify`. A repository with no CI gets `riff/verify` alone. |
 
 ```mermaid
@@ -436,9 +436,9 @@ them, and a repository with none passes. A session reads the rules of
 the repository for agents when it has them. See
 [Write a CLAUDE.md, when you want one](#write-a-claudemd-when-you-want-one).
 
-The wave starts a session only for an issue with a `Done when:` line.
-`riff init` names the open issues that lack it, in a note that fails no
-check. See
+The wave starts a session only for an issue with a `Done when:` line
+or a `## Done when` heading. `riff init` names the open issues that lack
+both, in a note that fails no check. See
 [Find the issues with no Done when line](development.md#find-the-issues-with-no-done-when-line).
 The names that riff uses on the forge are in
 [The names riff uses on the forge](waves.md#the-names-riff-uses-on-the-forge).

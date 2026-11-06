@@ -1788,7 +1788,7 @@ GitHub, last hour: 75 calls, 111 GraphQL points.
   session   pr view                       9 calls        9 points
   look      api commits/_/check-runs     12 calls        0 points
 GraphQL points left: 2,222, the counter starts again at 23:00:17 UTC (read 2m ago).
-Other callers: 2,670 GraphQL points since 22:00:17 UTC, about 95 a minute. The counter used 2,778, and riff counted 108.
+Other callers: 2,670 GraphQL points since 22:00:17 UTC, about 95 a minute. At 22:28:17 UTC the counter used 2,778, and riff counted 108.
 ```
 
 Each row has the caller and the kind of the call. The caller is `wave`
@@ -1796,18 +1796,23 @@ Each row has the caller and the kind of the call. The caller is `wave`
 `watches`, `sweep`, `usage`, or the command of `riff` that made the
 call: `top`, `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff
 wave ...`) or `audit`. The caller `session` is a `gh` that a session
-runs in its container. A call of REST costs no
-GraphQL point. The points of a row are an estimate from the query that
-`gh` sends. The line with the points left comes from GitHub: it is the
-counter that answered. GitHub keeps more than one counter for one
-token, so two reads can differ.
+runs in its container. A call of REST costs no GraphQL point. The
+points of a row are an estimate: riff takes them from a table of the
+cost of each query that `gh` sends (see
+[Measure the cost of a query again](#measure-the-cost-of-a-query-again)).
+The line with the points left comes from GitHub: it is the counter that
+answered. GitHub keeps more than one counter for one token, so two
+reads can differ.
 
-The last line, `Other callers`, shows what riff does not see. The
-counter used 2,778 points since it started, and riff counted 108 of
-them. The other 2,670 points went to a caller that is not a riff
-process: a script, an editor, another tool, or riff on another
-machine, with the same token. The line shows only while the counter
-has not started again.
+The last line, `Other callers`, shows what riff does not see. It
+compares two numbers from one time, the time of the last reading of the
+counter (22:28:17 UTC here). At that time the counter had used 2,778
+points since it started, and riff had counted 108 of them. The other
+2,670 points went to a caller that is not a riff process: a script, an
+editor, another tool, or riff on another machine, with the same token.
+A reading can be old (see "read 2m ago" above), so the line says the
+time of the reading, and not the time of the status. The line shows
+only while the counter has not started again.
 
 To find the process behind a caller, see
 [See the riff processes of this host](#see-the-riff-processes-of-this-host).
@@ -1823,6 +1828,50 @@ riff counts no gh call of a session of these images, as they have their own gh a
 
 When the points are gone, see
 [Know what the daemon does when the GitHub limit runs out](#know-what-the-daemon-does-when-the-github-limit-runs-out).
+
+#### Know why riff counted more than GitHub used
+
+Sometimes riff counts more points than the counter used. Then the last
+line does not say 0 points for the other callers, because it cannot
+know them:
+
+```sh
+riff daemon status
+```
+
+```text
+GraphQL points left: 4,668, the counter starts again at 23:02:33 UTC (read 12m ago).
+Other callers: not known. riff counted more than GitHub used: the points of riff are estimates. At 22:10:00 UTC the counter used 332, and riff counted 1,201.
+```
+
+GitHub keeps more than one counter for one token, and each call lands
+on one of them. A reading shows one counter, but riff counts the calls
+of all of them. So the points of riff are estimates, and they can be
+higher than the use of the one counter that answered. The next reading
+can come from another counter, and the line can change.
+
+```mermaid
+flowchart LR
+    R["the calls of riff:<br/>1,201 points counted"] --> A["counter A"]
+    R --> B["counter B"]
+    A --> S["the reading:<br/>counter A used 332"]
+    S --> L["riff counted more than GitHub used:<br/>the points of riff are estimates"]
+```
+
+#### Measure the cost of a query again
+
+The points of `gh pr list` and `gh issue list` come from a record of
+what GitHub says: the `cost` of the query in `rateLimit(dryRun: true)`
+for each page. The record is `crates/riff/src/ghcalls/costs.txt`. A
+test compares the points of riff with it. To ask GitHub again, with a
+`gh` that is signed in (it makes about 40 calls of 1 point each):
+
+```sh
+cargo test -p riff --test all gh_costs:: -- --ignored --nocapture
+```
+
+The test fails when GitHub changes a cost. Then change the record and
+the table of `points_of`.
 
 #### Know how an idle wave reads GitHub
 
@@ -2112,6 +2161,10 @@ each host:
 - "Wave N is complete";
 - a fault when riff cannot read the state of the forge (see
   [See the watches of the daemon](#see-the-watches-of-the-daemon)).
+
+The line in `riff chat` that tells you that the label `question` went on
+an issue comes one time too, and it goes to you, not to your lead (see
+[Ask the person a question](#ask-the-person-a-question)).
 
 A notice about one host comes from each host, because each host has its
 own fact:
@@ -2531,9 +2584,11 @@ warns when an item has no line (see
 ### Find the issues with no Done when line
 
 `riff init` counts the open issues that have no line that starts with
-`Done when:`, and names them in a note. A tracker and a release issue
-are not in the note: no session does them. Run it in a clone of the
-repository. `--check` changes nothing:
+`Done when:` and no heading `## Done when`, and names them in a note. A
+heading `## Done when` counts, with or without the colon, as it does for
+the wave. A tracker and a release issue are not in the note: no session
+does them. Run it in a clone of the repository. `--check` changes
+nothing:
 
 ```sh
 riff init --check
@@ -2544,13 +2599,13 @@ changes no exit code. It names the first 20 issues, and counts the rest.
 For example:
 
 ```text
-2 open issues of acme/app have no "Done when:" line, so the wave starts no session for them: #12, #13. Add the line to each issue. See "Add a Done when line to an issue" in the book.
+2 open issues of acme/app have no "Done when:" line and no "## Done when" heading, so the wave starts no session for them: #12, #13. Add the line to each issue. See "Add a Done when line to an issue" in the book.
 ```
 
 ```mermaid
 flowchart LR
     I["riff init"] --> L["gh issue list:<br/>the open issues"]
-    L --> T{"a tracker, a release issue,<br/>or a Done when: line?"}
+    L --> T{"a tracker, a release issue,<br/>a Done when: line,<br/>or a ## Done when heading?"}
     T -- yes --> O["not in the note"]
     T -- no --> N["named in the note"]
 ```
@@ -2654,9 +2709,11 @@ riff wave list
 The current wave has the mark `current`, and `runs on HOST` for each
 host whose daemon runs its loop. Under each wave come its open items
 in the groups of the board of `riff top`: `free`, `held`, `claimed`,
-`verify`, `stuck` and `tracker`. A held item has the reason of the lead,
-and the wave does not start it. The wave never starts a tracker (see
-[Track a group of items](waves.md#track-a-group-of-items)). A stuck item
+`verify`, `stuck`, `tracker` and `question`. A held item has the reason
+of the lead, and the wave does not start it. The wave never starts a
+tracker (see [Track a group of items](waves.md#track-a-group-of-items)).
+An item in `question` waits for the answer of a person (see
+[Ask the person a question](#ask-the-person-a-question)). A stuck item
 has a pull request that cannot merge by itself (see
 [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)):
 
@@ -2665,13 +2722,15 @@ Wave 33: Hosts  current  runs on thelio  4 open, 21 closed
   held: #1003 #1008 (VmLck reading at 19:40 UTC)
   claimed: #1103
   tracker: #1248
+  question: #1596
 Wave 34  1 open, 0 closed
   free: #1106
 Backlog  61 open, 4 closed
 ```
 
 When the wave says "no free work now" while items are open, look at
-the groups: the items are held, claimed, in verify, stuck or trackers.
+the groups: the items are held, claimed, in verify, stuck, trackers or
+waiting for an answer.
 
 The lead runs the same command in its container. There, riff reads
 the sessions and the holds through the riff daemon of the host.
@@ -2748,6 +2807,75 @@ A hold of `verify-issue-12`, or the label `no-verify` on the issue,
 also stops the verify request after the build: the lead gets a note
 with the reason (see
 [Keep the verify of an item from the workers](how-it-works.md#keep-the-verify-of-an-item-from-the-workers)).
+
+### Ask the person a question
+
+A lead that needs a decision of a person asks in the issue, not in a
+comment. It writes the questions in the body of the issue, in a section
+"Questions for PERSON", as Q1, Q2, and so on. Then it adds the label
+`question`:
+
+```sh
+gh issue edit 1596 --add-label question
+```
+
+From then on, riff waits for the answer:
+
+- The wave starts no build of the issue, and no rebase or fix of its
+  pull request. A verify of an open pull request of the issue goes on.
+- `riff wave list` and the board of `riff top` show the issue in the
+  group `question`, next to `held` and `tracker` (see
+  [See which wave runs, and where](#see-which-wave-runs-and-where)).
+- The look of the daemon tells the person one time in `riff chat`, with
+  the title and the link of the issue. It tells again only when the
+  label goes on again.
+
+The person answers in the body or in a comment. The lead writes each
+answer in the body, and a decision as a requirement. When no question
+is open, the lead removes the label:
+
+```sh
+gh issue edit 1596 --remove-label question
+```
+
+One open question keeps the label on. The wave takes the issue at its
+next look after the label goes. `riff init` makes the label in a new
+repository, when it is not there.
+
+```mermaid
+flowchart LR
+    L["the lead: the questions in the body,<br/>gh issue edit --add-label question"] --> G["the group question:<br/>no build"]
+    L --> C["one line in riff chat<br/>for the person"]
+    P["the person answers<br/>in the body or in a comment"] --> R["the lead records the answer,<br/>gh issue edit --remove-label question"]
+    G --> P
+    R --> F["the wave takes the issue"]
+```
+
+### See all your open questions
+
+To see each open question for you, in all the repositories of the riff,
+run this in any folder:
+
+```sh
+riff questions
+```
+
+It lists the open issues with the label `question` in the repository of
+each session of the riff, and in the repository of your folder. Each
+line has the repository, the number, the title and the link:
+
+```text
+como-technologies/riff  #1596  Which design for the board?  https://github.com/como-technologies/riff/issues/1596
+o/other  #3  Who owns it?  https://github.com/o/other/issues/3
+```
+
+When `gh` cannot read a repository, one line on stderr names it, and
+the command exits with 1 after it lists the other repositories. To see
+the same issues in the browser, in one GitHub search:
+
+```sh
+riff questions --web
+```
 
 ### Set the limit of the host
 
@@ -3265,8 +3393,8 @@ shows the daemon, the limit of the host, each start that waits for
 room, and each wave. It draws them again each second. To see another
 host, see
 [See a session on another host](#see-a-session-on-another-host). A
-later release merges `riff view` and `riff top` into one sessions view
-in each UI: see [Design: the UIs of riff](riff-uis.md).
+later release adds one sessions view to each UI, and `riff view` stays:
+see [Design: the UIs of riff](riff-uis.md).
 
 | Key | Does |
 |---|---|

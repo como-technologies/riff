@@ -956,6 +956,11 @@ pub const BROKEN_MAIN_LABEL: &str = "main is broken: the rollout of riff gives t
 /// ([`riff_client::waves::TRACKER`], 01M5ND16V2SVN8A9K7W90VC6X9).
 pub const TRACKER_LABEL: &str = "a tracker: its parts are separate items, and no session does it";
 
+/// The description of the label `question` that riff makes in a repository
+/// that has none (#1605).
+pub const QUESTION_LABEL: &str =
+    "a lead waits for your answer: the wave starts no build of the issue";
+
 /// The first 7 characters of a commit.
 fn short(commit: &str) -> String {
     commit.chars().take(7).collect()
@@ -1443,6 +1448,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     verify: vec![],
 ///     stuck: vec![],
 ///     tracker: vec![],
+///     question: vec![],
 /// };
 /// let items = Items {
 ///     boards: vec![
@@ -1534,6 +1540,78 @@ pub fn waves_age(age: std::time::Duration) -> Option<String> {
 /// ```
 pub fn waves_no_repo() -> String {
     "this folder is in no git repository".into()
+}
+
+/// The output of `riff questions`: one line for each open issue with the
+/// label `question`, with the repository, the number, the title and the
+/// link (#1605). With no question, one line that says so.
+///
+/// ```
+/// use riff::questions::Question;
+///
+/// let question = |repo: &str, number, title: &str| Question {
+///     repo: repo.into(),
+///     number,
+///     title: title.into(),
+///     url: format!("https://github.com/{repo}/issues/{number}"),
+/// };
+/// assert_eq!(
+///     riff::text::questions_list(&[question("o/r", 12, "Which design?"), question("o/s", 3, "Ship it?")]),
+///     "o/r  #12  Which design?  https://github.com/o/r/issues/12\n\
+///      o/s  #3  Ship it?  https://github.com/o/s/issues/3"
+/// );
+/// assert_eq!(
+///     riff::text::questions_list(&[]),
+///     "No open question in the repositories of the riff."
+/// );
+/// ```
+pub fn questions_list(questions: &[crate::questions::Question]) -> String {
+    if questions.is_empty() {
+        return "No open question in the repositories of the riff.".into();
+    }
+    let lines: Vec<String> = questions
+        .iter()
+        .map(|q| {
+            format!(
+                "{}  #{}  {}  {}",
+                safe(&q.repo),
+                q.number,
+                safe(&q.title),
+                safe(&q.url)
+            )
+        })
+        .collect();
+    lines.join("\n")
+}
+
+/// The line on stderr of `riff questions` for a repository that `gh`
+/// cannot read.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::questions_fault("o/r", "gh issue list failed: HTTP 404"),
+///     "riff: cannot read the questions of o/r: gh issue list failed: HTTP 404"
+/// );
+/// ```
+pub fn questions_fault(repo: &str, why: &str) -> String {
+    format!(
+        "riff: cannot read the questions of {}: {}",
+        safe(repo),
+        safe(why)
+    )
+}
+
+/// The line on stderr of `riff questions --web`: the address that riff
+/// opens in the browser.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::questions_web("https://github.com/issues?q=x"),
+///     "riff: opening https://github.com/issues?q=x in your browser."
+/// );
+/// ```
+pub fn questions_web(url: &str) -> String {
+    format!("riff: opening {} in your browser.", safe(url))
 }
 
 /// The cause when `gh` gives no open issues of `repo`.
@@ -5592,6 +5670,7 @@ pub fn body_in_sentences() -> String {
 /// let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
 /// let text = riff::text::run_start("o/r", "master", 12, "worktree-issue-12", "1a2b", frame, "Wave 3", false);
 /// assert!(text.contains("gh issue view 12 --comments"));
+/// assert!(text.contains("Find its \"Done when\" line or heading: a line \"Done when:\", or a heading \"## Done when\"."));
 /// assert!(text.contains("git push -u origin worktree-issue-12"));
 /// assert!(text.contains("Never push to master."));
 /// assert!(text.contains("--trailer \"Riff-Session: 1a2b\""));
@@ -5640,8 +5719,8 @@ pub fn run_start(
          release and the verify request for you. Your riff tools only talk: whoami, who, \
          threads, read, post, tell, status and blocked.\n{earlier}\n\
          1. Read the issue and its comments: gh issue view {issue} --comments\n   \
-         Find its \"Done when:\" line. When the line is missing, or you cannot test it, stop \
-         and say why.\n\
+         Find its \"Done when\" line or heading: a line \"Done when:\", or a heading \
+         \"## Done when\". When it is missing, or you cannot test it, stop and say why.\n\
          2. {READ_RULES}, and obey them.\n\
          3. Do the work on the branch {branch}. Give each commit this trailer:\n   \
          git commit --trailer \"Riff-Session: {session}\"\n\
@@ -6636,7 +6715,20 @@ pub const GITHUB_ROWS: usize = 8;
 /// assert!(
 ///     text.ends_with(
 ///         "Other callers: 1,212 GraphQL points since 14:00:35 UTC, about 43 a minute. \
-///          The counter used 1,284, and riff counted 72.\n"
+///          At 14:28:35 UTC the counter used 1,284, and riff counted 72.\n"
+///     ),
+///     "{text}"
+/// );
+///
+/// // riff counted more than the counter used: the line does not say 0
+/// // for the other callers, which are not known (#1607).
+/// let more = riff::ghcalls::Other { points: 0, used: 332, counted: 1_201, ..other };
+/// let shown = Shown { other: Some(more), ..shown };
+/// let text = riff::text::github_use(&shown, since_ms + 30 * 60_000);
+/// assert!(
+///     text.ends_with(
+///         "Other callers: not known. riff counted more than GitHub used: the points of riff \
+///          are estimates. At 14:28:35 UTC the counter used 332, and riff counted 1,201.\n"
 ///     ),
 ///     "{text}"
 /// );
@@ -6716,17 +6808,25 @@ pub fn github_use(shown: &crate::ghcalls::Shown, now_ms: i64) -> String {
         );
     }
     if let Some(other) = &shown.other {
-        let _ = writeln!(
-            out,
-            "Other callers: {} GraphQL {} since {}, about {} a minute. The counter used {}, and riff \
-             counted {}.",
-            grouped(other.points),
-            if other.points == 1 { "point" } else { "points" },
-            clock_utc(other.since_ms),
-            grouped(other.a_minute()),
-            grouped(other.used),
-            grouped(other.counted),
-        );
+        let at = clock_utc(other.read_ms);
+        let (used, counted) = (grouped(other.used), grouped(other.counted));
+        if other.counted_more() {
+            let _ = writeln!(
+                out,
+                "Other callers: not known. riff counted more than GitHub used: the points of riff \
+                 are estimates. At {at} the counter used {used}, and riff counted {counted}.",
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "Other callers: {} GraphQL {} since {}, about {} a minute. At {at} the counter \
+                 used {used}, and riff counted {counted}.",
+                grouped(other.points),
+                if other.points == 1 { "point" } else { "points" },
+                clock_utc(other.since_ms),
+                grouped(other.a_minute()),
+            );
+        }
     }
     if !shown.own_gh.is_empty() {
         let images: Vec<String> = shown.own_gh.iter().map(|image| safe(image)).collect();
@@ -7778,17 +7878,18 @@ pub const INIT_WIDE_KEPT: &str =
 pub const INIT_ISSUES_SHOWN: usize = 20;
 
 /// The note of `riff init` for the open issues of `repo` that have no
-/// line `Done when:` (01M5SMMP7ZW2PZNGK63WWZAC8P): their `numbers`, at most
-/// [`INIT_ISSUES_SHOWN`] of them.
+/// "Done when" line, and no heading of `Done when`
+/// (01M5SMMP7ZW2PZNGK63WWZAC8P, 01M6QCXGC42AG1RY5QNGT47GVV): their
+/// `numbers`, at most [`INIT_ISSUES_SHOWN`] of them.
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::init_no_done_when("acme/app", &[2, 3]),
-///     "2 open issues of acme/app have no \"Done when:\" line, so the wave starts no session for \
+///     "2 open issues of acme/app have no \"Done when:\" line and no \"## Done when\" heading, so the wave starts no session for \
 ///      them: #2, #3. Add the line to each issue. See \"Add a Done when line to an issue\" in the book."
 /// );
 /// let one = riff::text::init_no_done_when("acme/app", &[7]);
-/// assert!(one.starts_with("1 open issue of acme/app has no \"Done when:\" line, so the wave starts no session for it: #7."), "{one}");
+/// assert!(one.starts_with("1 open issue of acme/app has no \"Done when:\" line and no \"## Done when\" heading, so the wave starts no session for it: #7."), "{one}");
 /// let many: Vec<u64> = (1..=23).collect();
 /// let text = riff::text::init_no_done_when("acme/app", &many);
 /// assert!(text.starts_with("23 open issues of acme/app have no"), "{text}");
@@ -7812,9 +7913,9 @@ pub fn init_no_done_when(repo: &str, numbers: &[u64]) -> String {
         named.push(format!("and {} more", count - INIT_ISSUES_SHOWN));
     }
     format!(
-        "{count} open {issues} of {repo} {has} no \"Done when:\" line, so the wave starts no \
-         session for {them}: {}. Add the line to each issue. See \"Add a Done when line to an \
-         issue\" in the book.",
+        "{count} open {issues} of {repo} {has} no \"Done when:\" line and no \"## Done when\" \
+         heading, so the wave starts no session for {them}: {}. Add the line to each issue. See \
+         \"Add a Done when line to an issue\" in the book.",
         named.join(", ")
     )
 }
@@ -7825,13 +7926,13 @@ pub fn init_no_done_when(repo: &str, numbers: &[u64]) -> String {
 /// ```
 /// assert_eq!(
 ///     riff::text::init_issues_unread("acme/app", "gh: HTTP 502"),
-///     "riff cannot list the open issues of acme/app, so it cannot count the issues with no \"Done when:\" line: gh: HTTP 502"
+///     "riff cannot list the open issues of acme/app, so it cannot count the issues with no \"Done when:\" line and no \"## Done when\" heading: gh: HTTP 502"
 /// );
 /// ```
 pub fn init_issues_unread(repo: &str, why: &str) -> String {
     format!(
         "riff cannot list the open issues of {repo}, so it cannot count the issues with no \
-         \"Done when:\" line: {}",
+         \"Done when:\" line and no \"## Done when\" heading: {}",
         flat(why)
     )
 }
@@ -8695,6 +8796,26 @@ pub fn wave_no_done_when(issue: u64) -> String {
         "The riff daemon did not start issue-{issue}: the body of the issue has no \"Done when:\" \
          line and no \"## Done when\" heading, and a session stops at once without one. Add the \
          line to the body of the issue. The wave will take the issue at its next look."
+    )
+}
+
+/// The line in riff chat for the person of the lead: the issue `issue` of
+/// `repo` got the label `question`, so a lead waits for an answer
+/// (#1605). It has the title of the issue and its link.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_question("o/r", 12, "Which design?"),
+///     "A lead waits for your answer in issue #12, Which design?: https://github.com/o/r/issues/12. \
+///      The wave starts no build of the issue until the label question goes."
+/// );
+/// ```
+pub fn wave_question(repo: &str, issue: u64, title: &str) -> String {
+    format!(
+        "A lead waits for your answer in issue #{issue}, {}: https://github.com/{}/issues/{issue}. \
+         The wave starts no build of the issue until the label question goes.",
+        safe(title),
+        safe(repo)
     )
 }
 
@@ -9761,7 +9882,9 @@ action, file an issue to fix the guard in code: do not work around the refusal. 
 that you read, and say \"I do not know\" for the rest: do not speculate. When your person \
 writes in the riff chat, answer in the riff chat, not only in your terminal: post to the thread `chat` with the selector `{user, host, person: true}`, so that no agent session wakes. Do not name \
 message numbers in the chat: say what the message said. Write a design in the body of the \
-issue, not in comments. A rule that must hold needs a guard in code with a test: a rule in a \
+issue, not in comments. Put each question for a person in the body of the issue, in a section \"Questions for PERSON\" \
+as Q1, Q2 and so on, and add the label `question`: riff shows it, and the wave waits for the \
+answer. Record each answer in the body, and remove the label when no question is open. A rule that must hold needs a guard in code with a test: a rule in a \
 note or in memory is no guard. Use \"I will\" for a future action: never the present tense. \
 When you need a decision of your person, call `blocked` at once. Never delete or overwrite the \
 config of a user without being asked. Do not break the other repositories of the riff. Keep the \
@@ -9778,9 +9901,9 @@ notes."
 /// for (name, phrase) in riff::text::LEAD_RULES {
 ///     assert!(riff::text::MCP_LEAD.contains(phrase), "{name}: {phrase}");
 /// }
-/// assert_eq!(riff::text::LEAD_RULES.len(), 16);
+/// assert_eq!(riff::text::LEAD_RULES.len(), 17);
 /// ```
-pub const LEAD_RULES: [(&str, &str); 16] = [
+pub const LEAD_RULES: [(&str, &str); 17] = [
     ("lead-places-issues", "You place the issues in the waves"),
     ("no-raw-oneliners", "Do not run a raw shell one-liner"),
     ("riff-commands-alone", "Run each riff command alone"),
@@ -9808,6 +9931,10 @@ pub const LEAD_RULES: [(&str, &str); 16] = [
     ),
     ("guards-in-code", "needs a guard in code with a test"),
     ("future-tense-will", "Use \"I will\" for a future action"),
+    (
+        "questions-in-issue",
+        "Put each question for a person in the body of the issue",
+    ),
     ("ask-at-once", "call `blocked` at once"),
     (
         "never-delete-user-config",
@@ -10773,6 +10900,32 @@ mod tests {
         ] {
             assert!(!text.contains("plain sentences"), "{text}");
         }
+    }
+
+    /// #1617 (01M6QCXGC42AG1RY5QNGT47GVV): the start text of a worker
+    /// names both forms of a "Done when" line, so a session of an issue
+    /// with a heading `## Done when` does not read the line as missing.
+    /// The note of `riff init` names both forms too.
+    #[test]
+    fn the_start_text_of_a_worker_names_the_heading_of_done_when() {
+        let frame = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
+        for earlier in [false, true] {
+            let text = run_start("o/r", "main", 12, "b", "1a", frame, "Wave 3", earlier);
+            let step = text
+                .split("\n2. ")
+                .next()
+                .and_then(|head| head.split("\n1. ").nth(1))
+                .unwrap_or_else(|| panic!("no step 1 in\n{text}"));
+            assert!(step.contains("\"Done when\" line or heading"), "{step}");
+            assert!(step.contains("\"Done when:\""), "{step}");
+            assert!(step.contains("\"## Done when\""), "{step}");
+            assert!(step.contains("When it is missing"), "{step}");
+        }
+        let note = init_no_done_when("o/r", &[1]);
+        assert!(note.contains("\"Done when:\" line"), "{note}");
+        assert!(note.contains("\"## Done when\" heading"), "{note}");
+        let unread = init_issues_unread("o/r", "boom");
+        assert!(unread.contains("\"## Done when\" heading"), "{unread}");
     }
 
     /// #1354 (01M5R580VCRCHJM8FY7NT485R1): the start texts of the

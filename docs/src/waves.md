@@ -148,7 +148,7 @@ Run this in a clone of the repository. It shows each open wave in
 number order, then the backlog, with the number of the open and the
 closed items. The current wave has the mark `current` and the hosts
 of its loop. The open items of each wave follow in the groups `free`,
-`held`, `claimed`, `verify`, `stuck` and `tracker` (see
+`held`, `claimed`, `verify`, `stuck`, `tracker` and `question` (see
 [See which wave runs, and where](development.md#see-which-wave-runs-and-where)):
 
 ```sh
@@ -285,6 +285,7 @@ the waves, and riff ignores them.
 | `Done when:` | the start of a line in the body of an issue, or a heading `## Done when` | The wave starts a session only for an issue with this line. |
 | `Needs:` | the start of a line in the body of an issue | The issues that must be merged first. |
 | `tracker`, or the title start `Tracker:` | a label | A tracker has no code of its own: the wave starts no session for it. |
+| `question` | a label | A lead waits for the answer of a person: the wave starts no build of the issue (see [Ask the person a question](development.md#ask-the-person-a-question)). |
 | `broken-main` | a label | A fix item for a broken `main`. It is free work before each other item. |
 | `no-verify` | a label | riff offers no verify for the pull request of the issue. |
 | `release` | a label | A release issue or pull request: the wave starts no session for it. |
@@ -310,6 +311,7 @@ gh label list
 ```
 
 `riff init` makes the milestone `Backlog`, and `Wave 1` when the
-repository has no open wave. It also counts the open issues with no
-`Done when:` line: see
+repository has no open wave. With `Wave 1` it makes the label
+`question`, when the repository has none. It also counts the open
+issues with no `Done when:` line: see
 [Find the issues with no Done when line](development.md#find-the-issues-with-no-done-when-line).

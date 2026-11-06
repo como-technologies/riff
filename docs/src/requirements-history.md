@@ -2909,3 +2909,8 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   3.0. It moves the core library out of
   the CLI in small steps. Each step keeps each test and changes no
   command. The UIs come after riff 3.1.
+- **01M54216BCJQTQFKK5SD1PRJK9** When the TUI ships, `riff top` prints
+  one look of the sessions and ends, as `riff top --once` does. The
+  live view is the sessions tab of the TUI. The TUI design picks a
+  plain alias of `riff top`, or none.
+  Superseded by 01M6QEXNM0QCGH6RG4Q8M9VH4W.

@@ -73,7 +73,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
 use riff_client::sessions::Sessions;
-use riff_client::waves::{Board, Issues, Milestone, TRACKER};
+use riff_client::waves::{Board, Issues, Milestone, QUESTION, TRACKER};
 use riff_core::name::ThreadName;
 use riff_core::wire::{HoldInfo, SessionInfo};
 use serde::Deserialize;
@@ -200,15 +200,36 @@ fn make_tracker_label(gh: &Gh) {
     );
 }
 
+/// Makes the label [`QUESTION`] when it is missing (#1605). GitHub makes it
+/// in each new repository, with the description "Further information is
+/// requested". `gh label create` with no `--force` fails for a label that is
+/// there, so a label that a person changed keeps its color and its
+/// description. No label is no reason to refuse a wave.
+fn make_question_label(gh: &Gh) {
+    let _ = gh.run(
+        &[
+            "label",
+            "create",
+            QUESTION,
+            "--color",
+            "D876E3",
+            "--description",
+            text::QUESTION_LABEL,
+        ],
+        None,
+    );
+}
+
 /// The title of the first wave of a repository: `riff init` makes it
 /// (01M5R1672NF56P15VD0JEX51K4).
 pub const FIRST_WAVE: &str = "Wave 1";
 
-/// Makes the first wave [`FIRST_WAVE`], and the label [`TRACKER`], for
-/// a repository with no open wave. It makes no Backlog: that is a
-/// step of its own.
+/// Makes the first wave [`FIRST_WAVE`], and the labels [`TRACKER`] and
+/// [`QUESTION`], for a repository with no open wave (#1605). It makes no
+/// Backlog: that is a step of its own.
 pub fn make_first(gh: &Gh) -> Result<Milestone> {
     make_tracker_label(gh);
+    make_question_label(gh);
     new_milestone(gh, FIRST_WAVE)
 }
 
@@ -556,7 +577,7 @@ impl Items {
     ///     session("riff://mike@pangolin/o/s?session=d2", Some(&runs("o/s"))),
     ///     session("riff://mike@thelio/o/r?session=a1&claim=issue-12", None),
     /// ];
-    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()), tracker: false };
+    /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()), tracker: false, question: false };
     /// let issues = Issues::of(vec![issue(12, "Wave 3"), issue(13, "Wave 3"), issue(20, "Wave 4")]);
     /// let holds = BTreeMap::from([(
     ///     "issue-13".to_owned(),
@@ -1012,6 +1033,7 @@ mod tests {
             title: "t".into(),
             milestone: Some(wave.into()),
             tracker: false,
+            question: false,
         };
         let issues = Issues::of(vec![
             issue(1003, "Wave 33: Hosts"),
@@ -1021,6 +1043,10 @@ mod tests {
             Issue {
                 tracker: true,
                 ..issue(1248, "Wave 33: Hosts")
+            },
+            Issue {
+                question: true,
+                ..issue(1250, "Wave 33: Hosts")
             },
         ]);
         let hold = HoldInfo {
@@ -1049,7 +1075,8 @@ mod tests {
             "Wave 33: Hosts  current  runs on thelio  4 open, 21 closed\n  \
              held: #1003 #1008 (VmLck reading at 19:40 UTC)\n  \
              claimed: #1103\n  \
-             tracker: #1248\n\
+             tracker: #1248\n  \
+             question: #1250\n\
              Wave 34  1 open, 0 closed\n  \
              free: #1106\n\
              Backlog  61 open, 4 closed"

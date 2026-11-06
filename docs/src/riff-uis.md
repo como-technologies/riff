@@ -113,9 +113,9 @@ the container sessions of the daemons, in one list. Today two commands
 show them: `riff top` (see
 [See what each session does](how-it-works.md#see-what-each-session-does))
 and `riff view` (see [Watch the riff](development.md#watch-the-riff)).
-They merge. The sessions tab of the TUI does what each of them does:
-the live table, the board of each repository, and the attach to a
-session.
+The sessions tab of the TUI merges them. It does what each of them
+does: the live table, the board of each repository, and the attach to a
+session. The two commands stay (see [The CLI](#the-cli)).
 
 ## The CLI
 
@@ -125,9 +125,16 @@ the MCP server).
 - Each command prints plain lines that are easy to `grep`.
 - Each command that prints data takes `--format text` (the default) or
   `--format json`. serde makes the JSON from the types of the data.
-- `riff top` prints one look of the sessions and ends, as
-  `riff top --once` does today. The live view moves to the TUI. The TUI
-  design can give `riff top` a plain alias, for example `riff stats`.
+- `riff top` stays the live table with the TUI. It draws the table
+  again in place until Ctrl-C, and `riff top --once` prints one table
+  and exits. `riff top` gets no alias.
+- Each command keeps its work when the TUI ships, where it makes sense.
+  A command may change to fit the core library and the TUI.
+
+```sh
+riff top
+riff top --once
+```
 
 ## The TUI
 

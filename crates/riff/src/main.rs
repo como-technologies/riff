@@ -524,12 +524,12 @@ enum Command {
     /// default branch that requires riff/verify, has the milestone Backlog
     /// and an open wave, and has a CI check that a pull request runs. It
     /// reads no CLAUDE.md or AGENTS.md: that file is the choice of the
-    /// repository. It names the open issues with no "Done when:" line in a
-    /// note: the wave starts no session for them. It names the fix of each
-    /// check that fails. For the first five checks, riff init does the fix
-    /// itself: it asks one question,
-    /// and then it makes riff.toml with a pull request that it merges,
-    /// allows auto-merge and squash merges, makes the Backlog and Wave 1,
+    /// repository. It names the open issues with no "Done when:" line and no
+    /// "## Done when" heading in a note: the wave starts no session for
+    /// them. It names the fix of each check that fails. For the first five
+    /// checks, riff init does the fix itself: it asks one question, and then it
+    /// makes riff.toml with a pull request that it merges, allows auto-merge
+    /// and squash merges, makes the Backlog and Wave 1,
     /// and makes the ruleset riff. It needs the rights of an admin of the
     /// repository, and a second run changes nothing. The riff.toml that it
     /// makes pins riff-base: claude, git and gh, with no language. --image
@@ -683,6 +683,20 @@ enum Command {
         /// the wave is not necessary.
         #[arg(long, value_name = "WAVE")]
         wave: String,
+    },
+    /// List the questions that wait for your answer
+    ///
+    /// A lead that needs an answer of you writes its questions in the body
+    /// of an issue and adds the label question. This command lists each
+    /// open issue with that label, in the repository of each session of the
+    /// riff and in the repository of this folder. Each line has the
+    /// repository, the number, the title and the link. A repository that gh
+    /// cannot read gets a line on stderr, and the command exits with 1.
+    Questions {
+        /// Open one GitHub search for these issues in the browser, as gh
+        /// issue view --web does, and list nothing.
+        #[arg(long)]
+        web: bool,
     },
     /// Make and run riff-server instances on Cloud Run
     ///
@@ -1107,10 +1121,12 @@ enum WaveCommand {
     /// the lowest number, has the mark current, and "runs on HOST" for
     /// each host whose riff daemon runs its loop. Under each wave come
     /// its open issues in the groups of riff top: free, held (with the
-    /// reason of the lead), claimed, verify and tracker. A tracker has
-    /// the label tracker, or a title that starts with "Tracker:". No
-    /// session does it. When riff cannot read riff-server, it shows only
-    /// the waves and their numbers.
+    /// reason of the lead), claimed, verify, tracker and question. A tracker
+    /// has the label tracker, or a title that starts with "Tracker:". No
+    /// session does it. An item in question has the label question: a lead
+    /// waits for the answer of a person, and the wave starts no build of it.
+    /// When riff cannot read riff-server, it shows only the waves and their
+    /// numbers.
     ///
     /// riff keeps its read of GitHub for 60 seconds for each repository on
     /// this machine, and each run shares it. The list names the age of a
@@ -1904,6 +1920,27 @@ async fn cli() -> Result<()> {
             println!("{}", riff::ends::why(item, &records));
             return Ok(());
         }
+        Command::Questions { web } => {
+            let here = identity::place(&identity::working_dir()?)?;
+            let here =
+                matches!(here.repo(), riff_core::name::Repo::Git { .. }).then(|| here.repo_text());
+            let repos = riff::questions::repos(&reach.who(true).await?, here.as_deref());
+            if *web {
+                let url = riff::questions::web_url(&repos);
+                eprintln!("{}", text::questions_web(&url));
+                let _ = open::that_detached(&url);
+                return Ok(());
+            }
+            let found = riff::questions::list(&pr::Gh::here("questions"), &repos);
+            println!("{}", text::questions_list(&found.questions));
+            for (repo, why) in &found.faults {
+                eprintln!("{}", text::questions_fault(repo, why));
+            }
+            if !found.faults.is_empty() {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
         Command::Audit { wave } => {
             let here = identity::place(&identity::working_dir()?)?;
             let repo = audit::repo_of(&here)?;
@@ -2363,6 +2400,7 @@ async fn cli() -> Result<()> {
         | Command::Members
         | Command::Session { .. }
         | Command::Audit { .. }
+        | Command::Questions { .. }
         | Command::Chat { .. }
         | Command::Admin { .. }
         | Command::Owner { .. }

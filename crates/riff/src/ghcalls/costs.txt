@@ -1,0 +1,58 @@
+# The cost of the queries that `gh` sends, as GitHub says it (#1607).
+#
+# Each row is one call of `gh`: COST | FIRST | ARGS.
+#
+# - COST is the `cost` that GitHub gave for the query in
+#   `rateLimit(dryRun: true) { cost }`. A dry run counts nothing.
+# - FIRST is the `$limit` of the query: the items of one page. `gh`
+#   asks for 100 at most.
+# - ARGS are the arguments of `gh`, with no `--repo`.
+#
+# Measured on 2026-11-06 with gh 2.102.0 against GitHub.com. The real
+# drop of the counter agreed: six calls of the first row with
+# `--limit 100` took exactly 2 points each from the counter that
+# answered. A query that asks for `rateLimit` and nothing else says
+# `cost: 1`, and takes no point: ten reads left both counters as they
+# were. In `crates/riff/tests/gh_costs.rs`, the test
+# `the_points_of_a_list_are_the_cost_that_github_gave` checks `points_of`
+# against this file, and the ignored test `measure_the_cost_of_a_list`
+# measures the rows again.
+1 | 1 | pr list --state open --limit 1 --json number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body
+1 | 30 | pr list --state open --limit 30 --json number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body
+1 | 50 | pr list --state open --limit 50 --json number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body
+1 | 51 | pr list --state open --limit 51 --json number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body
+2 | 75 | pr list --state open --limit 75 --json number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body
+2 | 100 | pr list --state open --limit 100 --json number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body
+2 | 100 | pr list --state open --limit 1000 --json number,headRefName,headRefOid,isDraft,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body
+1 | 30 | pr list --json number,statusCheckRollup
+1 | 1 | issue list --state open --limit 1 --json number,title,body,comments,milestone,labels
+1 | 30 | issue list --state open --limit 30 --json number,title,body,comments,milestone,labels
+1 | 50 | issue list --state open --limit 50 --json number,title,body,comments,milestone,labels
+1 | 51 | issue list --state open --limit 51 --json number,title,body,comments,milestone,labels
+2 | 75 | issue list --state open --limit 75 --json number,title,body,comments,milestone,labels
+2 | 100 | issue list --state open --limit 100 --json number,title,body,comments,milestone,labels
+2 | 100 | issue list --state open --limit 1000 --json number,title,body,comments,milestone,labels
+1 | 1 | issue list --state open --limit 1 --json number,title,labels
+1 | 100 | issue list --state open --limit 100 --json number,title,labels
+1 | 1 | pr list --limit 1
+1 | 30 | pr list --limit 30
+1 | 100 | pr list --limit 100
+1 | 30 | pr list
+1 | 1 | issue list --limit 1
+1 | 30 | issue list --limit 30
+1 | 100 | issue list --limit 100
+1 | 30 | issue list
+1 | 30 | pr list --head b --json number,state
+1 | 100 | pr list --limit 100 --json number,assignees
+1 | 100 | pr list --limit 100 --json number,reviews
+1 | 100 | pr list --limit 100 --json number,latestReviews
+1 | 100 | pr list --limit 100 --json number,reviewRequests
+1 | 100 | pr list --limit 100 --json number,files
+1 | 100 | pr list --limit 100 --json number,projectItems
+1 | 100 | pr list --limit 100 --json number,comments
+1 | 100 | pr list --limit 100 --json number,reactionGroups
+1 | 100 | pr list --limit 100 --json number,labels
+1 | 100 | issue list --limit 100 --json number,assignees
+1 | 100 | issue list --limit 100 --json number,projectItems
+1 | 100 | issue list --limit 100 --json number,reactionGroups
+1 | 100 | issue list --limit 100 --json number,labels

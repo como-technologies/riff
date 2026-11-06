@@ -471,6 +471,48 @@
   than 10 seconds. `riff wave list --fresh` reads GitHub in full at
   once. `riff wave make`, `rename`, `end` and `move` delete the kept
   read of their repository (#1609).
+- **01M6QBJA0J7PQ0J29HWM1KDVHJ** A lead that needs a decision of a
+  person writes the questions in the body of the issue, in a section
+  "Questions for PERSON", as Q1, Q2 and so on, and adds the label
+  `question`. The person answers in the body or in a comment. The lead
+  records each answer in the body, and as a requirement when it is a
+  decision, and removes the label. One open question keeps the label on.
+  The instructions of the lead name the rule (`text::LEAD_RULES`,
+  #1605).
+- **01M6QBJHM5BQR59QX2K2BMZVYH** The wave starts no build of an issue
+  with the label `question`, as for a hold: the work waits for the
+  answer of the person. It starts no rebase and no fix of checks for it
+  either, and it tells no missing `Done when:` line for it. A verify of
+  an open pull request of such an issue goes on. A claim of a session
+  wins: the item shows as claimed.
+- **01M6QBJHQEJ3C77FA1DEV2GKXG** `riff wave list` and the board of `riff
+  top` show the group `question` with the open items that have the label
+  `question`, next to `held` and `tracker`. A claim, a verify and a
+  stuck pull request win over it, a tracker wins over it, and it wins
+  over a hold. A pause hides no item of the group.
+- **01M6QBJHV7PVV5893Q6RCPENJQ** When the label `question` goes on an
+  issue, the look of the daemon tells the person of the lead one time in
+  riff chat, with the title and the link of the issue. It posts one line
+  for each issue and each time that the label goes on. The post has a
+  key from the issue and the time of the label event, so the look of
+  each host and a new start of the daemon give the person the same line
+  one time. When the label goes off, the look forgets the issue.
+- **01M6QBJHZBDQ8BB1JPT003RXW7** `riff init` makes the label `question`
+  with the first wave, when the repository has none. It never changes a
+  label that is there.
+- **01M6QBJJ3R5CNTHT4FAPZ5DDSW** `riff questions` lists the open issues
+  with the label `question` in each repository of the riff: the
+  repository of each session on riff-server, and the repository of the
+  folder. Each line has the repository, the number, the title and the
+  link. A repository that `gh` cannot read gets one line on stderr, and
+  the command exits with 1 after it lists the others. `riff questions
+  --web` opens one GitHub search for `is:issue is:open label:question`
+  over the same repositories in the browser, and lists nothing.
+- **01M6QCXGC42AG1RY5QNGT47GVV** The start text of a work session names
+  both forms of a "Done when" line: the line `Done when:` and the
+  heading `## Done when`. The note of `riff init` for the open issues
+  with no "Done when" line says both forms too. Supersedes
+  01M5SMMP7ZW2PZNGK63WWZAC8P in part.
 
 ## Issue hygiene on GitHub
 
@@ -5254,6 +5296,23 @@ of this part when they merge.
   is no caller of gh in the tally. The look of the daemon counts its
   calls in memory, as the caller look, and a session cannot give that
   caller. Supersedes 01M6JGF6Z6Y8FP86Q9VAS3NPZ7 in part (#1598).
+- **01M6QBRR4GDSNZ9YPTDR3AJ0KA** The GraphQL points that riff counts for
+  a list of pull requests or issues come from a measurement: the cost
+  that GitHub gives for the query of gh in rateLimit(dryRun: true),
+  recorded in a file that a test compares with the points of the call,
+  with the drop of the real counter as a check. A page costs the
+  requests of its query, 1 for the list and 1 for each list inside each
+  item, divided by 100, rounded to the nearest whole number, and 1 at
+  the least. gh asks for 100 items in a page and for the rest of the
+  limit in the last page; a call with no limit reads 30 items. A query
+  that asks for rateLimit and nothing else costs no point (#1607).
+- **01M6QBRR7Q2NXCARHE21572GQ5** The other line of riff daemon status
+  says the time of the reading at which it compares the points that the
+  counter used with the points that riff counted. When riff counted more
+  points than the counter used, the line does not say 0 points for the
+  other callers. It says that they are not known: riff counted more than
+  GitHub used: the points of riff are estimates. GitHub keeps more than
+  one counter for one token, and a reading shows one of them (#1607).
 - **01M6QCDHZ5KNMFXQB9X3ZYRF3N** The daemon binds the binary of riff at
   /usr/local/bin/gh only in a session of an image that has no gh there.
   Before the first session of an image, it runs /usr/local/bin/gh
@@ -5632,11 +5691,11 @@ of this part when they merge.
   installs no daemon and pulls no image: the host has the daemon. On a
   host, the checks stay as 01M4ZJN6TEWCYCB39XTH6BBD9H gives them.
 - **01M5SMMP7ZW2PZNGK63WWZAC8P** `riff init` counts the open issues of
-  the repository that have no line that starts with `Done when:`, and
-  names them in a note, as `riff init --check` does too. A tracker and a
-  release issue are not counted: no session does them. The note changes
-  no exit code, and `riff init` prints nothing when each open issue has
-  the line. When `gh` cannot list the open issues, the note says so.
+  the repository that have no "Done when" line, and names them in a
+  note, as `riff init --check` does too. A tracker and a release issue
+  are not counted: no session does them. The note changes no exit code,
+  and `riff init` prints nothing when each open issue has the line. When
+  `gh` cannot list the open issues, the note says so.
 - **01M5SNTPEP41NMSP3SEKR7KVB0** `riff init` pins `riff-base` in a
   repository that has no `riff.toml`: the digest in the `FROM` of
   `deploy/rust/Dockerfile` at the commit of the build
@@ -6651,8 +6710,8 @@ that builds it merges.
   riff-server.
 - **01M5421633BKPPMANYRVZ76BVP** Each UI shows the sessions in one view:
   the sessions on riff-server and the container sessions of the
-  daemons, in one list. In the TUI, the sessions tab replaces the live
-  table of `riff top` and the view of `riff view`, with each of their
+  daemons, in one list. In the TUI, the sessions tab does what the live
+  table of `riff top` and the view of `riff view` do, with each of their
   actions, also the attach to a session.
 - **01M542165T96VW72HAWFXVD160** The CLI stays complete: it serves
   scripts, agents through the MCP server, and hooks. Each command prints
@@ -6660,10 +6719,6 @@ that builds it merges.
 - **01M542168PYP1WH78D3D9DKEK6** Each command that prints data takes
   `--format text` (the default) or `--format json`. serde makes the JSON
   from the types of the data. It has the same facts as the text.
-- **01M54216BCJQTQFKK5SD1PRJK9** When the TUI ships, `riff top` prints
-  one look of the sessions and ends, as `riff top --once` does. The
-  live view is the sessions tab of the TUI. The TUI design picks a
-  plain alias of `riff top`, or none.
 - **01M54216E2GY49GFV5SNPWTBEB** `riff` with no command starts the TUI
   in a terminal. With no terminal, it prints the help of the CLI.
   `riff --help` stays the help of the CLI, and says that
@@ -6764,6 +6819,12 @@ that builds it merges.
   plain terminal it works as before. When the auto mode checker blocks
   a release command, `riff denials` has a record, and the lead files an
   issue for it.
+- **01M6QEXNM0QCGH6RG4Q8M9VH4W** With the TUI too, `riff top` stays the
+  live table that it draws again in place until Ctrl-C, and `riff top
+  --once` prints one table and exits. `riff top` gets no alias.
+- **01M6QEXNQ4RD5BP8JPDH9DWK5F** Each CLI command keeps its work when
+  the TUI ships, where it makes sense. A command may change to fit the
+  core library and the TUI.
 
 ## The notes of the lead
 
