@@ -524,6 +524,7 @@ mod tests {
             limit: Some(crate::room::Limit::default()),
             waiting: vec![],
             waves: vec![],
+            parts: vec![],
             jobs: 0,
             test: None,
             mcp: vec![],

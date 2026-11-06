@@ -21,6 +21,10 @@
 //!     H --> T["riff top: lines under the host"]
 //! ```
 //!
+//! The facts carry the [`Parts`] of the host in each repository that its
+//! daemon serves: `workers`, `lead`, both or none (#1643). `riff who`
+//! shows them as the line `parts`. A daemon of an older build sends none.
+//!
 //! A line has at most [`MACHINE_CHARS`] characters. The last step of
 //! each session has at most [`LAST_CHARS`]. When the line is still too
 //! long, it lists fewer sessions, and counts the others in
@@ -207,6 +211,56 @@ pub struct Wave {
     pub image: Option<Image>,
 }
 
+/// What a host does in one repository: it gives workers (the daemon runs
+/// the wave), it runs the lead of a person, both, or none (#1643).
+///
+/// ```
+/// use riff_client::daemons::Parts;
+///
+/// assert_eq!(Parts { workers: true, lead: false }.word(), "workers");
+/// assert_eq!(Parts { workers: false, lead: true }.word(), "lead");
+/// assert_eq!(Parts { workers: true, lead: true }.word(), "workers and lead");
+/// assert!(Parts::default().none());
+/// assert_eq!(Parts::default().word(), "none");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Parts {
+    /// The daemon of the host runs the wave of the repository: the work
+    /// items and the verifies.
+    #[serde(default)]
+    pub workers: bool,
+    /// The host runs the lead of a person in the repository.
+    #[serde(default)]
+    pub lead: bool,
+}
+
+impl Parts {
+    /// True when the host has no part.
+    pub fn none(self) -> bool {
+        !self.workers && !self.lead
+    }
+
+    /// The parts in words.
+    pub fn word(self) -> &'static str {
+        match (self.workers, self.lead) {
+            (true, true) => "workers and lead",
+            (true, false) => "workers",
+            (false, true) => "lead",
+            (false, false) => "none",
+        }
+    }
+}
+
+/// The parts of a host in one repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoParts {
+    /// The repository, as `OWNER/REPO`.
+    pub repo: String,
+    /// The parts of the host in it.
+    #[serde(flatten)]
+    pub parts: Parts,
+}
+
 /// The real-session test that the daemon runs (01M5QVBTXE8YRY44A1C1VP71QS).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Test {
@@ -264,6 +318,10 @@ pub struct Facts {
     /// The waves that the daemon runs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub waves: Vec<Wave>,
+    /// The parts of the host in each repository that its daemon serves
+    /// (#1643).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<RepoParts>,
     /// The real-session test that the daemon runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<Test>,
@@ -343,7 +401,10 @@ impl Facts {
             }
             if facts.sessions.pop().is_some() {
                 facts.more += 1;
-            } else if facts.waiting.pop().is_none() && facts.waves.pop().is_none() {
+            } else if facts.waiting.pop().is_none()
+                && facts.waves.pop().is_none()
+                && facts.parts.pop().is_none()
+            {
                 return line;
             }
         }
@@ -450,6 +511,13 @@ mod tests {
                     here: true,
                 }),
             }],
+            parts: vec![RepoParts {
+                repo: "o/r".into(),
+                parts: Parts {
+                    workers: true,
+                    lead: false,
+                },
+            }],
             test: Some(Test {
                 tag: "v4.1.1".into(),
                 commit: "90e36bfd".into(),
@@ -498,6 +566,37 @@ mod tests {
         // A fact with no digest adds nothing to the line.
         assert!(!facts.line().contains("digest"));
         assert!(!facts.line().contains("image"));
+    }
+
+    /// #1643: the facts of an older daemon have no parts, and the parts
+    /// round-trip with the line.
+    #[test]
+    fn the_parts_come_back_from_the_line_and_an_older_daemon_sends_none() {
+        let old = r#"daemon facts: {"build":"4.10.0","limit":8,"floor_gb":8}"#;
+        assert!(Facts::parse(old).unwrap().parts.is_empty());
+        let facts = Facts {
+            parts: vec![
+                RepoParts {
+                    repo: "o/r".into(),
+                    parts: Parts {
+                        workers: true,
+                        lead: true,
+                    },
+                },
+                RepoParts {
+                    repo: "o/s".into(),
+                    parts: Parts {
+                        workers: false,
+                        lead: true,
+                    },
+                },
+            ],
+            ..Facts::default()
+        };
+        let line = facts.line();
+        assert!(line.contains(r#""parts":[{"repo":"o/r","workers":true,"lead":true}"#));
+        assert_eq!(Facts::parse(&line), Some(facts));
+        assert!(!Facts::default().line().contains("parts"));
     }
 
     #[test]

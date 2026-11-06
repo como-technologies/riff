@@ -90,6 +90,8 @@ pub const GROUPS: &[Group] = &[
         commands: &[
             "init",
             "run",
+            "join",
+            "leave",
             "wave",
             "view",
             "takeover",

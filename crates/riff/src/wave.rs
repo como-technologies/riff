@@ -7,11 +7,15 @@
 //!
 //! # Design
 //!
-//! `riff wave run` in a clone asks the daemon to run the wave of that
-//! repository ([`Wave`]). The daemon keeps each wave in [`WAVES_FILE`]
-//! in its folder, and starts its loop again after its own restart.
-//! `riff wave stop` ends the loop: the daemon starts no new session
-//! there, and the sessions that run go on.
+//! `riff join` in a clone asks the daemon to run the wave of that
+//! repository ([`Wave`]): the host gets the part workers
+//! ([`crate::daemon::parts`], #1643). The daemon keeps each wave in
+//! [`WAVES_FILE`] in its folder, and starts its loop again after its own
+//! restart and after an update, while the host has the part workers.
+//! `riff leave` takes the part workers and ends the loop: the daemon
+//! starts no new session there, and the sessions that run go on, or with
+//! `--now` it ends them. The rollout of a lead starts no wave on a host
+//! with no part workers ([`crate::rollout::WaveState::NoWorkers`]).
 //!
 //! Each item has one session: it starts, does the item and ends
 //! (01M4Z60B7NW4GHKGCYZZDG26R6). A verify is an item too: a new session
@@ -187,7 +191,7 @@
 //! - an item that started [`STARTS`] times in this run of the wave. The
 //!   lead gets one message for it. A start whose claim riff-server
 //!   refused for a pause does not count (01M558EYCXPFW8CJV3XJ7HK3NR).
-//!   `riff wave run` on the wave clears the starts
+//!   `riff join` on the wave clears the starts
 //!   (01M57A7A48A70Y7PTD95A3MBYC). The starts of a verify are for its head
 //!   commit ([`Work::key`], 01M6QQ7H2B88AT3KS8NGM3DKCZ): a new head starts
 //!   a new count, and a verify whose PASS or FAIL riff put on the pull
@@ -259,7 +263,7 @@
 //! Each head commit with a conflict starts one session in a run of the
 //! wave: [`Work::key`] names the rebase by the item and the head. A pause
 //! or a fault of the host takes the start back, as for each item.
-//! `riff wave run` clears the starts, so a person can start the rebase
+//! `riff join` clears the starts, so a person can start the rebase
 //! of the same head again. When the session ends with the head that had
 //! the conflict, the lead gets a message in place of the verify request
 //! (01M57FJ3Z8AFDY9G0KTAYZJESY).
@@ -274,11 +278,11 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     S["riff wave run"] --> L["the loop: the work"]
+//!     S["riff join"] --> L["the loop: the work"]
 //!     S --> W["the look, each minute"]
 //!     W --> P["a pull request that stops:<br/>a message to its holder or the lead"]
 //!     W --> M["the full check of main:<br/>a message, the fix item, a note"]
-//!     X["riff wave stop"] --> E["the loop and the look end"]
+//!     X["riff leave"] --> E["the loop and the look end"]
 //! ```
 //!
 //! # A pull request that cannot merge
@@ -375,7 +379,7 @@
 //! by the item and the head ([`Work::key`]). So a new head is a new
 //! state. A message is not repeated while the wave runs. A build of a
 //! failed check runs one time for a head in a run of the wave
-//! ([`CHECKS`]), and `riff wave run` clears the starts. When a pull
+//! ([`CHECKS`]), and `riff join` clears the starts. When a pull
 //! request has a conflict and a failed check, the rebase comes first:
 //! the new head has new checks.
 //!
@@ -595,16 +599,17 @@ pub fn write_waves(dir: &Path, waves: &BTreeMap<String, Wave>) -> Result<()> {
     std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
 }
 
-/// `riff wave run`: asks the daemon in the folder `dir` to run the
-/// current wave of the repository of the place `here`, on the
-/// riff-server `server` (01M4ZV3B6J89KJQ0F14YWTZMJQ).
-pub async fn ask_run(dir: &Path, here: &Place, server: &str) -> Result<()> {
+/// `riff join`: asks the daemon in the folder `dir` to serve the
+/// repository of the place `here`, to give the host the part workers, and
+/// to run the current wave, on the riff-server `server`
+/// (01M4ZV3B6J89KJQ0F14YWTZMJQ, #1643).
+pub async fn ask_join(dir: &Path, here: &Place, server: &str) -> Result<()> {
     let repo = ask(dir, here, server, |line| println!("{line}")).await?;
     println!("{}", text::wave_asked(&repo));
     Ok(())
 }
 
-/// [`ask_run`] with each line of the steps to `show`, for a caller with
+/// [`ask_join`] with each line of the steps to `show`, for a caller with
 /// no stdout of its own, as `riff mcp` (01M53NGVE839TRH7XB7CDPQNZE). It
 /// gives the repository, as `OWNER/REPO`.
 ///
@@ -652,7 +657,7 @@ pub async fn ask_with(
         server: server.to_owned(),
         host: here.host().to_owned(),
     };
-    crate::daemon::ask_done(dir, crate::daemon::Ask::Wave { wave }, show).await?;
+    crate::daemon::ask_done(dir, crate::daemon::Ask::Join { wave }, show).await?;
     Ok(repo)
 }
 
@@ -672,17 +677,39 @@ pub fn runs(status: &crate::daemon::Status, repo: &str) -> bool {
     status.waves.iter().any(|w| w.repo == repo)
 }
 
-/// `riff wave stop`: asks the daemon in the folder `dir` to start no new
-/// session for the wave of the repository of the place `here`.
-pub async fn ask_stop(dir: &Path, here: &Place) -> Result<()> {
+/// True when the host of the daemon of `status` has the part workers in
+/// `repo` (`OWNER/REPO`): it joined, and did not leave (#1643).
+///
+/// ```
+/// let status: riff::daemon::Status = serde_json::from_value(serde_json::json!({
+///     "pid": 7, "build": "3.0.0", "since_ms": 0, "dir": "/d", "sessions": [],
+///     "parts": [
+///         {"repo": "o/r", "workers": true, "lead": false},
+///         {"repo": "o/lead", "workers": false, "lead": true},
+///     ],
+/// }))?;
+/// assert!(riff::wave::gives_workers(&status, "o/r"));
+/// assert!(!riff::wave::gives_workers(&status, "o/lead"));
+/// assert!(!riff::wave::gives_workers(&status, "o/other"));
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub fn gives_workers(status: &crate::daemon::Status, repo: &str) -> bool {
+    status
+        .parts
+        .iter()
+        .any(|p| p.repo == repo && p.parts.workers)
+}
+
+/// `riff leave`: asks the daemon in the folder `dir` to start no new
+/// session for the repository of the place `here`. With `now`, it ends the
+/// sessions that run, and frees their items (#1643).
+pub async fn ask_leave(dir: &Path, here: &Place, now: bool) -> Result<()> {
     if here.default_thread().is_none() {
         bail!("{}", text::RUN_NO_REPO);
     }
     let repo = here.repo_text();
-    let ask = crate::daemon::Ask::WaveStop { repo: repo.clone() };
-    crate::daemon::ask_done(dir, ask, |line| println!("{line}")).await?;
-    println!("{}", text::wave_stops(&repo));
-    Ok(())
+    let ask = crate::daemon::Ask::Leave { repo, now };
+    crate::daemon::ask_done(dir, ask, |line| println!("{line}")).await
 }
 
 /// What a session of a wave does.
@@ -1486,7 +1513,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
         let next = match world.look(&wave).await {
             Ok(look) => {
                 let spent = spent(&look, &running(&daemon, &wave, &taken), &lock(&starts));
-                // `riff wave run` cleared the starts of these items.
+                // `riff join` cleared the starts of these items.
                 told.retain(|key| lock(&starts).get(key).is_some_and(|n| *n >= STARTS));
                 for Spent { item, key, head } in spent {
                     if told.insert(key) {
@@ -1646,7 +1673,7 @@ fn has_session<R: Runtime + 'static>(daemon: &Daemon<R>, wave: &Wave) -> bool {
 }
 
 /// The starts of each item in one run of a wave, shared by its loop and
-/// its jobs. `riff wave run` on a wave that runs clears them
+/// its jobs. `riff join` on a wave that runs clears them
 /// (01M57A7A48A70Y7PTD95A3MBYC).
 pub(crate) type Starts = Arc<Mutex<BTreeMap<String, u32>>>;
 
@@ -4891,7 +4918,7 @@ mod tests {
     }
 
     /// 01M57A7A48A70Y7PTD95A3MBYC: a spent item starts again after a
-    /// second `riff wave run`, and the lead hears of it again when it is
+    /// second `riff join`, and the lead hears of it again when it is
     /// spent again.
     #[tokio::test]
     async fn a_second_wave_run_clears_the_spent_starts() {
@@ -6022,7 +6049,7 @@ esac
         );
     }
 
-    /// `riff wave stop` ends the look with the loop of the wave.
+    /// `riff leave` ends the look with the loop of the wave.
     #[tokio::test]
     async fn a_stop_of_the_wave_ends_its_look() {
         let here = Here::looking().await;

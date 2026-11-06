@@ -122,8 +122,8 @@ sequenceDiagram
     D->>D: the container and the clone go
 ```
 
-A second machine takes work when its daemon runs the wave of the
-repository too. `riff wave run --host HOST` adds it: see
+A second machine takes work when it gives workers to the repository
+too. `riff join --host HOST` adds it: see
 [Add a host to the wave](development.md#add-a-host-to-the-wave). The
 claims on riff-server keep two machines from one item.
 
@@ -633,7 +633,7 @@ your lead once in each repository of the message:
 | The process that starts the update | The repository of the message |
 |---|---|
 | A session, or a `riff` command in a clone | The repository of the session or the clone |
-| The riff daemon | Each repository whose wave the daemon runs on the same riff (`riff wave run` or `riff daemon host` in its main clone, or either one with `--host` from another host; a daemon start serves the waves it already runs) |
+| The riff daemon | Each repository where the host has a part on the same riff (`riff join` in its main clone, or with `--host` from another host; a daemon start serves the repositories where the host has a part) |
 
 The riff daemon has no repository of its own. Its working folder can
 be in the work tree of another repository, for example a home folder
@@ -1052,13 +1052,13 @@ session.
 - `worker`: a session that registered as a worker. It tells the server,
   so each machine shows the same tag.
 - `container`: a session that the riff daemon runs in a container,
-  for example for `riff run` or `riff wave run`. It has no watch.
+  for example for `riff run` or for a wave. It has no watch.
   The daemon keeps it alive, so it shows its state, not `offline`.
   When its container stops, it is gone. The daemon gives it its item,
   so it takes no request from the lead. The lead in a container has
   `lead container`.
 - `daemon`: the session of the riff daemon on a machine, after
-  `riff daemon host` or `riff wave run`. It runs the sessions in
+  `riff join`, or while a lead runs there. It runs the sessions in
   containers. Its status starts with `daemon host:`. It takes no
   claims, so when it is idle it shows `hosts containers`, not
   `ready for work`.
@@ -1088,11 +1088,13 @@ A blocked status is red. The `who` tool of a session stays plain.
 ### See the facts of each host
 
 The riff daemon of each host sends the facts of its host to the riff
-server each 30 seconds. It does so after `riff daemon host` or
-`riff wave run` in the main clone on that host. `riff who` shows them
-in its last part, `Hosts`. `riff top` shows them under the row of the
-host. The `who` tool of a session shows the same part, so the lead sees
-the facts in its session:
+server each 30 seconds. It does so for each repository where the host
+has a part: after `riff join` in the main clone on that host, or while a
+lead runs there. `riff who` shows them in its last part, `Hosts`. The
+line `parts` of a host names the parts of the host in each repository:
+`workers`, `lead`, or `workers and lead`. `riff top` shows the facts
+under the row of the host. The `who` tool of a session shows the same
+part, so the lead sees the facts in its session:
 
 ```sh
 riff who
@@ -3244,7 +3246,7 @@ gh issue edit 12 --add-label no-verify
 riff run sends no verify request for issue-12: issue #12 has the label no-verify.
 ```
 
-The wave of the daemon (`riff wave run`) posts a note to the lead in
+The wave of the daemon (`riff join`) posts a note to the lead in
 place of the verify request, with the reason:
 
 ```text
@@ -3824,10 +3826,13 @@ sequenceDiagram
 On thelio, the riff daemon must serve the repository. If it does not,
 run this once in your clone of the repository. The daemon of thelio
 makes its own main clone (see
-[Add a host to the wave](development.md#add-a-host-to-the-wave)):
+[Add a host to the wave](development.md#add-a-host-to-the-wave)). This
+gives thelio the part workers too. When thelio must give no workers,
+run `riff leave --host thelio` after the move: the lead keeps the
+daemon serving the repository.
 
 ```sh
-riff daemon host --host thelio
+riff join --host thelio
 ```
 
 Then run this on pangolin, in the repository:
@@ -4604,7 +4609,9 @@ flowchart TD
   first, also when it is not in the current wave (see
   [When main breaks](#when-main-breaks)).
 - **The wave.** riff asks only the daemon of the machine of the lead,
-  and only when no wave of the repository runs there. The daemon runs
+  and only when the host has the part workers (`riff join`) and no wave
+  of the repository runs there. A host that left (`riff leave`), or that
+  never joined, gets no ask: its lead only watches. The daemon runs
   each item in a container, in its own limit (see
   [Let the rollout of the lead run the
   wave](development.md#let-the-rollout-of-the-lead-run-the-wave)). While

@@ -1204,6 +1204,11 @@ impl<R: Runtime + 'static> Daemon<R> {
                 for line in daemon.sweep_news(None).await {
                     println!("{line}");
                 }
+                // A main clone that a folder linked to goes after the sweep
+                // removed the folder (#1643).
+                for line in daemon.retire_all() {
+                    println!("{line}");
+                }
                 tokio::time::sleep(every).await;
             }
         });

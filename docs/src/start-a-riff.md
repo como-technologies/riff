@@ -91,7 +91,7 @@ See [Pause the riff](how-it-works.md#pause-the-riff).
 ## Let riff work in auto mode
 
 In auto mode, Claude Code can block riff work: a riff tool,
-`riff wave run`, or a step of a pull request. A session cannot allow
+`riff join`, or a step of a pull request. A session cannot allow
 this itself. Run this once in each project, then commit the file that
 it names:
 
@@ -221,10 +221,11 @@ one item: see
 
 ### Let the lead start the work
 
-You start no worker by hand. When the current wave has free work, the
-rollout of your lead asks the riff daemon of your machine to run the
-wave of the repository. The daemon runs each free item and each verify
-in a container, in the limit of the machine. The lead gets a note.
+You start no worker by hand. A host gives workers to a repository after
+`riff join` (see [Give workers from a host](#give-workers-from-a-host)).
+Then, when the current wave has free work, the riff daemon of the host
+runs each free item and each verify in a container, in the limit of the
+machine. The lead gets a note.
 
 To run your lead in a container too, run this in your clone of the
 project. It also starts the wave of the repository, when none runs.
@@ -250,8 +251,63 @@ To see the containers:
 riff daemon status
 ```
 
-A second machine takes work when its daemon runs the wave too: see
+A second machine takes work when it joined too: see
 [Use a second machine](development.md#use-a-second-machine).
+
+### Give workers from a host
+
+A host has two parts in a repository. It gives workers: its riff daemon
+runs the wave, which is the work items and the verifies. It runs the
+lead of a person. `riff join` gives this host the part workers. Run it
+in your clone of the project:
+
+```sh
+riff join
+```
+
+The daemon serves the repository, gets the session image that
+`riff.toml` pins, and runs the wave. It needs the sign-in of riff, of
+`gh` and of `claude` on this machine. The host keeps the part until
+`riff leave`, also over a restart of the daemon and over an update.
+
+To give workers from another host of yours, with no login there:
+
+```sh
+riff join --host thelio
+```
+
+```mermaid
+flowchart LR
+    J["riff join"] --> W["this host has the part workers"]
+    W --> D["the daemon runs the wave:<br/>an item or a verify, each in a container"]
+    L["riff leave"] --> N["this host loses the part workers"]
+    N --> E["no new session starts there"]
+```
+
+See [Add a host to the wave](development.md#add-a-host-to-the-wave).
+
+### Take the workers from a host
+
+A host that joined gives workers until you take them. Run this in your
+clone of the project:
+
+```sh
+riff leave
+```
+
+The daemon starts no new session for the repository on this host. The
+sessions that run go on to their end. The lead on this host goes on,
+and the rollout of the lead asks for no wave there. To end the
+sessions that run, and free their items:
+
+```sh
+riff leave --now
+```
+
+When the host has no other part in the repository, for example a lead,
+its daemon stops serving the repository. Add `--host thelio` to do it
+for another host of yours. See
+[Stop the wave](development.md#stop-the-wave).
 
 ### Get the static riff
 

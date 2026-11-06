@@ -13,7 +13,7 @@
 //! ```mermaid
 //! flowchart LR
 //!     C["riff release cut, verify, test,<br/>publish, approve, retry, rollback"] -- "register" --> F["watches.json<br/>in the folder of the daemon"]
-//!     W["riff wave run"] -- "one watch for the wave" --> F
+//!     W["riff join"] -- "one watch for the wave" --> F
 //!     D["riff daemon:<br/>a look each minute"] -- "read" --> F
 //!     D -- "gh, git" --> G["the forge"]
 //!     D -- "one message at the end" --> L["the lead"]
@@ -25,7 +25,7 @@
 //! | `riff release cut`, `riff release verify` | [`Op::Pull`] | the Gate of the release pull request ends, or the pull request merges or closes |
 //! | `riff release test --host HOST` | [`Op::Test`] | the real-session test passes or fails |
 //! | `riff release publish`, `approve`, `retry`, `rollback` | [`Op::Deploy`] | the job `Deploy` of the tag passes or fails |
-//! | `riff wave run` | [`Op::Wave`] | never: it posts each time the last open item of the current wave closes |
+//! | `riff join` | [`Op::Wave`] | never: it posts each time the last open item of the current wave closes |
 //!
 //! The same watch is one watch: a second `riff release verify` of the
 //! same pull request registers nothing new ([`Registered::Kept`]).
