@@ -41,7 +41,7 @@
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M5NJ87NXF6077Y9W32840BR8, 01M5NJ87YEHHGJBANM7CRYV56Z |
-//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle (its transcript got no write for 5 minutes: [`quiet`]), and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3 |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle (its transcript got no write for 5 minutes: [`quiet`]), and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
 //! | The wave | the wave of the repository on the daemon, when none runs: the lead in a container has no rollout ([`crate::wave::ask`]); a failed ask stops no lead | 01M53NGVE839TRH7XB7CDPQNZE, 01M5515CJ7QDJ639VGR7SJTE08 |
 //!
 //! The clone and the Claude folder stay between the starts of the lead:
@@ -53,7 +53,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use riff_core::name::{Place, SessionUri};
 use riff_core::wire::{SessionInfo, StartReason};
 
@@ -642,6 +642,42 @@ impl Parts<'_> {
     }
 }
 
+/// The main clone that the clone of the lead at `clone` links to
+/// (01M6QB89JJEM9Z1V3RVZYHKYT0): `git clone --reference MAIN`
+/// ([`fresh_clone`]) writes `MAIN/.git/objects` in the file
+/// `.git/objects/info/alternates` of the clone, and the container of the
+/// lead binds that folder at the same path ([`run::spec`]).
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let clone = dir.path().join("clone");
+/// let info = clone.join(".git/objects/info");
+/// std::fs::create_dir_all(&info)?;
+/// std::fs::write(info.join("alternates"), "/src/riff/.git/objects\n")?;
+/// assert_eq!(riff::lead::linked_main(&clone)?, std::path::Path::new("/src/riff"));
+/// // A clone with no link names no main clone.
+/// assert!(riff::lead::linked_main(dir.path()).is_err());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn linked_main(clone: &Path) -> Result<PathBuf> {
+    let objects = clone.join(".git/objects");
+    let file = objects.join("info/alternates");
+    let text = std::fs::read_to_string(&file)
+        .with_context(|| format!("cannot read {}", file.display()))?;
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .ok_or_else(|| anyhow::anyhow!("{} names no folder", file.display()))?;
+    // A relative path is relative to the objects folder of the clone.
+    let linked = objects.join(line);
+    linked
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("{} has no main clone", linked.display()))
+}
+
 /// The [`daemon::Start`] of the lead of `record` for a start again on the
 /// riff of this daemon (01M5TC2919TB9XPF42YFNJBP79): the same session, the
 /// same clone and the same Claude folder, and `claude --resume ID`
@@ -650,11 +686,24 @@ impl Parts<'_> {
 /// lead. It makes no clone and no new session on riff-server. It reads
 /// the host, so call it off the async threads.
 ///
-/// `wave` gives the main clone of the repository of the lead.
-pub fn again(wave: &crate::wave::Wave, record: &daemon::Record) -> Result<daemon::Start> {
-    let here = wave.place(None)?;
+/// `wave` is the wave of the repository of the lead, when the daemon runs
+/// one: its main clone is the main clone of the start. With no wave, the
+/// main clone is the one that the clone of the lead links to
+/// ([`linked_main`]). So a host that must not run the wave of a
+/// repository starts its lead again all the same (#1606, 01M6QB89JJEM9Z1V3RVZYHKYT0).
+pub fn again(wave: Option<&crate::wave::Wave>, record: &daemon::Record) -> Result<daemon::Start> {
+    let here = record.me.place();
     let repo = here.repo_text();
-    let (main, common) = run::main_clone(&wave.main)?;
+    let folder = record.folder.clone();
+    let main = match wave {
+        Some(wave) => wave.main.clone(),
+        None => {
+            let clone = folder.join("clone");
+            linked_main(&clone)
+                .map_err(|_| anyhow::anyhow!("{}", text::lead_again_no_main(&repo, &clone)))?
+        }
+    };
+    let (main, common) = run::main_clone(&main)?;
     let host = run::host_facts(&main).map_err(|fault| match fault {
         run::HostFault::SignInEnds(_) => anyhow::anyhow!("{}", text::LEAD_NEEDS_TOKEN),
         fault => fault.into(),
@@ -662,7 +711,6 @@ pub fn again(wave: &crate::wave::Wave, record: &daemon::Record) -> Result<daemon
     needs_token(&host.claude.sign_in())?;
     let merged = session_image::merged_config(&main, |_| {})?;
     let sources = session_image::merged_sources(&main)?;
-    let folder = record.folder.clone();
     run::claude_folder(
         &folder.join("claude"),
         &folder.join("clone"),

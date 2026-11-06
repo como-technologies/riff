@@ -133,3 +133,44 @@ fn a_clone_that_git_cannot_fast_forward_stays_as_it_is_with_the_error_of_git() {
     assert_eq!(git(&clone, &["rev-parse", "HEAD"]), old);
     assert_eq!(std::fs::read_to_string(clone.join("b")).unwrap(), "mine");
 }
+
+/// 01M6QB89JJEM9Z1V3RVZYHKYT0: a host that runs no wave of the repository
+/// still finds the main clone of the lead: the clone links to it.
+#[test]
+fn the_clone_of_a_lead_links_to_the_main_clone_that_made_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, main) = origin_and_main(dir.path());
+    let clone = dir.path().join("lead/clone");
+    fresh_clone(&main, &clone).unwrap();
+
+    let linked = riff::lead::linked_main(&clone).unwrap();
+    assert_eq!(linked, std::fs::canonicalize(&main).unwrap());
+    // It is the main clone that a start takes: its top, and its git dir.
+    let (top, common) = riff::run::main_clone(&linked).unwrap();
+    assert_eq!(top, linked);
+    assert_eq!(common, linked.join(".git"));
+}
+
+/// 01M6QB89JJEM9Z1V3RVZYHKYT0: a clone with no link names no main clone.
+/// A clone that `git clone --dissociate` made is that case.
+#[test]
+fn a_clone_with_no_link_to_a_main_clone_names_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, main) = origin_and_main(dir.path());
+    let clone = dir.path().join("lead/clone");
+    git(
+        dir.path(),
+        &[
+            "clone",
+            "-q",
+            "--reference",
+            &main.to_string_lossy(),
+            "--dissociate",
+            "--",
+            &origin.to_string_lossy(),
+            &clone.to_string_lossy(),
+        ],
+    );
+    let why = riff::lead::linked_main(&clone).unwrap_err();
+    assert!(format!("{why:#}").contains("alternates"), "{why:#}");
+}

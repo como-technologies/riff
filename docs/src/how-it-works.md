@@ -1467,6 +1467,10 @@ Claude folder. So the lead goes on with its conversation and its notes.
 It starts its Monitor again. Its session on riff-server stays, and it
 stays your lead.
 
+The daemon needs no wave of the repository for this. A host that runs no
+wave of it starts the lead again too: see
+[Update the lead on a host that runs no wave of the repository](development.md#update-the-lead-on-a-host-that-runs-no-wave-of-the-repository).
+
 You get one line in riff chat for each lead that started again:
 
 ```text
@@ -1486,9 +1490,8 @@ When the daemon cannot start the lead again, you get one line in riff
 chat for it. The line says which case it is:
 
 - The start failed before the stop. The lead still runs the old riff.
-  The line names the fault, for example that the daemon knows no main
-  clone of the repository. Fix the fault. riff tries again every
-  minute.
+  The line names the fault, for example that `claude` has no token on
+  this host. Fix the fault. riff tries again every minute.
 - The start failed after the stop. The lead is not there. Start it
   again, then type `/resume` in it. It finds the old conversation:
 

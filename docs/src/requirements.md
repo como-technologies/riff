@@ -5433,6 +5433,15 @@ of this part when they merge.
   stop leaves the lead on the old riff, and the daemon tries again at
   the next look. A start that fails after the stop ends the lead: the
   daemon ends its session, and the line says `riff lead start`.
+- **01M6QB89JJEM9Z1V3RVZYHKYT0** The daemon starts a lead again on the
+  new riff with no wave of its repository. With a wave, the main clone
+  of the start is the main clone of the wave. With no wave, it is the
+  main clone that the clone of the lead links to: the folder in
+  `.git/objects/info/alternates` of that clone. The restart starts no
+  session for any item, and `riff wave run` is no step of it. When the
+  clone links to no main clone, the line in riff chat says that riff has
+  no step that gives the main clone and starts no session, and names
+  `riff wave run` (#1606).
 
 ### The first run
 

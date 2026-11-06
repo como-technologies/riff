@@ -2691,9 +2691,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     ///     D->>S: chat: the lead started again
     /// ```
     ///
-    /// All that can fail comes before the stop: the wave of the
-    /// repository for its main clone, the facts of the host, the image,
-    /// the relay. A fault there leaves the lead on the old riff. The
+    /// All that can fail comes before the stop: the main clone, the facts
+    /// of the host, the image, the relay. A fault there leaves the lead on the old riff. The
     /// person hears of it one time, and the daemon tries again at the next
     /// look ([`text::lead_again_waits`]). After the stop, a start that
     /// fails three times ends the lead: the daemon ends its session, and
@@ -2751,14 +2750,15 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The [`Start`] of the lead of `record` on the riff of this daemon,
-    /// with all that can fail checked before the stop: the main clone of
-    /// the wave, the facts of the host, the spec, the relay and the image.
+    /// with all that can fail checked before the stop: the main clone, the
+    /// facts of the host, the spec, the relay and the image. The main clone
+    /// is that of the wave of the repository. A host that runs no wave of
+    /// it keeps the lead going all the same: the main clone is the one that
+    /// the clone of the lead links to (01M6QB89JJEM9Z1V3RVZYHKYT0, [`crate::lead::linked_main`]).
     async fn lead_start(&self, record: &Record) -> Result<Start> {
         let repo = record.me.place().repo_text();
-        let wave = crate::wave::read_waves(&self.dir)?
-            .remove(&repo)
-            .ok_or_else(|| anyhow!("{}", text::lead_again_no_wave(&repo)))?;
-        let start = self.world.lead_again(&wave, record).await?;
+        let wave = crate::wave::read_waves(&self.dir)?.remove(&repo);
+        let start = self.world.lead_again(wave.as_ref(), record).await?;
         self.check(&start.spec)?;
         self.check_relay()?;
         self.have_image(&start.spec.image, |_| {}).await?;
@@ -7222,7 +7222,7 @@ mod tests {
         /// the spec of `claude --resume`, with a value for each variable of the host.
         fn lead_again<'a>(
             &'a self,
-            _: &'a Wave,
+            _: Option<&'a Wave>,
             record: &'a Record,
         ) -> crate::wave::BoxFuture<'a, Result<Start>> {
             Box::pin(async move {
@@ -7724,6 +7724,41 @@ mod tests {
         assert!(here.daemon.leads_again().await.is_empty());
     }
 
+    /// 01M6QB89JJEM9Z1V3RVZYHKYT0: the wave of the repository is stopped
+    /// (`riff wave stop`), or it never ran. The lead starts again all the same,
+    /// and the daemon starts no session for any item and runs no wave.
+    #[tokio::test]
+    async fn a_lead_starts_again_on_the_new_riff_when_its_host_runs_no_wave_of_the_repository() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        transcript_of(&record, 600);
+        update_riff(&here);
+        let terminal = format!("terminal {LEAD}");
+
+        // `riff wave stop`: the daemon keeps no wave of the repository.
+        assert!(here.daemon.stop_wave("como-technologies/riff").unwrap());
+        assert!(crate::wave::read_waves(&here.dir).unwrap().is_empty());
+
+        let line = text::lead_started_again(LEAD);
+        assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
+        assert_eq!(
+            here.fake.calls(),
+            [terminal.clone(), format!("stop {LEAD}"), terminal],
+            "the lead only: no session for an item"
+        );
+        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        assert!(said_of(&server, "leave").is_empty(), "{:?}", server.said());
+        // The restart did not run the wave again.
+        assert!(crate::wave::read_waves(&here.dir).unwrap().is_empty());
+        let status = status(&here.dir).await.unwrap();
+        assert_eq!(status.sessions.len(), 1, "{:?}", status.sessions);
+        assert!(status.sessions.iter().any(|s| s.name == LEAD && s.lead));
+        assert!(status.waves.is_empty(), "{:?}", status.waves);
+    }
+
     /// 01M5TC29A4Q94NJP7HFC75XCF3
     #[tokio::test]
     async fn a_lead_that_cannot_start_again_runs_on_and_the_person_hears_of_it_one_time() {
@@ -7736,18 +7771,16 @@ mod tests {
         update_riff(&here);
         let terminal = format!("terminal {LEAD}");
 
-        // The daemon knows no main clone: the lead stays on the old riff.
-        let waves = here.dir.join(crate::wave::WAVES_FILE);
-        let kept = std::fs::read(&waves).unwrap();
-        std::fs::remove_file(&waves).unwrap();
-        let no_wave = text::lead_again_no_wave("como-technologies/riff");
-        let line = text::lead_again_waits(LEAD, &no_wave);
+        // The daemon finds no main clone: the lead stays on the old riff.
+        let clone = record.folder.join("clone");
+        let no_main = text::lead_again_no_main("como-technologies/riff", &clone);
+        *server.again_fault.lock().unwrap() = Some(no_main.clone());
+        let line = text::lead_again_waits(LEAD, &no_main);
         assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
         assert_eq!(here.fake.calls(), std::slice::from_ref(&terminal));
         assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
 
         // The host fails the next try: the person heard of it already.
-        std::fs::write(&waves, &kept).unwrap();
         *server.again_fault.lock().unwrap() = Some("gh is not signed in".into());
         assert!(here.daemon.leads_again().await.is_empty());
         assert_eq!(here.fake.calls(), std::slice::from_ref(&terminal));
