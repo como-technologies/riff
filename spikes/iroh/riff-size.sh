@@ -61,7 +61,7 @@ build() {
         -v riff-static-cargo:/usr/local/cargo/registry \
         -e CARGO_TARGET_DIR=/src/target/static \
         -e CARGO_BUILD_JOBS \
-        -e RIFF_COMMIT -e RIFF_COMMIT_TIME \
+        -e RIFF_BUILD -e RIFF_BUILD_TIME \
         "$IMAGE" \
         sh -euc '
             apk add -q --no-cache musl-dev linux-headers

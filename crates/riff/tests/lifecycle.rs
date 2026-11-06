@@ -20,7 +20,7 @@ use crate::common;
 /// A build with another commit.
 fn other() -> Build {
     Build {
-        commit: "0000deadbeef".into(),
+        id: "0000deadbeef".into(),
         ..Build::this()
     }
 }
@@ -113,7 +113,7 @@ fn riff_line() -> String {
     format!(
         "riff        {}  ({}, {})",
         release(),
-        &this.commit[..7],
+        &this.id[..7],
         &this.time[..10]
     )
 }

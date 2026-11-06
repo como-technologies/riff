@@ -80,7 +80,7 @@ jobs:
       PROFILE: ${{ (github.ref_type == 'tag' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release'))) && 'release' || 'dev' }}
       TESTS: ${{ github.ref_type != 'tag' }}
     steps:
-      # build-id.sh reads the last commit that changed the code.
+      # build-id.sh reads the time of the last commit that changed the code.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0

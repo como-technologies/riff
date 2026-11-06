@@ -3491,16 +3491,16 @@
 ## Builds
 
 - **01M3MX1DYY6AVDW946NR0B9T2C** A build names the crate version, the
-  last commit that changed `crates`, `Cargo.toml` or `Cargo.lock`, and
-  the UTC time of that commit. The crate version is a semantic version.
-  Its line is the major, and the minor while the major is 0. A `riff`
-  and a `riff-server` of the same line talk.
+  id of the code and the time of the code (01M6QV4SRYYAH06WSYMF6KHY7S).
+  The crate version is a semantic version. Its line is the major, and
+  the minor while the major is 0. A `riff` and a `riff-server` of the
+  same line talk.
 - **01M3MX1E1EY1M7JGNCN6FCEVQK** `riff-server` also talks with a `riff`
   of the line before its own: `0.3.x` on a `0.4` server, `1.x` on a `2`
   server. It does not talk with a `riff` of a later line.
 - **01M514C19H3WQP1FSX9RBVSC69** A build is older than another build
-  when its version is lower, or when the version is the same and the
-  time of its commit is older. A build of a higher version is not
+  when its version is lower, or when the version is the same, the id is
+  another and its time is older. A build of a higher version is not
   older, also from an older commit.
 - **01M3N73E5JWFTYZ90JX5AVFGEP** While the major is 0, the minor has
   the role of the major.
@@ -3603,9 +3603,8 @@
   `riff-server --version`, `riff whoami`, `riff who` and the whoami
   tool show the build.
 - **01M3JEE7YXQPWS65FBVTASAEBX** The image build of `riff-server` has no
-  git. It gets the commit and its time as `RIFF_COMMIT` and
-  `RIFF_COMMIT_TIME` from `deploy/build-id.sh`, which uses the same git
-  command as the build of `riff`.
+  git. It gets its build from `deploy/build-id.sh`, which uses the same
+  git commands as the build of `riff`.
 - **01M3N7JJC5WQBJ7SJZSZNBAVVR** `riff update --auto on` and
   `riff update --auto off` set `update.auto` in the settings of the
   machine, and install nothing. The default is off. `riff update
@@ -3695,6 +3694,17 @@
   new binary in place, it gives the new chat the text that the person
   typed and did not send, in the hidden option `--draft`. The new chat
   shows that text after its prompt.
+- **01M6QV4SRYYAH06WSYMF6KHY7S** The id of a build is the short hash of
+  the trees of `crates`, `Cargo.toml` and `Cargo.lock`: each commit with
+  the same code has the same id. A binary that CI made for a commit is
+  the build of each other commit with the same tree. `riff` and
+  `riff-server` compare builds by version and id. The time of a build is
+  the UTC time of the last commit that changed the code. It orders
+  builds of different code, and it is no part of the identity: the same
+  version and id are never older. `deploy/build-id.sh` prints the id and
+  the time as `RIFF_BUILD` and `RIFF_BUILD_TIME`. Supersedes
+  01M3MX1DYY6AVDW946NR0B9T2C, 01M3JEE7YXQPWS65FBVTASAEBX and
+  01M514C19H3WQP1FSX9RBVSC69 in part.
 
 ## Code
 

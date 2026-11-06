@@ -316,14 +316,19 @@ riff --server 127.0.0.1:7878 who
 
 ## Builds
 
-A build of `riff` or `riff-server` is the crate version, the last
-commit that changed the code, and the time of that commit. A commit
-that changes only the book keeps the build.
+A build of `riff` or `riff-server` is the crate version, the id of the
+code, and the time of the last commit that changed the code. The id is
+the short hash of the code: `crates`, `Cargo.toml` and `Cargo.lock`. Two
+commits with the same code have the same id. A commit that changes only
+the book keeps the build.
 
 CI builds each tree one time, in the pull request. The commit on
-`main` and the release take that build. So the build of a release names
-the last commit of the pull request that changed the code, and not the
-squash commit on `main`. The version is the same (see
+`main` and the release take that build. So the build of a release has
+the id of the code, as on `main`. Its time is the time of the last
+commit of the pull request that changed the code, and not the time of
+the squash commit on `main`. Two builds with the same version and id
+are the same build, also with another time. The time only tells which of
+two builds of different code is older. The version is the same (see
 [Build once for each tree](development.md#build-once-for-each-tree)).
 
 The version is a semantic version, `MAJOR.MINOR.PATCH`. It tells which

@@ -755,7 +755,7 @@ async fn a_riff_of_v0_8_gets_the_build_header_in_each_reply() {
     let (_service, base) = common::start_on(Arc::new(store)).await;
     let old = Build {
         version: "0.8.0".into(),
-        commit: "e3cfe5a2919c".into(),
+        id: "e3cfe5a2919c".into(),
         time: "2026-09-29T21:12:48Z".into(),
     };
     assert_ne!(old.to_string(), VERSION);

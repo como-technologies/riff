@@ -41,14 +41,14 @@ pub(crate) fn ci_job(name: &str) -> String {
 }
 
 /// A fake container engine `podman` in `bin`: it logs each argument on
-/// a line to `bin/podman.log`, and `RIFF_COMMIT` to `bin/podman.env`.
+/// a line to `bin/podman.log`, and `RIFF_BUILD` to `bin/podman.env`.
 pub(crate) fn fake_engine(bin: &Path) {
     let path = bin.join("podman");
     isolated::write_program(
         &path,
         format!(
             "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done >> {log}\n\
-             echo \"RIFF_COMMIT=$RIFF_COMMIT\" > {env}\n",
+             echo \"RIFF_BUILD=$RIFF_BUILD\" > {env}\n",
             log = bin.join("podman.log").display(),
             env = bin.join("podman.env").display(),
         ),
@@ -74,7 +74,7 @@ fn text(bytes: &[u8]) -> String {
 
 /// 01M4ZPJ04D9MJHNPAV0WN1KCES: the build runs in
 /// `rust:CHANNEL-alpine`, with the channel of `rust-toolchain.toml`, the
-/// tree at `/src`, the target in `target/static`, and the commit of
+/// tree at `/src`, the target in `target/static`, and the build of
 /// `deploy/build-id.sh`, since the container has no git.
 #[test]
 fn the_static_build_runs_in_the_rust_image_of_the_channel_of_the_repository() {
@@ -95,8 +95,8 @@ fn the_static_build_runs_in_the_rust_image_of_the_channel_of_the_repository() {
         has(["-e", "CARGO_TARGET_DIR=/src/target/static"]),
         "{args:?}"
     );
-    assert!(has(["-e", "RIFF_COMMIT"]), "{args:?}");
-    assert!(has(["-e", "RIFF_COMMIT_TIME"]), "{args:?}");
+    assert!(has(["-e", "RIFF_BUILD"]), "{args:?}");
+    assert!(has(["-e", "RIFF_BUILD_TIME"]), "{args:?}");
     let image = format!("docker.io/library/rust:{channel}-alpine");
     assert!(args.contains(&image.as_str()), "{args:?}");
     // The script of the container has lines of its own.
@@ -111,9 +111,9 @@ fn the_static_build_runs_in_the_rust_image_of_the_channel_of_the_repository() {
     let id = std::process::Command::new(top().join("deploy/build-id.sh"))
         .output()
         .unwrap();
-    let commit = text(&id.stdout).lines().next().unwrap().to_owned();
+    let build = text(&id.stdout).lines().next().unwrap().to_owned();
     let env = fs::read_to_string(bin.path().join("podman.env")).unwrap();
-    assert_eq!(env.trim(), commit);
+    assert_eq!(env.trim(), build);
 }
 
 #[test]

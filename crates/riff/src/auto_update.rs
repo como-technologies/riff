@@ -482,7 +482,7 @@ pub struct Machine<'a> {
 /// let off = Machine::default();
 /// let on = Machine { auto: true, ..off };
 /// // The same release, or another commit of it: no tag.
-/// let dev = Build { commit: "dev".into(), ..b("0.5.0") };
+/// let dev = Build { id: "dev".into(), ..b("0.5.0") };
 /// assert_eq!(tag(Some(&b("0.5.0")), &b("0.5.0"), &dev, off), None);
 /// assert_eq!(tag(Some(&b("0.6.0")), &b("0.6.0"), &b("0.5.0"), off), None);
 /// assert_eq!(tag(None, &b("0.5.0"), &b("next"), off), None);
