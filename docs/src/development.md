@@ -5277,6 +5277,11 @@ part `Watches:` has one line for each watch, with the repository, the
 operation and its age. The part `Waves:` shows each wave, and the
 watch of its current wave has no line in `Watches:`.
 
+The message of a merge names the step after the merge. When the release
+pull request merged, `next:` is `riff release test`, not "wait for the
+merge". GitHub can show the old state for a minute, so the daemon takes
+the merge as a fact and does not read the state of the release again.
+
 A fault of the forge comes one time for each repository, also with
 more watches. The message holds the error of `gh` and the name of
 each watch that failed. While that message is one of the last 200

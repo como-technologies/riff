@@ -6383,6 +6383,12 @@ of this part when they merge.
   one time to the lead of the repository while the message is one of the
   last 200 of its thread. The text adds no dot after an error that ends
   with one. Supersedes 01M5RGD0RTXYA7FF5K1TH72MGX in part.
+- **01M6QBEJYHKS8G26CM46P4P077** The message of the watch for a release
+  pull request that merged names the next step after the merge: it takes
+  the merge as a fact, and not from a second read of the stage that can
+  lag behind it. When that read shows the release before the merge, or
+  no release, the next step is the one of a merged release that has no
+  test.
 
 ### The real-session test
 

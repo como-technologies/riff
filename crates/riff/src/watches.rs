@@ -825,6 +825,19 @@ fn next_of(forge: &dyn Forge, tag: &str, fallback: &str) -> String {
         .map_or_else(|| fallback.to_owned(), |stage| cycle::next(&stage))
 }
 
+/// The next step after the release pull request `number` of `tag` merged
+/// (01M6QBEJYHKS8G26CM46P4P077). The merge is a fact: a read of the stage
+/// that lags behind it, or that fails, does not name the step before it
+/// ([`cycle::after_merge`]). A `tag` with no version gets `riff release
+/// status`.
+fn next_after_merge(forge: &dyn Forge, tag: &str, number: u64) -> String {
+    let Ok(version) = cycle::tag_version(tag) else {
+        return "riff release status".to_owned();
+    };
+    let read = cycle::stage(forge, version).ok().flatten();
+    cycle::next(&cycle::after_merge(read, version, number))
+}
+
 /// The failed jobs for a line: `: A, B`, or a text for no name.
 fn jobs_text(names: &[String], ended: &str) -> String {
     match names.is_empty() {
@@ -867,7 +880,7 @@ fn look_pull(forge: &dyn Forge, seen: &mut Seen, tag: &str, number: u64) -> Resu
     let pull = forge.candidate(number)?;
     match pull.state.as_str() {
         "MERGED" => {
-            let next = next_of(forge, tag, "riff release status");
+            let next = next_after_merge(forge, tag, number);
             return Ok(say(
                 format!("The release pull request #{number} of {tag} merged. next: {next}"),
                 true,
@@ -1310,6 +1323,54 @@ mod tests {
         look(dir.path(), &ground, 5 * MINUTE).await;
         assert!(ground.told().is_empty(), "no second message for the merge");
         assert!(kept(dir.path()).is_empty(), "the watch goes");
+    }
+
+    const AFTER_MERGE: &str = "The release pull request #1140 of v3.3.0 merged. next: riff release \
+                               test v3.3.0 --host HOST, or just real-session on origin/main";
+
+    #[tokio::test]
+    async fn a_merge_names_the_next_step_while_the_list_of_open_pull_requests_lags() {
+        let dir = daemon_dir();
+        let ground = Ground::new(open_pull());
+        watch(dir.path(), pull());
+        // The pull request is `MERGED`, but the list of merged pull requests
+        // does not hold it yet, and the list of open ones still does.
+        ground.forge(|f| {
+            f.candidate.state = "MERGED".into();
+            f.open_pr = Some((1140, "3.3.0"));
+        });
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(ground.told(), [AFTER_MERGE]);
+        assert!(kept(dir.path()).is_empty(), "the watch goes");
+    }
+
+    #[tokio::test]
+    async fn a_merge_names_the_next_step_while_no_list_holds_the_pull_request() {
+        let dir = daemon_dir();
+        let ground = Ground::new(open_pull());
+        watch(dir.path(), pull());
+        // The list of open pull requests dropped it, and the list of merged
+        // ones does not hold it yet: the stage has no release.
+        ground.forge(|f| f.candidate.state = "MERGED".into());
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(ground.told(), [AFTER_MERGE]);
+    }
+
+    #[tokio::test]
+    async fn a_merge_keeps_the_next_step_of_a_stage_that_is_ahead() {
+        let dir = daemon_dir();
+        let ground = Ground::new(open_pull());
+        watch(dir.path(), pull());
+        // A fast test passed on the merge commit before the first look.
+        ground.forge(|f| {
+            merged(f);
+            f.real = vec![("m1", true)];
+        });
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            ["The release pull request #1140 of v3.3.0 merged. next: riff release publish v3.3.0"]
+        );
     }
 
     #[tokio::test]
