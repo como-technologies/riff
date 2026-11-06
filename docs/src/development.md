@@ -1796,8 +1796,8 @@ Each row has the caller and the kind of the call. The caller is `wave`
 (the loop and the jobs of the wave), `look` (the look of the daemon),
 `watches`, `sweep`, `usage`, `clone` (the clone of a repository that
 the daemon starts to serve), `release test` (the real-session test of a
-release), or the command of `riff` that made the call: `top`, `pr
-open`, `pr wait`, `verify`, `release`, `waves` (`riff wave ...`),
+release), or the command of `riff` that made the call: `top`,
+`pr open`, `pr wait`, `verify`, `release`, `waves` (`riff wave ...`),
 `audit`, `questions`, `run`, `init`, or `claim` (the pull request line
 of a claim). The caller `session` is a `gh` that a session runs in its
 container. A call of REST costs no GraphQL point. The points of a row
