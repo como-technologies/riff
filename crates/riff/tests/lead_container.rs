@@ -391,6 +391,20 @@ async fn leave_in_a_container_names_the_host_flag() {
     assert!(common::call_names(&asked).is_empty());
 }
 
+/// #1644: `riff lead stop` in the container of the lead, with no `--host`,
+/// stops nothing: the container has no daemon of the host. It names
+/// `--host`, and asks the daemon nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn lead_stop_in_a_container_names_the_host_flag() {
+    let container = Container::new();
+    let (_dir, socket, asked) =
+        common::session_socket(|call| Err(format!("unexpected call {call}")));
+    let out = container.riff(&socket, &["lead", "stop"]).await;
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(text(&out.stderr).trim(), riff::text::LEAD_STOP_IN_CONTAINER);
+    assert!(common::call_names(&asked).is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn session_why_of_a_verify_names_the_missing_pass_or_fail() {
     let container = Container::new();

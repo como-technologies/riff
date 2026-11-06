@@ -1392,7 +1392,7 @@ enum DaemonCommand {
     ///
     /// The daemon frees the claim of the session on riff-server, then
     /// stops its container. riff daemon status shows the names. It
-    /// refuses the lead: end it in its terminal with /exit.
+    /// refuses the lead: stop it with riff lead stop.
     End {
         /// The name of the container, for example riff-issue-12-1a2b3c4d.
         name: String,
@@ -1536,9 +1536,25 @@ enum LeadCommand {
     /// attaches to it. Ctrl-P Ctrl-Q detaches: the lead runs on. riff
     /// view shows it and attaches to it too.
     ///
-    /// When no wave of this repository runs, riff first asks the riff
-    /// daemon to run the wave: the lead in a container has no rollout.
+    /// This command starts no workers and does not join the host: the
+    /// host gives workers after riff join.
     Start,
+    /// Stop the lead of this repository, and end its container
+    ///
+    /// riff asks the lead to write its notes, and waits for them for 5
+    /// minutes. Then the riff daemon ends the container of the lead, and
+    /// the host loses the part lead. An update starts the lead no more.
+    /// To start it again, run riff lead start. The lead can run this
+    /// command on your word, with --host. Only the lead and you can run
+    /// it.
+    Stop {
+        /// Ask the riff daemon of HOST, through riff-server. riff waits
+        /// for its reply. Only you in a terminal and your lead in this
+        /// repository can use --host. The daemon of HOST refuses each
+        /// other session, for example a worker. The default is this host.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Move the lead of this repository to another host
     ///
     /// riff asks the old lead to write its handover to the notes of the
@@ -1549,9 +1565,9 @@ enum LeadCommand {
     /// session stays as a plain session: you end it. The lead can run
     /// this command on your word. Only the lead and you can run it.
     ///
-    /// On HOST, the daemon must serve this repository: run `riff daemon
-    /// host` in its main clone there. Then `riff lead start` or `riff
-    /// view` on HOST attaches to the new lead.
+    /// On HOST, the daemon must serve this repository. It does when HOST
+    /// has a part in it: workers (riff join --host HOST) or a lead. Then
+    /// `riff lead start` or `riff view` on HOST attaches to the new lead.
     Move {
         /// The host of the new lead, for example thelio.
         host: String,
@@ -2050,6 +2066,13 @@ async fn cli() -> Result<()> {
             .map(|NotesCommand::Edit { file }| file.as_deref());
         return riff::lead::notes(&api, &me, &thread, user.as_deref(), *history, file).await;
     }
+    if let Command::Lead {
+        command: Some(LeadCommand::Stop { host }),
+        ..
+    } = &cli.command
+    {
+        return lead_stop_command(host.as_deref(), &here, &reach, api.base()).await;
+    }
     if let Command::Join { host } = &cli.command {
         return join_command(host.as_deref(), &here, &reach, api.base()).await;
     }
@@ -2376,7 +2399,13 @@ async fn cli() -> Result<()> {
         | Command::Init { .. }
         | Command::Relay { .. }
         | Command::Lead {
-            command: Some(LeadCommand::Start | LeadCommand::Notes { .. } | LeadCommand::Move { .. }),
+            command:
+                Some(
+                    LeadCommand::Start
+                    | LeadCommand::Stop { .. }
+                    | LeadCommand::Notes { .. }
+                    | LeadCommand::Move { .. },
+                ),
             ..
         }
         | Command::View { .. }
@@ -3854,6 +3883,51 @@ async fn join_command(host: Option<&str>, here: &Place, reach: &Reach, server: &
             Ok(())
         }
     }
+}
+
+/// `riff lead stop` (#1644): the lead on this host, or with `host` the lead
+/// on that host, writes its notes, and the daemon ends its container.
+/// In a lead container there is no daemon of the host, and the lead is the
+/// caller: it names `host`, and riff asks nobody for notes, because the
+/// lead wrote them first (01M6QVSWTARPKP59X8AJBBK69X).
+async fn lead_stop_command(
+    host: Option<&str>,
+    here: &Place,
+    reach: &Reach,
+    server: &str,
+) -> Result<()> {
+    if here.default_thread().is_none() {
+        anyhow::bail!("{}", text::RUN_NO_REPO);
+    }
+    let request = riff::daemon::remote::Request::LeadStop;
+    let named = host.unwrap_or_else(|| here.host());
+    match (host, reach) {
+        (None, Reach::Daemon(_)) => {
+            eprintln!("{}", text::LEAD_STOP_IN_CONTAINER);
+            std::process::exit(1);
+        }
+        (Some(host), Reach::Daemon(_)) => ask_daemon(host, &request, here, reach).await?,
+        (_, Reach::Direct(_)) => {
+            let (api, me) = daemon_asker(here, server)?;
+            let wait = riff::lead::HANDOVER_WAIT;
+            if let Err(e) = riff::lead::stop_notes(&api, &me, named, wait).await {
+                eprintln!("{e:#}");
+                std::process::exit(1);
+            }
+            match host {
+                Some(host) => ask_daemon(host, &request, here, reach).await?,
+                None => {
+                    let (dir, repo) = (riff::daemon::dir()?, here.repo_text());
+                    if let Err(e) = riff::lead::stop_here(&dir, &repo).await {
+                        eprintln!("{e:#}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+    }
+    println!("{}", text::lead_stop_done(named));
+    Ok(())
 }
 
 /// `riff leave` (#1643): the daemon of this host stops the workers of the

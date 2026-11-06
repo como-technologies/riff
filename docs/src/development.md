@@ -2854,7 +2854,7 @@ machine to run the wave of the repository. It asks only when the host
 has the part workers (`riff join`) and no wave of the repository runs
 there. On a host that never joined, or that left, the rollout asks
 nothing and says nothing: a lead on it only watches. `riff lead start`
-starts the wave too.
+starts no wave.
 
 ```mermaid
 flowchart LR
@@ -3317,8 +3317,9 @@ riff daemon end riff-issue-12-1a2b3c4d
 
 `riff daemon status` shows the names. The daemon frees the claim of
 the session on riff-server, then stops its container. The item is free
-work again at once. riff refuses the lead: end it in its terminal with
-`/exit`. Add `--host HOST` to end a session on another host (see
+work again at once. riff refuses the lead: stop it with
+`riff lead stop` (see [Stop the lead](start-a-riff.md#stop-the-lead)).
+Add `--host HOST` to end a session on another host (see
 [Manage the daemon of another host](#manage-the-daemon-of-another-host)).
 
 ### Manage the daemon of another host
@@ -3596,8 +3597,12 @@ your terminal to see the lead.
 To leave the terminal of the lead, press Ctrl-P, then Ctrl-Q. The lead
 runs on, and riff says that you left the terminal of the container.
 
-To end the lead, type `/exit` in it. The container of the lead ends,
-and riff prints:
+`riff lead start` starts no workers, and it does not join the host. A
+host that gave no workers gets one line that names `riff join`. The
+daemon serves the repository while the lead runs, so `riff who` shows
+the host. To end the lead with its notes, run `riff lead stop` (see
+[Stop the lead](start-a-riff.md#stop-the-lead)). To end it at once, type
+`/exit` in it. The container of the lead ends, and riff prints:
 
 ```text
 The lead in the container riff-lead-OWNER-REPO ended. Start it again in a clone: riff lead start
@@ -3666,11 +3671,13 @@ and riff tells the old lead. See
 After `riff update`, the riff daemon starts the lead again on the new
 riff (see
 [The lead starts again on the new riff](how-it-works.md#the-lead-starts-again-on-the-new-riff)).
-It needs no wave of the repository. So a host that must not run the
-wave of a repository updates its lead too, for example when the other
-person of the repository has a rule that its waves run on other hosts
-only. `riff leave` took the part workers from the host, or no person
-ran `riff join` there.
+It does so on each host with the part lead, with or without the part
+workers. It needs no wave of the repository. So a host that must not
+run the wave of a repository updates its lead too, for example when the
+other person of the repository has a rule that its waves run on other
+hosts only. `riff leave` took the part workers from the host, or no
+person ran `riff join` there. A lead that `riff lead stop` ended is
+gone: no update starts it again.
 
 ```mermaid
 flowchart TD

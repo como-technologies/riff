@@ -417,6 +417,7 @@ pub fn remove_clone(dir: &Path, data: &Path, wave: &Wave) -> Vec<String> {
 ///     "release test 0123abc v3.3.0",
 ///     "build",
 ///     "lead move",
+///     "lead stop",
 /// ] {
 ///     assert_eq!(body.parse::<Request>().unwrap().to_string(), body);
 /// }
@@ -513,6 +514,9 @@ pub enum Request {
     /// `riff lead move`: start the lead here, and make it the lead
     /// (01M596DH8G4A5XQFHJFBX1X379).
     LeadMove,
+    /// `riff lead stop --host`: end the container of the lead of the
+    /// repository here, and the host loses the part lead (#1644).
+    LeadStop,
 }
 
 impl FromStr for Request {
@@ -562,6 +566,7 @@ impl FromStr for Request {
                 now: true,
             }),
             ["lead", "move"] => Ok(Request::LeadMove),
+            ["lead", "stop"] => Ok(Request::LeadStop),
             ["build"] => Ok(Request::Build),
             ["release", "test", commit, tag]
                 if super::release_test::is_commit(commit)
@@ -653,6 +658,7 @@ impl fmt::Display for Request {
             Request::Leave { repo, now: false } => write!(f, "leave {repo}"),
             Request::Leave { repo, now: true } => write!(f, "leave {repo} --now"),
             Request::LeadMove => write!(f, "lead move"),
+            Request::LeadStop => write!(f, "lead stop"),
             Request::Build => write!(f, "build"),
             Request::ReleaseTest { commit, tag } => write!(f, "release test {commit} {tag}"),
         }
@@ -1130,6 +1136,12 @@ pub async fn answer(
             lines_of(dir, ask).await
         }
         Request::LeadMove => crate::lead::take(dir, &served.wave).await,
+        Request::LeadStop => {
+            let ask = Ask::StopLead {
+                repo: served.wave.repo.clone(),
+            };
+            lines_of(dir, ask).await
+        }
         Request::ReleaseTest { commit, tag } => {
             let (dir, served) = (dir.to_owned(), served.clone());
             let (commit, tag) = (commit.clone(), tag.clone());

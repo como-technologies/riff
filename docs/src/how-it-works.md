@@ -3853,7 +3853,14 @@ they are. If thelio has no daemon, nothing moves, and the old lead
 stays the lead. Only the lead and you can run this command. The lead
 runs it on your word, and writes its handover to the notes first.
 
-The old session stays as a plain session. End it when you are ready.
+The old session stays as a plain session. It is not the lead any
+more, so riff asks it for no notes. End it when you are ready, with
+this command on pangolin:
+
+```sh
+riff lead stop
+```
+
 To attach to the new lead, run this on thelio:
 
 ```sh

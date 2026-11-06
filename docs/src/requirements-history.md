@@ -1940,6 +1940,10 @@ page [Requirements](requirements.md) holds the rules of today.
   daemon until the next look of the rollout with free work. To keep it
   stopped, a person pauses the repository. Superseded by
   01M6QRDB7KVR8954B00RTETEK4 and 01M6QRDBAD4ZH2P1Y9BMW3VE2Q.
+- **01M5515CJ7QDJ639VGR7SJTE08** When `riff lead start` cannot start the
+  wave of the repository, it prints the reason and the step
+  `riff join`, and it starts the lead. Superseded by
+  01M6QVSJC4V3Z3NB6MJW4XGJSR.
 
 ### The lead, the view and the takeover
 
