@@ -352,9 +352,12 @@
 //! the turn. The result of a turn that a takeover interrupts is no fail
 //! of the session ([`Record::interrupt`]). At the
 //! [`Up::Held`] of the relay, the daemon says [`Say::Held`] to `riff
-//! takeover`, which runs `claude --resume ID` in the container with the
-//! terminal of the person. At [`Then::GoOn`], or at the end of the
-//! connection of `riff takeover`, the daemon gives the session back: it
+//! takeover`, which runs `claude --resume ID --model MODEL` in the
+//! container with the terminal of the person. [`Say::Held`] has the
+//! model of the session, which the daemon keeps in [`Record::model`]
+//! from `--model` of its command (01M6VD1NSHTJQGR31VZ4689S8J). At
+//! [`Then::GoOn`], or at the end of the connection of `riff takeover`,
+//! the daemon gives the session back: it
 //! tells the relay [`Say::GoOn`], and gives `claude` one new input
 //! ([`text::TAKEOVER_GO_ON`]). The quiet limit does not count during a
 //! takeover. A restart of the daemon keeps the takeover: a new `riff
@@ -1660,6 +1663,11 @@ pub enum Say {
     Held {
         /// The riff session ID: `claude --resume` takes it.
         session: String,
+        /// The model of the session: `claude --model` takes it
+        /// (01M6VD1NSHTJQGR31VZ4689S8J). None for a session with no
+        /// `--model`, and from an older daemon.
+        #[serde(default)]
+        model: Option<String>,
     },
     /// The ask is done.
     Done,
@@ -1787,6 +1795,11 @@ pub struct Record {
     /// (01M51KJ1R9K7A7RW8T8XH8VW43).
     #[serde(default)]
     pub interrupt: bool,
+    /// The model of `claude --model` of the session, for the terminal of
+    /// a takeover (01M6VD1NSHTJQGR31VZ4689S8J). None for a session with
+    /// no `--model`.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// What a link of a session tells the task that waits for its end.
@@ -1939,6 +1952,15 @@ impl SessionState {
             phase: self.phase(),
             last: self.last_step.clone(),
             ..self.record.live.clone()
+        }
+    }
+
+    /// What `riff takeover` gets when `claude` ended for it: the session
+    /// ID and the model (01M6VD1NSHTJQGR31VZ4689S8J).
+    fn held_say(&self) -> Say {
+        Say::Held {
+            session: self.record.live.session.clone(),
+            model: self.record.model.clone(),
         }
     }
 }
@@ -2119,9 +2141,7 @@ impl Owned {
                 && state.record.takeover
                 && let Some(taker) = &state.taker
             {
-                taker.say(Say::Held {
-                    session: state.record.live.session.clone(),
-                });
+                taker.say(state.held_say());
             }
             state.relay = Some(out.clone());
             if let Err(e) = self.save(&state) {
@@ -2154,9 +2174,7 @@ impl Owned {
                     state.held = true;
                     if state.record.takeover {
                         if let Some(taker) = &state.taker {
-                            taker.say(Say::Held {
-                                session: state.record.live.session.clone(),
-                            });
+                            taker.say(state.held_say());
                         }
                     } else {
                         // The person left before the end of the turn.
@@ -4018,6 +4036,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             terminal,
             takeover: false,
             interrupt: false,
+            model: crate::session_setup::model_of(&spec.command).map(str::to_owned),
         };
         if let Err(e) = self.check(&spec).and_then(|()| self.check_relay()) {
             out.say(Say::Failed {
@@ -4812,9 +4831,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             state.taker = Some(out.clone());
             state.followers.push(out.clone());
             if state.held && state.record.takeover {
-                out.say(Say::Held {
-                    session: state.record.live.session.clone(),
-                });
+                out.say(state.held_say());
             } else {
                 if !state.record.takeover {
                     state.record.takeover = true;
@@ -6861,6 +6878,7 @@ mod tests {
             terminal: false,
             takeover: false,
             interrupt: false,
+            model: None,
         };
         assert_eq!(daemon.limit_of(&record, 0), QUIET_LIMIT);
         record.job = Some(Job {
@@ -6910,6 +6928,7 @@ mod tests {
             terminal: false,
             takeover: false,
             interrupt: false,
+            model: None,
         };
         std::fs::write(
             record_path(&dir, name),
@@ -7074,6 +7093,7 @@ mod tests {
             terminal: false,
             takeover: false,
             interrupt: false,
+            model: None,
         };
         // The wave of an older build had these four fields, and no more.
         let old = serde_json::to_value(&record).unwrap();
@@ -7161,6 +7181,7 @@ mod tests {
                 terminal: false,
                 takeover: false,
                 interrupt: false,
+                model: None,
             };
             std::fs::write(
                 record_path(&dir, name),
@@ -7282,6 +7303,7 @@ mod tests {
             terminal: false,
             takeover: false,
             interrupt: false,
+            model: None,
         };
         private_dir(&dir.join(LIVE)).unwrap();
         std::fs::write(
@@ -7915,7 +7937,10 @@ mod tests {
 
     /// A worker with its relay, after its start text and its first event.
     async fn a_worker(here: &Here) -> (Client, String, Relay) {
-        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let mut start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        // 01M6VD1NSHTJQGR31VZ4689S8J: the model of the session, for a
+        // takeover.
+        start.spec.command = ["claude", "--model", "sonnet"].map(String::from).into();
         let (client, name) = here.started(start).await;
         let socket = session_dir(&here.dir, &name);
         let (mut relay, _) = Relay::connect(&socket, 0, false).await;
@@ -8981,7 +9006,8 @@ mod tests {
         assert_eq!(
             next_of(&mut taker).await,
             Some(Say::Held {
-                session: "riff-issue-12-1a2b3c4d-session".into()
+                session: "riff-issue-12-1a2b3c4d-session".into(),
+                model: Some("sonnet".into())
             })
         );
         assert_eq!(phase_of(&here.dir, &name).await, Phase::Taken);
@@ -9479,7 +9505,8 @@ mod tests {
         assert_eq!(
             first_line,
             Say::Held {
-                session: "riff-issue-12-1a2b3c4d-session".into()
+                session: "riff-issue-12-1a2b3c4d-session".into(),
+                model: Some("sonnet".into())
             }
         );
         taker.go_on().await.unwrap();
@@ -9511,9 +9538,11 @@ mod tests {
         assert_eq!(relay.next().await, Say::GoOn);
         assert!(matches!(relay.next().await, Say::Input { .. }));
         assert_eq!(taken.await.unwrap().unwrap(), 0);
+        // 01M6VD1NSHTJQGR31VZ4689S8J: the terminal has the model of the
+        // session.
         let exec = format!(
             "exec {name} /opt/riff/riff relay --terminal -- claude --resume \
-             riff-issue-12-1a2b3c4d-session --permission-mode auto"
+             riff-issue-12-1a2b3c4d-session --model sonnet --permission-mode auto"
         );
         assert!(here.fake.calls().contains(&exec), "{:?}", here.fake.calls());
         let shown = shown.lock().unwrap_or_else(PoisonError::into_inner).clone();
@@ -9525,6 +9554,32 @@ mod tests {
                 text::takeover_back(&name)
             ]
         );
+    }
+
+    /// 01M6VD1NSHTJQGR31VZ4689S8J: the record on disk keeps the model of
+    /// the session. The held of an older daemon, and the record of a
+    /// session that an older daemon started, have no model. Then the
+    /// terminal of a takeover has no `--model`.
+    #[tokio::test]
+    async fn the_record_keeps_the_model_and_an_older_daemon_gives_none() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (_client, name, _relay) = a_worker(&here).await;
+        let mut record = serde_json::to_value(record_of(&here.dir, &name)).unwrap();
+        assert_eq!(record["model"], "sonnet");
+
+        let held: Say = serde_json::from_str(r#"{"say":"held","session":"s1"}"#).unwrap();
+        assert_eq!(
+            held,
+            Say::Held {
+                session: "s1".into(),
+                model: None
+            }
+        );
+        record.as_object_mut().unwrap().remove("model");
+        let record: Record = serde_json::from_value(record).unwrap();
+        assert_eq!(record.model, None);
+        let command = crate::takeover::command("s1", record.model.as_deref());
+        assert!(!command.iter().any(|a| a == "--model"), "{command:?}");
     }
 
     #[tokio::test]

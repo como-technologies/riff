@@ -967,6 +967,41 @@ git fetch origin
 git show origin/HEAD:riff.toml
 ```
 
+## Set the model of the sessions
+
+riff starts the lead, each work item and each verify of a repository
+with `claude --model MODEL`. The model comes from the key `model` in the
+table `[session]` of `riff.toml`. With no key, the model is `opus`. The
+`riff.toml` of riff has this line:
+
+```toml
+[session]
+model = "opus"
+```
+
+A model is a name that `claude --model` takes: an alias, for example
+`opus`, `sonnet` or `haiku`, or a full name, for example
+`claude-opus-5-5`. riff refuses a model that is empty, that has a space,
+or that starts with `-`. The error names the key and the file. To check
+your working tree, run `riff image`.
+
+`ANTHROPIC_MODEL` in `[session.env]` also names a model. riff gives it
+to the session as any other variable, but `claude --model` wins over
+it. The `riff.toml` of riff has both, `model = "opus"` and
+`ANTHROPIC_MODEL = "opus"`: a host on an older riff does not know the
+key `model`, and its sessions take the model from the variable.
+
+Only the merged `riff.toml` counts, as for the image. Merge your change
+with a pull request. A new session reads the model at its start. A
+session that runs keeps its model: in the lead, use `/model` to change
+it. `riff run` shows the model of the session in its line
+`start: model claude-opus-5-5, permission mode auto`. To see the models
+that did the work of an issue, with the tokens of each claim:
+
+```sh
+riff usage 12
+```
+
 ## Start the riff daemon
 
 The riff daemon owns the containers of `riff run` on your machine.
@@ -3286,6 +3321,8 @@ and the three levels. `riff daemon status` shows them too. A new session
 gets the levels at its start. A session that runs keeps its effort: in
 the lead, use `/effort` to change it. riff refuses a level that Claude
 Code does not know. Add `--host HOST` to set the levels on another host.
+The model of the sessions comes from `riff.toml`: see
+[Set the model of the sessions](#set-the-model-of-the-sessions).
 
 ### Show or empty the compile cache of the container sessions
 
@@ -3800,11 +3837,13 @@ riff takeover riff-issue-12-1a2b3c4d
 
 riff stops the turn of the session at once, also in the middle of a
 tool call. `claude` opens in your terminal in a few seconds, in the
-container of the session, with the history of the session. When you
-are done, type `/exit`. The session goes on with its item: riff starts
-`claude -p` again with `--resume`, and tells it that a person used the
-session. While you have the session, the quiet limit of the daemon
-does not stop it.
+container of the session, with the history and the model of the
+session (see
+[Set the model of the sessions](#set-the-model-of-the-sessions)).
+When you are done, type `/exit`. The session goes on with its item:
+riff starts `claude -p` again with `--resume`, and tells it that a
+person used the session. While you have the session, the quiet limit
+of the daemon does not stop it.
 
 riff cannot stop a turn after the result of the session (the state
 `ends`), or of a session with an old relay. Then
@@ -3879,8 +3918,10 @@ flowchart LR
 The test does these steps. The messages name them:
 
 1. Check the host: podman runs rootless, `gh` has a sign-in, and
-   `riff image` names the image. Then the test starts its own
-   riff-server. See
+   `riff image` names the image. The test reads the model of
+   `riff.toml` (see
+   [Set the model of the sessions](#set-the-model-of-the-sessions)).
+   Then the test starts its own riff-server. See
    [Which riff-server the test uses](#which-riff-server-the-test-uses).
 2. List the home: the test lists the files of your home.
 3. Make the scratch item: an issue in the backlog that adds one line
@@ -3897,7 +3938,9 @@ The test does these steps. The messages name them:
    beside the daemon of your machine, and waits until it answers. See
    [When a riff daemon runs already](#when-a-riff-daemon-runs-already).
 6. Run the item: `riff run` does the issue. You see each event of the
-   session.
+   session. Its line `start: model ...` must name the model of
+   `riff.toml`, for example `claude-opus-5-5` for `opus`. Else the step
+   fails.
 7. Check the home: the test lists your home again. A new file fails
    the test, outside the paths that the test leaves out (see
    [When another program writes in your home](#when-another-program-writes-in-your-home)).

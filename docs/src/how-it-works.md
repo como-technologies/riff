@@ -167,23 +167,28 @@ the sign-ins, the git config, the Claude folder, the clone, the folder
 of the socket, and the caps `--memory` and `--cpus`. It sets no
 variable and no volume of a language or a tool. The repository gives
 them in its `riff.toml`, in the tables `[session.env]` and
-`[session.volumes]`. Only the merged `riff.toml` counts, as for the
-image (see
+`[session.volumes]`. The key `model` in `[session]` names the model of
+each session: riff starts `claude --model MODEL`, and the default is
+`opus`. Only the merged `riff.toml` counts, as for the image (see
 [Only a merged pin counts](development.md#only-a-merged-pin-counts)).
 
 ```mermaid
 flowchart LR
-    R["riff.toml on the default branch:<br/>[session.env] and [session.volumes]"] --> S["the spec of the session"]
+    R["riff.toml on the default branch:<br/>model, [session.env] and [session.volumes]"] --> S["the spec of the session"]
     H["riff: the home, the user, the sign-ins,<br/>the clone, the socket, --cpus, --memory"] --> S
-    S --> P["podman run -e NAME=VALUE -v VOLUME:PATH"]
+    S --> P["podman run -e NAME=VALUE -v VOLUME:PATH<br/>claude --model MODEL"]
 ```
 
 A `riff.toml` with neither table gives a session no tool variable and
 no cache volume. A repository of any language works the same way. The
-`riff.toml` of riff runs each session on Opus with `ANTHROPIC_MODEL`.
-It also sets the build cache of riff: the cargo home, sccache, and their
-two volumes. To write the tables, see
+`riff.toml` of riff has `model = "opus"`, and also `ANTHROPIC_MODEL` in
+`[session.env]` for a host on an older riff, which does not know the
+key `model`. `claude --model` wins over the variable. It also sets the
+build cache of riff: the cargo home, sccache, and their two volumes. To
+write the tables, see
 [Set the env and the volumes of a session](development.md#set-the-env-and-the-volumes-of-a-session).
+To choose the model, see
+[Set the model of the sessions](development.md#set-the-model-of-the-sessions).
 
 ## Find a command
 

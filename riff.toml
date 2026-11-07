@@ -6,6 +6,11 @@
 # docs/src/development.md.
 image = "ghcr.io/como-technologies/riff-session@sha256:ce4cef5058d7720bb5c573146653dc1a429b08636db06f0362e0ac965b81ec82"
 
+# The model of each session: the lead, each work item and each verify
+# start with claude --model MODEL. With no key, riff uses opus. See "Set
+# the model of the sessions" in docs/src/development.md.
+model = "opus"
+
 # The package sources that the auto mode of each session trusts: a list
 # of hosts. riff adds none by itself. riff reads this list from the
 # default branch of origin, so a change counts after its merge. See
@@ -19,7 +24,9 @@ sources = ["crates.io", "index.crates.io", "static.crates.io"]
 # home. The toolchain is in the image.
 [session.env]
 # Each session of riff runs on Opus (#1692): the lead, each work item and
-# each verify.
+# each verify. A host on an older riff does not know the key model of
+# [session], and takes the model from this variable. claude --model wins
+# over it. #1696 removes it.
 ANTHROPIC_MODEL = "opus"
 CARGO_HOME = "$HOME/.cargo"
 SCCACHE_DIR = "$HOME/.cache/sccache"

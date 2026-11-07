@@ -11,8 +11,10 @@
 //! `TERM riff daemon` to the log, and removes the file. With no
 //! `RIFF_DATA`, it fails: the daemon of the machine is not the daemon of
 //! the test. The fake `riff run` fails when no daemon of the test runs,
-//! and makes its session folder in `RIFF_DATA`. A file in that folder
-//! changes what a fake does:
+//! makes its session folder in `RIFF_DATA`, and says that the session
+//! started on `claude-opus-5-5`. The clone of the test has a `riff.toml`
+//! with no `model`. A file in the control folder changes what a fake
+//! does:
 //!
 //! | File | The fake |
 //! |---|---|
@@ -25,6 +27,8 @@
 //! | `run-fails` | `riff run` ends with 1 |
 //! | `run-waits` | `riff run` waits for a signal |
 //! | `run-signaled` | `riff run` ends by SIGTERM, and the test gets no signal |
+//! | `no-start` | `riff run` prints no line `start: model ...` |
+//! | `sonnet` | `riff run` says that the session started on `claude-sonnet-5-5` |
 //! | `stray` | `riff run` writes paths in the home, and changes files that other programs write |
 //! | `gitconfig` | `riff run` appends to `~/.gitconfig` |
 //! | `others` | `riff run` writes in `~/snap`, in the locks of `claude` and in `~/.claude.json.lock` |
@@ -144,6 +148,8 @@ run)
   d="$RIFF_DATA/sessions/$2-ID8"
   mkdir -p "$d/clone" "$d/claude"
   echo work > "$d/clone/f"
+  if [ -f "$c/sonnet" ]; then model=claude-sonnet-5-5; else model=claude-opus-5-5; fi
+  if [ ! -f "$c/no-start" ]; then echo "start: model $model, permission mode auto"; fi
   if [ -f "$c/stray" ]; then
     touch "$HOME/.cvsignore"
     mkdir -p "$HOME/.claude/projects/-x-$2-ID8-clone" "$HOME/.cache/tool" "$XDG_STATE_HOME/riff"
@@ -234,6 +240,11 @@ impl Fake {
             .status()
             .unwrap();
         assert!(git.success());
+        std::fs::write(
+            clone.join("riff.toml"),
+            "[session]\nimage = \"ghcr.io/o/riff-session@sha256:00ff\"\n",
+        )
+        .unwrap();
         let fake = Fake {
             env,
             bin,
@@ -570,6 +581,85 @@ fn a_failed_step_names_the_step_stops_the_test_and_cleans_up() {
     );
     assert!(find(&log, "gh pr close").is_none(), "{log:#?}");
     assert_clean(&fake);
+}
+
+/// 01M6VAQWQ1D95TPKYE360KC3QR: a session that started on another model
+/// than the one of `riff.toml` fails step 6, and so does a `riff run`
+/// with no line `start: model ...`. A `riff.toml` with that model
+/// passes.
+#[test]
+fn a_session_on_another_model_than_the_riff_toml_fails_step_6() {
+    let fake = Fake::new();
+    let out = fake.run(&[]);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    for line in [
+        "  model opus\n",
+        "start: model claude-opus-5-5, permission mode auto\n",
+        "  the session started on claude-opus-5-5, and riff.toml names opus\n",
+    ] {
+        assert!(stdout.contains(line), "{line}\n{stdout}");
+    }
+
+    let fake = Fake::new();
+    fake.set("sonnet");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(
+            "real-session: FAIL at step 6 of 10, run the item: the session started on \
+             claude-sonnet-5-5, and riff.toml names opus"
+        ),
+        "{stderr}"
+    );
+    let log = fake.log();
+    assert!(find(&log, "gh pr diff").is_none(), "{log:#?}");
+    assert_clean(&fake);
+
+    let fake = Fake::new();
+    fake.set("no-start");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(
+            "real-session: FAIL at step 6 of 10, run the item: riff run printed no line start: \
+             model, so the test does not know the model of the session"
+        ),
+        "{stderr}"
+    );
+
+    let fake = Fake::new();
+    fake.set("sonnet");
+    std::fs::write(
+        fake.clone.join("riff.toml"),
+        "[session]\nimage = \"ghcr.io/o/riff-session@sha256:00ff\"\nmodel = \"sonnet\"\n",
+    )
+    .unwrap();
+    let out = fake.run(&[]);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains("  the session started on claude-sonnet-5-5, and riff.toml names sonnet\n"),
+        "{stdout}"
+    );
+}
+
+/// A clone with no `riff.toml` fails step 1, and makes no item.
+#[test]
+fn a_clone_with_no_riff_toml_fails_step_1() {
+    let fake = Fake::new();
+    std::fs::remove_file(fake.clone.join("riff.toml")).unwrap();
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("real-session: FAIL at step 1 of 10, check the host: cannot read "),
+        "{stderr}"
+    );
+    assert!(stderr.contains("riff.toml: "), "{stderr}");
+    assert!(find(&fake.log(), "gh issue create").is_none());
 }
 
 #[test]

@@ -4461,6 +4461,22 @@ of this part when they merge.
   that names issue 1692, so each session of this repository runs on
   Opus: the lead, each work item and each verify. A test checks that the
   file sets it.
+- **01M6VAQWECJ6N6VJF66KCMNYD1** riff starts each session with the model
+  of the `riff.toml` of the repository, and the default is `opus`: the
+  key `model` in the table `[session]` of the merged `riff.toml` names
+  the model, as `image` names the image. The lead, each work item and
+  each verify start with `claude --model MODEL`. A session that runs
+  keeps its model.
+- **01M6VAQWJ5RH7NCHAX0KCQ4BWY** riff refuses a `model` in `[session]`
+  that is not a string, that is empty, that has a space or a control
+  character, or that starts with `-`. The error names the key and the
+  file.
+- **01M6VAQWMKDX4VY8QRPA8EYFN9** The `riff.toml` of this repository sets
+  `model = "opus"` in `[session]`, beside `ANTHROPIC_MODEL = "opus"` in
+  `[session.env]` (01M6V8GQ1297PCZEKY311KRRWC). riff takes
+  `ANTHROPIC_MODEL` in `[session.env]` as any other variable, and the
+  command of each session has `--model opus`. A test checks the file and
+  the command.
 
 ### Sessions
 
@@ -5608,8 +5624,8 @@ of this part when they merge.
 - **01M501PA6W0NCG9JEK017F9304** `riff takeover NAME` takes over the
   worker in the container NAME. It stops the turn of the session at once
   (01M51KJ1R9K7A7RW8T8XH8VW43). Then it runs `podman exec -it NAME
-  /opt/riff/riff relay --terminal -- claude --resume ID
-  --permission-mode auto` with the terminal of the person. When that
+  /opt/riff/riff relay --terminal -- claude --resume ID` with the
+  terminal of the person (01M6VD1NSHTJQGR31VZ4689S8J). When that
   ends, it tells the daemon to go on. It exits with 0 when the session
   goes on, and with 1 when the session ended before the takeover.
 - **01M51KJ1R9K7A7RW8T8XH8VW43** `riff takeover NAME` and `t` in
@@ -5796,6 +5812,13 @@ of this part when they merge.
 - **01M6QVSWYXKZ2MJ54AFK62SZAY** `riff daemon end` keeps its refusal of
   the lead (01M579Z9VRD12FRK6DSYVKDHQB), and its text names `riff lead
   stop`.
+- **01M6VD1NSHTJQGR31VZ4689S8J** The terminal of `riff takeover NAME`
+  runs `claude --resume ID --model MODEL --permission-mode auto`. MODEL
+  is the model of `claude --model` of the session: the daemon keeps it
+  in the record of the session, and gives it to `riff takeover` with the
+  session ID. A session that started with no `--model` gets no `--model`
+  in the terminal. This supersedes 01M501PA6W0NCG9JEK017F9304 in part:
+  the flags of `claude`.
 
 ### The first run
 
@@ -6927,6 +6950,12 @@ of this part when they merge.
   TAG on COMMIT, for N min". `riff top`, `riff who` and `riff view` show
   it on the line of the host. `Status::busy` counts the test as one, so
   the daemon starts again on a new riff only after the test.
+- **01M6VAQWQ1D95TPKYE360KC3QR** Step 6 of the real-session test fails
+  when the line `start: model MODEL` of `riff run` does not name the
+  model of the `riff.toml` of the tree: the same name, or a name that
+  has it in, as `claude-opus-5-5` has `opus`. With no `model` in
+  `[session]`, the model of the tree is `opus`. A `riff run` with no
+  such line fails the step too.
 
 ## The UIs
 
