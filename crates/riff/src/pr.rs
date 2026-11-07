@@ -1314,6 +1314,27 @@ fn read_all(pipe: Option<impl Read + Send + 'static>) -> JoinHandle<Vec<u8>> {
     })
 }
 
+/// Runs `read`, which calls `gh`, on a thread of its own, and gives its
+/// result. The end of a process waits for each blocking task of tokio,
+/// and for no thread that nobody joins. So a slow `gh` holds up no `q`
+/// of the TUI (#1707, 01M6VT7TTV8J90C5E3QAZ454GY). A task that stops
+/// lets the read go on, and its result goes nowhere. A read that
+/// panicked is an error.
+///
+/// ```
+/// let read = riff::pr::on_thread(|| 6 * 7);
+/// let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+/// assert_eq!(runtime.block_on(read)?, 42);
+/// # anyhow::Ok(())
+/// ```
+pub async fn on_thread<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'static) -> Result<T> {
+    let (sender, result) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(read());
+    });
+    result.await.map_err(|_| anyhow!("a read of gh panicked"))
+}
+
 /// The body of a pull request for the issue of `link` in the form of the
 /// hygiene check: the link line, the summary, and the trailers.
 ///
@@ -2505,6 +2526,42 @@ mod tests {
     use crate::text;
 
     const FULL: &str = "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
+
+    /// #1707, 01M6VT7TTV8J90C5E3QAZ454GY: a runtime that ends while a
+    /// read of [`super::on_thread`] runs ends at once, and the read goes
+    /// on to its end. A read that panics is an error.
+    #[test]
+    fn a_read_on_a_thread_of_its_own_holds_up_no_end() {
+        use std::sync::mpsc::channel;
+
+        let (started, starts) = channel();
+        let (go, waits) = channel::<()>();
+        let (done, ends) = channel();
+        let runtime = tokio::runtime::Builder::new_multi_thread().build().unwrap();
+        runtime.spawn(super::on_thread(move || {
+            started.send(()).unwrap();
+            let _ = waits.recv();
+            done.send(()).unwrap();
+        }));
+        starts.recv_timeout(Duration::from_secs(5)).unwrap();
+        let start = Instant::now();
+        drop(runtime);
+        let ended = start.elapsed();
+        assert!(
+            ended < Duration::from_secs(1),
+            "the runtime ended in {ended:?}"
+        );
+        go.send(()).unwrap();
+        ends.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let error = runtime
+            .block_on(super::on_thread(|| -> u8 { panic!("no gh") }))
+            .unwrap_err();
+        assert_eq!(error.to_string(), "a read of gh panicked");
+    }
 
     /// #1566: a `304` renews the kept reply, so a read that accepts a short
     /// age takes it. A reply that nobody kept, and a `gh` that shares no

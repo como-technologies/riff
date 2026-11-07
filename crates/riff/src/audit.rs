@@ -1173,8 +1173,8 @@ pub fn repo_of(place: &Place) -> Result<ThreadName> {
 /// full title ([`crate::waves::title`]): it reads the records of the
 /// repository through `reach`, reads the forge with `gh`, and checks
 /// each rule. The CLI prints the report, and the Audit report of the
-/// TUI shows it. The read of the forge runs in a blocking task: its
-/// calls of `gh` block.
+/// TUI shows it. The read of the forge runs on a thread of its own
+/// ([`crate::pr::on_thread`]): its calls of `gh` block.
 pub async fn of_wave(
     gh: &Gh,
     reach: &crate::reach::Reach,
@@ -1183,7 +1183,7 @@ pub async fn of_wave(
 ) -> Result<Report> {
     let log = reach.log(repo).await?;
     let (gh, name, wave) = (gh.clone(), repo.to_string(), title.to_owned());
-    let forge = tokio::task::spawn_blocking(move || Forge::read(&gh, &name, &wave)).await??;
+    let forge = crate::pr::on_thread(move || Forge::read(&gh, &name, &wave)).await??;
     audit(title, &log.records, log.pruned, &forge, now_ms())
 }
 

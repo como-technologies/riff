@@ -2077,9 +2077,11 @@ async fn frames(
 /// The tasks of the Reports tab (01M6VT3JFEKD2FEQGNGGKHC8X5): it takes
 /// the result of a read of the usage, of an audit and of a follow of a
 /// Session log that ended, and the lines of the follow. It starts the
-/// read that the tab asks for, each in a task of its own: the read of the
-/// usage in a blocking task, as its calls of `gh` block. It stops the
-/// follow of a log that does not show.
+/// read that the tab asks for, each in a task of its own. The calls of
+/// `gh` of the usage and of the audit run on threads of their own
+/// ([`crate::pr::on_thread`]): a slow `gh` holds up no `q`
+/// (01M6VT7TTV8J90C5E3QAZ454GY). It stops the follow of a log that does
+/// not show.
 async fn reports_tasks(
     tasks: &mut Tasks,
     state: &mut State,
@@ -2088,7 +2090,7 @@ async fn reports_tasks(
     reach: &Reach,
     gh: &crate::pr::Gh,
 ) -> Result<()> {
-    use tokio::task::{JoinHandle, spawn_blocking};
+    use tokio::task::JoinHandle;
     fn done<T>(task: &Option<(JoinHandle<T>, Option<u64>)>) -> bool {
         task.as_ref().is_some_and(|(task, _)| task.is_finished())
     }
@@ -2102,8 +2104,11 @@ async fn reports_tasks(
     {
         state.usage_started();
         let gh = gh.clone();
-        let task = spawn_blocking(move || {
-            reports::read_usage(&gh, &repo, wave).map_err(|e| format!("{e:#}"))
+        let task = tokio::spawn(async move {
+            crate::pr::on_thread(move || reports::read_usage(&gh, &repo, wave))
+                .await
+                .and_then(|read| read)
+                .map_err(|e| format!("{e:#}"))
         });
         tasks.usage = Some((task, wave));
     }

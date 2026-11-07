@@ -1055,6 +1055,79 @@ async fn the_reports_tab_shows_the_usage_the_audit_and_the_log() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// A fake `gh` whose read of the milestones does not answer until the
+/// file `go` of its folder is there. It makes the file `reading` when
+/// that read starts.
+const SLOW_WAVES_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$*" >> "$dir/calls"
+case "$*" in
+  *milestones*)
+    touch "$dir/reading"
+    n=0
+    while [ ! -e "$dir/go" ] && [ "$n" -lt 120 ]; do sleep 1; n=$((n + 1)); done
+    echo '[]' ;;
+  *) echo '[]' ;;
+esac
+"#;
+
+/// 01M6VT7TTV8J90C5E3QAZ454GY, 01M6VT3JHVFQ27VJE8987WET34: in a clone of
+/// acme/app, `q` while the Usage report reads the waves from a `gh` that
+/// does not answer ends the TUI within 1 second, with exit 0.
+#[tokio::test]
+async fn q_ends_the_tui_at_once_while_the_reports_tab_reads_gh() {
+    let server = crate::common::start_signed().await;
+    let clone = tempfile::tempdir().unwrap();
+    for args in [
+        &["init", "-q"][..],
+        &["remote", "add", "origin", "https://github.com/acme/app.git"],
+    ] {
+        let git = std::process::Command::new("git")
+            .args(args)
+            .current_dir(clone.path())
+            .status()
+            .unwrap();
+        assert!(git.success());
+    }
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), SLOW_WAVES_GH);
+    let mut tty = Tty::start_in(
+        clone,
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    assert!(
+        !bin.path().join("reading").exists(),
+        "no read of the waves yet"
+    );
+    tty.press("6").await;
+    let span = Span::start();
+    while !bin.path().join("reading").exists() {
+        assert!(span.within(WAIT), "the read of the usage starts in time");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let span = Span::start();
+    tty.press("q").await;
+    let code = tty.exits().await;
+    let ended = span.wall();
+    std::fs::write(bin.path().join("go"), "").unwrap();
+    assert_eq!(code, Some(0));
+    assert!(
+        span.within(Duration::from_secs(1)),
+        "the TUI ended in {ended:?}"
+    );
+    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    assert!(
+        calls.contains("api repos/acme/app/milestones?state=all&per_page=100"),
+        "{calls}"
+    );
+}
+
 /// A fake `gh` for acme/app: the waves 2 (closed), `3: Boards` and 4,
 /// the issues 12 and 13 of Wave 3, and the comments of each issue from
 /// the file `comments-N` of its folder.

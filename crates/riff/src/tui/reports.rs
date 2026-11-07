@@ -253,11 +253,12 @@ pub struct Audited {
 
 /// Audits the wave `wave` of `repo`, else its current wave, with the
 /// code of `riff audit --wave N` ([`wave_of`],
-/// [`crate::audit::of_wave`]). The calls of `gh` run in blocking tasks.
+/// [`crate::audit::of_wave`]). The calls of `gh` run on threads of their
+/// own ([`crate::pr::on_thread`]).
 pub async fn run_audit(gh: &Gh, reach: &Reach, repo: &str, wave: Option<u64>) -> Result<Audited> {
     let thread: ThreadName = repo.parse()?;
     let (asker, name) = (gh.clone(), repo.to_owned());
-    let wave = tokio::task::spawn_blocking(move || wave_of(&asker, &name, wave)).await??;
+    let wave = crate::pr::on_thread(move || wave_of(&asker, &name, wave)).await??;
     let report = crate::audit::of_wave(gh, reach, &thread, &wave.title).await?;
     Ok(Audited {
         repo: repo.to_owned(),
