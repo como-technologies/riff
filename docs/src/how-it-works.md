@@ -181,8 +181,11 @@ flowchart LR
 
 A `riff.toml` with neither table gives a session no tool variable and
 no cache volume. A repository of any language works the same way. The
-`riff.toml` of riff sets the build cache of riff: the cargo home,
-sccache, and their two volumes. To write the tables, see
+`riff.toml` of riff has `model = "opus"`, and also `ANTHROPIC_MODEL` in
+`[session.env]` for a host on an older riff, which does not know the
+key `model`. `claude --model` wins over the variable. It also sets the
+build cache of riff: the cargo home, sccache, and their two volumes. To
+write the tables, see
 [Set the env and the volumes of a session](development.md#set-the-env-and-the-volumes-of-a-session).
 To choose the model, see
 [Set the model of the sessions](development.md#set-the-model-of-the-sessions).

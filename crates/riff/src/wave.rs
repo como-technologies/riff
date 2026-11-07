@@ -4779,6 +4779,7 @@ mod tests {
             terminal: true,
             takeover: false,
             interrupt: false,
+            model: None,
         }
     }
 
@@ -6400,6 +6401,7 @@ esac
                 terminal: false,
                 takeover: false,
                 interrupt: false,
+                model: None,
             };
             Self {
                 api,

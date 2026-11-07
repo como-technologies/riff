@@ -662,10 +662,10 @@ enum Command {
     /// Take over a session of the riff daemon in your terminal
     ///
     /// riff stops the turn of the session at once, also in the middle of
-    /// a tool call. Then claude opens here with the history of the
-    /// session, in its container. When you end it with /exit, the session
-    /// goes on with its item. riff view and riff daemon status show the
-    /// names.
+    /// a tool call. Then claude opens here with the history and the model
+    /// of the session, in its container. When you end it with /exit, the
+    /// session goes on with its item. riff view and riff daemon status
+    /// show the names.
     Takeover {
         /// Wait for the end of the turn of the session. Do not stop it.
         #[arg(long)]

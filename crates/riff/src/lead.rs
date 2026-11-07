@@ -429,6 +429,7 @@ pub async fn old(runtime: &impl Runtime, name: &str) -> bool {
 ///     terminal: true,
 ///     takeover: false,
 ///     interrupt: false,
+///     model: Some("opus".into()),
 /// };
 /// let idle = Duration::from_secs(300);
 /// // A write now: a turn runs.
@@ -1350,6 +1351,7 @@ mod tests {
             terminal: true,
             takeover: false,
             interrupt: false,
+            model: None,
         }
     }
 

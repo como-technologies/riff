@@ -2380,20 +2380,26 @@ mod tests {
         );
     }
 
-    /// 01M6VAQWMKDX4VY8QRPA8EYFN9: the `riff.toml` of riff runs each
-    /// session on Opus with `model` in `[session]`, and has no
-    /// `ANTHROPIC_MODEL`.
+    /// 01M6V8GQ1297PCZEKY311KRRWC, 01M6VAQWMKDX4VY8QRPA8EYFN9: the
+    /// `riff.toml` of riff runs each session on Opus, with `model` in
+    /// `[session]`, and with the model first in `[session.env]` for a
+    /// host on an older riff.
     #[test]
     fn the_riff_toml_of_riff_runs_each_session_on_opus() {
         let text = include_str!("../../../riff.toml");
         let config: toml_edit::DocumentMut = text.parse().unwrap();
         assert_eq!(config["session"]["model"].as_str(), Some("opus"));
-        assert!(!text.contains("ANTHROPIC_MODEL"), "{text}");
         let spec = spec(&Facts {
             setup: riff_setup(),
             ..facts()
         });
         assert_eq!(spec.command[..3], ["claude", "--model", "opus"]);
+        let vars = variables(&spec);
+        let model = vars
+            .iter()
+            .position(|var| var == "ANTHROPIC_MODEL=opus")
+            .unwrap_or_else(|| panic!("no ANTHROPIC_MODEL=opus in {vars:?}"));
+        assert_eq!(vars[model + 1], "CARGO_HOME=/home/mike/.cargo");
     }
 
     /// 01M6VAQWECJ6N6VJF66KCMNYD1: the command of a worker starts with

@@ -801,16 +801,20 @@ async fn a_new_item_starts_with_the_model_of_the_merged_riff_toml() {
     assert!(!args.contains("haiku"), "{args}");
 }
 
-/// 01M6VAQWJ5RH7NCHAX0KCQ4BWY: `ANTHROPIC_MODEL` in `[session.env]` of
-/// the merged `riff.toml` stops `riff run` before the claim. The error
-/// names the key and the file.
+/// 01M6VAQWMKDX4VY8QRPA8EYFN9: riff takes `ANTHROPIC_MODEL` in
+/// `[session.env]` of the merged `riff.toml` beside `model` in
+/// `[session]`. The container gets the variable, and `claude` gets
+/// `--model` of the key, which wins over the variable.
 #[tokio::test]
-async fn anthropic_model_in_the_env_of_the_riff_toml_takes_no_claim() {
+async fn anthropic_model_in_the_env_of_the_riff_toml_goes_beside_the_model() {
     let machine = Machine::new().await;
     machine.lead().await;
     std::fs::write(
         machine.main.join("riff.toml"),
-        format!("[session]\nimage = \"{PINNED}\"\n\n[session.env]\nANTHROPIC_MODEL = \"opus\"\n"),
+        format!(
+            "[session]\nimage = \"{PINNED}\"\nmodel = \"opus\"\n\n\
+             [session.env]\nANTHROPIC_MODEL = \"opus\"\n"
+        ),
     )
     .unwrap();
     git(&machine.main, &["commit", "-q", "-am", "model in the env"]);
@@ -819,17 +823,17 @@ async fn anthropic_model_in_the_env_of_the_riff_toml_takes_no_claim() {
     let out = machine
         .run(None, &["run", "issue-12", "--image", IMAGE])
         .await;
-    assert!(!out.status.success());
-    let stderr = text(&out.stderr);
-    assert!(
-        stderr.contains(
-            "riff.toml of origin/main: [session.env] ANTHROPIC_MODEL: riff sets the model \
-             itself. Put model = \"opus\" in [session] in place of it"
-        ),
-        "{stderr}"
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    let args = machine.read("run.args");
+    assert!(args.contains("\nANTHROPIC_MODEL=opus\n"), "{args}");
+    let lines: Vec<&str> = args.lines().collect();
+    let at = lines.iter().position(|a| *a == "claude").unwrap();
+    assert_eq!(
+        lines[at..at + 5],
+        ["claude", "--effort", "xhigh", "--model", "opus"],
+        "{args}"
     );
-    assert!(machine.read("run.args").is_empty());
-    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
 #[tokio::test]
@@ -3541,10 +3545,12 @@ async fn take_over_a_session(flags: &[&str]) {
     );
     assert!(shown.contains(&riff::text::takeover_held(&name)), "{shown}");
     assert!(shown.contains(&riff::text::takeover_back(&name)), "{shown}");
+    // 01M6VD1NSHTJQGR31VZ4689S8J: the terminal has the model of the
+    // session, opus with no model in the riff.toml.
     assert!(
         machine.read("podman.log").contains(&format!(
             "podman exec -it {name} /opt/riff/riff relay --terminal -- claude --resume \
-             {session} --permission-mode auto"
+             {session} --model opus --permission-mode auto"
         )),
         "{}",
         machine.read("podman.log")

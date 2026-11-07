@@ -944,8 +944,6 @@ riff refuses a `riff.toml` that it cannot keep:
 - A variable that riff sets itself: `HOME`, `USER`, `LOGNAME`,
   `GH_TOKEN`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, and each
   name that starts with `GIT_CONFIG_` or `RIFF_`.
-- `ANTHROPIC_MODEL`: set the model with `model` in `[session]`. See
-  [Set the model of the sessions](#set-the-model-of-the-sessions).
 - A volume name that podman could read as a path. A name starts with a
   letter or a digit, and has letters, digits, `_`, `.` and `-`.
 - A path that is not absolute, or that has a colon or a comma.
@@ -984,9 +982,14 @@ model = "opus"
 A model is a name that `claude --model` takes: an alias, for example
 `opus`, `sonnet` or `haiku`, or a full name, for example
 `claude-opus-5-5`. riff refuses a model that is empty, that has a space,
-or that starts with `-`. It also refuses `ANTHROPIC_MODEL` in
-`[session.env]`: the model has one place. The error names the key and
-the file. To check your working tree, run `riff image`.
+or that starts with `-`. The error names the key and the file. To check
+your working tree, run `riff image`.
+
+`ANTHROPIC_MODEL` in `[session.env]` also names a model. riff gives it
+to the session as any other variable, but `claude --model` wins over
+it. The `riff.toml` of riff has both, `model = "opus"` and
+`ANTHROPIC_MODEL = "opus"`: a host on an older riff does not know the
+key `model`, and its sessions take the model from the variable.
 
 Only the merged `riff.toml` counts, as for the image. Merge your change
 with a pull request. A new session reads the model at its start. A
@@ -3834,11 +3837,13 @@ riff takeover riff-issue-12-1a2b3c4d
 
 riff stops the turn of the session at once, also in the middle of a
 tool call. `claude` opens in your terminal in a few seconds, in the
-container of the session, with the history of the session. When you
-are done, type `/exit`. The session goes on with its item: riff starts
-`claude -p` again with `--resume`, and tells it that a person used the
-session. While you have the session, the quiet limit of the daemon
-does not stop it.
+container of the session, with the history and the model of the
+session (see
+[Set the model of the sessions](#set-the-model-of-the-sessions)).
+When you are done, type `/exit`. The session goes on with its item:
+riff starts `claude -p` again with `--resume`, and tells it that a
+person used the session. While you have the session, the quiet limit
+of the daemon does not stop it.
 
 riff cannot stop a turn after the result of the session (the state
 `ends`), or of a session with an old relay. Then

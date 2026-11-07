@@ -1,12 +1,15 @@
 //! `riff takeover NAME`: a person takes over a worker of the riff daemon
-//! (#720, 01M4Z60B83ZH10HYKW7X1C0SSS, 01M501PA6W0NCG9JEK017F9304).
+//! (#720, 01M4Z60B83ZH10HYKW7X1C0SSS, 01M501PA6W0NCG9JEK017F9304,
+//! 01M6VD1NSHTJQGR31VZ4689S8J).
 //!
 //! # Design
 //!
 //! A worker runs `claude -p` in stream-json, with no terminal. A takeover
-//! stops its turn at once, and opens `claude --resume ID` with the
-//! terminal of the person in the same container
-//! (01M51KJ1R9K7A7RW8T8XH8VW43). With `--at-end`, it waits for the end
+//! stops its turn at once, and opens `claude --resume ID --model MODEL`
+//! with the terminal of the person in the same container
+//! (01M51KJ1R9K7A7RW8T8XH8VW43). MODEL is the model of the session: the
+//! daemon keeps it in its record, and says it with the session ID
+//! (01M6VD1NSHTJQGR31VZ4689S8J). With `--at-end`, it waits for the end
 //! of the turn. When that `claude` ends, the worker goes on with its
 //! item.
 //!
@@ -17,8 +20,8 @@
 //!     participant C as container NAME
 //!     P->>D: takeover NAME
 //!     D->>C: hold: claude -p stops its turn, or ends after it with --at-end
-//!     D-->>P: held: the session ID
-//!     P->>C: podman exec -it NAME riff relay --terminal -- claude --resume ID
+//!     D-->>P: held: the session ID and the model
+//!     P->>C: podman exec -it NAME riff relay --terminal -- claude --resume ID --model MODEL
 //!     Note over P,C: the person works, then types /exit
 //!     P->>D: go on
 //!     D->>C: go on: claude -p --resume ID, with one new input
@@ -42,18 +45,20 @@ use crate::text;
 
 /// The command of the terminal of a takeover of the session `session`:
 /// the relay adds the riff tools, and runs `claude --resume` with the
-/// terminal.
+/// terminal, on the model of the session (01M6VD1NSHTJQGR31VZ4689S8J).
 ///
 /// ```
-/// let command = riff::takeover::command("s1");
+/// let command = riff::takeover::command("s1", Some("opus"));
 /// assert_eq!(
 ///     command,
 ///     ["/opt/riff/riff", "relay", "--terminal", "--", "claude", "--resume", "s1",
-///      "--permission-mode", "auto"]
+///      "--model", "opus", "--permission-mode", "auto"]
 /// );
+/// // A session with no --model.
+/// assert!(!riff::takeover::command("s1", None).contains(&"--model".to_owned()));
 /// ```
-pub fn command(session: &str) -> Vec<String> {
-    [
+pub fn command(session: &str, model: Option<&str>) -> Vec<String> {
+    let mut command: Vec<String> = [
         RELAY_BIN,
         "relay",
         "--terminal",
@@ -61,11 +66,14 @@ pub fn command(session: &str) -> Vec<String> {
         "claude",
         "--resume",
         session,
-        "--permission-mode",
-        "auto",
     ]
     .map(String::from)
-    .to_vec()
+    .to_vec();
+    if let Some(model) = model {
+        command.extend(["--model".to_owned(), model.to_owned()]);
+    }
+    command.extend(["--permission-mode".to_owned(), "auto".to_owned()]);
+    command
 }
 
 /// Takes over the session in the container `name` of the daemon in the
@@ -91,9 +99,11 @@ pub async fn takeover(
     loop {
         match client.next().await? {
             Some(Say::Line { text }) => show(&text),
-            Some(Say::Held { session }) if !back => {
+            Some(Say::Held { session, model }) if !back => {
                 show(&text::takeover_held(name));
-                let exit = runtime.exec(name, &command(&session)).await;
+                let exit = runtime
+                    .exec(name, &command(&session, model.as_deref()))
+                    .await;
                 back = true;
                 client.go_on().await?;
                 exit?;

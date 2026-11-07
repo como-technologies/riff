@@ -26,9 +26,11 @@
 //! The key `model` of `[session]` names the model of each session of the
 //! repository: the lead, each work item and each verify start with
 //! `claude --model MODEL` ([`Setup::claude`]). With no key, the model is
-//! [`MODEL`]. A session that runs keeps its model. The model has one
-//! place: riff refuses `ANTHROPIC_MODEL` in `[session.env]`
-//! (01M6VAQWJ5RH7NCHAX0KCQ4BWY).
+//! [`MODEL`]. A session that runs keeps its model, and the terminal of a
+//! takeover resumes it on the same model ([`model_of`],
+//! [`crate::takeover::command`]). riff takes `ANTHROPIC_MODEL` in
+//! `[session.env]` as any other variable, and `claude --model` wins over
+//! it (01M6VAQWMKDX4VY8QRPA8EYFN9).
 //!
 //! The key of `[session.volumes]` is the name of a podman volume, and
 //! the value is its path in the container. A value of `[session.env]`
@@ -69,11 +71,6 @@ use crate::runtime::{Bind, Env, Source};
 /// latest Opus.
 pub const MODEL: &str = "opus";
 
-/// The variable of Claude Code for the model. riff refuses it in
-/// `[session.env]`: `model` in `[session]` is the one place of the model
-/// (01M6VAQWJ5RH7NCHAX0KCQ4BWY).
-const MODEL_VAR: &str = "ANTHROPIC_MODEL";
-
 /// The names of the variables that riff sets itself.
 const RESERVED: &[&str] = &[
     "HOME",
@@ -82,7 +79,6 @@ const RESERVED: &[&str] = &[
     "GH_TOKEN",
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_OAUTH_TOKEN",
-    MODEL_VAR,
 ];
 
 /// The starts of the names of the variables that riff sets itself.
@@ -261,6 +257,23 @@ fn pairs(session: &toml_edit::Item, key: &str, place: &str) -> Result<Vec<(Strin
         .collect()
 }
 
+/// The model of the command of a session: the word after `--model`, or
+/// none for a command with no `--model`. The daemon keeps it for the
+/// terminal of a takeover (01M6VD1NSHTJQGR31VZ4689S8J).
+///
+/// ```
+/// use riff::session_setup::{Setup, model_of};
+///
+/// let mut command = Setup::default().claude();
+/// command.extend(["-p".to_owned(), "--verbose".to_owned()]);
+/// assert_eq!(model_of(&command), Some("opus"));
+/// assert_eq!(model_of(&["claude".to_owned(), "-p".to_owned()]), None);
+/// ```
+pub fn model_of(command: &[String]) -> Option<&str> {
+    let at = command.iter().position(|arg| arg == "--model")?;
+    command.get(at + 1).map(String::as_str)
+}
+
 /// The key `model` of the table `[session]`, or [`MODEL`] with no key
 /// (01M6VAQWJ5RH7NCHAX0KCQ4BWY). A model is one argument of `claude`:
 /// riff refuses an empty one, one with a space or a control character,
@@ -293,12 +306,6 @@ fn check_name(name: &str, place: &str) -> Result<()> {
     {
         bail!(
             "{place}: [session.env] {name} is not the name of a variable: use letters, digits and _"
-        );
-    }
-    if name == MODEL_VAR {
-        bail!(
-            "{place}: [session.env] {name}: riff sets the model itself. Put model = \"{MODEL}\" \
-             in [session] in place of it"
         );
     }
     if RESERVED.contains(&name) || RESERVED_STARTS.iter().any(|start| name.starts_with(start)) {
@@ -507,21 +514,34 @@ mod tests {
         );
     }
 
-    /// 01M6VAQWJ5RH7NCHAX0KCQ4BWY: `ANTHROPIC_MODEL` in `[session.env]`
-    /// is refused, and the error names the key, the file and the fix.
+    /// 01M6VAQWMKDX4VY8QRPA8EYFN9: riff takes `ANTHROPIC_MODEL` in
+    /// `[session.env]` beside `model` in `[session]`, and the command
+    /// has the model of the key.
     #[test]
-    fn anthropic_model_in_the_env_is_refused_with_the_fix() {
-        let error = format!(
-            "{:#}",
-            setup("[session.env]\nANTHROPIC_MODEL = \"opus\"\n").unwrap_err()
-        );
+    fn anthropic_model_in_the_env_is_taken_beside_the_model() {
+        let setup =
+            setup("[session]\nmodel = \"sonnet\"\n\n[session.env]\nANTHROPIC_MODEL = \"opus\"\n")
+                .unwrap();
+        assert_eq!(setup.claude(), ["claude", "--model", "sonnet"]);
         assert_eq!(
-            error,
-            "riff.toml: [session.env] ANTHROPIC_MODEL: riff sets the model itself. \
-             Put model = \"opus\" in [session] in place of it"
+            setup.env,
+            [("ANTHROPIC_MODEL".to_owned(), "opus".to_owned())]
         );
-        // Another variable of Claude Code is the repository's own.
-        assert!(setup("[session.env]\nANTHROPIC_SMALL_FAST_MODEL = \"haiku\"\n").is_ok());
+    }
+
+    /// 01M6VD1NSHTJQGR31VZ4689S8J: the model of a command is the word
+    /// after `--model`, also after the `--effort` of the daemon.
+    #[test]
+    fn the_model_of_a_command_is_the_word_after_model() {
+        let command = |args: &[&str]| args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            model_of(&command(&[
+                "claude", "--effort", "xhigh", "--model", "sonnet", "-p"
+            ])),
+            Some("sonnet")
+        );
+        assert_eq!(model_of(&command(&["claude", "-p"])), None);
+        assert_eq!(model_of(&command(&["claude", "--model"])), None);
     }
 
     /// 01M6VAQWJ5RH7NCHAX0KCQ4BWY: a model that `claude` could read as a

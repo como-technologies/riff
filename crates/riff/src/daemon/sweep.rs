@@ -1940,6 +1940,7 @@ esac
             terminal: false,
             takeover: false,
             interrupt: false,
+            model: None,
         };
         let path = crate::daemon::record_path(&here.dir, name);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
