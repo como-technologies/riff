@@ -115,7 +115,8 @@ The TUI needs 40 columns and 10 rows.
 
 The tabs come one at a time. Until a tab is built, it names the
 commands that show its area, for example `riff top` for the sessions.
-See [The TUI](riff-uis.md#the-tui).
+See [The TUI](riff-uis.md#the-tui). The Machines tab is built: see
+[See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui).
 
 With no terminal, for example in a script, `riff` prints the help.
 

@@ -7151,6 +7151,56 @@ that builds it merges.
 - **01M6VAZKVK7530JJ63S7RVF88J** Until the build item of a tab of the
   TUI merges, the body of the tab names the CLI commands that show its
   area.
+- **01M6VFCPK2PSDTHHE5TSY3XP5N** The Machines tab of the TUI has a row
+  for each host whose riff daemon sent the facts of its host in the last
+  3 minutes. A row shows the host, its live sessions against its limit,
+  the 1-minute load against the hardware threads, the free memory, the
+  free disk and its use, the starts that wait for room, and the age of
+  the facts.
+- **01M6VFD09QN71SWMPP8YXCRAEK** At each look, the TUI asks the riff
+  daemon of its own host for its status on its socket. The row of this
+  host in the Machines tab takes the limit, the sessions, the starts
+  that wait and the waves from that status, and the load, the memory and
+  the disk from the host. When no daemon answers, the row of this host
+  comes from riff-server, as each other row.
+- **01M6VFD0CAS71DNBGE7K56JJ2H** A host in the Machines tab has a fault
+  when it is at its limit, when its free memory is under its floor, when
+  less than 15% of its disk is free, or when it tells no numbers of its
+  machine. A sign-in that stops its sessions is a fault too: the sign-in
+  of riff or of `gh` is off, the sign-in of `claude` has less than 2
+  hours left and no token is set, or `claude` refused the token. A host
+  with a fault gets `!` and comes first. Then the hosts come in the
+  order of their names. The first line of the tab counts the hosts and
+  each fault.
+- **01M6VFD0EXECEEVNN969SAPV4C** Under the rows, the Machines tab shows
+  the detail of the selected host: the numbers of its machine, its limit
+  and its floor, the starts that wait, a line for each fault, its waves
+  and its sessions. For its own host, it shows the pid of the daemon,
+  the time since its start and the jobs of its waves too. The narrow
+  layout shows no detail.
+- **01M6VFD0HGCVMYNNC3H4788W9X** The Machines tab ends with the lines of
+  the link and the server: the time of the last call `who`, the
+  reconnects of the TUI, the build of riff-server against the build of
+  this riff, and the GitHub points that are left, with the points of
+  riff and of the other callers in the last hour. The points come from
+  the daemon of this host.
+- **01M6VFD0M3RHT488D0RQ84RVMC** In the Machines tab, the keys `↑` and
+  `↓`, `j` and `k`, and the wheel of the mouse select a host. `PgUp`
+  and `PgDn` move 10 hosts, and `g` and `G` go to the first and the last
+  host. A click on a row selects it. When the hosts do not fit, the rows
+  scroll, and the first line shows the place, for example `12-18 of 50`.
+  `Enter` opens the Sessions tab with the filter `host:HOST`.
+- **01M6VFD0PPXDNH3NKD3YE4W9SB** The key `l` in the Machines tab asks in
+  the note line for the most live sessions of the selected host, then
+  asks `y` or `n`. `y` sets the limit with the code of `riff daemon
+  limit --sessions N`: in the folder of the daemon for this host, and
+  through riff-server, as with `--host HOST`, for another host. The note
+  line shows the reply. In the TUI, only the user of a host sets its
+  limit.
+- **01M6VFD0S90SB8M8WV952NT4Y1** A question of the TUI in the note line
+  ends with `y/N`. `y` does the action. `q` and `Ctrl-C` end the TUI.
+  Each other key, also `Esc`, answers no: the TUI does nothing, and the
+  note line says so.
 
 ## The notes of the lead
 

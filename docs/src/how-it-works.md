@@ -1164,8 +1164,83 @@ flowchart LR
     D -->|"a note: a short sign-in, a kept folder"| S
     S --> W["riff who: Hosts"]
     S --> T["riff top: under the host"]
+    S --> M["riff: the Machines tab"]
     S --> L["the lead"]
+    H["riff daemon of your host"] -->|"its socket, at each look"| M
 ```
+
+#### See the hosts in the TUI
+
+The Machines tab of the TUI shows the facts with a row for each host.
+Run riff with no command, then press `4`:
+
+```sh
+riff
+```
+
+```text
+ 3 hosts · 1 at its limit · 1 low on memory
+     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN
+ > ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   80%   1     0s
+     pangolin   2/4   3.1/16   14/32 GB    90/200 GB   55%   0     12s
+     strata-ci  0/2   0.4/8    30/64 GB    140/500 GB  72%   0     28s
+
+──thelio · riff daemon pid 4242, up 2d ─────────────────────────────────────────
+ cpu 32x5883MHz (now 4100MHz), mem 124GB, 2GB available, load 18.96
+ limit 3 sessions and a floor of 8 GB · 1 start waits · 1 job
+ at its limit: 3 of 3 sessions live, a new start waits for room
+ low on memory: the daemon starts no session until 8 GB are free
+ wave como-technologies/riff: started issue-1594
+ sessions: 5b1e2a90 works · 9c0d1e2f works · 3a3f8d5d ends
+
+──the link and the server ──────────────────────────────────────────────────────
+ link ok: 118 ms · 1 reconnect · riff-server build 10df8a4, same as yours
+ GitHub: 4,210 of 5,000 points left · riff spent 310, others 480, in the hour
+```
+
+- A row shows the live sessions against the limit (`WORK`), the
+  1-minute load against the hardware threads, the free memory, the free
+  disk and its use, the starts that wait for room, and the age of the
+  facts.
+- A host with a fault gets `!` and comes first. A fault is a host at
+  its limit, a host with less free memory than its floor, a disk with
+  less than 15% free, a sign-in that stops the sessions, or a host that
+  tells no numbers. The first line counts each fault.
+- Under the rows is the detail of the selected host. The row and the
+  detail of your own host come from its daemon at each look, so they
+  are not 30 seconds old. They add the pid of the daemon, the time since
+  its start and the jobs of its waves.
+- The last lines show the link: the time of the last call, the
+  reconnects, and the build of riff-server against your build. The
+  GitHub line shows the points that are left, and the points that riff
+  and the other callers used in the last hour. The daemon of your host
+  counts them.
+
+| Key | Does |
+|---|---|
+| `↑` `↓`, `j` `k`, the wheel | Select a host. A click on a row selects it too. |
+| `PgUp` `PgDn` | Move 10 hosts. |
+| `g` `G` | Select the first or the last host. |
+| `Enter` | Open the Sessions tab with the filter `host:HOST`. |
+| `l` | Set the limit of the host. |
+
+Under 80 columns, the rows have fewer columns, and the tab shows no
+detail.
+
+#### Set the limit of a host in the TUI
+
+In the Machines tab, select the host and press `l`. Type the most live
+sessions, press `Enter`, then press `y`. Each other key sets nothing.
+The TUI runs the code of this command, here for 4 sessions on thelio:
+
+```sh
+riff daemon limit --sessions 4 --host thelio
+```
+
+For your own host, the TUI writes the limit in the folder of its
+daemon, as `riff daemon limit --sessions 4` does. The note line shows
+the reply. In the TUI, you set the limit only of your own hosts. See
+[Set the limit of the host](development.md#set-the-limit-of-the-host).
 
 ### Show the URI of each session
 

@@ -20,7 +20,7 @@ struct Tty {
     child: Child,
     master: std::fs::File,
     screen: Arc<Mutex<vt100::Parser>>,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
 }
 
 impl Tty {
@@ -72,7 +72,7 @@ impl Tty {
             child,
             master,
             screen,
-            _dir: dir,
+            dir,
         }
     }
 
@@ -105,6 +105,11 @@ impl Tty {
             .rows(0, Self::COLUMNS)
             .map(|row| row.trim_end().to_owned())
             .collect()
+    }
+
+    /// The `RIFF_HOME` of riff: its data folder too.
+    fn home(&self) -> &std::path::Path {
+        self.dir.path()
     }
 
     /// The exit code of riff, once it exits.
@@ -172,6 +177,108 @@ async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
         !rows.iter().any(|row| row.contains("Sessions")),
         "{rows:#?}"
     );
+}
+
+/// 01M6VFCPK2PSDTHHE5TSY3XP5N, 01M6VFD09QN71SWMPP8YXCRAEK,
+/// 01M6VFD0HGCVMYNNC3H4788W9X, 01M6VFD0M3RHT488D0RQ84RVMC,
+/// 01M6VFD0PPXDNH3NKD3YE4W9SB, 01M6VFD0S90SB8M8WV952NT4Y1: the Machines
+/// tab shows the facts that the daemon of thelio sent to riff-server.
+/// This host has no daemon socket, so its row comes from riff-server.
+/// `l` sets the limit of this host in the folder of its daemon, after
+/// `y`, and `Enter` opens the Sessions tab with the filter of the host.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
+    use riff_client::daemons::Facts;
+    use riff_client::machines::{Disk, Machine};
+
+    let server = crate::common::start_signed().await;
+    // The session of the daemon of brett on thelio sends its facts.
+    let daemon: riff_core::name::SessionUri = "riff://brett@thelio/o/r?session=d1".parse().unwrap();
+    let api = server.api("brett", Some("d1"));
+    api.register(&daemon).await.unwrap();
+    let _watch = api.watch(&daemon).await.unwrap();
+    let facts = Facts {
+        build: riff_core::build::Build::this().to_string(),
+        limit: 3,
+        floor_gb: 8,
+        machine: Some(Machine {
+            threads: 16,
+            mhz: 4500,
+            now_mhz: 4400,
+            mem_gb: 32,
+            avail_gb: 24,
+            load: 1.5,
+        }),
+        disk: Some(Disk {
+            free_gb: 200,
+            total_gb: 455,
+        }),
+        ..Facts::default()
+    };
+    api.machine(&daemon, &facts.line()).await.unwrap();
+
+    let mut tty = Tty::start(&server, "brett", "thelio", true, &[]);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("4").await;
+    let rows = tty
+        .shows(|rows| rows[0].contains("[4 Machines]") && rows[2] == " 1 host")
+        .await;
+    assert_eq!(
+        rows[3],
+        "     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN"
+    );
+    assert!(
+        rows[4].starts_with(" >   thelio     0/3   1.5/16   24/32 GB    200/455 GB  57%   0     "),
+        "{rows:#?}"
+    );
+    let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with(&format!("──thelio · riff daemon build {build} ─"))),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.starts_with(" link ok: ") && row.contains(" ms · ")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.contains(&" GitHub: no riff daemon here counts the points".to_owned()),
+        "{rows:#?}"
+    );
+    assert_eq!(
+        rows[23],
+        " ↑↓ select  Enter sessions of the host  l limit  r read again  ? help  q quit"
+    );
+
+    // `l`, the digits, Enter, then `y`: the limit of this host.
+    tty.press("l").await;
+    tty.shows(|rows| rows[22] == " The most live sessions of thelio (now 3): █")
+        .await;
+    tty.press("5").await;
+    tty.press("\r").await;
+    tty.shows(|rows| rows[22] == " Set the limit of thelio to 5 sessions? y/N")
+        .await;
+    tty.press("y").await;
+    tty.shows(|rows| {
+        rows[22]
+            == " thelio: The limit of this host: 5 live sessions, and 8 GB of free memory or more for a start."
+                .chars()
+                .take(80)
+                .collect::<String>()
+                .trim_end()
+    })
+    .await;
+    let limit = std::fs::read_to_string(tty.home().join("daemon/limit.json")).unwrap();
+    let limit: riff::room::Limit = serde_json::from_str(&limit).unwrap();
+    assert_eq!((limit.sessions, limit.floor_gb), (5, 8));
+
+    // Enter: the Sessions tab, with the filter of the host.
+    tty.press("\r").await;
+    let rows = tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    assert_eq!(rows[22], " The filter of the Sessions tab: host:thelio.");
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
 }
 
 /// 01M6VAZKAH6B53YKR8W4YKNSH6: when the first look fails, the TUI ends
