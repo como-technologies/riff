@@ -156,7 +156,7 @@ tab comes with a build item:
 | [B #1637](https://github.com/como-technologies/riff/issues/1637) | 1 Sessions: each session and each worker, with its mark, its item, its state and its age. It does what `riff top` and `riff view` do. |
 | [E #1640](https://github.com/como-technologies/riff/issues/1640) | 2 Chat: the thread `chat`, as `riff chat` shows it. |
 | [C #1638](https://github.com/como-technologies/riff/issues/1638) | 3 Waves: the items, the claims, the pull requests and the verifies of each repository. |
-| [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server. |
+| [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, and the limit of a host. Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui). |
 | [G #1642](https://github.com/como-technologies/riff/issues/1642) | 5 Devices: list the devices, add one with a QR code, remove one. |
 | [F #1641](https://github.com/como-technologies/riff/issues/1641) | 6 Reports: the usage, the audit and the log of a session. |
 
