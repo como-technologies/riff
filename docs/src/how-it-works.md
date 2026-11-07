@@ -51,7 +51,7 @@ plain `claude` lacks, other than the riff tools.
 flowchart LR
     subgraph M["your machine"]
         L["the lead:<br/>riff lead start,<br/>or claude on the host"] -- "the rollout:<br/>run the wave" --> D["riff daemon<br/>systemd user unit"]
-        V["riff view, riff top"] --> D
+        V["riff, riff top"] --> D
         D -- "podman" --> C1
         D -- "podman" --> C2
         subgraph C1["container: issue-12 (conmon)"]
@@ -1221,7 +1221,7 @@ riff
 | `↑` `↓`, `j` `k`, the wheel | Select a host. A click on a row selects it too. |
 | `PgUp` `PgDn` | Move 10 hosts. |
 | `g` `G` | Select the first or the last host. |
-| `Enter` | Open the Sessions tab with the filter `host:HOST`. |
+| `Enter` | Open the Sessions tab with the filter `host:HOST`. Esc there clears it: see [Filter the sessions](#filter-the-sessions). |
 | `l` | Set the limit of the host. |
 
 Under 80 columns, the rows have fewer columns, and the tab shows no
@@ -1323,16 +1323,124 @@ riff who --all
 
 ## See what each session does
 
-`riff top` shows a live table of each person and each session. It
+The Sessions tab of the TUI shows each person and each session: the
+sessions of riff-server, and the containers of the riff daemon of this
+machine. It is the first tab of `riff`:
+
+```sh
+riff
+```
+
+```text
+[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
+ riff running · owner mike · build 10df8a4 · link ok 2s
+ 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person
+ ▼ mike  owner  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle
+   ▼ thelio › riff            4 sessions · 1 blocked · 1 done · 1 busy · 1 idle
+ >   ! 3a3f8d5d  #994   worker     blocked 32m  which of two designs?
+     ✓ 8f1c2d3e  #1599  container  done         waits for a verify of PR #1614
+     ● 5b1e2a90  #1590  container  busy 12m     Bash: just check
+     ○ 4e54d4e5  ↑      lead       idle 2h      monitoring work
+   ▶ pangolin › strata                                       1 session · 1 busy
+ ▶ brett  online  › kadomony › strata                        1 session · 1 busy
+ ▶ ann  admin  offline  seen 1h ago
+──3a3f8d5d · #994 Design: the TUI of riff · thelio ─────────────────────────────
+ which of two designs? (32m ago)
+ the lead gave no answer
+ working on #994 Design: the TUI of riff
+ claim #994   pull request none   riff build current
+ ↑↓ select  ←→ fold  Enter open  l lead  t take over  p pause  / filter  ? help
+```
+
+- The third row counts the sessions by their mark, then the sessions
+  that run an old riff (`↑`).
+- The tree has the levels person, host, repository and session, as in
+  `riff top` below. A row with one row under it takes that row after a
+  `›`. A group row ends with the counts of its sessions.
+- A session row has its mark, its short session ID, its item, its tag,
+  its state with its age, and its last words: the reason of a block,
+  what it waits for, or its last step.
+- The worst row comes first. A group with a `!`, a `✓` or a `↑` row is
+  open. Each other group is one line with its counts: press `→` to
+  open it.
+- Under the tree comes the detail of the selected row: the detail of
+  its state (see [The state of a session](#the-state-of-a-session)),
+  its claims, its pull request and its riff. A session in a container
+  of this machine also shows the name of its container, its phase and
+  its last step. The detail needs 80 columns and 24 rows. In a smaller
+  terminal, Enter shows it on the whole screen, and Esc goes back.
+- When a session turns `!` or `✓` while you look at another tab, the
+  strip shows `Sessions•`.
+- With no riff daemon on this machine, the tab shows the sessions of
+  riff-server, and the row before the last says so.
+
+| Mark | Word | When |
+|---|---|---|
+| `!` | blocked | The session is blocked. |
+| `✓` | done | The turn of a container gave its result. The mark stays until you select the row. |
+| `◐` | waiting | It waits for a verify, a merge, or an item of `Needs:`. |
+| `●` | busy | It works on an item, or a turn of its container runs. |
+| `○` | idle | It has no item. |
+
+`offline`, `paused` and `must clear` are words, not marks.
+
+| Key | Does |
+|---|---|
+| `↑` `↓` `j` `k` | Select the row above or below. |
+| `PgUp` `PgDn` `g` `G` | Move a page, or to the first or the last row. |
+| `←` `→` `Space` | Fold or open a group. `←` on a session selects its group. |
+| `Enter` | A group: fold or open it. A lead: attach to it. A session: its detail on the whole screen. |
+| `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. |
+| `t` | Take over the selected session, as `riff takeover` does. |
+| `x` | End the selected session of the daemon, and free its item, as `riff daemon end` does. |
+| `p`, `P` | Pause or resume the repository of the row, or the whole riff. |
+| `e` | Open each group, or fold the groups that need no look. |
+| `b` | Put the repository at the top of the tree, or the person again. |
+| `/` | Filter the rows. See [Filter the sessions](#filter-the-sessions). |
+
+`t`, `x`, `p` and `P` ask first in the row before the last, for
+example `Pause como-technologies/riff? y/N`. Press `y` to do it. `q`
+and Ctrl-C end the TUI. Each other key changes nothing. `l`, `t` and
+`x` work only on a session in a container of the riff daemon of this
+machine. For a session of another host, run `riff` there. The mouse
+does the same as the keys: a click selects a row, a click on `▶` or
+`▼` folds a group, a double click presses Enter, and the wheel moves
+the selection.
+
+```mermaid
+flowchart LR
+    S["riff-server: riff, who<br/>each 3 s"] --> M["the sessions model"]
+    D["the riff daemon of this machine:<br/>status, each second"] --> M
+    G["gh: the titles of the issues<br/>each minute"] --> T
+    M --> T["the tree: person › host › repository › session"]
+    T --> P["the detail of the selected row"]
+```
+
+### Filter the sessions
+
+In the Sessions tab, press `/` and type a word. The tab shows only the
+sessions that match it, with each group open. A word matches a part of
+the user, the host, the repository, the item, the state, the tag, the
+session ID or the name of the container. Give a key to match only that
+fact, for example `host:thelio` or `state:blocked`. Press Enter to keep
+the filter, and Esc to clear it. For example, type this after `/`:
+
+```text
+host:thelio blocked
+```
+
+The third row shows the filter on its right, for example
+`/host:thelio blocked`.
+
+### See each session in a live table
+
+`riff top` shows the same sessions as a live table of plain lines. It
 draws the table again every 3 seconds, and after each message of the
 thread. Ctrl-C stops it:
 
 ```sh
 riff top
 ```
-
-A later release adds one sessions view to each UI, and `riff top`
-stays a live table: see [Design: the UIs of riff](riff-uis.md).
 
 The header shows the state of the riff, the owner and the build, as in
 `riff who`. A board comes next for each repository with a live
@@ -1569,17 +1677,18 @@ wave of it starts the lead again too: see
 You get one line in riff chat for each lead that started again:
 
 ```text
-riff started the lead riff-lead-como-technologies-riff again on the new riff, and its conversation goes on. Attach with: riff view
+riff started the lead riff-lead-como-technologies-riff again on the new riff, and its conversation goes on. Attach with: riff lead start, or l in the Sessions tab of riff.
 ```
 
-Attach to the lead again:
+Attach to the lead again, in your project:
 
 ```sh
-riff view
+riff lead start
 ```
 
-When you are attached at that moment, your terminal shows the end of
-the container. Attach again with `riff view`.
+Or press `l` in the Sessions tab of `riff`. When you are attached at
+that moment, your terminal shows the end of the container. Attach
+again in the same way.
 
 When the daemon cannot start the lead again, you get one line in riff
 chat for it. The line says which case it is:
@@ -3522,7 +3631,8 @@ riff
 Select a row of the repository, press `p`, then `y`. On a paused
 repository, `p` resumes it. `P` pauses or resumes the whole riff. The
 TUI calls the code of `riff pause` and `riff resume`, and the note line
-shows the answer.
+shows the answer. `p` and `P` do the same in the Sessions tab: see
+[See what each session does](#see-what-each-session-does).
 
 ### Resume your repository
 

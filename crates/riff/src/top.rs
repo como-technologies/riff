@@ -308,15 +308,38 @@ pub fn issues_from_gh(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Issues> 
     issues_and_pulls(gh, repo).map(|(issues, _)| issues)
 }
 
+/// The open issues of `repo` from `gh`, with no read of the pull
+/// requests: the titles, the trackers, the questions and the current
+/// wave. It fails as [`issues_from_gh`] does. The Sessions tab of the TUI
+/// reads only these (#1637).
+pub fn titles_from_gh(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Issues> {
+    let args = issue_args(repo);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let json = gh.run_as("gh issue list", &args)?;
+    parse_issues(&json).ok_or_else(|| anyhow::anyhow!(crate::text::gh_issues_unreadable()))
+}
+
+/// One look of `riff top` and of the TUI: the calls `riff` and `who`,
+/// with the state of each session that the server sent none for
+/// ([`state::fill`]), and the time of the call `who`. Each call has the
+/// budget of a short command (01M4A803Z4Q0KX6NT1KC6QR43H).
+pub async fn look(
+    api: &riff_client::api::Api,
+    me: &riff_core::name::SessionUri,
+) -> anyhow::Result<(RiffReply, riff_core::wire::WhoReply, std::time::Duration)> {
+    let pauses = api.pauses(me).await?;
+    let start = std::time::Instant::now();
+    let mut who = api.roster(me, false).await?;
+    let call = start.elapsed();
+    state::fill(&mut who.sessions, pauses.state);
+    Ok((pauses, who, call))
+}
+
 /// [`issues_from_gh`] and whether the read saw no open pull request. A
 /// read of the pull requests that fails counts as a sight of one: the
 /// answer is `false` ([`crate::wave_list`]).
 pub fn issues_and_pulls(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<(Issues, bool)> {
-    let args = issue_args(repo);
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let json = gh.run_as("gh issue list", &args)?;
-    let issues =
-        parse_issues(&json).ok_or_else(|| anyhow::anyhow!(crate::text::gh_issues_unreadable()))?;
+    let issues = titles_from_gh(gh, repo)?;
     Ok(match crate::rollout::pulls(gh, repo) {
         Ok(pulls) => {
             let none = pulls.is_empty();

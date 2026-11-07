@@ -6570,8 +6570,8 @@ pub fn parts_line(parts: &[riff_client::daemons::RepoParts]) -> String {
 }
 
 /// The real-session test that a daemon runs, on one line
-/// (01M5QVBTXE8YRY44A1C1VP71QS): `riff daemon status`, `riff view`,
-/// `riff top` and `riff who` show it. The commit has at most 8
+/// (01M5QVBTXE8YRY44A1C1VP71QS): `riff daemon status`, `riff top`,
+/// `riff who` and the Sessions tab of the TUI show it. The commit has at most 8
 /// characters, and the minutes are whole.
 ///
 /// ```
@@ -8302,8 +8302,8 @@ pub fn daemon_refused(
     }
 }
 
-/// Who can use `--host` on the daemon commands, `riff join`, `riff
-/// leave` and `riff view`: the same words in the help of each flag and
+/// Who can use `--host` on the daemon commands, `riff join` and `riff
+/// leave`: the same words in the help of each flag and
 /// in the book (01M588QXAGD3B8BTK7N17M29WM).
 pub const DAEMON_HOST_WHO: &str = "Only you in a terminal and your lead in this repository can \
 use --host. The daemon of HOST refuses each other session, for example a worker.";
@@ -10291,7 +10291,7 @@ pub fn not_in_the_lead_container(tool: &str) -> String {
 pub fn lead_start(repo: &str) -> String {
     format!(
         "You are the lead of {repo} in riff, in a container with a terminal. The person attaches \
-         to you with riff view or riff lead start. Call the riff tools whoami, notes and read. \
+         to you with riff lead start, or with l in the Sessions tab of riff. Call the riff tools whoami, notes and read. \
          The notes are the running state of the lead: what runs, what waits for the person, the \
          deadlines, the next steps, and the choices of the person and of the host. Read the notes \
          and the unread messages at each start, after each resume and after each compaction of \
@@ -10393,12 +10393,12 @@ pub fn lead_move_no_handover(wait: std::time::Duration) -> String {
 /// ```
 /// let text = riff::text::lead_move_done("thelio", "1a2b");
 /// assert!(text.contains("The lead moved to thelio"));
-/// assert!(text.contains("On thelio, run riff lead start or riff view"));
+/// assert!(text.contains("On thelio, run riff lead start, or press l in the Sessions tab of riff,"));
 /// ```
 pub fn lead_move_done(host: &str, session: &str) -> String {
     format!(
-        "The lead moved to {host}: session {session}. On {host}, run riff lead start or riff \
-         view to attach to it."
+        "The lead moved to {host}: session {session}. On {host}, run riff lead start, or press l \
+         in the Sessions tab of riff, to attach to it."
     )
 }
 
@@ -10595,8 +10595,8 @@ your start text says.";
 /// The daemon refuses the takeover of a session with a terminal.
 pub fn takeover_terminal(name: &str) -> String {
     format!(
-        "The session in the container {name} has a terminal: attach to it with riff view or riff \
-         lead start. A takeover is for a worker."
+        "The session in the container {name} has a terminal: attach to it with riff lead start, \
+         or with l in the Sessions tab of riff. A takeover is for a worker."
     )
 }
 
@@ -10830,12 +10830,12 @@ pub fn lead_again(repo: &str) -> String {
 /// ```
 /// let text = riff::text::lead_started_again("riff-lead-o-r");
 /// assert!(text.starts_with("riff started the lead riff-lead-o-r again on the new riff"));
-/// assert!(text.ends_with("Attach with: riff view"));
+/// assert!(text.ends_with("Attach with: riff lead start, or l in the Sessions tab of riff."));
 /// ```
 pub fn lead_started_again(name: &str) -> String {
     format!(
         "riff started the lead {name} again on the new riff, and its conversation goes on. \
-         Attach with: riff view"
+         Attach with: riff lead start, or l in the Sessions tab of riff."
     )
 }
 
@@ -10923,16 +10923,16 @@ pub fn daemon_no_network(name: &str) -> String {
     )
 }
 
-/// `riff lead start` and `riff view`: how to detach.
-pub const LEAD_DETACH: &str =
-    "Ctrl-P Ctrl-Q detaches: the lead runs on. riff view or riff lead start attaches again.";
+/// `riff lead start` and the attach of the TUI: how to detach.
+pub const LEAD_DETACH: &str = "Ctrl-P Ctrl-Q detaches: the lead runs on. riff lead start, or l \
+     in the Sessions tab of riff, attaches again.";
 
-/// `riff lead start` and `riff view` after a detach: the lead runs on.
+/// `riff lead start` and the TUI after a detach: the lead runs on.
 pub fn lead_detached(name: &str) -> String {
     format!("You left the terminal of the container {name}.")
 }
 
-/// `riff lead start` and `riff view` after the end of the lead
+/// `riff lead start` and the TUI after the end of the lead
 /// (01M51PD7Q24N252V66NFEHY49N).
 ///
 /// ```
@@ -10949,7 +10949,7 @@ pub fn lead_ended(name: &str) -> String {
 pub const LEAD_NO_RESUME: &str = "The command claude --resume that claude shows works only in \
      the container of the lead. In a new lead, /resume shows the old conversations.";
 
-/// `riff lead start` and `riff view`: riff cannot make the lead draw its
+/// `riff lead start` and the TUI: riff cannot make the lead draw its
 /// terminal again, for the reason `error` (01M51PD7M04HZR2PVVJA4WCBK5).
 ///
 /// ```
@@ -10963,48 +10963,119 @@ pub fn lead_no_redraw(error: &str) -> String {
     )
 }
 
-/// `riff view`: no lead runs on this machine.
-pub const VIEW_NO_LEAD: &str = "No lead runs on this machine. Start it in a clone: riff lead start";
+/// The Sessions tab of the TUI: no lead runs on this machine.
+pub const NO_LEAD_HERE: &str = "No lead runs on this machine. Start it in a clone: riff lead start";
 
-/// `riff view`: the starts that wait for room in the limit of the host.
+/// The Sessions tab of the TUI: no riff daemon answers on this machine.
+/// The tab shows the sessions of riff-server.
+pub const NO_DAEMON_HERE: &str = "No riff daemon here: the tab shows the sessions of riff-server.";
+
+/// The Sessions tab: `t` or `x` on a row that is no session.
+pub const PICK_A_SESSION: &str = "Select a session first: t and x act on one session.";
+
+/// The Sessions tab: `p` on a row with no repository.
+pub const PICK_A_REPOSITORY: &str =
+    "Select a row of one repository first, or press P for the whole riff.";
+
+/// The Sessions tab: `t` or `x` on a session of this machine that runs
+/// in no container of the riff daemon.
+pub const NO_CONTAINER_HERE: &str = "This session runs in no container of the riff daemon of \
+     this machine: t and x work only on such a session.";
+
+/// The Sessions tab: `l`, `t` and `x` on a session of another host
+/// (01M57D4FZGCVE62AP4MVG59HM4).
 ///
 /// ```
-/// let line = riff::text::view_waiting(&["riff-issue-13-2b3c4d5e".into()]);
+/// assert_eq!(
+///     riff::text::on_host_only("thelio"),
+///     "l, t and x work only on thelio: run riff there."
+/// );
+/// ```
+pub fn on_host_only(host: &str) -> String {
+    format!("l, t and x work only on {}: run riff there.", safe(host))
+}
+
+/// The Sessions tab: `t` on the lead.
+pub fn no_takeover_of_lead(name: &str) -> String {
+    format!(
+        "The session in {} is the lead: l attaches to it.",
+        safe(name)
+    )
+}
+
+/// The Sessions tab: the question before `t` takes over the session in
+/// the container `name` (01M51KJ1R9K7A7RW8T8XH8VW43).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::ask_takeover("riff-issue-12-1a2b3c4d"),
+///     "Take over riff-issue-12-1a2b3c4d? It stops the turn at once."
+/// );
+/// ```
+pub fn ask_takeover(name: &str) -> String {
+    format!("Take over {}? It stops the turn at once.", safe(name))
+}
+
+/// The Sessions tab: the question before `x` ends the session in the
+/// container `name` (01M579Z9VRD12FRK6DSYVKDHQB).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::ask_end("riff-issue-12-1a2b3c4d"),
+///     "End riff-issue-12-1a2b3c4d, and free its item?"
+/// );
+/// ```
+pub fn ask_end(name: &str) -> String {
+    format!("End {}, and free its item?", safe(name))
+}
+
+/// The Sessions tab: the line after `x` when the daemon said nothing.
+pub fn daemon_ended(name: &str) -> String {
+    format!("The riff daemon ended {}.", safe(name))
+}
+
+/// The detail of the host of this machine in the Sessions tab: the
+/// starts that wait for room in the limit of the host.
+///
+/// ```
+/// let line = riff::text::daemon_waiting(&["riff-issue-13-2b3c4d5e".into()]);
 /// assert_eq!(line, "waits for room: riff-issue-13-2b3c4d5e");
 /// ```
-pub fn view_waiting(names: &[String]) -> String {
+pub fn daemon_waiting(names: &[String]) -> String {
     let names: Vec<String> = names.iter().map(|n| safe(n)).collect();
     format!("waits for room: {}", names.join(", "))
 }
 
-/// `riff view`: the keys, at the bottom of the view.
-pub const VIEW_KEYS: &str = "Up/Down select   Enter attach to the lead   t take over now   q quit";
-
-/// `riff view`: the riff daemon does not answer.
-pub fn view_no_daemon(error: &str) -> String {
-    format!("No riff daemon answers: {error}. Start it: riff daemon install")
+/// The detail of the host of this machine in the Sessions tab: the riff
+/// daemon does not answer.
+pub fn no_daemon(error: &str) -> String {
+    format!(
+        "No riff daemon answers: {}. Start it: riff daemon install",
+        safe(error)
+    )
 }
 
-/// `riff view`: the line of the daemon. A real-session test that runs
-/// ends it (01M5QVBTXE8YRY44A1C1VP71QS).
+/// The detail of the host of this machine in the Sessions tab: the line
+/// of the daemon. A real-session test that runs ends it
+/// (01M5QVBTXE8YRY44A1C1VP71QS).
 ///
 /// ```
 /// let mut status: riff::daemon::Status = serde_json::from_value(serde_json::json!({
 ///     "pid": 7, "build": "b", "since_ms": 0, "dir": "/d", "sessions": [],
 /// }))?;
-/// assert_eq!(riff::text::view_daemon(&status), "riff daemon b, pid 7, 0 waiting");
+/// assert_eq!(riff::text::daemon_line(&status), "riff daemon b, pid 7, 0 waiting");
 /// status.test = Some(riff_client::daemons::Test {
 ///     tag: "v4.1.1".into(),
 ///     commit: "90e36bfd".into(),
 ///     secs: 120,
 /// });
 /// assert_eq!(
-///     riff::text::view_daemon(&status),
+///     riff::text::daemon_line(&status),
 ///     "riff daemon b, pid 7, 0 waiting, real-session test of v4.1.1 on 90e36bfd, for 2 min"
 /// );
 /// # Ok::<(), serde_json::Error>(())
 /// ```
-pub fn view_daemon(status: &crate::daemon::Status) -> String {
+pub fn daemon_line(status: &crate::daemon::Status) -> String {
     let limit = status.limit.map_or_else(String::new, |l| {
         format!(
             ", limit {} sessions and a floor of {} GB",
@@ -11023,7 +11094,8 @@ pub fn view_daemon(status: &crate::daemon::Status) -> String {
     )
 }
 
-/// `riff view`: the word of a phase of a session.
+/// `riff daemon status` and the Sessions tab: the word of a phase of a
+/// container session (01M501PADKZNRHBZD9XPMJGW06).
 pub fn phase_word(phase: riff_client::sessions::Phase) -> &'static str {
     use riff_client::sessions::Phase;
     match phase {
@@ -11035,31 +11107,10 @@ pub fn phase_word(phase: riff_client::sessions::Phase) -> &'static str {
     }
 }
 
-/// `riff view`: the line of a wave.
-pub fn view_wave(wave: &crate::daemon::WaveShown) -> String {
+/// The detail of the host of this machine in the Sessions tab: the line
+/// of a wave of the daemon.
+pub fn daemon_wave(wave: &crate::daemon::WaveShown) -> String {
     format!("wave {}: {}", safe(&wave.repo), safe(&wave.word))
-}
-
-/// `riff view`: the session has no takeover.
-pub fn view_no_takeover(name: &str) -> String {
-    format!("The session in {name} is the lead: Enter attaches to it.")
-}
-
-/// `riff view --host`: the note at the start.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::view_of_host("thelio"),
-///     "The riff daemon of thelio, through riff-server. Enter and t work only on thelio."
-/// );
-/// ```
-pub fn view_of_host(host: &str) -> String {
-    format!("The riff daemon of {host}, through riff-server. Enter and t work only on {host}.")
-}
-
-/// `riff view --host`: the note after Enter or `t`.
-pub fn view_on_host(host: &str) -> String {
-    format!("Enter and t work only on {host}: run riff view there.")
 }
 
 /// A job of a wave: the daemon sent the verify request of the pull

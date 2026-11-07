@@ -21,35 +21,42 @@
 //! - The header ([`view::compute_view`], 01M6VAZK4RQSZ0MG2DHWQC598Q)
 //!   shows the state of the whole riff, the owner, the build of this
 //!   riff, and the link with the age of the last good look.
-//! - The note line shows the first note that it has: a question, the
-//!   fault of the link, in the Chat tab a post that failed and the note
-//!   of the prompt, else the result of the last action
+//! - The note line shows the first note that it has: a question or the
+//!   filter that the person types in the Sessions tab, the fault of the
+//!   link, in the Chat tab a post that failed and the note of the
+//!   prompt, else the result of the last action
 //!   (01M6VMACJGF4A0ZXC6YK13KNCH). With none of them, the Waves tab
 //!   shows the age of its last read of `gh` (01M6VFGYW0XVJ5JSX6R1NCR6W7).
 //!   The key line shows the keys of the tab, and `?` shows them all in a
 //!   popup (01M6VAZKDEQ6951KGPGAMF1SNJ).
-//! - The body of a tab comes with its build item: B #1637 Sessions,
-//!   C #1638 Waves, D #1639 Machines, E #1640 Chat, F #1641 Reports, G
-//!   #1642 Devices. Until then, the body names the commands of the CLI
-//!   that show its area ([`Tab::today`], 01M6VAZKVK7530JJ63S7RVF88J).
-//!   The Waves tab ([`waves`]), the Machines tab ([`machines`]) and the
-//!   Chat tab ([`chat`]) are built.
+//! - The Sessions tab ([`sessions`], #1637) is the one view of the
+//!   sessions. The Chat tab ([`chat`], #1640) shows the thread `chat`.
+//!   The Waves tab ([`waves`], #1638) shows a board for each repository.
+//!   The Machines tab ([`machines`], #1639) shows the hosts. The body of
+//!   each other tab comes with its build item: F #1641 Reports, G #1642
+//!   Devices. Until then, the body names the commands of the CLI that
+//!   show its area ([`Tab::today`], 01M6VAZKVK7530JJ63S7RVF88J).
 //!
 //! The render is pure (01M6VAZKNXZV1RTG7MT0GMHKT3). [`State`] holds what
-//! the TUI knows: the last look of riff-server, the fault of the link,
-//! the note and the choices of the person. [`view::compute_view`] makes
-//! the [`view::View`] from the state, the size and the time: its rows,
-//! their places, and the places that a click hits. [`view::render`]
-//! draws the view on a ratatui `Buffer`. So a screen test draws a tab
-//! into a `Buffer` and compares the rows, with no terminal.
+//! the TUI knows: the last look of riff-server, the last status of the
+//! riff daemon of this machine, the titles of the issues, the boards of
+//! the Waves tab, the fault of the link, the note and the choices of the
+//! person. [`view::compute_view`] makes the [`view::View`] from the
+//! state, the size and the time: its rows, their places, and the places
+//! that a click hits. [`view::render`] draws the view on a ratatui
+//! `Buffer`. So a screen test draws a tab into a `Buffer` and compares
+//! the rows, with no terminal.
 //!
 //! ```mermaid
 //! flowchart LR
-//!     S["riff-server<br/>riff, who"] -- "a look, or a fault" --> ST["State"]
+//!     S["riff-server<br/>riff, who, plan show, tail"] -- "a look, or a fault" --> ST["State"]
+//!     D["the socket of the daemon<br/>status"] -- "the containers here" --> ST
+//!     G["gh<br/>issue list, api"] -- "the titles, the boards" --> ST
 //!     K["a key or a click"] --> ST
 //!     ST -- "&State, the size, the time" --> V["compute_view<br/>pure: the rows and the hits"]
 //!     V -- "&View" --> R["render<br/>pure: draws on a Buffer"]
-//!     ST -- "an Action" --> E["the loop: quit, or look again"]
+//!     ST -- "an Action" --> E["the loop: the code of the CLI command"]
+//!     E -- "a note, a new look" --> ST
 //! ```
 //!
 //! # The looks
@@ -57,10 +64,35 @@
 //! [`run`] looks at riff-server with the calls `riff` and `who`
 //! ([`look`]) each [`LOOK_EVERY`], and each [`IDLE_LOOK_EVERY`] after
 //! [`IDLE_AFTER`] with no key and no click ([`every`],
-//! 01M6VAZK7N636Q0JFSV553A9ES). `r` looks again at once. A look runs in
+//! 01M6VAZK7N636Q0JFSV553A9ES). `r` looks again at once. A message in
+//! the thread of the repository of the folder starts a look at once, at
+//! most one each [`THREAD_LOOK_EVERY`], as in `riff top`. A look runs in
 //! a task of its own, so a slow look holds up no key. A look also asks
 //! the riff daemon of this host for its status on its socket
 //! ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK).
+//!
+//! While the Sessions tab is open (01M6VGHCDTDJ69B7C02B5K61PW), the TUI
+//! asks the riff daemon of this machine for its status each
+//! [`DAEMON_EVERY`]: its container sessions
+//! join the sessions model. It reads the titles of the open issues of
+//! each repository with a live session from `gh` each
+//! [`crate::top::ISSUES_TTL`], with no read of the pull requests
+//! ([`crate::top::titles_from_gh`]). A read of `gh` that fails names the
+//! error in the note line once, and keeps the last titles.
+//!
+//! While the Waves tab shows, each look also reads the holds of its
+//! boards (01M6VFGK79JGRF919BM8SJ6E08), and the TUI reads the forge of
+//! its boards each [`forge::READ_EVERY`] ([`forge::read_each`],
+//! 01M6VFGK4P2FWMFQHBZKR3JXSZ). Each call of `gh` of the TUI counts as
+//! the caller `tui`.
+//!
+//! | What | Source | When |
+//! |---|---|---|
+//! | The sessions, the state of the riff | riff-server: `riff`, `who` | each 3 s, each 15 s when idle, and after a message of the thread |
+//! | The holds of the boards | riff-server: `plan show` | at each look while the Waves tab shows |
+//! | The container sessions of this machine | the socket of the daemon: `status` | each second while the Sessions tab is open |
+//! | The titles of the issues | `gh issue list` | each 60 s while the Sessions tab is open |
+//! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | each 60 s while the Waves tab shows, and at once on `r` |
 //!
 //! A look that fails does what it does in `riff top`
 //! (01M6VAZKAH6B53YKR8W4YKNSH6). The first look runs before the TUI
@@ -84,11 +116,13 @@
 //!
 //! # The keys and the mouse
 //!
-//! [`State::on_key`] turns a [`Key`] into an [`Action`]. The mouse does
-//! the same as the keys (01M6VAZKG8FS4HEA9VSA4Z4YF1): the view has a
+//! [`input_of`] turns an event of the terminal into a [`Key`], and
+//! [`State::on_key`] turns a key into an [`Action`]. The mouse does the
+//! same as the keys (01M6VAZKG8FS4HEA9VSA4Z4YF1): the view has a
 //! [`view::Hit`] for each place that a click hits, with its key, and
-//! [`State::on_click`] presses that key. The setting `tui.mouse` turns
-//! the mouse off ([`crate::settings::tui_mouse`]).
+//! [`State::on_click`] presses that key. A double click on a row presses
+//! Enter, and the wheel moves the selection. The setting `tui.mouse`
+//! turns the mouse off ([`crate::settings::tui_mouse`]).
 //!
 //! A plain character is a [`Key::Char`]. The state gives it its meaning:
 //! while the note line asks for a text, it types into it
@@ -104,8 +138,11 @@
 //! | `r` | Look again now. |
 //! | `?` | Show or hide the keys of this tab. |
 //! | `Esc` | Close the popup. |
+//! | `y`, `n` | Answer the question in the note line. |
 //! | `q`, `Ctrl-C` | End the TUI. The sessions go on. |
 //! | `↑` `↓` `j` `k`, `PgUp` `PgDn`, `g` `G` | Select a row, in a tab with rows. |
+//!
+//! The help popup takes no key of a tab.
 //!
 //! The prompt of the Chat tab takes each key that types: there only
 //! Alt opens a tab, and `Ctrl-C` ends the TUI. [`State::input`] gives
@@ -114,38 +151,55 @@
 //!
 //! # The actions
 //!
-//! An action that changes something asks first in the note line
-//! ([`Question`], 01M6VFD0S90SB8M8WV952NT4Y1, 01M6VFGK9XXWCA8X7CE8EZNSJV,
-//! 01M6VMACJGF4A0ZXC6YK13KNCH):
+//! Each action calls the code of its CLI command
+//! (01M54216GT8SX6NVMKRGNR2H0T). An action that changes something asks
+//! first in the note line ([`Question`], 01M6VFD0S90SB8M8WV952NT4Y1,
+//! 01M6VFGK9XXWCA8X7CE8EZNSJV, 01M6VMACJGF4A0ZXC6YK13KNCH):
 //! `Set the limit of thelio to 4 sessions? y/N`. `y` gives the action to
-//! the loop: [`Action::Limit`], or [`Action::Do`] with an [`Effect`].
-//! The loop runs the code of its CLI command in a task of its own
-//! ([`machines::set_limit`], [`Effect::run`]). Its result goes to the
-//! note line, and the TUI looks again at once.
+//! the loop. The attach asks nothing. The attach and the takeover leave
+//! the screen of the TUI, as `riff lead start` and `riff takeover` do in
+//! a terminal, and the TUI draws again at their end
+//! (01M6VGHC59FJS10FJEYH6K4CAQ). The limit and each [`Effect`] run in a
+//! task of their own. The result of an action goes to the note line, and
+//! the TUI looks again at once.
+//!
+//! | Action | The code of |
+//! |---|---|
+//! | [`Action::Attach`] | `riff lead start`: [`crate::lead::attach`] |
+//! | [`Action::Takeover`] | `riff takeover NAME`: [`crate::takeover::takeover`] |
+//! | [`Action::End`] | `riff daemon end NAME`: [`crate::daemon::ask_end`] |
+//! | [`Action::Limit`] | `riff daemon limit --sessions N`: [`machines::set_limit`] |
+//! | [`Action::Do`] | `riff plan hold`, `riff plan free`, `riff pause`, `riff resume`: [`Effect::run`] |
+//! | [`Action::Post`] | `riff chat`: [`crate::chat::posts`], through [`chat::Link`] |
 //!
 //! # The marks
 //!
 //! A session of a tab gets a [`Mark`] (01M6VAZKRTVZTY73PQV5GE2WY6): a
 //! small fixed set, from the state that riff-server derives and from
-//! the phase of a container session. The worst mark comes first.
+//! the phase of a container session. The worst mark comes first. A
+//! session that turns `!` or `✓` while the person is in another tab
+//! gives the Sessions tab the news `•`.
 
 pub mod chat;
 pub mod forge;
 pub mod machines;
+pub mod sessions;
 pub mod view;
 pub mod waves;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use anyhow::Result;
 use ratatui::style::Color;
 use riff_client::api::{self, Api, PauseScope};
-use riff_client::sessions::Phase;
+use riff_client::sessions::{Phase, Sessions};
+use riff_client::waves::Issues;
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{HoldInfo, RiffOwner, RiffReply, RiffState, SessionState, WhoReply};
 
+use crate::daemon::Status;
 use crate::reach::Reach;
 use crate::text;
 
@@ -159,6 +213,16 @@ pub const IDLE_LOOK_EVERY: Duration = Duration::from_secs(15);
 /// The time with no key and no click after which the TUI looks each
 /// [`IDLE_LOOK_EVERY`].
 pub const IDLE_AFTER: Duration = Duration::from_secs(120);
+
+/// The least time between two looks that messages of the thread start.
+pub const THREAD_LOOK_EVERY: Duration = Duration::from_secs(1);
+
+/// The time between two asks of the status of the riff daemon of this
+/// machine, while the Sessions tab is open.
+pub const DAEMON_EVERY: Duration = Duration::from_secs(1);
+
+/// The longest time between the two clicks of a double click.
+pub const DOUBLE_CLICK: Duration = Duration::from_millis(500);
 
 /// The time between two looks when the last key or click was `idle`
 /// ago (01M6VAZK7N636Q0JFSV553A9ES).
@@ -262,31 +326,32 @@ impl Tab {
         Tab::ALL[(self as usize + Tab::ALL.len() - 1) % Tab::ALL.len()]
     }
 
-    /// The commands of the CLI that show the area of the tab, until its
-    /// build item merges (01M6VAZKVK7530JJ63S7RVF88J). The Devices tab
-    /// has none: it needs the device commands. A built tab has none: it
-    /// has its body ([`Tab::built`]).
+    /// The commands of the CLI that show the area of a tab that is not
+    /// built yet (01M6VAZKVK7530JJ63S7RVF88J). The Devices tab has none:
+    /// it needs the device commands. A tab that is [`Tab::built`] has
+    /// none: it has its body.
     pub fn today(self) -> &'static [&'static str] {
         match self {
-            Tab::Sessions => &["riff top", "riff who"],
-            Tab::Chat | Tab::Waves | Tab::Machines | Tab::Devices => &[],
+            Tab::Sessions | Tab::Chat | Tab::Waves | Tab::Machines | Tab::Devices => &[],
             Tab::Reports => &["riff usage", "riff audit", "riff daemon events NAME"],
         }
     }
 
     /// True when the build item of the tab merged: the tab draws its own
-    /// body.
+    /// body. The Sessions tab (#1637), the Chat tab (#1640), the Waves tab
+    /// (#1638) and the Machines tab (#1639) are built.
     ///
     /// ```
     /// use riff::tui::Tab;
     ///
+    /// assert!(Tab::Sessions.built());
     /// assert!(Tab::Waves.built());
     /// assert!(Tab::Machines.built());
     /// assert!(Tab::Chat.built());
-    /// assert!(!Tab::Sessions.built());
+    /// assert!(!Tab::Reports.built());
     /// ```
     pub fn built(self) -> bool {
-        matches!(self, Tab::Chat | Tab::Waves | Tab::Machines)
+        matches!(self, Tab::Sessions | Tab::Chat | Tab::Waves | Tab::Machines)
     }
 }
 
@@ -416,7 +481,9 @@ impl Mark {
     }
 }
 
-/// A key of the person, as the frame takes it.
+/// A key of the person. [`State::on_key`] gives each key its meaning in
+/// the tab and the mode: a character is a key of the tab, a letter of a
+/// text, or the answer to a question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     /// Open a tab: `Alt-1` to `Alt-6`, and a click on a tab. The digits
@@ -428,7 +495,8 @@ pub enum Key {
     Before,
     /// Show or hide the keys of the tab: a click on `? help`.
     Help,
-    /// Close the popup, or cancel a question: `Esc`.
+    /// Close the popup, cancel a question, leave a mode, or clear the
+    /// filter: `Esc`.
     Esc,
     /// Look again now: a click on `r read again`.
     Again,
@@ -454,8 +522,13 @@ pub enum Key {
     Enter,
     /// Delete the last character of a text: `Backspace`.
     Backspace,
-    /// A click on the row of this index in the rows of the tab.
+    /// A click on the row of this index in the rows of the tab: the tree
+    /// of the Sessions tab, the rows of the Waves tab, or the hosts of
+    /// the Machines tab.
     Row(usize),
+    /// A click on the fold mark of the row of this index in the tree of
+    /// the Sessions tab.
+    Fold(usize),
     /// A plain character, for example `q`, `3`, `j`, `h` or `y`. The
     /// state gives it its meaning ([`State::on_key`]).
     Char(char),
@@ -470,6 +543,15 @@ pub enum Action {
     Look,
     /// End the TUI. The sessions go on.
     Quit,
+    /// Attach to the lead in this container of this machine
+    /// ([`crate::lead::attach`]).
+    Attach(String),
+    /// Take over the session in this container of this machine
+    /// ([`crate::takeover::takeover`]).
+    Takeover(String),
+    /// End the session of the daemon of this machine in this container
+    /// ([`crate::daemon::ask_end`]).
+    End(String),
     /// Set the most live sessions of `host` with the code of `riff
     /// daemon limit --sessions N` (01M6VFD0PPXDNH3NKD3YE4W9SB).
     Limit { host: String, sessions: u32 },
@@ -493,7 +575,8 @@ pub struct Question {
 }
 
 /// An action of the Waves tab that changes something, with the code of
-/// its CLI command (01M6VFGK9XXWCA8X7CE8EZNSJV).
+/// its CLI command (01M6VFGK9XXWCA8X7CE8EZNSJV). `p` and `P` of the
+/// Sessions tab are its pause too (01M6VGH4Y0G25VYBBD5ZV4GG2H).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// `riff plan hold issue-ITEM REASON` in the repository `repo`.
@@ -551,11 +634,7 @@ impl Effect {
                 }
             }
         };
-        Question {
-            text,
-            yes: Action::Do(self),
-            no: NOTHING_CHANGED.to_owned(),
-        }
+        Question::new(text, Action::Do(self))
     }
 
     /// The note line while the effect runs.
@@ -619,6 +698,25 @@ pub const NOTHING_CHANGED: &str = "Nothing changed.";
 /// The line of an action while the action before it still runs.
 pub const STILL_ACTING: &str = "riff still waits for the reply of the last action.";
 
+impl Question {
+    /// The question `text` with the action `yes`. After no, the note
+    /// line says that nothing changed ([`NOTHING_CHANGED`]).
+    ///
+    /// ```
+    /// use riff::tui::{Action, NOTHING_CHANGED, Question};
+    ///
+    /// let question = Question::new("Pause the riff?", Action::Look);
+    /// assert_eq!(question.no, NOTHING_CHANGED);
+    /// ```
+    pub fn new(text: impl Into<String>, yes: Action) -> Question {
+        Question {
+            text: text.into(),
+            yes,
+            no: NOTHING_CHANGED.to_owned(),
+        }
+    }
+}
+
 /// The facts of one good look of riff-server ([`look`]).
 #[derive(Debug, Clone)]
 pub struct Look {
@@ -662,16 +760,14 @@ impl Default for Look {
     }
 }
 
-/// Looks at riff-server as `me`: the calls `riff` and `who`
-/// (01M6VAZK7N636Q0JFSV553A9ES), and `plan show` for each repository of
-/// `boards` (01M6VFGK79JGRF919BM8SJ6E08). Each call has the budget of a
-/// short command, as in `riff top`. Then it asks the riff daemon of this
-/// host for its status ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK).
+/// Looks at riff-server as `me`: the calls `riff` and `who` of
+/// `riff top` ([`crate::top::look`], 01M6VAZK7N636Q0JFSV553A9ES), and
+/// `plan show` for each repository of `boards`
+/// (01M6VFGK79JGRF919BM8SJ6E08). Each call has the budget of a short
+/// command, as in `riff top`. Then it asks the riff daemon of this host
+/// for its status ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK).
 pub async fn look(api: &Api, me: &SessionUri, boards: &[String]) -> Result<Look> {
-    let pauses = api.pauses(me).await?;
-    let start = std::time::Instant::now();
-    let who = api.roster(me, false).await?;
-    let call = start.elapsed();
+    let (pauses, who, call) = crate::top::look(api, me).await?;
     let mut holds = BTreeMap::new();
     for repo in boards {
         let Ok(thread) = repo.parse::<ThreadName>() else {
@@ -706,19 +802,34 @@ pub struct State {
     fault: Option<String>,
     /// The result of the last action.
     note: Option<String>,
+    /// The question in the note line, until the person answers it.
+    question: Option<Question>,
     /// True while the help popup shows.
     help: bool,
     /// The build of this riff.
     build: Build,
-    /// The question in the note line, until the person answers it.
-    question: Option<Question>,
-    /// What the person types in the note line, until `Enter` or `Esc`.
+    /// The limit that the person types in the note line, until `Enter`
+    /// or `Esc`.
     typing: Option<machines::Typing>,
     /// The host that the person selected in the Machines tab.
     host: Option<machines::Name>,
-    /// The filter of the Sessions tab, for example `host:thelio`
-    /// (01M6VFD0M3RHT488D0RQ84RVMC).
-    filter: Option<String>,
+    /// The session of the TUI: the person, its host, and the repository
+    /// of its folder.
+    me: SessionUri,
+    /// The last status of the riff daemon of this machine, or why no
+    /// daemon answers. `None` before the first ask.
+    daemon: Option<Result<Status, String>>,
+    /// The sessions model of the last look and of the last status of
+    /// the daemon.
+    model: Sessions,
+    /// The issues of each repository from `gh`: the titles.
+    titles: BTreeMap<String, Issues>,
+    /// The last fault of `gh`, so the note line names it once.
+    gh_fault: Option<String>,
+    /// The sessions with a `!` or a `✓` at the last look.
+    alerts: BTreeSet<String>,
+    /// The choices of the person in the Sessions tab.
+    sessions: sessions::Choices,
     /// The Chat tab: the log, the prompt and the focus.
     chat: chat::Chat,
     /// The Waves tab.
@@ -734,21 +845,28 @@ pub struct State {
 }
 
 impl State {
-    /// The state at the start: the Sessions tab, no look yet, and
-    /// `build`, the build of this riff, for the header.
-    pub fn new(build: Build) -> State {
+    /// The state at the start: the Sessions tab, no look yet, `build`,
+    /// the build of this riff, for the header, and `me`, the session of
+    /// the TUI.
+    pub fn new(build: Build, me: SessionUri) -> State {
         State {
             tab: Tab::default(),
             news: [None; 6],
             look: None,
             fault: None,
             note: None,
+            question: None,
             help: false,
             build,
-            question: None,
             typing: None,
             host: None,
-            filter: None,
+            me,
+            daemon: None,
+            model: Sessions::default(),
+            titles: BTreeMap::new(),
+            gh_fault: None,
+            alerts: BTreeSet::new(),
+            sessions: sessions::Choices::default(),
             chat: chat::Chat::default(),
             waves: waves::Waves::default(),
             reason: None,
@@ -777,6 +895,74 @@ impl State {
         }
         self.look = Some((look, at_ms));
         self.fault = None;
+        self.model_again();
+    }
+
+    /// Takes the status of the riff daemon of this machine: `Err` says why
+    /// no daemon answers. A `✓` that the person saw comes back after a new
+    /// turn of its session.
+    pub fn daemon_looked(&mut self, status: Result<Status, String>) {
+        let ends: BTreeSet<&str> = status
+            .iter()
+            .flat_map(|s| &s.sessions)
+            .filter(|c| c.phase == Phase::Ends)
+            .map(|c| c.session.as_str())
+            .collect();
+        self.sessions.seen.retain(|id| ends.contains(id.as_str()));
+        self.daemon = Some(status);
+        self.model_again();
+    }
+
+    /// Takes a read of the issues of each repository from `gh`: a read
+    /// that failed keeps the last issues of its repository, and the note
+    /// line names a new fault once (01M3ZC09FA9DZPTHK31XECZ566).
+    pub fn titled(&mut self, read: Titles) {
+        let fault = read
+            .iter()
+            .find_map(|(_, read)| read.as_ref().err())
+            .map(|e| text::top_gh_fault(e));
+        if fault.is_some() && fault != self.gh_fault {
+            self.note = fault.clone();
+        }
+        self.gh_fault = fault;
+        let read = read
+            .into_iter()
+            .map(|(repo, read)| (repo, read.ok()))
+            .collect();
+        self.titles = Issues::newest_each(std::mem::take(&mut self.titles), read);
+    }
+
+    /// Makes the sessions model again from the last look and the last
+    /// status of the daemon, and gives the Sessions tab the news `•` for
+    /// a session that turned `!` or `✓`.
+    fn model_again(&mut self) {
+        let server = self
+            .look
+            .as_ref()
+            .map(|(look, _)| look.who.sessions.clone())
+            .unwrap_or_default();
+        let containers = match &self.daemon {
+            Some(Ok(status)) => status.sessions.clone(),
+            _ => Vec::new(),
+        };
+        self.model = Sessions::new(server, containers);
+        let alerts: BTreeSet<String> = self
+            .model
+            .entries
+            .iter()
+            .filter(|entry| {
+                let state = entry.server.as_ref().map(crate::state::of);
+                matches!(
+                    Mark::of(state, entry.phase()),
+                    Some(Mark::Blocked | Mark::Done)
+                )
+            })
+            .filter_map(|entry| entry.id().map(str::to_owned))
+            .collect();
+        if alerts.iter().any(|id| !self.alerts.contains(id)) {
+            self.news(Tab::Sessions, News::Dot);
+        }
+        self.alerts = alerts;
     }
 
     /// Takes the read `read` of the forge for the Waves tab at the time
@@ -829,7 +1015,7 @@ impl State {
     /// use riff::tui::{Look, State};
     /// use riff_core::build::Build;
     ///
-    /// let mut state = State::new(Build::this());
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
     /// state.looked(Look::default(), 0);
     /// state.failed("riff: no good look since 21:35:07: cannot reach riff-server");
     /// assert!(state.link_down());
@@ -837,6 +1023,7 @@ impl State {
     /// state.looked(Look::default(), 3000);
     /// assert!(!state.link_down());
     /// assert_eq!(state.shown_note(), None);
+    /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn failed(&mut self, fault: impl Into<String>) {
         self.fault = Some(fault.into());
@@ -847,6 +1034,62 @@ impl State {
         self.note = Some(note.into());
     }
 
+    /// Shows the end of the attach to the lead `name`
+    /// (01M51PD7Q24N252V66NFEHY49N): a detach, the end of the lead, or
+    /// the error of the attach.
+    ///
+    /// ```
+    /// use riff::lead::Left;
+    /// use riff::tui::State;
+    /// use riff_core::build::Build;
+    ///
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
+    /// state.attached("n", &Ok(Left::Ended));
+    /// assert_eq!(state.shown_note(), Some(riff::text::lead_ended("n").as_str()));
+    /// state.attached("n", &Ok(Left::Detached));
+    /// assert_eq!(state.shown_note(), Some(riff::text::lead_detached("n").as_str()));
+    /// state.attached("n", &Err(anyhow::anyhow!("no podman")));
+    /// assert_eq!(state.shown_note(), Some("no podman"));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn attached(&mut self, name: &str, left: &Result<crate::lead::Left>) {
+        self.note(match left {
+            Ok(left) => left.line(name),
+            Err(e) => format!("{e:#}"),
+        });
+    }
+
+    /// Shows the end of the takeover of `name` with the exit code
+    /// `taken` of [`crate::takeover::takeover`]: 0 when the session goes
+    /// on, 1 when it ended before the takeover.
+    ///
+    /// ```
+    /// use riff::tui::State;
+    /// use riff_core::build::Build;
+    ///
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
+    /// state.took_over("n", &Ok(1));
+    /// assert_eq!(state.shown_note(), Some(riff::text::takeover_session_ended("n").as_str()));
+    /// state.took_over("n", &Ok(0));
+    /// assert_eq!(state.shown_note(), Some(riff::text::takeover_back("n").as_str()));
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn took_over(&mut self, name: &str, taken: &Result<i32>) {
+        self.note(match taken {
+            Ok(0) => text::takeover_back(name),
+            Ok(_) => text::takeover_session_ended(name),
+            Err(e) => format!("{e:#}"),
+        });
+    }
+
+    /// Shows the result of an action that gives a line, or its error.
+    pub fn done(&mut self, result: Result<String>) {
+        self.note(match result {
+            Ok(line) => line,
+            Err(e) => format!("{e:#}"),
+        });
+    }
+
     /// Gives the tab `tab` the news `news`. The tab that the person sees
     /// gets none: the person sees it.
     ///
@@ -854,7 +1097,7 @@ impl State {
     /// use riff::tui::{Key, News, State, Tab};
     /// use riff_core::build::Build;
     ///
-    /// let mut state = State::new(Build::this());
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
     /// state.news(Tab::Chat, News::Lines(2));
     /// state.news(Tab::Sessions, News::Dot);
     /// assert_eq!(state.news_of(Tab::Chat), Some(News::Lines(2)));
@@ -862,6 +1105,7 @@ impl State {
     /// // The news of a tab goes when the person opens it.
     /// state.on_key(Key::Open(Tab::Chat));
     /// assert_eq!(state.news_of(Tab::Chat), None);
+    /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn news(&mut self, tab: Tab, news: News) {
         if tab != self.tab {
@@ -894,17 +1138,36 @@ impl State {
         &self.build
     }
 
+    /// The session of the TUI.
+    pub fn me(&self) -> &SessionUri {
+        &self.me
+    }
+
+    /// The sessions model of the last look and status.
+    pub fn model(&self) -> &Sessions {
+        &self.model
+    }
+
+    /// The choices of the person in the Sessions tab.
+    pub fn choices(&self) -> &sessions::Choices {
+        &self.sessions
+    }
+
     /// The fault of the last look, while the link is down.
     pub fn fault(&self) -> Option<&str> {
         self.fault.as_deref()
     }
 
-    /// The fault of the link, else the note of the last action. A
-    /// question of the note line comes before them, and in the Chat tab
-    /// the notes of the chat come between them
-    /// (01M6VMACJGF4A0ZXC6YK13KNCH).
+    /// The fault of the link, else the note of the last action, else in
+    /// the Sessions tab with no riff daemon here: that no daemon answers.
+    /// A question of the note line comes before them, and in the Chat
+    /// tab the notes of the chat come between them
+    /// (01M6VMACJGF4A0ZXC6YK13KNCH, [`State::asked`]).
     pub fn shown_note(&self) -> Option<&str> {
-        self.fault.as_deref().or(self.note.as_deref())
+        self.fault.as_deref().or(self.note.as_deref()).or_else(|| {
+            (self.tab == Tab::Sessions && matches!(self.daemon, Some(Err(_))))
+                .then_some(text::NO_DAEMON_HERE)
+        })
     }
 
     /// True while the help popup shows.
@@ -924,14 +1187,15 @@ impl State {
     }
 
     /// The text of the note line while the TUI asks: the question with
-    /// `y/N`, or what the person types with a cursor. It comes before
-    /// the fault and the note (01M6VMACJGF4A0ZXC6YK13KNCH).
+    /// `y/N`, or what the person types with a cursor: the limit of a host
+    /// or the reason of a hold. It comes before the fault and the note
+    /// (01M6VMACJGF4A0ZXC6YK13KNCH).
     ///
     /// ```
     /// use riff::tui::{Action, Key, Question, State};
     /// use riff_core::build::Build;
     ///
-    /// let mut state = State::new(Build::this());
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
     /// let yes = Action::Limit { host: "thelio".into(), sessions: 4 };
     /// let no = "The limit of thelio stays.".to_owned();
     /// state.ask(Question { text: "Set the limit?".into(), yes: yes.clone(), no: no.clone() });
@@ -942,11 +1206,16 @@ impl State {
     /// state.ask(Question { text: "Set the limit?".into(), yes: yes.clone(), no: no.clone() });
     /// assert_eq!(state.on_key(Key::Esc), None);
     /// assert_eq!(state.shown_note(), Some("The limit of thelio stays."));
+    /// // A question with no note of its own says that nothing changed.
+    /// state.ask(Question::new("Pause the riff?", Action::Look));
+    /// assert_eq!(state.on_key(Key::Char('n')), None);
+    /// assert_eq!(state.shown_note(), Some(riff::tui::NOTHING_CHANGED));
     /// // q and Ctrl-C end the TUI.
     /// state.ask(Question { text: "Set the limit?".into(), yes: yes.clone(), no: no.clone() });
     /// assert_eq!(state.on_key(Key::Char('q')), Some(Action::Quit));
     /// state.ask(Question { text: "Set the limit?".into(), yes, no });
     /// assert_eq!(state.on_key(Key::Quit), Some(Action::Quit));
+    /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn asked(&self) -> Option<String> {
         if let Some(question) = &self.question {
@@ -958,15 +1227,10 @@ impl State {
         self.typing.as_ref().map(machines::Typing::line)
     }
 
-    /// The filter of the Sessions tab, for example `host:thelio`
-    /// (01M6VFD0M3RHT488D0RQ84RVMC).
-    pub fn filter(&self) -> Option<&str> {
-        self.filter.as_deref()
-    }
-
     /// Opens the tab `tab`: its news goes. The prompt of the Chat tab
     /// gets the focus.
     fn open(&mut self, tab: Tab) {
+        self.help = false;
         self.tab = tab;
         self.news[tab as usize] = None;
         if tab == Tab::Chat {
@@ -976,9 +1240,10 @@ impl State {
 
     /// Takes the key `key` of the person (01M6VAZJYYQZDHD6YDB0NBQ7KW,
     /// 01M6VAZKDEQ6951KGPGAMF1SNJ). A question of the note line takes the
-    /// key first, then a text that the person types ([`machines::typed`],
-    /// [`waves::typed`]). Then the frame takes its keys, and the tab the
-    /// others: `k` `j` `g` `G` are `↑` `↓` `Home` `End`
+    /// key first, then a text that the person types: the limit of a host
+    /// ([`machines::typed`]), the reason of a hold ([`waves::typed`]), or
+    /// the filter of the Sessions tab. Then the frame takes its keys, and
+    /// the tab the others: `k` `j` `g` `G` are `↑` `↓` `Home` `End`
     /// (01M6VFGKCJ02G33TXR01GY6M0G). Opening the Waves tab looks again at
     /// once, for the holds of its boards.
     ///
@@ -986,7 +1251,7 @@ impl State {
     /// use riff::tui::{Action, Key, State, Tab};
     /// use riff_core::build::Build;
     ///
-    /// let mut state = State::new(Build::this());
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
     /// assert_eq!(state.on_key(Key::Open(Tab::Machines)), None);
     /// assert_eq!(state.tab(), Tab::Machines);
     /// assert_eq!(state.on_key(Key::Char('3')), Some(Action::Look));
@@ -994,7 +1259,7 @@ impl State {
     /// state.on_key(Key::Next);
     /// assert_eq!(state.tab(), Tab::Machines);
     /// state.on_key(Key::Before);
-    /// state.on_key(Key::Before);
+    /// state.on_key(Key::Open(Tab::Chat));
     /// assert_eq!(state.tab(), Tab::Chat);
     /// // `?` shows the help, and `?` or Esc closes it.
     /// state.on_key(Key::Char('?'));
@@ -1008,6 +1273,7 @@ impl State {
     /// assert_eq!(state.on_key(Key::Again), Some(Action::Look));
     /// assert_eq!(state.on_key(Key::Char('q')), Some(Action::Quit));
     /// assert_eq!(state.on_key(Key::Quit), Some(Action::Quit));
+    /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn on_key(&mut self, key: Key) -> Option<Action> {
         // A post that failed comes before the note of the prompt until
@@ -1016,7 +1282,10 @@ impl State {
         // A question takes the next key (01M6VFD0S90SB8M8WV952NT4Y1).
         if let Some(question) = self.question.take() {
             return match key {
-                Key::Char('y' | 'Y') => Some(question.yes),
+                Key::Char('y' | 'Y') => {
+                    self.note = None;
+                    Some(question.yes)
+                }
                 Key::Quit | Key::Char('q') => Some(Action::Quit),
                 _ => {
                     self.note(question.no);
@@ -1030,6 +1299,9 @@ impl State {
         }
         if let Some(reason) = self.reason.take() {
             return waves::typed(self, reason, key);
+        }
+        if self.tab == Tab::Sessions && self.sessions.typing() && key != Key::Quit {
+            return self.on_sessions_key(key);
         }
         let key = match key {
             Key::Char(digit @ '1'..='6') => digit
@@ -1053,7 +1325,7 @@ impl State {
                 self.help = !self.help;
                 None
             }
-            Key::Esc => {
+            Key::Esc if self.help => {
                 self.help = false;
                 None
             }
@@ -1063,6 +1335,7 @@ impl State {
             _ if self.help => None,
             Key::Chat(key) => self.on_chat(key),
             key => match self.tab {
+                Tab::Sessions => self.on_sessions_key(key),
                 Tab::Waves => self.waves_key(key),
                 Tab::Machines => machines::on_key(self, key),
                 _ => None,
@@ -1070,10 +1343,9 @@ impl State {
         }
     }
 
-    /// Opens the tab `tab` and closes the help. The Waves tab looks again
+    /// Opens the tab `tab` ([`State::open`]). The Waves tab looks again
     /// at once.
     fn go(&mut self, tab: Tab) -> Option<Action> {
-        self.help = false;
         let was = self.tab;
         self.open(tab);
         (tab == Tab::Waves && was != Tab::Waves).then_some(Action::Look)
@@ -1096,13 +1368,32 @@ impl State {
     /// Takes a click of the person at `column` and `row` on the view
     /// `view`: it presses the key of the place that it hits
     /// (01M6VAZKG8FS4HEA9VSA4Z4YF1). A click on no place does nothing.
-    pub fn on_click(&mut self, view: &view::View, column: u16, row: u16) -> Option<Action> {
-        self.on_key(view.hit(column, row)?)
+    /// With `double`, the second click of a double click on a row also
+    /// presses Enter.
+    pub fn on_click(
+        &mut self,
+        view: &view::View,
+        column: u16,
+        row: u16,
+        double: bool,
+    ) -> Option<Action> {
+        let key = view.hit(column, row)?;
+        // In the Waves tab, the second click is on the selected row: it
+        // acts as Enter already (01M6VFGKCJ02G33TXR01GY6M0G).
+        let enter = double && matches!(key, Key::Row(_)) && self.tab != Tab::Waves;
+        let action = self.on_key(key);
+        if enter {
+            return self.on_key(Key::Enter);
+        }
+        action
     }
 
     /// Keeps what the person saw in `view`, the view of the last draw:
-    /// a scroll of the log of the Chat tab needs its rows.
+    /// the window of the tree of the Sessions tab, its first row and the
+    /// rows that fit for `PgUp` and `PgDn`, and the rows of the log of
+    /// the Chat tab for a scroll.
     pub fn drawn(&mut self, view: &view::View) {
+        (self.sessions.top, self.sessions.page) = (view.top, view.page);
         if let Some(window) = view.chat {
             self.chat.window = window;
         }
@@ -1118,7 +1409,7 @@ impl State {
     /// use riff_core::build::Build;
     ///
     /// let q = Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
-    /// let mut state = State::new(Build::this());
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
     /// assert_eq!(state.input(&q), Some(Input::Key(Key::Char('q'))));
     /// // In the prompt of the Chat tab, `q` types.
     /// state.on_key(Key::Open(Tab::Chat));
@@ -1127,6 +1418,7 @@ impl State {
     /// state.on_key(Key::Chat(chat::Key::Log));
     /// assert_eq!(state.input(&q), Some(Input::Key(Key::Char('q'))));
     /// assert_eq!(state.on_key(Key::Char('q')), Some(Action::Quit));
+    /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn input(&self, event: &ratatui::crossterm::event::Event) -> Option<Input> {
         if self.tab == Tab::Chat
@@ -1142,7 +1434,7 @@ impl State {
 /// What the person does: a key, or a click of the mouse at a place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {
-    /// A key of the frame.
+    /// A key.
     Key(Key),
     /// A click of the left button at a column and a row.
     Click { column: u16, row: u16 },
@@ -1195,9 +1487,9 @@ pub enum Input {
 ///     input_of(&mouse(MouseEventKind::Down(MouseButton::Left))),
 ///     Some(Input::Click { column: 4, row: 0 })
 /// );
-/// // The wheel selects the row above or below.
-/// assert_eq!(input_of(&mouse(MouseEventKind::ScrollUp)), Some(Input::Key(Key::Up)));
+/// // The wheel moves the selection.
 /// assert_eq!(input_of(&mouse(MouseEventKind::ScrollDown)), Some(Input::Key(Key::Down)));
+/// assert_eq!(input_of(&mouse(MouseEventKind::ScrollUp)), Some(Input::Key(Key::Up)));
 /// assert_eq!(input_of(&mouse(MouseEventKind::Moved)), None);
 /// ```
 pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
@@ -1236,21 +1528,23 @@ pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
                 column: mouse.column,
                 row: mouse.row,
             }),
-            MouseEventKind::ScrollUp => Some(Input::Key(Key::Up)),
             MouseEventKind::ScrollDown => Some(Input::Key(Key::Down)),
+            MouseEventKind::ScrollUp => Some(Input::Key(Key::Up)),
             _ => None,
         },
         _ => None,
     }
 }
 
-/// How long [`next_input`] waits for a key or a click. The age of the
+/// How long [`next_event`] waits for a key or a click. The age of the
 /// look in the header draws again after each wait.
 const INPUT_WAIT: Duration = Duration::from_millis(200);
 
 /// The next event of the terminal, or `None` when none comes in
 /// [`INPUT_WAIT`]. The blocking reads of crossterm run in a blocking
-/// task of tokio, not in the async loop, as in `riff view`.
+/// task of tokio, not in the async loop. The task ends after
+/// [`INPUT_WAIT`], so no read of the TUI takes a key from an attach or a
+/// takeover (01M50RRQBZ8ASPT25DYPX78HP9).
 async fn next_event() -> Result<Option<ratatui::crossterm::event::Event>> {
     use ratatui::crossterm::event;
     tokio::task::spawn_blocking(|| {
@@ -1260,6 +1554,29 @@ async fn next_event() -> Result<Option<ratatui::crossterm::event::Event>> {
         Ok(Some(event::read()?))
     })
     .await?
+}
+
+/// Takes the terminal for the TUI, and with `mouse`, the mouse
+/// (01M6VAZKG8FS4HEA9VSA4Z4YF1).
+fn enter(mouse: bool) -> Result<ratatui::DefaultTerminal> {
+    use ratatui::crossterm::event::EnableMouseCapture;
+    use ratatui::crossterm::execute;
+    let terminal = ratatui::try_init()?;
+    if mouse && let Err(e) = execute!(std::io::stdout(), EnableMouseCapture) {
+        ratatui::restore();
+        return Err(e.into());
+    }
+    Ok(terminal)
+}
+
+/// Gives the terminal back: for an attach, a takeover, or the end.
+fn leave(mouse: bool) {
+    use ratatui::crossterm::event::DisableMouseCapture;
+    use ratatui::crossterm::execute;
+    if mouse {
+        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    }
+    ratatui::restore();
 }
 
 /// `riff` with no command, in a terminal: the TUI, as `me` at `api`,
@@ -1276,38 +1593,84 @@ pub async fn run(
     reach: &Reach,
     mouse: bool,
 ) -> Result<()> {
-    use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
-    use ratatui::crossterm::execute;
     // The first look runs before the TUI takes the terminal: its error
     // prints as in the CLI (01M6VAZKAH6B53YKR8W4YKNSH6).
     let first = look(api, me, &[]).await?;
     let here = here.default_thread().map(|t| t.to_string());
-    let mut state = State::new(Build::this()).in_clone(here);
+    let mut state = State::new(Build::this(), me.clone()).in_clone(here);
     let start = crate::run::now_ms();
     state.looked(first, start);
     state.chat_as(person.me.who().user(), u64::try_from(start).unwrap_or(0));
-    let mut terminal = ratatui::try_init()?;
-    if mouse && let Err(e) = execute!(std::io::stdout(), EnableMouseCapture) {
-        ratatui::restore();
-        return Err(e.into());
-    }
-    let shown = frames(&mut terminal, &mut state, api, me, person, reach).await;
-    if mouse {
-        let _ = execute!(std::io::stdout(), DisableMouseCapture);
-    }
-    ratatui::restore();
+    let mut terminal = enter(mouse)?;
+    let shown = frames(&mut terminal, &mut state, api, me, person, reach, mouse).await;
+    leave(mouse);
     shown
 }
+
+/// A read of the titles of the issues of each repository from `gh`: the
+/// issues, or the error of `gh`.
+type Titles = Vec<(String, Result<Issues, String>)>;
 
 /// A read of the forge for the Waves tab that runs: it gives back the
 /// kept replies, and the read of each repository.
 type Reading = tokio::task::JoinHandle<(forge::Kept, Vec<(String, Result<forge::Forge, String>)>)>;
 
+/// The tasks of the loop of the TUI: each look that runs, and when the
+/// next one starts.
+struct Tasks {
+    /// The look of riff-server that runs.
+    looking: Option<tokio::task::JoinHandle<Result<Look>>>,
+    /// The time of the next look, and of the start of the last one.
+    next: tokio::time::Instant,
+    started: tokio::time::Instant,
+    /// `r` while a look runs: look again after it.
+    again: bool,
+    /// The ask of the riff daemon of this machine that runs, and the
+    /// time of the next one.
+    asking: Option<tokio::task::JoinHandle<Result<Status, String>>>,
+    next_ask: tokio::time::Instant,
+    /// The read of the titles from `gh` that runs, and the time of the
+    /// last one.
+    reading: Option<tokio::task::JoinHandle<Titles>>,
+    read_at: Option<tokio::time::Instant>,
+    /// The read of the forge for the Waves tab that runs, and the kept
+    /// replies of the forge while no read runs.
+    forge: Option<Reading>,
+    kept: Option<forge::Kept>,
+    /// `r` while the Waves tab shows: read the forge again.
+    forge_again: bool,
+    /// The action that runs in a task of its own: its result is the
+    /// next note.
+    acting: Option<tokio::task::JoinHandle<String>>,
+}
+
+impl Tasks {
+    /// Stops each task that runs: the TUI ends.
+    fn abort(&self) {
+        if let Some(task) = &self.looking {
+            task.abort();
+        }
+        if let Some(task) = &self.asking {
+            task.abort();
+        }
+        if let Some(task) = &self.reading {
+            task.abort();
+        }
+        if let Some(task) = &self.forge {
+            task.abort();
+        }
+        if let Some(task) = &self.acting {
+            task.abort();
+        }
+    }
+}
+
 /// The loop of [`run`]: it draws the state, takes the input of the
-/// person, looks at riff-server each [`every`], reads the forge of the
-/// Waves tab each [`forge::READ_EVERY`] while it shows, and runs each
-/// action in a task of its own. The [`chat::Link`] of `person` follows
-/// the thread `chat` and posts its lines.
+/// person, does the actions, and looks at riff-server each [`every`].
+/// While the Sessions tab is open, it asks the daemon of this machine and
+/// reads the titles from `gh`. While the Waves tab shows, it reads the
+/// forge each [`forge::READ_EVERY`]. The [`chat::Link`] of `person`
+/// follows the thread `chat` and posts its lines.
 async fn frames(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut State,
@@ -1315,69 +1678,98 @@ async fn frames(
     me: &SessionUri,
     person: &chat::Person,
     reach: &Reach,
+    mouse: bool,
 ) -> Result<()> {
+    use futures::StreamExt;
     use tokio::time::Instant;
-    let mut input_at = Instant::now();
-    let mut next = Instant::now() + LOOK_EVERY;
-    let mut looking: Option<tokio::task::JoinHandle<Result<Look>>> = None;
-    // The action that runs: its result is the next note.
-    let mut acting: Option<tokio::task::JoinHandle<String>> = None;
-    // `r` while a look runs: look again after it.
-    let mut again = false;
-    let mut good_at = chrono::Local::now();
-    let mut link = chat::Link::start(person);
-    // The reads of the forge share one token, and count as `tui`
+    let dir = crate::daemon::dir().ok();
+    // The calls of `gh` share one token, and count as `tui`
     // (01M6VFGK4P2FWMFQHBZKR3JXSZ).
     let gh = crate::pr::Gh::here("tui")
         .with_one_token()
         .with_shared_reads();
-    let mut kept = Some(forge::Kept::default());
-    let mut reading: Option<Reading> = None;
-    // `r` while the Waves tab shows: read the forge again.
-    let mut read_again = false;
-    loop {
+    let mut input_at = Instant::now();
+    let mut tasks = Tasks {
+        looking: None,
+        next: Instant::now() + LOOK_EVERY,
+        started: Instant::now(),
+        again: false,
+        asking: None,
+        next_ask: Instant::now(),
+        reading: None,
+        read_at: None,
+        forge: None,
+        kept: Some(forge::Kept::default()),
+        forge_again: false,
+        acting: None,
+    };
+    let mut good_at = chrono::Local::now();
+    let mut link = chat::Link::start(person);
+    // A message of the thread of the repository of the folder starts a
+    // look, as in `riff top`.
+    let (told, mut messages) = tokio::sync::mpsc::channel::<()>(1);
+    let follower = me.default_thread().map(|thread| {
+        let (api, me) = (api.clone(), me.clone());
+        tokio::spawn(async move {
+            let stream = riff_client::api::follow(
+                || api.tail(&me, &thread),
+                riff_client::link::STREAM_RETRY,
+            );
+            let mut stream = Box::pin(stream);
+            while let Some(item) = stream.next().await {
+                if item.is_ok() && told.send(()).await.is_err() {
+                    return;
+                }
+            }
+        })
+    });
+    let mut last_click: Option<(Key, Instant)> = None;
+    let shown = loop {
         for came in link.came() {
             state.chat_came(came);
         }
-        if reading
+        if tasks
+            .forge
             .as_ref()
             .is_some_and(tokio::task::JoinHandle::is_finished)
-            && let Some(done) = reading.take()
+            && let Some(done) = tasks.forge.take()
         {
             let (back, read) = done.await?;
-            kept = Some(back);
+            tasks.kept = Some(back);
             state.read_forge(read, crate::run::now_ms());
         }
-        if acting
+        if tasks
+            .acting
             .as_ref()
             .is_some_and(tokio::task::JoinHandle::is_finished)
-            && let Some(done) = acting.take()
+            && let Some(done) = tasks.acting.take()
         {
             state.note(done.await?);
             // The action changed something: look again.
-            if looking.is_some() {
-                again = true;
+            if tasks.looking.is_some() {
+                tasks.again = true;
             } else {
-                next = Instant::now();
+                tasks.next = Instant::now();
             }
         }
-        if reading.is_none()
+        if tasks.forge.is_none()
             && state.tab() == Tab::Waves
-            && (read_again || state.waves().due(crate::run::now_ms()))
+            && (tasks.forge_again || state.waves().due(crate::run::now_ms()))
         {
-            read_again = false;
+            tasks.forge_again = false;
             let repos = state.boards();
             let gh = gh.clone();
-            let mut back = kept.take().unwrap_or_default();
-            reading = Some(tokio::task::spawn_blocking(move || {
+            let mut back = tasks.kept.take().unwrap_or_default();
+            tasks.forge = Some(tokio::task::spawn_blocking(move || {
                 let read = forge::read_each(&gh, &repos, &mut back);
                 (back, read)
             }));
         }
-        if looking
+        if tasks
+            .looking
             .as_ref()
             .is_some_and(tokio::task::JoinHandle::is_finished)
-            && let Some(done) = looking.take()
+            && let Some(done) = tasks.looking.take()
         {
             match done.await? {
                 Ok(look) => {
@@ -1392,17 +1784,72 @@ async fn frames(
                     &good_at,
                     &chrono::Local::now(),
                 )),
-                Err(e) => return Err(e),
+                Err(e) => break Err(e),
             }
-            next = if std::mem::take(&mut again) {
+            tasks.next = if std::mem::take(&mut tasks.again) {
                 Instant::now()
             } else {
                 Instant::now() + every(input_at.elapsed())
             };
         }
-        if looking.is_none() && Instant::now() >= next {
+        if messages.try_recv().is_ok() {
+            tasks.next = tasks.next.min(tasks.started + THREAD_LOOK_EVERY);
+        }
+        if tasks.looking.is_none() && Instant::now() >= tasks.next {
             let (api, me, boards) = (api.clone(), me.clone(), state.boards());
-            looking = Some(tokio::spawn(async move { look(&api, &me, &boards).await }));
+            tasks.started = Instant::now();
+            tasks.looking = Some(tokio::spawn(async move { look(&api, &me, &boards).await }));
+        }
+        if tasks
+            .asking
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+            && let Some(done) = tasks.asking.take()
+        {
+            state.daemon_looked(done.await?);
+            tasks.next_ask = Instant::now() + DAEMON_EVERY;
+        }
+        let sessions = state.tab() == Tab::Sessions;
+        if sessions && tasks.asking.is_none() && Instant::now() >= tasks.next_ask {
+            let dir = dir.clone();
+            tasks.asking = Some(tokio::spawn(async move {
+                let Some(dir) = dir else {
+                    return Err(text::NO_DAEMON_HERE.to_owned());
+                };
+                crate::daemon::status(&dir)
+                    .await
+                    .map_err(|e| format!("{e:#}"))
+            }));
+        }
+        if tasks
+            .reading
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+            && let Some(done) = tasks.reading.take()
+        {
+            state.titled(done.await?);
+        }
+        let due = tasks
+            .read_at
+            .is_none_or(|at| at.elapsed() >= crate::top::ISSUES_TTL);
+        if sessions && tasks.reading.is_none() && due {
+            let repo = me.default_thread().map(|t| t.to_string());
+            let repos = riff_client::waves::board_repos(
+                state.model(),
+                &riff_client::sessions::Show::default(),
+                repo.as_deref(),
+            );
+            let gh = gh.clone();
+            tasks.read_at = Some(Instant::now());
+            tasks.reading = Some(tokio::task::spawn_blocking(move || {
+                repos
+                    .into_iter()
+                    .map(|repo| {
+                        let read = crate::top::titles_from_gh(&gh, &repo);
+                        (repo, read.map_err(|e| format!("{e:#}")))
+                    })
+                    .collect()
+            }));
         }
         let mut drawn = None;
         terminal.draw(|frame| {
@@ -1417,8 +1864,10 @@ async fn frames(
             state.drawn(shown);
             state.drew(area.height.saturating_sub(4), crate::run::now_ms());
         }
-        let Some(event) = next_event().await? else {
-            continue;
+        let event = match next_event().await {
+            Ok(Some(event)) => event,
+            Ok(None) => continue,
+            Err(e) => break Err(e),
         };
         let Some(input) = state.input(&event) else {
             continue;
@@ -1426,52 +1875,124 @@ async fn frames(
         input_at = Instant::now();
         let action = match input {
             Input::Key(key) => state.on_key(key),
-            Input::Click { column, row } => drawn
-                .as_ref()
-                .and_then(|(shown, _)| state.on_click(shown, column, row)),
+            Input::Click { column, row } => {
+                let hit = drawn.as_ref().and_then(|(shown, _)| shown.hit(column, row));
+                let double = hit.is_some()
+                    && last_click
+                        .is_some_and(|(key, at)| Some(key) == hit && at.elapsed() < DOUBLE_CLICK);
+                last_click = hit.map(|key| (key, Instant::now()));
+                drawn
+                    .as_ref()
+                    .and_then(|(shown, _)| state.on_click(shown, column, row, double))
+            }
+        };
+        let Some(action) = action else {
+            continue;
         };
         match action {
-            Some(Action::Quit) => {
-                if let Some(looking) = looking {
-                    looking.abort();
-                }
+            Action::Quit => {
                 // An action that runs ends first: the person said `y`.
-                if let Some(acting) = acting {
+                if let Some(acting) = tasks.acting.take() {
                     let _ = acting.await;
                 }
                 link.end().await;
-                return Ok(());
+                break Ok(());
             }
-            Some(Action::Look) => {
-                read_again = state.tab() == Tab::Waves;
-                if looking.is_some() {
-                    again = true;
+            Action::Look => {
+                tasks.forge_again = state.tab() == Tab::Waves;
+                if tasks.looking.is_some() {
+                    tasks.again = true;
                 } else {
-                    next = Instant::now();
+                    tasks.next = Instant::now();
                 }
             }
-            Some(Action::Limit { .. } | Action::Do(_)) if acting.is_some() => {
+            Action::Attach(name) => {
+                leave(mouse);
+                let left = attach(&name).await;
+                *terminal = enter(mouse)?;
+                state.attached(&name, &left);
+                (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
+            }
+            Action::Takeover(name) => {
+                leave(mouse);
+                let taken = take_over(dir.as_deref(), &name).await;
+                *terminal = enter(mouse)?;
+                state.took_over(&name, &taken);
+                (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
+            }
+            Action::End(name) => {
+                state.done(end(dir.as_deref(), &name).await);
+                (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
+            }
+            Action::Limit { .. } | Action::Do(_) if tasks.acting.is_some() => {
                 state.note(STILL_ACTING);
             }
-            Some(Action::Limit { host, sessions }) => {
+            Action::Limit { host, sessions } => {
                 state.note(machines::setting(&host, sessions));
                 let (api, me) = (api.clone(), me.clone());
-                acting = Some(tokio::spawn(async move {
+                tasks.acting = Some(tokio::spawn(async move {
                     machines::set_limit(&api, &me, &host, sessions).await
                 }));
             }
-            Some(Action::Post(body)) => link.send(body),
-            Some(Action::Do(effect)) => {
+            Action::Post(body) => link.send(body),
+            Action::Do(effect) => {
                 state.note(effect.doing());
                 let (api, me, reach) = (api.clone(), me.clone(), reach.clone());
-                acting = Some(tokio::spawn(async move {
+                tasks.acting = Some(tokio::spawn(async move {
                     match effect.run(&api, &me, &reach).await {
                         Ok(line) => line,
                         Err(e) => format!("riff: {e:#}"),
                     }
                 }));
             }
-            None => {}
         }
+    };
+    if let Some(follower) = follower {
+        follower.abort();
     }
+    tasks.abort();
+    shown
+}
+
+/// The attach of `l` and Enter to the lead `name`: the code of
+/// `riff lead start` (01M51PD7M04HZR2PVVJA4WCBK5).
+async fn attach(name: &str) -> Result<crate::lead::Left> {
+    #[cfg(target_os = "linux")]
+    {
+        crate::lead::attach(&crate::podman::Podman, name).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = name;
+        anyhow::bail!(text::RUN_LINUX_ONLY)
+    }
+}
+
+/// The takeover of `t` of the session `name`: the code of
+/// `riff takeover NAME`, with the daemon in the folder `dir`. It stops
+/// the turn at once (01M51KJ1R9K7A7RW8T8XH8VW43).
+async fn take_over(dir: Option<&std::path::Path>, name: &str) -> Result<i32> {
+    let dir = dir.ok_or_else(|| anyhow::anyhow!(text::NO_DAEMON_HERE))?;
+    #[cfg(target_os = "linux")]
+    {
+        crate::takeover::takeover(dir, &crate::podman::Podman, name, false, |line| {
+            println!("{line}");
+        })
+        .await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (dir, name);
+        anyhow::bail!(text::RUN_LINUX_ONLY)
+    }
+}
+
+/// The end of `x` of the session `name`: the code of `riff daemon end
+/// NAME`, with the daemon in the folder `dir`. It gives the last line of
+/// the daemon.
+async fn end(dir: Option<&std::path::Path>, name: &str) -> Result<String> {
+    let dir = dir.ok_or_else(|| anyhow::anyhow!(text::NO_DAEMON_HERE))?;
+    let mut lines = Vec::new();
+    crate::daemon::ask_end(dir, name, |line| lines.push(line.to_owned())).await?;
+    Ok(lines.pop().unwrap_or_else(|| text::daemon_ended(name)))
 }

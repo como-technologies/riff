@@ -71,14 +71,16 @@ effort xhigh.
 ## Detach from the lead
 
 To leave the terminal of the lead, press Ctrl-P, then Ctrl-Q. This
-works in `riff lead start` and in `riff view`. The lead runs on in its
+works in `riff lead start` and in the TUI. The lead runs on in its
 container, and riff says that you left the terminal.
 
-To attach again, run this in a terminal:
+To attach again, run this in your project:
 
 ```sh
-riff view
+riff lead start
 ```
+
+Or press `l` in the Sessions tab of `riff`.
 
 In tmux, the keys go through to the lead when the prefix of tmux is not
 Ctrl-P. The detach of tmux (prefix, then d) detaches tmux, not the
@@ -106,6 +108,7 @@ cannot reach riff-server. The last row shows the keys.
 | `Tab`, `Shift-Tab` | Open the next tab, or the tab before. |
 | `r` | Look at riff-server again now. |
 | `?` | Show the keys of the tab. `?` or `Esc` closes them. |
+| `y`, `n` | Answer the question of an action, for example `Pause the whole riff? y/N`. |
 | `q`, `Ctrl-C` | End the TUI. The sessions go on. |
 
 A click on a tab opens it. A click on a key of the last row presses
@@ -113,18 +116,19 @@ that key. Under 80 columns, the first row shows one tab, for example
 `‹ 1/6 Sessions ›`: click `‹` or `›` to open the tab before or after.
 The TUI needs 40 columns and 10 rows.
 
-The tabs come one at a time. Until a tab is built, it names the
-commands that show its area, for example `riff top` for the sessions.
-See [The TUI](riff-uis.md#the-tui). Three tabs are built. In the
-Waves tab, `3` shows the boards of your repositories, and `↑` and `↓`
-select an item: see
-[See the open items of a wave](waves.md#see-the-open-items-of-a-wave).
-For the Machines tab, see
-[See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui).
-For the Chat tab, see
+The first tab shows each session: see
+[See what each session does](how-it-works.md#see-what-each-session-does).
+The Chat tab shows the chat: see
 [Chat in the TUI](how-it-works.md#chat-in-the-tui). In the prompt of
 the Chat tab, the digits and `q` type: press `Esc` first, or use
-`Alt-1` to `Alt-6`.
+`Alt-1` to `Alt-6`. In the Waves tab, `3` shows the boards of your
+repositories, and `↑` and `↓` select an item: see
+[See the open items of a wave](waves.md#see-the-open-items-of-a-wave).
+The Machines tab shows each host: see
+[See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui).
+The other tabs come one at a time. Until a tab is built, it names the
+commands that show its area, for example `riff usage` for the reports.
+See [The TUI](riff-uis.md#the-tui).
 
 With no terminal, for example in a script, `riff` prints the help.
 

@@ -1921,6 +1921,11 @@ page [Requirements](requirements.md) holds the rules of today.
   the limit. This supersedes the load part of
   01M421QPZ9E01PQ62PDBH378SJ.
   Superseded by riff 4.0 (01M599XR3NMJD9RAJ6ZAMW6KG5).
+- **01M57D4FZGCVE62AP4MVG59HM4** `riff view --host HOST` shows the view
+  of `riff view` for the daemon of HOST, through riff-server. riff asks
+  the daemon of HOST for its status each 3 seconds. Enter and `t` work
+  only on HOST: in the view of another host they show a note.
+  Superseded by 01M6VGHPP3ZT5TTMSGAXV3ZK7W.
 
 ### riff relay
 
@@ -1954,6 +1959,23 @@ page [Requirements](requirements.md) holds the rules of today.
   do it. A relay of riff 1.5 reads a `hold` with `interrupt` as its own
   `hold`. The protocol stays 4. Superseded by
   01M5RG6C25DB49ZKM03Y93QB1F.
+- **01M501PA4MG5NYNK7FBBRRAT20** `riff view` shows the daemon of this
+  machine with ratatui, and draws it again each second: each session
+  with its container, its item, its state, its age and its last step;
+  the daemon and the limit of the host; each start that waits for room;
+  each wave. Up and Down select a session. Enter attaches to the lead:
+  the selected session when it is a lead, else the first lead. `t`
+  takes over the selected session. `q`, Esc and Ctrl-C end the view;
+  the sessions go on. Its tests draw it on the `TestBackend` of
+  ratatui. Superseded by 01M6VGHPP3ZT5TTMSGAXV3ZK7W.
+- **01M51PD7T7451SR11W7JA7QW3X** The SESSION column of `riff view` is
+  as wide as the longest name of a session, so each name shows in full.
+  Superseded by 01M6VGHPP3ZT5TTMSGAXV3ZK7W.
+- **01M50RRQBZ8ASPT25DYPX78HP9** After a takeover from `riff view`,
+  the note under the rows says that the session goes on, or that it
+  ended before the takeover. The view reads the keys of the person in
+  a blocking task of tokio, not in its async loop. Superseded by
+  01M6VGHPP3ZT5TTMSGAXV3ZK7W.
 
 ### The permission rules
 

@@ -30,7 +30,7 @@
 //! | [`files`] | The files in the local folders: mode 0700 for a folder, 0600 for a file. |
 //! | [`text`] | The words of the errors and of the notes of the client. |
 //! | [`platform`] | The trait of the parts that each UI gives. |
-//! | [`sessions`] | The sessions model: the tree of `riff top` and the rows of `riff view`. |
+//! | [`sessions`] | The sessions model: the tree of `riff top` and of the Sessions tab of the TUI. |
 //! | [`threads`] | The threads model: the lines of `riff read`, `riff tail` and `riff chat`. |
 //! | [`chat`] | The wakes of the chat: the sessions that a line of `riff chat` and of the Chat tab of the TUI wakes. |
 //! | [`waves`] | The waves model: the board of `riff top` and the waves of `riff wave list`. |

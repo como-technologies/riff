@@ -1112,7 +1112,7 @@ when you send the output to a pipe.
   than 60 processes shows the first 60. When podman gives no list in
   5 s, the container shows why, and the others show.
 - **Outside a container** lists each riff command on the host, for
-  example `riff top`, `riff view` or `riff wave list`. Each shows its
+  example `riff`, `riff top` or `riff wave list`. Each shows its
   parents up to the first process that is not riff, for example
   `watch`, a shell or `tmux`.
 
@@ -3520,14 +3520,16 @@ took each secret out before it kept them. Your lead can run the same
 command in its container: the riff daemon of its host sends the request
 for it.
 
-To watch the sessions of that host, as `riff view` shows them there:
+To see the sessions of the daemon of that host, with their state and
+their last step, as `riff daemon status` shows them there:
 
 ```sh
-riff view --host thelio
+riff daemon status --host thelio
 ```
 
-The view asks the daemon of the host each 3 seconds. Enter and `t`
-work only on that host: run `riff view` or `riff takeover` there.
+The Sessions tab of `riff` shows the sessions of each host too (see
+[Watch the riff](#watch-the-riff)). Its keys `l`, `t` and `x` work only
+on the host of the session: run `riff` or `riff takeover` there.
 
 ### What the wave does
 
@@ -3601,15 +3603,15 @@ daemon takes it up, and does the steps after its end.
 The lead is a session of the riff daemon too: `claude` in
 a container of the session image, with a terminal. conmon, the monitor
 of podman, holds the terminal. So the lead runs on when you close your
-terminal, and when the daemon stops. `riff view` shows each session of
-the daemon, and attaches your terminal to the lead. The lead runs
-in a container.
+terminal, and when the daemon stops. The Sessions tab of `riff` shows
+each session of the daemon, and attaches your terminal to the lead.
+The lead runs in a container.
 
 ```mermaid
 flowchart LR
     subgraph M["your machine"]
-        V["riff view"] -- "status, each second" --> D["riff daemon"]
-        V -- "Enter: podman attach" --> L["container: the lead<br/>claude with a terminal"]
+        V["riff: the Sessions tab"] -- "status, each second" --> D["riff daemon"]
+        V -- "l: podman attach" --> L["container: the lead<br/>claude with a terminal"]
         V -- "t: podman exec -it" --> W["container: issue-12<br/>claude -p"]
         D -- "podman run -d -i -t" --> L
         D -- "podman run" --> W
@@ -3671,7 +3673,7 @@ The command claude --resume that claude shows works only in the container of the
 A lead of an older riff can run with no token: it holds the sign-in
 file of `claude` of this machine. When `claude` on this machine signs
 in again, it replaces that file, and the sign-in of the lead is stale.
-riff tells you at each attach of `riff lead start` and `riff view`,
+riff tells you at each attach of `riff lead start` and of the TUI,
 and the riff daemon tells you once in riff chat. Type `/exit` in the
 lead, then run this on the machine of the lead:
 
@@ -3788,35 +3790,49 @@ match as before.
 
 ### Watch the riff
 
+The Sessions tab of the TUI shows each session of the daemon of this
+machine with the sessions of riff-server, and attaches your terminal to
+the lead. It is the first tab of `riff`:
+
 ```sh
-riff view
+riff
 ```
 
-The view shows each session of the daemon of this machine: its
-container, its item, its state, its age and its last step. It also
-shows the daemon, the limit of the host, each start that waits for
-room, and each wave. It draws them again each second. To see another
-host, see
-[See a session on another host](#see-a-session-on-another-host). A
-later release adds one sessions view to each UI, and `riff view` stays:
-see [Design: the UIs of riff](riff-uis.md).
+The tab asks the daemon each second. A session in a container of this
+machine has the mark of its phase: `●` while a turn of `claude` runs,
+and `✓` when the turn gave its result. Select it: the detail under the
+tree names its container, its phase and its last step, for example:
+
+```text
+ container riff-issue-12-1a2b3c4d · works for 5m
+ last step: > Bash: just check
+```
+
+Select the row of this host: the detail shows the line of the daemon
+with the limit of the host, each start that waits for room, and each
+wave. The whole tree and each key are in
+[See what each session does](how-it-works.md#see-what-each-session-does).
+These keys act on the containers of this machine:
 
 | Key | Does |
 |---|---|
-| Up, Down (or k, j) | Select a session. |
-| Enter | Attach to the lead. Ctrl-P Ctrl-Q, or the end of the lead, comes back to the view. |
-| t | Stop the turn of the selected session, and take it over (see [Take over a session](#take-over-a-session)). |
-| q, Esc, Ctrl-C | End the view. The sessions go on. |
+| `l` | Attach to the lead of the repository of the row, else to the first lead. Ctrl-P Ctrl-Q, or the end of the lead, comes back to the tab. |
+| `Enter` on a lead | Attach to that lead. |
+| `t` | Stop the turn of the selected session, and take it over, after `y` (see [Take over a session](#take-over-a-session)). |
+| `x` | End the selected session, and free its item, after `y`, as `riff daemon end` does. |
+| `q`, `Ctrl-C` | End the TUI. The sessions go on. |
 
-After an attach, the note under the rows says that you left the
-terminal of the lead, or that the lead ended. After a takeover, the
-note says that the session goes on with its item, or that it ended
-before the takeover. The SESSION column shows the full name of each
-container.
+After an attach, the row before the last says that you left the
+terminal of the lead, or that the lead ended. After a takeover, it says
+that the session goes on with its item, or that it ended before the
+takeover. The keys work only on a session of this machine: for a session
+of another host, run `riff` there. To see another host, see
+[See a session on another host](#see-a-session-on-another-host).
 
-The states of a session:
+The phases of a container session, as the detail and `riff daemon
+status` name them:
 
-| State | Means |
+| Phase | Means |
 |---|---|
 | `works` | A turn of `claude` runs. |
 | `ends` | The turn gave its result. `claude` ends, or waits for its background tasks. |
@@ -3824,14 +3840,19 @@ The states of a session:
 | `taken over` | A person has the session in a terminal. |
 | `lead` | The lead, with its terminal. |
 
-`riff daemon status` shows the same state and last step of each
-session.
+`riff daemon status` prints the same facts in plain lines: each session
+with its container, its item, its phase and its last step, the limit
+of the host, each start that waits for room, and each wave:
+
+```sh
+riff daemon status
+```
 
 ### Take over a session
 
 You can take over a session that works on an item, for example to
 help it or to stop a wrong step. Find the name of its container with
-`riff view` or `riff daemon status`. Then:
+the Sessions tab of `riff` or with `riff daemon status`. Then:
 
 ```sh
 riff takeover riff-issue-12-1a2b3c4d
@@ -4007,10 +4028,11 @@ While the test runs, the status has a line of its own:
 real-session test of v3.3.0 on 90e36bfd, for 4 min
 ```
 
-`riff top`, `riff who` and `riff view` show the same line on the line of
-the host. The daemon counts the test as work: after `riff update`, it
-starts again on the new riff only after the test. The line goes away
-when the test ends. Then `riff release status` shows the result.
+`riff top` and `riff who` show the same line on the line of the host,
+and the Sessions tab of `riff` in the detail of the host. The daemon
+counts the test as work: after `riff update`, it starts again on the
+new riff only after the test. The line goes away when the test ends.
+Then `riff release status` shows the result.
 
 ### Which riff-server the test uses
 

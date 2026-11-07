@@ -375,7 +375,7 @@ impl Reason {
 /// use riff::tui::{Action, Effect, Key, NOTHING_CHANGED, State};
 /// use riff_core::build::Build;
 ///
-/// let mut state = State::new(Build::this());
+/// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
 /// let reason = || Reason { repo: "o/r".into(), item: 12, text: String::new() };
 /// state.ask_reason(reason());
 /// for key in "q 3x".chars() {
@@ -398,6 +398,7 @@ impl Reason {
 /// assert_eq!(state.asked(), None);
 /// state.ask_reason(reason());
 /// assert_eq!(state.on_key(Key::Quit), Some(Action::Quit));
+/// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn typed(state: &mut State, mut reason: Reason, key: Key) -> Option<Action> {
     match key {
@@ -1373,7 +1374,7 @@ mod tests {
     /// and kadomony with no wave, 2 seconds after a good look and 41
     /// seconds after the read of the forge, with #1620 selected.
     fn mock_up() -> State {
-        let mut state = State::new(build("10df8a4c0ffe"));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         let mut look = Look::default();
         look.who.owner = RiffOwner::Owner {
             user: "mike".into(),
@@ -1830,19 +1831,19 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
         let view = compute_view(&state, area, NOW);
         // The row of #1631 is the row 7 of the screen.
-        assert_eq!(state.on_click(&view, 40, 7), None);
+        assert_eq!(state.on_click(&view, 40, 7, false), None);
         assert_eq!(state.waves().picked(), Some(&Pick::Item(RIFF.into(), 1631)));
         let view = compute_view(&state, area, NOW);
-        state.on_click(&view, 40, 7);
+        state.on_click(&view, 40, 7, false);
         assert_eq!(
             state.shown_note(),
             Some("#1631 Design: the web UI · held · waits for mike · 3d")
         );
         // A click on the line of strata, then on it again, opens its board.
         let view = compute_view(&state, area, NOW);
-        state.on_click(&view, 10, 15);
+        state.on_click(&view, 10, 15, false);
         let view = compute_view(&state, area, NOW);
-        state.on_click(&view, 10, 15);
+        state.on_click(&view, 10, 15, false);
         assert!(drawn(&state, 80, 24)[15].starts_with(" ▼ como-technologies/strata"));
         // The key line: `h hold`.
         let keys = " ↑↓ select  Enter open  h hold  f free  p pause  o URL  r read again  ? help";
@@ -1919,7 +1920,7 @@ mod tests {
     /// the forge yet says that too.
     #[test]
     fn no_board_and_a_board_not_read_yet_say_so() {
-        let mut state = State::new(build("10df8a4c0ffe"));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         state.looked(Look::default(), NOW);
         state.on_key(Key::Open(Tab::Waves));
         let rows = drawn(&state, 80, 24);
@@ -1932,7 +1933,8 @@ mod tests {
         assert_eq!(state.on_key(Key::Char('h')), None);
         assert_eq!(state.on_key(Key::Down), None);
         // The clone of o/r gets a board, before its first read.
-        let mut state = State::new(build("10df8a4c0ffe")).in_clone(Some("o/r".into()));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap())
+            .in_clone(Some("o/r".into()));
         state.looked(Look::default(), NOW);
         state.on_key(Key::Open(Tab::Waves));
         assert_eq!(state.boards(), ["o/r"]);

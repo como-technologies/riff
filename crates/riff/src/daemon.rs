@@ -5432,10 +5432,11 @@ fn again_here() -> remote::Again {
 
 /// `riff daemon end NAME`: asks the daemon in the folder `dir` to free
 /// the item of the session in the container `name` and to stop it
-/// (01M579Z9VRD12FRK6DSYVKDHQB). It prints each line of the daemon.
-pub async fn ask_end(dir: &Path, name: &str) -> Result<()> {
-    let ask = Ask::End { name: name.into() };
-    ask_done(dir, ask, |line| println!("{line}")).await
+/// (01M579Z9VRD12FRK6DSYVKDHQB). It gives each line of the daemon to
+/// `show`: the CLI prints it, and the Sessions tab of the TUI shows it in
+/// its note line.
+pub async fn ask_end(dir: &Path, name: &str, show: impl FnMut(&str)) -> Result<()> {
+    ask_done(dir, Ask::End { name: name.into() }, show).await
 }
 
 /// `riff daemon status`: shows the daemon in the folder `dir` and its

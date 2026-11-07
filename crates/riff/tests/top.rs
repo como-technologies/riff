@@ -1438,7 +1438,12 @@ fn the_book_example_has_the_four_level_tree() {
         .split("\n## See what each session does\n")
         .nth(1)
         .unwrap();
-    let example = part.split("```text\n").nth(1).unwrap();
+    // The table of `riff top`: the first block after the screen of the
+    // Sessions tab.
+    let example = part
+        .split("```text\n")
+        .find(|block| block.starts_with("riff   running\n"))
+        .unwrap();
     let example = example.split("```").next().unwrap();
     for board in [
         "\nWave 3 (como-technologies/riff)\n",

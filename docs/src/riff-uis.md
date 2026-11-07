@@ -3,10 +3,10 @@
 This page is the design of the UI architecture of riff (#982). It
 decides the core library, the list of UIs and their order. Each UI has
 a child design of its own. The CLI is built, and the frame, the
-Machines tab and the Chat tab of the TUI: see [The TUI](#the-tui). The
-other tabs of the TUI and the other UIs come with their build items
-(see [The order](#the-order)). Until then,
-`riff --help` does not show `riff device`. The
+Sessions tab, the Chat tab, the Waves tab and the Machines tab of the
+TUI: see [The TUI](#the-tui). The other tabs of the TUI and the other
+UIs come with their build items (see [The order](#the-order)). Until
+then, `riff --help` does not show `riff device`. The
 [requirements of the UIs](requirements.md#the-uis) hold each decision.
 
 | UI | How a person starts it | Toolkit | Child design |
@@ -88,7 +88,7 @@ colors and the ratatui widgets stay in the crate `riff`.
 
 | Model | Module | Holds | Drawn by |
 |---|---|---|---|
-| The sessions | `sessions` | The sessions of riff-server and the container sessions of the riff daemon, one entry for each session ID | `riff top`, `riff view` |
+| The sessions | `sessions` | The sessions of riff-server and the container sessions of the riff daemon, one entry for each session ID | `riff top`, the Sessions tab |
 | The threads | `threads` | One line for each message: the sender, the receivers, the mark `verified`, the kind and the body | `riff read`, `riff tail`, `riff chat` |
 | The waves | `waves` | The open issues, the board of the current wave, the open waves | `riff top`, `riff wave list` |
 | The machines | `machines` | The numbers of each host: the limit, the workers, the machine, the disk and the monitor | `riff top` |
@@ -103,20 +103,22 @@ flowchart LR
 ```
 
 A container session that is also a session of riff-server is one entry
-of the sessions model, with the state of its container. Today `riff top`
-gives the model no container session, and `riff view` gives it no
-session of riff-server. So each command prints what it printed before.
+of the sessions model, with the state of its container. `riff top`
+gives the model no container session, so it prints what it printed
+before. The Sessions tab of the TUI gives it both.
 
 ## One sessions view
 
 Each UI shows the sessions in one view: the sessions on riff-server and
-the container sessions of the daemons, in one list. Today two commands
-show them: `riff top` (see
-[See what each session does](how-it-works.md#see-what-each-session-does))
-and `riff view` (see [Watch the riff](development.md#watch-the-riff)).
-The sessions tab of the TUI merges them. It does what each of them
-does: the live table, the board of each repository, and the attach to a
-session. The two commands stay (see [The CLI](#the-cli)).
+the container sessions of the daemons, in one list. In the TUI, it is
+the Sessions tab (see
+[See what each session does](how-it-works.md#see-what-each-session-does)
+and [Watch the riff](development.md#watch-the-riff)). It does what the
+live table of `riff top` and the old view of the riff daemon did: the
+tree, the detail of a session, the attach to the lead, the takeover,
+the end of a session and the pause. `riff top` stays (see
+[The CLI](#the-cli)). The command `riff view` is gone: `riff daemon
+status` prints its facts in plain lines.
 
 ## The CLI
 
@@ -154,7 +156,7 @@ tab comes with a build item:
 | Build item | What |
 |---|---|
 | [A #1636](https://github.com/como-technologies/riff/issues/1636) | The frame: the tab strip, the header, the note line, the key line, the help, the mouse and the narrow layout. |
-| [B #1637](https://github.com/como-technologies/riff/issues/1637) | 1 Sessions: each session and each worker, with its mark, its item, its state and its age. It does what `riff top` and `riff view` do. |
+| [B #1637](https://github.com/como-technologies/riff/issues/1637) | 1 Sessions: each session and each worker, with its mark, its item, its state and its age, the fold, the filter, the detail, the attach, the takeover and the pause. `riff view` is gone. Built: see [See what each session does](how-it-works.md#see-what-each-session-does). |
 | [E #1640](https://github.com/como-technologies/riff/issues/1640) | 2 Chat: the thread `chat`, as `riff chat` shows it. Built: see [Chat in the TUI](how-it-works.md#chat-in-the-tui). |
 | [C #1638](https://github.com/como-technologies/riff/issues/1638) | 3 Waves: a board for each repository: the items, the claims, the pull requests, the next waves and the checks of `main`, with hold, free and pause. Built: see [See the open items of a wave](waves.md#see-the-open-items-of-a-wave). |
 | [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, and the limit of a host. Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui). |
@@ -201,7 +203,8 @@ Each tab has the same five parts:
   off. In a tab with rows, a click selects a row, and a second click
   opens it.
 - An action that changes something, for example a hold, asks `y` or
-  `n` in the note line first.
+  `n` in the note line first. The attach and the takeover leave the
+  screen of the TUI, and the TUI draws again at their end.
 - Under 80 columns the TUI shows the narrow layout, for a phone with
   SSH: the strip is `‹ 1/6 Sessions ›`, and the rows have fewer words.
   Under 40 columns or 10 rows, the TUI asks for a bigger terminal.
