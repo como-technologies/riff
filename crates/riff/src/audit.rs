@@ -13,6 +13,10 @@
 //! - The waves, the issues and the pull requests, from `gh`
 //!   ([`Forge::read`], 01M3ZWRC9F7TGSHB966TPVVS9Q).
 //!
+//! [`of_wave`] reads both and runs the audit: `riff audit --wave N` prints
+//! its report, and the Audit report of the TUI shows it
+//! (01M6VT3JMABMEXSBPE414MBJZP).
+//!
 //! [`audit`] replays the records in log order, and checks each rule at
 //! each record. The span of a wave starts when the wave became the
 //! current wave: at its start, or at the close of the last wave before
@@ -1163,6 +1167,24 @@ pub fn repo_of(place: &Place) -> Result<ThreadName> {
         Some(thread) => Ok(thread),
         None => bail!("run riff audit in a clone of the repository of the wave"),
     }
+}
+
+/// The audit of `riff audit --wave` of the wave `title` of `repo`, its
+/// full title ([`crate::waves::title`]): it reads the records of the
+/// repository through `reach`, reads the forge with `gh`, and checks
+/// each rule. The CLI prints the report, and the Audit report of the
+/// TUI shows it. The read of the forge runs on a thread of its own
+/// ([`crate::pr::on_thread`]): its calls of `gh` block.
+pub async fn of_wave(
+    gh: &Gh,
+    reach: &crate::reach::Reach,
+    repo: &ThreadName,
+    title: &str,
+) -> Result<Report> {
+    let log = reach.log(repo).await?;
+    let (gh, name, wave) = (gh.clone(), repo.to_string(), title.to_owned());
+    let forge = crate::pr::on_thread(move || Forge::read(&gh, &name, &wave)).await??;
+    audit(title, &log.records, log.pruned, &forge, now_ms())
 }
 
 /// The time now, in milliseconds since the Unix epoch.

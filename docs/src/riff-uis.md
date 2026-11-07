@@ -161,10 +161,10 @@ tab comes with a build item:
 | [C #1638](https://github.com/como-technologies/riff/issues/1638) | 3 Waves: a board for each repository: the items, the claims, the pull requests, the next waves and the checks of `main`, with hold, free and pause. Built: see [See the open items of a wave](waves.md#see-the-open-items-of-a-wave). |
 | [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, the limit of a host, and the filter of the hosts (#1702). Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui) and [Filter the hosts in the TUI](how-it-works.md#filter-the-hosts-in-the-tui). |
 | [G #1642](https://github.com/como-technologies/riff/issues/1642) | 5 Devices: list the devices, add one with a QR code, remove one. |
-| [F #1641](https://github.com/como-technologies/riff/issues/1641) | 6 Reports: the usage, the audit and the log of a session. |
+| [F #1641](https://github.com/como-technologies/riff/issues/1641) | 6 Reports: the usage, the audit and the log of a session. Built: see [See the tokens in the TUI](development.md#see-the-tokens-in-the-tui), [Audit a wave in the TUI](development.md#audit-a-wave-in-the-tui) and [See the events in the TUI](development.md#see-the-events-in-the-tui). |
 
-Until its build item merges, a tab names the commands of the CLI that
-show its area.
+Until its build item merges, the Devices tab says that it is not built
+yet.
 
 ```mermaid
 flowchart LR

@@ -92,6 +92,9 @@
 //! | `riff usage --wave N` | Each issue of the wave with its total, and the sum (01M3Y1YP45VQS5HMJCXKRN3CCR). The number finds the wave, also one with a name ([`crate::waves::title`], 01M588K2M7G0CV3RNJ4N074FTG). |
 //! | `riff usage` | Each session of this machine: the tokens of each item, and `no issue` for the tokens outside each claim (01M3Y1YP4KVHK1DTZ85YNGDG0T). |
 //!
+//! The Usage report of the TUI reads a wave with the code of
+//! `riff usage --wave N` ([`Forge::wave_usage`], 01M6VT3JHVFQ27VJE8987WET34).
+//!
 //! Each person who can write a comment on the issue can write one with
 //! the mark. So `riff usage ISSUE` names who wrote each comment that it
 //! sums, and it trusts such a comment only for its numbers
@@ -914,6 +917,119 @@ pub fn sum(counted: &[Counted]) -> Tokens {
     counted.iter().map(|c| total(&c.report.models)).sum()
 }
 
+/// An issue of a wave with its usage ([`Forge::wave_usage`]): its
+/// number, its title, the reports of its comments that count
+/// ([`counted`]), and the line of the comments that do not
+/// ([`uncounted`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IssueUsage {
+    pub number: u64,
+    pub title: String,
+    pub counted: Vec<Counted>,
+    pub uncounted: Option<String>,
+}
+
+impl IssueUsage {
+    /// The tokens of the issue.
+    pub fn tokens(&self) -> Tokens {
+        sum(&self.counted)
+    }
+
+    /// The models of the issue, each one time: the model with the most
+    /// tokens first.
+    ///
+    /// ```
+    /// use riff::usage::{Counted, IssueUsage, Kind, Report, Tokens};
+    ///
+    /// let counted = |model: &str, output| Counted {
+    ///     report: Report {
+    ///         item: "issue-7".into(),
+    ///         kind: Kind::Work,
+    ///         session: "a6cf0123".into(),
+    ///         from_ms: 1,
+    ///         to_ms: 2,
+    ///         models: [(model.to_owned(), Tokens { output, ..Tokens::default() })].into(),
+    ///     },
+    ///     login: "mike".into(),
+    /// };
+    /// let issue = IssueUsage {
+    ///     number: 7,
+    ///     title: "Show the wave".into(),
+    ///     counted: vec![counted("haiku", 10), counted("opus", 30), counted("haiku", 30)],
+    ///     uncounted: None,
+    /// };
+    /// assert_eq!(issue.models(), ["haiku", "opus"]);
+    /// assert_eq!(issue.tokens().total(), 70);
+    /// ```
+    pub fn models(&self) -> Vec<String> {
+        let mut models: BTreeMap<&str, u64> = BTreeMap::new();
+        for c in &self.counted {
+            for (model, tokens) in &c.report.models {
+                let sum = models.entry(model).or_default();
+                *sum = sum.saturating_add(tokens.total());
+            }
+        }
+        let mut models: Vec<(&str, u64)> = models.into_iter().collect();
+        models.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        models.into_iter().map(|(m, _)| m.to_owned()).collect()
+    }
+}
+
+/// A number of tokens in a few characters: `999`, `12k`, `1.9M`, `2.4B`.
+///
+/// ```
+/// use riff::usage::short_count;
+///
+/// assert_eq!(short_count(999), "999");
+/// assert_eq!(short_count(12_345), "12k");
+/// assert_eq!(short_count(999_499), "999k");
+/// assert_eq!(short_count(999_600), "1.0M");
+/// assert_eq!(short_count(1_940_000), "1.9M");
+/// assert_eq!(short_count(16_240_000), "16.2M");
+/// assert_eq!(short_count(2_400_000_000), "2.4B");
+/// ```
+pub fn short_count(n: u64) -> String {
+    let n = n as f64;
+    if n < 1e3 {
+        format!("{n}")
+    } else if n < 999.5e3 {
+        format!("{:.0}k", n / 1e3)
+    } else if n < 999.95e6 {
+        format!("{:.1}M", n / 1e6)
+    } else {
+        format!("{:.1}B", n / 1e9)
+    }
+}
+
+/// The name of a model in a few words: `opus 5.5` for `claude-opus-5-5`,
+/// with no date. A name of another shape stays as it is, with no
+/// `claude-`.
+///
+/// ```
+/// use riff::usage::short_model;
+///
+/// assert_eq!(short_model("claude-opus-5-5"), "opus 5.5");
+/// assert_eq!(short_model("claude-fable-5-1"), "fable 5.1");
+/// assert_eq!(short_model("claude-sonnet-4-5-20250929"), "sonnet 4.5");
+/// assert_eq!(short_model("claude-3-5-haiku-20241022"), "3-5-haiku-20241022");
+/// assert_eq!(short_model("opus"), "opus");
+/// ```
+pub fn short_model(name: &str) -> String {
+    let name = name.strip_prefix("claude-").unwrap_or(name);
+    let words: Vec<&str> = name.split('-').collect();
+    let digits = |w: &&str| !w.is_empty() && w.chars().all(|c| c.is_ascii_digit());
+    let names: Vec<&str> = words.iter().copied().take_while(|w| !digits(w)).collect();
+    let version: Vec<&str> = words[names.len()..]
+        .iter()
+        .copied()
+        .take_while(|w| digits(w) && w.len() <= 2)
+        .collect();
+    match (names.is_empty(), version.is_empty()) {
+        (false, false) => format!("{} {}", names.join(" "), version.join(".")),
+        _ => name.to_owned(),
+    }
+}
+
 /// The issues of one repository on GitHub, through the `gh` of the
 /// machine.
 pub struct Forge<'a> {
@@ -1029,6 +1145,25 @@ impl<'a> Forge<'a> {
             None => self.add(issue, &body)?,
         }
         Ok(sum(&counted))
+    }
+
+    /// Each issue of the wave `title` with the reports of its comments
+    /// (01M3Y1YP45VQS5HMJCXKRN3CCR): the read of `riff usage --wave` and
+    /// of the Usage report of the TUI. One read of the issues, and one
+    /// read of the comments of each issue.
+    pub fn wave_usage(&self, title: &str) -> Result<Vec<IssueUsage>> {
+        self.wave(title)?
+            .into_iter()
+            .map(|(number, title)| {
+                let comments = self.comments(number)?;
+                Ok(IssueUsage {
+                    number,
+                    title,
+                    counted: counted(number, &comments),
+                    uncounted: uncounted(number, &comments),
+                })
+            })
+            .collect()
     }
 
     /// The number and the title of each issue of the wave `title`, open

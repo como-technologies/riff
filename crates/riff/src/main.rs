@@ -1954,9 +1954,7 @@ async fn cli() -> Result<()> {
             let repo = audit::repo_of(&here)?;
             let gh = pr::Gh::here("audit");
             let wave = riff::waves::title(&gh, &here.repo_text(), wave)?;
-            let log = reach.log(&repo).await?;
-            let forge = audit::Forge::read(&gh, &here.repo_text(), &wave)?;
-            let report = audit::audit(&wave, &log.records, log.pruned, &forge, audit::now_ms())?;
+            let report = audit::of_wave(&gh, &reach, &repo, &wave).await?;
             print!("{}", audit::render(&report, &here.repo_text()));
             if report.failed() {
                 std::process::exit(1);
@@ -3580,11 +3578,14 @@ fn usage_text(issue: Option<&str>, wave: Option<&str>, total: bool) -> Result<St
         return Ok(text);
     }
     let wave = riff::waves::title(&gh, &thread, wave.unwrap_or_default())?;
-    let mut rows = Vec::new();
-    for (number, title) in forge.wave(&wave)? {
-        let counted = usage::counted(number, &forge.comments(number)?);
-        rows.push((number, title, usage::sum(&counted)));
-    }
+    let rows: Vec<_> = forge
+        .wave_usage(&wave)?
+        .into_iter()
+        .map(|issue| {
+            let tokens = issue.tokens();
+            (issue.number, issue.title, tokens)
+        })
+        .collect();
     Ok(usage::wave_text(&wave, &rows))
 }
 

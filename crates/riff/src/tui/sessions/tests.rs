@@ -588,6 +588,110 @@ fn enter_opens_the_detail_on_the_whole_screen() {
     assert!(!rows.iter().any(|r| r.starts_with("──")), "{rows:#?}");
 }
 
+/// The place of the row of the session `id` in the tree of `state`.
+fn row_of(state: &State, id: &str) -> usize {
+    let tree = state.tree();
+    let rows = state.rows(&tree);
+    rows.iter()
+        .position(|row| matches!(row, Row::Session { item, .. } if item.id() == id))
+        .unwrap_or_else(|| panic!("no row of {id}"))
+}
+
+/// 01M6VT3JS3HRKXEJKDV0C97VZS: Enter on a worker in a container opens
+/// its Session log in the Reports tab. With no pane, Enter first shows
+/// the detail on the whole screen, and Enter there opens the log. A
+/// worker of another host of mike gets the container that its daemon
+/// names, and a session with no container that riff knows gets none.
+#[test]
+fn enter_on_a_worker_opens_its_session_log() {
+    use crate::tui::reports::{NO_LOG_OF_SESSION, Report, Source};
+
+    let busy = Source {
+        name: "riff-issue-1590-5b1e2a90".into(),
+        host: None,
+    };
+    // 80 x 24: the pane shows, and Enter opens the log at once.
+    let mut state = mock_up();
+    let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
+    state.drawn(&view);
+    state.on_key(Key::Row(row_of(&state, "5b1e2a90")));
+    assert_eq!(state.on_key(Key::Enter), None);
+    assert_eq!(state.tab(), Tab::Reports);
+    assert_eq!(state.reports().report(), Report::Log);
+    assert_eq!(state.log_wanted(), Some(&busy));
+
+    // 40 x 24: no pane. The detail first, then the log.
+    let mut state = mock_up();
+    let view = compute_view(&state, Rect::new(0, 0, 40, 24), NOW);
+    state.drawn(&view);
+    state.on_key(Key::Row(row_of(&state, "5b1e2a90")));
+    state.on_key(Key::Enter);
+    assert!(state.sessions.full());
+    assert_eq!(state.tab(), Tab::Sessions);
+    assert_eq!(
+        drawn(&state, 40, 24)[23],
+        "Esc back  Enter log  l lead  ? help"
+    );
+    assert_eq!(
+        drawn(&state, 80, 24)[23],
+        " Esc back  Enter log  l lead  t take over  ? help"
+    );
+    state.on_key(Key::Enter);
+    assert_eq!(state.tab(), Tab::Reports);
+    assert_eq!(state.log_wanted(), Some(&busy));
+
+    // The blocked worker runs in no container that riff knows.
+    let mut state = mock_up();
+    state.on_key(Key::Enter);
+    assert!(state.sessions.full());
+    state.on_key(Key::Enter);
+    assert_eq!(state.tab(), Tab::Sessions);
+    assert_eq!(state.shown_note(), Some(NO_LOG_OF_SESSION));
+
+    // The daemon of mike on pangolin names the container of 9c0d1e2f.
+    let mut state = mock_up();
+    let (mut look, at) = state.last_look().map(|(l, at)| (l.clone(), at)).unwrap();
+    let facts = riff_client::daemons::Facts {
+        build: "0.1.0 d2ae0801c0de 2026-11-06T12:00:00Z".into(),
+        sessions: vec![riff_client::daemons::Session {
+            name: "riff-issue-88-9c0d1e2f".into(),
+            item: "issue-88".into(),
+            phase: Phase::Works,
+            last: String::new(),
+            digest: String::new(),
+        }],
+        ..riff_client::daemons::Facts::default()
+    };
+    let mut daemon = info(
+        "riff://mike@pangolin/como-technologies/strata?session=d0d0d0d0",
+        SessionState::Idle,
+    );
+    daemon.machine = Some(riff_core::wire::MachineInfo {
+        numbers: facts.line(),
+        age_secs: 10,
+    });
+    look.who.sessions.push(daemon);
+    state.looked(look, at);
+    let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
+    state.drawn(&view);
+    state.on_key(Key::Char('e'));
+    state.on_key(Key::Row(row_of(&state, "9c0d1e2f")));
+    state.on_key(Key::Enter);
+    assert_eq!(
+        state.log_wanted(),
+        Some(&Source {
+            name: "riff-issue-88-9c0d1e2f".into(),
+            host: Some("pangolin".into()),
+        })
+    );
+    // A worker of brett: his daemon is not of mike.
+    state.on_key(Key::Open(Tab::Sessions));
+    state.on_key(Key::Row(row_of(&state, "7a8b9c0d")));
+    state.on_key(Key::Enter);
+    assert_eq!(state.tab(), Tab::Sessions);
+    assert!(state.sessions.full());
+}
+
 /// A click selects a row, a click on `▶` or `▼` folds or opens its
 /// group, and a double click presses Enter (01M6VAZKG8FS4HEA9VSA4Z4YF1).
 #[test]

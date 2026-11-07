@@ -86,7 +86,7 @@
 //! |---|---|
 //! | `↑` `↓` `j` `k`, `PgUp` `PgDn`, `g` `G`, `Home` `End` | Select a row. |
 //! | `←` `→`, `Space` | Fold or open a group. `←` on a session selects its group. |
-//! | `Enter` | A group: fold or open. A lead of this machine: attach. A session: its detail on the whole screen. |
+//! | `Enter` | A group: fold or open. A lead of this machine: attach. A worker in a container of a daemon of yours: its Session log in the Reports tab, and with no detail pane, its detail on the whole screen first. Each other session: its detail on the whole screen. |
 //! | `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. |
 //! | `t` | Take over the selected session, after `y` (`riff takeover NAME`). |
 //! | `x` | End the selected session of the daemon, after `y` (`riff daemon end NAME`). |
@@ -114,6 +114,7 @@ use riff_core::build::Build;
 use riff_core::name::{Repo, ThreadName};
 use riff_core::wire::{PersonRole, RiffState, SessionInfo, SessionState, Waits};
 
+use super::reports::Source;
 use super::view::{Hit, Layout, Placed, style_of, width};
 use super::{Action, Effect, Key, Mark, Question, State};
 use crate::text::{self, SessionKind, safe};
@@ -165,6 +166,8 @@ pub struct Choices {
     /// True while the detail of the selected row shows on the whole
     /// screen.
     full: bool,
+    /// True when the tab showed its detail pane at the last draw.
+    pub(super) pane: bool,
 }
 
 impl Choices {
@@ -786,10 +789,50 @@ impl State {
                 name: item.live().map(|c| c.name.clone()),
                 lead: item.lead(),
                 host: item.key(Level::Host).to_owned(),
+                log: self.log_of(item),
             }),
             Row::Group { .. } => None,
         };
         Some(Picked { repo, session })
+    }
+
+    /// The Session log of the worker `item` (01M6VT3JS3HRKXEJKDV0C97VZS):
+    /// its container on this machine, else the container of the session
+    /// in the facts that the daemon of its host sent, when the host is of
+    /// the person of the TUI. A container of the daemon is named
+    /// `riff-ITEM-ID8`, with the first 8 characters of the session ID. A
+    /// lead has none: Enter attaches to it.
+    fn log_of(&self, item: &Item) -> Option<Source> {
+        if item.lead() {
+            return None;
+        }
+        if let Some(c) = item.live() {
+            return Some(Source {
+                name: c.name.clone(),
+                host: None,
+            });
+        }
+        let [user, host, _] = &item.place;
+        let id: String = item.id().chars().take(8).collect();
+        if user != self.me.who().user() || id.is_empty() {
+            return None;
+        }
+        let end = format!("-{id}");
+        let hosts = riff_client::daemons::hosts(self.model.on_server());
+        let name = hosts
+            .iter()
+            .find(|h| &h.host == host && &h.user == user)?
+            .facts
+            .sessions
+            .iter()
+            .find(|s| s.name.ends_with(&end))?
+            .name
+            .clone();
+        let here = host == self.me.place().host();
+        Some(Source {
+            name,
+            host: (!here).then(|| host.clone()),
+        })
     }
 
     /// Selects the row that `to` gives from the place of the selected row
@@ -956,17 +999,24 @@ impl State {
         }
     }
 
-    /// Enter: a group folds or opens, a lead of this machine attaches, and
-    /// each other session shows its detail on the whole screen.
+    /// Enter: a group folds or opens, and a lead of this machine
+    /// attaches. A worker in a container opens its Session log in the
+    /// Reports tab (01M6VT3JS3HRKXEJKDV0C97VZS): with no detail pane, it
+    /// first shows its detail on the whole screen. Each other session
+    /// shows its detail on the whole screen.
     fn enter(&mut self) -> Option<Action> {
         let picked = self.picked()?;
-        match &picked.session {
+        match picked.session {
             None => self.fold(None, None),
             Some(Picked1 {
                 lead: true,
                 name: Some(name),
                 ..
-            }) => return Some(Action::Attach(name.clone())),
+            }) => return Some(Action::Attach(name)),
+            Some(Picked1 { log: Some(log), .. }) if self.sessions.full || self.sessions.pane => {
+                self.open_log(log);
+            }
+            Some(_) if self.sessions.full => self.note(super::reports::NO_LOG_OF_SESSION),
             Some(_) => self.sessions.full = true,
         }
         None
@@ -982,6 +1032,7 @@ impl State {
                     lead: true,
                     name: None,
                     host,
+                    ..
                 }),
             ..
         }) = &picked
@@ -1113,6 +1164,8 @@ struct Picked1 {
     name: Option<String>,
     lead: bool,
     host: String,
+    /// Its Session log, for a worker in a container.
+    log: Option<Source>,
 }
 
 /// The counts of a list of sessions: by mark, by word, the sessions that
@@ -1198,9 +1251,8 @@ pub fn body(
     let tree = state.tree();
     let rows = state.rows(&tree);
     let at = state.at(&rows);
-    let wide = layout == Layout::Wide;
     let full = state.sessions.full;
-    let pane = wide && !full && area.height + 4 >= PANE_ROWS;
+    let pane = pane(state, area, layout);
     let fit = if pane {
         usize::from(area.height.saturating_sub(1 + PANE))
     } else {
@@ -1267,6 +1319,13 @@ pub fn body(
         }
     }
     (placed, hits, top, fit)
+}
+
+/// True when the tab shows the detail pane in the body `area`: in the
+/// wide layout, with 24 rows or more, and no detail on the whole screen
+/// (01M6VGH4QSE8BP51R3TZ9SJDVY).
+pub fn pane(state: &State, area: Rect, layout: Layout) -> bool {
+    layout == Layout::Wide && !state.sessions.full && area.height + 4 >= PANE_ROWS
 }
 
 /// The first row of a window of `fit` rows of `len` rows, after a window
@@ -1739,12 +1798,20 @@ fn group_detail(state: &State, chain: &[&Group]) -> (String, Vec<Line<'static>>)
 /// ([`super::machines::filter_keys`]).
 pub fn keys(state: &State, layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
     if state.sessions.full {
-        return vec![
-            ("Esc", "back", Some(Key::Esc)),
-            ("l", "lead", Some(Key::Char('l'))),
-            ("t", "take over", Some(Key::Char('t'))),
-            ("?", "help", Some(Key::Help)),
-        ];
+        let log = state
+            .picked()
+            .and_then(|p| p.session)
+            .is_some_and(|s| s.log.is_some());
+        let mut keys = vec![("Esc", "back", Some(Key::Esc))];
+        if log {
+            keys.push(("Enter", "log", Some(Key::Enter)));
+        }
+        keys.push(("l", "lead", Some(Key::Char('l'))));
+        if !log || layout == Layout::Wide {
+            keys.push(("t", "take over", Some(Key::Char('t'))));
+        }
+        keys.push(("?", "help", Some(Key::Help)));
+        return keys;
     }
     match layout {
         Layout::Wide => vec![
@@ -1772,7 +1839,10 @@ pub fn help_keys() -> Vec<(&'static str, &'static str)> {
         ("↑ ↓ j k", "select a row"),
         ("PgUp PgDn g G", "move a page, or to the first or last row"),
         ("← → Space", "fold or open a group"),
-        ("Enter", "fold a group, attach to a lead, or open a session"),
+        (
+            "Enter",
+            "fold, attach to a lead, or open a session or its log",
+        ),
         ("l", "attach to the lead"),
         ("t", "take over the session, after y"),
         ("x", "end the session of the daemon, after y"),

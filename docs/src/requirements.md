@@ -7395,6 +7395,39 @@ that builds it merges.
   last reply, so a read with no change costs no point. The two tabs
   share the ETag of each reply. Supersedes 01M6VGHPGYF1G3BJ7J1W8ZZM17 in
   part.
+- **01M6VT3JFEKD2FEQGNGGKHC8X5** The Reports tab of the TUI has three
+  reports: Usage, Audit and Session log. The row under the header names
+  them, with the report that shows in `[ ]`. `←` and `→` show the
+  report before or after, and a click on a name shows it. A report reads
+  no source on a timer. The usage and the audit are of the repository of
+  the working folder, else of the first repository with a live session.
+  They start with the current wave, the open wave with the lowest
+  number. `[` and `]` show the wave before or after.
+- **01M6VT3JHVFQ27VJE8987WET34** The Usage report of the Reports tab
+  reads the usage of a wave with the code of `riff usage --wave N` when
+  it shows with no read yet, after `[` or `]`, and on `r`. It shows the
+  total of the wave, and a row for each issue with its number, its
+  title, its tokens and its models, the model with the most tokens
+  first. `Enter` on an issue shows its claims as `riff usage ISSUE`
+  prints them, from the same read, and `Esc` goes back. The note line
+  shows the age of the read.
+- **01M6VT3JMABMEXSBPE414MBJZP** The Audit report of the Reports tab
+  says first that the audit reads the log of riff-server and the forge.
+  `Enter` runs the code of `riff audit --wave N` in a task of its own,
+  and `r` runs it again after an audit. The report shows each rule with
+  `pass`, `fail` or `not checked`, as `riff audit` prints it.
+- **01M6VT3JPQXRWMX9PWYADT4MJX** The Session log of the Reports tab
+  shows the events of one session as `riff daemon events NAME` shows
+  them, with its code: through the riff daemon of this machine, or
+  through riff-server as with `--host HOST` for a session on another
+  host of the same person. It follows the session while the report
+  shows, up to the end of the session, and keeps the last 2000 lines.
+  The window follows the end until the person scrolls up. `End` or `G`
+  follows the end again.
+- **01M6VT3JS3HRKXEJKDV0C97VZS** In the Sessions tab, Enter on a worker
+  in a container of a riff daemon of the person opens its Session log in
+  the Reports tab. With no detail pane, Enter first shows the detail of
+  the session on the whole screen, and Enter there opens its log.
 
 ## The notes of the lead
 
