@@ -19,15 +19,21 @@
 //!        STATE   ITEM   TITLE                           WHO / PULL REQUEST   AGE
 //!    !   stuck   #1601  Fix the help                    PR #1604 conflict    2h
 //!  > ○   free    #1620  Add the flag --format           -                    -
+//!    ○   free    #1622  The book names the flag         -                    -
 //!    ◌   held    #1631  Design: the web UI              waits for mike       3d
 //!    !   work    #994   Design: the TUI of riff         3a3f8d5d blocked     32m
+//!    ●   work    #1590  An idle look asks GitHub first  5b1e2a90 busy        40m
+//!    ●   work    #1594  riff counts the gh calls        9c0d1e2f busy        1h
 //!    ◐   verify  #1599  The wave takes an issue         PR #1614 verify      5m
+//!    ◐   verify  #1600  The book tells how to detach    PR #1613 merge       9m
 //!        done 4 · closed 1 (Enter shows them)
 //!        main: the full check of 3f2a91c runs · 4 of 9 jobs done
 //!  ▶ como-technologies/strata · Wave 5                               1 work 3 done
+//!  ▶ como-technologies/kadomony · no wave
 //!
 //!  NEXT WAVES · como-technologies/riff
 //!    Wave 49: 8 items    Wave 50: 3 items    Backlog: 41 items
+//!
 //!
 //!  The boards come from gh, 41s ago.
 //!  ↑↓ select  Enter open  h hold  f free  p pause  o URL  r read again  ? help
@@ -1504,6 +1510,60 @@ mod tests {
             " ↑↓ select  Enter open  h hold  f free  p pause  o URL  r read again  ? help",
         ];
         assert_eq!(drawn(&mock_up(), 80, 24), want);
+    }
+
+    /// The number of the items of each state in the rows `rows` of a
+    /// mock-up: from the counts of the line of its open board, and from
+    /// its rows of items.
+    fn counts_and_rows(rows: &[String]) -> (BTreeMap<String, usize>, BTreeMap<String, usize>) {
+        let board = rows.iter().find(|row| row.starts_with(" ▼ ")).unwrap();
+        let words: Vec<&str> = board
+            .split("Wave 48")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .collect();
+        let counts = words
+            .chunks(2)
+            .map(|pair| (pair[1].to_owned(), pair[0].parse().unwrap()))
+            .collect();
+        let mut items = BTreeMap::new();
+        for row in rows {
+            let words: Vec<&str> = row.split_whitespace().skip_while(|w| *w == ">").collect();
+            if let [_, state, item, ..] = words[..]
+                && item.starts_with('#')
+            {
+                *items.entry(state.to_owned()).or_insert(0) += 1;
+            }
+        }
+        (counts, items)
+    }
+
+    /// The mock-up in the rustdoc of this module and in "See the open
+    /// items of a wave" of the book is the screen of the 80 x 24 test, and
+    /// the counts of its board match its rows (#1707).
+    #[test]
+    fn the_rustdoc_and_the_book_show_the_screen_and_its_counts_match_its_rows() {
+        use crate::tui::text_block;
+
+        let screen = drawn(&mock_up(), 80, 24);
+        let rustdoc = text_block(include_str!("waves.rs"), "//! # Design", "//! ");
+        assert_eq!(rustdoc, screen);
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/waves.md"
+        ))
+        .unwrap();
+        let book = text_block(&book, "### See the open items of a wave", "");
+        assert_eq!(book, screen);
+        let (counts, rows) = counts_and_rows(&book);
+        assert_eq!(counts, rows);
+        assert_eq!(rows["work"], 3, "{book:#?}");
+        // A count that does not match its rows fails.
+        let mut wrong = book.clone();
+        wrong.retain(|row| !row.contains("#1594"));
+        let (counts, rows) = counts_and_rows(&wrong);
+        assert_ne!(counts, rows);
     }
 
     /// The screen test of the narrow layout of the Waves tab at 40 x 24

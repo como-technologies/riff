@@ -1575,8 +1575,8 @@ pub async fn set_limit(api: &Api, me: &SessionUri, host: &str, sessions: u32) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::News;
     use crate::tui::view::{compute_view, render};
+    use crate::tui::{News, text_block};
     use ratatui::buffer::Buffer;
     use riff_client::daemons::{Caps, Session, Wave};
     use riff_client::sessions::Phase;
@@ -1819,24 +1819,6 @@ mod tests {
         let head = format!("──{title} ");
         let rest = width - head.chars().count();
         format!("{head}{}", "─".repeat(rest))
-    }
-
-    /// The lines of the first `text` block of `doc` after the line
-    /// `after`, with `strip` taken from the start of each line, and no
-    /// spaces at their ends.
-    fn text_block(doc: &str, after: &str, strip: &str) -> Vec<String> {
-        let start = doc.find(after).unwrap_or_else(|| panic!("{after}"));
-        doc[start..]
-            .lines()
-            .map(|line| {
-                line.strip_prefix(strip)
-                    .unwrap_or(line.trim_start_matches(strip.trim_end()))
-            })
-            .skip_while(|line| *line != "```text")
-            .skip(1)
-            .take_while(|line| *line != "```")
-            .map(|line| line.trim_end().to_owned())
-            .collect()
     }
 
     /// The state of [`mock_up`] with the filter `pang` kept: `/`, the

@@ -1421,6 +1421,10 @@ riff
   strip shows `Sessions•`.
 - With no riff daemon on this machine, the tab shows the sessions of
   riff-server, and the row before the last says so.
+- The titles of the items come from `gh` each minute, for each
+  repository with a live session. The tab asks GitHub whether the list
+  of the open issues changed, as the Waves tab does: the answer "no
+  change" costs no point.
 
 | Mark | Word | When |
 |---|---|---|
