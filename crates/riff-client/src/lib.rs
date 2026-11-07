@@ -32,6 +32,7 @@
 //! | [`platform`] | The trait of the parts that each UI gives. |
 //! | [`sessions`] | The sessions model: the tree of `riff top` and the rows of `riff view`. |
 //! | [`threads`] | The threads model: the lines of `riff read`, `riff tail` and `riff chat`. |
+//! | [`chat`] | The wakes of the chat: the sessions that a line of `riff chat` and of the Chat tab of the TUI wakes. |
 //! | [`waves`] | The waves model: the board of `riff top` and the waves of `riff wave list`. |
 //! | [`machines`] | The machines model: the numbers of each host in `riff top` and `riff workers`. |
 //! | [`daemons`] | The daemons model: the facts of the riff daemon of each host in `riff who` and `riff top`. |
@@ -76,6 +77,7 @@
 //! checks it. `riff-server` does not use this crate.
 
 pub mod api;
+pub mod chat;
 pub mod daemons;
 pub mod device;
 pub mod files;

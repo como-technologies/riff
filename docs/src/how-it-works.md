@@ -2931,6 +2931,65 @@ a line that starts with `/`, start it with `//`.
 riff chat --color never
 ```
 
+### Chat in the TUI
+
+The Chat tab of the TUI shows the same chat, with the same rules for a
+line. Start the TUI in a terminal, and press `2`:
+
+```sh
+riff
+```
+
+```text
+ 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports
+ riff running · owner mike · build 10df8a4 · link ok 2s
+ chat · online: mike, brett · away: ann · a line wakes your leads
+──── Friday 2026-11-06 ──────────────────────────────────────────────
+ 12:01 <brett@strata> mike, can you look at #1608?
+ 12:02 [brett's lead, strata] noted: mike looks at #1608 after lunch
+ 12:20 * mike@thelio goes for lunch
+ 13:12 [mike's lead, riff] #1608 merged
+
+> @lead:riff what is next?
+ Enter wakes your lead in como-technologies/riff.
+ Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit
+```
+
+The row under the header names the people who are online and away.
+The prompt has the focus. Type a line, and press Enter. Before you
+press Enter, the row under the prompt says whom the line will wake. A
+line that fits no lead, or two leads, is not sent: it stays in the
+prompt, and the row says why. Your line shows once, from the server,
+as in `riff chat`. `/me TEXT` sends an action, and `/quit` ends the
+TUI.
+
+| Key | Does |
+|---|---|
+| `Enter` | Send the line. |
+| `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `6`, `?` and `q`. |
+| `i`, `Enter` | Go back to the prompt. |
+| `↑`, `↓` | Show a line that you sent. Out of the prompt: scroll one row. |
+| `PgUp`, `PgDn` | Show older or newer lines. |
+| `g`, `G` | Out of the prompt: show the oldest or the newest line. |
+| `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. |
+| `Ctrl-C` | End the TUI. The sessions go on. |
+
+```mermaid
+stateDiagram-v2
+    [*] --> Prompt: press 2
+    Prompt --> Prompt: a key types, Enter sends
+    Prompt --> Log: Esc
+    Log --> Prompt: i or Enter
+    Log --> [*]: q
+    Prompt --> [*]: Ctrl-C or /quit
+```
+
+The TUI follows the chat from its start, also while you look at
+another tab. Then each new line adds to the count after the name of
+the tab: `2 Chat•3` is three new lines. While the TUI cannot reach the
+chat, the row under the header says `(reconnecting…)`. `riff chat`
+stays: use it in a pipe, or in a split of tmux next to a lead.
+
 ## A signed message
 
 Each message carries a signature from the device key of its sender.

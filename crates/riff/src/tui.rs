@@ -28,7 +28,8 @@
 //!   C #1638 Waves, D #1639 Machines, E #1640 Chat, F #1641 Reports, G
 //!   #1642 Devices. Until then, the body names the commands of the CLI
 //!   that show its area ([`Tab::today`], 01M6VAZKVK7530JJ63S7RVF88J).
-//!   The Machines tab is built: see [`machines`].
+//!   The Machines tab ([`machines`]) and the Chat tab ([`chat`]) are
+//!   built.
 //!
 //! The render is pure (01M6VAZKNXZV1RTG7MT0GMHKT3). [`State`] holds what
 //! the TUI knows: the last look of riff-server, the fault of the link,
@@ -98,6 +99,11 @@
 //! a letter as [`Key::Char`]. The tab turns it into an [`Action`], for
 //! example [`machines::on_key`].
 //!
+//! The prompt of the Chat tab takes each key that types: there only
+//! Alt opens a tab, and `Ctrl-C` ends the TUI. [`State::input`] gives
+//! the keys of the tab ([`chat::key_of`]) before the keys of the frame
+//! ([`input_of`]).
+//!
 //! An action that changes something asks first in the note line
 //! ([`Question`], 01M6VAZKDEQ6951KGPGAMF1SNJ, 01M6VFD0S90SB8M8WV952NT4Y1):
 //! `Set the limit of thelio to 4 sessions? y/N`. `y` gives the action to
@@ -111,6 +117,7 @@
 //! small fixed set, from the state that riff-server derives and from
 //! the phase of a container session. The worst mark comes first.
 
+pub mod chat;
 pub mod machines;
 pub mod view;
 
@@ -246,9 +253,8 @@ impl Tab {
     pub fn today(self) -> &'static [&'static str] {
         match self {
             Tab::Sessions => &["riff top", "riff who"],
-            Tab::Chat => &["riff chat"],
             Tab::Waves => &["riff top", "riff wave list"],
-            Tab::Machines | Tab::Devices => &[],
+            Tab::Chat | Tab::Machines | Tab::Devices => &[],
             Tab::Reports => &["riff usage", "riff audit", "riff daemon events NAME"],
         }
     }
@@ -260,10 +266,11 @@ impl Tab {
     /// use riff::tui::Tab;
     ///
     /// assert!(Tab::Machines.built());
+    /// assert!(Tab::Chat.built());
     /// assert!(!Tab::Sessions.built());
     /// ```
     pub fn built(self) -> bool {
-        self == Tab::Machines
+        matches!(self, Tab::Machines | Tab::Chat)
     }
 }
 
@@ -432,6 +439,8 @@ pub enum Key {
     /// of the tab, the answer to a question, or a character of an
     /// answer.
     Char(char),
+    /// A key of the Chat tab: the prompt and the log.
+    Chat(chat::Key),
 }
 
 /// What the loop of the TUI does for a key.
@@ -444,6 +453,8 @@ pub enum Action {
     /// Set the most live sessions of `host` with the code of `riff
     /// daemon limit --sessions N` (01M6VFD0PPXDNH3NKD3YE4W9SB).
     Limit { host: String, sessions: u32 },
+    /// Post the line to the thread `chat`, as `riff chat` does.
+    Post(String),
 }
 
 /// A question in the note line (01M6VFD0S90SB8M8WV952NT4Y1): `y` gives
@@ -543,6 +554,8 @@ pub struct State {
     /// The filter of the Sessions tab, for example `host:thelio`
     /// (01M6VFD0M3RHT488D0RQ84RVMC).
     filter: Option<String>,
+    /// The Chat tab: the log, the prompt and the focus.
+    chat: chat::Chat,
 }
 
 impl State {
@@ -561,6 +574,7 @@ impl State {
             typing: None,
             host: None,
             filter: None,
+            chat: chat::Chat::default(),
         }
     }
 
@@ -701,10 +715,14 @@ impl State {
         self.filter.as_deref()
     }
 
-    /// Opens the tab `tab`: its news goes.
+    /// Opens the tab `tab`: its news goes. The prompt of the Chat tab
+    /// gets the focus.
     fn open(&mut self, tab: Tab) {
         self.tab = tab;
         self.news[tab as usize] = None;
+        if tab == Tab::Chat {
+            self.on_chat(chat::Key::Prompt);
+        }
     }
 
     /// Takes the key `key` of the person (01M6VAZJYYQZDHD6YDB0NBQ7KW,
@@ -773,6 +791,7 @@ impl State {
             Key::Quit => Some(Action::Quit),
             // The popup takes no key of a tab.
             _ if self.help => None,
+            Key::Chat(key) => self.on_chat(key),
             key => match self.tab {
                 Tab::Machines => machines::on_key(self, key),
                 _ => None,
@@ -785,6 +804,43 @@ impl State {
     /// (01M6VAZKG8FS4HEA9VSA4Z4YF1). A click on no place does nothing.
     pub fn on_click(&mut self, view: &view::View, column: u16, row: u16) -> Option<Action> {
         self.on_key(view.hit(column, row)?)
+    }
+
+    /// Keeps what the person saw in `view`, the view of the last draw:
+    /// a scroll of the log of the Chat tab needs its rows.
+    pub fn drawn(&mut self, view: &view::View) {
+        if let Some(window) = view.chat {
+            self.chat.window = window;
+        }
+    }
+
+    /// The input of the person in `event`. In the Chat tab, the keys of
+    /// the tab come first ([`chat::key_of`]), then the keys of the frame
+    /// ([`input_of`]). The help popup takes only the keys of the frame.
+    ///
+    /// ```
+    /// use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    /// use riff::tui::{Input, Key, State, Tab, chat};
+    /// use riff_core::build::Build;
+    ///
+    /// let q = Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+    /// let mut state = State::new(Build::this());
+    /// assert_eq!(state.input(&q), Some(Input::Key(Key::Quit)));
+    /// // In the prompt of the Chat tab, `q` types.
+    /// state.on_key(Key::Open(Tab::Chat));
+    /// assert_eq!(state.input(&q), Some(Input::Key(Key::Chat(chat::Key::Type('q')))));
+    /// // In the log, `q` ends the TUI.
+    /// state.on_key(Key::Chat(chat::Key::Log));
+    /// assert_eq!(state.input(&q), Some(Input::Key(Key::Quit)));
+    /// ```
+    pub fn input(&self, event: &ratatui::crossterm::event::Event) -> Option<Input> {
+        if self.tab == Tab::Chat
+            && !self.help
+            && let Some(key) = chat::key_of(event, self.chat.focus())
+        {
+            return Some(Input::Key(Key::Chat(key)));
+        }
+        input_of(event)
     }
 }
 
@@ -908,37 +964,40 @@ pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
 /// look in the header draws again after each wait.
 const INPUT_WAIT: Duration = Duration::from_millis(200);
 
-/// The next input of the person, or `None` when none comes in
+/// The next event of the terminal, or `None` when none comes in
 /// [`INPUT_WAIT`]. The blocking reads of crossterm run in a blocking
 /// task of tokio, not in the async loop, as in `riff view`.
-async fn next_input() -> Result<Option<Input>> {
+async fn next_event() -> Result<Option<ratatui::crossterm::event::Event>> {
     use ratatui::crossterm::event;
     tokio::task::spawn_blocking(|| {
         if !event::poll(INPUT_WAIT)? {
             return Ok(None);
         }
-        Ok(input_of(&event::read()?))
+        Ok(Some(event::read()?))
     })
     .await?
 }
 
 /// `riff` with no command, in a terminal: the TUI, as `me` at `api`,
-/// until the person ends it (01M6VAZ7WH3MFAYF4PAZW6EDVY). With `mouse`,
-/// the TUI takes the mouse (01M6VAZKG8FS4HEA9VSA4Z4YF1).
-pub async fn run(api: &Api, me: &SessionUri, mouse: bool) -> Result<()> {
+/// until the person ends it (01M6VAZ7WH3MFAYF4PAZW6EDVY). The Chat tab
+/// posts as `person`, as `riff chat` does. With `mouse`, the TUI takes
+/// the mouse (01M6VAZKG8FS4HEA9VSA4Z4YF1).
+pub async fn run(api: &Api, me: &SessionUri, person: &chat::Person, mouse: bool) -> Result<()> {
     use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
     use ratatui::crossterm::execute;
     // The first look runs before the TUI takes the terminal: its error
     // prints as in the CLI (01M6VAZKAH6B53YKR8W4YKNSH6).
     let first = look(api, me).await?;
     let mut state = State::new(Build::this());
-    state.looked(first, crate::run::now_ms());
+    let start = crate::run::now_ms();
+    state.looked(first, start);
+    state.chat_as(person.me.who().user(), u64::try_from(start).unwrap_or(0));
     let mut terminal = ratatui::try_init()?;
     if mouse && let Err(e) = execute!(std::io::stdout(), EnableMouseCapture) {
         ratatui::restore();
         return Err(e.into());
     }
-    let shown = frames(&mut terminal, &mut state, api, me).await;
+    let shown = frames(&mut terminal, &mut state, api, me, person).await;
     if mouse {
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
     }
@@ -948,12 +1007,14 @@ pub async fn run(api: &Api, me: &SessionUri, mouse: bool) -> Result<()> {
 
 /// The loop of [`run`]: it draws the state, takes the input of the
 /// person, looks at riff-server each [`every`], and runs each action in
-/// a task of its own.
+/// a task of its own. The [`chat::Link`] of `person` follows the thread
+/// `chat` and posts its lines.
 async fn frames(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut State,
     api: &Api,
     me: &SessionUri,
+    person: &chat::Person,
 ) -> Result<()> {
     use tokio::time::Instant;
     let mut input_at = Instant::now();
@@ -964,7 +1025,11 @@ async fn frames(
     // `r` while a look runs: look again after it.
     let mut again = false;
     let mut good_at = chrono::Local::now();
+    let mut link = chat::Link::start(person);
     loop {
+        for came in link.came() {
+            state.chat_came(came);
+        }
         if acting
             .as_ref()
             .is_some_and(tokio::task::JoinHandle::is_finished)
@@ -1012,9 +1077,18 @@ async fn frames(
         terminal.draw(|frame| {
             let shown = view::compute_view(state, frame.area(), crate::run::now_ms());
             view::render(&shown, frame.buffer_mut());
+            if let Some(at) = shown.cursor {
+                frame.set_cursor_position(at);
+            }
             drawn = Some(shown);
         })?;
-        let Some(input) = next_input().await? else {
+        if let Some(shown) = &drawn {
+            state.drawn(shown);
+        }
+        let Some(event) = next_event().await? else {
+            continue;
+        };
+        let Some(input) = state.input(&event) else {
             continue;
         };
         input_at = Instant::now();
@@ -1035,6 +1109,7 @@ async fn frames(
                 {
                     task.abort();
                 }
+                link.end().await;
                 return Ok(());
             }
             Some(Action::Look) if looking.is_some() => again = true,
@@ -1047,6 +1122,7 @@ async fn frames(
                     machines::set_limit(&api, &me, &host, sessions).await
                 }));
             }
+            Some(Action::Post(body)) => link.send(body),
             None => {}
         }
     }

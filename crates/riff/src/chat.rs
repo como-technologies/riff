@@ -66,10 +66,11 @@
 //!
 //! `@lead:REPO` and `@USER:REPO` wake one lead: the lead in the
 //! repository REPO (01M5QVH7KDK3R2S4NDFB2V1XY9). REPO is `OWNER/REPO`, or
-//! the name after the slash. [`wakes`] reads the line, and
-//! [`resolve`] picks the lead from the leads that riff-server lists. When
-//! no lead or more than one lead fits, the chat sends nothing and names
-//! the leads that it found.
+//! the name after the slash. [`riff_client::chat::wakes`] reads the line,
+//! and [`riff_client::chat::resolve`] picks the lead from the leads that
+//! riff-server lists. `riff chat` and the Chat tab of the TUI share them
+//! ([`crate::tui::chat`]). When no lead or more than one lead fits, the
+//! chat sends nothing and names the leads that it found.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -83,7 +84,6 @@
 //!     Note over A,S: no lead or two leads fit: the chat sends nothing
 //! ```
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::io::{IsTerminal, Write as _};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -160,8 +160,9 @@ pub fn marked(body: &str) -> bool {
 /// Posts `body` in riff chat as `me`, as a line that riff writes: the
 /// kind of the post is `riff` (01M5TKMVB7CF0QNAWXEVGEQETJ). The watch of
 /// a deploy, the daemon and `riff release` post so, as the person of the
-/// riff. `to` is what [`wakes`] gave for `body`. A line of the kind `riff`
-/// is no word of the person: `riff release approve` skips it.
+/// riff. `to` is what [`riff_client::chat::wakes`] gave for `body`. A
+/// line of the kind `riff` is no word of the person: `riff release
+/// approve` skips it.
 ///
 /// A riff-server of the release before refuses the kind `riff`. After a
 /// rollback of the server to that release, the line goes again with the
@@ -235,191 +236,6 @@ pub fn refuses_kind_riff(error: &anyhow::Error) -> bool {
     error.downcast_ref::<Refusal>().is_some_and(|refusal| {
         refusal.status == reqwest::StatusCode::BAD_REQUEST && refusal.text.contains("no such kind")
     })
-}
-
-/// The sessions that a chat line of `sender` wakes: the leads of each
-/// user that the line names with `@USER`, and the leads of the sender for
-/// `@lead`. `@USER:REPO` and `@lead:REPO` name the one lead in the
-/// repository REPO: the selector keeps REPO as typed (`OWNER/REPO` or
-/// the name after the slash), and [`resolve`] makes it `OWNER/REPO`.
-/// Punctuation after the name does not count. A line that names no one
-/// wakes the leads of the sender, so a question never waits unseen.
-///
-/// ```
-/// use riff::chat::wakes;
-///
-/// let lead = |user: &str| format!("user={user},lead=true").parse().unwrap();
-/// let in_repo = |user: &str, repo: &str| {
-///     format!("user={user},repo={repo},lead=true").parse().unwrap()
-/// };
-/// assert_eq!(wakes("@lead: is #12 done?", "mike"), [lead("mike")]);
-/// assert_eq!(wakes("ask @brett, and @lead", "mike"), [lead("brett"), lead("mike")]);
-/// assert_eq!(wakes("@mike @lead", "mike"), [lead("mike")]);
-/// assert_eq!(wakes("mail mike@thelio about it", "brett"), [lead("brett")]);
-/// assert_eq!(wakes("no names here", "brett"), [lead("brett")]);
-///
-/// // A name with a repository wakes one lead.
-/// assert_eq!(wakes("@lead:strata is #12 done?", "mike"), [in_repo("mike", "strata")]);
-/// assert_eq!(
-///     wakes("@brett:como-technologies/strata, can I take #14?", "mike"),
-///     [in_repo("brett", "como-technologies/strata")]
-/// );
-/// assert_eq!(
-///     wakes("@lead:strata @lead:riff @lead", "mike"),
-///     [in_repo("mike", "strata"), in_repo("mike", "riff"), lead("mike")]
-/// );
-/// // Text after a colon that is no repository is no repository.
-/// assert_eq!(wakes("@brett: can I take #14?", "mike"), [lead("brett")]);
-/// ```
-pub fn wakes(line: &str, sender: &str) -> Vec<Selector> {
-    let mut named: Vec<(&str, Option<&str>)> = Vec::new();
-    for word in line.split_whitespace() {
-        let Some(name) = word.strip_prefix('@') else {
-            continue;
-        };
-        let name = name.trim_end_matches(|c: char| !c.is_alphanumeric());
-        let (user, repo) = match name.split_once(':') {
-            Some((user, repo)) if is_repo(repo) => (user, Some(repo)),
-            _ => (name, None),
-        };
-        let user = if user == "lead" { sender } else { user };
-        if !user.is_empty() && !named.contains(&(user, repo)) {
-            named.push((user, repo));
-        }
-    }
-    if named.is_empty() {
-        named.push((sender, None));
-    }
-    named
-        .into_iter()
-        .map(|(user, repo)| match repo {
-            Some(repo) => Selector::lead(user, repo),
-            None => Selector {
-                user: Some(user.to_owned()),
-                lead: Some(true),
-                ..Selector::default()
-            },
-        })
-        .collect()
-}
-
-/// True when `text` is `REPO` or `OWNER/REPO`, with letters, digits, `-`,
-/// `_` and `.` in each part.
-fn is_repo(text: &str) -> bool {
-    let part = |p: &str| {
-        !p.is_empty()
-            && p.chars()
-                .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
-    };
-    text.split_once('/')
-        .map_or_else(|| part(text), |(owner, name)| part(owner) && part(name))
-}
-
-/// Makes each selector of [`wakes`] that names a repository exact: the
-/// lead of its user in `OWNER/REPO`, from the sessions that riff-server
-/// lists (`leads` may hold other sessions: only a lead counts). A
-/// repository that is `OWNER/REPO` must be the repository of a lead of
-/// the user. A repository that is a name must be the name after the slash
-/// of the repository of exactly one lead of the user. A selector with no
-/// repository stays as it is.
-///
-/// When no lead fits, or more than one lead fits, the answer is the text
-/// for the person. It names the leads that the chat found. The chat sends
-/// nothing then.
-///
-/// ```
-/// use riff::chat::{resolve, wakes};
-/// use riff_core::name::SessionUri;
-///
-/// let leads: Vec<SessionUri> = [
-///     "riff://brett@heron/como-technologies/strata?session=b1&lead=true",
-///     "riff://brett@heron/como-technologies/riff?session=b2&lead=true",
-///     "riff://brett@heron/acme/riff?session=b3&lead=true",
-///     "riff://brett@heron/como-technologies/riff?session=b4",
-///     "riff://mike@thelio/como-technologies/riff?session=m1&lead=true",
-/// ].into_iter().map(|u| u.parse().unwrap()).collect();
-/// let one = |line: &str| resolve(wakes(line, "mike"), &leads);
-/// let selector = |s: &str| vec![s.parse().unwrap()];
-///
-/// // The name after the slash fits one lead of the user.
-/// assert_eq!(
-///     one("@brett:strata hi"),
-///     Ok(selector("user=brett,repo=como-technologies/strata,lead=true"))
-/// );
-/// assert_eq!(
-///     one("@lead:riff hi"),
-///     Ok(selector("user=mike,repo=como-technologies/riff,lead=true"))
-/// );
-/// // OWNER/REPO fits one lead, also when the name fits two.
-/// assert_eq!(
-///     one("@brett:acme/riff hi"),
-///     Ok(selector("user=brett,repo=acme/riff,lead=true"))
-/// );
-/// // A line with no repository stays as it is.
-/// assert_eq!(one("@brett hi"), Ok(selector("user=brett,lead=true")));
-///
-/// // Two leads fit, or no lead fits: no line, and the leads that it found.
-/// assert_eq!(
-///     one("@brett:riff hi"),
-///     Err("brett has 2 leads in a repository with the name riff: \
-///          acme/riff, como-technologies/riff. Use OWNER/REPO.".to_owned())
-/// );
-/// assert_eq!(
-///     one("@brett:other hi"),
-///     Err("brett has no lead in other. The leads of brett: acme/riff, \
-///          como-technologies/riff, como-technologies/strata.".to_owned())
-/// );
-/// assert_eq!(
-///     one("@lead:other hi"),
-///     Err("mike has no lead in other. The leads of mike: \
-///          como-technologies/riff.".to_owned())
-/// );
-/// assert_eq!(
-///     resolve(wakes("@ann:riff", "mike"), &leads),
-///     Err("ann has no lead.".to_owned())
-/// );
-/// ```
-pub fn resolve(to: Vec<Selector>, leads: &[SessionUri]) -> Result<Vec<Selector>, String> {
-    to.into_iter()
-        .map(|selector| match (&selector.user, &selector.repo) {
-            (Some(user), Some(asked)) => {
-                pick(user, asked, leads).map(|repo| Selector::lead(user, &repo))
-            }
-            _ => Ok(selector),
-        })
-        .collect()
-}
-
-/// The `OWNER/REPO` of the one lead of `user` that `asked` names.
-fn pick(user: &str, asked: &str, leads: &[SessionUri]) -> Result<String, String> {
-    let repos: BTreeSet<String> = leads
-        .iter()
-        .filter(|l| l.lead() && l.who().user() == user)
-        .map(|l| l.place().repo_text())
-        .collect();
-    let fits = |repo: &&String| {
-        repo.as_str() == asked || (!asked.contains('/') && repo.rsplit('/').next() == Some(asked))
-    };
-    let fit: Vec<&String> = repos.iter().filter(fits).collect();
-    let list = |repos: &mut dyn Iterator<Item = &String>| {
-        repos.map(|r| safe(r)).collect::<Vec<_>>().join(", ")
-    };
-    let user = safe(user);
-    match fit[..] {
-        [one] => Ok(one.clone()),
-        [] if repos.is_empty() => Err(format!("{user} has no lead.")),
-        [] => Err(format!(
-            "{user} has no lead in {}. The leads of {user}: {}.",
-            safe(asked),
-            list(&mut repos.iter())
-        )),
-        _ => Err(format!(
-            "{user} has {} leads in a repository with the name {}: {}. Use OWNER/REPO.",
-            fit.len(),
-            safe(asked),
-            list(&mut fit.into_iter())
-        )),
-    }
 }
 
 /// What a person typed in the chat.
@@ -544,22 +360,80 @@ where
     if last_day != Some(at.date_naive()) {
         let _ = writeln!(out, "{}", styled(DIM, &at.format("%Y-%m-%d").to_string()));
     }
-    let Sender { name, session } = m.sender();
-    let name = safe(&name);
-    let name = styled(crate::style::session(&m.from), &name);
-    let (who, body) = match (m.action(), session) {
-        (Some(text), _) => (format!("* {name}"), text),
-        (None, false) => (format!("<{name}>"), m.body.as_str()),
-        (None, true) => (format!("[{name}]"), m.body.as_str()),
-    };
-    let body = safe(body).replace('\t', "    ");
+    let said = said(m);
+    let name = styled(crate::style::session(&m.from), &said.name);
     let _ = write!(
         out,
-        "{} {who} {}",
+        "{} {}{name}{} {}",
         styled(DIM, &at.format("%H:%M").to_string()),
-        body.lines().collect::<Vec<_>>().join("\n      ")
+        said.before,
+        said.after,
+        said.body
+            .lines()
+            .collect::<Vec<_>>()
+            .join(&format!("\n{INDENT}"))
     );
     out
+}
+
+/// The indent of each more line of the body of a chat line: the width
+/// of the time `HH:MM` and a space.
+pub const INDENT: &str = "      ";
+
+/// The sender and the body of a chat line, as `riff chat` and the Chat
+/// tab of the TUI show them ([`said`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Said {
+    /// The text before the name: `<` for a person, `[` for a session,
+    /// `* ` for an action.
+    pub before: &'static str,
+    /// The name of the sender ([`Line::sender`]), safe.
+    pub name: String,
+    /// The text after the name: `>` for a person, `]` for a session.
+    pub after: &'static str,
+    /// The body, or the text of an action, safe, with four spaces for a
+    /// tab.
+    pub body: String,
+}
+
+/// The sender and the body of the chat line `m`: a person as
+/// `<USER@HOST>`, a session as `[NAME]`, and an action as `* NAME
+/// TEXT`. It removes each escape sequence from the body and the sender.
+///
+/// ```
+/// use riff_client::api::Checked;
+/// use riff_client::threads::Line;
+/// use riff_core::wire::{Kind, Message};
+///
+/// let message = Message {
+///     seq: 3,
+///     from: "riff://mike@thelio".parse()?,
+///     to: vec![],
+///     body: "/me waves\x1b[2J\tbye".into(),
+///     at_ms: 0,
+///     kind: Kind::Message,
+///     sig: None,
+///     payload: None,
+/// };
+/// let checked = Checked { message, verified: true };
+/// let said = riff::chat::said(&Line::of(&checked, &"chat".parse()?));
+/// assert_eq!((said.before, said.name.as_str(), said.after), ("* ", "mike@thelio", ""));
+/// assert_eq!(said.body, "waves    bye");
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn said(m: &Line) -> Said {
+    let Sender { name, session } = m.sender();
+    let (before, after, body) = match (m.action(), session) {
+        (Some(text), _) => ("* ", "", text),
+        (None, false) => ("<", ">", m.body.as_str()),
+        (None, true) => ("[", "]", m.body.as_str()),
+    };
+    Said {
+        before,
+        name: safe(&name),
+        after,
+        body: safe(body).replace('\t', "    "),
+    }
 }
 
 /// Runs the chat of `me` until stdin ends, or the person types
@@ -626,7 +500,8 @@ pub async fn run(
     let mut stream = Box::pin(first.chain(again));
     let (screen, mut input) = Screen::start(draft)?;
     let _ = LINES.set(screen.lines.clone());
-    let (send, posts) = posts(api, me, thread, screen.lines.clone());
+    let lines = screen.lines.clone();
+    let (send, posts) = posts(api, me, thread, move |text| lines.warn(text));
     let mut link = crate::view::Reconnect::default();
     let follow = Follow::this();
     let update = follow.new_one();
@@ -674,50 +549,34 @@ pub async fn run(
     Ok(())
 }
 
-/// The task that posts each typed line of the chat, in order
-/// (01M4A804AWYEHPYZ966A6PXRPF). A post that fails shows its error on
-/// the screen. A line with a lead that the chat cannot pick
-/// ([`resolve`]) is not sent, and the screen names the leads that the
-/// chat found.
-fn posts(
+/// The task that posts each line of the chat that `me` sends, in
+/// order (01M4A804AWYEHPYZ966A6PXRPF): `riff chat` and the Chat tab of
+/// the TUI give it each body. The receivers come from
+/// [`riff_client::chat::receivers`]. A post that fails gives `fault` its
+/// error, as a safe line for the person. A line with a lead that the
+/// chat cannot pick ([`riff_client::chat::resolve`]) is not sent, and
+/// the line names the leads that the chat found.
+pub fn posts(
     api: &Api,
     me: &SessionUri,
     thread: &ThreadName,
-    lines: Lines,
+    fault: impl Fn(&str) + Send + 'static,
 ) -> (mpsc::UnboundedSender<String>, tokio::task::JoinHandle<()>) {
     let (send, mut typed) = mpsc::unbounded_channel::<String>();
     let (api, me, thread) = (api.clone(), me.clone(), thread.clone());
     let task = tokio::spawn(async move {
         while let Some(body) = typed.recv().await {
             let sent = async {
-                let to = receivers(&api, &me, &body).await?;
+                let to = riff_client::chat::receivers(&api, &me, &body).await?;
                 api.post(&me, Some(&thread), &to, &body, Kind::Message)
                     .await
             };
             if let Err(e) = sent.await {
-                lines.warn(&format!("riff: cannot send the line: {e:#}"));
+                fault(&safe(&format!("riff: cannot send the line: {e:#}")));
             }
         }
     });
     (send, task)
-}
-
-/// The selectors of the line `body` of `me`: [`wakes`], and [`resolve`]
-/// with the leads that riff-server lists when the line names a
-/// repository. The error names the leads that it found, or is the error
-/// of the call to riff-server.
-async fn receivers(api: &Api, me: &SessionUri, body: &str) -> Result<Vec<Selector>> {
-    let to = wakes(body, me.who().user());
-    if to.iter().all(|s| s.repo.is_none()) {
-        return Ok(to);
-    }
-    let leads: Vec<SessionUri> = api
-        .who(me, false)
-        .await?
-        .into_iter()
-        .map(|s| s.uri)
-        .collect();
-    resolve(to, &leads).map_err(anyhow::Error::msg)
 }
 
 /// The printer of the line editor: it prints above the prompt.

@@ -315,3 +315,88 @@ async fn a_first_look_that_fails_ends_the_tui_with_the_error_of_the_cli() {
     assert!(shown.contains(&first), "{first}: {shown}");
     assert!(!shown.contains("Sessions"), "{shown}");
 }
+
+/// The Chat tab (#1640): it shows the history of the thread `chat` as
+/// `riff chat` does, a new line while another tab shows adds to
+/// `Chat•N`, the note line says whom a line will wake, and Enter sends
+/// the line as the person. The lead wakes, and the line shows once.
+#[tokio::test]
+async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
+    use futures::StreamExt;
+    use riff_core::name::SessionUri;
+    use riff_core::wire::Kind;
+
+    let server = crate::common::start_signed().await;
+    let chat = riff::chat::thread();
+    // A line of mike before the TUI starts: the history.
+    let mike: SessionUri = "riff://mike@heron".parse().unwrap();
+    let mike_api = server.api("mike", None);
+    mike_api.join(&mike, &chat).await.unwrap();
+    mike_api
+        .post(&mike, Some(&chat), &[], "hello brett", Kind::Message)
+        .await
+        .unwrap();
+    // The lead of brett in como-technologies/riff. A client of this
+    // process has one sign-in per server: brett is the last one.
+    let lead: SessionUri = "riff://brett@thelio/como-technologies/riff?session=brett-lead"
+        .parse()
+        .unwrap();
+    crate::common::api_of(&server, &lead)
+        .register(&lead)
+        .await
+        .unwrap();
+    crate::common::name_lead(&server.api("brett", None), &lead).await;
+    let lead_api = crate::common::api_of(&server, &lead);
+    let mut wakes = Box::pin(lead_api.watch(&lead).await.unwrap());
+
+    let mut tty = Tty::start(&server, "brett", "thelio", true, &[]);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    // A new line while the Sessions tab shows: the news of the chat.
+    lead_api
+        .post(&lead, Some(&chat), &[], "are you there?", Kind::Message)
+        .await
+        .unwrap();
+    tty.shows(|rows| rows[0].contains("  2 Chat•1  ")).await;
+
+    // `2` opens the Chat tab: the history and the new line, as in
+    // `riff chat`, and the prompt.
+    tty.press("2").await;
+    let shown = |rows: &[String], text: &str| rows.iter().filter(|r| r.ends_with(text)).count();
+    let rows = tty
+        .shows(|rows| shown(rows, "[brett's lead, riff] are you there?") == 1)
+        .await;
+    assert_eq!(
+        rows[0],
+        " 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports"
+    );
+    assert!(rows[2].starts_with(" chat · online: brett"), "{rows:#?}");
+    assert_eq!(shown(&rows, "<mike@heron> hello brett"), 1, "{rows:#?}");
+    assert_eq!(rows[21], ">");
+    assert_eq!(
+        rows[23],
+        " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit"
+    );
+
+    // The note line says whom the line will wake, before Enter.
+    tty.press("@lead:riff is #12 done?").await;
+    tty.shows(|rows| rows[22] == " Enter wakes your lead in como-technologies/riff.")
+        .await;
+    tty.press("\r").await;
+    let wake = in_time(WAIT, wakes.next())
+        .await
+        .expect("the lead of brett wakes")
+        .unwrap()
+        .unwrap();
+    assert_eq!(wake.thread, chat);
+    assert_eq!(wake.from.to_string(), "riff://brett@thelio");
+    let rows = tty
+        .shows(|rows| shown(rows, "<brett@thelio> @lead:riff is #12 done?") == 1)
+        .await;
+    assert_eq!(rows[21], ">", "{rows:#?}");
+
+    // Esc leaves the prompt, and `q` ends the TUI.
+    tty.press("\x1b").await;
+    tty.shows(|rows| rows[23].starts_with(" i type")).await;
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
