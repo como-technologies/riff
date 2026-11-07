@@ -4458,6 +4458,11 @@ of this part when they merge.
   `riff` and `riff-server` of the tree of `HEAD` from the artifact of
   CI, else from the file of the release of a tag on `HEAD`. It builds
   them with `just static dev` only when it finds neither.
+- **01M6V8GQ1297PCZEKY311KRRWC** The `riff.toml` of this repository sets
+  `ANTHROPIC_MODEL = "opus"` first in `[session.env]`, with a comment
+  that names issue 1692, so each session of this repository runs on
+  Opus: the lead, each work item and each verify. A test checks that the
+  file sets it.
 
 ### Sessions
 

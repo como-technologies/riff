@@ -2378,6 +2378,22 @@ mod tests {
         );
     }
 
+    /// 01M6V8GQ1297PCZEKY311KRRWC: the `riff.toml` of riff runs each
+    /// session on Opus, with the model first in `[session.env]`.
+    #[test]
+    fn the_riff_toml_of_riff_runs_each_session_on_opus() {
+        let spec = spec(&Facts {
+            setup: riff_setup(),
+            ..facts()
+        });
+        let vars = variables(&spec);
+        let model = vars
+            .iter()
+            .position(|var| var == "ANTHROPIC_MODEL=opus")
+            .unwrap_or_else(|| panic!("no ANTHROPIC_MODEL=opus in {vars:?}"));
+        assert_eq!(vars[model + 1], "CARGO_HOME=/home/mike/.cargo");
+    }
+
     #[test]
     fn the_spec_binds_no_git_or_gh_config_that_the_host_does_not_have() {
         let spec = spec(&Facts {
