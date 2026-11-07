@@ -271,7 +271,9 @@ for each of its open items:
    ◌   held    #1631  Design: the web UI              waits for mike       3d
    !   work    #994   Design: the TUI of riff         3a3f8d5d blocked     32m
    ●   work    #1590  An idle look asks GitHub first  5b1e2a90 busy        40m
+   ●   work    #1594  riff counts the gh calls        9c0d1e2f busy        1h
    ◐   verify  #1599  The wave takes an issue         PR #1614 verify      5m
+   ◐   verify  #1600  The book tells how to detach    PR #1613 merge       9m
        done 4 · closed 1 (Enter shows them)
        main: the full check of 3f2a91c runs · 4 of 9 jobs done
  ▶ como-technologies/strata · Wave 5                               1 work 3 done
@@ -279,6 +281,7 @@ for each of its open items:
 
  NEXT WAVES · como-technologies/riff
    Wave 49: 8 items    Wave 50: 3 items    Backlog: 41 items
+
 
  The boards come from gh, 41s ago.
  ↑↓ select  Enter open  h hold  f free  p pause  o URL  r read again  ? help

@@ -51,7 +51,7 @@
 //! flowchart LR
 //!     S["riff-server<br/>riff, who, plan show, tail"] -- "a look, or a fault" --> ST["State"]
 //!     D["the socket of the daemon<br/>status"] -- "the containers here" --> ST
-//!     G["gh<br/>issue list, api"] -- "the titles, the boards" --> ST
+//!     G["gh<br/>api, pr list"] -- "the titles, the boards" --> ST
 //!     K["a key or a click"] --> ST
 //!     ST -- "&State, the size, the time" --> V["compute_view<br/>pure: the rows and the hits"]
 //!     V -- "&View" --> R["render<br/>pure: draws on a Buffer"]
@@ -76,23 +76,31 @@
 //! [`DAEMON_EVERY`]: its container sessions
 //! join the sessions model. It reads the titles of the open issues of
 //! each repository with a live session from `gh` each
-//! [`crate::top::ISSUES_TTL`], with no read of the pull requests
-//! ([`crate::top::titles_from_gh`]). A read of `gh` that fails names the
-//! error in the note line once, and keeps the last titles.
+//! [`crate::top::ISSUES_TTL`], with the conditional read of the Waves
+//! tab and no read of the pull requests ([`forge::titles`]). A read of
+//! `gh` that fails names the error in the note line once, and keeps the
+//! last titles.
 //!
 //! While the Waves tab shows, each look also reads the holds of its
 //! boards (01M6VFGK79JGRF919BM8SJ6E08), and the TUI reads the forge of
 //! its boards each [`forge::READ_EVERY`] ([`forge::read_each`],
 //! 01M6VFGK4P2FWMFQHBZKR3JXSZ). Each call of `gh` of the TUI counts as
-//! the caller `tui`.
+//! the caller `tui`. The two tabs share the `ETag` of each read
+//! ([`forge::Kept`]).
 //!
 //! | What | Source | When |
 //! |---|---|---|
 //! | The sessions, the state of the riff | riff-server: `riff`, `who` | each 3 s, each 15 s when idle, and after a message of the thread |
 //! | The holds of the boards | riff-server: `plan show` | at each look while the Waves tab shows |
 //! | The container sessions of this machine | the socket of the daemon: `status` | each second while the Sessions tab is open |
-//! | The titles of the issues | `gh issue list` | each 60 s while the Sessions tab is open |
+//! | The titles of the issues | `gh api`: the conditional read of the open issues | each 60 s while the Sessions tab is open |
 //! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | each 60 s while the Waves tab shows, and at once on `r` |
+//!
+//! A read of `gh` runs on a thread of its own, not in a blocking task of
+//! tokio: the end of the process waits for each blocking task of tokio.
+//! So `q` ends the TUI at once and gives back the screen, also while a
+//! slow read runs. The read goes on, and its result goes nowhere (#1707,
+//! 01M6VT7TTV8J90C5E3QAZ454GY).
 //!
 //! A look that fails does what it does in `riff top`
 //! (01M6VAZKAH6B53YKR8W4YKNSH6). The first look runs before the TUI
@@ -1668,9 +1676,32 @@ pub async fn run(
 /// issues, or the error of `gh`.
 type Titles = Vec<(String, Result<Issues, String>)>;
 
-/// A read of the forge for the Waves tab that runs: it gives back the
-/// kept replies, and the read of each repository.
-type Reading = tokio::task::JoinHandle<(forge::Kept, Vec<(String, Result<forge::Forge, String>)>)>;
+/// A read of the forge for the Waves tab: the read of each repository.
+type Boards = Vec<(String, Result<forge::Forge, String>)>;
+
+/// A read of `gh` on a thread of its own: the end of the TUI waits for
+/// no read (#1707). A thread that nobody joins holds up no exit.
+struct Reading<T>(std::thread::JoinHandle<T>);
+
+impl<T: Send + 'static> Reading<T> {
+    /// Starts the read `read` on a thread of its own.
+    fn start(read: impl FnOnce() -> T + Send + 'static) -> Reading<T> {
+        Reading(std::thread::spawn(read))
+    }
+
+    /// True when the read ended.
+    fn is_finished(&self) -> bool {
+        self.0.is_finished()
+    }
+
+    /// The result of the read, once it ended. A read that panicked is an
+    /// error.
+    fn result(self) -> Result<T> {
+        self.0
+            .join()
+            .map_err(|_| anyhow::anyhow!("a read of gh panicked"))
+    }
+}
 
 /// The tasks of the loop of the TUI: each look that runs, and when the
 /// next one starts.
@@ -1688,12 +1719,13 @@ struct Tasks {
     next_ask: tokio::time::Instant,
     /// The read of the titles from `gh` that runs, and the time of the
     /// last one.
-    reading: Option<tokio::task::JoinHandle<Titles>>,
+    reading: Option<Reading<Titles>>,
     read_at: Option<tokio::time::Instant>,
-    /// The read of the forge for the Waves tab that runs, and the kept
-    /// replies of the forge while no read runs.
-    forge: Option<Reading>,
-    kept: Option<forge::Kept>,
+    /// The read of the forge for the Waves tab that runs.
+    forge: Option<Reading<Boards>>,
+    /// The kept replies of the conditional reads of `gh`: the Sessions
+    /// tab and the Waves tab share them.
+    kept: forge::Kept,
     /// `r` while the Waves tab shows: read the forge again.
     forge_again: bool,
     /// The action that runs in a task of its own: its result is the
@@ -1702,18 +1734,13 @@ struct Tasks {
 }
 
 impl Tasks {
-    /// Stops each task that runs: the TUI ends.
+    /// Stops each task that runs: the TUI ends. A read of `gh` goes on
+    /// ([`Reading`]).
     fn abort(&self) {
         if let Some(task) = &self.looking {
             task.abort();
         }
         if let Some(task) = &self.asking {
-            task.abort();
-        }
-        if let Some(task) = &self.reading {
-            task.abort();
-        }
-        if let Some(task) = &self.forge {
             task.abort();
         }
         if let Some(task) = &self.acting {
@@ -1756,7 +1783,7 @@ async fn frames(
         reading: None,
         read_at: None,
         forge: None,
-        kept: Some(forge::Kept::default()),
+        kept: forge::Kept::default(),
         forge_again: false,
         acting: None,
     };
@@ -1785,15 +1812,10 @@ async fn frames(
         for came in link.came() {
             state.chat_came(came);
         }
-        if tasks
-            .forge
-            .as_ref()
-            .is_some_and(tokio::task::JoinHandle::is_finished)
+        if tasks.forge.as_ref().is_some_and(Reading::is_finished)
             && let Some(done) = tasks.forge.take()
         {
-            let (back, read) = done.await?;
-            tasks.kept = Some(back);
-            state.read_forge(read, crate::run::now_ms());
+            state.read_forge(done.result()?, crate::run::now_ms());
         }
         if tasks
             .acting
@@ -1815,12 +1837,8 @@ async fn frames(
         {
             tasks.forge_again = false;
             let repos = state.boards();
-            let gh = gh.clone();
-            let mut back = tasks.kept.take().unwrap_or_default();
-            tasks.forge = Some(tokio::task::spawn_blocking(move || {
-                let read = forge::read_each(&gh, &repos, &mut back);
-                (back, read)
-            }));
+            let (gh, kept) = (gh.clone(), tasks.kept.clone());
+            tasks.forge = Some(Reading::start(move || forge::read_each(&gh, &repos, &kept)));
         }
         if tasks
             .looking
@@ -1878,13 +1896,10 @@ async fn frames(
                     .map_err(|e| format!("{e:#}"))
             }));
         }
-        if tasks
-            .reading
-            .as_ref()
-            .is_some_and(tokio::task::JoinHandle::is_finished)
+        if tasks.reading.as_ref().is_some_and(Reading::is_finished)
             && let Some(done) = tasks.reading.take()
         {
-            state.titled(done.await?);
+            state.titled(done.result()?);
         }
         let due = tasks
             .read_at
@@ -1896,13 +1911,13 @@ async fn frames(
                 &riff_client::sessions::Show::default(),
                 repo.as_deref(),
             );
-            let gh = gh.clone();
+            let (gh, kept) = (gh.clone(), tasks.kept.clone());
             tasks.read_at = Some(Instant::now());
-            tasks.reading = Some(tokio::task::spawn_blocking(move || {
+            tasks.reading = Some(Reading::start(move || {
                 repos
                     .into_iter()
                     .map(|repo| {
-                        let read = crate::top::titles_from_gh(&gh, &repo);
+                        let read = forge::titles(&gh, &repo, &kept);
                         (repo, read.map_err(|e| format!("{e:#}")))
                     })
                     .collect()
@@ -2052,4 +2067,24 @@ async fn end(dir: Option<&std::path::Path>, name: &str) -> Result<String> {
     let mut lines = Vec::new();
     crate::daemon::ask_end(dir, name, |line| lines.push(line.to_owned())).await?;
     Ok(lines.pop().unwrap_or_else(|| text::daemon_ended(name)))
+}
+
+/// The lines of the first `text` block of `doc` after the line `after`,
+/// with `strip` taken from the start of each line, and no spaces at
+/// their ends: the mock-up of a tab in the rustdoc or in the book, for a
+/// screen test.
+#[cfg(test)]
+pub(crate) fn text_block(doc: &str, after: &str, strip: &str) -> Vec<String> {
+    let start = doc.find(after).unwrap_or_else(|| panic!("{after}"));
+    doc[start..]
+        .lines()
+        .map(|line| {
+            line.strip_prefix(strip)
+                .unwrap_or(line.trim_start_matches(strip.trim_end()))
+        })
+        .skip_while(|line| *line != "```text")
+        .skip(1)
+        .take_while(|line| *line != "```")
+        .map(|line| line.trim_end().to_owned())
+        .collect()
 }

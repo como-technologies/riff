@@ -6953,9 +6953,9 @@ that builds it merges.
   riff-server.
 - **01M5421633BKPPMANYRVZ76BVP** Each UI shows the sessions in one view:
   the sessions on riff-server and the container sessions of the
-  daemons, in one list. In the TUI, the sessions tab does what the live
-  table of `riff top` and the view of `riff view` do, with each of their
-  actions, also the attach to a session.
+  daemons, in one list. In the TUI, the Sessions tab does what the live
+  table of `riff top` does, with the actions on a session, also the
+  attach to a session.
 - **01M542165T96VW72HAWFXVD160** The CLI stays complete: it serves
   scripts, agents through the MCP server, and hooks. Each command prints
   plain lines that `grep` can find.
@@ -7351,10 +7351,9 @@ that builds it merges.
   double click presses Enter, and the wheel of the mouse moves the
   selection.
 - **01M6VGHPGYF1G3BJ7J1W8ZZM17** `riff top` and the Sessions tab share
-  the code of a look (the calls `riff` and `who`), of the read of the
-  titles of the issues from `gh`, and of the words of a session: its
-  state, its detail, its tags and its mark `↑`. They draw one sessions
-  model.
+  the code of a look (the calls `riff` and `who`), and of the words of
+  a session: its state, its detail, its tags and its mark `↑`. They
+  draw one sessions model.
 - **01M6VGHPP3ZT5TTMSGAXV3ZK7W** riff has no command `riff view`, also
   not with `--host`. The Sessions tab of the TUI does what it did, and
   `riff daemon status` and `riff daemon status --host HOST` print its
@@ -7387,6 +7386,15 @@ that builds it merges.
 - **01M6VJQPNJ4AX4RT877F1QAPPX** While the person types a filter in the
   TUI, each character is a letter of the filter, also `1` to `6`, `q`,
   `r`, `?`, `j`, `k`, `g` and `G`. `Ctrl-C` still ends the TUI.
+- **01M6VT7TTV8J90C5E3QAZ454GY** `q` and `Ctrl-C` end the TUI and give
+  back the screen at once, also while a read of `gh` runs. The read may
+  go on in the background, and its result goes nowhere.
+- **01M6VT7TXBW8EJKY0FTYQ0H49M** The Sessions tab of the TUI reads the
+  titles of the open issues with the conditional REST read of the Waves
+  tab: each page of the list of the open issues, with the ETag of the
+  last reply, so a read with no change costs no point. The two tabs
+  share the ETag of each reply. Supersedes 01M6VGHPGYF1G3BJ7J1W8ZZM17 in
+  part.
 
 ## The notes of the lead
 

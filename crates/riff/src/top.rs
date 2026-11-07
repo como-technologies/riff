@@ -311,7 +311,8 @@ pub fn issues_from_gh(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Issues> 
 /// The open issues of `repo` from `gh`, with no read of the pull
 /// requests: the titles, the trackers, the questions and the current
 /// wave. It fails as [`issues_from_gh`] does. The Sessions tab of the TUI
-/// reads only these (#1637).
+/// reads these with the conditional read of the Waves tab
+/// ([`crate::tui::forge::titles`]).
 pub fn titles_from_gh(gh: &crate::pr::Gh, repo: &str) -> anyhow::Result<Issues> {
     let args = issue_args(repo);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();

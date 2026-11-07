@@ -109,7 +109,7 @@ cannot reach riff-server. The last row shows the keys.
 | `r` | Look at riff-server again now. |
 | `?` | Show the keys of the tab. `?` or `Esc` closes them. |
 | `y`, `n` | Answer the question of an action, for example `Pause the whole riff? y/N`. |
-| `q`, `Ctrl-C` | End the TUI. The sessions go on. |
+| `q`, `Ctrl-C` | End the TUI at once, also while it reads GitHub. The sessions go on. |
 
 A click on a tab opens it. A click on a key of the last row presses
 that key. Under 80 columns, the first row shows one tab, for example

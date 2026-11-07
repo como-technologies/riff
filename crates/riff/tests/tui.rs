@@ -30,14 +30,19 @@ impl Tty {
     /// Starts `riff` at the riff-server `url` as `user` on `host`,
     /// in a new pseudo-terminal. With `signed`, the command is signed in.
     /// A fake `gh` comes first on `PATH`: each repository has the open
-    /// issue #12, "Show the wave".
+    /// issue #12, "Show the wave", in the REST list of the open issues.
     fn start(url: &str, user: &str, host: &str, signed: bool) -> Tty {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
         isolated::write_program(
             bin.join("gh"),
-            "#!/bin/sh\necho '[{\"number\": 12, \"title\": \"Show the wave\", \"milestone\": null}]'\n",
+            r#"#!/bin/sh
+case "$*" in
+  *'issues?state=open'*) printf 'HTTP/2.0 200 OK\r\n\r\n' ;;
+esac
+echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
+"#,
         );
         let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
             &std::env::var_os("PATH").unwrap_or_default(),
@@ -644,6 +649,11 @@ case "$*" in
 esac
 "#;
 
+/// The `PATH` of the tests with the folder `bin` first.
+fn path_with(bin: &std::path::Path) -> String {
+    format!("{}:{}", bin.display(), std::env::var("PATH").unwrap())
+}
+
 /// 01M6VFG882T794B1CTHK5AKPDG, 01M6VFGK9XXWCA8X7CE8EZNSJV,
 /// 01M6VFGK4P2FWMFQHBZKR3JXSZ: in a clone of acme/app, the Waves tab
 /// shows the board of its current wave from `gh`, and holds, frees and
@@ -666,12 +676,14 @@ async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
     }
     let bin = tempfile::tempdir().unwrap();
     isolated::write_program(bin.path().join("gh"), FAKE_GH);
-    let path = format!(
-        "{}:{}",
-        bin.path().display(),
-        std::env::var("PATH").unwrap()
+    let mut tty = Tty::start_in(
+        clone,
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", path_with(bin.path()))],
     );
-    let mut tty = Tty::start_in(clone, &server, "brett", "thelio", true, &[("PATH", path)]);
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
 
     // `3` opens the Waves tab: the board of acme/app, from the REST list
@@ -746,6 +758,92 @@ async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
 
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));
+}
+
+/// A fake `gh` whose read of the open issues is slow: it starts, writes
+/// the file `reading` in its folder, and answers only when the file `go`
+/// is there, or after 2 minutes. It logs each call to the file `calls`.
+const SLOW_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$*" >> "$dir/calls"
+case "$*" in
+  *'issues?state=open'*)
+    touch "$dir/reading"
+    n=0
+    while [ ! -e "$dir/go" ] && [ "$n" -lt 120 ]; do sleep 1; n=$((n + 1)); done
+    printf 'HTTP/2.0 200 OK\r\nEtag: "v1"\r\n\r\n[]' ;;
+  *) echo '[]' ;;
+esac
+"#;
+
+/// 01M6VGHCDTDJ69B7C02B5K61PW, 01M6VT7TXBW8EJKY0FTYQ0H49M,
+/// 01M6VT7TTV8J90C5E3QAZ454GY, #1707: with a live session in acme/app,
+/// the Sessions tab reads the titles of its issues with the conditional
+/// read of the open issues, not with `gh issue list`. `q` while that
+/// read runs and does not answer ends the TUI within 1 second, with exit
+/// 0, and gives back the screen: the main screen, and the terminal mode
+/// of a shell.
+#[tokio::test]
+async fn q_ends_the_tui_at_once_while_a_slow_read_of_gh_runs() {
+    use nix::sys::termios::{LocalFlags, tcgetattr};
+
+    let server = crate::common::start_signed().await;
+    let brett: riff_core::name::SessionUri = "riff://brett@thelio".parse().unwrap();
+    crate::common::api_of(&server, &brett)
+        .set_pause(
+            &brett,
+            &riff_client::api::PauseScope::Riff,
+            riff_core::wire::RiffState::Running,
+        )
+        .await
+        .unwrap();
+    session(
+        &server,
+        "riff://mike@pangolin/acme/app?session=5b1e2a90",
+        "issue-12",
+    )
+    .await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), SLOW_GH);
+    let mut tty = Tty::start_in(
+        tempfile::tempdir().unwrap(),
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    let span = Span::start();
+    while !bin.path().join("reading").exists() {
+        assert!(span.within(WAIT), "the read of the titles starts in time");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let span = Span::start();
+    tty.press("q").await;
+    let code = tty.exits().await;
+    let ended = span.wall();
+    std::fs::write(bin.path().join("go"), "").unwrap();
+    assert_eq!(code, Some(0));
+    assert!(
+        span.within(Duration::from_secs(1)),
+        "the TUI ended in {ended:?}"
+    );
+    tty.shows(|rows| !rows.iter().any(|row| row.contains("Sessions")))
+        .await;
+    let mode = tcgetattr(&tty.master).unwrap();
+    assert!(
+        mode.local_flags
+            .contains(LocalFlags::ICANON | LocalFlags::ECHO),
+        "{mode:?}"
+    );
+    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    assert!(
+        calls.contains("api -i repos/acme/app/issues?state=open&per_page=100&page=1"),
+        "{calls}"
+    );
+    assert!(!calls.contains("issue list"), "{calls}");
 }
 
 /// 01M6VMACJGF4A0ZXC6YK13KNCH: a post of the Chat tab that fails while
