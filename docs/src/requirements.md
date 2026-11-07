@@ -4163,9 +4163,8 @@ of this part when they merge.
   riff of peers: they give and take the workers of a host
   (01M6QRDB4WQ1WD3NTZ50XXXJPC). The
   member commands act on riff-server (01M588J2QAF288ZB3M9PBN71ZS). `riff
-  daemon status`, `riff view` and `riff top` show no key, no riff of
-  peers and no peer link. With no `--host`, they show no session of
-  another daemon.
+  daemon status` and `riff top` show no key, no riff of peers and no
+  peer link. With no `--host`, they show no session of another daemon.
 - **01M53NGW9FH02EM74GKY829808** The re-cut supersedes each requirement
   of Wave B (#803), and each requirement of the riff of peers in "Data
   and peers": the log of peers, the keys of the members, the claims on
@@ -4718,10 +4717,6 @@ of this part when they merge.
   wire only from the events that the daemon keeps: the daemon took each
   secret out of each event before it kept it. So no secret leaves the
   host.
-- **01M57D4FZGCVE62AP4MVG59HM4** `riff view --host HOST` shows the view
-  of `riff view` for the daemon of HOST, through riff-server. riff asks
-  the daemon of HOST for its status each 3 seconds. Enter and `t` work
-  only on HOST: in the view of another host they show a note.
 - **01M579Z9PZZCVWQKG7V8WZ5KRB** The daemon of a host acts only on a
   verified request from its person, or from the lead of its person in
   its repository. It replies to each other request with a refusal, and
@@ -5544,19 +5539,17 @@ of this part when they merge.
   not run, in the container `riff-lead-OWNER-REPO`. Then it attaches the
   terminal of the person to it. When the lead runs already, it only
   attaches. Ctrl-P Ctrl-Q detaches, and the lead runs on.
-- **01M51PD7M04HZR2PVVJA4WCBK5** Before each attach to the lead, from
-  `riff lead start` and from `riff view`, riff sets the terminal of the
-  container to a size that is not the size of the terminal of the
-  person. The attach then sets the size of the person, so `claude`
-  draws its screen at once. When riff cannot set the size, it says why,
-  and attaches.
+- **01M51PD7M04HZR2PVVJA4WCBK5** Before each attach to the lead from
+  `riff lead start`, riff sets the terminal of the container to a size
+  that is not the size of the terminal of the person. The attach then
+  sets the size of the person, so `claude` draws its screen at once.
+  When riff cannot set the size, it says why, and attaches.
 - **01M51PD7Q24N252V66NFEHY49N** After an attach to the lead, riff
   tells a detach from the end of the lead: the lead ended when its
-  container does not run. After a detach, `riff lead start` and `riff
-  view` say that the person left the terminal. After the end, they say
-  that the lead ended and how to start it again. `riff lead start` also
-  says that the `claude --resume` line of `claude` works only in the
-  container.
+  container does not run. After a detach, `riff lead start` says that
+  the person left the terminal. After the end, it says that the lead
+  ended and how to start it again, and that the `claude --resume` line
+  of `claude` works only in the container.
 - **01M501P9Q51AYN9GBPWKVHA229** The folder of the lead is
   `leads/OWNER-REPO` in the data folder of riff. At the first start,
   riff makes `clone/` with `git clone --reference MAIN`, on the default
@@ -5606,21 +5599,6 @@ of this part when they merge.
   `podman wait` gives its end. Such a session does not wait for room,
   and does not count in the limit of the host. The daemon says `done`
   to `riff` when its container runs.
-- **01M501PA4MG5NYNK7FBBRRAT20** `riff view` shows the daemon of this
-  machine with ratatui, and draws it again each second: each session
-  with its container, its item, its state, its age and its last step;
-  the daemon and the limit of the host; each start that waits for room;
-  each wave. Up and Down select a session. Enter attaches to the lead:
-  the selected session when it is a lead, else the first lead. `t`
-  takes over the selected session. `q`, Esc and Ctrl-C end the view;
-  the sessions go on. Its tests draw it on the `TestBackend` of
-  ratatui.
-- **01M51PD7T7451SR11W7JA7QW3X** The SESSION column of `riff view` is
-  as wide as the longest name of a session, so each name shows in full.
-- **01M50RRQBZ8ASPT25DYPX78HP9** After a takeover from `riff view`,
-  the note under the rows says that the session goes on, or that it
-  ended before the takeover. The view reads the keys of the person in
-  a blocking task of tokio, not in its async loop.
 - **01M501PA6W0NCG9JEK017F9304** `riff takeover NAME` takes over the
   worker in the container NAME. It stops the turn of the session at once
   (01M51KJ1R9K7A7RW8T8XH8VW43). Then it runs `podman exec -it NAME
@@ -5628,15 +5606,14 @@ of this part when they merge.
   terminal of the person (01M6VD1NSHTJQGR31VZ4689S8J). When that
   ends, it tells the daemon to go on. It exits with 0 when the session
   goes on, and with 1 when the session ended before the takeover.
-- **01M51KJ1R9K7A7RW8T8XH8VW43** `riff takeover NAME` and `t` in
-  `riff view` stop the turn of the session at once, also in the middle
-  of a tool call. `riff takeover --at-end NAME` waits for the end of the
-  turn. A takeover also waits for the end when the input of `claude`
-  closed after the result of its turn, and when the relay of the
-  session cannot stop a turn. `riff takeover` and the view say which
-  one they do. The result of a turn that a takeover stops is no fail of
-  the session. The new input after the takeover says that the stop can
-  come in the middle of a step.
+- **01M51KJ1R9K7A7RW8T8XH8VW43** `riff takeover NAME` stops the turn
+  of the session at once, also in the middle of a tool call. `riff
+  takeover --at-end NAME` waits for the end of the turn. A takeover also
+  waits for the end when the input of `claude` closed after the result
+  of its turn, and when the relay of the session cannot stop a turn.
+  `riff takeover` says which one it does. The result of a turn that a
+  takeover stops is no fail of the session. The new input after the
+  takeover says that the stop can come in the middle of a step.
 - **01M501PA94CDZDH214GGFMTH5V** On the socket of a session, `hold`
   tells the relay to close the stdin of `claude`, and to keep the
   container at the end of `claude`. The relay then says `held`, and
@@ -5654,8 +5631,8 @@ of this part when they merge.
   terminal at once. The daemon refuses a takeover of a session with a
   terminal, of a session with no relay, and of a relay of a protocol
   before 4.
-- **01M501PADKZNRHBZD9XPMJGW06** `riff daemon status` and `riff view`
-  show the state of each session and its last step. The state is
+- **01M501PADKZNRHBZD9XPMJGW06** `riff daemon status` shows the state
+  of each session and its last step. The state is
   `works`, `ends` after the result of its turn, `holds for a takeover`
   while a takeover waits, `taken over` while a person has it, or `lead`
   for the lead. The last step is the last line that `riff run` shows of
@@ -5696,8 +5673,8 @@ of this part when they merge.
 - **01M5NJ87YEHHGJBANM7CRYV56Z** When the lead runs with the sign-in
   file of claude of the host and the host replaced that file, riff tells
   the person that the sign-in of the lead is stale, with the step to fix
-  it and to start the lead again: at each attach of riff lead start and
-  riff view, and once in riff chat from the daemon.
+  it and to start the lead again: at each attach of riff lead start,
+  and once in riff chat from the daemon.
 - **01M5P21M7MSP503125GD2PJGRE** In the container of the lead, riff
   release cut, publish and approve reach riff-server through the socket
   of the session, as riff release check does: the roster, the chat line,
@@ -6947,8 +6924,8 @@ of this part when they merge.
 - **01M5QVBTXE8YRY44A1C1VP71QS** The riff daemon shows the real-session
   test that it runs, with its tag, its commit and its minutes. `riff
   daemon status` shows it on a line of its own: "real-session test of
-  TAG on COMMIT, for N min". `riff top`, `riff who` and `riff view` show
-  it on the line of the host. `Status::busy` counts the test as one, so
+  TAG on COMMIT, for N min". `riff top` and `riff who` show it on the
+  line of the host. `Status::busy` counts the test as one, so
   the daemon starts again on a new riff only after the test.
 - **01M6VAQWQ1D95TPKYE360KC3QR** Step 6 of the real-session test fails
   when the line `start: model MODEL` of `riff run` does not name the
@@ -7029,8 +7006,7 @@ that builds it merges.
   each session ID: a session of riff-server, a container session of
   the riff daemon of this machine, or both. An entry with both has the
   state of its container. `riff top` gives the model no container
-  session, and `riff view` gives it no session of riff-server. Each
-  draws its part of the model.
+  session, and draws its sessions of riff-server.
 - **01M56Y8KF7EDWHX1JE5RA0XMCW** The machines model holds the numbers
   that a host tells in its status line: the limit, the floor, the
   workers, and the numbers of its machine, its disk and its monitor.
@@ -7304,6 +7280,91 @@ that builds it merges.
   send the line:` and the error at once, also while the prompt holds a
   line. Supersedes 01M6VFGYW0XVJ5JSX6R1NCR6W7 and
   01M6VG1PCXHNVJP7TSP0J5G5K9 in part.
+- **01M6VGGW73KKG6Q0TZNBGYN7E0** The Sessions tab of the TUI shows the
+  sessions of riff-server and the container sessions of the riff daemon
+  of this machine in one tree: person, host, repository, session. A
+  container session that is on riff-server too is one row. `b` puts the
+  repository at the top. A group row with one group under it takes that
+  group after `›`, and ends with the counts of its sessions. A session
+  row has its mark, its short ID, its item, its tag, its state with its
+  age, and its last words: the reason of a block, what it waits for, or
+  its last step.
+- **01M6VGGWAAKQ3HPXZ7JX5FE7B0** In the Sessions tab, the sessions of a
+  group come by their worst mark, then by their ID. The groups come by
+  their worst row, with a session that runs an old riff (`↑`) after
+  `!`, then by their name. A group is open when it holds a `!`, a `✓`
+  or a `↑` row or the selected row, or when a filter is set. The
+  person folds and opens a group with `←`, `→`, `Space` or Enter,
+  and `e` opens each group, or folds the groups that need no look. The
+  folds live while the TUI runs.
+- **01M6VGGWE75Y1XEXG0TM60P6S5** In the Sessions tab, a `✓` stays
+  until the person selects its row. A session that turns `!` or `✓`
+  while the person is in another tab gives the Sessions tab the news
+  `•`.
+- **01M6VGH4JTM81PZH3F4R51VWG5** `/` in the Sessions tab filters the
+  rows. Each word must match a part of the user, the host, the
+  repository, the item, the state, the tag, the session ID or the
+  container name of a session, with no case. `KEY:WORD`, for example
+  `host:thelio`, matches only that key. While the person types, the note
+  line shows the filter. Enter keeps the filter, and Esc clears it.
+- **01M6VGH4QSE8BP51R3TZ9SJDVY** With 80 columns and 24 rows or more,
+  the Sessions tab shows the detail of the selected row under a line
+  with its name. A session shows the detail of `riff top`, its claims,
+  its pull request and its riff, and on this machine its container, its
+  phase and its last step. A host of this machine shows the line of its
+  riff daemon, the starts that wait for room and the waves; another host
+  shows the facts that its daemon sends. In a smaller terminal, Enter on
+  a session shows its detail on the whole screen, and Esc goes back.
+- **01M6VGH4V01H3CC6GE45FHGF5J** Under 80 columns, the Sessions tab has
+  one column of rows: a group row has its name and the count of its
+  sessions, and a session row has its mark, the first 4 characters of
+  its ID, its item, `lead` for a lead, and its state with its age.
+- **01M6VGH4Y0G25VYBBD5ZV4GG2H** In the Sessions tab, `l` attaches to
+  the lead of the repository of the row, else to the first lead of this
+  machine, and Enter on a lead attaches to it, with the code of the
+  attach of `riff lead start`. `t` takes over the selected session with
+  the code of `riff takeover NAME`, `x` ends it with the code of `riff
+  daemon end NAME`, and `p` and `P` pause or resume the repository of
+  the row or the whole riff with the code of `riff pause` and `riff
+  resume`. `t`, `x`, `p` and `P` ask `y` or `n` in the note line first.
+  The attach asks nothing.
+- **01M6VGHC59FJS10FJEYH6K4CAQ** The attach and the takeover of the TUI
+  leave its screen, and the TUI draws again at their end. Then the note
+  line says that the person left the terminal of the lead or that the
+  lead ended, or that the session goes on or ended before the takeover.
+  The TUI reads the keys in a blocking task of tokio that ends after 200
+  ms, so no read of the TUI takes a key from an attach or a takeover.
+- **01M6VGHC981887SCEKGBNRPHJV** `l`, `t` and `x` in the Sessions tab
+  work only on a container session of the riff daemon of this machine.
+  On a session of another host they put a note in the note line. With no
+  riff daemon on this machine, the Sessions tab shows the sessions of
+  riff-server, and the note line says so.
+- **01M6VGHCDTDJ69B7C02B5K61PW** While the Sessions tab is open, the TUI
+  asks the riff daemon of this machine for its status each second. It
+  reads the titles of the open issues of each repository with a live
+  session from `gh` each 60 seconds, with no read of the pull requests,
+  and a read that fails keeps the last titles and names its error once
+  in the note line. A message in the thread of the repository of the
+  folder starts a look of riff-server at once, at most one each second.
+- **01M6VGHCJ8WNT6H9VJYE2HP8SP** A click on a row of the Sessions tab
+  selects it, a click on `▶` or `▼` folds or opens its group, a
+  double click presses Enter, and the wheel of the mouse moves the
+  selection.
+- **01M6VGHPGYF1G3BJ7J1W8ZZM17** `riff top` and the Sessions tab share
+  the code of a look (the calls `riff` and `who`), of the read of the
+  titles of the issues from `gh`, and of the words of a session: its
+  state, its detail, its tags and its mark `↑`. They draw one sessions
+  model.
+- **01M6VGHPP3ZT5TTMSGAXV3ZK7W** riff has no command `riff view`, also
+  not with `--host`. The Sessions tab of the TUI does what it did, and
+  `riff daemon status` and `riff daemon status --host HOST` print its
+  facts. This supersedes 01M501PA4MG5NYNK7FBBRRAT20,
+  01M51PD7T7451SR11W7JA7QW3X, 01M50RRQBZ8ASPT25DYPX78HP9 and
+  01M57D4FZGCVE62AP4MVG59HM4 in full, and 01M53NGW6F5HP1DZ9QRGP50MGT,
+  01M51PD7M04HZR2PVVJA4WCBK5, 01M51PD7Q24N252V66NFEHY49N,
+  01M51KJ1R9K7A7RW8T8XH8VW43, 01M501PADKZNRHBZD9XPMJGW06,
+  01M5NJ87YEHHGJBANM7CRYV56Z, 01M5QVBTXE8YRY44A1C1VP71QS and
+  01M56Y8KD05JH2J7AMK636WGT7 in part.
 
 ## The notes of the lead
 

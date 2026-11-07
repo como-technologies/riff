@@ -99,7 +99,6 @@ pub const GROUPS: &[Group] = &[
             "join",
             "leave",
             "wave",
-            "view",
             "takeover",
             "ps",
             "daemon",

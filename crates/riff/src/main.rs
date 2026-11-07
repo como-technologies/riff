@@ -647,31 +647,13 @@ enum Command {
         #[command(subcommand)]
         command: WaveCommand,
     },
-    /// Show the sessions of the riff daemon of this machine
-    ///
-    /// It shows each session with its item, its state, its age and its
-    /// last step, the limit of this host, each start that waits for room
-    /// and the waves of the daemon. It draws them again each second. Up
-    /// and Down select a session. Enter attaches to the lead: Ctrl-P
-    /// Ctrl-Q detaches and comes back here. t takes over the selected
-    /// session of this machine, as riff takeover does: it stops the turn
-    /// at once. q ends the view; the sessions go on.
-    View {
-        /// Show the riff daemon of HOST, through riff-server. riff asks it
-        /// each 3 seconds. Enter and t work only on HOST. Only you in a
-        /// terminal and your lead in this repository can use --host. The
-        /// daemon of HOST refuses each other session, for example a
-        /// worker.
-        #[arg(long)]
-        host: Option<String>,
-    },
     /// Take over a session of the riff daemon in your terminal
     ///
     /// riff stops the turn of the session at once, also in the middle of
     /// a tool call. Then claude opens here with the history and the model
     /// of the session, in its container. When you end it with /exit, the
-    /// session goes on with its item. riff view and riff daemon status
-    /// show the names.
+    /// session goes on with its item. riff daemon status and the Sessions
+    /// tab of riff show the names.
     Takeover {
         /// Wait for the end of the turn of the session. Do not stop it.
         #[arg(long)]
@@ -1573,7 +1555,8 @@ enum LeadCommand {
     ///
     /// On HOST, the daemon must serve this repository. It does when HOST
     /// has a part in it: workers (riff join --host HOST) or a lead. Then
-    /// `riff lead start` or `riff view` on HOST attaches to the new lead.
+    /// `riff lead start` on HOST, or l in the Sessions tab of riff there,
+    /// attaches to the new lead.
     Move {
         /// The host of the new lead, for example thelio.
         host: String,
@@ -1744,15 +1727,6 @@ async fn cli() -> Result<()> {
     } = command
     {
         return relay_command(terminal, session, command).await;
-    }
-    if let Command::View { host: None } = command {
-        return view_command().await;
-    }
-    if let Command::View { host: Some(host) } = &command {
-        let (server, _) = server_of(cli.server.as_deref())?;
-        let here = identity::place(&identity::working_dir()?)?;
-        let (api, me) = daemon_asker(&here, &server)?;
-        return riff::screen::view_host(&api, &me, host).await;
     }
     if let Command::Takeover { name, at_end } = &command {
         let code = riff::takeover::here(name, *at_end).await?;
@@ -2416,7 +2390,6 @@ async fn cli() -> Result<()> {
                 ),
             ..
         }
-        | Command::View { .. }
         | Command::Takeover { .. }
         | Command::Ps
         | Command::Pr {
@@ -2557,7 +2530,9 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             riff::daemon::ask_done(&dir, ask, |line| println!("{line}")).await
         }
         DaemonCommand::Sweep { .. } => riff::daemon::ask_sweep(&dir).await,
-        DaemonCommand::End { name, .. } => riff::daemon::ask_end(&dir, name).await,
+        DaemonCommand::End { name, .. } => {
+            riff::daemon::ask_end(&dir, name, |line| println!("{line}")).await
+        }
         DaemonCommand::Restart { .. } => {
             let ask = riff::daemon::Ask::Restart;
             riff::daemon::ask_done(&dir, ask, |line| println!("{line}")).await
@@ -2765,19 +2740,6 @@ async fn update_check() -> Result<i32> {
     {
         let (daemon, here) = (riff::daemon::dir()?, identity::working_dir()?);
         Ok(riff::update_steps::check(&riff::podman::Podman, &daemon, &here).await)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        anyhow::bail!(text::RUN_LINUX_ONLY)
-    }
-}
-
-/// `riff view` on this machine: the daemon of [`riff::daemon::dir`] and
-/// rootless podman.
-async fn view_command() -> Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        riff::screen::view(&riff::daemon::dir()?, &riff::podman::Podman).await
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -4067,9 +4029,7 @@ async fn draw_top(
     let mut last = None;
     loop {
         let look = async {
-            let pauses = api.pauses(me).await?;
-            let mut who = api.roster(me, false).await?;
-            riff::state::fill(&mut who.sessions, pauses.state);
+            let (pauses, mut who, _) = riff::top::look(api, me).await?;
             // `riff top` asks no riff daemon: the model has no container
             // session (01M53NGW6F5HP1DZ9QRGP50MGT, 01M56Y8KD05JH2J7AMK636WGT7).
             let sessions = Sessions::new(std::mem::take(&mut who.sessions), Vec::new());

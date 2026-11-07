@@ -1,5 +1,5 @@
-//! The sessions model: the tree of `riff top` and the rows of
-//! `riff view`, in one model (01M56Y8KAPHJMSK89ZW1PA8B0E,
+//! The sessions model: the tree of `riff top` and of the Sessions tab of
+//! the TUI, in one model (01M56Y8KAPHJMSK89ZW1PA8B0E,
 //! 01M56Y8KD05JH2J7AMK636WGT7).
 //!
 //! # Design
@@ -21,14 +21,14 @@
 //!     S["riff-server: who"] -- "SessionInfo" --> M["Sessions"]
 //!     D["the riff daemon of this machine:<br/>its status, through the UI"] -- "Live" --> M
 //!     M -- "Sessions::on_server, Sessions::tree" --> T["riff top: the tree"]
-//!     M -- "Sessions::containers" --> V["riff view: the rows"]
+//!     M -- "Sessions::entries" --> V["the Sessions tab of the TUI: the tree"]
 //! ```
 //!
 //! `riff top` gives the sessions of riff-server and no container
 //! session: it asks no riff daemon (01M53NGW6F5HP1DZ9QRGP50MGT).
-//! `riff view` gives the container sessions of its daemon and no
-//! session of riff-server. Each draws its part of the model: `riff top`
-//! the sessions on the server, `riff view` the containers.
+//! The Sessions tab of the TUI gives both: the sessions of riff-server
+//! and the container sessions of the daemon of its machine. It draws each
+//! entry.
 //!
 //! The tree of `riff top` has four levels: person, host, repository,
 //! session (01M3NT4M5D36KTZ5XZMDP6QFQT, 01M42KHN33M4K13GKTX2WM6CMM).
@@ -75,7 +75,7 @@ use riff_core::build::Build;
 use riff_core::wire::{Person, PersonRole, RiffOwner, SessionInfo, SessionState};
 use serde::{Deserialize, Serialize};
 
-/// What a container session does now, as `riff view` shows it
+/// What a container session does now, as `riff daemon status` shows it
 /// (01M501PADKZNRHBZD9XPMJGW06).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

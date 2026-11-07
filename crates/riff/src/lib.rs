@@ -116,7 +116,6 @@ pub mod room;
 pub mod run;
 pub mod runtime;
 pub mod sccache;
-pub mod screen;
 pub mod service;
 pub mod session_image;
 pub mod session_mcp;

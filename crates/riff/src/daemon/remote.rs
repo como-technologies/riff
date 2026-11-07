@@ -54,9 +54,8 @@
 //!     D-->>L: events to 13, ended: done
 //! ```
 //!
-//! `riff view --host HOST` draws the view of `riff view` from the
-//! status of the daemon of HOST ([`Request::State`],
-//! 01M57D4FZGCVE62AP4MVG59HM4). It asks for it each [`VIEW_EVERY`].
+//! [`state`] gives the status of the daemon of HOST as JSON
+//! ([`Request::State`]).
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -175,10 +174,6 @@ pub const EVENT_GAP: Duration = Duration::from_millis(500);
 /// The longest hold of a request for a [`Page`] when no new event
 /// comes.
 pub const EVENT_HOLD: Duration = Duration::from_secs(20);
-
-/// How often `riff view --host` asks the daemon of the host for its
-/// status.
-pub const VIEW_EVERY: Duration = Duration::from_secs(3);
 
 /// A repository that the daemon serves, and its session on riff-server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -457,7 +452,7 @@ pub enum Request {
         /// True empties the volume.
         clear: bool,
     },
-    /// `riff view`: the status of the daemon, as JSON.
+    /// The status of the daemon, as JSON.
     State,
     /// `riff daemon events NAME`: the [`Page`] of the events of the
     /// session NAME after the event `after`, and of the lines of the
@@ -1502,8 +1497,7 @@ where
     }
 }
 
-/// The status of the daemon of `host`, for `riff view --host`
-/// (01M57D4FZGCVE62AP4MVG59HM4).
+/// The status of the daemon of `host`, through riff-server.
 pub async fn state(api: &Api, me: &SessionUri, host: &str) -> Result<super::Status> {
     let text = ask(api, me, host, &Request::State, REPLY_WAIT).await?;
     serde_json::from_str(&text).with_context(|| text::daemon_no_page(host))

@@ -34,7 +34,7 @@
 //! takes longer than a reply waits. It runs one test at a time, and
 //! [`running`] gives it: its tag, its commit and its seconds
 //! (01M5QVBTXE8YRY44A1C1VP71QS). [`Status`](super::Status) holds it, so
-//! `riff daemon status`, `riff view`, `riff top` and `riff who` show it,
+//! `riff daemon status`, `riff top`, `riff who` and the TUI show it,
 //! and [`Status::busy`](super::Status::busy) counts it as one. The
 //! clone is in [`FOLDER`] of its folder; the output of the test is in
 //! `FOLDER/COMMIT.log`. After the run, the daemon sets the status

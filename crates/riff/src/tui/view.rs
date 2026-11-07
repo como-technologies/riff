@@ -32,7 +32,8 @@
 //! use riff::tui::{Look, State};
 //! use riff_core::build::Build;
 //!
-//! let mut state = State::new("0.1.0 10df8a4c0ffe 2026-11-06T12:00:00Z".parse().unwrap());
+//! let me = "riff://mike@thelio".parse().unwrap();
+//! let mut state = State::new("0.1.0 10df8a4c0ffe 2026-11-06T12:00:00Z".parse().unwrap(), me);
 //! state.looked(Look::default(), 1_000);
 //! let area = Rect::new(0, 0, 80, 24);
 //! let view = compute_view(&state, area, 3_000);
@@ -145,6 +146,10 @@ pub struct View {
     /// The places that a click hits. The first place that holds a
     /// point wins.
     pub hits: Vec<Hit>,
+    /// The first row of the tree of the Sessions tab in the window, and
+    /// the rows of the tree that fit ([`super::State::drawn`]).
+    pub top: usize,
+    pub page: usize,
     /// The place of the cursor of the terminal: the prompt of the Chat
     /// tab. `None` hides the cursor.
     pub cursor: Option<Position>,
@@ -184,8 +189,69 @@ pub(super) const ACTIVE: Style = Style::new().add_modifier(Modifier::BOLD);
 const NEWS: Style = Style::new().fg(Color::Cyan);
 
 /// The width of `text` in columns.
-pub(super) fn width(text: &str) -> u16 {
+pub fn width(text: &str) -> u16 {
     u16::try_from(Line::raw(text).width()).unwrap_or(u16::MAX)
+}
+
+/// The ratatui style of the style `style` of the CLI ([`crate::style`]),
+/// so the TUI draws the words of the CLI in the same colors.
+///
+/// ```
+/// use ratatui::style::{Color, Modifier, Style};
+/// use riff::tui::view::style_of;
+///
+/// assert_eq!(style_of(riff::style::ERROR), Style::new().fg(Color::Red));
+/// assert_eq!(style_of(riff::style::MUTED), Style::new().fg(Color::DarkGray));
+/// assert_eq!(style_of(riff::style::DIM), Style::new().add_modifier(Modifier::DIM));
+/// assert_eq!(
+///     style_of(riff::style::BOLD.fg_color(Some(anstyle::AnsiColor::BrightCyan.into()))),
+///     Style::new().fg(Color::LightCyan).add_modifier(Modifier::BOLD)
+/// );
+/// ```
+pub fn style_of(style: anstyle::Style) -> Style {
+    use anstyle::{AnsiColor, Effects};
+    let color = |color: anstyle::Color| match color {
+        anstyle::Color::Ansi(ansi) => match ansi {
+            AnsiColor::Black => Color::Black,
+            AnsiColor::Red => Color::Red,
+            AnsiColor::Green => Color::Green,
+            AnsiColor::Yellow => Color::Yellow,
+            AnsiColor::Blue => Color::Blue,
+            AnsiColor::Magenta => Color::Magenta,
+            AnsiColor::Cyan => Color::Cyan,
+            AnsiColor::White => Color::Gray,
+            AnsiColor::BrightBlack => Color::DarkGray,
+            AnsiColor::BrightRed => Color::LightRed,
+            AnsiColor::BrightGreen => Color::LightGreen,
+            AnsiColor::BrightYellow => Color::LightYellow,
+            AnsiColor::BrightBlue => Color::LightBlue,
+            AnsiColor::BrightMagenta => Color::LightMagenta,
+            AnsiColor::BrightCyan => Color::LightCyan,
+            AnsiColor::BrightWhite => Color::White,
+        },
+        anstyle::Color::Ansi256(index) => Color::Indexed(index.0),
+        anstyle::Color::Rgb(rgb) => Color::Rgb(rgb.0, rgb.1, rgb.2),
+    };
+    let mut out = Style::new();
+    if let Some(fg) = style.get_fg_color() {
+        out = out.fg(color(fg));
+    }
+    if let Some(bg) = style.get_bg_color() {
+        out = out.bg(color(bg));
+    }
+    let effects = style.get_effects();
+    for (effect, modifier) in [
+        (Effects::BOLD, Modifier::BOLD),
+        (Effects::DIMMED, Modifier::DIM),
+        (Effects::ITALIC, Modifier::ITALIC),
+        (Effects::UNDERLINE, Modifier::UNDERLINED),
+        (Effects::INVERT, Modifier::REVERSED),
+    ] {
+        if effects.contains(effect) {
+            out = out.add_modifier(modifier);
+        }
+    }
+    out
 }
 
 /// The view of `state` in `area` at the time `now_ms`, in milliseconds
@@ -227,6 +293,13 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
 
     let body = Rect::new(area.x, area.y + 2, area.width, area.height - 4);
     match state.tab() {
+        Tab::Sessions => {
+            let (rows, hits, top, page) =
+                super::sessions::body(state, body, layout, margin, now_ms);
+            view.rows.extend(rows);
+            view.hits.extend(hits);
+            (view.top, view.page) = (top, page);
+        }
         Tab::Machines => {
             let (rows, hits) = super::machines::body(state, body, layout, now_ms);
             view.rows.extend(rows);
@@ -287,14 +360,19 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
 }
 
 /// The note line (01M6VMACJGF4A0ZXC6YK13KNCH): a question of the TUI
-/// (01M6VFD0S90SB8M8WV952NT4Y1), else the fault of the link, else in
-/// the Chat tab a post that failed after the last key or whom the line
-/// in the prompt will wake ([`chat::note`]), else the note of the last
-/// action, else in the Waves tab the age of its last read of `gh`
+/// (01M6VFD0S90SB8M8WV952NT4Y1), else the filter that the person types
+/// in the Sessions tab, else the fault of the link, else in the Chat tab
+/// a post that failed after the last key or whom the line in the prompt
+/// will wake ([`chat::note`]), else the note of the last action, else in
+/// the Waves tab the age of its last read of `gh`
 /// (01M6VFGYW0XVJ5JSX6R1NCR6W7).
 fn note_line(state: &State, now_ms: i64) -> Option<Line<'static>> {
     if let Some(asked) = state.asked() {
         return Some(Line::styled(text::safe(&asked), ACTIVE));
+    }
+    if state.tab() == Tab::Sessions && state.choices().typing() {
+        let filter = format!("/{}█", text::safe(state.choices().filter()));
+        return Some(Line::raw(filter));
     }
     if let Some(fault) = state.fault() {
         return Some(Line::styled(text::safe(fault), ERROR));
@@ -457,9 +535,11 @@ fn body_lines(tab: Tab, columns: u16) -> Vec<Line<'static>> {
 /// The keys of the key line of the tab of `state` in a layout: the text
 /// of the key, its word, and the key that a click on it presses. A built
 /// tab has its own keys first ([`super::machines::keys`]), or all its
-/// keys ([`super::waves::keys_of`], [`chat::keys`]).
+/// keys ([`super::sessions::keys`], [`super::waves::keys_of`],
+/// [`chat::keys`]).
 fn keys_of(state: &State, layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
     let mut keys = match state.tab() {
+        Tab::Sessions => return super::sessions::keys(state, layout),
         Tab::Chat => return chat::keys(state.chat().focus(), layout),
         Tab::Waves => return super::waves::keys_of(layout),
         Tab::Machines => super::machines::keys(layout),
@@ -505,14 +585,16 @@ fn key_line(
 
 /// The keys of the help popup of `tab`: the key, and what it does
 /// (01M6VAZKDEQ6951KGPGAMF1SNJ). A built tab has its own keys first
-/// ([`super::machines::help_keys`], [`super::waves::help_keys`],
-/// [`chat::HELP`]). Each tab has the keys of the frame.
+/// ([`super::sessions::help_keys`], [`super::waves::help_keys`],
+/// [`super::machines::help_keys`], [`chat::HELP`]). Each tab has the
+/// keys of the frame.
 ///
 /// ```
 /// use riff::tui::Tab;
 /// use riff::tui::view::help_keys;
 ///
-/// assert_eq!(help_keys(Tab::Sessions)[0], ("1 to 6", "open a tab"));
+/// assert_eq!(help_keys(Tab::Reports)[0], ("1 to 6", "open a tab"));
+/// assert_eq!(help_keys(Tab::Sessions)[0], ("↑ ↓ j k", "select a row"));
 /// assert_eq!(help_keys(Tab::Waves)[0], ("↑ ↓, j k", "select a row"));
 /// assert_eq!(help_keys(Tab::Machines)[0], ("↑ ↓ j k", "select a host"));
 /// assert!(help_keys(Tab::Waves).contains(&("q, Ctrl-C", "end the TUI")));
@@ -522,6 +604,7 @@ fn key_line(
 /// ```
 pub fn help_keys(tab: Tab) -> Vec<(&'static str, &'static str)> {
     let mut keys = match tab {
+        Tab::Sessions => super::sessions::help_keys(),
         Tab::Waves => super::waves::help_keys(),
         Tab::Machines => super::machines::help_keys(),
         Tab::Chat => chat::HELP.to_vec(),
@@ -617,7 +700,7 @@ mod tests {
     /// owner mike, at the same build as riff-server, 2 seconds after a
     /// good look, with two new lines in the chat and news in the waves.
     fn mock_up() -> State {
-        let mut state = State::new(build("10df8a4c0ffe"));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         let mut look = Look::default();
         look.who.owner = RiffOwner::Owner {
             user: "mike".into(),
@@ -647,45 +730,51 @@ mod tests {
             .collect()
     }
 
-    /// The frame of the mock-up of the Sessions tab of #994 at 80 x 24:
-    /// the strip, the header, the note and the key line of the frame,
-    /// and the body until item B (01M6VAZK1R932VQMJBC32MTTJB,
-    /// 01M6VAZK4RQSZ0MG2DHWQC598Q, 01M6VAZKNXZV1RTG7MT0GMHKT3).
+    /// The frame of #994 at 80 x 24 in the Reports tab: the strip, the
+    /// header, the note and the key line of the frame, and the body until
+    /// item F (01M6VAZK1R932VQMJBC32MTTJB, 01M6VAZK4RQSZ0MG2DHWQC598Q,
+    /// 01M6VAZKNXZV1RTG7MT0GMHKT3). The screen tests of the built tabs are
+    /// in [`super::super::sessions`], [`super::super::waves`],
+    /// [`super::super::machines`] and [`super::super::chat`].
     #[test]
     fn the_frame_at_80_x_24_is_the_mock_up() {
         let mut state = mock_up();
-        state.note("The lead of riff runs on. (Ctrl-P Ctrl-Q detached.)");
+        state.on_key(Key::Open(Tab::Reports));
+        state.note("Read again 2s ago.");
         let mut want = vec![
-            "[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports",
+            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  5 Devices  [6 Reports]",
             " riff running · owner mike · build 10df8a4 · link ok 2s",
-            " The Sessions tab is not built yet. Use these commands:",
-            "   riff top",
-            "   riff who",
+            " The Reports tab is not built yet. Use these commands:",
+            "   riff usage",
+            "   riff audit",
+            "   riff daemon events NAME",
         ];
         want.resize(22, "");
         want.extend([
-            " The lead of riff runs on. (Ctrl-P Ctrl-Q detached.)",
+            " Read again 2s ago.",
             " 1-6 tab  r read again  ? help  q quit",
         ]);
         assert_eq!(drawn(&state, 80, 24), want);
     }
 
-    /// The frame of the mock-up of the narrow layout of #994 at 40 x 24
+    /// The frame of the narrow layout of #994 at 40 x 24
     /// (01M6VAZKK4KHCDCX4RKG9B95D7).
     #[test]
     fn the_frame_at_40_x_24_is_the_narrow_mock_up() {
         let mut state = mock_up();
-        state.note("The lead of riff runs on.");
+        state.on_key(Key::Open(Tab::Reports));
+        state.note("Read again 2s ago.");
         let mut want = vec![
-            "‹ 1/6 Sessions ›",
+            "‹ 6/6 Reports ›",
             "riff running · link ok 2s",
-            "The Sessions tab is not built yet. Use",
+            "The Reports tab is not built yet. Use",
             "these commands:",
-            "  riff top",
-            "  riff who",
+            "  riff usage",
+            "  riff audit",
+            "  riff daemon events NAME",
         ];
         want.resize(22, "");
-        want.extend(["The lead of riff runs on.", "1-6 tab  ? help  q quit"]);
+        want.extend(["Read again 2s ago.", "1-6 tab  ? help  q quit"]);
         assert_eq!(drawn(&state, 40, 24), want);
     }
 
@@ -761,7 +850,7 @@ mod tests {
     /// when it is another.
     #[test]
     fn the_header_shows_a_pause_no_owner_and_another_build_of_riff_server() {
-        let mut state = State::new(build("10df8a4c0ffe"));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         let mut look = Look {
             pauses: RiffState::Paused.into(),
             ..Look::default()
@@ -775,7 +864,7 @@ mod tests {
         );
         assert_eq!(drawn(&state, 40, 24)[1], "riff paused · link ok 2m");
         // No look yet: the link is down.
-        let state = State::new(build("10df8a4c0ffe"));
+        let state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         assert_eq!(drawn(&state, 80, 24)[1], " build 10df8a4 · link down");
     }
 
@@ -806,7 +895,7 @@ mod tests {
         let popup = view.popup.as_ref().unwrap();
         assert!(popup.area.width <= 76 && popup.area.height <= 24);
         // A click anywhere closes the popup.
-        assert_eq!(state.on_click(&view, 79, 0), None);
+        assert_eq!(state.on_click(&view, 79, 0, false), None);
         assert!(!state.help_shown());
         assert_eq!(compute_view(&state, area, NOW).popup, None);
         // `?` again shows it, and `?` closes it.
@@ -829,19 +918,23 @@ mod tests {
             Some(Key::Open(Tab::Waves))
         );
         // The Waves tab looks again at once, for the holds of its boards.
-        assert_eq!(state.on_click(&wide, 30, 0), Some(Action::Look));
+        assert_eq!(state.on_click(&wide, 30, 0, false), Some(Action::Look));
         assert_eq!(state.tab(), Tab::Waves);
         assert_eq!(state.news_of(Tab::Waves), None);
         // The space between two tabs is no place.
         assert_eq!(wide.hit(12, 0), None);
         assert_eq!(wide.hit(0, 0), Some(Key::Open(Tab::Sessions)));
+        let wide = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
         // The key line: ` 1-6 tab  r read again  ? help  q quit`.
         let keys = " 1-6 tab  r read again  ? help  q quit";
         let at = |word: &str| u16::try_from(keys.find(word).unwrap()).unwrap();
         assert_eq!(wide.hit(at("1-6"), 23), None);
         assert_eq!(wide.hit(at("read again"), 23), Some(Key::Again));
         assert_eq!(wide.hit(at("? help"), 23), Some(Key::Help));
-        assert_eq!(state.on_click(&wide, at("q quit"), 23), Some(Action::Quit));
+        assert_eq!(
+            state.on_click(&wide, at("q quit"), 23, false),
+            Some(Action::Quit)
+        );
         // No place in the body.
         assert_eq!(wide.hit(5, 5), None);
 
@@ -850,11 +943,11 @@ mod tests {
         assert_eq!(narrow.hit(next, 0), Some(Key::Next));
         assert_eq!(narrow.hit(0, 0), Some(Key::Before));
         assert_eq!(narrow.hit(3, 0), None);
-        state.on_click(&narrow, 0, 0);
+        state.on_click(&narrow, 0, 0, false);
         assert_eq!(state.tab(), Tab::Chat);
         let narrow = compute_view(&state, Rect::new(0, 0, 40, 24), NOW);
         let next = u16::try_from("‹ 2/6 Chat ".chars().count()).unwrap();
-        state.on_click(&narrow, next, 0);
+        state.on_click(&narrow, next, 0, false);
         assert_eq!(state.tab(), Tab::Waves);
     }
 
@@ -880,7 +973,8 @@ mod tests {
     /// A wide terminal draws the same frame as 80 columns.
     #[test]
     fn a_wide_terminal_draws_the_same_frame() {
-        let state = mock_up();
+        let mut state = mock_up();
+        state.on_key(Key::Open(Tab::Reports));
         let wide = drawn(&state, 200, 30);
         let narrow = drawn(&state, 80, 30);
         assert_eq!(wide, narrow);

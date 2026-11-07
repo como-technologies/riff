@@ -237,22 +237,23 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
     assert!(!help.contains("--forge"), "{help}");
 }
 
-/// 01M53NGW6F5HP1DZ9QRGP50MGT, 01M57D4FZGCVE62AP4MVG59HM4,
-/// 01M6QVSJC4V3Z3NB6MJW4XGJSR: `riff view` shows the sessions of this
-/// machine, or with `--host` of another host through riff-server, and
-/// `riff lead start` asks the riff daemon for no wave.
+/// 01M6VGHPP3ZT5TTMSGAXV3ZK7W, 01M6QVSJC4V3Z3NB6MJW4XGJSR: riff has no
+/// command `riff view`, also not with `--host`, and `riff --help` names
+/// none. `riff lead start` asks the riff daemon for no wave.
 #[test]
-fn the_help_of_view_and_lead_start_says_what_they_do_in_riff_3() {
+fn riff_view_is_gone_and_the_help_of_lead_start_says_what_it_does() {
     // The words, with no line breaks of the wrap.
     let words = |args: &[&str]| riff(args).split_whitespace().collect::<Vec<_>>().join(" ");
-    let view = words(&["view", "--help"]);
-    assert!(
-        view.contains("Show the riff daemon of HOST, through riff-server."),
-        "{view}"
-    );
-    for word in ["other machines", "offline"] {
-        assert!(!view.contains(word), "riff view --help: {word}: {view}");
+    for args in [&["view"][..], &["view", "--host", "thelio"]] {
+        let out = Isolated::shared().riff().args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "riff {args:?}: {out:?}");
     }
+    let help = riff(&["--help"]);
+    assert!(
+        !help.lines().any(|l| l.trim_start().starts_with("view ")),
+        "{help}"
+    );
+    assert!(!help.contains("riff view"), "{help}");
     let lead = words(&["lead", "start", "--help"]);
     assert!(
         lead.contains("starts no workers and does not join the host"),
@@ -377,7 +378,6 @@ fn the_help_and_the_book_say_who_can_use_each_host_flag() {
         (&["join"], daemon),
         (&["leave"], daemon),
         (&["lead", "stop"], daemon),
-        (&["view"], daemon),
     ] {
         for flag in ["--help", "-h"] {
             let help = words(&riff(&[args, &[flag]].concat()));

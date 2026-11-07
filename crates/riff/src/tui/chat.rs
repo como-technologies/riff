@@ -702,7 +702,7 @@ impl State {
     ///     let at = chrono::DateTime::from_timestamp_millis(at_ms as i64).unwrap().fixed_offset();
     ///     Came::Seen(Entry::Line { line: Box::new(line), at })
     /// };
-    /// let mut state = State::new(Build::this());
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
     /// state.chat_as("mike", 5_000);
     /// // The history is no news, and a new line is.
     /// state.chat_came(came(1_000));
@@ -718,6 +718,7 @@ impl State {
     /// assert_eq!(state.chat().unsent(), Some("riff: cannot send the line: no"));
     /// state.on_key(Frame::Chat(Key::Type('a')));
     /// assert_eq!(state.chat().unsent(), None);
+    /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn chat_came(&mut self, came: Came) {
         match came {
@@ -757,7 +758,7 @@ impl State {
     /// use riff::tui::{Action, Key as Frame, Look, State, Tab};
     /// use riff_core::build::Build;
     ///
-    /// let mut state = State::new(Build::this());
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
     /// state.looked(Look::default(), 0);
     /// state.chat_as("mike", 0);
     /// state.on_key(Frame::Open(Tab::Chat));
@@ -791,6 +792,7 @@ impl State {
     /// assert_eq!(state.chat().focus(), Focus::Log);
     /// state.on_key(Frame::Chat(Key::Prompt));
     /// assert_eq!(state.chat().focus(), Focus::Prompt);
+    /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub(super) fn on_chat(&mut self, key: Key) -> Option<Action> {
         match key {
@@ -1366,7 +1368,7 @@ mod tests {
     /// como-technologies/riff, the lines of the mock-up, and news in
     /// the waves.
     fn mock_up() -> State {
-        let mut state = State::new(build("10df8a4c0ffe"));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         let mut look = Look::default();
         look.who.owner = RiffOwner::Owner {
             user: "mike".into(),
@@ -1533,7 +1535,7 @@ mod tests {
         assert_eq!(view.hit(2, 23), Some(FrameKey::Chat(Key::Prompt)));
         assert_eq!(view.hit(10, 21), Some(FrameKey::Chat(Key::Prompt)));
         assert_eq!(view.hit(10, 5), Some(FrameKey::Chat(Key::Log)));
-        state.on_click(&view, 10, 21);
+        state.on_click(&view, 10, 21, false);
         assert_eq!(state.chat().focus(), Focus::Prompt);
         let (_, view) = drawn(&mut state, 80, 24);
         assert_eq!(view.hit(2, 23), Some(FrameKey::Chat(Key::Send)));

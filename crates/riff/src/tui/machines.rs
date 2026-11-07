@@ -531,7 +531,8 @@ fn sessions_word(n: u32) -> &'static str {
 
 /// Takes the key `key` while the person types the limit `typing`
 /// (01M6VFD0PPXDNH3NKD3YE4W9SB): a digit, also the digits of the tabs,
-/// `Backspace`, `Enter` to ask `y` or `n`, and `Esc` to set nothing.
+/// `Backspace`, `Enter` to ask `y` or `n`, and `Esc` to set nothing. `q`
+/// and `Ctrl-C` end the TUI.
 ///
 /// ```
 /// use riff::tui::{Action, Key, Look, State, Tab};
@@ -546,13 +547,13 @@ fn sessions_word(n: u32) -> &'static str {
 /// host.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 5 });
 /// let mut look = Look::default();
 /// look.who.sessions = vec![host];
-/// let mut state = State::new(Build::this());
+/// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
 /// state.looked(look, 0);
 /// state.on_key(Key::Open(Tab::Machines));
 /// state.on_key(Key::Char('l'));
 /// assert_eq!(state.asked().as_deref(), Some("The most live sessions of thelio (now 3): █"));
-/// // The digits of the tabs are digits here.
-/// for key in [Key::Open(Tab::Sessions), Key::Char('2'), Key::Backspace, Key::Char('0')] {
+/// // The digits of the tabs are digits here, and a letter is nothing.
+/// for key in [Key::Char('1'), Key::Char('2'), Key::Backspace, Key::Char('j'), Key::Char('0')] {
 ///     state.on_key(key);
 /// }
 /// assert_eq!(state.tab(), Tab::Machines);
@@ -571,14 +572,11 @@ fn sessions_word(n: u32) -> &'static str {
 /// ```
 pub fn typed(state: &mut State, mut typing: Typing, key: Key) -> Option<Action> {
     let digit = match key {
-        Key::Open(tab) => u32::try_from(tab.number())
-            .ok()
-            .and_then(|n| char::from_digit(n, 10)),
         Key::Char(c) if c.is_ascii_digit() => Some(c),
         _ => None,
     };
     match key {
-        Key::Quit => return Some(Action::Quit),
+        Key::Quit | Key::Char('q') => return Some(Action::Quit),
         Key::Esc => state.note(typing.stays()),
         Key::Enter => match typing.typed.parse::<u32>() {
             Ok(sessions) => state.ask(Question {
@@ -630,7 +628,7 @@ pub fn on_key(state: &mut State, key: Key) -> Option<Action> {
         Key::Row(row) => row.min(last),
         Key::Enter => {
             let host = safe(&rows[at].name.host);
-            state.filter = Some(format!("host:{host}"));
+            state.sessions.set_filter(format!("host:{host}"));
             state.open(Tab::Sessions);
             state.note(format!("The filter of the Sessions tab: host:{host}."));
             return None;
@@ -1340,7 +1338,7 @@ mod tests {
     /// pangolin and strata-ci in `who`. Thelio is at its limit and low
     /// on memory. The link is good, and riff-server has the same build.
     fn mock_up() -> State {
-        let mut state = State::new(build("10df8a4c0ffe"));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         let mut look = Look::default();
         look.who.owner = RiffOwner::Owner {
             user: "mike".into(),
@@ -1641,7 +1639,7 @@ mod tests {
     /// host of two users shows the user.
     #[test]
     fn the_hosts_with_a_fault_come_first() {
-        let mut state = State::new(build("10df8a4c0ffe"));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         let mut look = Look::default();
         let ok = fine(
             2,
@@ -1738,14 +1736,14 @@ mod tests {
         let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
         assert_eq!(view.hit(30, 5), Some(Key::Row(1)));
         assert_eq!(view.hit(30, 3), None);
-        state.on_click(&view, 30, 5);
+        state.on_click(&view, 30, 5, false);
         assert_eq!(host(&state), "pangolin");
         // A click on `Enter sessions of the host` of the key line.
         assert_eq!(view.hit(14, 23), Some(Key::Enter));
         assert_eq!(view.hit(42, 23), Some(Key::Char('l')));
         assert_eq!(state.on_key(Key::Enter), None);
         assert_eq!(state.tab(), Tab::Sessions);
-        assert_eq!(state.filter(), Some("host:pangolin"));
+        assert_eq!(state.choices().filter(), "host:pangolin");
         assert_eq!(
             state.shown_note(),
             Some("The filter of the Sessions tab: host:pangolin.")
@@ -1759,7 +1757,7 @@ mod tests {
     /// follow the selection, and the first line shows the place.
     #[test]
     fn many_hosts_scroll_with_the_selection() {
-        let mut state = State::new(build("10df8a4c0ffe"));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         let mut look = Look::default();
         let ok = fine(
             2,
@@ -1897,7 +1895,7 @@ mod tests {
     /// the link. No key acts.
     #[test]
     fn with_no_host_the_tab_says_how_to_add_one() {
-        let mut state = State::new(build("10df8a4c0ffe"));
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         state.looked(Look::default(), NOW);
         state.on_key(Key::Open(Tab::Machines));
         let rows = drawn(&state, 80, 24);

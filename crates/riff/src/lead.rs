@@ -6,7 +6,8 @@
 //! The lead is a session of the riff daemon, as a worker is, but with a
 //! terminal: `podman run -d -i -t`. conmon holds the terminal, so the
 //! lead runs on when the person detaches with Ctrl-P Ctrl-Q, and when
-//! the daemon stops. `riff lead start` and `riff view` attach to it
+//! the daemon stops. `riff lead start` and the Sessions tab of the TUI
+//! attach to it
 //! ([`crate::runtime::Runtime::attach`]).//!
 //! ```mermaid
 //! sequenceDiagram

@@ -43,7 +43,7 @@
 //! flowchart TD
 //!     W["watch -n 5 riff wave list"] --> R["riff wave list: GitHub, 12 calls, 24 points"]
 //!     S["bash"] --> T["riff top"]
-//!     S --> V["riff view"]
+//!     S --> V["riff, the TUI"]
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};

@@ -331,12 +331,7 @@ pub fn detail(
             lines.extend(s.status.as_ref().map(step));
         }
         SessionState::Idle => {
-            let what = match SessionKind::of(s) {
-                Some(SessionKind::Lead) => "monitoring work",
-                Some(SessionKind::Host) => "hosts workers",
-                Some(SessionKind::Daemon) => "hosts containers",
-                _ => "ready for work",
-            };
+            let what = idle(s);
             lines.push((format!("{what} for {}", ago(s.claims_secs)), plain));
             lines.extend(current(s).map(step));
         }
@@ -348,6 +343,29 @@ pub fn detail(
         lines.push((format!("fresh start {} ago", ago(secs)), DIM));
     }
     lines
+}
+
+/// What an idle session does, by its kind ([`SessionKind`],
+/// 01M589HH8Z1TCYDCZHQQHTYWMK): the lead `monitoring work`, the session
+/// of `riff workers host` `hosts workers`, the session of the riff daemon
+/// `hosts containers`, and each other session `ready for work`.
+///
+/// ```
+/// use riff_core::wire::SessionInfo;
+///
+/// let info = |uri: &str| -> SessionInfo {
+///     serde_json::from_value(serde_json::json!({ "uri": uri, "live": true })).unwrap()
+/// };
+/// assert_eq!(riff::state::idle(&info("riff://mike@thelio/o/r?session=l1&lead=true")), "monitoring work");
+/// assert_eq!(riff::state::idle(&info("riff://mike@thelio/o/r?session=w1")), "ready for work");
+/// ```
+pub fn idle(s: &SessionInfo) -> &'static str {
+    match SessionKind::of(s) {
+        Some(SessionKind::Lead) => "monitoring work",
+        Some(SessionKind::Host) => "hosts workers",
+        Some(SessionKind::Daemon) => "hosts containers",
+        _ => "ready for work",
+    }
 }
 
 /// A long step (01M48VDGTD40P8RBZMS0XB5M9N): `NAME for 12m`, or in red

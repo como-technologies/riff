@@ -29,8 +29,23 @@ impl Tty {
 
     /// Starts `riff` at the riff-server `url` as `user` on `host`,
     /// in a new pseudo-terminal. With `signed`, the command is signed in.
+    /// A fake `gh` comes first on `PATH`: each repository has the open
+    /// issue #12, "Show the wave".
     fn start(url: &str, user: &str, host: &str, signed: bool) -> Tty {
-        Self::start_in(tempfile::tempdir().unwrap(), url, user, host, signed, &[])
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        isolated::write_program(
+            bin.join("gh"),
+            "#!/bin/sh\necho '[{\"number\": 12, \"title\": \"Show the wave\", \"milestone\": null}]'\n",
+        );
+        let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )))
+        .unwrap()
+        .into_string()
+        .unwrap();
+        Self::start_in(dir, url, user, host, signed, &[("PATH", path)])
     }
 
     /// [`Tty::start`] in the folder `dir`, with the variables `vars` too.
@@ -138,7 +153,9 @@ impl Tty {
 async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
     let server = crate::common::start_signed().await;
     let mut tty = Tty::start(&server, "brett", "thelio", true);
-    let rows = tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    let rows = tty
+        .shows(|rows| rows[0].starts_with("[1 Sessions]") && !rows[22].is_empty())
+        .await;
     assert_eq!(
         rows[0],
         "[1 Sessions]  2 Chat  3 Waves  4 Machines  5 Devices  6 Reports"
@@ -150,11 +167,16 @@ async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
         )),
         "{rows:#?}"
     );
-    assert_eq!(
-        rows[2],
-        " The Sessions tab is not built yet. Use these commands:"
+    // The Sessions tab: no session yet, and no riff daemon here.
+    assert!(
+        rows[2].starts_with(" 0 sessions") && rows[2].ends_with("by person"),
+        "{rows:#?}"
     );
-    assert_eq!(rows[23], " 1-6 tab  r read again  ? help  q quit");
+    assert_eq!(rows[22], format!(" {}", riff::text::NO_DAEMON_HERE));
+    assert_eq!(
+        rows[23],
+        " ↑↓ select  ←→ fold  Enter open  l lead  t take over  p pause  / filter  ? help"
+    );
 
     // The keys open a tab: a digit, Tab and Shift-Tab.
     tty.press("4").await;
@@ -290,6 +312,114 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
     tty.press("\r").await;
     let rows = tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     assert_eq!(rows[22], " The filter of the Sessions tab: host:thelio.");
+    assert!(rows[2].ends_with("/host:thelio · by person"), "{rows:#?}");
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// A session `uri` on the riff-server `server`, with the claim `item`
+/// in the thread of its repository. It is live until the test ends.
+async fn session(server: &str, uri: &str, item: &str) {
+    let uri: riff_core::name::SessionUri = uri.parse().unwrap();
+    let api = crate::common::api_of(server, &uri);
+    api.register(&uri).await.unwrap();
+    let thread = uri.default_thread().unwrap();
+    api.claim(&uri, &thread, item).await.unwrap();
+    let (open, opened) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let _watch = api.watch(&uri).await.unwrap();
+        open.send(()).unwrap();
+        std::future::pending::<()>().await;
+    });
+    opened.await.unwrap();
+}
+
+/// 01M6VGGW73KKG6Q0TZNBGYN7E0, 01M6VGH4JTM81PZH3F4R51VWG5,
+/// 01M6VGH4Y0G25VYBBD5ZV4GG2H: the Sessions tab shows the sessions of
+/// riff-server in the tree, `/` filters them, and `p` pauses the
+/// repository of the row after `y`, with the code of `riff pause`.
+#[tokio::test]
+async fn the_sessions_tab_shows_the_tree_filters_it_and_pauses_a_repository() {
+    let server = crate::common::start_signed().await;
+    // A new riff starts paused: the owner brett resumes it, as `riff
+    // resume --riff` does.
+    let brett: riff_core::name::SessionUri = "riff://brett@thelio".parse().unwrap();
+    crate::common::api_of(&server, &brett)
+        .set_pause(
+            &brett,
+            &riff_client::api::PauseScope::Riff,
+            riff_core::wire::RiffState::Running,
+        )
+        .await
+        .unwrap();
+    session(
+        &server,
+        "riff://mike@pangolin/como-technologies/riff?session=5b1e2a90",
+        "issue-12",
+    )
+    .await;
+    session(
+        &server,
+        "riff://mike@pangolin/como-technologies/strata?session=9c0d1e2f",
+        "issue-88",
+    )
+    .await;
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    // The groups of mike need no look: one folded line with the counts.
+    let rows = tty
+        .shows(|rows| rows.iter().any(|row| row.starts_with(" ▶ mike")))
+        .await;
+    assert!(rows[2].starts_with(" 2 sessions: 2 busy"), "{rows:#?}");
+    let mike = rows.iter().find(|row| row.starts_with(" ▶ mike")).unwrap();
+    assert!(mike.ends_with("2 sessions · 2 busy"), "{rows:#?}");
+
+    // `/` and a word: only the rows that match, in open groups.
+    tty.press("/").await;
+    for key in ["#", "1", "2"] {
+        tty.press(key).await;
+    }
+    tty.shows(|rows| rows[22] == " /#12█").await;
+    tty.press("\r").await;
+    let rows = tty
+        .shows(|rows| rows.iter().any(|row| row.contains("5b1e2a90")))
+        .await;
+    assert!(rows[2].starts_with(" 1 session: 1 busy"), "{rows:#?}");
+    assert!(rows[2].ends_with("/#12 · by person"), "{rows:#?}");
+    assert!(
+        !rows.iter().any(|row| row.contains("9c0d1e2f")),
+        "{rows:#?}"
+    );
+    let row = rows.iter().find(|row| row.contains("5b1e2a90")).unwrap();
+    assert!(row.contains("5b1e2a90  #12 "), "{rows:#?}");
+    // The detail of the selected session has the title from `gh`.
+    tty.shows(|rows| {
+        rows.iter()
+            .any(|row| row.starts_with("──5b1e2a90 · #12 Show the wave · pangolin ─"))
+    })
+    .await;
+
+    // `p` asks first, `n` changes nothing, and `y` pauses.
+    tty.press("p").await;
+    let ask = " Pause como-technologies/riff? y/N";
+    tty.shows(|rows| rows[22] == ask).await;
+    tty.press("n").await;
+    tty.shows(|rows| rows[22] == format!(" {}", riff::tui::NOTHING_CHANGED))
+        .await;
+    tty.press("p").await;
+    tty.shows(|rows| rows[22] == ask).await;
+    tty.press("y").await;
+    let rows = tty
+        .shows(|rows| rows[22].starts_with(" The repository como-technologies/riff is paused now."))
+        .await;
+    // The next look shows the pause: the session is paused.
+    tty.press("r").await;
+    tty.shows(|rows| rows[2].starts_with(" 1 session: 1 paused"))
+        .await;
+    assert!(!rows.is_empty());
+
+    // Esc clears the filter, and `q` ends the TUI.
+    tty.press("\x1b").await;
+    tty.shows(|rows| rows[2].starts_with(" 2 sessions")).await;
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));
 }
