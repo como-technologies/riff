@@ -1,6 +1,6 @@
-//! The Machines tab of the TUI (#1639): the facts of each host, the
-//! detail of the selected host, the link and riff-server, and the limit
-//! of a host.
+//! The Machines tab of the TUI (#1639, #1702): the facts of each host,
+//! the detail of the selected host, the link and riff-server, the limit
+//! of a host, and the filter of the hosts.
 //!
 //! # Design
 //!
@@ -9,7 +9,7 @@
 //!  riff running · owner mike · build 10df8a4 · link ok 2s
 //!  3 hosts · 1 at its limit · 1 low on memory
 //!      HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN
-//!  > ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   80%   1     0s
+//!  > ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   79%   1     0s
 //!      pangolin   2/4   3.1/16   14/32 GB    90/200 GB   55%   0     12s
 //!      strata-ci  0/2   0.4/8    30/64 GB    140/500 GB  72%   0     28s
 //!
@@ -56,7 +56,53 @@
 //! and the server (01M6VFD0HGCVMYNNC3H4788W9X). The narrow layout has no
 //! detail. When the hosts do not fit, the rows scroll with the
 //! selection, and the first line shows the place
-//! (01M6VFD0M3RHT488D0RQ84RVMC).
+//! (01M6VFD0M3RHT488D0RQ84RVMC). The column `USED` is the used part of
+//! the disk, rounded to the nearest percent
+//! ([`riff_client::machines::Disk::used_percent`],
+//! 01M6VJQPG6RM3Q4QAJEHFJ6RQK).
+//!
+//! # The wide rows
+//!
+//! From [`view::WIDER`] columns, a row adds two columns
+//! (01M6VJQGSMNAJ82GX0YQ2YAHKC): `CLOCK`, the clock now against the
+//! most clock of a core, and `POOL`, the CPUs and the memory of each new
+//! container of the host ([`riff_client::daemons::Caps`], `riff daemon
+//! limit --cpus N --memory GB`). The key line adds `/ filter`. The rows
+//! at 132 columns:
+//!
+//! ```text
+//!      HOST       WORK  LOAD     CLOCK          MEM FREE    DISK FREE   USED  POOL          WAITS SEEN
+//!  > ! thelio     3/3   19.0/32  4100/5883 MHz  2/124 GB !  95/455 GB   79%   8 CPU 8 GB    1     0s
+//!      pangolin   2/4   3.1/16   4400/4500 MHz  14/32 GB    90/200 GB   55%   4 CPU 8 GB    0     12s
+//!      strata-ci  0/2   0.4/8    1200/3600 MHz  30/64 GB    140/500 GB  72%   2 CPU 16 GB   0     28s
+//! ```
+//!
+//! # The filter
+//!
+//! `/` filters the hosts ([`Filter`], 01M6VJQPJXKHKJ8WT1CAQMN1YR). Each
+//! word must match a part of a word of the host ([`matches()`]): its user,
+//! its host, the repository of a wave, the item of a session, or a fault
+//! ([`Fault::word`]). `KEY:WORD` matches only the words of [`KEYS`]. While
+//! the person types, the note line shows the filter, and each character
+//! is a letter of it ([`crate::tui::State::on_key`]). The first line
+//! counts the hosts that match against all, and ends with the filter:
+//!
+//! ```text
+//!  1 of 3 hosts · /pang
+//!      HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN
+//!  >   pangolin   2/4   3.1/16   14/32 GB    90/200 GB   55%   0     12s
+//! ```
+//!
+//! ```mermaid
+//! stateDiagram-v2
+//!     [*] --> None
+//!     None --> Typing: /
+//!     Typing --> Typing: a character, Backspace
+//!     Typing --> Kept: Enter
+//!     Typing --> None: Esc
+//!     Kept --> Typing: /
+//!     Kept --> None: Esc
+//! ```
 //!
 //! # The keys
 //!
@@ -70,6 +116,8 @@
 //! | A click on a row | Select the host. |
 //! | `Enter` | Open the Sessions tab with the filter `host:HOST`. |
 //! | `l` | Set the limit of the host. |
+//! | `/` | Filter the hosts. `Enter` keeps the filter, `Esc` clears it. |
+//! | `Esc` | Clear the filter. |
 //!
 //! `l` asks for the most live sessions of the selected host in the
 //! note line ([`Typing`], 01M6VFD0PPXDNH3NKD3YE4W9SB). `Enter` asks
@@ -294,6 +342,28 @@ impl Fault {
         }
     }
 
+    /// The words of the fault that the filter matches with the key
+    /// `state` (01M6VJQPJXKHKJ8WT1CAQMN1YR).
+    ///
+    /// ```
+    /// use riff::tui::machines::Fault;
+    ///
+    /// let words: Vec<&str> = Fault::ALL.iter().map(|f| f.word()).collect();
+    /// assert_eq!(
+    ///     words,
+    ///     ["at its limit", "low on memory", "tight on disk", "needs a sign-in", "tells no numbers"]
+    /// );
+    /// ```
+    pub fn word(self) -> &'static str {
+        match self {
+            Fault::Limit => "at its limit",
+            Fault::Memory => "low on memory",
+            Fault::Disk => "tight on disk",
+            Fault::SignIn => "needs a sign-in",
+            Fault::Numbers => "tells no numbers",
+        }
+    }
+
     /// The line of the fault in the detail of a host with the facts
     /// `facts` (01M6VFD0EXECEEVNN969SAPV4C).
     pub fn line(self, facts: &Facts) -> String {
@@ -392,6 +462,121 @@ impl Row {
             process,
         }
     }
+
+    /// The words of the host that a word of the filter can match, each
+    /// with its key of [`KEYS`] (01M6VJQPJXKHKJ8WT1CAQMN1YR): its user,
+    /// its host, the repository of each wave, the item of each session,
+    /// and each fault.
+    pub fn words(&self) -> Vec<(&'static str, String)> {
+        let mut words = vec![
+            ("user", self.name.user.clone()),
+            ("host", self.name.host.clone()),
+        ];
+        words.extend(self.facts.waves.iter().map(|w| ("repo", w.repo.clone())));
+        words.extend(self.facts.sessions.iter().map(|s| ("item", s.item.clone())));
+        words.extend(self.faults.iter().map(|f| ("state", f.word().to_owned())));
+        words
+    }
+}
+
+/// The keys of a word of the filter: `KEY:WORD` matches only the words
+/// of the host with that key (01M6VJQPJXKHKJ8WT1CAQMN1YR).
+pub const KEYS: [&str; 5] = ["user", "host", "repo", "item", "state"];
+
+/// True when the word `word` of the filter matches one of `words`
+/// (01M6VJQPJXKHKJ8WT1CAQMN1YR): a word with no key of [`KEYS`] matches
+/// each word, `host:thelio` only a host. The match is a part of the
+/// word, with no case.
+///
+/// ```
+/// use riff::tui::machines::matches;
+///
+/// let words = [("host", "thelio".to_owned()), ("item", "issue-1594".to_owned())];
+/// assert!(matches("thel", &words));
+/// assert!(matches("THELIO", &words));
+/// assert!(matches("host:thelio", &words));
+/// assert!(matches("1594", &words));
+/// assert!(!matches("user:thelio", &words));
+/// assert!(!matches("pangolin", &words));
+/// // A key that is not in KEYS is a part of the word.
+/// assert!(!matches("os:thelio", &words));
+/// ```
+pub fn matches(word: &str, words: &[(&str, String)]) -> bool {
+    let word = word.to_lowercase();
+    let (key, value) = match word.split_once(':') {
+        Some((key, value)) if KEYS.contains(&key) => (Some(key), value),
+        _ => (None, word.as_str()),
+    };
+    words
+        .iter()
+        .filter(|(k, _)| key.is_none_or(|key| key == *k))
+        .any(|(_, w)| w.to_lowercase().contains(value))
+}
+
+/// The filter of the Machines tab (01M6VJQPJXKHKJ8WT1CAQMN1YR): its
+/// words, and true while the person types them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Filter {
+    /// The words. Each word must match.
+    pub words: String,
+    /// True while the person types the words.
+    pub typing: bool,
+}
+
+impl Filter {
+    /// True when the filter has a word.
+    pub fn is_set(&self) -> bool {
+        !self.words.trim().is_empty()
+    }
+
+    /// True when each word of the filter matches a word of `row`.
+    ///
+    /// ```
+    /// use riff::tui::machines::{Fault, Filter, Name, Row};
+    /// use riff_client::daemons::Facts;
+    ///
+    /// let row = Row {
+    ///     name: Name { user: "mike".into(), host: "thelio".into() },
+    ///     age_secs: 0,
+    ///     facts: Facts::default(),
+    ///     process: None,
+    ///     faults: vec![Fault::Numbers],
+    /// };
+    /// let filter = |words: &str| Filter { words: words.into(), typing: false };
+    /// assert!(filter("thel mike").shows(&row));
+    /// assert!(filter("state:numbers").shows(&row));
+    /// assert!(!filter("thel ann").shows(&row));
+    /// assert!(!filter("host:mike").shows(&row));
+    /// // No word shows each host.
+    /// assert!(filter("").shows(&row) && !filter("  ").is_set());
+    /// assert!(filter("thel").is_set());
+    /// ```
+    pub fn shows(&self, row: &Row) -> bool {
+        let words = row.words();
+        self.words.split_whitespace().all(|w| matches(w, &words))
+    }
+
+    /// The note line while the person types: `/`, the words and a
+    /// cursor.
+    ///
+    /// ```
+    /// use riff::tui::machines::Filter;
+    ///
+    /// let filter = Filter { words: "host:thel".into(), typing: true };
+    /// assert_eq!(filter.line(), "/host:thel█");
+    /// ```
+    pub fn line(&self) -> String {
+        format!("/{}█", self.words)
+    }
+}
+
+/// The rows of `look` that the filter of the Machines tab shows, in the
+/// order of [`rows`] (01M6VJQPJXKHKJ8WT1CAQMN1YR).
+pub fn shown(state: &State, look: &Look) -> Vec<Row> {
+    rows(look)
+        .into_iter()
+        .filter(|row| state.host_filter().shows(row))
+        .collect()
 }
 
 /// The hosts of the look `look`, in the order of the tab
@@ -609,12 +794,76 @@ pub fn typed(state: &mut State, mut typing: Typing, key: Key) -> Option<Action> 
     None
 }
 
+/// Takes the key `key` while the person types the filter of the tab
+/// (01M6VJQPJXKHKJ8WT1CAQMN1YR): a character, `Backspace`, `Enter` to
+/// keep the filter, and `Esc` to clear it. `Ctrl-C` ends the TUI.
+///
+/// ```
+/// use riff::tui::{Action, Key, State, Tab};
+/// use riff_core::build::Build;
+///
+/// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
+/// state.on_key(Key::Open(Tab::Machines));
+/// state.on_key(Key::Char('/'));
+/// for c in "pang q1".chars() {
+///     state.on_key(Key::Char(c));
+/// }
+/// state.on_key(Key::Backspace);
+/// assert_eq!(state.asked().as_deref(), Some("/pang q█"));
+/// assert_eq!(state.tab(), Tab::Machines);
+/// // Enter keeps the filter.
+/// state.on_key(Key::Enter);
+/// assert_eq!(state.host_filter().words, "pang q");
+/// assert_eq!(state.asked(), None);
+/// // `/` types on, and Esc clears the filter.
+/// state.on_key(Key::Char('/'));
+/// assert_eq!(state.asked().as_deref(), Some("/pang q█"));
+/// state.on_key(Key::Esc);
+/// assert!(!state.host_filter().is_set());
+/// assert_eq!(state.asked(), None);
+/// // Esc also clears a kept filter.
+/// for key in [Key::Char('/'), Key::Char('x'), Key::Enter, Key::Esc] {
+///     state.on_key(key);
+/// }
+/// assert!(!state.host_filter().is_set());
+/// state.on_key(Key::Char('/'));
+/// assert_eq!(state.on_key(Key::Quit), Some(Action::Quit));
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn filter_typed(state: &mut State, key: Key) -> Option<Action> {
+    let filter = &mut state.host_filter;
+    match key {
+        Key::Quit => return Some(Action::Quit),
+        Key::Char(c) => filter.words.push(c),
+        Key::Backspace => {
+            filter.words.pop();
+        }
+        Key::Enter => filter.typing = false,
+        Key::Esc => *filter = Filter::default(),
+        _ => {}
+    }
+    None
+}
+
 /// Takes the key `key` of the Machines tab (01M6VFD0M3RHT488D0RQ84RVMC,
-/// 01M6VFD0PPXDNH3NKD3YE4W9SB). With no host, no key acts.
+/// 01M6VFD0PPXDNH3NKD3YE4W9SB, 01M6VJQPJXKHKJ8WT1CAQMN1YR). `/` types
+/// the filter, and `Esc` clears it. With no host that shows, no other
+/// key acts.
 pub fn on_key(state: &mut State, key: Key) -> Option<Action> {
+    match key {
+        Key::Char('/') => {
+            state.host_filter.typing = true;
+            return None;
+        }
+        Key::Esc => {
+            state.host_filter = Filter::default();
+            return None;
+        }
+        _ => {}
+    }
     let rows = state
         .last_look()
-        .map(|(look, _)| rows(look))
+        .map(|(look, _)| shown(state, look))
         .unwrap_or_default();
     let last = rows.len().checked_sub(1)?;
     let at = selected(state, &rows);
@@ -667,13 +916,27 @@ fn ask_limit(state: &mut State, row: &Row) {
 
 /// The keys of the tab on the key line of `layout`, before the keys of
 /// the frame: the text of the key, its word, and the key of a click.
-pub fn keys(layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
+/// From [`view::WIDER`] columns, `wider`, the line names `/` too
+/// (01M6VJQPJXKHKJ8WT1CAQMN1YR).
+pub fn keys(layout: Layout, wider: bool) -> Vec<(&'static str, &'static str, Option<Key>)> {
     let mut keys = vec![("↑↓", "select", None)];
     if layout == Layout::Wide {
         keys.push(("Enter", "sessions of the host", Some(Key::Enter)));
     }
     keys.push(("l", "limit", Some(Key::Char('l'))));
+    if wider {
+        keys.push(("/", "filter", Some(Key::Char('/'))));
+    }
     keys
+}
+
+/// The keys of the key line while the person types the filter
+/// (01M6VJQPJXKHKJ8WT1CAQMN1YR): the line has no other key.
+pub fn filter_keys() -> Vec<(&'static str, &'static str, Option<Key>)> {
+    vec![
+        ("Enter", "keep the filter", Some(Key::Enter)),
+        ("Esc", "clear it", Some(Key::Esc)),
+    ]
 }
 
 /// The keys of the tab in the help popup, before the keys of the frame.
@@ -684,25 +947,92 @@ pub fn help_keys() -> Vec<(&'static str, &'static str)> {
         ("g G", "the first or last host"),
         ("Enter", "show its sessions"),
         ("l", "set its limit"),
+        ("/", "filter: Enter keeps it, Esc clears it"),
         ("y, n", "answer a question"),
     ]
 }
 
-/// The columns of the wide layout: the head and the width of each. The
-/// last column has the rest of the row.
-const WIDE_COLUMNS: [(&str, usize); 8] = [
-    ("HOST", 11),
-    ("WORK", 6),
-    ("LOAD", 9),
-    ("MEM FREE", 12),
-    ("DISK FREE", 12),
-    ("USED", 6),
-    ("WAITS", 6),
-    ("SEEN", 0),
+/// A column of the rows of the hosts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Column {
+    /// The host, or `USER@HOST`.
+    Host,
+    /// The live sessions against the limit.
+    Work,
+    /// The 1-minute load against the hardware threads.
+    Load,
+    /// The clock now against the most clock of a core, in MHz.
+    Clock,
+    /// The free memory against the memory, in GB.
+    Memory,
+    /// The same, with no unit: the narrow layout.
+    MemoryGb,
+    /// The free disk against the disk, in GB.
+    Disk,
+    /// The used part of the disk.
+    Used,
+    /// The CPUs and the memory of each new container.
+    Pool,
+    /// The starts that wait for room.
+    Waits,
+    /// The age of the facts.
+    Seen,
+}
+
+impl Column {
+    /// The head of the column.
+    fn head(self) -> &'static str {
+        match self {
+            Column::Host => "HOST",
+            Column::Work => "WORK",
+            Column::Load => "LOAD",
+            Column::Clock => "CLOCK",
+            Column::Memory => "MEM FREE",
+            Column::MemoryGb => "MEM GB",
+            Column::Disk => "DISK FREE",
+            Column::Used => "USED",
+            Column::Pool => "POOL",
+            Column::Waits => "WAITS",
+            Column::Seen => "SEEN",
+        }
+    }
+}
+
+/// The columns of the wide layout, and the width of each. The last
+/// column has the rest of the row.
+const WIDE_COLUMNS: [(Column, usize); 8] = [
+    (Column::Host, 11),
+    (Column::Work, 6),
+    (Column::Load, 9),
+    (Column::Memory, 12),
+    (Column::Disk, 12),
+    (Column::Used, 6),
+    (Column::Waits, 6),
+    (Column::Seen, 0),
+];
+
+/// The columns from [`view::WIDER`] columns (01M6VJQGSMNAJ82GX0YQ2YAHKC):
+/// the wide ones, with the clock and the pool.
+const WIDER_COLUMNS: [(Column, usize); 10] = [
+    (Column::Host, 11),
+    (Column::Work, 6),
+    (Column::Load, 9),
+    (Column::Clock, 15),
+    (Column::Memory, 12),
+    (Column::Disk, 12),
+    (Column::Used, 6),
+    (Column::Pool, 14),
+    (Column::Waits, 6),
+    (Column::Seen, 0),
 ];
 
 /// The columns of the narrow layout.
-const NARROW_COLUMNS: [(&str, usize); 4] = [("HOST", 11), ("WORK", 6), ("LOAD", 8), ("MEM GB", 0)];
+const NARROW_COLUMNS: [(Column, usize); 4] = [
+    (Column::Host, 11),
+    (Column::Work, 6),
+    (Column::Load, 8),
+    (Column::MemoryGb, 0),
+];
 
 /// `text` in a column of `width` characters, with one space after it at
 /// least. A longer text ends with `…`. A width of 0 keeps the text.
@@ -717,89 +1047,113 @@ fn fit(text: &str, width: usize) -> String {
     format!("{cut}… ")
 }
 
-/// The cells of `row` with the name `name`, each with its style. A
-/// number over its limit has the warning style (01M6VFCPK2PSDTHHE5TSY3XP5N).
-fn cells(row: &Row, name: String, wide: bool) -> Vec<(String, Style)> {
+/// The cell of `row` with the name `name` in the column `column`, with
+/// its style. A number over its limit has the warning style
+/// (01M6VFCPK2PSDTHHE5TSY3XP5N). A fact that the host does not tell is
+/// `-`.
+fn cell(row: &Row, name: &str, column: Column) -> (String, Style) {
     let facts = &row.facts;
     let warn = |over: bool| if over { WARNING } else { Style::new() };
-    let none = || ("-".to_owned(), Style::new());
-    let work = (
-        format!("{}/{}", facts.runs(), facts.limit),
-        warn(row.faults.contains(&Fault::Limit)),
-    );
-    let load = facts.machine.map_or_else(none, |m| {
-        (format!("{:.1}/{}", m.load, m.threads), warn(m.busy()))
-    });
-    let low = row.faults.contains(&Fault::Memory);
+    let plain = |text: String| (text, Style::new());
+    let none = || plain("-".to_owned());
     let mark = |over: bool| if over { " !" } else { "" };
-    let mem = facts.machine.map_or_else(none, |m| {
-        let unit = if wide { " GB" } else { "" };
-        (
-            format!("{}/{}{unit}{}", m.avail_gb, m.mem_gb, mark(low)),
-            warn(low),
-        )
-    });
-    let mut cells = vec![(name, Style::new()), work, load, mem];
-    if wide {
-        let tight = row.faults.contains(&Fault::Disk);
-        cells.extend([
-            facts.disk.map_or_else(none, |d| {
-                (
-                    format!("{}/{} GB{}", d.free_gb, d.total_gb, mark(tight)),
-                    warn(tight),
-                )
-            }),
-            facts.disk.map_or_else(none, |d| {
-                (
-                    format!("{}%", 100u64.saturating_sub(d.percent())),
-                    Style::new(),
-                )
-            }),
-            (facts.waiting.len().to_string(), Style::new()),
-            (text::ago(row.age_secs), Style::new()),
-        ]);
+    let low = row.faults.contains(&Fault::Memory);
+    let tight = row.faults.contains(&Fault::Disk);
+    match column {
+        Column::Host => plain(name.to_owned()),
+        Column::Work => (
+            format!("{}/{}", facts.runs(), facts.limit),
+            warn(row.faults.contains(&Fault::Limit)),
+        ),
+        Column::Load => facts.machine.map_or_else(none, |m| {
+            (format!("{:.1}/{}", m.load, m.threads), warn(m.busy()))
+        }),
+        Column::Clock => facts
+            .machine
+            .map_or_else(none, |m| plain(format!("{}/{} MHz", m.now_mhz, m.mhz))),
+        Column::Memory | Column::MemoryGb => facts.machine.map_or_else(none, |m| {
+            let unit = if column == Column::Memory { " GB" } else { "" };
+            (
+                format!("{}/{}{unit}{}", m.avail_gb, m.mem_gb, mark(low)),
+                warn(low),
+            )
+        }),
+        Column::Disk => facts.disk.map_or_else(none, |d| {
+            (
+                format!("{}/{} GB{}", d.free_gb, d.total_gb, mark(tight)),
+                warn(tight),
+            )
+        }),
+        Column::Used => facts
+            .disk
+            .map_or_else(none, |d| plain(format!("{}%", d.used_percent()))),
+        Column::Pool => facts.caps.map_or_else(none, |c| {
+            plain(format!("{} CPU {} GB", c.cpus, c.memory_gb))
+        }),
+        Column::Waits => plain(facts.waiting.len().to_string()),
+        Column::Seen => plain(text::ago(row.age_secs)),
     }
-    cells
 }
 
-/// The line of the cells `cells` in the columns `columns`, after the
-/// lead-in `pre`.
+/// The line of the cells of `row` with the name `name` in the columns
+/// `columns`, after the lead-in `pre`.
 fn columns_line(
     pre: Vec<Span<'static>>,
-    cells: Vec<(String, Style)>,
-    columns: &[(&str, usize)],
+    row: &Row,
+    name: &str,
+    columns: &[(Column, usize)],
 ) -> Line<'static> {
     let mut spans = pre;
-    for ((text, style), (_, width)) in cells.into_iter().zip(columns) {
+    for (column, width) in columns {
+        let (text, style) = cell(row, name, *column);
         spans.push(Span::styled(fit(&text, *width), style));
     }
     Line::from(spans)
 }
 
-/// The names of the hosts of `rows`: the host, or `USER@HOST` for a host
-/// with the same name as the host of another user.
-fn names(rows: &[Row]) -> Vec<String> {
-    rows.iter()
-        .map(|row| {
-            let twin = rows
-                .iter()
-                .any(|other| other.name.host == row.name.host && other.name.user != row.name.user);
-            if twin {
-                format!("{}@{}", safe(&row.name.user), safe(&row.name.host))
-            } else {
-                safe(&row.name.host)
-            }
-        })
-        .collect()
+/// The line of the heads of `columns`, after the lead-in.
+fn heads_line(columns: &[(Column, usize)]) -> Line<'static> {
+    let mut spans = vec![Span::raw("    ")];
+    for (column, width) in columns {
+        spans.push(Span::raw(fit(column.head(), *width)));
+    }
+    Line::from(spans).style(DIM)
+}
+
+/// The name of the host of `row` among the hosts `all`: the host, or
+/// `USER@HOST` for a host with the same name as the host of another
+/// user.
+fn name_of(all: &[Row], row: &Row) -> String {
+    let twin = all
+        .iter()
+        .any(|other| other.name.host == row.name.host && other.name.user != row.name.user);
+    if twin {
+        format!("{}@{}", safe(&row.name.user), safe(&row.name.host))
+    } else {
+        safe(&row.name.host)
+    }
 }
 
 /// The first line of the tab (01M6VFD0CAS71DNBGE7K56JJ2H,
-/// 01M6VFD0M3RHT488D0RQ84RVMC): the count of the hosts and of each
-/// fault. The narrow layout counts the hosts with a fault. When the
-/// rows scroll, it ends with the place of the rows that show.
-fn summary(rows: &[Row], wide: bool, shown: std::ops::Range<usize>) -> String {
+/// 01M6VFD0M3RHT488D0RQ84RVMC, 01M6VJQPJXKHKJ8WT1CAQMN1YR): the count of
+/// the hosts and of each fault. The narrow layout counts the hosts with
+/// a fault. With a filter, it counts the hosts that match, `rows`,
+/// against all the hosts, `all`, and ends with the filter. When the
+/// rows scroll, it shows the place of the rows that show.
+fn summary(
+    rows: &[Row],
+    all: usize,
+    filter: &Filter,
+    wide: bool,
+    shown: std::ops::Range<usize>,
+) -> String {
     let n = rows.len();
-    let mut parts = vec![format!("{n} {}", if n == 1 { "host" } else { "hosts" })];
+    let hosts = if all == 1 { "host" } else { "hosts" };
+    let mut parts = vec![if filter.is_set() {
+        format!("{n} of {all} {hosts}")
+    } else {
+        format!("{n} {hosts}")
+    }];
     if wide {
         for fault in Fault::ALL {
             let count = rows.iter().filter(|r| r.faults.contains(&fault)).count();
@@ -816,6 +1170,9 @@ fn summary(rows: &[Row], wide: bool, shown: std::ops::Range<usize>) -> String {
     }
     if !shown.is_empty() && shown.len() < n {
         parts.push(format!("{}-{} of {n}", shown.start + 1, shown.end));
+    }
+    if filter.is_set() {
+        parts.push(format!("/{}", safe(filter.words.trim())));
     }
     parts.join(" · ")
 }
@@ -1018,6 +1375,9 @@ fn rule(title: &str, width: u16) -> Line<'static> {
 /// The rows of the hosts, the detail and the lines of the link share
 /// the rows of the area (01M6VFD0EXECEEVNN969SAPV4C): the hosts get at
 /// least half of the rest, and the detail loses its last lines first.
+/// The rows are the hosts that the filter shows, with the clock and the
+/// pool from [`view::WIDER`] columns (01M6VJQGSMNAJ82GX0YQ2YAHKC,
+/// 01M6VJQPJXKHKJ8WT1CAQMN1YR).
 pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Placed>, Vec<Hit>) {
     let wide = layout == Layout::Wide;
     let margin = u16::from(wide);
@@ -1041,8 +1401,8 @@ pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Plac
         });
     };
     let link = link_lines(state, look, at_ms, wide, now_ms);
-    let rows = rows(look);
-    if rows.is_empty() {
+    let all = rows(look);
+    if all.is_empty() {
         let width = usize::from((area.width - margin).max(1));
         let mut lines: Vec<Line<'static>> = Vec::new();
         for text in [NO_HOSTS, ADD_HOST] {
@@ -1070,6 +1430,13 @@ pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Plac
         return (placed, hits);
     }
 
+    let filter = state.host_filter();
+    let rows: Vec<Row> = all
+        .iter()
+        .filter(|row| filter.shows(row))
+        .cloned()
+        .collect();
+
     // The first line and the head of the columns.
     let mut room = total.saturating_sub(2);
     let link_rows = if room > link.len() + 2 {
@@ -1079,10 +1446,9 @@ pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Plac
     };
     room -= link_rows;
     let at = selected(state, &rows);
-    let detail = if wide {
-        detail_lines(&rows[at])
-    } else {
-        Vec::new()
+    let detail = match rows.get(at) {
+        Some(row) if wide => detail_lines(row),
+        _ => Vec::new(),
     };
     let detail_rows = if detail.is_empty() {
         0
@@ -1094,23 +1460,18 @@ pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Plac
         .min(room.saturating_sub(detail_rows.min(room / 2)));
     let first = if at < list { 0 } else { at + 1 - list };
     let shown = first..first + list;
-    let columns: &[(&str, usize)] = if wide { &WIDE_COLUMNS } else { &NARROW_COLUMNS };
+    let columns: &[(Column, usize)] = match layout {
+        Layout::Wide if area.width >= view::WIDER => &WIDER_COLUMNS,
+        Layout::Wide => &WIDE_COLUMNS,
+        _ => &NARROW_COLUMNS,
+    };
 
     push(
-        Line::raw(summary(&rows, wide, shown.clone())),
+        Line::raw(summary(&rows, all.len(), filter, wide, shown.clone())),
         false,
         &mut placed,
     );
-    let head = columns
-        .iter()
-        .map(|(head, _)| ((*head).to_owned(), Style::new()))
-        .collect();
-    push(
-        columns_line(vec![Span::raw("    ")], head, columns).style(DIM),
-        false,
-        &mut placed,
-    );
-    let names = names(&rows);
+    push(heads_line(columns), false, &mut placed);
     for index in shown {
         let row = &rows[index];
         let choice = if index == at {
@@ -1130,9 +1491,8 @@ pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Plac
             area: Rect::new(area.x, next_row(&placed), area.width, 1),
             key: Key::Row(index),
         });
-        let cells = cells(row, names[index].clone(), wide);
         push(
-            columns_line(vec![choice, mark], cells, columns),
+            columns_line(vec![choice, mark], row, &name_of(&all, row), columns),
             false,
             &mut placed,
         );
@@ -1218,7 +1578,7 @@ mod tests {
     use crate::tui::News;
     use crate::tui::view::{compute_view, render};
     use ratatui::buffer::Buffer;
-    use riff_client::daemons::{Session, Wave};
+    use riff_client::daemons::{Caps, Session, Wave};
     use riff_client::sessions::Phase;
     use riff_core::wire::{MachineInfo, RiffOwner, SessionInfo};
 
@@ -1265,7 +1625,8 @@ mod tests {
         }
     }
 
-    /// Facts of a fine host: podman, and each sign-in on.
+    /// Facts of a fine host: podman, each sign-in on, and caps of 8
+    /// CPUs and 8 GB.
     fn fine(limit: u32, machine: Machine, disk: Disk) -> Facts {
         Facts {
             build: "0.1.0 d2ae0801c0de 2026-11-06T12:00:00Z".into(),
@@ -1273,6 +1634,10 @@ mod tests {
             floor_gb: 8,
             machine: Some(machine),
             disk: Some(disk),
+            caps: Some(Caps {
+                cpus: 8,
+                memory_gb: 8,
+            }),
             podman: Some("5.2.1".into()),
             riff: Sign::On,
             gh: Sign::On,
@@ -1352,23 +1717,41 @@ mod tests {
                 session("7a8b9c0d", "issue-1610", Phase::Works),
                 session("1e2f3a4b", "issue-1611", Phase::Works),
             ],
+            caps: Some(Caps {
+                cpus: 4,
+                memory_gb: 8,
+            }),
             ..fine(
                 4,
-                machine(16, 32, 14, 3.1),
+                Machine {
+                    mhz: 4500,
+                    now_mhz: 4400,
+                    ..machine(16, 32, 14, 3.1)
+                },
                 Disk {
                     free_gb: 90,
                     total_gb: 200,
                 },
             )
         };
-        let strata = fine(
-            2,
-            machine(8, 64, 30, 0.4),
-            Disk {
-                free_gb: 140,
-                total_gb: 500,
-            },
-        );
+        let strata = Facts {
+            caps: Some(Caps {
+                cpus: 2,
+                memory_gb: 16,
+            }),
+            ..fine(
+                2,
+                Machine {
+                    mhz: 3600,
+                    now_mhz: 1200,
+                    ..machine(8, 64, 30, 0.4)
+                },
+                Disk {
+                    free_gb: 140,
+                    total_gb: 500,
+                },
+            )
+        };
         // The facts that thelio sent: the socket replaces them.
         let thelio = Facts {
             waves: vec![Wave {
@@ -1456,20 +1839,245 @@ mod tests {
             .collect()
     }
 
+    /// The state of [`mock_up`] with the filter `pang` kept: `/`, the
+    /// word, then Enter.
+    fn filtered() -> State {
+        let mut state = mock_up();
+        state.on_key(Key::Char('/'));
+        for c in "pang".chars() {
+            state.on_key(Key::Char(c));
+        }
+        state.on_key(Key::Enter);
+        state
+    }
+
     /// The mock-up in the rustdoc of this module and in the book is the
-    /// screen of [`mock_up`]: the book shows the body only.
+    /// screen of [`mock_up`]: the book shows the body only. The rows at
+    /// 132 columns and the rows of the filter `pang` are the screens too.
     #[test]
     fn the_rustdoc_and_the_book_show_the_screen() {
         let screen = drawn(&mock_up(), 80, 24);
-        let rustdoc = text_block(include_str!("machines.rs"), "//! # Design", "//! ");
-        assert_eq!(rustdoc, screen);
+        let wider = drawn(&mock_up(), 132, 24);
+        let filter = drawn(&filtered(), 80, 24);
+        let doc = include_str!("machines.rs");
+        assert_eq!(text_block(doc, "//! # Design", "//! "), screen);
+        assert_eq!(text_block(doc, "//! # The wide rows", "//! "), wider[3..7]);
+        assert_eq!(text_block(doc, "//! # The filter", "//! "), filter[2..5]);
         let book = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../docs/src/how-it-works.md"
         ))
         .unwrap();
-        let book = text_block(&book, "#### See the hosts in the TUI", "");
-        assert_eq!(book, screen[2..19]);
+        let block = |after: &str| text_block(&book, after, "");
+        assert_eq!(block("#### See the hosts in the TUI"), screen[2..19]);
+        assert_eq!(block("In a terminal of 120 columns or more"), wider[3..7]);
+        assert_eq!(block("#### Filter the hosts in the TUI"), filter[2..5]);
+    }
+
+    /// 01M6VJQGSMNAJ82GX0YQ2YAHKC: at 132 x 24, the rows add the clock
+    /// and the pool, and the key line adds `/ filter`. The detail and the
+    /// lines of the link are the ones of 80 columns.
+    #[test]
+    fn the_machines_tab_at_132_x_24_adds_the_clock_and_the_pool() {
+        let state = mock_up();
+        let mut want: Vec<String> = [
+            " 1 Sessions  2 Chat•2  3 Waves•  [4 Machines]  5 Devices  6 Reports",
+            " riff running · owner mike · build 10df8a4 · link ok 2s",
+            " 3 hosts · 1 at its limit · 1 low on memory",
+            "     HOST       WORK  LOAD     CLOCK          MEM FREE    DISK FREE   USED  POOL          WAITS SEEN",
+            " > ! thelio     3/3   19.0/32  4100/5883 MHz  2/124 GB !  95/455 GB   79%   8 CPU 8 GB    1     0s",
+            "     pangolin   2/4   3.1/16   4400/4500 MHz  14/32 GB    90/200 GB   55%   4 CPU 8 GB    0     12s",
+            "     strata-ci  0/2   0.4/8    1200/3600 MHz  30/64 GB    140/500 GB  72%   2 CPU 16 GB   0     28s",
+            "",
+        ]
+        .map(String::from)
+        .to_vec();
+        want.push(ruled("thelio · riff daemon pid 4242, up 2d", 132));
+        let narrow = drawn(&state, 80, 24);
+        want.extend(narrow[9..16].iter().cloned());
+        want.push(ruled("the link and the server", 132));
+        want.extend(narrow[17..19].iter().cloned());
+        want.resize(23, String::new());
+        want.push(
+            " ↑↓ select  Enter sessions of the host  l limit  / filter  r read again  ? help  q quit"
+                .into(),
+        );
+        assert_eq!(drawn(&state, 132, 24), want);
+        // From 120 columns: 119 columns have no clock.
+        assert_eq!(drawn(&state, 120, 24)[3], want[3]);
+        assert_eq!(drawn(&state, 119, 24)[3], narrow[3]);
+        // A click on `/ filter` types the filter.
+        let view = compute_view(&state, Rect::new(0, 0, 132, 24), NOW);
+        let keys = &want[23];
+        let at = u16::try_from(keys.chars().take_while(|c| *c != '/').count()).unwrap();
+        assert_eq!(view.hit(at, 23), Some(Key::Char('/')));
+    }
+
+    /// 01M6VJQGSMNAJ82GX0YQ2YAHKC: a host that tells no numbers and no
+    /// caps shows `-` for the clock and the pool.
+    #[test]
+    fn a_host_that_tells_no_clock_and_no_caps_shows_a_dash() {
+        let mut state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
+        let mut look = Look::default();
+        let silent = Facts {
+            machine: None,
+            caps: None,
+            ..fine(
+                2,
+                machine(8, 64, 30, 0.4),
+                Disk {
+                    free_gb: 140,
+                    total_gb: 500,
+                },
+            )
+        };
+        look.who.sessions = vec![daemon("mike", "m", &silent, 5)];
+        state.looked(look, NOW);
+        state.on_key(Key::Open(Tab::Machines));
+        assert_eq!(
+            drawn(&state, 132, 24)[4],
+            " > ! m          0/2   -        -              -           140/500 GB  72%   -             0     5s"
+        );
+    }
+
+    /// 01M6VJQPG6RM3Q4QAJEHFJ6RQK: `USED` is the used part of the disk,
+    /// rounded to the nearest percent: 95 of 455 GB free is 79%, not the
+    /// 80% of 100 less the free part rounded down.
+    #[test]
+    fn the_use_of_95_of_455_gb_free_is_79_percent() {
+        let state = mock_up();
+        let (look, _) = state.last_look().unwrap();
+        let found = rows(look);
+        let thelio = found.iter().find(|r| r.name.host == "thelio").unwrap();
+        assert_eq!(
+            thelio.facts.disk,
+            Some(Disk {
+                free_gb: 95,
+                total_gb: 455
+            })
+        );
+        assert_eq!(cell(thelio, "thelio", Column::Used).0, "79%");
+        let at = |free_gb, total_gb| {
+            let row = Row {
+                facts: Facts {
+                    disk: Some(Disk { free_gb, total_gb }),
+                    ..thelio.facts.clone()
+                },
+                ..thelio.clone()
+            };
+            cell(&row, "thelio", Column::Used).0
+        };
+        assert_eq!(at(400, 455), "12%");
+        assert_eq!(at(0, 455), "100%");
+        assert_eq!(at(455, 455), "0%");
+    }
+
+    /// 01M6VJQPJXKHKJ8WT1CAQMN1YR: `/` with a word shows only the hosts
+    /// that match. The note line shows the filter while the person types
+    /// it, Enter keeps it, and the first line counts the hosts that match
+    /// and shows the filter. Esc shows each host again.
+    #[test]
+    fn the_filter_shows_the_hosts_that_match() {
+        let mut state = mock_up();
+        state.on_key(Key::Char('/'));
+        // `g` is a letter of the filter, not the first host.
+        for c in "pang".chars() {
+            state.on_key(Key::Char(c));
+        }
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[2], " 1 of 3 hosts · /pang");
+        assert!(rows[4].starts_with(" >   pangolin   2/4 "), "{rows:#?}");
+        assert_eq!(rows[5], "");
+        assert_eq!(rows[6], ruled("pangolin · riff daemon build d2ae080", 80));
+        assert_eq!(rows[22], " /pang█");
+        assert_eq!(rows[23], " Enter keep the filter  Esc clear it");
+        // A click on `Esc clear it` presses Esc.
+        let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
+        assert_eq!(view.hit(25, 23), Some(Key::Esc));
+        assert_eq!(view.hit(5, 23), Some(Key::Enter));
+        state.on_key(Key::Enter);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[2], " 1 of 3 hosts · /pang");
+        assert_eq!(rows[22], "");
+        assert_eq!(
+            rows[23],
+            " ↑↓ select  Enter sessions of the host  l limit  r read again  ? help  q quit"
+        );
+        // The keys act on the hosts that show.
+        state.on_key(Key::Last);
+        state.on_key(Key::Enter);
+        assert_eq!(state.choices().filter(), "host:pangolin");
+        state.on_key(Key::Open(Tab::Machines));
+        assert_eq!(drawn(&state, 40, 24)[2], "1 of 3 hosts · /pang");
+        // Esc shows each host again.
+        state.on_key(Key::Esc);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[2], " 3 hosts · 1 at its limit · 1 low on memory");
+        assert!(rows[5].starts_with(" >   pangolin "), "{rows:#?}");
+    }
+
+    /// 01M6VJQPJXKHKJ8WT1CAQMN1YR: each word must match, a key matches
+    /// only its facts, and a filter with no host that matches shows no
+    /// row and no detail.
+    #[test]
+    fn each_word_and_each_key_of_the_filter_must_match() {
+        let shows = |words: &str| {
+            let mut state = mock_up();
+            state.host_filter.words = words.into();
+            let (look, _) = state.last_look().unwrap();
+            shown(&state, look)
+                .into_iter()
+                .map(|row| row.name.host)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shows("state:memory"), ["thelio"]);
+        assert_eq!(shows("item:1610"), ["pangolin"]);
+        assert_eq!(shows("repo:riff"), ["thelio"]);
+        assert_eq!(shows("user:mike"), ["thelio", "pangolin", "strata-ci"]);
+        assert_eq!(shows("MIKE ci"), ["strata-ci"]);
+        assert_eq!(shows("host:mike"), Vec::<String>::new());
+        assert_eq!(shows("i"), ["thelio", "pangolin", "strata-ci"]);
+        let mut state = mock_up();
+        state.on_key(Key::Char('/'));
+        state.on_key(Key::Char('x'));
+        state.on_key(Key::Enter);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[2], " 0 of 3 hosts · /x");
+        assert_eq!(rows[4], "");
+        assert_eq!(rows[5], ruled("the link and the server", 80));
+        // No key acts on a host, and `l` asks nothing.
+        assert_eq!(state.on_key(Key::Char('l')), None);
+        assert_eq!(state.on_key(Key::Enter), None);
+        assert_eq!((state.tab(), state.asked()), (Tab::Machines, None));
+        // `/` types on: Backspace, then a new word.
+        state.on_key(Key::Char('/'));
+        state.on_key(Key::Backspace);
+        for c in "strata".chars() {
+            state.on_key(Key::Char(c));
+        }
+        state.on_key(Key::Enter);
+        assert_eq!(drawn(&state, 80, 24)[2], " 1 of 3 hosts · /strata");
+    }
+
+    /// 01M6VJQPJXKHKJ8WT1CAQMN1YR: Esc closes the help popup first, and
+    /// keeps the filter. Then Esc clears the filter.
+    #[test]
+    fn esc_closes_the_help_first_and_then_clears_the_filter() {
+        let mut state = filtered();
+        state.on_key(Key::Help);
+        assert!(state.help_shown());
+        state.on_key(Key::Esc);
+        assert!(!state.help_shown());
+        assert!(state.host_filter().is_set());
+        state.on_key(Key::Esc);
+        assert!(!state.host_filter().is_set());
+        // The help names `/`.
+        state.on_key(Key::Help);
+        let text = drawn(&state, 80, 24).join("\n");
+        assert!(
+            text.contains("filter: Enter keeps it, Esc clears it"),
+            "{text}"
+        );
     }
 
     /// The mock-up of the Machines tab of #994 at 80 x 24
@@ -1486,7 +2094,7 @@ mod tests {
             " riff running · owner mike · build 10df8a4 · link ok 2s",
             " 3 hosts · 1 at its limit · 1 low on memory",
             "     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN",
-            " > ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   80%   1     0s",
+            " > ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   79%   1     0s",
             "     pangolin   2/4   3.1/16   14/32 GB    90/200 GB   55%   0     12s",
             "     strata-ci  0/2   0.4/8    30/64 GB    140/500 GB  72%   0     28s",
             "",
@@ -1585,7 +2193,7 @@ mod tests {
         assert_eq!(rows[2], " 3 hosts");
         assert_eq!(
             rows[6],
-            "     thelio     0/3   0.5/32   100/124 GB  400/455 GB  13%   0     20s"
+            "     thelio     0/3   0.5/32   100/124 GB  400/455 GB  12%   0     20s"
         );
         assert_eq!(rows[8], ruled("pangolin · riff daemon build d2ae080", 80));
         assert!(

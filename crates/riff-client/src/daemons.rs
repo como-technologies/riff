@@ -24,6 +24,8 @@
 //! The facts carry the [`Parts`] of the host in each repository that its
 //! daemon serves: `workers`, `lead`, both or none (#1643). `riff who`
 //! shows them as the line `parts`. A daemon of an older build sends none.
+//! They carry the [`Caps`] of each new container of the host too: the
+//! Machines tab of the TUI shows them.
 //!
 //! A line has at most [`MACHINE_CHARS`] characters. The last step of
 //! each session has at most [`LAST_CHARS`]. When the line is still too
@@ -281,6 +283,16 @@ pub struct Image {
     pub here: bool,
 }
 
+/// The caps of each new container of a host: `riff daemon limit
+/// --cpus N --memory GB`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Caps {
+    /// The CPUs of each new container.
+    pub cpus: u32,
+    /// The memory cap of each new container, in GB.
+    pub memory_gb: u64,
+}
+
 /// The short form of a digest: the first [`SHORT_DIGEST`] hex digits
 /// after `sha256:`. A text with no `sha256:` is cut the same way.
 ///
@@ -331,6 +343,10 @@ pub struct Facts {
     /// The disk of the session folders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disk: Option<Disk>,
+    /// The caps of each new container. A daemon of an older build sends
+    /// none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caps: Option<Caps>,
     /// The version of podman, or `None` with no podman.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub podman: Option<String>,
@@ -535,6 +551,10 @@ mod tests {
                 free_gb: 200,
                 total_gb: 455,
             }),
+            caps: Some(Caps {
+                cpus: 12,
+                memory_gb: 16,
+            }),
             podman: Some("5.2.1".into()),
             riff: Sign::On,
             gh: Sign::Off,
@@ -552,6 +572,8 @@ mod tests {
         let machine = facts.machine.unwrap();
         assert_eq!(machine.threads, 32);
         assert_eq!((machine.mhz, machine.avail_gb), (5883, 117));
+        // An old daemon tells no caps.
+        assert_eq!(facts.caps, None);
         assert!(facts.line().contains(r#""cores":32"#));
     }
 

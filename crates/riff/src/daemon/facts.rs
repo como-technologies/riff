@@ -10,9 +10,10 @@
 //! ([`riff_client::daemons`]). The facts are:
 //!
 //! - from the status of the daemon: the riff build, the limit and the
-//!   floor, the live sessions with their item, phase, last step and the
-//!   digest of the image of their container, the starts that wait, and
-//!   the state of each wave ([`of_status`]);
+//!   floor, the caps of each new container, the live sessions with their
+//!   item, phase, last step and the digest of the image of their
+//!   container, the starts that wait, and the state of each wave
+//!   ([`of_status`]);
 //! - from the host: the load, the free memory, the disk of the session
 //!   folders, the version of podman, and the merged pin of each wave
 //!   with whether podman has it ([`look`], [`pins`],
@@ -86,11 +87,13 @@ pub fn every() -> Duration {
 }
 
 /// The facts of the status of the daemon: the build, the limit, the
-/// sessions, the starts that wait and the waves. The lead counts in no
-/// limit: it is not a session of the facts.
+/// caps of each new container, the sessions, the starts that wait and
+/// the waves. The lead counts in no limit: it is not a session of the
+/// facts.
 ///
 /// ```
 /// use riff::daemon::facts::of_status;
+/// use riff_client::daemons::Caps;
 ///
 /// let status: riff::daemon::Status = serde_json::from_value(serde_json::json!({
 ///     "pid": 7, "build": "3.1.0", "since_ms": 0, "dir": "/d",
@@ -110,6 +113,7 @@ pub fn every() -> Duration {
 /// }))?;
 /// let facts = of_status(&status);
 /// assert_eq!((facts.build.as_str(), facts.limit, facts.floor_gb), ("3.1.0", 4, 8));
+/// assert_eq!(facts.caps, Some(Caps { cpus: 8, memory_gb: 8 }));
 /// assert_eq!(facts.sessions.len(), 1);
 /// assert_eq!(facts.sessions[0].last, "> Bash: just check");
 /// assert_eq!(facts.sessions[0].digest, "0123456789ab");
@@ -126,6 +130,10 @@ pub fn of_status(status: &Status) -> Facts {
         build: status.build.clone(),
         limit: limit.sessions,
         floor_gb: limit.floor_gb,
+        caps: Some(daemons::Caps {
+            cpus: limit.cpus,
+            memory_gb: limit.memory_gb,
+        }),
         sessions: status
             .sessions
             .iter()

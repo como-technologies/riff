@@ -263,7 +263,7 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
         "     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN"
     );
     assert!(
-        rows[4].starts_with(" >   thelio     0/3   1.5/16   24/32 GB    200/455 GB  57%   0     "),
+        rows[4].starts_with(" >   thelio     0/3   1.5/16   24/32 GB    200/455 GB  56%   0     "),
         "{rows:#?}"
     );
     let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
@@ -420,6 +420,89 @@ async fn the_sessions_tab_shows_the_tree_filters_it_and_pauses_a_repository() {
     // Esc clears the filter, and `q` ends the TUI.
     tty.press("\x1b").await;
     tty.shows(|rows| rows[2].starts_with(" 2 sessions")).await;
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// 01M6VJQPJXKHKJ8WT1CAQMN1YR, 01M6VJQPNJ4AX4RT877F1QAPPX: in the
+/// Machines tab, `/` with a word shows only the hosts that match, and
+/// Esc shows each host again. While the person types, `g` and `q` are
+/// letters of the filter: `g` selects no host, and `q` does not end the
+/// TUI.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_machines_tab_filters_the_hosts() {
+    use riff_client::daemons::Facts;
+    use riff_client::machines::{Disk, Machine};
+
+    let server = crate::common::start_signed().await;
+    let facts = Facts {
+        build: riff_core::build::Build::this().to_string(),
+        limit: 3,
+        floor_gb: 8,
+        machine: Some(Machine {
+            threads: 16,
+            mhz: 4500,
+            now_mhz: 4400,
+            mem_gb: 32,
+            avail_gb: 24,
+            load: 1.5,
+        }),
+        disk: Some(Disk {
+            free_gb: 200,
+            total_gb: 455,
+        }),
+        ..Facts::default()
+    };
+    // The daemons of brett on thelio and on pangolin send their facts.
+    let daemons: Vec<(riff_core::name::SessionUri, _)> = [("thelio", "d1"), ("pangolin", "d2")]
+        .into_iter()
+        .map(|(host, session)| {
+            let uri = format!("riff://brett@{host}/o/r?session={session}");
+            (uri.parse().unwrap(), server.api("brett", Some(session)))
+        })
+        .collect();
+    let mut watches = Vec::new();
+    for (daemon, api) in &daemons {
+        api.register(daemon).await.unwrap();
+        watches.push(api.watch(daemon).await.unwrap());
+        api.machine(daemon, &facts.line()).await.unwrap();
+    }
+
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("4").await;
+    let rows = tty
+        .shows(|rows| rows[0].contains("[4 Machines]") && rows[2] == " 2 hosts")
+        .await;
+    assert!(rows[4].starts_with(" >   pangolin "), "{rows:#?}");
+    assert!(rows[5].starts_with("     thelio "), "{rows:#?}");
+
+    // `/`, then a word: only pangolin shows.
+    tty.press("/").await;
+    tty.press("pang").await;
+    let rows = tty
+        .shows(|rows| rows[2] == " 1 of 2 hosts · /pang" && rows[22] == " /pang█")
+        .await;
+    assert!(rows[4].starts_with(" >   pangolin "), "{rows:#?}");
+    assert_eq!(rows[5], "");
+    assert_eq!(rows[23], " Enter keep the filter  Esc clear it");
+    // `q` is a letter too, and Backspace takes it away.
+    tty.press("q").await;
+    tty.shows(|rows| rows[2] == " 0 of 2 hosts · /pangq").await;
+    tty.press("\x7f").await;
+    tty.shows(|rows| rows[2] == " 1 of 2 hosts · /pang").await;
+    // Enter keeps the filter.
+    tty.press("\r").await;
+    let rows = tty
+        .shows(|rows| rows[22].is_empty() && rows[23].starts_with(" ↑↓ select"))
+        .await;
+    assert_eq!(rows[2], " 1 of 2 hosts · /pang");
+
+    // Esc shows each host again.
+    tty.press("\x1b").await;
+    let rows = tty.shows(|rows| rows[2] == " 2 hosts").await;
+    assert!(rows[4].starts_with(" >   pangolin "), "{rows:#?}");
+    assert!(rows[5].starts_with("     thelio "), "{rows:#?}");
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));
 }

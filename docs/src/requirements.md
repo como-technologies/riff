@@ -7365,6 +7365,28 @@ that builds it merges.
   01M51KJ1R9K7A7RW8T8XH8VW43, 01M501PADKZNRHBZD9XPMJGW06,
   01M5NJ87YEHHGJBANM7CRYV56Z, 01M5QVBTXE8YRY44A1C1VP71QS and
   01M56Y8KD05JH2J7AMK636WGT7 in part.
+- **01M6VJQGSMNAJ82GX0YQ2YAHKC** From 120 columns, a row of the Machines
+  tab adds two columns: `CLOCK`, the clock now against the most clock of
+  a core in MHz, after `LOAD`, and `POOL`, the CPUs and the memory of
+  each new container of the host, after `USED`. The facts that the
+  daemon of a host sends carry these caps. A host that tells no clock or
+  no caps shows `-`.
+- **01M6VJQPG6RM3Q4QAJEHFJ6RQK** The column `USED` of the Machines tab
+  shows the used part of the disk: the size less the free GB, over the
+  size, rounded to the nearest percent. For example, 95 of 455 GB free
+  shows `79%`.
+- **01M6VJQPJXKHKJ8WT1CAQMN1YR** `/` in the Machines tab filters the
+  hosts. Each word must match a part of the user, the host, the
+  repository of a wave, the item of a session or a fault of a host, with
+  no case. `KEY:WORD`, for example `host:thelio`, matches only that key:
+  `user`, `host`, `repo`, `item` or `state`. While the person types, the
+  note line shows the filter. Enter keeps the filter, and Esc clears it.
+  With no popup, Esc clears a kept filter too. The first line counts the
+  hosts that match against all the hosts, and ends with the filter. From
+  120 columns, the key line shows `/ filter`.
+- **01M6VJQPNJ4AX4RT877F1QAPPX** While the person types a filter in the
+  TUI, each character is a letter of the filter, also `1` to `6`, `q`,
+  `r`, `?`, `j`, `k`, `g` and `G`. `Ctrl-C` still ends the TUI.
 
 ## The notes of the lead
 

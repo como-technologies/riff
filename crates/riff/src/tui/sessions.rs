@@ -1734,14 +1734,10 @@ fn group_detail(state: &State, chain: &[&Group]) -> (String, Vec<Line<'static>>)
 }
 
 /// The keys of the key line of the Sessions tab: the text of the key,
-/// its word, and the key that a click on it presses.
+/// its word, and the key that a click on it presses. While the person
+/// types the filter, the line has the keys of the filter
+/// ([`super::machines::filter_keys`]).
 pub fn keys(state: &State, layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
-    if state.sessions.typing {
-        return vec![
-            ("Enter", "keep the filter", Some(Key::Enter)),
-            ("Esc", "clear it", Some(Key::Esc)),
-        ];
-    }
     if state.sessions.full {
         return vec![
             ("Esc", "back", Some(Key::Esc)),
