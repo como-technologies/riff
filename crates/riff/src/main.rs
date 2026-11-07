@@ -1521,8 +1521,8 @@ enum LeadCommand {
     /// The riff daemon starts claude with a terminal in a container of
     /// the session image, with a clone and a Claude folder of its own
     /// that stay between starts. When the lead runs already, riff
-    /// attaches to it. Ctrl-P Ctrl-Q detaches: the lead runs on. riff
-    /// view shows it and attaches to it too.
+    /// attaches to it. Ctrl-P Ctrl-Q detaches: the lead runs on. The
+    /// Sessions tab of riff shows it and attaches to it too.
     ///
     /// This command starts no workers and does not join the host: the
     /// host gives workers after riff join.

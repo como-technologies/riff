@@ -238,8 +238,9 @@ fn the_help_has_no_command_and_no_flag_of_the_riff_of_peers() {
 }
 
 /// 01M6VGHPP3ZT5TTMSGAXV3ZK7W, 01M6QVSJC4V3Z3NB6MJW4XGJSR: riff has no
-/// command `riff view`, also not with `--host`, and `riff --help` names
-/// none. `riff lead start` asks the riff daemon for no wave.
+/// command `riff view`, also not with `--host`, and `riff --help` and
+/// `riff lead start --help` name none. `riff lead start` asks the riff
+/// daemon for no wave.
 #[test]
 fn riff_view_is_gone_and_the_help_of_lead_start_says_what_it_does() {
     // The words, with no line breaks of the wrap.
@@ -260,6 +261,7 @@ fn riff_view_is_gone_and_the_help_of_lead_start_says_what_it_does() {
         "{lead}"
     );
     assert!(!lead.contains("run the wave"), "{lead}");
+    assert!(!lead.contains("riff view"), "{lead}");
 }
 
 #[test]
