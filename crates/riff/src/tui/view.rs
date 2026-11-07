@@ -9,7 +9,9 @@
 //! The size picks the [`Layout`] (01M6VAZKK4KHCDCX4RKG9B95D7):
 //!
 //! - [`Layout::Wide`], at 80 columns or more: the strip names each tab,
-//!   and the other rows start after a margin of one column.
+//!   and the other rows start after a margin of one column. From
+//!   [`WIDER`] columns, a tab adds columns: the clock and the pool in
+//!   the Machines tab ([`super::machines`]).
 //! - [`Layout::Narrow`], under 80 columns: the strip is `‹ N/6 NAME ›`
 //!   with no news, the header has only the state of the riff and the
 //!   link, and the rows have no margin.
@@ -56,6 +58,10 @@ use crate::text;
 
 /// The fewest columns of the wide layout.
 pub const WIDE: u16 = 80;
+
+/// The fewest columns at which a tab adds columns: the clock and the
+/// pool in the Machines tab (01M6VJQGSMNAJ82GX0YQ2YAHKC).
+pub const WIDER: u16 = 120;
 
 /// The fewest columns of the TUI: under them, it asks for a bigger
 /// terminal.
@@ -343,7 +349,7 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
         });
     }
     let keys = row(area.height - 1);
-    let (line, hits) = key_line(keys_of(state, layout), keys);
+    let (line, hits) = key_line(keys_of(state, layout, area.width), keys);
     view.rows.push(Placed { area: keys, line });
     view.hits.extend(hits);
 
@@ -532,17 +538,26 @@ fn body_lines(tab: Tab, columns: u16) -> Vec<Line<'static>> {
     lines
 }
 
-/// The keys of the key line of the tab of `state` in a layout: the text
-/// of the key, its word, and the key that a click on it presses. A built
-/// tab has its own keys first ([`super::machines::keys`]), or all its
-/// keys ([`super::sessions::keys`], [`super::waves::keys_of`],
-/// [`chat::keys`]).
-fn keys_of(state: &State, layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
+/// The keys of the key line of the tab of `state` in a layout, at
+/// `columns`: the text of the key, its word, and the key that a click on
+/// it presses. A built tab has its own keys first
+/// ([`super::machines::keys`]), or all its keys
+/// ([`super::sessions::keys`], [`super::waves::keys_of`],
+/// [`chat::keys`]). While the person types a filter, the line has only
+/// the keys of the filter (01M6VJQPJXKHKJ8WT1CAQMN1YR).
+fn keys_of(
+    state: &State,
+    layout: Layout,
+    columns: u16,
+) -> Vec<(&'static str, &'static str, Option<Key>)> {
+    if state.takes_text() {
+        return super::machines::filter_keys();
+    }
     let mut keys = match state.tab() {
         Tab::Sessions => return super::sessions::keys(state, layout),
         Tab::Chat => return chat::keys(state.chat().focus(), layout),
         Tab::Waves => return super::waves::keys_of(layout),
-        Tab::Machines => super::machines::keys(layout),
+        Tab::Machines => super::machines::keys(layout, columns >= WIDER),
         _ => vec![("1-6", "tab", None)],
     };
     if layout == Layout::Wide {

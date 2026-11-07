@@ -126,10 +126,14 @@
 //!
 //! A plain character is a [`Key::Char`]. The state gives it its meaning:
 //! while the note line asks for a text, it types into it
-//! (01M6VFGKCJ02G33TXR01GY6M0G). Else the frame takes its keys, and
-//! gives each other key to the tab: the arrows, `Enter`, and a letter.
-//! The tab turns it into an [`Action`], for example
-//! [`machines::on_key`] and [`waves::Waves::on_key`].
+//! (01M6VFGKCJ02G33TXR01GY6M0G). While the person types a filter of the
+//! Sessions tab or of the Machines tab ([`State::takes_text`]), each
+//! character is a letter of the filter, also `1` to `6` and `q`
+//! (01M6VJQPNJ4AX4RT877F1QAPPX).
+//! Else the frame takes its keys, and gives each other key to the tab:
+//! the arrows, `Enter`, and a letter. The tab turns it into an
+//! [`Action`], for example [`machines::on_key`] and
+//! [`waves::Waves::on_key`].
 //!
 //! | Key | Does |
 //! |---|---|
@@ -137,7 +141,7 @@
 //! | `Tab`, `Shift-Tab` | Open the next tab, or the tab before. |
 //! | `r` | Look again now. |
 //! | `?` | Show or hide the keys of this tab. |
-//! | `Esc` | Close the popup. |
+//! | `Esc` | Close the popup. With no popup, the tab takes it: the Sessions tab and the Machines tab clear their filter. |
 //! | `y`, `n` | Answer the question in the note line. |
 //! | `q`, `Ctrl-C` | End the TUI. The sessions go on. |
 //! | `↑` `↓` `j` `k`, `PgUp` `PgDn`, `g` `G` | Select a row, in a tab with rows. |
@@ -842,6 +846,8 @@ pub struct State {
     /// The time of the last draw, in milliseconds since the epoch: the
     /// age in a note of a key.
     drawn_ms: i64,
+    /// The filter of the Machines tab (01M6VJQPJXKHKJ8WT1CAQMN1YR).
+    host_filter: machines::Filter,
 }
 
 impl State {
@@ -872,6 +878,7 @@ impl State {
             reason: None,
             page: 20,
             drawn_ms: 0,
+            host_filter: machines::Filter::default(),
         }
     }
 
@@ -1224,7 +1231,44 @@ impl State {
         if let Some(reason) = &self.reason {
             return Some(reason.line());
         }
+        if self.host_filter.typing {
+            return Some(self.host_filter.line());
+        }
         self.typing.as_ref().map(machines::Typing::line)
+    }
+
+    /// The filter of the Machines tab (01M6VJQPJXKHKJ8WT1CAQMN1YR).
+    pub fn host_filter(&self) -> &machines::Filter {
+        &self.host_filter
+    }
+
+    /// True while the person types a filter of the Sessions tab or of
+    /// the Machines tab: each character is a letter of the filter
+    /// ([`State::on_key`], 01M6VJQPNJ4AX4RT877F1QAPPX).
+    ///
+    /// ```
+    /// use riff::tui::{Key, State, Tab};
+    /// use riff_core::build::Build;
+    ///
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
+    /// state.on_key(Key::Open(Tab::Machines));
+    /// assert!(!state.takes_text());
+    /// state.on_key(Key::Char('/'));
+    /// assert!(state.takes_text());
+    /// state.on_key(Key::Enter);
+    /// assert!(!state.takes_text());
+    /// state.on_key(Key::Open(Tab::Sessions));
+    /// state.on_key(Key::Char('/'));
+    /// assert!(state.takes_text());
+    /// state.on_key(Key::Esc);
+    /// assert!(!state.takes_text());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn takes_text(&self) -> bool {
+        self.question.is_none()
+            && self.typing.is_none()
+            && self.reason.is_none()
+            && (self.host_filter.typing || self.tab == Tab::Sessions && self.sessions.typing())
     }
 
     /// Opens the tab `tab`: its news goes. The prompt of the Chat tab
@@ -1300,8 +1344,13 @@ impl State {
         if let Some(reason) = self.reason.take() {
             return waves::typed(self, reason, key);
         }
+        // A filter takes `1` to `6` and `q` too
+        // (01M6VJQPNJ4AX4RT877F1QAPPX).
         if self.tab == Tab::Sessions && self.sessions.typing() && key != Key::Quit {
             return self.on_sessions_key(key);
+        }
+        if self.host_filter.typing {
+            return machines::filter_typed(self, key);
         }
         let key = match key {
             Key::Char(digit @ '1'..='6') => digit
@@ -1325,6 +1374,8 @@ impl State {
                 self.help = !self.help;
                 None
             }
+            // Esc closes the popup first; else the tab takes it
+            // (01M6VJQPJXKHKJ8WT1CAQMN1YR).
             Key::Esc if self.help => {
                 self.help = false;
                 None
@@ -1418,6 +1469,12 @@ impl State {
     /// state.on_key(Key::Chat(chat::Key::Log));
     /// assert_eq!(state.input(&q), Some(Input::Key(Key::Char('q'))));
     /// assert_eq!(state.on_key(Key::Char('q')), Some(Action::Quit));
+    /// // In a filter of the Machines tab, `q` is a letter.
+    /// state.on_key(Key::Open(Tab::Machines));
+    /// state.on_key(Key::Char('/'));
+    /// assert_eq!(state.input(&q), Some(Input::Key(Key::Char('q'))));
+    /// assert_eq!(state.on_key(Key::Char('q')), None);
+    /// assert_eq!(state.asked().as_deref(), Some("/q█"));
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn input(&self, event: &ratatui::crossterm::event::Event) -> Option<Input> {

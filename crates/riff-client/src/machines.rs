@@ -261,6 +261,34 @@ impl Disk {
         }
     }
 
+    /// The used part of the disk in percent: the size less the free GB,
+    /// over the size, rounded to the nearest percent. It does not take
+    /// [`Disk::percent`] from 100: that rounds the free part down first.
+    /// A disk of size zero counts as unused.
+    ///
+    /// ```
+    /// use riff_client::machines::Disk;
+    ///
+    /// // 360 of 455 GB used: 79.1%.
+    /// let disk = Disk { free_gb: 95, total_gb: 455 };
+    /// assert_eq!((disk.percent(), disk.used_percent()), (20, 79));
+    /// // 255 of 455 GB used: 56.04%. 110 of 200: 55%.
+    /// assert_eq!(Disk { free_gb: 200, total_gb: 455 }.used_percent(), 56);
+    /// assert_eq!(Disk { free_gb: 90, total_gb: 200 }.used_percent(), 55);
+    /// // 1 of 3 GB used: 33.3%. 2 of 3: 66.7%.
+    /// assert_eq!(Disk { free_gb: 2, total_gb: 3 }.used_percent(), 33);
+    /// assert_eq!(Disk { free_gb: 1, total_gb: 3 }.used_percent(), 67);
+    /// assert_eq!(Disk { free_gb: 0, total_gb: 455 }.used_percent(), 100);
+    /// assert_eq!(Disk { free_gb: 0, total_gb: 0 }.used_percent(), 0);
+    /// ```
+    pub fn used_percent(&self) -> u64 {
+        let used = self.total_gb.saturating_sub(self.free_gb);
+        match self.total_gb {
+            0 => 0,
+            total => (used * 200 + total) / (total * 2),
+        }
+    }
+
     /// True under [`TIGHT_PERCENT`]: riff removes build folders.
     pub fn tight(&self) -> bool {
         self.percent() < TIGHT_PERCENT

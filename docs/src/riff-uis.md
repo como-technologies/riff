@@ -159,7 +159,7 @@ tab comes with a build item:
 | [B #1637](https://github.com/como-technologies/riff/issues/1637) | 1 Sessions: each session and each worker, with its mark, its item, its state and its age, the fold, the filter, the detail, the attach, the takeover and the pause. `riff view` is gone. Built: see [See what each session does](how-it-works.md#see-what-each-session-does). |
 | [E #1640](https://github.com/como-technologies/riff/issues/1640) | 2 Chat: the thread `chat`, as `riff chat` shows it. Built: see [Chat in the TUI](how-it-works.md#chat-in-the-tui). |
 | [C #1638](https://github.com/como-technologies/riff/issues/1638) | 3 Waves: a board for each repository: the items, the claims, the pull requests, the next waves and the checks of `main`, with hold, free and pause. Built: see [See the open items of a wave](waves.md#see-the-open-items-of-a-wave). |
-| [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, and the limit of a host. Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui). |
+| [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, the limit of a host, and the filter of the hosts (#1702). Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui) and [Filter the hosts in the TUI](how-it-works.md#filter-the-hosts-in-the-tui). |
 | [G #1642](https://github.com/como-technologies/riff/issues/1642) | 5 Devices: list the devices, add one with a QR code, remove one. |
 | [F #1641](https://github.com/como-technologies/riff/issues/1641) | 6 Reports: the usage, the audit and the log of a session. |
 

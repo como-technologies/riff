@@ -1181,7 +1181,7 @@ riff
 ```text
  3 hosts · 1 at its limit · 1 low on memory
      HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN
- > ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   80%   1     0s
+ > ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   79%   1     0s
      pangolin   2/4   3.1/16   14/32 GB    90/200 GB   55%   0     12s
      strata-ci  0/2   0.4/8    30/64 GB    140/500 GB  72%   0     28s
 
@@ -1201,7 +1201,8 @@ riff
 - A row shows the live sessions against the limit (`WORK`), the
   1-minute load against the hardware threads, the free memory, the free
   disk and its use, the starts that wait for room, and the age of the
-  facts.
+  facts. The use (`USED`) is the used GB over the size of the disk,
+  rounded to the nearest percent.
 - A host with a fault gets `!` and comes first. A fault is a host at
   its limit, a host with less free memory than its floor, a disk with
   less than 15% free, a sign-in that stops the sessions, or a host that
@@ -1223,9 +1224,56 @@ riff
 | `g` `G` | Select the first or the last host. |
 | `Enter` | Open the Sessions tab with the filter `host:HOST`. Esc there clears it: see [Filter the sessions](#filter-the-sessions). |
 | `l` | Set the limit of the host. |
+| `/` | Filter the hosts. Enter keeps the filter, and Esc clears it. See [Filter the hosts in the TUI](#filter-the-hosts-in-the-tui). |
+| `Esc` | Close the help. With no help, clear the filter. |
 
 Under 80 columns, the rows have fewer columns, and the tab shows no
 detail.
+
+In a terminal of 120 columns or more, each row adds two columns. The
+key line adds `/ filter`.
+
+```text
+     HOST       WORK  LOAD     CLOCK          MEM FREE    DISK FREE   USED  POOL          WAITS SEEN
+ > ! thelio     3/3   19.0/32  4100/5883 MHz  2/124 GB !  95/455 GB   79%   8 CPU 8 GB    1     0s
+     pangolin   2/4   3.1/16   4400/4500 MHz  14/32 GB    90/200 GB   55%   4 CPU 8 GB    0     12s
+     strata-ci  0/2   0.4/8    1200/3600 MHz  30/64 GB    140/500 GB  72%   2 CPU 16 GB   0     28s
+```
+
+- `CLOCK` is the clock now against the most clock of a core, in MHz.
+- `POOL` is the CPUs and the memory of each new container of the host.
+  To change them, see
+  [Set the caps of a container](development.md#set-the-caps-of-a-container).
+- A host that does not tell them shows `-`.
+
+#### Filter the hosts in the TUI
+
+In the Machines tab, press `/` and type a word. The tab shows only the
+hosts that match it. A word matches a part of the user, the host, the
+repository of a wave, the item of a session or a fault of the host,
+with no case. Each word must match. To match only one fact, give its
+key: `user:`, `host:`, `repo:`, `item:` or `state:`, for example
+`host:thelio` or `state:memory`. While you type, each key is a letter
+of the filter, also `q` and the digits. Press Enter to keep the
+filter, and Esc to clear it.
+
+Run riff, press `4`, then `/`, and type `pang`:
+
+```sh
+riff
+```
+
+The first line counts the hosts that match against all the hosts, and
+shows the filter:
+
+```text
+ 1 of 3 hosts · /pang
+     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN
+ >   pangolin   2/4   3.1/16   14/32 GB    90/200 GB   55%   0     12s
+```
+
+With a filter, the keys act on the hosts that show. Press Esc to see
+each host again.
 
 #### Set the limit of a host in the TUI
 
