@@ -924,8 +924,10 @@ mod tests {
         // The space between two tabs is no place.
         assert_eq!(wide.hit(12, 0), None);
         assert_eq!(wide.hit(0, 0), Some(Key::Open(Tab::Sessions)));
+        // The key line of a tab that is not built yet:
+        // ` 1-6 tab  r read again  ? help  q quit`.
+        state.on_key(Key::Open(Tab::Reports));
         let wide = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
-        // The key line: ` 1-6 tab  r read again  ? help  q quit`.
         let keys = " 1-6 tab  r read again  ? help  q quit";
         let at = |word: &str| u16::try_from(keys.find(word).unwrap()).unwrap();
         assert_eq!(wide.hit(at("1-6"), 23), None);
@@ -938,6 +940,7 @@ mod tests {
         // No place in the body.
         assert_eq!(wide.hit(5, 5), None);
 
+        state.on_key(Key::Open(Tab::Waves));
         let narrow = compute_view(&state, Rect::new(0, 0, 40, 24), NOW);
         let next = u16::try_from("‹ 3/6 Waves ".chars().count()).unwrap();
         assert_eq!(narrow.hit(next, 0), Some(Key::Next));
