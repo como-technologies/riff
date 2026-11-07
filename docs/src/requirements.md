@@ -186,10 +186,8 @@
   environment variable.
 - **01M3NT228WA11PGNWDJ0WP7PQD** The help of `--server` on each
   command is one short line of at most 60 characters.
-  `riff help server` shows the forms of a value and the default. `riff`
-  with no argument shows the help of `riff --help`. `riff` with options
-  and no command says to name a command. Neither names a hidden
-  command.
+  `riff help server` shows the forms of a value and the default. No
+  help, and no error for a missing command, names a hidden command.
 
 ## Waves
 
