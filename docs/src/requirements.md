@@ -4458,11 +4458,21 @@ of this part when they merge.
   `riff` and `riff-server` of the tree of `HEAD` from the artifact of
   CI, else from the file of the release of a tag on `HEAD`. It builds
   them with `just static dev` only when it finds neither.
-- **01M6V8GQ1297PCZEKY311KRRWC** The `riff.toml` of this repository sets
-  `ANTHROPIC_MODEL = "opus"` first in `[session.env]`, with a comment
-  that names issue 1692, so each session of this repository runs on
-  Opus: the lead, each work item and each verify. A test checks that the
-  file sets it.
+- **01M6VAQWECJ6N6VJF66KCMNYD1** riff starts each session with the model
+  of the `riff.toml` of the repository, and the default is `opus`: the
+  key `model` in the table `[session]` of the merged `riff.toml` names
+  the model, as `image` names the image. The lead, each work item and
+  each verify start with `claude --model MODEL`. A session that runs
+  keeps its model.
+- **01M6VAQWJ5RH7NCHAX0KCQ4BWY** riff refuses a `riff.toml` whose
+  `[session.env]` names `ANTHROPIC_MODEL`: the model has one place,
+  `model` in `[session]`. It also refuses a `model` that is not a
+  string, that is empty, that has a space or a control character, or
+  that starts with `-`. The error names the key and the file.
+- **01M6VAQWMKDX4VY8QRPA8EYFN9** The `riff.toml` of this repository sets
+  `model = "opus"` in `[session]`, and no `ANTHROPIC_MODEL` in
+  `[session.env]`. A test checks the file. This supersedes
+  01M6V8GQ1297PCZEKY311KRRWC in full.
 
 ### Sessions
 
@@ -6929,6 +6939,12 @@ of this part when they merge.
   TAG on COMMIT, for N min". `riff top`, `riff who` and `riff view` show
   it on the line of the host. `Status::busy` counts the test as one, so
   the daemon starts again on a new riff only after the test.
+- **01M6VAQWQ1D95TPKYE360KC3QR** Step 6 of the real-session test fails
+  when the line `start: model MODEL` of `riff run` does not name the
+  model of the `riff.toml` of the tree: the same name, or a name that
+  has it in, as `claude-opus-5-5` has `opus`. With no `model` in
+  `[session]`, the model of the tree is `opus`. A `riff run` with no
+  such line fails the step too.
 
 ## The UIs
 

@@ -766,6 +766,72 @@ async fn the_env_and_the_volumes_of_a_session_are_the_ones_of_the_merged_riff_to
     assert!(!args.contains("riff-cargo"), "{args}");
 }
 
+/// 01M6VAQWECJ6N6VJF66KCMNYD1: a new item starts with `claude --model
+/// MODEL`, with `model` in `[session]` of the merged `riff.toml`. An edit
+/// in the working tree that is not merged changes nothing.
+#[tokio::test]
+async fn a_new_item_starts_with_the_model_of_the_merged_riff_toml() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    let config = |model: &str| format!("[session]\nimage = \"{PINNED}\"\nmodel = \"{model}\"\n");
+    std::fs::write(machine.main.join("riff.toml"), config("sonnet")).unwrap();
+    git(&machine.main, &["commit", "-q", "-am", "sonnet"]);
+    git(&machine.main, &["push", "-q", "origin", "main"]);
+    // Not merged: this edit changes nothing.
+    std::fs::write(machine.main.join("riff.toml"), config("haiku")).unwrap();
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    let args = machine.read("run.args");
+    let lines: Vec<&str> = args.lines().collect();
+    let at = lines.iter().position(|a| *a == "claude").unwrap();
+    assert_eq!(
+        lines[at..at + 5],
+        ["claude", "--effort", "xhigh", "--model", "sonnet"],
+        "{args}"
+    );
+    assert_eq!(
+        lines.iter().filter(|a| **a == "--model").count(),
+        1,
+        "{args}"
+    );
+    assert!(!args.contains("haiku"), "{args}");
+}
+
+/// 01M6VAQWJ5RH7NCHAX0KCQ4BWY: `ANTHROPIC_MODEL` in `[session.env]` of
+/// the merged `riff.toml` stops `riff run` before the claim. The error
+/// names the key and the file.
+#[tokio::test]
+async fn anthropic_model_in_the_env_of_the_riff_toml_takes_no_claim() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    std::fs::write(
+        machine.main.join("riff.toml"),
+        format!("[session]\nimage = \"{PINNED}\"\n\n[session.env]\nANTHROPIC_MODEL = \"opus\"\n"),
+    )
+    .unwrap();
+    git(&machine.main, &["commit", "-q", "-am", "model in the env"]);
+    git(&machine.main, &["push", "-q", "origin", "main"]);
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE])
+        .await;
+    assert!(!out.status.success());
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(
+            "riff.toml of origin/main: [session.env] ANTHROPIC_MODEL: riff sets the model \
+             itself. Put model = \"opus\" in [session] in place of it"
+        ),
+        "{stderr}"
+    );
+    assert!(machine.read("run.args").is_empty());
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
 #[tokio::test]
 async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_the_home() {
     let machine = Machine::new().await;
@@ -890,6 +956,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "claude",
         "--effort",
         "xhigh",
+        "--model",
+        "opus",
         "-p",
         "--input-format",
         "stream-json",
@@ -912,9 +980,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         .lines()
         .map(String::from)
         .collect();
-    assert_eq!(claude_args[..12], want[want.len() - 12..]);
-    assert_eq!(claude_args[12], "--mcp-config");
-    let config: Value = serde_json::from_str(&claude_args[13]).unwrap();
+    assert_eq!(claude_args[..14], want[want.len() - 14..]);
+    assert_eq!(claude_args[14], "--mcp-config");
+    let config: Value = serde_json::from_str(&claude_args[15]).unwrap();
     assert_eq!(
         config,
         serde_json::json!({"mcpServers": {"riff": {
@@ -1892,6 +1960,9 @@ async fn a_new_daemon_starts_the_idle_lead_again_on_the_new_riff_with_claude_res
         claude.contains(&format!("--resume\n{session}\n")),
         "{claude}"
     );
+    // 01M6VAQWECJ6N6VJF66KCMNYD1: the lead that starts again has the
+    // model of the riff.toml too.
+    assert!(claude.contains("\n--model\nopus\n"), "{claude}");
     assert!(
         claude.contains("--dangerously-skip-permissions\n"),
         "{claude}"
@@ -2560,6 +2631,9 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
         "{path}"
     );
     let claude = machine.read("claude.args");
+    // 01M6VAQWECJ6N6VJF66KCMNYD1: a riff.toml with no model gives the
+    // lead opus.
+    assert!(claude.contains("\n--model\nopus\n"), "{claude}");
     // 01M5GG2X5F1HXCQJ2JJWV6305K: the lead skips the permission checks,
     // and has no permission mode.
     assert!(

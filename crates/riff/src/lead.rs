@@ -30,7 +30,7 @@
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
 //! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change and git can fast-forward it ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z, 01M51JYDHAQDJ3GH2J8DT3AZQS |
 //! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM |
-//! | The command | `claude --session-id ID --dangerously-skip-permissions START` ([`spec`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K |
+//! | The command | `claude --model MODEL --session-id ID --dangerously-skip-permissions START` ([`spec`]), with the model of the merged `riff.toml` ([`crate::session_setup::Setup::claude`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K, 01M6VAQWECJ6N6VJF66KCMNYD1 |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
 //! | The riff commands | `RIFF_SOCKET` and no `RIFF_SERVER`: `riff wave list`, `riff release check` and `riff plan hold` reach riff-server through the daemon ([`crate::reach`]) | 01M5GVPNAKAPA596K9361HSAAV, 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ |
 //! | The riff command | `riff` is the riff of the container: the relay puts `/opt/riff` first on the `PATH` of `claude` ([`crate::session_relay::riff_first`]), so `! riff who` works in the terminal of the lead. The spec sets no `PATH` of its own, and `/opt/riff/riff` stays for the permission rules | 01M5QVCVXWBBG1BMGRVBQS25W9 |
@@ -132,8 +132,8 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 /// assert_eq!(spec.name, "riff-lead-o-r");
 /// assert_eq!(spec.workdir, facts.clone);
 /// assert_eq!(
-///     spec.command[..4],
-///     ["claude", "--session-id", facts.session.as_str(), "--dangerously-skip-permissions"]
+///     spec.command[..6],
+///     ["claude", "--model", "opus", "--session-id", facts.session.as_str(), "--dangerously-skip-permissions"]
 /// );
 /// assert!(!spec.command.iter().any(|a| a == "--permission-mode"));
 /// assert!(!spec.command.iter().any(|a| a == "-p"));
@@ -173,8 +173,8 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 /// let spec = riff::lead::spec_again(&facts, "o/r", &riff::text::lead_again("o/r"));
 /// assert_eq!(spec.name, "riff-lead-o-r");
 /// assert_eq!(
-///     spec.command[..4],
-///     ["claude", "--resume", facts.session.as_str(), "--dangerously-skip-permissions"]
+///     spec.command[..6],
+///     ["claude", "--model", "opus", "--resume", facts.session.as_str(), "--dangerously-skip-permissions"]
 /// );
 /// assert!(!spec.command.iter().any(|a| a == "--session-id"));
 /// // The same clone and the same Claude folder: `claude` finds the conversation.
@@ -195,13 +195,13 @@ fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Sess
         crate::check::VAR.into(),
         spec.home.join(".riff-check").to_string_lossy().into_owned(),
     ));
-    spec.command = vec![
-        "claude".into(),
+    spec.command = facts.setup.claude();
+    spec.command.extend([
         session_flag.to_owned(),
         facts.session.clone(),
         "--dangerously-skip-permissions".into(),
         start.to_owned(),
-    ];
+    ]);
     spec
 }
 
@@ -1277,7 +1277,8 @@ mod tests {
         assert!(!quiet(&record, idle));
     }
 
-    /// 01M5TC2919TB9XPF42YFNJBP79
+    /// 01M5TC2919TB9XPF42YFNJBP79, 01M6VAQWECJ6N6VJF66KCMNYD1: both
+    /// start with the model of the `riff.toml`.
     #[test]
     fn the_spec_of_a_lead_that_starts_again_resumes_the_conversation_in_the_same_place() {
         let facts = Facts {
@@ -1292,7 +1293,11 @@ mod tests {
             sign_in: run::ClaudeSignIn::Token,
             gitconfig: None,
             gh_config: None,
-            setup: Default::default(),
+            setup: crate::session_setup::Setup::of_config(
+                "[session]\nmodel = \"sonnet\"\n",
+                "riff.toml",
+            )
+            .unwrap(),
         };
         let first = spec(&facts, "o/r", "start");
         let again = spec_again(&facts, "o/r", "go on");
@@ -1301,11 +1306,16 @@ mod tests {
         assert_eq!(again.env, first.env);
         assert_eq!(again.workdir, first.workdir);
         assert_eq!(again.name, first.name);
-        assert_eq!(first.command[1], "--session-id");
+        assert_eq!(
+            first.command[..4],
+            ["claude", "--model", "sonnet", "--session-id"]
+        );
         assert_eq!(
             again.command,
             [
                 "claude",
+                "--model",
+                "sonnet",
                 "--resume",
                 &facts.session,
                 "--dangerously-skip-permissions",

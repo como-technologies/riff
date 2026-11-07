@@ -179,7 +179,7 @@
 //! | The sign-in of `claude` | `-e CLAUDE_CODE_OAUTH_TOKEN`: the name only, when a token is set ([`crate::claude_token`]); else the sign-in file of the host with no write | 01M58B7H2HMYT6VTY0B8T2G0KW, 01M4Z60B869HWDTZMSYPVYACD8 |
 //! | The env and the volumes of the repository | `[session.env]` and `[session.volumes]` of the merged `riff.toml` ([`crate::session_setup`]). riff sets no variable and no volume of a language or a tool | 01M5SMVVC4GQS310CVK3H9CMQ7, 01M5SMW28KT5D5HPRH7KAZ8TVC |
 //! | The caps | `--memory` and `--cpus`: the defaults, and the daemon puts the caps of the host at the start ([`crate::room::Limit::caps`]) | 01M4Z60B7XT7462XMV49GJTVSJ, 01M56Q4AQ86V99RC8CA1KGCMSZ |
-//! | `claude` | `-p` in stream-json, the riff session ID, the auto mode | 01M4Z60B82FHN2YG9YJHW8XZX1, 01M4Z81ATZK3FX9GRFTM236FE6 |
+//! | `claude` | `--model` of the merged `riff.toml`, `opus` by default ([`Setup::claude`]), `-p` in stream-json, the riff session ID, the auto mode | 01M6VAQWECJ6N6VJF66KCMNYD1, 01M4Z60B82FHN2YG9YJHW8XZX1, 01M4Z81ATZK3FX9GRFTM236FE6 |
 //! | The socket of the session | the daemon adds it: its folder at `/run/riff` with write, and `RIFF_SOCKET` | 01M4ZDTVSP0T1YENKAWGKA114D |
 
 use std::borrow::Cow;
@@ -247,8 +247,8 @@ pub struct Facts {
     pub gitconfig: Option<PathBuf>,
     /// `~/.config/gh`, when it exists.
     pub gh_config: Option<PathBuf>,
-    /// The env and the volumes of the merged `riff.toml`
-    /// (01M5SMVVC4GQS310CVK3H9CMQ7).
+    /// The model, the env and the volumes of the merged `riff.toml`
+    /// (01M6VAQWECJ6N6VJF66KCMNYD1, 01M5SMVVC4GQS310CVK3H9CMQ7).
     pub setup: Setup,
 }
 
@@ -367,21 +367,22 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         env.push(Env::Host(crate::claude_token::VAR.into()));
     }
     env.extend(facts.setup.env(home));
-    let command = [
-        "claude",
-        "-p",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--session-id",
-        &facts.session,
-        "--permission-mode",
-        "auto",
-    ]
-    .map(String::from)
-    .to_vec();
+    let mut command = facts.setup.claude();
+    command.extend(
+        [
+            "-p",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--session-id",
+            &facts.session,
+            "--permission-mode",
+            "auto",
+        ]
+        .map(String::from),
+    );
     let mut spec = SessionSpec {
         name: format!("riff-{}-{}", facts.item, short(&facts.session)),
         image: facts.image.clone(),
@@ -1779,8 +1780,9 @@ pub async fn run_with(
     let dir = identity::working_dir()?;
     let (main, common) = main_clone(&dir)?;
     // With --image, the image is the one that the person gives, and the
-    // lines about the pin say nothing. The env and the volumes still come
-    // from the merged riff.toml (01M5SMVVC4GQS310CVK3H9CMQ7).
+    // lines about the pin say nothing. The model, the env and the volumes
+    // still come from the merged riff.toml (01M6VAQWECJ6N6VJF66KCMNYD1,
+    // 01M5SMVVC4GQS310CVK3H9CMQ7).
     let merged = match image {
         Some(_) => session_image::merged_config(&main, |_| {})?,
         None => session_image::merged_config(&main, |line| println!("{line}"))?,
@@ -2093,7 +2095,7 @@ mod tests {
         }
     }
 
-    /// The env and the volumes of the `riff.toml` of riff.
+    /// The model, the env and the volumes of the `riff.toml` of riff.
     fn riff_setup() -> Setup {
         Setup::of_config(include_str!("../../../riff.toml"), "riff.toml").unwrap()
     }
@@ -2279,8 +2281,8 @@ mod tests {
         );
         assert_eq!(
             spec.command.join(" "),
-            "claude -p --input-format stream-json --output-format stream-json --verbose \
-             --session-id 1a2b3c4d-0000-4000-8000-000000000000 --permission-mode auto"
+            "claude --model opus -p --input-format stream-json --output-format stream-json \
+             --verbose --session-id 1a2b3c4d-0000-4000-8000-000000000000 --permission-mode auto"
         );
         // The token of gh is the one value of the host.
         let token = [("GH_TOKEN".to_owned(), "gho_x".to_owned())];
@@ -2378,20 +2380,38 @@ mod tests {
         );
     }
 
-    /// 01M6V8GQ1297PCZEKY311KRRWC: the `riff.toml` of riff runs each
-    /// session on Opus, with the model first in `[session.env]`.
+    /// 01M6VAQWMKDX4VY8QRPA8EYFN9: the `riff.toml` of riff runs each
+    /// session on Opus with `model` in `[session]`, and has no
+    /// `ANTHROPIC_MODEL`.
     #[test]
     fn the_riff_toml_of_riff_runs_each_session_on_opus() {
+        let text = include_str!("../../../riff.toml");
+        let config: toml_edit::DocumentMut = text.parse().unwrap();
+        assert_eq!(config["session"]["model"].as_str(), Some("opus"));
+        assert!(!text.contains("ANTHROPIC_MODEL"), "{text}");
         let spec = spec(&Facts {
             setup: riff_setup(),
             ..facts()
         });
-        let vars = variables(&spec);
-        let model = vars
-            .iter()
-            .position(|var| var == "ANTHROPIC_MODEL=opus")
-            .unwrap_or_else(|| panic!("no ANTHROPIC_MODEL=opus in {vars:?}"));
-        assert_eq!(vars[model + 1], "CARGO_HOME=/home/mike/.cargo");
+        assert_eq!(spec.command[..3], ["claude", "--model", "opus"]);
+    }
+
+    /// 01M6VAQWECJ6N6VJF66KCMNYD1: the command of a worker starts with
+    /// `claude --model MODEL`, from the `riff.toml`, and `opus` with no
+    /// `model`.
+    #[test]
+    fn the_command_of_a_worker_has_the_model_of_the_riff_toml() {
+        let setup = Setup::of_config("[session]\nmodel = \"sonnet\"\n", "riff.toml").unwrap();
+        let with = spec(&Facts { setup, ..facts() });
+        assert_eq!(with.command[..4], ["claude", "--model", "sonnet", "-p"]);
+        let none = spec(&facts());
+        assert_eq!(none.command[..4], ["claude", "--model", "opus", "-p"]);
+        assert_eq!(
+            none.command.iter().filter(|a| *a == "--model").count(),
+            1,
+            "{:?}",
+            none.command
+        );
     }
 
     #[test]

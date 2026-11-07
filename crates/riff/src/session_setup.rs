@@ -1,5 +1,5 @@
-//! The env and the volumes of a session, from the riff config of the
-//! repository (#1423).
+//! The model, the env and the volumes of a session, from the riff config
+//! of the repository (#1423, #1691).
 //!
 //! # Design
 //!
@@ -8,9 +8,13 @@
 //! folder of the socket, and the caps `--memory` and `--cpus`
 //! (01M5SMW28KT5D5HPRH7KAZ8TVC). It sets no variable and no volume of a
 //! language or a tool. The repository gives them in its `riff.toml`
-//! (01M5SMVVC4GQS310CVK3H9CMQ7):
+//! (01M5SMVVC4GQS310CVK3H9CMQ7), and the model of its sessions too
+//! (01M6VAQWECJ6N6VJF66KCMNYD1):
 //!
 //! ```toml
+//! [session]
+//! model = "opus"
+//!
 //! [session.env]
 //! RUSTC_WRAPPER = "sccache"
 //! CARGO_HOME = "$HOME/.cargo"
@@ -18,6 +22,13 @@
 //! [session.volumes]
 //! riff-cargo = "$HOME/.cargo"
 //! ```
+//!
+//! The key `model` of `[session]` names the model of each session of the
+//! repository: the lead, each work item and each verify start with
+//! `claude --model MODEL` ([`Setup::claude`]). With no key, the model is
+//! [`MODEL`]. A session that runs keeps its model. The model has one
+//! place: riff refuses `ANTHROPIC_MODEL` in `[session.env]`
+//! (01M6VAQWJ5RH7NCHAX0KCQ4BWY).
 //!
 //! The key of `[session.volumes]` is the name of a podman volume, and
 //! the value is its path in the container. A value of `[session.env]`
@@ -28,10 +39,12 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     T["riff.toml on origin/HEAD:<br/>[session.env], [session.volumes]"] -- "session_image::merged_config" --> S["Setup"]
+//!     T["riff.toml on origin/HEAD:<br/>model, [session.env], [session.volumes]"] -- "session_image::merged_config" --> S["Setup"]
 //!     S -- "run::spec: $HOME becomes the home" --> P["the env and the binds of the SessionSpec"]
+//!     S -- "Setup::claude" --> M["claude --model MODEL"]
 //!     R["what riff needs itself:<br/>HOME, USER, GH_TOKEN, the clone, ..."] --> P
 //!     P --> C["podman run -e NAME=VALUE -v VOLUME:PATH"]
+//!     M --> C
 //! ```
 //!
 //! Only the merged `riff.toml` counts, as for the image
@@ -39,16 +52,27 @@
 //! is in the spec and in the command line of podman: a secret does not
 //! belong in `riff.toml`.
 //!
-//! riff refuses what it could not keep (01M5SMW2B4GMJ3V6BCX1KGC1ZY):
-//! a variable that riff sets itself, a volume name that podman could
-//! read as a path, and a path that is not absolute. The error names the
-//! key and the file.
+//! riff refuses what it could not keep (01M5SMW2B4GMJ3V6BCX1KGC1ZY,
+//! 01M6VAQWJ5RH7NCHAX0KCQ4BWY): a variable that riff sets itself, a
+//! model that `claude` could read as a flag, a volume name that podman
+//! could read as a path, and a path that is not absolute. The error
+//! names the key and the file.
 
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
 use crate::runtime::{Bind, Env, Source};
+
+/// The model of a session when `riff.toml` names none
+/// (01M6VAQWECJ6N6VJF66KCMNYD1): the alias of `claude --model` for the
+/// latest Opus.
+pub const MODEL: &str = "opus";
+
+/// The variable of Claude Code for the model. riff refuses it in
+/// `[session.env]`: `model` in `[session]` is the one place of the model
+/// (01M6VAQWJ5RH7NCHAX0KCQ4BWY).
+const MODEL_VAR: &str = "ANTHROPIC_MODEL";
 
 /// The names of the variables that riff sets itself.
 const RESERVED: &[&str] = &[
@@ -58,6 +82,7 @@ const RESERVED: &[&str] = &[
     "GH_TOKEN",
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    MODEL_VAR,
 ];
 
 /// The starts of the names of the variables that riff sets itself.
@@ -67,8 +92,8 @@ const RESERVED_STARTS: &[&str] = &["GIT_CONFIG_", "RIFF_"];
 /// path.
 pub const HOME: &str = "$HOME";
 
-/// The env and the volumes that a riff config gives to a session, in the
-/// order of the file.
+/// The model, the env and the volumes that a riff config gives to a
+/// session. The env and the volumes are in the order of the file.
 ///
 /// ```
 /// use riff::session_setup::Setup;
@@ -76,6 +101,7 @@ pub const HOME: &str = "$HOME";
 /// let config = r#"
 /// [session]
 /// image = "ghcr.io/o/i@sha256:00"
+/// model = "sonnet"
 ///
 /// [session.env]
 /// RUSTC_WRAPPER = "sccache"
@@ -85,19 +111,25 @@ pub const HOME: &str = "$HOME";
 /// riff-cargo = "$HOME/.cargo"
 /// "#;
 /// let setup = Setup::of_config(config, "riff.toml")?;
+/// assert_eq!(setup.model, "sonnet");
 /// assert_eq!(setup.env[0], ("RUSTC_WRAPPER".to_owned(), "sccache".to_owned()));
 /// assert_eq!(setup.volumes, [("riff-cargo".to_owned(), "$HOME/.cargo".to_owned())]);
 ///
-/// // No table, no env and no volume.
-/// assert_eq!(Setup::of_config("[session]\nimage = \"x\"\n", "riff.toml")?, Setup::default());
+/// // No table, no env and no volume. No model: opus.
+/// let none = Setup::of_config("[session]\nimage = \"x\"\n", "riff.toml")?;
+/// assert_eq!(none, Setup::default());
+/// assert_eq!(none.model, "opus");
 ///
 /// // riff sets HOME itself.
 /// let error = Setup::of_config("[session.env]\nHOME = \"/x\"\n", "riff.toml").unwrap_err();
 /// assert!(format!("{error:#}").contains("riff sets HOME itself"));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Setup {
+    /// The model of `claude --model` (01M6VAQWECJ6N6VJF66KCMNYD1):
+    /// `model` in `[session]`, else [`MODEL`].
+    pub model: String,
     /// The name and the value of each variable. A value may have
     /// [`HOME`].
     pub env: Vec<(String, String)>,
@@ -106,9 +138,19 @@ pub struct Setup {
     pub volumes: Vec<(String, String)>,
 }
 
+impl Default for Setup {
+    fn default() -> Self {
+        Setup {
+            model: MODEL.to_owned(),
+            env: Vec::new(),
+            volumes: Vec::new(),
+        }
+    }
+}
+
 impl Setup {
-    /// The env and the volumes of the riff config `text`. `place` names
-    /// the config in an error.
+    /// The model, the env and the volumes of the riff config `text`.
+    /// `place` names the config in an error.
     pub fn of_config(text: &str, place: &str) -> Result<Setup> {
         let config: toml_edit::DocumentMut = text
             .parse()
@@ -116,6 +158,7 @@ impl Setup {
         let Some(session) = config.get("session") else {
             return Ok(Setup::default());
         };
+        let model = model(session, place)?;
         let env = pairs(session, "env", place)?;
         for (name, value) in &env {
             check_name(name, place)?;
@@ -127,7 +170,29 @@ impl Setup {
         for (name, path) in &volumes {
             check_volume(name, path, place)?;
         }
-        Ok(Setup { env, volumes })
+        Ok(Setup {
+            model,
+            env,
+            volumes,
+        })
+    }
+
+    /// The start of the command of each session: `claude --model MODEL`
+    /// (01M6VAQWECJ6N6VJF66KCMNYD1). The spec of a worker
+    /// ([`crate::run::spec`]) and of the lead ([`crate::lead::spec`]) add
+    /// their flags after it, and the daemon adds `--effort LEVEL` after
+    /// `claude` ([`crate::room::Limit::effort`]).
+    ///
+    /// ```
+    /// use riff::session_setup::Setup;
+    ///
+    /// assert_eq!(Setup::default().claude(), ["claude", "--model", "opus"]);
+    /// let setup = Setup::of_config("[session]\nmodel = \"claude-opus-5-5\"\n", "riff.toml")?;
+    /// assert_eq!(setup.claude(), ["claude", "--model", "claude-opus-5-5"]);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn claude(&self) -> Vec<String> {
+        vec!["claude".into(), "--model".into(), self.model.clone()]
     }
 
     /// The binds of the volumes, with write, for the person whose home is
@@ -196,6 +261,29 @@ fn pairs(session: &toml_edit::Item, key: &str, place: &str) -> Result<Vec<(Strin
         .collect()
 }
 
+/// The key `model` of the table `[session]`, or [`MODEL`] with no key
+/// (01M6VAQWJ5RH7NCHAX0KCQ4BWY). A model is one argument of `claude`:
+/// riff refuses an empty one, one with a space or a control character,
+/// and one that starts with `-`, which `claude` reads as a flag.
+fn model(session: &toml_edit::Item, place: &str) -> Result<String> {
+    let Some(item) = session.get("model") else {
+        return Ok(MODEL.to_owned());
+    };
+    let model = item
+        .as_str()
+        .with_context(|| format!("{place}: [session] model is not a string"))?;
+    if model.is_empty()
+        || model.starts_with('-')
+        || model.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        bail!(
+            "{place}: [session] model {model:?} is not the name of a model: give one word that \
+             does not start with -, for example \"{MODEL}\""
+        );
+    }
+    Ok(model.to_owned())
+}
+
 /// Checks the name of a variable: letters, digits and `_`, not a digit
 /// first, and not a name that riff sets itself.
 fn check_name(name: &str, place: &str) -> Result<()> {
@@ -205,6 +293,12 @@ fn check_name(name: &str, place: &str) -> Result<()> {
     {
         bail!(
             "{place}: [session.env] {name} is not the name of a variable: use letters, digits and _"
+        );
+    }
+    if name == MODEL_VAR {
+        bail!(
+            "{place}: [session.env] {name}: riff sets the model itself. Put model = \"{MODEL}\" \
+             in [session] in place of it"
         );
     }
     if RESERVED.contains(&name) || RESERVED_STARTS.iter().any(|start| name.starts_with(start)) {
@@ -390,5 +484,56 @@ mod tests {
     fn a_config_with_no_session_table_gives_nothing() {
         assert_eq!(setup("").unwrap(), Setup::default());
         assert_eq!(setup("[release]\nx = 1\n").unwrap(), Setup::default());
+    }
+
+    /// 01M6VAQWECJ6N6VJF66KCMNYD1: `model` in `[session]` is the model,
+    /// and with no key the model is opus.
+    #[test]
+    fn the_model_comes_from_the_session_table_and_the_default_is_opus() {
+        for config in [
+            "",
+            "[session]\nimage = \"x\"\n",
+            "[session.env]\nA = \"1\"\n",
+        ] {
+            assert_eq!(setup(config).unwrap().model, "opus", "{config:?}");
+        }
+        for model in ["sonnet", "claude-opus-5-5", "sonnet[1m]", "opus"] {
+            let config = format!("[session]\nimage = \"x\"\nmodel = \"{model}\"\n");
+            assert_eq!(setup(&config).unwrap().model, model);
+        }
+        assert_eq!(
+            setup("[session]\nmodel = \"haiku\"\n").unwrap().claude(),
+            ["claude", "--model", "haiku"]
+        );
+    }
+
+    /// 01M6VAQWJ5RH7NCHAX0KCQ4BWY: `ANTHROPIC_MODEL` in `[session.env]`
+    /// is refused, and the error names the key, the file and the fix.
+    #[test]
+    fn anthropic_model_in_the_env_is_refused_with_the_fix() {
+        let error = format!(
+            "{:#}",
+            setup("[session.env]\nANTHROPIC_MODEL = \"opus\"\n").unwrap_err()
+        );
+        assert_eq!(
+            error,
+            "riff.toml: [session.env] ANTHROPIC_MODEL: riff sets the model itself. \
+             Put model = \"opus\" in [session] in place of it"
+        );
+        // Another variable of Claude Code is the repository's own.
+        assert!(setup("[session.env]\nANTHROPIC_SMALL_FAST_MODEL = \"haiku\"\n").is_ok());
+    }
+
+    /// 01M6VAQWJ5RH7NCHAX0KCQ4BWY: a model that `claude` could read as a
+    /// flag or as two arguments.
+    #[test]
+    fn a_model_that_is_not_one_word_is_refused() {
+        refused("[session]\nmodel = 4\n", "[session] model is not a string");
+        for model in ["", "-p", "--model", "opus sonnet", "opus\\n", "a\\tb"] {
+            refused(
+                &format!("[session]\nmodel = \"{model}\"\n"),
+                "is not the name of a model",
+            );
+        }
     }
 }

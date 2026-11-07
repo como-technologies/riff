@@ -40,12 +40,12 @@
 //!
 //! | Step | Passes when |
 //! |---|---|
-//! | 1. check the host | podman runs rootless, `gh` has a sign-in, `riff image` names the image of the tree, and the riff-server of the tree listens on a free port and runs: the test resumes its new riff (see below) |
+//! | 1. check the host | podman runs rootless, `gh` has a sign-in, `riff image` names the image of the tree, `riff.toml` of the tree names a model or none ([`model_of_config`]), and the riff-server of the tree listens on a free port and runs: the test resumes its new riff (see below) |
 //! | 2. list the home | always |
 //! | 3. make the scratch item | `gh issue create` prints the URL of an issue |
 //! | 4. keep its verify from the workers | the issue has the label [`NO_VERIFY`]; a failed hold is a warning |
 //! | 5. start the daemon | no daemon of the test answers before, and `riff daemon` of the tree answers in [`DAEMON_WAIT`] (see below) |
-//! | 6. run the item | `riff run issue-N --image IMAGE` ends with 0 |
+//! | 6. run the item | `riff run issue-N --image IMAGE` ends with 0, and its line `start: model ...` names the model of step 1 ([`check_model`], 01M6VAQWQ1D95TPKYE360KC3QR) |
 //! | 7. check the home | the home has no new path and no changed file that riff must not write (see below) |
 //! | 8. find the pull request | the branch `worktree-issue-N` has an open pull request |
 //! | 9. check the change | its diff adds the line of the item to [`BOOK_FILE`] |
@@ -238,6 +238,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::Metadata;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io::{BufRead, BufReader};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -324,6 +325,18 @@ pub const CLOSE_TEXT: &str = "The real-session test closes its scratch item.";
 
 /// The usage line of the command.
 pub const USAGE: &str = "usage: real-session --riff PATH [--skip PATH]... [--gate-wait SECONDS]";
+
+/// The model of a session when `riff.toml` names none
+/// (01M6VAQWECJ6N6VJF66KCMNYD1).
+///
+/// ```
+/// assert_eq!(real_session::MODEL, riff::session_setup::MODEL);
+/// ```
+pub const MODEL: &str = "opus";
+
+/// The start of the line of `riff run` that names the model of the
+/// session (`riff::run::event_lines`).
+pub const START_LINE: &str = "start: model ";
 
 /// One step of the test, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1657,8 +1670,13 @@ pub fn run(options: &Options, stop: &AtomicBool) -> u8 {
 
 /// Each step, in order. The first one that fails stops the test.
 fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String, Failure> {
-    let (env, image, clones, address) =
-        step(Step::Host, stop, || host(options, stop, &mut made.server))?;
+    let Host {
+        env,
+        image,
+        model,
+        clones,
+        address,
+    } = step(Step::Host, stop, || host(options, stop, &mut made.server))?;
     let riff = Riff::new(&options.riff, &env).with_server(&address);
     made.riff = Some(riff.clone());
     made.sessions = Some(env.sessions());
@@ -1691,7 +1709,9 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
         start_daemon(&riff, stop, &mut made.daemon)
     })?;
     let item = format!("issue-{issue}");
-    step(Step::Run, stop, || run_item(&riff, &item, &image, stop))?;
+    step(Step::Run, stop, || {
+        run_item(&riff, &item, &image, &model, stop)
+    })?;
     step(Step::Home, stop, || check_home(&home, &before, &env, issue))?;
     let pull = step(Step::Pull, stop, || find_pull(issue, stop))?;
     step(Step::Change, stop, || check_change(&pull, &line, stop))?;
@@ -1764,15 +1784,25 @@ fn output_of(mut command: Command, stop: &AtomicBool) -> Result<String, String> 
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
+/// What step 1 gives the other steps ([`host`]).
+struct Host {
+    /// The folders.
+    env: Env,
+    /// The image that `riff image` names.
+    image: String,
+    /// The model of `riff.toml` of the tree ([`model_of_config`]).
+    model: String,
+    /// The main clone and the worktree of the test.
+    clones: Vec<PathBuf>,
+    /// The address of the riff-server of the test.
+    address: String,
+}
+
 /// Step 1: podman runs rootless, `gh` has a sign-in, `riff image`
-/// names the image of the tree, and the riff-server of the tree listens
-/// ([`start_server`]). It gives the folders, the image, the main clone and
-/// the worktree of the test, and the address of the server.
-fn host(
-    options: &Options,
-    stop: &AtomicBool,
-    server: &mut Option<Child>,
-) -> Result<(Env, String, Vec<PathBuf>, String), String> {
+/// names the image of the tree, `riff.toml` of the tree names a model
+/// or none ([`model_of_config`]), and the riff-server of the tree listens
+/// ([`start_server`]).
+fn host(options: &Options, stop: &AtomicBool, server: &mut Option<Child>) -> Result<Host, String> {
     let env = Env::of_process()?;
     let riff = Riff::new(&options.riff, &env);
     let rootless = output(
@@ -1800,11 +1830,22 @@ fn host(
         .ok_or_else(|| format!("the git dir {} has no parent", common.display()))?
         .to_owned();
     let top = PathBuf::from(output("git", &["rev-parse", "--show-toplevel"], stop)?);
+    let config = top.join("riff.toml");
+    let text = std::fs::read_to_string(&config)
+        .map_err(|e| format!("cannot read {}: {e}", config.display()))?;
+    let model = model_of_config(&text).map_err(|e| format!("{}: {e}", config.display()))?;
     println!("  image {image}");
+    println!("  model {model}");
     let address = start_server(&riff, stop, server)?;
     let resumed = output_of(riff.with_server(&address).command(&RESUME), stop)?;
     println!("  {resumed}");
-    Ok((env, image, vec![main, top], address))
+    Ok(Host {
+        env,
+        image,
+        model,
+        clones: vec![main, top],
+        address,
+    })
 }
 
 /// The arguments of the `riff` that resumes the new riff of the server
@@ -2094,17 +2135,135 @@ fn stop_daemon(daemon: &mut Child, stop: &AtomicBool) -> Result<String, String> 
 
 /// Step 6: `riff run ITEM --image IMAGE`. The person sees its output.
 /// When it ends by SIGINT or SIGTERM, it sets `stop` ([`child_signal`]).
-fn run_item(riff: &Riff, item: &str, image: &str, stop: &AtomicBool) -> Result<(), String> {
-    let status = riff
+/// Its line `start: model ...` names `model`, the model of `riff.toml`
+/// ([`check_model`], 01M6VAQWQ1D95TPKYE360KC3QR).
+fn run_item(
+    riff: &Riff,
+    item: &str,
+    image: &str,
+    model: &str,
+    stop: &AtomicBool,
+) -> Result<(), String> {
+    let mut child = riff
         .command(&["run", item, "--image", image])
         .stdin(Stdio::null())
-        .status()
+        .stdout(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("cannot run {}: {e}", riff.bin.display()))?;
-    if status.success() {
-        Ok(())
-    } else {
+    let mut started = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        let mut out = BufReader::new(out);
+        let mut bytes = Vec::new();
+        while out.read_until(b'\n', &mut bytes).is_ok_and(|n| n > 0) {
+            let line = String::from_utf8_lossy(&bytes);
+            let line = line.trim_end_matches(['\n', '\r']);
+            println!("{line}");
+            if started_model(line).is_some() {
+                started.push(line.to_owned());
+            }
+            bytes.clear();
+        }
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("cannot wait for {}: {e}", riff.bin.display()))?;
+    if !status.success() {
         child_signal(status, stop);
-        Err(format!("riff run {item} ended with {status}"))
+        return Err(format!("riff run {item} ended with {status}"));
+    }
+    let on = check_model(&started, model)?;
+    println!("  the session started on {on}, and riff.toml names {model}");
+    Ok(())
+}
+
+/// The model of the riff config `text` (01M6VAQWQ1D95TPKYE360KC3QR):
+/// the key `model` of the table `[session]`, else [`MODEL`], as riff
+/// reads it. An error when the text is not TOML, or the model is not a
+/// string.
+///
+/// ```
+/// use real_session::model_of_config;
+///
+/// assert_eq!(model_of_config("[session]\nmodel = \"sonnet\"\n").as_deref(), Ok("sonnet"));
+/// assert_eq!(model_of_config("[session]\nimage = \"x\"\n").as_deref(), Ok("opus"));
+/// assert_eq!(model_of_config("").as_deref(), Ok("opus"));
+/// assert!(model_of_config("[session]\nmodel = 4\n").is_err());
+/// assert!(model_of_config("[session").is_err());
+///
+/// // The model that riff reads from the riff.toml of riff.
+/// let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../riff.toml");
+/// let text = std::fs::read_to_string(path).unwrap();
+/// let riff = riff::session_setup::Setup::of_config(&text, "riff.toml").unwrap();
+/// assert_eq!(model_of_config(&text), Ok(riff.model));
+/// ```
+pub fn model_of_config(text: &str) -> Result<String, String> {
+    let config: toml_edit::DocumentMut = text.parse().map_err(|e| format!("not TOML: {e}"))?;
+    match config
+        .get("session")
+        .and_then(|session| session.get("model"))
+    {
+        None => Ok(MODEL.to_owned()),
+        Some(item) => item
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| "[session] model is not a string".to_owned()),
+    }
+}
+
+/// The model of the line `start: model MODEL, permission mode MODE` of
+/// `riff run`, or `None` for another line.
+///
+/// ```
+/// use real_session::started_model;
+/// use serde_json::json;
+///
+/// let init = json!({"type":"system","subtype":"init","model":"claude-opus-5-5","permissionMode":"auto"});
+/// let line = riff::run::event_lines(&init).remove(0);
+/// assert_eq!(started_model(&line), Some("claude-opus-5-5"));
+/// assert_eq!(started_model("end: success, 8 turns, 22 s, 0.17 USD"), None);
+/// ```
+pub fn started_model(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix(START_LINE)?;
+    Some(rest.split_once(", ").map_or(rest, |(model, _)| model))
+}
+
+/// The model that the session started on, from the first line of
+/// `started` that [`started_model`] reads, when it names `model`, the
+/// model of `riff.toml` (01M6VAQWQ1D95TPKYE360KC3QR): the same name, or
+/// a name that has it in, as `claude-opus-5-5` has `opus`. An error says
+/// why not.
+///
+/// ```
+/// use real_session::check_model;
+///
+/// let lines = ["claimed issue-12", "start: model claude-opus-5-5, permission mode auto"];
+/// assert_eq!(check_model(&lines, "opus").as_deref(), Ok("claude-opus-5-5"));
+/// assert_eq!(check_model(&lines, "claude-opus-5-5").as_deref(), Ok("claude-opus-5-5"));
+/// assert_eq!(
+///     check_model(&lines, "sonnet").unwrap_err(),
+///     "the session started on claude-opus-5-5, and riff.toml names sonnet"
+/// );
+/// assert_eq!(
+///     check_model(&["claimed issue-12"], "opus").unwrap_err(),
+///     "riff run printed no line start: model, so the test does not know the model of the session"
+/// );
+/// ```
+pub fn check_model(started: &[impl AsRef<str>], model: &str) -> Result<String, String> {
+    let on = started
+        .iter()
+        .find_map(|line| started_model(line.as_ref()))
+        .ok_or_else(|| {
+            format!(
+                "riff run printed no line {}, so the test does not know the model of the session",
+                START_LINE.trim_end()
+            )
+        })?;
+    if on.contains(model) {
+        Ok(on.to_owned())
+    } else {
+        Err(format!(
+            "the session started on {on}, and riff.toml names {model}"
+        ))
     }
 }
 
@@ -2413,7 +2572,7 @@ mod tests {
         };
         let stop = AtomicBool::new(false);
         let failure = step(Step::Run, &stop, || {
-            run_item(&riff, "issue-12", "image", &stop)
+            run_item(&riff, "issue-12", "image", MODEL, &stop)
         })
         .unwrap_err();
         assert_eq!(failure.step, Step::Run);

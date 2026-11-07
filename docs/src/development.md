@@ -944,6 +944,8 @@ riff refuses a `riff.toml` that it cannot keep:
 - A variable that riff sets itself: `HOME`, `USER`, `LOGNAME`,
   `GH_TOKEN`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, and each
   name that starts with `GIT_CONFIG_` or `RIFF_`.
+- `ANTHROPIC_MODEL`: set the model with `model` in `[session]`. See
+  [Set the model of the sessions](#set-the-model-of-the-sessions).
 - A volume name that podman could read as a path. A name starts with a
   letter or a digit, and has letters, digits, `_`, `.` and `-`.
 - A path that is not absolute, or that has a colon or a comma.
@@ -965,6 +967,36 @@ get:
 ```sh
 git fetch origin
 git show origin/HEAD:riff.toml
+```
+
+## Set the model of the sessions
+
+riff starts the lead, each work item and each verify of a repository
+with `claude --model MODEL`. The model comes from the key `model` in the
+table `[session]` of `riff.toml`. With no key, the model is `opus`. The
+`riff.toml` of riff has this line:
+
+```toml
+[session]
+model = "opus"
+```
+
+A model is a name that `claude --model` takes: an alias, for example
+`opus`, `sonnet` or `haiku`, or a full name, for example
+`claude-opus-5-5`. riff refuses a model that is empty, that has a space,
+or that starts with `-`. It also refuses `ANTHROPIC_MODEL` in
+`[session.env]`: the model has one place. The error names the key and
+the file. To check your working tree, run `riff image`.
+
+Only the merged `riff.toml` counts, as for the image. Merge your change
+with a pull request. A new session reads the model at its start. A
+session that runs keeps its model: in the lead, use `/model` to change
+it. `riff run` shows the model of the session in its line
+`start: model claude-opus-5-5, permission mode auto`. To see the models
+that did the work of an issue, with the tokens of each claim:
+
+```sh
+riff usage 12
 ```
 
 ## Start the riff daemon
@@ -3286,6 +3318,8 @@ and the three levels. `riff daemon status` shows them too. A new session
 gets the levels at its start. A session that runs keeps its effort: in
 the lead, use `/effort` to change it. riff refuses a level that Claude
 Code does not know. Add `--host HOST` to set the levels on another host.
+The model of the sessions comes from `riff.toml`: see
+[Set the model of the sessions](#set-the-model-of-the-sessions).
 
 ### Show or empty the compile cache of the container sessions
 
@@ -3879,8 +3913,10 @@ flowchart LR
 The test does these steps. The messages name them:
 
 1. Check the host: podman runs rootless, `gh` has a sign-in, and
-   `riff image` names the image. Then the test starts its own
-   riff-server. See
+   `riff image` names the image. The test reads the model of
+   `riff.toml` (see
+   [Set the model of the sessions](#set-the-model-of-the-sessions)).
+   Then the test starts its own riff-server. See
    [Which riff-server the test uses](#which-riff-server-the-test-uses).
 2. List the home: the test lists the files of your home.
 3. Make the scratch item: an issue in the backlog that adds one line
@@ -3897,7 +3933,9 @@ The test does these steps. The messages name them:
    beside the daemon of your machine, and waits until it answers. See
    [When a riff daemon runs already](#when-a-riff-daemon-runs-already).
 6. Run the item: `riff run` does the issue. You see each event of the
-   session.
+   session. Its line `start: model ...` must name the model of
+   `riff.toml`, for example `claude-opus-5-5` for `opus`. Else the step
+   fails.
 7. Check the home: the test lists your home again. A new file fails
    the test, outside the paths that the test leaves out (see
    [When another program writes in your home](#when-another-program-writes-in-your-home)).
