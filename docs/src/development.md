@@ -2021,8 +2021,10 @@ Each row has the caller and the kind of the call. The caller is `wave`
 the daemon starts to serve), `release test` (the real-session test of a
 release), or the command of `riff` that made the call: `top`,
 `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff wave ...`),
-`audit`, `questions`, `run`, `init`, or `claim` (the pull request line
-of a claim). The caller `session` is a `gh` that a session runs in its
+`audit`, `questions`, `run`, `init`, `claim` (the pull request line
+of a claim), or `tui` (the Waves tab of the TUI, see
+[See the open items of a wave](waves.md#see-the-open-items-of-a-wave)).
+The caller `session` is a `gh` that a session runs in its
 container. A call of REST costs no GraphQL point. The points of a row
 are an estimate: riff takes them from a table of the cost of each query
 that `gh` sends (see

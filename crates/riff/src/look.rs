@@ -752,10 +752,14 @@ pub fn failed_jobs(jobs: &[Job]) -> Vec<String> {
 /// Reads the failed jobs of the run `run` in `repo` with `gh`
 /// ([`failed_jobs`]).
 pub fn read_failed_jobs(gh: &Gh, repo: &str, run: &str) -> Result<Vec<String>> {
+    Ok(failed_jobs(&read_jobs(gh, repo, run)?))
+}
+
+/// Reads the jobs of the run `run` (its page) in `repo` with `gh`.
+pub fn read_jobs(gh: &Gh, repo: &str, run: &str) -> Result<Vec<Job>> {
     let id = number_of(run).ok_or_else(|| anyhow!("no run number in {run}"))?;
     let path = format!("repos/{repo}/actions/runs/{id}/jobs?per_page=100");
-    let jobs: Vec<Job> = gh.json(&["api", &path, "--jq", ".jobs"])?;
-    Ok(failed_jobs(&jobs))
+    gh.json(&["api", &path, "--jq", ".jobs"])
 }
 
 /// What the full check of `main` tells at one look ([`MainWatch::news`]).

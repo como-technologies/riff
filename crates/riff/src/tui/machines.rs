@@ -118,9 +118,6 @@ pub const PAGE: usize = 10;
 /// The most digits of the limit that the person types.
 pub const MOST_DIGITS: usize = 4;
 
-/// The note of an action while the last action still runs.
-pub const STILL_ACTING: &str = "riff still waits for the reply of the last action.";
-
 /// The first line of the tab with no host.
 pub const NO_HOSTS: &str = "No riff daemon sent the facts of its host in the last 3 minutes.";
 
@@ -1727,6 +1724,15 @@ mod tests {
         state.on_key(Key::PageDown);
         assert_eq!(host(&state), "strata-ci");
         state.on_key(Key::First);
+        assert_eq!(host(&state), "thelio");
+        // `j` `k` `G` `g` are the same as `↓` `↑` `End` `Home`.
+        state.on_key(Key::Char('j'));
+        assert_eq!(host(&state), "pangolin");
+        state.on_key(Key::Char('k'));
+        assert_eq!(host(&state), "thelio");
+        state.on_key(Key::Char('G'));
+        assert_eq!(host(&state), "strata-ci");
+        state.on_key(Key::Char('g'));
         assert_eq!(host(&state), "thelio");
         // A click on the row of pangolin.
         let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);

@@ -3360,6 +3360,27 @@ In the container of the lead, `riff plan hold` and `riff plan free`
 need no `RIFF_SERVER` and no sign-in. The riff daemon of the host
 makes the call for the session, as it does for `riff who`.
 
+### Hold an item in the TUI
+
+Run riff with no command in a terminal, and press `3` for the Waves
+tab:
+
+```sh
+riff
+```
+
+1. Select the item with `↑` and `↓`.
+2. Press `h`, type the reason, and press `Enter`. `Esc` cancels.
+3. The note line asks `Hold #12 of como-technologies/riff: REASON?
+   y/N`. Press `y`.
+
+The TUI calls the code of `riff plan hold`, and the note line shows its
+answer. The row of the item turns `◌ held`, with the reason. To free a
+held item, select it, press `f`, then `y`. In a question, `q` ends the
+TUI, and each other key than `y` changes nothing. See [See the open
+items of a wave](waves.md#see-the-open-items-of-a-wave) for the other
+keys of the tab.
+
 ### Free a held item
 
 ```sh
@@ -3484,6 +3505,19 @@ riff pause
 ```
 
 You can also ask your lead: *"Pause the repository."*
+
+### Pause a repository in the TUI
+
+Run riff with no command, and press `3` for the Waves tab:
+
+```sh
+riff
+```
+
+Select a row of the repository, press `p`, then `y`. On a paused
+repository, `p` resumes it. `P` pauses or resumes the whole riff. The
+TUI calls the code of `riff pause` and `riff resume`, and the note line
+shows the answer.
 
 ### Resume your repository
 

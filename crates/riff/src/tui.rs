@@ -28,8 +28,8 @@
 //!   C #1638 Waves, D #1639 Machines, E #1640 Chat, F #1641 Reports, G
 //!   #1642 Devices. Until then, the body names the commands of the CLI
 //!   that show its area ([`Tab::today`], 01M6VAZKVK7530JJ63S7RVF88J).
-//!   The Machines tab ([`machines`]) and the Chat tab ([`chat`]) are
-//!   built.
+//!   The Waves tab ([`waves`]), the Machines tab ([`machines`]) and the
+//!   Chat tab ([`chat`]) are built.
 //!
 //! The render is pure (01M6VAZKNXZV1RTG7MT0GMHKT3). [`State`] holds what
 //! the TUI knows: the last look of riff-server, the fault of the link,
@@ -86,6 +86,13 @@
 //! [`State::on_click`] presses that key. The setting `tui.mouse` turns
 //! the mouse off ([`crate::settings::tui_mouse`]).
 //!
+//! A plain character is a [`Key::Char`]. The state gives it its meaning:
+//! while the note line asks for a text, it types into it
+//! (01M6VFGKCJ02G33TXR01GY6M0G). Else the frame takes its keys, and
+//! gives each other key to the tab: the arrows, `Enter`, and a letter.
+//! The tab turns it into an [`Action`], for example
+//! [`machines::on_key`] and [`waves::Waves::on_key`].
+//!
 //! | Key | Does |
 //! |---|---|
 //! | `1` to `6`, also with Alt | Open a tab. |
@@ -94,22 +101,23 @@
 //! | `?` | Show or hide the keys of this tab. |
 //! | `Esc` | Close the popup. |
 //! | `q`, `Ctrl-C` | End the TUI. The sessions go on. |
-//!
-//! The frame gives each other key to the tab: the arrows, `Enter`, and
-//! a letter as [`Key::Char`]. The tab turns it into an [`Action`], for
-//! example [`machines::on_key`].
+//! | `↑` `↓` `j` `k`, `PgUp` `PgDn`, `g` `G` | Select a row, in a tab with rows. |
 //!
 //! The prompt of the Chat tab takes each key that types: there only
 //! Alt opens a tab, and `Ctrl-C` ends the TUI. [`State::input`] gives
 //! the keys of the tab ([`chat::key_of`]) before the keys of the frame
 //! ([`input_of`]).
 //!
+//! # The actions
+//!
 //! An action that changes something asks first in the note line
-//! ([`Question`], 01M6VAZKDEQ6951KGPGAMF1SNJ, 01M6VFD0S90SB8M8WV952NT4Y1):
+//! ([`Question`], 01M6VFD0S90SB8M8WV952NT4Y1, 01M6VFGK9XXWCA8X7CE8EZNSJV,
+//! 01M6VFGYW0XVJ5JSX6R1NCR6W7):
 //! `Set the limit of thelio to 4 sessions? y/N`. `y` gives the action to
-//! the loop, and the loop runs the code of its CLI command in a task
-//! of its own. Its result goes to the note line, and the TUI looks
-//! again.
+//! the loop: [`Action::Limit`], or [`Action::Do`] with an [`Effect`].
+//! The loop runs the code of its CLI command in a task of its own
+//! ([`machines::set_limit`], [`Effect::run`]). Its result goes to the
+//! note line, and the TUI looks again at once.
 //!
 //! # The marks
 //!
@@ -118,19 +126,23 @@
 //! the phase of a container session. The worst mark comes first.
 
 pub mod chat;
+pub mod forge;
 pub mod machines;
 pub mod view;
+pub mod waves;
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::Result;
 use ratatui::style::Color;
-use riff_client::api::{self, Api};
+use riff_client::api::{self, Api, PauseScope};
 use riff_client::sessions::Phase;
 use riff_core::build::Build;
-use riff_core::name::SessionUri;
-use riff_core::wire::{RiffOwner, RiffReply, RiffState, SessionState, WhoReply};
+use riff_core::name::{SessionUri, ThreadName};
+use riff_core::wire::{HoldInfo, RiffOwner, RiffReply, RiffState, SessionState, WhoReply};
 
+use crate::reach::Reach;
 use crate::text;
 
 /// The time between two looks of riff-server.
@@ -253,8 +265,7 @@ impl Tab {
     pub fn today(self) -> &'static [&'static str] {
         match self {
             Tab::Sessions => &["riff top", "riff who"],
-            Tab::Waves => &["riff top", "riff wave list"],
-            Tab::Chat | Tab::Machines | Tab::Devices => &[],
+            Tab::Chat | Tab::Waves | Tab::Machines | Tab::Devices => &[],
             Tab::Reports => &["riff usage", "riff audit", "riff daemon events NAME"],
         }
     }
@@ -265,12 +276,13 @@ impl Tab {
     /// ```
     /// use riff::tui::Tab;
     ///
+    /// assert!(Tab::Waves.built());
     /// assert!(Tab::Machines.built());
     /// assert!(Tab::Chat.built());
     /// assert!(!Tab::Sessions.built());
     /// ```
     pub fn built(self) -> bool {
-        matches!(self, Tab::Machines | Tab::Chat)
+        matches!(self, Tab::Chat | Tab::Waves | Tab::Machines)
     }
 }
 
@@ -403,41 +415,45 @@ impl Mark {
 /// A key of the person, as the frame takes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
-    /// Open a tab: `1` to `6`, also with Alt.
+    /// Open a tab: `Alt-1` to `Alt-6`, and a click on a tab. The digits
+    /// with no Alt are a [`Key::Char`].
     Open(Tab),
     /// Open the next tab: `Tab`.
     Next,
     /// Open the tab before: `Shift-Tab`.
     Before,
-    /// Show or hide the keys of the tab: `?`.
+    /// Show or hide the keys of the tab: a click on `? help`.
     Help,
-    /// Close the popup: `Esc`.
+    /// Close the popup, or cancel a question: `Esc`.
     Esc,
-    /// Look again now: `r`.
+    /// Look again now: a click on `r read again`.
     Again,
-    /// End the TUI: `q` or `Ctrl-C`.
+    /// End the TUI: `Ctrl-C`, and a click on `q quit`.
     Quit,
-    /// Select the row above: `↑`, `k`, or the wheel of the mouse.
+    /// Select the row above: `↑`, or the wheel of the mouse.
     Up,
-    /// Select the row below: `↓`, `j`, or the wheel of the mouse.
+    /// Select the row below: `↓`, or the wheel of the mouse.
     Down,
     /// Move a page up: `PgUp`.
     PageUp,
     /// Move a page down: `PgDn`.
     PageDown,
-    /// Select the first row: `g` or `Home`.
+    /// Select the first row: `Home`.
     First,
-    /// Select the last row: `G` or `End`.
+    /// Select the last row: `End`.
     Last,
-    /// Act on the selected row, or end an answer: `Enter`.
+    /// Fold: `←`.
+    Left,
+    /// Unfold: `→`.
+    Right,
+    /// Act on the selected row, or take a text: `Enter`.
     Enter,
-    /// Remove the last character of an answer: `Backspace`.
+    /// Delete the last character of a text: `Backspace`.
     Backspace,
-    /// Select the row N of the body of the tab: a click on it.
+    /// A click on the row of this index in the rows of the tab.
     Row(usize),
-    /// Another character with no Ctrl and no Alt: the key of an action
-    /// of the tab, the answer to a question, or a character of an
-    /// answer.
+    /// A plain character, for example `q`, `3`, `j`, `h` or `y`. The
+    /// state gives it its meaning ([`State::on_key`]).
     Char(char),
     /// A key of the Chat tab: the prompt and the log.
     Chat(chat::Key),
@@ -446,7 +462,7 @@ pub enum Key {
 /// What the loop of the TUI does for a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// Look at riff-server again now.
+    /// Look at riff-server again now, and read the forge of the tab.
     Look,
     /// End the TUI. The sessions go on.
     Quit,
@@ -455,6 +471,8 @@ pub enum Action {
     Limit { host: String, sessions: u32 },
     /// Post the line to the thread `chat`, as `riff chat` does.
     Post(String),
+    /// Run the effect: the person said `y`.
+    Do(Effect),
 }
 
 /// A question in the note line (01M6VFD0S90SB8M8WV952NT4Y1): `y` gives
@@ -469,6 +487,133 @@ pub struct Question {
     /// The note after no.
     pub no: String,
 }
+
+/// An action of the Waves tab that changes something, with the code of
+/// its CLI command (01M6VFGK9XXWCA8X7CE8EZNSJV).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    /// `riff plan hold issue-ITEM REASON` in the repository `repo`.
+    Hold {
+        repo: String,
+        item: u64,
+        reason: String,
+    },
+    /// `riff plan free issue-ITEM` in the repository `repo`.
+    Free { repo: String, item: u64 },
+    /// `riff pause` or `riff resume` of the repository `repo`, or of the
+    /// whole riff with no repository.
+    Pause {
+        repo: Option<String>,
+        state: RiffState,
+    },
+}
+
+impl Effect {
+    /// The question of the note line before the effect: `y` runs it,
+    /// and no changes nothing.
+    ///
+    /// ```
+    /// use riff::tui::{Action, Effect, NOTHING_CHANGED};
+    /// use riff_core::wire::RiffState;
+    ///
+    /// let hold = Effect::Hold { repo: "o/r".into(), item: 12, reason: "a design".into() };
+    /// let question = hold.clone().question();
+    /// assert_eq!(question.text, "Hold #12 of o/r: a design?");
+    /// assert_eq!(question.yes, Action::Do(hold));
+    /// assert_eq!(question.no, NOTHING_CHANGED);
+    /// let free = Effect::Free { repo: "o/r".into(), item: 12 };
+    /// assert_eq!(free.question().text, "Free #12 of o/r?");
+    /// let pause = Effect::Pause { repo: Some("o/r".into()), state: RiffState::Paused };
+    /// assert_eq!(pause.question().text, "Pause o/r?");
+    /// let resume = Effect::Pause { repo: None, state: RiffState::Running };
+    /// assert_eq!(resume.question().text, "Resume the whole riff?");
+    /// ```
+    pub fn question(self) -> Question {
+        let text = match &self {
+            Effect::Hold { repo, item, reason } => format!(
+                "Hold #{item} of {}: {}?",
+                text::safe(repo),
+                text::safe(reason)
+            ),
+            Effect::Free { repo, item } => format!("Free #{item} of {}?", text::safe(repo)),
+            Effect::Pause { repo, state } => {
+                let verb = match state {
+                    RiffState::Paused => "Pause",
+                    RiffState::Running => "Resume",
+                };
+                match repo {
+                    Some(repo) => format!("{verb} {}?", text::safe(repo)),
+                    None => format!("{verb} the whole riff?"),
+                }
+            }
+        };
+        Question {
+            text,
+            yes: Action::Do(self),
+            no: NOTHING_CHANGED.to_owned(),
+        }
+    }
+
+    /// The note line while the effect runs.
+    ///
+    /// ```
+    /// use riff::tui::Effect;
+    /// use riff_core::wire::RiffState;
+    ///
+    /// let free = Effect::Free { repo: "o/r".into(), item: 12 };
+    /// assert_eq!(free.doing(), "riff frees #12 of o/r.");
+    /// let pause = Effect::Pause { repo: None, state: RiffState::Paused };
+    /// assert_eq!(pause.doing(), "riff pauses the whole riff.");
+    /// ```
+    pub fn doing(&self) -> String {
+        let (verb, what) = match self {
+            Effect::Hold { repo, item, .. } => {
+                ("holds", format!("#{item} of {}", text::safe(repo)))
+            }
+            Effect::Free { repo, item } => ("frees", format!("#{item} of {}", text::safe(repo))),
+            Effect::Pause { repo, state } => (
+                match state {
+                    RiffState::Paused => "pauses",
+                    RiffState::Running => "resumes",
+                },
+                repo.as_deref()
+                    .map_or_else(|| "the whole riff".to_owned(), text::safe),
+            ),
+        };
+        format!("riff {verb} {what}.")
+    }
+
+    /// Runs the effect as `me` at `api`, or through `reach`, with the
+    /// code of its CLI command, and gives the line of that command.
+    pub async fn run(&self, api: &Api, me: &SessionUri, reach: &Reach) -> Result<String> {
+        let thread = |repo: &str| repo.parse::<ThreadName>();
+        match self {
+            Effect::Hold { repo, item, reason } => {
+                reach
+                    .plan_hold(&thread(repo)?, &format!("issue-{item}"), reason)
+                    .await
+            }
+            Effect::Free { repo, item } => {
+                reach
+                    .plan_free(&thread(repo)?, &format!("issue-{item}"))
+                    .await
+            }
+            Effect::Pause { repo, state } => {
+                let scope = match repo {
+                    Some(repo) => PauseScope::Repository(thread(repo)?),
+                    None => PauseScope::Riff,
+                };
+                crate::reach::pause(api, me, me.place(), scope, *state).await
+            }
+        }
+    }
+}
+
+/// The line of a question that the person cancelled.
+pub const NOTHING_CHANGED: &str = "Nothing changed.";
+
+/// The line of an action while the action before it still runs.
+pub const STILL_ACTING: &str = "riff still waits for the reply of the last action.";
 
 /// The facts of one good look of riff-server ([`look`]).
 #[derive(Debug, Clone)]
@@ -487,6 +632,10 @@ pub struct Look {
     /// This host and the status of its riff daemon
     /// (01M6VFD09QN71SWMPP8YXCRAEK). `None` when the look did not ask.
     pub here: Option<machines::Here>,
+    /// The holds of each board, by `OWNER/REPO` and item, while the Waves
+    /// tab shows (01M6VFGK79JGRF919BM8SJ6E08). A read that fails keeps
+    /// the last holds of its repository ([`State::looked`]).
+    pub holds: BTreeMap<String, BTreeMap<String, HoldInfo>>,
 }
 
 /// The look of a riff that runs, with no sign-in and no session.
@@ -504,19 +653,30 @@ impl Default for Look {
             call: None,
             reconnects: 0,
             here: None,
+            holds: BTreeMap::new(),
         }
     }
 }
 
 /// Looks at riff-server as `me`: the calls `riff` and `who`
-/// (01M6VAZK7N636Q0JFSV553A9ES). Each call has the budget of a short
-/// command, as in `riff top`. Then it asks the riff daemon of this host
-/// for its status ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK).
-pub async fn look(api: &Api, me: &SessionUri) -> Result<Look> {
+/// (01M6VAZK7N636Q0JFSV553A9ES), and `plan show` for each repository of
+/// `boards` (01M6VFGK79JGRF919BM8SJ6E08). Each call has the budget of a
+/// short command, as in `riff top`. Then it asks the riff daemon of this
+/// host for its status ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK).
+pub async fn look(api: &Api, me: &SessionUri, boards: &[String]) -> Result<Look> {
     let pauses = api.pauses(me).await?;
     let start = std::time::Instant::now();
     let who = api.roster(me, false).await?;
     let call = start.elapsed();
+    let mut holds = BTreeMap::new();
+    for repo in boards {
+        let Ok(thread) = repo.parse::<ThreadName>() else {
+            continue;
+        };
+        if let Ok(plan) = api.plan_show(me, &thread).await {
+            holds.insert(repo.clone(), plan.holds);
+        }
+    }
     Ok(Look {
         pauses,
         who,
@@ -524,6 +684,7 @@ pub async fn look(api: &Api, me: &SessionUri) -> Result<Look> {
         call: Some(call),
         reconnects: api.link().swaps(),
         here: Some(machines::here(me).await),
+        holds,
     })
 }
 
@@ -556,6 +717,16 @@ pub struct State {
     filter: Option<String>,
     /// The Chat tab: the log, the prompt and the focus.
     chat: chat::Chat,
+    /// The Waves tab.
+    waves: waves::Waves,
+    /// The reason of a hold that the person types in the note line,
+    /// until `Enter` or `Esc`.
+    reason: Option<waves::Reason>,
+    /// The rows of a page of the body at the last draw.
+    page: usize,
+    /// The time of the last draw, in milliseconds since the epoch: the
+    /// age in a note of a key.
+    drawn_ms: i64,
 }
 
 impl State {
@@ -575,14 +746,75 @@ impl State {
             host: None,
             filter: None,
             chat: chat::Chat::default(),
+            waves: waves::Waves::default(),
+            reason: None,
+            page: 20,
+            drawn_ms: 0,
         }
     }
 
+    /// The state of a TUI in the clone of `here`, `OWNER/REPO`: its
+    /// repository gets a board in the Waves tab
+    /// (01M6VFG882T794B1CTHK5AKPDG).
+    #[must_use]
+    pub fn in_clone(mut self, here: Option<String>) -> State {
+        self.waves = waves::Waves::new(here);
+        self
+    }
+
     /// Takes the good look `look` at the time `at_ms`. The fault of the
-    /// link goes (01M6VAZKAH6B53YKR8W4YKNSH6).
-    pub fn looked(&mut self, look: Look, at_ms: i64) {
+    /// link goes (01M6VAZKAH6B53YKR8W4YKNSH6). A repository whose holds
+    /// the look could not read keeps its last holds.
+    pub fn looked(&mut self, mut look: Look, at_ms: i64) {
+        if let Some((last, _)) = self.look.take() {
+            for (repo, holds) in last.holds {
+                look.holds.entry(repo).or_insert(holds);
+            }
+        }
         self.look = Some((look, at_ms));
         self.fault = None;
+    }
+
+    /// Takes the read `read` of the forge for the Waves tab at the time
+    /// `at_ms` ([`waves::Waves::read`]): a new fault of `gh` goes to the
+    /// note line, and an item that turned stuck gives the tab news.
+    pub fn read_forge(&mut self, read: Vec<(String, Result<forge::Forge, String>)>, at_ms: i64) {
+        let (fault, stuck) = self.waves.read(read, at_ms);
+        if let Some(fault) = fault {
+            self.note(fault);
+        }
+        if stuck {
+            self.news(Tab::Waves, News::Dot);
+        }
+    }
+
+    /// The repositories of the boards of the Waves tab, while it shows:
+    /// the look reads their holds, and the forge reads their items.
+    pub fn boards(&self) -> Vec<String> {
+        match (self.tab, self.last_look()) {
+            (Tab::Waves, Some((look, _))) => self.waves.repos(look),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The Waves tab.
+    pub fn waves(&self) -> &waves::Waves {
+        &self.waves
+    }
+
+    /// The rows of the Waves tab now.
+    pub fn wave_rows(&self) -> Vec<waves::Row> {
+        match self.last_look() {
+            Some((look, at_ms)) => waves::rows(&self.waves, look, at_ms),
+            None => Vec::new(),
+        }
+    }
+
+    /// Takes the size of the body of the last draw, `rows` rows, and its
+    /// time `at_ms`.
+    pub fn drew(&mut self, rows: u16, at_ms: i64) {
+        self.drawn_ms = at_ms;
+        self.page = usize::from(rows).max(1);
     }
 
     /// Takes the fault of a look that failed: the screen keeps the last
@@ -679,9 +911,15 @@ impl State {
         self.question = Some(question);
     }
 
+    /// Asks for the reason of a hold in the note line: the person types
+    /// it ([`waves::typed`], 01M6VFGK9XXWCA8X7CE8EZNSJV).
+    pub fn ask_reason(&mut self, reason: waves::Reason) {
+        self.reason = Some(reason);
+    }
+
     /// The text of the note line while the TUI asks: the question with
     /// `y/N`, or what the person types with a cursor. It comes before
-    /// the fault and the note.
+    /// the fault and the note (01M6VFGYW0XVJ5JSX6R1NCR6W7).
     ///
     /// ```
     /// use riff::tui::{Action, Key, Question, State};
@@ -698,13 +936,18 @@ impl State {
     /// state.ask(Question { text: "Set the limit?".into(), yes: yes.clone(), no: no.clone() });
     /// assert_eq!(state.on_key(Key::Esc), None);
     /// assert_eq!(state.shown_note(), Some("The limit of thelio stays."));
-    /// // q ends the TUI.
+    /// // q and Ctrl-C end the TUI.
+    /// state.ask(Question { text: "Set the limit?".into(), yes: yes.clone(), no: no.clone() });
+    /// assert_eq!(state.on_key(Key::Char('q')), Some(Action::Quit));
     /// state.ask(Question { text: "Set the limit?".into(), yes, no });
     /// assert_eq!(state.on_key(Key::Quit), Some(Action::Quit));
     /// ```
     pub fn asked(&self) -> Option<String> {
         if let Some(question) = &self.question {
             return Some(format!("{} y/N", question.text));
+        }
+        if let Some(reason) = &self.reason {
+            return Some(reason.line());
         }
         self.typing.as_ref().map(machines::Typing::line)
     }
@@ -726,14 +969,21 @@ impl State {
     }
 
     /// Takes the key `key` of the person (01M6VAZJYYQZDHD6YDB0NBQ7KW,
-    /// 01M6VAZKDEQ6951KGPGAMF1SNJ).
+    /// 01M6VAZKDEQ6951KGPGAMF1SNJ). A question of the note line takes the
+    /// key first, then a text that the person types ([`machines::typed`],
+    /// [`waves::typed`]). Then the frame takes its keys, and the tab the
+    /// others: `k` `j` `g` `G` are `↑` `↓` `Home` `End`
+    /// (01M6VFGKCJ02G33TXR01GY6M0G). Opening the Waves tab looks again at
+    /// once, for the holds of its boards.
     ///
     /// ```
     /// use riff::tui::{Action, Key, State, Tab};
     /// use riff_core::build::Build;
     ///
     /// let mut state = State::new(Build::this());
-    /// assert_eq!(state.on_key(Key::Open(Tab::Waves)), None);
+    /// assert_eq!(state.on_key(Key::Open(Tab::Machines)), None);
+    /// assert_eq!(state.tab(), Tab::Machines);
+    /// assert_eq!(state.on_key(Key::Char('3')), Some(Action::Look));
     /// assert_eq!(state.tab(), Tab::Waves);
     /// state.on_key(Key::Next);
     /// assert_eq!(state.tab(), Tab::Machines);
@@ -741,11 +991,16 @@ impl State {
     /// state.on_key(Key::Before);
     /// assert_eq!(state.tab(), Tab::Chat);
     /// // `?` shows the help, and `?` or Esc closes it.
-    /// state.on_key(Key::Help);
+    /// state.on_key(Key::Char('?'));
     /// assert!(state.help_shown());
     /// state.on_key(Key::Esc);
     /// assert!(!state.help_shown());
+    /// state.on_key(Key::Help);
+    /// state.on_key(Key::Help);
+    /// assert!(!state.help_shown());
+    /// assert_eq!(state.on_key(Key::Char('r')), Some(Action::Look));
     /// assert_eq!(state.on_key(Key::Again), Some(Action::Look));
+    /// assert_eq!(state.on_key(Key::Char('q')), Some(Action::Quit));
     /// assert_eq!(state.on_key(Key::Quit), Some(Action::Quit));
     /// ```
     pub fn on_key(&mut self, key: Key) -> Option<Action> {
@@ -753,32 +1008,38 @@ impl State {
         if let Some(question) = self.question.take() {
             return match key {
                 Key::Char('y' | 'Y') => Some(question.yes),
-                Key::Quit => Some(Action::Quit),
+                Key::Quit | Key::Char('q') => Some(Action::Quit),
                 _ => {
                     self.note(question.no);
                     None
                 }
             };
         }
+        // A text takes each character (01M6VFGKCJ02G33TXR01GY6M0G).
         if let Some(typing) = self.typing.take() {
             return machines::typed(self, typing, key);
         }
+        if let Some(reason) = self.reason.take() {
+            return waves::typed(self, reason, key);
+        }
+        let key = match key {
+            Key::Char(digit @ '1'..='6') => digit
+                .to_digit(10)
+                .and_then(|n| Tab::of_number(n as usize))
+                .map_or(key, Key::Open),
+            Key::Char('?') => Key::Help,
+            Key::Char('r') => Key::Again,
+            Key::Char('q') => Key::Quit,
+            Key::Char('k') => Key::Up,
+            Key::Char('j') => Key::Down,
+            Key::Char('g') => Key::First,
+            Key::Char('G') => Key::Last,
+            key => key,
+        };
         match key {
-            Key::Open(tab) => {
-                self.help = false;
-                self.open(tab);
-                None
-            }
-            Key::Next => {
-                self.help = false;
-                self.open(self.tab.next());
-                None
-            }
-            Key::Before => {
-                self.help = false;
-                self.open(self.tab.before());
-                None
-            }
+            Key::Open(tab) => self.go(tab),
+            Key::Next => self.go(self.tab.next()),
+            Key::Before => self.go(self.tab.before()),
             Key::Help => {
                 self.help = !self.help;
                 None
@@ -793,10 +1054,34 @@ impl State {
             _ if self.help => None,
             Key::Chat(key) => self.on_chat(key),
             key => match self.tab {
+                Tab::Waves => self.waves_key(key),
                 Tab::Machines => machines::on_key(self, key),
                 _ => None,
             },
         }
+    }
+
+    /// Opens the tab `tab` and closes the help. The Waves tab looks again
+    /// at once.
+    fn go(&mut self, tab: Tab) -> Option<Action> {
+        self.help = false;
+        let was = self.tab;
+        self.open(tab);
+        (tab == Tab::Waves && was != Tab::Waves).then_some(Action::Look)
+    }
+
+    /// Takes a key of the Waves tab that the frame does not take.
+    fn waves_key(&mut self, key: Key) -> Option<Action> {
+        let rows = self.wave_rows();
+        let (look, at_ms) = self.last_look()?;
+        let look = look.clone();
+        let at = (&look, self.drawn_ms.max(at_ms));
+        match self.waves.on_key(key, &rows, at, self.page)? {
+            waves::Answer::Note(note) => self.note(note),
+            waves::Answer::Ask(question) => self.ask(question),
+            waves::Answer::Reason(reason) => self.ask_reason(reason),
+        }
+        None
     }
 
     /// Takes a click of the person at `column` and `row` on the view
@@ -820,18 +1105,19 @@ impl State {
     ///
     /// ```
     /// use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    /// use riff::tui::{Input, Key, State, Tab, chat};
+    /// use riff::tui::{Action, Input, Key, State, Tab, chat};
     /// use riff_core::build::Build;
     ///
     /// let q = Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
     /// let mut state = State::new(Build::this());
-    /// assert_eq!(state.input(&q), Some(Input::Key(Key::Quit)));
+    /// assert_eq!(state.input(&q), Some(Input::Key(Key::Char('q'))));
     /// // In the prompt of the Chat tab, `q` types.
     /// state.on_key(Key::Open(Tab::Chat));
     /// assert_eq!(state.input(&q), Some(Input::Key(Key::Chat(chat::Key::Type('q')))));
-    /// // In the log, `q` ends the TUI.
+    /// // In the log, `q` goes to the frame, and ends the TUI.
     /// state.on_key(Key::Chat(chat::Key::Log));
-    /// assert_eq!(state.input(&q), Some(Input::Key(Key::Quit)));
+    /// assert_eq!(state.input(&q), Some(Input::Key(Key::Char('q'))));
+    /// assert_eq!(state.on_key(Key::Char('q')), Some(Action::Quit));
     /// ```
     pub fn input(&self, event: &ratatui::crossterm::event::Event) -> Option<Input> {
         if self.tab == Tab::Chat
@@ -863,42 +1149,36 @@ pub enum Input {
 ///
 /// let press = |code, modifiers| Event::Key(KeyEvent::new(code, modifiers));
 /// let none = KeyModifiers::NONE;
-/// assert_eq!(input_of(&press(KeyCode::Char('3'), none)), Some(Input::Key(Key::Open(Tab::Waves))));
-/// assert_eq!(
-///     input_of(&press(KeyCode::Char('6'), KeyModifiers::ALT)),
-///     Some(Input::Key(Key::Open(Tab::Reports)))
-/// );
-/// assert_eq!(input_of(&press(KeyCode::Tab, none)), Some(Input::Key(Key::Next)));
-/// assert_eq!(input_of(&press(KeyCode::BackTab, KeyModifiers::SHIFT)), Some(Input::Key(Key::Before)));
-/// assert_eq!(input_of(&press(KeyCode::Char('?'), KeyModifiers::SHIFT)), Some(Input::Key(Key::Help)));
-/// assert_eq!(input_of(&press(KeyCode::Esc, none)), Some(Input::Key(Key::Esc)));
-/// assert_eq!(input_of(&press(KeyCode::Char('r'), none)), Some(Input::Key(Key::Again)));
-/// assert_eq!(input_of(&press(KeyCode::Char('q'), none)), Some(Input::Key(Key::Quit)));
-/// assert_eq!(
-///     input_of(&press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-///     Some(Input::Key(Key::Quit))
-/// );
-/// // The keys of a tab (01M6VFD0M3RHT488D0RQ84RVMC).
-/// for (code, key) in [
+/// let key = |code, modifiers| input_of(&press(code, modifiers));
+/// assert_eq!(key(KeyCode::Char('3'), none), Some(Input::Key(Key::Char('3'))));
+/// assert_eq!(key(KeyCode::Char('6'), KeyModifiers::ALT), Some(Input::Key(Key::Open(Tab::Reports))));
+/// assert_eq!(key(KeyCode::Tab, none), Some(Input::Key(Key::Next)));
+/// assert_eq!(key(KeyCode::BackTab, KeyModifiers::SHIFT), Some(Input::Key(Key::Before)));
+/// assert_eq!(key(KeyCode::Char('?'), KeyModifiers::SHIFT), Some(Input::Key(Key::Char('?'))));
+/// assert_eq!(key(KeyCode::Char('P'), KeyModifiers::SHIFT), Some(Input::Key(Key::Char('P'))));
+/// assert_eq!(key(KeyCode::Esc, none), Some(Input::Key(Key::Esc)));
+/// assert_eq!(key(KeyCode::Char('c'), KeyModifiers::CONTROL), Some(Input::Key(Key::Quit)));
+/// // The keys of a tab (01M6VFD0M3RHT488D0RQ84RVMC, 01M6VFGKCJ02G33TXR01GY6M0G).
+/// for (code, want) in [
 ///     (KeyCode::Up, Key::Up),
-///     (KeyCode::Char('k'), Key::Up),
 ///     (KeyCode::Down, Key::Down),
-///     (KeyCode::Char('j'), Key::Down),
 ///     (KeyCode::PageUp, Key::PageUp),
 ///     (KeyCode::PageDown, Key::PageDown),
-///     (KeyCode::Char('g'), Key::First),
+///     (KeyCode::Home, Key::First),
 ///     (KeyCode::End, Key::Last),
+///     (KeyCode::Left, Key::Left),
+///     (KeyCode::Right, Key::Right),
 ///     (KeyCode::Enter, Key::Enter),
 ///     (KeyCode::Backspace, Key::Backspace),
-///     (KeyCode::Char('7'), Key::Char('7')),
+///     (KeyCode::Char('j'), Key::Char('j')),
 ///     (KeyCode::Char('l'), Key::Char('l')),
 /// ] {
-///     assert_eq!(input_of(&press(code, none)), Some(Input::Key(key)), "{code:?}");
+///     assert_eq!(key(code, none), Some(Input::Key(want)), "{code:?}");
 /// }
-/// assert_eq!(input_of(&press(KeyCode::Char('G'), KeyModifiers::SHIFT)), Some(Input::Key(Key::Last)));
-/// // A letter with Ctrl is no key of a tab.
-/// assert_eq!(input_of(&press(KeyCode::Char('l'), KeyModifiers::CONTROL)), None);
-/// assert_eq!(input_of(&press(KeyCode::F(2), none)), None);
+/// // A letter with Ctrl or Alt is no key of a tab.
+/// assert_eq!(key(KeyCode::Char('7'), KeyModifiers::ALT), None);
+/// assert_eq!(key(KeyCode::Char('l'), KeyModifiers::CONTROL), None);
+/// assert_eq!(key(KeyCode::F(1), none), None);
 /// let mouse = |kind| {
 ///     Event::Mouse(MouseEvent { kind, column: 4, row: 0, modifiers: KeyModifiers::NONE })
 /// };
@@ -917,32 +1197,27 @@ pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
     };
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => {
+            let control = key.modifiers.contains(KeyModifiers::CONTROL);
+            let alt = key.modifiers.contains(KeyModifiers::ALT);
             let key = match key.code {
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Key::Quit,
-                KeyCode::Char(digit @ '1'..='6') => {
+                KeyCode::Char('c') if control => Key::Quit,
+                KeyCode::Char(digit @ '1'..='6') if alt => {
                     Key::Open(Tab::of_number(digit.to_digit(10)? as usize)?)
                 }
+                KeyCode::Char(c) if !control && !alt => Key::Char(c),
                 KeyCode::Tab => Key::Next,
                 KeyCode::BackTab => Key::Before,
-                KeyCode::Char('?') => Key::Help,
                 KeyCode::Esc => Key::Esc,
-                KeyCode::Char('r') => Key::Again,
-                KeyCode::Char('q') => Key::Quit,
-                KeyCode::Up | KeyCode::Char('k') => Key::Up,
-                KeyCode::Down | KeyCode::Char('j') => Key::Down,
+                KeyCode::Up => Key::Up,
+                KeyCode::Down => Key::Down,
                 KeyCode::PageUp => Key::PageUp,
                 KeyCode::PageDown => Key::PageDown,
-                KeyCode::Home | KeyCode::Char('g') => Key::First,
-                KeyCode::End | KeyCode::Char('G') => Key::Last,
+                KeyCode::Home => Key::First,
+                KeyCode::End => Key::Last,
+                KeyCode::Left => Key::Left,
+                KeyCode::Right => Key::Right,
                 KeyCode::Enter => Key::Enter,
                 KeyCode::Backspace => Key::Backspace,
-                KeyCode::Char(c)
-                    if !key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                {
-                    Key::Char(c)
-                }
                 _ => return None,
             };
             Some(Input::Key(key))
@@ -979,16 +1254,26 @@ async fn next_event() -> Result<Option<ratatui::crossterm::event::Event>> {
 }
 
 /// `riff` with no command, in a terminal: the TUI, as `me` at `api`,
-/// until the person ends it (01M6VAZ7WH3MFAYF4PAZW6EDVY). The Chat tab
-/// posts as `person`, as `riff chat` does. With `mouse`, the TUI takes
-/// the mouse (01M6VAZKG8FS4HEA9VSA4Z4YF1).
-pub async fn run(api: &Api, me: &SessionUri, person: &chat::Person, mouse: bool) -> Result<()> {
+/// until the person ends it (01M6VAZ7WH3MFAYF4PAZW6EDVY). The repository
+/// of the folder `here` gets a board in the Waves tab. The Chat tab posts
+/// as `person`, as `riff chat` does. An action of the Waves tab reaches
+/// riff-server through `reach`, as its CLI command does. With `mouse`,
+/// the TUI takes the mouse (01M6VAZKG8FS4HEA9VSA4Z4YF1).
+pub async fn run(
+    api: &Api,
+    me: &SessionUri,
+    here: &riff_core::name::Place,
+    person: &chat::Person,
+    reach: &Reach,
+    mouse: bool,
+) -> Result<()> {
     use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
     use ratatui::crossterm::execute;
     // The first look runs before the TUI takes the terminal: its error
     // prints as in the CLI (01M6VAZKAH6B53YKR8W4YKNSH6).
-    let first = look(api, me).await?;
-    let mut state = State::new(Build::this());
+    let first = look(api, me, &[]).await?;
+    let here = here.default_thread().map(|t| t.to_string());
+    let mut state = State::new(Build::this()).in_clone(here);
     let start = crate::run::now_ms();
     state.looked(first, start);
     state.chat_as(person.me.who().user(), u64::try_from(start).unwrap_or(0));
@@ -997,7 +1282,7 @@ pub async fn run(api: &Api, me: &SessionUri, person: &chat::Person, mouse: bool)
         ratatui::restore();
         return Err(e.into());
     }
-    let shown = frames(&mut terminal, &mut state, api, me, person).await;
+    let shown = frames(&mut terminal, &mut state, api, me, person, reach).await;
     if mouse {
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
     }
@@ -1005,16 +1290,22 @@ pub async fn run(api: &Api, me: &SessionUri, person: &chat::Person, mouse: bool)
     shown
 }
 
+/// A read of the forge for the Waves tab that runs: it gives back the
+/// kept replies, and the read of each repository.
+type Reading = tokio::task::JoinHandle<(forge::Kept, Vec<(String, Result<forge::Forge, String>)>)>;
+
 /// The loop of [`run`]: it draws the state, takes the input of the
-/// person, looks at riff-server each [`every`], and runs each action in
-/// a task of its own. The [`chat::Link`] of `person` follows the thread
-/// `chat` and posts its lines.
+/// person, looks at riff-server each [`every`], reads the forge of the
+/// Waves tab each [`forge::READ_EVERY`] while it shows, and runs each
+/// action in a task of its own. The [`chat::Link`] of `person` follows
+/// the thread `chat` and posts its lines.
 async fn frames(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut State,
     api: &Api,
     me: &SessionUri,
     person: &chat::Person,
+    reach: &Reach,
 ) -> Result<()> {
     use tokio::time::Instant;
     let mut input_at = Instant::now();
@@ -1026,9 +1317,27 @@ async fn frames(
     let mut again = false;
     let mut good_at = chrono::Local::now();
     let mut link = chat::Link::start(person);
+    // The reads of the forge share one token, and count as `tui`
+    // (01M6VFGK4P2FWMFQHBZKR3JXSZ).
+    let gh = crate::pr::Gh::here("tui")
+        .with_one_token()
+        .with_shared_reads();
+    let mut kept = Some(forge::Kept::default());
+    let mut reading: Option<Reading> = None;
+    // `r` while the Waves tab shows: read the forge again.
+    let mut read_again = false;
     loop {
         for came in link.came() {
             state.chat_came(came);
+        }
+        if reading
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+            && let Some(done) = reading.take()
+        {
+            let (back, read) = done.await?;
+            kept = Some(back);
+            state.read_forge(read, crate::run::now_ms());
         }
         if acting
             .as_ref()
@@ -1042,6 +1351,19 @@ async fn frames(
             } else {
                 next = Instant::now();
             }
+        }
+        if reading.is_none()
+            && state.tab() == Tab::Waves
+            && (read_again || state.waves().due(crate::run::now_ms()))
+        {
+            read_again = false;
+            let repos = state.boards();
+            let gh = gh.clone();
+            let mut back = kept.take().unwrap_or_default();
+            reading = Some(tokio::task::spawn_blocking(move || {
+                let read = forge::read_each(&gh, &repos, &mut back);
+                (back, read)
+            }));
         }
         if looking
             .as_ref()
@@ -1070,8 +1392,8 @@ async fn frames(
             };
         }
         if looking.is_none() && Instant::now() >= next {
-            let (api, me) = (api.clone(), me.clone());
-            looking = Some(tokio::spawn(async move { look(&api, &me).await }));
+            let (api, me, boards) = (api.clone(), me.clone(), state.boards());
+            looking = Some(tokio::spawn(async move { look(&api, &me, &boards).await }));
         }
         let mut drawn = None;
         terminal.draw(|frame| {
@@ -1080,10 +1402,11 @@ async fn frames(
             if let Some(at) = shown.cursor {
                 frame.set_cursor_position(at);
             }
-            drawn = Some(shown);
+            drawn = Some((shown, frame.area()));
         })?;
-        if let Some(shown) = &drawn {
+        if let Some((shown, area)) = &drawn {
             state.drawn(shown);
+            state.drew(area.height.saturating_sub(4), crate::run::now_ms());
         }
         let Some(event) = next_event().await? else {
             continue;
@@ -1096,25 +1419,31 @@ async fn frames(
             Input::Key(key) => state.on_key(key),
             Input::Click { column, row } => drawn
                 .as_ref()
-                .and_then(|shown| state.on_click(shown, column, row)),
+                .and_then(|(shown, _)| state.on_click(shown, column, row)),
         };
         match action {
             Some(Action::Quit) => {
-                for task in [
-                    looking.map(|t| t.abort_handle()),
-                    acting.map(|t| t.abort_handle()),
-                ]
-                .into_iter()
-                .flatten()
-                {
-                    task.abort();
+                if let Some(looking) = looking {
+                    looking.abort();
+                }
+                // An action that runs ends first: the person said `y`.
+                if let Some(acting) = acting {
+                    let _ = acting.await;
                 }
                 link.end().await;
                 return Ok(());
             }
-            Some(Action::Look) if looking.is_some() => again = true,
-            Some(Action::Look) => next = Instant::now(),
-            Some(Action::Limit { .. }) if acting.is_some() => state.note(machines::STILL_ACTING),
+            Some(Action::Look) => {
+                read_again = state.tab() == Tab::Waves;
+                if looking.is_some() {
+                    again = true;
+                } else {
+                    next = Instant::now();
+                }
+            }
+            Some(Action::Limit { .. } | Action::Do(_)) if acting.is_some() => {
+                state.note(STILL_ACTING);
+            }
             Some(Action::Limit { host, sessions }) => {
                 state.note(machines::setting(&host, sessions));
                 let (api, me) = (api.clone(), me.clone());
@@ -1123,6 +1452,16 @@ async fn frames(
                 }));
             }
             Some(Action::Post(body)) => link.send(body),
+            Some(Action::Do(effect)) => {
+                state.note(effect.doing());
+                let (api, me, reach) = (api.clone(), me.clone(), reach.clone());
+                acting = Some(tokio::spawn(async move {
+                    match effect.run(&api, &me, &reach).await {
+                        Ok(line) => line,
+                        Err(e) => format!("riff: {e:#}"),
+                    }
+                }));
+            }
             None => {}
         }
     }
