@@ -27,9 +27,21 @@ impl Tty {
     const ROWS: u16 = 24;
     const COLUMNS: u16 = 80;
 
-    /// Starts `riff ARGS` at the riff-server `url` as `user` on `host`,
+    /// Starts `riff` at the riff-server `url` as `user` on `host`,
     /// in a new pseudo-terminal. With `signed`, the command is signed in.
-    fn start(url: &str, user: &str, host: &str, signed: bool, args: &[&str]) -> Tty {
+    fn start(url: &str, user: &str, host: &str, signed: bool) -> Tty {
+        Self::start_in(tempfile::tempdir().unwrap(), url, user, host, signed, &[])
+    }
+
+    /// [`Tty::start`] in the folder `dir`, with the variables `vars` too.
+    fn start_in(
+        dir: tempfile::TempDir,
+        url: &str,
+        user: &str,
+        host: &str,
+        signed: bool,
+        vars: &[(&str, String)],
+    ) -> Tty {
         let size = nix::pty::Winsize {
             ws_row: Self::ROWS,
             ws_col: Self::COLUMNS,
@@ -37,14 +49,12 @@ impl Tty {
             ws_ypixel: 0,
         };
         let pty = nix::pty::openpty(Some(&size), None).unwrap();
-        let dir = tempfile::tempdir().unwrap();
         if signed {
             crate::common::sign_in(url, dir.path(), user);
         }
         let slave = std::fs::File::from(pty.slave);
-        let child = Isolated::shared()
-            .tokio_riff()
-            .args(args)
+        let mut command = Isolated::shared().tokio_riff();
+        command
             .current_dir(dir.path())
             .env("RIFF_SERVER", url)
             .env("RIFF_USER", user)
@@ -54,9 +64,11 @@ impl Tty {
             .stdin(slave.try_clone().unwrap())
             .stdout(slave.try_clone().unwrap())
             .stderr(slave)
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+            .kill_on_drop(true);
+        for (name, value) in vars {
+            command.env(name, value);
+        }
+        let child = command.spawn().unwrap();
         let master = std::fs::File::from(pty.master);
         let screen = Arc::new(Mutex::new(vt100::Parser::new(Self::ROWS, Self::COLUMNS, 0)));
         let mut reader = master.try_clone().unwrap();
@@ -125,7 +137,7 @@ impl Tty {
 #[tokio::test]
 async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
     let server = crate::common::start_signed().await;
-    let mut tty = Tty::start(&server, "brett", "thelio", true, &[]);
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
     let rows = tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     assert_eq!(
         rows[0],
@@ -155,11 +167,12 @@ async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
     // A click of the mouse on `3 Waves` opens it: the SGR mouse event
     // of a press and a release at column 26, row 1.
     tty.press("\x1b[<0;26;1M\x1b[<0;26;1m").await;
-    let rows = tty.shows(|rows| rows[0].contains("[3 Waves]")).await;
-    assert_eq!(
-        rows[2],
-        " The Waves tab is not built yet. Use these commands:"
-    );
+    // No repository has a live session, and the folder is no clone: no
+    // board (#1638).
+    let rows = tty
+        .shows(|rows| rows[0].contains("[3 Waves]") && !rows[2].is_empty())
+        .await;
+    assert_eq!(rows[2], format!(" {}", riff::tui::waves::NO_BOARD[0]));
 
     // `?` shows the keys of the tab, and Esc closes them.
     tty.press("?").await;
@@ -217,7 +230,7 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
     };
     api.machine(&daemon, &facts.line()).await.unwrap();
 
-    let mut tty = Tty::start(&server, "brett", "thelio", true, &[]);
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     tty.press("4").await;
     let rows = tty
@@ -306,7 +319,7 @@ async fn a_first_look_that_fails_ends_the_tui_with_the_error_of_the_cli() {
         format!("Error: cannot reach riff-server at {server}")
     );
 
-    let mut tty = Tty::start(server, "brett", "thelio", false, &[]);
+    let mut tty = Tty::start(server, "brett", "thelio", false);
     assert_eq!(tty.exits().await, Some(1));
     let rows = tty
         .shows(|rows| rows.iter().any(|row| !row.is_empty()))
@@ -349,7 +362,7 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
     let lead_api = crate::common::api_of(&server, &lead);
     let mut wakes = Box::pin(lead_api.watch(&lead).await.unwrap());
 
-    let mut tty = Tty::start(&server, "brett", "thelio", true, &[]);
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     // A new line while the Sessions tab shows: the news of the chat.
     lead_api
@@ -397,6 +410,127 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
     // Esc leaves the prompt, and `q` ends the TUI.
     tty.press("\x1b").await;
     tty.shows(|rows| rows[23].starts_with(" i type")).await;
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// A fake `gh` for the clone of acme/app: the open issues of Wave 3, as
+/// the REST list gives them, and no closed item, no pull request and no
+/// check. It logs each call to the file `calls` of its folder.
+const FAKE_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$*" >> "$dir/calls"
+case "$*" in
+  *'issues?state=open'*)
+    printf 'HTTP/2.0 200 OK\r\nEtag: "v1"\r\n\r\n'
+    printf '[{"number":12,"title":"Show the board","milestone":{"number":5,"title":"Wave 3"}},'
+    printf '{"number":13,"title":"Hold this one","milestone":{"number":5,"title":"Wave 3"}}]' ;;
+  *'issues?state=closed'*) printf 'HTTP/2.0 200 OK\r\n\r\n[]' ;;
+  'api repos/acme/app') echo '{"default_branch":"main"}' ;;
+  *) echo '[]' ;;
+esac
+"#;
+
+/// 01M6VFG882T794B1CTHK5AKPDG, 01M6VFGK9XXWCA8X7CE8EZNSJV,
+/// 01M6VFGK4P2FWMFQHBZKR3JXSZ: in a clone of acme/app, the Waves tab
+/// shows the board of its current wave from `gh`, and holds, frees and
+/// pauses with the code of `riff plan hold`, `riff plan free` and `riff
+/// pause`, each after `y`.
+#[tokio::test]
+async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
+    let server = crate::common::start_signed().await;
+    let clone = tempfile::tempdir().unwrap();
+    for args in [
+        &["init", "-q"][..],
+        &["remote", "add", "origin", "https://github.com/acme/app.git"],
+    ] {
+        let git = std::process::Command::new("git")
+            .args(args)
+            .current_dir(clone.path())
+            .status()
+            .unwrap();
+        assert!(git.success());
+    }
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), FAKE_GH);
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let mut tty = Tty::start_in(clone, &server, "brett", "thelio", true, &[("PATH", path)]);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+
+    // `3` opens the Waves tab: the board of acme/app, from the REST list
+    // of the open issues.
+    tty.press("3").await;
+    let rows = tty
+        .shows(|rows| rows.iter().any(|r| r.contains("#13")))
+        .await;
+    assert!(
+        rows[2].starts_with(" ▼ acme/app · Wave 3 · paused"),
+        "{rows:#?}"
+    );
+    assert!(
+        rows[4].starts_with(" > ○   free    #12    Show the board"),
+        "{rows:#?}"
+    );
+    assert!(
+        rows[5].starts_with("   ○   free    #13    Hold this one"),
+        "{rows:#?}"
+    );
+    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    assert!(
+        calls.contains("api -i repos/acme/app/issues?state=open"),
+        "{calls}"
+    );
+    assert!(!calls.contains("pr list"), "no open pull request: {calls}");
+
+    // `h` on #13: a reason, then `y`. The hold shows at the next look.
+    tty.press("j").await;
+    tty.press("h").await;
+    tty.press("later").await;
+    tty.shows(|rows| rows[22].ends_with("The reason: later█"))
+        .await;
+    tty.press("\r").await;
+    tty.shows(|rows| rows[22] == " Hold #13 of acme/app: later? y/N")
+        .await;
+    tty.press("y").await;
+    let rows = tty
+        .shows(|rows| rows[5].starts_with(" > ◌   held    #13    Hold this one"))
+        .await;
+    assert!(rows[5].contains("later"), "{rows:#?}");
+    tty.shows(|rows| rows[22].contains("issue-13 in acme/app is on hold now"))
+        .await;
+
+    // `f` frees it after `y`.
+    tty.press("f").await;
+    tty.shows(|rows| rows[22] == " Free #13 of acme/app? y/N")
+        .await;
+    tty.press("y").await;
+    tty.shows(|rows| rows[5].starts_with(" > ○   free    #13"))
+        .await;
+
+    // `p` pauses the repository after `y`, and `n` changes nothing.
+    tty.press("p").await;
+    tty.shows(|rows| rows[22] == " Pause acme/app? y/N").await;
+    tty.press("n").await;
+    tty.shows(|rows| rows[22] == " Nothing changed.").await;
+    tty.press("p").await;
+    tty.press("y").await;
+    tty.shows(|rows| rows[22].contains("The repository acme/app is paused now"))
+        .await;
+
+    // `P` resumes the whole riff after `y`: the header says so.
+    tty.press("P").await;
+    tty.shows(|rows| rows[22] == " Resume the whole riff? y/N")
+        .await;
+    tty.press("y").await;
+    tty.shows(|rows| rows[1].starts_with(" riff running")).await;
+    // The repository stays paused.
+    tty.shows(|rows| rows[2].starts_with(" ▼ acme/app · Wave 3 · paused"))
+        .await;
+
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));
 }

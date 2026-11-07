@@ -2145,24 +2145,14 @@ async fn cli() -> Result<()> {
             );
         }
         Command::Pause { riff, repo } => {
-            pause(
-                &api,
-                &me,
-                &here,
-                pause_scope(riff, repo)?,
-                RiffState::Paused,
-            )
-            .await?;
+            let scope = pause_scope(riff, repo)?;
+            let line = riff::reach::pause(&api, &me, &here, scope, RiffState::Paused).await?;
+            println!("{line}");
         }
         Command::Resume { riff, repo } => {
-            pause(
-                &api,
-                &me,
-                &here,
-                pause_scope(riff, repo)?,
-                RiffState::Running,
-            )
-            .await?;
+            let scope = pause_scope(riff, repo)?;
+            let line = riff::reach::pause(&api, &me, &here, scope, RiffState::Running).await?;
+            println!("{line}");
         }
         Command::Post {
             thread,
@@ -3658,36 +3648,6 @@ fn pause_scope(riff: bool, repo: Option<String>) -> Result<PauseScope> {
     Ok(PauseScope::of(riff, repo))
 }
 
-/// Pauses or resumes `scope`, and wakes each session that the change
-/// stops or starts (01M3XAHZDSQR263QZVB41CK0MX,
-/// 01M3JCG3YD7C2Y3V0QJPF082YH).
-///
-/// The URI of a person names only the host. For the pause of the
-/// repository of the directory `here`, the person calls from `here`, so
-/// the server knows the repository.
-async fn pause(
-    api: &Api,
-    me: &SessionUri,
-    here: &Place,
-    scope: PauseScope,
-    state: RiffState,
-) -> Result<()> {
-    let at_here;
-    let me = if matches!(scope, PauseScope::Here) && me.who().session().is_none() {
-        at_here = SessionUri::new(me.who().clone(), here.clone());
-        &at_here
-    } else {
-        me
-    };
-    let (reply, posted) = api.set_pause(me, &scope, state).await?;
-    let repository = scope.repository(me);
-    println!(
-        "{}",
-        text::riff_set(repository.as_ref(), state, &reply, &posted)
-    );
-    Ok(())
-}
-
 fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> {
     match given {
         Some(t) => Ok(t.parse()?),
@@ -4018,7 +3978,7 @@ fn forget_wave_list() {
 /// (01M6VAZ7WH3MFAYF4PAZW6EDVY). It finds the session and the sign-in
 /// as `riff top` does, so an error of the start prints as in the CLI.
 async fn tui_command(server: Option<&str>, place: Option<&Place>) -> Result<()> {
-    let (server, _) = server_of(server)?;
+    let (server, source) = server_of(server)?;
     let api = Api::new(&server);
     let here = identity::here(place)?;
     let me = identity::me(&here, api.base())?;
@@ -4040,7 +4000,8 @@ async fn tui_command(server: Option<&str>, place: Option<&Place>) -> Result<()> 
         Ok(path) => settings::tui_mouse(&path)?,
         Err(_) => true,
     };
-    riff::tui::run(&api, &me, &person, mouse).await
+    let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
+    riff::tui::run(&api, &me, &here, &person, &reach, mouse).await
 }
 
 /// Draws [`riff::top::Top`] once, or again every

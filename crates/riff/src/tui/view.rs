@@ -225,23 +225,45 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
         line: header(state, layout, now_ms),
     });
 
+    let body = Rect::new(area.x, area.y + 2, area.width, area.height - 4);
     match state.tab() {
         Tab::Machines => {
-            let body = Rect::new(area.x, area.y + 2, area.width, area.height - 4);
             let (rows, hits) = super::machines::body(state, body, layout, now_ms);
             view.rows.extend(rows);
             view.hits.extend(hits);
         }
+        Tab::Waves => {
+            let rows = state.wave_rows();
+            let lines = super::waves::body(
+                state.waves(),
+                &rows,
+                layout,
+                area.width - margin,
+                body.height,
+                now_ms,
+            );
+            for ((line, index), y) in lines.into_iter().zip(2..area.height - 2) {
+                if rows[index].pick().is_some() {
+                    view.hits.push(Hit {
+                        area: row(y),
+                        key: Key::Row(index),
+                    });
+                }
+                view.rows.push(Placed { area: row(y), line });
+            }
+        }
         Tab::Chat => chat::place(state, area, layout, &mut view),
         tab => {
-            let body = 2..area.height - 2;
-            for (line, y) in body_lines(tab, area.width - margin).into_iter().zip(body) {
+            for (line, y) in body_lines(tab, area.width - margin)
+                .into_iter()
+                .zip(2..area.height - 2)
+            {
                 view.rows.push(Placed { area: row(y), line });
             }
         }
     }
 
-    if let Some(line) = note_line(state) {
+    if let Some(line) = note_line(state, now_ms) {
         view.rows.push(Placed {
             area: row(area.height - 2),
             line,
@@ -264,11 +286,12 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
     view
 }
 
-/// The note line (01M6VAZKDEQ6951KGPGAMF1SNJ): a question of the TUI
+/// The note line (01M6VFGYW0XVJ5JSX6R1NCR6W7): a question of the TUI
 /// (01M6VFD0S90SB8M8WV952NT4Y1), else the fault of the link, else in
 /// the Chat tab whom the line in the prompt will wake, else the note of
-/// the last action.
-fn note_line(state: &State) -> Option<Line<'static>> {
+/// the last action, else in the Waves tab the age of its last read of
+/// `gh`.
+fn note_line(state: &State, now_ms: i64) -> Option<Line<'static>> {
     if let Some(asked) = state.asked() {
         return Some(Line::styled(text::safe(&asked), ACTIVE));
     }
@@ -280,7 +303,11 @@ fn note_line(state: &State) -> Option<Line<'static>> {
     {
         return Some(line);
     }
-    state.shown_note().map(|note| Line::raw(text::safe(note)))
+    if let Some(note) = state.shown_note() {
+        return Some(Line::raw(text::safe(note)));
+    }
+    (state.tab() == Tab::Waves)
+        .then(|| Line::styled(super::waves::note(state.waves(), now_ms), DIM))
 }
 
 /// The strip of the wide layout, and the place of each tab
@@ -428,11 +455,12 @@ fn body_lines(tab: Tab, columns: u16) -> Vec<Line<'static>> {
 
 /// The keys of the key line of the tab of `state` in a layout: the text
 /// of the key, its word, and the key that a click on it presses. A built
-/// tab has its own keys first ([`super::machines::keys`]). The Chat tab
-/// has only its own keys ([`chat::keys`]).
+/// tab has its own keys first ([`super::machines::keys`]), or all its
+/// keys ([`super::waves::keys_of`], [`chat::keys`]).
 fn keys_of(state: &State, layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
     let mut keys = match state.tab() {
         Tab::Chat => return chat::keys(state.chat().focus(), layout),
+        Tab::Waves => return super::waves::keys_of(layout),
         Tab::Machines => super::machines::keys(layout),
         _ => vec![("1-6", "tab", None)],
     };
@@ -476,21 +504,24 @@ fn key_line(
 
 /// The keys of the help popup of `tab`: the key, and what it does
 /// (01M6VAZKDEQ6951KGPGAMF1SNJ). A built tab has its own keys first
-/// ([`super::machines::help_keys`], [`chat::HELP`]). Each tab has the
-/// keys of the frame.
+/// ([`super::machines::help_keys`], [`super::waves::help_keys`],
+/// [`chat::HELP`]). Each tab has the keys of the frame.
 ///
 /// ```
 /// use riff::tui::Tab;
 /// use riff::tui::view::help_keys;
 ///
-/// assert_eq!(help_keys(Tab::Waves)[0], ("1 to 6", "open a tab"));
+/// assert_eq!(help_keys(Tab::Sessions)[0], ("1 to 6", "open a tab"));
+/// assert_eq!(help_keys(Tab::Waves)[0], ("↑ ↓, j k", "select a row"));
 /// assert_eq!(help_keys(Tab::Machines)[0], ("↑ ↓ j k", "select a host"));
+/// assert!(help_keys(Tab::Waves).contains(&("q, Ctrl-C", "end the TUI")));
 /// assert!(help_keys(Tab::Machines).contains(&("q, Ctrl-C", "end the TUI")));
 /// assert_eq!(help_keys(Tab::Chat)[7], ("/me TEXT", "send an action"));
 /// assert!(help_keys(Tab::Chat).contains(&("q, Ctrl-C", "end the TUI")));
 /// ```
 pub fn help_keys(tab: Tab) -> Vec<(&'static str, &'static str)> {
     let mut keys = match tab {
+        Tab::Waves => super::waves::help_keys(),
         Tab::Machines => super::machines::help_keys(),
         Tab::Chat => chat::HELP.to_vec(),
         _ => Vec::new(),
@@ -796,7 +827,8 @@ mod tests {
             wide.hit(u16::try_from(waves).unwrap(), 0),
             Some(Key::Open(Tab::Waves))
         );
-        assert_eq!(state.on_click(&wide, 30, 0), None);
+        // The Waves tab looks again at once, for the holds of its boards.
+        assert_eq!(state.on_click(&wide, 30, 0), Some(Action::Look));
         assert_eq!(state.tab(), Tab::Waves);
         assert_eq!(state.news_of(Tab::Waves), None);
         // The space between two tabs is no place.

@@ -156,7 +156,7 @@ tab comes with a build item:
 | [A #1636](https://github.com/como-technologies/riff/issues/1636) | The frame: the tab strip, the header, the note line, the key line, the help, the mouse and the narrow layout. |
 | [B #1637](https://github.com/como-technologies/riff/issues/1637) | 1 Sessions: each session and each worker, with its mark, its item, its state and its age. It does what `riff top` and `riff view` do. |
 | [E #1640](https://github.com/como-technologies/riff/issues/1640) | 2 Chat: the thread `chat`, as `riff chat` shows it. Built: see [Chat in the TUI](how-it-works.md#chat-in-the-tui). |
-| [C #1638](https://github.com/como-technologies/riff/issues/1638) | 3 Waves: the items, the claims, the pull requests and the verifies of each repository. |
+| [C #1638](https://github.com/como-technologies/riff/issues/1638) | 3 Waves: a board for each repository: the items, the claims, the pull requests, the next waves and the checks of `main`, with hold, free and pause. Built: see [See the open items of a wave](waves.md#see-the-open-items-of-a-wave). |
 | [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, and the limit of a host. Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui). |
 | [G #1642](https://github.com/como-technologies/riff/issues/1642) | 5 Devices: list the devices, add one with a QR code, remove one. |
 | [F #1641](https://github.com/como-technologies/riff/issues/1641) | 6 Reports: the usage, the audit and the log of a session. |
@@ -198,7 +198,10 @@ Each tab has the same five parts:
   line, as `riff top` does. The first look that fails ends the TUI
   with the error, before it draws a screen.
 - The mouse does what the keys do. The setting `tui.mouse` turns it
-  off.
+  off. In a tab with rows, a click selects a row, and a second click
+  opens it.
+- An action that changes something, for example a hold, asks `y` or
+  `n` in the note line first.
 - Under 80 columns the TUI shows the narrow layout, for a phone with
   SSH: the strip is `‹ 1/6 Sessions ›`, and the rows have fewer words.
   Under 40 columns or 10 rows, the TUI asks for a bigger terminal.

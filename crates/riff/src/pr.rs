@@ -149,6 +149,38 @@ pub enum Answer {
     Changed { etag: Option<String> },
 }
 
+/// The answer to a conditional read with its body ([`Gh::ask_for`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reply {
+    /// GitHub answered `304`: the body of the `ETag` that the ask sent
+    /// still holds.
+    Same,
+    /// GitHub gave a new reply: its `ETag`, when the headers have one, and
+    /// its body.
+    New { etag: Option<String>, body: String },
+}
+
+/// The body of a reply that `gh api --include` printed: the text after
+/// the first empty line.
+///
+/// ```
+/// use riff::pr::body_of;
+///
+/// assert_eq!(body_of("HTTP/2.0 200 OK\r\nEtag: \"a1\"\r\n\r\n[1]\n"), "[1]\n");
+/// assert_eq!(body_of("HTTP/2.0 200 OK\n\n[]"), "[]");
+/// assert_eq!(body_of("HTTP/2.0 200 OK\r\n"), "");
+/// ```
+pub fn body_of(reply: &str) -> &str {
+    let mut at = 0;
+    for line in reply.split_inclusive('\n') {
+        at += line.len();
+        if line.trim().is_empty() {
+            return &reply[at..];
+        }
+    }
+    ""
+}
+
 /// The `ETag` in the headers of a reply that `gh api --include` printed.
 ///
 /// ```
@@ -858,6 +890,35 @@ impl Gh {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn ask(&self, path: &str, etag: Option<&str>) -> Result<Answer> {
+        Ok(match self.ask_for(path, etag)? {
+            Reply::Same => Answer::Same,
+            Reply::New { etag, .. } => Answer::Changed { etag },
+        })
+    }
+
+    /// [`Gh::ask`] that keeps the body of a new reply (#1638): a reader
+    /// that takes the facts from the reply itself, such as the Waves tab
+    /// of the TUI, keeps the body with its `ETag`, and a `304` gives it
+    /// again for no point.
+    ///
+    /// ```
+    /// use riff::pr::{Gh, Reply};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let script = r#"#!/bin/sh
+    /// case "$*" in
+    ///   *'If-None-Match: "v1"'*) echo 'gh: HTTP 304' >&2; exit 1 ;;
+    ///   *) printf 'HTTP/2.0 200 OK\r\nEtag: "v1"\r\n\r\n[{"number":12}]\n' ;;
+    /// esac
+    /// "#;
+    /// let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+    /// let path = "repos/o/r/issues?state=open&per_page=100&page=1";
+    /// let new = Reply::New { etag: Some(r#""v1""#.into()), body: "[{\"number\":12}]\n".into() };
+    /// assert_eq!(gh.ask_for(path, None)?, new);
+    /// assert_eq!(gh.ask_for(path, Some(r#""v1""#))?, Reply::Same);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn ask_for(&self, path: &str, etag: Option<&str>) -> Result<Reply> {
         let header = etag.map(|etag| format!("If-None-Match: {etag}"));
         let mut args = vec!["api", "-i"];
         if let Some(header) = &header {
@@ -866,12 +927,13 @@ impl Gh {
         args.push(path);
         let (ok, stdout, stderr) = self.output(&args, None)?;
         if ok {
-            return Ok(Answer::Changed {
+            return Ok(Reply::New {
                 etag: etag_of(&stdout),
+                body: body_of(&stdout).to_owned(),
             });
         }
         if http_status(&stdout) == Some("304") || stderr.contains("HTTP 304") {
-            return Ok(Answer::Same);
+            return Ok(Reply::Same);
         }
         let status = http_status(&stdout)
             .map(|s| format!("HTTP {s}: "))

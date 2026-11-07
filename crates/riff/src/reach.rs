@@ -538,6 +538,33 @@ impl Reach {
     }
 }
 
+/// `riff pause` and `riff resume`: pauses or resumes `scope` as `me` at
+/// `api`, wakes each session that the change stops or starts, and gives
+/// the line for the person (01M3XAHZDSQR263QZVB41CK0MX,
+/// 01M3JCG3YD7C2Y3V0QJPF082YH). The Waves tab of the TUI calls it too.
+///
+/// The URI of a person names only the host. For the pause of the
+/// repository of the directory `here`, the person calls from `here`, so
+/// the server knows the repository.
+pub async fn pause(
+    api: &Api,
+    me: &SessionUri,
+    here: &riff_core::name::Place,
+    scope: PauseScope,
+    state: RiffState,
+) -> Result<String> {
+    let at_here;
+    let me = if matches!(scope, PauseScope::Here) && me.who().session().is_none() {
+        at_here = SessionUri::new(me.who().clone(), here.clone());
+        &at_here
+    } else {
+        me
+    };
+    let (reply, posted) = api.set_pause(me, &scope, state).await?;
+    let repository = scope.repository(me);
+    Ok(text::riff_set(repository.as_ref(), state, &reply, &posted))
+}
+
 /// The Cloud Run log of an instance of riff, read by the riff daemon of
 /// the host with its `gcloud` (#1247). The container has no `gcloud` and
 /// no Google sign-in. Only the lead may.

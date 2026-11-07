@@ -7121,11 +7121,9 @@ that builds it merges.
   header and the fault in the note line, as `riff top` does. The fault
   goes at the next good look. A fault that a new try cannot repair ends
   the TUI with the error.
-- **01M6VAZKDEQ6951KGPGAMF1SNJ** The note line of the TUI shows the
-  fault of the link, else the result of the last action. The key line
-  shows the keys of the tab. `?` shows each key of the tab in a popup,
-  and `?` or `Esc` closes it. `q` and `Ctrl-C` end the TUI. The sessions
-  go on.
+- **01M6VAZKDEQ6951KGPGAMF1SNJ** The key line of the TUI shows the keys
+  of the tab. `?` shows each key of the tab in a popup, and `?` or `Esc`
+  closes it. `q` and `Ctrl-C` end the TUI. The sessions go on.
 - **01M6VAZKG8FS4HEA9VSA4Z4YF1** The TUI takes the mouse: a click acts
   as the key of the place that it hits, for example a click on a tab
   opens it, and a click on a key of the key line presses that key. A
@@ -7237,6 +7235,66 @@ that builds it merges.
 - **01M6VG1PJDWE523TR9X9WJ5VXG** The rules of whom a line of the chat
   wakes, `wakes` and `resolve`, are in `riff-client`. `riff chat` and
   the Chat tab of the TUI share them.
+- **01M6VFG882T794B1CTHK5AKPDG** The Waves tab of the TUI shows a board
+  for each repository of a live session and for the repository of the
+  working folder: its current wave as `Wave N`, its items, their claims
+  and their pull requests. The repositories with a stuck, held or free
+  item come first, and their boards are open. Each other repository is
+  one folded line with its counts. `Enter`, `←`, `→` and `Space` on
+  the line of a repository fold or unfold its board.
+- **01M6VFGJWVB3WEEYBCNSZ2FJT0** A board of the Waves tab has one row
+  for each open item of the current wave, in the order stuck, free,
+  held, asked, work, verify and tracker, and in number order in each
+  state. A row has a mark, the state, the item, the title, the session
+  or the pull request, and the age. The marks of an item are `!` stuck
+  (red), `○` free, `◌` held, `?` asked (yellow), the mark of its
+  session for work, `◐` verify (cyan) and `·` tracker. The items that
+  closed in the wave are one line with their counts, `done` and
+  `closed`, and `Enter` on that line shows or hides them.
+- **01M6VFGJZF7XGNGVWTECKAH429** A board of the Waves tab has the line
+  `main` only when the full check of the head of the default branch
+  runs, failed or ended with no success. While it runs, the line counts
+  the jobs that ended. When it failed, the line names the jobs that
+  failed. A board has a line for each open release issue: its checks
+  after the deploy have not passed.
+- **01M6VFGK22ZC1D7WF6PP853TP9** The Waves tab shows the next waves of
+  the repository of the selected row under the boards: the number of
+  open items of each later wave and of the Backlog.
+- **01M6VFGK4P2FWMFQHBZKR3JXSZ** The Waves tab reads `gh` each 60
+  seconds while it shows, and at once on `r`. The open issues come from
+  a conditional REST read of each page of the list of the open issues,
+  with the ETag of the last reply, so a `304` costs no point. The list
+  has the pull requests too: the read drops them from the items. The tab
+  calls `gh pr list` only when the list has an open pull request. A read
+  that fails keeps the last facts of its repository, and the note line
+  names the error of `gh`. The calls of `gh` of the TUI count as the
+  caller `tui`.
+- **01M6VFGK79JGRF919BM8SJ6E08** While the Waves tab shows, each look of
+  the TUI also reads the holds of each board from riff-server.
+- **01M6VFGK9XXWCA8X7CE8EZNSJV** In the Waves tab, `h` holds the
+  selected item with a reason that the person types, `f` frees a held
+  item, `p` pauses or resumes the repository of the selected row, and
+  `P` pauses or resumes the whole riff. Each of them asks `y` or `n` in
+  the note line first, calls the code of `riff plan hold`, `riff plan
+  free`, `riff pause` or `riff resume`, and puts its result in the note
+  line. `o` puts the URL of the pull request, of the item or of the
+  repository of the selected row in the note line. `Enter` on an item
+  puts its whole row in the note line.
+- **01M6VFGKCJ02G33TXR01GY6M0G** In the Waves tab, `↑`, `↓`, `j`, `k`
+  and the wheel of the mouse select the row above or below, `PgUp` and
+  `PgDn` move a page, and `g`, `G`, `Home` and `End` select the first or
+  the last row. A click on a row selects it, and a click on the selected
+  row acts as `Enter`. While the note line asks for the reason of a
+  hold, each key that is a character types into it, `Enter` takes it and
+  `Esc` cancels it.
+- **01M6VFGKF574TCZ7C3AW3MWX4S** In the narrow layout, the line of a
+  repository in the Waves tab names the repository with no owner, and a
+  row of an item has the mark, the state, the item and the title.
+- **01M6VFGYW0XVJ5JSX6R1NCR6W7** The note line of the TUI shows a
+  question that waits for its answer first, else the fault of the link,
+  else in the Chat tab whom the line in the prompt will wake, else the
+  result of the last action. With none of them, the Waves tab shows the
+  age of its last read of `gh` there.
 
 ## The notes of the lead
 

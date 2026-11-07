@@ -249,8 +249,76 @@ flowchart LR
 
 ### See the open items of a wave
 
-`gh` needs the full title of the milestone, as `riff wave list` shows
-it. `"Wave 6"` does not find the wave `Wave 6: Cloud`:
+In a terminal, run riff with no command, and press `3` for the Waves
+tab of the TUI:
+
+```sh
+riff
+```
+
+The tab shows a board for each repository with a live session, and for
+the repository of your folder. A board has the current wave and one row
+for each of its open items:
+
+```text
+ 1 Sessions  2 Chat•2  [3 Waves]  4 Machines  5 Devices  6 Reports
+ riff running · owner mike · build 10df8a4 · link ok 2s
+ ▼ como-technologies/riff · Wave 48        1 stuck 2 free 1 held 3 work 2 verify
+       STATE   ITEM   TITLE                           WHO / PULL REQUEST   AGE
+   !   stuck   #1601  Fix the help                    PR #1604 conflict    2h
+ > ○   free    #1620  Add the flag --format           -                    -
+   ○   free    #1622  The book names the flag         -                    -
+   ◌   held    #1631  Design: the web UI              waits for mike       3d
+   !   work    #994   Design: the TUI of riff         3a3f8d5d blocked     32m
+   ●   work    #1590  An idle look asks GitHub first  5b1e2a90 busy        40m
+   ◐   verify  #1599  The wave takes an issue         PR #1614 verify      5m
+       done 4 · closed 1 (Enter shows them)
+       main: the full check of 3f2a91c runs · 4 of 9 jobs done
+ ▶ como-technologies/strata · Wave 5                               1 work 3 done
+ ▶ como-technologies/kadomony · no wave
+
+ NEXT WAVES · como-technologies/riff
+   Wave 49: 8 items    Wave 50: 3 items    Backlog: 41 items
+
+ The boards come from gh, 41s ago.
+ ↑↓ select  Enter open  h hold  f free  p pause  o URL  r read again  ? help
+```
+
+- The repositories with a stuck, a held or a free item come first, with
+  their boards open. Each other repository is one line with its counts.
+- The rows go in the order `stuck`, `free`, `held`, `asked` (the label
+  `question`), `work`, `verify` and `tracker`. A `work` row shows the
+  session of the claim and its state. A `stuck` or `verify` row shows
+  the pull request and what it waits for: `verify`, `merge`, or why it
+  is stuck, for example `conflict`.
+- The line `done 4 · closed 1` counts the items that closed in the
+  wave. `Enter` on it shows them.
+- The line `main` shows only when the full check of `main` runs or
+  failed. A line shows each release whose checks after the deploy have
+  not passed.
+- `NEXT WAVES` counts the open items of the later waves and of the
+  Backlog of the repository of the selected row.
+
+| Key | Does |
+|---|---|
+| `↑` `↓`, `j` `k`, the wheel | Select the row above or below. `PgUp` `PgDn` move a page, `g` `G` go to the first or the last row. A click on a row selects it, and a click on the selected row opens it. |
+| `Enter` | On a repository: fold or open its board. On the closed line: show the closed items. On an item: show its whole row in the note line. |
+| `←` `→`, `Space` | Fold or open the board of the repository. |
+| `h`, `f` | Hold the item, or free it. See [Hold an item in the TUI](how-it-works.md#hold-an-item-in-the-tui). |
+| `p`, `P` | Pause or resume the repository of the row, or the whole riff. |
+| `o` | Show the URL of the pull request, the item or the repository in the note line, to copy it. |
+| `r` | Read riff-server and `gh` again now. |
+
+The tab reads `gh` each minute while it shows. It asks GitHub whether
+the list of the open issues changed: the answer "no change" costs no
+point. It reads the pull requests with `gh pr list` only while one is
+open, and the check of `main` with a few REST calls. Its calls show as
+`tui` in `riff daemon status`. Under 80 columns, a row has the mark,
+the state, the item and the title.
+
+To list the open items of a wave with `gh`, use the full title of the
+milestone, as `riff wave list` shows it. `"Wave 6"` does not find the
+wave `Wave 6: Cloud`:
 
 ```sh
 gh issue list --milestone "Wave 6: Cloud"
