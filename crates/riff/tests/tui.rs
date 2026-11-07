@@ -918,3 +918,211 @@ async fn a_post_that_fails_while_the_prompt_holds_a_line_shows_until_the_next_ke
     tty.press("\x03").await;
     assert_eq!(tty.exits().await, Some(0));
 }
+
+/// A fake `gh` for the Reports tab in the clone of acme/app: the waves
+/// 2 (closed) and 3, the issues 12 and 13 of Wave 3, the comment of a
+/// claim of #12 from the file `comments-12`, and no pull request. It
+/// logs each call to the file `calls` of its folder.
+const REPORTS_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$*" >> "$dir/calls"
+case "$*" in
+  'api repos/acme/app/milestones?state=all&per_page=100')
+    echo '[{"title":"Wave 2","created_at":"2026-10-01T00:00:00Z","closed_at":"2026-10-31T00:00:00Z"},'
+    echo '{"title":"Wave 3","created_at":"2026-11-01T00:00:00Z","closed_at":null}]' ;;
+  'issue list --repo acme/app --milestone Wave 3 '*)
+    echo '[{"number":12,"title":"Show the board"},{"number":13,"title":"Hold this one"}]' ;;
+  'issue list --repo acme/app --state all '*)
+    echo '[{"number":12,"milestone":{"title":"Wave 3"},"body":"","closedAt":null,"comments":[]}]' ;;
+  'api --paginate repos/acme/app/issues/12/comments '*) cat "$dir/comments-12" ;;
+  'api --paginate '*) ;;
+  *) echo '[]' ;;
+esac
+"#;
+
+/// 01M6VT3JFEKD2FEQGNGGKHC8X5, 01M6VT3JHVFQ27VJE8987WET34,
+/// 01M6VT3JMABMEXSBPE414MBJZP, 01M6VT3JPQXRWMX9PWYADT4MJX: in a clone of
+/// acme/app, the Reports tab shows the usage of the current wave from
+/// `gh` with the code of `riff usage --wave N`, the claims of an issue
+/// on `Enter`, the audit of the wave on `Enter` in the Audit report, and
+/// a Session log with no session.
+#[tokio::test]
+async fn the_reports_tab_shows_the_usage_the_audit_and_the_log() {
+    use riff::usage::{Kind, Report, Tokens};
+
+    let server = crate::common::start_signed().await;
+    let clone = tempfile::tempdir().unwrap();
+    for args in [
+        &["init", "-q"][..],
+        &["remote", "add", "origin", "https://github.com/acme/app.git"],
+    ] {
+        let git = std::process::Command::new("git")
+            .args(args)
+            .current_dir(clone.path())
+            .status()
+            .unwrap();
+        assert!(git.success());
+    }
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), REPORTS_GH);
+    let claim = Report {
+        item: "issue-12".into(),
+        kind: Kind::Work,
+        session: "a6cf0123".into(),
+        from_ms: 1_790_931_600_000,
+        to_ms: 1_790_935_200_000,
+        models: [(
+            "claude-opus-5-5".to_owned(),
+            Tokens {
+                output: 1_940_000,
+                ..Tokens::default()
+            },
+        )]
+        .into(),
+    };
+    let comment = serde_json::json!({ "id": 1, "login": "brett", "body": claim.comment() });
+    std::fs::write(bin.path().join("comments-12"), format!("{comment}\n")).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let mut tty = Tty::start_in(clone, &server, "brett", "thelio", true, &[("PATH", path)]);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+
+    // `6` opens the Reports tab: the usage of Wave 3, the open wave.
+    tty.press("6").await;
+    let rows = tty
+        .shows(|rows| rows.iter().any(|r| r.contains("#13")))
+        .await;
+    assert_eq!(rows[2], " [Usage]  Audit  Session log", "{rows:#?}");
+    assert_eq!(
+        rows[3],
+        " USAGE OF WAVE 3 · acme/app · 1.9M tokens in 2 issues"
+    );
+    assert_eq!(
+        rows[5],
+        " > #12    Show the board                   1.9M    opus 5.5"
+    );
+    assert_eq!(
+        rows[6],
+        "   #13    Hold this one                    0       -"
+    );
+    assert!(rows[22].starts_with(" Read from the comments of the issues with gh"));
+    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    assert!(
+        calls.contains("issue list --repo acme/app --milestone Wave 3 --state all"),
+        "{calls}"
+    );
+
+    // Enter shows the claims of #12, and Esc goes back.
+    tty.press("\r").await;
+    let rows = tty
+        .shows(|rows| rows[3] == " CLAIMS OF #12 · Show the board")
+        .await;
+    assert!(rows[4].starts_with(" #12: 1,940,000 tokens"), "{rows:#?}");
+    tty.press("\x1b").await;
+    tty.shows(|rows| rows[5].starts_with(" > #12")).await;
+
+    // `→` shows the audit: it runs only on Enter.
+    tty.press("\x1b[C").await;
+    let rows = tty
+        .shows(|rows| rows[2] == " Usage  [Audit]  Session log")
+        .await;
+    assert!(rows[4].starts_with(" The audit reads the log"), "{rows:#?}");
+    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    assert!(!calls.contains("pr list"), "no audit yet: {calls}");
+    tty.press("\r").await;
+    let rows = tty
+        .shows(|rows| rows.iter().any(|r| r.starts_with(" Rule 1: ")))
+        .await;
+    assert!(
+        rows[4].starts_with(" Audit of Wave 3 in acme/app, from 2026-11-01"),
+        "{rows:#?}"
+    );
+    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    assert!(calls.contains("pr list --repo acme/app"), "{calls}");
+
+    // `→` shows the Session log, with no session yet.
+    tty.press("\x1b[C").await;
+    let rows = tty
+        .shows(|rows| rows[2] == " Usage  Audit  [Session log]")
+        .await;
+    assert_eq!(rows[3], " SESSION LOG");
+    assert_eq!(rows[4], format!(" {}", riff::tui::reports::NO_LOG));
+
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// A fake `gh` for acme/app: the waves 2 (closed), `3: Boards` and 4,
+/// the issues 12 and 13 of Wave 3, and the comments of each issue from
+/// the file `comments-N` of its folder.
+const USAGE_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+case "$*" in
+  'api repos/acme/app/milestones?state=all&per_page=100')
+    echo '[{"title":"Wave 2","closed_at":"2026-10-01T00:00:00Z"},{"title":"Wave 3: Boards","closed_at":null},{"title":"Wave 4","closed_at":null},{"title":"Backlog","closed_at":null}]' ;;
+  'issue list --repo acme/app --milestone Wave 3: Boards '*)
+    echo '[{"number":13,"title":"Hold this one"},{"number":12,"title":"Show the board"}]' ;;
+  'api --paginate repos/acme/app/issues/12/comments '*) cat "$dir/comments-12" ;;
+  'api --paginate repos/acme/app/issues/13/comments '*) ;;
+  *) echo "the fake gh does not know: $*" >&2; exit 1 ;;
+esac
+"#;
+
+/// 01M6VT3JHVFQ27VJE8987WET34: the Usage report reads with the code of
+/// `riff usage --wave N`: the current wave is the open wave with the
+/// lowest number, the issues come in number order, and the tokens come
+/// from the comments of each issue.
+#[test]
+fn the_usage_report_reads_what_riff_usage_reads() {
+    use riff::tui::reports::{Wave, read_usage};
+    use riff::usage::{Kind, Report, Tokens};
+
+    let dir = tempfile::tempdir().unwrap();
+    let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), USAGE_GH));
+    let claim = Report {
+        item: "issue-12".into(),
+        kind: Kind::Work,
+        session: "a6cf0123".into(),
+        from_ms: 1_790_931_600_000,
+        to_ms: 1_790_935_200_000,
+        models: [(
+            "claude-opus-5-5".to_owned(),
+            Tokens {
+                output: 1_500,
+                ..Tokens::default()
+            },
+        )]
+        .into(),
+    };
+    let comment = serde_json::json!({ "id": 1, "login": "mike", "body": claim.comment() });
+    std::fs::write(dir.path().join("comments-12"), format!("{comment}\n")).unwrap();
+
+    let usage = read_usage(&gh, "acme/app", None).unwrap();
+    assert_eq!(
+        usage.wave,
+        Wave {
+            number: 3,
+            title: "Wave 3: Boards".into(),
+            waves: vec![2, 3, 4],
+        }
+    );
+    let numbers: Vec<u64> = usage.issues.iter().map(|i| i.number).collect();
+    assert_eq!(numbers, [12, 13]);
+    assert_eq!(usage.issues[0].tokens().output, 1_500);
+    assert_eq!(usage.issues[0].models(), ["claude-opus-5-5"]);
+    assert_eq!(usage.issues[1].tokens().total(), 0);
+    assert_eq!(usage.tokens().output, 1_500);
+    // The same wave by its number.
+    assert_eq!(read_usage(&gh, "acme/app", Some(3)).unwrap(), usage);
+    // A wave that the repository does not have names the open waves.
+    let error = read_usage(&gh, "acme/app", Some(9))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        error,
+        riff::text::waves_no_such("9", &["Wave 3: Boards", "Wave 4"])
+    );
+}

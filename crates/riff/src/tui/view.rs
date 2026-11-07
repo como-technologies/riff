@@ -162,6 +162,10 @@ pub struct View {
     /// The window of the log of the Chat tab, while it shows
     /// ([`State::drawn`](super::State::drawn)).
     pub chat: Option<chat::Window>,
+    /// True when the Sessions tab shows its detail pane.
+    pub pane: bool,
+    /// The window of the report of the Reports tab, while it shows.
+    pub reports: Option<super::reports::Window>,
 }
 
 impl View {
@@ -305,6 +309,13 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
             view.rows.extend(rows);
             view.hits.extend(hits);
             (view.top, view.page) = (top, page);
+            view.pane = super::sessions::pane(state, body, layout);
+        }
+        Tab::Reports => {
+            let (rows, hits, window) = super::reports::body(state, body, layout, margin);
+            view.rows.extend(rows);
+            view.hits.extend(hits);
+            view.reports = Some(window);
         }
         Tab::Machines => {
             let (rows, hits) = super::machines::body(state, body, layout, now_ms);
@@ -342,7 +353,7 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
         }
     }
 
-    if let Some(line) = note_line(state, now_ms) {
+    if let Some(line) = note_line(state, layout, now_ms) {
         view.rows.push(Placed {
             area: row(area.height - 2),
             line,
@@ -371,8 +382,10 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
 /// a post that failed after the last key or whom the line in the prompt
 /// will wake ([`chat::note`]), else the note of the last action, else in
 /// the Waves tab the age of its last read of `gh`
-/// (01M6VFGYW0XVJ5JSX6R1NCR6W7).
-fn note_line(state: &State, now_ms: i64) -> Option<Line<'static>> {
+/// (01M6VFGYW0XVJ5JSX6R1NCR6W7), and in the Reports tab the age of the
+/// read of its report ([`super::reports::note`],
+/// 01M6VT3JHVFQ27VJE8987WET34).
+fn note_line(state: &State, layout: Layout, now_ms: i64) -> Option<Line<'static>> {
     if let Some(asked) = state.asked() {
         return Some(Line::styled(text::safe(&asked), ACTIVE));
     }
@@ -391,8 +404,13 @@ fn note_line(state: &State, now_ms: i64) -> Option<Line<'static>> {
     if let Some(note) = state.shown_note() {
         return Some(Line::raw(text::safe(note)));
     }
-    (state.tab() == Tab::Waves)
-        .then(|| Line::styled(super::waves::note(state.waves(), now_ms), DIM))
+    match state.tab() {
+        Tab::Waves => Some(Line::styled(super::waves::note(state.waves(), now_ms), DIM)),
+        Tab::Reports => {
+            super::reports::note(state, layout, now_ms).map(|note| Line::styled(note, DIM))
+        }
+        _ => None,
+    }
 }
 
 /// The strip of the wide layout, and the place of each tab
@@ -515,27 +533,14 @@ pub(super) fn short(id: &str) -> String {
 }
 
 /// The body of `tab` in `columns`, until its build item merges
-/// (01M6VAZKVK7530JJ63S7RVF88J): the commands that show its area.
+/// (01M6VAZKVK7530JJ63S7RVF88J). No command of the CLI shows the area of
+/// the Devices tab yet: the body names none.
 fn body_lines(tab: Tab, columns: u16) -> Vec<Line<'static>> {
-    let today = tab.today();
-    let head = if today.is_empty() {
-        format!("The {} tab is not built yet.", tab.name())
-    } else {
-        format!(
-            "The {} tab is not built yet. Use these commands:",
-            tab.name()
-        )
-    };
-    let mut lines: Vec<Line<'static>> = textwrap::wrap(&head, usize::from(columns.max(1)))
+    let head = format!("The {} tab is not built yet.", tab.name());
+    textwrap::wrap(&head, usize::from(columns.max(1)))
         .into_iter()
         .map(|line| Line::raw(line.into_owned()))
-        .collect();
-    lines.extend(
-        today
-            .iter()
-            .map(|command| Line::styled(format!("  {command}"), ACTIVE)),
-    );
-    lines
+        .collect()
 }
 
 /// The keys of the key line of the tab of `state` in a layout, at
@@ -543,8 +548,9 @@ fn body_lines(tab: Tab, columns: u16) -> Vec<Line<'static>> {
 /// it presses. A built tab has its own keys first
 /// ([`super::machines::keys`]), or all its keys
 /// ([`super::sessions::keys`], [`super::waves::keys_of`],
-/// [`chat::keys`]). While the person types a filter, the line has only
-/// the keys of the filter (01M6VJQPJXKHKJ8WT1CAQMN1YR).
+/// [`chat::keys`], [`super::reports::keys`]). While the person types a
+/// filter, the line has only the keys of the filter
+/// (01M6VJQPJXKHKJ8WT1CAQMN1YR).
 fn keys_of(
     state: &State,
     layout: Layout,
@@ -557,6 +563,7 @@ fn keys_of(
         Tab::Sessions => return super::sessions::keys(state, layout),
         Tab::Chat => return chat::keys(state.chat().focus(), layout),
         Tab::Waves => return super::waves::keys_of(layout),
+        Tab::Reports => return super::reports::keys(state, layout),
         Tab::Machines => super::machines::keys(layout, columns >= WIDER),
         _ => vec![("1-6", "tab", None)],
     };
@@ -601,14 +608,15 @@ fn key_line(
 /// The keys of the help popup of `tab`: the key, and what it does
 /// (01M6VAZKDEQ6951KGPGAMF1SNJ). A built tab has its own keys first
 /// ([`super::sessions::help_keys`], [`super::waves::help_keys`],
-/// [`super::machines::help_keys`], [`chat::HELP`]). Each tab has the
-/// keys of the frame.
+/// [`super::machines::help_keys`], [`chat::HELP`],
+/// [`super::reports::help_keys`]). Each tab has the keys of the frame.
 ///
 /// ```
 /// use riff::tui::Tab;
 /// use riff::tui::view::help_keys;
 ///
-/// assert_eq!(help_keys(Tab::Reports)[0], ("1 to 6", "open a tab"));
+/// assert_eq!(help_keys(Tab::Devices)[0], ("1 to 6", "open a tab"));
+/// assert_eq!(help_keys(Tab::Reports)[0], ("← →", "show the report before or after"));
 /// assert_eq!(help_keys(Tab::Sessions)[0], ("↑ ↓ j k", "select a row"));
 /// assert_eq!(help_keys(Tab::Waves)[0], ("↑ ↓, j k", "select a row"));
 /// assert_eq!(help_keys(Tab::Machines)[0], ("↑ ↓ j k", "select a host"));
@@ -623,7 +631,8 @@ pub fn help_keys(tab: Tab) -> Vec<(&'static str, &'static str)> {
         Tab::Waves => super::waves::help_keys(),
         Tab::Machines => super::machines::help_keys(),
         Tab::Chat => chat::HELP.to_vec(),
-        _ => Vec::new(),
+        Tab::Reports => super::reports::help_keys(),
+        Tab::Devices => Vec::new(),
     };
     keys.extend([
         ("1 to 6", "open a tab"),
@@ -745,24 +754,22 @@ mod tests {
             .collect()
     }
 
-    /// The frame of #994 at 80 x 24 in the Reports tab: the strip, the
+    /// The frame of #994 at 80 x 24 in the Devices tab: the strip, the
     /// header, the note and the key line of the frame, and the body until
-    /// item F (01M6VAZK1R932VQMJBC32MTTJB, 01M6VAZK4RQSZ0MG2DHWQC598Q,
-    /// 01M6VAZKNXZV1RTG7MT0GMHKT3). The screen tests of the built tabs are
-    /// in [`super::super::sessions`], [`super::super::waves`],
-    /// [`super::super::machines`] and [`super::super::chat`].
+    /// item G (01M6VAZK1R932VQMJBC32MTTJB, 01M6VAZK4RQSZ0MG2DHWQC598Q,
+    /// 01M6VAZKNXZV1RTG7MT0GMHKT3, 01M6VAZKVK7530JJ63S7RVF88J). The
+    /// screen tests of the built tabs are in [`super::super::sessions`],
+    /// [`super::super::waves`], [`super::super::machines`],
+    /// [`super::super::chat`] and [`super::super::reports`].
     #[test]
     fn the_frame_at_80_x_24_is_the_mock_up() {
         let mut state = mock_up();
-        state.on_key(Key::Open(Tab::Reports));
+        state.on_key(Key::Open(Tab::Devices));
         state.note("Read again 2s ago.");
         let mut want = vec![
-            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  5 Devices  [6 Reports]",
+            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports",
             " riff running · owner mike · build 10df8a4 · link ok 2s",
-            " The Reports tab is not built yet. Use these commands:",
-            "   riff usage",
-            "   riff audit",
-            "   riff daemon events NAME",
+            " The Devices tab is not built yet.",
         ];
         want.resize(22, "");
         want.extend([
@@ -777,16 +784,12 @@ mod tests {
     #[test]
     fn the_frame_at_40_x_24_is_the_narrow_mock_up() {
         let mut state = mock_up();
-        state.on_key(Key::Open(Tab::Reports));
+        state.on_key(Key::Open(Tab::Devices));
         state.note("Read again 2s ago.");
         let mut want = vec![
-            "‹ 6/6 Reports ›",
+            "‹ 5/6 Devices ›",
             "riff running · link ok 2s",
-            "The Reports tab is not built yet. Use",
-            "these commands:",
-            "  riff usage",
-            "  riff audit",
-            "  riff daemon events NAME",
+            "The Devices tab is not built yet.",
         ];
         want.resize(22, "");
         want.extend(["Read again 2s ago.", "1-6 tab  ? help  q quit"]);
@@ -814,16 +817,17 @@ mod tests {
             if tab == Tab::Chat {
                 assert_eq!(rows[2], " chat · a line wakes your leads", "{rows:#?}");
             }
+            if tab == Tab::Reports {
+                assert_eq!(rows[2], " [Usage]  Audit  Session log", "{rows:#?}");
+            }
             if tab.built() {
                 continue;
             }
-            assert!(
-                rows[2].starts_with(&format!(" The {} tab is not built yet.", tab.name())),
+            assert_eq!(
+                rows[2],
+                format!(" The {} tab is not built yet.", tab.name()),
                 "{rows:#?}"
             );
-            for (y, command) in tab.today().iter().enumerate() {
-                assert_eq!(rows[3 + y], format!("   {command}"), "{rows:#?}");
-            }
         }
         // The narrow strip names the tab and its number.
         let mut state = mock_up();
@@ -941,7 +945,7 @@ mod tests {
         assert_eq!(wide.hit(0, 0), Some(Key::Open(Tab::Sessions)));
         // The key line of a tab that is not built yet:
         // ` 1-6 tab  r read again  ? help  q quit`.
-        state.on_key(Key::Open(Tab::Reports));
+        state.on_key(Key::Open(Tab::Devices));
         let wide = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
         let keys = " 1-6 tab  r read again  ? help  q quit";
         let at = |word: &str| u16::try_from(keys.find(word).unwrap()).unwrap();
@@ -992,7 +996,7 @@ mod tests {
     #[test]
     fn a_wide_terminal_draws_the_same_frame() {
         let mut state = mock_up();
-        state.on_key(Key::Open(Tab::Reports));
+        state.on_key(Key::Open(Tab::Devices));
         let wide = drawn(&state, 200, 30);
         let narrow = drawn(&state, 80, 30);
         assert_eq!(wide, narrow);

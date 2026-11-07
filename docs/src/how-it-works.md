@@ -1416,7 +1416,8 @@ riff
   its claims, its pull request and its riff. A session in a container
   of this machine also shows the name of its container, its phase and
   its last step. The detail needs 80 columns and 24 rows. In a smaller
-  terminal, Enter shows it on the whole screen, and Esc goes back.
+  terminal, Enter shows it on the whole screen, and Esc goes back. For
+  a worker in a container, Enter there shows its events.
 - When a session turns `!` or `✓` while you look at another tab, the
   strip shows `Sessions•`.
 - With no riff daemon on this machine, the tab shows the sessions of
@@ -1441,7 +1442,7 @@ riff
 | `↑` `↓` `j` `k` | Select the row above or below. |
 | `PgUp` `PgDn` `g` `G` | Move a page, or to the first or the last row. |
 | `←` `→` `Space` | Fold or open a group. `←` on a session selects its group. |
-| `Enter` | A group: fold or open it. A lead: attach to it. A session: its detail on the whole screen. |
+| `Enter` | A group: fold or open it. A lead: attach to it. A worker in a container of a daemon of yours: its events in the Reports tab, see [See the events in the TUI](development.md#see-the-events-in-the-tui). In a smaller terminal, the detail on the whole screen first. Another session: its detail on the whole screen. |
 | `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. |
 | `t` | Take over the selected session, as `riff takeover` does. |
 | `x` | End the selected session of the daemon, and free its item, as `riff daemon end` does. |

@@ -522,6 +522,13 @@ pub fn find(milestones: &[(&str, bool)], wave: &str) -> Result<String> {
 /// forge has it, so `gh` matches it: print it through
 /// [`text::forge`].
 pub fn title(gh: &Gh, repo: &str, wave: &str) -> Result<String> {
+    let all = all(gh, repo)?;
+    find(&pairs(&all), wave)
+}
+
+/// Each milestone of `repo` (`OWNER/REPO`), open and closed: its title
+/// as the forge has it, and true while it is open.
+pub fn all(gh: &Gh, repo: &str) -> Result<Vec<(String, bool)>> {
     #[derive(Deserialize)]
     struct Any {
         title: String,
@@ -531,11 +538,36 @@ pub fn title(gh: &Gh, repo: &str, wave: &str) -> Result<String> {
         "api",
         &format!("repos/{repo}/milestones?state=all&per_page=100"),
     ])?;
-    let milestones: Vec<(&str, bool)> = all
+    Ok(all
+        .into_iter()
+        .map(|m| (m.title, m.closed_at.is_none()))
+        .collect())
+}
+
+/// The milestones of [`all`] as [`find`] takes them.
+pub fn pairs(all: &[(String, bool)]) -> Vec<(&str, bool)> {
+    all.iter()
+        .map(|(title, open)| (title.as_str(), *open))
+        .collect()
+}
+
+/// The number of the current wave of `milestones`: the open wave with
+/// the lowest number, as `riff wave list` marks it. `None` with no open
+/// wave.
+///
+/// ```
+/// use riff::waves::current;
+///
+/// let milestones = [("Wave 32", false), ("Wave 34", true), ("Wave 33: Hosts", true), ("Backlog", true)];
+/// assert_eq!(current(&milestones), Some(33));
+/// assert_eq!(current(&milestones[..1]), None);
+/// ```
+pub fn current(milestones: &[(&str, bool)]) -> Option<u64> {
+    milestones
         .iter()
-        .map(|m| (m.title.as_str(), m.closed_at.is_none()))
-        .collect();
-    find(&milestones, wave)
+        .filter(|(_, open)| *open)
+        .filter_map(|(title, _)| wave_number(title))
+        .min()
 }
 
 /// What riff-server adds to `riff wave list`

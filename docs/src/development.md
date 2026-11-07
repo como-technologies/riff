@@ -1550,6 +1550,26 @@ lead can: the daemon refuses each other session. To see the events of a
 session on another host, add `--host` (see [See a session on another
 host](#see-a-session-on-another-host)).
 
+#### See the events in the TUI
+
+The Session log of the Reports tab of the TUI shows the same lines,
+with the same code. Run riff with no command, select a worker in the
+Sessions tab, and press `Enter`:
+
+```sh
+riff
+```
+
+- The Session log follows the session while it shows, up to the end
+  of the session. It keeps the last 2000 lines.
+- The window follows the end. Press `↑` to scroll up, and `End` or `G`
+  to follow the end again.
+- Under 80 columns or 24 rows, `Enter` first shows the detail of the
+  session on the whole screen. Press `Enter` there for its log.
+- A worker on another host of yours works too: the TUI asks the
+  daemon of that host through riff-server, as `--host` does.
+- When the session ended, `r` shows its events again from the start.
+
 ### Remove the folders of old sessions
 
 The folder of a session holds its clone with its `target`: often some
@@ -4669,6 +4689,44 @@ sequenceDiagram
 - When GitHub refuses the total comment, riff tries one more time. The
   line names the HTTP status of the reply, when there is one.
 
+### See the tokens in the TUI
+
+The Reports tab of the TUI shows the tokens of each issue of a wave.
+Run riff with no command in your clone, then press `6`:
+
+```sh
+riff
+```
+
+```text
+ [Usage]  Audit  Session log
+ USAGE OF WAVE 48 · como-technologies/riff · 14.3M tokens in 6 issues
+   ISSUE  TITLE                            TOKENS  MODELS
+ > #994   Design: the TUI of riff          1.9M    fable 5.1 · sonnet 5.5
+   #1590  An idle look asks GitHub first   3.1M    sonnet 5.5
+   #1594  riff counts the gh calls         2.4M    sonnet 5.5
+   #1599  The wave takes an issue          700k    sonnet 5.5
+   #1600  The book tells how to detach     400k    sonnet 5.5
+   #1601  Fix the help                     5.7M    sonnet 5.5 · opus 5.5
+```
+
+- The Usage report reads what `riff usage --wave N` reads, with the
+  same code. It starts with the current wave: the open wave with the
+  lowest number. Press `[` or `]` for the wave before or after.
+- A row shows the tokens of an issue and its models. The model with
+  the most tokens comes first.
+- Press `Enter` on an issue to see its claims, as `riff usage 12`
+  shows them. `Esc` goes back to the issues.
+- The report reads `gh` when it shows with no read yet, after `[` or
+  `]`, and when you press `r`, never on a timer. The note line shows
+  the age of the read.
+- The report is of the repository of your folder. Outside a clone, it
+  is of the first repository with a live session.
+- `←` and `→` show the other reports: the audit (see
+  [Audit a wave in the TUI](#audit-a-wave-in-the-tui)) and the log of a
+  session (see
+  [See the events in the TUI](#see-the-events-in-the-tui)).
+
 ### Write the total of an issue again
 
 When an issue has no total comment, for example after a failed
@@ -4727,6 +4785,22 @@ flowchart LR
 - A rule with nothing to check is `not checked`, with the reason. So
   is a check that the facts cannot prove, for example a claim of an
   item that is in no wave.
+
+### Audit a wave in the TUI
+
+The Audit report of the Reports tab of the TUI runs `riff audit` with
+the same code. Run riff with no command in your clone, press `6`, then
+`→`, and press `Enter`:
+
+```sh
+riff
+```
+
+The audit is the heaviest read of the TUI. So it runs only when you
+press `Enter`, and again when you press `r`. It shows each rule as
+`riff audit --wave N` prints it, with `pass` in green, `fail` in red
+and `not checked` in yellow. It audits the wave of the Usage report:
+`[` and `]` show the wave before or after.
 
 ### What the audit sees after a prune
 

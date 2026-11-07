@@ -441,6 +441,11 @@ impl Waves {
         }
     }
 
+    /// The repository of the working folder, `OWNER/REPO`.
+    pub fn here(&self) -> Option<&str> {
+        self.here.as_deref()
+    }
+
     /// The repositories that get a board, from the look `look`
     /// (01M6VFG882T794B1CTHK5AKPDG).
     pub fn repos(&self, look: &Look) -> Vec<String> {

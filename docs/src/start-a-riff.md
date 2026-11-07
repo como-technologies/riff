@@ -126,9 +126,10 @@ repositories, and `↑` and `↓` select an item: see
 [See the open items of a wave](waves.md#see-the-open-items-of-a-wave).
 The Machines tab shows each host: see
 [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui).
-The other tabs come one at a time. Until a tab is built, it names the
-commands that show its area, for example `riff usage` for the reports.
-See [The TUI](riff-uis.md#the-tui).
+The Reports tab shows the tokens of a wave, its audit and the events
+of a session: see
+[See the tokens in the TUI](development.md#see-the-tokens-in-the-tui).
+The Devices tab is not built yet. See [The TUI](riff-uis.md#the-tui).
 
 With no terminal, for example in a script, `riff` prints the help.
 

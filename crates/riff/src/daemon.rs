@@ -5323,6 +5323,29 @@ pub async fn ask_sweep(dir: &Path) -> Result<()> {
 /// Ctrl-C ends the view: the session goes on. It gives the exit code: 1
 /// when the session failed.
 pub async fn show_events(dir: &Path, name: &str) -> Result<i32> {
+    let failed = follow_events(
+        dir,
+        name,
+        |line| println!("{line}"),
+        |line| eprintln!("{line}"),
+    )
+    .await?;
+    Ok(i32::from(failed))
+}
+
+/// Follows the live session in the container `name` of the daemon in
+/// the folder `dir` from its start, up to its end
+/// (01M4ZKX0KMS58NR2E9AF8229A8): the code of `riff daemon events NAME`
+/// and of the Session log of the TUI. It gives each line of its events
+/// as `riff run` shows them, each line of the daemon about the session
+/// and the line of its end to `out`, and each line of the stderr of the
+/// session to `err`. It gives true when the session failed.
+pub async fn follow_events(
+    dir: &Path,
+    name: &str,
+    mut out: impl FnMut(&str),
+    mut err: impl FnMut(&str),
+) -> Result<bool> {
     let mut client = Client::connect(dir).await?;
     client
         .ask(Ask::Follow {
@@ -5333,12 +5356,16 @@ pub async fn show_events(dir: &Path, name: &str) -> Result<i32> {
     let mut view = crate::run::View::default();
     loop {
         match client.next().await? {
-            Some(Say::Event { line, .. }) => view.show(&line),
-            Some(Say::Stderr { line }) => eprintln!("{line}"),
-            Some(Say::Line { text }) => println!("{text}"),
+            Some(Say::Event { line, .. }) => {
+                for shown in view.shown(&line) {
+                    out(&shown);
+                }
+            }
+            Some(Say::Stderr { line }) => err(&line),
+            Some(Say::Line { text }) => out(&text),
             Some(Say::Ended(ended)) => {
-                println!("{}", text::daemon_session_ends(name, ended.code));
-                return Ok(i32::from(ended.failed));
+                out(&text::daemon_session_ends(name, ended.code));
+                return Ok(ended.failed);
             }
             Some(Say::Failed { error }) => bail!("{error}"),
             Some(_) => {}
@@ -6291,6 +6318,52 @@ mod tests {
             follower.next().await.unwrap(),
             Some(Say::Failed { .. })
         ));
+    }
+
+    /// `riff daemon events NAME` and the Session log of the TUI
+    /// (01M6VT3JPQXRWMX9PWYADT4MJX): [`follow_events`] gives each line of
+    /// the session from its start as `riff run` shows it, then the line
+    /// of its end, and says whether it failed.
+    #[tokio::test]
+    async fn follow_events_gives_each_line_from_the_start_and_the_end() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let (client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        drop(client);
+        let socket = session_dir(&here.dir, &name);
+        let (mut relay, _) = Relay::connect(&socket, 1, false).await;
+        relay.event(1, TURN[0]).await;
+        let (mut out, mut err) = (Vec::new(), Vec::<String>::new());
+        let follow = follow_events(
+            &here.dir,
+            &name,
+            |line| out.push(line.to_owned()),
+            |line| err.push(line.to_owned()),
+        );
+        let drive = async {
+            relay.event(2, TURN[1]).await;
+            relay.event(3, TURN[2]).await;
+            relay.exit(4, 0).await;
+        };
+        let (failed, ()) = tokio::join!(follow, drive);
+        assert!(!failed.unwrap());
+        // The daemon hides the secret of the second event.
+        assert!(!out.iter().any(|line| line.contains("gho_secret1")));
+        let mut view = crate::run::View::default();
+        let shown: Vec<String> = [TURN[0], TURN[2]]
+            .iter()
+            .flat_map(|line| view.shown(line))
+            .collect();
+        assert!(!shown.is_empty());
+        let events: Vec<&String> = out.iter().filter(|line| shown.contains(line)).collect();
+        assert_eq!(events.len(), shown.len(), "{out:#?}");
+        assert_eq!(out.last(), Some(&text::daemon_session_ends(&name, Some(0))));
+        assert!(err.is_empty(), "{err:#?}");
+
+        // A session that the daemon does not own.
+        let unknown = follow_events(&here.dir, "riff-issue-9-00000000", |_| {}, |_| {}).await;
+        assert!(unknown.is_err());
     }
 
     #[tokio::test]

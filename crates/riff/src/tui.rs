@@ -32,10 +32,11 @@
 //! - The Sessions tab ([`sessions`], #1637) is the one view of the
 //!   sessions. The Chat tab ([`chat`], #1640) shows the thread `chat`.
 //!   The Waves tab ([`waves`], #1638) shows a board for each repository.
-//!   The Machines tab ([`machines`], #1639) shows the hosts. The body of
-//!   each other tab comes with its build item: F #1641 Reports, G #1642
-//!   Devices. Until then, the body names the commands of the CLI that
-//!   show its area ([`Tab::today`], 01M6VAZKVK7530JJ63S7RVF88J).
+//!   The Machines tab ([`machines`], #1639) shows the hosts. The Reports
+//!   tab ([`reports`], #1641) shows the usage, the audit and the log of
+//!   a session. The body of the Devices tab comes with its build item G
+//!   #1642. Until then, it says that it is not built yet
+//!   (01M6VAZKVK7530JJ63S7RVF88J).
 //!
 //! The render is pure (01M6VAZKNXZV1RTG7MT0GMHKT3). [`State`] holds what
 //! the TUI knows: the last look of riff-server, the last status of the
@@ -95,6 +96,9 @@
 //! | The container sessions of this machine | the socket of the daemon: `status` | each second while the Sessions tab is open |
 //! | The titles of the issues | `gh api`: the conditional read of the open issues | each 60 s while the Sessions tab is open |
 //! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | each 60 s while the Waves tab shows, and at once on `r` |
+//! | The usage of a wave | `gh`: the milestones, the issues and their comments | when the Usage report shows with no read yet, and on `r` |
+//! | The audit of a wave | riff-server: the log; `gh`: the forge | on `Enter` and `r` in the Audit report |
+//! | The events of a session | the socket of the daemon, or riff-server for another host | while the Session log shows |
 //!
 //! A read of `gh` runs on a thread of its own, not in a blocking task of
 //! tokio: the end of the process waits for each blocking task of tokio.
@@ -195,6 +199,7 @@
 pub mod chat;
 pub mod forge;
 pub mod machines;
+pub mod reports;
 pub mod sessions;
 pub mod view;
 pub mod waves;
@@ -338,20 +343,12 @@ impl Tab {
         Tab::ALL[(self as usize + Tab::ALL.len() - 1) % Tab::ALL.len()]
     }
 
-    /// The commands of the CLI that show the area of a tab that is not
-    /// built yet (01M6VAZKVK7530JJ63S7RVF88J). The Devices tab has none:
-    /// it needs the device commands. A tab that is [`Tab::built`] has
-    /// none: it has its body.
-    pub fn today(self) -> &'static [&'static str] {
-        match self {
-            Tab::Sessions | Tab::Chat | Tab::Waves | Tab::Machines | Tab::Devices => &[],
-            Tab::Reports => &["riff usage", "riff audit", "riff daemon events NAME"],
-        }
-    }
-
     /// True when the build item of the tab merged: the tab draws its own
     /// body. The Sessions tab (#1637), the Chat tab (#1640), the Waves tab
-    /// (#1638) and the Machines tab (#1639) are built.
+    /// (#1638), the Machines tab (#1639) and the Reports tab (#1641) are
+    /// built. The body of the Devices tab says that it is not built yet:
+    /// no command of the CLI shows its area yet
+    /// (01M6VAZKVK7530JJ63S7RVF88J).
     ///
     /// ```
     /// use riff::tui::Tab;
@@ -360,10 +357,11 @@ impl Tab {
     /// assert!(Tab::Waves.built());
     /// assert!(Tab::Machines.built());
     /// assert!(Tab::Chat.built());
-    /// assert!(!Tab::Reports.built());
+    /// assert!(Tab::Reports.built());
+    /// assert!(!Tab::Devices.built());
     /// ```
     pub fn built(self) -> bool {
-        matches!(self, Tab::Sessions | Tab::Chat | Tab::Waves | Tab::Machines)
+        self != Tab::Devices
     }
 }
 
@@ -541,6 +539,8 @@ pub enum Key {
     /// A click on the fold mark of the row of this index in the tree of
     /// the Sessions tab.
     Fold(usize),
+    /// A click on the name of a report in the Reports tab.
+    Report(reports::Report),
     /// A plain character, for example `q`, `3`, `j`, `h` or `y`. The
     /// state gives it its meaning ([`State::on_key`]).
     Char(char),
@@ -849,6 +849,8 @@ pub struct State {
     /// The reason of a hold that the person types in the note line,
     /// until `Enter` or `Esc`.
     reason: Option<waves::Reason>,
+    /// The Reports tab.
+    reports: reports::Reports,
     /// The rows of a page of the body at the last draw.
     page: usize,
     /// The time of the last draw, in milliseconds since the epoch: the
@@ -884,6 +886,7 @@ impl State {
             chat: chat::Chat::default(),
             waves: waves::Waves::default(),
             reason: None,
+            reports: reports::Reports::default(),
             page: 20,
             drawn_ms: 0,
             host_filter: machines::Filter::default(),
@@ -1388,7 +1391,12 @@ impl State {
                 self.help = false;
                 None
             }
-            Key::Again => Some(Action::Look),
+            Key::Again => {
+                if self.tab == Tab::Reports {
+                    self.reports_again();
+                }
+                Some(Action::Look)
+            }
             Key::Quit => Some(Action::Quit),
             // The popup takes no key of a tab.
             _ if self.help => None,
@@ -1397,6 +1405,7 @@ impl State {
                 Tab::Sessions => self.on_sessions_key(key),
                 Tab::Waves => self.waves_key(key),
                 Tab::Machines => machines::on_key(self, key),
+                Tab::Reports => self.on_reports_key(key),
                 _ => None,
             },
         }
@@ -1453,8 +1462,13 @@ impl State {
     /// the Chat tab for a scroll.
     pub fn drawn(&mut self, view: &view::View) {
         (self.sessions.top, self.sessions.page) = (view.top, view.page);
+        self.sessions.pane = view.pane;
         if let Some(window) = view.chat {
             self.chat.window = window;
+        }
+        if let Some(window) = view.reports {
+            self.reports.window = window;
+            self.reports.top = window.top;
         }
     }
 
@@ -1731,12 +1745,42 @@ struct Tasks {
     /// The action that runs in a task of its own: its result is the
     /// next note.
     acting: Option<tokio::task::JoinHandle<String>>,
+    /// The read of the usage of the Reports tab that runs, with the wave
+    /// that it reads.
+    usage: Option<Asked<reports::Usage>>,
+    /// The audit of the Reports tab that runs, with the wave that it
+    /// audits.
+    audit: Option<Asked<reports::Audited>>,
+    /// The follow of the Session log that runs, its session, and its
+    /// lines.
+    follow: Option<Following>,
 }
+
+/// A read of a report of the Reports tab that runs, and the wave that it
+/// reads.
+type Asked<T> = (tokio::task::JoinHandle<Result<T, String>>, Option<u64>);
+
+/// The follow of a Session log that runs: its task, its session, and its
+/// lines.
+type Following = (
+    tokio::task::JoinHandle<Result<bool>>,
+    reports::Source,
+    tokio::sync::mpsc::UnboundedReceiver<String>,
+);
 
 impl Tasks {
     /// Stops each task that runs: the TUI ends. A read of `gh` goes on
     /// ([`Reading`]).
     fn abort(&self) {
+        if let Some((task, _)) = &self.usage {
+            task.abort();
+        }
+        if let Some((task, _)) = &self.audit {
+            task.abort();
+        }
+        if let Some((task, ..)) = &self.follow {
+            task.abort();
+        }
         if let Some(task) = &self.looking {
             task.abort();
         }
@@ -1786,6 +1830,9 @@ async fn frames(
         kept: forge::Kept::default(),
         forge_again: false,
         acting: None,
+        usage: None,
+        audit: None,
+        follow: None,
     };
     let mut good_at = chrono::Local::now();
     let mut link = chat::Link::start(person);
@@ -1831,6 +1878,7 @@ async fn frames(
                 tasks.next = Instant::now();
             }
         }
+        reports_tasks(&mut tasks, state, api, me, reach, &gh).await?;
         if tasks.forge.is_none()
             && state.tab() == Tab::Waves
             && (tasks.forge_again || state.waves().due(crate::run::now_ms()))
@@ -2024,6 +2072,93 @@ async fn frames(
     }
     tasks.abort();
     shown
+}
+
+/// The tasks of the Reports tab (01M6VT3JFEKD2FEQGNGGKHC8X5): it takes
+/// the result of a read of the usage, of an audit and of a follow of a
+/// Session log that ended, and the lines of the follow. It starts the
+/// read that the tab asks for, each in a task of its own: the read of the
+/// usage in a blocking task, as its calls of `gh` block. It stops the
+/// follow of a log that does not show.
+async fn reports_tasks(
+    tasks: &mut Tasks,
+    state: &mut State,
+    api: &Api,
+    me: &SessionUri,
+    reach: &Reach,
+    gh: &crate::pr::Gh,
+) -> Result<()> {
+    use tokio::task::{JoinHandle, spawn_blocking};
+    fn done<T>(task: &Option<(JoinHandle<T>, Option<u64>)>) -> bool {
+        task.as_ref().is_some_and(|(task, _)| task.is_finished())
+    }
+    if done(&tasks.usage)
+        && let Some((task, asked)) = tasks.usage.take()
+    {
+        state.usage_read(asked, task.await?, crate::run::now_ms());
+    }
+    if tasks.usage.is_none()
+        && let Some((repo, wave)) = state.usage_due()
+    {
+        state.usage_started();
+        let gh = gh.clone();
+        let task = spawn_blocking(move || {
+            reports::read_usage(&gh, &repo, wave).map_err(|e| format!("{e:#}"))
+        });
+        tasks.usage = Some((task, wave));
+    }
+    if done(&tasks.audit)
+        && let Some((task, asked)) = tasks.audit.take()
+    {
+        state.audited(asked, task.await?, crate::run::now_ms());
+    }
+    if tasks.audit.is_none()
+        && let Some((repo, wave)) = state.audit_due()
+    {
+        state.audit_started();
+        let (gh, reach) = (gh.clone(), reach.clone());
+        let task = tokio::spawn(async move {
+            reports::run_audit(&gh, &reach, &repo, wave)
+                .await
+                .map_err(|e| format!("{e:#}"))
+        });
+        tasks.audit = Some((task, wave));
+    }
+    if let Some((task, _, lines)) = &mut tasks.follow {
+        // A follow that ended sent each of its lines before its end.
+        let ended = task.is_finished();
+        while let Ok(line) = lines.try_recv() {
+            state.log_came(line);
+        }
+        if ended && let Some((task, ..)) = tasks.follow.take() {
+            state.log_ended(match task.await {
+                Ok(Ok(failed)) => Ok(failed),
+                Ok(Err(e)) => Err(format!("{e:#}")),
+                Err(e) => Err(e.to_string()),
+            });
+        }
+    }
+    let wanted = state.log_wanted().cloned();
+    if let Some((task, source, _)) = &tasks.follow
+        && wanted.as_ref() != Some(source)
+    {
+        task.abort();
+        tasks.follow = None;
+        state.log_stopped();
+    }
+    if tasks.follow.is_none()
+        && let Some(source) = wanted
+    {
+        state.log_started();
+        let (sender, lines) = tokio::sync::mpsc::unbounded_channel();
+        let (api, me, reach, followed) = (api.clone(), me.clone(), reach.clone(), source.clone());
+        let task =
+            tokio::spawn(
+                async move { reports::follow(&api, &me, &reach, &followed, sender).await },
+            );
+        tasks.follow = Some((task, source, lines));
+    }
+    Ok(())
 }
 
 /// The attach of `l` and Enter to the lead `name`: the code of
