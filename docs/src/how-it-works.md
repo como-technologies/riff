@@ -2963,6 +2963,11 @@ prompt, and the row says why. Your line shows once, from the server,
 as in `riff chat`. `/me TEXT` sends an action, and `/quit` ends the
 TUI.
 
+When riff cannot send a line, for example because riff-server refuses
+it, the row under the prompt says `riff: cannot send the line:` and the
+error. The row says it at once, also while you type the next line. The
+next key gives the row back to the note of the line that you type.
+
 | Key | Does |
 |---|---|
 | `Enter` | Send the line. |

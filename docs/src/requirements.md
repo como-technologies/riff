@@ -7097,9 +7097,10 @@ that builds it merges.
   example no sign-in, prints as in the CLI, before the TUI draws a
   screen.
 - **01M6VAZJYYQZDHD6YDB0NBQ7KW** The TUI has six tabs, in this order:
-  Sessions, Chat, Waves, Machines, Devices and Reports. The keys `1` to
-  `6` open a tab, also with Alt. `Tab` opens the next tab, and
-  `Shift-Tab` the tab before.
+  Sessions, Chat, Waves, Machines, Devices and Reports. `Alt-1` to
+  `Alt-6` open a tab. `Tab` opens the next tab, and `Shift-Tab` the tab
+  before. Outside the prompt of the Chat tab and a text that the note
+  line asks for, the keys `1` to `6` open a tab too.
 - **01M6VAZK1R932VQMJBC32MTTJB** Each tab of the TUI has five parts: the
   tab strip on the first row, the header on the second row, the body,
   the note line on the row before the last, and the key line on the last
@@ -7122,8 +7123,10 @@ that builds it merges.
   goes at the next good look. A fault that a new try cannot repair ends
   the TUI with the error.
 - **01M6VAZKDEQ6951KGPGAMF1SNJ** The key line of the TUI shows the keys
-  of the tab. `?` shows each key of the tab in a popup, and `?` or `Esc`
-  closes it. `q` and `Ctrl-C` end the TUI. The sessions go on.
+  of the tab. `Ctrl-C` ends the TUI. The sessions go on. Outside the
+  prompt of the Chat tab and a text that the note line asks for, `q`
+  ends the TUI too, `?` shows each key of the tab in a popup, and `?` or
+  `Esc` closes it.
 - **01M6VAZKG8FS4HEA9VSA4Z4YF1** The TUI takes the mouse: a click acts
   as the key of the place that it hits, for example a click on a tab
   opens it, and a click on a key of the key line presses that key. A
@@ -7220,8 +7223,7 @@ that builds it merges.
   `riff chat`, with the same code: `/me TEXT` sends an action, `/quit`
   ends the TUI, `//` starts a line with `/`, and the line wakes the
   leads that `riff chat` wakes. The Chat tab posts as the person,
-  `USER@HOST`, also when the TUI runs in a session. While the prompt
-  holds a line, the note line says whom `Enter` will wake. A line with a
+  `USER@HOST`, also when the TUI runs in a session. A line with a
   command that the chat does not know, or that names a lead that fits no
   lead or two leads of the last look, is not sent: it stays in the
   prompt, and the note line says why. Supersedes
@@ -7290,11 +7292,18 @@ that builds it merges.
 - **01M6VFGKF574TCZ7C3AW3MWX4S** In the narrow layout, the line of a
   repository in the Waves tab names the repository with no owner, and a
   row of an item has the mark, the state, the item and the title.
-- **01M6VFGYW0XVJ5JSX6R1NCR6W7** The note line of the TUI shows a
-  question that waits for its answer first, else the fault of the link,
-  else in the Chat tab whom the line in the prompt will wake, else the
-  result of the last action. With none of them, the Waves tab shows the
-  age of its last read of `gh` there.
+- **01M6VFGYW0XVJ5JSX6R1NCR6W7** With no other note in the note line of
+  the TUI, the Waves tab shows the age of its last read of `gh` there.
+- **01M6VMACJGF4A0ZXC6YK13KNCH** The note line of the TUI shows the
+  first note that it has, in this order: a question of the TUI or a text
+  that it asks for, the fault of the link, a post that failed after the
+  last key, the note of the line in the prompt, and the result of the
+  last action. Only the Chat tab shows the third and the fourth. The
+  note of the line in the prompt says whom `Enter` will wake, or why the
+  chat will not send the line. A post that failed shows `riff: cannot
+  send the line:` and the error at once, also while the prompt holds a
+  line. Supersedes 01M6VFGYW0XVJ5JSX6R1NCR6W7 and
+  01M6VG1PCXHNVJP7TSP0J5G5K9 in part.
 
 ## The notes of the lead
 

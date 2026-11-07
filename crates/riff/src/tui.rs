@@ -21,9 +21,13 @@
 //! - The header ([`view::compute_view`], 01M6VAZK4RQSZ0MG2DHWQC598Q)
 //!   shows the state of the whole riff, the owner, the build of this
 //!   riff, and the link with the age of the last good look.
-//! - The note line shows the fault of the link, else the result of the
-//!   last action. The key line shows the keys of the tab, and `?` shows
-//!   them all in a popup (01M6VAZKDEQ6951KGPGAMF1SNJ).
+//! - The note line shows the first note that it has: a question, the
+//!   fault of the link, in the Chat tab a post that failed and the note
+//!   of the prompt, else the result of the last action
+//!   (01M6VMACJGF4A0ZXC6YK13KNCH). With none of them, the Waves tab
+//!   shows the age of its last read of `gh` (01M6VFGYW0XVJ5JSX6R1NCR6W7).
+//!   The key line shows the keys of the tab, and `?` shows them all in a
+//!   popup (01M6VAZKDEQ6951KGPGAMF1SNJ).
 //! - The body of a tab comes with its build item: B #1637 Sessions,
 //!   C #1638 Waves, D #1639 Machines, E #1640 Chat, F #1641 Reports, G
 //!   #1642 Devices. Until then, the body names the commands of the CLI
@@ -112,7 +116,7 @@
 //!
 //! An action that changes something asks first in the note line
 //! ([`Question`], 01M6VFD0S90SB8M8WV952NT4Y1, 01M6VFGK9XXWCA8X7CE8EZNSJV,
-//! 01M6VFGYW0XVJ5JSX6R1NCR6W7):
+//! 01M6VMACJGF4A0ZXC6YK13KNCH):
 //! `Set the limit of thelio to 4 sessions? y/N`. `y` gives the action to
 //! the loop: [`Action::Limit`], or [`Action::Do`] with an [`Effect`].
 //! The loop runs the code of its CLI command in a task of its own
@@ -895,8 +899,10 @@ impl State {
         self.fault.as_deref()
     }
 
-    /// The text of the note line: the fault of the link, else the note
-    /// of the last action (01M6VAZKDEQ6951KGPGAMF1SNJ).
+    /// The fault of the link, else the note of the last action. A
+    /// question of the note line comes before them, and in the Chat tab
+    /// the notes of the chat come between them
+    /// (01M6VMACJGF4A0ZXC6YK13KNCH).
     pub fn shown_note(&self) -> Option<&str> {
         self.fault.as_deref().or(self.note.as_deref())
     }
@@ -919,7 +925,7 @@ impl State {
 
     /// The text of the note line while the TUI asks: the question with
     /// `y/N`, or what the person types with a cursor. It comes before
-    /// the fault and the note (01M6VFGYW0XVJ5JSX6R1NCR6W7).
+    /// the fault and the note (01M6VMACJGF4A0ZXC6YK13KNCH).
     ///
     /// ```
     /// use riff::tui::{Action, Key, Question, State};
@@ -1004,6 +1010,9 @@ impl State {
     /// assert_eq!(state.on_key(Key::Quit), Some(Action::Quit));
     /// ```
     pub fn on_key(&mut self, key: Key) -> Option<Action> {
+        // A post that failed comes before the note of the prompt until
+        // the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
+        self.chat.unsent = None;
         // A question takes the next key (01M6VFD0S90SB8M8WV952NT4Y1).
         if let Some(question) = self.question.take() {
             return match key {
