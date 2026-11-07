@@ -28,6 +28,7 @@
 //!   C #1638 Waves, D #1639 Machines, E #1640 Chat, F #1641 Reports, G
 //!   #1642 Devices. Until then, the body names the commands of the CLI
 //!   that show its area ([`Tab::today`], 01M6VAZKVK7530JJ63S7RVF88J).
+//!   The Machines tab is built: see [`machines`].
 //!
 //! The render is pure (01M6VAZKNXZV1RTG7MT0GMHKT3). [`State`] holds what
 //! the TUI knows: the last look of riff-server, the fault of the link,
@@ -52,7 +53,9 @@
 //! ([`look`]) each [`LOOK_EVERY`], and each [`IDLE_LOOK_EVERY`] after
 //! [`IDLE_AFTER`] with no key and no click ([`every`],
 //! 01M6VAZK7N636Q0JFSV553A9ES). `r` looks again at once. A look runs in
-//! a task of its own, so a slow look holds up no key.
+//! a task of its own, so a slow look holds up no key. A look also asks
+//! the riff daemon of this host for its status on its socket
+//! ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK).
 //!
 //! A look that fails does what it does in `riff top`
 //! (01M6VAZKAH6B53YKR8W4YKNSH6). The first look runs before the TUI
@@ -91,12 +94,24 @@
 //! | `Esc` | Close the popup. |
 //! | `q`, `Ctrl-C` | End the TUI. The sessions go on. |
 //!
+//! The frame gives each other key to the tab: the arrows, `Enter`, and
+//! a letter as [`Key::Char`]. The tab turns it into an [`Action`], for
+//! example [`machines::on_key`].
+//!
+//! An action that changes something asks first in the note line
+//! ([`Question`], 01M6VAZKDEQ6951KGPGAMF1SNJ, 01M6VFD0S90SB8M8WV952NT4Y1):
+//! `Set the limit of thelio to 4 sessions? y/N`. `y` gives the action to
+//! the loop, and the loop runs the code of its CLI command in a task
+//! of its own. Its result goes to the note line, and the TUI looks
+//! again.
+//!
 //! # The marks
 //!
 //! A session of a tab gets a [`Mark`] (01M6VAZKRTVZTY73PQV5GE2WY6): a
 //! small fixed set, from the state that riff-server derives and from
 //! the phase of a container session. The worst mark comes first.
 
+pub mod machines;
 pub mod view;
 
 use std::time::Duration;
@@ -226,16 +241,29 @@ impl Tab {
 
     /// The commands of the CLI that show the area of the tab, until its
     /// build item merges (01M6VAZKVK7530JJ63S7RVF88J). The Devices tab
-    /// has none: it needs the device commands.
+    /// has none: it needs the device commands. A built tab has none: it
+    /// has its body ([`Tab::built`]).
     pub fn today(self) -> &'static [&'static str] {
         match self {
             Tab::Sessions => &["riff top", "riff who"],
             Tab::Chat => &["riff chat"],
             Tab::Waves => &["riff top", "riff wave list"],
-            Tab::Machines => &["riff top", "riff daemon status"],
-            Tab::Devices => &[],
+            Tab::Machines | Tab::Devices => &[],
             Tab::Reports => &["riff usage", "riff audit", "riff daemon events NAME"],
         }
+    }
+
+    /// True when the build item of the tab merged: the tab draws its own
+    /// body.
+    ///
+    /// ```
+    /// use riff::tui::Tab;
+    ///
+    /// assert!(Tab::Machines.built());
+    /// assert!(!Tab::Sessions.built());
+    /// ```
+    pub fn built(self) -> bool {
+        self == Tab::Machines
     }
 }
 
@@ -382,15 +410,53 @@ pub enum Key {
     Again,
     /// End the TUI: `q` or `Ctrl-C`.
     Quit,
+    /// Select the row above: `↑`, `k`, or the wheel of the mouse.
+    Up,
+    /// Select the row below: `↓`, `j`, or the wheel of the mouse.
+    Down,
+    /// Move a page up: `PgUp`.
+    PageUp,
+    /// Move a page down: `PgDn`.
+    PageDown,
+    /// Select the first row: `g` or `Home`.
+    First,
+    /// Select the last row: `G` or `End`.
+    Last,
+    /// Act on the selected row, or end an answer: `Enter`.
+    Enter,
+    /// Remove the last character of an answer: `Backspace`.
+    Backspace,
+    /// Select the row N of the body of the tab: a click on it.
+    Row(usize),
+    /// Another character with no Ctrl and no Alt: the key of an action
+    /// of the tab, the answer to a question, or a character of an
+    /// answer.
+    Char(char),
 }
 
 /// What the loop of the TUI does for a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// Look at riff-server again now.
     Look,
     /// End the TUI. The sessions go on.
     Quit,
+    /// Set the most live sessions of `host` with the code of `riff
+    /// daemon limit --sessions N` (01M6VFD0PPXDNH3NKD3YE4W9SB).
+    Limit { host: String, sessions: u32 },
+}
+
+/// A question in the note line (01M6VFD0S90SB8M8WV952NT4Y1): `y` gives
+/// `yes` to the loop. Each other key but `q` and `Ctrl-C` answers no:
+/// the note line shows `no`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Question {
+    /// The question, with no `y/N`.
+    pub text: String,
+    /// The action of `y`.
+    pub yes: Action,
+    /// The note after no.
+    pub no: String,
 }
 
 /// The facts of one good look of riff-server ([`look`]).
@@ -402,6 +468,14 @@ pub struct Look {
     pub who: WhoReply,
     /// The build of riff-server, from the header of its last reply.
     pub server: Option<Build>,
+    /// The time of the call `who` (01M6VFD0HGCVMYNNC3H4788W9X).
+    pub call: Option<Duration>,
+    /// The new connections of the link since the start of the TUI
+    /// ([`riff_client::link::Link::swaps`]).
+    pub reconnects: u64,
+    /// This host and the status of its riff daemon
+    /// (01M6VFD09QN71SWMPP8YXCRAEK). `None` when the look did not ask.
+    pub here: Option<machines::Here>,
 }
 
 /// The look of a riff that runs, with no sign-in and no session.
@@ -416,20 +490,29 @@ impl Default for Look {
                 repos: Vec::new(),
             },
             server: None,
+            call: None,
+            reconnects: 0,
+            here: None,
         }
     }
 }
 
 /// Looks at riff-server as `me`: the calls `riff` and `who`
 /// (01M6VAZK7N636Q0JFSV553A9ES). Each call has the budget of a short
-/// command, as in `riff top`.
+/// command, as in `riff top`. Then it asks the riff daemon of this host
+/// for its status ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK).
 pub async fn look(api: &Api, me: &SessionUri) -> Result<Look> {
     let pauses = api.pauses(me).await?;
+    let start = std::time::Instant::now();
     let who = api.roster(me, false).await?;
+    let call = start.elapsed();
     Ok(Look {
         pauses,
         who,
         server: riff_client::link::server_build(),
+        call: Some(call),
+        reconnects: api.link().swaps(),
+        here: Some(machines::here(me).await),
     })
 }
 
@@ -451,6 +534,15 @@ pub struct State {
     help: bool,
     /// The build of this riff.
     build: Build,
+    /// The question in the note line, until the person answers it.
+    question: Option<Question>,
+    /// What the person types in the note line, until `Enter` or `Esc`.
+    typing: Option<machines::Typing>,
+    /// The host that the person selected in the Machines tab.
+    host: Option<machines::Name>,
+    /// The filter of the Sessions tab, for example `host:thelio`
+    /// (01M6VFD0M3RHT488D0RQ84RVMC).
+    filter: Option<String>,
 }
 
 impl State {
@@ -465,6 +557,10 @@ impl State {
             note: None,
             help: false,
             build,
+            question: None,
+            typing: None,
+            host: None,
+            filter: None,
         }
     }
 
@@ -564,6 +660,47 @@ impl State {
         self.help
     }
 
+    /// Asks `question` in the note line (01M6VFD0S90SB8M8WV952NT4Y1).
+    pub fn ask(&mut self, question: Question) {
+        self.question = Some(question);
+    }
+
+    /// The text of the note line while the TUI asks: the question with
+    /// `y/N`, or what the person types with a cursor. It comes before
+    /// the fault and the note.
+    ///
+    /// ```
+    /// use riff::tui::{Action, Key, Question, State};
+    /// use riff_core::build::Build;
+    ///
+    /// let mut state = State::new(Build::this());
+    /// let yes = Action::Limit { host: "thelio".into(), sessions: 4 };
+    /// let no = "The limit of thelio stays.".to_owned();
+    /// state.ask(Question { text: "Set the limit?".into(), yes: yes.clone(), no: no.clone() });
+    /// assert_eq!(state.asked().as_deref(), Some("Set the limit? y/N"));
+    /// assert_eq!(state.on_key(Key::Char('y')), Some(yes.clone()));
+    /// assert_eq!(state.asked(), None);
+    /// // Each other key answers no, also Esc.
+    /// state.ask(Question { text: "Set the limit?".into(), yes: yes.clone(), no: no.clone() });
+    /// assert_eq!(state.on_key(Key::Esc), None);
+    /// assert_eq!(state.shown_note(), Some("The limit of thelio stays."));
+    /// // q ends the TUI.
+    /// state.ask(Question { text: "Set the limit?".into(), yes, no });
+    /// assert_eq!(state.on_key(Key::Quit), Some(Action::Quit));
+    /// ```
+    pub fn asked(&self) -> Option<String> {
+        if let Some(question) = &self.question {
+            return Some(format!("{} y/N", question.text));
+        }
+        self.typing.as_ref().map(machines::Typing::line)
+    }
+
+    /// The filter of the Sessions tab, for example `host:thelio`
+    /// (01M6VFD0M3RHT488D0RQ84RVMC).
+    pub fn filter(&self) -> Option<&str> {
+        self.filter.as_deref()
+    }
+
     /// Opens the tab `tab`: its news goes.
     fn open(&mut self, tab: Tab) {
         self.tab = tab;
@@ -594,6 +731,20 @@ impl State {
     /// assert_eq!(state.on_key(Key::Quit), Some(Action::Quit));
     /// ```
     pub fn on_key(&mut self, key: Key) -> Option<Action> {
+        // A question takes the next key (01M6VFD0S90SB8M8WV952NT4Y1).
+        if let Some(question) = self.question.take() {
+            return match key {
+                Key::Char('y' | 'Y') => Some(question.yes),
+                Key::Quit => Some(Action::Quit),
+                _ => {
+                    self.note(question.no);
+                    None
+                }
+            };
+        }
+        if let Some(typing) = self.typing.take() {
+            return machines::typed(self, typing, key);
+        }
         match key {
             Key::Open(tab) => {
                 self.help = false;
@@ -620,6 +771,12 @@ impl State {
             }
             Key::Again => Some(Action::Look),
             Key::Quit => Some(Action::Quit),
+            // The popup takes no key of a tab.
+            _ if self.help => None,
+            key => match self.tab {
+                Tab::Machines => machines::on_key(self, key),
+                _ => None,
+            },
         }
     }
 
@@ -665,8 +822,27 @@ pub enum Input {
 ///     input_of(&press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
 ///     Some(Input::Key(Key::Quit))
 /// );
-/// assert_eq!(input_of(&press(KeyCode::Char('7'), none)), None);
-/// assert_eq!(input_of(&press(KeyCode::Char('x'), none)), None);
+/// // The keys of a tab (01M6VFD0M3RHT488D0RQ84RVMC).
+/// for (code, key) in [
+///     (KeyCode::Up, Key::Up),
+///     (KeyCode::Char('k'), Key::Up),
+///     (KeyCode::Down, Key::Down),
+///     (KeyCode::Char('j'), Key::Down),
+///     (KeyCode::PageUp, Key::PageUp),
+///     (KeyCode::PageDown, Key::PageDown),
+///     (KeyCode::Char('g'), Key::First),
+///     (KeyCode::End, Key::Last),
+///     (KeyCode::Enter, Key::Enter),
+///     (KeyCode::Backspace, Key::Backspace),
+///     (KeyCode::Char('7'), Key::Char('7')),
+///     (KeyCode::Char('l'), Key::Char('l')),
+/// ] {
+///     assert_eq!(input_of(&press(code, none)), Some(Input::Key(key)), "{code:?}");
+/// }
+/// assert_eq!(input_of(&press(KeyCode::Char('G'), KeyModifiers::SHIFT)), Some(Input::Key(Key::Last)));
+/// // A letter with Ctrl is no key of a tab.
+/// assert_eq!(input_of(&press(KeyCode::Char('l'), KeyModifiers::CONTROL)), None);
+/// assert_eq!(input_of(&press(KeyCode::F(2), none)), None);
 /// let mouse = |kind| {
 ///     Event::Mouse(MouseEvent { kind, column: 4, row: 0, modifiers: KeyModifiers::NONE })
 /// };
@@ -674,6 +850,9 @@ pub enum Input {
 ///     input_of(&mouse(MouseEventKind::Down(MouseButton::Left))),
 ///     Some(Input::Click { column: 4, row: 0 })
 /// );
+/// // The wheel selects the row above or below.
+/// assert_eq!(input_of(&mouse(MouseEventKind::ScrollUp)), Some(Input::Key(Key::Up)));
+/// assert_eq!(input_of(&mouse(MouseEventKind::ScrollDown)), Some(Input::Key(Key::Down)));
 /// assert_eq!(input_of(&mouse(MouseEventKind::Moved)), None);
 /// ```
 pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
@@ -693,16 +872,34 @@ pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
                 KeyCode::Esc => Key::Esc,
                 KeyCode::Char('r') => Key::Again,
                 KeyCode::Char('q') => Key::Quit,
+                KeyCode::Up | KeyCode::Char('k') => Key::Up,
+                KeyCode::Down | KeyCode::Char('j') => Key::Down,
+                KeyCode::PageUp => Key::PageUp,
+                KeyCode::PageDown => Key::PageDown,
+                KeyCode::Home | KeyCode::Char('g') => Key::First,
+                KeyCode::End | KeyCode::Char('G') => Key::Last,
+                KeyCode::Enter => Key::Enter,
+                KeyCode::Backspace => Key::Backspace,
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    Key::Char(c)
+                }
                 _ => return None,
             };
             Some(Input::Key(key))
         }
-        Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
-            Some(Input::Click {
+        Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => Some(Input::Click {
                 column: mouse.column,
                 row: mouse.row,
-            })
-        }
+            }),
+            MouseEventKind::ScrollUp => Some(Input::Key(Key::Up)),
+            MouseEventKind::ScrollDown => Some(Input::Key(Key::Down)),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -750,7 +947,8 @@ pub async fn run(api: &Api, me: &SessionUri, mouse: bool) -> Result<()> {
 }
 
 /// The loop of [`run`]: it draws the state, takes the input of the
-/// person, and looks at riff-server each [`every`].
+/// person, looks at riff-server each [`every`], and runs each action in
+/// a task of its own.
 async fn frames(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut State,
@@ -761,10 +959,25 @@ async fn frames(
     let mut input_at = Instant::now();
     let mut next = Instant::now() + LOOK_EVERY;
     let mut looking: Option<tokio::task::JoinHandle<Result<Look>>> = None;
+    // The action that runs: its result is the next note.
+    let mut acting: Option<tokio::task::JoinHandle<String>> = None;
     // `r` while a look runs: look again after it.
     let mut again = false;
     let mut good_at = chrono::Local::now();
     loop {
+        if acting
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+            && let Some(done) = acting.take()
+        {
+            state.note(done.await?);
+            // The action changed something: look again.
+            if looking.is_some() {
+                again = true;
+            } else {
+                next = Instant::now();
+            }
+        }
         if looking
             .as_ref()
             .is_some_and(tokio::task::JoinHandle::is_finished)
@@ -813,13 +1026,27 @@ async fn frames(
         };
         match action {
             Some(Action::Quit) => {
-                if let Some(looking) = looking {
-                    looking.abort();
+                for task in [
+                    looking.map(|t| t.abort_handle()),
+                    acting.map(|t| t.abort_handle()),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    task.abort();
                 }
                 return Ok(());
             }
             Some(Action::Look) if looking.is_some() => again = true,
             Some(Action::Look) => next = Instant::now(),
+            Some(Action::Limit { .. }) if acting.is_some() => state.note(machines::STILL_ACTING),
+            Some(Action::Limit { host, sessions }) => {
+                state.note(machines::setting(&host, sessions));
+                let (api, me) = (api.clone(), me.clone());
+                acting = Some(tokio::spawn(async move {
+                    machines::set_limit(&api, &me, &host, sessions).await
+                }));
+            }
             None => {}
         }
     }

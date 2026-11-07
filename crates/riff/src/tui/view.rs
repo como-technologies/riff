@@ -160,25 +160,25 @@ impl View {
 }
 
 /// The style of a good word: `running`, `link ok`.
-const GOOD: Style = Style::new().fg(Color::Green);
+pub(super) const GOOD: Style = Style::new().fg(Color::Green);
 
 /// The style of a word that needs a look: `paused`, another build.
-const WARNING: Style = Style::new().fg(Color::Yellow);
+pub(super) const WARNING: Style = Style::new().fg(Color::Yellow);
 
 /// The style of a fault: `link down`, the fault line.
-const ERROR: Style = Style::new().fg(Color::Red);
+pub(super) const ERROR: Style = Style::new().fg(Color::Red);
 
 /// The style of the key line.
-const DIM: Style = Style::new().add_modifier(Modifier::DIM);
+pub(super) const DIM: Style = Style::new().add_modifier(Modifier::DIM);
 
 /// The style of the active tab.
-const ACTIVE: Style = Style::new().add_modifier(Modifier::BOLD);
+pub(super) const ACTIVE: Style = Style::new().add_modifier(Modifier::BOLD);
 
 /// The style of the news of a tab.
 const NEWS: Style = Style::new().fg(Color::Cyan);
 
 /// The width of `text` in columns.
-fn width(text: &str) -> u16 {
+pub(super) fn width(text: &str) -> u16 {
     u16::try_from(Line::raw(text).width()).unwrap_or(u16::MAX)
 }
 
@@ -219,15 +219,28 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
         line: header(state, layout, now_ms),
     });
 
-    let body = 2..area.height - 2;
-    for (line, y) in body_lines(state.tab(), area.width - margin)
-        .into_iter()
-        .zip(body)
-    {
-        view.rows.push(Placed { area: row(y), line });
+    let body = Rect::new(area.x, area.y + 2, area.width, area.height - 4);
+    if state.tab() == Tab::Machines {
+        let (rows, hits) = super::machines::body(state, body, layout, now_ms);
+        view.rows.extend(rows);
+        view.hits.extend(hits);
+    } else {
+        for (line, y) in body_lines(state.tab(), area.width - margin)
+            .into_iter()
+            .zip(2..area.height - 2)
+        {
+            view.rows.push(Placed { area: row(y), line });
+        }
     }
 
-    if let Some(note) = state.shown_note() {
+    // A question comes before the fault and the note
+    // (01M6VFD0S90SB8M8WV952NT4Y1).
+    if let Some(asked) = state.asked() {
+        view.rows.push(Placed {
+            area: row(area.height - 2),
+            line: Line::styled(text::safe(&asked), ACTIVE),
+        });
+    } else if let Some(note) = state.shown_note() {
         let style = if state.fault().is_some() {
             ERROR
         } else {
@@ -239,7 +252,7 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
         });
     }
     let keys = row(area.height - 1);
-    let (line, hits) = key_line(layout, keys);
+    let (line, hits) = key_line(state.tab(), layout, keys);
     view.rows.push(Placed { area: keys, line });
     view.hits.extend(hits);
 
@@ -369,7 +382,7 @@ fn header(state: &State, layout: Layout, now_ms: i64) -> Line<'static> {
 }
 
 /// The first 7 characters of a build ID.
-fn short(id: &str) -> String {
+pub(super) fn short(id: &str) -> String {
     text::safe(&id.chars().take(7).collect::<String>())
 }
 
@@ -397,10 +410,14 @@ fn body_lines(tab: Tab, columns: u16) -> Vec<Line<'static>> {
     lines
 }
 
-/// The keys of the key line of a layout: the text of the key, its
-/// word, and the key that a click on it presses.
-fn keys_of(layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
-    let mut keys = vec![("1-6", "tab", None)];
+/// The keys of the key line of a tab in a layout: the text of the key,
+/// its word, and the key that a click on it presses. A built tab has
+/// its own keys first ([`super::machines::keys`]).
+fn keys_of(tab: Tab, layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
+    let mut keys = match tab {
+        Tab::Machines => super::machines::keys(layout),
+        _ => vec![("1-6", "tab", None)],
+    };
     if layout == Layout::Wide {
         keys.push(("r", "read again", Some(Key::Again)));
     }
@@ -411,13 +428,13 @@ fn keys_of(layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
     keys
 }
 
-/// The key line at `area`, and the place of each key that a click
-/// presses (01M6VAZKDEQ6951KGPGAMF1SNJ).
-fn key_line(layout: Layout, area: Rect) -> (Line<'static>, Vec<Hit>) {
+/// The key line of `tab` at `area`, and the place of each key that a
+/// click presses (01M6VAZKDEQ6951KGPGAMF1SNJ).
+fn key_line(tab: Tab, layout: Layout, area: Rect) -> (Line<'static>, Vec<Hit>) {
     let mut spans = Vec::new();
     let mut hits = Vec::new();
     let mut x = area.x;
-    for (i, (key, word, press)) in keys_of(layout).into_iter().enumerate() {
+    for (i, (key, word, press)) in keys_of(tab, layout).into_iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled("  ", DIM));
             x += 2;
@@ -436,24 +453,38 @@ fn key_line(layout: Layout, area: Rect) -> (Line<'static>, Vec<Hit>) {
     (Line::from(spans), hits)
 }
 
-/// The keys of the help popup: the key, and what it does
-/// (01M6VAZKDEQ6951KGPGAMF1SNJ). Each tab has the keys of the frame.
-/// The build item of a tab adds its own.
-pub fn help_keys() -> Vec<(&'static str, &'static str)> {
-    vec![
+/// The keys of the help popup of `tab`: the key, and what it does
+/// (01M6VAZKDEQ6951KGPGAMF1SNJ). A built tab has its own keys first
+/// ([`super::machines::help_keys`]). Each tab has the keys of the frame.
+///
+/// ```
+/// use riff::tui::Tab;
+/// use riff::tui::view::help_keys;
+///
+/// assert_eq!(help_keys(Tab::Waves)[0], ("1 to 6", "open a tab"));
+/// assert_eq!(help_keys(Tab::Machines)[0], ("↑ ↓ j k", "select a host"));
+/// assert!(help_keys(Tab::Machines).contains(&("q, Ctrl-C", "end the TUI")));
+/// ```
+pub fn help_keys(tab: Tab) -> Vec<(&'static str, &'static str)> {
+    let mut keys = match tab {
+        Tab::Machines => super::machines::help_keys(),
+        _ => Vec::new(),
+    };
+    keys.extend([
         ("1 to 6", "open a tab"),
         ("Tab", "open the next tab"),
         ("Shift-Tab", "open the tab before"),
         ("r", "look again now"),
         ("?, Esc", "close this help"),
         ("q, Ctrl-C", "end the TUI"),
-    ]
+    ]);
+    keys
 }
 
 /// The help popup of `tab` in the middle of `area`, under the strip and
 /// over the key line.
 fn popup(tab: Tab, area: Rect, layout: Layout) -> Popup {
-    let keys = help_keys();
+    let keys = help_keys(tab);
     let column = keys.iter().map(|(key, _)| width(key)).max().unwrap_or(0) + 2;
     let mut lines: Vec<Line<'static>> = keys
         .iter()
@@ -618,6 +649,10 @@ mod tests {
             state.on_key(Key::Open(tab));
             let rows = drawn(&state, 80, 24);
             assert_eq!(rows[0], strip, "{tab:?}");
+            // A built tab draws its own body.
+            if tab.built() {
+                continue;
+            }
             assert!(
                 rows[2].starts_with(&format!(" The {} tab is not built yet.", tab.name())),
                 "{rows:#?}"
@@ -695,7 +730,7 @@ mod tests {
             let rows = drawn(&state, width, height);
             let text = rows.join("\n");
             assert!(text.contains("Keys of the Waves tab"), "{text}");
-            for (key, does) in help_keys() {
+            for (key, does) in help_keys(Tab::Waves) {
                 if height > 10 {
                     assert!(
                         rows.iter().any(|r| r.contains(key) && r.contains(does)),
