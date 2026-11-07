@@ -180,8 +180,9 @@ flowchart LR
 
 A `riff.toml` with neither table gives a session no tool variable and
 no cache volume. A repository of any language works the same way. The
-`riff.toml` of riff sets the build cache of riff: the cargo home,
-sccache, and their two volumes. To write the tables, see
+`riff.toml` of riff runs each session on Opus with `ANTHROPIC_MODEL`.
+It also sets the build cache of riff: the cargo home, sccache, and their
+two volumes. To write the tables, see
 [Set the env and the volumes of a session](development.md#set-the-env-and-the-volumes-of-a-session).
 
 ## Find a command
