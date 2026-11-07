@@ -35,7 +35,9 @@
 //!   sent (01M6VG1PA4PM47777ZT4PNGETF).
 //! - **The note line** says whom the line will wake before you send it
 //!   ([`wake_note`]), with the rules of `riff chat`
-//!   (01M6VG1PCXHNVJP7TSP0J5G5K9).
+//!   (01M6VG1PCXHNVJP7TSP0J5G5K9). A post that fails shows there at
+//!   once, before that note, until the next key
+//!   (01M6VMACJGF4A0ZXC6YK13KNCH).
 //! - **News:** each new line of the thread while another tab shows
 //!   adds one to `Chat•N` in the strip (01M6VG1PFPMHRQ4F9XHJTYMSJY).
 //!
@@ -98,8 +100,8 @@ const WHEEL: u16 = 3;
 /// The style of the time, the rules and a dim prompt.
 const DIM: Style = Style::new().add_modifier(Modifier::DIM);
 
-/// The style of a warning: a line that the chat will not send, the lost
-/// lines.
+/// The style of a warning: a line that the chat will not send or could
+/// not send, the lost lines.
 const WARNING: Style = Style::new().fg(Color::Yellow);
 
 /// The style of a fault of the stream.
@@ -471,6 +473,9 @@ pub struct Chat {
     pub(super) window: Window,
     /// Why the stream of the thread is down, while it is.
     down: Option<Down>,
+    /// The note of a post that failed, until the next key
+    /// (01M6VMACJGF4A0ZXC6YK13KNCH).
+    pub(super) unsent: Option<String>,
 }
 
 impl Chat {
@@ -507,6 +512,12 @@ impl Chat {
     /// Why the stream is down, while it is.
     pub fn down(&self) -> Option<&Down> {
         self.down.as_ref()
+    }
+
+    /// The note of a post that failed, until the next key: it comes
+    /// before the note of the prompt (01M6VMACJGF4A0ZXC6YK13KNCH).
+    pub fn unsent(&self) -> Option<&str> {
+        self.unsent.as_deref()
     }
 
     /// Adds `entry` to the end of the log. While the person looks at
@@ -666,11 +677,13 @@ impl State {
     /// Takes what [`Link`] gave. A new line while another tab shows adds
     /// one to the news of the Chat tab: `Chat•N`
     /// (01M6VAZK1R932VQMJBC32MTTJB). A line that the post of a line
-    /// could not send goes in the note line.
+    /// could not send goes in the note line at once: until the next key,
+    /// it comes before the note of the prompt
+    /// (01M6VMACJGF4A0ZXC6YK13KNCH).
     ///
     /// ```
-    /// use riff::tui::chat::{Came, Entry};
-    /// use riff::tui::{News, State, Tab};
+    /// use riff::tui::chat::{Came, Entry, Key};
+    /// use riff::tui::{Key as Frame, News, State, Tab};
     /// use riff_client::threads::Line;
     /// use riff_core::build::Build;
     /// use riff_core::wire::Kind;
@@ -698,9 +711,13 @@ impl State {
     /// state.chat_came(came(7_000));
     /// assert_eq!(state.news_of(Tab::Chat), Some(News::Lines(2)));
     /// assert_eq!(state.chat().entries().count(), 3);
-    /// // A line that riff could not send goes in the note line.
+    /// // A line that riff could not send goes in the note line. Until
+    /// // the next key, it comes before the note of the prompt.
     /// state.chat_came(Came::Unsent("riff: cannot send the line: no".into()));
     /// assert_eq!(state.shown_note(), Some("riff: cannot send the line: no"));
+    /// assert_eq!(state.chat().unsent(), Some("riff: cannot send the line: no"));
+    /// state.on_key(Frame::Chat(Key::Type('a')));
+    /// assert_eq!(state.chat().unsent(), None);
     /// ```
     pub fn chat_came(&mut self, came: Came) {
         match came {
@@ -719,7 +736,10 @@ impl State {
             Came::Up => self.chat.down = None,
             Came::Reconnecting => self.chat.down = Some(Down::Reconnecting),
             Came::Fault(fault) => self.chat.down = Some(Down::Fault(fault)),
-            Came::Unsent(text) => self.note(text),
+            Came::Unsent(text) => {
+                self.chat.unsent = Some(text.clone());
+                self.note(text);
+            }
         }
     }
 
@@ -901,10 +921,14 @@ fn whom(to: &[Selector], user: &str) -> String {
     }
 }
 
-/// The note of the Chat tab: whom the line in the prompt will wake, with
-/// its style, while the prompt holds a line.
+/// The note of the Chat tab, with its style: a post that failed after
+/// the last key, else whom the line in the prompt will wake, while the
+/// prompt holds a line (01M6VMACJGF4A0ZXC6YK13KNCH).
 pub(super) fn note(state: &State) -> Option<Row<'static>> {
     let chat = &state.chat;
+    if let Some(unsent) = &chat.unsent {
+        return Some(Row::styled(safe(unsent), WARNING));
+    }
     let user = chat.user.as_deref()?;
     let text = chat.prompt.text();
     let names_repo = wakes(text, user).iter().any(|s| s.repo.is_some());
@@ -1249,8 +1273,9 @@ mod tests {
     use riff_core::build::Build;
     use riff_core::wire::{Kind, RiffOwner};
 
-    /// The time of the screen tests: 13:20 on the day of the mock-up.
-    const NOW: i64 = 1_762_435_200_000;
+    /// The time of the screen tests: 13:20 UTC on 2026-11-06, the day of
+    /// the mock-up.
+    const NOW: i64 = 1_793_971_200_000;
 
     fn build(id: &str) -> Build {
         format!("0.1.0 {id} 2026-11-06T12:00:00Z").parse().unwrap()
@@ -1513,6 +1538,34 @@ mod tests {
         let (_, view) = drawn(&mut state, 80, 24);
         assert_eq!(view.hit(2, 23), Some(FrameKey::Chat(Key::Send)));
         assert_eq!(view.hit(14, 23), Some(FrameKey::Chat(Key::Log)));
+    }
+
+    /// A post that fails while the prompt holds a line shows at once in
+    /// the note line, before the note of the wake. The next key brings
+    /// back the note of the wake (01M6VMACJGF4A0ZXC6YK13KNCH).
+    #[test]
+    fn a_post_that_fails_while_the_prompt_holds_a_line_shows_until_the_next_key() {
+        let mut state = mock_up();
+        type_in(&mut state, "@lead:riff what is next?");
+        let failed = "riff: cannot send the line: cannot reach riff-server";
+        state.chat_came(Came::Unsent(failed.into()));
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[21], "> @lead:riff what is next?");
+        assert_eq!(rows[22], format!(" {failed}"));
+        let note = &view.rows.iter().find(|r| r.area.y == 22).unwrap().line;
+        assert_eq!(note.style, WARNING);
+        // The next key brings back the note of the wake.
+        state.on_key(FrameKey::Chat(Key::End));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(
+            rows[22],
+            " Enter wakes your lead in como-technologies/riff."
+        );
+        // With an empty prompt, the failure is the result of the last
+        // action.
+        state.on_key(FrameKey::Chat(Key::Clear));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[22], format!(" {failed}"));
     }
 
     /// PgUp shows older rows and PgDn newer, in the window of the last

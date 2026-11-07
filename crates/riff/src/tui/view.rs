@@ -286,11 +286,12 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
     view
 }
 
-/// The note line (01M6VFGYW0XVJ5JSX6R1NCR6W7): a question of the TUI
+/// The note line (01M6VMACJGF4A0ZXC6YK13KNCH): a question of the TUI
 /// (01M6VFD0S90SB8M8WV952NT4Y1), else the fault of the link, else in
-/// the Chat tab whom the line in the prompt will wake, else the note of
-/// the last action, else in the Waves tab the age of its last read of
-/// `gh`.
+/// the Chat tab a post that failed after the last key or whom the line
+/// in the prompt will wake ([`chat::note`]), else the note of the last
+/// action, else in the Waves tab the age of its last read of `gh`
+/// (01M6VFGYW0XVJ5JSX6R1NCR6W7).
 fn note_line(state: &State, now_ms: i64) -> Option<Line<'static>> {
     if let Some(asked) = state.asked() {
         return Some(Line::styled(text::safe(&asked), ACTIVE));

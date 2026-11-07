@@ -534,3 +534,76 @@ async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));
 }
+
+/// 01M6VMACJGF4A0ZXC6YK13KNCH: a post of the Chat tab that fails while
+/// the prompt holds a line shows `cannot send the line` in the note line
+/// at once. The next key brings back the note of the wake. The server
+/// holds the post of the line `this line fails` until the test types the
+/// next line, then it refuses the post.
+#[tokio::test]
+async fn a_post_that_fails_while_the_prompt_holds_a_line_shows_until_the_next_key() {
+    use axum::body::{Body, to_bytes};
+    use axum::extract::Request;
+    use axum::http::StatusCode;
+    use axum::middleware::{Next, from_fn};
+    use axum::response::Response;
+
+    let go = Arc::new(tokio::sync::Notify::new());
+    let gate = Arc::clone(&go);
+    let server = crate::common::start_signed_with(move |router| {
+        router.layer(from_fn(move |request: Request, next: Next| {
+            let gate = Arc::clone(&gate);
+            async move {
+                let (head, body) = request.into_parts();
+                let bytes = to_bytes(body, usize::MAX).await.unwrap();
+                let fails = head.uri.path() == "/v1/post"
+                    && serde_json::from_slice::<serde_json::Value>(&bytes)
+                        .is_ok_and(|post| post["body"] == "this line fails");
+                if fails {
+                    gate.notified().await;
+                    return Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header(
+                            riff_core::build::HEADER,
+                            riff_core::build::Build::this().to_string(),
+                        )
+                        .header(riff_core::wire::REFUSED_HEADER, "bad_request")
+                        .body(Body::from("no post now"))
+                        .unwrap();
+                }
+                next.run(Request::from_parts(head, Body::from(bytes))).await
+            }
+        }))
+    })
+    .await;
+
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("2").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    tty.press("this line fails\r").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    tty.press("hi all").await;
+    tty.shows(|rows| rows[22] == " Enter wakes each lead of yours.")
+        .await;
+
+    // The post fails while the prompt holds a line: the failure shows.
+    go.notify_one();
+    let rows = tty
+        .shows(|rows| rows[22].starts_with(" riff: cannot send the line:"))
+        .await;
+    assert_eq!(
+        rows[22],
+        " riff: cannot send the line: post failed (400 Bad Request): no post now"
+    );
+    assert_eq!(rows[21], "> hi all", "{rows:#?}");
+
+    // The next key brings back the note of the wake.
+    tty.press("!").await;
+    let rows = tty
+        .shows(|rows| rows[22] == " Enter wakes each lead of yours.")
+        .await;
+    assert_eq!(rows[21], "> hi all!", "{rows:#?}");
+    tty.press("\x03").await;
+    assert_eq!(tty.exits().await, Some(0));
+}

@@ -1869,7 +1869,7 @@ mod tests {
         assert!(drawn(&state, 80, 24)[0].contains("3 Waves•"));
     }
 
-    /// 01M6VFGYW0XVJ5JSX6R1NCR6W7, 01M6VFGK4P2FWMFQHBZKR3JXSZ: a read of
+    /// 01M6VMACJGF4A0ZXC6YK13KNCH, 01M6VFGK4P2FWMFQHBZKR3JXSZ: a read of
     /// `gh` that fails names the error in the note line once, keeps the
     /// board, and a question shows over the fault of the link.
     #[test]
