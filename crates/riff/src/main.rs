@@ -23,7 +23,11 @@ use riff_core::wire::{Kind, PullState, RiffState, Status, StepChange};
 
 /// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
-#[command(version = riff_core::build::VERSION, about)]
+#[command(
+    version = riff_core::build::VERSION,
+    about,
+    before_help = "With no command, in a terminal, riff starts the TUI."
+)]
 struct Cli {
     // `riff help server` shows the long text (01M3NT228WA11PGNWDJ0WP7PQD).
     // riff reads RIFF_SERVER itself, not with the `env` of clap: so a
@@ -43,8 +47,10 @@ struct Cli {
     #[arg(long, global = true, hide = true, value_parser = identity::place_from_text)]
     place: Option<Place>,
 
+    // With no command, in a terminal, riff starts the TUI
+    // (01M6VAZ7WH3MFAYF4PAZW6EDVY).
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -1663,9 +1669,21 @@ async fn cli() -> Result<()> {
     riff::platform::install();
     let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
     let cli = Cli::from_arg_matches(&matches)?;
+    // With no command: the TUI in a terminal, else the help
+    // (01M6VAZ7WH3MFAYF4PAZW6EDVY).
+    let Some(command) = cli.command else {
+        use std::io::IsTerminal;
+        if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+            help::exit_with_help(help::grouped(Cli::command(), help::GROUPS));
+        }
+        if let Err(line) = local::secure_here() {
+            eprintln!("{line}");
+        }
+        return tui_command(cli.server.as_deref(), cli.place.as_ref()).await;
+    };
     // A closed pipe on stdout ends a command quietly
     // (01M5MRG35BYRGZYD4VQVV8ZTYX).
-    if !cli.command.serves() {
+    if !command.serves() {
         riff_core::pipe::end_quietly();
     }
     use_color(cli.color);
@@ -1673,11 +1691,11 @@ async fn cli() -> Result<()> {
     if let Err(line) = local::secure_here() {
         eprintln!("{line}");
     }
-    if let Command::ClaudeToken = cli.command {
+    if let Command::ClaudeToken = command {
         println!("{}", riff::claude_token::run(&riff::daemon::dir()?)?);
         return Ok(());
     }
-    if let Command::Image { check } = cli.command {
+    if let Command::Image { check } = command {
         let dir = std::env::current_dir().context("cannot read the current folder")?;
         let image = riff::session_image::of_folder(&dir)?;
         if !check {
@@ -1697,13 +1715,13 @@ async fn cli() -> Result<()> {
         }
         return Ok(());
     }
-    if let Command::Daemon { command } = &cli.command {
+    if let Command::Daemon { command } = &command {
         return daemon_command(command.as_ref(), cli.server.as_deref()).await;
     }
-    if let Command::Ps = cli.command {
+    if let Command::Ps = command {
         return ps_command().await;
     }
-    if let Command::Init { check, yes, image } = cli.command {
+    if let Command::Init { check, yes, image } = command {
         use riff::first_run::Mode;
         let image = image
             .map(|text| text.parse::<riff::session_image::Image>())
@@ -1723,20 +1741,20 @@ async fn cli() -> Result<()> {
         terminal,
         session,
         command,
-    } = cli.command
+    } = command
     {
         return relay_command(terminal, session, command).await;
     }
-    if let Command::View { host: None } = cli.command {
+    if let Command::View { host: None } = command {
         return view_command().await;
     }
-    if let Command::View { host: Some(host) } = &cli.command {
+    if let Command::View { host: Some(host) } = &command {
         let (server, _) = server_of(cli.server.as_deref())?;
         let here = identity::place(&identity::working_dir()?)?;
         let (api, me) = daemon_asker(&here, &server)?;
         return riff::screen::view_host(&api, &me, host).await;
     }
-    if let Command::Takeover { name, at_end } = &cli.command {
+    if let Command::Takeover { name, at_end } = &command {
         let code = riff::takeover::here(name, *at_end).await?;
         if code != 0 {
             std::process::exit(code);
@@ -1747,7 +1765,7 @@ async fn cli() -> Result<()> {
     // In a container, the socket of the session reaches riff-server
     // (01M5GVPNAKAPA596K9361HSAAV).
     let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
-    if let Command::Server = cli.command {
+    if let Command::Server = command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
         anstream::println!("{}", text::server_view(&view));
         return Ok(());
@@ -1758,7 +1776,7 @@ async fn cli() -> Result<()> {
         check,
         background,
         cargo,
-    } = &cli.command
+    } = &command
     {
         if *check {
             std::process::exit(update_check().await?);
@@ -1785,25 +1803,25 @@ async fn cli() -> Result<()> {
         println!("{words}");
         return Ok(());
     }
-    if let Command::Usage { issue, wave, total } = &cli.command {
+    if let Command::Usage { issue, wave, total } = &command {
         print!("{}", usage_text(issue.as_deref(), wave.as_deref(), *total)?);
         return Ok(());
     }
-    if let Command::Setup { check } = cli.command {
+    if let Command::Setup { check } = command {
         return setup(check);
     }
-    if let Command::Build { .. } = &cli.command {
+    if let Command::Build { .. } = &command {
         riff::release_config::require(&identity::working_dir()?)?;
     }
     if let Command::Build {
         host: Some(host), ..
-    } = &cli.command
+    } = &command
     {
         let request = riff::daemon::remote::Request::Build;
         let here = identity::place(&identity::working_dir()?)?;
         return ask_daemon(host, &request, &here, &reach).await;
     }
-    if let Command::Build { just, .. } = &cli.command {
+    if let Command::Build { just, .. } = &command {
         let home = std::env::var_os("HOME")
             .filter(|h| !h.is_empty())
             .context("riff cannot find your home: HOME is not set")?;
@@ -1815,19 +1833,19 @@ async fn cli() -> Result<()> {
         println!("{}", riff.display());
         return Ok(());
     }
-    if let Command::Cloud { command } = &cli.command {
+    if let Command::Cloud { command } = &command {
         return cloud(command, &server).await;
     }
     if let Command::Release {
         cycle: Some(command),
         ..
-    } = &cli.command
+    } = &command
     {
         return release_cycle(command, &server, &reach).await;
     }
     if let Command::Pr {
         command: Pr::Wait { number, every },
-    } = &cli.command
+    } = &command
     {
         eprintln!("{}", text::pr_waits(*number));
         let every = Duration::from_secs(*every);
@@ -1849,7 +1867,7 @@ async fn cli() -> Result<()> {
         }
         return Ok(());
     }
-    if let Command::Wave { command } = &cli.command {
+    if let Command::Wave { command } = &command {
         let gh = pr::Gh::here("waves");
         let line = match command {
             WaveCommand::Make { title } => {
@@ -1886,7 +1904,7 @@ async fn cli() -> Result<()> {
         }
     }
     let api = Api::new(&server);
-    match &cli.command {
+    match &command {
         Command::Login => {
             let sign_in = login::login(&api, open_browser).await?;
             println!("{}", text::signed_in(&sign_in.user, api.base()));
@@ -2006,7 +2024,7 @@ async fn cli() -> Result<()> {
     // In a container, the control socket of the daemon is not there: the
     // daemon runs the item as a job of the wave, through the socket of the
     // session (#1338). Only the lead may.
-    if let (Command::Run { item, image }, Reach::Daemon(_)) = (&cli.command, &reach) {
+    if let (Command::Run { item, image }, Reach::Daemon(_)) = (&command, &reach) {
         if image.is_some() {
             anyhow::bail!("{}", text::RUN_IMAGE_ON_HOST);
         }
@@ -2017,7 +2035,7 @@ async fn cli() -> Result<()> {
     riff::auto_update::remember(&here);
     // `riff run` is a session of its own, not the session that runs it
     // (01M4Z81APKC14AVNJWCGRQKNVW).
-    if let Command::Run { item, image } = &cli.command {
+    if let Command::Run { item, image } = &command {
         let server = api.base().to_owned();
         let code = riff::run::run(api, &here, &server, item, image.as_deref()).await?;
         std::process::exit(code);
@@ -2025,7 +2043,7 @@ async fn cli() -> Result<()> {
     if let Command::Lead {
         command: Some(LeadCommand::Start),
         ..
-    } = &cli.command
+    } = &command
     {
         let server = api.base().to_owned();
         return riff::lead::start(api, &here, &server).await;
@@ -2033,7 +2051,7 @@ async fn cli() -> Result<()> {
     if let Command::Lead {
         command: Some(LeadCommand::Move { host }),
         ..
-    } = &cli.command
+    } = &command
     {
         let (api, me) = daemon_asker(&here, api.base())?;
         match riff::lead::move_to(&api, &me, host, riff::lead::HANDOVER_WAIT).await {
@@ -2056,7 +2074,7 @@ async fn cli() -> Result<()> {
                 user,
             }),
         ..
-    } = &cli.command
+    } = &command
     {
         let thread = thread_or_default(thread.clone(), &here)?;
         let me = person(&api)?;
@@ -2069,17 +2087,17 @@ async fn cli() -> Result<()> {
     if let Command::Lead {
         command: Some(LeadCommand::Stop { host }),
         ..
-    } = &cli.command
+    } = &command
     {
         return lead_stop_command(host.as_deref(), &here, &reach, api.base()).await;
     }
-    if let Command::Join { host } = &cli.command {
+    if let Command::Join { host } = &command {
         return join_command(host.as_deref(), &here, &reach, api.base()).await;
     }
-    if let Command::Leave { host, now } = &cli.command {
+    if let Command::Leave { host, now } = &command {
         return leave_command(host.as_deref(), *now, &here, &reach).await;
     }
-    if let Command::Wave { command } = &cli.command {
+    if let Command::Wave { command } = &command {
         match command {
             WaveCommand::List { fresh } => wave_list(&reach, &here, *fresh).await?,
             WaveCommand::Move { items, to } => wave_move(&reach, &here, items, to).await?,
@@ -2102,7 +2120,7 @@ async fn cli() -> Result<()> {
         anyhow::bail!(riff_client::text::LEFT_COMMAND);
     }
     let api = api.signed_in(me.who().session())?;
-    match cli.command {
+    match command {
         Command::Whoami => {
             // In a container, the daemon reads for the session (#1338).
             let seen = match &reach {
@@ -3996,6 +4014,30 @@ fn forget_wave_list() {
     }
 }
 
+/// `riff` with no command, in a terminal: the TUI
+/// (01M6VAZ7WH3MFAYF4PAZW6EDVY). It finds the session and the sign-in
+/// as `riff top` does, so an error of the start prints as in the CLI.
+async fn tui_command(server: Option<&str>, place: Option<&Place>) -> Result<()> {
+    let (server, _) = server_of(server)?;
+    let api = Api::new(&server);
+    let here = identity::here(place)?;
+    let me = identity::me(&here, api.base())?;
+    // A session that left makes no call (01M3MEEFETT9A0DRWBKQTG77Z2).
+    if let Some(id) = me.who().session()
+        && local::left_here(id)
+    {
+        anyhow::bail!(riff_client::text::LEFT_COMMAND);
+    }
+    let api = api.signed_in(me.who().session())?;
+    // 01M6VAZKG8FS4HEA9VSA4Z4YF1: the mouse is on, also with no
+    // settings file.
+    let mouse = match settings::path() {
+        Ok(path) => settings::tui_mouse(&path)?,
+        Err(_) => true,
+    };
+    riff::tui::run(&api, &me, mouse).await
+}
+
 /// Draws [`riff::top::Top`] once, or again every
 /// [`riff::top::REFRESH`] and after each message of `thread` until
 /// stopped (01M3NB54P1RBHTA5TKXP8BMY3K). It makes only read calls
@@ -4169,6 +4211,22 @@ mod tests {
         Cli::command().debug_assert();
     }
 
+    /// 01M6VAZ7WH3MFAYF4PAZW6EDVY: `riff` with no command parses, also
+    /// with only the global options: in a terminal, it starts the TUI.
+    #[test]
+    fn riff_with_only_the_global_options_has_no_command() {
+        use clap::Parser;
+        for args in [
+            &["riff"][..],
+            &["riff", "--server", "127.0.0.1:9"],
+            &["riff", "--color", "never"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            assert!(cli.command.is_none(), "{args:?}");
+            assert_eq!(cli.server.is_some(), args.contains(&"--server"));
+        }
+    }
+
     /// Only `riff daemon` and `riff relay` serve. Each other command
     /// ends quietly at a closed pipe (01M5MRG35BYRGZYD4VQVV8ZTYX).
     #[test]
@@ -4178,7 +4236,7 @@ mod tests {
             Cli::try_parse_from(args.iter().copied())
                 .unwrap()
                 .command
-                .serves()
+                .is_some_and(|command| command.serves())
         };
         assert!(serves(&["riff", "daemon"]));
         assert!(serves(&["riff", "relay", "--", "claude"]));
@@ -4205,7 +4263,7 @@ mod tests {
                 args.push("stage");
             }
             let parsed = Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
-            let super::Command::Cloud { command } = parsed.command else {
+            let Some(super::Command::Cloud { command }) = parsed.command else {
                 panic!("{args:?}: not riff cloud");
             };
             if command.writes() {

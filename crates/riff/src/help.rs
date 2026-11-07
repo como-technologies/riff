@@ -9,12 +9,17 @@
 //! A hidden subcommand, for example a step that only riff runs, is in no
 //! group. `riff help CMD` still shows it.
 //!
+//! The `before_help` of the command comes after the usage line: for
+//! `riff`, the line that says that `riff` with no command starts the TUI
+//! (01M6VAZ7WH3MFAYF4PAZW6EDVY).
+//!
 //! ```
 //! use clap::Command;
 //! use riff::help::{Group, grouped};
 //!
 //! let cmd = Command::new("tool")
 //!     .about("A tool")
+//!     .before_help("With no command, tool waits.")
 //!     .subcommand(Command::new("go").about("Go now"))
 //!     .subcommand(Command::new("stop").about("Stop at once"))
 //!     .subcommand(Command::new("hook").about("Plumbing").hide(true));
@@ -22,6 +27,7 @@
 //! let help = grouped(cmd, &groups).render_help().to_string();
 //! assert!(help.contains("Move:\n  go    Go now\n  stop  Stop at once\n"));
 //! assert!(!help.contains("hook"));
+//! assert!(help.contains("\n\nWith no command, tool waits.\n\nMove:\n"), "{help}");
 //! ```
 
 use std::ffi::OsString;
@@ -125,6 +131,10 @@ pub fn grouped(cmd: Command, groups: &[Group]) -> Command {
         template,
         "{{about-with-newline}}\n{{usage-heading}} {{usage}}\n"
     );
+    // The line of `riff` with no command (01M6VAZ7WH3MFAYF4PAZW6EDVY).
+    if let Some(before) = cmd.get_before_help() {
+        let _ = write!(template, "\n{before}\n");
+    }
     for group in groups {
         let _ = write!(template, "\n{header}{}:{header:#}\n", group.heading);
         for name in group.commands {
@@ -145,18 +155,20 @@ pub fn grouped(cmd: Command, groups: &[Group]) -> Command {
 }
 
 /// Parse the arguments of this process with `cmd`. See [`try_matches`].
-/// With no argument at all, show the help on stderr and exit with 2.
-pub fn matches(mut cmd: Command) -> ArgMatches {
-    if std::env::args_os().len() == 1 {
-        let help = cmd.render_help();
-        if std::io::stderr().is_terminal() {
-            eprint!("{}", help.ansi());
-        } else {
-            eprint!("{help}");
-        }
-        std::process::exit(2);
-    }
+pub fn matches(cmd: Command) -> ArgMatches {
     try_matches(cmd, std::env::args_os()).unwrap_or_else(|e| e.exit())
+}
+
+/// Show the help of `cmd` on stderr and exit with 2: `riff` with no
+/// command and no terminal (01M6VAZ7WH3MFAYF4PAZW6EDVY).
+pub fn exit_with_help(mut cmd: Command) -> ! {
+    let help = cmd.render_help();
+    if std::io::stderr().is_terminal() {
+        eprint!("{}", help.ansi());
+    } else {
+        eprint!("{help}");
+    }
+    std::process::exit(2);
 }
 
 /// Parse `args` with `cmd`. With no subcommand, the error names no

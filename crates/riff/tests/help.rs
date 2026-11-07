@@ -305,30 +305,40 @@ fn the_server_help_is_short_and_riff_help_server_has_the_long_text() {
     }
 }
 
+/// 01M6VAZ7WH3MFAYF4PAZW6EDVY: with no terminal, `riff` with no
+/// command prints the help on stderr and exits with 2, also with only
+/// the global options. The help names no hidden command.
 #[test]
-fn riff_with_no_command_names_no_hidden_command() {
+fn riff_with_no_command_and_no_terminal_prints_the_help() {
+    let help = riff(&["--help"]);
     for args in [&[][..], &["--server", "127.0.0.1:9"]] {
         let out = Isolated::shared().riff().args(args).output().unwrap();
         assert_eq!(out.status.code(), Some(2), "riff {args:?}: {out:?}");
+        assert!(out.stdout.is_empty(), "riff {args:?}: {out:?}");
         let err = String::from_utf8(out.stderr).unwrap();
         for name in REMOVED {
             assert!(!err.contains(name), "riff {args:?}: {name}: {err}");
         }
         assert!(!err.contains("[subcommands:"), "riff {args:?}: {err}");
+        assert!(err.contains("Get started:\n"), "riff {args:?}: {err}");
+        assert_eq!(err.lines().count(), help.lines().count(), "{err}");
     }
-    let out = Isolated::shared().riff().output().unwrap();
-    let help = String::from_utf8(out.stderr).unwrap();
-    assert!(help.contains("Get started:\n"), "{help}");
-    let out = Isolated::shared()
-        .riff()
-        .args(["--server", "127.0.0.1:9"])
-        .output()
-        .unwrap();
-    let err = String::from_utf8(out.stderr).unwrap();
-    assert_eq!(
-        err,
-        "error: name a command. Run 'riff --help' to list them.\n"
-    );
+}
+
+/// 01M54216E2GY49GFV5SNPWTBEB: `riff --help` says that `riff` with no
+/// command starts the TUI.
+#[test]
+fn the_help_says_that_riff_with_no_command_starts_the_tui() {
+    for args in [&["--help"][..], &["-h"], &["help"]] {
+        let help = riff(args);
+        assert!(
+            help.contains(
+                "\nUsage: riff [OPTIONS] [COMMAND]\n\n\
+                 With no command, in a terminal, riff starts the TUI.\n\nGet started:\n"
+            ),
+            "riff {args:?}: {help}"
+        );
+    }
 }
 
 /// The words of `text` on one line, with no backticks.

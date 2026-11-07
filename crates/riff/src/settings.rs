@@ -28,6 +28,7 @@
 //! | `lead.wake` | 15 | The minutes that a block waits for an answer before riff wakes the lead again, and again before riff tells the person (see [`crate::look`], 01M41FZQ545HQ9Q75CSKX8HF8H). |
 //! | `lead.notify` | true | riff shows a block with no answer of the lead in a desktop notification on the machine of the lead (01M41FZQKZKW131Z8822G31T5G). |
 //! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` asks a person once when the key is missing (see [`ask_update_auto`]). |
+//! | `tui.mouse` | true | The TUI takes the mouse (see [`tui`](crate::tui), 01M6VAZKG8FS4HEA9VSA4Z4YF1). |
 
 use std::path::{Path, PathBuf};
 
@@ -203,6 +204,30 @@ pub fn lead_notify(path: &Path) -> Result<bool> {
     notify
         .as_bool()
         .with_context(|| format!("lead.notify in {} is not true or false", path.display()))
+}
+
+/// True when the TUI takes the mouse: `tui.mouse`
+/// (01M6VAZKG8FS4HEA9VSA4Z4YF1). True when the file or the key is
+/// missing.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert!(riff::settings::tui_mouse(&path)?);
+/// std::fs::write(&path, "[tui]\nmouse = false\n")?;
+/// assert!(!riff::settings::tui_mouse(&path)?);
+/// std::fs::write(&path, "[tui]\nmouse = \"off\"\n")?;
+/// assert!(riff::settings::tui_mouse(&path).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn tui_mouse(path: &Path) -> Result<bool> {
+    let doc = read(path)?;
+    let Some(mouse) = doc.get("tui").and_then(|t| t.get("mouse")) else {
+        return Ok(true);
+    };
+    mouse
+        .as_bool()
+        .with_context(|| format!("tui.mouse in {} is not true or false", path.display()))
 }
 
 /// The question about `update.auto` on a new machine.
