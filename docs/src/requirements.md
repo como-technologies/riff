@@ -7201,6 +7201,42 @@ that builds it merges.
   ends with `y/N`. `y` does the action. `q` and `Ctrl-C` end the TUI.
   Each other key, also `Esc`, answers no: the TUI does nothing, and the
   note line says so.
+- **01M6VG1P7BH32E5YAP0GJSNJJP** The Chat tab of the TUI shows the
+  thread `chat` as `riff chat` does: the newest lines, a rule with the
+  day before the first line of each day, and a prompt. A person shows as
+  `<USER@HOST>`, a lead as `[USER's lead, REPO]`, and an action as `*
+  USER@HOST TEXT`. A long line wraps, and each more row starts under the
+  sender. The row under the header names the people who are online and
+  away. `riff chat` stays.
+- **01M6VG1PA4PM47777ZT4PNGETF** The prompt of the Chat tab has the
+  focus when you open the tab. In the prompt, each key that types a
+  character types it, also `1` to `6`, `q`, `r` and `?`. There `Alt-1`
+  to `Alt-6`, `Tab` and `Shift-Tab` open a tab, and `Ctrl-C` ends the
+  TUI. `Esc` moves the focus to the log, where the keys of the frame
+  work and `?` shows the keys of the Chat tab. `i` or `Enter` gives the
+  focus back to the prompt. `↑` and `↓` in the prompt show the lines
+  that you sent. `PgUp` and `PgDn` show older and newer lines.
+  Supersedes 01M6VAZJYYQZDHD6YDB0NBQ7KW and 01M6VAZKDEQ6951KGPGAMF1SNJ
+  in part.
+- **01M6VG1PCXHNVJP7TSP0J5G5K9** A line of the Chat tab has the rules of
+  `riff chat`, with the same code: `/me TEXT` sends an action, `/quit`
+  ends the TUI, `//` starts a line with `/`, and the line wakes the
+  leads that `riff chat` wakes. The Chat tab posts as the person,
+  `USER@HOST`, also when the TUI runs in a session. While the prompt
+  holds a line, the note line says whom `Enter` will wake. A line with a
+  command that the chat does not know, or that names a lead that fits no
+  lead or two leads of the last look, is not sent: it stays in the
+  prompt, and the note line says why. Supersedes
+  01M6VAZKDEQ6951KGPGAMF1SNJ in part.
+- **01M6VG1PFPMHRQ4F9XHJTYMSJY** The TUI follows the thread `chat` from
+  its start, also while another tab shows, as `riff chat` does: after a
+  break of the stream, it shows each line of the break one time. Each
+  new line while another tab shows adds one to `Chat•N`. A line from
+  before the start of the TUI is no news. While the stream is down, the
+  row under the header of the Chat tab says `(reconnecting…)`.
+- **01M6VG1PJDWE523TR9X9WJ5VXG** The rules of whom a line of the chat
+  wakes, `wakes` and `resolve`, are in `riff-client`. `riff chat` and
+  the Chat tab of the TUI share them.
 
 ## The notes of the lead
 

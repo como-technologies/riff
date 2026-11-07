@@ -4028,6 +4028,11 @@ async fn tui_command(server: Option<&str>, place: Option<&Place>) -> Result<()> 
     {
         anyhow::bail!(riff_client::text::LEFT_COMMAND);
     }
+    // The Chat tab posts as the person, as `riff chat` does.
+    let person = riff::tui::chat::Person {
+        me: identity::person(&Place::host_only(here.host())?, api.base())?,
+        api: api.clone().signed_in(None)?,
+    };
     let api = api.signed_in(me.who().session())?;
     // 01M6VAZKG8FS4HEA9VSA4Z4YF1: the mouse is on, also with no
     // settings file.
@@ -4035,7 +4040,7 @@ async fn tui_command(server: Option<&str>, place: Option<&Place>) -> Result<()> 
         Ok(path) => settings::tui_mouse(&path)?,
         Err(_) => true,
     };
-    riff::tui::run(&api, &me, mouse).await
+    riff::tui::run(&api, &me, &person, mouse).await
 }
 
 /// Draws [`riff::top::Top`] once, or again every

@@ -50,7 +50,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Widget};
 use riff_core::wire::RiffOwner;
 
-use super::{Key, State, Tab};
+use super::{Key, State, Tab, chat};
 use crate::text;
 
 /// The fewest columns of the wide layout.
@@ -145,6 +145,12 @@ pub struct View {
     /// The places that a click hits. The first place that holds a
     /// point wins.
     pub hits: Vec<Hit>,
+    /// The place of the cursor of the terminal: the prompt of the Chat
+    /// tab. `None` hides the cursor.
+    pub cursor: Option<Position>,
+    /// The window of the log of the Chat tab, while it shows
+    /// ([`State::drawn`](super::State::drawn)).
+    pub chat: Option<chat::Window>,
 }
 
 impl View {
@@ -219,45 +225,36 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
         line: header(state, layout, now_ms),
     });
 
-    let body = Rect::new(area.x, area.y + 2, area.width, area.height - 4);
-    if state.tab() == Tab::Machines {
-        let (rows, hits) = super::machines::body(state, body, layout, now_ms);
-        view.rows.extend(rows);
-        view.hits.extend(hits);
-    } else {
-        for (line, y) in body_lines(state.tab(), area.width - margin)
-            .into_iter()
-            .zip(2..area.height - 2)
-        {
-            view.rows.push(Placed { area: row(y), line });
+    match state.tab() {
+        Tab::Machines => {
+            let body = Rect::new(area.x, area.y + 2, area.width, area.height - 4);
+            let (rows, hits) = super::machines::body(state, body, layout, now_ms);
+            view.rows.extend(rows);
+            view.hits.extend(hits);
+        }
+        Tab::Chat => chat::place(state, area, layout, &mut view),
+        tab => {
+            let body = 2..area.height - 2;
+            for (line, y) in body_lines(tab, area.width - margin).into_iter().zip(body) {
+                view.rows.push(Placed { area: row(y), line });
+            }
         }
     }
 
-    // A question comes before the fault and the note
-    // (01M6VFD0S90SB8M8WV952NT4Y1).
-    if let Some(asked) = state.asked() {
+    if let Some(line) = note_line(state) {
         view.rows.push(Placed {
             area: row(area.height - 2),
-            line: Line::styled(text::safe(&asked), ACTIVE),
-        });
-    } else if let Some(note) = state.shown_note() {
-        let style = if state.fault().is_some() {
-            ERROR
-        } else {
-            Style::new()
-        };
-        view.rows.push(Placed {
-            area: row(area.height - 2),
-            line: Line::styled(text::safe(note), style),
+            line,
         });
     }
     let keys = row(area.height - 1);
-    let (line, hits) = key_line(state.tab(), layout, keys);
+    let (line, hits) = key_line(keys_of(state, layout), keys);
     view.rows.push(Placed { area: keys, line });
     view.hits.extend(hits);
 
     if state.help_shown() {
         view.popup = Some(popup(state.tab(), area, layout));
+        view.cursor = None;
         // A click closes the popup, wherever it hits.
         view.hits = vec![Hit {
             area,
@@ -265,6 +262,25 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
         }];
     }
     view
+}
+
+/// The note line (01M6VAZKDEQ6951KGPGAMF1SNJ): a question of the TUI
+/// (01M6VFD0S90SB8M8WV952NT4Y1), else the fault of the link, else in
+/// the Chat tab whom the line in the prompt will wake, else the note of
+/// the last action.
+fn note_line(state: &State) -> Option<Line<'static>> {
+    if let Some(asked) = state.asked() {
+        return Some(Line::styled(text::safe(&asked), ACTIVE));
+    }
+    if let Some(fault) = state.fault() {
+        return Some(Line::styled(text::safe(fault), ERROR));
+    }
+    if state.tab() == Tab::Chat
+        && let Some(line) = chat::note(state)
+    {
+        return Some(line);
+    }
+    state.shown_note().map(|note| Line::raw(text::safe(note)))
 }
 
 /// The strip of the wide layout, and the place of each tab
@@ -410,11 +426,13 @@ fn body_lines(tab: Tab, columns: u16) -> Vec<Line<'static>> {
     lines
 }
 
-/// The keys of the key line of a tab in a layout: the text of the key,
-/// its word, and the key that a click on it presses. A built tab has
-/// its own keys first ([`super::machines::keys`]).
-fn keys_of(tab: Tab, layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
-    let mut keys = match tab {
+/// The keys of the key line of the tab of `state` in a layout: the text
+/// of the key, its word, and the key that a click on it presses. A built
+/// tab has its own keys first ([`super::machines::keys`]). The Chat tab
+/// has only its own keys ([`chat::keys`]).
+fn keys_of(state: &State, layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
+    let mut keys = match state.tab() {
+        Tab::Chat => return chat::keys(state.chat().focus(), layout),
         Tab::Machines => super::machines::keys(layout),
         _ => vec![("1-6", "tab", None)],
     };
@@ -428,13 +446,16 @@ fn keys_of(tab: Tab, layout: Layout) -> Vec<(&'static str, &'static str, Option<
     keys
 }
 
-/// The key line of `tab` at `area`, and the place of each key that a
+/// The key line of `keys` at `area`, and the place of each key that a
 /// click presses (01M6VAZKDEQ6951KGPGAMF1SNJ).
-fn key_line(tab: Tab, layout: Layout, area: Rect) -> (Line<'static>, Vec<Hit>) {
+fn key_line(
+    keys: Vec<(&'static str, &'static str, Option<Key>)>,
+    area: Rect,
+) -> (Line<'static>, Vec<Hit>) {
     let mut spans = Vec::new();
     let mut hits = Vec::new();
     let mut x = area.x;
-    for (i, (key, word, press)) in keys_of(tab, layout).into_iter().enumerate() {
+    for (i, (key, word, press)) in keys.into_iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled("  ", DIM));
             x += 2;
@@ -455,7 +476,8 @@ fn key_line(tab: Tab, layout: Layout, area: Rect) -> (Line<'static>, Vec<Hit>) {
 
 /// The keys of the help popup of `tab`: the key, and what it does
 /// (01M6VAZKDEQ6951KGPGAMF1SNJ). A built tab has its own keys first
-/// ([`super::machines::help_keys`]). Each tab has the keys of the frame.
+/// ([`super::machines::help_keys`], [`chat::HELP`]). Each tab has the
+/// keys of the frame.
 ///
 /// ```
 /// use riff::tui::Tab;
@@ -464,10 +486,13 @@ fn key_line(tab: Tab, layout: Layout, area: Rect) -> (Line<'static>, Vec<Hit>) {
 /// assert_eq!(help_keys(Tab::Waves)[0], ("1 to 6", "open a tab"));
 /// assert_eq!(help_keys(Tab::Machines)[0], ("↑ ↓ j k", "select a host"));
 /// assert!(help_keys(Tab::Machines).contains(&("q, Ctrl-C", "end the TUI")));
+/// assert_eq!(help_keys(Tab::Chat)[7], ("/me TEXT", "send an action"));
+/// assert!(help_keys(Tab::Chat).contains(&("q, Ctrl-C", "end the TUI")));
 /// ```
 pub fn help_keys(tab: Tab) -> Vec<(&'static str, &'static str)> {
     let mut keys = match tab {
         Tab::Machines => super::machines::help_keys(),
+        Tab::Chat => chat::HELP.to_vec(),
         _ => Vec::new(),
     };
     keys.extend([
@@ -650,6 +675,9 @@ mod tests {
             let rows = drawn(&state, 80, 24);
             assert_eq!(rows[0], strip, "{tab:?}");
             // A built tab draws its own body.
+            if tab == Tab::Chat {
+                assert_eq!(rows[2], " chat · a line wakes your leads", "{rows:#?}");
+            }
             if tab.built() {
                 continue;
             }

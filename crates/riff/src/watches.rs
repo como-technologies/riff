@@ -408,7 +408,7 @@ impl Lookout for Here {
                 _ => String::new(),
             };
             let body = line(&owner);
-            let to = crate::chat::wakes(&body, person.who().user());
+            let to = riff_client::chat::wakes(&body, person.who().user());
             crate::chat::post_by_riff(&api, &person, &to, &body).await
         })
     }

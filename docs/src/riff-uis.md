@@ -2,9 +2,10 @@
 
 This page is the design of the UI architecture of riff (#982). It
 decides the core library, the list of UIs and their order. Each UI has
-a child design of its own. The CLI is built, and the frame of the TUI:
-see [The TUI](#the-tui). The tabs of the TUI and the other UIs come
-with their build items (see [The order](#the-order)). Until then,
+a child design of its own. The CLI is built, and the frame, the
+Machines tab and the Chat tab of the TUI: see [The TUI](#the-tui). The
+other tabs of the TUI and the other UIs come with their build items
+(see [The order](#the-order)). Until then,
 `riff --help` does not show `riff device`. The
 [requirements of the UIs](requirements.md#the-uis) hold each decision.
 
@@ -154,7 +155,7 @@ tab comes with a build item:
 |---|---|
 | [A #1636](https://github.com/como-technologies/riff/issues/1636) | The frame: the tab strip, the header, the note line, the key line, the help, the mouse and the narrow layout. |
 | [B #1637](https://github.com/como-technologies/riff/issues/1637) | 1 Sessions: each session and each worker, with its mark, its item, its state and its age. It does what `riff top` and `riff view` do. |
-| [E #1640](https://github.com/como-technologies/riff/issues/1640) | 2 Chat: the thread `chat`, as `riff chat` shows it. |
+| [E #1640](https://github.com/como-technologies/riff/issues/1640) | 2 Chat: the thread `chat`, as `riff chat` shows it. Built: see [Chat in the TUI](how-it-works.md#chat-in-the-tui). |
 | [C #1638](https://github.com/como-technologies/riff/issues/1638) | 3 Waves: the items, the claims, the pull requests and the verifies of each repository. |
 | [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server, and the limit of a host. Built: see [See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui). |
 | [G #1642](https://github.com/como-technologies/riff/issues/1642) | 5 Devices: list the devices, add one with a QR code, remove one. |
@@ -219,6 +220,7 @@ draw only reads the view. So a screen test draws a tab into a
 ```mermaid
 flowchart LR
     S["riff-server<br/>riff, who"] -- "a look, or a fault" --> ST["the state"]
+    C["riff-server<br/>tail chat"] -- "each line of the chat" --> ST
     K["a key or a click"] --> ST
     ST --> V["compute_view<br/>the rows and the places of a click"]
     V --> R["render<br/>draws on a Buffer"]

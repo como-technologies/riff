@@ -313,7 +313,7 @@ impl Reach {
         match self {
             Reach::Direct(server) => {
                 let (api, me) = signed(server)?;
-                let to = crate::chat::wakes(body, me.who().user());
+                let to = riff_client::chat::wakes(body, me.who().user());
                 crate::chat::post_by_riff(&api, &me, &to, body).await
             }
             Reach::Daemon(socket) => {
