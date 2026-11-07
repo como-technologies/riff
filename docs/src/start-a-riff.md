@@ -85,6 +85,56 @@ Ctrl-P. The detach of tmux (prefix, then d) detaches tmux, not the
 lead. When the prefix of tmux is Ctrl-P, tmux takes the key: use
 another prefix.
 
+## Open the TUI
+
+The TUI shows the riff in one screen, with a tab for each area. In a
+terminal, run riff with no command:
+
+```sh
+riff
+```
+
+The first row has the six tabs: Sessions, Chat, Waves, Machines,
+Devices and Reports. The second row shows the state of the riff, the
+owner, the build of your riff and the link to riff-server. The row
+before the last shows the result of your last action, or why riff
+cannot reach riff-server. The last row shows the keys.
+
+| Key | Does |
+|---|---|
+| `1` to `6` | Open a tab. |
+| `Tab`, `Shift-Tab` | Open the next tab, or the tab before. |
+| `r` | Look at riff-server again now. |
+| `?` | Show the keys of the tab. `?` or `Esc` closes them. |
+| `q`, `Ctrl-C` | End the TUI. The sessions go on. |
+
+A click on a tab opens it. A click on a key of the last row presses
+that key. Under 80 columns, the first row shows one tab, for example
+`‹ 1/6 Sessions ›`: click `‹` or `›` to open the tab before or after.
+The TUI needs 40 columns and 10 rows.
+
+The tabs come one at a time. Until a tab is built, it names the
+commands that show its area, for example `riff top` for the sessions.
+See [The TUI](riff-uis.md#the-tui).
+
+With no terminal, for example in a script, `riff` prints the help.
+
+### Turn off the mouse in the TUI
+
+The TUI takes the mouse. In most terminals, you can still select text:
+hold Shift when you use the mouse. To turn the mouse off, run:
+
+```sh
+mkdir -p ~/.config/riff
+cat >> ~/.config/riff/config.toml <<'EOF'
+[tui]
+mouse = false
+EOF
+```
+
+The setting is the key `tui.mouse` in `~/.config/riff/config.toml`
+(`$XDG_CONFIG_HOME/riff/config.toml`). It is on by default.
+
 ## Resume the new riff
 
 A new riff is paused. The sessions talk, but they take no work. When

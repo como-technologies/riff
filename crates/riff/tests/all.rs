@@ -85,6 +85,7 @@ mod token_calls;
 mod top;
 mod top_fault;
 mod trusted_riff;
+mod tui;
 mod usage;
 mod wakes;
 mod wave_branch;

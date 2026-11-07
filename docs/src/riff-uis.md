@@ -2,11 +2,11 @@
 
 This page is the design of the UI architecture of riff (#982). It
 decides the core library, the list of UIs and their order. Each UI has
-a child design of its own. Only the CLI is built: the work on the rest
-starts with the core library (see [The order](#the-order)). Until then,
-`riff --help` does not show `riff device`, and `riff` with no command
-prints the help. The [requirements of the UIs](requirements.md#the-uis)
-hold each decision.
+a child design of its own. The CLI is built, and the frame of the TUI:
+see [The TUI](#the-tui). The tabs of the TUI and the other UIs come
+with their build items (see [The order](#the-order)). Until then,
+`riff --help` does not show `riff device`. The
+[requirements of the UIs](requirements.md#the-uis) hold each decision.
 
 | UI | How a person starts it | Toolkit | Child design |
 |---|---|---|---|
@@ -138,14 +138,30 @@ riff top --once
 
 ## The TUI
 
-`riff` with no command starts the TUI in a terminal. With no terminal,
-it prints the help of the CLI. `riff --help` stays the help of the
-CLI, and says that `riff` with no command starts the TUI.
-`riff COMMAND` stays the CLI. If a bare `riff` makes the CLI
-awkward, the TUI is `riff ui`. The TUI design (#994) decides.
+`riff` with no command starts the TUI in a terminal, also with only the
+global options: `riff --server URL` starts the TUI at that riff-server.
+With no terminal on stdin and stdout, for example in a script or for an
+agent, `riff` prints the help of the CLI. `riff --help` stays the help
+of the CLI, and says that `riff` with no command starts the TUI.
+`riff COMMAND` stays the CLI. So the TUI is `riff`, not `riff ui`. To
+use it, see [Open the TUI](start-a-riff.md#open-the-tui).
 
 The TUI is a ratatui app with a tab for each area. Each action of the
-TUI calls the same code as its CLI command.
+TUI calls the same code as its CLI command. The design is #994. Each
+tab comes with a build item:
+
+| Build item | What |
+|---|---|
+| [A #1636](https://github.com/como-technologies/riff/issues/1636) | The frame: the tab strip, the header, the note line, the key line, the help, the mouse and the narrow layout. |
+| [B #1637](https://github.com/como-technologies/riff/issues/1637) | 1 Sessions: each session and each worker, with its mark, its item, its state and its age. It does what `riff top` and `riff view` do. |
+| [E #1640](https://github.com/como-technologies/riff/issues/1640) | 2 Chat: the thread `chat`, as `riff chat` shows it. |
+| [C #1638](https://github.com/como-technologies/riff/issues/1638) | 3 Waves: the items, the claims, the pull requests and the verifies of each repository. |
+| [D #1639](https://github.com/como-technologies/riff/issues/1639) | 4 Machines: the numbers of each host, the link and riff-server. |
+| [G #1642](https://github.com/como-technologies/riff/issues/1642) | 5 Devices: list the devices, add one with a QR code, remove one. |
+| [F #1641](https://github.com/como-technologies/riff/issues/1641) | 6 Reports: the usage, the audit and the log of a session. |
+
+Until its build item merges, a tab names the commands of the CLI that
+show its area.
 
 ```mermaid
 flowchart LR
@@ -156,6 +172,56 @@ flowchart LR
     TABS --> M["Machines: the hosts, the daemons,<br/>the limits"]
     TABS --> DV["Devices: list, add with a QR code,<br/>remove"]
     TABS --> RP["Reports: the usage, the audit,<br/>the log of a session"]
+```
+
+Each tab has the same five parts:
+
+```text
+[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
+ riff running · owner mike · build 10df8a4 · link ok 2s
+ the body of the tab
+
+ the note: the result of the last action, or the fault of the link
+ 1-6 tab  r read again  ? help  q quit
+```
+
+- The tab strip shows the active tab in `[ ]`. A dot after a tab says
+  that it has news since you looked at it: `Chat•2` is two new lines.
+- The header shows the state of the whole riff, the owner, the build
+  of your riff, and the link: `link ok` with the age of the last look,
+  or `link down`. When riff-server runs another build, the header
+  names it.
+- The TUI looks at riff-server each 3 seconds, and each 15 seconds
+  after 2 minutes with no key. A look that fails keeps the last
+  screen, puts `link down` in the header and the fault in the note
+  line, as `riff top` does. The first look that fails ends the TUI
+  with the error, before it draws a screen.
+- The mouse does what the keys do. The setting `tui.mouse` turns it
+  off.
+- Under 80 columns the TUI shows the narrow layout, for a phone with
+  SSH: the strip is `‹ 1/6 Sessions ›`, and the rows have fewer words.
+  Under 40 columns or 10 rows, the TUI asks for a bigger terminal.
+
+A session in a tab gets one of five marks. The worst mark comes first.
+
+| Mark | Word | When |
+|---|---|---|
+| `!` | blocked | The state `blocked`. |
+| `✓` | done | The phase `ends` of a container session: the turn gave its result. |
+| `◐` | waiting | The state `waiting`: a verify, a merge, or an item of `Needs:`. |
+| `●` | busy | The state `busy`, or the phase `works`. |
+| `○` | idle | The state `idle`. |
+
+The render is pure: a function makes the view from the state, and the
+draw only reads the view. So a screen test draws a tab into a
+`Buffer` of ratatui and compares the rows.
+
+```mermaid
+flowchart LR
+    S["riff-server<br/>riff, who"] -- "a look, or a fault" --> ST["the state"]
+    K["a key or a click"] --> ST
+    ST --> V["compute_view<br/>the rows and the places of a click"]
+    V --> R["render<br/>draws on a Buffer"]
 ```
 
 ## The graphical UIs

@@ -6962,8 +6962,6 @@ that builds it merges.
   in a terminal. With no terminal, it prints the help of the CLI.
   `riff --help` stays the help of the CLI, and says that
   `riff` with no command starts the TUI. `riff COMMAND` stays the CLI.
-  When the TUI design finds that a bare `riff` makes the CLI awkward,
-  the TUI is `riff ui`.
 - **01M54216GT8SX6NVMKRGNR2H0T** The TUI is a ratatui app with a tab for
   each area: the sessions, the chat, the waves (the items, the claims,
   the pull requests and the verifies), the machines, the devices, and
@@ -7064,6 +7062,68 @@ that builds it merges.
 - **01M6QEXNQ4RD5BP8JPDH9DWK5F** Each CLI command keeps its work when
   the TUI ships, where it makes sense. A command may change to fit the
   core library and the TUI.
+- **01M6VAZ7WH3MFAYF4PAZW6EDVY** In a terminal, `riff` with no command
+  starts the TUI, also with only the global options, for example `riff
+  --server URL`. The TUI needs a terminal on stdin and on stdout. With
+  no terminal, `riff` prints the help of the CLI on stderr and exits
+  with 2. The TUI is `riff`, not `riff ui`. An error of the start, for
+  example no sign-in, prints as in the CLI, before the TUI draws a
+  screen.
+- **01M6VAZJYYQZDHD6YDB0NBQ7KW** The TUI has six tabs, in this order:
+  Sessions, Chat, Waves, Machines, Devices and Reports. The keys `1` to
+  `6` open a tab, also with Alt. `Tab` opens the next tab, and
+  `Shift-Tab` the tab before.
+- **01M6VAZK1R932VQMJBC32MTTJB** Each tab of the TUI has five parts: the
+  tab strip on the first row, the header on the second row, the body,
+  the note line on the row before the last, and the key line on the last
+  row. The strip shows the active tab in `[ ]`. A tab with news since
+  you looked at it gets `•` after its name, or `•N` for N new lines.
+  The news of a tab goes when you open it.
+- **01M6VAZK4RQSZ0MG2DHWQC598Q** The header of the TUI shows the state
+  of the whole riff (`running` or `paused`), the owner, the build ID of
+  this riff, and the link: `link ok` with the age of the last good look,
+  or `link down`. When riff-server has another build, the header names
+  its ID too.
+- **01M6VAZK7N636Q0JFSV553A9ES** The TUI looks at riff-server with the
+  calls `riff` and `who` each 3 seconds, and each 15 seconds after 2
+  minutes with no key and no click. The key `r` looks again at once. A
+  look runs in a task of its own, so a slow look holds up no key.
+- **01M6VAZKAH6B53YKR8W4YKNSH6** The first look of the TUI that fails
+  ends the TUI with the error, before it draws a screen. After a good
+  look, a look that fails keeps the last screen, puts `link down` in the
+  header and the fault in the note line, as `riff top` does. The fault
+  goes at the next good look. A fault that a new try cannot repair ends
+  the TUI with the error.
+- **01M6VAZKDEQ6951KGPGAMF1SNJ** The note line of the TUI shows the
+  fault of the link, else the result of the last action. The key line
+  shows the keys of the tab. `?` shows each key of the tab in a popup,
+  and `?` or `Esc` closes it. `q` and `Ctrl-C` end the TUI. The sessions
+  go on.
+- **01M6VAZKG8FS4HEA9VSA4Z4YF1** The TUI takes the mouse: a click acts
+  as the key of the place that it hits, for example a click on a tab
+  opens it, and a click on a key of the key line presses that key. A
+  click closes the help popup. The setting `tui.mouse` turns the mouse
+  off. It is on by default.
+- **01M6VAZKK4KHCDCX4RKG9B95D7** Under 80 columns, the TUI shows the
+  narrow layout: the strip is `‹ N/6 NAME ›` with no news, the
+  header has only the state of the riff and the link, and the rows have
+  no margin. A click on `‹` or `›` opens the tab before or after.
+  Under 40 columns or 10 rows, the TUI asks for a bigger terminal.
+- **01M6VAZKNXZV1RTG7MT0GMHKT3** The render of the TUI is pure.
+  `compute_view` makes the view from the state, the size and the time:
+  its rows, their places, and the places that a click hits. `render`
+  draws the view on a ratatui `Buffer`. A screen test draws a tab into a
+  `Buffer` at 80 x 24, and at 40 x 24 for the narrow layout, and
+  compares the rows.
+- **01M6VAZKRTVZTY73PQV5GE2WY6** A session in the TUI has one of five
+  marks: `!` blocked (red), `●` busy, or the phase `works` (green),
+  `◐` waiting (cyan), `○` idle (dim), and `✓` the phase `ends`
+  (cyan). A blocked session gets `!` in each phase. `offline`, `paused`
+  and `must clear` are words, not marks. The worst mark comes first:
+  `!`, `✓`, `◐`, `●`, `○`.
+- **01M6VAZKVK7530JJ63S7RVF88J** Until the build item of a tab of the
+  TUI merges, the body of the tab names the CLI commands that show its
+  area.
 
 ## The notes of the lead
 
