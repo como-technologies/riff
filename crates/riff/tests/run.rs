@@ -3589,20 +3589,60 @@ async fn riff_takeover_of_a_session_that_the_daemon_does_not_own_fails() {
 /// Runs the hook `riff relay prompt` with the socket `socket`, and the
 /// hook input on its stdin.
 async fn prompt_hook(socket: &Path) -> Output {
+    let input = br#"{"hook_event_name":"UserPromptSubmit","prompt":"go on"}"#;
+    relay_hook(socket, "prompt", input).await
+}
+
+/// Runs the hook `riff relay HOOK` with the socket `socket`, and `input`
+/// on its stdin.
+async fn relay_hook(socket: &Path, hook: &str, input: &'static [u8]) -> Output {
     let mut cmd = Command::new(Isolated::shared().riff_path());
-    cmd.args(["relay", "prompt"])
+    cmd.args(["relay", hook])
         .env("RIFF_SOCKET", socket)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     tokio::task::spawn_blocking(move || {
         let mut child = cmd.spawn().unwrap();
-        let input = br#"{"hook_event_name":"UserPromptSubmit","prompt":"go on"}"#;
         std::io::Write::write_all(&mut child.stdin.take().unwrap(), input).unwrap();
         child.wait_with_output().unwrap()
     })
     .await
     .unwrap()
+}
+
+/// 01M6WBX2FQEHW92Y1A5HM4H8BM: the `Stop` hook tells the daemon of the
+/// end of the turn on the socket of the session, and prints nothing. With
+/// no daemon, it still exits with status 0: a status 2 would hold the
+/// turn open.
+#[tokio::test]
+async fn the_stop_hook_tells_the_daemon_of_the_end_of_the_turn() {
+    let input = br#"{"hook_event_name":"Stop","stop_hook_active":false}"#;
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("riff.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let daemon = tokio::spawn(async move {
+        let (conn, _) = listener.accept().await.unwrap();
+        let (read, mut write) = conn.into_split();
+        let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(read));
+        let ask: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        write.write_all(b"{\"say\":\"done\"}\n").await.unwrap();
+        ask
+    });
+    let out = relay_hook(&socket, "idle", input).await;
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "");
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(daemon.await.unwrap()["ask"], "idle");
+
+    let away = relay_hook(&dir.path().join("none.sock"), "idle", input).await;
+    assert_eq!(away.status.code(), Some(0), "{}", text(&away.stderr));
+    assert_eq!(text(&away.stdout), "");
+    assert!(
+        text(&away.stderr).contains("cannot tell the daemon of the end of the turn"),
+        "{}",
+        text(&away.stderr)
+    );
 }
 
 /// 01M5GVQQ8NK3RD9CM3VTGXEHZQ: the prompt hook tells the daemon of the

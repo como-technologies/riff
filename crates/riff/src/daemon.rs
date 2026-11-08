@@ -139,6 +139,7 @@
 //! | [`SessionAsk::Follow`] | says [`Say::Line`] at each wake of the session, until the relay leaves ([`World::wakes`]) |
 //! | [`SessionAsk::Denied`] | posts the refusals of auto mode of the session, and says [`Say::Posted`] ([`Daemon::post_denials`]) |
 //! | [`SessionAsk::Prompt`] | ends the block of the lead on riff-server, and says [`Say::Done`] ([`Daemon::prompted`]) |
+//! | [`SessionAsk::Idle`] | keeps the end of the turn of the lead, looks at an old lead again soon, and says [`Say::Done`] ([`Daemon::turn_ended`]) |
 //! | [`SessionAsk::GhCalls`] | adds the calls of `gh` of the session to the tally of the calls, and says [`Say::Done`] ([`Daemon::tally_calls`], [`crate::ghcalls`]) |
 //!
 //! # A session
@@ -314,17 +315,30 @@
 //! looks at its start, when it takes up the sessions that run, and each
 //! [`AGAIN_EVERY`]. A lead is old when the file that its container binds
 //! at [`RELAY_BIN`] has no link in the container ([`crate::lead::old`]).
-//! It is idle when its transcript got no write in [`LEAD_IDLE`]
-//! ([`crate::lead::quiet`]): the daemon sees no turn of a lead, because the
-//! relay of a lead relays no event, but each message and each tool call
-//! of a turn writes the transcript. A lead in a turn waits for the next
-//! look.
+//! The relay of a lead relays no event, so the daemon sees the turns of a
+//! lead by two facts ([`crate::lead::idle`]). At the end of each turn, the
+//! `Stop` hook runs `riff relay idle` ([`SessionAsk::Idle`]): the daemon
+//! writes the end in the folder of the lead ([`crate::lead::end_turn`]),
+//! and looks again [`TURN_SETTLE`] later ([`Daemon::turn_ended`],
+//! 01M6WBX2FQEHW92Y1A5HM4H8BM). The lead is idle while its transcript got
+//! no write after the tail of that turn ([`crate::lead::between_turns`]):
+//! each message and each tool call of a new turn writes the transcript.
+//! A lead with no hook, for example of an older riff, is idle when its
+//! transcript got no write in [`LEAD_IDLE`] ([`crate::lead::quiet`]). A
+//! lead in a turn waits for the next look. While `riff update` replaced
+//! the binary of the daemon itself, the daemon starts no lead: the bind
+//! would hold a newer riff than the daemon. The new daemon starts it
+//! (01M6WBX2FT7Y9FV9VGGPDBKAHM).
 //!
 //! ```mermaid
 //! flowchart TD
-//!     L[look: each lead] --> O{old: the bind has no link?}
+//!     H[the Stop hook: riff relay idle] --> T[write turn-ended, look in 2 s]
+//!     T --> L
+//!     L[look: each lead] --> D{the binary of the daemon was replaced?}
+//!     D -- yes --> N
+//!     D -- no --> O{old: the bind has no link?}
 //!     O -- no --> N[nothing to do]
-//!     O -- yes --> I{idle: no write to the transcript in 5 minutes?}
+//!     O -- yes --> I{idle: no write after the end of the turn,<br/>or no write in 5 minutes?}
 //!     I -- no --> W[wait for the next look]
 //!     I -- yes --> P[make the start: wave, host, image, relay]
 //!     P -- fault --> F[one line in chat, try again at the next look]
@@ -531,6 +545,11 @@ pub const LEAD_IDLE: Duration = Duration::from_secs(5 * 60);
 /// assert_eq!(riff::daemon::LEAD_IDLE_VAR, "RIFF_DAEMON_LEAD_IDLE_MS");
 /// ```
 pub const LEAD_IDLE_VAR: &str = "RIFF_DAEMON_LEAD_IDLE_MS";
+
+/// The wait between the end of a turn of a lead and the look at it
+/// ([`Daemon::turn_ended`], 01M6WBX2FQEHW92Y1A5HM4H8BM): `claude` writes
+/// the end of the turn to its transcript first.
+pub const TURN_SETTLE: Duration = Duration::from_secs(2);
 
 /// The longest wait of `riff ps` for the processes of one container
 /// ([`Runtime::processes`], #1610): a container whose list takes longer
@@ -1088,6 +1107,12 @@ pub enum SessionAsk {
     /// The person of the session gave a prompt: `riff relay prompt`,
     /// the `UserPromptSubmit` hook (01M5GVQQ8NK3RD9CM3VTGXEHZQ).
     Prompt {
+        /// [`PROTOCOL`] of the relay.
+        protocol: u32,
+    },
+    /// The turn of `claude` ended: `riff relay idle`, the `Stop` hook
+    /// (01M6WBX2FQEHW92Y1A5HM4H8BM).
+    Idle {
         /// [`PROTOCOL`] of the relay.
         protocol: u32,
     },
@@ -2355,6 +2380,16 @@ pub struct Daemon<R> {
     own_gh: Mutex<BTreeMap<String, bool>>,
     /// The forge and the posts of the watches ([`crate::watches`]).
     lookout: Arc<dyn crate::watches::Lookout>,
+    /// A turn of a lead ended: [`Daemon::leads_again_every`] looks now
+    /// ([`Daemon::turn_ended`], 01M6WBX2FQEHW92Y1A5HM4H8BM).
+    again_now: Arc<Notify>,
+    /// True when `riff update` replaced the binary of this daemon: it starts
+    /// no lead again until its own new start (01M6WBX2FT7Y9FV9VGGPDBKAHM).
+    own_replaced: Arc<dyn Fn() -> bool + Send + Sync>,
+    /// True when the host updates riff by itself (`update.auto`): the watch
+    /// of a deploy that passed waits for the new riff of the daemon
+    /// (01M6WBX2G1PX11D89HNBAZ6MCM).
+    auto: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -2471,7 +2506,30 @@ impl<R: Runtime + 'static> Daemon<R> {
             looked: Mutex::default(),
             own_gh: Mutex::default(),
             lookout: Arc::new(crate::watches::Here),
+            again_now: Arc::default(),
+            own_replaced: Arc::new(|| crate::binary::replaced(Path::new("/proc/self/exe"))),
+            auto: Arc::new(|| {
+                crate::settings::path()
+                    .and_then(|path| crate::settings::update_auto(&path))
+                    .unwrap_or(false)
+            }),
         })
+    }
+
+    /// The daemon that takes `replaced` for the fact that `riff update`
+    /// replaced its binary, for a test (01M6WBX2FT7Y9FV9VGGPDBKAHM).
+    #[must_use]
+    pub fn with_own_replaced(mut self, replaced: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        self.own_replaced = replaced;
+        self
+    }
+
+    /// The daemon of a host with `update.auto` set to `auto`, for a test
+    /// (01M6WBX2G1PX11D89HNBAZ6MCM).
+    #[must_use]
+    pub fn with_auto(mut self, auto: bool) -> Self {
+        self.auto = Arc::new(move || auto);
+        self
     }
 
     /// The daemon with the quiet limit `quiet` in place of
@@ -2816,15 +2874,21 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// daemon, when the lead is idle (01M5TC24PB3YC2CC8BA275WSEN). A lead
     /// runs an old riff when `riff update` replaced the file that its
     /// container binds at [`RELAY_BIN`] ([`crate::lead::old`]). It is idle
-    /// when its transcript got no write in [`LEAD_IDLE`]
-    /// ([`crate::lead::quiet`]): a lead in a turn waits for the next look.
-    /// It gives one line for each lead that it started again, or that it
-    /// first told the person of: the line is in riff chat too.
+    /// at the end of its turn, or when its transcript got no write in
+    /// [`LEAD_IDLE`] ([`crate::lead::idle`], 01M6WBX2FQEHW92Y1A5HM4H8BM): a
+    /// lead in a turn waits for the next look. While `riff update` replaced
+    /// the binary of the daemon itself, it starts no lead: the new daemon
+    /// does (01M6WBX2FT7Y9FV9VGGPDBKAHM). It gives one line for each lead
+    /// that it started again, or that it first told the person of: the line
+    /// is in riff chat too.
     pub async fn leads_again(self: &Arc<Self>) -> Vec<String> {
+        if (self.own_replaced)() {
+            return Vec::new();
+        }
         let mut lines = Vec::new();
         for record in self.records().into_iter().filter(|r| r.terminal) {
             if crate::lead::old(&self.runtime, &record.live.name).await
-                && crate::lead::quiet(&record, self.lead_idle)
+                && crate::lead::idle(&record, self.lead_idle)
                 && let Some(line) = self.lead_again(record).await
             {
                 lines.push(line);
@@ -2833,8 +2897,9 @@ impl<R: Runtime + 'static> Daemon<R> {
         lines
     }
 
-    /// Looks at the riff of each lead each [`AGAIN_EVERY`], from now until
-    /// the daemon stops ([`Daemon::leads_again`]).
+    /// Looks at the riff of each lead each [`AGAIN_EVERY`], and
+    /// [`TURN_SETTLE`] after the end of a turn of a lead, from now until the
+    /// daemon stops ([`Daemon::leads_again`], [`Daemon::turn_ended`]).
     pub fn leads_again_every(self: &Arc<Self>) {
         let daemon = self.clone();
         tokio::spawn(async move {
@@ -2842,9 +2907,31 @@ impl<R: Runtime + 'static> Daemon<R> {
                 for line in daemon.leads_again().await {
                     println!("riff daemon: {line}");
                 }
-                tokio::time::sleep(AGAIN_EVERY).await;
+                tokio::select! {
+                    () = tokio::time::sleep(AGAIN_EVERY) => {}
+                    () = daemon.again_now.notified() => {}
+                }
             }
         });
+    }
+
+    /// The turn of the session of `record` ended: its `Stop` hook ran
+    /// `riff relay idle` (01M6WBX2FQEHW92Y1A5HM4H8BM). For the lead, the
+    /// daemon keeps the end ([`crate::lead::end_turn`]), and the next look
+    /// of [`Daemon::leads_again_every`] comes [`TURN_SETTLE`] later. So an
+    /// old lead starts again on the new riff at the first end of its turn.
+    /// The end of a turn of a worker changes nothing.
+    pub fn turn_ended(&self, record: &Record) -> Result<()> {
+        if !record.terminal {
+            return Ok(());
+        }
+        crate::lead::end_turn(&record.folder)?;
+        let again = self.again_now.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(TURN_SETTLE).await;
+            again.notify_one();
+        });
+        Ok(())
     }
 
     /// Starts the lead of `record` again: the same session, the same
@@ -2982,7 +3069,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             let watches = crate::watches::Watches::new(&daemon.dir);
             let mut last_error = None;
             loop {
-                let slow = match watches.look_all(&daemon.lookout, now_ms()).await {
+                let riffs = daemon.riffs_for(&watches).await;
+                let slow = match watches.look_all(&daemon.lookout, now_ms(), &riffs).await {
                     Ok(slow) => {
                         last_error = None;
                         slow
@@ -2999,6 +3087,31 @@ impl<R: Runtime + 'static> Daemon<R> {
                 watches.pause(every, slow).await;
             }
         })
+    }
+
+    /// What this daemon and its leads run, for the message of a deploy that
+    /// passed ([`crate::watches::Riffs`], 01M6WBX2G1PX11D89HNBAZ6MCM). It
+    /// asks the runtime about each lead only while a watch of a deploy
+    /// stands; else it gives the default.
+    pub async fn riffs_for(&self, watches: &crate::watches::Watches) -> crate::watches::Riffs {
+        let deploys = watches.read().is_ok_and(|all| {
+            all.iter()
+                .any(|w| matches!(w.op, crate::watches::Op::Deploy { .. }))
+        });
+        if !deploys {
+            return crate::watches::Riffs::default();
+        }
+        let mut leads = BTreeMap::new();
+        for record in self.records().into_iter().filter(|r| r.terminal) {
+            let old = crate::lead::old(&self.runtime, &record.live.name).await;
+            leads.insert(record.me.place().repo_text(), old);
+        }
+        crate::watches::Riffs {
+            daemon: Build::this().semver(),
+            replaced: (self.own_replaced)(),
+            auto: (self.auto)(),
+            leads,
+        }
     }
 
     /// Registers the watch of `op` for the repository of the session of
@@ -4469,6 +4582,18 @@ impl<R: Runtime + 'static> Daemon<R> {
                 drop(out);
                 let _ = written.await;
             }
+            Ok(SessionAsk::Idle { .. }) => {
+                let (out, written) = writer(write);
+                let record = owned.lock().record.clone();
+                out.say(match self.turn_ended(&record) {
+                    Ok(()) => Say::Done,
+                    Err(e) => Say::Failed {
+                        error: format!("{e:#}"),
+                    },
+                });
+                drop(out);
+                let _ = written.await;
+            }
             Ok(SessionAsk::GhCalls { calls, .. }) => {
                 let name = owned.lock().record.live.name.clone();
                 self.tally_calls(&name, calls);
@@ -5583,6 +5708,9 @@ mod tests {
         keep_end: Duration,
         grace: Option<Duration>,
         world: Option<Arc<dyn World>>,
+        /// True when `riff update` replaced the binary of the daemon
+        /// (01M6WBX2FT7Y9FV9VGGPDBKAHM).
+        replaced: Arc<std::sync::atomic::AtomicBool>,
         pub(super) daemon: Arc<Daemon<Fake>>,
         stop: Option<oneshot::Sender<()>>,
         served: JoinHandle<Result<()>>,
@@ -5609,6 +5737,7 @@ mod tests {
         dir: &Path,
         (quiet, keep_end, grace): (Duration, Duration, Option<Duration>),
         world: Option<Arc<dyn World>>,
+        replaced: Arc<std::sync::atomic::AtomicBool>,
     ) -> Served {
         let listener = listen(dir).await.unwrap();
         riff_client::secrets::mock_store();
@@ -5617,7 +5746,10 @@ mod tests {
             .with_quiet(quiet)
             .with_keep_end(keep_end)
             .with_relay(static_riff(dir))
-            .with_gcloud(crate::cloud::Gcloud::at(dir.with_file_name("gcloud")));
+            .with_gcloud(crate::cloud::Gcloud::at(dir.with_file_name("gcloud")))
+            .with_own_replaced(Arc::new(move || {
+                replaced.load(std::sync::atomic::Ordering::SeqCst)
+            }));
         if let Some(world) = world {
             daemon = daemon.with_world(world);
         }
@@ -5679,7 +5811,9 @@ mod tests {
         ) -> Here {
             let root = tempfile::tempdir().unwrap();
             let dir = dir_in(root.path());
-            let (daemon, stop, served) = serve_in(&fake, &dir, times, world.clone()).await;
+            let replaced = Arc::default();
+            let (daemon, stop, served) =
+                serve_in(&fake, &dir, times, world.clone(), Arc::clone(&replaced)).await;
             let (quiet, keep_end, grace) = times;
             Here {
                 root,
@@ -5689,6 +5823,7 @@ mod tests {
                 keep_end,
                 grace,
                 world,
+                replaced,
                 daemon,
                 stop: Some(stop),
                 served,
@@ -5699,8 +5834,14 @@ mod tests {
         async fn restart(&mut self) {
             self.stop().await;
             let times = (self.quiet, self.keep_end, self.grace);
-            let (daemon, stop, served) =
-                serve_in(&self.fake, &self.dir, times, self.world.clone()).await;
+            let (daemon, stop, served) = serve_in(
+                &self.fake,
+                &self.dir,
+                times,
+                self.world.clone(),
+                self.replaced.clone(),
+            )
+            .await;
             self.daemon = daemon;
             self.stop = Some(stop);
             self.served = served;
@@ -8262,6 +8403,117 @@ mod tests {
         let kind = format!("{kind} ");
         let said = server.said();
         said.into_iter().filter(|s| s.starts_with(&kind)).collect()
+    }
+
+    /// #1693, 01M6WBX2FQEHW92Y1A5HM4H8BM: the `Stop` hook of an old lead
+    /// ends its turn, and the lead starts again at once, with no 5 minutes
+    /// of a quiet transcript. `claude` wrote the transcript a moment before
+    /// the end. A write after the end is a new turn.
+    #[tokio::test]
+    async fn an_old_lead_starts_again_at_the_end_of_its_turn() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        let socket = session_dir(&here.dir, LEAD).join(SOCKET);
+        update_riff(&here);
+
+        // A turn runs: its transcript got a write 10 s ago.
+        transcript_of(&record, 10);
+        assert!(here.daemon.leads_again().await.is_empty());
+
+        // The turn ends: the hook tells the daemon. A new turn starts after
+        // the tail of the end, so the lead waits.
+        crate::session_relay::idle(&socket).await.unwrap();
+        assert!(record.folder.join(crate::lead::TURN_ENDED).is_file());
+        transcript_of(&record, 0);
+        let later = std::time::SystemTime::now() + crate::lead::TURN_TAIL * 2;
+        let project = record.folder.join("claude/projects/-clone");
+        let name = format!("{}.jsonl", record.live.session);
+        let file = std::fs::File::options()
+            .write(true)
+            .open(project.join(name))
+            .unwrap();
+        file.set_modified(later).unwrap();
+        assert!(here.daemon.leads_again().await.is_empty());
+
+        // That turn ends too: the lead starts again on the new riff.
+        transcript_of(&record, 1);
+        crate::session_relay::idle(&socket).await.unwrap();
+        let line = text::lead_started_again(LEAD);
+        assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
+        assert!(said_of(&server, "chat").contains(&format!("chat {LEAD}: {line}")));
+    }
+
+    /// 01M6WBX2FQEHW92Y1A5HM4H8BM: the end of a turn of a worker keeps no
+    /// end: only the lead has one.
+    #[tokio::test]
+    async fn the_end_of_a_turn_of_a_worker_keeps_nothing() {
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let (_client, name) = here.started(start).await;
+        let socket = session_dir(&here.dir, &name).join(SOCKET);
+        crate::session_relay::idle(&socket).await.unwrap();
+        let record = here.daemon.records().pop().unwrap();
+        assert!(!record.folder.join(crate::lead::TURN_ENDED).exists());
+    }
+
+    /// 01M6WBX2G1PX11D89HNBAZ6MCM: the facts of the watch of a deploy: the
+    /// version of the daemon, and whether its lead runs an old riff. With
+    /// no watch of a deploy, the daemon asks the runtime nothing.
+    #[tokio::test]
+    async fn the_watch_of_a_deploy_knows_what_the_daemon_and_its_lead_run() {
+        use crate::watches::{Op, Riffs, Watches};
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        started_lead(&here).await;
+        let repo = "como-technologies/riff";
+        let watches = Watches::new(&here.dir);
+        assert_eq!(here.daemon.riffs_for(&watches).await, Riffs::default());
+
+        let op = Op::Deploy {
+            tag: "v1.0.0".into(),
+            stale: None,
+        };
+        watches.register(repo, op, 0).unwrap();
+        let riffs = here.daemon.riffs_for(&watches).await;
+        assert_eq!(riffs.daemon, Build::this().semver());
+        assert!(!riffs.replaced);
+        assert_eq!(riffs.leads, BTreeMap::from([(repo.to_owned(), false)]));
+
+        update_riff(&here);
+        here.replaced
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let riffs = here.daemon.riffs_for(&watches).await;
+        assert!(riffs.replaced);
+        assert_eq!(riffs.leads, BTreeMap::from([(repo.to_owned(), true)]));
+    }
+
+    /// 01M6WBX2FT7Y9FV9VGGPDBKAHM: while `riff update` replaced the binary
+    /// of the daemon itself, it starts no lead again: the bind would hold a
+    /// newer riff than the daemon. The new daemon does it.
+    #[tokio::test]
+    async fn a_daemon_on_a_replaced_riff_starts_no_lead_again() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        update_riff(&here);
+        transcript_of(&record, 600);
+        here.replaced
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(here.daemon.leads_again().await.is_empty());
+        assert_eq!(here.fake.calls(), [format!("terminal {LEAD}")]);
+
+        // The daemon on the new riff starts it.
+        here.replaced
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let line = text::lead_started_again(LEAD);
+        assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
     }
 
     /// 01M5TC24PB3YC2CC8BA275WSEN

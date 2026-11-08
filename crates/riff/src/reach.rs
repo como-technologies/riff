@@ -51,6 +51,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
+use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{
     HoldInfo, LogReply, MembersReply, Person, RiffOwner, RiffReply, RiffState, SessionInfo,
@@ -610,8 +611,108 @@ fn signed(server: &str) -> Result<(Api, SessionUri)> {
     Ok((base.signed_in(id.as_deref())?, me))
 }
 
-/// Makes `call` through the daemon on `socket`, and reads its answer.
+/// Makes `call` through the daemon on `socket`, and reads its answer. An
+/// answer that this riff cannot read gives the error of
+/// [`text::daemon_other_answer`], with the build of the daemon
+/// ([`daemon_build`], #1693, 01M6WBX2FYPH0K8RAKXMRKDGX7).
 async fn ask<T: DeserializeOwned>(socket: &std::path::Path, call: &ServerCall) -> Result<T> {
     let reply = session_relay::ask_server(socket, call).await?;
-    serde_json::from_value(reply).map_err(|e| anyhow!("the riff daemon gave another answer: {e}"))
+    match serde_json::from_value(reply) {
+        Ok(answer) => Ok(answer),
+        Err(e) => {
+            let theirs = daemon_build(socket).await;
+            let fault = e.to_string();
+            Err(anyhow!(text::daemon_other_answer(
+                &fault,
+                &Build::this(),
+                theirs.as_deref()
+            )))
+        }
+    }
+}
+
+/// The build of the riff daemon on `socket`, as its status names it. It
+/// reads only the field `build`, so a status of another shape gives it
+/// too. `None` when the daemon does not answer, or names no build.
+pub async fn daemon_build(socket: &std::path::Path) -> Option<String> {
+    let status = session_relay::ask_server(socket, &ServerCall::Status)
+        .await
+        .ok()?;
+    status.get("build")?.as_str().map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
+
+    /// A riff daemon of another build on a socket in `dir`: it answers
+    /// `who` in a shape that this riff cannot read, and its status with
+    /// `build`, or with no build.
+    fn other_daemon(dir: &std::path::Path, build: Option<&'static str>) -> PathBuf {
+        let path = dir.join("riff.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        tokio::spawn(async move {
+            while let Ok((conn, _)) = listener.accept().await {
+                let (read, mut write) = conn.into_split();
+                let mut lines = BufReader::new(read).lines();
+                let Ok(Some(first)) = lines.next_line().await else {
+                    continue;
+                };
+                let ask: serde_json::Value = serde_json::from_str(&first).unwrap();
+                let reply = match ask["call"]["call"].as_str() {
+                    Some("status") => serde_json::json!({ "build": build, "pid": 7 }),
+                    _ => serde_json::json!({ "sessions": { "s1": {} } }),
+                };
+                let say = serde_json::json!({ "say": "served", "reply": reply });
+                write
+                    .write_all(format!("{say}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+        path
+    }
+
+    /// #1693, 01M6WBX2FYPH0K8RAKXMRKDGX7: an answer of a newer daemon
+    /// that this riff cannot read names the two builds and the step, in
+    /// place of the bare fault of serde.
+    #[tokio::test]
+    async fn an_answer_of_a_newer_daemon_names_the_two_builds_and_the_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = other_daemon(dir.path(), Some("999.0.0 bbbb 2099-01-01T00:00:00Z"));
+        let error = Reach::Daemon(socket).who(false).await.unwrap_err();
+        let error = format!("{error:#}");
+        assert!(
+            error.starts_with("the riff daemon runs a newer riff: wait for the restart"),
+            "{error}"
+        );
+        assert!(
+            error.contains("The riff daemon runs the build 999.0.0 bbbb"),
+            "{error}"
+        );
+        assert!(
+            error.contains(&format!("this riff is the build {}", Build::this())),
+            "{error}"
+        );
+        assert!(error.contains("next: end your turn"), "{error}");
+    }
+
+    /// A daemon whose status names no build still gives the build of this
+    /// riff and the fault.
+    #[tokio::test]
+    async fn an_answer_of_a_daemon_with_no_build_names_the_build_of_this_riff() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = other_daemon(dir.path(), None);
+        assert_eq!(daemon_build(&socket).await, None);
+        let error = Reach::Daemon(socket).who(false).await.unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("names no build"), "{error}");
+        assert!(
+            error.contains(&format!("This riff is the build {}", Build::this())),
+            "{error}"
+        );
+        assert!(error.contains("invalid type: map"), "{error}");
+    }
 }
