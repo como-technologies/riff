@@ -1866,6 +1866,14 @@ page [Requirements](requirements.md) holds the rules of today.
   later plan" says that its plan is not in riff 3.0.0, and that its
   items wait in the Backlog.
 
+### Ship
+
+- **01M6V8GQ1297PCZEKY311KRRWC** The `riff.toml` of this repository sets
+  `ANTHROPIC_MODEL = "opus"` first in `[session.env]`, with a comment
+  that names issue 1692, so each session of this repository runs on
+  Opus: the lead, each work item and each verify. A test checks that the
+  file sets it. Superseded by 01M6W7VC9REZKE87T6YT5Z47A2.
+
 ### Sessions
 
 - **01M4Z60B7RPSQ1ABGVMJSZWS5P** The cache volumes are named volumes:

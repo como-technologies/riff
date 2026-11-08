@@ -801,12 +801,12 @@ async fn a_new_item_starts_with_the_model_of_the_merged_riff_toml() {
     assert!(!args.contains("haiku"), "{args}");
 }
 
-/// 01M6VAQWMKDX4VY8QRPA8EYFN9: riff takes `ANTHROPIC_MODEL` in
-/// `[session.env]` of the merged `riff.toml` beside `model` in
-/// `[session]`. The container gets the variable, and `claude` gets
-/// `--model` of the key, which wins over the variable.
+/// 01M6W7VC9REZKE87T6YT5Z47A2: riff refuses `ANTHROPIC_MODEL` in
+/// `[session.env]` of the merged `riff.toml`, also beside `model` in
+/// `[session]`. The error names the key and the file, and says where the
+/// model goes. No container starts.
 #[tokio::test]
-async fn anthropic_model_in_the_env_of_the_riff_toml_goes_beside_the_model() {
+async fn riff_run_refuses_anthropic_model_in_the_env_of_the_riff_toml() {
     let machine = Machine::new().await;
     machine.lead().await;
     std::fs::write(
@@ -824,16 +824,16 @@ async fn anthropic_model_in_the_env_of_the_riff_toml_goes_beside_the_model() {
         .run(None, &["run", "issue-12", "--image", IMAGE])
         .await;
     let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
-    assert!(out.status.success(), "{stdout}\n{stderr}");
-    let args = machine.read("run.args");
-    assert!(args.contains("\nANTHROPIC_MODEL=opus\n"), "{args}");
-    let lines: Vec<&str> = args.lines().collect();
-    let at = lines.iter().position(|a| *a == "claude").unwrap();
-    assert_eq!(
-        lines[at..at + 5],
-        ["claude", "--effort", "xhigh", "--model", "opus"],
-        "{args}"
+    assert!(!out.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains(
+            "riff.toml of origin/main: [session.env] ANTHROPIC_MODEL: riff sets the model \
+             itself, with claude --model. Put model = \"opus\" in [session]"
+        ),
+        "{stderr}"
     );
+    assert!(machine.read("run.args").is_empty());
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
 #[tokio::test]

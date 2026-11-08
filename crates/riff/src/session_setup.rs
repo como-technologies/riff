@@ -28,9 +28,9 @@
 //! `claude --model MODEL` ([`Setup::claude`]). With no key, the model is
 //! [`MODEL`]. A session that runs keeps its model, and the terminal of a
 //! takeover resumes it on the same model ([`model_of`],
-//! [`crate::takeover::command`]). riff takes `ANTHROPIC_MODEL` in
-//! `[session.env]` as any other variable, and `claude --model` wins over
-//! it (01M6VAQWMKDX4VY8QRPA8EYFN9).
+//! [`crate::takeover::command`]). The model has this one place: riff
+//! refuses [`MODEL_VARIABLE`] in `[session.env]`, and the error says to
+//! put `model` in `[session]` (01M6W7VC9REZKE87T6YT5Z47A2).
 //!
 //! The key of `[session.volumes]` is the name of a podman volume, and
 //! the value is its path in the container. A value of `[session.env]`
@@ -55,10 +55,11 @@
 //! belong in `riff.toml`.
 //!
 //! riff refuses what it could not keep (01M5SMW2B4GMJ3V6BCX1KGC1ZY,
-//! 01M6VAQWJ5RH7NCHAX0KCQ4BWY): a variable that riff sets itself, a
-//! model that `claude` could read as a flag, a volume name that podman
-//! could read as a path, and a path that is not absolute. The error
-//! names the key and the file.
+//! 01M6VAQWJ5RH7NCHAX0KCQ4BWY, 01M6W7VC9REZKE87T6YT5Z47A2): a variable
+//! that riff sets itself, the model as a variable, a model that `claude`
+//! could read as a flag, a volume name that podman could read as a path,
+//! and a path that is not absolute. The error names the key and the
+//! file.
 
 use std::path::Path;
 
@@ -71,6 +72,10 @@ use crate::runtime::{Bind, Env, Source};
 /// latest Opus.
 pub const MODEL: &str = "opus";
 
+/// The variable of the model of `claude`. riff sets the model itself,
+/// with `claude --model` (01M6W7VC9REZKE87T6YT5Z47A2).
+pub const MODEL_VARIABLE: &str = "ANTHROPIC_MODEL";
+
 /// The names of the variables that riff sets itself.
 const RESERVED: &[&str] = &[
     "HOME",
@@ -79,6 +84,7 @@ const RESERVED: &[&str] = &[
     "GH_TOKEN",
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_OAUTH_TOKEN",
+    MODEL_VARIABLE,
 ];
 
 /// The starts of the names of the variables that riff sets itself.
@@ -119,6 +125,14 @@ pub const HOME: &str = "$HOME";
 /// // riff sets HOME itself.
 /// let error = Setup::of_config("[session.env]\nHOME = \"/x\"\n", "riff.toml").unwrap_err();
 /// assert!(format!("{error:#}").contains("riff sets HOME itself"));
+///
+/// // The model has one place: model in [session].
+/// let error = Setup::of_config("[session.env]\nANTHROPIC_MODEL = \"opus\"\n", "riff.toml");
+/// assert_eq!(
+///     format!("{:#}", error.unwrap_err()),
+///     "riff.toml: [session.env] ANTHROPIC_MODEL: riff sets the model itself, with claude \
+///      --model. Put model = \"opus\" in [session]"
+/// );
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,10 +171,7 @@ impl Setup {
         let model = model(session, place)?;
         let env = pairs(session, "env", place)?;
         for (name, value) in &env {
-            check_name(name, place)?;
-            if value.contains('\0') {
-                bail!("{place}: the value of [session.env] {name} has a NUL character");
-            }
+            check_variable(name, value, place)?;
         }
         let volumes = pairs(session, "volumes", place)?;
         for (name, path) in &volumes {
@@ -297,9 +308,11 @@ fn model(session: &toml_edit::Item, place: &str) -> Result<String> {
     Ok(model.to_owned())
 }
 
-/// Checks the name of a variable: letters, digits and `_`, not a digit
-/// first, and not a name that riff sets itself.
-fn check_name(name: &str, place: &str) -> Result<()> {
+/// Checks a variable: a name of letters, digits and `_`, not a digit
+/// first, and not a name that riff sets itself, and a value with no NUL.
+/// For [`MODEL_VARIABLE`], the error says to put `model` in `[session]`
+/// with the value of the variable.
+fn check_variable(name: &str, value: &str, place: &str) -> Result<()> {
     let first = name.chars().next();
     if !first.is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
@@ -309,7 +322,16 @@ fn check_name(name: &str, place: &str) -> Result<()> {
         );
     }
     if RESERVED.contains(&name) || RESERVED_STARTS.iter().any(|start| name.starts_with(start)) {
+        if name == MODEL_VARIABLE {
+            bail!(
+                "{place}: [session.env] {name}: riff sets the model itself, with claude --model. \
+                 Put model = {value:?} in [session]"
+            );
+        }
         bail!("{place}: [session.env] {name}: riff sets {name} itself");
+    }
+    if value.contains('\0') {
+        bail!("{place}: the value of [session.env] {name} has a NUL character");
     }
     Ok(())
 }
@@ -514,19 +536,31 @@ mod tests {
         );
     }
 
-    /// 01M6VAQWMKDX4VY8QRPA8EYFN9: riff takes `ANTHROPIC_MODEL` in
-    /// `[session.env]` beside `model` in `[session]`, and the command
-    /// has the model of the key.
+    /// 01M6W7VC9REZKE87T6YT5Z47A2: riff refuses `ANTHROPIC_MODEL` in
+    /// `[session.env]`, also beside `model` in `[session]`. The error
+    /// names the key and the file, and says to put `model` in
+    /// `[session]` with the value of the variable.
     #[test]
-    fn anthropic_model_in_the_env_is_taken_beside_the_model() {
-        let setup =
-            setup("[session]\nmodel = \"sonnet\"\n\n[session.env]\nANTHROPIC_MODEL = \"opus\"\n")
-                .unwrap();
-        assert_eq!(setup.claude(), ["claude", "--model", "sonnet"]);
-        assert_eq!(
-            setup.env,
-            [("ANTHROPIC_MODEL".to_owned(), "opus".to_owned())]
-        );
+    fn anthropic_model_in_the_env_is_refused() {
+        for (config, model) in [
+            ("[session.env]\nANTHROPIC_MODEL = \"opus\"\n", "opus"),
+            (
+                "[session]\nmodel = \"opus\"\n\n[session.env]\nA = \"1\"\nANTHROPIC_MODEL = \"sonnet\"\n",
+                "sonnet",
+            ),
+            (
+                "[session]\nenv = { ANTHROPIC_MODEL = \"haiku\" }\n",
+                "haiku",
+            ),
+        ] {
+            refused(
+                config,
+                "[session.env] ANTHROPIC_MODEL: riff sets the model itself",
+            );
+            refused(config, &format!("Put model = \"{model}\" in [session]"));
+        }
+        // A name that only starts with it is fine.
+        assert!(setup("[session.env]\nANTHROPIC_MODEL_X = \"x\"\n").is_ok());
     }
 
     /// 01M6VD1NSHTJQGR31VZ4689S8J: the model of a command is the word

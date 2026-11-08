@@ -4455,11 +4455,6 @@ of this part when they merge.
   `riff` and `riff-server` of the tree of `HEAD` from the artifact of
   CI, else from the file of the release of a tag on `HEAD`. It builds
   them with `just static dev` only when it finds neither.
-- **01M6V8GQ1297PCZEKY311KRRWC** The `riff.toml` of this repository sets
-  `ANTHROPIC_MODEL = "opus"` first in `[session.env]`, with a comment
-  that names issue 1692, so each session of this repository runs on
-  Opus: the lead, each work item and each verify. A test checks that the
-  file sets it.
 - **01M6VAQWECJ6N6VJF66KCMNYD1** riff starts each session with the model
   of the `riff.toml` of the repository, and the default is `opus`: the
   key `model` in the table `[session]` of the merged `riff.toml` names
@@ -4471,11 +4466,16 @@ of this part when they merge.
   character, or that starts with `-`. The error names the key and the
   file.
 - **01M6VAQWMKDX4VY8QRPA8EYFN9** The `riff.toml` of this repository sets
-  `model = "opus"` in `[session]`, beside `ANTHROPIC_MODEL = "opus"` in
-  `[session.env]` (01M6V8GQ1297PCZEKY311KRRWC). riff takes
-  `ANTHROPIC_MODEL` in `[session.env]` as any other variable, and the
-  command of each session has `--model opus`. A test checks the file and
-  the command.
+  `model = "opus"` in `[session]`, and the command of each session has
+  `--model opus`. A test checks the file and the command.
+- **01M6W7VC9REZKE87T6YT5Z47A2** riff refuses `ANTHROPIC_MODEL` in
+  `[session.env]` of a `riff.toml`: the model of a session comes only
+  from `model` in `[session]` (01M6VAQWECJ6N6VJF66KCMNYD1). The error
+  names the key and the file, and says to put `model` in `[session]`
+  with the value of the variable. The `riff.toml` of this repository has
+  no `ANTHROPIC_MODEL`, and a test checks it. This supersedes
+  01M6V8GQ1297PCZEKY311KRRWC in full, and 01M6VAQWMKDX4VY8QRPA8EYFN9 in
+  part.
 
 ### Sessions
 
