@@ -1947,6 +1947,10 @@ To see the checks of a pull request, and the check that has no run yet:
 gh pr checks 40
 ```
 
+A verify also waits while another pull request that changes the same
+files goes first (see
+[The order of the verifies of a wave](how-it-works.md#the-order-of-the-verifies-of-a-wave)).
+
 #### See how the daemon uses the GitHub limit
 
 Each session, each look and each lead of one person use the token of
@@ -3036,8 +3040,11 @@ in the groups of the board of `riff top`: `free`, `held`, `claimed`,
 of the lead, and the wave does not start it. The wave never starts a
 tracker (see [Track a group of items](waves.md#track-a-group-of-items)).
 An item in `question` waits for the answer of a person (see
-[Ask the person a question](#ask-the-person-a-question)). A stuck item
-has a pull request that cannot merge by itself (see
+[Ask the person a question](#ask-the-person-a-question)). A verify that
+waits for the merge of the pull request #N is in the group
+`verify waits for #N` (see
+[The order of the verifies of a wave](how-it-works.md#the-order-of-the-verifies-of-a-wave)).
+A stuck item has a pull request that cannot merge by itself (see
 [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)):
 
 ```text

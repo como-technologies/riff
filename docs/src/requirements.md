@@ -331,6 +331,26 @@
   no issue and has no trailer `Issue: #N` still counts for the item of
   the line `Closes #N` of its body. The wave starts no build of that
   item.
+- **01M6WCGNCC3HWS47158WTWNQ8B** The wave starts one verify at a time
+  among the open pull requests that change the same files. A pull
+  request goes first while its verify runs, and while its verify passed
+  and nothing stops its merge. Then the verifies go in the order of
+  their verify requests in the repository thread. A verify that shares a
+  file with a pull request before it waits until that pull request
+  merges or its verify fails. A verify that shares no file starts beside
+  the others. The wave reads the files of a pull request with one REST
+  call for each head commit, and only while two pull requests or more
+  are on their way to the merge and one of them waits for a verify.
+- **01M6WCGNGNQXG443D5EMC8JRAC** riff wave list shows each verify that
+  waits for another pull request in the group verify waits for #N, where
+  N is the number of that pull request. The riff daemon of the wave
+  sends these waits in its facts.
+- **01M6WCGNN0X2DGYYM97656RQK1** The look of the riff daemon sends no
+  message that a pull request waits for a verify while the pull request
+  has a conflict with the default branch, while the lead holds its
+  verify- item, or while its verify waits for the merge of another pull
+  request. When the pull request waits for a verify again, the 30
+  minutes of 01M49Q316RXNATJP587DWGDNCD start again.
 
 ## Waves on GitHub
 

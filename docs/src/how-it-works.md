@@ -2355,6 +2355,61 @@ Each step on GitHub is one `riff` command, a thin wrapper around the
 `gh` of your machine. A session runs one command for one step, with no
 shell loop.
 
+### The order of the verifies of a wave
+
+The wave orders the verifies of the pull requests that change the same
+files. The merge of one of them can give each of the others a conflict.
+A conflict costs a rebase session, a new Gate run and a new verify, and
+a verify that passed before the conflict is lost. So the wave starts
+the verify of one of them, and the others wait until it merges or its
+verify fails:
+
+- A pull request goes first while its verify runs, and while its
+  verify passed and it waits for the merge.
+- Then come the pull requests that wait for a verify, in the order of
+  their verify requests in the repository thread.
+- A verify that shares a file with a pull request before it waits. A
+  verify that shares no file starts beside the others.
+- A pull request that cannot merge by itself does not go first, for
+  example with a conflict or with auto-merge off. A conflict gets no
+  verify: the wave starts its rebase first.
+
+```mermaid
+flowchart TD
+    A["verify requests: PR #41, then PR #42"] --> S["the verify of #41 starts"]
+    S --> Q{"#42 changes a file that #41 changes?"}
+    Q -- no --> B["the verify of #42 starts beside it"]
+    Q -- yes --> W["#42: verify waits for #41"]
+    W --> E{"#41"}
+    E -- "merges" --> R["#42: a rebase when it has a conflict,<br/>then its verify"]
+    E -- "its verify fails, or it cannot merge" --> V["the verify of #42 starts"]
+```
+
+The wave reads the files of each pull request from GitHub: one REST
+call for each head commit. It reads them only while two pull requests
+or more are on their way to the merge.
+
+To see the verifies that wait, in your clone of the repository:
+
+```sh
+riff wave list
+```
+
+Each verify that waits is in the group `verify waits for #N`, where
+`#N` is the pull request that goes first:
+
+```text
+Wave 50: The TUI  current  runs on thelio  6 open, 12 closed
+  verify: #1637
+  verify waits for #1701: #1638 #1640
+```
+
+The lead gets no message that these pull requests wait for a verify
+(see [When a pull request stops](#when-a-pull-request-stops)). To keep
+a verify out of the order, hold it (see
+[Keep the verify of an item from the
+workers](#keep-the-verify-of-an-item-from-the-workers)).
+
 ### Open a pull request
 
 Push the branch first. Then open its pull request:
@@ -2447,7 +2502,12 @@ flowchart TD
   session. The wave of the riff daemon starts a session for it by
   itself (see [Run the wave](development.md#run-the-wave)).
 - A verify that no session claims for 30 minutes: the lead gives the
-  verify to a free session, or starts a worker.
+  verify to a free session, or starts a worker. No message comes while
+  the pull request has a conflict, while the lead holds its verify, or
+  while its verify waits for the merge of another pull request (see
+  [The order of the verifies of a
+  wave](#the-order-of-the-verifies-of-a-wave)). The 30 minutes start
+  when the pull request waits for a verify again.
 
 Each message comes one time for each pull request, head commit and
 state. A new push that has a conflict again gives a new message. A wave

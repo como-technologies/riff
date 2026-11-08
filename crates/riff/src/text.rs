@@ -1450,6 +1450,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     stuck: vec![],
 ///     tracker: vec![],
 ///     question: vec![],
+///     waits: vec![],
 /// };
 /// let items = Items {
 ///     boards: vec![
@@ -6434,11 +6435,13 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 ///             repo: "o/r".into(),
 ///             word: "started issue-12".into(),
 ///             image: Some(Image { digest: "1a2b3c4d5e6f".into(), here: true }),
+///             waits: Default::default(),
 ///         },
 ///         Wave {
 ///             repo: "o/s".into(),
 ///             word: "waits".into(),
 ///             image: Some(Image { digest: "9f8e7d6c5b4a".into(), here: false }),
+///             waits: Default::default(),
 ///         },
 ///     ],
 ///     machine: Some(Machine { threads: 16, mhz: 4500, now_mhz: 4400, mem_gb: 32, avail_gb: 24, load: 1.5 }),
@@ -6487,7 +6490,7 @@ pub fn load_part(m: &riff_client::machines::Machine) -> (String, anstyle::Style)
 /// assert_eq!(warned, ["claude 1h30m left", "claude token not set", "image not here"]);
 /// // A wave with no merged pin, and a session that podman did not tell.
 /// let none = Facts {
-///     waves: vec![Wave { repo: "o/r".into(), word: "waits".into(), image: None }],
+///     waves: vec![Wave { repo: "o/r".into(), word: "waits".into(), image: None, waits: Default::default() }],
 ///     sessions: vec![Session { digest: String::new(), ..facts.sessions[0].clone() }],
 ///     ..facts.clone()
 /// };
@@ -7000,7 +7003,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     lead: false,
 /// });
 /// status.waiting.push("the wave of o/r".into());
-/// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into() });
+/// status.waves.push(WaveShown { repo: "o/r".into(), word: "starts issue-12".into(), waits: Default::default() });
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.contains(
 ///     "  riff-issue-12-1a2b3c4d  issue-12  session 1a2b3c4d-0000  for 1m  works: > Bash: just check\n"

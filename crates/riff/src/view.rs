@@ -508,6 +508,7 @@ pub fn who(
 ///         repo: "o/r".into(),
 ///         word: "started issue-12".into(),
 ///         image: Some(Image { digest: "1a2b3c4d5e6f".into(), here: true }),
+///         waits: Default::default(),
 ///     }],
 ///     ..Facts::default()
 /// };
