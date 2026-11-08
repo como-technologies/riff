@@ -849,8 +849,9 @@ async fn q_ends_the_tui_at_once_while_a_slow_read_of_gh_runs() {
 /// 01M6VMACJGF4A0ZXC6YK13KNCH: a post of the Chat tab that fails while
 /// the prompt holds a line shows `cannot send the line` in the note line
 /// at once. The next key brings back the note of the wake. The server
-/// holds the post of the line `this line fails` until the test types the
-/// next line, then it refuses the post.
+/// holds the post of the line `this line fails` until the prompt shows
+/// each key of the next line, then it refuses the post: a key that the
+/// TUI reads after the refusal ends the note (01M6WH1FN4N3DDFY6FR1CH1M7X).
 #[tokio::test]
 async fn a_post_that_fails_while_the_prompt_holds_a_line_shows_until_the_next_key() {
     use axum::body::{Body, to_bytes};
@@ -858,12 +859,14 @@ async fn a_post_that_fails_while_the_prompt_holds_a_line_shows_until_the_next_ke
     use axum::http::StatusCode;
     use axum::middleware::{Next, from_fn};
     use axum::response::Response;
+    use tokio::sync::Notify;
 
-    let go = Arc::new(tokio::sync::Notify::new());
-    let gate = Arc::clone(&go);
+    // `held`: the server holds the post. `go`: the server refuses it.
+    let (held, go) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let (hold, gate) = (Arc::clone(&held), Arc::clone(&go));
     let server = crate::common::start_signed_with(move |router| {
         router.layer(from_fn(move |request: Request, next: Next| {
-            let gate = Arc::clone(&gate);
+            let (hold, gate) = (Arc::clone(&hold), Arc::clone(&gate));
             async move {
                 let (head, body) = request.into_parts();
                 let bytes = to_bytes(body, usize::MAX).await.unwrap();
@@ -871,6 +874,7 @@ async fn a_post_that_fails_while_the_prompt_holds_a_line_shows_until_the_next_ke
                     && serde_json::from_slice::<serde_json::Value>(&bytes)
                         .is_ok_and(|post| post["body"] == "this line fails");
                 if fails {
+                    hold.notify_one();
                     gate.notified().await;
                     return Response::builder()
                         .status(StatusCode::BAD_REQUEST)
@@ -893,28 +897,24 @@ async fn a_post_that_fails_while_the_prompt_holds_a_line_shows_until_the_next_ke
     tty.press("2").await;
     tty.shows(|rows| rows[21] == ">").await;
     tty.press("this line fails\r").await;
-    tty.shows(|rows| rows[21] == ">").await;
+    in_time(WAIT, held.notified())
+        .await
+        .expect("the server holds the post in time");
     tty.press("hi all").await;
-    tty.shows(|rows| rows[22] == " Enter wakes each lead of yours.")
+    let wake = " Enter wakes each lead of yours.";
+    tty.shows(|rows| rows[21] == "> hi all" && rows[22] == wake)
         .await;
 
     // The post fails while the prompt holds a line: the failure shows.
     go.notify_one();
-    let rows = tty
-        .shows(|rows| rows[22].starts_with(" riff: cannot send the line:"))
+    let failed = " riff: cannot send the line: post failed (400 Bad Request): no post now";
+    tty.shows(|rows| rows[21] == "> hi all" && rows[22] == failed)
         .await;
-    assert_eq!(
-        rows[22],
-        " riff: cannot send the line: post failed (400 Bad Request): no post now"
-    );
-    assert_eq!(rows[21], "> hi all", "{rows:#?}");
 
     // The next key brings back the note of the wake.
     tty.press("!").await;
-    let rows = tty
-        .shows(|rows| rows[22] == " Enter wakes each lead of yours.")
+    tty.shows(|rows| rows[21] == "> hi all!" && rows[22] == wake)
         .await;
-    assert_eq!(rows[21], "> hi all!", "{rows:#?}");
     tty.press("\x03").await;
     assert_eq!(tty.exits().await, Some(0));
 }

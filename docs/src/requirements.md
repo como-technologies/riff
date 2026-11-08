@@ -1140,6 +1140,10 @@
   reruns itself with `isolated::rerun_without_git_config`. A doc test
   calls `isolated::clear_git_config_env` first. So the test gives the
   same result in a container of riff, in CI and on a host.
+- **01M6WH1FN4N3DDFY6FR1CH1M7X** A test of the TUI in a pseudo-terminal
+  lets the server send a reply that the test holds only after the screen
+  shows each key that the test sent: for example, the prompt holds the
+  whole line that the test typed.
 
 ## Saved state
 
