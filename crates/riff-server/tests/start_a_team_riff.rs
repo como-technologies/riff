@@ -9,7 +9,7 @@ use crate::common;
 use isolated::Isolated;
 use std::fs;
 use std::path::Path;
-use std::process::{Child, Stdio};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 use riff_core::dpop::Key;
@@ -61,12 +61,14 @@ const WAIT: Duration = Duration::from_secs(60);
 /// `issuer`, and the listen address of the test. The TLS proxy of the
 /// page is not in the test. Another process can take the free port
 /// before the server listens there. Then the server ends, and the test
-/// starts it again on a new port.
+/// starts it again on a new port. The log line of the server shows that
+/// it is the server that listens there (01M6YP7699AQGQ0QAG7HTY9ME9).
 async fn start(command: &str, issuer: &str, owner: &str) -> (Server, String) {
     let start = Instant::now();
     loop {
         let listen = format!("127.0.0.1:{}", free_port());
         let url = format!("http://{listen}");
+        let terminal = tempfile::NamedTempFile::new().unwrap();
         let args: Vec<String> = command
             .split_whitespace()
             .skip(1)
@@ -84,13 +86,15 @@ async fn start(command: &str, issuer: &str, owner: &str) -> (Server, String) {
             .env("RIFF_OIDC_CLIENT_SECRET", "not-secret")
             .env("RIFF_OIDC_ISSUER", issuer)
             .env("RIFF_LISTEN", &listen)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(terminal.reopen().unwrap())
+            .stderr(terminal.reopen().unwrap())
             .spawn()
             .unwrap();
         let mut server = Server(child);
         while server.0.try_wait().unwrap().is_none() {
-            if tokio::net::TcpStream::connect(&listen).await.is_ok() {
+            if common::listening(&terminal).as_deref() == Some(listen.as_str())
+                && tokio::net::TcpStream::connect(&listen).await.is_ok()
+            {
                 return (server, url);
             }
             assert!(

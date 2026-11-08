@@ -183,23 +183,24 @@ async fn open(listen: &str) -> bool {
 #[tokio::test]
 async fn the_port_opens_after_the_load_and_gives_503_until_the_server_serves() {
     let dir = tempfile::tempdir().unwrap();
-    let listen = common::free_address();
     let log = tempfile::NamedTempFile::new().unwrap();
-    let _server = common::Server(common::server_on_dir(dir.path(), &listen, &log));
+    let _server = common::Server(common::server_on_dir(dir.path(), common::LISTEN, &log));
 
-    // The port opens before the lease is there.
+    // The port opens before the lease is there. The server writes the
+    // line `riff-server listens on` when its port opens.
     let lease = dir.path().join(LEASE);
     let span = isolated::Span::start();
-    loop {
+    let listen = loop {
         let leased = lease.exists();
-        if open(&listen).await {
-            break;
+        if let Some(listen) = common::listening(&log) {
+            break listen;
         }
         assert!(!leased, "a lease and no open port");
         assert!(span.within(Duration::from_secs(10)), "no open port");
         sleep(Duration::from_millis(20)).await;
-    }
+    };
     let opened = isolated::Span::start();
+    assert!(open(&listen).await, "the port is not open");
 
     // During the wait for the lease, each call gets 503 of riff-server.
     let base = format!("http://{listen}");
@@ -252,14 +253,14 @@ async fn a_riff_server_that_cannot_load_exits_with_no_lease_and_no_open_port() {
     let chunk = dir.path().join(chunk_name(LATER_CHUNK));
     fs::create_dir_all(chunk.parent().unwrap()).unwrap();
     fs::write(&chunk, LATER_FORMAT).unwrap();
-    let listen = common::free_address();
     let log = tempfile::NamedTempFile::new().unwrap();
-    let mut child = common::server_on_dir(dir.path(), &listen, &log);
+    let mut child = common::server_on_dir(dir.path(), common::LISTEN, &log);
 
-    // It exits long before the end of a lease wait.
+    // It exits long before the end of a lease wait. The server writes
+    // the line `riff-server listens on` when its port opens.
     let span = isolated::Span::start();
     let status = loop {
-        assert!(!open(&listen).await, "the port is open");
+        assert_eq!(common::listening(&log), None, "the port is open");
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }

@@ -1,6 +1,8 @@
 //! Each log line of `riff-server` is JSON with a `severity`
 //! (01M3TJWJ3VK671T9NM95F3ES82). The tests run the real binary.
 
+use crate::common;
+
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -13,12 +15,6 @@ use riff_state::log::chunk_name;
 use serde_json::Value;
 use tempfile::NamedTempFile;
 
-/// A free port on the loopback address.
-fn free_address() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().to_string()
-}
-
 /// Each line of `log` as JSON. A line that is not JSON fails the test.
 fn lines(log: &str) -> Vec<Value> {
     log.lines()
@@ -26,32 +22,33 @@ fn lines(log: &str) -> Vec<Value> {
         .collect()
 }
 
-/// A server that listens on `listen` and writes its lines to `log`.
-fn server(listen: &str, log: &NamedTempFile) -> Child {
-    let child = Isolated::shared()
+/// A server on a free port that writes its lines to `log`, and the
+/// address that it listens on (01M6YP7699AQGQ0QAG7HTY9ME9).
+fn server(log: &NamedTempFile) -> (Child, String) {
+    let mut child = Isolated::shared()
         .riff_server()
-        .env("RIFF_LISTEN", listen)
+        .env("RIFF_LISTEN", common::LISTEN)
         .stdin(Stdio::null())
         .stdout(log.reopen().unwrap())
         .stderr(log.reopen().unwrap())
         .spawn()
         .unwrap();
-    let span = Span::start();
-    while TcpStream::connect(listen).is_err() {
-        assert!(span.within(Duration::from_secs(20)), "no open port");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    child
+    let listen = common::listen_address(&mut child, log);
+    (child, listen)
 }
 
 /// Stops `server` with SIGTERM, and gives each line of the token layer
-/// in `log`: the lines `denied` and `dropped`.
+/// in `log`: the lines `denied` and `dropped`. An exit with no success
+/// fails with the status and the last lines of the log.
 fn stop(mut server: Child, log: &NamedTempFile) -> Vec<Value> {
     let pid = server.id().to_string();
     let kill = Command::new("kill").args(["-TERM", &pid]).status().unwrap();
     assert!(kill.success());
-    assert!(server.wait().unwrap().success());
+    let status = server.wait().unwrap();
     let log = fs::read_to_string(log.path()).unwrap();
+    let all: Vec<&str> = log.lines().collect();
+    let last = &all[all.len().saturating_sub(20)..];
+    assert!(status.success(), "{status}:\n{}", last.join("\n"));
     let mut lines = lines(&log);
     lines.retain(|line| line["result"] == "denied" || line["result"] == "dropped");
     lines
@@ -75,12 +72,25 @@ fn refused_call(listen: &str, head: &str, body: &str) -> String {
 /// The read of the body of a refused call has a time limit
 /// (01M3Z67B9RMVKY7TCXCG8HEZT4): a client sends a part of the body and
 /// then nothing. The reply comes at the limit, and the server closes
-/// the call. The line has no `named`.
+/// the call. The line has no `named`. SIGTERM then ends the server with
+/// success. The case runs 20 times, with 5 servers at the same time, and
+/// each server ends with success (#1819).
 #[test]
 fn a_refused_call_with_a_slow_body_ends_at_the_time_limit() {
-    let listen = free_address();
+    for _ in 0..4 {
+        std::thread::scope(|scope| {
+            for _ in 0..5 {
+                scope.spawn(slow_body);
+            }
+        });
+    }
+}
+
+/// One run of the case of
+/// [`a_refused_call_with_a_slow_body_ends_at_the_time_limit`].
+fn slow_body() {
     let log = NamedTempFile::new().unwrap();
-    let server = server(&listen, &log);
+    let (server, listen) = server(&log);
 
     let span = Span::start();
     let part = r#"{"me":"riff://mike@pangolin/como-technologies/riff?session=a"#;
@@ -108,9 +118,8 @@ fn a_refused_call_with_a_slow_body_ends_at_the_time_limit() {
 /// writes the count of the window that it ends.
 #[test]
 fn a_thousand_refused_calls_give_the_lines_of_the_limit_and_one_count() {
-    let listen = free_address();
     let log = NamedTempFile::new().unwrap();
-    let server = server(&listen, &log);
+    let (server, listen) = server(&log);
 
     let body = r#"{"me":"riff://mike@pangolin/como-technologies/riff?session=a"}"#;
     let head = format!("connection: close\r\ncontent-length: {}", body.len());
@@ -159,11 +168,10 @@ fn a_thousand_refused_calls_give_the_lines_of_the_limit_and_one_count() {
 
 #[test]
 fn each_line_of_the_log_of_a_server_is_json_with_a_severity() {
-    let listen = free_address();
     let log = tempfile::NamedTempFile::new().unwrap();
     let mut child = Isolated::shared()
         .riff_server()
-        .env("RIFF_LISTEN", &listen)
+        .env("RIFF_LISTEN", common::LISTEN)
         .stdin(Stdio::null())
         .stdout(log.reopen().unwrap())
         .stderr(log.reopen().unwrap())
@@ -220,7 +228,7 @@ fn a_start_that_fails_logs_one_line_with_the_severity_error() {
         .riff_server()
         .arg("--dir")
         .arg(dir.path())
-        .env("RIFF_LISTEN", free_address())
+        .env("RIFF_LISTEN", common::LISTEN)
         .stdin(Stdio::null())
         .output()
         .unwrap();
@@ -236,4 +244,29 @@ fn a_start_that_fails_logs_one_line_with_the_severity_error() {
         message.starts_with("riff-server stops: cannot read the saved object"),
         "{message}"
     );
+}
+
+/// A server on an address that another process holds stops with one
+/// line with the severity `ERROR` that names the address, and exits
+/// with 1 (01M6YP766GCZMNB64NVEXKPPGZ).
+#[test]
+fn a_server_on_a_held_address_stops_with_one_error_line_that_names_it() {
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = held.local_addr().unwrap().to_string();
+    let out = Isolated::shared()
+        .riff_server()
+        .env("RIFF_LISTEN", &address)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let log = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{log}");
+    let errors: Vec<Value> = lines(&log)
+        .into_iter()
+        .filter(|line| line["severity"] == "ERROR")
+        .collect();
+    assert_eq!(errors.len(), 1, "{log}");
+    let message = errors[0]["message"].as_str().unwrap();
+    let start = format!("riff-server stops: cannot listen on {address}: ");
+    assert!(message.starts_with(&start), "{message}");
 }

@@ -1791,7 +1791,8 @@ impl Service {
     /// holds the lease then ends it, so that a tool of the log can run at
     /// once (01M3X342ARX5Y7R9ZJDT12R9A1). A server that gave the lease to
     /// a new instance first ends the write of the hand-over
-    /// (01M51X8MG0YQT5KBZC9H7917J3).
+    /// (01M51X8MG0YQT5KBZC9H7917J3). It does not wait for a call that is
+    /// still open: see "The shutdown" in [`crate::listen`].
     pub async fn shutdown(&self) -> Result<(), StoreError> {
         let _handed_over = self.0.gate.handing_over.lock().await;
         self.0.gate.closing.store(true, Ordering::SeqCst);
