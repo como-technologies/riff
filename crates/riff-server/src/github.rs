@@ -66,18 +66,19 @@ use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::{Extension, Json};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use riff_core::name::{Repo, SessionUri, Who};
+use riff_core::name::{Repo, SessionUri, ThreadName, Who};
+use riff_core::selector::Selector;
 use riff_core::wire::{
     GitHubApp, GitHubAppFacts, GitHubApps, GitHubAppsReply, GitHubCheck, GitHubChecked,
-    GitHubCreate, GitHubDaemonToken, GitHubRole, GitHubStarted, GitHubToken, Rights, RoleChecked,
-    SessionToken,
+    GitHubCreate, GitHubDaemonToken, GitHubRole, GitHubStarted, GitHubToken, Kind, Rights,
+    RoleChecked, SessionToken,
 };
 use riff_state::state::{Code, Refused, Role};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::SignedIn;
 use crate::engine::Failed;
-use crate::keys::{AppKeys, Apps, At, Keys};
+use crate::keys::{AppKeys, Apps, At, Keys, KeysError};
 
 /// The API of GitHub.
 pub const API: &str = "https://api.github.com";
@@ -750,6 +751,9 @@ pub(crate) struct GitHub {
     client: Client,
     keys: Keys,
     states: Mutex<States>,
+    /// The cause of the last read of the keys, when the place refused it
+    /// (01M6YC3SYATQW7GZZV3APFG85B). `None` after a read that worked.
+    fault: Mutex<Option<String>>,
 }
 
 impl GitHub {
@@ -761,12 +765,24 @@ impl GitHub {
             },
             keys: Keys::new(settings.keys.clone(), http),
             states: Mutex::new(States::new(settings.state_life)),
+            fault: Mutex::new(None),
             settings,
         }
     }
 
     fn states(&self) -> std::sync::MutexGuard<'_, States> {
         self.states.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn fault(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.fault.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Why riff-server cannot read the keys, for `GET /v1/server`
+    /// (01M6YC3SYATQW7GZZV3APFG85B): the cause of the last read, when the place
+    /// refused it.
+    pub(crate) fn keys_fault(&self) -> Option<String> {
+        self.fault().clone()
     }
 
     /// The App that a new `riff github create` makes first: the first
@@ -1018,13 +1034,160 @@ fn need_admin(
     Ok(())
 }
 
-/// A failed read of the keys: 503, with the place.
-fn keys_failed(e: crate::keys::KeysError) -> (StatusCode, String) {
+/// A failed read of the keys: 503, with the place. A read that the place
+/// refuses has its error line in [`apps_of`] one time, and the fix here.
+fn keys_failed(e: KeysError, public_url: &str) -> (StatusCode, String) {
+    if e.denied {
+        tracing::warn!("the keys of the GitHub Apps did not read: {e}");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            keys_fault_text(&e.text, public_url),
+        );
+    }
     tracing::error!("the keys of the GitHub Apps did not read: {e}");
     (
         StatusCode::SERVICE_UNAVAILABLE,
         format!("riff-server cannot read the keys of the GitHub Apps: {e}"),
     )
+}
+
+/// The text of a read of the keys that the place refuses
+/// (01M6YC3SYATQW7GZZV3APFG85B): the cause, what the pause stops, the fix, and a
+/// prompt for a `claude` session that an admin starts on the host. The
+/// chat line of riff-bot, the wake of each repository, the reply to the
+/// token call of a lead, `riff daemon status` and the first prompt of the
+/// lead have this text. `cause` is the text of the [`KeysError`].
+///
+/// ```
+/// use riff_server::github::keys_fault_text;
+///
+/// let cause = "projects/p/secrets/s: 403 Forbidden: Permission denied.";
+/// let text = keys_fault_text(cause, "https://riff.example");
+/// assert!(text.starts_with(
+///     "riff-server cannot read the keys of the GitHub Apps: projects/p/secrets/s: 403 \
+///      Forbidden: Permission denied. The riff is paused"
+/// ), "{text}");
+/// assert!(text.contains("riff cloud create NAME, then riff resume --riff"), "{text}");
+/// assert!(text.contains("start claude on the host"), "{text}");
+/// assert!(text.contains("the riff at https://riff.example"), "{text}");
+/// ```
+pub fn keys_fault_text(cause: &str, public_url: &str) -> String {
+    let cause = cause.trim().trim_end_matches('.');
+    format!(
+        "riff-server cannot read the keys of the GitHub Apps: {cause}. The riff is paused: no \
+         worker and no verify starts, and a lead starts with no token on GitHub. The fix: an \
+         admin runs git pull, riff cloud create NAME, then riff resume --riff, in a terminal, \
+         in the clone with the cloud settings of the riff at {public_url} (riff cloud list \
+         names it). When the lead cannot help, start claude on the host in that clone, and \
+         paste this prompt: \"The riff at {public_url} is paused: its riff-server cannot read \
+         the keys of the GitHub Apps ({cause}). Help me repair it in this clone. Run git pull. \
+         Find the NAME of the riff at {public_url} with riff cloud list. Run riff cloud status \
+         NAME, and find the missing secret or the missing role. Then give me the commands for \
+         my terminal, because riff refuses them in a session: riff cloud create NAME, then riff \
+         resume --riff.\""
+    )
+}
+
+/// The wake of each repository when riff-server pauses the riff for the
+/// keys (01M6YC3SYATQW7GZZV3APFG85B): the pause as each session hears it, then the
+/// text of [`keys_fault_text`] for the lead.
+///
+/// ```
+/// let wake = riff_server::github::keys_wake("the fix");
+/// assert!(wake.contains("see \"Pause\" in the instructions of the riff tools"), "{wake}");
+/// assert!(wake.ends_with("The lead tells its person: the fix"), "{wake}");
+/// ```
+pub fn keys_wake(fault: &str) -> String {
+    format!(
+        "The riff is paused by riff-server. Stop at your next step and wait: see \"Pause\" in \
+         the instructions of the riff tools. The lead tells its person: {fault}"
+    )
+}
+
+/// The Apps of the riff, from [`Keys::load`] (01M6YC3SYATQW7GZZV3APFG85B). The first
+/// read that the place refuses pauses the whole riff, posts one line as
+/// riff-bot in the chat to the owner and each admin, wakes each
+/// repository, and logs one error: the alert sends it to the owner. A
+/// later refused read only keeps the fault. A read that works ends the
+/// fault; the riff stays paused until an admin resumes it.
+pub(crate) async fn apps_of(s: &crate::Server) -> Result<Apps, KeysError> {
+    let read = s.github.keys.load().await;
+    match &read {
+        Ok(_) => {
+            if s.github.fault().take().is_some() {
+                tracing::info!("riff-server reads the keys of the GitHub Apps again");
+            }
+        }
+        Err(e) if e.denied => {
+            let first = s.github.fault().replace(e.text.clone()).is_none();
+            if first {
+                keys_denied(s, e).await;
+            }
+        }
+        Err(_) => {}
+    }
+    read
+}
+
+/// The first read of the keys that the place refuses: the error line, the
+/// pause of the whole riff, the chat line and the wakes (01M6YC3SYATQW7GZZV3APFG85B).
+async fn keys_denied(s: &crate::Server, e: &KeysError) {
+    tracing::error!(
+        "riff-server cannot read the keys of the GitHub Apps: {e}. It pauses the riff until an \
+         admin fixes the secret and runs riff resume --riff"
+    );
+    let fault = keys_fault_text(&e.text, &s.config.public_url);
+    let reply = match s.engine.pause_riff().await {
+        Ok(reply) => Some(reply),
+        Err(failed) => {
+            tracing::warn!("the pause of the riff did not go: {}", failed.text());
+            None
+        }
+    };
+    let (admins, repos) = s.engine.read(|state| {
+        let admins: Vec<String> = state
+            .people()
+            .persons()
+            .into_iter()
+            .filter(|(_, role)| *role != riff_core::wire::PersonRole::Member)
+            .map(|(user, _)| user)
+            .collect();
+        (admins, state.repositories())
+    });
+    let to = admins
+        .into_iter()
+        .map(|user| Selector {
+            user: Some(user),
+            person: Some(true),
+            ..Selector::default()
+        })
+        .collect();
+    let mut posts = vec![crate::Server::news(
+        Some(ThreadName::chat()),
+        to,
+        &fault,
+        Kind::Riff,
+    )];
+    // A repository with a pause of its own: only its lead hears it, as
+    // after a pause of a person (01M6FYGVTCBKC9C8AXMFD7WMW2).
+    let wake = keys_wake(&fault);
+    for repo in repos {
+        let own = reply
+            .as_ref()
+            .is_some_and(|reply| reply.repository(&repo).is_some());
+        let to = Selector {
+            repo: Some(repo.to_string()),
+            lead: own.then_some(true),
+            ..Selector::default()
+        };
+        posts.push(crate::Server::news(
+            Some(repo),
+            vec![to],
+            &wake,
+            Kind::Message,
+        ));
+    }
+    s.announce_each(posts).await;
 }
 
 /// `POST /v1/github/create`: a new state, and the URL of the start page
@@ -1043,7 +1206,9 @@ pub(crate) async fn create(
     if *github.keys.at() == At::Nowhere {
         return Err((StatusCode::CONFLICT, crate::keys::NOWHERE.to_owned()));
     }
-    let apps = github.keys.load().await.map_err(keys_failed)?;
+    let apps = apps_of(&s)
+        .await
+        .map_err(|e| keys_failed(e, &s.config.public_url))?;
     let app = GitHub::first_app(&apps);
     if let Some(old) = apps.of(app) {
         tracing::warn!(
@@ -1153,7 +1318,7 @@ pub(crate) async fn created(
     );
     let apps = match s.github.keys.load().await {
         Ok(apps) => apps,
-        Err(e) => return refused_page(StatusCode::SERVICE_UNAVAILABLE, &e.0),
+        Err(e) => return refused_page(StatusCode::SERVICE_UNAVAILABLE, &e.text),
     };
     if pending.app == GitHubApp::Session {
         let next = Pending {
@@ -1179,7 +1344,9 @@ pub(crate) async fn apps(
     if r.owner.is_some() {
         need_admin(&s, &signed_in, "riff github install")?;
     }
-    let apps = s.github.keys.load().await.map_err(keys_failed)?;
+    let apps = apps_of(&s)
+        .await
+        .map_err(|e| keys_failed(e, &s.config.public_url))?;
     let mut reply = GitHubAppsReply::default();
     for app in GitHubApp::ALL {
         let Some(keys) = apps.of(app) else {
@@ -1263,9 +1430,12 @@ pub fn role_of(uri: &SessionUri) -> GitHubRole {
 /// signed in as the person: the daemon. riff-server takes the role and
 /// the repository from its own facts. A riff with no App of the role, or
 /// an App that is not on the repository, gives no token and says why:
-/// the session keeps the token of the person. The log line names the
-/// session, the person, the repository, the role and the end, never the
-/// token.
+/// the session keeps the token of the person. While the place of the keys
+/// refuses their read, the lead gets no token, the reason and
+/// `no_github`: it starts, and works, with no token on GitHub at all. A
+/// worker and a verifier get a 503, so no container starts for them
+/// (01M6YC3T0TXANJH6YMTJZR1HCR). The log line names the session, the person, the
+/// repository, the role and the end, never the token.
 pub(crate) async fn token(
     AxumState(s): AxumState<crate::Shared>,
     Extension(signed_in): Extension<SignedIn>,
@@ -1298,7 +1468,31 @@ pub(crate) async fn token(
         let why = format!("the session {} works in no repository of GitHub", r.session);
         return Err((StatusCode::BAD_REQUEST, why));
     }
-    let apps = s.github.keys.load().await.map_err(keys_failed)?;
+    let apps = match apps_of(&s).await {
+        Ok(apps) => apps,
+        Err(e) if e.denied && role == GitHubRole::Lead => {
+            tracing::info!(
+                session = %r.session,
+                person,
+                repo,
+                role = %role,
+                "no token on GitHub for the lead, also not the token of its person: riff-server \
+                 cannot read the keys of the GitHub Apps"
+            );
+            return Ok(Json(SessionToken {
+                role,
+                repo,
+                bot: None,
+                bot_id: None,
+                token: None,
+                rights: Rights::new(),
+                ends: None,
+                problem: Some(keys_fault_text(&e.text, &s.config.public_url)),
+                no_github: true,
+            }));
+        }
+        Err(e) => return Err(keys_failed(e, &s.config.public_url)),
+    };
     let keys = apps.of(role.app());
     let mut reply = SessionToken {
         role,
@@ -1309,6 +1503,7 @@ pub(crate) async fn token(
         rights: Rights::new(),
         ends: None,
         problem: None,
+        no_github: false,
     };
     let granted = match s.github.grant(&apps, role, &repo).await {
         Ok((_, granted)) => granted,
@@ -1356,8 +1551,9 @@ pub(crate) async fn token(
 /// repository of the riff, and the lead gets the same token. A riff with
 /// no lead App, or a lead App that is not on the repository, gives no
 /// token and says why: the daemon writes with the token of the person.
-/// The log line names the person, the repository and the end, never the
-/// token.
+/// So does a riff-server that the place of the keys refuses
+/// (01M6YC3SYATQW7GZZV3APFG85B). The log line names the person, the repository and
+/// the end, never the token.
 pub(crate) async fn daemon_token(
     AxumState(s): AxumState<crate::Shared>,
     Extension(signed_in): Extension<SignedIn>,
@@ -1374,18 +1570,30 @@ pub(crate) async fn daemon_token(
         return Err((StatusCode::BAD_REQUEST, why));
     }
     let role = GitHubRole::Lead;
-    let apps = s.github.keys.load().await.map_err(keys_failed)?;
-    let keys = apps.of(role.app());
     let mut reply = SessionToken {
         role,
         repo: repo.clone(),
-        bot: keys.map(AppKeys::bot),
-        bot_id: keys.and_then(|keys| keys.bot_id),
+        bot: None,
+        bot_id: None,
         token: None,
         rights: Rights::new(),
         ends: None,
         problem: None,
+        no_github: false,
     };
+    // While the place of the keys refuses their read, the daemon writes
+    // with the token of its person, as with no lead App (01M6YC3SYATQW7GZZV3APFG85B).
+    let apps = match apps_of(&s).await {
+        Ok(apps) => apps,
+        Err(e) if e.denied => {
+            reply.problem = Some(keys_fault_text(&e.text, &s.config.public_url));
+            return Ok(Json(reply));
+        }
+        Err(e) => return Err(keys_failed(e, &s.config.public_url)),
+    };
+    let keys = apps.of(role.app());
+    reply.bot = keys.map(AppKeys::bot);
+    reply.bot_id = keys.and_then(|keys| keys.bot_id);
     let granted = match s.github.grant(&apps, role, &repo).await {
         Ok((_, granted)) => granted,
         Err(NoGrant::Missing(why)) => {
@@ -1432,7 +1640,9 @@ pub(crate) async fn check(
         let why = format!("{:?} is no repository OWNER/NAME of GitHub", r.repo);
         return Err((StatusCode::BAD_REQUEST, why));
     }
-    let apps = s.github.keys.load().await.map_err(keys_failed)?;
+    let apps = apps_of(&s)
+        .await
+        .map_err(|e| keys_failed(e, &s.config.public_url))?;
     let mut checked = GitHubChecked::default();
     for role in GitHubRole::ALL {
         checked

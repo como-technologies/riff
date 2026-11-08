@@ -12,7 +12,7 @@
 //! | `riff cloud signin NAME` | Shows the console steps of the sign-in client, then stores the secret in Secret Manager and the client ID in the settings ([`signin`]) |
 //! | `riff cloud deploy NAME [TAG]` | Deploys the image of a release tag, or builds this tree with Cloud Build ([`deploy`]) |
 //! | `riff cloud list` | Each instance: URL, release, ready, paused |
-//! | `riff cloud status NAME` | The same for one instance, with its revision and memory |
+//! | `riff cloud status NAME` | The same for one instance, with its revision and memory, and each secret with the roles of the run account on it ([`secret_states`]) |
 //! | `riff cloud log NAME [--errors]` | The log lines of the service |
 //! | `riff cloud delete NAME [--with-state]` | Deletes the service, and the bucket with `--with-state` ([`delete`]) |
 //!
@@ -34,6 +34,32 @@
 //! when it has that folder. Else they are in `cloud/` beside the riff
 //! settings of the machine ([`dir`]). The riff repository holds two:
 //! `shared.env`, the shared riff, and `stage.env`, the stage.
+//!
+//! `CLOUD_GITHUB_SECRET` names the secret of the keys of the GitHub
+//! Apps. It has no default: settings with no value for it are an error
+//! that names the line to add (01M6YC5XGQR7V3KC68WW8NE1PD). `riff cloud create`
+//! writes `NAME-github-apps` in the file of a new instance.
+//!
+//! ## A clone that is behind
+//!
+//! `riff cloud create NAME` reads or writes the settings of a clone only
+//! when the branch of the clone is not behind its upstream ([`behind`],
+//! 01M6YC5XGQR7V3KC68WW8NE1PD). Else it stops before each call of `gcloud`, makes
+//! nothing, and names the fix `git pull`. A branch with no upstream, a
+//! detached `HEAD`, and a folder outside a clone have no check.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     C["riff cloud create NAME"] --> U{"branch has an upstream?"}
+//!     U -- no --> R["read or write NAME.env"]
+//!     U -- yes --> F["git fetch, quiet, best effort"]
+//!     F --> B{"HEAD..upstream has a commit?"}
+//!     B -- no --> R
+//!     B -- yes --> X["stop: run git pull<br/>no call of gcloud"]
+//!     R --> G{"CLOUD_GITHUB_SECRET?"}
+//!     G -- empty or none --> Y["stop: add the line"]
+//!     G -- yes --> M["make each missing resource"]
+//! ```
 //!
 //! The shared riff and the stage take the same code path. Only the
 //! setting `CLOUD_CONFIRM=true` differs in the flow: then `deploy` asks
@@ -57,6 +83,13 @@
 //! let text = "# The stage\nCLOUD_PROJECT=p\nRIFF_OIDC_CLIENT_ID=\n";
 //! let s = Settings::parse("stage", text).unwrap_err();
 //! assert!(s.to_string().contains("have no CLOUD_PROJECT_NUMBER"));
+//!
+//! // No default for the secret of the GitHub Apps (01M6YC5XGQR7V3KC68WW8NE1PD).
+//! let mut new = Settings::new("stage", "p", "1", "r").text();
+//! assert!(Settings::parse("stage", &new).is_ok());
+//! new = new.replace("CLOUD_GITHUB_SECRET=stage-github-apps\n", "");
+//! let e = Settings::parse("stage", &new).unwrap_err().to_string();
+//! assert!(e.contains("Add the line CLOUD_GITHUB_SECRET=SECRET to stage.env"), "{e}");
 //! assert_eq!(
 //!     set_line(text, "RIFF_OIDC_CLIENT_ID", "x.apps.googleusercontent.com"),
 //!     "# The stage\nCLOUD_PROJECT=p\nRIFF_OIDC_CLIENT_ID=x.apps.googleusercontent.com\n",
@@ -317,7 +350,9 @@ pub struct Settings {
     /// The name of the secret of the sign-in client in Secret Manager.
     pub secret_name: String,
     /// The name of the secret of the keys of the GitHub Apps in Secret
-    /// Manager (01M6WG52ZEVRSQ463FTDS94M54).
+    /// Manager (01M6WG52ZEVRSQ463FTDS94M54): `CLOUD_GITHUB_SECRET` of the
+    /// settings. It has no default ([`Settings::parse`],
+    /// 01M6YC5XGQR7V3KC68WW8NE1PD).
     pub github_secret: String,
     /// The bucket that holds the state of riff-server.
     pub bucket: String,
@@ -357,7 +392,30 @@ pub struct Settings {
     pub confirm: bool,
 }
 
-/// The keys that must have a value.
+/// The roles of the run account on the secret of the sign-in client: it
+/// only reads it (R134).
+pub const SIGNIN_SECRET_ROLES: &[&str] = &["roles/secretmanager.secretAccessor"];
+
+/// The roles of the run account on the secret of the GitHub Apps: it
+/// reads it and adds its versions (01M6WG52ZEVRSQ463FTDS94M54).
+pub const GITHUB_SECRET_ROLES: &[&str] = &[
+    "roles/secretmanager.secretAccessor",
+    "roles/secretmanager.secretVersionAdder",
+];
+
+/// A secret of an instance in Secret Manager ([`Settings::secrets`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Secret<'a> {
+    /// What the secret holds, as `riff cloud status` names it.
+    pub label: &'static str,
+    /// The name of the secret.
+    pub name: &'a str,
+    /// The roles that the run account needs on the secret.
+    pub roles: &'static [&'static str],
+}
+
+/// The keys that must have a value. `CLOUD_GITHUB_SECRET` must have one
+/// too: its error names the line to add ([`Settings::parse`]).
 const REQUIRED: [&str; 10] = [
     "CLOUD_PROJECT",
     "CLOUD_PROJECT_NUMBER",
@@ -372,9 +430,30 @@ const REQUIRED: [&str; 10] = [
 ];
 
 impl Settings {
-    /// The settings of the instance `name` from the text of its file.
-    /// It fails when a required key has no value.
+    /// The settings of the instance `name` from the text of its file
+    /// `NAME.env`. It fails when a required key has no value. With no
+    /// value of `CLOUD_GITHUB_SECRET`, the error names the line to add
+    /// (01M6YC5XGQR7V3KC68WW8NE1PD).
+    ///
+    /// ```
+    /// use riff::cloud::Settings;
+    ///
+    /// let text = Settings::new("team", "acme", "1", "r").text();
+    /// assert_eq!(Settings::parse("team", &text)?.github_secret, "team-github-apps");
+    /// for gone in ["", "CLOUD_GITHUB_SECRET=\n"] {
+    ///     let text = text.replace("CLOUD_GITHUB_SECRET=team-github-apps\n", gone);
+    ///     let e = Settings::parse("team", &text).unwrap_err().to_string();
+    ///     assert_eq!(e, riff::text::cloud_no_github_secret("team", "team.env".as_ref()));
+    /// }
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
     pub fn parse(name: &str, text: &str) -> Result<Self> {
+        Self::parse_at(name, text, Path::new(&format!("{name}.env")))
+    }
+
+    /// [`Settings::parse`] of the text of the file `path`: an error
+    /// names that file.
+    fn parse_at(name: &str, text: &str, path: &Path) -> Result<Self> {
         let values = values(text);
         for key in REQUIRED {
             if values.get(key).is_none_or(|v| v.is_empty()) {
@@ -382,16 +461,17 @@ impl Settings {
             }
         }
         let get = |key: &str| values.get(key).cloned().unwrap_or_default();
+        let github_secret = get("CLOUD_GITHUB_SECRET");
+        if github_secret.is_empty() {
+            bail!(text::cloud_no_github_secret(name, path));
+        }
         Ok(Self {
             name: name.to_owned(),
             project: get("CLOUD_PROJECT"),
             project_number: get("CLOUD_PROJECT_NUMBER"),
             region: get("CLOUD_REGION"),
             secret_name: get("CLOUD_SECRET"),
-            github_secret: match get("CLOUD_GITHUB_SECRET").as_str() {
-                "" => format!("{name}-github-apps"),
-                given => given.to_owned(),
-            },
+            github_secret,
             bucket: get("CLOUD_BUCKET"),
             service: get("CLOUD_SERVICE"),
             domain: get("CLOUD_DOMAIN"),
@@ -418,7 +498,9 @@ impl Settings {
 
     /// The settings of a new instance `name` in `project` (with the
     /// number `number`) and `region`. Each resource takes its name from
-    /// the instance, so two instances share no resource.
+    /// the instance, so two instances share no resource. The secret of
+    /// the GitHub Apps is `NAME-github-apps`: [`Settings::text`] writes
+    /// it in the file.
     ///
     /// ```
     /// let s = riff::cloud::Settings::new("mine", "acme", "123", "europe-west1");
@@ -427,6 +509,7 @@ impl Settings {
     /// assert_eq!(s.run_account, "mine-server");
     /// assert_eq!(s.url, "https://mine-123.europe-west1.run.app");
     /// let text = s.text();
+    /// assert!(text.contains("\nCLOUD_GITHUB_SECRET=mine-github-apps\n"), "{text}");
     /// assert_eq!(riff::cloud::Settings::parse("mine", &text).unwrap(), s);
     /// ```
     pub fn new(name: &str, project: &str, number: &str, region: &str) -> Self {
@@ -499,6 +582,34 @@ impl Settings {
     /// The email of the service account `name` of the project.
     pub fn account(&self, name: &str) -> String {
         format!("{name}@{}.iam.gserviceaccount.com", self.project)
+    }
+
+    /// The two secrets of the instance in Secret Manager: of the sign-in
+    /// client, and of the keys of the GitHub Apps.
+    ///
+    /// ```
+    /// use riff::cloud::{GITHUB_SECRET_ROLES, SIGNIN_SECRET_ROLES, Settings};
+    ///
+    /// let s = Settings::new("mine", "acme", "123", "europe-west1");
+    /// let [signin, github] = s.secrets();
+    /// assert_eq!((signin.label, signin.name), ("sign-in secret", "mine-oidc-client-secret"));
+    /// assert_eq!(signin.roles, SIGNIN_SECRET_ROLES);
+    /// assert_eq!((github.label, github.name), ("github secret", "mine-github-apps"));
+    /// assert_eq!(github.roles, GITHUB_SECRET_ROLES);
+    /// ```
+    pub fn secrets(&self) -> [Secret<'_>; 2] {
+        [
+            Secret {
+                label: "sign-in secret",
+                name: &self.secret_name,
+                roles: SIGNIN_SECRET_ROLES,
+            },
+            Secret {
+                label: "github secret",
+                name: &self.github_secret,
+                roles: GITHUB_SECRET_ROLES,
+            },
+        ]
     }
 
     /// The image of the release `tag` in the image repository.
@@ -613,7 +724,124 @@ pub fn load(dir: &Path, name: &str) -> Result<Settings> {
     let path = file(dir, name);
     let text = std::fs::read_to_string(&path)
         .map_err(|_| anyhow::anyhow!(text::cloud_no_settings(name, &path)))?;
-    Settings::parse(name, &text)
+    Settings::parse_at(name, &text, &path)
+}
+
+/// The branch of a clone that is behind its upstream ([`behind`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Behind {
+    /// The top of the work tree of the clone.
+    pub top: PathBuf,
+    /// The upstream of the branch, for example `origin/main`.
+    pub upstream: String,
+    /// The number of commits of the upstream that the branch does not
+    /// have.
+    pub commits: u64,
+}
+
+/// The longest wait for the fetch of [`behind`].
+const FETCH_WAIT: Duration = Duration::from_secs(30);
+
+/// The clone of the folder `dir` when its branch is behind its upstream
+/// (01M6YC5XGQR7V3KC68WW8NE1PD), else `None`. It fetches the remote of the
+/// upstream first, with no output and no prompt, for at most 30
+/// seconds. When the fetch fails, it compares the branch with the
+/// upstream ref that the clone has. A folder outside a clone, a detached
+/// `HEAD` and a branch with no upstream give `None`.
+///
+/// ```
+/// use riff::cloud::behind;
+///
+/// let dir = tempfile::tempdir()?;
+/// let git = |dir: &std::path::Path, args: &[&str]| {
+///     let status = std::process::Command::new("git")
+///         .args(["-c", "user.name=a", "-c", "user.email=a@b.c", "-c", "commit.gpgsign=false", "-C"])
+///         .arg(dir)
+///         .args(args)
+///         .status()
+///         .unwrap();
+///     assert!(status.success(), "git {args:?}");
+/// };
+/// let (origin, clone) = (dir.path().join("origin"), dir.path().join("clone"));
+/// git(dir.path(), &["init", "-q", "-b", "main", "origin"]);
+/// git(&origin, &["commit", "-q", "--allow-empty", "-m", "first"]);
+/// git(dir.path(), &["clone", "-q", "origin", "clone"]);
+/// assert_eq!(behind(&clone), None);
+///
+/// git(&origin, &["commit", "-q", "--allow-empty", "-m", "second"]);
+/// let late = behind(&clone).unwrap();
+/// assert_eq!((late.upstream.as_str(), late.commits), ("origin/main", 1));
+/// assert_eq!(late.top.canonicalize()?, clone.canonicalize()?);
+///
+/// git(&clone, &["pull", "-q", "--ff-only"]);
+/// assert_eq!(behind(&clone), None);
+/// // The origin is the clone of nothing: it has no upstream.
+/// assert_eq!(behind(&origin), None);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn behind(dir: &Path) -> Option<Behind> {
+    use crate::session_image::git;
+    if !dir.is_dir() {
+        return None;
+    }
+    let top = git(dir, &["rev-parse", "--show-toplevel"]).ok()?;
+    // This fails on a detached HEAD, and on a branch with no upstream.
+    let upstream = git(
+        dir,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
+    )
+    .ok()?;
+    // With no remote named, git fetches the remote of the upstream.
+    fetch(dir);
+    let commits = git(dir, &["rev-list", "--count", "HEAD..@{upstream}"])
+        .ok()?
+        .parse()
+        .ok()?;
+    (commits > 0).then(|| Behind {
+        top: top.into(),
+        upstream,
+        commits,
+    })
+}
+
+/// Runs `git fetch --quiet` in `dir` with no output and no prompt, for
+/// at most [`FETCH_WAIT`]. A fetch that fails changes nothing.
+fn fetch(dir: &Path) {
+    use std::os::unix::process::CommandExt;
+    let child = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["fetch", "--quiet"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        // A group of its own: the stop at the end of the wait also stops
+        // each process that git started, for example ssh.
+        .process_group(0)
+        .spawn();
+    let Ok(mut child) = child else {
+        return;
+    };
+    let end = std::time::Instant::now() + FETCH_WAIT;
+    while matches!(child.try_wait(), Ok(None)) {
+        if std::time::Instant::now() >= end {
+            if let Ok(group) = i32::try_from(child.id()) {
+                let _ = nix::sys::signal::killpg(
+                    nix::unistd::Pid::from_raw(group),
+                    nix::sys::signal::Signal::SIGKILL,
+                );
+            }
+            let _ = child.wait();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// The settings of each instance in `dir`, by name.
@@ -657,7 +885,10 @@ pub fn confirm(name: &str, given: Option<&str>, what: &str) -> Result<()> {
 
 /// Writes the settings of a new instance to `dir`, or reads the
 /// settings that are there. `project` and `region` must match the
-/// settings that are there.
+/// settings that are there. When `dir` is in a clone whose branch is
+/// behind its upstream ([`behind`]), it stops before each call of
+/// `gcloud` and writes nothing: the error names the fix `git pull`
+/// (01M6YC5XGQR7V3KC68WW8NE1PD).
 pub fn settings_for_create(
     gcloud: &Gcloud,
     dir: &Path,
@@ -667,6 +898,9 @@ pub fn settings_for_create(
 ) -> Result<Settings> {
     if !valid_name(name) {
         bail!(text::cloud_bad_name(name));
+    }
+    if let Some(late) = behind(dir) {
+        bail!(text::cloud_clone_behind(name, &late));
     }
     let path = file(dir, name);
     if path.exists() {
@@ -775,7 +1009,7 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     // The secret of the sign-in client, and the secret of the keys of the
     // GitHub Apps (01M6WG52ZEVRSQ463FTDS94M54). riff-server adds each
     // version of the second one itself.
-    for name in [&s.secret_name, &s.github_secret] {
+    for Secret { name, .. } in s.secrets() {
         if gcloud.exists(&with(&["secrets", "describe", name], &project))? {
             println!("Secret {name}: exists.");
         } else {
@@ -892,34 +1126,21 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
         ],
         &project,
     ))?;
-    gcloud.bind(&with(
-        &[
-            "secrets",
-            "add-iam-policy-binding",
-            &s.secret_name,
-            "--member",
-            &run,
-            "--role",
-            "roles/secretmanager.secretAccessor",
-        ],
-        &project,
-    ))?;
-    for role in [
-        "roles/secretmanager.secretAccessor",
-        "roles/secretmanager.secretVersionAdder",
-    ] {
-        gcloud.bind(&with(
-            &[
-                "secrets",
-                "add-iam-policy-binding",
-                &s.github_secret,
-                "--member",
-                &run,
-                "--role",
-                role,
-            ],
-            &project,
-        ))?;
+    for secret in s.secrets() {
+        for role in secret.roles {
+            gcloud.bind(&with(
+                &[
+                    "secrets",
+                    "add-iam-policy-binding",
+                    secret.name,
+                    "--member",
+                    &run,
+                    "--role",
+                    role,
+                ],
+                &project,
+            ))?;
+        }
     }
     gcloud.bind(&with(
         &[
@@ -1666,6 +1887,81 @@ pub fn facts(gcloud: &Gcloud, s: &Settings) -> Result<Facts> {
     })
 }
 
+/// The state of a secret of an instance in Secret Manager, for
+/// `riff cloud status` (01M6YC5XGQR7V3KC68WW8NE1PD).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretState {
+    /// What the secret holds ([`Secret::label`]).
+    pub label: &'static str,
+    /// The name of the secret.
+    pub name: String,
+    /// False when Secret Manager has no secret of this name.
+    pub exists: bool,
+    /// The roles that the run account needs on the secret and does not
+    /// have. Empty for a secret that does not exist.
+    pub missing: Vec<&'static str>,
+}
+
+/// The state of each secret of `s` ([`Settings::secrets`]): whether it
+/// exists, and each role that the run account needs on it and does not
+/// have (01M6YC5XGQR7V3KC68WW8NE1PD). Each failure of `gcloud` other than "not
+/// found" is an error, so riff never says "missing" for a failed call
+/// (01M4382RKERWAPKBRY9W8F2GSA).
+pub fn secret_states(gcloud: &Gcloud, s: &Settings) -> Result<Vec<SecretState>> {
+    let member = format!("serviceAccount:{}", s.account(&s.run_account));
+    let mut states = Vec::new();
+    for secret in s.secrets() {
+        let mut describe = args(&["secrets", "describe", secret.name]);
+        describe.extend(s.project());
+        let exists = gcloud.find(&describe)?.is_some();
+        let missing = if exists {
+            let mut policy = args(&["secrets", "get-iam-policy", secret.name]);
+            policy.extend(s.project());
+            policy.extend(args(&["--format", "json"]));
+            missing_roles(&gcloud.run(&policy, None)?, &member, secret.roles)
+        } else {
+            Vec::new()
+        };
+        states.push(SecretState {
+            label: secret.label,
+            name: secret.name.to_owned(),
+            exists,
+            missing,
+        });
+    }
+    Ok(states)
+}
+
+/// Each role of `roles` that `member` has in no binding of `policy`, the
+/// JSON of `gcloud ... get-iam-policy`. A policy with no bindings gives
+/// each role.
+///
+/// ```
+/// use riff::cloud::{GITHUB_SECRET_ROLES, SIGNIN_SECRET_ROLES, missing_roles};
+///
+/// let member = "serviceAccount:a@p.iam.gserviceaccount.com";
+/// let policy = format!(
+///     r#"{{"bindings":[{{"role":"roles/secretmanager.secretAccessor","members":["{member}"]}}]}}"#
+/// );
+/// assert_eq!(missing_roles(&policy, member, GITHUB_SECRET_ROLES), ["roles/secretmanager.secretVersionAdder"]);
+/// assert!(missing_roles(&policy, member, SIGNIN_SECRET_ROLES).is_empty());
+/// assert_eq!(missing_roles(&policy, "serviceAccount:b@p", SIGNIN_SECRET_ROLES), SIGNIN_SECRET_ROLES);
+/// assert_eq!(missing_roles(r#"{"etag":"ACAB"}"#, member, GITHUB_SECRET_ROLES), GITHUB_SECRET_ROLES);
+/// ```
+pub fn missing_roles(policy: &str, member: &str, roles: &[&'static str]) -> Vec<&'static str> {
+    let policy: serde_json::Value = serde_json::from_str(policy).unwrap_or_default();
+    let has = |role: &str| {
+        policy["bindings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|b| b["role"] == role)
+            .flat_map(|b| b["members"].as_array().into_iter().flatten())
+            .any(|m| m == member)
+    };
+    roles.iter().copied().filter(|role| !has(role)).collect()
+}
+
 /// The `gcloud` arguments that read the log of the service of `s`:
 /// the last `limit` lines, only the errors with `errors`, and only the
 /// lines of `filter`.
@@ -1722,4 +2018,175 @@ pub fn delete(gcloud: &Gcloud, s: &Settings, with_state: bool) -> Result<()> {
         println!("Bucket {}: none.", s.bucket);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs `git ARGS` in `dir`, as a person with a name and no signing.
+    fn git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(["-c", "user.name=a", "-c", "user.email=a@b.c"])
+            .args(["-c", "commit.gpgsign=false", "-C"])
+            .arg(dir)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    /// A folder with a repository `origin` and its clone `clone`, with
+    /// one commit, and a folder `deploy/cloud` in the clone.
+    fn clones() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let (origin, clone) = (dir.path().join("origin"), dir.path().join("clone"));
+        git(dir.path(), &["init", "-q", "-b", "main", "origin"]);
+        git(&origin, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        git(dir.path(), &["clone", "-q", "origin", "clone"]);
+        std::fs::create_dir_all(clone.join("deploy/cloud")).unwrap();
+        (dir, origin, clone)
+    }
+
+    #[test]
+    fn settings_with_no_github_secret_name_the_line_to_add() {
+        let text = Settings::new("team", "acme", "1", "r").text();
+        let line = "CLOUD_GITHUB_SECRET=team-github-apps\n";
+        assert!(text.contains(line), "{text}");
+        for gone in ["", "CLOUD_GITHUB_SECRET=\n", "CLOUD_GITHUB_SECRET=  \n"] {
+            let text = text.replace(line, gone);
+            let e = Settings::parse("team", &text).unwrap_err().to_string();
+            assert!(
+                e.starts_with("the cloud settings team have no CLOUD_GITHUB_SECRET. "),
+                "{e}"
+            );
+            assert!(
+                e.contains("Add the line CLOUD_GITHUB_SECRET=SECRET to team.env. "),
+                "{e}"
+            );
+        }
+    }
+
+    #[test]
+    fn load_names_the_path_of_the_file_with_no_github_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = Settings::new("team", "acme", "1", "r").text();
+        let path = file(dir.path(), "team");
+        std::fs::write(
+            &path,
+            text.replace("CLOUD_GITHUB_SECRET=team-github-apps\n", ""),
+        )
+        .unwrap();
+        let e = load(dir.path(), "team").unwrap_err().to_string();
+        assert_eq!(e, text::cloud_no_github_secret("team", &path));
+        assert!(e.contains(&format!("to {}. ", path.display())), "{e}");
+    }
+
+    #[test]
+    fn a_clone_is_behind_only_after_a_new_commit_of_its_upstream() {
+        let (_dir, origin, clone) = clones();
+        assert_eq!(behind(&clone.join("deploy/cloud")), None);
+        git(&origin, &["commit", "-q", "--allow-empty", "-m", "second"]);
+        git(&origin, &["commit", "-q", "--allow-empty", "-m", "third"]);
+        let late = behind(&clone.join("deploy/cloud")).unwrap();
+        assert_eq!(late.upstream, "origin/main");
+        assert_eq!(late.commits, 2);
+        assert_eq!(
+            late.top.canonicalize().unwrap(),
+            clone.canonicalize().unwrap()
+        );
+        // A commit of the clone only: the branch is ahead, not behind.
+        git(&clone, &["pull", "-q", "--ff-only"]);
+        git(&clone, &["commit", "-q", "--allow-empty", "-m", "mine"]);
+        assert_eq!(behind(&clone), None);
+    }
+
+    #[test]
+    fn a_failed_fetch_compares_with_the_upstream_ref_of_the_clone() {
+        let (_dir, origin, clone) = clones();
+        git(&origin, &["commit", "-q", "--allow-empty", "-m", "second"]);
+        git(&clone, &["fetch", "-q"]);
+        std::fs::remove_dir_all(&origin).unwrap();
+        let late = behind(&clone).unwrap();
+        assert_eq!(late.commits, 1);
+    }
+
+    #[test]
+    fn no_upstream_a_detached_head_and_no_clone_have_no_check() {
+        let (dir, origin, clone) = clones();
+        git(&origin, &["commit", "-q", "--allow-empty", "-m", "second"]);
+        git(&clone, &["fetch", "-q"]);
+        assert!(behind(&clone).is_some());
+        git(&clone, &["checkout", "-q", "--detach"]);
+        assert_eq!(behind(&clone), None);
+        git(&clone, &["checkout", "-q", "-b", "local"]);
+        assert_eq!(behind(&clone), None);
+        // The folder of the clones is in no clone.
+        assert_eq!(behind(dir.path()), None);
+        assert_eq!(behind(&dir.path().join("nosuch")), None);
+    }
+
+    /// 01M6YC5XGQR7V3KC68WW8NE1PD: in a clone that is behind, `settings_for_create`
+    /// stops before each call of `gcloud`, and writes nothing.
+    #[test]
+    fn create_in_a_clone_that_is_behind_stops_before_gcloud() {
+        let (_dir, origin, clone) = clones();
+        let cloud = clone.join("deploy/cloud");
+        let text = Settings::new("team", "acme", "1", "r").text();
+        std::fs::write(file(&cloud, "team"), &text).unwrap();
+        git(&origin, &["commit", "-q", "--allow-empty", "-m", "second"]);
+        // No gcloud is there: a call would fail with another error.
+        let gcloud = Gcloud::at("/nonexistent/gcloud");
+        for (name, project, region) in [
+            ("team", None, None),
+            ("new", Some("acme"), Some("europe-west1")),
+        ] {
+            let e = settings_for_create(&gcloud, &cloud, name, project, region)
+                .unwrap_err()
+                .to_string();
+            assert!(e.starts_with("The clone "), "{e}");
+            assert!(e.contains("Run git pull in "), "{e}");
+            assert!(!file(&cloud, "new").exists());
+        }
+        git(&clone, &["pull", "-q", "--ff-only"]);
+        let s = settings_for_create(&gcloud, &cloud, "team", None, None).unwrap();
+        assert_eq!(s.github_secret, "team-github-apps");
+    }
+
+    #[test]
+    fn each_secret_names_the_roles_of_the_run_account_on_it() {
+        let s = Settings::new("team", "acme", "1", "r");
+        let [signin, github] = s.secrets();
+        assert_eq!(signin.name, s.secret_name);
+        assert_eq!(github.name, s.github_secret);
+        assert_eq!(signin.roles, ["roles/secretmanager.secretAccessor"]);
+        assert_eq!(
+            github.roles,
+            [
+                "roles/secretmanager.secretAccessor",
+                "roles/secretmanager.secretVersionAdder"
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_roles_reads_only_the_bindings_of_the_member() {
+        let member = "serviceAccount:run@p.iam.gserviceaccount.com";
+        let policy = serde_json::json!({"bindings": [
+            {"role": "roles/secretmanager.secretVersionAdder", "members": ["user:x@y.z"]},
+            {"role": "roles/secretmanager.secretAccessor", "members": ["user:x@y.z", member]},
+        ]})
+        .to_string();
+        assert_eq!(
+            missing_roles(&policy, member, GITHUB_SECRET_ROLES),
+            ["roles/secretmanager.secretVersionAdder"]
+        );
+        assert!(missing_roles(&policy, member, SIGNIN_SECRET_ROLES).is_empty());
+        assert_eq!(
+            missing_roles("", member, GITHUB_SECRET_ROLES),
+            GITHUB_SECRET_ROLES
+        );
+    }
 }

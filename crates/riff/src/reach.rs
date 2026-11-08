@@ -214,8 +214,21 @@ impl Reach {
         }
     }
 
+    /// Why riff-server cannot read the keys of the GitHub Apps, from its
+    /// facts (`GET /v1/server`, 01M6YC3T3B8JKT5BSQJTYMXBKY), or `None` when it reads
+    /// them. The person signs in to read them; a lead asks the daemon.
+    pub async fn keys_fault(&self) -> Result<Option<String>> {
+        match self {
+            Reach::Direct(server) => {
+                Ok(Api::new(server).signed_in(None)?.facts().await?.keys_fault)
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::KeysFault).await,
+        }
+    }
+
     /// The facts of the shared riff for `riff release check`: the build
-    /// of the server, and the build of the daemon of each host.
+    /// of the server, the build of the daemon of each host, and the read
+    /// of the keys of the GitHub Apps.
     pub async fn served(&self) -> crate::cycle::Served {
         let server = self
             .build()
@@ -232,7 +245,12 @@ impl Reach {
                     .collect()
             })
             .map_err(|e| format!("{e:#}"));
-        crate::cycle::Served { server, hosts }
+        let keys = self.keys_fault().await.map_err(|e| format!("{e:#}"));
+        crate::cycle::Served {
+            server,
+            hosts,
+            keys,
+        }
     }
 
     /// The person of this session on GitHub, for the line

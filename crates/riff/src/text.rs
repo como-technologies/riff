@@ -1786,6 +1786,29 @@ pub fn gh_tried(tries: u32) -> String {
     format!("riff tried the call {tries} times.")
 }
 
+/// The failed check of `riff release check` when riff-server cannot read
+/// the keys of the GitHub Apps of the shared riff, with the cause `why`
+/// from `GET /v1/server` (01M6YC3T3B8JKT5BSQJTYMXBKY): the riff is paused, and the
+/// fix.
+///
+/// ```
+/// let text = riff::text::release_keys_fault("projects/p/secrets/s: 403 Forbidden.");
+/// assert_eq!(
+///     text,
+///     "riff-server cannot read the secret of the keys of the GitHub Apps: projects/p/secrets/s: \
+///      403 Forbidden. The riff is paused. An admin runs git pull, riff cloud create shared, then \
+///      riff resume --riff, in a terminal, in a clone of the repository with deploy/cloud/shared.env"
+/// );
+/// ```
+pub fn release_keys_fault(why: &str) -> String {
+    let why = why.trim().trim_end_matches('.');
+    format!(
+        "riff-server cannot read the secret of the keys of the GitHub Apps: {why}. The riff is \
+         paused. An admin runs git pull, riff cloud create shared, then riff resume --riff, in a \
+         terminal, in a clone of the repository with deploy/cloud/shared.env"
+    )
+}
+
 /// The context of the error of `riff release check` when the comment on the
 /// release issue `issue` fails after the checks ran
 /// (01M6H12QRZFBDTT5D5VQ4FB4C1).
@@ -4315,6 +4338,7 @@ where
 ///     last_error: Some(FactError { message: "the token store was not saved".into(), at_ms: now_ms - 60_000 }),
 ///     no_checkpoint: Some("this build skipped the record at position 7".into()),
 ///     memory_bytes: None,
+///     keys_fault: Some("projects/p/secrets/s: 403 Forbidden".into()),
 ///     ..facts
 /// });
 /// let text = anstream::adapter::strip_str(&riff::text::server_view(&view)).to_string();
@@ -4322,6 +4346,11 @@ where
 /// assert!(text.contains("\n  error     1m ago: the token store was not saved\n"), "{text}");
 /// assert!(text.contains("from v0.8.0; this build writes none: this build skipped the record at position 7\n"), "{text}");
 /// assert!(text.contains("\n  memory    unknown\n"), "{text}");
+/// // 01M6YC3T3B8JKT5BSQJTYMXBKY: the keys of the GitHub Apps that riff-server cannot read.
+/// assert!(text.contains(
+///     "\n  keys      cannot read the keys of the GitHub Apps: projects/p/secrets/s: 403 Forbidden. \
+///      The riff is paused: an admin runs riff cloud create NAME, then riff resume --riff"
+/// ), "{text}");
 /// ```
 pub fn server_view(view: &crate::lifecycle::View) -> String {
     use crate::lifecycle::Source;
@@ -4552,6 +4581,16 @@ fn facts_rows(out: &mut String, facts: &riff_core::wire::ServerFacts) {
     ];
     for (label, value) in rows {
         let _ = write!(out, "\n{}", row(label, &value));
+    }
+    // 01M6YC3T3B8JKT5BSQJTYMXBKY: only a riff-server that cannot read the keys of the
+    // GitHub Apps has this row.
+    if let Some(why) = &facts.keys_fault {
+        let why = why.trim().trim_end_matches('.');
+        let text = format!(
+            "cannot read the keys of the GitHub Apps: {why}. The riff is paused: an admin runs \
+             riff cloud create NAME, then riff resume --riff"
+        );
+        let _ = write!(out, "\n{}", row("  keys", &styled(ERROR, &safe(&text))));
     }
 }
 
@@ -5259,6 +5298,57 @@ pub fn cloud_no_settings(name: &str, path: &Path) -> String {
     )
 }
 
+/// The error of the cloud settings `name` in the file `path` with no
+/// `CLOUD_GITHUB_SECRET`: it names the line to add (01M6YC5XGQR7V3KC68WW8NE1PD).
+///
+/// ```
+/// let line = riff::text::cloud_no_github_secret("shared", "deploy/cloud/shared.env".as_ref());
+/// assert_eq!(
+///     line,
+///     "the cloud settings shared have no CLOUD_GITHUB_SECRET. Add the line \
+///      CLOUD_GITHUB_SECRET=SECRET to deploy/cloud/shared.env. SECRET is the name of the secret \
+///      in Secret Manager that holds the keys of the GitHub Apps."
+/// );
+/// ```
+pub fn cloud_no_github_secret(name: &str, path: &Path) -> String {
+    format!(
+        "the cloud settings {name} have no CLOUD_GITHUB_SECRET. Add the line \
+         CLOUD_GITHUB_SECRET=SECRET to {}. SECRET is the name of the secret in Secret Manager \
+         that holds the keys of the GitHub Apps.",
+        path.display()
+    )
+}
+
+/// The refusal of `riff cloud create NAME` in a clone whose branch is
+/// behind its upstream: the settings in it can be old
+/// (01M6YC5XGQR7V3KC68WW8NE1PD).
+///
+/// ```
+/// use riff::cloud::Behind;
+/// use riff::text::cloud_clone_behind;
+///
+/// let late = Behind { top: "/src/riff".into(), upstream: "origin/main".into(), commits: 3 };
+/// assert_eq!(
+///     cloud_clone_behind("shared", &late),
+///     "The clone /src/riff is 3 commits behind origin/main: its cloud settings can be old. \
+///      riff changed nothing. Run git pull in /src/riff, then riff cloud create shared again."
+/// );
+/// let late = Behind { commits: 1, ..late };
+/// assert!(cloud_clone_behind("shared", &late).contains(" is 1 commit behind "));
+/// ```
+pub fn cloud_clone_behind(name: &str, late: &crate::cloud::Behind) -> String {
+    let top = late.top.display();
+    let commits = match late.commits {
+        1 => "1 commit".to_owned(),
+        n => format!("{n} commits"),
+    };
+    format!(
+        "The clone {top} is {commits} behind {}: its cloud settings can be old. riff changed \
+         nothing. Run git pull in {top}, then riff cloud create {name} again.",
+        late.upstream
+    )
+}
+
 /// The refusal of `riff cloud create` for a new instance with no
 /// project or no region.
 pub fn cloud_create_needs(name: &str) -> String {
@@ -5673,8 +5763,69 @@ pub fn cloud_row(
     format!("{name}  {url}  {}  {ready}  {paused}", facts.release())
 }
 
-/// The lines of `riff cloud status` after its row.
-pub fn cloud_status(s: &crate::cloud::Settings, facts: &crate::cloud::Facts) -> String {
+/// The row of `riff cloud status` for one secret of the instance of `s`:
+/// missing, a role that the run account does not have on it, or fine
+/// (01M6YC5XGQR7V3KC68WW8NE1PD).
+///
+/// ```
+/// use riff::cloud::{SecretState, Settings};
+/// use riff::text::cloud_secret_row;
+///
+/// let s = Settings::new("shared", "p", "1", "r");
+/// let mut state = SecretState {
+///     label: "github secret",
+///     name: "riff-github-apps".into(),
+///     exists: false,
+///     missing: Vec::new(),
+/// };
+/// assert_eq!(
+///     cloud_secret_row(&s, &state),
+///     "github secret  riff-github-apps: missing. Fix: riff cloud create shared"
+/// );
+/// state.exists = true;
+/// state.missing = vec!["roles/secretmanager.secretVersionAdder"];
+/// assert_eq!(
+///     cloud_secret_row(&s, &state),
+///     "github secret  riff-github-apps: the run account shared-server has no role \
+///      roles/secretmanager.secretVersionAdder. Fix: riff cloud create shared"
+/// );
+/// state.missing.insert(0, "roles/secretmanager.secretAccessor");
+/// assert!(cloud_secret_row(&s, &state).contains(
+///     "has no role roles/secretmanager.secretAccessor and no role roles/secretmanager.secretVersionAdder."
+/// ));
+/// state.missing.clear();
+/// assert_eq!(
+///     cloud_secret_row(&s, &state),
+///     "github secret  riff-github-apps: exists, and the run account shared-server has its roles"
+/// );
+/// ```
+pub fn cloud_secret_row(s: &crate::cloud::Settings, state: &crate::cloud::SecretState) -> String {
+    let head = format!("{}  {}", state.label, state.name);
+    let fix = format!("Fix: riff cloud create {}", s.name);
+    if !state.exists {
+        return format!("{head}: missing. {fix}");
+    }
+    if state.missing.is_empty() {
+        return format!(
+            "{head}: exists, and the run account {} has its roles",
+            s.run_account
+        );
+    }
+    format!(
+        "{head}: the run account {} has no role {}. {fix}",
+        s.run_account,
+        state.missing.join(" and no role ")
+    )
+}
+
+/// The lines of `riff cloud status` after its row: the settings, the
+/// revision, the CI deploy, and a row for each secret
+/// ([`cloud_secret_row`]).
+pub fn cloud_status(
+    s: &crate::cloud::Settings,
+    facts: &crate::cloud::Facts,
+    secrets: &[crate::cloud::SecretState],
+) -> String {
     let mut out = format!(
         "project: {}\nregion: {}\nservice: {}\nbucket: {}\n",
         s.project, s.region, s.service, s.bucket
@@ -5695,6 +5846,10 @@ pub fn cloud_status(s: &crate::cloud::Settings, facts: &crate::cloud::Facts) -> 
             "each merge to main, when the GitHub variable STAGE_DEPLOY is true"
         }
     ));
+    for state in secrets {
+        out.push_str(&cloud_secret_row(s, state));
+        out.push('\n');
+    }
     out
 }
 
@@ -6476,6 +6631,55 @@ pub fn daemon_gh_status(repo: &str, why: &str) -> String {
     format!("GitHub: the sessions of {repo} act with the token of the person: {why}.")
 }
 
+/// Why a session has no token on GitHub when riff-server says so and
+/// names no problem (01M6YC3T0TXANJH6YMTJZR1HCR).
+pub const GH_NONE: &str = "riff-server gives no token on GitHub";
+
+/// The line of the daemon for a session with no token on GitHub at all,
+/// also not the token of the person (01M6YC3T0TXANJH6YMTJZR1HCR).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_gh_none("riff-lead-acme-app", "riff-server cannot read the keys"),
+///     "The container riff-lead-acme-app has no token on GitHub, also not the token of the \
+///      person: riff-server cannot read the keys"
+/// );
+/// ```
+pub fn daemon_gh_none(name: &str, why: &str) -> String {
+    format!("The container {name} has no token on GitHub, also not the token of the person: {why}")
+}
+
+/// The line of `riff daemon status` for a repository whose lead has no
+/// token on GitHub, and why: the fix and the prompt for `claude` on the
+/// host (01M6YC3T0TXANJH6YMTJZR1HCR).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_gh_none_status("acme/app", "riff-server cannot read the keys"),
+///     "GitHub: the lead of acme/app has no token on GitHub: riff-server cannot read the keys"
+/// );
+/// ```
+pub fn daemon_gh_none_status(repo: &str, why: &str) -> String {
+    format!("GitHub: the lead of {repo} has no token on GitHub: {why}")
+}
+
+/// The end of the first prompt of a lead that starts with no token on
+/// GitHub (01M6YC3T0TXANJH6YMTJZR1HCR): its first wake gives the person the fix and
+/// the prompt for `claude` on the host.
+///
+/// ```
+/// let text = riff::text::lead_no_github("riff-server cannot read the keys. The fix: X");
+/// assert!(text.starts_with("You have no token on GitHub"), "{text}");
+/// assert!(text.ends_with("riff-server cannot read the keys. The fix: X"), "{text}");
+/// ```
+pub fn lead_no_github(why: &str) -> String {
+    format!(
+        "You have no token on GitHub: gh, git fetch and git push do not work, and the riff tools \
+         work. The riff is paused. First tell your person the fix and the prompt in this text, \
+         word for word: {why}"
+    )
+}
+
 /// Why the daemon writes on a repository with the token of the person
 /// when it knows no riff-server to ask for a token of the lead App
 /// (01M6XZJFE2ZTR5RE3AWM30R704).
@@ -6525,7 +6729,8 @@ pub fn daemon_writes(repo: &str, acts: &crate::daemon::gh_token::ActsAs) -> Stri
         crate::daemon::gh_token::ActsAs::Bot { bot, .. } => {
             format!("GitHub: the daemon writes on {repo} as {bot}.")
         }
-        crate::daemon::gh_token::ActsAs::Person { why } => {
+        crate::daemon::gh_token::ActsAs::Person { why }
+        | crate::daemon::gh_token::ActsAs::NoToken { why } => {
             format!("GitHub: the daemon writes on {repo} with the token of the person: {why}.")
         }
     }
@@ -7610,6 +7815,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     person_tokens: vec![],
+///     no_tokens: vec![],
 ///     writes: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
@@ -7728,6 +7934,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     for person in &status.person_tokens {
         let _ = writeln!(out, "{}", daemon_gh_status(&person.repo, &person.why));
+    }
+    for none in &status.no_tokens {
+        let _ = writeln!(out, "{}", daemon_gh_none_status(&none.repo, &none.why));
     }
     for writes in &status.writes {
         let _ = writeln!(out, "{}", daemon_writes(&writes.repo, &writes.acts));
@@ -9014,6 +9223,7 @@ pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: 
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     person_tokens: vec![],
+///     no_tokens: vec![],
 ///     writes: vec![],
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");

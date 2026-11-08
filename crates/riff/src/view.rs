@@ -285,6 +285,12 @@ pub(crate) fn state_facts(
 /// assert!(plain.contains(
 ///     "github   the token of the person: riff-acme is not installed on acme/app: riff github install acme\n"
 /// ), "{plain}");
+/// let none = ActsAs::NoToken { why: "riff-server cannot read the keys of the GitHub Apps".into() };
+/// let out = riff::view::whoami(&me, Ok(RiffState::Paused.into()), Some(&none));
+/// let plain = anstream::adapter::strip_str(&out).to_string();
+/// assert!(plain.contains(
+///     "github   no token: riff-server cannot read the keys of the GitHub Apps\n"
+/// ), "{plain}");
 ///
 /// let paused = riff::view::whoami(&me, Ok(RiffState::Paused.into()), None);
 /// let plain = anstream::adapter::strip_str(&paused).to_string();
@@ -354,6 +360,9 @@ pub fn whoami(
             "github",
             styled(WARNING, &safe(&format!("the token of the person: {why}"))),
         )),
+        Some(ActsAs::NoToken { why }) => {
+            rows.push(("github", styled(ERROR, &safe(&format!("no token: {why}")))))
+        }
         None => {}
     }
     let mut out = facts(&rows);

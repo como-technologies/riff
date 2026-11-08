@@ -526,6 +526,10 @@ pub struct ServerFacts {
     pub replay_ms: u64,
     /// The time of this reply.
     pub now_ms: u64,
+    /// Why riff-server cannot read the keys of the GitHub Apps, with the
+    /// fix (01M6YC3SYATQW7GZZV3APFG85B). `None`: its last read worked, or it did no
+    /// read yet.
+    pub keys_fault: Option<String>,
 }
 
 /// An error of the server in [`ServerFacts`].
@@ -3176,7 +3180,8 @@ pub struct GitHubDaemonToken {
 /// The reply to [`GitHubToken`]: a token of the App of the role, for the
 /// one repository of the session, with the rights of the role. Or why
 /// riff-server gave none: then the session keeps the token of the
-/// person. Its `Debug` hides the token.
+/// person, but with [`no_github`](Self::no_github) it gets no token on
+/// GitHub at all. Its `Debug` hides the token.
 ///
 /// ```
 /// use riff_core::wire::{GitHubRole, SessionToken};
@@ -3187,8 +3192,15 @@ pub struct GitHubDaemonToken {
 ///     "ends": "2026-11-08T13:00:00Z"
 /// }"#).unwrap();
 /// assert_eq!(reply.role, GitHubRole::Worker);
-/// assert!(reply.problem.is_none());
+/// assert!(reply.problem.is_none() && !reply.no_github);
 /// assert!(!format!("{reply:?}").contains("ghs_abcd"));
+///
+/// let paused: SessionToken = serde_json::from_str(r#"{
+///     "role": "lead", "repo": "acme/app",
+///     "problem": "riff-server cannot read the keys of the GitHub Apps",
+///     "no_github": true
+/// }"#).unwrap();
+/// assert!(paused.token.is_none() && paused.no_github);
 /// ```
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionToken {
@@ -3214,9 +3226,15 @@ pub struct SessionToken {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ends: Option<String>,
     /// Why riff-server gave no token, with the fix: the riff has no App
-    /// of the role, or the App is not on the repository.
+    /// of the role, the App is not on the repository, or riff-server
+    /// cannot read the keys of the Apps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub problem: Option<String>,
+    /// True when the session gets no token on GitHub at all, also not the
+    /// token of the person: riff-server cannot read the keys of the Apps,
+    /// and the riff is paused (01M6YC3T0TXANJH6YMTJZR1HCR).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_github: bool,
 }
 
 impl std::fmt::Debug for SessionToken {
@@ -3230,6 +3248,7 @@ impl std::fmt::Debug for SessionToken {
             .field("rights", &self.rights)
             .field("ends", &self.ends)
             .field("problem", &self.problem)
+            .field("no_github", &self.no_github)
             .finish()
     }
 }

@@ -6692,7 +6692,7 @@ sequenceDiagram
     participant C as riff release check (the lead, in its container)
     participant D as riff daemon (the host)
     participant S as riff-server
-    C->>D: the build, the hosts (on RIFF_SOCKET)
+    C->>D: the build, the hosts, the keys (on RIFF_SOCKET)
     D->>S: the calls, with the sign-in of the person on the host
     S-->>D: the answers
     D-->>C: the answers
@@ -6723,6 +6723,10 @@ says to install it, or to add it to PATH. After the fix, the lead runs
 riff checks that:
 
 - `riff server` shows the build of the release;
+- riff-server reads the keys of the GitHub Apps. When it cannot, the
+  check fails with the fix: `git pull`, `riff cloud create shared`,
+  then `riff resume --riff`. See
+  [When riff-server cannot read the keys of the Apps](how-it-works.md#when-riff-server-cannot-read-the-keys-of-the-apps);
 - the Cloud Run log has no run of 503 longer than 20 s, no 500 of
   the new revision of `riff-server`, and no 401 or 429 of the token
   store;

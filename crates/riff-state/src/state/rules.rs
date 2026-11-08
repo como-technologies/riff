@@ -1167,6 +1167,22 @@ fn only_an_admin_pauses_the_whole_riff() {
         .then_refused_as(Code::NotAllowed, "only your user or the lead");
 }
 
+/// The server pauses the whole riff when it cannot read the keys of the
+/// GitHub Apps. It resumes nothing: an admin does (01M6YC3SYATQW7GZZV3APFG85B).
+#[test]
+fn the_server_pauses_the_whole_riff_and_resumes_nothing() {
+    let server = riff_core::name::SessionUri::server();
+    given(&team())
+        .when(&server, PauseRiff)
+        .then(&[riff_set(RiffState::Paused)]);
+    let mut paused = team();
+    paused.push(riff_set(RiffState::Paused));
+    given(&paused).when(&server, PauseRiff).then(&[]);
+    given(&paused)
+        .when(&server, ResumeRiff)
+        .then_refused_as(Code::NotAllowed, "cannot send the command resume");
+}
+
 /// Only an admin pauses a repository by its name
 /// (01M3XAHZDSQR263QZVB41CK0MX).
 #[test]

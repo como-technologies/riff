@@ -123,6 +123,10 @@ secret of the sign-in client, and the secret that keeps the keys of the
 GitHub Apps (see
 [Make the GitHub Apps of riff](#make-the-github-apps-of-riff)). Then it
 makes each of them. It checks each one first, so you can run it again.
+It reads the settings file of a clone only when the clone is not
+behind its upstream: else it makes nothing, and tells you to run
+`git pull`. A settings file must name the secret of the GitHub Apps in
+`CLOUD_GITHUB_SECRET`: the error names the line to add.
 To get an email for each error of the riff, give your email:
 
 ```sh
@@ -159,6 +163,10 @@ riff cloud list
 riff cloud status NAME
 riff cloud log NAME --errors
 ```
+
+`riff cloud status` also has one row for each secret of the riff: it is
+missing, the account of riff-server misses a role on it, or it is fine.
+A problem names the fix, `riff cloud create NAME`.
 
 To stop the riff, delete its service. riff asks you to type the name.
 The bucket with the state stays, unless you add `--with-state`:
@@ -254,6 +262,24 @@ keeps them in the secret of the riff in Secret Manager on Cloud Run:
 `github-apps.json` of `--dir`. A riff-server with no `--dir` keeps
 them in memory: a restart loses them. The keys are in no reply and in
 no log line.
+
+### Make the secret before the deploy
+
+A release of riff with the Apps reads their keys from the secret of the
+riff at its start. So make the secret before the deploy of that
+release. Run it in your clone of the riff repository. Put the name of
+your riff in place of `shared`:
+
+```sh
+git pull
+riff cloud create shared
+riff cloud status shared
+```
+
+The row `github secret` of `riff cloud status` must say that the secret
+exists and that the account of riff-server has its roles. Then deploy.
+When riff-server cannot read the secret, it pauses the whole riff: see
+[When riff-server cannot read the keys of the Apps](how-it-works.md#when-riff-server-cannot-read-the-keys-of-the-apps).
 
 The session App also has the webhook `URL/hooks/github` of the riff.
 riff-server takes each event of GitHub there, and drops it for now.

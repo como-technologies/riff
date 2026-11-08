@@ -58,6 +58,21 @@ struct Cloud {
     iam: String,
     /// More variables of each run, for example `RIFF_WORKER`.
     vars: Vec<(String, String)>,
+    /// The folder of the bare upstream `riff.git` of the clone, when it
+    /// has one ([`Cloud::behind`]).
+    upstream: Option<tempfile::TempDir>,
+}
+
+/// Runs `git ARGS` in `dir`, as a person with a name and no signing.
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(["-c", "commit.gpgsign=false", "-C"])
+        .arg(dir)
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
 }
 
 /// The result of one `riff cloud` run.
@@ -115,7 +130,55 @@ impl Cloud {
             denied: false,
             iam: String::new(),
             vars: Vec::new(),
+            upstream: None,
         }
+    }
+
+    /// Makes the clone a clone of a bare upstream with one more commit
+    /// there: after a fetch, its branch `main` is 1 commit behind
+    /// `origin/main`. The clone has not fetched that commit yet.
+    fn behind(mut self) -> Cloud {
+        let top = self.top.path();
+        let upstream = tempfile::tempdir().unwrap();
+        let bare = upstream.path().join("riff.git");
+        git(
+            upstream.path(),
+            &["init", "-q", "--bare", "-b", "main", "riff.git"],
+        );
+        git(top, &["checkout", "-q", "-B", "main"]);
+        git(top, &["add", "-A"]);
+        git(top, &["commit", "-qm", "the settings"]);
+        git(
+            top,
+            &["remote", "add", "origin", &bare.display().to_string()],
+        );
+        git(top, &["push", "-q", "-u", "origin", "main"]);
+        git(upstream.path(), &["clone", "-q", "riff.git", "other"]);
+        let other = upstream.path().join("other");
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "more"]);
+        git(&other, &["push", "-q", "origin", "main"]);
+        self.upstream = Some(upstream);
+        self
+    }
+
+    /// Removes the line of `key` from the settings file `file`.
+    fn without(self, file: &str, key: &str) -> Cloud {
+        let path = self.top.path().join("deploy/cloud").join(file);
+        let text = fs::read_to_string(&path).unwrap();
+        let start = format!("{key}=");
+        let kept: String = text
+            .lines()
+            .filter(|l| !l.starts_with(&start))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_ne!(kept, text, "{file} has no {key}");
+        fs::write(&path, kept).unwrap();
+        self
+    }
+
+    /// The top of the clone, as git names it.
+    fn top(&self) -> PathBuf {
+        fs::canonicalize(self.top.path()).unwrap()
     }
 
     /// Sets the variable `key` to `value` in each run.
@@ -725,6 +788,97 @@ fn create_of_a_new_instance_needs_its_project_and_region() {
     }
 }
 
+/// 01M6YC5XGQR7V3KC68WW8NE1PD: in a clone whose branch is behind its upstream,
+/// `riff cloud create` calls no `gcloud`, makes nothing, and names the
+/// fix `git pull`. After the pull, it runs.
+#[test]
+fn create_in_a_clone_that_is_behind_makes_nothing_and_says_git_pull() {
+    let cloud = Cloud::new().behind();
+    let before = cloud.text("shared.env");
+    let top = cloud.top();
+    for args in [
+        &["create", "shared"][..],
+        &[
+            "create",
+            "team",
+            "--project",
+            "acme",
+            "--region",
+            "europe-west1",
+        ],
+    ] {
+        let ran = cloud.run(args);
+        assert_eq!(ran.out.status.code(), Some(1), "{args:?}: {}", ran.stderr());
+        let stderr = ran.stderr();
+        let refusal = format!(
+            "The clone {top} is 1 commit behind origin/main: its cloud settings can be old. riff \
+             changed nothing. Run git pull in {top}, then riff cloud create {} again.",
+            args[1],
+            top = top.display()
+        );
+        assert!(stderr.contains(&refusal), "{args:?}: {stderr}");
+        assert!(ran.calls.is_empty(), "{args:?}: {}", ran.calls);
+    }
+    assert!(!cloud.top.path().join("deploy/cloud/team.env").exists());
+    assert_eq!(cloud.text("shared.env"), before);
+
+    git(cloud.top.path(), &["pull", "-q", "--ff-only"]);
+    let ran = cloud.run(&["create", "shared"]).ok();
+    ran.line("secrets describe riff-github-apps ");
+}
+
+/// 01M6YC5XGQR7V3KC68WW8NE1PD: when the fetch fails, the check compares the branch
+/// with the upstream ref of the clone, and says nothing of the fetch.
+#[test]
+fn create_with_a_failed_fetch_compares_with_the_upstream_ref_of_the_clone() {
+    let cloud = Cloud::new().behind();
+    git(cloud.top.path(), &["fetch", "-q"]);
+    fs::remove_dir_all(cloud.upstream.as_ref().unwrap().path().join("riff.git")).unwrap();
+    let ran = cloud.run(&["create", "shared"]);
+    assert_eq!(ran.out.status.code(), Some(1), "{}", ran.stderr());
+    let stderr = ran.stderr();
+    assert!(
+        stderr.contains(" is 1 commit behind origin/main: "),
+        "{stderr}"
+    );
+    assert!(stderr.contains("Run git pull in "), "{stderr}");
+    for word in ["fatal", "fetch", "riff.git"] {
+        assert!(!stderr.contains(word), "{word}: {stderr}");
+    }
+    assert!(ran.calls.is_empty(), "{}", ran.calls);
+}
+
+/// 01M6YC5XGQR7V3KC68WW8NE1PD: settings with no `CLOUD_GITHUB_SECRET`, or with an
+/// empty one, stop `riff cloud create` and `riff cloud deploy`. The error
+/// names the line to add to the file. No default name of a secret takes
+/// its place, and riff calls no `gcloud`.
+#[test]
+fn create_with_no_github_secret_names_the_line_to_add_and_makes_nothing() {
+    for cloud in [
+        Cloud::new().without("shared.env", "CLOUD_GITHUB_SECRET"),
+        Cloud::new().set("shared.env", "CLOUD_GITHUB_SECRET", ""),
+    ] {
+        let path = cloud.top().join("deploy/cloud/shared.env");
+        let line = format!(
+            "the cloud settings shared have no CLOUD_GITHUB_SECRET. Add the line \
+             CLOUD_GITHUB_SECRET=SECRET to {}. SECRET is the name of the secret in Secret \
+             Manager that holds the keys of the GitHub Apps.",
+            path.display()
+        );
+        for args in [
+            &["create", "shared"][..],
+            &["deploy", "shared", "v1.0.0", "--confirm", "shared"],
+        ] {
+            let ran = cloud.run(args);
+            assert_eq!(ran.out.status.code(), Some(1), "{args:?}: {}", ran.stderr());
+            let stderr = ran.stderr();
+            assert!(stderr.contains(&line), "{args:?}: {stderr}");
+            assert!(!stderr.contains("shared-github-apps"), "{args:?}: {stderr}");
+            assert!(ran.calls.is_empty(), "{args:?}: {}", ran.calls);
+        }
+    }
+}
+
 #[test]
 fn deploy_runs_one_instance_with_sign_in() {
     let ran = Cloud::new()
@@ -1185,6 +1339,92 @@ fn list_and_status_show_each_instance() {
         ),
         "{out}"
     );
+}
+
+/// The policy of a secret in which the run account of the shared riff
+/// has the roles `roles`, as `gcloud secrets get-iam-policy` prints it.
+fn policy(roles: &[&str]) -> String {
+    let member = "serviceAccount:riff-server@como-riff.iam.gserviceaccount.com";
+    let bindings: Vec<serde_json::Value> = roles
+        .iter()
+        .map(|role| serde_json::json!({"role": role, "members": ["user:a@b.c", member]}))
+        .collect();
+    serde_json::json!({"bindings": bindings, "etag": "BwX"}).to_string()
+}
+
+/// `riff cloud status shared` with `cloud`, and a dead URL: the test
+/// never reaches a riff.
+fn status_of_shared(cloud: Cloud) -> Ran {
+    cloud
+        .set("shared.env", "CLOUD_URL", "http://127.0.0.1:9")
+        .run(&["status", "shared"])
+        .ok()
+}
+
+/// The row of the sign-in secret of the shared riff when it is fine.
+const SIGNIN_FINE: &str = "\nsign-in secret  riff-oidc-client-secret: exists, and the run account riff-server has its roles\n";
+
+/// 01M6YC5XGQR7V3KC68WW8NE1PD: `riff cloud status` names a missing secret of the
+/// GitHub Apps, with its fix, and asks for no policy of it.
+#[test]
+fn status_names_a_missing_github_secret_and_its_fix() {
+    let ran = status_of_shared(Cloud::new().iam(&policy(riff::cloud::GITHUB_SECRET_ROLES)));
+    let out = ran.stdout();
+    assert!(
+        out.contains("\ngithub secret  riff-github-apps: missing. Fix: riff cloud create shared\n"),
+        "{out}"
+    );
+    assert!(out.contains(SIGNIN_FINE), "{out}");
+    ran.line("secrets describe riff-github-apps --project como-riff");
+    assert!(
+        !ran.calls
+            .contains("secrets get-iam-policy riff-github-apps"),
+        "{}",
+        ran.calls
+    );
+}
+
+/// 01M6YC5XGQR7V3KC68WW8NE1PD: `riff cloud status` names each role that the run
+/// account does not have on a secret, with its fix.
+#[test]
+fn status_names_a_missing_role_on_a_secret_and_its_fix() {
+    let ran = status_of_shared(
+        Cloud::new()
+            .found(&["secrets describe riff-github-apps "])
+            .iam(&policy(&["roles/secretmanager.secretAccessor"])),
+    );
+    let out = ran.stdout();
+    assert!(
+        out.contains(
+            "\ngithub secret  riff-github-apps: the run account riff-server has no role \
+             roles/secretmanager.secretVersionAdder. Fix: riff cloud create shared\n"
+        ),
+        "{out}"
+    );
+    assert!(out.contains(SIGNIN_FINE), "{out}");
+    let get = ran.line("secrets get-iam-policy riff-github-apps ");
+    assert!(get.contains("--project como-riff --format json"), "{get}");
+}
+
+/// 01M6YC5XGQR7V3KC68WW8NE1PD: with each secret there and each role of the run
+/// account on it, `riff cloud status` names no fix.
+#[test]
+fn status_shows_each_secret_with_its_roles() {
+    let ran = status_of_shared(
+        Cloud::new()
+            .found(&["secrets describe riff-github-apps "])
+            .iam(&policy(riff::cloud::GITHUB_SECRET_ROLES)),
+    );
+    let out = ran.stdout();
+    assert!(out.contains(SIGNIN_FINE), "{out}");
+    assert!(
+        out.ends_with(
+            "\ngithub secret  riff-github-apps: exists, and the run account riff-server has its roles\n"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("Fix:"), "{out}");
+    ran.line("secrets get-iam-policy riff-oidc-client-secret ");
 }
 
 /// A failed call of `gcloud` gives its error in one line and a code

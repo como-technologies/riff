@@ -690,11 +690,13 @@ async fn a_server_with_no_place_for_the_keys_refuses_create() {
 }
 
 /// The versions of a fake secret of Secret Manager, and the tokens of
-/// each call.
+/// each call. With a `refuse` status, each read gets that status and
+/// the error text of Google.
 #[derive(Clone, Default)]
 struct Secret {
     versions: Arc<Mutex<Vec<String>>>,
     bearers: Arc<Mutex<Vec<String>>>,
+    refuse: Arc<Mutex<Option<u16>>>,
 }
 
 /// A fake metadata server and Secret Manager with the one secret
@@ -707,6 +709,16 @@ async fn secret_manager(secret: Secret) -> String {
         use axum::response::IntoResponse;
         let bearer = headers["authorization"].to_str().unwrap().to_owned();
         s.bearers.lock().unwrap().push(bearer);
+        if let Some(status) = *s.refuse.lock().unwrap() {
+            let status = axum::http::StatusCode::from_u16(status).unwrap();
+            let error = json!({ "error": {
+                "code": status.as_u16(),
+                "message": "Permission 'secretmanager.versions.access' denied on resource \
+                            (or it may not exist).",
+                "status": "PERMISSION_DENIED",
+            }});
+            return (status, Json(error)).into_response();
+        }
         match s.versions.lock().unwrap().last() {
             Some(data) => Json(json!({ "payload": { "data": data } })).into_response(),
             None => axum::http::StatusCode::NOT_FOUND.into_response(),
@@ -1209,4 +1221,171 @@ async fn a_token_of_the_daemon_has_a_log_line_with_no_token_and_the_rights_of_th
         assert!(!log.contains(token.as_str()), "a token in: {log}");
         assert!(!text.contains(token.as_str()), "a token in: {text}");
     }
+}
+
+/// 01M6YC3SYATQW7GZZV3APFG85B: a secret that riff-server cannot read pauses the whole
+/// riff. riff-server posts one line as riff-bot in the chat to the owner
+/// and each admin, with the fix and the prompt for `claude` on the host,
+/// and logs one error. The token call of the lead gets no token, the
+/// reason and `no_github`; a worker gets a 503. `riff resume --riff` is
+/// refused with the fix while Secret Manager answers 403, and resumes the
+/// riff when it answers again. A fault that a new try can end, a 500,
+/// pauses nothing.
+#[tokio::test]
+async fn a_secret_that_answers_403_pauses_the_riff_and_the_lead_gets_no_token() {
+    // The log of this thread misses lines while other tests run.
+    if !isolated::rerun_alone(
+        module_path!(),
+        "a_secret_that_answers_403_pauses_the_riff_and_the_lead_gets_no_token",
+    ) {
+        return;
+    }
+    use base64::Engine;
+    use riff_core::record::By;
+    use riff_core::wire::{Kind, ReadReply, RiffReply, RiffState, ServerFacts};
+    let lines = Lines::default();
+    let writer = lines.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .event_format(riff_server::logline::JsonLines)
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _log = tracing::subscriber::set_default(subscriber);
+
+    let fake = FakeGitHub::start().await;
+    fake.seen().installed = true;
+    let secret = Secret::default();
+    let apps = serde_json::to_vec(&both_apps()).unwrap();
+    let data = base64::engine::general_purpose::STANDARD.encode(apps);
+    secret.versions.lock().unwrap().push(data);
+    // A 500 first: a new try can end it, so it pauses nothing.
+    *secret.refuse.lock().unwrap() = Some(500);
+    let google = secret_manager(secret.clone()).await;
+    let at = At::Secret {
+        name: "projects/p/secrets/s".into(),
+        api: google.clone(),
+        metadata: google,
+    };
+    let (service, url) = serve(&fake, at, STATE_LIFE).await;
+    let ada = person(&service, "ada@example.com").await;
+    let bob = person(&service, "bob@example.com").await;
+    let place = "riff://ada@heron/acme/app";
+    let resume = json!({ "me": place, "riff": true });
+    let (status, text) = call(&url, &ada, "/v1/resume", resume.clone()).await;
+    assert_eq!(status, 200, "{text}");
+    for (id, claim) in [("w1", Some("issue-12")), ("l1", None)] {
+        let session = session_of(&url, &ada, id).await;
+        let me = ada_in(REPO, id);
+        let (status, text) = call(&url, &session, "/v1/register", json!({ "me": me })).await;
+        assert_eq!(status, 200, "{text}");
+        if let Some(item) = claim {
+            let body = json!({ "me": me, "thread": REPO, "item": item });
+            let (status, text) = call(&url, &session, "/v1/claim", body).await;
+            assert_eq!(status, 200, "{text}");
+        }
+    }
+    let lead = json!({ "me": place, "session": "l1" });
+    let (status, text) = call(&url, &ada, "/v1/lead", lead).await;
+    assert_eq!(status, 200, "{text}");
+    let riff = || async {
+        let (_, text) = call(&url, &ada, "/v1/riff", json!({ "me": place })).await;
+        serde_json::from_str::<RiffReply>(&text).unwrap()
+    };
+    assert_eq!(riff().await.state, RiffState::Running);
+
+    // Secret Manager refuses the read.
+    *secret.refuse.lock().unwrap() = Some(403);
+    let (status, text) = call(&url, &ada, "/v1/github/token", json!({ "session": "w1" })).await;
+    assert_eq!(status, 503, "{text}");
+    assert!(text.contains("riff cloud create NAME"), "{text}");
+    let paused = riff().await;
+    assert_eq!(paused.state, RiffState::Paused);
+    assert_eq!(paused.riff.unwrap().by, Some(By::Server));
+
+    let (status, text) = call(&url, &ada, "/v1/github/token", json!({ "session": "l1" })).await;
+    assert_eq!(status, 200, "{text}");
+    let reply: SessionToken = serde_json::from_str(&text).unwrap();
+    assert_eq!(reply.role, GitHubRole::Lead);
+    assert!(reply.token.is_none() && reply.no_github, "{reply:?}");
+    let problem = reply.problem.unwrap();
+    assert!(
+        problem.starts_with(
+            "riff-server cannot read the keys of the GitHub Apps: projects/p/secrets/s: 403 \
+             Forbidden: Permission 'secretmanager.versions.access' denied"
+        ),
+        "{problem}"
+    );
+    assert!(problem.contains("start claude on the host"), "{problem}");
+
+    let (status, text) = call(&url, &ada, "/v1/resume", resume.clone()).await;
+    assert_eq!(status, 409, "{text}");
+    assert!(text.contains("the riff stays paused"), "{text}");
+    assert!(
+        text.contains("riff cloud create NAME, then riff resume --riff"),
+        "{text}"
+    );
+    assert_eq!(riff().await.state, RiffState::Paused);
+
+    let server = format!("{url}/v1/server");
+    let proof = ada
+        .key
+        .proof("GET", &server, Some(&ada.token), common::now());
+    let facts: ServerFacts = common::client()
+        .get(&server)
+        .header("dpop", proof)
+        .header("authorization", format!("DPoP {}", ada.token))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let fault = facts.keys_fault.unwrap_or_default();
+    assert!(fault.contains("403 Forbidden"), "{fault}");
+
+    // One line in the chat, as riff-bot, to the owner: bob is a member.
+    let read = json!({ "me": place, "thread": "chat", "all": true });
+    let (_, text) = call(&url, &ada, "/v1/read", read).await;
+    let chat: ReadReply = serde_json::from_str(&text).unwrap();
+    let [line] = chat.messages.as_slice() else {
+        panic!("not one line in the chat: {text}")
+    };
+    assert_eq!(line.from, riff_core::name::SessionUri::server());
+    assert_eq!(line.kind, Kind::Riff);
+    assert_eq!(line.body, problem);
+    let to: Vec<String> = line.to.iter().map(ToString::to_string).collect();
+    assert_eq!(to, ["user=ada,person=true"]);
+    let _ = bob;
+
+    // The wake of the repository names the pause and the fix.
+    let w1 = session_of(&url, &ada, "w1").await;
+    let read = json!({ "me": ada_in(REPO, "w1"), "thread": REPO });
+    let (_, text) = call(&url, &w1, "/v1/read", read).await;
+    assert!(text.contains("The riff is paused by riff-server"), "{text}");
+    assert!(text.contains("riff cloud create NAME"), "{text}");
+
+    let log = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+    let errors: Vec<Value> = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["severity"] == "ERROR")
+        .collect();
+    let [error] = errors.as_slice() else {
+        panic!("not one error line: {log}")
+    };
+    let message = error["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("riff-server cannot read the keys of the GitHub Apps"),
+        "{message}"
+    );
+
+    // Secret Manager answers again: the resume reads the keys, and runs.
+    *secret.refuse.lock().unwrap() = None;
+    let (status, text) = call(&url, &ada, "/v1/resume", resume).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(riff().await.state, RiffState::Running);
+    let (status, text) = call(&url, &ada, "/v1/github/token", json!({ "session": "l1" })).await;
+    assert_eq!(status, 200, "{text}");
+    let reply: SessionToken = serde_json::from_str(&text).unwrap();
+    assert!(reply.token.is_some() && !reply.no_github, "{reply:?}");
 }

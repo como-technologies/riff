@@ -678,8 +678,11 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // `handle` refuses a worker as the new lead.
         CommandKind::Lead => (&[Person], Can),
         // The command gives the role: an admin for the whole riff.
-        // `handle` checks that a session is a lead.
-        CommandKind::Pause | CommandKind::Resume => (&[Person, Session], Can),
+        // `handle` checks that a session is a lead. The server pauses the
+        // riff when it cannot read the keys of the GitHub Apps
+        // (01M6YC3SYATQW7GZZV3APFG85B). Only a person and a lead resume it.
+        CommandKind::Pause => (&[Person, Session, Server], Can),
+        CommandKind::Resume => (&[Person, Session], Can),
         // `handle` checks that the caller is a lead of the thread, the
         // owner or an admin (01M43GSGGY0QMB5D5EH92M6ZFP).
         CommandKind::Hold => (&[Person, Session], Cannot("hold an item. Tell the lead.")),
@@ -900,7 +903,7 @@ mod tests {
         row(CommandKind::ReleaseFor, S,  true,  false, true),
         row(CommandKind::Lead,       P,  true,  false, false),
         row(CommandKind::MakeRiff,   &[Class::Server], true, false, false),
-        row(CommandKind::Pause,      PS, true,  false, true),
+        row(CommandKind::Pause,      &[Class::Person, Class::Session, Class::Server], true, false, true),
         row(CommandKind::Resume,     PS, true,  false, true),
         row(CommandKind::SetIdle,    P,  true,  false, true),
         row(CommandKind::Forget,     &[Class::Server], true, false, false),

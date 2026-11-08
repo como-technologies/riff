@@ -196,12 +196,47 @@ impl Apps {
 
 /// Why the keys did not read or did not write. The text names the
 /// place, never a key.
+///
+/// ```
+/// use riff_server::keys::KeysError;
+///
+/// let fault = KeysError::new("projects/p/secrets/s: 503 Service Unavailable");
+/// assert!(!fault.denied);
+/// assert!(KeysError::denied("projects/p/secrets/s: 403 Forbidden").denied);
+/// assert_eq!(fault.to_string(), "projects/p/secrets/s: 503 Service Unavailable");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeysError(pub String);
+pub struct KeysError {
+    /// Why, with the place.
+    pub text: String,
+    /// True when the place refuses the read: Secret Manager answers 401
+    /// or 403, or the file has no read right for the account of the
+    /// server. A new try does not help: an admin fixes the secret, and
+    /// riff-server pauses the riff until then (01M6YC3SYATQW7GZZV3APFG85B).
+    pub denied: bool,
+}
+
+impl KeysError {
+    /// A fault that a new try can end, for example a 503.
+    pub fn new(text: impl Into<String>) -> Self {
+        KeysError {
+            text: text.into(),
+            denied: false,
+        }
+    }
+
+    /// A read that the place refuses.
+    pub fn denied(text: impl Into<String>) -> Self {
+        KeysError {
+            text: text.into(),
+            denied: true,
+        }
+    }
+}
 
 impl std::fmt::Display for KeysError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.text)
     }
 }
 
@@ -264,7 +299,14 @@ impl Keys {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(Apps::default());
                 }
-                Err(e) => return Err(KeysError(format!("{}: {e}", self.at.describe()))),
+                Err(e) => {
+                    let text = format!("{}: {e}", self.at.describe());
+                    return Err(if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        KeysError::denied(text)
+                    } else {
+                        KeysError::new(text)
+                    });
+                }
             },
             At::Secret {
                 name,
@@ -276,16 +318,16 @@ impl Keys {
             },
         };
         serde_json::from_slice(&bytes)
-            .map_err(|e| KeysError(format!("{} does not read: {e}", self.at.describe())))
+            .map_err(|e| KeysError::new(format!("{} does not read: {e}", self.at.describe())))
     }
 
     async fn write(&self, apps: &Apps) -> Result<(), KeysError> {
         let bytes = serde_json::to_vec(apps).expect("the keys are JSON");
         match &self.at {
             At::Memory => Ok(()),
-            At::Nowhere => Err(KeysError(NOWHERE.to_owned())),
+            At::Nowhere => Err(KeysError::new(NOWHERE)),
             At::Dir(dir) => write_private(dir, &bytes)
-                .map_err(|e| KeysError(format!("{}: {e}", self.at.describe()))),
+                .map_err(|e| KeysError::new(format!("{}: {e}", self.at.describe()))),
             At::Secret {
                 name,
                 api,
@@ -317,7 +359,7 @@ impl Keys {
             .bearer_auth(self.token(metadata).await?)
             .send()
             .await
-            .map_err(|e| KeysError(format!("{name}: {e}")))?;
+            .map_err(|e| KeysError::new(format!("{name}: {e}")))?;
         if reply.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -325,10 +367,10 @@ impl Keys {
         let version: Version = reply
             .json()
             .await
-            .map_err(|e| KeysError(format!("{name}: {e}")))?;
+            .map_err(|e| KeysError::new(format!("{name}: {e}")))?;
         let data = STANDARD
             .decode(version.payload.data)
-            .map_err(|e| KeysError(format!("{name}: the payload is no base64: {e}")))?;
+            .map_err(|e| KeysError::new(format!("{name}: the payload is no base64: {e}")))?;
         Ok(Some(data))
     }
 
@@ -349,7 +391,7 @@ impl Keys {
             .json(&body)
             .send()
             .await
-            .map_err(|e| KeysError(format!("{name}: {e}")))?;
+            .map_err(|e| KeysError::new(format!("{name}: {e}")))?;
         failed_status(name, reply).await.map(|_| ())
     }
 
@@ -361,7 +403,8 @@ impl Keys {
             access_token: String,
         }
         let url = format!("{metadata}{}", crate::gcs::TOKEN_PATH);
-        let failed = |e: reqwest::Error| KeysError(format!("no access token for the secret: {e}"));
+        let failed =
+            |e: reqwest::Error| KeysError::new(format!("no access token for the secret: {e}"));
         let reply = self
             .http
             .get(&url)
@@ -382,7 +425,8 @@ pub const NOWHERE: &str = "this riff-server has no place for the keys of the Git
                        names it in RIFF_GITHUB_SECRET";
 
 /// The reply, or an error with its status and its text. The text of
-/// Secret Manager names no secret value.
+/// Secret Manager names no secret value. A 401 or a 403 is a read that
+/// Secret Manager refuses ([`KeysError::denied`]).
 async fn failed_status(
     name: &str,
     reply: reqwest::Response,
@@ -391,8 +435,35 @@ async fn failed_status(
     if status.is_success() {
         return Ok(reply);
     }
-    let text = reply.text().await.unwrap_or_default();
-    Err(KeysError(format!("{name}: {status}: {}", text.trim())))
+    let text = format!(
+        "{name}: {status}: {}",
+        google_message(&reply.text().await.unwrap_or_default())
+    );
+    Err(if matches!(status.as_u16(), 401 | 403) {
+        KeysError::denied(text)
+    } else {
+        KeysError::new(text)
+    })
+}
+
+/// The message of an error of a Google API, `{"error": {"message": …}}`,
+/// or the whole text when it has none.
+///
+/// ```
+/// use riff_server::keys::google_message;
+///
+/// let body = r#"{"error": {"code": 403, "message": "Permission 'secretmanager.versions.access' denied on resource (or it may not exist).", "status": "PERMISSION_DENIED"}}"#;
+/// assert_eq!(
+///     google_message(body),
+///     "Permission 'secretmanager.versions.access' denied on resource (or it may not exist)."
+/// );
+/// assert_eq!(google_message(" no JSON \n"), "no JSON");
+/// ```
+pub fn google_message(text: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v["error"]["message"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| text.trim().to_owned())
 }
 
 /// Writes `bytes` to [`FILE`] in `dir`: to a new file with mode `0600`
@@ -440,7 +511,7 @@ mod tests {
         assert_eq!(keys.load().await.unwrap(), Apps::default());
         let app = AppKeys::new(7, "riff-acme", "acme", "THE KEY", None);
         let error = keys.put(GitHubApp::Session, app).await.unwrap_err();
-        assert!(error.0.contains("riff cloud create NAME"), "{error}");
+        assert!(error.text.contains("riff cloud create NAME"), "{error}");
         // A failed write keeps no App in memory either.
         assert_eq!(keys.load().await.unwrap(), Apps::default());
     }
