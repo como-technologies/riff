@@ -880,6 +880,9 @@
   When the read fails, the body has no line `Co-authored-by:`, and riff
   says why in one line. The daemon counts the read under the caller
   `token` (01M6WQWARBTYSN3SCB86DZQ5QV).
+- **01M6Y4XHQADF27SHMMMV8RQ7Q1** When `gh` ends before it reads all of
+  the text that riff gives it on stdin, the call gives the exit status
+  and the stderr of `gh`, and not a broken pipe.
 
 ## Tokens on GitHub
 

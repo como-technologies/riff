@@ -822,7 +822,19 @@ impl Gh {
     }
 
     /// Runs `gh ARGS` with `input` on stdin, and returns its stdout. It
-    /// fails with the stderr of `gh` when `gh` fails.
+    /// fails with the stderr of `gh` when `gh` fails, also when `gh`
+    /// ended before it read `input` (01M6Y4XHQADF27SHMMMV8RQ7Q1).
+    ///
+    /// ```
+    /// let dir = tempfile::tempdir()?;
+    /// let script = "#!/bin/sh\necho 'gh: not signed in' >&2\nexit 4\n";
+    /// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), script));
+    /// // More than a pipe holds: the write meets the closed pipe.
+    /// let body = "Hi.\n".repeat(64 * 1024);
+    /// let error = gh.run(&["pr", "comment", "12", "--body-file", "-"], Some(&body)).unwrap_err();
+    /// assert_eq!(error.to_string(), "gh pr comment 12 --body-file -: gh: not signed in");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
     pub fn run(&self, args: &[&str], input: Option<&str>) -> Result<String> {
         let (ok, stdout, stderr) = self.output(args, input)?;
         if !ok {
@@ -1323,7 +1335,9 @@ impl Gh {
 
     /// Runs `gh ARGS`: whether it exits with status 0, its stdout and its
     /// stderr. With a time limit, it fails at the end of the limit
-    /// ([`Gh::with_limit`]).
+    /// ([`Gh::with_limit`]). A `gh` that ends before it reads all of
+    /// `input` gives its status and its stderr, not a broken pipe
+    /// (#1803, 01M6Y4XHQADF27SHMMMV8RQ7Q1).
     fn spawn(&self, args: &[&str], input: Option<&str>) -> Result<(bool, String, String)> {
         use std::os::unix::process::CommandExt;
         let mut command = Command::new(&self.program);
@@ -1355,7 +1369,12 @@ impl Gh {
             .with_context(|| format!("cannot run {}", self.program.display()))?;
         let Some(limit) = self.limit else {
             if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-                stdin.write_all(input.as_bytes())?;
+                // A `gh` that ends before it reads its input closes the
+                // pipe: its status and its stderr tell why.
+                match stdin.write_all(input.as_bytes()) {
+                    Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+                    written => written?,
+                }
             }
             let out = child.wait_with_output()?;
             return Ok((
@@ -3581,5 +3600,38 @@ mod tests {
             (calls[0].caller.as_str(), calls[0].kind.as_str()),
             ("top", "pr view")
         );
+    }
+
+    /// 01M6Y4XHQADF27SHMMMV8RQ7Q1 (#1803): a `gh` that ends before it
+    /// reads its input gives its stdout, or its status and its stderr,
+    /// with a time limit and with none. The input is more than a pipe
+    /// holds, so each write meets the closed pipe.
+    #[test]
+    fn a_gh_that_reads_no_input_gives_its_own_answer_and_not_a_broken_pipe() {
+        let dir = tempfile::tempdir().unwrap();
+        let answers = isolated::write_program(dir.path().join("answers"), "#!/bin/sh\necho done\n");
+        let fails = isolated::write_program(
+            dir.path().join("fails"),
+            "#!/bin/sh\necho 'gh: not signed in' >&2\nexit 4\n",
+        );
+        let input = "x".repeat(1 << 20);
+        let args = ["issue", "comment", "12", "--body-file", "-"];
+        for limit in [None, Some(Duration::from_secs(60))] {
+            let with = |gh: Gh| match limit {
+                Some(limit) => gh.with_limit(limit),
+                None => gh,
+            };
+            assert_eq!(
+                with(Gh::at(&answers)).run(&args, Some(&input)).unwrap(),
+                "done\n",
+                "{limit:?}"
+            );
+            let error = with(Gh::at(&fails)).run(&args, Some(&input)).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "gh issue comment 12 --body-file -: gh: not signed in",
+                "{limit:?}"
+            );
+        }
     }
 }
