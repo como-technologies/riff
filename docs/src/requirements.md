@@ -7981,6 +7981,10 @@ that builds it merges.
   its title, as `Wave N · TITLE`, and `Enter` on it puts its wave in
   the note line too. The asked rows of all the waves go in number order,
   and the counts of the line of the repository count them.
+- **01M6XXFJQ9SKN2RCAKNTF39TMS** After a panic of the TUI, its terminal
+  comes back as after q: riff turns off the mouse capture, the bracketed
+  paste and the focus events, ends the raw mode and leaves the alternate
+  screen. Then it prints the message of the panic.
 
 ## The notes of the lead
 

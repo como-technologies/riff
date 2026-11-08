@@ -138,7 +138,8 @@
 //! asks the terminal for focus events: when its window gets the focus
 //! back, [`input_of`] gives [`Input::Focused`], and the prompt of the
 //! Chat tab gets the focus ([`State::focused`],
-//! 01M6XT6MCZ38XEN7ZHWTRF50Z5).
+//! 01M6XT6MCZ38XEN7ZHWTRF50Z5). The end of the TUI turns these modes
+//! off, and so does a panic (01M6XXFJQ9SKN2RCAKNTF39TMS).
 //!
 //! A plain character is a [`Key::Char`]. The state gives it its meaning:
 //! while the note line asks for a text, it types into it
@@ -1761,10 +1762,12 @@ async fn next_event() -> Result<Option<ratatui::crossterm::event::Event>> {
 /// (01M6XSK4GHNBJCR0RHMBGZE57G), its focus events
 /// (01M6XT6MCZ38XEN7ZHWTRF50Z5), and with `mouse`, the mouse
 /// (01M6VAZKG8FS4HEA9VSA4Z4YF1). A terminal with no bracketed paste
-/// gives a paste as keys.
+/// gives a paste as keys. A panic gives the terminal back
+/// ([`modes_off_on_panic`]).
 fn enter(mouse: bool) -> Result<ratatui::DefaultTerminal> {
     use ratatui::crossterm::event::{EnableBracketedPaste, EnableFocusChange, EnableMouseCapture};
     use ratatui::crossterm::execute;
+    modes_off_on_panic();
     let terminal = ratatui::try_init()?;
     let mut out = std::io::stdout();
     let _ = execute!(out, EnableBracketedPaste);
@@ -1784,16 +1787,38 @@ fn enter(mouse: bool) -> Result<ratatui::DefaultTerminal> {
 
 /// Gives the terminal back: for an attach, a takeover, or the end.
 fn leave(mouse: bool) {
+    modes_off(&mut std::io::stdout(), mouse);
+    ratatui::restore();
+}
+
+/// Turns off in `out` the modes that [`enter`] turns on: the bracketed
+/// paste, the focus events, and with `mouse`, the mouse capture.
+fn modes_off(out: &mut impl std::io::Write, mouse: bool) {
     use ratatui::crossterm::event::{
         DisableBracketedPaste, DisableFocusChange, DisableMouseCapture,
     };
     use ratatui::crossterm::execute;
     if mouse {
-        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+        let _ = execute!(out, DisableMouseCapture);
     }
-    let _ = execute!(std::io::stdout(), DisableBracketedPaste);
-    let _ = execute!(std::io::stdout(), DisableFocusChange);
-    ratatui::restore();
+    let _ = execute!(out, DisableBracketedPaste);
+    let _ = execute!(out, DisableFocusChange);
+}
+
+/// Sets, once, a panic hook that turns off each mode of [`enter`]
+/// (01M6XXFJQ9SKN2RCAKNTF39TMS). The hook of `ratatui::try_init` only
+/// ends the raw mode and leaves the alternate screen. It comes after
+/// this hook, so it runs first. Then this hook gives the panic to the
+/// hook before it, which prints the message.
+fn modes_off_on_panic() {
+    static SET: std::sync::Once = std::sync::Once::new();
+    SET.call_once(|| {
+        let next = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            modes_off(&mut std::io::stdout(), true);
+            next(info);
+        }));
+    });
 }
 
 /// `riff` with no command, in a terminal: the TUI, as `me` at `api`,
@@ -2396,4 +2421,91 @@ pub(crate) fn text_block(doc: &str, after: &str, strip: &str) -> Vec<String> {
         .take_while(|line| *line != "```")
         .map(|line| line.trim_end().to_owned())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The marker of the run of a test in its pseudo-terminal.
+    const IN_THE_TTY: &str = "RIFF_TEST_IN_THE_TTY";
+
+    /// 01M6XXFJQ9SKN2RCAKNTF39TMS: the test runs again in a
+    /// pseudo-terminal of its own. There the TUI takes the terminal with
+    /// the mouse, and panics. The terminal comes back with no mouse
+    /// capture, no bracketed paste, no focus events, no raw mode and no
+    /// alternate screen, and it shows the message of the panic.
+    #[test]
+    fn a_panic_of_the_tui_gives_back_a_terminal_with_no_mouse_capture_and_no_bracketed_paste() {
+        use std::io::Read;
+        use std::os::fd::AsFd;
+        const NAME: &str =
+            "a_panic_of_the_tui_gives_back_a_terminal_with_no_mouse_capture_and_no_bracketed_paste";
+        if std::env::var_os(IN_THE_TTY).is_some() {
+            let _terminal = enter(true).unwrap();
+            panic!("the TUI panics");
+        }
+        let size = nix::pty::Winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let pty = nix::pty::openpty(Some(&size), None).unwrap();
+        let slave = std::fs::File::from(pty.slave);
+        let exe = std::env::current_exe().unwrap();
+        let name = isolated::test_name(module_path!(), NAME);
+        // The command holds the only ends of the slave, and drops them
+        // after the spawn: the read of the master ends with the child.
+        let mut child = isolated::rerun_command(&exe, &name, std::iter::empty())
+            .arg("--nocapture")
+            .env(IN_THE_TTY, "1")
+            .env("TERM", "xterm")
+            .stdin(slave.try_clone().unwrap())
+            .stdout(slave.try_clone().unwrap())
+            .stderr(slave)
+            .spawn()
+            .unwrap();
+        let master = std::fs::File::from(pty.master);
+        let mut reader = master.try_clone().unwrap();
+        let (send, written) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut all, mut buf) = (Vec::new(), [0u8; 4096]);
+            while let Ok(n @ 1..) = reader.read(&mut buf) {
+                all.extend_from_slice(&buf[..n]);
+            }
+            let _ = send.send(all);
+        });
+        let Ok(written) = written.recv_timeout(Duration::from_secs(60)) else {
+            let _ = child.kill();
+            panic!("the test in the pseudo-terminal ends in time");
+        };
+        let status = child.wait().unwrap();
+        let text = String::from_utf8_lossy(&written);
+        assert!(!status.success(), "{text}");
+        // The TUI took the terminal with each mode.
+        for on in ["?1049h", "?1000h", "?1003h", "?1006h", "?2004h", "?1004h"] {
+            assert!(text.contains(&format!("\x1b[{on}")), "{on} in {text:?}");
+        }
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(&written);
+        let screen = parser.screen();
+        assert_eq!(
+            screen.mouse_protocol_mode(),
+            vt100::MouseProtocolMode::None,
+            "{text:?}"
+        );
+        assert!(!screen.bracketed_paste(), "{text:?}");
+        assert!(!screen.alternate_screen(), "{text:?}");
+        let focus = |mode: char| text.rfind(&format!("\x1b[?1004{mode}"));
+        assert!(focus('l') > focus('h'), "{text:?}");
+        let modes = nix::sys::termios::tcgetattr(master.as_fd()).unwrap();
+        assert!(
+            modes.local_flags.contains(
+                nix::sys::termios::LocalFlags::ICANON | nix::sys::termios::LocalFlags::ECHO
+            ),
+            "the raw mode ended"
+        );
+        assert!(screen.contents().contains("the TUI panics"), "{text:?}");
+    }
 }
