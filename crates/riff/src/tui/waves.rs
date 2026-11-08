@@ -71,6 +71,7 @@
 //! |---|---|---|
 //! | `h` | Asks for a reason, then holds the item. | `riff plan hold` |
 //! | `f` | Frees the held item. | `riff plan free` |
+//! | `a` | Marks the questions of an item with the label `question` as answered: the label goes, and the lead wakes. | `riff questions --answered` |
 //! | `p` | Pauses or resumes the repository of the row. | `riff pause --repo`, `riff resume --repo` |
 //! | `P` | Pauses or resumes the whole riff. | `riff pause --riff`, `riff resume --riff` |
 //! | `o` | Puts the URL of the pull request, the item or the repository in the note line. | |
@@ -632,6 +633,25 @@ impl Waves {
                 text::safe(repo)
             ))),
             (Key::Char('f'), _) => Some(Answer::Note("Select a held item to free it.".to_owned())),
+            // The label from the last read of the forge: an item in work
+            // can have it too.
+            (Key::Char('a'), Row::Item { repo, item }) => {
+                let asked = self
+                    .forge
+                    .get(repo)
+                    .is_some_and(|forge| forge.issues.questions.contains(&item.number));
+                if !asked {
+                    return Some(Answer::Note(text::questions_not_asked(repo, item.number)));
+                }
+                let answered = Effect::Answered {
+                    repo: repo.clone(),
+                    item: item.number,
+                };
+                Some(Answer::Ask(answered.question()))
+            }
+            (Key::Char('a'), _) => Some(Answer::Note(
+                "Select an item with the label question to mark it as answered.".to_owned(),
+            )),
             (Key::Char('p'), row) => {
                 let repo = row.repo()?.to_owned();
                 // The pause of the repository itself: the whole riff has `P`.
@@ -1269,6 +1289,7 @@ pub fn help_keys() -> Vec<(&'static str, &'static str)> {
         ("← → Space", "fold a board"),
         ("h", "hold the item"),
         ("f", "free the item"),
+        ("a", "mark as answered"),
         ("p", "pause the repository"),
         ("P", "pause the whole riff"),
         ("o", "show the URL"),
@@ -1790,6 +1811,69 @@ mod tests {
             " Free #1631 of como-technologies/riff? y/N"
         );
         assert_eq!(state.on_key(Key::Char('y')), Some(Action::Do(free)));
+    }
+
+    /// 01M6XZ2TCBVN69GTJYV9X8GBW5: `a` on an item with the label
+    /// `question` asks `y` or `n`, and `y` gives the effect of `riff
+    /// questions --answered`. The row of the item has the mark `?` and the
+    /// state `asked`. An item in work can have the label too. An item with
+    /// no label gets a line, and no question.
+    #[test]
+    fn a_marks_the_questions_of_an_item_as_answered_after_a_yes() {
+        let mut state = mock_up();
+        state.on_key(Key::Char('a'));
+        assert_eq!(state.asked(), None);
+        assert_eq!(
+            state.shown_note(),
+            Some("#1620 of como-technologies/riff has no label question. Nothing changed.")
+        );
+        let mut forge = riff_forge();
+        forge
+            .issues
+            .titles
+            .insert(1640, "Which key marks it?".into());
+        forge.issues.waves[0].1.push(1640);
+        forge.issues.questions.extend([1640, 1590]);
+        state.read_forge(vec![(RIFF.to_owned(), Ok(forge))], NOW);
+        for _ in 0..3 {
+            state.on_key(Key::Down);
+        }
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(
+            rows[8],
+            " > ?   asked   #1640  Which key marks it?             waits for a person   -"
+        );
+        state.on_key(Key::Char('a'));
+        let answered = Effect::Answered {
+            repo: RIFF.into(),
+            item: 1640,
+        };
+        assert_eq!(
+            drawn(&state, 80, 24)[22],
+            " Mark the questions of #1640 of como-technologies/riff as answered? y/N"
+        );
+        assert_eq!(state.on_key(Key::Char('y')), Some(Action::Do(answered)));
+        // `n` changes nothing.
+        state.on_key(Key::Char('a'));
+        assert_eq!(state.on_key(Key::Char('n')), None);
+        assert_eq!(state.shown_note(), Some(crate::tui::NOTHING_CHANGED));
+        // #1590 is in work, with the label.
+        state.on_key(Key::Down);
+        state.on_key(Key::Down);
+        assert_eq!(state.waves().picked(), Some(&Pick::Item(RIFF.into(), 1590)));
+        state.on_key(Key::Char('a'));
+        assert_eq!(
+            state.asked().as_deref(),
+            Some("Mark the questions of #1590 of como-technologies/riff as answered? y/N")
+        );
+        state.on_key(Key::Esc);
+        // The line of a repository has no item.
+        state.on_key(Key::Char('g'));
+        state.on_key(Key::Char('a'));
+        assert_eq!(
+            state.shown_note(),
+            Some("Select an item with the label question to mark it as answered.")
+        );
     }
 
     /// 01M6VFGK9XXWCA8X7CE8EZNSJV: `p` pauses the repository of the row, or

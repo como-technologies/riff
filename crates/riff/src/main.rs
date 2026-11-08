@@ -750,8 +750,18 @@ enum Command {
     Questions {
         /// Open one GitHub search for these issues in the browser, as gh
         /// issue view --web does, and list nothing.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "answered")]
         web: bool,
+        /// Mark the questions of the issue N as answered: riff removes
+        /// the label question, and wakes your lead of the repository. The
+        /// lead records each answer in the body of the issue. An issue
+        /// with no label question gets a note, and nothing changes.
+        #[arg(long, value_name = "N")]
+        answered: Option<u64>,
+        /// The repository of the issue of --answered, not the repository
+        /// of this folder.
+        #[arg(long, value_name = "OWNER/REPO", requires = "answered")]
+        repo: Option<String>,
     },
     /// Make and run riff-server instances on Cloud Run
     ///
@@ -2029,10 +2039,29 @@ async fn cli() -> Result<()> {
             println!("{}", riff::ends::why(item, &records));
             return Ok(());
         }
-        Command::Questions { web } => {
+        Command::Questions {
+            web,
+            answered,
+            repo,
+        } => {
             let here = identity::place(&identity::working_dir()?)?;
             let here =
                 matches!(here.repo(), riff_core::name::Repo::Git { .. }).then(|| here.repo_text());
+            if let Some(number) = answered {
+                let repo: ThreadName = repo
+                    .as_deref()
+                    .or(here.as_deref())
+                    .context(text::QUESTIONS_NO_REPO)?
+                    .parse()?;
+                let me = person(&api)?;
+                let gh = pr::Gh::here("questions");
+                let api = api.signed_in(None)?;
+                println!(
+                    "{}",
+                    riff::questions::answered(&gh, &api, &me, &repo, *number).await?
+                );
+                return Ok(());
+            }
             // The repos of the reply do not depend on `all`: ask for the
             // live sessions only.
             let repos = riff::questions::repos(&reach.who_reply(false).await?, here.as_deref());

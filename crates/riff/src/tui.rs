@@ -190,7 +190,7 @@
 //! | [`Action::End`] | `riff daemon end NAME`: [`crate::daemon::ask_end`] |
 //! | [`Action::Host`] | `riff daemon end NAME --host HOST`, `riff leave --host HOST`: [`sessions::ask_host`] |
 //! | [`Action::Limit`] | `riff daemon limit --sessions N`: [`machines::set_limit`] |
-//! | [`Action::Do`] | `riff plan hold`, `riff plan free`, `riff pause`, `riff resume`: [`Effect::run`] |
+//! | [`Action::Do`] | `riff plan hold`, `riff plan free`, `riff pause`, `riff resume`, `riff questions --answered`: [`Effect::run`] |
 //! | [`Action::Post`] | `riff chat`: [`crate::chat::posts`], through [`chat::Link`] |
 //!
 //! # The marks
@@ -618,6 +618,9 @@ pub enum Effect {
         repo: Option<String>,
         state: RiffState,
     },
+    /// `riff questions --answered ITEM --repo REPO`
+    /// ([`crate::questions::answered`]).
+    Answered { repo: String, item: u64 },
 }
 
 impl Effect {
@@ -639,6 +642,8 @@ impl Effect {
     /// assert_eq!(pause.question().text, "Pause o/r?");
     /// let resume = Effect::Pause { repo: None, state: RiffState::Running };
     /// assert_eq!(resume.question().text, "Resume the whole riff?");
+    /// let answered = Effect::Answered { repo: "o/r".into(), item: 12 };
+    /// assert_eq!(answered.question().text, "Mark the questions of #12 of o/r as answered?");
     /// ```
     pub fn question(self) -> Question {
         let text = match &self {
@@ -648,6 +653,10 @@ impl Effect {
                 text::safe(reason)
             ),
             Effect::Free { repo, item } => format!("Free #{item} of {}?", text::safe(repo)),
+            Effect::Answered { repo, item } => format!(
+                "Mark the questions of #{item} of {} as answered?",
+                text::safe(repo)
+            ),
             Effect::Pause { repo, state } => {
                 let verb = match state {
                     RiffState::Paused => "Pause",
@@ -672,6 +681,8 @@ impl Effect {
     /// assert_eq!(free.doing(), "riff frees #12 of o/r.");
     /// let pause = Effect::Pause { repo: None, state: RiffState::Paused };
     /// assert_eq!(pause.doing(), "riff pauses the whole riff.");
+    /// let answered = Effect::Answered { repo: "o/r".into(), item: 12 };
+    /// assert_eq!(answered.doing(), "riff marks #12 of o/r as answered.");
     /// ```
     pub fn doing(&self) -> String {
         let (verb, what) = match self {
@@ -679,6 +690,10 @@ impl Effect {
                 ("holds", format!("#{item} of {}", text::safe(repo)))
             }
             Effect::Free { repo, item } => ("frees", format!("#{item} of {}", text::safe(repo))),
+            Effect::Answered { repo, item } => (
+                "marks",
+                format!("#{item} of {} as answered", text::safe(repo)),
+            ),
             Effect::Pause { repo, state } => (
                 match state {
                     RiffState::Paused => "pauses",
@@ -692,8 +707,15 @@ impl Effect {
     }
 
     /// Runs the effect as `me` at `api`, or through `reach`, with the
-    /// code of its CLI command, and gives the line of that command.
-    pub async fn run(&self, api: &Api, me: &SessionUri, reach: &Reach) -> Result<String> {
+    /// code of its CLI command, and gives the line of that command. The
+    /// calls of `gh` go through `gh`.
+    pub async fn run(
+        &self,
+        api: &Api,
+        me: &SessionUri,
+        reach: &Reach,
+        gh: &crate::pr::Gh,
+    ) -> Result<String> {
         let thread = |repo: &str| repo.parse::<ThreadName>();
         match self {
             Effect::Hold { repo, item, reason } => {
@@ -705,6 +727,9 @@ impl Effect {
                 reach
                     .plan_free(&thread(repo)?, &format!("issue-{item}"))
                     .await
+            }
+            Effect::Answered { repo, item } => {
+                crate::questions::answered(gh, api, me, &thread(repo)?, *item).await
             }
             Effect::Pause { repo, state } => {
                 let scope = match repo {
@@ -1984,7 +2009,9 @@ async fn frames(
             && let Some(done) = tasks.acting.take()
         {
             state.note(done.await?);
-            // The action changed something: look again.
+            // The action changed something: look again, and read the
+            // forge again while the Waves tab shows.
+            tasks.forge_again = true;
             if tasks.looking.is_some() {
                 tasks.again = true;
             } else {
@@ -2188,9 +2215,9 @@ async fn frames(
             Action::Post(body) => link.send(body),
             Action::Do(effect) => {
                 state.note(effect.doing());
-                let (api, me, reach) = (api.clone(), me.clone(), reach.clone());
+                let (api, me, reach, gh) = (api.clone(), me.clone(), reach.clone(), gh.clone());
                 tasks.acting = Some(tokio::spawn(async move {
-                    match effect.run(&api, &me, &reach).await {
+                    match effect.run(&api, &me, &reach, &gh).await {
                         Ok(line) => line,
                         Err(e) => format!("riff: {e:#}"),
                     }

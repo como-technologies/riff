@@ -4,7 +4,9 @@
 //! the terminal, from a real riff-server and a fake `gh`. The sessions of
 //! another person add no repository, and a repository with the notes of a
 //! lead and no session does. `--web` opens one GitHub search in the
-//! browser, here a fake `xdg-open`.
+//! browser, here a fake `xdg-open`. `--answered N` removes the label of
+//! the issue N, and wakes the lead of the person (#1782,
+//! 01M6XZ2T9TPZC1X36Y2ZXZ83C0).
 
 use isolated::Isolated;
 use std::path::Path;
@@ -367,4 +369,205 @@ async fn riff_questions_web_opens_one_search_over_the_repositories() {
     }
     assert_eq!(std::fs::read_to_string(opened).unwrap(), url);
     assert!(asked(bin.path()).is_empty());
+}
+
+/// A dir for `PATH` with `git` and a fake `gh` for `--answered`: `issue
+/// view N --json labels` gives the label `question` for each issue of
+/// `asked`, and only the label `bug` for each other. It takes each `issue
+/// edit`. It writes each call in the file `calls` ([`issue_calls`]).
+fn answering(asked: &[u64]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let git = String::from_utf8(Command::new("which").arg("git").output().unwrap().stdout).unwrap();
+    std::os::unix::fs::symlink(git.trim(), dir.path().join("git")).unwrap();
+    let calls = dir.path().join("calls");
+    let mut script = format!(
+        "#!/bin/sh\necho \"$*\" >> {}\ncase \"$*\" in\n",
+        calls.display()
+    );
+    for n in asked {
+        script.push_str(&format!(
+            "  \"issue view {n} \"*) echo '{{\"labels\":[{{\"name\":\"bug\"}},{{\"name\":\"question\"}}]}}' ;;\n"
+        ));
+    }
+    script.push_str("  \"issue view \"*) echo '{\"labels\":[{\"name\":\"bug\"}]}' ;;\n");
+    script.push_str("  \"issue edit \"*) ;;\n");
+    script.push_str("  *) echo 'unknown call' >&2; exit 1 ;;\nesac\n");
+    isolated::write_program(dir.path().join("gh"), script);
+    dir
+}
+
+/// The calls `gh issue` that the fake `gh` of `dir` got, in order.
+fn issue_calls(dir: &Path) -> Vec<String> {
+    let calls = std::fs::read_to_string(dir.join("calls")).unwrap_or_default();
+    calls
+        .lines()
+        .filter(|line| line.starts_with("issue "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The lead of brett in `repo`, named by the person, with no unread
+/// message.
+async fn lead_of_brett(server: &str, repo: &str) -> SessionUri {
+    let lead: SessionUri = format!("riff://brett@thelio/{repo}?session=1ead")
+        .parse()
+        .unwrap();
+    common::api_of(server, &lead).register(&lead).await.unwrap();
+    common::name_lead(&common::api_of(server, &common::person_of(&lead)), &lead).await;
+    common::api_of(server, &lead)
+        .inbox(&lead, None, false)
+        .await
+        .unwrap();
+    lead
+}
+
+/// Each unread message of the lead `lead` from a person: its sender and
+/// its body.
+async fn lead_reads(server: &str, lead: &SessionUri) -> Vec<(String, String)> {
+    common::api_of(server, lead)
+        .inbox(lead, None, false)
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|inbox| inbox.messages)
+        .map(|checked| checked.message)
+        .filter(|m| m.from.who().session().is_none())
+        .map(|m| (m.from.to_string(), m.body))
+        .collect()
+}
+
+/// #1782: `riff questions --answered 12` in the clone removes the label
+/// `question` of #12 with `gh`, and the message wakes the lead of the
+/// person in the repository.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_questions_answered_removes_the_label_and_wakes_the_lead() {
+    let server = common::start_signed().await;
+    let lead = lead_of_brett(&server, "como-technologies/riff").await;
+    let dir = repo();
+    let bin = answering(&[12]);
+
+    let out = run(riff(&server, dir.path(), bin.path(), &["--answered", "12"])).await;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.starts_with(
+            "Removed the label question of #12 of como-technologies/riff. \
+             Posted message 1 to como-technologies/riff. Woke brett@thelio:riff (1ead)."
+        ),
+        "{stdout}"
+    );
+    assert_eq!(
+        issue_calls(bin.path()),
+        [
+            "issue view 12 --repo como-technologies/riff --json labels",
+            "issue edit 12 --repo como-technologies/riff --remove-label question",
+        ]
+    );
+    assert_eq!(
+        lead_reads(&server, &lead).await,
+        [(
+            "riff://brett@pangolin".to_owned(),
+            "questions answered: brett answered the questions of #12 of como-technologies/riff, \
+             and riff removed the label question. Record each answer in the body of #12."
+                .to_owned()
+        )]
+    );
+}
+
+/// #1782: an issue with no label `question` gives a note. riff removes no
+/// label and posts nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_questions_answered_on_an_issue_with_no_label_changes_nothing() {
+    let server = common::start_signed().await;
+    let lead = lead_of_brett(&server, "como-technologies/riff").await;
+    let dir = repo();
+    let bin = answering(&[12]);
+
+    let out = run(riff(&server, dir.path(), bin.path(), &["--answered", "13"])).await;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "#13 of como-technologies/riff has no label question. Nothing changed.\n"
+    );
+    assert_eq!(
+        issue_calls(bin.path()),
+        ["issue view 13 --repo como-technologies/riff --json labels"]
+    );
+    assert!(lead_reads(&server, &lead).await.is_empty());
+}
+
+/// #1782: `--repo` names the repository in a folder that is no clone. With
+/// no `--repo` there, the command says what to give, and calls no `gh`.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_questions_answered_takes_the_repository_of_repo() {
+    let server = common::start_signed().await;
+    let lead = lead_of_brett(&server, "o/other").await;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = answering(&[3]);
+
+    let out = run(riff(&server, dir.path(), bin.path(), &["--answered", "3"])).await;
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Give the repository with --repo OWNER/REPO."),
+        "{stderr}"
+    );
+    assert!(issue_calls(bin.path()).is_empty());
+
+    let args = ["--answered", "3", "--repo", "o/other"];
+    let out = run(riff(&server, dir.path(), bin.path(), &args)).await;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(
+        issue_calls(bin.path()),
+        [
+            "issue view 3 --repo o/other --json labels",
+            "issue edit 3 --repo o/other --remove-label question",
+        ]
+    );
+    let read = lead_reads(&server, &lead).await;
+    assert_eq!(read.len(), 1, "{read:?}");
+    assert!(
+        read[0].1.contains("the questions of #3 of o/other"),
+        "{read:?}"
+    );
+}
+
+/// #1782: `y` on the question of `a` in the Waves tab runs the effect
+/// `Answered`, and it does the same as `riff questions --answered`: the
+/// label goes, and the lead of the person gets the message.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_key_of_the_waves_tab_does_the_same_as_answered() {
+    let server = common::start_signed().await;
+    let lead = lead_of_brett(&server, "como-technologies/riff").await;
+    let bin = answering(&[12]);
+    let gh = riff::pr::Gh::at(bin.path().join("gh")).by("tui");
+    let me: SessionUri = "riff://brett@pangolin".parse().unwrap();
+    let api = common::api(&server, "brett", None);
+    let reach = riff::reach::Reach::Direct(server.to_string());
+    let effect = riff::tui::Effect::Answered {
+        repo: "como-technologies/riff".into(),
+        item: 12,
+    };
+
+    let line = effect.run(&api, &me, &reach, &gh).await.unwrap();
+    assert!(
+        line.starts_with("Removed the label question of #12 of como-technologies/riff."),
+        "{line}"
+    );
+    assert_eq!(
+        issue_calls(bin.path()),
+        [
+            "issue view 12 --repo como-technologies/riff --json labels",
+            "issue edit 12 --repo como-technologies/riff --remove-label question",
+        ]
+    );
+    let read = lead_reads(&server, &lead).await;
+    assert_eq!(read.len(), 1, "{read:?}");
+    assert!(
+        read[0].1.starts_with("questions answered: brett"),
+        "{read:?}"
+    );
 }

@@ -311,6 +311,7 @@ for each of its open items:
 | `Enter` | On a repository: fold or open its board. On the closed line: show the closed items. On an item: show its whole row in the note line. |
 | `←` `→`, `Space` | Fold or open the board of the repository. |
 | `h`, `f` | Hold the item, or free it. See [Hold an item in the TUI](how-it-works.md#hold-an-item-in-the-tui). |
+| `a` | Mark the questions of an item with the label `question` as answered, after `y`: the label goes, and your lead wakes. See [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered). |
 | `p`, `P` | Pause or resume the repository of the row, or the whole riff. |
 | `o` | Show the URL of the pull request, the item or the repository in the note line, to copy it. |
 | `r` | Read riff-server and `gh` again now. |
