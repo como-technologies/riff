@@ -498,10 +498,24 @@ fn names_issue(word: &str) -> bool {
 /// let keys: Vec<_> = hygiene::trailers(squash).into_iter().map(|(k, _)| k).collect();
 /// assert_eq!(keys, ["Issue", "Milestone", "Co-authored-by"]);
 ///
-/// // The squash of a pull request with two commits and a co-author:
-/// let squash = "Text.\n\nIssue: #7\n\n---------\n\nCo-authored-by: A <a@b.c>\n";
+/// // The squash of a pull request with two commits and a co-author, as
+/// // GitHub wrote it in the commit 9f466f4f of #1776, in short:
+/// let squash = "The terminal of an attach comes back whole (#1776)\n\n\
+///     Closes #1767\n\nText.\n\n\
+///     Issue: #1767\nMilestone: Wave 52\n\
+///     Riff-Session: 1a69bbf5-4d2f-4a99-a0b5-f4cfd21c863c\n\
+///     Co-authored-by: n8behavior <692218+n8behavior@users.noreply.github.com>\n\n\
+///     ---------\n\n\
+///     Co-authored-by: riff worker e0c36dab \
+///     <354108017+riff-como-technologies[bot]@users.noreply.github.com>\n";
 /// let keys: Vec<_> = hygiene::trailers(squash).into_iter().map(|(k, _)| k).collect();
-/// assert_eq!(keys, ["Issue", "Co-authored-by"]);
+/// assert_eq!(keys, [
+///     "Issue",
+///     "Milestone",
+///     "Riff-Session",
+///     "Co-authored-by",
+///     "Co-authored-by",
+/// ]);
 ///
 /// // A paragraph of text after the trailers ends the block.
 /// assert!(hygiene::trailers("Issue: #7\n\nText.\n\nCo-authored-by: A <a@b.c>\n")
@@ -1311,17 +1325,6 @@ mod tests {
     #[test]
     fn the_commit_1776_with_the_separator_of_the_squash_passes() {
         assert_eq!(check_commit(COMMIT_1776), []);
-        let keys: Vec<_> = trailers(COMMIT_1776).into_iter().map(|(k, _)| k).collect();
-        assert_eq!(
-            keys,
-            [
-                "Issue",
-                "Milestone",
-                "Riff-Session",
-                "Co-authored-by",
-                "Co-authored-by"
-            ]
-        );
     }
 
     #[test]
