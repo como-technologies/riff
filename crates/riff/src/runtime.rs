@@ -48,6 +48,24 @@
 //! runs `claude --resume ID` with the terminal of the person in the
 //! container of a worker ([`Runtime::exec`], 01M4Z60B83ZH10HYKW7X1C0SSS).
 //!
+//! A command in the container can turn on modes of the terminal of the
+//! person: the mouse reports, the bracketed paste, the alternate screen.
+//! A detach leaves the command with its modes on, and the shell of the
+//! person then prints each report of the mouse as text. So after each
+//! attach and each exec with the terminal of the person, riff writes
+//! [`TERMINAL_RESET`] ([`reset_terminal`], 01M6XVBRQMBMK68K8GCDRZ5GJ5).
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant T as the terminal of the person
+//!     participant R as riff
+//!     participant C as claude in the container
+//!     R->>C: podman attach NAME, or podman exec -it NAME
+//!     C->>T: a mode on, for example the mouse reports
+//!     T->>C: Ctrl-P Ctrl-Q: a detach, claude runs on with its modes
+//!     R->>T: TERMINAL_RESET: each mode off, the cursor on
+//! ```
+//!
 //! A spec holds no secret. Each [`Env::Host`] of a spec names a variable
 //! only. Its value goes to [`Runtime::start`] beside the spec, and the
 //! runtime gives it to the session with no command line
@@ -384,6 +402,50 @@ pub trait Runtime: Send + Sync {
 /// The host that [`Runtime::reaches`] looks up: the API of `claude`.
 pub const REACH_HOST: &str = "api.anthropic.com";
 
+/// The reset of the modes that a command in a session can leave on in
+/// the terminal of the person (01M6XVBRQMBMK68K8GCDRZ5GJ5): the mouse
+/// reports, the focus events, the bracketed paste, the theme reports,
+/// the keys of the kitty protocol and of modifyOtherKeys, and the
+/// alternate screen. Then it shows the cursor. It leaves the alternate
+/// screen with `?1047`, which does not move the cursor of the main
+/// screen.
+///
+/// ```
+/// use riff::runtime::TERMINAL_RESET;
+///
+/// // Each move of the mouse gives a report with `?1003`: the reset
+/// // turns it off.
+/// assert!(TERMINAL_RESET.contains("\x1b[?1003l"));
+/// assert!(TERMINAL_RESET.contains("\x1b[?1047l"));
+/// assert!(TERMINAL_RESET.ends_with("\x1b[?25h"));
+/// ```
+pub const TERMINAL_RESET: &str = concat!(
+    // The mouse reports: the clicks, the drags, each move, and their forms.
+    "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l",
+    // The focus events, the bracketed paste and the theme reports.
+    "\x1b[?1004l\x1b[?2004l\x1b[?2031l",
+    // The keys of the kitty protocol, and of modifyOtherKeys.
+    "\x1b[<u\x1b[>4m",
+    // The alternate screen, then the cursor.
+    "\x1b[?1047l\x1b[?25h",
+);
+
+/// Writes [`TERMINAL_RESET`] to `out`, the terminal of this process, and
+/// flushes it. riff calls it after each [`Runtime::attach`] and each
+/// [`Runtime::exec`] with the terminal of the person: a detach leaves
+/// the command of the session as it was, with its modes on.
+///
+/// ```
+/// let mut out = Vec::new();
+/// riff::runtime::reset_terminal(&mut out)?;
+/// assert_eq!(out, riff::runtime::TERMINAL_RESET.as_bytes());
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn reset_terminal(out: &mut impl io::Write) -> io::Result<()> {
+    out.write_all(TERMINAL_RESET.as_bytes())?;
+    out.flush()
+}
+
 /// A runtime with no container, for tests (01M4ZBGK5G3EFXWT61DR2NHMDD).
 ///
 /// Each session of it plays a `claude` of one turn: it prints the lines
@@ -462,6 +524,30 @@ struct Book {
     /// The sessions whose list of processes never comes
     /// ([`Fake::with_hung_processes`]).
     hung: BTreeSet<String>,
+    /// The bytes that the command of a session writes to the terminal
+    /// at each attach and each exec ([`Fake::with_terminal_bytes`]).
+    writes: Vec<u8>,
+    /// The terminal of this process: each byte of riff
+    /// ([`Fake::terminal`]) and of each attach and exec, in order.
+    screen: Vec<u8>,
+}
+
+/// The terminal of this process for a [`Fake`] ([`Fake::terminal`]): it
+/// writes to the screen of the fake.
+#[derive(Debug, Clone)]
+pub struct FakeTerminal {
+    book: Arc<Mutex<Book>>,
+}
+
+impl io::Write for FakeTerminal {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        lock(&self.book).screen.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// One session of a [`Fake`].
@@ -533,6 +619,54 @@ impl Fake {
     pub fn with_attach_until_end(self) -> Self {
         self.lock().attach_until_end = true;
         self
+    }
+
+    /// The command of each session writes `bytes` to the terminal at
+    /// each attach and each exec, as `claude` turns on the modes of its
+    /// terminal. A detach leaves them on.
+    ///
+    /// ```
+    /// use std::io::Write;
+    /// use riff::runtime::{Fake, Runtime, SessionSpec};
+    ///
+    /// let spec = SessionSpec {
+    ///     name: "lead".into(),
+    ///     image: "i".into(),
+    ///     home: "/h".into(),
+    ///     workdir: "/w".into(),
+    ///     binds: vec![],
+    ///     env: vec![],
+    ///     memory: "8g".into(),
+    ///     cpus: 4,
+    ///     command: vec![],
+    /// };
+    /// let fake = Fake::default().with_image("i").with_terminal_bytes(b"\x1b[?1003h");
+    /// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+    ///     let _end = fake.start_terminal(&spec, &[]).await?;
+    ///     fake.terminal().write_all(b"riff: attach\n")?;
+    ///     fake.attach("lead").await?;
+    ///     Ok::<(), anyhow::Error>(())
+    /// })?;
+    /// assert_eq!(fake.screen(), b"riff: attach\n\x1b[?1003h");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_terminal_bytes(self, bytes: &[u8]) -> Self {
+        self.lock().writes = bytes.to_vec();
+        self
+    }
+
+    /// The terminal of this process: what riff writes to it goes to the
+    /// screen of the fake, as each attach and each exec does
+    /// ([`Fake::screen`]).
+    pub fn terminal(&self) -> FakeTerminal {
+        FakeTerminal {
+            book: self.book.clone(),
+        }
+    }
+
+    /// Each byte that the terminal of the fake got, in order.
+    pub fn screen(&self) -> Vec<u8> {
+        self.lock().screen.clone()
     }
 
     /// The container of the session `name` runs the image with the digest
@@ -724,6 +858,15 @@ fn lock(book: &Mutex<Book>) -> MutexGuard<'_, Book> {
     book.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+impl Book {
+    /// The command of a session writes the bytes of
+    /// [`Fake::with_terminal_bytes`] to the terminal.
+    fn write_terminal(&mut self) {
+        let Book { writes, screen, .. } = self;
+        screen.extend_from_slice(writes);
+    }
+}
+
 /// Ends the live session `name` of `book` with `exit`. False when no
 /// such session runs.
 fn end(book: &mut Book, name: &str, exit: Exit) -> bool {
@@ -805,6 +948,7 @@ impl Runtime for Fake {
                 Some(played) if played.exit.is_none() => played.id,
                 _ => bail!("no session {name} runs"),
             };
+            book.write_terminal();
             if book.exit_in_attach {
                 end(&mut book, name, Exit::SUCCESS);
             }
@@ -846,7 +990,10 @@ impl Runtime for Fake {
         book.calls
             .push(format!("exec {name} {}", command.join(" ")));
         match book.sessions.get(name) {
-            Some(played) if played.exit.is_none() => Ok(Exit::SUCCESS),
+            Some(played) if played.exit.is_none() => {
+                book.write_terminal();
+                Ok(Exit::SUCCESS)
+            }
             _ => bail!("no session {name} runs"),
         }
     }

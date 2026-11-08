@@ -8,7 +8,8 @@
 //! lead runs on when the person detaches with Ctrl-P Ctrl-Q, and when
 //! the daemon stops. `riff lead start` and the Sessions tab of the TUI
 //! attach to it
-//! ([`crate::runtime::Runtime::attach`]).//!
+//! ([`crate::runtime::Runtime::attach`]).
+//!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant P as riff lead start (the person)
@@ -30,16 +31,16 @@
 //! | The container | `riff-lead-OWNER-REPO` ([`name_of`]): one lead for each repository | 01M4Z60B81RTZT71PN5HV0GZHX, 01M501P9MXNAP5QXNVBVF5JJFN |
 //! | The folder | `leads/OWNER-REPO` in the data folder of riff ([`folder_of`]): `clone/` and `claude/` | 01M501P9Q51AYN9GBPWKVHA229 |
 //! | The clone | `git clone --reference MAIN`, on the default branch, at the first start; a fetch and a fast-forward at each later start, when it has no local change and git can fast-forward it ([`fresh_clone`]) | 01M501P9Q51AYN9GBPWKVHA229, 01M50RRQ9DT0JPSB358EAZRP8Z, 01M51JYDHAQDJ3GH2J8DT3AZQS |
-//! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM |
+//! | The Claude folder | the first-run answers of `claude`, as for each session ([`run::claude_folder`]), and `"tui": "default"`, so `claude` turns on no mouse reports ([`run::TUI`]) | 01M501P9SDGVWG3MTVCW5BDRQQ, 01M51JACH6TQP318ZFG6NQ9GRM, 01M6XVBRT2T838TX53SSXR6HRH |
 //! | The command | `claude --model MODEL --session-id ID --dangerously-skip-permissions START` ([`spec`]), with the model of the merged `riff.toml` ([`crate::session_setup::Setup::claude`]); the daemon runs it as `riff relay --terminal -- ...` | 01M501P9VN47QAKZ6B8P39ZSW4, 01M5GG2X5F1HXCQJ2JJWV6305K, 01M6VAQWECJ6N6VJF66KCMNYD1 |
 //! | The riff tools | [`crate::tools::LEAD_TOOLS`], on riff-server as the session of the lead | 01M501P9XWXWDBSXP4QRTHTZ4P |
 //! | The riff commands | `RIFF_SOCKET` and no `RIFF_SERVER`: `riff wave list`, `riff release check` and `riff plan hold` reach riff-server through the daemon ([`crate::reach`]) | 01M5GVPNAKAPA596K9361HSAAV, 01M6QPQZ0FNEZFQ1F4Q9C7FEEQ |
 //! | The riff command | `riff` is the riff of the container: the relay puts `/opt/riff` first on the `PATH` of `claude` ([`crate::session_relay::riff_first`]), so `! riff who` works in the terminal of the lead. The spec sets no `PATH` of its own, and `/opt/riff/riff` stays for the permission rules | 01M5QVCVXWBBG1BMGRVBQS25W9 |
 //! | The wakes | `/opt/riff/riff relay watch --follow` in the Monitor tool, started once | 01M501PA04NP79RJQEDP4D7YTM, 01M59235BBXEKPZBRH23C39574 |
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
-//! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |
+//! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which. First riff writes the reset of the modes of the terminal ([`crate::runtime::reset_terminal`]) | 01M51PD7Q24N252V66NFEHY49N, 01M6XVBRQMBMK68K8GCDRZ5GJ5 |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M5NJ87NXF6077Y9W32840BR8, 01M5NJ87YEHHGJBANM7CRYV56Z |
-//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach_with`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
 //! | The workers | none: `riff lead start` does not join the host, so it starts no wave. A host gives workers after `riff join`, and `riff lead start` says so when it starts a lead on a host with no part workers ([`gives_workers`]) | 01M6QVSJC4V3Z3NB6MJW4XGJSR |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host (`Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V |
 //! | The stop | `riff lead stop`: the lead writes its notes ([`stop_notes`]), then the daemon ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, and an update starts the lead no more | 01M6QVSWTARPKP59X8AJBBK69X, 01M6QVSWWM3EA4ZS47XCKV38D0 |
@@ -51,6 +52,7 @@
 //! keeps the session and resumes the conversation. The other spec parts
 //! are those of a worker ([`crate::run::spec`]).
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -519,18 +521,15 @@ pub fn idle(record: &daemon::Record, quiet: std::time::Duration) -> bool {
 }
 
 /// Attaches the terminal of this process to the lead `name` with
-/// `runtime`, until a detach or the end of the lead, with the lines for
-/// the person on stdout ([`attach_with`]). `folder` is the folder of the
-/// lead ([`folder_of`]).
-pub async fn attach(runtime: &impl Runtime, name: &str, folder: &Path) -> Result<Left> {
-    attach_with(runtime, name, folder, &mut |line| println!("{line}")).await
-}
-
-/// [`attach`] with the lines for the person to `say`. A lead with a
-/// stale sign-in gets the line of [`text::lead_sign_in_stale`] first
-/// ([`stale`]). Then it asks the runtime to make the lead draw its
-/// terminal again (01M51PD7M04HZR2PVVJA4WCBK5). When that fails, it says
-/// why, and attaches.
+/// `runtime`, until a detach or the end of the lead. `folder` is the
+/// folder of the lead ([`folder_of`]). `out` is that terminal: riff
+/// writes its lines there. A lead with a stale sign-in gets the line of
+/// [`text::lead_sign_in_stale`] first ([`stale`]). Then it asks the
+/// runtime to make the lead draw its terminal again
+/// (01M51PD7M04HZR2PVVJA4WCBK5). When that fails, it prints why, and
+/// attaches. After each attach, also a failed one, it writes the reset of
+/// the modes of the terminal ([`crate::runtime::reset_terminal`],
+/// 01M6XVBRQMBMK68K8GCDRZ5GJ5).
 ///
 /// When the daemon starts the lead again on a new riff while the person is
 /// attached ([`Again`], 01M6XTS7V47RFX1G37FRGRBWCY), the stop of the old
@@ -547,31 +546,35 @@ pub async fn attach(runtime: &impl Runtime, name: &str, folder: &Path) -> Result
 ///     P->>C: attach
 ///     D->>D: write started-again: the riff, the time
 ///     D->>C: stop: the attach ends
+///     P->>P: the reset of the modes of the terminal
 ///     D->>C: a new container: claude --resume
 ///     D->>D: started-again: started
 ///     P->>P: riff started this lead again on riff vX.Y.Z; its conversation goes on
 ///     P->>C: attach to the new container
 /// ```
-pub async fn attach_with(
+pub async fn attach(
     runtime: &impl Runtime,
     name: &str,
     folder: &Path,
-    say: &mut (dyn FnMut(&str) + Send),
+    out: &mut (impl Write + Send),
 ) -> Result<Left> {
     if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty())
         && stale(runtime, name, Path::new(&home)).await
     {
-        say(&text::lead_sign_in_stale(name));
+        writeln!(out, "{}", text::lead_sign_in_stale(name))?;
     }
-    say(text::LEAD_DETACH);
+    writeln!(out, "{}", text::LEAD_DETACH)?;
     loop {
         if let Err(e) = runtime.redraw(name).await {
-            say(&text::lead_no_redraw(&format!("{e:#}")));
+            writeln!(out, "{}", text::lead_no_redraw(&format!("{e:#}")))?;
         }
+        out.flush()?;
         let since_ms = daemon::now_ms();
-        runtime.attach(name).await?;
+        let attached = runtime.attach(name).await;
+        crate::runtime::reset_terminal(out)?;
+        attached?;
         match started_again(runtime, name, folder, since_ms).await {
-            Some(riff) => say(&text::lead_again_attached(&riff)),
+            Some(riff) => writeln!(out, "{}", text::lead_again_attached(&riff))?,
             None => break,
         }
     }
@@ -667,11 +670,11 @@ async fn started_again(
     }
 }
 
-/// [`attach`], then the line of [`Left::line`]. After the end of the
-/// lead, it also says that the `claude --resume` line of `claude` does
-/// not work on the host.
+/// [`attach`] with the terminal of this process, then the line of
+/// [`Left::line`]. After the end of the lead, it also says that the
+/// `claude --resume` line of `claude` does not work on the host.
 async fn attach_here(runtime: &impl Runtime, name: &str, folder: &Path) -> Result<()> {
-    let left = attach(runtime, name, folder).await?;
+    let left = attach(runtime, name, folder, &mut std::io::stdout()).await?;
     println!("{}", left.line(name));
     if left == Left::Ended {
         println!("{}", text::LEAD_NO_RESUME);
@@ -1254,7 +1257,7 @@ pub(crate) async fn tell_lead(place: Option<&Place>, server: &str, body: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::{End, Exit, Fake};
+    use crate::runtime::{End, Exit, Fake, TERMINAL_RESET};
 
     const NAME: &str = "riff-lead-como-technologies-riff";
 
@@ -1279,9 +1282,14 @@ mod tests {
     async fn an_attach_to_a_lead_that_runs_redraws_it_and_a_detach_says_that_it_runs_on() {
         let fake = Fake::default().with_image("img");
         let _end = lead(&fake).await;
-        let left = attach(&fake, NAME, tempfile::tempdir().unwrap().path())
-            .await
-            .unwrap();
+        let left = attach(
+            &fake,
+            NAME,
+            tempfile::tempdir().unwrap().path(),
+            &mut fake.terminal(),
+        )
+        .await
+        .unwrap();
         assert_eq!(left, Left::Detached);
         assert_eq!(left.line(NAME), text::lead_detached(NAME));
         // The redraw comes before the attach, so the attach changes the
@@ -1302,9 +1310,14 @@ mod tests {
     async fn the_end_of_the_lead_in_the_attach_says_that_the_lead_ended() {
         let fake = Fake::default().with_image("img").with_exit_in_attach();
         let end = lead(&fake).await;
-        let left = attach(&fake, NAME, tempfile::tempdir().unwrap().path())
-            .await
-            .unwrap();
+        let left = attach(
+            &fake,
+            NAME,
+            tempfile::tempdir().unwrap().path(),
+            &mut fake.terminal(),
+        )
+        .await
+        .unwrap();
         assert_eq!(left, Left::Ended);
         assert_eq!(left.line(NAME), text::lead_ended(NAME));
         assert_ne!(text::lead_ended(NAME), text::lead_detached(NAME));
@@ -1316,9 +1329,14 @@ mod tests {
         let fake = Fake::default().with_image("img").with_no_answer();
         let _end = lead(&fake).await;
         assert_eq!(
-            attach(&fake, NAME, tempfile::tempdir().unwrap().path())
-                .await
-                .unwrap(),
+            attach(
+                &fake,
+                NAME,
+                tempfile::tempdir().unwrap().path(),
+                &mut fake.terminal()
+            )
+            .await
+            .unwrap(),
             Left::Detached
         );
     }
@@ -1364,20 +1382,20 @@ mod tests {
                 new
             })
         };
-        let mut said = Vec::new();
-        let left = attach_with(&fake, NAME, folder.path(), &mut |line| {
-            said.push(line.to_owned());
-        })
-        .await
-        .unwrap();
+        let left = attach(&fake, NAME, folder.path(), &mut fake.terminal())
+            .await
+            .unwrap();
         let _new = daemon.await.unwrap();
         assert_eq!(left, Left::Ended);
+        // 01M6XVBRQMBMK68K8GCDRZ5GJ5: the reset of the modes after each
+        // attach, before the line of the start again.
         assert_eq!(
-            said,
-            [
-                text::LEAD_DETACH.to_owned(),
+            String::from_utf8(fake.screen()).unwrap(),
+            format!(
+                "{}\n{TERMINAL_RESET}{}\n{TERMINAL_RESET}",
+                text::LEAD_DETACH,
                 text::lead_again_attached("v3.3.0")
-            ]
+            )
         );
         assert_eq!(
             fake.calls(),
@@ -1417,15 +1435,15 @@ mod tests {
             })
         };
         let span = std::time::Instant::now();
-        let mut said = Vec::new();
-        let left = attach_with(&fake, NAME, folder.path(), &mut |line| {
-            said.push(line.to_owned());
-        })
-        .await
-        .unwrap();
+        let left = attach(&fake, NAME, folder.path(), &mut fake.terminal())
+            .await
+            .unwrap();
         daemon.await.unwrap();
         assert_eq!(left, Left::Ended);
-        assert_eq!(said, [text::LEAD_DETACH]);
+        assert_eq!(
+            String::from_utf8(fake.screen()).unwrap(),
+            format!("{}\n{TERMINAL_RESET}", text::LEAD_DETACH)
+        );
         assert!(span.elapsed() < AGAIN_WAIT / 4, "{:?}", span.elapsed());
     }
 
@@ -1670,14 +1688,71 @@ mod tests {
         );
     }
 
+    /// 01M6XVBRQMBMK68K8GCDRZ5GJ5: a failed attach also ends with the
+    /// reset.
     #[tokio::test]
     async fn an_attach_to_a_lead_that_does_not_run_fails() {
         let fake = Fake::default().with_image("img");
         assert!(
-            attach(&fake, NAME, tempfile::tempdir().unwrap().path())
-                .await
-                .is_err()
+            attach(
+                &fake,
+                NAME,
+                tempfile::tempdir().unwrap().path(),
+                &mut fake.terminal()
+            )
+            .await
+            .is_err()
         );
+        assert!(fake.screen().ends_with(TERMINAL_RESET.as_bytes()));
+    }
+
+    /// The bytes of a `claude` with its fullscreen renderer: the
+    /// alternate screen, and the mouse reports of each click, drag and
+    /// move, in the SGR form.
+    const MOUSE_ON: &[u8] = b"\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h";
+
+    /// 01M6XVBRQMBMK68K8GCDRZ5GJ5
+    #[tokio::test]
+    async fn after_a_detach_the_output_ends_with_the_reset_of_the_modes() {
+        let fake = Fake::default()
+            .with_image("img")
+            .with_terminal_bytes(MOUSE_ON);
+        let _end = lead(&fake).await;
+        let left = attach(
+            &fake,
+            NAME,
+            tempfile::tempdir().unwrap().path(),
+            &mut fake.terminal(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(left, Left::Detached);
+        let mut want = format!("{}\n", text::LEAD_DETACH).into_bytes();
+        want.extend_from_slice(MOUSE_ON);
+        want.extend_from_slice(TERMINAL_RESET.as_bytes());
+        assert_eq!(fake.screen(), want);
+    }
+
+    /// 01M6XVBRQMBMK68K8GCDRZ5GJ5
+    #[tokio::test]
+    async fn after_the_end_of_the_lead_the_output_ends_with_the_reset_of_the_modes() {
+        let fake = Fake::default()
+            .with_image("img")
+            .with_exit_in_attach()
+            .with_terminal_bytes(MOUSE_ON);
+        let _end = lead(&fake).await;
+        let left = attach(
+            &fake,
+            NAME,
+            tempfile::tempdir().unwrap().path(),
+            &mut fake.terminal(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(left, Left::Ended);
+        let screen = fake.screen();
+        assert!(screen.ends_with(TERMINAL_RESET.as_bytes()), "{screen:?}");
+        assert!(screen.windows(MOUSE_ON.len()).any(|w| w == MOUSE_ON));
     }
 
     /// The transcript of the lead of `record`, with its last write `ago`

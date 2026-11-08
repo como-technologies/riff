@@ -3044,7 +3044,7 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// The file [`crate::lead::AGAIN`] in the folder of the lead tells an
     /// attached terminal of the person that the lead starts again on the riff
     /// of this daemon, and when the new container runs
-    /// ([`crate::lead::attach_with`], 01M6XTS7V47RFX1G37FRGRBWCY). A start
+    /// ([`crate::lead::attach`], 01M6XTS7V47RFX1G37FRGRBWCY). A start
     /// that fails removes it.
     async fn lead_again(self: &Arc<Self>, record: Record) -> Option<String> {
         let name = record.live.name.clone();
@@ -10507,21 +10507,19 @@ mod tests {
         drop(first);
     }
 
+    /// 01M6XVBRQMBMK68K8GCDRZ5GJ5: the `claude` of the terminal turns on
+    /// the mouse reports, and riff writes the reset after it.
     #[tokio::test]
     async fn riff_takeover_runs_the_terminal_of_the_person_and_gives_the_session_back() {
-        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let mouse_on = b"\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h";
+        let fake = Fake::default()
+            .with_image(IMAGE)
+            .with_terminal_bytes(mouse_on);
+        let here = Here::new(fake).await;
         let (_client, name, mut relay) = a_worker(&here).await;
         let (dir, fake, at) = (here.dir.clone(), here.fake.clone(), name.clone());
-        let shown = Arc::new(Mutex::new(Vec::new()));
-        let lines = shown.clone();
         let taken = tokio::spawn(async move {
-            crate::takeover::takeover(&dir, &fake, &at, false, |line| {
-                lines
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push(line.to_owned());
-            })
-            .await
+            crate::takeover::takeover(&dir, &fake, &at, false, &mut fake.terminal()).await
         });
         assert_eq!(relay.next().await, Say::Hold { interrupt: true });
         relay.event(2, TURN[2]).await;
@@ -10536,14 +10534,19 @@ mod tests {
              riff-issue-12-1a2b3c4d-session --model sonnet --permission-mode auto"
         );
         assert!(here.fake.calls().contains(&exec), "{:?}", here.fake.calls());
-        let shown = shown.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        // The output of the terminal of the takeover ends with the reset,
+        // and the line of riff comes after it.
+        let screen = String::from_utf8(here.fake.screen()).unwrap();
+        let terminal = String::from_utf8(mouse_on.to_vec()).unwrap();
         assert_eq!(
-            shown,
-            [
+            screen,
+            format!(
+                "{}\n{}\n{terminal}{}{}\n",
                 text::takeover_interrupts(&name),
                 text::takeover_held(&name),
+                crate::runtime::TERMINAL_RESET,
                 text::takeover_back(&name)
-            ]
+            )
         );
     }
 

@@ -207,6 +207,8 @@ Each tab has the same five parts:
 - The mouse does what the keys do. The setting `tui.mouse` turns it
   off. In a tab with rows, a click selects a row, and a second click
   opens it.
+- At its end, also after a crash, the TUI gives the terminal back
+  whole: the mouse, the paste and the keys work as before.
 - An action that changes something, for example a hold, asks `y` or
   `n` in the note line first. The attach and the takeover leave the
   screen of the TUI, and the TUI draws again at their end.

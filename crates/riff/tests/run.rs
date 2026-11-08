@@ -30,6 +30,9 @@ const IMAGE: &str = "localhost/riff-session:test";
 /// The image that `riff.toml` of the repository pins.
 const PINNED: &str = "ghcr.io/como-technologies/riff-session@sha256:\
                       0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+/// What the fake `podman` writes to the terminal at an attach and at an
+/// `exec -it`: the mouse reports of each move.
+const MOUSE_ON: &str = "\x1b[?1003h";
 
 /// The `riff.toml` of the repository: the image, one package source, and the
 /// env and the volumes that the `riff.toml` of riff sets for its build cache.
@@ -119,8 +122,9 @@ esac
 /// background, and `wait` waits for its end. `stop` logs, and ends the
 /// `run`. `container inspect` says `true` while the `run` runs, and gives the text of
 /// `bin/digest` as the image digest, or fails with no such file. `attach`
-/// and `exec` log, and end at once. `volume inspect` of `riff-sccache`
-/// gives the folder `bin/volume` when it is there. With `bin/no-network`, the
+/// and `exec` log, and end at once. `attach` and `exec -it` first turn
+/// on the mouse reports of the terminal ([`MOUSE_ON`]). `volume inspect`
+/// of `riff-sccache` gives the folder `bin/volume` when it is there. With `bin/no-network`, the
 /// look-up of `exec ... getent` fails: the container has no network. With
 /// `bin/exit-in-attach`, `attach`
 /// first ends the `run`, as `/exit` in the lead does. A zombie counts as
@@ -146,8 +150,12 @@ case "$1" in
     # The look-up of a host in the container: exit 2 (no address) when the
     # file `no-network` is there.
     if [ "$3" = getent ]; then [ -f "$dir/no-network" ] && exit 2; exit 0; fi
-    echo "podman $*" >> "$dir/podman.log"; exit 0 ;;
+    echo "podman $*" >> "$dir/podman.log"
+    # The claude of a terminal turns on the mouse reports.
+    [ "$2" = -it ] && printf '\033[?1003h'
+    exit 0 ;;
   attach) echo "podman $*" >> "$dir/podman.log"
+    printf '\033[?1003h'
     # The person types /exit in the lead: its container ends.
     if [ "$1" = attach ] && [ -f "$dir/exit-in-attach" ]; then
       kill "$(cat "$dir/run.pid")"
@@ -1102,6 +1110,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     )
     .unwrap();
     assert_eq!(settings["includeCoAuthoredBy"], false);
+    // The classic renderer of claude: no mouse reports in the terminal of
+    // a takeover (01M6XVBRT2T838TX53SSXR6HRH).
+    assert_eq!(settings["tui"], "default");
     // The rules of the session place for a worker, so the auto mode check
     // does not refuse a step of the start text
     // (01M5084K4YQCZF20XA0P2485SG).
@@ -2722,8 +2733,15 @@ async fn riff_lead_start_runs_the_lead_with_a_terminal_and_attaches_to_it() {
         2
     );
     // 01M51PD7Q24N252V66NFEHY49N: the lead runs on after the attach.
+    // 01M6XVBRQMBMK68K8GCDRZ5GJ5: the reset of the modes of the terminal
+    // comes after the attach, before the line of riff.
+    let reset = format!(
+        "{MOUSE_ON}{}{}",
+        riff::runtime::TERMINAL_RESET,
+        riff::text::lead_detached(name)
+    );
     for out in [&out, &again] {
-        assert!(out.contains(&riff::text::lead_detached(name)), "{out}");
+        assert!(out.contains(&reset), "{out:?}");
         assert!(!out.contains(&riff::text::lead_ended(name)), "{out}");
     }
 
@@ -3582,6 +3600,10 @@ async fn take_over_a_session(flags: &[&str]) {
     );
     assert!(shown.contains(&riff::text::takeover_held(&name)), "{shown}");
     assert!(shown.contains(&riff::text::takeover_back(&name)), "{shown}");
+    // 01M6XVBRQMBMK68K8GCDRZ5GJ5: the reset of the modes of the terminal
+    // comes after the terminal of the takeover.
+    let reset = format!("{MOUSE_ON}{}", riff::runtime::TERMINAL_RESET);
+    assert!(shown.contains(&reset), "{shown:?}");
     // 01M6VD1NSHTJQGR31VZ4689S8J: the terminal has the model of the
     // session, opus with no model in the riff.toml.
     assert!(

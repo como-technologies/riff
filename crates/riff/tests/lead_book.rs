@@ -212,3 +212,30 @@ fn start_the_lead_shows_the_lines_of_the_end_of_the_lead() {
         );
     }
 }
+
+/// 01M6XVBRQMBMK68K8GCDRZ5GJ5, 01M6XVBRT2T838TX53SSXR6HRH: "Let the lead
+/// start the work" and "Take over a session" say how to select text in
+/// the terminal of an attach, and that the terminal is whole again
+/// after it.
+#[test]
+fn the_book_says_how_to_select_text_and_that_the_terminal_comes_back_whole() {
+    for (page, heading) in [
+        ("start-a-riff.md", "Let the lead start the work"),
+        ("development.md", "Take over a session"),
+    ] {
+        // The words of the part on one line, as the wrap breaks the lines.
+        let part = part(page, heading)
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for words in [
+            "select text with the mouse",
+            "hold shift",
+            "the mouse reports",
+            "whole again",
+        ] {
+            assert!(part.contains(words), "\"{heading}\" has no {words:?}");
+        }
+    }
+}

@@ -314,6 +314,14 @@ riff lead start
 says so when the host gave no workers. A host gives workers after
 `riff join`: see [Give workers from a host](#give-workers-from-a-host).
 
+`riff lead start` attaches your terminal to the lead. Select text with
+the mouse, then copy and paste, as in a plain terminal: the `claude` of
+the lead takes no mouse. When a program in the container takes the
+mouse, hold Shift when you use the mouse. When the attach ends, after a
+detach or the end of the lead, riff turns off each mode that a program
+in the container can leave on in your terminal, for example the mouse
+reports. So your terminal is whole again.
+
 When another session of you is the lead, `riff lead start` makes the
 new session the lead. It prints which session was the lead before. In
 the lead container, `whoami` says in its first line when the session is

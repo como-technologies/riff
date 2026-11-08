@@ -6153,6 +6153,22 @@ of this part when they merge.
   It marks the file when the new container runs, and removes the file
   when the start fails. The attach waits for the new container for up to
   2 minutes.
+- **01M6XVBRQMBMK68K8GCDRZ5GJ5** When an attach to the lead or the
+  terminal of a takeover ends, riff writes to its terminal the reset of
+  the modes that a program in the container can leave on: the mouse
+  reports (`?1000`, `?1002`, `?1003`, `?1005`, `?1006`, `?1015`,
+  `?1016`), the focus events (`?1004`), the bracketed paste (`?2004`),
+  the theme reports (`?2031`), the keys of the kitty protocol and of
+  modifyOtherKeys, and the alternate screen (`?1047`). Then it shows the
+  cursor. riff writes the reset after a detach, after the end of the
+  session, and after a failed attach. So the terminal is whole again
+  after each attach and each takeover.
+- **01M6XVBRT2T838TX53SSXR6HRH** The `settings.json` of the Claude
+  folder of each session has `"tui": "default"`, so `claude` draws with
+  its classic renderer: it turns on no mouse reports and no alternate
+  screen. A person selects, copies and pastes in the terminal of an
+  attach or of a takeover as in a plain terminal. riff adds the key to a
+  `settings.json` with no `tui`, and keeps a `tui` that is there.
 
 ### The first run
 
@@ -7975,6 +7991,10 @@ that builds it merges.
   its title, as `Wave N · TITLE`, and `Enter` on it puts its wave in
   the note line too. The asked rows of all the waves go in number order,
   and the counts of the line of the repository count them.
+- **01M6XXFJQ9SKN2RCAKNTF39TMS** After a panic of the TUI, its terminal
+  comes back as after q: riff turns off the mouse capture, the bracketed
+  paste and the focus events, ends the raw mode and leaves the alternate
+  screen. Then it prints the message of the panic.
 
 ## The notes of the lead
 
