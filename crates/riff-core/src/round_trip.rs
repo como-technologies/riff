@@ -292,6 +292,7 @@ mod tests {
             claim: Some(text("issue-7")),
             lead: Some(true),
             person: Some(true),
+            name: Some(text("riff")),
             other: None,
         }
     }
@@ -544,6 +545,17 @@ mod tests {
                 members: vec![me()],
                 unread: 2,
             }],
+        });
+        c.trip(&Names { me: me() });
+        c.trip(&NamesReply {
+            names: [NameKind::Person, NameKind::Project]
+                .into_iter()
+                .map(|kind| ChatName {
+                    name: text("ann"),
+                    kind,
+                    online: true,
+                })
+                .collect(),
         });
         c.trip(&Join {
             me: me(),

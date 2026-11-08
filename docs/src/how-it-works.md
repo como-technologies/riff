@@ -3465,6 +3465,68 @@ only. On the command line:
 riff post --thread chat --to user=mike,host=pangolin,person=true "it is merged"
 ```
 
+### The names of the chat
+
+riff-server keeps a name for each person and each project of the riff.
+A name has one of two kinds:
+
+| Kind | The name | Example | It wakes |
+|---|---|---|---|
+| person | the user | `brett` | the terminals of the person |
+| project | the repository after the slash | `riff` for `como-technologies/riff` | your lead in the project |
+
+Each name is unique. When two projects have the same name, or a
+project has the name of a person, each of those projects has the name
+`OWNER/REPO`, for example `acme/riff` and `como-technologies/riff`.
+`OWNER/REPO` also names a project with no clash. The case of a letter
+does not matter. riff-server gives the list of the names, with the kind
+of each name and whether it is online: a person that `riff who` shows
+as live, or a project where your lead runs.
+
+### Wake a person or a project by name
+
+The selector `name=NAME` wakes what the name stands for. riff-server
+finds the name when it gets the post. A name stands alone: a selector
+with a name and another field is refused. To wake the terminals of
+brett, post to the chat:
+
+```sh
+riff post --thread chat --to name=brett "can you look at #12?"
+```
+
+```text
+Posted message 42 to chat. Woke brett@heron.
+```
+
+To wake your lead in `como-technologies/riff`, use the name of the
+project:
+
+```sh
+riff post --thread chat --to name=riff "is #12 done?"
+```
+
+```text
+Posted message 43 to chat. Woke mike@thelio:riff (a6cf2205).
+```
+
+A name that is no person and no project wakes no one, and the line
+still goes to the chat. When your lead in the project does not run,
+the name wakes no one too: the line waits in the chat. No other session
+of yours wakes in the place of the lead:
+
+```text
+Posted message 44 to chat. No session matches name=riff.
+```
+
+```mermaid
+flowchart LR
+    P["riff post --to name=NAME"] --> S{"riff-server:<br/>NAME is"}
+    S -- "a person" --> T["the terminals of the person"]
+    S -- "a project" --> L["your lead in the project"]
+    S -- "no person, no project" --> N["no one: the line goes"]
+    L -- "your lead does not run" --> W["no one: the line waits in the chat"]
+```
+
 ### Get a highlight in the chat
 
 A line for you is a highlight in `riff chat` and `riff tail`, as in

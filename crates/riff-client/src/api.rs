@@ -114,13 +114,13 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::SetMachine;
 use riff_core::wire::{
-    Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
-    DenyOwner, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
+    Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, ChatName, Claim,
+    ClaimReply, DenyOwner, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
     GitHubChecked, GitHubCreate, GitHubStarted, GitHubToken, Hold, HoldReply, Invite, Invited,
     ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
-    Members, MembersReply, Message, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed,
-    PassOwner, Pause, PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read,
-    Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked,
+    Members, MembersReply, Message, Names, NotesReply, NotesShow, OwnerAsked, OwnerDenied,
+    OwnerPassed, PassOwner, Pause, PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER,
+    Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked,
     RiffBinary, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SessionToken, SetAdmin,
     SetBlocked, SetNotes, SetNotesReply, SetStatus, SetStep, SignInConfig, Start, StartReason,
     Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply,
@@ -1307,6 +1307,14 @@ impl Api {
 
     pub async fn threads(&self, me: &SessionUri) -> Result<Vec<ThreadInfo>> {
         Ok(self.call(&Threads { me: me.clone() }).await?.threads)
+    }
+
+    /// The names of the chat, sorted, for the type-ahead of `@`
+    /// (01M6XZ27XV8RAC8B72DCM937ST): each person and each project, with
+    /// whether its role is online. A post names one with the selector
+    /// [`Selector::name`].
+    pub async fn names(&self, me: &SessionUri) -> Result<Vec<ChatName>> {
+        Ok(self.call(&Names { me: me.clone() }).await?.names)
     }
 
     pub async fn join(&self, me: &SessionUri, thread: &ThreadName) -> Result<()> {

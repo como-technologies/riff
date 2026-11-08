@@ -244,6 +244,7 @@ calls! {
     Alive => "/v1/alive", AliveReply;
     WhoRequest => "/v1/who", WhoReply;
     Threads => "/v1/threads", ThreadsReply;
+    Names => "/v1/names", NamesReply;
     Read => "/v1/read", ReadReply;
     RiffQuery => "/v1/riff", RiffReply;
     IdleQuery => "/v1/idle", Idle;
@@ -1284,6 +1285,57 @@ pub struct ThreadInfo {
     pub thread: ThreadName,
     pub members: Vec<SessionUri>,
     pub unread: usize,
+}
+
+/// `POST /v1/names`: the names of the chat, for the type-ahead of `@`.
+/// A person has the name of its user, and a project the name of its
+/// repository after the slash, or `OWNER/REPO` on a clash. A post names
+/// one with the selector field `name` ([`Selector::name`]), and
+/// riff-server resolves it when the message is posted. The call counts
+/// as a call of `me`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct Names {
+    pub me: SessionUri,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct NamesReply {
+    /// Each name of the riff, sorted by name.
+    pub names: Vec<ChatName>,
+}
+
+/// A name of the chat in the reply to [`Names`].
+///
+/// ```
+/// use riff_core::wire::{ChatName, NameKind};
+///
+/// let riff: ChatName =
+///     serde_json::from_str(r#"{"name":"riff","kind":"project","online":true}"#).unwrap();
+/// assert_eq!(riff.kind, NameKind::Project);
+/// assert_eq!(serde_json::to_string(&NameKind::Person).unwrap(), r#""person""#);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ChatName {
+    /// The name as a person types it after `@`: `brett`, `riff`, or
+    /// `acme/riff` on a clash.
+    pub name: String,
+    pub kind: NameKind,
+    /// True when the role of the name is online: a person that `who`
+    /// shows as live, or a project with a live lead of the caller.
+    pub online: bool,
+}
+
+/// What a name of the chat stands for.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NameKind {
+    /// A person: the name wakes the terminals of the person.
+    Person,
+    /// A project: the name wakes the lead of the sender in its
+    /// repository.
+    Project,
 }
 
 /// `POST /v1/join`: adds `me` to a thread. It makes the thread if it

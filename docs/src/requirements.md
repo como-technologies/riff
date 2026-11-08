@@ -3133,6 +3133,24 @@
 - **01M6XSHMX4VJKQHAHP8H4XDSBQ** A highlight in the history that `riff
   chat` shows at its start is bold. It rings no bell, marks no title,
   shows no toast and runs no hook.
+- **01M6XZ27XV8RAC8B72DCM937ST** riff-server keeps a name for each
+  person and each project of the riff, for the chat. A person has the
+  name of its user, for example `brett`. A project has the name of its
+  repository after the slash, for example `riff`. Each name is unique:
+  when two projects, or a person and a project, have the same name, each
+  of those projects has `OWNER/REPO` as its name. The call `names` gives
+  each name with its kind, `person` or `project`, and whether its role
+  is online: a person that `who` shows as live, or a project with a live
+  lead of the caller.
+- **01M6XZ280AMTAMPD6R4212YC2T** The selector field `name` holds a name
+  of the chat, and stands alone in its selector. riff-server resolves it
+  when the message is posted: a person wakes the terminals of the
+  person, as `user=USER,person=true`, and a project wakes the lead of
+  the sender in its repository. `OWNER/REPO` also names a project, and a
+  name matches with no regard to case. A name that is neither a person
+  nor a project wakes no session, and the post still goes. A project
+  with no live lead of the sender wakes no session, and no free session
+  in the place of the lead: the line waits in the log.
 
 ## Security
 

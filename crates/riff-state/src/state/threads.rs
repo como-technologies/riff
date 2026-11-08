@@ -361,7 +361,8 @@ impl View<'_> {
     /// selector that matched no session. In a direct thread, a lead
     /// that holds counts as live (01M56P1T2AZCP48RJBM01RRRZ4). A lead
     /// that posts to its own `lead=true` selector is that live lead: the
-    /// selector wakes no free session in its place.
+    /// selector wakes no free session in its place. A selector with a
+    /// name wakes what the name stands for ([`super::names`]).
     fn selected(
         &self,
         from: &Who,
@@ -374,6 +375,14 @@ impl View<'_> {
         let sessions = &self.presence.sessions;
         let live = |who: &&Who| *who != from && !self.gone(who, now);
         for selector in to {
+            if let Some(name) = &selector.name {
+                let (matched, to_sender) = self.woken_by_name(from, name, now);
+                if matched.is_empty() && !to_sender {
+                    unmatched.push(selector.clone());
+                }
+                woken.extend(matched);
+                continue;
+            }
             let to_lead = direct && selector.lead == Some(true);
             let mut matched: Vec<Who> = sessions
                 .keys()
@@ -571,7 +580,17 @@ impl Command for Post {
         if let Some(later) = post.to.iter().find(|selector| selector.is_other()) {
             return Err(format!(
                 "this server does not know the selector {later}. \
-                 Use the fields user, session, host, repo, worktree, claim or lead."
+                 Use the fields user, session, host, repo, worktree, claim, lead, person or name."
+            )
+            .into());
+        }
+        if let Some(wide) = post
+            .to
+            .iter()
+            .find(|selector| selector.name.is_some() && !selector.stands_alone())
+        {
+            return Err(format!(
+                "the selector {wide} has a name and another field: a name stands alone"
             )
             .into());
         }
