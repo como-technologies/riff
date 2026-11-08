@@ -619,6 +619,55 @@ fn the_book_says_who_acts_on_github_for_each_role() {
     assert!(who.contains(&format!("\n{line}\n")), "{line}: {who}");
 }
 
+/// 01M6YC3SYATQW7GZZV3APFG85B, 01M6YC3T0TXANJH6YMTJZR1HCR: "How It
+/// Works" has the how-to "When riff-server cannot read the keys of the
+/// Apps", with a copyable `sh` block of the fix, the line of `riff daemon
+/// status`, and the prompt for `claude` on the host as riff-server writes
+/// it.
+#[test]
+fn the_book_has_the_how_to_when_riff_server_cannot_read_the_keys() {
+    let page = crate::book::page("how-it-works.md");
+    let how_to = page
+        .split("\n### When riff-server cannot read the keys of the Apps\n")
+        .nth(1)
+        .expect("the how-to is in How It Works");
+    let how_to = how_to.split("\n## ").next().unwrap();
+    let how_to = how_to.split("\n### ").next().unwrap();
+    let commands = crate::book::commands_in(how_to);
+    assert_eq!(
+        commands,
+        [
+            "git pull",
+            "riff cloud create shared",
+            "riff resume --riff",
+            "riff cloud status shared",
+            "riff daemon status"
+        ]
+    );
+    let riff: Vec<String> = commands
+        .into_iter()
+        .filter(|c| c.starts_with("riff "))
+        .collect();
+    crate::book::each_is_real(&riff);
+    let line = riff::text::daemon_gh_none_status(
+        "acme/app",
+        "riff-server cannot read the keys of the GitHub Apps: ...",
+    );
+    assert!(how_to.contains(&format!("\n{line}\n")), "{line}: {how_to}");
+    // The prompt of the book is the prompt of the line of riff-bot.
+    let url = "https://riff.example.com";
+    let fault = riff_server::github::keys_fault_text("CAUSE", url);
+    let prompt = fault
+        .split("paste this prompt: \"")
+        .nth(1)
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("the line has the prompt");
+    assert!(
+        how_to.contains(&format!("\n{prompt}\n")),
+        "{prompt}: {how_to}"
+    );
+}
+
 /// 01M6WWG3S60XYGTNBQH7S3F6D1: the token of a verifier reads only, so a
 /// verifier adds nothing to an issue. The Claude folder of a verify
 /// session allows no `gh issue comment`, its start text names none and

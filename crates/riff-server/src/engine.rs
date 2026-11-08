@@ -487,6 +487,11 @@ pub struct Authenticated<C> {
 }
 
 impl<C> Authenticated<C> {
+    /// The command of the call.
+    pub fn command(&self) -> &C {
+        &self.command
+    }
+
     /// The same call with the call ID `call`. Each try of one call has
     /// the same ID. The engine runs a command with a call ID one time
     /// only (01M48VFX22S4811DYBBD7QDW24).
@@ -1010,6 +1015,14 @@ impl Engine {
             call: None,
         })
         .await
+    }
+
+    /// Pauses the whole riff as the server: the command `pause` of the
+    /// server, when it cannot read the keys of the GitHub Apps
+    /// (01M6YC3SYATQW7GZZV3APFG85B). The record has the `by` of the server.
+    pub async fn pause_riff(&self) -> Result<riff_core::wire::RiffReply, Failed> {
+        let pause = Pause::whole(SessionUri::server());
+        self.dispatch(Engine::as_server(pause)).await
     }
 
     /// Posts a note or a message of the server itself: the command

@@ -1194,6 +1194,10 @@ pub enum ServerCall {
     /// The version of the build of riff-server, or `null` when it names
     /// none.
     Build,
+    /// Why riff-server cannot read the keys of the GitHub Apps, from its
+    /// facts, or `null` when it reads them (`riff release check`,
+    /// 01M6YC3T0TXANJH6YMTJZR1HCR). The daemon reads them as the person.
+    KeysFault,
     /// The reply of riff-server to `who`: the sessions of the riff, and
     /// the repositories of the leads of the caller
     /// ([`riff_core::wire::WhoReply`], #1666). `all` adds the gone
@@ -1359,6 +1363,10 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         ServerCall::Build => {
             let probe = api.probe(crate::lifecycle::PROBE_WAIT).await?;
             serde_json::to_value(probe.build.map(|b| b.version.to_string()))?
+        }
+        ServerCall::KeysFault => {
+            let facts = api.clone().signed_in(None)?.facts().await?;
+            serde_json::to_value(facts.keys_fault)?
         }
         ServerCall::Who { all } => serde_json::to_value(signed()?.roster(&record.me, *all).await?)?,
         ServerCall::Holds { thread } => {
@@ -1527,6 +1535,12 @@ pub struct Status {
     /// An old daemon gives none.
     #[serde(default)]
     pub person_tokens: Vec<PersonToken>,
+    /// The repositories whose lead has no token on GitHub at all, and why:
+    /// riff-server cannot read the keys of the GitHub Apps, with the fix and
+    /// the prompt for `claude` on the host (01M6YC3T0TXANJH6YMTJZR1HCR). An old daemon
+    /// gives none.
+    #[serde(default)]
+    pub no_tokens: Vec<PersonToken>,
     /// How the daemon writes on GitHub in each repository: as the bot of
     /// the lead App, or with the token of the person and why
     /// (01M6XZJFE2ZTR5RE3AWM30R704). An old daemon gives none.
@@ -2453,6 +2467,9 @@ pub struct Daemon<R> {
     /// of the person, and why ([`gh_token`], 01M6WPMWSMQABE97YCMS5Z3M1P):
     /// `riff daemon status` names them.
     person_tokens: Mutex<BTreeMap<String, String>>,
+    /// The repositories whose lead has no token on GitHub at all, and why
+    /// (01M6YC3T0TXANJH6YMTJZR1HCR): `riff daemon status` names them.
+    no_tokens: Mutex<BTreeMap<String, String>>,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -2580,6 +2597,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     .unwrap_or(false)
             }),
             person_tokens: Mutex::default(),
+            no_tokens: Mutex::default(),
         })
     }
 
@@ -3276,8 +3294,11 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// renews the token until the end. A session with no token of an App
     /// keeps `GH_TOKEN`, the token of the person
     /// (01M6WPMWSMQABE97YCMS5Z3M1P), and the git identity of
-    /// `~/.gitconfig`. It gives how the session acts on GitHub. An error
-    /// starts no container.
+    /// `~/.gitconfig`. A lead that riff-server gives no token at all
+    /// (01M6YC3T0TXANJH6YMTJZR1HCR) starts with the folder of the token with no token
+    /// in it, with no `GH_TOKEN`, and with the fix at the end of its first
+    /// prompt; the daemon asks again every [`gh_token::PERSON_AGAIN`]. It
+    /// gives how the session acts on GitHub. An error starts no container.
     async fn give_github(
         self: &Arc<Self>,
         owned: &Arc<Owned>,
@@ -3287,24 +3308,38 @@ impl<R: Runtime + 'static> Daemon<R> {
         let record = owned.lock().record.clone();
         let grant = self.world.github_token(&record.server, &record.me).await?;
         let repo = record.me.place().repo_text();
-        let line = if let (
-            Some(token),
-            gh_token::ActsAs::Bot {
-                bot, role, ends, ..
-            },
-        ) = (&grant.token, &grant.acts)
-        {
-            let dir = gh_token::write(&record.folder, bot, token)?;
-            gh_token::give(spec, values, &dir);
-            // The bot is the author of each commit (01M6Y6B8VBM3TKC3YHZKSA4PFZ).
-            let (name, email) = gh_token::author(bot, grant.bot_id);
-            gh_token::give_author(spec, &name, &email);
-            self.person_tokens_lock().remove(&repo);
-            text::daemon_gh_token(&owned.name, bot, *role, ends)
-        } else {
-            let why = gh_token::why_person(&grant.acts);
-            self.person_tokens_lock().insert(repo, why.clone());
-            text::daemon_gh_person(&owned.name, &why)
+        let line = match (&grant.token, &grant.acts) {
+            (
+                Some(token),
+                gh_token::ActsAs::Bot {
+                    bot, role, ends, ..
+                },
+            ) => {
+                let dir = gh_token::write(&record.folder, bot, token)?;
+                gh_token::give(spec, values, &dir);
+                // The bot is the author of each commit (01M6Y6B8VBM3TKC3YHZKSA4PFZ).
+                let (name, email) = gh_token::author(bot, grant.bot_id);
+                gh_token::give_author(spec, &name, &email);
+                self.person_tokens_lock().remove(&repo);
+                self.no_tokens_lock().remove(&repo);
+                text::daemon_gh_token(&owned.name, bot, *role, ends)
+            }
+            (_, gh_token::ActsAs::NoToken { why }) => {
+                let dir = gh_token::write_none(&record.folder)?;
+                gh_token::give(spec, values, &dir);
+                if record.terminal {
+                    crate::lead::tell_no_github(spec, why);
+                }
+                self.person_tokens_lock().remove(&repo);
+                self.no_tokens_lock().insert(repo, why.clone());
+                text::daemon_gh_none(&owned.name, why)
+            }
+            _ => {
+                let why = gh_token::why_person(&grant.acts);
+                self.person_tokens_lock().insert(repo.clone(), why.clone());
+                self.no_tokens_lock().remove(&repo);
+                text::daemon_gh_person(&owned.name, &why)
+            }
         };
         println!("{line}");
         {
@@ -3313,7 +3348,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             state.record.github = Some(grant.acts.clone());
             owned.save(&state)?;
         }
-        if grant.token.is_some() {
+        if grant.token.is_some() || matches!(grant.acts, gh_token::ActsAs::NoToken { .. }) {
             self.renew_github(owned);
         }
         Ok(grant.acts)
@@ -3327,25 +3362,34 @@ impl<R: Runtime + 'static> Daemon<R> {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The repositories whose lead has no token on GitHub at all.
+    fn no_tokens_lock(&self) -> MutexGuard<'_, BTreeMap<String, String>> {
+        self.no_tokens
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Renews the token of the session `owned` on GitHub
     /// [`gh_token::RENEW_BEFORE`] before each end, until the end of the
     /// session (01M6WPMNXN1BSBEH74TG5DDRTF). A fault keeps the token, and
     /// asks again after [`gh_token::RETRY`]. Two renewals are at least
-    /// [`gh_token::RETRY`] apart.
+    /// [`gh_token::RETRY`] apart. A session with no token at all asks
+    /// again every [`gh_token::PERSON_AGAIN`] (01M6YC3T0TXANJH6YMTJZR1HCR).
     fn renew_github(self: &Arc<Self>, owned: &Arc<Owned>) {
-        let ends = match &owned.lock().record.github {
-            Some(gh_token::ActsAs::Bot { ends, .. }) => ends.clone(),
+        let first = match &owned.lock().record.github {
+            Some(gh_token::ActsAs::Bot { ends, .. }) => {
+                gh_token::renew_in(ends, gh_token::now_secs())
+            }
+            Some(gh_token::ActsAs::NoToken { .. }) => gh_token::PERSON_AGAIN,
             _ => return,
         };
         let (daemon, session) = (self.clone(), owned.clone());
         let task = tokio::spawn(async move {
-            let mut wait = gh_token::renew_in(&ends, gh_token::now_secs());
+            let mut wait = first;
             loop {
                 tokio::time::sleep(wait).await;
                 wait = match daemon.renew_once(&session).await {
-                    Ok(Some(ends)) => {
-                        gh_token::renew_in(&ends, gh_token::now_secs()).max(gh_token::RETRY)
-                    }
+                    Ok(Some(next)) => next.max(gh_token::RETRY),
                     Ok(None) => return,
                     Err(e) => {
                         let line = text::daemon_gh_renew_failed(&session.name, &format!("{e:#}"));
@@ -3367,11 +3411,33 @@ impl<R: Runtime + 'static> Daemon<R> {
 
     /// Asks riff-server for a new token of the session `owned`, and writes
     /// it in the folder of the session in place of the old one, which
-    /// ends by itself. It gives the end of the new token, or `None` after
-    /// the end of the session: then it revokes the new token.
-    async fn renew_once(&self, owned: &Owned) -> Result<Option<String>> {
+    /// ends by itself. It gives the wait until the next ask, or `None`
+    /// after the end of the session: then it revokes the new token. An
+    /// answer with no token at all (01M6YC3T0TXANJH6YMTJZR1HCR) takes the token out of
+    /// the folder and revokes it: the session then has no token on GitHub,
+    /// and the daemon asks again after [`gh_token::PERSON_AGAIN`].
+    async fn renew_once(&self, owned: &Owned) -> Result<Option<Duration>> {
         let record = owned.lock().record.clone();
         let grant = self.world.github_token(&record.server, &record.me).await?;
+        if let gh_token::ActsAs::NoToken { why } = &grant.acts {
+            gh_token::write_none(&record.folder)?;
+            let old = {
+                let mut state = owned.lock();
+                let old = state.gh_token.take();
+                if !state.ended {
+                    state.record.github = Some(grant.acts.clone());
+                    owned.save(&state)?;
+                }
+                old
+            };
+            if let Some(old) = old {
+                self.revoke_github(&owned.name, &record, old);
+            }
+            let repo = record.me.place().repo_text();
+            self.no_tokens_lock().insert(repo, why.clone());
+            println!("riff daemon: {}", text::daemon_gh_none(&owned.name, why));
+            return Ok(Some(gh_token::PERSON_AGAIN));
+        }
         let (
             Some(token),
             gh_token::ActsAs::Bot {
@@ -3398,8 +3464,9 @@ impl<R: Runtime + 'static> Daemon<R> {
             self.revoke_github(&owned.name, &record, token.clone());
             return Ok(None);
         }
+        self.no_tokens_lock().remove(&record.me.place().repo_text());
         println!("{}", text::daemon_gh_token(&owned.name, bot, *role, ends));
-        Ok(Some(ends.clone()))
+        Ok(Some(gh_token::renew_in(ends, gh_token::now_secs())))
     }
 
     /// Revokes the token `token` of the session of `record` in the
@@ -3510,6 +3577,14 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .person_tokens
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .map(|(repo, why)| PersonToken {
+                    repo: repo.clone(),
+                    why: why.clone(),
+                })
+                .collect(),
+            no_tokens: self
+                .no_tokens_lock()
                 .iter()
                 .map(|(repo, why)| PersonToken {
                     repo: repo.clone(),
@@ -5497,12 +5572,19 @@ impl<R: Runtime + 'static> Daemon<R> {
                     // The token on GitHub of the session goes on: its file,
                     // and its end in the record (01M6WPMNXN1BSBEH74TG5DDRTF).
                     owned.lock().gh_token = gh_token::read_token(&record.folder);
-                    if owned.lock().gh_token.is_some() {
+                    let no_token = matches!(record.github, Some(gh_token::ActsAs::NoToken { .. }));
+                    if owned.lock().gh_token.is_some() || no_token {
                         self.renew_github(&owned);
                     }
-                    if let Some(gh_token::ActsAs::Person { why }) = &record.github {
-                        let repo = record.me.place().repo_text();
-                        self.person_tokens_lock().insert(repo, why.clone());
+                    let repo = record.me.place().repo_text();
+                    match &record.github {
+                        Some(gh_token::ActsAs::Person { why }) => {
+                            self.person_tokens_lock().insert(repo, why.clone());
+                        }
+                        Some(gh_token::ActsAs::NoToken { why }) => {
+                            self.no_tokens_lock().insert(repo, why.clone());
+                        }
+                        _ => {}
                     }
                     let looked = record.clone();
                     // The lead keeps its session on riff-server alive.
@@ -8757,6 +8839,7 @@ mod tests {
         let served = crate::cycle::Served {
             server: Ok("3.3.0".into()),
             hosts: Ok(vec![]),
+            keys: Ok(None),
         };
         let version = crate::cycle::version("3.3.0").unwrap();
         let lines = crate::cycle::checks(version, "2026-10-22T09:00:00Z", &served, &log);
@@ -8803,6 +8886,7 @@ mod tests {
         let served = crate::cycle::Served {
             server: Ok("3.3.0".into()),
             hosts: Ok(vec![]),
+            keys: Ok(None),
         };
         let version = crate::cycle::version("3.3.0").unwrap();
         let unknown = |lines: Vec<(&str, crate::cycle::Verdict)>| -> Vec<String> {
@@ -12839,5 +12923,146 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// The why of riff-server when it cannot read the keys of the GitHub
+    /// Apps, in the tests.
+    const NO_KEYS: &str = "riff-server cannot read the keys of the GitHub Apps: \
+                           projects/p/secrets/s: 403 Forbidden. The fix: riff cloud create NAME";
+
+    /// 01M6YC3T0TXANJH6YMTJZR1HCR: while riff-server cannot read the keys of the
+    /// GitHub Apps, the lead starts with no token on GitHub: no
+    /// `GH_TOKEN`, no token of the person, and the folder of its token
+    /// with no token in it. Its first prompt ends with the fix, and `riff
+    /// daemon status` names the reason.
+    #[tokio::test]
+    async fn in_the_pause_of_the_keys_a_lead_starts_with_no_token_on_github() {
+        let server = Arc::new(Server::with_github(|_| Ok(gh_token::Grant::none(NO_KEYS))));
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        let spec = here.fake.spec(LEAD).unwrap();
+        let named = |e: &Env| matches!(e, Env::Host(n) | Env::Value(n, _) if n == "GH_TOKEN");
+        assert!(!spec.env.iter().any(named), "{:?}", spec.env);
+        assert!(here.fake.values(LEAD).iter().all(|(n, _)| n != "GH_TOKEN"));
+        let dir = gh_token::dir(&record.folder);
+        let config = Env::Value("GH_CONFIG_DIR".into(), dir.to_string_lossy().into_owned());
+        assert!(spec.env.contains(&config), "{:?}", spec.env);
+        assert!(gh_token::read_token(&record.folder).is_none());
+        let start = spec.command.last().unwrap();
+        assert!(start.ends_with(&text::lead_no_github(NO_KEYS)), "{start}");
+        assert_eq!(
+            record.github,
+            Some(gh_token::ActsAs::NoToken {
+                why: NO_KEYS.into()
+            })
+        );
+
+        let status = here.daemon.status().await;
+        assert!(
+            status.person_tokens.is_empty(),
+            "{:?}",
+            status.person_tokens
+        );
+        assert_eq!(
+            status.no_tokens,
+            [PersonToken {
+                repo: "como-technologies/riff".into(),
+                why: NO_KEYS.into(),
+            }]
+        );
+        let shown = text::daemon_status(&status, now_ms());
+        let line = text::daemon_gh_none_status("como-technologies/riff", NO_KEYS);
+        assert!(shown.contains(&line), "{shown}");
+    }
+
+    /// 01M6YC3T0TXANJH6YMTJZR1HCR: a lead that runs loses its token at its next renew
+    /// while riff-server cannot read the keys: the file of its token has
+    /// no token, and the daemon revokes the old one.
+    #[tokio::test]
+    async fn in_the_pause_of_the_keys_a_running_lead_has_no_token_after_its_next_renew() {
+        let server = Arc::new(Server::with_github(|n| {
+            if n > 0 {
+                return Ok(gh_token::Grant::none(NO_KEYS));
+            }
+            // The first token ends in 10 minutes and 2 seconds: the
+            // daemon asks again 2 seconds after the start.
+            let ends = gh_token::RENEW_BEFORE + Duration::from_secs(2);
+            let mut grant = app_token("ghs_lead", ends);
+            if let gh_token::ActsAs::Bot { bot, role, .. } = &mut grant.acts {
+                *bot = "riff-acme-lead[bot]".into();
+                *role = riff_core::wire::GitHubRole::Lead;
+            }
+            Ok(grant)
+        }));
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        assert!(gh_token::read_token(&record.folder).is_some());
+        for _ in 0..1000 {
+            if gh_token::read_token(&record.folder).is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            gh_token::read_token(&record.folder).is_none(),
+            "the token stays after 10 s"
+        );
+        assert!(
+            gh_token::dir(&record.folder).is_dir(),
+            "the bind keeps its folder"
+        );
+        until(|| !server.revoked().is_empty()).await;
+        assert_eq!(
+            server.revoked(),
+            [("como-technologies/riff".to_owned(), "ghs_lead".to_owned())]
+        );
+        let status = here.daemon.status().await;
+        assert_eq!(
+            status
+                .no_tokens
+                .iter()
+                .map(|t| t.why.as_str())
+                .collect::<Vec<_>>(),
+            [NO_KEYS]
+        );
+        let owned = here.daemon.lock().get(LEAD).cloned().unwrap();
+        let acts = owned.lock().record.github.clone();
+        assert_eq!(
+            acts,
+            Some(gh_token::ActsAs::NoToken {
+                why: NO_KEYS.into()
+            })
+        );
+    }
+
+    /// 01M6YC3T0TXANJH6YMTJZR1HCR: while riff-server cannot read the keys of the
+    /// GitHub Apps, it answers the token call of a worker and of a
+    /// verifier with a 503: no worker and no verify starts.
+    #[tokio::test]
+    async fn in_the_pause_of_the_keys_no_worker_and_no_verify_starts() {
+        let server = Arc::new(Server::with_github(|_| bail!("HTTP 503: {NO_KEYS}")));
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        for (name, item) in [
+            ("riff-issue-12-1a2b3c4d", "issue-12"),
+            ("riff-verify-issue-12-5e6f7a8b", "verify-issue-12"),
+        ] {
+            let start = here.start(name, item);
+            let mut client = Client::connect(&here.dir).await.unwrap();
+            client.ask(Ask::Start(Box::new(start))).await.unwrap();
+            let (_, end) = to_the_end(&mut client).await;
+            let Some(Say::Failed { error }) = end else {
+                panic!("{end:?}");
+            };
+            assert!(error.contains("riff cloud create NAME"), "{error}");
+            assert!(here.fake.spec(name).is_none(), "{name}");
+        }
+        assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+        assert!(status(&here.dir).await.unwrap().sessions.is_empty());
     }
 }

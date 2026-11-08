@@ -202,6 +202,35 @@ pub fn spec_again(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
     spec_with(facts, repo, "--resume", start)
 }
 
+/// Adds [`text::lead_no_github`] with `why` to the end of the first
+/// prompt of the lead of `spec`, the last word of its command: a lead
+/// that starts with no token on GitHub tells its person the fix first
+/// (01M6YC3T0TXANJH6YMTJZR1HCR).
+///
+/// ```
+/// use riff::runtime::SessionSpec;
+///
+/// let mut spec = SessionSpec {
+///     name: "riff-lead-o-r".into(),
+///     image: "img".into(),
+///     home: "/home/mike".into(),
+///     workdir: "/w".into(),
+///     binds: vec![],
+///     env: vec![],
+///     memory: String::new(),
+///     cpus: 0,
+///     command: vec!["claude".into(), "Start.".into()],
+/// };
+/// riff::lead::tell_no_github(&mut spec, "the fix");
+/// assert_eq!(spec.command[1], format!("Start. {}", riff::text::lead_no_github("the fix")));
+/// ```
+pub fn tell_no_github(spec: &mut SessionSpec, why: &str) {
+    if let Some(start) = spec.command.last_mut() {
+        start.push(' ');
+        start.push_str(&text::lead_no_github(why));
+    }
+}
+
 /// [`spec`], with the flag `session_flag` for the session ID of `claude`.
 fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> SessionSpec {
     let mut spec = run::spec(facts);
@@ -243,7 +272,7 @@ fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Sess
 /// let status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![live],
 ///     limit: None, waiting: vec![], waves: vec![], parts: vec![], leaving: vec![], jobs: 0, test: None, mcp: vec![],
-///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), person_tokens: vec![], writes: vec![],
+///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), person_tokens: vec![], no_tokens: vec![], writes: vec![],
 /// };
 /// assert!(riff::lead::runs(&status, "riff-lead-o-r"));
 /// assert!(!riff::lead::runs(&status, "riff-lead-o-other"));
@@ -262,7 +291,7 @@ pub fn runs(status: &Status, name: &str) -> bool {
 /// let mut status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![],
 ///     limit: None, waiting: vec![], waves: vec![], parts: vec![], leaving: vec![], jobs: 0, test: None, mcp: vec![],
-///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), person_tokens: vec![], writes: vec![],
+///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), person_tokens: vec![], no_tokens: vec![], writes: vec![],
 /// };
 /// assert!(!riff::lead::gives_workers(&status, "o/r"));
 /// let part = |repo: &str, workers, lead| RepoParts { repo: repo.into(), parts: Parts { workers, lead } };

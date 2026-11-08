@@ -842,7 +842,9 @@ enum CloudCommand {
     /// accounts and secret. Then riff makes each resource that is
     /// missing: it checks each one first, so you can run it again. With
     /// RIFF_OWNER set and an alert in the settings, it makes an alert
-    /// that sends each error of the service to that email.
+    /// that sends each error of the service to that email. In a clone
+    /// whose branch is behind its upstream, it makes nothing: run git
+    /// pull first. The settings must name CLOUD_GITHUB_SECRET.
     Create {
         /// The name of the instance, for example stage.
         name: String,
@@ -896,6 +898,10 @@ enum CloudCommand {
     /// List each instance: URL, release, ready, paused
     List,
     /// Show the state of one instance
+    ///
+    /// It shows the service, the bucket and the CI deploy. Then one row
+    /// for each secret: missing, a role that the run account does not
+    /// have on it, or fine. A problem has its fix.
     Status {
         /// The name of the instance.
         name: String,
@@ -3125,9 +3131,10 @@ async fn cloud(command: &CloudCommand, server: &str) -> Result<()> {
         CloudCommand::Status { name } => {
             let s = cloud::load(&dir, name)?;
             let facts = cloud::facts(&gcloud, &s)?;
+            let secrets = cloud::secret_states(&gcloud, &s)?;
             let paused = riff_paused(&s.url, &here).await;
             println!("{}", text::cloud_row(&s.name, &s.url, &facts, paused));
-            print!("{}", text::cloud_status(&s, &facts));
+            print!("{}", text::cloud_status(&s, &facts, &secrets));
             Ok(())
         }
         CloudCommand::Log {

@@ -487,6 +487,7 @@ mod tests {
             started_at_ms: 15,
             replay_ms: 16,
             now_ms: 17,
+            keys_fault: Some(text("403 Forbidden")),
         });
         c.trip(&SetStatus {
             me: me(),
@@ -919,6 +920,7 @@ mod tests {
             rights: [(text("contents"), text("write"))].into(),
             ends: Some(text("2026-11-08T13:00:00Z")),
             problem: Some(text("riff github install acme")),
+            no_github: true,
         });
         c.trip(&Members {});
         c.trip(&MembersReply {

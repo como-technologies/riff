@@ -143,6 +143,8 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud list",
             "riff login",
             "riff github create --owner OWNER",
+            "riff cloud create shared",
+            "riff cloud status shared",
             "riff github check",
             "riff invite EMAIL",
             "riff members",
@@ -192,20 +194,38 @@ const HOW_TO: &str = "Add another repository to the riff";
 /// 01M6WHG7A736K9N01TXGAQS0MZ: "Start a Team Riff" has the how-to "Make
 /// the GitHub Apps of riff", and "Add another repository to the riff"
 /// has the step that installs them on another account, each with a
-/// copyable `sh` block of a real command.
+/// copyable `sh` block of a real command. The how-to makes the secret of
+/// the keys before the deploy of a release with the Apps
+/// (01M6YC3SYATQW7GZZV3APFG85B).
 #[test]
 fn the_book_has_the_how_tos_of_the_github_apps() {
     let make = part("start-a-team-riff.md", "Make the GitHub Apps of riff");
     let commands = book::commands_in(&make);
     assert_eq!(
         commands,
-        ["riff github create --owner OWNER", "riff github check"]
+        [
+            "riff github create --owner OWNER",
+            "git pull",
+            "riff cloud create shared",
+            "riff cloud status shared",
+            "riff github check"
+        ]
     );
+    for heading in [
+        "\n### Make the secret before the deploy\n",
+        "\n### Check the tokens of each role\n",
+    ] {
+        assert!(make.contains(heading), "{heading}: {make}");
+    }
     assert!(
-        make.contains("\n### Check the tokens of each role\n"),
+        make.contains("(how-it-works.md#when-riff-server-cannot-read-the-keys-of-the-apps)"),
         "{make}"
     );
-    each_is_real(&commands);
+    let riff: Vec<String> = commands
+        .into_iter()
+        .filter(|c| c.starts_with("riff "))
+        .collect();
+    each_is_real(&riff);
     let add = part(PAGE, HOW_TO);
     let install = add
         .split("\n### Install the GitHub Apps of riff on the account\n")

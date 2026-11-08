@@ -273,7 +273,7 @@ use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::auth::{Config, Refusal, Replay, SignedIn};
-use crate::engine::{Admitted, Engine, Failed, SignIns, command};
+use crate::engine::{Admitted, Authenticated, Engine, Failed, SignIns, command};
 use crate::import::Old;
 use crate::lease::Lease;
 use crate::oidc::Identity;
@@ -908,6 +908,7 @@ impl Server {
             started_at_ms: facts.started_at_ms,
             replay_ms: ms(facts.replay),
             now_ms: now_ms(),
+            keys_fault: self.github.keys_fault(),
         }
     }
 
@@ -1540,7 +1541,36 @@ impl Service {
         service.keep_checkpoints();
         service.forget_sessions();
         service.watch_owner();
+        service.read_keys();
         service
+    }
+
+    /// Reads the keys of the GitHub Apps one time, when the server
+    /// serves (01M6YC3SYATQW7GZZV3APFG85B). So a deploy with a secret that riff-server
+    /// cannot read pauses the riff at once, and `GET /v1/server` names the
+    /// fault. A server with no async runtime starts no task.
+    fn read_keys(&self) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let server = Arc::downgrade(&self.0);
+        runtime.spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(100));
+            loop {
+                tick.tick().await;
+                let Some(server) = server.upgrade() else {
+                    return;
+                };
+                if server.is_stopped() {
+                    return;
+                }
+                if server.serving() {
+                    // A fault has its own log line in apps_of.
+                    let _ = github::apps_of(&server).await;
+                    return;
+                }
+            }
+        });
     }
 
     /// Starts the writer: the task that writes the records of each entry
@@ -1920,7 +1950,7 @@ impl Service {
             .route(ReleaseFor::PATH, post(command::<ReleaseFor>))
             .route(Lead::PATH, post(command::<Lead>))
             .route(Pause::PATH, post(command::<Pause>))
-            .route(Resume::PATH, post(command::<Resume>))
+            .route(Resume::PATH, post(resume))
             .route(Hold::PATH, post(command::<Hold>))
             .route(Free::PATH, post(command::<Free>))
             .route(SetPlan::PATH, post(command::<SetPlan>))
@@ -2657,6 +2687,24 @@ async fn me(
         session,
         build: build::VERSION.into(),
     }))
+}
+
+/// `POST /v1/resume`: the command `resume`. A resume of the whole riff
+/// reads the keys of the GitHub Apps first, and is refused with the fix
+/// while their place refuses the read (01M6YC3SYATQW7GZZV3APFG85B).
+async fn resume(
+    AxumState(s): AxumState<Shared>,
+    call: Authenticated<Resume>,
+) -> Result<axum::response::Response, Failed> {
+    if call.command().riff
+        && let Err(e) = github::apps_of(&s).await
+        && e.denied
+    {
+        let why = github::keys_fault_text(&e.text, &s.config.public_url);
+        let reason = format!("the riff stays paused: {why}");
+        return Err(Failed::Refused(Refused::new(Code::Paused, reason)));
+    }
+    command(AxumState(s.engine.clone()), call).await
 }
 
 /// The facts of this instance, for `riff server`

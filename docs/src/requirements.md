@@ -1010,6 +1010,35 @@
   person. `riff daemon status` names, for each repository, the bot of
   its writes, or the token of the person and why. This supersedes
   01M6WPMWW7T0Y8SY3522GS4YF0 in part.
+- **01M6YC3SYATQW7GZZV3APFG85B** When the place of the keys of the
+  GitHub Apps refuses their read, riff-server pauses the whole riff as
+  the server: Secret Manager answers 401 or 403, or the file of `--dir`
+  has no read right. riff-server then posts one line of the kind `riff`
+  in the chat to the owner and each admin, wakes each repository as a
+  pause of a person does, and logs one error. riff-server reads the keys
+  at its start, at each call that needs them, and at each `riff resume
+  --riff`. The line names the cause, the fix, and a prompt to paste into
+  a `claude` session that an admin starts on the host, in the clone with
+  the cloud settings of the riff. The fix is `git pull`, `riff cloud
+  create NAME`, then `riff resume --riff`, in a terminal. `riff resume
+  --riff` reads the keys first, and riff-server refuses it with the fix
+  while the place refuses the read. A secret with no version is a riff
+  with no Apps. A fault that a new try can end, for example a 503,
+  pauses nothing.
+- **01M6YC3T0TXANJH6YMTJZR1HCR** While the place of the keys of the
+  GitHub Apps refuses their read, the token call of a lead gives no
+  token, the reason and `no_github`. The daemon starts the lead with no
+  token on GitHub: no `GH_TOKEN`, never the token of the person, and the
+  folder `gh` of the session with no token in it. The fix and the prompt
+  for `claude` on the host go at the end of the first prompt of the
+  lead. A lead that runs has no token after its next renew: the daemon
+  takes the token out of the file, and revokes it. The daemon asks again
+  every 10 minutes, and writes the next token in the same file. The
+  token call of a worker and of a verifier fails with 503, so no
+  container of a worker or a verify starts. The daemon writes on GitHub
+  with the token of the person. `riff daemon status` names the
+  repository of the lead and the reason, and `riff whoami` in the lead
+  shows `no token`. This supersedes 01M6WPMWSMQABE97YCMS5Z3M1P in part.
 
 ## Pause
 
@@ -2134,6 +2163,22 @@
   `riff-como-technologies-lead` is the default. When GitHub has no such
   App, it stops before its first change. Supersedes
   01M3MRMB0AJVPD952AQYD7X1RN.
+- **01M6YC5XGQR7V3KC68WW8NE1PD** `riff cloud create NAME` reads or
+  writes the settings of a clone only when the branch of the clone is
+  not behind its upstream. It fetches the remote of the upstream first,
+  and when the fetch fails, it compares the branch with the upstream ref
+  of the clone. A clone that is behind stops the command before each
+  call of `gcloud`: riff makes nothing, and the error names the clone
+  and the fix `git pull`. A branch with no upstream, a detached `HEAD`
+  and settings outside a clone have no check. The settings must have a
+  value of `CLOUD_GITHUB_SECRET`: with none, each `riff cloud` command
+  that reads them stops, and the error names the line to add to the
+  settings file. A new instance gets
+  `CLOUD_GITHUB_SECRET=NAME-github-apps` in its new file. `riff cloud
+  status NAME` shows one row for each secret of the instance: missing,
+  each role that the run account needs on it and does not have, or fine.
+  A missing secret or a missing role names the fix `riff cloud create
+  NAME`. This supersedes 01M6WG52ZEVRSQ463FTDS94M54 in part.
 
 ## One instance
 
@@ -3339,10 +3384,9 @@
   secret are in no reply, no log line, no record and no object of the
   bucket.
 - **01M6WG52ZEVRSQ463FTDS94M54** `riff cloud create NAME` makes the
-  secret of the GitHub Apps, `CLOUD_GITHUB_SECRET` of the settings
-  (`NAME-github-apps` when the settings have none). It lets only the
-  account of the server read it and add a version. `riff cloud deploy
-  NAME` names the secret in `RIFF_GITHUB_SECRET`.
+  secret of the GitHub Apps, `CLOUD_GITHUB_SECRET` of the settings. It
+  lets only the account of the server read it and add a version. `riff
+  cloud deploy NAME` names the secret in `RIFF_GITHUB_SECRET`.
 - **01M6WG5322WRWQA79RCSCY4MSS** `riff github install OWNER` opens the
   install page of each App with OWNER as the target. It waits at most 10
   minutes for the two installs. Then it runs `riff github check` when
@@ -6832,14 +6876,15 @@ of this part when they merge.
   container gets a bind of `~/.config/gh` of the host. This supersedes
   01M4Z60B89BHXQVJ2MGRRQ2CKJ in full, and 01M4Z60B7QDWEFQ96H448RE9N2 in
   part.
-- **01M6WPMWSMQABE97YCMS5Z3M1P** When riff-server gives no token of an
-  App, the session keeps the token of the person: the riff has no App of
-  the role or no sign-in, the App is not on the repository, or the `gh`
-  of the person cannot push there. The daemon then reads `gh auth token`
-  on the host, and gives it in `GH_TOKEN` with the name only on the
-  command line of podman (`-e GH_TOKEN`). `riff daemon status` names
-  each such repository with the fix, for example `riff github install
-  OWNER`, and `riff init --check` fails a check with the same fix.
+- **01M6WPMWSMQABE97YCMS5Z3M1P** The session keeps the token of the
+  person when riff-server gives no token of an App because the riff has
+  no App of the role or no sign-in, the App is not on the repository, or
+  the `gh` of the person cannot push there. The daemon then reads `gh
+  auth token` on the host, and gives it in `GH_TOKEN` with the name only
+  on the command line of podman (`-e GH_TOKEN`). `riff daemon status`
+  names each such repository with the fix, for example `riff github
+  install OWNER`, and `riff init --check` fails a check with the same
+  fix.
 - **01M6WPMWW7T0Y8SY3522GS4YF0** The lead in a container gets the token
   of the lead App at `riff lead start`, and the daemon renews it for the
   life of the lead. Each `riff` command of a person in a terminal keeps
@@ -7263,6 +7308,13 @@ of this part when they merge.
   of a deploy of the same repository starts. The daemon keeps the
   watches of a check in `checks.json` of its folder, and no watch of a
   check in `watches.json`.
+- **01M6YC3T3B8JKT5BSQJTYMXBKY** `riff release check vX.Y.Z` also checks
+  that riff-server reads the keys of the GitHub Apps: it reads
+  `keys_fault` of `GET /v1/server`, as the person, or through the daemon
+  in the container of the lead. The check fails while riff-server cannot
+  read them, with the fix `git pull`, `riff cloud create shared`, then
+  `riff resume --riff`. `riff server` shows the row `keys` for such a
+  riff-server.
 
 ### The real-session test
 

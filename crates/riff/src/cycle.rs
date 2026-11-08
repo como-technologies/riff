@@ -1615,14 +1615,18 @@ pub trait CloudLog {
 }
 
 /// The facts of riff-server for [`check`]: the build that `riff server`
-/// shows, and the build of the daemon of each host, as the part `Hosts`
-/// of `riff who` shows it. An error is the reason that riff cannot tell.
+/// shows, the build of the daemon of each host, as the part `Hosts` of
+/// `riff who` shows it, and the read of the keys of the GitHub Apps. An
+/// error is the reason that riff cannot tell.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Served {
     /// The version of the build of the shared riff.
     pub server: Result<String, String>,
     /// `USER@HOST` and the build of its daemon, for each host.
     pub hosts: Result<Vec<(String, String)>, String>,
+    /// Why riff-server cannot read the keys of the GitHub Apps, from
+    /// `GET /v1/server` (01M6YC3T3B8JKT5BSQJTYMXBKY), or `None` when it reads them.
+    pub keys: Result<Option<String>, String>,
 }
 
 /// The result of one check after a deploy.
@@ -1754,6 +1758,14 @@ pub fn checks(
         match &served.server {
             Ok(build) if *build == want => Verdict::Passed,
             Ok(build) => Verdict::Failed(format!("riff server shows {build}, not {want}")),
+            Err(e) => Verdict::Unknown(format!("riff cannot ask the shared riff: {e}")),
+        },
+    ));
+    out.push((
+        "riff-server reads the keys of the GitHub Apps",
+        match &served.keys {
+            Ok(None) => Verdict::Passed,
+            Ok(Some(why)) => Verdict::Failed(text::release_keys_fault(why)),
             Err(e) => Verdict::Unknown(format!("riff cannot ask the shared riff: {e}")),
         },
     ));
@@ -4373,6 +4385,7 @@ pub(crate) mod tests {
                 "mike@thelio".into(),
                 format!("{build} bbf9227fd8cf 2026-10-22T02:02:45Z"),
             )]),
+            keys: Ok(None),
         }
     }
 
@@ -4510,6 +4523,20 @@ pub(crate) mod tests {
                 },
                 Log(Ok(vec![])),
                 "each host takes the build: failed: bob@pangolin has 3.2.0 929605821e54",
+            ),
+            // 01M6YC3T3B8JKT5BSQJTYMXBKY: a riff-server that cannot read the secret of the
+            // keys fails the check, with the fix.
+            (
+                Served {
+                    keys: Ok(Some(
+                        "projects/como-riff/secrets/riff-github-apps: 403 Forbidden".into(),
+                    )),
+                    ..served("3.3.0")
+                },
+                Log(Ok(vec![])),
+                "riff-server reads the keys of the GitHub Apps: failed: riff-server cannot read the \
+                 secret of the keys of the GitHub Apps: projects/como-riff/secrets/riff-github-apps: \
+                 403 Forbidden. The riff is paused. An admin runs git pull, riff cloud create shared",
             ),
         ];
         for (served, log, want) in cases {

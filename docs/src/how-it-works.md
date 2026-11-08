@@ -345,6 +345,7 @@ server      https://riff.example.com  (from RIFF_SERVER)
 | `counts` | The chunks in the store, the sessions, the read cursors, the threads, and the live sign-ins. |
 | `memory` | The memory that the server uses. |
 | `started` | The age of the instance, and how long its load and its replay took. |
+| `keys` | Only when riff-server cannot read the keys of the GitHub Apps: the cause and the fix. See [When riff-server cannot read the keys of the Apps](#when-riff-server-cannot-read-the-keys-of-the-apps). |
 
 - A riff with sign-in gives its facts only to a person who is signed
   in. Else the lines are not there.
@@ -4621,6 +4622,83 @@ paused   como-technologies/strata by the session brett/62b2
 The fact `riff` is the pause of the whole riff, with who set it. Each
 fact `paused` is a repository that is paused, with who set its pause.
 `riff who` and `riff top` show the same facts.
+
+### When riff-server cannot read the keys of the Apps
+
+riff-server keeps the keys of the GitHub Apps of the riff in a secret
+of Secret Manager (see
+[Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff)).
+When Secret Manager refuses the read, with 401 or 403, riff-server
+pauses the whole riff. For example, the secret is not there, or the
+account of riff-server has no role on it. Then:
+
+- riff-server posts one line as `<riff-bot>` in the chat to the owner
+  and each admin. The line has the cause, the fix, and a prompt for
+  `claude` on the host. It also logs one error: the alert of the riff,
+  when it has one, sends an email to the owner.
+- No worker and no verify starts.
+- A lead still starts, with no token on GitHub: no `GH_TOKEN`, and
+  never your token. A lead that runs loses its token at its next
+  renew. The riff tools work, so the lead tells you the fix.
+- `riff whoami` shows the riff as paused by the server.
+
+```mermaid
+sequenceDiagram
+    participant S as riff-server
+    participant M as Secret Manager
+    participant C as the chat
+    participant D as riff daemon
+    participant L as the lead
+    S->>M: read the keys of the Apps
+    M-->>S: 403
+    S->>S: pause the whole riff
+    S->>C: riff-bot: the cause, the fix, the prompt
+    D->>S: the token of the lead
+    S-->>D: no token, and why
+    D->>L: start with no token on GitHub, and the fix in its first prompt
+    Note over D: no worker and no verify starts
+```
+
+The fix is for the owner or an admin, in a terminal, in the clone with
+the cloud settings of the riff. Put the name of your riff in place of
+`shared`:
+
+```sh
+git pull
+riff cloud create shared
+riff resume --riff
+```
+
+`riff cloud create` makes the secret and its roles. It stops in a clone
+that is behind its upstream: then run `git pull` first. `riff resume
+--riff` reads the keys first, and refuses with the fix while riff-server
+cannot read them. To see the secret and its roles, run:
+
+```sh
+riff cloud status shared
+```
+
+The host names the cause too:
+
+```sh
+riff daemon status
+```
+
+```text
+GitHub: the lead of acme/app has no token on GitHub: riff-server cannot read the keys of the GitHub Apps: ...
+```
+
+When the lead cannot help, start `claude` on the host, in that clone,
+with your own sign-in. Paste the prompt of the chat line. It has this
+form:
+
+```text
+The riff at https://riff.example.com is paused: its riff-server cannot read the keys of the GitHub Apps (CAUSE). Help me repair it in this clone. Run git pull. Find the NAME of the riff at https://riff.example.com with riff cloud list. Run riff cloud status NAME, and find the missing secret or the missing role. Then give me the commands for my terminal, because riff refuses them in a session: riff cloud create NAME, then riff resume --riff.
+```
+
+`claude` finds the cause with your `gcloud`. It gives you the commands
+for your terminal: riff runs `riff cloud create` and `riff resume
+--riff` only in a terminal of a person.
 
 ## A status
 

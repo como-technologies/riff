@@ -214,6 +214,7 @@ of the caller.
 | `lead` | a person; the new lead is a session that is not a worker | member |
 | `pause`, `resume` of a repository | a person, a session | member |
 | `pause`, `resume` of the riff | a person, a session | admin |
+| `pause` of the riff, when the server cannot read the keys of the GitHub Apps | the server | |
 | `revoke` of the own sign-ins | a person | member |
 | `set_idle`, `invite`, `remove`, `revoke` of another person, `take_owner` | a person | admin |
 | `set_admin`, `pass_owner`, `deny_owner` | a person | owner |
