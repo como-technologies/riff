@@ -3276,6 +3276,27 @@
   sender and its whole body, as each other line does. Supersedes
   01M5TQ0DX4M2EJJGE7QA8DZVYS in full, and 01M6Y1FB5MZNZ971CJRBWZ2F9X and
   01M5TKMVB7CF0QNAWXEVGEQETJ in part.
+- **01M6Y1EKGKNW2MH970PDF6PJK1** In `riff chat` and in the Chat tab of
+  the TUI, an `@` at the start of a word opens a list of the names of
+  the chat (01M6XZ27XV8RAC8B72DCM937ST) while the cursor is at the end
+  of the word. The list holds each name that starts with the letters
+  after the `@`, or whose part after the slash does, with no regard to
+  case. It shows at most five names, each with its kind and `online` or
+  `offline`, and the number of the others. With no name, or when the
+  word is the one name of the list already, no list shows. `Tab` or
+  `Enter` puts the first name of the list in the place of the word, with
+  a space after it at the end of the line. `Esc` closes the list until
+  the cursor leaves the word. The list never stops a key or a line: a
+  line with a name that is not in the list posts as it is.
+- **01M6Y1EKKCCZ5215V49Z5T3HKH** `riff chat` reads the names of the chat
+  before it shows its prompt, and the Chat tab when the TUI starts. Each
+  one reads them again each 30 seconds. A read that fails keeps the
+  names of the last read, and with no names no list shows. In `riff
+  chat`, the list shows on the rows under the prompt, with the note `Tab
+  or Enter picks NAME. Esc closes the list.` after it.
+- **01M6YDSREH39WWV6QHB0M7Z6P5** In `riff chat`, the list of the names
+  of 01M6Y1EKGKNW2MH970PDF6PJK1 is not text of the line: `→` at the
+  end of the line puts none of it in the line, and the list stays.
 
 ## Security
 
@@ -7729,12 +7750,11 @@ that builds it merges.
 - **01M6VG1PA4PM47777ZT4PNGETF** The prompt of the Chat tab has the
   focus when you open the tab. In the prompt, each key that types a
   character types it, also `1` to `6`, `q`, `r` and `?`. There `Alt-1`
-  to `Alt-6`, `Tab` and `Shift-Tab` open a tab, and `Ctrl-C` ends the
-  TUI. `Esc` moves the focus to the log, where the keys of the frame
-  work and `?` shows the keys of the Chat tab. `i` or `Enter` gives the
-  focus back to the prompt. `PgUp` and `PgDn` show older and newer
-  lines. Supersedes 01M6VAZJYYQZDHD6YDB0NBQ7KW and
-  01M6VAZKDEQ6951KGPGAMF1SNJ in part.
+  to `Alt-6` and `Shift-Tab` open a tab, and `Ctrl-C` ends the TUI. In
+  the log, the keys of the frame work and `?` shows the keys of the Chat
+  tab. `i` or `Enter` gives the focus back to the prompt. `PgUp` and
+  `PgDn` show older and newer lines. Supersedes
+  01M6VAZJYYQZDHD6YDB0NBQ7KW and 01M6VAZKDEQ6951KGPGAMF1SNJ in part.
 - **01M6VG1PCXHNVJP7TSP0J5G5K9** A line of the Chat tab has the rules of
   `riff chat`, with the same code: `/me TEXT` sends an action, `/quit`
   ends the TUI, and `//` starts a line with `/`. The Chat tab posts as
@@ -8101,6 +8121,14 @@ that builds it merges.
   back makes it a typed text. In `riff chat`, a new line of a paste
   starts a row, and a long line is one row. Supersedes
   01M6XXDDYQG7M6WYNRXP35DZ1Y in part.
+- **01M6Y1ES82XHFGANKZS7AF3CP2** While the list of the names of
+  01M6Y1EKGKNW2MH970PDF6PJK1 shows in the Chat tab, its rows take the
+  last rows of the log over the prompt, the first name is in reverse
+  video, and the note line says `Tab or Enter picks NAME. Esc closes the
+  list.` Then `Tab` and `Enter` pick the name, and `Esc` closes the list
+  and the focus stays in the prompt. With no list, `Tab` in the prompt
+  opens the next tab, and `Esc` moves the focus to the log. Supersedes
+  01M6VG1PA4PM47777ZT4PNGETF in part: `Tab` and `Esc` in the prompt.
 
 ## The notes of the lead
 

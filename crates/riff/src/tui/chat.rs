@@ -28,10 +28,10 @@
 //!   a person as `<USER>`, a lead as `<PROJECT>`, riff-server itself as
 //!   `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK), an action as `* NAME
 //!   TEXT`. A line that riff writes as the person shows as the person,
-//!   with the mark `[by riff]`. The names come from riff-server at the
-//!   start ([`Came::Names`]). A rule names each new day. A long line
-//!   wraps, and each more row starts under the sender.
-//!   The newest lines show: `PgUp` shows older lines ([`Scroll`],
+//!   with the mark `[by riff]`. The names come from riff-server
+//!   ([`Came::Names`]). A rule names each new day. A long line wraps, and
+//!   each more row starts under the sender. The newest lines show: `PgUp`
+//!   shows older lines ([`Scroll`],
 //!   01M6VG1P7BH32E5YAP0GJSNJJP).
 //! - **The prompt** ([`Prompt`]) has the focus when you open the tab
 //!   ([`Focus`]). There each key types, also the digits, `q` and `?`.
@@ -61,11 +61,31 @@
 //!   and `Enter` sends the line as one message. A paste or a typed
 //!   character that makes the line longer than [`POST_MAX`] stays out
 //!   ([`too_long`], 01M6XSK4K2MDA2SK0A6KHN9HDT, 01M6XVCDEP1ZP9RS7DV795W79E).
+//! - **The list of the names** ([`crate::typeahead`],
+//!   01M6Y1EKGKNW2MH970PDF6PJK1, 01M6Y1ES82XHFGANKZS7AF3CP2): an `@` at
+//!   the start of a word shows the names of the chat that fit the letters
+//!   after it. Its rows take the last rows of the log over the prompt,
+//!   under the text of the line, and the first name, the pick, is in
+//!   reverse video. `Tab` or `Enter` picks it ([`Key::Pick`]), and `Esc`
+//!   closes the list ([`Key::Close`]): [`key_of`] gives these keys only
+//!   while the list shows ([`Chat::list`]). [`Link`] reads the names at
+//!   its start and each [`READ_EVERY`], and gives them as
+//!   [`Came::Names`].
+//!
+//!   ```text
+//!    13:12 <riff> #1608 merged
+//!     riff  project  online
+//!     rita  person   offline
+//!   > ask @r
+//!    Tab or Enter picks riff. Esc closes the list.
+//!    Tab pick  Esc close  Ctrl-C quit
+//!   ```
 //! - **The note line** says what `Enter` does with a command, or why
 //!   the chat will not send it ([`prompt_note`]). It never says whom a
 //!   line wakes (01M6Y1A5PTCVZ6GRJ0FXMART2T). A post that fails, or a
 //!   paste or a key that makes the line too long, shows there at once,
-//!   until the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
+//!   until the next key (01M6VMACJGF4A0ZXC6YK13KNCH). While the list of
+//!   the names shows, the note names its keys.
 //! - **News:** each new line of the thread while another tab shows
 //!   adds one to `Chat•N` in the strip (01M6VG1PFPMHRQ4F9XHJTYMSJY).
 //!
@@ -115,6 +135,7 @@ use super::{Action, Key as FrameKey, News, State, Tab};
 use crate::catch_up::{self, Seen, Shown, Start};
 use crate::chat::{INDENT, Sent, Typed, typed};
 use crate::text::safe;
+use crate::typeahead::{Ahead, List, READ_EVERY};
 
 /// The most lines that the log keeps. An older line goes.
 pub const KEEP: usize = 1000;
@@ -136,6 +157,10 @@ const WARNING: Style = Style::new().fg(Color::Yellow);
 
 /// The style of a fault of the stream.
 const ERROR: Style = Style::new().fg(Color::Red);
+
+/// The style of the name that `Tab` and `Enter` pick in the list of the
+/// names.
+const PICKED: Style = Style::new().add_modifier(Modifier::REVERSED);
 
 /// Where the keys of the Chat tab go.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -176,6 +201,11 @@ pub enum Key {
     Down,
     /// Send the line: `Enter` in the prompt.
     Send,
+    /// Put the first name of the list of the names in the line: `Tab` or
+    /// `Enter` while the list shows.
+    Pick,
+    /// Close the list of the names: `Esc` while it shows.
+    Close,
     /// Move the focus to the log: `Esc`.
     Log,
     /// Move the focus to the prompt: `i` or `Enter` in the log.
@@ -201,51 +231,70 @@ pub enum Scroll {
     Newest,
 }
 
-/// The key of the Chat tab in `event`, when the focus is `focus`
-/// (01M6VG1PA4PM47777ZT4PNGETF). `None`
+/// The key of the Chat tab in `event`, when the focus is `focus`, and
+/// `listed` while the list of the names shows (01M6VG1PA4PM47777ZT4PNGETF,
+/// 01M6Y1ES82XHFGANKZS7AF3CP2). `None`
 /// for a key that the frame takes ([`super::input_of`]): `Alt-1` to
 /// `Alt-6`, `Tab`, `Shift-Tab` and `Ctrl-C` in the prompt, and each key
-/// of the frame in the log. The wheel of the mouse scrolls the log.
+/// of the frame in the log. While the list shows, `Tab` and `Enter` pick
+/// a name, and `Esc` closes the list. The wheel of the mouse scrolls the
+/// log.
 ///
 /// ```
 /// use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 /// use riff::tui::chat::{Focus, Key, Scroll, key_of};
 ///
-/// let press = |code, modifiers| Event::Key(KeyEvent::new(code, modifiers));
 /// let none = KeyModifiers::NONE;
+/// let key = |code, modifiers, focus| {
+///     key_of(&Event::Key(KeyEvent::new(code, modifiers)), focus, false)
+/// };
+/// let prompt = |code| key(code, none, Focus::Prompt);
+/// let log = |code| key(code, none, Focus::Log);
 /// // In the prompt, each key types: also a digit, `q` and `?`.
 /// for c in ['q', '2', '?', 'r'] {
-///     assert_eq!(key_of(&press(KeyCode::Char(c), none), Focus::Prompt), Some(Key::Type(c)));
+///     assert_eq!(prompt(KeyCode::Char(c)), Some(Key::Type(c)));
 /// }
-/// assert_eq!(key_of(&press(KeyCode::Enter, none), Focus::Prompt), Some(Key::Send));
-/// assert_eq!(key_of(&press(KeyCode::Esc, none), Focus::Prompt), Some(Key::Log));
-/// assert_eq!(key_of(&press(KeyCode::Up, none), Focus::Prompt), Some(Key::Up));
-/// assert_eq!(
-///     key_of(&press(KeyCode::PageUp, none), Focus::Prompt),
-///     Some(Key::Scroll(Scroll::PageUp))
-/// );
+/// assert_eq!(prompt(KeyCode::Enter), Some(Key::Send));
+/// assert_eq!(prompt(KeyCode::Esc), Some(Key::Log));
+/// assert_eq!(prompt(KeyCode::Up), Some(Key::Up));
+/// assert_eq!(prompt(KeyCode::PageUp), Some(Key::Scroll(Scroll::PageUp)));
 /// // Alt-2, Tab and Ctrl-C go to the frame.
-/// assert_eq!(key_of(&press(KeyCode::Char('2'), KeyModifiers::ALT), Focus::Prompt), None);
-/// assert_eq!(key_of(&press(KeyCode::Tab, none), Focus::Prompt), None);
-/// assert_eq!(key_of(&press(KeyCode::Char('c'), KeyModifiers::CONTROL), Focus::Prompt), None);
+/// assert_eq!(key(KeyCode::Char('2'), KeyModifiers::ALT, Focus::Prompt), None);
+/// assert_eq!(prompt(KeyCode::Tab), None);
+/// assert_eq!(key(KeyCode::Char('c'), KeyModifiers::CONTROL, Focus::Prompt), None);
+///
+/// // While the list of the names shows, Tab and Enter pick, and Esc
+/// // closes it. Alt-Tab goes to the frame.
+/// let listed = |code, modifiers| {
+///     key_of(&Event::Key(KeyEvent::new(code, modifiers)), Focus::Prompt, true)
+/// };
+/// assert_eq!(listed(KeyCode::Tab, none), Some(Key::Pick));
+/// assert_eq!(listed(KeyCode::Enter, none), Some(Key::Pick));
+/// assert_eq!(listed(KeyCode::Esc, none), Some(Key::Close));
+/// assert_eq!(listed(KeyCode::Tab, KeyModifiers::ALT), None);
+/// assert_eq!(listed(KeyCode::Char('r'), none), Some(Key::Type('r')));
 ///
 /// // In the log, `i` and Enter go back to the prompt, and the keys of
 /// // the frame go to the frame.
-/// assert_eq!(key_of(&press(KeyCode::Char('i'), none), Focus::Log), Some(Key::Prompt));
-/// assert_eq!(key_of(&press(KeyCode::Enter, none), Focus::Log), Some(Key::Prompt));
-/// assert_eq!(key_of(&press(KeyCode::Char('k'), none), Focus::Log), Some(Key::Scroll(Scroll::Up(1))));
-/// assert_eq!(key_of(&press(KeyCode::Char('G'), none), Focus::Log), Some(Key::Scroll(Scroll::Newest)));
-/// assert_eq!(key_of(&press(KeyCode::Char('q'), none), Focus::Log), None);
-/// assert_eq!(key_of(&press(KeyCode::Char('2'), none), Focus::Log), None);
+/// assert_eq!(log(KeyCode::Char('i')), Some(Key::Prompt));
+/// assert_eq!(log(KeyCode::Enter), Some(Key::Prompt));
+/// assert_eq!(log(KeyCode::Char('k')), Some(Key::Scroll(Scroll::Up(1))));
+/// assert_eq!(log(KeyCode::Char('G')), Some(Key::Scroll(Scroll::Newest)));
+/// assert_eq!(log(KeyCode::Char('q')), None);
+/// assert_eq!(log(KeyCode::Char('2')), None);
 /// ```
-pub fn key_of(event: &Event, focus: Focus) -> Option<Key> {
+pub fn key_of(event: &Event, focus: Focus, listed: bool) -> Option<Key> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => {
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             let alt = key.modifiers.contains(KeyModifiers::ALT);
             // AltGr comes as Ctrl and Alt on some terminals.
             let plain = ctrl == alt;
+            let shift = key.modifiers.contains(KeyModifiers::SHIFT);
             let key = match (focus, key.code) {
+                (Focus::Prompt, KeyCode::Tab) if listed && !ctrl && !alt && !shift => Key::Pick,
+                (Focus::Prompt, KeyCode::Enter) if listed => Key::Pick,
+                (Focus::Prompt, KeyCode::Esc) if listed => Key::Close,
                 (Focus::Prompt, KeyCode::Char('a')) if ctrl && !alt => Key::Home,
                 (Focus::Prompt, KeyCode::Char('e')) if ctrl && !alt => Key::End,
                 (Focus::Prompt, KeyCode::Char('u')) if ctrl && !alt => Key::Clear,
@@ -485,6 +534,19 @@ impl Prompt {
         self.cursor += text.chars().count();
     }
 
+    /// The byte of the cursor in the text.
+    fn at(&self) -> usize {
+        self.byte(self.cursor)
+    }
+
+    /// Puts the first name of `list` in the place of its word, and the
+    /// cursor after it ([`List::pick`]).
+    fn pick(&mut self, list: &List) {
+        let (text, at) = list.pick(&self.text);
+        self.cursor = text[..at].chars().count();
+        self.text = text;
+    }
+
     /// Shows `text` with the cursor at its end.
     fn show(&mut self, text: String) {
         self.cursor = text.chars().count();
@@ -649,8 +711,9 @@ pub enum Came {
     Fault(String),
     /// A line that riff could not send, with the error.
     Unsent(String),
-    /// The names of the chat from riff-server: the log shows each lead
-    /// by the name of its project from them.
+    /// The names of the chat, from a read of riff-server: the log shows
+    /// each lead by the name of its project from them, and the list of
+    /// the names shows them.
     Names(Vec<ChatName>),
 }
 
@@ -698,8 +761,10 @@ pub struct Chat {
     /// The note of a post that failed or of a line that is too long,
     /// until the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
     pub(super) warning: Option<String>,
-    /// The names of the chat from riff-server ([`Came::Names`]).
+    /// The names of the chat from the last read ([`Came::Names`]).
     names: Names,
+    /// The type-ahead of the prompt: the list that `Esc` closed.
+    ahead: Ahead,
 }
 
 impl Chat {
@@ -742,6 +807,24 @@ impl Chat {
     /// (01M6VMACJGF4A0ZXC6YK13KNCH).
     pub fn warning(&self) -> Option<&str> {
         self.warning.as_deref()
+    }
+
+    /// The list of the names for the line in the prompt
+    /// ([`crate::typeahead`]), while the prompt has the focus.
+    pub fn list(&self) -> Option<List> {
+        if self.focus != Focus::Prompt {
+            return None;
+        }
+        let prompt = &self.prompt;
+        self.ahead
+            .list(self.names.list(), prompt.text(), prompt.at())
+    }
+
+    /// The person changed the line or moved the cursor: a closed list
+    /// opens again when the cursor left its word.
+    fn edited(&mut self) {
+        let at = self.prompt.at();
+        self.ahead.edited(self.prompt.text(), at);
     }
 
     /// Adds `entry` to the end of the log. While the person looks at
@@ -795,13 +878,15 @@ pub struct Person {
 }
 
 /// The tasks of the Chat tab: one follows the thread `chat` from the
-/// start of the TUI (01M6VG1PFPMHRQ4F9XHJTYMSJY), and one posts the
-/// lines that the person sends, in order.
+/// start of the TUI (01M6VG1PFPMHRQ4F9XHJTYMSJY), one posts the lines
+/// that the person sends, in order, and one reads the names of the chat
+/// at the start and each [`READ_EVERY`] (01M6Y1EKKCCZ5215V49Z5T3HKH).
 pub struct Link {
     came: mpsc::UnboundedReceiver<Came>,
     send: mpsc::UnboundedSender<String>,
     posts: tokio::task::JoinHandle<()>,
     follow: tokio::task::JoinHandle<()>,
+    names: tokio::task::JoinHandle<()>,
 }
 
 impl Link {
@@ -814,12 +899,14 @@ impl Link {
             let _ = unsent.send(Came::Unsent(text.to_owned()));
         });
         let (api, me) = (person.api.clone(), person.me.clone());
+        let names = tokio::spawn(read_names(api.clone(), me.clone(), tx.clone()));
         let follow = tokio::spawn(async move { follow(&api, &me, &thread, &tx).await });
         Link {
             came,
             send,
             posts,
             follow,
+            names,
         }
     }
 
@@ -841,16 +928,29 @@ impl Link {
     /// person sent, as `riff chat` does at its end.
     pub async fn end(self) {
         self.follow.abort();
+        self.names.abort();
         drop(self.send);
         let _ = self.posts.await;
     }
 }
 
+/// Reads the names of the chat as `me`, and gives each read to `tx`,
+/// until its receiver goes. A read that fails gives nothing: the tab
+/// keeps the names of the last read. With no names, each project has
+/// the name after the slash.
+async fn read_names(api: Api, me: SessionUri, tx: mpsc::UnboundedSender<Came>) {
+    while !tx.is_closed() {
+        if let Ok(names) = api.names(&me).await {
+            let _ = tx.send(Came::Names(names));
+        }
+        tokio::time::sleep(READ_EVERY).await;
+    }
+}
+
 /// Joins `thread` as `me`, and follows it until the receiver of `tx`
-/// goes: the names of the chat first, then the history, then each new
-/// line, one time ([`crate::catch_up`]). A join that fails tries again
-/// after [`STREAM_RETRY`]. A riff-server that gives no names gives none:
-/// then each project has the name after the slash.
+/// goes: the history first, then each new line, one time
+/// ([`crate::catch_up`]). A join that fails tries again after
+/// [`STREAM_RETRY`].
 async fn follow(api: &Api, me: &SessionUri, thread: &ThreadName, tx: &mpsc::UnboundedSender<Came>) {
     while let Err(e) = api.join(me, thread).await {
         let fault = safe(&format!("riff: cannot join the chat: {e:#}"));
@@ -858,9 +958,6 @@ async fn follow(api: &Api, me: &SessionUri, thread: &ThreadName, tx: &mpsc::Unbo
             return;
         }
         tokio::time::sleep(STREAM_RETRY).await;
-    }
-    if let Ok(names) = api.names(me).await {
-        let _ = tx.send(Came::Names(names));
     }
     let shown = Arc::new(Mutex::new(Shown::new(Start::History)));
     let connect = || {
@@ -1066,7 +1163,7 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub(super) fn on_chat(&mut self, key: Key) -> Option<Action> {
-        match key {
+        let action = match key {
             Key::Send => self.send(),
             Key::Log => {
                 self.chat.focus = Focus::Log;
@@ -1080,6 +1177,15 @@ impl State {
                 self.chat.scroll_by(scroll);
                 None
             }
+            Key::Pick => {
+                self.pick();
+                None
+            }
+            Key::Close => {
+                let at = self.chat.prompt.at();
+                self.chat.ahead.close(self.chat.prompt.text(), at);
+                None
+            }
             Key::Type(c) if self.chat.prompt.text().len() + c.len_utf8() > POST_MAX => {
                 self.over_limit();
                 None
@@ -1089,7 +1195,23 @@ impl State {
                 self.chat.prompt.edit(edit, columns);
                 None
             }
+        };
+        self.chat.edited();
+        action
+    }
+
+    /// `Tab` or `Enter` while the list of the names shows: the first
+    /// name takes the place of the word ([`List::pick`]). A pick that
+    /// makes the line longer than [`POST_MAX`] stays out, as a key does.
+    fn pick(&mut self) {
+        let Some(list) = self.chat.list() else {
+            return;
+        };
+        if list.pick(self.chat.prompt.text()).0.len() > POST_MAX {
+            self.over_limit();
+            return;
         }
+        self.chat.prompt.pick(&list);
     }
 
     /// A paste in the Chat tab ([`super::State::on_paste`]): the prompt
@@ -1105,6 +1227,7 @@ impl State {
             return;
         }
         self.chat.prompt.paste(&text);
+        self.chat.edited();
     }
 
     /// A paste or a typed key that makes the line longer than
@@ -1210,12 +1333,16 @@ pub fn prompt_note(text: &str) -> Option<(String, bool)> {
 
 /// The note of the Chat tab, with its style: a post that failed, or a
 /// paste or a key that made the line too long, after the last key, else
-/// the note of a command in the prompt ([`prompt_note`],
-/// 01M6VMACJGF4A0ZXC6YK13KNCH).
+/// the keys of the list of the names while it shows, else the note of a
+/// command in the prompt ([`prompt_note`], 01M6VMACJGF4A0ZXC6YK13KNCH,
+/// 01M6Y1ES82XHFGANKZS7AF3CP2).
 pub(super) fn note(state: &State) -> Option<Row<'static>> {
     let chat = &state.chat;
     if let Some(warning) = &chat.warning {
         return Some(Row::styled(safe(warning), WARNING));
+    }
+    if let Some(list) = chat.list() {
+        return Some(Row::raw(list.note()));
     }
     let (note, warning) = prompt_note(chat.prompt.text())?;
     Some(if warning {
@@ -1226,15 +1353,21 @@ pub(super) fn note(state: &State) -> Option<Row<'static>> {
 }
 
 /// The keys of the key line of the Chat tab, with the key that a click
-/// on each presses (01M6VAZKG8FS4HEA9VSA4Z4YF1).
+/// on each presses (01M6VAZKG8FS4HEA9VSA4Z4YF1). While the list of the
+/// names shows, the keys of the list come first.
 pub(super) fn keys(
-    focus: Focus,
+    state: &Chat,
     layout: Layout,
 ) -> Vec<(&'static str, &'static str, Option<FrameKey>)> {
     let wide = layout == Layout::Wide;
     let chat = |key| Some(FrameKey::Chat(key));
     let mut keys = Vec::new();
-    match focus {
+    match state.focus {
+        Focus::Prompt if state.list().is_some() => {
+            keys.push(("Tab", "pick", chat(Key::Pick)));
+            keys.push(("Esc", "close", chat(Key::Close)));
+            keys.push(("Ctrl-C", "quit", Some(FrameKey::Quit)));
+        }
         Focus::Prompt => {
             keys.push(("Enter", "send", chat(Key::Send)));
             keys.push(("Esc", "log", chat(Key::Log)));
@@ -1262,7 +1395,7 @@ pub(super) fn keys(
 
 /// The keys of the Chat tab in the help popup, before the keys of the
 /// frame (01M6VAZKDEQ6951KGPGAMF1SNJ).
-pub const HELP: [(&str, &str); 10] = [
+pub const HELP: [(&str, &str); 11] = [
     ("Enter", "send the line, or go back to the prompt"),
     ("Esc", "leave the prompt: the keys of the tab work"),
     ("i", "go back to the prompt"),
@@ -1272,6 +1405,7 @@ pub const HELP: [(&str, &str); 10] = [
     ("g, G", "the oldest or the newest line, in the log"),
     ("Alt-1 to 6", "open a tab, also from the prompt"),
     ("/me TEXT", "send an action"),
+    ("@", "a list of the names: Tab or Enter picks, Esc closes"),
     ("a paste", "goes into the line, with its new lines"),
 ];
 
@@ -1311,7 +1445,11 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
     let prompt = area.height - 2 - high;
 
     let top = 3;
-    let rows = prompt - top;
+    // The list of the names takes the last rows of the log.
+    let list = chat.list();
+    let listed = list.as_ref().map(list_rows).unwrap_or_default();
+    let over = u16::try_from(listed.len()).map_or(0, |n| n.min(prompt - top));
+    let rows = prompt - top - over;
     for (y, (line, rule)) in (top..).zip(window(chat, columns, area.width, rows)) {
         let place = if rule {
             Rect::new(area.x, area.y + y, area.width, 1)
@@ -1326,6 +1464,12 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
         line,
         line_top: shown.top,
     });
+    // Under the text of the line, after the mark of the prompt.
+    let indent = super::view::width(MARK).min(area.width);
+    for (y, line) in (prompt - over..prompt).zip(listed) {
+        let place = Rect::new(area.x + indent, area.y + y, area.width - indent, 1);
+        view.rows.push(Placed { area: place, line });
+    }
 
     for (y, line) in (prompt..).zip(shown.rows) {
         let place = Rect::new(area.x, area.y + y, area.width, 1);
@@ -1339,6 +1483,30 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
         area: Rect::new(area.x, area.y + prompt, area.width, high),
         key: FrameKey::Chat(Key::Prompt),
     });
+}
+
+/// The rows of the list of the names, of one width: the first name, the
+/// pick of `Tab` and `Enter`, in reverse video, and the count of the
+/// other names dim.
+fn list_rows(list: &List) -> Vec<Row<'static>> {
+    let rows = list.rows();
+    let width = rows
+        .iter()
+        .map(|row| textwrap::core::display_width(row))
+        .max()
+        .unwrap_or(0);
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let pad = " ".repeat(width - textwrap::core::display_width(&row));
+            let style = match i {
+                0 => PICKED,
+                i if i >= list.names.len() => DIM,
+                _ => Style::new(),
+            };
+            Row::from(Span::styled(format!("{row}{pad}"), style))
+        })
+        .collect()
 }
 
 /// The end of the summary row in the wide layout: how a line wakes
@@ -1595,7 +1763,7 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::crossterm::event::{KeyEvent, MouseButton, MouseEvent};
     use riff_core::build::Build;
-    use riff_core::wire::{Kind, RiffOwner};
+    use riff_core::wire::{Kind, NameKind, RiffOwner};
 
     /// The time of the screen tests: 13:20 UTC on 2026-11-06, the day of
     /// the mock-up.
@@ -2557,6 +2725,119 @@ mod tests {
             rows.contains(&" 13:12 <riff> #1608 merged".to_owned()),
             "{rows:#?}"
         );
+    }
+
+    /// The names of the chat from riff-server: a project with a lead that
+    /// runs, and two people.
+    fn names() -> Came {
+        let name = |name: &str, kind, online| ChatName {
+            name: name.into(),
+            kind,
+            online,
+        };
+        Came::Names(vec![
+            name("brett", NameKind::Person, true),
+            name("riff", NameKind::Project, true),
+            name("rita", NameKind::Person, false),
+        ])
+    }
+
+    /// The keys of the prompt with no list.
+    const PROMPT_KEYS: &str = " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit";
+
+    /// `@r` shows the list of the names over the prompt, under the text
+    /// of the line: `riff` first, in reverse video, and the note line
+    /// names the keys (01M6Y1EKGKNW2MH970PDF6PJK1,
+    /// 01M6Y1ES82XHFGANKZS7AF3CP2). `Tab` completes the name, and opens
+    /// no other tab. A name that is not in the list shows no list, and
+    /// still posts.
+    #[test]
+    fn at_r_shows_riff_and_tab_completes_it() {
+        let mut state = mock_up();
+        state.chat_came(names());
+        type_in(&mut state, "ask @r");
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(
+            rows[17..24],
+            [
+                " 13:09 <riff> #1608: the verify passed; the merge waits for CI",
+                " 13:12 <riff> #1608 merged",
+                "  riff  project  online",
+                "  rita  person   offline",
+                "> ask @r",
+                " Tab or Enter picks riff. Esc closes the list.",
+                " Tab pick  Esc close  Ctrl-C quit",
+            ]
+        );
+        let row = |view: &View, y: u16| view.rows.iter().find(|r| r.area.y == y).cloned();
+        assert_eq!(row(&view, 19).unwrap().line.spans[0].style, PICKED);
+        assert_eq!(row(&view, 20).unwrap().line.spans[0].style, Style::new());
+        assert_eq!(view.cursor, Some(Position::new(8, 21)));
+
+        send(&mut state, &view, &press(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(state.tab(), Tab::Chat);
+        assert_eq!(state.chat().prompt().text(), "ask @riff ");
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[19..22], ["", "", "> ask @riff"]);
+        assert_eq!(rows[23], PROMPT_KEYS);
+        assert_eq!(view.cursor, Some(Position::new(12, 21)));
+        type_in(&mut state, "is #12 done?");
+        let enter = press(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(
+            state.input(&enter),
+            Some(Input::Key(FrameKey::Chat(Key::Send)))
+        );
+        assert_eq!(
+            state.on_key(FrameKey::Chat(Key::Send)),
+            Some(Action::Post("ask @riff is #12 done?".into()))
+        );
+
+        // A name that is not in the list: no list, and Enter sends.
+        type_in(&mut state, "@zed hi");
+        assert_eq!(state.chat().list(), None);
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[19..22], ["", "", "> @zed hi"]);
+        assert_eq!(
+            state.on_key(FrameKey::Chat(Key::Send)),
+            Some(Action::Post("@zed hi".into()))
+        );
+    }
+
+    /// `Enter` picks a name too, and sends nothing. `Esc` closes the
+    /// list, and the focus stays in the prompt. A key in the word keeps
+    /// the list closed, and a second `Esc` moves the focus to the log
+    /// (01M6Y1ES82XHFGANKZS7AF3CP2).
+    #[test]
+    fn enter_picks_a_name_and_esc_closes_the_list() {
+        let mut state = mock_up();
+        state.chat_came(names());
+        let (_, view) = drawn(&mut state, 80, 24);
+        let enter = press(KeyCode::Enter, KeyModifiers::NONE);
+        let esc = press(KeyCode::Esc, KeyModifiers::NONE);
+        type_in(&mut state, "@r");
+        assert_eq!(
+            state.input(&enter),
+            Some(Input::Key(FrameKey::Chat(Key::Pick)))
+        );
+        send(&mut state, &view, &enter);
+        assert_eq!(state.chat().prompt().text(), "@riff ");
+
+        type_in(&mut state, "and @b");
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[20..22], ["  brett  person   online", "> @riff and @b"]);
+        send(&mut state, &view, &esc);
+        assert_eq!(state.chat().focus(), Focus::Prompt);
+        assert_eq!(state.chat().list(), None);
+        type_in(&mut state, "r");
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[20..22], ["", "> @riff and @br"]);
+        assert_eq!(rows[23], PROMPT_KEYS);
+        send(&mut state, &view, &esc);
+        assert_eq!(state.chat().focus(), Focus::Log);
+        // A new word with `@` opens a list again.
+        state.on_key(FrameKey::Chat(Key::Prompt));
+        type_in(&mut state, " @b");
+        assert_eq!(state.chat().list().unwrap().first().name, "brett");
     }
 
     /// The help popup of the Chat tab has its keys, then the keys of the
