@@ -1622,13 +1622,6 @@
   A read of all with `after` set to that number gives the next page.
   `riff read` and `riff read --all` read each page. The `read` tool of
   `riff mcp` gives one page, and says how to read the next.
-- **01M51TKZSYR7PH629S29JX00ZD** A read marks as read only the messages
-  that it shows. A read of all with `after` past the read cursor skips
-  the unread messages of other sessions up to `after`, so it keeps the
-  cursor. Those messages stay unread: the next unread read shows them.
-  For example, the `read` tool with no thread gives `after` to each
-  thread, so a direct message that came after the first page of a long
-  repository thread stays unread.
 - **01M58AG7Z2PETHBZG7X9QD8PK5** A read with no thread shows each
   direct thread first, then the other threads in the order of the list
   of the server. `riff read` and the `read` tool of `riff mcp` do the
@@ -2774,7 +2767,7 @@
   instructions `text::MCP_LEAD` and `text::lead_start` say so.
 - **01M5P1XN9EX680KQNKRHWGRWJT** A new watch does not wake a session for
   a message that a `read` returned, also a `read` with `all` and
-  `after`. Such a read keeps the cursor.
+  `after`.
 - **01M5R9S69W7QEMNKV3JRNV0RNB** riff never guesses where a command
   works. It asks git for the repository, the remote origin and the
   worktree. When git says that the directory is outside git, the place
@@ -3008,6 +3001,15 @@
   server runs a newer release, the line that riff starts an update, and
   the wait line. Code that runs in `riff chat` never writes to the
   terminal on its own while the prompt shows.
+- **01M6WBQQEGZKVV49QWCQGTE4CY** A `read` with `all` marks as read each
+  message up to the last message that it returns, also each message
+  before `after`. It never moves the read cursor back. A read with `all`
+  that returns no message of a thread marks none of it. The checkpoint
+  keeps the read cursor, so a new watch after a start of `riff-server`
+  does not wake a session for such a message either. Supersedes
+  01M51TKZSYR7PH629S29JX00ZD, and 01M5P1XN9EX680KQNKRHWGRWJT in part.
+- **01M6WBQQH3Y1K56FQEN161B0D9** The `read` tool of `riff mcp` refuses
+  `after` with no `thread`: a message number is of one thread.
 
 ## Security
 

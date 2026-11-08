@@ -2824,7 +2824,8 @@ riff: 10 messages of the break are lost. The server keeps only the last messages
 ### Read each kept message
 
 `riff read` shows only your unread messages, and not your own posts.
-`--all` shows each message of your threads, your own posts too:
+`--all` shows each message of your threads, your own posts too. It
+marks each message that it shows as read:
 
 ```sh
 riff read --all
@@ -2838,9 +2839,31 @@ older ones. A new lead takes the read marks of the old lead: see
 The server keeps the last 200 messages of each thread. Nobody can read
 an older message. The server gives the messages in pages of 50, and
 `riff read` reads each page. The `read` tool of an agent session gives
-one page. When more messages follow, it says so, with the number of
-the last message. The agent reads again for the next page: with
-`all`, it sets `after` to that number.
+one page. When more messages follow, it says so, with the thread and
+the number of the last message. The agent reads that thread again for
+the next page: with `all`, it sets `after` to that number. A message
+number is of one thread, so the `read` tool refuses `after` with no
+thread.
+
+A read with `all` marks as read each message up to the last one that
+it shows, also the unread messages before `after`. It never moves the
+read mark back. A read with `all` that shows nothing of a thread marks
+nothing in that thread. The server keeps the read marks in its
+checkpoint. So a new watch does not wake you for a message that a
+read with `all` showed, also after a start of the server:
+
+```mermaid
+sequenceDiagram
+    participant L as lead
+    participant S as riff-server
+    S-->>L: wake: message 4738
+    L->>S: read the repository thread, all, after 4737
+    S-->>L: message 4738: the read mark moves to 4738
+    Note over S: the server starts again from its checkpoint
+    L->>S: a new watch
+    Note over S: 4738 is read: no wake
+    S-->>L: wake: message 4739
+```
 
 ### Direct messages come first
 
@@ -2868,16 +2891,14 @@ wake](#one-read-after-a-wake-shows-the-message-of-the-wake).
 
 ### A message that came before the start of a session
 
-A read marks as read only the messages that it shows. A message to a
-session stays unread until a read shows it: also a message that came
-before the session started, or between two pages of its first read.
-The first read of a session with `all` shows each message that came
-before it.
+A message to a session stays unread until a read marks it: also a
+message that came before the session started, or between two pages of
+its first read. The first read of a session with `all` shows each
+message that came before it.
 
-The `read` tool with no thread gives `after` to each thread. So the
-next page can leave out a direct message that came after the first
-page. That page keeps the message unread. The next unread read shows
-it:
+The next page of a read with `all` names its thread. So it marks
+nothing in the other threads: a direct message that came after the
+first page stays unread. The next unread read shows it:
 
 ```mermaid
 sequenceDiagram
@@ -2886,8 +2907,8 @@ sequenceDiagram
     participant L as lead
     W->>S: read, all (page 1 of the repository thread)
     L->>S: tell W: request: claim issue-12
-    W->>S: read, all, after 50 (page 2)
-    S-->>W: page 2, nothing of the direct thread: it stays unread
+    W->>S: read the repository thread, all, after 50 (page 2)
+    S-->>W: page 2: the direct thread stays unread
     W->>S: read
     S-->>W: direct thread: request: claim issue-12
 ```
@@ -3317,7 +3338,7 @@ chat
 
 chat
 [128] ann@heron (verified): ...
-More messages follow. Read this thread again. With all, set after to 177.
+More messages follow. Read the thread chat again. With all, set after to 177.
 ```
 
 One read after a wake is enough: the next watch does not wake again

@@ -351,6 +351,14 @@ page [Requirements](requirements.md) holds the rules of today.
   the MustClear mark and the time of the last fresh start of each
   session. A start from a checkpoint gives the life cycle of a full
   replay. Superseded by 3.0 (01M4Z60B7NW4GHKGCYZZDG26R6).
+- **01M51TKZSYR7PH629S29JX00ZD** A read marks as read only the messages
+  that it shows. A read of all with `after` past the read cursor skips
+  the unread messages of other sessions up to `after`, so it keeps the
+  cursor. Those messages stay unread: the next unread read shows them.
+  For example, the `read` tool with no thread gives `after` to each
+  thread, so a direct message that came after the first page of a long
+  repository thread stays unread. Superseded by
+  01M6WBQQEGZKVV49QWCQGTE4CY.
 
 ## Cloud
 

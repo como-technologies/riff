@@ -262,10 +262,11 @@ async fn a_worker_asks_the_lead_and_gets_the_answer() {
 /// A tell of the lead to a new worker reaches it, before its first read
 /// and between two pages of its start read (#651). The repository
 /// thread is longer than one page. The first read with no thread and
-/// `all` shows a tell that came before it. The next page, a read of all
-/// after a seq of the repository thread, shows nothing of a tell that
-/// came after the first page: it keeps the tell unread
-/// (01M51TKZSYR7PH629S29JX00ZD), and the next read shows it.
+/// `all` shows a tell that came before it. The next page names the
+/// repository thread: a read with `after` and no thread is refused
+/// (01M6WBQQH3Y1K56FQEN161B0D9). That page marks the repository thread
+/// only (01M6WBQQEGZKVV49QWCQGTE4CY): a tell that came after the first
+/// page stays unread, and the next read shows it.
 #[tokio::test]
 async fn a_tell_to_a_new_worker_stays_unread_until_a_read_shows_it() {
     use riff_state::state::PAGE;
@@ -308,7 +309,18 @@ async fn a_tell_to_a_new_worker_stays_unread_until_a_read_shows_it() {
     assert!(first.contains(&more) && !first.contains(direct), "{first}");
     let tell = serde_json::json!({ "session": "w2", "body": "request: claim issue-12" });
     call(&lead, "tell", tell).await;
-    let next = serde_json::json!({ "all": true, "after": PAGE });
+    let (refused, is_error) = call(
+        &w2,
+        "read",
+        serde_json::json!({ "all": true, "after": PAGE }),
+    )
+    .await;
+    assert!(is_error, "{refused}");
+    assert!(
+        refused.contains("after needs a thread: a message number is of one thread"),
+        "{refused}"
+    );
+    let next = serde_json::json!({ "thread": repo.to_string(), "all": true, "after": PAGE });
     let (second, _) = call(&w2, "read", next).await;
     assert!(
         second.contains(&format!("history {}", PAGE + 10)),

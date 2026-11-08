@@ -1459,6 +1459,11 @@ impl Api {
     /// As [`Api::inbox`], but it reads one page of each thread
     /// (01M3TBZBX140GJWCV5GZ73Q5Z5). With `all`, the page starts after
     /// the seq `after`. [`Inbox::next`] tells when more messages follow.
+    /// A seq is of one thread, so `after` needs `thread`
+    /// (01M6WBQQH3Y1K56FQEN161B0D9): a read of all marks each message up
+    /// to the last one of its page (01M6WBQQEGZKVV49QWCQGTE4CY), and
+    /// the seq of one thread would pass over the unread messages of
+    /// another.
     pub async fn inbox_page(
         &self,
         me: &SessionUri,
@@ -1466,6 +1471,9 @@ impl Api {
         all: bool,
         after: Option<u64>,
     ) -> Result<Vec<Inbox>> {
+        if after.is_some() && thread.is_none() {
+            bail!("after needs a thread: a message number is of one thread");
+        }
         self.inbox_pages(me, thread, all, after, false).await
     }
 

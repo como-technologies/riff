@@ -150,7 +150,8 @@ enum Command {
         /// it.
         #[arg(long, short)]
         thread: Option<String>,
-        /// Show the full history, not only the unread messages.
+        /// Show the full history, not only the unread messages. It marks
+        /// each message as read.
         #[arg(long)]
         all: bool,
     },
