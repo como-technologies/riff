@@ -1471,6 +1471,12 @@ enum RelayCommand {
     /// prompt ends the block of the lead. It prints nothing, and always
     /// exits with status 0.
     Prompt,
+    /// Run the Stop hook of the session
+    ///
+    /// It tells the riff daemon that the turn of claude ended. An old lead
+    /// starts again on the new riff at the end of its turn. It prints
+    /// nothing, and always exits with status 0.
+    Idle,
 }
 
 #[derive(Subcommand)]
@@ -2746,8 +2752,9 @@ async fn update_check() -> Result<i32> {
     }
 }
 
-/// The longest wait of `riff relay prompt` for the daemon: the prompt
-/// of the person waits for the hook.
+/// The longest wait of `riff relay prompt` and `riff relay idle` for the
+/// daemon: the prompt of the person, and the end of the turn, wait for
+/// the hook.
 const PROMPT_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// `riff relay`: the riff in a session of the riff daemon
@@ -2804,6 +2811,24 @@ async fn relay_command(
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => eprintln!("riff: cannot tell the daemon of the prompt: {e:#}"),
                 Err(_) => eprintln!("riff: the daemon did not take the prompt in time"),
+            }
+            Ok(())
+        }
+        Some(RelayCommand::Idle) => {
+            // The hook input says nothing that riff needs. An exit with
+            // status 2 would hold the turn open: it always exits with 0.
+            let mut stdin = String::new();
+            let _ = std::io::stdin().read_to_string(&mut stdin);
+            let told = async {
+                let socket = riff::session_relay::socket_here()?;
+                riff::session_relay::idle(&socket).await
+            };
+            match tokio::time::timeout(PROMPT_WAIT, told).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    eprintln!("riff: cannot tell the daemon of the end of the turn: {e:#}")
+                }
+                Err(_) => eprintln!("riff: the daemon did not take the end of the turn in time"),
             }
             Ok(())
         }

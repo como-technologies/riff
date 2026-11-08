@@ -5731,9 +5731,9 @@ of this part when they merge.
   the file that its container binds at `/opt/riff/riff` is not the file
   on disk: `riff update` replaced it. The daemon looks when it takes up
   the sessions that run, and each minute. It starts only a lead that is
-  idle: the transcript of its conversation got no write for 5 minutes. A
-  lead in a turn waits for the end of the turn. Supersedes in part
-  01M4Z60B800BH5BHX0H9JVDG6A and 01M5SNV7H3739PXW73H14XM4B8.
+  idle (01M6WBX2FQEHW92Y1A5HM4H8BM). A lead in a turn waits for the end
+  of the turn. Supersedes in part 01M4Z60B800BH5BHX0H9JVDG6A and
+  01M5SNV7H3739PXW73H14XM4B8.
 - **01M5TC2919TB9XPF42YFNJBP79** The daemon stops the container of an
   old lead and starts it again with the same session, the same clone and
   the same Claude folder. The new container binds the riff on disk. Its
@@ -5804,6 +5804,30 @@ of this part when they merge.
   session ID. A session that started with no `--model` gets no `--model`
   in the terminal. This supersedes 01M501PA6W0NCG9JEK017F9304 in part:
   the flags of `claude`.
+- **01M6WBX2FQEHW92Y1A5HM4H8BM** The `Stop` hook of each container
+  session runs `/opt/riff/riff relay idle` at the end of each turn of
+  `claude`. It tells the riff daemon on the socket of the session,
+  prints nothing, and always exits with status 0. For the lead, the
+  daemon writes the time of the end in the file `turn-ended` of the
+  folder of the lead. A lead is idle when its transcript got no write
+  later than 5 s after that end, or got no write for 5 minutes. At the
+  end of a turn of an old lead, the daemon looks again after 2 s, so the
+  lead starts again on the new riff at the first end of its turn. This
+  supersedes 01M5TC24PB3YC2CC8BA275WSEN in part: when a lead is idle.
+- **01M6WBX2FT7Y9FV9VGGPDBKAHM** The daemon starts no lead again while
+  the daemon itself runs a riff that `riff update` replaced on disk. The
+  daemon starts again on the new riff first, and the new daemon starts
+  the lead again. So a lead never runs a newer riff than the daemon of
+  its host.
+- **01M6WBX2FYPH0K8RAKXMRKDGX7** In a container, when a riff command
+  cannot read the answer of the riff daemon, it reads the build of the
+  daemon from the status of the daemon. The error names the build of the
+  daemon, the build of the command, and the fault. With a newer daemon,
+  it begins with "the riff daemon runs a newer riff: wait for the
+  restart of this container", and its next step is to end the turn and
+  run the command again after the restart. With an older daemon, the
+  next step is to wait for the new start of the daemon, or `riff daemon
+  restart` on the host. With the same build, it is a fault of riff.
 
 ### The first run
 
@@ -6679,7 +6703,8 @@ of this part when they merge.
   each watch each minute, but at the watch of a wave alone
   (01M6GYN9526HAYVKJC4HS858TH). When an operation ends, with a success
   or a failure, the daemon posts one message to the lead of the
-  repository: the result, the failed jobs and the next step. Then the
+  repository: the result, the failed jobs and the next step. A deploy
+  that passed has its own time (01M6WBX2G1PX11D89HNBAZ6MCM). Then the
   watch goes, and no second message comes for the same end. A watch
   whose state riff cannot read goes on.
 - **01M5RGD0XTR4X1MEV726HMCEGQ** The chat line of `riff release publish`
@@ -6769,6 +6794,17 @@ of this part when they merge.
   says that the limit is out, the time when it starts again in UTC and
   in minutes, and "Run the same command again then." When riff cannot
   read the reset, the time is a guess and the error says so.
+- **01M6WBX2G1PX11D89HNBAZ6MCM** When the job `Deploy` passed, the watch
+  of the deploy holds its message to the lead and its note to the other
+  leads until the riff daemon of its host runs the release or a newer
+  riff, and the lead of the repository on that host runs the riff of the
+  daemon. Then one look posts both. The message says that the container
+  of the lead runs the new riff, and its next step is `riff release
+  check vX.Y.Z`. A host with `update.auto` off does not wait for its
+  daemon, and a host with no lead of the repository does not wait for a
+  lead. After 30 minutes the watch posts all the same, and the message
+  says what it waited for. This supersedes 01M5RGD0RTXYA7FF5K1TH72MGX in
+  part: the time of the message of a deploy that passed.
 
 ### The real-session test
 

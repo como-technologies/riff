@@ -39,7 +39,7 @@
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M5NJ87NXF6077Y9W32840BR8, 01M5NJ87YEHHGJBANM7CRYV56Z |
-//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle (its transcript got no write for 5 minutes: [`quiet`]), and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
 //! | The workers | none: `riff lead start` does not join the host, so it starts no wave. A host gives workers after `riff join`, and `riff lead start` says so when it starts a lead on a host with no part workers ([`gives_workers`]) | 01M6QVSJC4V3Z3NB6MJW4XGJSR |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host (`Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V |
 //! | The stop | `riff lead stop`: the lead writes its notes ([`stop_notes`]), then the daemon ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, and an update starts the lead no more | 01M6QVSWTARPKP59X8AJBBK69X, 01M6QVSWWM3EA4ZS47XCKV38D0 |
@@ -441,17 +441,65 @@ pub async fn old(runtime: &impl Runtime, name: &str) -> bool {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn quiet(record: &daemon::Record, idle: std::time::Duration) -> bool {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    let written = crate::usage::transcripts_in(&record.folder.join("claude"), &record.live.session)
-        .iter()
-        .filter_map(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok())
-        .max();
-    let started =
-        UNIX_EPOCH + Duration::from_millis(u64::try_from(record.live.since_ms).unwrap_or(0));
-    let last = written.map_or(started, |written| written.max(started));
-    SystemTime::now()
+    let started = started(record);
+    let last = written(record).map_or(started, |written| written.max(started));
+    std::time::SystemTime::now()
         .duration_since(last)
         .is_ok_and(|age| age >= idle)
+}
+
+/// The start of the container of the lead of `record`.
+fn started(record: &daemon::Record) -> std::time::SystemTime {
+    let since = u64::try_from(record.live.since_ms).unwrap_or(0);
+    std::time::UNIX_EPOCH + std::time::Duration::from_millis(since)
+}
+
+/// The last write to the transcript of the lead of `record`, if it has
+/// one.
+fn written(record: &daemon::Record) -> Option<std::time::SystemTime> {
+    crate::usage::transcripts_in(&record.folder.join("claude"), &record.live.session)
+        .iter()
+        .filter_map(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok())
+        .max()
+}
+
+/// The file of the end of the last turn of a lead, in the folder of the
+/// lead: the daemon writes it at each `Stop` hook ([`end_turn`],
+/// 01M6WBX2FQEHW92Y1A5HM4H8BM).
+pub const TURN_ENDED: &str = "turn-ended";
+
+/// How long after the end of a turn `claude` may still write the
+/// transcript of that turn, for example the summary of the hooks of the
+/// end. A later write is a new turn (01M6WBX2FQEHW92Y1A5HM4H8BM).
+pub const TURN_TAIL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Keeps the end of a turn of the lead whose folder is `folder`: the
+/// file [`TURN_ENDED`], written now, with the time in milliseconds since
+/// the epoch (01M6WBX2FQEHW92Y1A5HM4H8BM).
+pub fn end_turn(folder: &Path) -> Result<()> {
+    let path = folder.join(TURN_ENDED);
+    std::fs::write(&path, daemon::now_ms().to_string())
+        .with_context(|| format!("cannot write {}", path.display()))
+}
+
+/// True when the lead of `record` is between two turns
+/// (01M6WBX2FQEHW92Y1A5HM4H8BM): a turn of its container ended
+/// ([`end_turn`]), and its transcript got no write later than
+/// [`TURN_TAIL`] after that end. A lead from a riff with no `Stop` hook
+/// never is: [`quiet`] holds for it.
+pub fn between_turns(record: &daemon::Record) -> bool {
+    let Ok(ended) = std::fs::metadata(record.folder.join(TURN_ENDED)).and_then(|m| m.modified())
+    else {
+        return false;
+    };
+    ended >= started(record) && written(record).is_none_or(|written| written <= ended + TURN_TAIL)
+}
+
+/// True when no turn of the lead of `record` runs: it is between two
+/// turns ([`between_turns`]), or its transcript got no write in `quiet`
+/// ([`quiet`], 01M6WBX2FQEHW92Y1A5HM4H8BM).
+pub fn idle(record: &daemon::Record, quiet: std::time::Duration) -> bool {
+    between_turns(record) || self::quiet(record, quiet)
 }
 
 /// Attaches the terminal of this process to the lead `name` with
@@ -1373,5 +1421,73 @@ mod tests {
     async fn an_attach_to_a_lead_that_does_not_run_fails() {
         let fake = Fake::default().with_image("img");
         assert!(attach(&fake, NAME).await.is_err());
+    }
+
+    /// The transcript of the lead of `record`, with its last write `ago`
+    /// before now.
+    fn written_ago(record: &daemon::Record, ago: std::time::Duration) {
+        let project = record.folder.join("claude/projects/-d-clone");
+        std::fs::create_dir_all(&project).unwrap();
+        let file = std::fs::File::create(project.join("s1.jsonl")).unwrap();
+        file.set_modified(std::time::SystemTime::now() - ago)
+            .unwrap();
+    }
+
+    /// The end of the last turn of the lead of `record`, `ago` before now.
+    fn ended_ago(record: &daemon::Record, ago: std::time::Duration) {
+        end_turn(&record.folder).unwrap();
+        let file = std::fs::File::options()
+            .write(true)
+            .open(record.folder.join(TURN_ENDED))
+            .unwrap();
+        file.set_modified(std::time::SystemTime::now() - ago)
+            .unwrap();
+    }
+
+    /// 01M6WBX2FQEHW92Y1A5HM4H8BM: a lead is idle at the end of its turn,
+    /// also when its transcript got a write a moment ago. A write after
+    /// the tail of the turn is a new turn. A lead with no end of a turn
+    /// keeps the rule of the quiet transcript.
+    #[test]
+    fn a_lead_is_idle_at_the_end_of_its_turn() {
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        let record = record_in(dir.path());
+        let quiet = Duration::from_secs(300);
+
+        // No `Stop` hook yet: a write 10 s ago is a turn.
+        written_ago(&record, Duration::from_secs(10));
+        assert!(!between_turns(&record));
+        assert!(!idle(&record, quiet));
+
+        // The turn ended 8 s ago, and `claude` wrote the end of the turn
+        // a moment after the hook: the lead is between two turns.
+        ended_ago(&record, Duration::from_secs(8));
+        written_ago(&record, Duration::from_secs(7));
+        assert!(between_turns(&record));
+        assert!(idle(&record, quiet));
+        let kept: i64 = std::fs::read_to_string(dir.path().join(TURN_ENDED))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(kept > 0);
+
+        // A wake started a new turn: a write after the tail.
+        written_ago(&record, Duration::from_secs(1));
+        assert!(!between_turns(&record));
+        assert!(!idle(&record, quiet));
+
+        // The end of a turn of an older container does not count.
+        let mut again = record.clone();
+        again.live.since_ms = daemon::now_ms();
+        ended_ago(&again, Duration::from_secs(60));
+        std::fs::remove_dir_all(dir.path().join("claude")).unwrap();
+        assert!(!between_turns(&again));
+
+        // With no end of a turn, the quiet rule still holds.
+        std::fs::remove_file(dir.path().join(TURN_ENDED)).unwrap();
+        written_ago(&record, Duration::from_secs(600));
+        assert!(!between_turns(&record));
+        assert!(idle(&record, quiet));
     }
 }

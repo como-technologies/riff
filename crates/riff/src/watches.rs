@@ -94,8 +94,34 @@
 //!     Runs --> Passed: the job Deploy passed
 //!     Runs --> Failed: the job Deploy failed
 //!     Waits --> Failed: a job failed
-//!     Passed --> [*]: message to the lead: next: riff release check
+//!     Passed --> Passed: the daemon or the lead runs an old riff, up to 30 minutes
+//!     Passed --> [*]: the daemon and the lead run the new riff: message to the lead: next: riff release check
 //!     Failed --> [*]: message to the lead: the jobs, next: riff release retry
+//! ```
+//!
+//! At "Passed" the message waits for the new riff
+//! (01M6WBX2G1PX11D89HNBAZ6MCM): the lead runs `riff release check` in
+//! its container, and an old riff there cannot read each answer of a new
+//! daemon. The daemon gives each look its own facts ([`Riffs`]): its
+//! version, whether `riff update` replaced its binary, `update.auto`, and
+//! whether each of its leads runs an old riff. The message goes when the
+//! daemon runs the release, or a newer riff, and the lead of the
+//! repository on this host runs the riff of the daemon
+//! ([`Riffs::waits_for`]). A host with `update.auto` off does not wait for
+//! its daemon, and a host with no lead of the repository does not wait for
+//! a lead. After [`DEPLOY_SETTLE`] the message goes all the same, and says
+//! what it waited for.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant W as the watch of the deploy
+//!     participant D as riff daemon (the host)
+//!     participant L as the lead (its container)
+//!     Note over W: the job Deploy passed: the message waits
+//!     D->>D: riff update, then a new start on the release
+//!     L->>D: the end of a turn (the Stop hook)
+//!     D->>L: a new container on the release
+//!     W->>L: the deploy passed, your container runs the release. next: riff release check
 //! ```
 //!
 //! At "Waits" the lead gets one message, and the owner gets the line
@@ -162,6 +188,89 @@ pub fn every() -> Duration {
 /// The time between two lines to the owner while a deploy waits for the
 /// approval (01M58KMM3NFGJRW4CCV50KJQB2, 01M5RGD0XTR4X1MEV726HMCEGQ).
 pub const REMIND_EVERY: Duration = Duration::from_secs(4 * 60 * 60);
+
+/// The longest wait of the message of a deploy that passed for the new riff
+/// of the daemon and of the lead (01M6WBX2G1PX11D89HNBAZ6MCM). After it,
+/// the watch posts all the same, and says what it waited for.
+pub const DEPLOY_SETTLE: Duration = Duration::from_secs(30 * 60);
+
+/// What the daemon of the watches and its leads run, for the time of the
+/// message of a deploy that passed (01M6WBX2G1PX11D89HNBAZ6MCM). The
+/// default waits for nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Riffs {
+    /// The version of the riff of the daemon.
+    pub daemon: Option<riff_core::build::Semver>,
+    /// True when `riff update` replaced the binary of the daemon: it starts
+    /// again on the new riff after its last session.
+    pub replaced: bool,
+    /// True when the host updates riff by itself (`update.auto`), so the
+    /// daemon gets the release.
+    pub auto: bool,
+    /// The repository of each lead on the host, and true when the lead runs
+    /// an old riff ([`crate::lead::old`]): the daemon starts it again at the
+    /// end of its turn.
+    pub leads: BTreeMap<String, bool>,
+}
+
+impl Riffs {
+    /// What the message of the passed deploy of `tag` in `repo` waits for,
+    /// or `None` when it goes now. A host with `update.auto` off does not
+    /// wait for its daemon, and a host with no lead of `repo` does not
+    /// wait for a lead.
+    ///
+    /// ```
+    /// use std::collections::BTreeMap;
+    /// use riff::watches::Riffs;
+    ///
+    /// let riffs = Riffs {
+    ///     daemon: Some("4.11.0".parse().unwrap()),
+    ///     replaced: false,
+    ///     auto: true,
+    ///     leads: BTreeMap::from([("o/r".to_owned(), false)]),
+    /// };
+    /// assert_eq!(riffs.waits_for("o/r", "v4.11.0"), None);
+    /// // A rollback to an older release waits for no daemon.
+    /// assert_eq!(riffs.waits_for("o/r", "v4.10.0"), None);
+    /// let why = riffs.waits_for("o/r", "v4.12.0").unwrap();
+    /// assert!(why.contains("still runs v4.11.0, not v4.12.0"), "{why}");
+    /// let off = Riffs { auto: false, ..riffs.clone() };
+    /// assert_eq!(off.waits_for("o/r", "v4.12.0"), None);
+    ///
+    /// let old = Riffs { leads: BTreeMap::from([("o/r".to_owned(), true)]), ..riffs.clone() };
+    /// let why = old.waits_for("o/r", "v4.11.0").unwrap();
+    /// assert!(why.contains("your container still runs an old riff"), "{why}");
+    /// assert_eq!(old.waits_for("o/other", "v4.11.0"), None);
+    ///
+    /// let replaced = Riffs { replaced: true, ..riffs };
+    /// let why = replaced.waits_for("o/r", "v4.11.0").unwrap();
+    /// assert!(why.contains("starts again on the new riff"), "{why}");
+    /// ```
+    pub fn waits_for(&self, repo: &str, tag: &str) -> Option<String> {
+        if self.replaced {
+            return Some(
+                "the riff daemon of this host still runs an old riff: it starts again on the new \
+                 riff after its last session"
+                    .to_owned(),
+            );
+        }
+        if let (true, Some(daemon), Ok(release)) = (self.auto, self.daemon, cycle::tag_version(tag))
+            && daemon < release
+        {
+            return Some(format!(
+                "the riff daemon of this host still runs v{daemon}, not {tag}"
+            ));
+        }
+        if self.leads.get(repo) == Some(&true) {
+            return Some(
+                "your container still runs an old riff: riff starts it again on the riff of the \
+                 daemon at the end of your turn"
+                    .to_owned(),
+            );
+        }
+        None
+    }
+}
 
 /// The state of a CI run that a command saw before it started an
 /// operation: the watch ignores it until the state moves.
@@ -262,6 +371,10 @@ pub struct Seen {
     pub reminded_ms: Option<i64>,
     /// [`Op::Wave`]: the title of the wave that had an open item.
     pub wave: Option<String>,
+    /// [`Op::Deploy`]: the first look that saw the job `Deploy` passed, in
+    /// milliseconds since the epoch. The message waits for the new riff
+    /// from then on ([`Riffs::waits_for`], 01M6WBX2G1PX11D89HNBAZ6MCM).
+    pub deployed_ms: Option<i64>,
     /// The last fault that the lead got, until a look reads the forge.
     pub fault: Option<String>,
 }
@@ -591,8 +704,14 @@ impl Watches {
     /// `lookout`. The error is a file that riff cannot read or write. It
     /// gives `true` when no watch but the watch of a wave stands: that
     /// watch ends at no time, and it needs no quick look
-    /// ([`Watches::pause`], #1549).
-    pub async fn look_all(&self, lookout: &Arc<dyn Lookout>, now_ms: i64) -> Result<bool> {
+    /// ([`Watches::pause`], #1549). `riffs` is what the daemon and its leads
+    /// run, for a deploy that passed ([`Riffs`]).
+    pub async fn look_all(
+        &self,
+        lookout: &Arc<dyn Lookout>,
+        now_ms: i64,
+        riffs: &Riffs,
+    ) -> Result<bool> {
         self.keep_waves(now_ms)?;
         // No look while a limit of GitHub is out: each call would fail, and
         // the lead would hear the fault (#1557).
@@ -615,9 +734,11 @@ impl Watches {
                 }
             };
             let seen = {
-                let (lookout, wave) = (lookout.clone(), wave.clone());
-                tokio::task::spawn_blocking(move || read_all(&*lookout, &wave, watches, now_ms))
-                    .await?
+                let (lookout, wave, riffs) = (lookout.clone(), wave.clone(), riffs.clone());
+                tokio::task::spawn_blocking(move || {
+                    read_all(&*lookout, &wave, watches, now_ms, &riffs)
+                })
+                .await?
             };
             let mut failed = Vec::new();
             for (watch, result) in seen {
@@ -780,6 +901,7 @@ fn read_all(
     wave: &Wave,
     watches: Vec<Watch>,
     now_ms: i64,
+    riffs: &Riffs,
 ) -> Vec<(Watch, Result<Outcome>)> {
     let fetch = watches.iter().any(|w| w.op != Op::Wave);
     let forge = match lookout.forge(wave, fetch) {
@@ -795,7 +917,7 @@ fn read_all(
     watches
         .into_iter()
         .map(|mut watch| {
-            let result = look(&*forge, &mut watch, now_ms);
+            let result = look(&*forge, &mut watch, now_ms, riffs);
             (watch, result)
         })
         .collect()
@@ -847,17 +969,36 @@ fn jobs_text(names: &[String], ended: &str) -> String {
 }
 
 /// Looks at the forge for `watch` at `now_ms`, and says what to post.
-/// It changes `watch.seen` for what it decided. It fails when the forge
-/// does not answer.
-pub fn look(forge: &dyn Forge, watch: &mut Watch, now_ms: i64) -> Result<Outcome> {
+/// `riffs` is what the daemon and its leads run ([`Riffs`]). It changes
+/// `watch.seen` for what it decided. It fails when the forge does not
+/// answer.
+pub fn look(forge: &dyn Forge, watch: &mut Watch, now_ms: i64, riffs: &Riffs) -> Result<Outcome> {
     match watch.op.clone() {
         Op::Pull { tag, number } => look_pull(forge, &mut watch.seen, &tag, number),
         Op::Test { tag, commit } => look_test(forge, &tag, &commit),
         Op::Deploy { tag, stale } => {
-            look_deploy(forge, &mut watch.seen, &watch.repo, &tag, stale, now_ms)
+            let deploy = Deployed {
+                repo: &watch.repo,
+                tag: &tag,
+                now_ms,
+                riffs,
+            };
+            look_deploy(forge, &mut watch.seen, &deploy, stale)
         }
         Op::Wave => look_wave(forge, &mut watch.seen),
     }
+}
+
+/// The facts of a look at the watch of a deploy.
+struct Deployed<'a> {
+    /// The repository, as `OWNER/REPO`.
+    repo: &'a str,
+    /// The tag of the release.
+    tag: &'a str,
+    /// The time of the look, in milliseconds since the epoch.
+    now_ms: i64,
+    /// What the daemon and its leads run.
+    riffs: &'a Riffs,
 }
 
 fn say(body: String, end: bool) -> Outcome {
@@ -952,11 +1093,10 @@ fn look_test(forge: &dyn Forge, tag: &str, commit: &str) -> Result<Outcome> {
 fn look_deploy(
     forge: &dyn Forge,
     seen: &mut Seen,
-    repo: &str,
-    tag: &str,
+    deployed: &Deployed,
     stale: Option<Stale>,
-    now_ms: i64,
 ) -> Result<Outcome> {
+    let (repo, tag, now_ms) = (deployed.repo, deployed.tag, deployed.now_ms);
     let Some(deploy) = forge.deploy(tag)? else {
         return Ok(Outcome::default());
     };
@@ -1014,9 +1154,31 @@ fn look_deploy(
             })
         }
         DeployState::Passed => {
+            // The message waits for the new riff of the daemon and of the
+            // lead (01M6WBX2G1PX11D89HNBAZ6MCM).
+            let since = *seen.deployed_ms.get_or_insert(now_ms);
+            let waited = now_ms.saturating_sub(since);
+            let why = deployed.riffs.waits_for(repo, tag);
+            let settle = i64::try_from(DEPLOY_SETTLE.as_millis()).unwrap_or(i64::MAX);
+            if why.is_some() && waited < settle {
+                return Ok(Outcome::default());
+            }
             let next = next_of(forge, tag, &format!("riff release check {tag}"));
+            let riff = match (why, deployed.riffs.leads.contains_key(repo)) {
+                (Some(why), _) => format!(
+                    " riff waited {} minutes for the new riff, but {why}.",
+                    waited / 60_000
+                ),
+                (None, true) => match deployed.riffs.daemon {
+                    Some(daemon) => format!(
+                        " Your container runs v{daemon}, as the riff daemon of this host does."
+                    ),
+                    None => " Your container runs the riff of the riff daemon of this host.".into(),
+                },
+                (None, false) => String::new(),
+            };
             Ok(say_and_tell_leads(
-                format!("The deploy of {tag} passed: {run}. next: {next}"),
+                format!("The deploy of {tag} passed: {run}.{riff} next: {next}"),
                 crate::text::release_note(Step::Deployed, tag, &hold::by(repo)),
                 true,
             ))
@@ -1111,6 +1273,8 @@ mod tests {
         /// The limit of GitHub that waits, and whether it starts only after
         /// the first forge (a call that runs into the limit).
         limit: Mutex<Option<(crate::ghcalls::Wait, bool)>>,
+        /// What the daemon and its leads run.
+        riffs: Mutex<Riffs>,
     }
 
     impl Ground {
@@ -1126,7 +1290,12 @@ mod tests {
                 holds: Mutex::default(),
                 fetches: Mutex::default(),
                 limit: Mutex::default(),
+                riffs: Mutex::default(),
             })
+        }
+
+        fn riffs(&self, change: impl FnOnce(&mut Riffs)) {
+            change(&mut self.riffs.lock().unwrap());
         }
 
         fn forge(&self, change: impl FnOnce(&mut Fake)) {
@@ -1226,10 +1395,15 @@ mod tests {
     const MINUTE: i64 = 60_000;
 
     /// One look of a new `Watches` on the folder: a daemon that started
-    /// again reads the file.
+    /// again reads the file. The daemon and its leads run what
+    /// `ground.riffs` holds.
     async fn look(dir: &Path, ground: &Arc<Ground>, now_ms: i64) {
+        let riffs = ground.riffs.lock().unwrap().clone();
         let ground: Arc<dyn Lookout> = ground.clone();
-        Watches::new(dir).look_all(&ground, now_ms).await.unwrap();
+        Watches::new(dir)
+            .look_all(&ground, now_ms, &riffs)
+            .await
+            .unwrap();
     }
 
     fn watch(dir: &Path, op: Op) {
@@ -1634,6 +1808,101 @@ mod tests {
         assert!(kept(dir.path()).is_empty());
     }
 
+    /// #1693, 01M6WBX2G1PX11D89HNBAZ6MCM: the message of a deploy that
+    /// passed, and the note to the other leads, wait until the daemon runs
+    /// the release and the lead runs the riff of the daemon. Each look is
+    /// a new daemon that reads the file.
+    #[tokio::test]
+    async fn a_deploy_that_passed_waits_for_the_new_riff_of_the_daemon_and_the_lead() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        ground.forge(|f| {
+            f.deploy = deploy(DeployState::Passed, &[]);
+            f.tags = vec!["v3.3.0".into()];
+        });
+        let version = |v: &str| Some(v.parse().unwrap());
+        ground.riffs(|r| {
+            r.daemon = version("3.2.0");
+            r.auto = true;
+            r.leads = BTreeMap::from([(REPO.to_owned(), false)]);
+        });
+        watch(dir.path(), deploy_op(None));
+
+        // The daemon still runs the old release.
+        look(dir.path(), &ground, MINUTE).await;
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
+
+        // `riff update` replaced its binary: it starts again soon.
+        ground.riffs(|r| r.replaced = true);
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
+
+        // The new daemon runs the release, and the lead the old riff.
+        ground.riffs(|r| {
+            r.replaced = false;
+            r.daemon = version("3.3.0");
+            r.leads = BTreeMap::from([(REPO.to_owned(), true)]);
+        });
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
+        assert_eq!(kept(dir.path()), [deploy_op(None)]);
+
+        // The end of the turn: the lead runs the riff of the daemon.
+        ground.riffs(|r| r.leads = BTreeMap::from([(REPO.to_owned(), false)]));
+        look(dir.path(), &ground, 4 * MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            [
+                "The deploy of v3.3.0 passed: https://github.com/o/r/actions/runs/9. Your \
+                 container runs v3.3.0, as the riff daemon of this host does. next: riff \
+                 release check v3.3.0"
+            ]
+        );
+        assert_eq!(
+            ground.leads(),
+            [crate::text::release_note(
+                Step::Deployed,
+                "v3.3.0",
+                "the lead of o/r"
+            )]
+        );
+        assert!(kept(dir.path()).is_empty());
+    }
+
+    /// 01M6WBX2G1PX11D89HNBAZ6MCM: after 30 minutes the message goes all
+    /// the same, and says what it waited for.
+    #[tokio::test]
+    async fn a_deploy_that_passed_tells_the_lead_after_30_minutes_what_it_waited_for() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        ground.forge(|f| {
+            f.deploy = deploy(DeployState::Passed, &[]);
+            f.tags = vec!["v3.3.0".into()];
+        });
+        ground.riffs(|r| {
+            r.daemon = Some("3.3.0".parse().unwrap());
+            r.auto = true;
+            r.leads = BTreeMap::from([(REPO.to_owned(), true)]);
+        });
+        watch(dir.path(), deploy_op(None));
+        look(dir.path(), &ground, MINUTE).await;
+        look(dir.path(), &ground, 30 * MINUTE).await;
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
+
+        look(dir.path(), &ground, 31 * MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            [
+                "The deploy of v3.3.0 passed: https://github.com/o/r/actions/runs/9. riff \
+                 waited 30 minutes for the new riff, but your container still runs an old riff: \
+                 riff starts it again on the riff of the daemon at the end of your turn. next: \
+                 riff release check v3.3.0"
+            ]
+        );
+        assert_eq!(ground.leads().len(), 1);
+        assert!(kept(dir.path()).is_empty());
+    }
+
     #[tokio::test]
     async fn a_deploy_that_fails_tells_the_failed_jobs_once() {
         let dir = daemon_dir();
@@ -1796,9 +2065,19 @@ mod tests {
         let dir = daemon_dir();
         let ground: Arc<dyn Lookout> = Ground::new(open_pull());
         let watches = Watches::new(dir.path());
-        assert!(watches.look_all(&ground, MINUTE).await.unwrap());
+        assert!(
+            watches
+                .look_all(&ground, MINUTE, &Riffs::default())
+                .await
+                .unwrap()
+        );
         watch(dir.path(), pull());
-        assert!(!watches.look_all(&ground, 2 * MINUTE).await.unwrap());
+        assert!(
+            !watches
+                .look_all(&ground, 2 * MINUTE, &Riffs::default())
+                .await
+                .unwrap()
+        );
     }
 
     /// 01M6GYN9526HAYVKJC4HS858TH (#1549): a slow wait ends when a command
@@ -1809,7 +2088,12 @@ mod tests {
         let dir = daemon_dir();
         let ground: Arc<dyn Lookout> = Ground::new(open_pull());
         let watches = Watches::new(dir.path());
-        assert!(watches.look_all(&ground, MINUTE).await.unwrap());
+        assert!(
+            watches
+                .look_all(&ground, MINUTE, &Riffs::default())
+                .await
+                .unwrap()
+        );
 
         let every = Duration::from_millis(200);
         let registers = {
@@ -2090,7 +2374,9 @@ mod tests {
         let lookout: Arc<dyn Lookout> = ground.clone();
         let daemon = crate::daemon::Daemon::new(crate::runtime::Fake::default(), dir.to_owned())
             .unwrap()
-            .with_lookout(lookout);
+            .with_lookout(lookout)
+            .with_auto(false)
+            .with_own_replaced(Arc::new(|| false));
         let daemon = Arc::new(daemon);
         let task = daemon.watch_every(Duration::from_millis(20));
         (daemon, task)

@@ -120,7 +120,10 @@
 //! the daemon ([`watch`], 01M501PA04NP79RJQEDP4D7YTM), as `riff watch
 //! --once` does on the host. At each prompt of the person, the hook
 //! `UserPromptSubmit` runs `riff relay prompt` ([`prompt`]): the daemon
-//! ends the block of the lead (01M5GVQQ8NK3RD9CM3VTGXEHZQ).
+//! ends the block of the lead (01M5GVQQ8NK3RD9CM3VTGXEHZQ). At the end of
+//! each turn, the hook `Stop` runs `riff relay idle` ([`idle`]): the
+//! daemon keeps the end of the turn of the lead, and an old lead starts
+//! again on the new riff then (01M6WBX2FQEHW92Y1A5HM4H8BM).
 //!
 //! # Versions
 //!
@@ -1021,6 +1024,25 @@ pub async fn prompt(socket: &Path) -> Result<()> {
     let (read, mut write) = conn.into_split();
     let mut lines = BufReader::new(read).lines();
     send(&mut write, &SessionAsk::Prompt { protocol: PROTOCOL }).await?;
+    while let Some(line) = lines.next_line().await? {
+        match serde_json::from_str::<Say>(&line) {
+            Ok(Say::Done) => return Ok(()),
+            Ok(Say::Failed { error }) => anyhow::bail!("{error}"),
+            _ => {}
+        }
+    }
+    anyhow::bail!("the daemon went away")
+}
+
+/// `riff relay idle` (01M6WBX2FQEHW92Y1A5HM4H8BM): tells the daemon on
+/// the socket at `socket` that the turn of `claude` ended, the `Stop`
+/// hook ([`SessionAsk::Idle`]). The daemon keeps the end for the lead,
+/// and says [`Say::Done`].
+pub async fn idle(socket: &Path) -> Result<()> {
+    let conn = connect(socket).await?;
+    let (read, mut write) = conn.into_split();
+    let mut lines = BufReader::new(read).lines();
+    send(&mut write, &SessionAsk::Idle { protocol: PROTOCOL }).await?;
     while let Some(line) = lines.next_line().await? {
         match serde_json::from_str::<Say>(&line) {
             Ok(Say::Done) => return Ok(()),

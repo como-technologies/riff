@@ -6018,7 +6018,9 @@ flowchart TD
     H2 --> H
     H -- approved --> I{Deploy job}
     I -- "FAIL: wakes the lead with the failed jobs" --> I1[Old revision still serves. riff release check files the issue and resumes the riff. riff release retry vX.Y.Z] --> H
-    I -- "PASS: wakes the lead" --> J{riff release check vX.Y.Z}
+    I -- PASS --> R1[The riff daemon of each host starts again on vX.Y.Z, after its last session]
+    R1 --> R2[riff starts the lead container again on vX.Y.Z, at the end of its turn]
+    R2 -- "wakes the lead: the deploy passed, and your container runs vX.Y.Z" --> J{riff release check vX.Y.Z}
     J -- PASS --> K[riff resumes. Release issue closes. riff wave end N. Next wave starts]
     J -- FAIL --> L{Lead: fix forward or roll back}
     L -- fix forward --> L1[Issue, patch release X.Y.Z+1: the same cycle] --> C
@@ -6127,7 +6129,7 @@ sequenceDiagram
 | The release pull request | `riff release cut`, `riff release verify` | the Gate passed (next: `riff release verify`), the Gate failed (the failed jobs), the pull request merged, or it closed with no merge |
 | The real-session test | `riff release test --host HOST` | the test passed, or failed |
 | The CI run of the tag | `riff release publish` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
-| The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job passed, or failed (the failed jobs) |
+| The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed and your container runs the release (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check)) |
 | The wave | `riff join` | the last open item of the current wave closed |
 
 The message ends with `next:` and the command of the next step. A
@@ -6231,7 +6233,7 @@ sequenceDiagram
 | `riff release publish` | the command | the tag, and the CI run that builds |
 | The job `Deploy` waits | the watch of the daemon | the deploy waits for a person: hold now, when you are in a critical place |
 | `riff release approve` | the command | the riff is paused: stop at your next step, and keep your state in your notes |
-| The job `Deploy` ends | the watch of the daemon | the deploy passed (the daemon of your host starts again on the release after its sessions), or it failed (the old revision still serves) |
+| The job `Deploy` ends | the watch of the daemon | the deploy passed (the daemon of your host starts again on the release after its sessions), or it failed (the old revision still serves). The note of a pass comes with the message to the lead of the release: when its container runs the release |
 | `riff release check` | the command | the checks passed and the riff runs again, or a check failed, or the deploy had failed |
 | `riff release check`, an unknown result | the command | the checks could not all run, and no check failed, for example when the sign-in of gcloud ended: the riff stays paused, and the lead checks again after a sign-in on the host |
 | `riff release rollback` | the command | the older release deploys: hold now, when you are in a critical place |
@@ -6290,10 +6292,52 @@ a terminal get a refusal. The lead of a member may hold. A lead holds a
 version one time: a second hold replaces the reason. A hold is for one
 version, so the next release starts with no hold.
 
+#### Wait for the new riff before the check
+
+The lead runs `riff release check` in its container, and the riff
+daemon of the host answers each riff command there. A riff of the
+container that is older than the daemon can fail to read an answer.
+So the order after a deploy that passed is fixed: first the daemon of
+the host starts again on the release, then riff starts the container of
+the lead again on it, and only then the watch tells the lead to check.
+
+```mermaid
+sequenceDiagram
+    participant W as the watch of the deploy
+    participant D as riff daemon (the host)
+    participant L as the lead (its container)
+    Note over W: the job Deploy passed: the message waits
+    D->>D: riff update, then a new start on the release, after its last session
+    L->>D: the end of a turn: the Stop hook
+    D->>L: a new container on the release: claude --resume
+    W->>L: the deploy passed, and your container runs the release. next: riff release check
+```
+
+The lead does nothing until the message comes. The message to the lead,
+and the note to the other leads, come in the same look:
+
+```text
+The deploy of v3.3.0 passed: https://github.com/como-technologies/riff/actions/runs/9. Your container runs v3.3.0, as the riff daemon of this host does. next: riff release check v3.3.0
+```
+
+The watch waits for no daemon on a host with `update.auto` off, and for
+no lead on a host with no lead of the repository. After 30 minutes it
+tells the lead all the same, and says what it waited for, for example
+`riff waited 30 minutes for the new riff, but your container still runs
+an old riff`. When a command of an old container cannot read an answer
+of the daemon, see
+[When the riff daemon runs another riff than the container](how-it-works.md#when-the-riff-daemon-runs-another-riff-than-the-container).
+To see the riff of the daemon and of the container, in the container:
+
+```sh
+riff daemon status
+riff --version
+```
+
 #### Check the release after the deploy
 
-The lead runs the checks after the job `Deploy` ends, in its
-container (`riff lead start`):
+The lead runs the checks after the watch says that its container runs
+the release, in its container (`riff lead start`):
 
 ```sh
 riff release check v3.3.0
@@ -6349,8 +6393,8 @@ riff checks that:
 The lead does not keep its host on the old riff. After an update, the
 riff daemon of a host with only the lead starts again on the new riff.
 Then the daemon starts the container of the lead again on the new riff,
-when the lead is idle, and the lead goes on with its conversation. You
-stop no container. See
+at the end of a turn of the lead, and the lead goes on with its
+conversation. You stop no container. See
 [The lead starts again on the new riff](how-it-works.md#the-lead-starts-again-on-the-new-riff).
 
 riff prints the result of each check, and writes it on the release

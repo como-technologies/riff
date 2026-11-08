@@ -544,8 +544,8 @@ pub fn sessions_dir() -> Result<PathBuf> {
 /// 01M6FZXZ9267YKMH97E6A2Y2EP).
 /// It has the auto mode settings of `auto`: no `/auto-mode-setup`, and
 /// the places of riff work ([`crate::permissions::auto_mode`],
-/// 01M516HEX3GVTN9K2QS12A4PG3). It has the hooks `PermissionDenied` and
-/// `UserPromptSubmit` ([`session_hooks`]). It is a setting of
+/// 01M516HEX3GVTN9K2QS12A4PG3). It has the hooks `PermissionDenied`,
+/// `UserPromptSubmit` and `Stop` ([`session_hooks`]). It is a setting of
 /// riff for its sessions, not a copy of a setting of the person.
 ///
 /// ```
@@ -594,8 +594,9 @@ pub fn settings(auto: &crate::permissions::Trust, role: crate::permissions::Role
 
 /// The hooks of each container session: `PermissionDenied` runs
 /// `/opt/riff/riff relay denied` for each tool (01M57XY3Q6HEYQG27FE0CEQ7HB,
-/// [`crate::denied`]), and `UserPromptSubmit` runs `/opt/riff/riff relay
-/// prompt` (01M5GVQQ8NK3RD9CM3VTGXEHZQ).
+/// [`crate::denied`]), `UserPromptSubmit` runs `/opt/riff/riff relay
+/// prompt` (01M5GVQQ8NK3RD9CM3VTGXEHZQ), and `Stop` runs `/opt/riff/riff
+/// relay idle` at the end of each turn (01M6WBX2FQEHW92Y1A5HM4H8BM).
 ///
 /// ```
 /// let hooks = riff::run::session_hooks();
@@ -604,6 +605,8 @@ pub fn settings(auto: &crate::permissions::Trust, role: crate::permissions::Role
 /// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay denied");
 /// let hook = &hooks["UserPromptSubmit"][0];
 /// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay prompt");
+/// let hook = &hooks["Stop"][0];
+/// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay idle");
 /// ```
 pub fn session_hooks() -> Value {
     json!({
@@ -620,6 +623,12 @@ pub fn session_hooks() -> Value {
                 "command": format!("{} relay prompt", daemon::RELAY_BIN),
             }],
         }],
+        "Stop": [{
+            "hooks": [{
+                "type": "command",
+                "command": format!("{} relay idle", daemon::RELAY_BIN),
+            }],
+        }],
     })
 }
 
@@ -629,15 +638,16 @@ pub fn session_hooks() -> Value {
 /// ```
 /// let dir = tempfile::tempdir()?;
 /// let path = dir.path().join("settings.json");
-/// std::fs::write(&path, r#"{"model":"opus","hooks":{"Stop":[]}}"#)?;
+/// std::fs::write(&path, r#"{"model":"opus","hooks":{"SessionEnd":[]}}"#)?;
 /// assert!(riff::run::add_session_hooks(&path)?);
 /// assert!(!riff::run::add_session_hooks(&path)?, "the hooks are there");
 /// let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
 /// assert_eq!(settings["model"], "opus");
-/// assert_eq!(settings["hooks"]["Stop"], serde_json::json!([]));
+/// assert_eq!(settings["hooks"]["SessionEnd"], serde_json::json!([]));
 /// let hooks = riff::run::session_hooks();
 /// assert_eq!(settings["hooks"]["PermissionDenied"], hooks["PermissionDenied"]);
 /// assert_eq!(settings["hooks"]["UserPromptSubmit"], hooks["UserPromptSubmit"]);
+/// assert_eq!(settings["hooks"]["Stop"], hooks["Stop"]);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn add_session_hooks(path: &Path) -> Result<bool> {

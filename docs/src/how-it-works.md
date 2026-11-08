@@ -757,7 +757,7 @@ idle, so no work stops:
 | `riff relay watch`, `riff tail`, `riff top` | runs the new `riff` in its place | at once |
 | `riff chat` | runs the new `riff` in its place | between two lines |
 | The riff daemon | starts again on the `riff` on `PATH`, or on its unit after it wrote the unit again (see [Each step of an update](#each-step-of-an-update)) | when it runs no session and no real-session test, else after its last session |
-| The lead in a container | the daemon stops its container and starts it again on the new `riff` with `claude --resume`; the lead goes on with its conversation (see [The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)) | when the lead is idle: its transcript got no write for 5 minutes |
+| The lead in a container | the daemon stops its container and starts it again on the new `riff` with `claude --resume`; the lead goes on with its conversation (see [The lead starts again on the new riff](#the-lead-starts-again-on-the-new-riff)) | after the daemon started again on the new riff, at the first end of a turn of the lead; a lead of an older riff, when its transcript got no write for 5 minutes |
 
 You still start `riff-server` again yourself. `riff update` tells you
 when it runs the old build.
@@ -1701,20 +1701,53 @@ starts the lead again by itself. You stop no container.
 
 ```mermaid
 flowchart TD
-    U["riff update"] --> D["the daemon starts again on the new riff"]
+    U["riff update"] --> D["the daemon starts again on the new riff,<br/>after its last session"]
     D --> O{"the container of the lead<br/>binds the old riff?"}
     O -- no --> N["nothing to do"]
-    O -- yes --> I{"the lead is idle?<br/>no write to its transcript in 5 minutes"}
-    I -- no --> W["wait: look again in a minute"]
+    O -- yes --> I{"the lead is idle?<br/>its turn ended, or no write to its transcript in 5 minutes"}
+    I -- no --> W["wait: look again at the end of the turn,<br/>or in a minute"]
     I -- yes --> S["stop the container, start it again:<br/>claude --resume of the conversation"]
     S --> C["one line in riff chat"]
 ```
 
-The daemon looks at its start, and each minute. It sees a turn of the
-lead by the transcript of its conversation: `claude` writes it at each
-message and each tool call. A lead in a turn waits for the end of the
-turn. A tool call that runs for more than 5 minutes with no output
-counts as idle.
+The order is fixed: first the daemon starts again on the new riff, then
+the lead. A daemon that still runs the old riff starts no lead again, so
+the lead never runs a newer riff than the daemon of its host.
+
+The daemon looks at its start, at the end of each turn of the lead, and
+each minute. The settings of each container session run the hook `Stop`
+at the end of each turn of `claude`: `/opt/riff/riff relay idle`. It
+tells the riff daemon on the socket of the session, prints nothing, and
+never holds the turn. The daemon writes the time of the end in the
+folder of the lead, and looks at the lead 2 seconds later. So an old
+lead starts again on the new riff at the first end of its turn, also
+when a wake starts the next turn a minute later.
+
+```mermaid
+sequenceDiagram
+    participant C as claude (the lead)
+    participant H as riff relay idle
+    participant D as riff daemon
+    C->>H: Stop: the turn ended
+    H->>D: idle, on the socket of the lead
+    D->>D: write turn-ended in the folder of the lead
+    D-->>H: done
+    Note over D: 2 s later: the lead is old and idle
+    D->>C: stop the container, start it again on the new riff
+```
+
+A turn writes the transcript of the conversation at each message and
+each tool call. A write more than 5 seconds after the end of the turn is
+a new turn: the lead waits for its end. To see the time of the last end
+of a turn of the lead, in milliseconds since 1970:
+
+```sh
+cat ~/.local/share/riff/leads/OWNER-REPO/turn-ended
+```
+
+A lead that started on an older riff has no hook. It counts as idle
+when its transcript got no write for 5 minutes. A tool call that runs
+for more than 5 minutes with no output counts as idle too.
 
 The new container has the same session, the same clone and the same
 Claude folder. So the lead goes on with its conversation and its notes.
@@ -1753,6 +1786,34 @@ chat for it. The line says which case it is:
   ```sh
   riff lead start
   ```
+
+### When the riff daemon runs another riff than the container
+
+In a container, `riff who`, `riff wave list`, `riff release check` and
+the other commands that reach riff-server ask the riff daemon of the
+host. After an update, the daemon can run a newer riff than the
+container for a short time: the daemon starts the lead again at the end
+of its turn. When a command cannot read an answer of the daemon, it
+asks the daemon for its build. The error names the two builds and the
+next step:
+
+```text
+the riff daemon runs a newer riff: wait for the restart of this container. The riff daemon runs the build 3.3.0 7213825ab1c2 2026-09-28T20:10:44Z, and this riff is the build 3.2.0 929605821e54 2026-09-27T22:03:01Z. riff cannot read its answer: invalid type: map, expected a sequence. riff starts the container of a lead again on the riff of the daemon at the end of its turn, and a worker gets it at its next start. next: end your turn, and run the command again after the restart
+```
+
+| The daemon runs | The step |
+|---|---|
+| a newer build | the lead ends its turn; riff starts its container again on the riff of the daemon, then the lead runs the command again |
+| an older build | wait for the new start of the daemon after its last session, or start it at once on the host with `riff daemon restart` |
+| the same build | a fault of riff: file an issue with the line |
+| no build that riff can read | compare the build of `riff daemon status` with `riff --version` |
+
+To see the two builds, in the container:
+
+```sh
+riff --version
+riff daemon status
+```
 
 ### When riff cannot reach the server
 

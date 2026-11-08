@@ -6094,6 +6094,64 @@ pub fn daemon_protocol(theirs: u32, ours: u32) -> String {
     )
 }
 
+/// A riff command in a container cannot read the answer of the riff
+/// daemon: `fault` says why. It names the build `theirs` of the daemon,
+/// from its status, and `ours`, the build of this riff, and the step
+/// (#1693, 01M6WBX2FYPH0K8RAKXMRKDGX7). `theirs` is `None` when the
+/// daemon names no build.
+///
+/// ```
+/// use riff_core::build::Build;
+///
+/// let ours: Build = "4.10.0 aaaa 2026-11-06T10:00:00Z".parse().unwrap();
+/// let fault = "invalid type: map, expected a sequence";
+/// let newer = riff::text::daemon_other_answer(fault, &ours, Some("4.11.0 bbbb 2026-11-07T10:00:00Z"));
+/// assert!(newer.starts_with("the riff daemon runs a newer riff: wait for the restart of this container."), "{newer}");
+/// assert!(newer.contains("The riff daemon runs the build 4.11.0 bbbb"), "{newer}");
+/// assert!(newer.contains("this riff is the build 4.10.0 aaaa"), "{newer}");
+/// assert!(newer.contains(fault), "{newer}");
+/// assert!(newer.contains("end your turn"), "{newer}");
+///
+/// let older = riff::text::daemon_other_answer(fault, &ours, Some("4.9.0 cccc 2026-11-01T10:00:00Z"));
+/// assert!(older.starts_with("the riff daemon runs an older riff"), "{older}");
+/// assert!(older.contains("riff daemon restart"), "{older}");
+///
+/// let same = riff::text::daemon_other_answer(fault, &ours, Some(&ours.to_string()));
+/// assert!(same.contains("a fault of riff"), "{same}");
+///
+/// let none = riff::text::daemon_other_answer(fault, &ours, None);
+/// assert!(none.contains("names no build"), "{none}");
+/// assert!(none.contains("This riff is the build 4.10.0 aaaa"), "{none}");
+/// ```
+pub fn daemon_other_answer(fault: &str, ours: &Build, theirs: Option<&str>) -> String {
+    let cannot = format!("riff cannot read its answer: {fault}.");
+    let Some(theirs) = theirs else {
+        return format!(
+            "the riff daemon runs another riff, and names no build. This riff is the build {ours}. \
+             {cannot} next: run riff daemon status, and compare its build with riff --version"
+        );
+    };
+    let builds =
+        format!("The riff daemon runs the build {theirs}, and this riff is the build {ours}.");
+    match theirs.parse::<Build>() {
+        Ok(build) if ours.older_than(&build) => format!(
+            "the riff daemon runs a newer riff: wait for the restart of this container. {builds} \
+             {cannot} riff starts the container of a lead again on the riff of the daemon at the \
+             end of its turn, and a worker gets it at its next start. next: end your turn, and \
+             run the command again after the restart"
+        ),
+        Ok(build) if build.older_than(ours) => format!(
+            "the riff daemon runs an older riff: wait for its new start. {builds} {cannot} The \
+             daemon starts again on the new riff when it runs no session. next: run the command \
+             again after that start. A person on the host starts it at once: riff daemon restart"
+        ),
+        _ => format!(
+            "the riff daemon gave an answer that this riff cannot read. {builds} The fault: \
+             {fault}. This is a fault of riff. next: file an issue with this line"
+        ),
+    }
+}
+
 /// A session that is not the lead asks the daemon to pause the riff.
 pub const DAEMON_PAUSE_ONLY_LEAD: &str =
     "Only the lead can pause the riff through the riff daemon.";
