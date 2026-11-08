@@ -178,7 +178,7 @@
 //! | `~/.gitconfig` | no write, when it exists. No `~/.config/gh` | 01M4Z60B7QDWEFQ96H448RE9N2, 01M6WPMP035A93SM6SAJGS6MTC |
 //! | The sign-in of `gh` | `-e GH_TOKEN`: the name only. The daemon puts the folder of the token of the session in its place, when riff-server gives one ([`crate::daemon::gh_token`]) | 01M6WPMWSMQABE97YCMS5Z3M1P, 01M6WPMNXN1BSBEH74TG5DDRTF |
 //! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` ([`git_config`]) | 01M4Z60B89G8YNVMTEPGX7FQCV |
-//! | The author of a commit | `user.name` `riff ROLE ID8` and `user.email` the noreply address of the bot, by `GIT_CONFIG_*`: the daemon adds them with the token of an App ([`crate::daemon::gh_token::give_author`]). With the token of the person, the identity of `~/.gitconfig` | 01M6WZ2C8JXEA888XYMRXTS17V |
+//! | The author of a commit | `user.name` the login of the bot and `user.email` its noreply address, by `GIT_CONFIG_*`: the daemon adds them with the token of an App ([`crate::daemon::gh_token::give_author`]). With the token of the person, the identity of `~/.gitconfig` | 01M6Y6B8VBM3TKC3YHZKSA4PFZ, 01M6WZ2C8JXEA888XYMRXTS17V |
 //! | The token of git | the credential helper `!gh auth git-credential` of `https://github.com` by `GIT_CONFIG_*`, after an empty one: no helper of `~/.gitconfig` | 01M6WPMNXN1BSBEH74TG5DDRTF |
 //! | The Claude folder | with write | 01M4Z60B86N999JRN7Z1G52PG4 |
 //! | The sign-in of `claude` | `-e CLAUDE_CODE_OAUTH_TOKEN`: the name only, when a token is set ([`crate::claude_token`]); else the sign-in file of the host with no write | 01M58B7H2HMYT6VTY0B8T2G0KW, 01M4Z60B869HWDTZMSYPVYACD8 |
@@ -417,7 +417,7 @@ pub const GIT_HELPER: &str = "credential.https://github.com.helper";
 ///
 /// let mut env = vec![Env::Value("HOME".into(), "/home/mike".into())];
 /// git_config(&mut env, "commit.gpgsign", "false");
-/// git_config(&mut env, "user.name", "riff worker 21c026a1");
+/// git_config(&mut env, "user.name", "riff-acme[bot]");
 /// let value = |n: &str, v: &str| Env::Value(n.into(), v.into());
 /// assert_eq!(
 ///     env,
@@ -427,7 +427,7 @@ pub const GIT_HELPER: &str = "credential.https://github.com.helper";
 ///         value("GIT_CONFIG_KEY_0", "commit.gpgsign"),
 ///         value("GIT_CONFIG_VALUE_0", "false"),
 ///         value("GIT_CONFIG_KEY_1", "user.name"),
-///         value("GIT_CONFIG_VALUE_1", "riff worker 21c026a1"),
+///         value("GIT_CONFIG_VALUE_1", "riff-acme[bot]"),
 ///     ]
 /// );
 /// ```

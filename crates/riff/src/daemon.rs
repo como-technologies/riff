@@ -3271,8 +3271,8 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// its container ([`gh_token`], 01M6WPMNXN1BSBEH74TG5DDRTF): the daemon
     /// asks riff-server as the person, writes the token in the folder of
     /// the session, gives the container that folder in place of
-    /// `GH_TOKEN` in `spec` and `values`, gives each commit the author of
-    /// the session ([`gh_token::author`], 01M6WZ2C8JXEA888XYMRXTS17V), and
+    /// `GH_TOKEN` in `spec` and `values`, gives each commit the bot as its
+    /// author ([`gh_token::author`], 01M6Y6B8VBM3TKC3YHZKSA4PFZ), and
     /// renews the token until the end. A session with no token of an App
     /// keeps `GH_TOKEN`, the token of the person
     /// (01M6WPMWSMQABE97YCMS5Z3M1P), and the git identity of
@@ -3296,8 +3296,8 @@ impl<R: Runtime + 'static> Daemon<R> {
         {
             let dir = gh_token::write(&record.folder, bot, token)?;
             gh_token::give(spec, values, &dir);
-            // The author of each commit (01M6WZ2C8JXEA888XYMRXTS17V).
-            let (name, email) = gh_token::author(*role, &record.live.session, bot, grant.bot_id);
+            // The bot is the author of each commit (01M6Y6B8VBM3TKC3YHZKSA4PFZ).
+            let (name, email) = gh_token::author(bot, grant.bot_id);
             gh_token::give_author(spec, &name, &email);
             self.person_tokens_lock().remove(&repo);
             text::daemon_gh_token(&owned.name, bot, *role, ends)
@@ -12547,9 +12547,11 @@ mod tests {
     }
     /// 01M6WPMNXN1BSBEH74TG5DDRTF, 01M6WPMP035A93SM6SAJGS6MTC: a session
     /// with a token of an App gets the folder of its token with no write,
-    /// and `GH_CONFIG_DIR`. Its container has no `GH_TOKEN`. The daemon
-    /// writes a new token 10 minutes before the end of the old one, and at
-    /// the end of the session it revokes the token and removes the folder.
+    /// and `GH_CONFIG_DIR`. Its container has no `GH_TOKEN`. Its git
+    /// identity is the name and the email of the bot
+    /// (01M6Y6B8VBM3TKC3YHZKSA4PFZ). The daemon writes a new token 10
+    /// minutes before the end of the old one, and at the end of the session
+    /// it revokes the token and removes the folder.
     #[tokio::test]
     async fn a_session_gets_the_file_of_its_token_a_new_token_before_the_end_and_a_revoke() {
         // The first token ends in 10 minutes and 2 seconds: the daemon asks
@@ -12565,7 +12567,6 @@ mod tests {
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
         let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
         let folder = start.folder.clone();
-        let session = start.session.clone();
         let (mut client, name) = here.started(start).await;
         until(|| here.fake.spec(&name).is_some()).await;
 
@@ -12582,10 +12583,13 @@ mod tests {
         let named = |e: &Env| matches!(e, Env::Host(n) | Env::Value(n, _) if n == "GH_TOKEN");
         assert!(!spec.env.iter().any(named), "{:?}", spec.env);
         assert!(here.fake.values(&name).iter().all(|(n, _)| n != "GH_TOKEN"));
-        // Each commit has the session as its author and the bot of the App
-        // as its email (01M6WZ2C8JXEA888XYMRXTS17V).
-        let author = format!("riff worker {}", crate::run::short(&session));
-        assert_eq!(git_setting(&spec.env, "user.name"), Some(author));
+        // Each commit has the bot of the App as its author: its name
+        // (01M6Y6B8VBM3TKC3YHZKSA4PFZ) and its email
+        // (01M6WZ2C8JXEA888XYMRXTS17V).
+        assert_eq!(
+            git_setting(&spec.env, "user.name").as_deref(),
+            Some("riff-acme[bot]")
+        );
         assert_eq!(
             git_setting(&spec.env, "user.email").as_deref(),
             Some("1101+riff-acme[bot]@users.noreply.github.com")

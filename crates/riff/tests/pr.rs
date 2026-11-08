@@ -328,9 +328,11 @@ fn pr_wait_with_a_long_every_waits_that_long() {
     assert_eq!(sleeps, [600, 600, 600]);
 }
 
-/// The fake forge of pull request 40 with `Closes #12`, whose Gate passed
-/// on its head 1a2b3c4d. Issue 12 has no line `Live:` ([`PLAIN_ISSUE`]).
-const VERIFY: &str = r#"*'pr view 40 --json headRefOid,body'*) printf '%s' '{"headRefOid":"1a2b3c4d","body":"Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n"}' ;;
+/// The fake forge of pull request 40 "Show the wave" with `Closes #12`
+/// and auto-merge off, whose Gate passed on its head 1a2b3c4d. Issue 12
+/// has no line `Live:` ([`PLAIN_ISSUE`]). Each other call, for example
+/// `pr merge`, works and prints nothing.
+const VERIFY: &str = r#"*'pr view 40 --json headRefOid,body'*) printf '%s' '{"headRefOid":"1a2b3c4d","title":"Show the wave","autoMergeRequest":null,"body":"Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n"}' ;;
 *'pr comment 40 --body-file -'*) echo 'https://github.com/como-technologies/riff/pull/40#issuecomment-7' ;;
 *'/statuses/'*) echo '{}' ;;
 *'api repos/como-technologies/riff') echo '{"default_branch":"main"}' ;;
@@ -372,6 +374,13 @@ async fn verify(verdict: &str, state: &str) {
              -f target_url=https://github.com/como-technologies/riff/pull/40#issuecomment-7"
         )]
     );
+    // A pass gives the squash message first (01M6Y95BMYDXFDYG3DKE2KG2PP),
+    // a fail gives none.
+    let merges = calls(&log)
+        .into_iter()
+        .filter(|call| call.starts_with("gh pr merge"))
+        .count();
+    assert_eq!(merges, usize::from(verdict == "pass"), "{log}");
 
     let inbox = machine.ok("author", &["read"]).await;
     assert_eq!(inbox.matches("verify result:").count(), 1, "{inbox}");
@@ -392,6 +401,169 @@ async fn verify_pass_comments_sets_success_and_posts_to_the_claim() {
 #[tokio::test]
 async fn verify_fail_sets_failure() {
     verify("fail", "failure").await;
+}
+
+/// Each call of the fake `gh` in `log`, in order, with no text of its
+/// stdin.
+fn calls(log: &str) -> Vec<&str> {
+    log.lines().filter(|line| line.starts_with("gh ")).collect()
+}
+
+/// The stdin of the first call of `log` that starts with `call`.
+fn stdin_of(log: &str, call: &str) -> String {
+    let mut lines = log.lines().skip_while(|line| !line.starts_with(call));
+    assert!(lines.next().is_some(), "no call {call}: {log}");
+    lines
+        .take_while(|line| !line.starts_with("gh "))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+/// The call of `riff verify pass 40` that gives the squash message of
+/// [`VERIFY`] to the auto-merge (01M6Y95BMYDXFDYG3DKE2KG2PP).
+const SQUASH: &str = "gh pr merge 40 --auto --squash --match-head-commit 1a2b3c4d \
+                      --subject Show the wave (#40) --body-file -";
+
+/// The body of [`VERIFY`] as JSON text.
+const VERIFY_BODY: &str = r#""Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n""#;
+
+/// The pass of pull request 40 on `fake`, by the verifier of a machine
+/// where the author holds issue 12. It gives the log of `gh` and the
+/// output.
+async fn pass(fake: &str) -> (String, std::process::Output) {
+    let machine = Machine::new(fake).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let args = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.run("verifier", &args).await;
+    (log(machine.bin.path()), out)
+}
+
+/// #1807, 01M6Y95BMYDXFDYG3DKE2KG2PP: `riff verify pass` gives the
+/// subject `TITLE (#N)` and the body of the pull request to `gh pr merge
+/// N --auto --squash` before its comment and its status. The trailers end
+/// the body as one last paragraph, so GitHub adds no paragraph of its own
+/// and the `Co-authored-by:` of the person counts.
+#[tokio::test]
+async fn verify_pass_gives_the_squash_message_before_the_status() {
+    let body = r#""Refs #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n\nRiff-Session: author\nCo-authored-by: Mike Sandman <7+mike@users.noreply.github.com>\n""#;
+    let (log, out) = pass(&VERIFY.replace(VERIFY_BODY, body)).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let calls = calls(&log);
+    let at = |start: &str| {
+        calls
+            .iter()
+            .position(|call| call.starts_with(start))
+            .unwrap_or_else(|| panic!("no call {start}: {log}"))
+    };
+    assert_eq!(calls[at("gh pr merge")], SQUASH);
+    assert!(at("gh pr merge") < at("gh pr comment"), "{log}");
+    assert!(at("gh pr comment") < at("gh api repos/como-technologies/riff/statuses/"));
+    let given = stdin_of(&log, SQUASH);
+    assert_eq!(
+        given,
+        "Refs #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\nRiff-Session: author\n\
+         Co-authored-by: Mike Sandman <7+mike@users.noreply.github.com>\n"
+    );
+    let trailers = given.trim_end().rsplit("\n\n").next().unwrap();
+    assert!(
+        trailers.ends_with("Co-authored-by: Mike Sandman <7+mike@users.noreply.github.com>"),
+        "{given}"
+    );
+    assert!(trailers.starts_with("Issue: #12\n"), "{given}");
+    // An auto-merge that was off gets no read after the call.
+    assert!(!log.contains("--json autoMergeRequest"), "{log}");
+}
+
+/// 01M6Y95BMYDXFDYG3DKE2KG2PP: an auto-merge that has the message
+/// already gets no call. One that was on with another message gets the
+/// call. When it keeps the other message, riff turns auto-merge off and
+/// on again with the message, before the comment and the status.
+#[tokio::test]
+async fn verify_pass_turns_an_auto_merge_with_another_message_off_and_on() {
+    let message = r#"{"mergeMethod":"SQUASH","commitHeadline":"Show the wave (#40)","commitBody":"Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n"}"#;
+    let other = r#"{"mergeMethod":"SQUASH","commitHeadline":null,"commitBody":null}"#;
+    let auto = |before: &str, after: &str| {
+        format!(
+            "{}\n*'pr view 40 --json autoMergeRequest'*) printf '%s' '{{\"autoMergeRequest\":{after}}}' ;;",
+            VERIFY.replace(
+                r#""autoMergeRequest":null"#,
+                &format!(r#""autoMergeRequest":{before}"#)
+            )
+        )
+    };
+    let merges = |log: &str| -> Vec<String> {
+        calls(log)
+            .into_iter()
+            .filter(|call| call.starts_with("gh pr merge") || call.contains("autoMergeRequest"))
+            .map(str::to_owned)
+            .collect()
+    };
+    let view = "gh pr view 40 --json autoMergeRequest";
+
+    // The message is there: no call.
+    let (log, out) = pass(&auto(message, message)).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        merges(&log),
+        ["gh pr view 40 --json headRefOid,body,title,autoMergeRequest"]
+    );
+
+    // The call changes the message.
+    let (log, out) = pass(&auto(other, message)).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(merges(&log)[1..], [SQUASH, view], "{log}");
+
+    // The call keeps the other message: off, and on again.
+    let (log, out) = pass(&auto(other, other)).await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        merges(&log)[1..],
+        [SQUASH, view, "gh pr merge 40 --disable-auto", SQUASH],
+        "{log}"
+    );
+    assert_eq!(stdin_of(&log, "gh pr merge 40 --disable-auto"), "");
+    let calls = calls(&log);
+    let last = calls.iter().rposition(|call| *call == SQUASH).unwrap();
+    let comment = calls
+        .iter()
+        .position(|call| call.starts_with("gh pr comment"));
+    assert!(comment.is_some_and(|comment| last < comment), "{log}");
+}
+
+/// 01M6Y95BMYDXFDYG3DKE2KG2PP: when the squash message does not go to
+/// the auto-merge, `riff verify pass` makes no comment, no status and no
+/// post, and prints the error of `gh`.
+#[tokio::test]
+async fn verify_pass_reports_nothing_when_the_squash_message_does_not_go() {
+    let fake = format!(
+        "*'pr merge 40'*) echo 'GraphQL: Pull request Auto merge is not allowed for this repository' >&2; exit 1 ;;\n{VERIFY}"
+    );
+    let machine = Machine::new(&fake).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let args = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.run("verifier", &args).await;
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(&riff::text::verify_no_squash(40)),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Auto merge is not allowed for this repository"),
+        "{stderr}"
+    );
+    let log = log(machine.bin.path());
+    assert!(log.contains(SQUASH), "{log}");
+    assert!(!log.contains("gh pr comment"), "{log}");
+    assert!(!log.contains("/statuses/"), "{log}");
+    let inbox = machine.ok("author", &["read"]).await;
+    assert!(!inbox.contains("verify result:"), "{inbox}");
 }
 
 /// The author released the item at its verify request. So no session
@@ -595,6 +767,7 @@ async fn verify_refuses_when_the_head_is_not_the_tested_commit() {
     );
     let log = log(machine.bin.path());
     assert!(!log.contains("gh pr comment"), "{log}");
+    assert!(!log.contains("gh pr merge"), "{log}");
     assert!(!log.contains("/statuses/"), "{log}");
     let inbox = machine.ok("author", &["read"]).await;
     assert!(!inbox.contains("verify result:"), "{inbox}");
@@ -653,6 +826,7 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
             "{calls}"
         );
         assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("gh pr merge"), "{calls}");
         assert!(!calls.contains("/statuses/"), "{calls}");
         let inbox = machine.ok("author", &["read"]).await;
         assert!(!inbox.contains("verify result:"), "{inbox}");
@@ -703,6 +877,7 @@ async fn verify_pass_refuses_a_body_that_closes_an_issue_with_a_live_line() {
     let calls = log(machine.bin.path());
     assert!(calls.contains("gh issue view 12 --json body"), "{calls}");
     assert!(!calls.contains("gh pr comment"), "{calls}");
+    assert!(!calls.contains("gh pr merge"), "{calls}");
     assert!(!calls.contains("/statuses/"), "{calls}");
     let inbox = machine.ok("author", &["read"]).await;
     assert!(!inbox.contains("verify result:"), "{inbox}");
@@ -792,6 +967,7 @@ async fn verify_pass_refuses_a_new_image_that_a_host_cannot_pull_with_no_login()
         let calls = log(machine.bin.path());
         assert!(calls.contains("contents/riff.toml?ref=1a2b3c4d"), "{calls}");
         assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("gh pr merge"), "{calls}");
         assert!(!calls.contains("/statuses/"), "{calls}");
         let inbox = machine.ok("author", &["read"]).await;
         assert!(!inbox.contains("verify result:"), "{inbox}");
@@ -1017,6 +1193,7 @@ async fn verify_pass_reads_the_newest_run_of_each_check() {
         );
         let calls = log(machine.bin.path());
         assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("gh pr merge"), "{calls}");
         assert!(!calls.contains("/statuses/"), "{calls}");
     }
 }
@@ -1067,6 +1244,7 @@ async fn verify_pass_refuses_while_a_required_check_has_no_success() {
         );
         let calls = log(machine.bin.path());
         assert!(!calls.contains("gh pr comment"), "{calls}");
+        assert!(!calls.contains("gh pr merge"), "{calls}");
         assert!(!calls.contains("/statuses/"), "{calls}");
 
         let fail = [
@@ -1704,34 +1882,25 @@ fn how_to(heading: &str) -> String {
     rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)].to_owned()
 }
 
-/// 01M6WZ2C8JXEA888XYMRXTS17V, 01M6WZ2CB56PNSYKEX4E0ZJV3Y: the how-to
-/// "Find the commits of a session" of development.md finds the commits of
-/// a session by their author on a branch and by the trailer on `main`, in
-/// copyable `sh` blocks. Its author is the one of the daemon, and the
-/// line `Co-authored-by:` of "Open a pull request" is the one of riff.
+/// 01M6Y6B8VBM3TKC3YHZKSA4PFZ, 01M6WZ2C8JXEA888XYMRXTS17V,
+/// 01M6WZ2CB56PNSYKEX4E0ZJV3Y: the how-to "Find the commits of a
+/// session" of development.md finds the commits of a session by the
+/// trailer `Riff-Session:` on its branch and on `main`, and the commits
+/// of each session by the name of the bot, in copyable `sh` blocks. Its
+/// author is the one of the daemon, and the line `Co-authored-by:` of
+/// "Open a pull request" is the one of riff.
 #[test]
 fn the_book_shows_how_to_find_the_commits_of_a_session() {
-    let page = book::page("development.md");
-    let start = page
-        .find("\n### Find the commits of a session\n")
-        .expect("the how-to Find the commits of a session");
-    let rest = &page[start + 1..];
-    let found = &rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)];
+    let found = &commits_how_to();
     let commands = book::commands_in(found);
-    assert!(
-        commands.contains(&"git log --author='riff worker' origin/worktree-issue-12".to_owned()),
-        "{commands:?}"
-    );
-    assert!(
-        commands.contains(&"git log --grep 'Riff-Session: 21c026a1' origin/main".to_owned()),
-        "{commands:?}"
-    );
-    let (name, email) = riff::daemon::gh_token::author(
-        riff_core::wire::GitHubRole::Worker,
-        "21c026a1-ee2a-4451-9729-59e6332cb974",
-        "riff-como-technologies[bot]",
-        Some(1101),
-    );
+    let (name, email) = riff::daemon::gh_token::author("riff-como-technologies[bot]", Some(1101));
+    for command in [
+        "git log --grep 'Riff-Session: 21c026a1' origin/worktree-issue-12".to_owned(),
+        "git log --grep 'Riff-Session: 21c026a1' origin/main".to_owned(),
+        format!("git log -F --author='{name}' origin/worktree-issue-12"),
+    ] {
+        assert!(commands.contains(&command), "{command}\n{commands:?}");
+    }
     assert!(found.contains(&format!("`{name}`")), "{found}");
     assert!(found.contains(&format!("`{email}`")), "{found}");
 
@@ -1742,6 +1911,79 @@ fn the_book_shows_how_to_find_the_commits_of_a_session() {
     };
     let line = mike.co_author().unwrap();
     assert!(how_to("Open a pull request").contains(&line), "{line}");
+}
+
+/// The how-to "Find the commits of a session" of development.md.
+fn commits_how_to() -> String {
+    let page = book::page("development.md");
+    let start = page
+        .find("\n### Find the commits of a session\n")
+        .expect("the how-to Find the commits of a session");
+    let rest = &page[start + 1..];
+    rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)].to_owned()
+}
+
+/// 01M6Y6B8VBM3TKC3YHZKSA4PFZ: each command of "Find the commits of a
+/// session" runs in a real git repository. The search for the trailer
+/// finds the commit of the session and no other, and the search for the
+/// bot finds each commit of the bot and none of a person.
+#[test]
+fn the_commands_of_the_book_find_the_commits_of_a_session() {
+    let env = Isolated::new();
+    let repo = env.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let run = |cmd: &mut Command| {
+        let out = cmd.current_dir(&repo).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        text(&out.stdout)
+    };
+    run(env.command("git").args(["init", "-q"]));
+    let (bot, email) = riff::daemon::gh_token::author("riff-como-technologies[bot]", Some(1101));
+    let session = "Riff-Session: 21c026a1-ee2a-4451-9729-59e6332cb974";
+    let other = "Riff-Session: 9de7b86a-39a2-4f79-aa5e-b9508cc7a0a2";
+    for (name, email, subject, trailer) in [
+        (bot.as_str(), email.as_str(), "of the session", session),
+        (bot.as_str(), email.as_str(), "of another session", other),
+        ("Mike", "mike@example.com", "of a person", "Issue: #12"),
+    ] {
+        run(env.command("git").args([
+            "-c",
+            &format!("user.name={name}"),
+            "-c",
+            &format!("user.email={email}"),
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            subject,
+            "--trailer",
+            trailer,
+        ]));
+    }
+    for branch in ["origin/worktree-issue-12", "origin/main"] {
+        let to = format!("refs/remotes/{branch}");
+        run(env.command("git").args(["update-ref", &to, "HEAD"]));
+    }
+    let found = |command: &str| run(env.command("sh").args(["-c", command]));
+    let commands = book::commands_in(&commits_how_to());
+    for command in commands.iter().filter(|c| c.contains("--grep")) {
+        let log = found(command);
+        assert!(log.contains("of the session"), "{command}\n{log}");
+        assert!(
+            !log.contains("another") && !log.contains("person"),
+            "{command}\n{log}"
+        );
+    }
+    let by_bot = commands
+        .iter()
+        .find(|c| c.contains("--author"))
+        .expect("a search by the bot");
+    let log = found(by_bot);
+    assert!(
+        log.contains("of the session") && log.contains("of another session"),
+        "{log}"
+    );
+    assert!(!log.contains("of a person"), "{log}");
 }
 
 /// The help of `riff pr open` and of `--title` says what holds in each

@@ -891,6 +891,19 @@
 - **01M6Y4XHQADF27SHMMMV8RQ7Q1** When `gh` ends before it reads all of
   the text that riff gives it on stdin, the call gives the exit status
   and the stderr of `gh`, and not a broken pipe.
+- **01M6Y95BMYDXFDYG3DKE2KG2PP** `riff verify pass N` gives the squash
+  message to the auto-merge of pull request N before it makes its
+  comment and sets the status `riff/verify`: `gh pr merge N --auto
+  --squash --match-head-commit COMMIT --subject SUBJECT --body-file -`,
+  with the tested head commit. The subject is `TITLE (#N)`. The body is
+  the body of the pull request, with its trailers as one last paragraph.
+  So GitHub adds no paragraph of its own, and the `Co-authored-by:` line
+  of the person counts. An auto-merge that has this message already gets
+  no call. When an auto-merge that was on has another message after the
+  call, riff turns auto-merge off with `gh pr merge N --disable-auto`,
+  and on again with the message. When a call fails, `riff verify pass`
+  makes no comment, no status and no post. `riff verify fail` gives no
+  message.
 
 ## Tokens on GitHub
 
@@ -6837,16 +6850,21 @@ of this part when they merge.
 - **01M6WPMX18BECQPTQNSTZMBN16** The daemon and the relay take each
   token of a GitHub App out of each event and each line: `ghs_` and the
   letters, digits and `_` after it.
-- **01M6WZ2C8JXEA888XYMRXTS17V** Each commit of a session with a token
-  of a GitHub App has the session as its author and its committer. The
-  daemon sets `user.name` to `riff ROLE ID8`, with the role of the token
-  and the first 8 characters of the session ID, for example `riff worker
-  21c026a1`, and `user.email` to the noreply address of the bot of the
-  App, `BOTID+LOGIN@users.noreply.github.com`, with `GIT_CONFIG_*` at
-  the start of the container. BOTID is the user ID of the bot that
-  riff-server gives with the token; with none, the address is
-  `LOGIN@users.noreply.github.com`. A session with the token of the
-  person keeps the git identity of `~/.gitconfig`.
+- **01M6WZ2C8JXEA888XYMRXTS17V** The daemon sets `user.email` of each
+  commit of a session with a token of a GitHub App to the noreply
+  address of the bot of the App, `BOTID+LOGIN@users.noreply.github.com`,
+  with `GIT_CONFIG_*` at the start of the container. BOTID is the user
+  ID of the bot that riff-server gives with the token; with none, the
+  address is `LOGIN@users.noreply.github.com`. A session with the token
+  of the person keeps the git identity of `~/.gitconfig`. Superseded in
+  part by 01M6Y6B8VBM3TKC3YHZKSA4PFZ.
+- **01M6Y6B8VBM3TKC3YHZKSA4PFZ** Each commit of a session with a token
+  of a GitHub App has the bot of the App as its author and its
+  committer: `user.name` is the login of the bot, for example
+  `riff-como-technologies[bot]`, with `GIT_CONFIG_*` at the start of the
+  container. The trailer `Riff-Session: ID` of each commit names the
+  session, and `git log --grep 'Riff-Session: ID'` finds its commits.
+  This supersedes 01M6WZ2C8JXEA888XYMRXTS17V in part.
 
 ### The security of riff's own code
 

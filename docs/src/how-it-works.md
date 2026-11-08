@@ -186,7 +186,7 @@ hold each decision of the design.
 | The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. | Nothing outside its binds. See the rows of git and of the caches. |
 | git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff. The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The clone goes when its item ends, after its push. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
-| git: the commit | A commit has the session as its author, for example `riff worker 21c026a1`, with the noreply email of the bot of its GitHub App, and a `Riff-Session:` trailer. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The author and the trailer tell the commits of two sessions apart. |
+| git: the commit | A commit has the bot of the GitHub App of the session as its author, for example `riff-como-technologies[bot]`, with the noreply email of the bot, and a `Riff-Session:` trailer that names the session. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the message that `riff verify pass` gives: the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The trailer `Riff-Session:` tells the commits of two sessions apart. |
 | git: the repository on GitHub | Each session pushes its own branch from its own clone. The daemon makes the claims, not the session: see the next row. | With your sign-in, a session can push to the branch of another session, or delete it. |
 | The claims | The daemon claims each item on riff-server, as the worker session of the item, with your sign-in of riff. riff-server gives each item to one session. The daemon releases the claim at the end of the session. riff-server ends the claim of a session that stops. | Nothing. A session has no sign-in of riff-server, and no riff tool of a session claims or releases. |
 | The processes | Each container has its own processes. Its PID 1 is the init of podman (`podman run --init`): it reaps each process that ends, so no zombie stays. A `pkill` in one session does not hit another. `podman stop` ends a session and each of its processes. | Nothing: it does not see the processes of another container. |
@@ -2453,7 +2453,7 @@ sequenceDiagram
     Note over A: the turn ends, riff clears the context
     V->>E: claim verify-issue-6
     V->>V: test each criterion
-    V->>G: riff verify: the result, riff/verify
+    V->>G: riff verify: the squash message of a pass, the result, riff/verify
     alt pass
         G->>G: squash merge
         V->>E: note "done issue-6"
@@ -2572,7 +2572,7 @@ sequenceDiagram
     V->>E: claim verify-issue-6
     E-->>V: granted
     V->>V: check out the commit, test each criterion
-    V->>G: riff verify: comment the result, set riff/verify
+    V->>G: riff verify: the squash message of a pass, comment the result, set riff/verify
     V->>E: riff verify: post to [claim=issue-6] the result
     V->>E: release verify-issue-6
     E->>A: wake
@@ -3043,6 +3043,33 @@ head commit. It sets the status `riff/verify` of that commit:
 result to the session that holds the issue of the `Issue:` trailer,
 for example `claim=issue-12`. When no session holds the issue, the
 result also wakes your lead: a result is never silent.
+
+#### The squash message of a pass
+
+Before its comment, a pass gives the squash message to the auto-merge
+of the pull request. The subject is the title with the number, for
+example `Show the wave (#40)`. The body is the body of the pull request,
+with its trailers as the last paragraph. GitHub reads a co-author only
+from the last paragraph. With no message, GitHub adds a last paragraph
+of its own, `Co-authored-by:` with the bot, and the line of the person
+does not count. The message names the tested head commit: a new push
+needs a new pass, and that pass gives the message again. The verify of
+the wave gives it in the same way.
+
+To see the message of the auto-merge of pull request 40:
+
+```sh
+gh pr view 40 --json autoMergeRequest --jq '.autoMergeRequest | .commitHeadline, .commitBody'
+```
+
+When the auto-merge was on and keeps another message, riff turns
+auto-merge off and on again with the message. When riff cannot give
+the message, it reports nothing and
+prints one line with the error of `gh`:
+
+```text
+riff verify pass: the squash message did not go to the auto-merge of pull request #40. Nothing is reported. Report again when the cause is fixed: gh pr merge 40 --auto --squash --match-head-commit 1a2b3c4 …: GraphQL: Pull request Auto merge is not allowed for this repository
+```
 
 #### Report a verify from another folder
 
@@ -6013,8 +6040,8 @@ sequenceDiagram
 The container gets no token of yours: no `GH_TOKEN`, and no
 `~/.config/gh`. `gh` reads the token from the folder `gh` of the
 session, and git gets it from `gh auth git-credential`. Each commit of
-the session has the session as its author, `riff ROLE ID8`, with the
-noreply email of the bot. See
+the session has the bot as its author, with the noreply email of the
+bot, and the trailer `Riff-Session:`. See
 [Find the commits of a session](development.md#find-the-commits-of-a-session).
 
 See how a session acts on GitHub. In the session, run:

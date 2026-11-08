@@ -47,7 +47,7 @@ fn the_helper_gives_no_git_config_and_no_gh_sign_in_of_a_session_container() {
     };
     assert_eq!(
         git(&mut Command::new("git")),
-        "riff worker 1a2b3c4d",
+        "riff-test[bot]",
         "the setup is real: a child of the test gets the git config"
     );
     let env = isolated::Isolated::new();
