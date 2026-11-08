@@ -89,7 +89,9 @@
 //! ([`crate::typeahead`], 01M6Y1EKGKNW2MH970PDF6PJK1). `Tab` or `Enter`
 //! picks the first name, and `Esc` closes the list. The list is the hint
 //! of the line editor, and the three keys are bindings of it: with no
-//! list, each key does its work of the line editor.
+//! list, each key does its work of the line editor. The hint has no
+//! text for the line, so `→` puts none of the list in the line
+//! (01M6YDSREH39WWV6QHB0M7Z6P5).
 //!
 //! ```text
 //! [riff] > @r
@@ -119,7 +121,7 @@ use riff_core::wire::Kind;
 use rustyline::completion::Completer;
 use rustyline::config::Config;
 use rustyline::highlight::Highlighter;
-use rustyline::hint::Hinter;
+use rustyline::hint::{Hint, Hinter};
 use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{
@@ -814,11 +816,27 @@ impl Known {
 }
 
 /// The hint of a list: its rows and its note, on the rows under the
-/// prompt.
-fn listed(list: &List) -> String {
-    let mut rows = list.rows();
-    rows.push(list.note());
-    rows.iter().map(|row| format!("\n  {row}")).collect()
+/// prompt. It is no text of the line: `→` at the end of the line puts
+/// the completion of a hint in the line, and this hint has none.
+#[derive(Debug, PartialEq)]
+struct Listed(String);
+
+impl Listed {
+    fn of(list: &List) -> Listed {
+        let mut rows = list.rows();
+        rows.push(list.note());
+        Listed(rows.iter().map(|row| format!("\n  {row}")).collect())
+    }
+}
+
+impl Hint for Listed {
+    fn display(&self) -> &str {
+        &self.0
+    }
+
+    fn completion(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// A copy of the text that the person is typing. The line editor lives
@@ -853,9 +871,9 @@ impl Typing {
 }
 
 impl Hinter for Typing {
-    type Hint = String;
+    type Hint = Listed;
 
-    fn hint(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
+    fn hint(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Listed> {
         self.set(line);
         // The line editor calls this on its own thread, the thread that
         // writes the screen: the title goes out between two of its writes.
@@ -866,7 +884,7 @@ impl Hinter for Typing {
         }
         let mut names = self.names.lock().ok()?;
         names.ahead.edited(line, pos);
-        names.list(line, pos).map(|list| listed(&list))
+        names.list(line, pos).map(|list| Listed::of(&list))
     }
 }
 
@@ -1156,6 +1174,31 @@ mod tests {
         assert_eq!(typing.text(), "half");
         typing.set("");
         assert_eq!(typing.text(), "");
+    }
+
+    /// The hint of `@r` shows the list and its note, and has no text for
+    /// the line: `→` puts none of it in the line
+    /// (01M6YDSREH39WWV6QHB0M7Z6P5).
+    #[test]
+    fn the_hint_of_the_list_shows_the_names_and_has_no_text_for_the_line() {
+        use riff_core::wire::{ChatName, NameKind};
+
+        let typing = Typing::default();
+        let riff = ChatName {
+            name: "riff".into(),
+            kind: NameKind::Project,
+            online: true,
+        };
+        typing.names.lock().unwrap().names = Names::new(vec![riff]);
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history as &dyn History);
+        let hint = typing.hint("hi @r", 5, &ctx).unwrap();
+        assert_eq!(
+            hint.display(),
+            "\n  riff  project  online\n  Tab or Enter picks riff. Esc closes the list."
+        );
+        assert_eq!(hint.completion(), None);
+        assert_eq!(typing.hint("hi @zed", 7, &ctx), None);
     }
 
     /// 01M6Y8N8W5RE5H6MW3TNDH5BSY: with a typed text, `↑` and `↓` keep

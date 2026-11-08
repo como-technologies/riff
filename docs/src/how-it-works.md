@@ -3733,8 +3733,9 @@ Then type `is #12 done? @r`:
 | `Tab`, `Enter` | Put the first name of the list in the line, with a space after it. |
 | `Esc` | Close the list. It stays closed until the cursor leaves the word. |
 
-The list does not stop your keys. To get another name of the list, type
-more of its letters. A name that is not in the list goes as you typed
+The list does not stop your keys, and it is not text of the line: `→`
+puts none of it in the line. To get another name of the list, type more
+of its letters. A name that is not in the list goes as you typed
 it: riff-server finds each name when it gets the line. The Chat tab of
 the TUI has the same list (see "Pick a name in the Chat tab").
 

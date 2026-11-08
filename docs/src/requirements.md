@@ -3249,6 +3249,9 @@
   names of the last read, and with no names no list shows. In `riff
   chat`, the list shows on the rows under the prompt, with the note `Tab
   or Enter picks NAME. Esc closes the list.` after it.
+- **01M6YDSREH39WWV6QHB0M7Z6P5** In `riff chat`, the list of the names
+  of 01M6Y1EKGKNW2MH970PDF6PJK1 is not text of the line: `→` at the
+  end of the line puts none of it in the line, and the list stays.
 
 ## Security
 

@@ -1394,6 +1394,48 @@ async fn in_a_terminal_at_shows_the_names_and_tab_completes_one() {
     assert!(is_line(&line, "mike", "@zed hi"), "{line:?}");
 }
 
+/// `→` at the end of the line puts none of the list of the names in the
+/// line, and the list stays (01M6YDSREH39WWV6QHB0M7Z6P5): `Enter` then
+/// picks the name, as the note says, and the line that posts holds no
+/// row of the list.
+#[tokio::test]
+async fn in_a_terminal_the_right_arrow_puts_none_of_the_list_in_the_line() {
+    let server = crate::common::start_signed().await;
+    let lead = lead_of("mike");
+    crate::common::api_of(&server, &lead)
+        .register(&lead)
+        .await
+        .unwrap();
+    crate::common::name_lead(&server.api("mike", None), &lead).await;
+    let mut mike = Tty::start(&server, "mike", "thelio").await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+    let note = "  Tab or Enter picks riff. Esc closes the list.";
+    let listed = |text: &'static str| {
+        move |rows: &[String]| {
+            rows.len() >= 3
+                && rows[rows.len() - 3] == format!("{PROMPT}{text}")
+                && rows.last().is_some_and(|row| row == note)
+        }
+    };
+
+    mike.keys("hi @r").await;
+    mike.shows(listed("hi @r")).await;
+    mike.press("\x1b[C").await;
+    let rows = mike.shows(listed("hi @r")).await;
+    assert!(
+        rows.iter().any(|row| row == "  riff  project  online"),
+        "{rows:#?}"
+    );
+    // The line is still `hi @r`: Enter picks the name, and sends nothing.
+    mike.keys("\r").await;
+    let want = format!("{PROMPT}hi @riff");
+    mike.shows(|rows| rows.last().is_some_and(|row| *row == want))
+        .await;
+    mike.keys("\r").await;
+    let line = brett.shows("hi @r").await;
+    assert!(is_line(&line, "mike", "hi @riff"), "{line:?}");
+}
+
 /// A server that names a build and holds each post for `wait`: the
 /// reply of a post comes a while after the post.
 struct Deploy {
