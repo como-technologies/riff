@@ -12,7 +12,7 @@
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
 //! | `riff pr wait N` | `pr view`, `pr checks --required`, again at the [`pace`] of `--every`. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
-//! | `riff verify pass\|fail N` | `pr view`, `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs` and `api …/pulls/N/files` (a pass), `pr comment`, `api …/statuses/COMMIT` |
+//! | `riff verify pass\|fail N` | `pr view`, `issue view` (a pass of a body with `Closes #N`), `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs` and `api …/pulls/N/files` (a pass), `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
@@ -24,6 +24,24 @@
 //! (01M3W2627GYXR8CFW76KB6CB9W). It checks the pull request with
 //! [`hygiene::check_pr_for`] before it opens it, and turns on auto-merge
 //! with a squash at once (01M3NB6FTGPD0S5JTXXXNGNNDT).
+//!
+//! The body of the issue gives the link line ([`Link::of`],
+//! 01M6WW5WSSRMTBP882FQP3TS2Q). A line of "Done when" that starts with
+//! `Live:` is a check after the release (R194), so the link is `Refs #N`,
+//! also with no `--refs`, and the merge leaves the issue open. The frame
+//! of the body in the start text of a worker gets the same link line
+//! ([`crate::run::Frame`]). `riff verify pass` refuses a pass of a body
+//! with `Closes #N` for such an issue ([`report`]): a body that a session
+//! wrote with `gh pr create` gets the same rule.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     I["the body of issue N"] --> L{"a line of Done when<br/>starts with Live:?"}
+//!     L -- yes --> R["Refs #N"]
+//!     L -- no --> F{"--refs?"}
+//!     F -- yes --> R
+//!     F -- no --> C["Closes #N"]
+//! ```
 //!
 //! The rules are the ones that the riff config of the repository asks
 //! for ([`crate::hygiene_rules`]). Only the repository of riff gets
@@ -127,6 +145,7 @@ use zeroize::Zeroizing;
 use crate::ghcalls::{self, Calls};
 use crate::registry;
 use crate::repo_setup;
+use crate::rollout;
 use crate::session_image;
 use crate::text;
 
@@ -1390,6 +1409,61 @@ pub async fn on_thread<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'sta
     result.await.map_err(|_| anyhow!("a read of gh panicked"))
 }
 
+/// The link line of the pull request of an issue, and why it is the one
+/// (01M3JFEXMPNFEV4HBZJQ15JD25, 01M6WW5WSSRMTBP882FQP3TS2Q).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Link {
+    /// `Closes #N`: the last pull request of the issue. Its merge closes
+    /// the issue.
+    Closes(u64),
+    /// `Refs #N`, that the author asks for with `--refs`: a pull request
+    /// before the last one of the issue.
+    Refs(u64),
+    /// `Refs #N`, because a line of "Done when" of the issue starts with
+    /// `Live:` ([`rollout::has_live_check`]): the merge leaves the issue
+    /// open for its check after the release.
+    Live(u64),
+}
+
+impl Link {
+    /// The link of the pull request of issue `issue`, whose body is
+    /// `body`: [`Link::Live`] for an issue with a `Live:` line, with or
+    /// without `refs`. Else [`Link::Refs`] with `refs`, and
+    /// [`Link::Closes`] without.
+    ///
+    /// ```
+    /// use riff::pr::Link;
+    ///
+    /// let live = "## Done when:\n\n- A test.\n- Live: the owner runs it.\n";
+    /// assert_eq!(Link::of(12, live, false), Link::Live(12));
+    /// assert_eq!(Link::of(12, live, true), Link::Live(12));
+    /// assert_eq!(Link::of(12, "## Done when:\n\n- A test.\n", true), Link::Refs(12));
+    /// assert_eq!(Link::of(12, "## Done when:\n\n- A test.\n", false), Link::Closes(12));
+    /// ```
+    pub fn of(issue: u64, body: &str, refs: bool) -> Self {
+        match (rollout::has_live_check(body), refs) {
+            (true, _) => Self::Live(issue),
+            (false, true) => Self::Refs(issue),
+            (false, false) => Self::Closes(issue),
+        }
+    }
+
+    /// The number of the issue.
+    pub fn issue(self) -> u64 {
+        match self {
+            Self::Closes(n) | Self::Refs(n) | Self::Live(n) => n,
+        }
+    }
+
+    /// The link line of the hygiene check: `Closes #N` or `Refs #N`.
+    pub fn line(self) -> hygiene::Link {
+        match self {
+            Self::Closes(n) => hygiene::Link::Closes(n),
+            Self::Refs(n) | Self::Live(n) => hygiene::Link::Refs(n),
+        }
+    }
+}
+
 /// The body of a pull request for the issue of `link` in the form of the
 /// hygiene check: the link line, the summary, and the trailers.
 ///
@@ -1399,10 +1473,13 @@ pub async fn on_thread<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'sta
 /// and names the line (01M3W2627GYXR8CFW76KB6CB9W). The trailer
 /// `Milestone:` names a wave by its number (01M518A07QF1YACBYT91M0DD1R),
 /// and a trailer of the summary with the same number is the one of the
-/// pull request.
+/// pull request. An issue with a line `Live:` in "Done when" gets
+/// `Refs #N` ([`Link::of`]), and a summary with `Closes #N` for it is
+/// refused with the fix (01M6WW5WSSRMTBP882FQP3TS2Q).
 ///
 /// ```
-/// use hygiene::{Issue, Link, PullRequest};
+/// use hygiene::{Issue, PullRequest};
+/// use riff::pr::Link;
 ///
 /// let body = riff::pr::body(Link::Closes(12), "Show the wave.\n", "Wave 3").unwrap();
 /// assert_eq!(body, "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n");
@@ -1429,8 +1506,16 @@ pub async fn on_thread<T: Send + 'static>(read: impl FnOnce() -> T + Send + 'sta
 ///     "the body has the line `Issue: #9`, but this pull request needs `Issue: #12`. \
 ///      Change the line, or remove it."
 /// );
+///
+/// // An issue with a check after the release: `Refs #12`, also with no
+/// // `--refs`, and a summary with `Closes #12` is refused.
+/// let issue = "Text.\n\n## Done when:\n\n- A test.\n- Live: the owner runs it.\n";
+/// let body = riff::pr::body(Link::of(12, issue, false), "Show the wave.\n", "Wave 3").unwrap();
+/// assert_eq!(body, "Refs #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n");
+/// let closes = riff::pr::body(Link::of(12, issue, false), "Closes #12\n\nShow it.\n", "Wave 3");
+/// assert!(closes.unwrap_err().to_string().contains("Change the line to `Refs #12`"));
 /// ```
-pub fn body(link: hygiene::Link, summary: &str, milestone: &str) -> Result<String> {
+pub fn body(link: Link, summary: &str, milestone: &str) -> Result<String> {
     body_for(link, summary, Some(milestone))
 }
 
@@ -1441,7 +1526,7 @@ pub fn body(link: hygiene::Link, summary: &str, milestone: &str) -> Result<Strin
 /// stays as it is then.
 ///
 /// ```
-/// use hygiene::Link;
+/// use riff::pr::Link;
 ///
 /// let body = riff::pr::body_for(Link::Closes(12), "Show the wave.\n", None).unwrap();
 /// assert_eq!(body, "Closes #12\n\nShow the wave.\n\nIssue: #12\n");
@@ -1449,9 +1534,9 @@ pub fn body(link: hygiene::Link, summary: &str, milestone: &str) -> Result<Strin
 /// // A line for another issue is refused, as in `body`.
 /// assert!(riff::pr::body_for(Link::Closes(12), "Issue: #9\n", None).is_err());
 /// ```
-pub fn body_for(link: hygiene::Link, summary: &str, milestone: Option<&str>) -> Result<String> {
+pub fn body_for(link: Link, summary: &str, milestone: Option<&str>) -> Result<String> {
     let n = link.issue();
-    let line = match link {
+    let line = match link.line() {
         hygiene::Link::Closes(_) => format!("Closes #{n}"),
         hygiene::Link::Refs(_) => format!("Refs #{n}"),
     };
@@ -1463,16 +1548,19 @@ pub fn body_for(link: hygiene::Link, summary: &str, milestone: Option<&str>) -> 
         .lines()
         .filter(|l| hygiene::Link::parse(l).is_some())
     {
-        if hygiene::Link::parse(found) != Some(link) {
+        if hygiene::Link::parse(found) != Some(link.line()) {
             let found = found.trim();
-            let refs = match link {
-                hygiene::Link::Closes(_) => "Give --refs for a line `Refs #N`. ",
-                hygiene::Link::Refs(_) => "Give no --refs for a line `Closes #N`. ",
+            let fix = match link {
+                Link::Closes(_) => {
+                    "Give --refs for a line `Refs #N`. Change the line, or remove it.".to_owned()
+                }
+                Link::Refs(_) => {
+                    "Give no --refs for a line `Closes #N`. Change the line, or remove it."
+                        .to_owned()
+                }
+                Link::Live(_) => text::live_link_fix(n),
             };
-            bail!(
-                "the body has the line `{found}`, but this pull request needs `{line}`. \
-                 {refs}Change the line, or remove it."
-            );
+            bail!("the body has the line `{found}`, but this pull request needs `{line}`. {fix}");
         }
         linked = true;
     }
@@ -1550,7 +1638,8 @@ pub fn claimed_issue(claims: &[String]) -> Result<u64> {
 /// Only `rules = "riff"` has this rule.
 ///
 /// ```
-/// use hygiene::{Issue, Link, Rules};
+/// use hygiene::{Issue, Rules};
+/// use riff::pr::Link;
 ///
 /// let issue = Issue::new(12, "OPEN", Some("Wave 3"));
 /// let tests = format!("{}done", "unit tests pass, ".repeat(17));
@@ -1588,6 +1677,44 @@ pub fn check(rules: hygiene::Rules, title: &str, body: &str, issue: &hygiene::Is
     )
 }
 
+/// An issue, as `gh issue view --json number,state,milestone,body` gives
+/// it: the facts of the hygiene check, and the body.
+#[derive(Debug, Clone, Deserialize)]
+pub struct IssueView {
+    /// The number, the state and the milestone.
+    #[serde(flatten)]
+    pub issue: hygiene::Issue,
+    /// The body, with its "Done when".
+    #[serde(default)]
+    pub body: String,
+}
+
+/// The issue `issue` with `gh`: its facts for the hygiene check, and its
+/// body for the link line ([`Link::of`]).
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let gh = riff::pr::Gh::at(isolated::write_program(
+///     dir.path().join("gh"),
+///     "#!/bin/sh\n\
+///      [ \"$*\" = 'issue view 12 --json number,state,milestone,body' ] || exit 1\n\
+///      printf '%s' '{\"number\":12,\"state\":\"OPEN\",\"milestone\":{\"title\":\"Wave 3\"},\"body\":\"Done when:\\n- Live: x.\"}'\n",
+/// ));
+/// let viewed = riff::pr::view_issue(&gh, 12)?;
+/// assert_eq!(viewed.issue, hygiene::Issue::new(12, "OPEN", Some("Wave 3")));
+/// assert_eq!(riff::pr::Link::of(12, &viewed.body, false), riff::pr::Link::Live(12));
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn view_issue(gh: &Gh, issue: u64) -> Result<IssueView> {
+    gh.json(&[
+        "issue",
+        "view",
+        &issue.to_string(),
+        "--json",
+        "number,state,milestone,body",
+    ])
+}
+
 /// Opens the pull request of the current branch for issue `issue`, and
 /// turns on auto-merge with a squash (01M3NB6FTGPD0S5JTXXXNGNNDT). The
 /// pull request is against the default branch. Returns its number and
@@ -1600,6 +1727,10 @@ pub fn check(rules: hygiene::Rules, title: &str, body: &str, issue: &hygiene::Is
 /// issue needs none: the body has the link line and the trailer
 /// `Issue:`, and the pull request gets the milestone of the issue only
 /// when the issue has one (01M5SMSHNQ9E4P9W6RCB8E1WTN).
+///
+/// The link line comes from `refs` and from the body of the issue
+/// ([`Link::of`], 01M6WW5WSSRMTBP882FQP3TS2Q): an issue with a line
+/// `Live:` in "Done when" gets `Refs #N`, also with no `refs`.
 pub fn open(
     gh: &Gh,
     title: &str,
@@ -1608,9 +1739,8 @@ pub fn open(
     refs: bool,
     rules: hygiene::Rules,
 ) -> Result<(u64, String)> {
-    let n = issue.to_string();
-    let found: hygiene::Issue =
-        gh.json(&["issue", "view", &n, "--json", "number,state,milestone"])?;
+    let viewed = view_issue(gh, issue)?;
+    let found = &viewed.issue;
     let milestone = found.milestone.as_ref().map(|m| m.title.clone());
     if milestone.is_none() && rules == hygiene::Rules::All {
         bail!("issue #{issue} has no milestone. Ask the lead to put it in a wave.");
@@ -1626,16 +1756,12 @@ pub fn open(
             text::forge(milestone)
         );
     }
-    let link = if refs {
-        hygiene::Link::Refs(issue)
-    } else {
-        hygiene::Link::Closes(issue)
-    };
+    let link = Link::of(issue, &viewed.body, refs);
     let wave = milestone
         .as_deref()
         .filter(|_| rules == hygiene::Rules::All);
     let body = body_for(link, summary, wave)?;
-    check(rules, title, &body, &found)?;
+    check(rules, title, &body, found)?;
     let mut args = vec!["pr", "create", "--title", title];
     if let Some(milestone) = &milestone {
         args.extend(["--milestone", milestone]);
@@ -2511,6 +2637,33 @@ fn image_pullable(gh: &Gh, repo: &str, number: u64, commit: &str) -> Result<()> 
     }
 }
 
+/// Refuses a pass of pull request `number` when the link line
+/// `Closes #N` of its body names an issue with a line `Live:` in "Done
+/// when" (01M6WW5WSSRMTBP882FQP3TS2Q): its merge would close the issue
+/// before the check after the release. A body with no line `Closes #N`
+/// reads no issue.
+fn closes_no_live_check(gh: &Gh, number: u64, body: &str) -> Result<()> {
+    #[derive(Deserialize)]
+    struct Body {
+        #[serde(default)]
+        body: String,
+    }
+    let closed = body
+        .lines()
+        .find_map(|line| match hygiene::Link::parse(line) {
+            Some(hygiene::Link::Closes(n)) => Some(n),
+            _ => None,
+        });
+    let Some(issue) = closed else {
+        return Ok(());
+    };
+    let found: Body = gh.json(&["issue", "view", &issue.to_string(), "--json", "body"])?;
+    if rollout::has_live_check(&found.body) {
+        bail!("{}", text::verify_closes_live(number, issue));
+    }
+    Ok(())
+}
+
 /// Puts the result on pull request `number` as a comment, and sets the
 /// status `riff/verify` of its head commit in `repo`
 /// (01M3NB6FYXXKX80VHEVA5CV6RY). It reports nothing when the head is
@@ -2518,8 +2671,10 @@ fn image_pullable(gh: &Gh, repo: &str, number: u64, commit: &str) -> Result<()> 
 /// check of the head has no success (01M49HAZ7P3JMWNCG1SWCMAXQP,
 /// 01M5QYDE41FVFX26EC8K5QGYH4), or while the session image that the pull
 /// request pins is one that a host cannot pull with no login
-/// (01M5SMRRAG1WPBJMQKKTPSRHRP). The caller posts it to the holder of the
-/// issue.
+/// (01M5SMRRAG1WPBJMQKKTPSRHRP). It reports no pass of a pull request
+/// whose body closes an issue with a line `Live:` in "Done when"
+/// ([`rollout::has_live_check`], 01M6WW5WSSRMTBP882FQP3TS2Q). The caller
+/// posts it to the holder of the issue.
 pub fn report(
     gh: &Gh,
     repo: &str,
@@ -2536,6 +2691,7 @@ pub fn report(
     };
     let commit = head.head_ref_oid;
     if verdict == Verdict::Pass {
+        closes_no_live_check(gh, number, &head.body)?;
         let checks = repo_setup::full_check(gh, repo)?;
         let gate = gate_of(gh, repo, &checks, &commit)?;
         if gate != Gate::Passed {
@@ -2575,9 +2731,11 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
-    use hygiene::{Issue, Link, Rules};
+    use hygiene::{Issue, Rules};
 
-    use super::{CheckRun, Gate, Gh, body, body_for, check, full_done, full_state, gate_state};
+    use super::{
+        CheckRun, Gate, Gh, Link, body, body_for, check, full_done, full_state, gate_state,
+    };
     use crate::text;
 
     const FULL: &str = "Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
@@ -2880,6 +3038,43 @@ mod tests {
              Give no --refs for a line `Closes #N`. Change the line, or remove it."
         );
         assert!(refused(Link::Closes(12), "Text.\n\nIssue: 12\n").contains("`Issue: 12`"));
+    }
+
+    /// #1747, 01M6WW5WSSRMTBP882FQP3TS2Q: the body of the issue gives the
+    /// link line. A line `- Live: ...` in "Done when" gives `Refs #12`,
+    /// with and with no `--refs`. An issue with no such line gives
+    /// `Closes #12`, or `Refs #12` with `--refs`. A summary with
+    /// `Closes #12` for an issue with a `Live:` line is refused with the
+    /// fix, and one with `Refs #12` passes.
+    #[test]
+    fn an_issue_with_a_live_line_in_done_when_gets_refs() {
+        let live = "Make the Apps.\n\n## Done when:\n\n- A test with a fake GitHub.\n\
+                    - Live: the owner runs `riff github check`, and it passes.\n\
+                    - Docs: a how-to.\n";
+        let plain = "Make the Apps.\n\n## Done when:\n\n- A test with a fake GitHub.\n";
+        let refs = "Refs #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n";
+        for asked in [false, true] {
+            let link = Link::of(12, live, asked);
+            assert_eq!(link, Link::Live(12), "--refs {asked}");
+            assert_eq!(body(link, "Show the wave.\n", "Wave 3").unwrap(), refs);
+            assert_eq!(body(link, refs, "Wave 3").unwrap(), refs);
+            assert_eq!(
+                refused(link, FULL),
+                "the body has the line `Closes #12`, but this pull request needs `Refs #12`. \
+                 Issue #12 has a line `Live:` in \"Done when\": a check after the release is \
+                 left, and the merge must leave the issue open. Change the line to `Refs #12`, \
+                 or remove it."
+            );
+        }
+        let link = Link::of(12, plain, false);
+        assert_eq!(link, Link::Closes(12));
+        assert_eq!(body(link, "Show the wave.\n", "Wave 3").unwrap(), FULL);
+        let link = Link::of(12, plain, true);
+        assert_eq!(link, Link::Refs(12));
+        assert_eq!(body(link, "Show the wave.\n", "Wave 3").unwrap(), refs);
+        // A `Live:` line outside "Done when" gives no `Refs #12`.
+        let outside = "Live: a note.\n\n## Done when:\n\n- A test.\n\n## Notes\n\n- Live: later.\n";
+        assert_eq!(Link::of(12, outside, false), Link::Closes(12));
     }
 
     /// The same line two times stays: the hygiene check then refuses

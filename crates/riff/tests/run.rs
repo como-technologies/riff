@@ -77,7 +77,7 @@ case "$*" in
     echo "$branch" ;;
   'auth token') echo GHTOKEN ;;
   'api repos/como-technologies/riff --jq .permissions.push') echo true ;;
-  'issue view 12 --json number,state,milestone')
+  'issue view 12 --json number,state,milestone,body')
     while [ -f "$dir/milestone-hold" ]; do sleep 0.05; done
     echo '{"number":12,"state":"OPEN","milestone":{"title":"Wave 27"}}' ;;
   'issue view 12 --json number,labels')
@@ -3164,7 +3164,7 @@ async fn a_claim_refused_for_a_pause_ends_the_session_of_the_job() {
     // step before the claim.
     wait_for(
         &bin.join("gh.log"),
-        "gh issue view 12 --json number,state,milestone",
+        "gh issue view 12 --json number,state,milestone,body",
     )
     .await;
     machine.ok(None, &["pause"]).await;

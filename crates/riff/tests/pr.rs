@@ -328,12 +328,15 @@ fn pr_wait_with_a_long_every_waits_that_long() {
     assert_eq!(sleeps, [600, 600, 600]);
 }
 
+/// The fake forge of pull request 40 with `Closes #12`, whose Gate passed
+/// on its head 1a2b3c4d. Issue 12 has no line `Live:` ([`PLAIN_ISSUE`]).
 const VERIFY: &str = r#"*'pr view 40 --json headRefOid,body'*) printf '%s' '{"headRefOid":"1a2b3c4d","body":"Closes #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n"}' ;;
 *'pr comment 40 --body-file -'*) echo 'https://github.com/como-technologies/riff/pull/40#issuecomment-7' ;;
 *'/statuses/'*) echo '{}' ;;
 *'api repos/como-technologies/riff') echo '{"default_branch":"main"}' ;;
 *'/rules/branches/main?per_page=100'*) echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]' ;;
-*'/check-runs?check_name=Gate'*) echo '{"total_count":1,"check_runs":[{"name":"Gate","status":"completed","conclusion":"success"}]}' ;;"#;
+*'/check-runs?check_name=Gate'*) echo '{"total_count":1,"check_runs":[{"name":"Gate","status":"completed","conclusion":"success"}]}' ;;
+*'issue view 12 --json body'*) printf '%s' '{"body":"Make it.\n\n## Done when:\n\n- A test.\n"}' ;;"#;
 
 /// `riff verify VERDICT` makes one comment, one status on the head
 /// commit and one post to the holder of the issue.
@@ -664,6 +667,80 @@ async fn verify_pass_refuses_while_the_gate_of_the_head_has_no_success() {
     }
 }
 
+/// The body of issue 12 in [`VERIFY`]: its "Done when" has no line
+/// `Live:`.
+const PLAIN_ISSUE: &str = r#"Make it.\n\n## Done when:\n\n- A test.\n"#;
+
+/// The body of an issue 12 with a line `Live:` in "Done when": a check
+/// after the release.
+const LIVE_ISSUE: &str = r#"Make the Apps.\n\n## Done when:\n\n- A test with a fake GitHub.\n- Live: the owner runs riff github check, and it passes.\n"#;
+
+/// #1747, 01M6WW5WSSRMTBP882FQP3TS2Q: the body of pull request 40 has
+/// `Closes #12`, and issue 12 has a line `Live:` in "Done when". `riff
+/// verify pass` refuses with the fix, and makes no comment, no status
+/// and no post. A fail needs no such check. With `Refs #12` the pass is
+/// reported, and an issue with no `Live:` line takes `Closes #12`.
+#[tokio::test]
+async fn verify_pass_refuses_a_body_that_closes_an_issue_with_a_live_line() {
+    let issue = |body: &str| VERIFY.replace(PLAIN_ISSUE, body);
+    let machine = Machine::new(&issue(LIVE_ISSUE)).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let pass = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    let out = machine.run("verifier", &pass).await;
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(&riff::text::verify_closes_live(40, 12)),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Fix: change the first line of the body to `Refs #12`"),
+        "{stderr}"
+    );
+    let calls = log(machine.bin.path());
+    assert!(calls.contains("gh issue view 12 --json body"), "{calls}");
+    assert!(!calls.contains("gh pr comment"), "{calls}");
+    assert!(!calls.contains("/statuses/"), "{calls}");
+    let inbox = machine.ok("author", &["read"]).await;
+    assert!(!inbox.contains("verify result:"), "{inbox}");
+
+    // A fail needs no such check.
+    let fail = [
+        "verify", "fail", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    machine.ok("verifier", &fail).await;
+    assert!(log(machine.bin.path()).contains("-f state=failure"));
+
+    // The body with `Refs #12` passes, and reads no issue.
+    let refs = issue(LIVE_ISSUE).replace(r#""body":"Closes #12\n"#, r#""body":"Refs #12\n"#);
+    assert!(refs.contains(r#""body":"Refs #12\n"#), "{refs}");
+    let machine = Machine::new(&refs).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let pass = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    machine.ok("verifier", &pass).await;
+    let calls = log(machine.bin.path());
+    assert!(calls.contains("-f state=success"), "{calls}");
+    assert!(!calls.contains("gh issue view"), "{calls}");
+
+    // An issue with no `Live:` line takes `Closes #12`.
+    let machine = Machine::new(&issue(PLAIN_ISSUE)).await;
+    machine.claim("author", "issue-12").await;
+    let result = machine.write("result.md", "1. The wave shows.\n");
+    let pass = [
+        "verify", "pass", "40", "--file", &result, "--commit", "1a2b3c4d",
+    ];
+    machine.ok("verifier", &pass).await;
+    let calls = log(machine.bin.path());
+    assert!(calls.contains("gh issue view 12 --json body"), "{calls}");
+    assert!(calls.contains("-f state=success"), "{calls}");
+}
+
 /// The fake forge of a pull request that changes `riff.toml` from the
 /// pin of `ghcr.io/o/i` to the pin `head`.
 fn pin_cases(head: &str) -> String {
@@ -776,7 +853,13 @@ const FOUR: [&str; 4] = [
 /// [`FOUR`] and `riff/verify`, and the head commit has no check run
 /// `Gate`. `run` gives the check run of each of the four, as JSON.
 fn without_gate(run: impl Fn(&str) -> String) -> String {
-    let mut cases: Vec<String> = VERIFY.lines().take(3).map(str::to_owned).collect();
+    // The pull request, the comment, the status, and the read of issue 12.
+    let mut cases: Vec<String> = VERIFY
+        .lines()
+        .take(3)
+        .chain(VERIFY.lines().last())
+        .map(str::to_owned)
+        .collect();
     let contexts: Vec<String> = FOUR
         .iter()
         .chain(&["riff/verify"])
@@ -1104,6 +1187,62 @@ async fn pr_open_with_refs_links_with_refs() {
         .await;
     let (_, body) = created(machine.bin.path());
     assert_eq!(body, "Refs #12\n\nIssue: #12\nMilestone: Wave 3\n");
+}
+
+/// #1747, 01M6WW5WSSRMTBP882FQP3TS2Q: issue 12 has a line `Live:` in
+/// "Done when". `riff pr open` links with `Refs #12`, with and with no
+/// `--refs`. A summary with `Closes #12` is refused with the fix, and
+/// riff opens nothing.
+#[tokio::test]
+async fn pr_open_links_an_issue_with_a_live_line_with_refs() {
+    // printf, not echo: the echo of sh reads `\n` as a new line.
+    let live = OPEN.replace(
+        r#"echo '{"number":12,"state":"OPEN","milestone":{"title":"Wave 3"}}'"#,
+        &format!(
+            r#"printf '%s' '{{"number":12,"state":"OPEN","milestone":{{"title":"Wave 3"}},"body":"{LIVE_ISSUE}"}}'"#
+        ),
+    );
+    assert!(live.contains("Live: the owner"), "{live}");
+    for refs in [false, true] {
+        let machine = Machine::new(&live).await;
+        machine.claim("author", "issue-12").await;
+        let summary = machine.write("summary.md", "Make the Apps.\n");
+        let mut args = vec!["pr", "open", "--title", "Make the Apps", "--file", &summary];
+        if refs {
+            args.push("--refs");
+        }
+        machine.ok("author", &args).await;
+        let (_, body) = created(machine.bin.path());
+        assert_eq!(
+            body, "Refs #12\n\nMake the Apps.\n\nIssue: #12\nMilestone: Wave 3\n",
+            "--refs {refs}"
+        );
+        let calls = log(machine.bin.path());
+        assert!(
+            calls.contains("gh issue view 12 --json number,state,milestone,body"),
+            "{calls}"
+        );
+    }
+
+    let machine = Machine::new(&live).await;
+    machine.claim("author", "issue-12").await;
+    let summary = machine.write("summary.md", "Closes #12\n\nMake the Apps.\n");
+    let out = machine
+        .run(
+            "author",
+            &["pr", "open", "--title", "Make the Apps", "--file", &summary],
+        )
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(
+        err.contains(&format!(
+            "the body has the line `Closes #12`, but this pull request needs `Refs #12`. {}",
+            riff::text::live_link_fix(12)
+        )),
+        "{err}"
+    );
+    assert!(!log(machine.bin.path()).contains("gh pr create"));
 }
 
 /// A body that has the link line and the trailers gets none of them a

@@ -2536,8 +2536,10 @@ the pull request after the look does not change what the verify reads.
 
 A criterion that only the shared riff can test is a check after the
 release. It does not stop a pass. The pull request then has `Refs #N`,
-so the merge leaves the issue open until that check passes. The rules
-of GitHub are in
+so the merge leaves the issue open until that check passes (see
+[Leave the issue open for a check after the
+release](development.md#leave-the-issue-open-for-a-check-after-the-release)).
+The rules of GitHub are in
 [Merge by pull request on
 GitHub](development.md#merge-by-pull-request-on-github).
 
@@ -2627,12 +2629,16 @@ rules of your repository.
 when a line names another issue or another wave, for example
 `Issue: #9` for the claim `issue-12`. The message names the line.
 
-When a check after the release is left, or a later pull request
-closes the issue, link with `Refs #12`:
+When a later pull request closes the issue, link with `Refs #12`:
 
 ```sh
 riff pr open --title "Show the wave" --file summary.md --refs
 ```
+
+An issue with a line `Live:` in "Done when" gets `Refs #12` with no
+`--refs`: see
+[Leave the issue open for a check after the
+release](development.md#leave-the-issue-open-for-a-check-after-the-release).
 
 ### Wait for the merge
 
@@ -2913,6 +2919,12 @@ riff verify pass: pull request #40 pins a session image that a host cannot pull.
 Report a fail with the line, or tell the author. The author can ask
 the same question before the pull request: see
 [Check that each host can pull the image](start-a-riff.md#check-that-each-host-can-pull-the-image).
+
+A pull request with `Closes #N` for an issue with a line `Live:` in
+"Done when" gets no pass either: `riff verify pass` reports nothing and
+prints the fix. See
+[Leave the issue open for a check after the
+release](development.md#leave-the-issue-open-for-a-check-after-the-release).
 
 The wave starts the verify of a pull request in the same way: it waits
 until each check of the full check has a run that ended on the head

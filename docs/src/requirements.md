@@ -562,6 +562,17 @@
   could not read N repositories: A, B`, names them all. The command
   exits with 0 when it read at least one repository, and with 1 when
   `gh` failed for each. Supersedes 01M6QBJJ3R5CNTHT4FAPZ5DDSW in part.
+- **01M6WW5WSSRMTBP882FQP3TS2Q** A line of the part "Done when" of an
+  issue that starts with `Live:`, also after a list mark, is a check
+  after the release (R194). The part runs from the "Done when" line or
+  heading to the next heading. `riff pr open` writes the link line
+  `Closes #N`, and `Refs #N` with `--refs` or for an issue with a
+  `Live:` line. It refuses a body with `Closes #N` for such an issue,
+  and names the fix. The frame of the body in the start text of a work
+  session has the same link line. `riff verify pass` refuses a pass, and
+  sets no status, when the link line `Closes #N` of the pull request
+  names an issue with a `Live:` line. It names the fix: change the first
+  line to `Refs #N`. Supersedes 01M3NB6FTGPD0S5JTXXXNGNNDT in part.
 
 ## Issue hygiene on GitHub
 
@@ -658,8 +669,8 @@
 - **01M3NB6FTGPD0S5JTXXXNGNNDT** `riff pr open --title TITLE` opens the
   pull request of the current branch with `gh`. The issue is the one
   claim `issue-N` of the session, or `--issue N`. The body is the link
-  line `Closes #N` (`Refs #N` with `--refs`), the summary of `--file`,
-  and the trailer `Issue: #N`. With the rules of riff
+  line, the summary of `--file`, and the trailer `Issue: #N`. With the
+  rules of riff
   (01M5SMSMWE89SC3Q7XFBQCFY32), it also has the trailer `Milestone: M`
   of the issue (01M518A07QF1YACBYT91M0DD1R). It refuses a pull request
   that breaks the rules that apply (01M5SMSHNQ9E4P9W6RCB8E1WTN), and

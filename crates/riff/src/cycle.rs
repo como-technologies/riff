@@ -1119,7 +1119,7 @@ pub fn cut(forge: &dyn Forge, new: Semver, skip: Option<&Skip>, why: Option<&str
     let issue = forge.release_issue(&title, &wave, &issue_body(new))?;
     let merged = forge.merged_since(Some(&tag(last)))?;
     let summary = summary(issue, last, new, skip, why, &merged);
-    let body = pr::body(hygiene::Link::Refs(issue), &summary, &wave)?;
+    let body = pr::body(pr::Link::Refs(issue), &summary, &wave)?;
     let errors = hygiene::check_pr(
         &hygiene::PullRequest::new(&title, &body, Some(&wave)),
         Some(&hygiene::Issue::new(issue, "OPEN", Some(&wave))),

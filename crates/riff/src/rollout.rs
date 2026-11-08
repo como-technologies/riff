@@ -331,18 +331,95 @@ pub const DONE_WHEN: &str = "Done when:";
 /// it is a Markdown heading of `Done when` (one to six `#`, a space), with
 /// or without the colon (01M6QB0T4AR4M06W34994TMNH4).
 fn done_when_line(line: &str) -> bool {
+    done_when_rest(line).is_some()
+}
+
+/// The text after `Done when:` of a "Done when" line or heading
+/// ([`done_when_line`]), or `None` for another line.
+fn done_when_rest(line: &str) -> Option<&str> {
     let line = line.trim_start();
-    if line.starts_with(DONE_WHEN) {
-        return true;
+    if let Some(rest) = line.strip_prefix(DONE_WHEN) {
+        return Some(rest);
     }
+    let rest = heading(line)?.strip_prefix("Done when")?;
+    if rest.trim_end().is_empty() {
+        return Some("");
+    }
+    rest.strip_prefix(':')
+}
+
+/// The text of a Markdown heading: one to six `#` and a space, or `None`
+/// for another line.
+fn heading(line: &str) -> Option<&str> {
+    let line = line.trim_start();
     let text = line.trim_start_matches('#');
     let marks = line.len() - text.len();
-    let Some(text) = text.strip_prefix(' ').filter(|_| (1..=6).contains(&marks)) else {
-        return false;
+    match text.strip_prefix(' ') {
+        Some(text) if (1..=6).contains(&marks) => Some(text.trim_start()),
+        _ => None,
+    }
+}
+
+/// The start of a line of "Done when" that names a check after the
+/// release (R194, 01M6WW5WSSRMTBP882FQP3TS2Q).
+pub const LIVE: &str = "Live:";
+
+/// True when a line of the part "Done when" of the body of an issue starts
+/// with [`LIVE`], also after a list mark: the issue has a check after the
+/// release, so the merge of its pull request leaves it open
+/// (01M6WW5WSSRMTBP882FQP3TS2Q). The part runs from a "Done when" line or
+/// heading ([`Issue::has_done_when`]) to the next heading.
+///
+/// ```
+/// use riff::rollout::has_live_check;
+///
+/// assert!(has_live_check("## Done when:\n\n- A test.\n- Live: the owner runs it.\n"));
+/// assert!(has_live_check("Done when:\n* Live: it runs on pangolin.\n2. Docs."));
+/// assert!(has_live_check("Done when: Live: it runs on pangolin."));
+/// assert!(has_live_check("### Done when\n- [ ] Live: it runs on pangolin."));
+/// assert!(!has_live_check("## Done when:\n\n- A test.\n"));
+/// // A line outside "Done when" does not count.
+/// assert!(!has_live_check("Live: a note.\n\n## Done when\n- A test.\n"));
+/// assert!(!has_live_check("## Done when\n- A test.\n\n## Notes\n- Live: later.\n"));
+/// // `Live:` starts the line, after the list mark.
+/// assert!(!has_live_check("## Done when\n- A test, not Live: yet.\n"));
+/// ```
+pub fn has_live_check(body: &str) -> bool {
+    let mut inside = false;
+    for line in body.lines() {
+        if let Some(rest) = done_when_rest(line) {
+            inside = true;
+            if live_line(rest) {
+                return true;
+            }
+        } else if heading(line).is_some() {
+            inside = false;
+        } else if inside && live_line(line) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when `line` starts with [`LIVE`], after the spaces, a list mark
+/// (`-`, `*`, `+`, or a number with `.` or `)`) and a task box (`[ ]`,
+/// `[x]`).
+fn live_line(line: &str) -> bool {
+    let line = line.trim_start();
+    let unnumbered = line.trim_start_matches(|c: char| c.is_ascii_digit());
+    let rest = match line.strip_prefix(['-', '*', '+']) {
+        Some(rest) => rest,
+        None if unnumbered.len() < line.len() => {
+            unnumbered.strip_prefix(['.', ')']).unwrap_or(line)
+        }
+        None => line,
     };
-    text.trim_start()
-        .strip_prefix("Done when")
-        .is_some_and(|rest| rest.trim_end().is_empty() || rest.starts_with(':'))
+    let rest = rest.trim_start();
+    let rest = ["[ ]", "[x]", "[X]"]
+        .iter()
+        .find_map(|task| rest.strip_prefix(task))
+        .unwrap_or(rest);
+    rest.trim_start().starts_with(LIVE)
 }
 
 /// An open issue, as `gh issue list --json
@@ -3132,6 +3209,49 @@ mod tests {
             "- ## Done when",
         ] {
             assert!(!has(no), "{no:?}");
+        }
+    }
+
+    /// #1747, 01M6WW5WSSRMTBP882FQP3TS2Q: a line of the part "Done when"
+    /// that starts with `Live:`, after a list mark or a task box, is a
+    /// check after the release. The part ends at the next heading. A line
+    /// outside it, and a line that has `Live:` later in its text, are
+    /// not.
+    #[test]
+    fn a_live_line_counts_only_in_the_part_done_when() {
+        for yes in [
+            "## Done when:\n\n- A test.\n- Live: a worker on pangolin opens a pull request.\n",
+            "## Done when\r\n- A test.\r\n- Live: it runs.\r\n",
+            "Done when:\n- A test.\n\n  - Live: it runs.\n",
+            "Done when:\n* Live: it runs.",
+            "Done when:\n+ Live: it runs.",
+            "Done when:\n1. A test.\n2. Live: it runs.",
+            "Done when:\n1) Live: it runs.",
+            "Done when:\nLive: it runs.",
+            "Done when: Live: it runs.",
+            "## Done when: Live: it runs.",
+            "### Done when\n- [ ] Live: it runs.",
+            "### Done when\n- [x] Live: it runs.",
+            "Text.\n\n## Done when\n\n- A test.\n\nMore text.\n\n- Live: it runs.\n",
+            "## Done when\n- A test.\n\n## Notes\n\n## Done when:\n- Live: it runs.\n",
+        ] {
+            assert!(has_live_check(yes), "{yes:?}");
+        }
+        for no in [
+            "",
+            "Live: it runs.",
+            "Live: it runs.\n\n## Done when\n- A test.\n",
+            "## Done when\n- A test.\n\n## Notes\n- Live: later.\n",
+            "## Done when\n- A test.\n# Notes\n- Live: later.\n",
+            "## Done when\n- A test, not Live: yet.\n",
+            "## Done when\n- live: it runs.\n",
+            "## Done when\n- Lively: it runs.\n",
+            "## Done when\n- **Live:** it runs.\n",
+            "## Done when\n-- Live: it runs.\n",
+            "## Done when\n1 Live: it runs.\n",
+            "It is done when it works.\n- Live: it runs.\n",
+        ] {
+            assert!(!has_live_check(no), "{no:?}");
         }
     }
 }

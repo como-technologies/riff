@@ -156,6 +156,63 @@ pub fn gate_not_passed(
     )
 }
 
+/// Why issue `issue` needs the link line `Refs #N`: a line of its "Done
+/// when" starts with `Live:` (01M6WW5WSSRMTBP882FQP3TS2Q).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::live_check_left(12),
+///     "Issue #12 has a line `Live:` in \"Done when\": a check after the release is left, and \
+///      the merge must leave the issue open."
+/// );
+/// ```
+pub fn live_check_left(issue: u64) -> String {
+    format!(
+        "Issue #{issue} has a line `Live:` in \"Done when\": a check after the release is left, \
+         and the merge must leave the issue open."
+    )
+}
+
+/// The fix of `riff pr open` for a body with another link line than
+/// `Refs #N` for an issue with a line `Live:` in "Done when"
+/// (01M6WW5WSSRMTBP882FQP3TS2Q).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::live_link_fix(12),
+///     "Issue #12 has a line `Live:` in \"Done when\": a check after the release is left, and \
+///      the merge must leave the issue open. Change the line to `Refs #12`, or remove it."
+/// );
+/// ```
+pub fn live_link_fix(issue: u64) -> String {
+    format!(
+        "{} Change the line to `Refs #{issue}`, or remove it.",
+        live_check_left(issue)
+    )
+}
+
+/// The line of `riff verify pass` for pull request `number`, whose body
+/// has the line `Closes #N` for issue `issue` with a line `Live:` in
+/// "Done when" (01M6WW5WSSRMTBP882FQP3TS2Q).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::verify_closes_live(40, 12),
+///     "riff verify pass: pull request #40 has the line `Closes #12`. Issue #12 has a line \
+///      `Live:` in \"Done when\": a check after the release is left, and the merge must leave \
+///      the issue open. Fix: change the first line of the body to `Refs #12`, with gh pr edit \
+///      40 --body-file FILE. Nothing is reported."
+/// );
+/// ```
+pub fn verify_closes_live(number: u64, issue: u64) -> String {
+    format!(
+        "riff verify pass: pull request #{number} has the line `Closes #{issue}`. {} Fix: change \
+         the first line of the body to `Refs #{issue}`, with gh pr edit {number} --body-file \
+         FILE. Nothing is reported.",
+        live_check_left(issue)
+    )
+}
+
 /// The fix for a session image that a host cannot pull with no login
 /// (01M5SMRRAG1WPBJMQKKTPSRHRP, 01M5SMSB3H1E9NXMBDN8ZDJ6CD).
 ///

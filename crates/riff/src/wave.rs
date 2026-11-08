@@ -2664,7 +2664,7 @@ impl Live {
         pinned: &Pinned,
         host: &run::Host,
         base: &str,
-        milestone: Option<String>,
+        frame: Option<run::Frame>,
         session: &str,
         me: &SessionUri,
     ) -> Result<Start> {
@@ -2697,10 +2697,10 @@ impl Live {
                 })
                 .await
                 .unwrap_or_default();
-                let milestone = milestone.context("a build has a milestone")?;
-                let frame = pr::body(hygiene::Link::Closes(issue), "SUMMARY", &milestone)?;
+                let frame = frame.context("a build has a milestone")?;
+                let (body, milestone) = (frame.body()?, &frame.milestone);
                 let mut text = text::run_start(
-                    &wave.repo, base, issue, &branch, session, &frame, &milestone, earlier,
+                    &wave.repo, base, issue, &branch, session, &body, milestone, earlier,
                 );
                 if let Some(failed) = failed {
                     text.push_str("\n\n");
@@ -3406,10 +3406,10 @@ impl World for Live {
                 let repo = wave.repo.clone();
                 blocking(move || pr::default_branch(&forge(&repo), &repo)).await?
             };
-            let milestone = match work {
+            let frame = match work {
                 Work::Build { issue } => {
                     let (repo, issue) = (wave.repo.clone(), *issue);
-                    Some(blocking(move || run::milestone(&forge(&repo), issue)).await?)
+                    Some(blocking(move || run::frame(&forge(&repo), issue)).await?)
                 }
                 Work::Verify { .. } | Work::Rebase { .. } | Work::Checks { .. } => None,
             };
@@ -3434,7 +3434,7 @@ impl World for Live {
             }
             self.keep_alive(api.clone(), me.clone(), &session);
             println!("{}", text::wave_claimed(&wave.repo, &item, &session));
-            match Self::prepare(wave, work, pinned, &host, &base, milestone, &session, &me).await {
+            match Self::prepare(wave, work, pinned, &host, &base, frame, &session, &me).await {
                 Ok(start) => Ok(Some(start)),
                 Err(e) => {
                     self.end(&api, &me, &thread, &item).await;
