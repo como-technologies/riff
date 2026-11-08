@@ -2,8 +2,8 @@
 //! push to `main` (01M3JFEXJG2D651PWA30DNRGWF), and `just github` sets up
 //! the repository (01M3JFEXG85AJK8ZE8N807EQVB) with a ruleset that has
 //! no bypass (01M3JN4QQCM0GXK9BCGXVS2YC7), and a ruleset on the release
-//! tags (01M3MRMB0AJVPD952AQYD7X1RN). A fake `gh` on `PATH` writes each
-//! call and its input to a log.
+//! tags for the admin role and the lead App (01M6WZ40PZNBHW2BZHMQX80WJ8).
+//! A fake `gh` on `PATH` writes each call and its input to a log.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -126,11 +126,15 @@ dir=$(dirname "$0")
 echo "gh $*" >> "$dir/log"
 case "$*" in
   *"--input -"*) cat >> "$dir/log"; echo ;;
+  'api apps/'*) [ -f "$dir/no-app" ] && { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }; echo 5245117 ;;
   *'/rulesets --jq'*'"main"'*) cat "$dir/ruleset-main" 2>/dev/null ;;
   *'/rulesets --jq'*'"releases"'*) cat "$dir/ruleset-releases" 2>/dev/null ;;
 esac
 exit 0
 "#;
+
+/// The App ID that the fake `gh` gives for the lead App.
+const LEAD_ID: u64 = 5245117;
 
 /// Runs `deploy/github.sh` with a fake `gh`. `ruleset` is the ID of the
 /// ruleset `main` that exists, if any; the ruleset `releases` then
@@ -146,6 +150,7 @@ fn setup(ruleset: Option<&str>) -> (String, String) {
     let out = Command::new(repo().join("deploy/github.sh"))
         .arg("owner/repo")
         .env("GH", &gh)
+        .env_remove("LEAD_APP")
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
@@ -178,6 +183,7 @@ fn just_github_sets_the_repository_and_makes_the_ruleset() {
     assert_eq!(
         calls,
         [
+            "gh api apps/riff-como-technologies-lead --jq .id",
             "gh api -X PATCH repos/owner/repo -F allow_auto_merge=true -F allow_squash_merge=true \
              -F allow_merge_commit=false -F allow_rebase_merge=false \
              -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY \
@@ -238,13 +244,18 @@ fn just_github_again_updates_the_same_ruleset() {
     assert_eq!(ruleset(&log, "main")["name"], "main");
 }
 
-/// 01M3MRMB0AJVPD952AQYD7X1RN: only the repository admin role creates,
-/// moves or deletes a release tag `v*`.
+/// 01M6WZ40PZNBHW2BZHMQX80WJ8: only the repository admin role and the
+/// lead App create, move or delete a release tag `v*`. The ruleset is the
+/// one of `riff init` ([`riff::repo_setup::releases`]).
 #[test]
-fn just_github_lets_only_an_admin_make_a_release_tag() {
+fn just_github_lets_only_an_admin_and_the_lead_app_make_a_release_tag() {
     let (out, log) = setup(None);
     assert!(
         out.contains("Made the ruleset releases of owner/repo."),
+        "{out}"
+    );
+    assert!(
+        out.contains("release tags only by an admin and the lead App riff-como-technologies-lead."),
         "{out}"
     );
     let rules = ruleset(&log, "releases");
@@ -256,7 +267,10 @@ fn just_github_lets_only_an_admin_make_a_release_tag() {
     );
     assert_eq!(
         rules["bypass_actors"],
-        serde_json::json!([{ "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }])
+        serde_json::json!([
+            { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
+            { "actor_id": LEAD_ID, "actor_type": "Integration", "bypass_mode": "always" },
+        ])
     );
     let kinds: Vec<&str> = rules["rules"]
         .as_array()
@@ -265,6 +279,31 @@ fn just_github_lets_only_an_admin_make_a_release_tag() {
         .map(|r| r["type"].as_str().unwrap())
         .collect();
     assert_eq!(kinds, ["creation", "update", "deletion"]);
+    assert_eq!(rules, riff::repo_setup::releases(LEAD_ID));
+}
+
+/// 01M6WZ40PZNBHW2BZHMQX80WJ8: `LEAD_APP` names the lead App. When
+/// GitHub has no such App, `just github` stops before its first change.
+#[test]
+fn just_github_reads_the_lead_app_first_and_stops_with_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = dir.path().join("gh");
+    isolated::write_program(&gh, FAKE_GH);
+    std::fs::write(dir.path().join("no-app"), "").unwrap();
+    let out = Command::new(repo().join("deploy/github.sh"))
+        .arg("owner/repo")
+        .env("GH", &gh)
+        .env("LEAD_APP", "riff-acme-lead")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "GitHub has no App riff-acme-lead, so the setup of owner/repo changed nothing. Make the \
+         Apps with riff github create, or put the slug of the lead App in LEAD_APP.\n"
+    );
+    let log = std::fs::read_to_string(dir.path().join("log")).unwrap();
+    assert_eq!(log, "gh api apps/riff-acme-lead --jq .id\n");
 }
 
 #[test]

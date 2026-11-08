@@ -2036,10 +2036,7 @@ async fn a_server_that_refuses_the_kind_riff_still_gets_the_lines_of_riff() {
             .find(|c| c.message.body.contains(body))
             .unwrap_or_else(|| panic!("no line with {body}"));
         assert_eq!(line.message.kind, riff_core::wire::Kind::Message, "{body}");
-        assert!(
-            line.message.body.starts_with(riff::chat::BY_RIFF),
-            "{body}"
-        );
+        assert!(line.message.body.starts_with(riff::chat::BY_RIFF), "{body}");
     }
     assert!(read.iter().any(|c| c.message.body.ends_with(&waits)));
 }
@@ -2193,7 +2190,11 @@ async fn approve_in_the_lead_container_refuses_and_asks_the_daemon_nothing() {
     let (_dir, socket, seen) =
         lead_daemon(|call| -> serde_json::Value { panic!("the server call {call}") });
     let out = machine
-        .run(&lead_vars(&socket), &["release", "approve", "v3.3.0"], "yes\n")
+        .run(
+            &lead_vars(&socket),
+            &["release", "approve", "v3.3.0"],
+            "yes\n",
+        )
         .await;
     assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
     assert_eq!(

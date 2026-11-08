@@ -583,7 +583,10 @@ enum Command {
     /// asks riff-server for the bot of the session App of the riff, and
     /// checks that the default branch has the guard of that bot:
     /// .github/workflows/riff-guard.yml puts back a change of that bot to
-    /// the body, the title or a comment of an issue. It
+    /// the body, the title or a comment of an issue. When riff.toml on the
+    /// default branch has [release], it asks riff-server for the lead App,
+    /// and checks that the ruleset releases on the tags v* lets the lead
+    /// App push a tag. It
     /// reads no CLAUDE.md or AGENTS.md: that file is the choice of the
     /// repository. It names the open issues with no "Done when:" line and no
     /// "## Done when" heading in a note: the wave starts no session for
@@ -591,7 +594,8 @@ enum Command {
     /// checks, riff init does the fix itself: it asks one question, and then it
     /// makes riff.toml with a pull request that it merges, allows auto-merge
     /// and squash merges, makes the Backlog and Wave 1,
-    /// and makes the ruleset riff. The same pull request adds the guard. It needs the rights of an admin of the
+    /// and makes the ruleset riff. The same pull request adds the guard. It
+    /// makes the ruleset releases too. It needs the rights of an admin of the
     /// repository, and a second run changes nothing. The riff.toml that it
     /// makes pins riff-base: claude, git and gh, with no language. --image
     /// pins another image. It writes no rule into
@@ -605,14 +609,15 @@ enum Command {
     /// container (RIFF_SOCKET is set), for example the container of a lead,
     /// riff init skips the checks of the machine, says so in one line, and
     /// runs the checks of the repository: the host runs the machine, the
-    /// daemon and the image.
+    /// daemon and the image. There it only checks, also with --yes: a
+    /// person runs riff init in a terminal for the steps of the repository.
     Init {
         /// Change nothing. Print the fix of each check that fails, and
         /// each wide allow rule. Exit with status 1 when a check fails.
         #[arg(long, conflicts_with = "yes")]
         check: bool,
         /// Ask no question. It sets up the repository on GitHub, and it
-        /// removes no wide rule.
+        /// removes no wide rule. In a session container it only checks.
         #[arg(long)]
         yes: bool,
         /// The session image that riff.toml pins, as HOST/PATH@sha256:DIGEST.
