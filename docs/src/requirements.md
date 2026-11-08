@@ -4023,6 +4023,9 @@
   by B". A new wrap of A, or a sentence that marks A as superseded in
   part, is no cut. The error names A and the new ID. `hygiene pr` reads
   the two texts with `gh api`.
+- **01M6WKP4GA1VM4XNPA2MGRXH8Q** A variable that holds the name of a
+  secret, of a key or of a token is not named `secret`, `key` or
+  `token`: it is `name` or `secret_name`, for example.
 
 ## The phone app
 

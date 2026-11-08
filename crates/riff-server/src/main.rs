@@ -202,7 +202,7 @@ impl Cli {
     /// into the bucket.
     fn keys(&self) -> At {
         match (&self.github_secret, &self.bucket, &self.dir) {
-            (Some(secret), _, _) => At::secret(secret),
+            (Some(name), _, _) => At::secret(name),
             (None, Some(_), _) => At::Nowhere,
             (None, None, Some(dir)) => At::Dir(dir.clone()),
             (None, None, None) => At::Memory,
@@ -482,10 +482,10 @@ mod tests {
         assert_eq!(keys(&["riff-server"]), At::Memory);
         assert_eq!(keys(&["riff-server", "--dir", "d"]), At::Dir("d".into()));
         assert_eq!(keys(&["riff-server", "--bucket", "b"]), At::Nowhere);
-        let secret = "projects/p/secrets/s";
+        let name = "projects/p/secrets/s";
         assert_eq!(
-            keys(&["riff-server", "--bucket", "b", "--github-secret", secret]),
-            At::secret(secret)
+            keys(&["riff-server", "--bucket", "b", "--github-secret", name]),
+            At::secret(name)
         );
     }
 

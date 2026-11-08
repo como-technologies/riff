@@ -390,7 +390,7 @@ impl Settings {
             secret_name: get("CLOUD_SECRET"),
             github_secret: match get("CLOUD_GITHUB_SECRET").as_str() {
                 "" => format!("{name}-github-apps"),
-                secret => secret.to_owned(),
+                given => given.to_owned(),
             },
             bucket: get("CLOUD_BUCKET"),
             service: get("CLOUD_SERVICE"),
@@ -775,17 +775,17 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     // The secret of the sign-in client, and the secret of the keys of the
     // GitHub Apps (01M6WG52ZEVRSQ463FTDS94M54). riff-server adds each
     // version of the second one itself.
-    for secret in [&s.secret_name, &s.github_secret] {
-        if gcloud.exists(&with(&["secrets", "describe", secret], &project))? {
-            println!("Secret {secret}: exists.");
+    for name in [&s.secret_name, &s.github_secret] {
+        if gcloud.exists(&with(&["secrets", "describe", name], &project))? {
+            println!("Secret {name}: exists.");
         } else {
-            println!("Secret {secret}: making it.");
+            println!("Secret {name}: making it.");
             gcloud.run(
                 &with(
                     &[
                         "secrets",
                         "create",
-                        secret,
+                        name,
                         "--replication-policy",
                         "automatic",
                     ],

@@ -2514,7 +2514,6 @@ fn print_members_news(news: &Result<Vec<riff_core::wire::Posted>>) {
     }
 }
 
-/// Shows the authorize URL of a sign-in, and opens it in the browser.
 /// `riff github create`, `install` and `check`
 /// (01M6WG52J7WTP079W1AYEQ4W08). Each refuses in an agent session and
 /// in a container, before each call (01M6WG537B67VWVENY3821RV33). It
@@ -2559,6 +2558,7 @@ async fn github_command(command: &GithubCommand, server: &str) -> Result<()> {
     Ok(())
 }
 
+/// Shows the authorize URL of a sign-in, and opens it in the browser.
 fn open_browser(url: &str) {
     eprintln!("riff: sign in with your browser. If it does not open, go to:\n{url}");
     let _ = open::that_detached(url);

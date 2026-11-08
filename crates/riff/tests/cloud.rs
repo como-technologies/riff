@@ -318,7 +318,14 @@ fn create_makes_the_secret_of_the_github_apps_and_deploy_names_it() {
         "{}",
         ran.calls
     );
-    let account = "serviceAccount:riff-server@como-riff.iam.gserviceaccount.com";
+    let stdout = ran.stdout();
+    for line in [
+        "Secret riff-oidc-client-secret: exists.\n",
+        "Secret riff-github-apps: making it.\n",
+    ] {
+        assert!(stdout.contains(line), "{stdout}");
+    }
+    let member = "serviceAccount:riff-server@como-riff.iam.gserviceaccount.com";
     let roles: Vec<&str> = ran
         .calls
         .lines()
@@ -329,7 +336,7 @@ fn create_makes_the_secret_of_the_github_apps_and_deploy_names_it() {
         "roles/secretmanager.secretAccessor",
         "roles/secretmanager.secretVersionAdder",
     ] {
-        let binding = format!("--member {account} --role {role}");
+        let binding = format!("--member {member} --role {role}");
         assert!(
             roles.iter().any(|l| l.contains(&binding)),
             "{binding}: {roles:?}"
