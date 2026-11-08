@@ -1059,6 +1059,14 @@ impl State {
     ///     fresh.on_key(Frame::Chat(Key::Type(c)));
     /// }
     /// assert_eq!(fresh.on_key(Frame::Chat(Key::Send)), Some(Action::Post("@riff hi".into())));
+    /// // A command that the chat does not know stays in the prompt. The
+    /// // note of the prompt says why, and Enter adds no note of its own.
+    /// for c in "/foo".chars() {
+    ///     state.on_key(Frame::Chat(Key::Type(c)));
+    /// }
+    /// assert_eq!(state.on_key(Frame::Chat(Key::Send)), None);
+    /// assert_eq!(state.chat().prompt().text(), "/foo");
+    /// assert_eq!(state.shown_note(), None);
     /// // Esc moves the focus to the log, and `i` gives it back.
     /// state.on_key(Frame::Chat(Key::Log));
     /// assert_eq!(state.chat().focus(), Focus::Log);
@@ -1125,16 +1133,14 @@ impl State {
     /// `Enter` in the prompt: the line to post, with the rules of
     /// `riff chat` ([`crate::chat::typed`], 01M6VG1PCXHNVJP7TSP0J5G5K9).
     /// It checks no name (01M6Y1A5PTCVZ6GRJ0FXMART2T). A command that the
-    /// chat does not know stays in the prompt, and the note line says why.
+    /// chat does not know stays in the prompt, and the note of the prompt
+    /// says why ([`prompt_note`]). It gives no note of the last action:
+    /// that note would stay after the line goes (01M6XTQHMY4VS04YGWY17BSTM8).
     fn send(&mut self) -> Option<Action> {
         let text = self.chat.prompt.text().to_owned();
         let body = match typed(&text) {
-            Typed::Nothing => return None,
+            Typed::Nothing | Typed::Unknown(_) => return None,
             Typed::Quit => return Some(Action::Quit),
-            Typed::Unknown(name) => {
-                self.note(unknown(name));
-                return None;
-            }
             Typed::Say(text) => text.to_owned(),
             Typed::Action(text) => format!("{ACTION}{text}"),
         };
@@ -2037,6 +2043,38 @@ mod tests {
             let note = &view.rows.iter().find(|r| r.area.y == 22).unwrap().line;
             assert_ne!(note.style, WARNING, "{key:?}");
         }
+    }
+
+    /// The cause of #1763: Enter on a line that the chat did not send put
+    /// its reason in the note of the last action too, and that note
+    /// stayed under each empty prompt and in each tab until the next line
+    /// that riff sent. Now Enter on a command that the chat does not know
+    /// gives no note of its own: the note of the prompt says why, and it
+    /// goes with the line (01M6XTQHMY4VS04YGWY17BSTM8).
+    #[test]
+    fn the_note_of_an_unknown_command_goes_with_the_line() {
+        let mut state = mock_up();
+        type_in(&mut state, "/foo");
+        assert_eq!(state.on_key(FrameKey::Chat(Key::Send)), None);
+        assert_eq!(state.chat().prompt().text(), "/foo");
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[22], format!(" {}", unknown("foo")));
+        let note = &view.rows.iter().find(|r| r.area.y == 22).unwrap().line;
+        assert_eq!(note.style, WARNING);
+        assert_eq!(state.shown_note(), None);
+
+        // With an empty prompt, the row under it is empty.
+        state.on_key(FrameKey::Chat(Key::Clear));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[21], ">");
+        assert_eq!(rows[22], "");
+        // Another tab has no old note either.
+        state.on_key(FrameKey::Open(Tab::Sessions));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert!(
+            !rows.iter().any(|row| row.contains("Unknown command")),
+            "{rows:#?}"
+        );
     }
 
     /// PgUp shows older rows and PgDn newer, in the window of the last

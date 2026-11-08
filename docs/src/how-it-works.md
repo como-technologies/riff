@@ -3801,6 +3801,11 @@ chat"): the tab sends each line with its names, and refuses no line for
 a name. Your line shows once, from the server, as in `riff chat`. `/me
 TEXT` sends an action, and `/quit` ends the TUI.
 
+A line with a command that the chat does not know, for example `/foo`,
+stays in the prompt, and the row under the prompt says why. The note
+goes with the line: when you delete the line, the row is empty, and no
+other tab shows the note.
+
 When riff cannot send a line, for example because riff-server refuses
 it, the row under the prompt says `riff: cannot send the line:` and the
 error in yellow. The row says it at once, also while you type the next

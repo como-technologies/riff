@@ -1149,6 +1149,38 @@ async fn a_long_line_in_the_chat_tab_wraps_over_more_rows() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// 01M6XTQHMY4VS04YGWY17BSTM8, the cause of #1763: Enter on a command
+/// that the chat does not know sends nothing, and the line stays. The
+/// row under the prompt says why, and the note goes with the line: no
+/// old note shows under an empty prompt, and not in another tab.
+#[tokio::test]
+async fn the_note_of_an_unknown_command_goes_with_the_line() {
+    let server = crate::common::start_signed().await;
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("2").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    let unknown = format!(" {}", riff::tui::chat::unknown("foo"));
+    tty.press("/foo").await;
+    tty.shows(|rows| rows[22] == unknown).await;
+    tty.press("\r").await;
+    let rows = tty.shows(|rows| rows[21] == "> /foo").await;
+    assert_eq!(rows[22], unknown, "{rows:#?}");
+
+    // Ctrl-U empties the prompt: the row under it is empty.
+    tty.press("\x15").await;
+    let rows = tty.shows(|rows| rows[21] == ">").await;
+    assert_eq!(rows[22], "", "{rows:#?}");
+    // Another tab has no old note either.
+    tty.press("\x1b").await;
+    tty.shows(|rows| rows[23].starts_with(" i type")).await;
+    tty.press("1").await;
+    let rows = tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    assert!(!rows[22].contains("Unknown command"), "{rows:#?}");
+    tty.press("\x03").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// A fake `gh` for the clone of acme/app: the open issues of Wave 3, as
 /// the REST list gives them, and no closed item, no pull request and no
 /// check. It logs each call to the file `calls` of its folder.

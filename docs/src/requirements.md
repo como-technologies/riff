@@ -8009,6 +8009,10 @@ that builds it merges.
   The line stays as it was.`, for a paste and for a typed character.
   This supersedes 01M6XSK4K2MDA2SK0A6KHN9HDT in part: the text of the
   note.
+- **01M6XTQHMY4VS04YGWY17BSTM8** `Enter` in the Chat tab gives no note
+  of the last action for a line that the chat does not send. The note of
+  the prompt says why, and it goes with the line: no old note shows
+  under an empty prompt or in another tab.
 
 ## The notes of the lead
 
