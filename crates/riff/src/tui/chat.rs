@@ -33,10 +33,15 @@
 //!   the focus to the log, where the keys of the frame work, and `i` or
 //!   `Enter` gives it back. `↑` and `↓` bring back the lines that you
 //!   sent (01M6VG1PA4PM47777ZT4PNGETF).
+//! - **A paste** goes into the prompt at the cursor, also from the log
+//!   ([`super::State::on_paste`], 01M6XSK4GHNBJCR0RHMBGZE57G). Its new
+//!   lines stay: the prompt shows each one as `↵`, and `Enter` sends the
+//!   line as one message. A paste that makes the line longer than
+//!   [`POST_MAX`] stays out ([`too_long`], 01M6XSK4K2MDA2SK0A6KHN9HDT).
 //! - **The note line** says whom the line will wake before you send it
 //!   ([`wake_note`]), with the rules of `riff chat`
-//!   (01M6VG1PCXHNVJP7TSP0J5G5K9). A post that fails shows there at
-//!   once, before that note, until the next key
+//!   (01M6VG1PCXHNVJP7TSP0J5G5K9). A post that fails, or a paste that is
+//!   too long, shows there at once, before that note, until the next key
 //!   (01M6VMACJGF4A0ZXC6YK13KNCH).
 //! - **News:** each new line of the thread while another tab shows
 //!   adds one to `Chat•N` in the strip (01M6VG1PFPMHRQ4F9XHJTYMSJY).
@@ -93,6 +98,11 @@ use crate::text::safe;
 
 /// The most lines that the log keeps. An older line goes.
 pub const KEEP: usize = 1000;
+
+/// The most bytes of a line of the Chat tab: 64 KiB. A paste that makes
+/// the line longer stays out of it ([`too_long`],
+/// 01M6XSK4K2MDA2SK0A6KHN9HDT).
+pub const POST_MAX: usize = 64 * 1024;
 
 /// The rows that a turn of the mouse wheel scrolls.
 const WHEEL: u16 = 3;
@@ -368,6 +378,25 @@ impl Prompt {
         }
     }
 
+    /// Puts `text` in the line at the cursor, and the cursor after it.
+    ///
+    /// ```
+    /// use riff::tui::chat::{Key, Prompt};
+    ///
+    /// let mut prompt = Prompt::default();
+    /// for c in "ab".chars() {
+    ///     prompt.edit(Key::Type(c));
+    /// }
+    /// prompt.edit(Key::Left);
+    /// prompt.paste("1\n2");
+    /// assert_eq!((prompt.text(), prompt.cursor()), ("a1\n2b", 4));
+    /// ```
+    pub fn paste(&mut self, text: &str) {
+        let at = self.byte(self.cursor);
+        self.text.insert_str(at, text);
+        self.cursor += text.chars().count();
+    }
+
     /// Shows `text` with the cursor at its end.
     fn show(&mut self, text: String) {
         self.cursor = text.chars().count();
@@ -473,9 +502,9 @@ pub struct Chat {
     pub(super) window: Window,
     /// Why the stream of the thread is down, while it is.
     down: Option<Down>,
-    /// The note of a post that failed, until the next key
-    /// (01M6VMACJGF4A0ZXC6YK13KNCH).
-    pub(super) unsent: Option<String>,
+    /// The note of a post that failed or of a paste that is too long,
+    /// until the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
+    pub(super) warning: Option<String>,
 }
 
 impl Chat {
@@ -514,10 +543,11 @@ impl Chat {
         self.down.as_ref()
     }
 
-    /// The note of a post that failed, until the next key: it comes
-    /// before the note of the prompt (01M6VMACJGF4A0ZXC6YK13KNCH).
-    pub fn unsent(&self) -> Option<&str> {
-        self.unsent.as_deref()
+    /// The note of a post that failed or of a paste that is too long,
+    /// until the next key: it comes before the note of the prompt
+    /// (01M6VMACJGF4A0ZXC6YK13KNCH).
+    pub fn warning(&self) -> Option<&str> {
+        self.warning.as_deref()
     }
 
     /// Adds `entry` to the end of the log. While the person looks at
@@ -715,9 +745,9 @@ impl State {
     /// // the next key, it comes before the note of the prompt.
     /// state.chat_came(Came::Unsent("riff: cannot send the line: no".into()));
     /// assert_eq!(state.shown_note(), Some("riff: cannot send the line: no"));
-    /// assert_eq!(state.chat().unsent(), Some("riff: cannot send the line: no"));
+    /// assert_eq!(state.chat().warning(), Some("riff: cannot send the line: no"));
     /// state.on_key(Frame::Chat(Key::Type('a')));
-    /// assert_eq!(state.chat().unsent(), None);
+    /// assert_eq!(state.chat().warning(), None);
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn chat_came(&mut self, came: Came) {
@@ -738,7 +768,7 @@ impl State {
             Came::Reconnecting => self.chat.down = Some(Down::Reconnecting),
             Came::Fault(fault) => self.chat.down = Some(Down::Fault(fault)),
             Came::Unsent(text) => {
-                self.chat.unsent = Some(text.clone());
+                self.chat.warning = Some(text.clone());
                 self.note(text);
             }
         }
@@ -816,6 +846,23 @@ impl State {
         }
     }
 
+    /// A paste in the Chat tab ([`super::State::on_paste`]): the prompt
+    /// gets the focus, and the text goes into the line at the cursor
+    /// ([`pasted`]). A paste that makes the line longer than
+    /// [`POST_MAX`] stays out: the line keeps its text, and the note line
+    /// says [`too_long`] until the next key.
+    pub(super) fn chat_paste(&mut self, text: &str) {
+        self.chat.focus = Focus::Prompt;
+        let text = pasted(text);
+        if self.chat.prompt.text().len() + text.len() > POST_MAX {
+            let note = too_long();
+            self.chat.warning = Some(note.clone());
+            self.note(note);
+            return;
+        }
+        self.chat.prompt.paste(&text);
+    }
+
     /// `Enter` in the prompt: the line to post, with the rules of
     /// `riff chat` ([`crate::chat::typed`], 01M6VG1PCXHNVJP7TSP0J5G5K9). A line that the chat cannot
     /// send stays in the prompt, and the note line says why.
@@ -856,6 +903,36 @@ pub fn unknown(name: &str) -> String {
         "Unknown command /{}. Use /me or {}, or start the line with //.",
         safe(name),
         crate::chat::QUIT
+    )
+}
+
+/// The text of a paste, safe for the prompt: each line end, `\r\n` or
+/// `\r`, is a new line `\n`, and no escape sequence and no control
+/// character stays, a new line and a tab apart.
+///
+/// ```
+/// use riff::tui::chat::pasted;
+///
+/// assert_eq!(pasted("one\r\ntwo\rthree\n"), "one\ntwo\nthree\n");
+/// assert_eq!(pasted("{\n\t\"a\": 1\n}"), "{\n\t\"a\": 1\n}");
+/// assert_eq!(pasted("hi\x1b]0;owned\x07 all\x1b[2J\x08"), "hi all");
+/// ```
+pub fn pasted(text: &str) -> String {
+    safe(&text.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
+/// The note of a paste that makes the line longer than [`POST_MAX`].
+///
+/// ```
+/// assert_eq!(
+///     riff::tui::chat::too_long(),
+///     "The paste is too long: a post has at most 64 KiB. The line stays as it was."
+/// );
+/// ```
+pub fn too_long() -> String {
+    format!(
+        "The paste is too long: a post has at most {} KiB. The line stays as it was.",
+        POST_MAX / 1024
     )
 }
 
@@ -923,13 +1000,14 @@ fn whom(to: &[Selector], user: &str) -> String {
     }
 }
 
-/// The note of the Chat tab, with its style: a post that failed after
-/// the last key, else whom the line in the prompt will wake, while the
-/// prompt holds a line (01M6VMACJGF4A0ZXC6YK13KNCH).
+/// The note of the Chat tab, with its style: a post that failed or a
+/// paste that was too long after the last key, else whom the line in
+/// the prompt will wake, while the prompt holds a line
+/// (01M6VMACJGF4A0ZXC6YK13KNCH).
 pub(super) fn note(state: &State) -> Option<Row<'static>> {
     let chat = &state.chat;
-    if let Some(unsent) = &chat.unsent {
-        return Some(Row::styled(safe(unsent), WARNING));
+    if let Some(warning) = &chat.warning {
+        return Some(Row::styled(safe(warning), WARNING));
     }
     let user = chat.user.as_deref()?;
     let text = chat.prompt.text();
@@ -984,7 +1062,7 @@ pub(super) fn keys(
 
 /// The keys of the Chat tab in the help popup, before the keys of the
 /// frame (01M6VAZKDEQ6951KGPGAMF1SNJ).
-pub const HELP: [(&str, &str); 8] = [
+pub const HELP: [(&str, &str); 9] = [
     ("Enter", "send the line, or go back to the prompt"),
     ("Esc", "leave the prompt: the keys of the tab work"),
     ("i", "go back to the prompt"),
@@ -993,6 +1071,7 @@ pub const HELP: [(&str, &str); 8] = [
     ("g, G", "the oldest or the newest line, in the log"),
     ("Alt-1 to 6", "open a tab, also from the prompt"),
     ("/me TEXT", "send an action"),
+    ("a paste", "goes into the line, with its new lines"),
 ];
 
 /// Places the body of the Chat tab in `area` on `view`: the summary
@@ -1232,12 +1311,22 @@ pub fn ratatui_style(style: anstyle::Style) -> Style {
 }
 
 /// The prompt row in `width` columns, and the column of the cursor. A
-/// long line shows the part around the cursor. While the log has the
-/// focus, the prompt is dim.
+/// long line shows the part around the cursor. A new line of a paste
+/// shows as `↵`, and a tab as a space. While the log has the focus, the
+/// prompt is dim.
 fn prompt_row(chat: &Chat, width: u16) -> (Row<'static>, u16) {
     const MARK: &str = "> ";
     let room = usize::from(width).saturating_sub(MARK.len()).max(1);
-    let chars: Vec<char> = chat.prompt.text().chars().collect();
+    let chars: Vec<char> = chat
+        .prompt
+        .text()
+        .chars()
+        .map(|c| match c {
+            '\n' => '↵',
+            '\t' => ' ',
+            c => c,
+        })
+        .collect();
     let cursor = chat.prompt.cursor().min(chars.len());
     // `at[i]` is the width of the first `i` characters.
     let mut at = vec![0];
@@ -1676,6 +1765,99 @@ mod tests {
             .find(|s| s.content == "riff: cannot join the chat: no")
             .unwrap();
         assert_eq!(fault.style, ERROR);
+    }
+
+    /// A bracketed paste of three lines puts the three lines in the
+    /// prompt, at the cursor: the prompt shows each new line as `↵`.
+    /// Enter posts them as one message with the new lines, and the
+    /// message shows each line under the sender.
+    #[test]
+    fn a_paste_of_three_lines_is_one_message_with_its_new_lines() {
+        let mut state = mock_up();
+        let paste = Event::Paste("one\r\ntwo\rthree".into());
+        let Some(super::super::Input::Paste(text)) = state.input(&paste) else {
+            panic!("a paste is no input");
+        };
+        assert_eq!(state.on_paste(&text), None);
+        assert_eq!(state.chat().prompt().text(), "one\ntwo\nthree");
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[21], "> one↵two↵three");
+        assert_eq!(rows[22], " Enter wakes each lead of yours.");
+        assert_eq!(
+            view.cursor,
+            Some(Position::new(
+                u16::try_from("> one↵two↵three".chars().count()).unwrap(),
+                21
+            ))
+        );
+        // A paste goes in at the cursor.
+        state.on_key(FrameKey::Chat(Key::Home));
+        state.on_paste("zero\n");
+        assert_eq!(state.chat().prompt().text(), "zero\none\ntwo\nthree");
+        assert_eq!(state.chat().prompt().cursor(), 5);
+        // Enter posts the lines as one message.
+        assert_eq!(
+            state.on_key(FrameKey::Chat(Key::Send)),
+            Some(Action::Post("zero\none\ntwo\nthree".into()))
+        );
+        assert_eq!(state.chat().prompt().text(), "");
+        state.chat_came(said("13:15", "riff://mike@thelio", "zero\none\ntwo\nthree"));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(
+            rows[17..21],
+            [
+                " 13:15 <mike@thelio> zero",
+                "       one",
+                "       two",
+                "       three"
+            ]
+        );
+    }
+
+    /// A paste that makes the line longer than [`POST_MAX`] stays out:
+    /// the line keeps its text, the note line says the limit at once,
+    /// and Enter posts nothing. The next key gives the note line back.
+    #[test]
+    fn a_paste_over_the_limit_gives_the_note_and_posts_nothing() {
+        let mut state = mock_up();
+        state.on_paste(&"x".repeat(POST_MAX + 1));
+        assert_eq!(state.chat().prompt().text(), "");
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[21], ">");
+        assert_eq!(rows[22], format!(" {}", too_long()));
+        let note = &view.rows.iter().find(|r| r.area.y == 22).unwrap().line;
+        assert_eq!(note.style, WARNING);
+        assert_eq!(state.on_key(FrameKey::Chat(Key::Send)), None);
+        // With a line in the prompt, the note comes before the note of
+        // the wake, and the line stays as it was.
+        type_in(&mut state, "hi");
+        state.on_paste(&"x".repeat(POST_MAX - 1));
+        assert_eq!(state.chat().prompt().text(), "hi");
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[22], format!(" {}", too_long()));
+        state.on_key(FrameKey::Chat(Key::End));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[22], " Enter wakes each lead of yours.");
+        // A paste up to the limit goes in.
+        state.on_paste(&"x".repeat(POST_MAX - 2));
+        assert_eq!(state.chat().prompt().text().len(), POST_MAX);
+        assert_eq!(state.chat().warning(), None);
+    }
+
+    /// A paste is no key: in the log, a paste with `q` in it ends no
+    /// TUI, and the help popup takes no paste.
+    #[test]
+    fn a_paste_in_the_log_goes_to_the_prompt_and_the_help_takes_none() {
+        let mut state = mock_up();
+        state.on_key(FrameKey::Chat(Key::Log));
+        assert_eq!(state.on_paste("q"), None);
+        assert_eq!(state.chat().focus(), Focus::Prompt);
+        assert_eq!(state.chat().prompt().text(), "q");
+        state.on_key(FrameKey::Chat(Key::Log));
+        state.on_key(FrameKey::Help);
+        assert_eq!(state.on_paste("more"), None);
+        assert_eq!(state.chat().prompt().text(), "q");
+        assert_eq!(state.chat().focus(), Focus::Log);
     }
 
     /// A long line in the prompt shows the part around the cursor.

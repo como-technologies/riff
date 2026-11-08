@@ -1342,7 +1342,7 @@ impl State {
     pub fn on_key(&mut self, key: Key) -> Option<Action> {
         // A post that failed comes before the note of the prompt until
         // the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
-        self.chat.unsent = None;
+        self.chat.warning = None;
         // A question takes the next key (01M6VFD0S90SB8M8WV952NT4Y1).
         if let Some(question) = self.question.take() {
             return match key {
@@ -1517,18 +1517,88 @@ impl State {
         }
         input_of(event)
     }
+
+    /// Takes the text `text` of a paste of the person: a bracketed paste
+    /// of the terminal (01M6XSK4GHNBJCR0RHMBGZE57G). In the Chat tab, the
+    /// text goes into the prompt, with its new lines ([`chat`]). A text
+    /// of one line takes it with each new line and tab as a space: a
+    /// filter, the reason of a hold, and the digits of the limit of a
+    /// host. A paste answers no question and is no key of a tab: else it
+    /// does nothing.
+    ///
+    /// ```
+    /// use riff::tui::waves::Reason;
+    /// use riff::tui::{Effect, Key, State, Tab, chat};
+    /// use riff_core::build::Build;
+    ///
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
+    /// // In the Sessions tab, a paste is no key: `x` ends no session.
+    /// state.on_paste("x");
+    /// assert_eq!(state.choices().filter(), "");
+    /// // The filter takes a paste on one line.
+    /// state.on_key(Key::Char('/'));
+    /// state.on_paste("host:thelio\nbusy");
+    /// assert_eq!(state.choices().filter(), "host:thelio busy");
+    /// state.on_key(Key::Enter);
+    /// // So does the reason of a hold, and a paste of `y` answers no
+    /// // question.
+    /// state.ask_reason(Reason { repo: "o/r".into(), item: 12, text: String::new() });
+    /// state.on_paste("waits\tfor\r\nmike");
+    /// assert_eq!(state.asked().as_deref(), Some("Hold #12 of o/r. The reason: waits for mike█"));
+    /// state.on_key(Key::Esc);
+    /// let hold = Effect::Hold { repo: "o/r".into(), item: 12, reason: "r".into() };
+    /// state.ask(hold.question());
+    /// assert_eq!(state.on_paste("y"), None);
+    /// assert_eq!(state.asked().as_deref(), Some("Hold #12 of o/r: r? y/N"));
+    /// state.on_key(Key::Esc);
+    /// // In the Chat tab, also from the log, the paste goes into the prompt.
+    /// state.on_key(Key::Open(Tab::Chat));
+    /// state.on_key(Key::Chat(chat::Key::Log));
+    /// state.on_paste("one\r\ntwo");
+    /// assert_eq!(state.chat().focus(), chat::Focus::Prompt);
+    /// assert_eq!(state.chat().prompt().text(), "one\ntwo");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn on_paste(&mut self, text: &str) -> Option<Action> {
+        self.chat.warning = None;
+        if self.question.is_some() {
+            return None;
+        }
+        let one_line = self.typing.is_some()
+            || self.reason.is_some()
+            || self.host_filter.typing
+            || self.tab == Tab::Sessions && self.sessions.typing();
+        if one_line {
+            let digits = self.typing.is_some();
+            let chars = chat::pasted(text)
+                .chars()
+                .map(|c| if matches!(c, '\n' | '\t') { ' ' } else { c })
+                .filter(|c| !digits || c.is_ascii_digit())
+                .collect::<Vec<_>>();
+            for c in chars {
+                self.on_key(Key::Char(c));
+            }
+        } else if self.tab == Tab::Chat && !self.help {
+            self.chat_paste(text);
+        }
+        None
+    }
 }
 
-/// What the person does: a key, or a click of the mouse at a place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What the person does: a key, a click of the mouse at a place, or a
+/// paste.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
     /// A key.
     Key(Key),
     /// A click of the left button at a column and a row.
     Click { column: u16, row: u16 },
+    /// The text of a bracketed paste ([`State::on_paste`]).
+    Paste(String),
 }
 
-/// The input of the person in `event`, or `None` for another event.
+/// The input of the person in `event`: a key, a click or a paste, or
+/// `None` for another event.
 ///
 /// ```
 /// use ratatui::crossterm::event::{
@@ -1579,6 +1649,11 @@ pub enum Input {
 /// assert_eq!(input_of(&mouse(MouseEventKind::ScrollDown)), Some(Input::Key(Key::Down)));
 /// assert_eq!(input_of(&mouse(MouseEventKind::ScrollUp)), Some(Input::Key(Key::Up)));
 /// assert_eq!(input_of(&mouse(MouseEventKind::Moved)), None);
+/// // A bracketed paste is one input, with its new lines.
+/// assert_eq!(
+///     input_of(&Event::Paste("one\ntwo".into())),
+///     Some(Input::Paste("one\ntwo".into()))
+/// );
 /// ```
 pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
     use ratatui::crossterm::event::{
@@ -1620,6 +1695,7 @@ pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
             MouseEventKind::ScrollUp => Some(Input::Key(Key::Up)),
             _ => None,
         },
+        Event::Paste(text) => Some(Input::Paste(text.clone())),
         _ => None,
     }
 }
@@ -1644,14 +1720,17 @@ async fn next_event() -> Result<Option<ratatui::crossterm::event::Event>> {
     .await?
 }
 
-/// Takes the terminal for the TUI, and with `mouse`, the mouse
-/// (01M6VAZKG8FS4HEA9VSA4Z4YF1).
+/// Takes the terminal for the TUI, with its bracketed paste
+/// (01M6XSK4GHNBJCR0RHMBGZE57G), and with `mouse`, the mouse
+/// (01M6VAZKG8FS4HEA9VSA4Z4YF1). A terminal with no bracketed paste
+/// gives a paste as keys.
 fn enter(mouse: bool) -> Result<ratatui::DefaultTerminal> {
-    use ratatui::crossterm::event::EnableMouseCapture;
+    use ratatui::crossterm::event::{EnableBracketedPaste, EnableMouseCapture};
     use ratatui::crossterm::execute;
     let terminal = ratatui::try_init()?;
+    let _ = execute!(std::io::stdout(), EnableBracketedPaste);
     if mouse && let Err(e) = execute!(std::io::stdout(), EnableMouseCapture) {
-        ratatui::restore();
+        leave(false);
         return Err(e.into());
     }
     Ok(terminal)
@@ -1659,11 +1738,12 @@ fn enter(mouse: bool) -> Result<ratatui::DefaultTerminal> {
 
 /// Gives the terminal back: for an attach, a takeover, or the end.
 fn leave(mouse: bool) {
-    use ratatui::crossterm::event::DisableMouseCapture;
+    use ratatui::crossterm::event::{DisableBracketedPaste, DisableMouseCapture};
     use ratatui::crossterm::execute;
     if mouse {
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
     }
+    let _ = execute!(std::io::stdout(), DisableBracketedPaste);
     ratatui::restore();
 }
 
@@ -2014,6 +2094,7 @@ async fn frames(
                     .as_ref()
                     .and_then(|(shown, _)| state.on_click(shown, column, row, double))
             }
+            Input::Paste(text) => state.on_paste(&text),
         };
         let Some(action) = action else {
             continue;

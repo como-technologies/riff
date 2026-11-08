@@ -130,6 +130,11 @@ echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
         }
     }
 
+    /// True while the terminal has its bracketed paste on.
+    fn bracketed_paste(&self) -> bool {
+        self.screen.lock().unwrap().screen().bracketed_paste()
+    }
+
     fn rows(&self) -> Vec<String> {
         let parser = self.screen.lock().unwrap();
         parser
@@ -861,6 +866,46 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
     tty.shows(|rows| rows[23].starts_with(" i type")).await;
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));
+}
+
+/// The TUI turns on the bracketed paste of the terminal. A paste of
+/// three lines in the Chat tab goes into the prompt, and Enter sends
+/// the three lines as one message: the log shows one sender, and each
+/// more line under it. The end of the TUI turns the bracketed paste off.
+#[tokio::test]
+async fn a_paste_of_three_lines_in_the_chat_tab_sends_one_message() {
+    let server = crate::common::start_signed().await;
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    assert!(tty.bracketed_paste());
+    tty.press("2").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    // A terminal gives each line end of a paste as `\r`.
+    tty.press("\x1b[200~one\rtwo\rthree\x1b[201~").await;
+    tty.shows(|rows| rows[21] == "> one↵two↵three").await;
+    tty.press("\r").await;
+    let rows = tty
+        .shows(|rows| rows.iter().any(|r| r.ends_with("<brett@thelio> one")))
+        .await;
+    let at = rows
+        .iter()
+        .position(|r| r.ends_with("<brett@thelio> one"))
+        .unwrap();
+    assert_eq!(
+        rows[at + 1..at + 3],
+        ["       two", "       three"],
+        "{rows:#?}"
+    );
+    assert_eq!(rows[21], ">", "{rows:#?}");
+    tty.press("\x1b").await;
+    tty.shows(|rows| rows[23].starts_with(" i type")).await;
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+    let span = Span::start();
+    while tty.bracketed_paste() {
+        assert!(span.within(WAIT), "the bracketed paste is off in time");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 /// A fake `gh` for the clone of acme/app: the open issues of Wave 3, as

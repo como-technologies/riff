@@ -849,6 +849,11 @@ fn sessions_word(n: u32) -> &'static str {
 ///     state.on_key(Key::Char('y')),
 ///     Some(Action::Limit { host: "thelio".into(), sessions: 10 })
 /// );
+/// // A paste types its digits: its `q` ends no TUI.
+/// state.on_key(Key::Char('l'));
+/// assert_eq!(state.on_paste("q 1\n2"), None);
+/// assert_eq!(state.asked().as_deref(), Some("The most live sessions of thelio (now 3): 12█"));
+/// state.on_key(Key::Esc);
 /// // Esc sets nothing.
 /// state.on_key(Key::Char('l'));
 /// state.on_key(Key::Esc);
@@ -912,6 +917,11 @@ pub fn typed(state: &mut State, mut typing: Typing, key: Key) -> Option<Action> 
 /// state.on_key(Key::Backspace);
 /// assert_eq!(state.asked().as_deref(), Some("/pang q█"));
 /// assert_eq!(state.tab(), Tab::Machines);
+/// // A paste types on one line.
+/// state.on_paste("\n1");
+/// assert_eq!(state.asked().as_deref(), Some("/pang q 1█"));
+/// state.on_key(Key::Backspace);
+/// state.on_key(Key::Backspace);
 /// // Enter keeps the filter.
 /// state.on_key(Key::Enter);
 /// assert_eq!(state.host_filter().words, "pang q");
