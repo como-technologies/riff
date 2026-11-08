@@ -15,11 +15,13 @@ use tokio::process::Child;
 /// hangs.
 const WAIT: Duration = Duration::from_secs(30);
 
-/// A running `riff` in a pseudo-terminal of 80 x 24, and its screen.
+/// A running `riff` in a pseudo-terminal of 80 x 24, its screen, and
+/// each byte that it wrote.
 struct Tty {
     child: Child,
     master: std::fs::File,
     screen: Arc<Mutex<vt100::Parser>>,
+    written: Arc<Mutex<Vec<u8>>>,
     dir: tempfile::TempDir,
 }
 
@@ -91,19 +93,22 @@ echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
         let child = command.spawn().unwrap();
         let master = std::fs::File::from(pty.master);
         let screen = Arc::new(Mutex::new(vt100::Parser::new(Self::ROWS, Self::COLUMNS, 0)));
+        let written = Arc::new(Mutex::new(Vec::new()));
         let mut reader = master.try_clone().unwrap();
-        let parser = Arc::clone(&screen);
+        let (parser, all) = (Arc::clone(&screen), Arc::clone(&written));
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             // The read fails when riff exits.
             while let Ok(n @ 1..) = reader.read(&mut buf) {
                 parser.lock().unwrap().process(&buf[..n]);
+                all.lock().unwrap().extend_from_slice(&buf[..n]);
             }
         });
         Tty {
             child,
             master,
             screen,
+            written,
             dir,
         }
     }
@@ -133,6 +138,32 @@ echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
     /// True while the terminal has its bracketed paste on.
     fn bracketed_paste(&self) -> bool {
         self.screen.lock().unwrap().screen().bracketed_paste()
+    }
+
+    /// Waits until riff wrote `bytes`, for example a mode of the
+    /// terminal, which the screen does not show.
+    async fn wrote(&self, bytes: &str) {
+        let span = Span::start();
+        loop {
+            let found = self
+                .written
+                .lock()
+                .unwrap()
+                .windows(bytes.len())
+                .any(|w| w == bytes.as_bytes());
+            if found {
+                return;
+            }
+            assert!(span.within(WAIT), "riff writes {bytes:?} in time");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// The row and the column of the cursor, and true while it shows.
+    fn cursor(&self) -> (u16, u16, bool) {
+        let parser = self.screen.lock().unwrap();
+        let (row, column) = parser.screen().cursor_position();
+        (row, column, !parser.screen().hide_cursor())
     }
 
     fn rows(&self) -> Vec<String> {
@@ -906,6 +937,36 @@ async fn a_paste_of_three_lines_in_the_chat_tab_sends_one_message() {
         assert!(span.within(WAIT), "the bracketed paste is off in time");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+/// The Chat tab keeps the line when the window of the terminal loses the
+/// focus and gets it back (#1762, 01M6XT6MCZ38XEN7ZHWTRF50Z5). The TUI
+/// asks the terminal for focus events. After `Esc`, the loss of the
+/// focus (`CSI O`) and its return (`CSI I`), and after a click on the
+/// log, the keys go into the line, and the cursor shows at the end of
+/// the text. At its end, the TUI turns the focus events off.
+#[tokio::test]
+async fn the_chat_tab_keeps_the_line_when_the_window_loses_and_gets_back_the_focus() {
+    let server = crate::common::start_signed().await;
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.wrote("\x1b[?1004h").await;
+    tty.press("2").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    tty.press("hi").await;
+    tty.press("\x1b").await;
+    tty.shows(|rows| rows[23].starts_with(" i type")).await;
+    tty.press("\x1b[O").await;
+    tty.press("\x1b[I").await;
+    tty.shows(|rows| rows[23].starts_with(" Enter send")).await;
+    // A click on the log, as the click that gives the window the focus.
+    tty.press("\x1b[<0;11;6M\x1b[<0;11;6m").await;
+    tty.press(" all").await;
+    tty.shows(|rows| rows[21] == "> hi all" && tty.cursor() == (21, 8, true))
+        .await;
+    tty.press("\x03").await;
+    assert_eq!(tty.exits().await, Some(0));
+    tty.wrote("\x1b[?1004l").await;
 }
 
 /// A fake `gh` for the clone of acme/app: the open issues of Wave 3, as

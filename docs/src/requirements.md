@@ -7845,6 +7845,12 @@ that builds it merges.
   keeps its text, and the note line says `The paste is too long: a post
   has at most 64 KiB. The line stays as it was.` at once, in the place
   of a post that failed, until the next key.
+- **01M6XT6MCZ38XEN7ZHWTRF50Z5** The TUI asks the terminal for focus
+  events. When the window of the terminal gets the focus back, the
+  prompt of the Chat tab gets the focus, as when you open the tab: the
+  cursor shows at its place, and each key types in the line again. A
+  click on the log of the Chat tab does not take the focus from the
+  prompt.
 
 ## The notes of the lead
 

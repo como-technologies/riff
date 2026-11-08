@@ -3642,9 +3642,20 @@ stateDiagram-v2
     [*] --> Prompt: press 2
     Prompt --> Prompt: a key types, Enter sends
     Prompt --> Log: Esc
-    Log --> Prompt: i, Enter or a paste
+    Log --> Prompt: i, Enter, a paste, or back to the window
     Log --> [*]: q
     Prompt --> [*]: Ctrl-C or /quit
+```
+
+The prompt keeps the focus when you switch to another window and back,
+for example with `Alt-Tab`. When the terminal window gets the focus
+back, the cursor shows in the prompt, and your keys type in the line,
+also when you pressed `Esc` before you left. A click on the log does
+not take the focus from the prompt. For this, the TUI asks the terminal
+for focus events. In tmux, turn them on first:
+
+```sh
+tmux set-option -g focus-events on
 ```
 
 The TUI follows the chat from its start, also while you look at
