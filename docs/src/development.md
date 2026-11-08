@@ -3328,9 +3328,11 @@ From then on, riff waits for the answer:
   the title and the link of the issue. It tells again only when the
   label goes on again.
 
-The person answers in the body or in a comment. The lead writes each
-answer in the body, and a decision as a requirement. When no question
-is open, the lead removes the label:
+The person answers in the body or in a comment, and can then mark the
+questions as answered (see
+[Mark the questions of an issue as answered](#mark-the-questions-of-an-issue-as-answered)).
+The lead writes each answer in the body, and a decision as a
+requirement. When no question is open, the lead removes the label:
 
 ```sh
 gh issue edit 1596 --remove-label question
@@ -3398,6 +3400,51 @@ flowchart LR
     F["your folder"] --> R
     R -- "gh issue list --label question" --> L["the lines"]
     R -- "--web" --> B["one search in the browser"]
+```
+
+#### Mark the questions of an issue as answered
+
+When you answered the questions of an issue, in its body or in a
+comment, tell riff. Run this in a clone of the repository, with the
+number of the issue:
+
+```sh
+riff questions --answered 1596
+```
+
+In another folder, name the repository:
+
+```sh
+riff questions --answered 1596 --repo como-technologies/riff
+```
+
+riff removes the label `question` of the issue. Then a message wakes
+your lead of the repository. The lead records each answer in the body
+of the issue:
+
+```text
+Removed the label question of #1596 of como-technologies/riff. Posted message 41 to como-technologies/riff. Woke mike@pangolin:riff (4e54d4e5).
+```
+
+When the issue has no label `question`, riff changes nothing:
+
+```text
+#1596 of como-technologies/riff has no label question. Nothing changed.
+```
+
+In the Waves tab of the TUI, select the row of the issue and press `a`,
+then `y` (see
+[See the open items of a wave](waves.md#see-the-open-items-of-a-wave)).
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant G as gh
+    participant L as your lead
+    P->>G: riff questions --answered 1596
+    G-->>P: the label question goes
+    P->>L: a message: you answered #1596
+    L->>G: the answers go in the body
 ```
 
 ### Set the limit of the host

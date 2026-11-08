@@ -580,6 +580,14 @@
   repository with gh. The look of the wave that finds such an issue with
   no comment adds the comment one time, before it starts any work. A
   comment that fails comes at the next look.
+- **01M6XZ2T9TPZC1X36Y2ZXZ83C0** `riff questions --answered N` marks the
+  questions of the issue N as answered, in the repository of the folder
+  or of `--repo OWNER/REPO`. It removes the label `question` of the
+  issue with `gh`, and posts a message to the thread of the repository
+  with the selector of the lead of the person there: the message wakes
+  the lead, and asks it to record each answer in the body of the issue.
+  An issue with no label `question` gets a note, and riff changes
+  nothing.
 
 ## Issue hygiene on GitHub
 
@@ -7904,6 +7912,11 @@ that builds it merges.
   deploy or a failed deploy gives no line. The line comes from the facts
   of the hosts in `who` and from the pause of the riff. With no open
   release, there is no line.
+- **01M6XZ2TCBVN69GTJYV9X8GBW5** In the Waves tab, `a` on an item with
+  the label `question` asks `y` or `n` in the note line, and calls the
+  code of `riff questions --answered`. The label comes from the last
+  read of the forge, so an item in work can have it too. On an item with
+  no label, `a` puts a note in the note line, and asks nothing.
 
 ## The notes of the lead
 

@@ -1683,6 +1683,72 @@ pub fn questions_web(url: &str) -> String {
     format!("riff: opening {} in your browser.", safe(url))
 }
 
+/// The note of `riff questions --answered N` for an issue with no label
+/// `question` (#1782): riff changed nothing.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::questions_not_asked("o/r", 12),
+///     "#12 of o/r has no label question. Nothing changed."
+/// );
+/// ```
+pub fn questions_not_asked(repo: &str, number: u64) -> String {
+    format!(
+        "#{number} of {} has no label question. Nothing changed.",
+        safe(repo)
+    )
+}
+
+/// The line of `riff questions --answered N` after the change (#1782):
+/// the label went, and the post to the lead ([`posted`]).
+///
+/// ```
+/// use riff_core::wire::Posted;
+///
+/// let posted = Posted {
+///     thread: "o/r".parse()?,
+///     seq: 4,
+///     woken: vec!["riff://brett@heron/o/r?session=4e54d4e5&lead=true".parse()?],
+///     unmatched: vec![],
+/// };
+/// assert_eq!(
+///     riff::text::questions_answered("o/r", 12, &posted),
+///     "Removed the label question of #12 of o/r. Posted message 4 to o/r. Woke brett@heron:r (4e54d4e5)."
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn questions_answered(repo: &str, number: u64, post: &Posted) -> String {
+    format!(
+        "Removed the label question of #{number} of {}. {}",
+        safe(repo),
+        posted(post)
+    )
+}
+
+/// The message of `riff questions --answered N` to the lead of `user` in
+/// `repo` (#1782). It wakes the lead.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::questions_answered_message("brett", "o/r", 12),
+///     "questions answered: brett answered the questions of #12 of o/r, and riff removed \
+///      the label question. Record each answer in the body of #12."
+/// );
+/// ```
+pub fn questions_answered_message(user: &str, repo: &str, number: u64) -> String {
+    format!(
+        "questions answered: {} answered the questions of #{number} of {}, and riff removed \
+         the label question. Record each answer in the body of #{number}.",
+        safe(user),
+        safe(repo)
+    )
+}
+
+/// The error of `riff questions --answered N` in a folder that is no
+/// clone of a repository on GitHub, with no `--repo`.
+pub const QUESTIONS_NO_REPO: &str = "this folder is no clone of a repository on GitHub. \
+     Give the repository with --repo OWNER/REPO.";
+
 /// The cause when `gh` gives no open issues of `repo`.
 ///
 /// ```

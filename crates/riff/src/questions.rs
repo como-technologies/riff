@@ -34,14 +34,41 @@
 //! stderr at the end names them all ([`crate::text::questions_faults`]).
 //! The command exits with 0 when it read at least one repository, and
 //! with 1 when it read none and `gh` failed for each.
+//!
+//! # Answered
+//!
+//! `riff questions --answered N` and the key `a` of the Waves tab
+//! ([`crate::tui::Effect::Answered`]) mark the questions of the issue N
+//! as answered ([`answered`], #1782, 01M6XZ2T9TPZC1X36Y2ZXZ83C0,
+//! 01M6XZ2TCBVN69GTJYV9X8GBW5): riff removes the label `question`, and a
+//! message wakes the lead of the person in the repository. The lead
+//! records each answer in the body of the issue. An issue with no label
+//! `question` gets a note, and riff changes nothing.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant P as the person
+//!     participant G as gh
+//!     participant S as riff-server
+//!     participant L as the lead
+//!     P->>G: issue view N --json labels
+//!     G-->>P: the label question
+//!     P->>G: issue edit N --remove-label question
+//!     P->>S: post to the repository thread,<br/>user=PERSON,repo=REPO,lead=true
+//!     S->>L: wake: the person answered #N
+//! ```
 
 use std::collections::BTreeSet;
 
 use anyhow::Result;
-use riff_core::wire::WhoReply;
+use riff_client::api::Api;
+use riff_core::name::{SessionUri, ThreadName};
+use riff_core::selector::Selector;
+use riff_core::wire::{Kind, WhoReply};
 use serde::Deserialize;
 
 use crate::pr::Gh;
+use crate::text;
 
 /// The text of `gh` for a repository with its issues turned off.
 const ISSUES_OFF: &str = "has disabled issues";
@@ -223,6 +250,83 @@ pub fn web_url(repos: &BTreeSet<String>) -> String {
         })
         .collect();
     format!("https://github.com/issues?q={encoded}")
+}
+
+/// The labels of an issue, from `gh issue view --json labels`.
+#[derive(Deserialize)]
+struct Labels {
+    labels: Vec<crate::rollout::Label>,
+}
+
+/// True when the issue `number` of `repo` has the label `question`.
+///
+/// ```
+/// use riff::questions::asked;
+///
+/// let dir = tempfile::tempdir()?;
+/// let script = r#"#!/bin/sh
+/// case "$*" in
+///   "issue view 12 --repo o/r --json labels") echo '{"labels":[{"name":"question"}]}' ;;
+///   *) echo '{"labels":[{"name":"bug"}]}' ;;
+/// esac
+/// "#;
+/// let gh = riff::pr::Gh::at(isolated::write_program(dir.path().join("gh"), script));
+/// assert!(asked(&gh, "o/r", 12)?);
+/// assert!(!asked(&gh, "o/r", 13)?);
+/// # anyhow::Ok(())
+/// ```
+pub fn asked(gh: &Gh, repo: &str, number: u64) -> Result<bool> {
+    let number = number.to_string();
+    let args = ["issue", "view", &number, "--repo", repo, "--json", "labels"];
+    let read: Labels = gh.json(&args)?;
+    Ok(read
+        .labels
+        .iter()
+        .any(|l| l.name == riff_client::waves::QUESTION))
+}
+
+/// Marks the questions of the issue `number` of `repo` as answered, as
+/// the person `me` at `api` (#1782): riff removes the label `question`
+/// with `gh`, and posts a message to the thread of `repo` with the
+/// selector of the lead of the person there. The message wakes the lead,
+/// and asks it to record each answer in the body. An issue with no label
+/// `question` gets a note, and riff changes nothing. It gives the line
+/// of the result ([`text::questions_answered`],
+/// [`text::questions_not_asked`]). The calls of `gh` run on a thread of
+/// their own ([`crate::pr::on_thread`]).
+pub async fn answered(
+    gh: &Gh,
+    api: &Api,
+    me: &SessionUri,
+    repo: &ThreadName,
+    number: u64,
+) -> Result<String> {
+    let name = repo.to_string();
+    let (read, at) = (gh.clone(), name.clone());
+    if !crate::pr::on_thread(move || asked(&read, &at, number)).await?? {
+        return Ok(text::questions_not_asked(&name, number));
+    }
+    let (edit, at) = (gh.clone(), name.clone());
+    crate::pr::on_thread(move || {
+        let number = number.to_string();
+        let label = riff_client::waves::QUESTION;
+        let args = [
+            "issue",
+            "edit",
+            &number,
+            "--repo",
+            &at,
+            "--remove-label",
+            label,
+        ];
+        edit.run(&args, None)
+    })
+    .await??;
+    let user = me.who().user();
+    let to = [Selector::lead(user, &name)];
+    let body = text::questions_answered_message(user, &name, number);
+    let posted = api.post(me, Some(repo), &to, &body, Kind::Message).await?;
+    Ok(text::questions_answered(&name, number, &posted))
 }
 
 #[cfg(test)]
