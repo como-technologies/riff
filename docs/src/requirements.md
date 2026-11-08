@@ -6259,19 +6259,24 @@ of this part when they merge.
 - **01M5SNV7KZRDBRC3NM2E5W92KS** `riff init` writes the permission rule
   of the lead for `riff release hold`, in the container of the lead.
 - **01M6FZXZ9267YKMH97E6A2Y2EP** A worker and a verifier do not change
-  the body or the title of an issue. They add to an issue with `gh issue
-  comment`. Only the lead edits an issue. The session rules are by role
-  (`riff::permissions::session_rules`): the session place gives `Bash(gh
-  issue edit *)` to the lead only, `Bash(gh issue comment *)` to a
-  worker and a verifier, and to a worker and a verifier it gives deny
-  rules for `gh issue edit` with `--body`, `--body-file`, `-b`, `-F`,
-  `--title` and `-t`, also after `gh -R`. No rule names `gh api`: no
-  allow rule matches a `gh api` call
-  (`riff::permissions::OUT_OF_BOUNDS`), a deny rule cannot list each
-  form of an API write, and the auto mode check judges the call. The
-  start text of a worker and of a verifier says the rule in one line.
+  the body or the title of an issue. A worker adds to an issue with `gh
+  issue comment`. Only the lead edits an issue. The session rules are by
+  role (`riff::permissions::session_rules`): the session place gives
+  `Bash(gh issue edit *)` to the lead only, `Bash(gh issue comment *)`
+  to a worker, and to a worker and a verifier it gives deny rules for
+  `gh issue edit` with `--body`, `--body-file`, `-b`, `-F`, `--title`
+  and `-t`, also after `gh -R`. No rule names `gh api`: no allow rule
+  matches a `gh api` call (`riff::permissions::OUT_OF_BOUNDS`), a deny
+  rule cannot list each form of an API write, and the auto mode check
+  judges the call. The start text of a worker says the rule in one line.
   Supersedes 01M5084K4YQCZF20XA0P2485SG in part: a session gets the
   allow rules and the deny rules of its own role.
+- **01M6WWG3S60XYGTNBQH7S3F6D1** A verifier adds nothing to an issue: it
+  puts each finding in its result (Q7 of #1543). The session place gives
+  `Bash(gh issue comment *)` to a worker only. The start text of a
+  verifier names no `gh issue comment`, and says that each finding goes
+  in the result. Supersedes 01M6FZXZ9267YKMH97E6A2Y2EP in part: the
+  comment of a verifier.
 
 ### The steps of an update
 

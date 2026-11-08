@@ -5825,11 +5825,18 @@ const RUN_CHECKS: &str = "run the checks that the repository names, when it name
 const CI_DECIDES: &str =
     "The full check of the pull request (its CI) and the verify decide the merge.";
 
-/// The line of the start text of a worker and of a verifier about an
-/// issue: they add to it with a comment, and never change its body or its
-/// title (01M6FZXZ9267YKMH97E6A2Y2EP).
+/// The line of the start text of a worker about an issue: it adds to it
+/// with a comment, and never changes its body or its title
+/// (01M6FZXZ9267YKMH97E6A2Y2EP). A verifier reads only, and puts each
+/// finding in its result ([`VERIFY_READS_ONLY`]).
 pub const ISSUE_BY_COMMENT: &str = "Never change the body or the title of an issue. Add to an \
      issue with a comment: gh issue comment NUMBER --body-file FILE";
+
+/// The step of the start text of a verifier about what it may change: no
+/// commit, no push, no pull request and no issue. Each finding goes in the
+/// result (01M6WWG3S60XYGTNBQH7S3F6D1).
+pub const VERIFY_READS_ONLY: &str = "Do not commit, do not push, and do not change the pull \
+     request or an issue: put each finding in your result.";
 
 /// The line of the start text of a worker about the body of the pull
 /// request: a line `Key: value` at its end is a trailer line, and the
@@ -10356,7 +10363,10 @@ pub fn wave_checks_rerun(
 /// assert!(!text.contains("CLAUDE.md names"));
 /// assert!(text.contains("Run each test in the foreground"));
 /// assert!(text.contains("Never end a turn while a background task runs"));
-/// assert!(text.contains(riff::text::ISSUE_BY_COMMENT));
+/// // A verifier reads only: each finding goes in its result
+/// // (01M6WWG3S60XYGTNBQH7S3F6D1).
+/// assert!(text.contains(riff::text::VERIFY_READS_ONLY));
+/// assert!(!text.contains("gh issue comment"));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
 /// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, true);
 /// assert!(text.contains("was done: the checks Lint, Test."));
@@ -10417,14 +10427,13 @@ pub fn wave_verify_start(
          {ran}\n\
          5. Check each criterion: review the code and its fit with the design, read the test \
          of each criterion, and run that test by its name when you must.\n\
-         6. Do not commit, do not push, and do not change the pull request. Run each test in \
-         the foreground, and wait for its end. Never end a turn while a background task runs: \
-         a session does not continue after its result.\n\
+         6. {VERIFY_READS_ONLY} Run each test in the foreground, and wait for its end. Never \
+         end a turn while a background task runs: a session does not continue after its \
+         result.\n\
          7. Your last reply is the result, in markdown, and nothing else. The first line is \
          PASS or FAIL. Then each criterion: for a pass, what you did to check it; for a fail, \
          the steps to see the failure. The result is public: it holds no secret and no security \
          fault. Tell the lead a security fault with the riff tool tell.\n\n\
-         {ISSUE_BY_COMMENT}\n\
          Do not print the environment or a token."
     )
 }

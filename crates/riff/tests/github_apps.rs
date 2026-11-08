@@ -530,3 +530,51 @@ fn the_book_says_who_acts_on_github_for_each_role() {
     assert_eq!(commands, ["riff whoami", "riff daemon status"]);
     crate::book::each_is_real(&commands);
 }
+
+/// 01M6WWG3S60XYGTNBQH7S3F6D1: the token of a verifier reads only, so a
+/// verifier adds nothing to an issue. The Claude folder of a verify
+/// session allows no `gh issue comment`, its start text names none and
+/// sends each finding to the result, and "Add to an issue" in the book
+/// says so. A worker keeps the comment.
+#[test]
+fn a_verifier_puts_each_finding_in_its_result_and_comments_on_no_issue() {
+    use riff::permissions::{Role, Trust};
+
+    let dir = tempfile::tempdir().unwrap();
+    let auto = Trust {
+        owner: Some(OWNER),
+        server: Some("http://h:7878"),
+        sources: &[],
+    };
+    let allow_of = |role: Role| -> Vec<String> {
+        let claude = dir.path().join(role.as_str());
+        let person = dir.path().join("none.json");
+        riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, role).unwrap();
+        let text = std::fs::read_to_string(claude.join("settings.json")).unwrap();
+        let settings: serde_json::Value = serde_json::from_str(&text).unwrap();
+        serde_json::from_value(settings["permissions"]["allow"].clone()).unwrap()
+    };
+    let comment = "Bash(gh issue comment *)".to_owned();
+    assert!(!allow_of(Role::Verifier).contains(&comment));
+    assert!(allow_of(Role::Worker).contains(&comment));
+
+    let checks = ["Gate".to_owned()];
+    let text = riff::text::wave_verify_start(REPO, "main", 12, 40, "1a2b3c4", &checks, true);
+    assert!(!text.contains("gh issue comment"), "{text}");
+    assert!(text.contains(riff::text::VERIFY_READS_ONLY), "{text}");
+
+    let page = crate::book::page("how-it-works.md");
+    let part = page
+        .split("\n#### Add to an issue\n")
+        .nth(1)
+        .expect("the how-to is in How It Works");
+    let part = part.split("\n#### ").next().unwrap();
+    assert!(
+        part.contains("A verifier reads only: it puts each finding in its result"),
+        "{part}"
+    );
+    assert!(
+        part.contains("The settings of a session of a worker allow `gh issue comment`."),
+        "{part}"
+    );
+}

@@ -493,7 +493,7 @@ The session place has these rules of `gh`, by role:
 | `Bash(gh pr create *)`, `Bash(gh pr merge --auto --squash *)`, `Bash(gh pr view *)`, `Bash(gh pr checks *)` | the steps of a pull request |
 | `Bash(gh run view *)`, `Bash(gh run rerun *)` | a worker reads the log of a failed check, and runs a flaky job again |
 | `Bash(gh issue view *)`, `Bash(gh issue list *)` | read an issue |
-| `Bash(gh issue comment *)` | a worker and a verifier add to an issue: see [Add to an issue](how-it-works.md#add-to-an-issue) |
+| `Bash(gh issue comment *)` | a worker adds to an issue. A verifier puts each finding in its result: see [Add to an issue](how-it-works.md#add-to-an-issue) |
 | `Bash(gh issue edit *)` | the lead edits the body of an issue. A worker and a verifier have deny rules for the body and the title |
 
 #### One step in each call

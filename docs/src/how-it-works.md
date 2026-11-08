@@ -5443,20 +5443,23 @@ A host is a name such as `pypi.org`: no `https://`, no path. When
 
 The lead owns the body and the title of an issue: the design, the
 `Done when:` line and the status. Only the lead changes them. A worker
-and a verifier add to an issue with a comment, and a comment keeps the
-history and the author.
+adds to an issue with a comment, and a comment keeps the history and
+the author. A verifier reads only: it puts each finding in its result,
+and the daemon reports the result on the pull request.
 
 ```mermaid
 flowchart LR
     L["lead"] -- "gh issue edit --body-file" --> B["body of the issue"]
-    W["worker, verifier"] -- "gh issue comment --body-file" --> C["comment on the issue"]
+    W["worker"] -- "gh issue comment --body-file" --> C["comment on the issue"]
     W -. "refused" .-> B
+    V["verifier"] -- "each finding" --> R["the result of the verify"]
+    V -. "refused" .-> B
 ```
 
-The settings of a session of a worker or a verifier allow
-`gh issue comment`. They refuse `gh issue edit` with `--body`,
-`--body-file`, `-b`, `-F`, `--title` and `-t`, also after `gh -R`. Write
-the text to a file, and post it:
+The settings of a session of a worker allow `gh issue comment`. The
+settings of a worker and of a verifier refuse `gh issue edit` with
+`--body`, `--body-file`, `-b`, `-F`, `--title` and `-t`, also after
+`gh -R`. A worker writes the text to a file, and posts it:
 
 ```sh
 gh issue comment 12 --body-file /home/you/tmp/comment-12.md
@@ -5470,11 +5473,12 @@ check judges it.
 A worker and a verifier act on GitHub as the bot of the session App of
 the riff: see
 [Who acts on GitHub for each role](#who-acts-on-github-for-each-role).
-The right `issues: write` of GitHub has no smaller part, so their token
-can change the body or the title of an issue, and change or delete a
-comment of another account. So each repository of the riff has a guard:
-the workflow `.github/workflows/riff-guard.yml`. `riff init` writes it
-with the bot of the session App, in the pull request "Set up riff": see
+The right `issues: write` of GitHub has no smaller part, so the token of
+a worker can change the body or the title of an issue, and change or
+delete a comment of another account. So each repository of the riff
+has a guard: the workflow `.github/workflows/riff-guard.yml`.
+`riff init` writes it with the bot of the session App, in the pull
+request "Set up riff": see
 [Add the guard](start-a-riff.md#add-the-guard).
 
 ```mermaid
