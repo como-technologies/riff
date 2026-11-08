@@ -46,7 +46,9 @@
 //!   row of the line, up to [`LINE_ROWS`], and the log has the rows over
 //!   it. A longer line scrolls, so that the row of the cursor shows. `↑`
 //!   and `↓` move the cursor one row ([`Prompt::edit`]). On the first
-//!   row and the last row, they bring back the lines that you sent.
+//!   row and the last row of a typed text, they go to its start and its
+//!   end. Only on an empty line does `↑` bring back the lines that you
+//!   sent ([`Sent`], 01M6Y8N8W5RE5H6MW3TNDH5BSY).
 //!
 //!   ```text
 //!   > @riff please look at the plan of wave 52, and tell me which item goes first:
@@ -111,7 +113,7 @@ use tokio::sync::mpsc;
 use super::view::{Hit, Layout, Placed, View};
 use super::{Action, Key as FrameKey, News, State, Tab};
 use crate::catch_up::{self, Seen, Shown, Start};
-use crate::chat::{INDENT, Typed, typed};
+use crate::chat::{INDENT, Sent, Typed, typed};
 use crate::text::safe;
 
 /// The most lines that the log keeps. An older line goes.
@@ -164,11 +166,13 @@ pub enum Key {
     End,
     /// Delete the text before the cursor: `Ctrl-U`.
     Clear,
-    /// Move the cursor one row up, or on the first row show the line
-    /// that you sent before the one that shows: `↑`.
+    /// Move the cursor one row up, or on the first row to the start of
+    /// the line. On an empty line, show the last line that you sent, and
+    /// on a sent line, the one before it: `↑`.
     Up,
-    /// Move the cursor one row down, or on the last row show the line
-    /// that you sent after the one that shows: `↓`.
+    /// Move the cursor one row down, or on the last row to the end of the
+    /// line. On a sent line, show the one after it, or after the last one
+    /// an empty line: `↓`.
     Down,
     /// Send the line: `Enter` in the prompt.
     Send,
@@ -302,14 +306,18 @@ pub fn key_of(event: &Event, focus: Focus) -> Option<Key> {
 /// assert_eq!(prompt.text(), "Hi al");
 /// assert_eq!(prompt.take(), "Hi al");
 /// assert_eq!(prompt.text(), "");
-/// // On a line of one row, ↑ brings back the line that you sent, and ↓
-/// // the text before it.
+/// // On an empty line, ↑ brings back the line that you sent, and ↓
+/// // empties the line again.
+/// prompt.edit(Key::Up, 40);
+/// assert_eq!((prompt.text(), prompt.cursor()), ("Hi al", 5));
+/// prompt.edit(Key::Down, 40);
+/// assert_eq!(prompt.text(), "");
+/// // With a typed text, ↑ keeps the text, and goes to its start.
 /// prompt.edit(Key::Type('x'), 40);
 /// prompt.edit(Key::Up, 40);
-/// assert_eq!(prompt.text(), "Hi al");
-/// prompt.edit(Key::Down, 40);
-/// assert_eq!(prompt.text(), "x");
+/// assert_eq!((prompt.text(), prompt.cursor()), ("x", 0));
 /// // Ctrl-U deletes the text before the cursor.
+/// prompt.edit(Key::End, 40);
 /// prompt.edit(Key::Clear, 40);
 /// assert_eq!(prompt.text(), "");
 /// ```
@@ -319,12 +327,8 @@ pub struct Prompt {
     text: String,
     /// The place of the cursor, in characters.
     cursor: usize,
-    /// The lines that the person sent, the oldest first.
-    sent: Vec<String>,
-    /// The line of `sent` that shows after `↑`.
-    back: Option<usize>,
-    /// The text before the first `↑`.
-    draft: String,
+    /// The lines that the person sent.
+    sent: Sent,
 }
 
 impl Prompt {
@@ -350,9 +354,12 @@ impl Prompt {
     /// columns ([`wrap`], 01M6XXDDYQG7M6WYNRXP35DZ1Y). `←` and `→` go
     /// over the end of a row, and `Home` and `End` go to the start and
     /// the end of the line. `↑` and `↓` move the cursor one row, to the
-    /// same column or to the end of a shorter row. `↑` on the first row
-    /// and `↓` on the last row show the lines that you sent. A key that
-    /// scrolls or moves the focus does nothing here.
+    /// same column or to the end of a shorter row. On the first row, `↑`
+    /// goes to the start of the line, and on the last row, `↓` to its
+    /// end. Only on an empty line, or on a sent line that came back, they
+    /// show the lines that you sent ([`Sent`],
+    /// 01M6Y8N8W5RE5H6MW3TNDH5BSY). A key that scrolls or moves the
+    /// focus does nothing here.
     ///
     /// ```
     /// use riff::tui::chat::{Key, Prompt};
@@ -364,6 +371,14 @@ impl Prompt {
     /// assert_eq!(prompt.cursor(), 5);
     /// prompt.edit(Key::Down, 10);
     /// assert_eq!(prompt.cursor(), 15);
+    /// // ↑ on the first row goes to the start of the line, and ↓ on the
+    /// // last row to its end. The text stays.
+    /// prompt.edit(Key::Up, 10);
+    /// prompt.edit(Key::Up, 10);
+    /// assert_eq!((prompt.text(), prompt.cursor()), ("hello big world", 0));
+    /// prompt.edit(Key::Down, 10);
+    /// prompt.edit(Key::Down, 10);
+    /// assert_eq!((prompt.text(), prompt.cursor()), ("hello big world", 15));
     /// // Home and End go to the start and the end of the line.
     /// prompt.edit(Key::Home, 10);
     /// assert_eq!(prompt.cursor(), 0);
@@ -408,11 +423,17 @@ impl Prompt {
             }
             Key::Up => match self.row_to(true, columns) {
                 Some(at) => self.cursor = at,
-                None => self.earlier(),
+                None => match self.sent.up(&self.text).map(str::to_owned) {
+                    Some(line) => self.show(line),
+                    None => self.cursor = 0,
+                },
             },
             Key::Down => match self.row_to(false, columns) {
                 Some(at) => self.cursor = at,
-                None => self.later(),
+                None => match self.sent.down(&self.text).map(str::to_owned) {
+                    Some(line) => self.show(line),
+                    None => self.cursor = length,
+                },
             },
             _ => {}
         }
@@ -445,39 +466,6 @@ impl Prompt {
         Some(at)
     }
 
-    /// Shows the line that the person sent before the one that shows.
-    fn earlier(&mut self) {
-        if self.sent.is_empty() {
-            return;
-        }
-        let back = match self.back {
-            None => {
-                self.draft = std::mem::take(&mut self.text);
-                self.sent.len() - 1
-            }
-            Some(i) => i.saturating_sub(1),
-        };
-        self.back = Some(back);
-        self.show(self.sent[back].clone());
-    }
-
-    /// Shows the line that the person sent after the one that shows, or
-    /// after the last one the text before the first `↑`.
-    fn later(&mut self) {
-        match self.back {
-            Some(i) if i + 1 < self.sent.len() => {
-                self.back = Some(i + 1);
-                self.show(self.sent[i + 1].clone());
-            }
-            Some(_) => {
-                self.back = None;
-                let draft = std::mem::take(&mut self.draft);
-                self.show(draft);
-            }
-            None => {}
-        }
-    }
-
     /// Puts `text` in the line at the cursor, and the cursor after it.
     ///
     /// ```
@@ -507,12 +495,8 @@ impl Prompt {
     /// the text back.
     pub fn take(&mut self) -> String {
         let text = std::mem::take(&mut self.text);
-        if self.sent.last() != Some(&text) {
-            self.sent.push(text.clone());
-        }
+        self.sent.push(&text);
         self.cursor = 0;
-        self.back = None;
-        self.draft.clear();
         text
     }
 }
@@ -1282,7 +1266,7 @@ pub const HELP: [(&str, &str); 10] = [
     ("Enter", "send the line, or go back to the prompt"),
     ("Esc", "leave the prompt: the keys of the tab work"),
     ("i", "go back to the prompt"),
-    ("↑ ↓", "a row of the line, a line that you sent, or scroll"),
+    ("↑ ↓", "a row, a sent line on an empty line, or scroll"),
     ("Home, End", "the start or the end of the line"),
     ("PgUp, PgDn", "older or newer lines"),
     ("g, G", "the oldest or the newest line, in the log"),
@@ -2401,8 +2385,10 @@ mod tests {
     /// `↑`, `↓`, `Home` and `End` move the cursor through the rows of the
     /// line, and `←` and `→` go over the end of a row
     /// (01M6XXDDYQG7M6WYNRXP35DZ1Y). A line of more than 5 rows scrolls,
-    /// so that the row of the cursor shows. `↑` on the first row and `↓`
-    /// on the last row show the lines that you sent.
+    /// so that the row of the cursor shows. `↑` on the first row goes to
+    /// the start of the line, and `↓` on the last row to its end. Only on
+    /// an empty line does `↑` show the line that you sent
+    /// (01M6Y8N8W5RE5H6MW3TNDH5BSY).
     #[test]
     fn the_keys_move_through_the_rows_and_a_long_line_scrolls_to_the_cursor() {
         let mut state = mock_up();
@@ -2449,15 +2435,78 @@ mod tests {
         assert_eq!(press(Key::Down).1, Some((2, 18)));
         assert_eq!(press(Key::Left).1, Some((36, 17)));
         assert_eq!(press(Key::Right).1, Some((2, 18)));
-        // ↑ on the first row shows the line that you sent, and ↓ on its
-        // last row the line that you type, with the cursor at its end.
+        // ↑ on the first row goes to the start of the line, and ↓ on the
+        // last row to its end: the text stays.
         press(Key::Up);
+        press(Key::Right);
+        let (rows, cursor) = press(Key::Up);
+        assert_eq!(rows[17], "> Mike asked for this: typing in the");
+        assert_eq!(cursor, Some((2, 17)));
+        press(Key::End);
+        let (rows, cursor) = press(Key::Down);
+        assert_eq!(rows[21], "  to five rows high now.");
+        assert_eq!(cursor, Some((24, 21)));
+        // On an empty line, ↑ shows the line that you sent, and ↓ empties
+        // the line again.
+        press(Key::Clear);
         let (rows, cursor) = press(Key::Up);
         assert_eq!(rows[21], "> ok");
         assert_eq!(cursor, Some((4, 21)));
         let (rows, cursor) = press(Key::Down);
-        assert_eq!(rows[21], "  to five rows high now.");
-        assert_eq!(cursor, Some((24, 21)));
+        assert_eq!(rows[21], ">");
+        assert_eq!(cursor, Some((2, 21)));
+    }
+
+    /// `↑` never puts a sent line in place of a typed text
+    /// (01M6Y8N8W5RE5H6MW3TNDH5BSY, #1788). A person moved with `↑` in a
+    /// long line, typed, and sent: the line that went out was the line
+    /// sent before it, with the new words after it. Now `↑` keeps the
+    /// text, and only an empty line brings back a sent line.
+    #[test]
+    fn up_keeps_a_typed_text_and_brings_back_a_sent_line_only_on_an_empty_line() {
+        let mut state = mock_up();
+        type_in(&mut state, "the first line");
+        assert_eq!(
+            state.on_key(FrameKey::Chat(Key::Send)),
+            Some(Action::Post("the first line".into()))
+        );
+        type_in(&mut state, LONG);
+        drawn(&mut state, 40, 24);
+        for _ in 0..8 {
+            state.on_key(FrameKey::Chat(Key::Up));
+        }
+        assert_eq!(state.chat.prompt.text(), LONG);
+        assert_eq!(state.chat.prompt.cursor(), 0);
+        type_in(&mut state, "Note: ");
+        assert_eq!(
+            state.on_key(FrameKey::Chat(Key::Send)),
+            Some(Action::Post(format!("Note: {LONG}")))
+        );
+
+        // On an empty line, ↑ brings back the last sent line, and more ↑
+        // the lines before it. ↓ goes back, and then empties the line.
+        let up = |state: &mut State| {
+            state.on_key(FrameKey::Chat(Key::Up));
+            state.chat.prompt.text().to_owned()
+        };
+        assert_eq!(up(&mut state), format!("Note: {LONG}"));
+        // In a wide tab, the sent line has one row.
+        drawn(&mut state, 400, 24);
+        assert_eq!(up(&mut state), "the first line");
+        state.on_key(FrameKey::Chat(Key::Down));
+        assert_eq!(state.chat.prompt.text(), format!("Note: {LONG}"));
+        state.on_key(FrameKey::Chat(Key::Down));
+        assert_eq!(state.chat.prompt.text(), "");
+
+        // A change to a sent line that came back makes it a typed text:
+        // ↑ and ↓ keep it.
+        up(&mut state);
+        up(&mut state);
+        type_in(&mut state, " again");
+        assert_eq!(up(&mut state), "the first line again");
+        state.on_key(FrameKey::Chat(Key::Down));
+        assert_eq!(state.chat.prompt.text(), "the first line again");
+        assert_eq!(state.chat.prompt.cursor(), "the first line again".len());
     }
 
     /// A wide character takes two columns: the buffer has a blank cell

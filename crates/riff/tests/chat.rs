@@ -580,6 +580,20 @@ fn the_book_shows_how_to_chat() {
     assert!(ask.contains("\n@brett can I take #14?\n"), "{ask}");
     assert!(ask.contains("A line with no name wakes no one"), "{ask}");
     assert!(!ask.contains("@lead"), "{ask}");
+    // 01M6Y8N8W5RE5H6MW3TNDH5BSY: when ↑ brings back a sent line.
+    let again = part
+        .find("\n### Send a line again\n")
+        .expect("the how-to to send a line again has its own heading");
+    let again = &part[again..];
+    assert!(again.contains("```sh\nriff chat\n```"), "{again}");
+    assert!(
+        again.contains("On an empty line, `↑` brings back the last line"),
+        "{again}"
+    );
+    assert!(
+        part.contains("`↑` brings back a line that you sent only on an empty line"),
+        "{part}"
+    );
     let action = part
         .find("\n### Send an action with /me\n")
         .expect("the /me how-to has its own heading");
@@ -1274,6 +1288,41 @@ async fn in_a_terminal_a_new_line_keeps_the_typed_text_and_the_cursor() {
         &typed[typed.len() - 3..]
     );
     assert!(is_line(&line, "mike", &want), "{line:?}");
+}
+
+/// 01M6Y8N8W5RE5H6MW3TNDH5BSY: with a typed text, `↑` keeps the text and
+/// goes to its start (#1788). On an empty line, `↑` brings back the last
+/// sent line, and `↓` empties the line again.
+#[tokio::test]
+async fn in_a_terminal_up_keeps_the_typed_text_and_brings_back_a_sent_line_on_an_empty_line() {
+    let server = crate::common::start_signed().await;
+    let mut mike = Tty::start(&server, "mike", "thelio").await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+    let prompt = |text: &str| {
+        let shown = format!("{PROMPT}{text}");
+        move |rows: &[String]| rows.last().is_some_and(|row| *row == shown.trim_end())
+    };
+
+    mike.keys("the first line\r").await;
+    brett.shows("the first line").await;
+    mike.shows(prompt("")).await;
+    mike.keys("my words").await;
+    mike.press("\x1b[A").await;
+    mike.keys("Note: ").await;
+    mike.shows(prompt("Note: my words")).await;
+    mike.keys("\r").await;
+    let line = brett.shows("my words").await;
+    assert!(is_line(&line, "mike", "Note: my words"), "{line:?}");
+
+    mike.shows(prompt("")).await;
+    mike.press("\x1b[A").await;
+    mike.shows(prompt("Note: my words")).await;
+    mike.press("\x1b[A").await;
+    mike.shows(prompt("the first line")).await;
+    mike.press("\x1b[B").await;
+    mike.shows(prompt("Note: my words")).await;
+    mike.press("\x1b[B").await;
+    mike.shows(prompt("")).await;
 }
 
 /// A server that names a build and holds each post for `wait`: the
