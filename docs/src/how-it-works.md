@@ -4237,6 +4237,52 @@ gh issue edit 12 --remove-label no-verify
 riff plan free verify-issue-12
 ```
 
+### See the questions of each wave in the TUI
+
+A lead keeps an item for the answer of a person with the label
+`question` (see
+[Ask the person a question](development.md#ask-the-person-a-question)).
+The Waves tab shows the questions of each wave, also of a wave that is
+not current. Run riff with no command, and press `3` for the Waves
+tab:
+
+```sh
+riff
+```
+
+The board of the current wave has an `asked` row for each question:
+
+```text
+   ◌   held    #1631  Design: the web UI              waits for mike       3d
+   ?   asked   #1610  Wave 49 · Design: the projects… waits for a person   -
+   ?   asked   #1622  The book names the flag         waits for a person   -
+   ?   asked   #1801  Wave 50 · later                 waits for a person   -
+```
+
+- A question of a later wave names its wave before its title. It shows
+  also when a session has a claim of it, or when it has a pull
+  request.
+- The `asked` rows of all the waves go in number order. The count
+  `asked` in the line of the repository counts them all.
+- `Enter` on the row puts the whole row in the note line, with its
+  wave.
+- `a` on the row marks its questions as answered, after `y`, also in a
+  later wave: see
+  [Mark the questions of an issue as answered](development.md#mark-the-questions-of-an-issue-as-answered).
+- A question with no wave, for example in the Backlog, is not on the
+  board. `riff questions` lists it: see
+  [See all your open questions](development.md#see-all-your-open-questions).
+
+```mermaid
+flowchart LR
+    G["gh: the open issues<br/>with the label question"] --> C["the current wave"]
+    G --> L["each later wave"]
+    G --> N["no wave"]
+    C --> A["the asked rows of the board"]
+    L -- "Wave N · TITLE" --> A
+    N --> Q["riff questions"]
+```
+
 ## Pause the riff
 
 riff has two pauses:
