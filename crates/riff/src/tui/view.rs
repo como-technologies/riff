@@ -18,6 +18,11 @@
 //! - [`Layout::Small`], under 40 columns or 10 rows: a line that asks
 //!   for a bigger terminal.
 //!
+//! While a release is open, the line of its state comes under the header in
+//! each layout, on up to [`RELEASE_ROWS`] rows ([`crate::view::release`],
+//! 01M6XTS1GCW7PTWSMM1HKQTHSN). The tab draws its body under it, and the note
+//! line and the key line stay at the bottom.
+//!
 //! ```text
 //! ‹ 1/6 Sessions ›
 //! riff running · link ok 2s
@@ -300,6 +305,16 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
         area: row(1),
         line: header(state, layout, now_ms),
     });
+    let release = release_rows(state, area.width - margin);
+    let shift = u16::try_from(release.len()).unwrap_or(0);
+    for (line, y) in release.into_iter().zip(2..) {
+        view.rows.push(Placed { area: row(y), line });
+    }
+    // Each tab draws in a frame that starts under the rows of the release:
+    // the note line and the key line stay at the bottom.
+    let full = area;
+    let area = Rect::new(area.x, area.y + shift, area.width, area.height - shift);
+    let row = |y: u16| Rect::new(area.x + margin, area.y + y, area.width - margin, 1);
 
     let body = Rect::new(area.x, area.y + 2, area.width, area.height - 4);
     match state.tab() {
@@ -365,15 +380,40 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
     view.hits.extend(hits);
 
     if state.help_shown() {
-        view.popup = Some(popup(state.tab(), area, layout));
+        view.popup = Some(popup(state.tab(), full, layout));
         view.cursor = None;
         // A click closes the popup, wherever it hits.
         view.hits = vec![Hit {
-            area,
+            area: full,
             key: Key::Esc,
         }];
     }
     view
+}
+
+/// The most rows of the line of the release under the header
+/// (01M6XTS1GCW7PTWSMM1HKQTHSN).
+pub const RELEASE_ROWS: usize = 2;
+
+/// The rows of the line of the open release under the header
+/// (01M6XTS1GCW7PTWSMM1HKQTHSN): the line of [`crate::view::release`] from
+/// the last look, wrapped to `columns`, at most [`RELEASE_ROWS`]. A row
+/// breaks between two words, so the name of a repository stays whole. None
+/// with no look, and with no open release.
+fn release_rows(state: &State, columns: u16) -> Vec<Line<'static>> {
+    let Some((look, _)) = state.last_look() else {
+        return Vec::new();
+    };
+    let Some(line) = crate::view::release(&look.pauses, &look.who.sessions) else {
+        return Vec::new();
+    };
+    let options = textwrap::Options::new(usize::from(columns.max(1)))
+        .word_splitter(textwrap::WordSplitter::NoHyphenation);
+    textwrap::wrap(&line, options)
+        .into_iter()
+        .take(RELEASE_ROWS)
+        .map(|part| Line::styled(part.into_owned(), WARNING))
+        .collect()
 }
 
 /// The note line (01M6VMACJGF4A0ZXC6YK13KNCH): a question of the TUI
@@ -474,7 +514,8 @@ fn strip_narrow(state: &State, area: Rect) -> (Line<'static>, Vec<Hit>) {
 /// The header (01M6VAZK4RQSZ0MG2DHWQC598Q): the state of the whole
 /// riff, the owner, the build of this riff and of riff-server when it
 /// is another, and the link. The narrow layout has only the state of
-/// the riff and the link.
+/// the riff and the link. The line of an open release comes under it
+/// ([`release_rows`]).
 fn header(state: &State, layout: Layout, now_ms: i64) -> Line<'static> {
     let wide = layout == Layout::Wide;
     let mut parts: Vec<Vec<Span<'static>>> = Vec::new();
@@ -885,6 +926,120 @@ mod tests {
         // No look yet: the link is down.
         let state = State::new(build("10df8a4c0ffe"), "riff://mike@thelio".parse().unwrap());
         assert_eq!(drawn(&state, 80, 24)[1], " build 10df8a4 · link down");
+    }
+
+    /// The mock-up after a look that found the riff `paused` or not, and
+    /// the daemon of thelio with the watch of a release at `step`, or with
+    /// no watch.
+    fn with_release(step: Option<riff_client::daemons::ReleaseStep>, paused: bool) -> State {
+        use riff_client::daemons::{Facts, Release};
+        let mut state = mock_up();
+        let mut look = state.last_look().unwrap().0.clone();
+        let facts = Facts {
+            releases: step
+                .map(|step| Release {
+                    repo: "como-technologies/riff".into(),
+                    tag: "v3.3.0".into(),
+                    step,
+                })
+                .into_iter()
+                .collect(),
+            ..Facts::default()
+        };
+        let mut daemon: riff_core::wire::SessionInfo = serde_json::from_value(serde_json::json!({
+            "uri": "riff://mike@thelio/como-technologies/riff?session=d1", "live": true,
+        }))
+        .unwrap();
+        daemon.machine = Some(riff_core::wire::MachineInfo {
+            numbers: facts.line(),
+            age_secs: 5,
+        });
+        look.who.sessions = vec![daemon];
+        look.pauses = match paused {
+            true => RiffState::Paused.into(),
+            false => RiffState::Running.into(),
+        };
+        state.looked(look, NOW - 2_000);
+        state
+    }
+
+    /// 01M6XTS1GCW7PTWSMM1HKQTHSN: under the header, the TUI says the state
+    /// of an open release at each step at 80 x 24: what runs, what it waits
+    /// for, and who acts next. The body of the tab starts under it. With no
+    /// open release, there is no line.
+    #[test]
+    fn the_header_says_each_step_of_an_open_release_at_80_x_24() {
+        use riff_client::daemons::ReleaseStep;
+        let header = |paused: bool| {
+            let state = if paused { "paused" } else { "running" };
+            format!(" riff {state} · owner mike · build 10df8a4 · link ok 2s")
+        };
+        let steps: [(Option<ReleaseStep>, bool, &[&str]); 5] = [
+            (
+                Some(ReleaseStep::Waits),
+                false,
+                &[" v3.3.0: the deploy waits for a person (riff release approve v3.3.0)"],
+            ),
+            (
+                Some(ReleaseStep::Runs),
+                true,
+                &[" v3.3.0: the deploy runs; the riff is paused"],
+            ),
+            (
+                Some(ReleaseStep::Passed),
+                true,
+                &[
+                    " v3.3.0: the deploy passed; it waits for the check of the lead of",
+                    " como-technologies/riff",
+                ],
+            ),
+            (
+                Some(ReleaseStep::CheckFailed),
+                true,
+                &[" v3.3.0: the check failed: the owner resumes or rolls back"],
+            ),
+            (None, false, &[]),
+        ];
+        for (step, paused, lines) in steps {
+            let mut state = with_release(step, paused);
+            state.on_key(Key::Open(Tab::Devices));
+            state.note("Read again 2s ago.");
+            let mut want = vec![
+                " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports".to_owned(),
+                header(paused),
+            ];
+            want.extend(lines.iter().map(ToString::to_string));
+            want.push(" The Devices tab is not built yet.".to_owned());
+            want.resize(22, String::new());
+            want.extend([
+                " Read again 2s ago.".to_owned(),
+                " 1-6 tab  r read again  ? help  q quit".to_owned(),
+            ]);
+            assert_eq!(drawn(&state, 80, 24), want, "{step:?}");
+        }
+        // The line is in the color of a word that needs a look.
+        let state = with_release(Some(ReleaseStep::Waits), false);
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        render(&compute_view(&state, area, NOW), &mut buffer);
+        assert_eq!(buffer[(1, 2)].fg, Color::Yellow);
+        // A built tab draws its body under the line too, and the note line
+        // and the key line stay at the bottom.
+        let mut state = with_release(Some(ReleaseStep::Runs), true);
+        state.on_key(Key::Open(Tab::Chat));
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[2], " v3.3.0: the deploy runs; the riff is paused");
+        assert_eq!(rows[3], " chat · a line wakes your leads", "{rows:#?}");
+        // The narrow layout wraps the line at its width.
+        let rows = drawn(&with_release(Some(ReleaseStep::Runs), true), 40, 24);
+        assert_eq!(
+            rows[1..4],
+            [
+                "riff paused · link ok 2s",
+                "v3.3.0: the deploy runs; the riff is",
+                "paused"
+            ]
+        );
     }
 
     /// 01M6VAZKDEQ6951KGPGAMF1SNJ: `?` shows the keys of the tab in a

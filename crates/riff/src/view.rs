@@ -475,6 +475,9 @@ pub fn who(
     long: bool,
 ) -> String {
     let (mut rows, paused) = state_facts(pauses, me.default_thread().as_ref());
+    if let Some(line) = release(pauses, sessions) {
+        rows.insert(1, ("release", styled(WARNING, &line)));
+    }
     let mut actions: Vec<String> = paused.into_iter().collect();
     match owner {
         RiffOwner::NoSignIn => {}
@@ -521,6 +524,54 @@ pub fn who(
         let _ = writeln!(out, "{action}");
     }
     out
+}
+
+/// The line of the open release of the riff (01M6XTS1GCW7PTWSMM1HKQTHSN), the
+/// same in the row `release` of `riff who` and in the header of the TUI: the
+/// release that the watches of the hosts in `sessions` follow
+/// ([`riff_client::daemons::release`]), with the pause of the whole riff in
+/// `pauses` ([`text::release_line`]). `None` with no open release.
+///
+/// ```
+/// use riff_client::daemons::{Facts, Release, ReleaseStep};
+/// use riff_core::wire::{MachineInfo, RiffState, SessionInfo};
+///
+/// let daemon = |step| {
+///     let facts = Facts {
+///         releases: vec![Release { repo: "o/r".into(), tag: "v3.3.0".into(), step }],
+///         ..Facts::default()
+///     };
+///     let mut s: SessionInfo = serde_json::from_value(serde_json::json!({
+///         "uri": "riff://mike@thelio/o/r?session=d1", "live": true,
+///     }))
+///     .unwrap();
+///     s.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 12 });
+///     s
+/// };
+/// let (running, paused) = (RiffState::Running.into(), RiffState::Paused.into());
+/// assert_eq!(riff::view::release(&running, &[]), None);
+/// assert_eq!(
+///     riff::view::release(&paused, &[daemon(ReleaseStep::Runs)]).unwrap(),
+///     "v3.3.0: the deploy runs; the riff is paused"
+/// );
+/// assert_eq!(riff::view::release(&running, &[daemon(ReleaseStep::Passed)]), None);
+///
+/// // `riff who` shows the line in the row `release`, under the state of the riff.
+/// let owner = riff_core::wire::RiffOwner::NoSignIn;
+/// let me = "riff://mike@thelio/o/r".parse()?;
+/// let text = riff::view::who(&paused, &owner, &[daemon(ReleaseStep::Passed)], &me, false);
+/// let plain = anstream::adapter::strip_str(&text).to_string();
+/// assert!(
+///     plain.starts_with(
+///         "riff     paused\nrelease  v3.3.0: the deploy passed; it waits for the check of the lead of o/r\n"
+///     ),
+///     "{plain}"
+/// );
+/// # Ok::<(), riff_core::name::NameError>(())
+/// ```
+pub fn release(pauses: &RiffReply, sessions: &[SessionInfo]) -> Option<String> {
+    let release = riff_client::daemons::release(&riff_client::daemons::hosts(sessions))?;
+    text::release_line(&release, pauses.riff.is_some())
 }
 
 /// The part `Hosts` of `riff who`: the facts of the daemon of each host

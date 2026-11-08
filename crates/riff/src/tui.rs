@@ -2302,7 +2302,8 @@ async fn reports_tasks(
 async fn attach(name: &str) -> Result<crate::lead::Left> {
     #[cfg(target_os = "linux")]
     {
-        crate::lead::attach(&crate::podman::Podman, name).await
+        let folder = crate::lead::folder_of_name(&crate::run::data_dir()?, name);
+        crate::lead::attach(&crate::podman::Podman, name, &folder).await
     }
     #[cfg(not(target_os = "linux"))]
     {

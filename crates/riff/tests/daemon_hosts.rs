@@ -1710,8 +1710,9 @@ async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_mad
 }
 
 /// A `gh` whose CI run of `TAG` has the state in the file `dir/state`:
-/// `waiting` (the job `Deploy` waits for a person), `success` or
-/// `failure`. Every other call answers with an empty list. Gives the
+/// `waiting` (the job `Deploy` waits for a person), `running`, `success`
+/// or `failure`. The list of the release issues is the file `dir/issues`,
+/// or empty. Every other call answers with an empty list. Gives the
 /// variables for a host.
 fn fake_deploy(dir: &Path) -> Vec<(String, String)> {
     let bin = dir.join("bin");
@@ -1719,16 +1720,21 @@ fn fake_deploy(dir: &Path) -> Vec<(String, String)> {
     let url = "https://github.com/o/r/actions/runs/9";
     let body = format!(
         "#!/bin/sh\nstate=$(cat {state} 2>/dev/null)\n\
+         case \"$state\" in\n\
+           waiting) status=waiting; job=waiting; conclusion= ;;\n\
+           running) status=in_progress; job=in_progress; conclusion= ;;\n\
+           *) status=completed; job=completed; conclusion=$state ;;\n\
+         esac\n\
          case \"$*\" in\n\
          'run list'*)\n\
-           if [ \"$state\" = waiting ]; then status=waiting; conclusion=; else status=completed; conclusion=$state; fi\n\
            printf '[{{\"databaseId\":9,\"headBranch\":\"{TAG}\",\"headSha\":\"abc\",\"url\":\"{url}\",\"displayTitle\":\"Release\",\"status\":\"%s\",\"conclusion\":\"%s\"}}]\\n' \"$status\" \"$conclusion\" ;;\n\
          'run view 9 --json jobs')\n\
-           if [ \"$state\" = waiting ]; then job=waiting; conclusion=; else job=completed; conclusion=$state; fi\n\
            printf '{{\"jobs\":[{{\"name\":\"Deploy\",\"status\":\"%s\",\"conclusion\":\"%s\",\"startedAt\":\"\"}}]}}\\n' \"$job\" \"$conclusion\" ;;\n\
+         'issue list'*) cat {issues} 2>/dev/null || echo '[]' ;;\n\
          *) echo '[]' ;;\n\
          esac\n",
-        state = dir.join("state").display()
+        state = dir.join("state").display(),
+        issues = dir.join("issues").display(),
     );
     isolated::write_program(bin.join("gh"), body);
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
@@ -1849,4 +1855,96 @@ async fn the_watch_of_a_deploy_gives_the_other_lead_one_note_for_each_step() {
     );
     assert_eq!(r.messages(&lead("passed")).await.len(), 1);
     assert_eq!(r.messages(&lead("failed")).await.len(), 1);
+}
+
+/// 01M6XTS7RGXB30MFM6DZ7PVZ75: `riff who` says the state of an open release
+/// at each step, in the same line as the header of the TUI. The watch of the
+/// deploy, then the watch of the check, give the step to the facts of the
+/// host, with a real riff-server and a fake `gh`. With no open release, `riff
+/// who` has no line `release`.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
+    let tmp = tempfile::tempdir().unwrap();
+    let extra = fake_deploy(tmp.path());
+    let r = riff_env(300, 300, &extra).await;
+    // The watch of the deploy fetches the main clone: it needs an origin.
+    add_origin(&r.main, tmp.path());
+    let repo = r.lead.place().repo_text();
+    let dir = r.host("a").dir();
+    let release = || async {
+        let out = r.a.run(&r.main, &["who"], None).await;
+        assert!(out.status.success(), "{out:?}");
+        text(&out.stdout)
+            .lines()
+            .find_map(|line| line.strip_prefix("release  "))
+            .map(str::to_owned)
+    };
+    let shows = |want: Option<String>| async move {
+        let what = format!("riff who: {want:?}");
+        until(&what, || async { (release().await == want).then_some(()) }).await;
+    };
+    let set = |name: &str, text: &str| std::fs::write(tmp.path().join(name), text).unwrap();
+    let lead = r.api(&r.lead);
+    let issue = |open: bool, result: &str| {
+        let body = format!("{}\\n\\n- a check: x", riff::cycle::check_mark(TAG, result));
+        let state = if open { "OPEN" } else { "CLOSED" };
+        format!(
+            r#"[{{"number":7,"title":"Release {TAG}","state":"{state}","comments":[{{"body":"{body}"}}]}}]"#
+        )
+    };
+
+    shows(None).await;
+    set("state", "waiting");
+    let op = riff::watches::Op::Deploy {
+        tag: TAG.to_owned(),
+        stale: None,
+    };
+    riff::watches::Watches::new(&dir)
+        .register(&repo, op, riff::daemon::now_ms())
+        .unwrap();
+    shows(Some(format!(
+        "{TAG}: the deploy waits for a person (riff release approve {TAG})"
+    )))
+    .await;
+
+    // A person approves: the riff is paused, and the job runs.
+    lead.set_riff(&r.lead, RiffState::Paused).await.unwrap();
+    set("state", "running");
+    shows(Some(format!("{TAG}: the deploy runs; the riff is paused"))).await;
+
+    // The job passes: the watch of the check takes the place of the watch
+    // of the deploy.
+    set("state", "success");
+    shows(Some(format!(
+        "{TAG}: the deploy passed; it waits for the check of the lead of {repo}"
+    )))
+    .await;
+    until("the watch of the check", || async {
+        let watches = riff::watches::Watches::new(&dir).read().unwrap();
+        watches
+            .iter()
+            .any(|w| matches!(w.op, riff::watches::Op::Check { .. }))
+            .then_some(())
+    })
+    .await;
+
+    // A check fails: the owner resumes, or the lead rolls back.
+    set("issues", &issue(true, "failed"));
+    shows(Some(format!(
+        "{TAG}: the check failed: the owner resumes or rolls back"
+    )))
+    .await;
+
+    // A check passes: riff closes the issue and resumes the riff.
+    set("issues", &issue(false, "passed"));
+    lead.set_riff(&r.lead, RiffState::Running).await.unwrap();
+    shows(None).await;
+    until("the end of the watch of the check", || async {
+        let watches = riff::watches::Watches::new(&dir).read().unwrap();
+        (!watches
+            .iter()
+            .any(|w| matches!(w.op, riff::watches::Op::Check { .. })))
+        .then_some(())
+    })
+    .await;
 }

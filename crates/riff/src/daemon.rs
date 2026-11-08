@@ -1600,6 +1600,11 @@ pub struct WatchShown {
     pub what: String,
     /// The start of the watch, in milliseconds since the epoch.
     pub since_ms: i64,
+    /// The release that the watch follows, at its step
+    /// ([`crate::watches::Watch::release`], 01M6XTS7RGXB30MFM6DZ7PVZ75). An
+    /// old daemon gives none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<riff_client::daemons::Release>,
 }
 
 /// A lead with no network, as `riff daemon status` shows it
@@ -3005,9 +3010,11 @@ impl<R: Runtime + 'static> Daemon<R> {
     ///     participant C as lead container
     ///     participant S as riff-server
     ///     D->>D: the start: host facts, image, relay, spec
+    ///     D->>D: started-again in the folder of the lead
     ///     D->>C: podman stop
     ///     Note over D,S: the lead keeps its session: no leave
     ///     D->>C: podman run: claude --resume ID
+    ///     D->>D: started-again: started
     ///     D->>S: chat: the lead started again
     /// ```
     ///
@@ -3018,6 +3025,12 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// fails three times ends the lead: the daemon ends its session, and
     /// the person starts it ([`text::lead_again_failed`]). It gives the
     /// line for the person, or `None` when the lead ended on its own.
+    ///
+    /// The file [`crate::lead::AGAIN`] in the folder of the lead tells an
+    /// attached terminal of the person that the lead starts again on the riff
+    /// of this daemon, and when the new container runs
+    /// ([`crate::lead::attach_with`], 01M6XTS7V47RFX1G37FRGRBWCY). A start
+    /// that fails removes it.
     async fn lead_again(self: &Arc<Self>, record: Record) -> Option<String> {
         let name = record.live.name.clone();
         let owned = self.lock().get(&name).cloned()?;
@@ -3026,6 +3039,14 @@ impl<R: Runtime + 'static> Daemon<R> {
             Err(e) => return self.lead_waits(&record, &format!("{e:#}")).await,
         };
         println!("{}", text::daemon_stops_lead(&name));
+        let mut again = crate::lead::Again {
+            riff: format!("v{}", Build::this().version),
+            at_ms: now_ms(),
+            started: false,
+        };
+        if let Err(e) = again.write(&record.folder) {
+            eprintln!("riff daemon: {e:#}");
+        }
         owned
             .renewing
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -3033,6 +3054,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             owned
                 .renewing
                 .store(false, std::sync::atomic::Ordering::SeqCst);
+            crate::lead::Again::clear(&record.folder);
             return self.lead_waits(&record, &format!("{e:#}")).await;
         }
         // A lead that this daemon took up has no end of its own: it looks.
@@ -3051,6 +3073,10 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
             match self.lead_launch(start.clone()).await {
                 Ok(()) => {
+                    again.started = true;
+                    if let Err(e) = again.write(&record.folder) {
+                        eprintln!("riff daemon: {e:#}");
+                    }
                     // The next update can fail on its own: the person hears of it.
                     self.again_told
                         .lock()
@@ -3063,6 +3089,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 Err(e) => why = e,
             }
         }
+        crate::lead::Again::clear(&record.folder);
         self.world.leave(&record).await;
         let line = text::lead_again_failed(&name, &why);
         self.world.chat(&record, &line).await;
@@ -3558,6 +3585,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             .filter(|w| w.op != crate::watches::Op::Wave)
             .map(|w| WatchShown {
                 what: w.op.what(),
+                release: w.release(),
                 repo: w.repo,
                 since_ms: w.since_ms,
             })
@@ -8861,6 +8889,11 @@ mod tests {
         let line = text::lead_started_again(LEAD);
         assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
         assert!(said_of(&server, "chat").contains(&format!("chat {LEAD}: {line}")));
+        // 01M6XTS7V47RFX1G37FRGRBWCY: the mark tells an attached terminal the
+        // riff of the new container.
+        let again = crate::lead::Again::read(&record.folder).unwrap();
+        assert!(again.started, "{again:?}");
+        assert_eq!(again.riff, format!("v{}", Build::this().version));
     }
 
     /// 01M6WBX2FQEHW92Y1A5HM4H8BM: the end of a turn of a worker keeps no
@@ -9151,6 +9184,9 @@ mod tests {
             "three tries, then the end"
         );
         assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        // 01M6XTS7V47RFX1G37FRGRBWCY: an attached terminal waits no more for
+        // a new container.
+        assert_eq!(crate::lead::Again::read(&record.folder), None);
         assert_eq!(
             said_of(&server, "leave"),
             [format!("leave {}", record.live.session)]
@@ -11906,7 +11942,8 @@ mod tests {
             [WatchShown {
                 repo: "o/r".into(),
                 what: "the deploy of v1.2.3".into(),
-                since_ms: 7
+                since_ms: 7,
+                release: None,
             }]
         );
         let text = text::daemon_status(&here.daemon.status().await, 60_007);

@@ -444,6 +444,11 @@ struct Book {
     /// True when each attach ends the session: the person ends the
     /// command in the terminal.
     exit_in_attach: bool,
+    /// True when each attach holds the terminal until its session ends,
+    /// as `podman attach` does ([`Fake::with_attach_until_end`]).
+    attach_until_end: bool,
+    /// The count of the sessions that started: the ID of the next one.
+    played: u64,
     /// The sessions with no network ([`Runtime::reaches`]).
     offline: BTreeSet<String>,
     /// The digest that the container of a session runs, by name
@@ -475,6 +480,9 @@ struct Played {
     /// start, by its path in the session: [`Runtime::links`] reads it as
     /// a container does.
     files: BTreeMap<PathBuf, std::fs::File>,
+    /// The count of the sessions before it: a new session with the same
+    /// name has another ID.
+    id: u64,
 }
 
 impl Fake {
@@ -516,6 +524,14 @@ impl Fake {
     /// types `/exit` in the `claude` of the lead.
     pub fn with_exit_in_attach(self) -> Self {
         self.lock().exit_in_attach = true;
+        self
+    }
+
+    /// Each attach holds the terminal until its session ends, as `podman
+    /// attach` does: a stop ends the attach, and a new session with the
+    /// same name gets an attach of its own.
+    pub fn with_attach_until_end(self) -> Self {
+        self.lock().attach_until_end = true;
         self
     }
 
@@ -782,17 +798,32 @@ impl Runtime for Fake {
     }
 
     async fn attach(&self, name: &str) -> Result<Exit> {
-        let mut book = self.lock();
-        book.calls.push(format!("attach {name}"));
-        match book.sessions.get(name) {
-            Some(played) if played.exit.is_none() => {
-                if book.exit_in_attach {
-                    end(&mut book, name, Exit::SUCCESS);
-                }
-                Ok(Exit::SUCCESS)
+        let id = {
+            let mut book = self.lock();
+            book.calls.push(format!("attach {name}"));
+            let id = match book.sessions.get(name) {
+                Some(played) if played.exit.is_none() => played.id,
+                _ => bail!("no session {name} runs"),
+            };
+            if book.exit_in_attach {
+                end(&mut book, name, Exit::SUCCESS);
             }
-            _ => bail!("no session {name} runs"),
+            if !book.attach_until_end {
+                return Ok(Exit::SUCCESS);
+            }
+            id
+        };
+        // The terminal stays with the session until its end.
+        let runs = |fake: &Fake| {
+            let book = fake.lock();
+            book.sessions
+                .get(name)
+                .is_some_and(|p| p.id == id && p.exit.is_none())
+        };
+        while runs(self) {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
+        Ok(Exit::SUCCESS)
     }
 
     async fn redraw(&self, name: &str) -> Result<()> {
@@ -915,6 +946,8 @@ impl Fake {
             }
         }
         let (ended, exit) = oneshot::channel();
+        let id = book.played;
+        book.played += 1;
         book.sessions.insert(
             spec.name.clone(),
             Played {
@@ -925,6 +958,7 @@ impl Fake {
                 end: Some(ended),
                 exit: None,
                 files: open_files(spec),
+                id,
             },
         );
         let name = spec.name.clone();

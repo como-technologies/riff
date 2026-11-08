@@ -2390,6 +2390,71 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
     format!("{why} next: {next}")
 }
 
+/// The line of the state of `release` in the header of the TUI and in `riff
+/// who` (01M6XTS1GCW7PTWSMM1HKQTHSN): what runs, what it waits for, and who
+/// acts next. `paused` is true while the whole riff is paused. `riff release
+/// check` resumes the riff after a passed check and after a failed deploy, so
+/// those steps have a line only while the riff is paused. The tag and the
+/// repository come from the facts of a host: the line has them [`safe`].
+///
+/// ```
+/// use riff_client::daemons::{Release, ReleaseStep};
+/// use riff::text::release_line;
+///
+/// let at = |step| Release { repo: "o/r".into(), tag: "v3.3.0".into(), step };
+/// let line = |step, paused| release_line(&at(step), paused);
+/// assert_eq!(
+///     line(ReleaseStep::Waits, false).unwrap(),
+///     "v3.3.0: the deploy waits for a person (riff release approve v3.3.0)"
+/// );
+/// assert_eq!(line(ReleaseStep::Runs, true).unwrap(), "v3.3.0: the deploy runs; the riff is paused");
+/// assert_eq!(line(ReleaseStep::Runs, false).unwrap(), "v3.3.0: the deploy runs");
+/// assert_eq!(
+///     line(ReleaseStep::Passed, true).unwrap(),
+///     "v3.3.0: the deploy passed; it waits for the check of the lead of o/r"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::DeployFailed, true).unwrap(),
+///     "v3.3.0: the deploy failed; it waits for the check of the lead of o/r"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::CheckFailed, true).unwrap(),
+///     "v3.3.0: the check failed: the owner resumes or rolls back"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::CheckFailed, false).unwrap(),
+///     "v3.3.0: the check failed: the lead of o/r fixes forward or rolls back"
+/// );
+/// // The check passed, or the deploy failed and the check filed the issue.
+/// assert_eq!(line(ReleaseStep::Passed, false), None);
+/// assert_eq!(line(ReleaseStep::DeployFailed, false), None);
+/// ```
+pub fn release_line(release: &riff_client::daemons::Release, paused: bool) -> Option<String> {
+    use riff_client::daemons::ReleaseStep;
+    let (tag, repo) = (safe(&release.tag), safe(&release.repo));
+    let state = match (release.step, paused) {
+        (ReleaseStep::Waits, _) => {
+            format!("the deploy waits for a person (riff release approve {tag})")
+        }
+        (ReleaseStep::Runs, true) => "the deploy runs; the riff is paused".to_owned(),
+        (ReleaseStep::Runs, false) => "the deploy runs".to_owned(),
+        (ReleaseStep::Passed, true) => {
+            format!("the deploy passed; it waits for the check of the lead of {repo}")
+        }
+        (ReleaseStep::DeployFailed, true) => {
+            format!("the deploy failed; it waits for the check of the lead of {repo}")
+        }
+        (ReleaseStep::CheckFailed, true) => {
+            "the check failed: the owner resumes or rolls back".to_owned()
+        }
+        (ReleaseStep::CheckFailed, false) => {
+            format!("the check failed: the lead of {repo} fixes forward or rolls back")
+        }
+        (ReleaseStep::Passed | ReleaseStep::DeployFailed, false) => return None,
+    };
+    Some(format!("{tag}: {state}"))
+}
+
 /// The note to each other lead for the step `step` of the release `tag`
 /// (01M5SNV75DRFHR26BT2M8243VV). `by` names who runs the step, for
 /// example "the lead of como-technologies/riff". The note ends with what
@@ -7425,6 +7490,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     repo: "o/r".into(),
 ///     what: "the deploy of v4.3.0".into(),
 ///     since_ms: 120_000,
+///     release: None,
 /// });
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.contains("Watches:\n  o/r  the deploy of v4.3.0, for 3m\n"), "{text}");
@@ -11612,6 +11678,20 @@ pub fn lead_again(repo: &str) -> String {
          /opt/riff/riff relay watch --follow with the Monitor tool again, and go on with your \
          work. Tell your person nothing about this start: the person has a line in riff chat."
     )
+}
+
+/// The line in the terminal of a person who is attached to the lead while the
+/// daemon starts it again on the riff `riff` (01M6XTS7V47RFX1G37FRGRBWCY):
+/// `riff lead start` and the TUI attach to the new container after it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_again_attached("v3.3.0"),
+///     "riff started this lead again on riff v3.3.0; its conversation goes on"
+/// );
+/// ```
+pub fn lead_again_attached(riff: &str) -> String {
+    format!("riff started this lead again on riff {riff}; its conversation goes on")
 }
 
 /// The line in riff chat for the person: the daemon started the lead

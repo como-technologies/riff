@@ -394,6 +394,93 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// 01M6XTS1GCW7PTWSMM1HKQTHSN: the header of the TUI at 80 x 24 says the
+/// state of an open release at each step, from the facts that the daemon of
+/// thelio sent to riff-server and from the pause of the riff. The line under
+/// the header moves the body of the tab down. With no open release, it goes.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_header_says_the_state_of_an_open_release_at_each_step() {
+    use riff_client::daemons::{Facts, Release, ReleaseStep};
+    use riff_core::wire::RiffState;
+
+    let server = crate::common::start_signed().await;
+    let daemon: riff_core::name::SessionUri =
+        "riff://brett@thelio/como-technologies/riff?session=d1"
+            .parse()
+            .unwrap();
+    let api = server.api("brett", Some("d1"));
+    api.register(&daemon).await.unwrap();
+    let _watch = api.watch(&daemon).await.unwrap();
+    let brett: riff_core::name::SessionUri = "riff://brett@thelio".parse().unwrap();
+    let person = crate::common::api_of(&server, &brett);
+
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
+    let steps: [(Option<ReleaseStep>, RiffState, &[&str]); 5] = [
+        (
+            Some(ReleaseStep::Waits),
+            RiffState::Running,
+            &[" v3.3.0: the deploy waits for a person (riff release approve v3.3.0)"],
+        ),
+        (
+            Some(ReleaseStep::Runs),
+            RiffState::Paused,
+            &[" v3.3.0: the deploy runs; the riff is paused"],
+        ),
+        (
+            Some(ReleaseStep::Passed),
+            RiffState::Paused,
+            &[
+                " v3.3.0: the deploy passed; it waits for the check of the lead of",
+                " como-technologies/riff",
+            ],
+        ),
+        (
+            Some(ReleaseStep::CheckFailed),
+            RiffState::Paused,
+            &[" v3.3.0: the check failed: the owner resumes or rolls back"],
+        ),
+        (None, RiffState::Running, &[]),
+    ];
+    for (step, state, lines) in steps {
+        let facts = Facts {
+            build: riff_core::build::Build::this().to_string(),
+            limit: 3,
+            releases: step
+                .map(|step| Release {
+                    repo: "como-technologies/riff".into(),
+                    tag: "v3.3.0".into(),
+                    step,
+                })
+                .into_iter()
+                .collect(),
+            ..Facts::default()
+        };
+        api.machine(&daemon, &facts.line()).await.unwrap();
+        person
+            .set_pause(&brett, &riff_client::api::PauseScope::Riff, state)
+            .await
+            .unwrap();
+        tty.press("r").await;
+        let word = match state {
+            RiffState::Paused => "paused",
+            RiffState::Running => "running",
+        };
+        let header = format!(" riff {word} · owner brett · build {build} · link ok ");
+        let rows = tty
+            .shows(|rows| {
+                rows[1].starts_with(&header)
+                    && rows[2..2 + lines.len()] == *lines
+                    && rows[2 + lines.len()].starts_with(" 1 session")
+            })
+            .await;
+        assert!(rows[23].starts_with(" ↑↓ select"), "{step:?}: {rows:#?}");
+    }
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// A session `uri` on the riff-server `server`, with the claim `item`
 /// in the thread of its repository. It is live until the test ends.
 async fn session(server: &str, uri: &str, item: &str) {

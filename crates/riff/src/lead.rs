@@ -39,7 +39,7 @@
 //! | The attach | [`crate::runtime::Runtime::redraw`], then [`crate::runtime::Runtime::attach`] ([`attach`]): `claude` draws its screen at each attach | 01M51PD7M04HZR2PVVJA4WCBK5 |
 //! | After the attach | [`Left`]: a detach, or the end of the lead when its container does not run; the line says which | 01M51PD7Q24N252V66NFEHY49N |
 //! | The sign-in of `claude` | the token of `riff claude-token` only ([`needs_token`]); a lead from an older riff with the sign-in file of the host gets a word when the host replaced that file ([`stale`], [`crate::daemon::Daemon::stale_leads`]) | 01M5NJ87NXF6077Y9W32840BR8, 01M5NJ87YEHHGJBANM7CRYV56Z |
-//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
+//! | A new riff | after `riff update`, the daemon stops an old lead (the bind of its riff has no link: [`old`]) when it is idle ([`idle`]: the `Stop` hook ended its turn, and its transcript got no write after the tail of the turn, [`between_turns`]; or its transcript got no write for 5 minutes, [`quiet`]) and the daemon itself runs the riff on disk, and starts it again with `claude --resume ID` ([`spec_again`], [`again`]): the same session, clone and Claude folder, no new session on riff-server; the main clone is that of the wave, and with no wave the one that the clone of the lead links to ([`linked_main`]); the person gets one line in riff chat ([`crate::daemon::Daemon::leads_again`]), and an attached terminal one line, then the attach to the new container ([`attach_with`], [`Again`]) | 01M5TC24PB3YC2CC8BA275WSEN, 01M6XTS7V47RFX1G37FRGRBWCY, 01M6WBX2FQEHW92Y1A5HM4H8BM, 01M6WBX2FT7Y9FV9VGGPDBKAHM, 01M5TC2919TB9XPF42YFNJBP79, 01M5TC29A4Q94NJP7HFC75XCF3, 01M6QB89JJEM9Z1V3RVZYHKYT0 |
 //! | The workers | none: `riff lead start` does not join the host, so it starts no wave. A host gives workers after `riff join`, and `riff lead start` says so when it starts a lead on a host with no part workers ([`gives_workers`]) | 01M6QVSJC4V3Z3NB6MJW4XGJSR |
 //! | The repository | the daemon serves it while the lead runs, so `riff who` and the commands with `--host` reach the host (`Daemon::serve_lead`) | 01M6QVSWQZE41BMQ6YN2963C4V |
 //! | The stop | `riff lead stop`: the lead writes its notes ([`stop_notes`]), then the daemon ends its container ([`crate::daemon::Daemon::stop_lead`]); the host loses the part lead, and an update starts the lead no more | 01M6QVSWTARPKP59X8AJBBK69X, 01M6QVSWWM3EA4ZS47XCKV38D0 |
@@ -103,6 +103,23 @@ fn plain(repo: &str) -> String {
 /// ```
 pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
     data.join("leads").join(plain(repo))
+}
+
+/// The folder of the lead in the container `name` ([`name_of`]), in the
+/// data folder `data` of riff: the same as [`folder_of`] of its
+/// repository.
+///
+/// ```
+/// use std::path::Path;
+/// use riff::lead::{folder_of, folder_of_name, name_of};
+///
+/// let data = Path::new("/d/riff");
+/// let repo = "como-technologies/riff";
+/// assert_eq!(folder_of_name(data, &name_of(repo)), folder_of(data, repo));
+/// ```
+pub fn folder_of_name(data: &Path, name: &str) -> PathBuf {
+    data.join("leads")
+        .join(name.strip_prefix("riff-lead-").unwrap_or(name))
 }
 
 /// The [`SessionSpec`] of the lead of `repo`: the spec of a worker
@@ -502,36 +519,159 @@ pub fn idle(record: &daemon::Record, quiet: std::time::Duration) -> bool {
 }
 
 /// Attaches the terminal of this process to the lead `name` with
-/// `runtime`, until a detach or the end of the lead. A lead with a
+/// `runtime`, until a detach or the end of the lead, with the lines for
+/// the person on stdout ([`attach_with`]). `folder` is the folder of the
+/// lead ([`folder_of`]).
+pub async fn attach(runtime: &impl Runtime, name: &str, folder: &Path) -> Result<Left> {
+    attach_with(runtime, name, folder, &mut |line| println!("{line}")).await
+}
+
+/// [`attach`] with the lines for the person to `say`. A lead with a
 /// stale sign-in gets the line of [`text::lead_sign_in_stale`] first
-/// ([`stale`]). Then it asks the
-/// runtime to make the lead draw its terminal again
-/// (01M51PD7M04HZR2PVVJA4WCBK5). When that fails, it prints why, and
-/// attaches. After the attach, a lead whose container does not run
-/// ended (01M51PD7Q24N252V66NFEHY49N). When the runtime cannot say, it
-/// counts as a detach.
-pub async fn attach(runtime: &impl Runtime, name: &str) -> Result<Left> {
+/// ([`stale`]). Then it asks the runtime to make the lead draw its
+/// terminal again (01M51PD7M04HZR2PVVJA4WCBK5). When that fails, it says
+/// why, and attaches.
+///
+/// When the daemon starts the lead again on a new riff while the person is
+/// attached ([`Again`], 01M6XTS7V47RFX1G37FRGRBWCY), the stop of the old
+/// container ends the attach. Then it waits for the new container, says
+/// [`text::lead_again_attached`], and attaches to it. After the attach, a
+/// lead whose container does not run ended (01M51PD7Q24N252V66NFEHY49N). When
+/// the runtime cannot say, it counts as a detach.
+///
+/// ```mermaid
+/// sequenceDiagram
+///     participant P as the terminal of the person
+///     participant D as riff daemon
+///     participant C as container of the lead
+///     P->>C: attach
+///     D->>D: write started-again: the riff, the time
+///     D->>C: stop: the attach ends
+///     D->>C: a new container: claude --resume
+///     D->>D: started-again: started
+///     P->>P: riff started this lead again on riff vX.Y.Z; its conversation goes on
+///     P->>C: attach to the new container
+/// ```
+pub async fn attach_with(
+    runtime: &impl Runtime,
+    name: &str,
+    folder: &Path,
+    say: &mut (dyn FnMut(&str) + Send),
+) -> Result<Left> {
     if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty())
         && stale(runtime, name, Path::new(&home)).await
     {
-        println!("{}", text::lead_sign_in_stale(name));
+        say(&text::lead_sign_in_stale(name));
     }
-    println!("{}", text::LEAD_DETACH);
-    if let Err(e) = runtime.redraw(name).await {
-        println!("{}", text::lead_no_redraw(&format!("{e:#}")));
+    say(text::LEAD_DETACH);
+    loop {
+        if let Err(e) = runtime.redraw(name).await {
+            say(&text::lead_no_redraw(&format!("{e:#}")));
+        }
+        let since_ms = daemon::now_ms();
+        runtime.attach(name).await?;
+        match started_again(runtime, name, folder, since_ms).await {
+            Some(riff) => say(&text::lead_again_attached(&riff)),
+            None => break,
+        }
     }
-    runtime.attach(name).await?;
     Ok(match runtime.running(name).await {
         Ok(false) => Left::Ended,
         Ok(true) | Err(_) => Left::Detached,
     })
 }
 
+/// The file in the folder of a lead of a start again on a new riff
+/// (01M6XTS7V47RFX1G37FRGRBWCY): the daemon writes it before it stops the old
+/// container ([`Again`]).
+pub const AGAIN: &str = "started-again";
+
+/// How long an attach waits for the new container of a lead that starts again
+/// (01M6XTS7V47RFX1G37FRGRBWCY). The daemon waits up to 30 s for the end of
+/// the old container, then tries the start up to three times.
+pub const AGAIN_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The time between two looks of an attach at a lead that starts again.
+const AGAIN_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// A start again of a lead on a new riff, in the file [`AGAIN`] of the folder
+/// of the lead (01M6XTS7V47RFX1G37FRGRBWCY). The daemon writes it before it
+/// stops the old container, and again with `started` when the new container
+/// runs. A start that fails removes it ([`Again::clear`]).
+///
+/// ```
+/// use riff::lead::Again;
+///
+/// let folder = tempfile::tempdir()?;
+/// assert_eq!(Again::read(folder.path()), None);
+/// let again = Again { riff: "v3.3.0".into(), at_ms: 7, started: false };
+/// again.write(folder.path())?;
+/// assert_eq!(Again::read(folder.path()), Some(again));
+/// Again::clear(folder.path());
+/// assert_eq!(Again::read(folder.path()), None);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Again {
+    /// The riff of the new container, for example `v3.3.0`.
+    pub riff: String,
+    /// The time of the stop of the old container, in milliseconds since
+    /// the epoch.
+    pub at_ms: i64,
+    /// True when the new container runs.
+    pub started: bool,
+}
+
+impl Again {
+    /// Writes the start again in the folder `folder` of the lead.
+    pub fn write(&self, folder: &Path) -> Result<()> {
+        let path = folder.join(AGAIN);
+        std::fs::write(&path, serde_json::to_vec(self)?)
+            .with_context(|| format!("cannot write {}", path.display()))
+    }
+
+    /// The start again in the folder `folder` of the lead, or `None`.
+    pub fn read(folder: &Path) -> Option<Again> {
+        let text = std::fs::read(folder.join(AGAIN)).ok()?;
+        serde_json::from_slice(&text).ok()
+    }
+
+    /// Removes the start again from the folder `folder` of the lead: the
+    /// start failed.
+    pub fn clear(folder: &Path) {
+        let _ = std::fs::remove_file(folder.join(AGAIN));
+    }
+}
+
+/// The riff of the new container when the daemon started the lead `name`
+/// again after `since_ms` ([`Again`], 01M6XTS7V47RFX1G37FRGRBWCY). It waits
+/// up to [`AGAIN_WAIT`] for the new container. `None` when no start again
+/// came after `since_ms`, when the start failed, and when the new container
+/// does not run in time.
+async fn started_again(
+    runtime: &impl Runtime,
+    name: &str,
+    folder: &Path,
+    since_ms: i64,
+) -> Option<String> {
+    let start = std::time::Instant::now();
+    loop {
+        let again = Again::read(folder).filter(|again| again.at_ms >= since_ms)?;
+        if again.started && runtime.running(name).await.unwrap_or(false) {
+            return Some(again.riff);
+        }
+        if start.elapsed() >= AGAIN_WAIT {
+            return None;
+        }
+        tokio::time::sleep(AGAIN_EVERY).await;
+    }
+}
+
 /// [`attach`], then the line of [`Left::line`]. After the end of the
 /// lead, it also says that the `claude --resume` line of `claude` does
 /// not work on the host.
-async fn attach_here(runtime: &impl Runtime, name: &str) -> Result<()> {
-    let left = attach(runtime, name).await?;
+async fn attach_here(runtime: &impl Runtime, name: &str, folder: &Path) -> Result<()> {
+    let left = attach(runtime, name, folder).await?;
     println!("{}", left.line(name));
     if left == Left::Ended {
         println!("{}", text::LEAD_NO_RESUME);
@@ -567,6 +707,7 @@ pub async fn start_with(
 ) -> Result<()> {
     let repo = here.repo_text();
     let name = name_of(&repo);
+    let folder = folder_of(&run::data_dir()?, &repo);
     let status = daemon::status(dir).await?;
     // A lead with no merged pin does not start (01M5QY976MTPRX5J4N1MKXAGDK):
     // no line says that the lead starts.
@@ -579,14 +720,14 @@ pub async fn start_with(
     };
     let Some((main, common)) = clone else {
         println!("{}", text::lead_runs(&repo, &name));
-        return attach_here(runtime, &name).await;
+        return attach_here(runtime, &name, &folder).await;
     };
     let start = text::lead_start(&repo);
     launch(dir, api, here, server, (&main, &common), &start).await?;
     if !gives_workers(&status, &repo) {
         println!("{}", text::lead_gives_no_workers(&repo));
     }
-    attach_here(runtime, &name).await
+    attach_here(runtime, &name, &folder).await
 }
 
 /// Starts the lead of the repository of `here` on the daemon in the
@@ -1138,7 +1279,9 @@ mod tests {
     async fn an_attach_to_a_lead_that_runs_redraws_it_and_a_detach_says_that_it_runs_on() {
         let fake = Fake::default().with_image("img");
         let _end = lead(&fake).await;
-        let left = attach(&fake, NAME).await.unwrap();
+        let left = attach(&fake, NAME, tempfile::tempdir().unwrap().path())
+            .await
+            .unwrap();
         assert_eq!(left, Left::Detached);
         assert_eq!(left.line(NAME), text::lead_detached(NAME));
         // The redraw comes before the attach, so the attach changes the
@@ -1159,7 +1302,9 @@ mod tests {
     async fn the_end_of_the_lead_in_the_attach_says_that_the_lead_ended() {
         let fake = Fake::default().with_image("img").with_exit_in_attach();
         let end = lead(&fake).await;
-        let left = attach(&fake, NAME).await.unwrap();
+        let left = attach(&fake, NAME, tempfile::tempdir().unwrap().path())
+            .await
+            .unwrap();
         assert_eq!(left, Left::Ended);
         assert_eq!(left.line(NAME), text::lead_ended(NAME));
         assert_ne!(text::lead_ended(NAME), text::lead_detached(NAME));
@@ -1170,7 +1315,118 @@ mod tests {
     async fn a_lead_that_the_runtime_cannot_see_after_the_attach_counts_as_a_detach() {
         let fake = Fake::default().with_image("img").with_no_answer();
         let _end = lead(&fake).await;
-        assert_eq!(attach(&fake, NAME).await.unwrap(), Left::Detached);
+        assert_eq!(
+            attach(&fake, NAME, tempfile::tempdir().unwrap().path())
+                .await
+                .unwrap(),
+            Left::Detached
+        );
+    }
+
+    /// Waits until the fake has `n` attaches of `NAME`.
+    async fn attaches(fake: &Fake, n: usize) {
+        let attach = format!("attach {NAME}");
+        let span = std::time::Instant::now();
+        while fake.calls().iter().filter(|c| **c == attach).count() < n {
+            assert!(span.elapsed().as_secs() < 30, "{:?}", fake.calls());
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
+    /// 01M6XTS7V47RFX1G37FRGRBWCY: the daemon starts the lead again on a new
+    /// riff while the person is attached. The terminal of the person gets the
+    /// line, and the attach goes on in the new container. The end of the lead
+    /// after it is an end: the start again is older than that attach.
+    #[tokio::test]
+    async fn an_attached_terminal_gets_the_line_when_the_daemon_starts_the_lead_again() {
+        let fake = Fake::default().with_image("img").with_attach_until_end();
+        let folder = tempfile::tempdir().unwrap();
+        let _old = lead(&fake).await;
+        let daemon = {
+            let (fake, folder) = (fake.clone(), folder.path().to_owned());
+            tokio::spawn(async move {
+                attaches(&fake, 1).await;
+                // The daemon of the new riff: the mark, then the stop.
+                let mut again = Again {
+                    riff: "v3.3.0".into(),
+                    at_ms: daemon::now_ms(),
+                    started: false,
+                };
+                again.write(&folder).unwrap();
+                fake.stop(NAME).await.unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                let new = lead(&fake).await;
+                again.started = true;
+                again.write(&folder).unwrap();
+                // The person ends the lead in the new container.
+                attaches(&fake, 2).await;
+                fake.stop(NAME).await.unwrap();
+                new
+            })
+        };
+        let mut said = Vec::new();
+        let left = attach_with(&fake, NAME, folder.path(), &mut |line| {
+            said.push(line.to_owned());
+        })
+        .await
+        .unwrap();
+        let _new = daemon.await.unwrap();
+        assert_eq!(left, Left::Ended);
+        assert_eq!(
+            said,
+            [
+                text::LEAD_DETACH.to_owned(),
+                text::lead_again_attached("v3.3.0")
+            ]
+        );
+        assert_eq!(
+            fake.calls(),
+            [
+                format!("terminal {NAME}"),
+                format!("redraw {NAME}"),
+                format!("attach {NAME}"),
+                format!("stop {NAME}"),
+                format!("terminal {NAME}"),
+                format!("redraw {NAME}"),
+                format!("attach {NAME}"),
+                format!("stop {NAME}"),
+            ]
+        );
+    }
+
+    /// 01M6XTS7V47RFX1G37FRGRBWCY: a start again that fails removes the mark:
+    /// the attach ends at once with the end of the lead, and waits no longer.
+    #[tokio::test]
+    async fn an_attach_waits_no_more_when_the_start_again_fails() {
+        let fake = Fake::default().with_image("img").with_attach_until_end();
+        let folder = tempfile::tempdir().unwrap();
+        let _old = lead(&fake).await;
+        let daemon = {
+            let (fake, folder) = (fake.clone(), folder.path().to_owned());
+            tokio::spawn(async move {
+                attaches(&fake, 1).await;
+                let again = Again {
+                    riff: "v3.3.0".into(),
+                    at_ms: daemon::now_ms(),
+                    started: false,
+                };
+                again.write(&folder).unwrap();
+                fake.stop(NAME).await.unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                Again::clear(&folder);
+            })
+        };
+        let span = std::time::Instant::now();
+        let mut said = Vec::new();
+        let left = attach_with(&fake, NAME, folder.path(), &mut |line| {
+            said.push(line.to_owned());
+        })
+        .await
+        .unwrap();
+        daemon.await.unwrap();
+        assert_eq!(left, Left::Ended);
+        assert_eq!(said, [text::LEAD_DETACH]);
+        assert!(span.elapsed() < AGAIN_WAIT / 4, "{:?}", span.elapsed());
     }
 
     /// The fake runs the lead `NAME` with a bind of the sign-in file of
@@ -1417,7 +1673,11 @@ mod tests {
     #[tokio::test]
     async fn an_attach_to_a_lead_that_does_not_run_fails() {
         let fake = Fake::default().with_image("img");
-        assert!(attach(&fake, NAME).await.is_err());
+        assert!(
+            attach(&fake, NAME, tempfile::tempdir().unwrap().path())
+                .await
+                .is_err()
+        );
     }
 
     /// The transcript of the lead of `record`, with its last write `ago`
