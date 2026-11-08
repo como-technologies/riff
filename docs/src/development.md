@@ -904,6 +904,30 @@ When you pin a new digest, they run the tests in the new image. To run
 one part of them, see
 [Run one part of the tests](#run-one-part-of-the-tests).
 
+A session container with the token of an App has a git config and a
+sign-in of `gh`: five `GIT_CONFIG_*` keys and a `GH_CONFIG_DIR` with
+the sign-in of the bot. The tests clear them. The helper crate
+`isolated` gives each `riff` of a test no `GIT_CONFIG_*` key and an
+empty `GH_CONFIG_DIR`. A test that sets its own git config in the test
+process clears the keys first. So `just check` passes in a session
+container. `just test` and `just check` give each test run the same
+five keys, and the sign-in of a test bot in
+`crates/isolated/session-gh`, on your machine and on the Gate too. Its
+token is not real. So a test that depends on them fails on your
+machine, not only in a session:
+
+```mermaid
+flowchart LR
+    J["just test:<br/>the git config and the gh sign-in<br/>of a session container"] --> T["the test process"]
+    T -- "isolated: no GIT_CONFIG_*,<br/>an empty GH_CONFIG_DIR" --> R["the riff of the test:<br/>no git config, gh off"]
+```
+
+To see the variables of each test run:
+
+```sh
+just --evaluate test_env
+```
+
 ## Set the env and the volumes of a session
 
 riff sets no variable and no volume of a language or a tool in a

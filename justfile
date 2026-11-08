@@ -1,6 +1,19 @@
+# 01M6XWACAZH79NK727KMC3AQ0D: the git config and the gh sign-in of a session
+# container with the token of an App, also on a host and on the Gate. The
+# token in crates/isolated/session-gh is not real.
+session_env := (
+    "GIT_CONFIG_COUNT=5" +
+    " GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false" +
+    " GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1=" +
+    " GIT_CONFIG_KEY_2=credential.https://github.com.helper GIT_CONFIG_VALUE_2='!gh auth git-credential'" +
+    " GIT_CONFIG_KEY_3=user.name GIT_CONFIG_VALUE_3='riff worker 1a2b3c4d'" +
+    " GIT_CONFIG_KEY_4=user.email GIT_CONFIG_VALUE_4='1101+riff-test[bot]@users.noreply.github.com'" +
+    " GH_CONFIG_DIR='" + justfile_directory() / "crates/isolated/session-gh" + "'"
+)
+
 # 01M3MY2KWKBJCQ0BCNC6533RBW: no test reaches the shared riff, the local riff or the OS keyring.
-# The environment of each test run: a RIFF_SERVER where nothing listens and a D-Bus that fails each call.
-test_env := "RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus"
+# The environment of each test run: a RIFF_SERVER where nothing listens, a D-Bus that fails each call, and the session_env.
+test_env := "RIFF_SERVER=http://127.0.0.1:9 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/riff-test-bus " + session_env
 
 # Default: list available recipes
 default:

@@ -657,7 +657,8 @@ async fn riff_who_and_riff_top_show_the_facts_of_each_host() {
         assert!(part.contains("riff on"), "{host}: {part}");
         // The parts of the host in the repository (#1643).
         assert!(part.contains("parts local/riff lead"), "{host}: {part}");
-        // The gh of a test has no sign-in.
+        // The gh of a test has no sign-in, also in a session container
+        // (01M6XWAC88HABQRKPG9MM1SCY0).
         assert!(part.contains("gh off"), "{host}: {part}");
         assert!(part.contains(left), "{host}: {part}");
         assert!(part.contains(token), "{host}: {part}");

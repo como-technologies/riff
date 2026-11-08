@@ -174,6 +174,53 @@ fn a_test_of_this_repository_has_its_tmpdir_outside_each_repository() {
     assert!(!isolated::in_git(&std::env::temp_dir()));
 }
 
+/// `just` runs each test with the git config and the `gh` sign-in of a
+/// session container with the token of an App, also on a host and on the
+/// Gate (01M6XWACAZH79NK727KMC3AQ0D).
+#[test]
+fn just_runs_each_test_with_the_git_config_and_the_gh_sign_in_of_a_session_container() {
+    let vars = isolated::test_env(repo());
+    let value = |name: &str| {
+        vars.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+            .unwrap_or_else(|| panic!("the test_env of just sets {name}: {vars:?}"))
+    };
+    assert_eq!(value("GIT_CONFIG_COUNT"), "5");
+    let keys: Vec<_> = (0..5)
+        .map(|n| value(&format!("GIT_CONFIG_KEY_{n}")))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "commit.gpgsign",
+            "credential.https://github.com.helper",
+            "credential.https://github.com.helper",
+            "user.name",
+            "user.email",
+        ]
+    );
+    let dir = Path::new(value("GH_CONFIG_DIR"));
+    assert_eq!(
+        dir.canonicalize().unwrap(),
+        repo().join(isolated::SESSION_GH).canonicalize().unwrap()
+    );
+    let gh = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .env("GH_CONFIG_DIR", dir)
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .output();
+    match gh {
+        Ok(out) => assert!(
+            out.status.success() && !out.stdout.trim_ascii().is_empty(),
+            "the gh of {} has a sign-in: {out:?}",
+            dir.display()
+        ),
+        Err(e) => eprintln!("skip: no gh to read the sign-in: {e}"),
+    }
+}
+
 /// 01M49NP2JW8JFWYY56K7AK3H05.
 #[test]
 fn the_helper_is_outside_each_repository() {
