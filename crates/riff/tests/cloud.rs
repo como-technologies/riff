@@ -305,6 +305,53 @@ fn the_server_account_gets_only_its_bucket_and_its_secret() {
     assert!(project.contains("--role roles/run.builder"), "{project}");
 }
 
+/// 01M6WG52ZEVRSQ463FTDS94M54: `riff cloud create` makes the secret of
+/// the GitHub Apps with no version, and lets only the account of the
+/// server read it and add a version. `riff cloud deploy` names it.
+#[test]
+fn create_makes_the_secret_of_the_github_apps_and_deploy_names_it() {
+    let ran = Cloud::new().found(&SETUP).run(&["create", "shared"]).ok();
+    let make = ran.line("secrets create riff-github-apps ");
+    assert!(make.contains("--replication-policy automatic"), "{make}");
+    assert!(
+        !ran.calls.contains("versions add riff-github-apps"),
+        "{}",
+        ran.calls
+    );
+    let stdout = ran.stdout();
+    for line in [
+        "Secret riff-oidc-client-secret: exists.\n",
+        "Secret riff-github-apps: making it.\n",
+    ] {
+        assert!(stdout.contains(line), "{stdout}");
+    }
+    let member = "serviceAccount:riff-server@como-riff.iam.gserviceaccount.com";
+    let roles: Vec<&str> = ran
+        .calls
+        .lines()
+        .filter(|l| l.starts_with("secrets add-iam-policy-binding riff-github-apps "))
+        .collect();
+    assert_eq!(roles.len(), 2, "{roles:?}");
+    for role in [
+        "roles/secretmanager.secretAccessor",
+        "roles/secretmanager.secretVersionAdder",
+    ] {
+        let binding = format!("--member {member} --role {role}");
+        assert!(
+            roles.iter().any(|l| l.contains(&binding)),
+            "{binding}: {roles:?}"
+        );
+    }
+    let ran = Cloud::new()
+        .run(&["deploy", "shared", "v1.0.0", "--confirm", "shared"])
+        .ok();
+    let deploy = ran.line("run deploy riff-server --image ");
+    assert!(
+        deploy.contains("RIFF_GITHUB_SECRET=projects/como-riff/secrets/riff-github-apps"),
+        "{deploy}"
+    );
+}
+
 #[test]
 fn create_again_keeps_each_resource() {
     let ran = Cloud::new().found(&SETUP).run(&["create", "shared"]).ok();

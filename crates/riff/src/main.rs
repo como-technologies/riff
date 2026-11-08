@@ -742,6 +742,16 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
+    /// Make, install and check the GitHub Apps of the riff
+    ///
+    /// A riff has two GitHub Apps: the session App riff-OWNER for the
+    /// workers and the verifiers, and the lead App riff-OWNER-lead for the
+    /// lead. riff-server keeps their keys. Run each subcommand in a plain
+    /// terminal: it refuses in an agent session and in a container.
+    Github {
+        #[command(subcommand)]
+        command: GithubCommand,
+    },
     /// Keep the token of claude setup-token for the containers
     ///
     /// Run claude setup-token on this machine first, and sign in at the
@@ -887,6 +897,56 @@ enum CloudCommand {
         #[arg(long, value_name = "NAME")]
         confirm: Option<String>,
     },
+}
+
+/// The subcommands of `riff github` (01M6WG52J7WTP079W1AYEQ4W08).
+#[derive(Subcommand)]
+enum GithubCommand {
+    /// Make the two GitHub Apps of the riff on an account
+    ///
+    /// It opens the start page of riff-server in your browser. On GitHub,
+    /// click "Create GitHub App" for each App, then "Install" for each
+    /// App, on the repositories of the riff. riff waits at most 10 minutes
+    /// for the two installs. Then it runs riff github check, in a clone of
+    /// a repository of the account. Only the owner or an admin of the riff
+    /// can. On GitHub, you must be an owner of the account, or a manager of
+    /// its GitHub Apps.
+    Create {
+        /// The organization or the personal account that gets the Apps.
+        #[arg(long)]
+        owner: String,
+    },
+    /// Install the two GitHub Apps of the riff on an account
+    ///
+    /// It opens the install page of each App with the account as the
+    /// target. The owner of the account clicks "Install" for each App.
+    /// riff waits at most 10 minutes for the two installs. Then it runs
+    /// riff github check, in a clone of a repository of the account. Only
+    /// the owner or an admin of the riff can.
+    Install {
+        /// The organization or the personal account, for example
+        /// n8behavior.
+        owner: String,
+    },
+    /// Check the token of each role for this repository
+    ///
+    /// riff-server asks GitHub for a token of each role: the worker, the
+    /// verifier and the lead. It compares the rights of each token with
+    /// the rights of the role, and revokes each token at once. riff
+    /// prints one line for each role: the bot and the rights. It exits
+    /// with status 1 when a role fails.
+    Check,
+}
+
+impl GithubCommand {
+    /// The name of the subcommand.
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Create { .. } => "create",
+            Self::Install { .. } => "install",
+            Self::Check => "check",
+        }
+    }
 }
 
 impl CloudCommand {
@@ -1832,6 +1892,9 @@ async fn cli() -> Result<()> {
     if let Command::Cloud { command } = &command {
         return cloud(command, &server).await;
     }
+    if let Command::Github { command } = &command {
+        return github_command(command, &server).await;
+    }
     if let Command::Release {
         cycle: Some(command),
         ..
@@ -2394,6 +2457,7 @@ async fn cli() -> Result<()> {
         | Command::Server
         | Command::Update { .. }
         | Command::Cloud { .. }
+        | Command::Github { .. }
         | Command::ClaudeToken
         | Command::Release { .. }
         | Command::Image { .. }
@@ -2448,6 +2512,50 @@ fn print_members_news(news: &Result<Vec<riff_core::wire::Posted>>) {
         Ok(_) => println!("{}", text::members_news(news)),
         Err(_) => anstream::eprintln!("{}", text::members_news(news)),
     }
+}
+
+/// `riff github create`, `install` and `check`
+/// (01M6WG52J7WTP079W1AYEQ4W08). Each refuses in an agent session and
+/// in a container, before each call (01M6WG537B67VWVENY3821RV33). It
+/// exits with status 1 when a role fails its check.
+async fn github_command(command: &GithubCommand, server: &str) -> Result<()> {
+    use riff::github::{self, Wait};
+    if let Some(refused) = github::refusal(command.name()) {
+        eprintln!("{refused}");
+        std::process::exit(1);
+    }
+    let api = Api::new(server).signed_in(None)?;
+    let repo = identity::working_dir()
+        .ok()
+        .and_then(|dir| identity::place(&dir).ok())
+        .filter(|place| matches!(place.repo(), riff_core::name::Repo::Git { .. }))
+        .map(|place| place.repo_text());
+    let gh = pr::Gh::here("github");
+    let open = |url: &str| {
+        let _ = open::that_detached(url);
+    };
+    let mut out = std::io::stdout();
+    let passed = match command {
+        GithubCommand::Create { owner } => {
+            let account = github::account(&gh, owner)?;
+            let wait = Wait::default();
+            github::create(&api, &account, open, wait, repo.as_deref(), &mut out).await?
+        }
+        GithubCommand::Install { owner } => {
+            let account = github::account(&gh, owner)?;
+            let wait = Wait::default();
+            let web = github::WEB;
+            github::install(&api, &account, web, open, wait, repo.as_deref(), &mut out).await?
+        }
+        GithubCommand::Check => {
+            let repo = repo.context(text::GITHUB_CHECK_NO_REPO)?;
+            github::check(&api, &repo, &mut out).await?
+        }
+    };
+    if !passed {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// Shows the authorize URL of a sign-in, and opens it in the browser.

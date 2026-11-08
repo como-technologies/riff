@@ -422,12 +422,39 @@ pub fn rerun_command(
 /// }
 /// ```
 pub fn rerun_without_git_config(module: &str, test: &str) -> bool {
+    let vars = std::env::vars_os().map(|(var, _)| var);
+    rerun(module, test, vars, "with no git config")
+}
+
+/// For a test that needs a process of its own: for example a test that
+/// reads the log lines of the code under test with a `tracing`
+/// subscriber of its thread. The other tests of the binary run on other
+/// threads at the same time, and the cache of `tracing` can then miss a
+/// line. So the test runs again, alone, in a child process, as with
+/// [`rerun_without_git_config`]: the call gives `false` after the child
+/// passed, and `true` in the child.
+///
+/// ```no_run
+/// fn no_log_line_has_the_key() {
+///     if !isolated::rerun_alone(module_path!(), "no_log_line_has_the_key") {
+///         return;
+///     }
+///     // From here, the test is the one test of its process.
+/// }
+/// ```
+pub fn rerun_alone(module: &str, test: &str) -> bool {
+    rerun(module, test, std::iter::empty(), "alone")
+}
+
+/// Runs the test `test` of `module` again in a child process, with each
+/// [`git_config_var`] of `vars` removed: `true` in the child, `false`
+/// after the child passed. `how` says how it ran in the failure.
+fn rerun(module: &str, test: &str, vars: impl IntoIterator<Item = OsString>, how: &str) -> bool {
     if std::env::var_os(RERUN).is_some() {
         return true;
     }
     let name = test_name(module, test);
     let exe = std::env::current_exe().expect("the path of the test binary");
-    let vars = std::env::vars_os().map(|(var, _)| var);
     let out = rerun_command(&exe, &name, vars)
         .output()
         .expect("the test binary runs again");
@@ -438,7 +465,7 @@ pub fn rerun_without_git_config(module: &str, test: &str) -> bool {
     );
     assert!(
         out.status.success() && text.contains("1 passed"),
-        "the test {name} failed when it ran again with no git config:\n{text}"
+        "the test {name} failed when it ran again {how}:\n{text}"
     );
     false
 }

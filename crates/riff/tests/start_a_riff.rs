@@ -142,6 +142,8 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud delete NAME",
             "riff cloud list",
             "riff login",
+            "riff github create --owner OWNER",
+            "riff github check",
             "riff invite EMAIL",
             "riff members",
             "riff tail",
@@ -186,6 +188,34 @@ fn the_page_has_no_command_of_the_plugin_and_signs_in_nowhere() {
 
 /// The how-to "Add another repository to the riff" of "Start a Riff".
 const HOW_TO: &str = "Add another repository to the riff";
+
+/// 01M6WHG7A736K9N01TXGAQS0MZ: "Start a Team Riff" has the how-to "Make
+/// the GitHub Apps of riff", and "Add another repository to the riff"
+/// has the step that installs them on another account, each with a
+/// copyable `sh` block of a real command.
+#[test]
+fn the_book_has_the_how_tos_of_the_github_apps() {
+    let make = part("start-a-team-riff.md", "Make the GitHub Apps of riff");
+    let commands = book::commands_in(&make);
+    assert_eq!(
+        commands,
+        ["riff github create --owner OWNER", "riff github check"]
+    );
+    assert!(
+        make.contains("\n### Check the tokens of each role\n"),
+        "{make}"
+    );
+    each_is_real(&commands);
+    let add = part(PAGE, HOW_TO);
+    let install = add
+        .split("\n### Install the GitHub Apps of riff on the account\n")
+        .nth(1)
+        .expect("the step is in the how-to");
+    let install = install.split("\n### ").next().unwrap();
+    let commands = book::commands_in(install);
+    assert_eq!(commands, ["riff github install OWNER"]);
+    each_is_real(&commands);
+}
 
 /// 01M5QVF5C3CYJPMQ9CXNZJ8E93: "Start a Riff" has the how-to "Add another
 /// repository to the riff", with a copyable `sh` block for each step.

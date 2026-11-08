@@ -115,10 +115,11 @@ use riff_core::selector::Selector;
 use riff_core::wire::SetMachine;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
-    DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Invite, Invited, ItemFact, ItemFacts,
-    Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    Message, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
-    PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release,
+    DenyOwner, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
+    GitHubChecked, GitHubCreate, GitHubStarted, Hold, HoldReply, Invite, Invited, ItemFact,
+    ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members,
+    MembersReply, Message, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner,
+    Pause, PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release,
     ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery,
     RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetNotes, SetNotesReply,
     SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner,
@@ -2062,6 +2063,32 @@ impl Api {
     pub async fn log(&self, repo: &ThreadName) -> Result<LogReply> {
         self.need_sign_in().await?;
         self.call(&LogQuery { repo: repo.clone() }).await
+    }
+
+    /// The start of `riff github create` for the account `owner`: the URL
+    /// of the start page (01M6WG52T5PAD9NGQ597CP56K7). Only the owner and
+    /// the admins can.
+    pub async fn github_create(&self, create: &GitHubCreate) -> Result<GitHubStarted> {
+        self.need_sign_in().await?;
+        self.call(create).await
+    }
+
+    /// The GitHub Apps of the riff, and whether each is installed on
+    /// `owner`. Only the owner and the admins can.
+    pub async fn github_apps(&self, owner: Option<&str>) -> Result<GitHubAppsReply> {
+        self.need_sign_in().await?;
+        let owner = owner.map(str::to_owned);
+        self.call(&GitHubApps { owner }).await
+    }
+
+    /// The check of the token of each role for the repository `repo`,
+    /// `OWNER/NAME` (01M6WG534PPE2JW8JQFRJDEK86).
+    pub async fn github_check(&self, repo: &str) -> Result<GitHubChecked> {
+        self.need_sign_in().await?;
+        self.call(&GitHubCheck {
+            repo: repo.to_owned(),
+        })
+        .await
     }
 
     /// Fails with what to do when this device has no sign-in.

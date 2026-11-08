@@ -3,8 +3,10 @@
 # $FAKE_GCLOUD_LOG, and each argument of each call on a line of the
 # file $FAKE_GCLOUD_ARGS. A describe call succeeds only when the call
 # starts with a line of the file $FAKE_GCLOUD_FOUND; else it says that
-# the resource does not exist. With $FAKE_GCLOUD_SIGNIN_ENDED set, each
-# call fails as gcloud does when its sign-in ended. With
+# the resource does not exist. A describe of a secret succeeds, but
+# for the secret of the GitHub Apps only when it is found too. With
+# $FAKE_GCLOUD_SIGNIN_ENDED set, each call fails as gcloud does when its
+# sign-in ended. With
 # $FAKE_GCLOUD_DENIED set, each call fails as Cloud Run does when the
 # account has no permission: the reply says "may not exist". A list call of the
 # alert prints a name only then. Stdin of `secrets versions add` goes
@@ -50,6 +52,9 @@ esac
 case "$*" in
     "projects describe "*"--format value(projectNumber)"*) echo 123456; exit 0 ;;
     "billing projects describe"*) echo True; exit 0 ;;
+    "secrets describe "*"-github-apps "*)
+        if found "$@"; then exit 0; fi
+        missing "$@" ;;
     "projects describe"*|"secrets describe"*) exit 0 ;;
     "secrets versions list"*) echo 1; exit 0 ;;
     *" get-iam-policy "*)

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use clap::{Args, Parser, Subcommand};
 use riff_server::auth::Config;
 use riff_server::gcs::Gcs;
+use riff_server::keys::At;
 use riff_server::lease::Revision;
 use riff_server::listen::{self, Port, Start};
 use riff_server::oidc::{self, DEFAULT_DOMAIN, Provider, SignInError};
@@ -117,6 +118,14 @@ struct Cli {
     #[arg(long, env = "RIFF_DIR", hide_env_values = true, global = true)]
     dir: Option<std::path::PathBuf>,
 
+    /// The secret of Secret Manager that holds the keys of the GitHub
+    /// Apps of the riff, projects/PROJECT/secrets/NAME. riff cloud deploy
+    /// sets it. Without it, the keys are in the file github-apps.json of
+    /// --dir, or in memory. With a bucket and no secret, riff github
+    /// create refuses.
+    #[arg(long, env = "RIFF_GITHUB_SECRET", hide_env_values = true)]
+    github_secret: Option<String>,
+
     /// The minutes that the owner has to answer `riff owner --take` of an
     /// admin. With no answer, the admin is the owner.
     #[arg(long, env = "RIFF_OWNER_TAKE_MINUTES", hide_env_values = true, default_value_t = 10,
@@ -185,6 +194,19 @@ impl Cli {
     /// True for a riff with no sign-in (R211).
     fn trusted(&self) -> bool {
         self.client_id.is_none() && !self.require_sign_in
+    }
+
+    /// Where the server keeps the keys of the GitHub Apps
+    /// (01M6WG52WSWM8A9CN6X448AGAJ): the secret, else the folder of the
+    /// state. A bucket with no secret has no place: the keys never go
+    /// into the bucket.
+    fn keys(&self) -> At {
+        match (&self.github_secret, &self.bucket, &self.dir) {
+            (Some(name), _, _) => At::secret(name),
+            (None, Some(_), _) => At::Nowhere,
+            (None, None, Some(dir)) => At::Dir(dir.clone()),
+            (None, None, None) => At::Memory,
+        }
     }
 }
 
@@ -308,12 +330,18 @@ async fn serve(cli: Cli, trusted: bool) -> std::io::Result<()> {
     let mut terminate = signal(SignalKind::terminate())?;
     // The port opens only after the load (01M52JYGHHK5X0XS39VFT3ZGGM).
     let port = Port::reserve(cli.listen)?;
+    let keys = cli.keys();
     let public_url = cli
         .public_url
         .unwrap_or_else(|| format!("http://{}", port.addr()));
     let mut config = Config::new(&public_url);
     // A riff with a provider requires sign-in (01M3JZN1XQVVNVD0MJVM8J91HC).
     config.require_sign_in = cli.require_sign_in || cli.client_id.is_some();
+    config.github.keys = keys;
+    tracing::info!(
+        "the keys of the GitHub Apps: in {}",
+        config.github.keys.describe()
+    );
     config.admins = cli.admins;
     config.owner = cli.owner;
     // Cloud Run names the revision of the instance: the order of the
@@ -441,6 +469,24 @@ mod tests {
         .unwrap();
         assert_eq!((cli.owner_ping_minutes, cli.owner_pings), (20, 4));
         assert!(Cli::try_parse_from(["riff-server", "--owner-pings", "0"]).is_err());
+    }
+
+    /// 01M6WG52WSWM8A9CN6X448AGAJ: the keys of the GitHub Apps go to the
+    /// secret, else to the folder of the state. A bucket with no secret
+    /// has no place for them.
+    #[test]
+    fn the_keys_of_the_github_apps_go_to_the_secret_or_the_folder() {
+        use clap::Parser;
+        use riff_server::keys::At;
+        let keys = |args: &[&str]| Cli::try_parse_from(args).unwrap().keys();
+        assert_eq!(keys(&["riff-server"]), At::Memory);
+        assert_eq!(keys(&["riff-server", "--dir", "d"]), At::Dir("d".into()));
+        assert_eq!(keys(&["riff-server", "--bucket", "b"]), At::Nowhere);
+        let name = "projects/p/secrets/s";
+        assert_eq!(
+            keys(&["riff-server", "--bucket", "b", "--github-secret", name]),
+            At::secret(name)
+        );
     }
 
     /// 01M3K0QM5HY852J4E5M2YQDYEM: the only command is `log`, with its

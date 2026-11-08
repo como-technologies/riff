@@ -115,6 +115,9 @@ pub struct Config {
     /// 01M3JEE7P46GWXR1BD4Q1TTSGN). [`Build::this`], except in a test
     /// of the check of another line.
     pub build: Build,
+    /// The API of GitHub, and where the server keeps the keys of the
+    /// GitHub Apps of the riff (01M6WG52WSWM8A9CN6X448AGAJ).
+    pub github: crate::github::Settings,
 }
 
 impl Default for Config {
@@ -140,6 +143,7 @@ impl Config {
             checkpoint: riff_state::checkpoint::Settings::default(),
             save_every: crate::SAVE_EVERY,
             build: Build::this(),
+            github: crate::github::Settings::default(),
         }
     }
 

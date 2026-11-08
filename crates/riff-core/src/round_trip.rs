@@ -856,6 +856,42 @@ mod tests {
             first: 1918,
             first_ms: 5000,
         });
+        c.trip(&GitHubCreate {
+            owner: text("acme"),
+            organization: true,
+            owner_id: Some(7),
+        });
+        c.trip(&GitHubStarted {
+            url: text("https://riff.example/github/start?state=S"),
+            makes: vec![GitHubApp::Session, GitHubApp::Lead],
+        });
+        c.trip(&GitHubApps {
+            owner: Some(text("acme")),
+        });
+        c.trip(&GitHubAppsReply {
+            apps: vec![GitHubAppFacts {
+                app: GitHubApp::Session,
+                id: 101,
+                slug: text("riff-acme"),
+                bot: text("riff-acme[bot]"),
+                bot_id: Some(1101),
+                installed: Some(true),
+            }],
+        });
+        c.trip(&GitHubCheck {
+            repo: text("acme/app"),
+        });
+        let role = |role| RoleChecked {
+            role,
+            bot: Some(text("riff-acme[bot]")),
+            rights: [(text("contents"), text("read"))].into(),
+            missing: vec![text("contents: write")],
+            extra: vec![text("secrets: read")],
+            problem: Some(text("riff github install acme")),
+        };
+        c.trip(&GitHubChecked {
+            roles: GitHubRole::ALL.into_iter().map(role).collect(),
+        });
         c.trip(&Members {});
         c.trip(&MembersReply {
             owner: Some(text("ann@acme.io")),

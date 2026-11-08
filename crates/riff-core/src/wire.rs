@@ -79,6 +79,16 @@
 //! `admin` and `owner`. `owner` to a person who is not a member or an
 //! admin gets status 400. `remove` of the owner or of an admin gets status 400.
 //!
+//! Three calls make and check the GitHub Apps of the riff
+//! (01M6WG52J7WTP079W1AYEQ4W08). Each needs an access token and a DPoP
+//! proof too:
+//!
+//! | Path | Request | Reply | Who |
+//! |---|---|---|---|
+//! | `POST /v1/github/create` | [`GitHubCreate`] | [`GitHubStarted`] | an admin |
+//! | `POST /v1/github/apps` | [`GitHubApps`] | [`GitHubAppsReply`] | an admin |
+//! | `POST /v1/github/check` | [`GitHubCheck`] | [`GitHubChecked`] | each person |
+//!
 //! Two metadata documents follow the MCP authorization spec (R22):
 //!
 //! | Path | Reply |
@@ -244,6 +254,9 @@ calls! {
     PassOwner => "/v1/owner", OwnerPassed;
     TakeOwner => "/v1/owner/take", OwnerAsked;
     DenyOwner => "/v1/owner/deny", OwnerDenied;
+    GitHubCreate => "/v1/github/create", GitHubStarted;
+    GitHubApps => "/v1/github/apps", GitHubAppsReply;
+    GitHubCheck => "/v1/github/check", GitHubChecked;
 }
 
 /// `POST /v1/register`: a session says that it exists and where it
@@ -2821,6 +2834,247 @@ pub struct Pruned {
     /// written, in milliseconds since the Unix epoch. A record before it
     /// can be gone.
     pub first_ms: u64,
+}
+
+/// The rights of a token or of a GitHub App: each permission of GitHub
+/// with its level, `read` or `write`, for example `contents: write`.
+pub type Rights = BTreeMap<String, String>;
+
+/// A GitHub App of the riff (01M6WG52J7WTP079W1AYEQ4W08).
+///
+/// ```
+/// use riff_core::wire::GitHubApp;
+///
+/// assert_eq!(serde_json::to_string(&GitHubApp::Lead).unwrap(), r#""lead""#);
+/// assert_eq!(GitHubApp::Session.name("acme"), "riff-acme");
+/// assert_eq!(GitHubApp::Lead.name("acme"), "riff-acme-lead");
+/// ```
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubApp {
+    /// The App of each worker and each verifier.
+    Session,
+    /// The App of the lead.
+    Lead,
+}
+
+impl GitHubApp {
+    /// Both Apps, in the order that `riff github create` makes them.
+    pub const ALL: [GitHubApp; 2] = [GitHubApp::Session, GitHubApp::Lead];
+
+    /// The name that riff gives the App on the account `owner`. The
+    /// person can change it on the page of GitHub: the slug of the App
+    /// is its real name.
+    pub fn name(self, owner: &str) -> String {
+        match self {
+            GitHubApp::Session => format!("riff-{owner}"),
+            GitHubApp::Lead => format!("riff-{owner}-lead"),
+        }
+    }
+}
+
+/// A role of a session on GitHub (01M6WG52MWZB1SVQMMH6BKJSJ5).
+///
+/// ```
+/// use riff_core::wire::{GitHubApp, GitHubRole};
+///
+/// assert_eq!(GitHubRole::Verifier.app(), GitHubApp::Session);
+/// assert_eq!(GitHubRole::Lead.app(), GitHubApp::Lead);
+/// assert_eq!(GitHubRole::Worker.to_string(), "worker");
+/// ```
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubRole {
+    Worker,
+    Verifier,
+    Lead,
+}
+
+impl GitHubRole {
+    /// Each role, in the order of `riff github check`.
+    pub const ALL: [GitHubRole; 3] = [GitHubRole::Worker, GitHubRole::Verifier, GitHubRole::Lead];
+
+    /// The App whose token the role gets.
+    pub fn app(self) -> GitHubApp {
+        match self {
+            GitHubRole::Worker | GitHubRole::Verifier => GitHubApp::Session,
+            GitHubRole::Lead => GitHubApp::Lead,
+        }
+    }
+}
+
+impl std::fmt::Display for GitHubRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            GitHubRole::Worker => "worker",
+            GitHubRole::Verifier => "verifier",
+            GitHubRole::Lead => "lead",
+        })
+    }
+}
+
+/// `POST /v1/github/create`: the start of `riff github create`
+/// (01M6WG52T5PAD9NGQ597CP56K7). Only the owner and the admins can.
+///
+/// ```
+/// use riff_core::wire::{Call, GitHubCreate};
+///
+/// let create = GitHubCreate { owner: "acme".into(), organization: true, owner_id: Some(7) };
+/// assert_eq!(
+///     serde_json::to_string(&create).unwrap(),
+///     r#"{"owner":"acme","organization":true,"owner_id":7}"#
+/// );
+/// assert_eq!(GitHubCreate::PATH, "/v1/github/create");
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubCreate {
+    /// The account that gets the two Apps.
+    pub owner: String,
+    /// True for an organization, false for a personal account.
+    pub organization: bool,
+    /// The ID of the account on GitHub, for the install pages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<u64>,
+}
+
+/// The reply to [`GitHubCreate`]: the start page, with its state in
+/// the URL, and the Apps that the run makes: both, or the lead App when
+/// the riff has the session App only.
+///
+/// ```
+/// use riff_core::wire::{GitHubApp, GitHubStarted};
+///
+/// let started: GitHubStarted =
+///     serde_json::from_str(r#"{"url":"https://riff.example.com/github/start?state=S","makes":["lead"]}"#).unwrap();
+/// assert_eq!(started.makes, [GitHubApp::Lead]);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubStarted {
+    pub url: String,
+    pub makes: Vec<GitHubApp>,
+}
+
+/// `POST /v1/github/apps`: the Apps of the riff, and whether each is
+/// installed on `owner`. Only the owner and the admins can.
+///
+/// ```
+/// use riff_core::wire::{Call, GitHubApps};
+///
+/// let apps = GitHubApps { owner: Some("acme".into()) };
+/// assert_eq!(serde_json::to_string(&apps).unwrap(), r#"{"owner":"acme"}"#);
+/// assert_eq!(GitHubApps::PATH, "/v1/github/apps");
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubApps {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+}
+
+/// The reply to [`GitHubApps`]: each App that the riff has, in the
+/// order of [`GitHubApp::ALL`].
+///
+/// ```
+/// use riff_core::wire::{GitHubApp, GitHubAppsReply};
+///
+/// let reply: GitHubAppsReply = serde_json::from_str(
+///     r#"{"apps":[{"app":"session","id":101,"slug":"riff-acme","bot":"riff-acme[bot]","installed":true}]}"#,
+/// ).unwrap();
+/// assert_eq!(reply.apps[0].app, GitHubApp::Session);
+/// assert_eq!(reply.apps[0].installed, Some(true));
+/// assert_eq!(reply.apps[0].bot_id, None);
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubAppsReply {
+    pub apps: Vec<GitHubAppFacts>,
+}
+
+/// One App of [`GitHubAppsReply`]. It holds no key and no secret.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubAppFacts {
+    pub app: GitHubApp,
+    /// The App ID. A new App has a new one.
+    pub id: u64,
+    /// The slug of the App on GitHub: its name in each URL.
+    pub slug: String,
+    /// The login of its bot, `SLUG[bot]`.
+    pub bot: String,
+    /// The user ID of its bot, when GitHub gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<u64>,
+    /// True when the App is installed on the account of the query,
+    /// `None` for a query with no account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed: Option<bool>,
+}
+
+/// `POST /v1/github/check`: `riff github check` for one repository
+/// (01M6WG534PPE2JW8JQFRJDEK86). Each person of the riff can.
+///
+/// ```
+/// use riff_core::wire::{Call, GitHubCheck};
+///
+/// let check = GitHubCheck { repo: "acme/app".into() };
+/// assert_eq!(serde_json::to_string(&check).unwrap(), r#"{"repo":"acme/app"}"#);
+/// assert_eq!(GitHubCheck::PATH, "/v1/github/check");
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubCheck {
+    /// The repository, `OWNER/NAME`.
+    pub repo: String,
+}
+
+/// The reply to [`GitHubCheck`]: one check for each role, in the order
+/// of [`GitHubRole::ALL`]. It holds no token.
+///
+/// ```
+/// use riff_core::wire::{GitHubChecked, GitHubRole};
+///
+/// let reply: GitHubChecked = serde_json::from_str(r#"{"roles":[
+///     {"role":"verifier","bot":"riff-acme[bot]","rights":{"contents":"read"}},
+///     {"role":"lead","problem":"riff has no lead App"}
+/// ]}"#).unwrap();
+/// assert_eq!(reply.roles[0].role, GitHubRole::Verifier);
+/// assert!(reply.roles[0].passed());
+/// assert!(!reply.roles[1].passed());
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubChecked {
+    pub roles: Vec<RoleChecked>,
+}
+
+/// The check of one role: the rights that GitHub gave its token, and
+/// what differs from the rights of the role.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RoleChecked {
+    pub role: GitHubRole,
+    /// The login of the bot of the App of the role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot: Option<String>,
+    /// The rights that GitHub gave the token.
+    #[serde(default, skip_serializing_if = "Rights::is_empty")]
+    pub rights: Rights,
+    /// Each right that the role needs and the token did not get, as
+    /// `NAME: LEVEL`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing: Vec<String>,
+    /// Each right that the token got and the role does not need.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra: Vec<String>,
+    /// Why riff-server got no token for the role, with the fix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+}
+
+impl RoleChecked {
+    /// True when the token of the role has the rights of the role and
+    /// no more.
+    pub fn passed(&self) -> bool {
+        self.problem.is_none() && self.missing.is_empty() && self.extra.is_empty()
+    }
 }
 
 /// The records of a [`LogReply`] with a kind that this build knows.

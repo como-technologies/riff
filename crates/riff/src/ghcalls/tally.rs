@@ -82,6 +82,7 @@ pub const CALLERS: &[&str] = &[
     "init",
     "questions",
     "tui",
+    "github",
 ];
 
 /// The most records in one send of a session.

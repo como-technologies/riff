@@ -77,6 +77,7 @@ pub mod ends;
 pub mod first_run;
 pub mod gh_wrapper;
 pub mod ghcalls;
+pub mod github;
 pub mod help;
 pub mod hold;
 pub mod home;

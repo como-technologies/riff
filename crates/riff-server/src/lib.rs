@@ -194,6 +194,11 @@
 //!   the facts that the state does not hold: the writer counts the
 //!   chunks and the failed tries, and each error that the server logs
 //!   stays as the last error.
+//! - `POST /v1/github/create`, `/v1/github/apps` and `/v1/github/check`
+//!   make and check the GitHub Apps of the riff (01M6WG52J7WTP079W1AYEQ4W08).
+//!   The pages `/github/start` and `/github/created` of the browser, and
+//!   the webhook `/hooks/github`, need no token and no build. See
+//!   [`github`]. The keys of the Apps are in no record: see [`keys`].
 //! - Each log line is JSON with a `severity` (see [`logline`]). The
 //!   tools of the log run with no server (see [`tools`]).
 //!
@@ -211,7 +216,9 @@
 pub mod auth;
 pub mod engine;
 pub mod gcs;
+pub mod github;
 pub mod import;
+pub mod keys;
 pub mod lease;
 pub mod listen;
 pub mod logline;
@@ -242,13 +249,14 @@ use riff_core::selector::Selector;
 use riff_core::wire::SetMachine;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
-    Claim, DenyOwner, End, FactError, Free, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
-    ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
-    NotesReply, NotesShow, PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post,
-    Pruned, Read, ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume,
-    Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked,
-    SetIdle, SetNotes, SetPlan, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner,
-    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    Claim, DenyOwner, End, FactError, Free, GitHubApps, GitHubCheck, GitHubCreate, Hold,
+    ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery,
+    LogReply, MeReply, Members, MembersReply, NotesReply, NotesShow, PassOwner, Pause, Person,
+    PlanOff, PlanReply, PlanSeen, PlanShow, Post, Pruned, Read, ReadReply, Register, Release,
+    ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply,
+    ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetNotes, SetPlan, SetStatus,
+    SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
+    TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
@@ -374,6 +382,9 @@ struct Server {
     checkpoints: Mutex<Checkpoints>,
     /// What `GET /v1/server` tells about this instance.
     facts: Mutex<Facts>,
+    /// The GitHub Apps of the riff: their keys, and the states of
+    /// `riff github create` (01M6WG52J7WTP079W1AYEQ4W08).
+    github: github::GitHub,
 }
 
 /// The last checkpoint, and why the server writes none.
@@ -1497,6 +1508,7 @@ impl Service {
             engine.name_owner(&owner);
         }
         let save_every = config.save_every;
+        let github = github::GitHub::new(config.github.clone(), http.clone());
         let service = Service(Arc::new(Server {
             config,
             engine,
@@ -1517,6 +1529,7 @@ impl Service {
             log,
             checkpoints: Mutex::new(checkpoints),
             facts: Mutex::new(facts),
+            github,
         }));
         service.write_log();
         service.keep_checkpoints();
@@ -1962,6 +1975,9 @@ impl Service {
             .route(DenyOwner::PATH, post(command::<DenyOwner>))
             .route(Members::PATH, post(members))
             .route(LogQuery::PATH, post(log_records))
+            .route(GitHubCreate::PATH, post(github::create))
+            .route(GitHubApps::PATH, post(github::apps))
+            .route(GitHubCheck::PATH, post(github::check))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {
@@ -1976,6 +1992,12 @@ impl Service {
             .route("/v1/sign-in", get(sign_in_config))
             .route(auth::RESOURCE_METADATA_PATH, get(resource_metadata))
             .route(auth::SERVER_METADATA_PATH, get(server_metadata))
+            // The browser and GitHub name no build and have no riff
+            // token: the state and GitHub are their proof
+            // (01M6WG52T5PAD9NGQ597CP56K7).
+            .route(github::START_PATH, get(github::start))
+            .route(github::CREATED_PATH, get(github::created))
+            .route(github::HOOK_PATH, post(github::hook))
             .layer(middleware::from_fn_with_state(self.0.clone(), gate))
             // The facts answer also while the gate replies 503, and to a
             // `riff` of each version (01M3TJWJ12WEDCXW3W0529KRP2).

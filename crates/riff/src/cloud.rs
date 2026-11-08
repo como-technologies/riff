@@ -316,6 +316,9 @@ pub struct Settings {
     pub region: String,
     /// The name of the secret of the sign-in client in Secret Manager.
     pub secret_name: String,
+    /// The name of the secret of the keys of the GitHub Apps in Secret
+    /// Manager (01M6WG52ZEVRSQ463FTDS94M54).
+    pub github_secret: String,
     /// The bucket that holds the state of riff-server.
     pub bucket: String,
     /// The Cloud Run service.
@@ -385,6 +388,10 @@ impl Settings {
             project_number: get("CLOUD_PROJECT_NUMBER"),
             region: get("CLOUD_REGION"),
             secret_name: get("CLOUD_SECRET"),
+            github_secret: match get("CLOUD_GITHUB_SECRET").as_str() {
+                "" => format!("{name}-github-apps"),
+                given => given.to_owned(),
+            },
             bucket: get("CLOUD_BUCKET"),
             service: get("CLOUD_SERVICE"),
             domain: get("CLOUD_DOMAIN"),
@@ -429,6 +436,7 @@ impl Settings {
             project_number: number.to_owned(),
             region: region.to_owned(),
             secret_name: format!("{name}-oidc-client-secret"),
+            github_secret: format!("{name}-github-apps"),
             bucket: format!("{project}-{name}-state"),
             service: name.to_owned(),
             domain: String::new(),
@@ -468,6 +476,7 @@ impl Settings {
             ("CLOUD_PROJECT_NUMBER", self.project_number.clone()),
             ("CLOUD_REGION", self.region.clone()),
             ("CLOUD_SECRET", self.secret_name.clone()),
+            ("CLOUD_GITHUB_SECRET", self.github_secret.clone()),
             ("CLOUD_BUCKET", self.bucket.clone()),
             ("CLOUD_SERVICE", self.service.clone()),
             ("CLOUD_DOMAIN", self.domain.clone()),
@@ -763,23 +772,28 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
     gcloud.run(&enable, None)?;
     println!("APIs: on.");
 
-    if gcloud.exists(&with(&["secrets", "describe", &s.secret_name], &project))? {
-        println!("Secret {}: exists.", s.secret_name);
-    } else {
-        println!("Secret {}: making it.", s.secret_name);
-        gcloud.run(
-            &with(
-                &[
-                    "secrets",
-                    "create",
-                    &s.secret_name,
-                    "--replication-policy",
-                    "automatic",
-                ],
-                &project,
-            ),
-            None,
-        )?;
+    // The secret of the sign-in client, and the secret of the keys of the
+    // GitHub Apps (01M6WG52ZEVRSQ463FTDS94M54). riff-server adds each
+    // version of the second one itself.
+    for name in [&s.secret_name, &s.github_secret] {
+        if gcloud.exists(&with(&["secrets", "describe", name], &project))? {
+            println!("Secret {name}: exists.");
+        } else {
+            println!("Secret {name}: making it.");
+            gcloud.run(
+                &with(
+                    &[
+                        "secrets",
+                        "create",
+                        name,
+                        "--replication-policy",
+                        "automatic",
+                    ],
+                    &project,
+                ),
+                None,
+            )?;
+        }
     }
 
     let bucket = format!("gs://{}", s.bucket);
@@ -861,7 +875,9 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
         }
     }
     // riff-server reads and writes only its bucket, and reads only its
-    // secret (R134). The build account may only build and store images.
+    // secret (R134). It reads the secret of the GitHub Apps, and adds its
+    // versions (01M6WG52ZEVRSQ463FTDS94M54). The build account may only
+    // build and store images.
     let run = format!("serviceAccount:{}", s.account(&s.run_account));
     gcloud.bind(&with(
         &[
@@ -888,6 +904,23 @@ pub fn create(gcloud: &Gcloud, s: &Settings, owner: Option<&str>) -> Result<()> 
         ],
         &project,
     ))?;
+    for role in [
+        "roles/secretmanager.secretAccessor",
+        "roles/secretmanager.secretVersionAdder",
+    ] {
+        gcloud.bind(&with(
+            &[
+                "secrets",
+                "add-iam-policy-binding",
+                &s.github_secret,
+                "--member",
+                &run,
+                "--role",
+                role,
+            ],
+            &project,
+        ))?;
+    }
     gcloud.bind(&with(
         &[
             "projects",
@@ -1505,8 +1538,8 @@ pub fn deploy(gcloud: &Gcloud, s: &Settings, source: &Source, owner: &str) -> Re
         "--no-invoker-iam-check",
         "--set-env-vars",
         &format!(
-            "RIFF_PUBLIC_URL={},RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID={},RIFF_BUCKET={},RIFF_OWNER={owner}",
-            s.url, s.client_id, s.bucket
+            "RIFF_PUBLIC_URL={},RIFF_REQUIRE_SIGN_IN=true,RIFF_OIDC_CLIENT_ID={},RIFF_BUCKET={},RIFF_OWNER={owner},RIFF_GITHUB_SECRET=projects/{}/secrets/{}",
+            s.url, s.client_id, s.bucket, s.project, s.github_secret
         ),
         "--set-secrets",
         &format!("RIFF_OIDC_CLIENT_SECRET={}:latest", s.secret_name),
