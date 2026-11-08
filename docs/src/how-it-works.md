@@ -3879,7 +3879,7 @@ paste or a key that makes the line longer stays out of it, and the row
 under the prompt says so until your next key:
 
 ```text
- The paste is too long: a post has at most 64 KiB. The line stays as it was.
+ The line is too long: a post has at most 64 KiB. The line stays as it was.
 ```
 
 ## A signed message

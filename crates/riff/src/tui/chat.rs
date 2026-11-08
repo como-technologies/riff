@@ -709,7 +709,7 @@ pub struct Chat {
     pub(super) window: Window,
     /// Why the stream of the thread is down, while it is.
     down: Option<Down>,
-    /// The note of a post that failed or of a paste that is too long,
+    /// The note of a post that failed or of a line that is too long,
     /// until the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
     pub(super) warning: Option<String>,
     /// The names of the chat from riff-server ([`Came::Names`]).
@@ -751,7 +751,7 @@ impl Chat {
         self.down.as_ref()
     }
 
-    /// The note of a post that failed or of a paste that is too long,
+    /// The note of a post that failed or of a line that is too long,
     /// until the next key: it comes before the note of the prompt
     /// (01M6VMACJGF4A0ZXC6YK13KNCH).
     pub fn warning(&self) -> Option<&str> {
@@ -1175,17 +1175,18 @@ pub fn pasted(text: &str) -> String {
 }
 
 /// The note of a paste or a typed character that makes the line longer
-/// than [`POST_MAX`].
+/// than [`POST_MAX`]: it names the line, for both
+/// (01M6XZX237NRXSR4FN0XBP4MCA).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::tui::chat::too_long(),
-///     "The paste is too long: a post has at most 64 KiB. The line stays as it was."
+///     "The line is too long: a post has at most 64 KiB. The line stays as it was."
 /// );
 /// ```
 pub fn too_long() -> String {
     format!(
-        "The paste is too long: a post has at most {} KiB. The line stays as it was.",
+        "The line is too long: a post has at most {} KiB. The line stays as it was.",
         POST_MAX / 1024
     )
 }
@@ -2199,6 +2200,8 @@ mod tests {
         assert_eq!(state.chat().warning(), Some(too_long().as_str()));
         let (rows, view) = drawn(&mut state, 80, 24);
         assert_eq!(rows[22], format!(" {}", too_long()));
+        // The note names the line, not a paste, also for a key.
+        assert!(rows[22].starts_with(" The line is too long:"), "{rows:#?}");
         let note = &view.rows.iter().find(|r| r.area.y == 22).unwrap().line;
         assert_eq!(note.style, WARNING);
         // Also at the start of the line, the key types nothing.

@@ -7945,9 +7945,8 @@ that builds it merges.
   tab.
 - **01M6XSK4K2MDA2SK0A6KHN9HDT** A line of the Chat tab has at most 64
   KiB. A paste that makes the line longer stays out of it: the line
-  keeps its text, and the note line says `The paste is too long: a post
-  has at most 64 KiB. The line stays as it was.` at once, in the place
-  of a post that failed, until the next key.
+  keeps its text, and the note line says the note of the limit at once,
+  in the place of a post that failed, until the next key.
 - **01M6XT6MCZ38XEN7ZHWTRF50Z5** The TUI asks the terminal for focus
   events. When the window of the terminal gets the focus back, the
   prompt of the Chat tab gets the focus, as when you open the tab: the
@@ -7999,6 +7998,11 @@ that builds it merges.
   `↓` move the cursor one row. `↑` on the first row and `↓` on the
   last row show the lines that you sent. Supersedes
   01M6VG1PA4PM47777ZT4PNGETF in part.
+- **01M6XZX237NRXSR4FN0XBP4MCA** The note of the limit of the line of
+  the Chat tab says `The line is too long: a post has at most 64 KiB.
+  The line stays as it was.`, for a paste and for a typed character.
+  This supersedes 01M6XSK4K2MDA2SK0A6KHN9HDT in part: the text of the
+  note.
 
 ## The notes of the lead
 
