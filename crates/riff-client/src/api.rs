@@ -118,11 +118,12 @@ use riff_core::wire::{
     DenyOwner, End, Free, FreeReply, Freed, Hold, HoldReply, Invite, Invited, ItemFact, ItemFacts,
     Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
     Message, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
-    PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release, ReleaseFor,
-    ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery, RiffReply,
-    RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetNotes, SetNotesReply, SetStatus,
-    SetStep, SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo,
-    Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
+    PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release,
+    ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery,
+    RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetNotes, SetNotesReply,
+    SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner,
+    ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply,
+    WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -1954,6 +1955,19 @@ impl Api {
         let events = self.events::<Tailed>("tail", &query).await?;
         Ok(events
             .map(move |tailed| tailed.map(|t| checked(&t.thread, t.message, &t.keys, t.trusted))))
+    }
+
+    /// Each change of the free work of the repository thread `thread`, on
+    /// one connection (#1729): a hold, a free, a release, a plan. `me` is
+    /// the caller. The open stream is no sign of life. [`follow`] connects
+    /// again.
+    pub async fn plan_watch(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+    ) -> Result<impl Stream<Item = Result<PlanChanged>>> {
+        let query = [("uri", me.to_string()), ("thread", thread.to_string())];
+        self.events("plan/watch", &query).await
     }
 
     /// Ends each sign-in of `user`, or of the caller when `user` is

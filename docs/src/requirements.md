@@ -351,6 +351,20 @@
   verify- item, or while its verify waits for the merge of another pull
   request. When the pull request waits for a verify again, the 30
   minutes of 01M49Q316RXNATJP587DWGDNCD start again.
+- **01M6WJNG3YA4PS8B5DQWPTBXBR** The host with the most free room takes
+  a free item first. Before the claim of an item of a wave, the riff
+  daemon waits 10 s × the live sessions of its host / the limit of its
+  host: 0 s for an empty host, 7.5 s for 3 sessions of 4. Then it claims
+  the item only when no session claims it and no lead holds it. Else the
+  start of the item does not count. A run that the lead asks for does
+  not wait. With the same load, the first host to look takes the item.
+  No host has a fixed preference.
+- **01M6WJNV9KP5TN5SVBVT4JDN66** A change of the plan wakes the wave of
+  each host. After a command that holds an item, frees an item, releases
+  a claim, sets the plan or ends it, riff-server sends one event of the
+  repository thread on the stream GET /v1/plan/watch. The riff daemon of
+  each host follows the stream of each wave that it runs, and the wave
+  looks at once, also while it waits 5 minutes.
 
 ## Waves on GitHub
 

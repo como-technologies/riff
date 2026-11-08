@@ -86,13 +86,14 @@
 //! | `GET /.well-known/oauth-protected-resource` | [`ResourceMetadata`] (RFC 9728) |
 //! | `GET /.well-known/oauth-authorization-server` | [`ServerMetadata`] (RFC 8414) |
 //!
-//! Two streams use server-sent events. Each event is one `data:` line
+//! Three streams use server-sent events. Each event is one `data:` line
 //! that holds JSON:
 //!
 //! | Stream | Query | Event |
 //! |---|---|---|
 //! | `GET /v1/watch` | `uri=<session URI>` | [`Wake`] |
 //! | `GET /v1/tail` | `thread=<thread name>` | [`Tailed`] |
+//! | `GET /v1/plan/watch` | `uri=<session URI>`, `thread=<thread name>` | [`PlanChanged`] |
 //!
 //! `GET /v1/me` with the query `uri=<session URI>` gives [`MeReply`]:
 //! only the session of the caller (01M3T5GFVS8NMA992KHZN4VE17). The
@@ -2455,6 +2456,25 @@ pub struct Wake {
     pub from: SessionUri,
     #[serde(default, skip_serializing_if = "Kind::is_message")]
     pub kind: Kind,
+}
+
+/// An event on `GET /v1/plan/watch?uri=…&thread=…`: a command changed the
+/// free work of the repository thread `thread` (#1729). It held an item,
+/// freed an item, released a claim, set the plan or ended it. The record
+/// at `position` is its last record in that thread. Each command gives
+/// one event for each thread.
+///
+/// ```
+/// use riff_core::wire::PlanChanged;
+///
+/// let changed = PlanChanged { thread: "acme/app".parse()?, position: 7 };
+/// assert_eq!(serde_json::to_string(&changed)?, r#"{"thread":"acme/app","position":7}"#);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlanChanged {
+    pub thread: ThreadName,
+    pub position: u64,
 }
 
 /// An event on `GET /v1/tail?thread=…`.

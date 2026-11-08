@@ -1973,8 +1973,10 @@ one wave with 8 sessions uses at most 1,500.
   minute.
 - A wave with no work, no session and no change since its last look
   looks each 5 minutes. It looks each minute again when something
-  changes. A session that ends, a job that ends, and a new
-  `riff join` in your clone make it look at once.
+  changes. A session that ends, a job that ends, a new `riff join` in
+  your clone and a change of the plan on riff-server make it look at
+  once (see
+  [Which host takes a free item](how-it-works.md#which-host-takes-a-free-item)).
 - The default branch and its rules are read one time in 10 minutes. The
   message of a commit is read one time.
 - The sweep asks GitHub about a folder that stays one time in 10

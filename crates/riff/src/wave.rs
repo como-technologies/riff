@@ -28,8 +28,8 @@
 //!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the full check of each waiting pull request"]
 //!     L --> P{"pick"}
 //!     P -- "an item, and a fact of the host fails" --> W
-//!     P -- "no work" --> W["give the room back; wait for an end,<br/>LOOK_EVERY, or IDLE_LOOK_EVERY"] --> A
-//!     P -- "an item" --> J["a job: claim, clone, start, wait for the end,<br/>the steps after the end, release"]
+//!     P -- "no work" --> W["give the room back; wait for an end,<br/>a change of the plan, LOOK_EVERY, or IDLE_LOOK_EVERY"] --> A
+//!     P -- "an item" --> J["a job: the wait before the claim, claim, clone, start,<br/>wait for the end, the steps after the end, release"]
 //!     J -.-> A
 //! ```
 //!
@@ -39,7 +39,8 @@
 //! sessions, looks and leads (#1549, [`crate::ghcalls`]). A wave that has
 //! no work, no session and no change since its last look waits
 //! [`IDLE_LOOK_EVERY`] for the next look, not [`LOOK_EVERY`]. The end of a
-//! session or of a job wakes it at once.
+//! session or of a job wakes it at once, and so does a change of the plan
+//! on riff-server (see "The hosts of a wave").
 //! A paused wave calls no `gh`, so it keeps [`LOOK_EVERY`]. The look of the
 //! loop asks GitHub first whether anything changed, with two conditional
 //! reads that cost no GraphQL point. When both answer `304`, no pull
@@ -56,8 +57,46 @@
 //!     L["a look"] --> Q{"no work, no session,<br/>the same facts as the last look?"}
 //!     Q -- yes --> I["wait IDLE_LOOK_EVERY"]
 //!     Q -- no --> N["wait LOOK_EVERY"]
-//!     I -- "a session or a job ends" --> L
-//!     N -- "a session or a job ends" --> L
+//!     I -- "a session or a job ends,<br/>a change of the plan" --> L
+//!     N -- "a session or a job ends,<br/>a change of the plan" --> L
+//! ```
+//!
+//! # The hosts of a wave
+//!
+//! A wave can run on more hosts. The claims on riff-server give each item
+//! to one session, and the host with the most free room takes a free item
+//! first (#1729, 01M6WJNG3YA4PS8B5DQWPTBXBR, 01M6WJNV9KP5TN5SVBVT4JDN66):
+//!
+//! - **A change of the plan wakes each wave.** riff-server sends one
+//!   event on `GET /v1/plan/watch` of the repository thread for each
+//!   command that holds an item, frees an item, releases a claim, sets the
+//!   plan or ends it ([`riff_core::record::Record::plan_thread`]). The loop
+//!   of each wave follows the stream ([`World::plan_changes`],
+//!   [`follow_plan`]) and looks at once, also an idle wave. So the hosts
+//!   see a free item at the same time.
+//! - **The host with the most free room claims first.** Before the claim
+//!   of an item, a job waits [`claim_wait`]: [`CLAIM_WAIT`] × the live
+//!   sessions of the host / its limit, so 0 s on an empty host and 7.5 s
+//!   with 3 sessions of 4. Then it reads the claims and the holds again,
+//!   and claims the item only when it is still free (`wait_to_claim`).
+//!   Else the start does not count (`Taken`), and the lead hears
+//!   nothing. A job that the lead asked for does not wait.
+//! - With the same load, the first host to look takes the item. No host
+//!   has a fixed preference.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant S as riff-server
+//!     participant B as the wave of pangolin: 3 of 4
+//!     participant E as the wave of thelio: 0 of 8
+//!     Note over S: the lead frees issue-12
+//!     S->>B: plan/watch: a change
+//!     S->>E: plan/watch: a change
+//!     B->>B: look: issue-12 is free, wait 7.5 s
+//!     E->>E: look: issue-12 is free, wait 0 s
+//!     E->>S: claim issue-12: granted
+//!     B->>S: who: issue-12 is claimed
+//!     Note over B: no claim, the start does not count
 //! ```
 //!
 //! # When the limit of GitHub runs out
@@ -500,9 +539,10 @@ use riff_core::wire::{
     HoldInfo, Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY, Wake,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 
+use crate::daemon::remote::Abort;
 use crate::daemon::sweep::{self, Fate, InJob};
 use crate::daemon::{Daemon, Ended, Out, PullFailed, Record, Say, Start};
 use crate::pr::Verdict;
@@ -515,6 +555,7 @@ use crate::{
     session_image, text, usage,
 };
 use riff_client::api::{self, Api};
+use riff_client::link::STREAM_RETRY;
 
 /// The file of the waves that the daemon runs, in its folder.
 pub const WAVES_FILE: &str = "waves.json";
@@ -524,10 +565,37 @@ pub const LOOK_EVERY: Duration = Duration::from_secs(60);
 
 /// How often an idle wave looks (#1549, [`crate::ghcalls`]): no session of
 /// the wave runs, no work is free, and the look saw the same facts as the
-/// look before ([`look_wait`]). A session that ends, and a job that ends,
-/// wake the wave at once.
+/// look before ([`look_wait`]). A session that ends, a job that ends and a
+/// change of the plan on riff-server wake the wave at once.
 pub const IDLE_LOOK_EVERY: Duration =
     Duration::from_secs(LOOK_EVERY.as_secs() * crate::watches::IDLE_FACTOR as u64);
+
+/// The wait of a full host before the claim of free work (#1729): a host
+/// waits a part of it that grows with its load ([`claim_wait`]).
+pub const CLAIM_WAIT: Duration = Duration::from_secs(10);
+
+/// How long a host with `live` sessions and the limit `limit` waits before
+/// the claim of free work (#1729): `full` × `live` / `limit`, with `full`
+/// [`CLAIM_WAIT`]. So the host with the most free room claims first. A
+/// host at its limit or past it, and a limit of 0, wait `full`.
+///
+/// ```
+/// use std::time::Duration;
+/// use riff::wave::{CLAIM_WAIT, claim_wait};
+///
+/// assert_eq!(claim_wait(0, 8, CLAIM_WAIT), Duration::ZERO);
+/// assert_eq!(claim_wait(3, 4, CLAIM_WAIT), Duration::from_millis(7_500));
+/// assert_eq!(claim_wait(4, 8, CLAIM_WAIT), Duration::from_secs(5));
+/// assert_eq!(claim_wait(5, 4, CLAIM_WAIT), CLAIM_WAIT);
+/// assert_eq!(claim_wait(0, 0, CLAIM_WAIT), CLAIM_WAIT);
+/// ```
+pub fn claim_wait(live: usize, limit: u32, full: Duration) -> Duration {
+    if limit == 0 {
+        return full;
+    }
+    let live = u32::try_from(live).unwrap_or(u32::MAX).min(limit);
+    full * live / limit
+}
 
 /// The most starts of one item in one run of a wave.
 pub const STARTS: u32 = 3;
@@ -1389,6 +1457,13 @@ pub trait World: Send + Sync {
         Box::pin(async { Ok(HashSet::new()) })
     }
 
+    /// Tells `changed` at each change of the free work of the repository of
+    /// `wave` on riff-server (#1729): a hold, a free, a release, a plan. It
+    /// never ends. The default tells nothing.
+    fn plan_changes<'a>(&'a self, _wave: &'a Wave, _changed: &'a Notify) -> BoxFuture<'a, ()> {
+        Box::pin(std::future::pending())
+    }
+
     /// Posts `body` of `kind` as the person of the wave: to the session
     /// that claims `item`, or to the lead of the person when `item` is
     /// `None`. The error is a post that did not go out. A post with a
@@ -1505,7 +1580,8 @@ fn forge(repo: &str) -> pr::Gh {
 /// work (`picked` is false), and no session or job of the wave runs
 /// (`running` is false): it waits [`IDLE_LOOK_EVERY`]. Else it waits
 /// [`LOOK_EVERY`]. A paused wave calls no `gh`, and it starts at once on a
-/// resume, so it is never idle. An end of a session or of a job wakes the
+/// resume, so it is never idle. An end of a session or of a job, and a
+/// change of the plan on riff-server ([`World::plan_changes`]), wake the
 /// wave in each case.
 ///
 /// ```
@@ -1529,6 +1605,32 @@ pub fn look_wait(look: &Look, last: Option<&Look>, picked: bool, running: bool) 
     match !picked && !running && !look.paused && last == Some(look) {
         true => IDLE_LOOK_EVERY,
         false => LOOK_EVERY,
+    }
+}
+
+/// Follows the changes of the free work of `thread` on riff-server as `me`
+/// ([`Api::plan_watch`], #1729), and tells `changed` at each one. It
+/// connects again after each end of the stream, and never ends. It prints
+/// a fault of the stream one time until the fault changes.
+pub async fn follow_plan(api: &Api, me: &SessionUri, thread: &ThreadName, changed: &Notify) {
+    use futures::StreamExt;
+    let changes = api::follow(|| api.plan_watch(me, thread), STREAM_RETRY);
+    tokio::pin!(changes);
+    let mut fault = None;
+    while let Some(change) = changes.next().await {
+        match change {
+            Ok(_) => {
+                fault = None;
+                changed.notify_one();
+            }
+            Err(e) => {
+                let e = format!("{e:#}");
+                if fault.as_ref() != Some(&e) {
+                    eprintln!("riff daemon: {thread}: {}", text::wave_no_plan(&e));
+                }
+                fault = Some(e);
+            }
+        }
     }
 }
 
@@ -1585,6 +1687,14 @@ pub(crate) async fn run<R: Runtime + 'static>(
     let mut last: Option<Look> = None;
     // The key of the limit of GitHub that the lead heard of.
     let mut limited: Option<String> = None;
+    // A change of the plan on riff-server: the wave looks at once (#1729).
+    let plan = Arc::new(Notify::new());
+    let _follow = {
+        let (world, wave, plan) = (daemon.world(), wave.clone(), plan.clone());
+        Abort(tokio::spawn(async move {
+            world.plan_changes(&wave, &plan).await;
+        }))
+    };
     loop {
         let world = daemon.world();
         // While a limit of GitHub is out, the wave makes no look, no sweep
@@ -1611,6 +1721,8 @@ pub(crate) async fn run<R: Runtime + 'static>(
         for line in daemon.sweep_news(Some(&wave.repo)).await {
             println!("{line}");
         }
+        // This look sees each change of the plan before it.
+        let _ = futures::FutureExt::now_or_never(plan.notified());
         let mut wait = LOOK_EVERY;
         let next = match world.look(&wave).await {
             Ok(look) => {
@@ -1714,6 +1826,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                 tokio::select! {
                     () = tokio::time::sleep(wait) => {}
                     () = daemon.changed() => {}
+                    () = plan.notified() => {}
                 }
             }
         }
@@ -1821,7 +1934,7 @@ pub(crate) async fn job<R: Runtime + 'static>(
 ) {
     let item = work.item();
     let held = daemon.in_job(&item);
-    let no_start = match start_job(&daemon, &wave, &work, slot).await {
+    let no_start = match start_job(&daemon, &wave, &work, slot, asked).await {
         Ok(Some((record, ended))) => {
             // A verify with a PASS or FAIL on the pull request is no failed
             // start (#1651). The item is still taken: no start comes
@@ -1833,6 +1946,11 @@ pub(crate) async fn job<R: Runtime + 'static>(
         }
         Ok(None) => {
             println!("{}", text::wave_not_claimed(&wave.repo, &item));
+            Some(text::RUN_NOT_CLAIMED.to_owned())
+        }
+        Err(ref e) if e.downcast_ref::<Taken>().is_some() => {
+            println!("{}", text::wave_taken(&wave.repo, &item));
+            take_back(&starts, &work);
             Some(text::RUN_NOT_CLAIMED.to_owned())
         }
         Err(e) if paused(&e) => {
@@ -1878,17 +1996,65 @@ pub(crate) async fn job<R: Runtime + 'static>(
     daemon.tell_changed();
 }
 
-/// The steps of a job up to the end of its session: the image that the
-/// wave pins, the steps before the start, and the session. `None` when
-/// the claim failed. Hold [`Daemon::in_job`] of the item from before the
-/// call to the end of [`finish`]: the sweep then keeps the folder.
+/// The item of a job is no free work after the wait before its claim
+/// (#1729): another session claims it, or the lead holds it. The start
+/// does not count, and the lead hears nothing.
+#[derive(Debug)]
+pub(crate) struct Taken;
+
+impl std::fmt::Display for Taken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(text::RUN_NOT_CLAIMED)
+    }
+}
+
+impl std::error::Error for Taken {}
+
+/// The wait before the claim of `work` (#1729): the host with the most
+/// free room claims first. The host waits [`claim_wait`] for its live
+/// sessions and its limit now: an empty host does not wait. After a
+/// wait, it reads the claims and the holds of riff-server again, and the
+/// error is [`Taken`] when the item is no free work now. A read that
+/// fails leaves the choice to the claim: riff-server gives each item to
+/// one session.
+async fn wait_to_claim<R: Runtime + 'static>(
+    daemon: &Daemon<R>,
+    world: &dyn World,
+    wave: &Wave,
+    work: &Work,
+) -> Result<()> {
+    let limit = daemon.room().limit().sessions;
+    let wait = claim_wait(daemon.live_count(), limit, daemon.claim_wait());
+    if wait.is_zero() {
+        return Ok(());
+    }
+    tokio::time::sleep(wait).await;
+    let item = work.item();
+    let claimed = world.claims(wave).await.is_ok_and(|c| c.contains(&item));
+    let held = world.holds(wave).await.is_ok_and(|h| h.contains(&item));
+    match claimed || held {
+        true => Err(Taken.into()),
+        false => Ok(()),
+    }
+}
+
+/// The steps of a job up to the end of its session: the wait before the
+/// claim ([`wait_to_claim`]) when the lead did not ask for the job
+/// (`asked`), the image that the wave pins, the steps before the start,
+/// and the session. `None` when the claim failed. Hold [`Daemon::in_job`]
+/// of the item from before the call to the end of [`finish`]: the sweep
+/// then keeps the folder.
 async fn start_job<R: Runtime + 'static>(
     daemon: &Arc<Daemon<R>>,
     wave: &Wave,
     work: &Work,
     slot: Slot,
+    asked: bool,
 ) -> Result<Option<(Record, Ended)>> {
     let world = daemon.world();
+    if !asked {
+        wait_to_claim(daemon, &*world, wave, work).await?;
+    }
     let pinned = world.pinned(wave).await?;
     daemon
         .have_image(&pinned.image, |line| println!("{line}"))
@@ -3511,6 +3677,25 @@ impl World for Live {
         })
     }
 
+    fn plan_changes<'a>(&'a self, wave: &'a Wave, changed: &'a Notify) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let follow = async {
+                let person = identity::person(&wave.place(None)?, &wave.server)?;
+                let api = Api::new(&wave.server).signed_in(None)?;
+                follow_plan(&api, &person, &wave.thread()?, changed).await;
+                anyhow::Ok(())
+            };
+            if let Err(e) = follow.await {
+                eprintln!(
+                    "riff daemon: {}: {}",
+                    wave.repo,
+                    text::wave_no_plan(&format!("{e:#}"))
+                );
+            }
+            std::future::pending().await
+        })
+    }
+
     fn post<'a>(
         &'a self,
         wave: &'a Wave,
@@ -3833,9 +4018,13 @@ mod tests {
     /// held item as on riff-server, and a session folder in `root`.
     struct Fakes {
         root: PathBuf,
-        forge: Mutex<Forge>,
+        /// The forge and the riff: two hosts of one wave share them.
+        forge: Arc<Mutex<Forge>>,
         /// The fake `gh` of the look ([`FAKE_GH`]).
         gh: Arc<pr::Gh>,
+        /// The stream of the changes of the plan on a real riff-server: the
+        /// API, the caller and the thread. Else the plan never changes.
+        plan: Mutex<Option<(Api, SessionUri, ThreadName)>>,
     }
 
     impl World for Fakes {
@@ -4092,6 +4281,16 @@ mod tests {
             Box::pin(async move { Ok(holds) })
         }
 
+        fn plan_changes<'a>(&'a self, _: &'a Wave, changed: &'a Notify) -> BoxFuture<'a, ()> {
+            let plan = lock(&self.plan).clone();
+            Box::pin(async move {
+                if let Some((api, me, thread)) = plan {
+                    follow_plan(&api, &me, &thread, changed).await;
+                }
+                std::future::pending().await
+            })
+        }
+
         fn post<'a>(
             &'a self,
             _: &'a Wave,
@@ -4171,6 +4370,32 @@ mod tests {
             free: Arc<AtomicU64>,
             every: Duration,
         ) -> Here {
+            let forge = Forge {
+                items: items.to_vec(),
+                ..Forge::default()
+            };
+            Here::on(
+                Arc::new(Mutex::new(forge)),
+                sessions,
+                free,
+                every,
+                Duration::ZERO,
+            )
+            .await
+        }
+
+        /// A host of the wave of `forge`, with the limit `sessions`, a
+        /// floor of 8 GB and the free memory of `free` in GB. It looks at
+        /// `main` and the pull requests each `every`. A full host waits
+        /// `claim_wait` before a claim ([`CLAIM_WAIT`]). [`Here::new`] gives
+        /// 0: no host of the other tests waits.
+        async fn on(
+            forge: Arc<Mutex<Forge>>,
+            sessions: u32,
+            free: Arc<AtomicU64>,
+            every: Duration,
+            claim_wait: Duration,
+        ) -> Here {
             let root = tempfile::tempdir().unwrap();
             let dir = dir_in(root.path());
             let fake = Fake::default().with_image(IMAGE);
@@ -4179,11 +4404,9 @@ mod tests {
             let gh = pr::Gh::at(isolated::write_program(bin.join("gh"), FAKE_GH));
             let world = Arc::new(Fakes {
                 root: root.path().to_owned(),
-                forge: Mutex::new(Forge {
-                    items: items.to_vec(),
-                    ..Forge::default()
-                }),
+                forge,
                 gh: Arc::new(gh),
+                plan: Mutex::new(None),
             });
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
@@ -4194,6 +4417,7 @@ mod tests {
                 .with_memory(memory)
                 .with_world(world.clone())
                 .with_look_every(every)
+                .with_claim_wait(claim_wait)
                 .with_relay(crate::release::fake_riff(&relay, None));
             Limit {
                 sessions,
@@ -4290,6 +4514,131 @@ mod tests {
             6,
             "one session for each item and each verify"
         );
+    }
+
+    /// The wait of a full host before a claim in
+    /// [`a_free_item_goes_to_the_host_with_the_most_free_room`]: a host
+    /// with 3 sessions of 4 waits 3 s.
+    const TEST_CLAIM_WAIT: Duration = Duration::from_secs(4);
+
+    /// Tells the waves of `hosts` to look again, in order, until `done`
+    /// holds.
+    async fn look_until(hosts: &[&Here], done: impl Fn() -> bool) {
+        let started = Instant::now();
+        while !done() {
+            assert!(started.elapsed() < isolated::HANG, "it did not happen");
+            for here in hosts {
+                here.daemon.tell_changed();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// #1729: the host with the most free room claims a free item first.
+    /// One host runs 3 sessions of its limit of 4, the other 0 of 8. A
+    /// new item comes, and both waves look at it, the busy one first. The
+    /// host with 0 of 8 claims it at once. The busy host waits 3 s, sees
+    /// the claim, and claims nothing.
+    #[tokio::test]
+    async fn a_free_item_goes_to_the_host_with_the_most_free_room() {
+        let free = Arc::new(AtomicU64::new(64));
+        let forge = Arc::new(Mutex::new(Forge {
+            items: vec![1, 2, 3],
+            ..Forge::default()
+        }));
+        let on = |sessions| {
+            let every = crate::look::LOOK_EVERY;
+            Here::on(
+                forge.clone(),
+                sessions,
+                free.clone(),
+                every,
+                TEST_CLAIM_WAIT,
+            )
+        };
+        let busy = on(4).await;
+        busy.run();
+        busy.until(4, |h| h.daemon.live_count() == 3).await;
+        let empty = on(8).await;
+        empty.run();
+        empty.idle(8).await;
+        assert_eq!(empty.daemon.live_count(), 0);
+
+        lock(&forge).items.push(4);
+        look_until(&[&busy, &empty], || {
+            lock(&forge).claims.contains_key("issue-4")
+        })
+        .await;
+        assert!(empty.running("issue-4").is_some(), "{:?}", lock(&forge));
+        // The busy host waited, and found the item claimed.
+        tokio::time::sleep(TEST_CLAIM_WAIT).await;
+        busy.idle(4).await;
+        assert!(busy.running("issue-4").is_none());
+        let forge = lock(&forge);
+        let starts = forge.starts.iter().filter(|(item, _)| item == "issue-4");
+        assert_eq!(starts.count(), 1, "{forge:?}");
+        assert_eq!(busy.daemon.live_count(), 3);
+    }
+
+    /// #1729: a free on riff-server wakes an idle wave at once. The lead
+    /// holds the only item. The wave looks two times with the same facts:
+    /// then it waits [`IDLE_LOOK_EVERY`], and no session ends to wake it.
+    /// The lead frees the item on a real riff-server. The wave follows the
+    /// changes of the plan there, looks at once, and starts the item, long
+    /// before its next look at [`LOOK_EVERY`].
+    #[tokio::test]
+    async fn a_free_on_riff_server_wakes_an_idle_wave_at_once() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            axum::serve(listener, riff_server::router()).await.unwrap();
+        });
+        let api = Api::new(&server);
+        let place = crate::identity::place_from_text("thelio/o/r").unwrap();
+        let who = riff_core::name::Who::new("mike", Some("lead1")).unwrap();
+        let lead = SessionUri::new(who, place);
+        api.start(&lead, StartReason::Process, false).await.unwrap();
+        let thread: ThreadName = "o/r".parse().unwrap();
+        api.hold(&lead, &thread, "issue-1", "a reading")
+            .await
+            .unwrap();
+
+        let here = Here::new(&[1], 2, Arc::new(AtomicU64::new(64))).await;
+        here.forge().holds.insert("issue-1".into());
+        *lock(&here.world.plan) = Some((api.clone(), lead.clone(), thread.clone()));
+        here.run();
+        here.until(2, |h| h.forge().branch_reads >= 2).await;
+        // A hold of another item on riff-server wakes the wave too: so the
+        // wave follows the changes of the plan now.
+        let looks = here.forge().branch_reads;
+        let woken = async {
+            while here.forge().branch_reads == looks {
+                api.hold(&lead, &thread, "issue-9", "a probe")
+                    .await
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        };
+        isolated::in_time(LOOK_EVERY / 3, woken)
+            .await
+            .expect("the hold woke the wave");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let looks = here.forge().branch_reads;
+        assert!(here.forge().starts.is_empty());
+
+        // Only the free on riff-server can wake the wave now.
+        here.forge().holds.remove("issue-1");
+        api.free(&lead, &thread, "issue-1").await.unwrap();
+        let started = async {
+            while here.forge().starts.is_empty() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        isolated::in_time(LOOK_EVERY / 3, started)
+            .await
+            .expect("the free woke the wave");
+        assert!(here.forge().branch_reads > looks);
+        assert_eq!(here.forge().starts[0].0, "issue-1");
     }
 
     /// 01M53S7WDPQ2GWHJWJ6SZXZ5PN: after the end of a session, the daemon
@@ -7610,8 +7959,9 @@ esac
         };
         let world = Fakes {
             root: forge.path().to_owned(),
-            forge: Mutex::default(),
+            forge: Arc::default(),
             gh: Arc::new(gh.clone().by("look")),
+            plan: Mutex::new(None),
         };
         let none = BTreeSet::new();
         look_with(&gh.clone().by("wave"), "o/r", none.clone(), none, &[]).unwrap();
@@ -7650,8 +8000,9 @@ esac
             let gh = pr::Gh::at(isolated::write_program(dir.path().join("gh"), FAKE_GH));
             let world = Fakes {
                 root: dir.path().to_owned(),
-                forge: Mutex::default(),
+                forge: Arc::default(),
                 gh: Arc::new(gh),
+                plan: Mutex::new(None),
             };
             let wave = Wave {
                 repo: "o/r".into(),

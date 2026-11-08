@@ -8895,6 +8895,40 @@ pub fn wave_not_claimed(repo: &str, item: &str) -> String {
     )
 }
 
+/// The riff daemon cannot follow the changes of the plan on riff-server,
+/// for the reason `error` (#1729). The wave then looks at its own times.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_no_plan("no route"),
+///     "cannot follow the changes of the plan on riff-server: no route. The wave looks at \
+///      its own times."
+/// );
+/// ```
+pub fn wave_no_plan(error: &str) -> String {
+    format!(
+        "cannot follow the changes of the plan on riff-server: {error}. The wave looks at its \
+         own times."
+    )
+}
+
+/// The wave of `repo` claims no `item` after the wait before the claim
+/// (#1729): another host took it first. The start does not count.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_taken("o/r", "issue-12"),
+///     "The wave of o/r: another session took issue-12, or the lead held it, while this \
+///      host waited before its claim. The start does not count."
+/// );
+/// ```
+pub fn wave_taken(repo: &str, item: &str) -> String {
+    format!(
+        "The wave of {repo}: another session took {item}, or the lead held it, while this \
+         host waited before its claim. The start does not count."
+    )
+}
+
 /// The riff daemon cannot start a container of the session image, for
 /// the reason `error`, so it gets no ask of the wave
 /// (01M558EYAJFZK7Y822NVWGBS9H).

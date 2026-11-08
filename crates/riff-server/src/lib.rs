@@ -6,7 +6,8 @@
 //!  HTTP handlers ──▶ Engine ──lock──▶ State    see [`engine`], [`state`]
 //!        │             │
 //!        │             └─ the writer ──▶ wakes channel ──▶ GET /v1/watch streams
-//!        │                           └─▶ tail channel  ──▶ GET /v1/tail streams
+//!        │                           ├─▶ tail channel  ──▶ GET /v1/tail streams
+//!        │                           └─▶ plans channel ──▶ GET /v1/plan/watch streams
 //!        └──lock──▶ Tokens (Mutex)      see [`token`]: only the sign-ins
 //! ```
 //!
@@ -29,6 +30,12 @@
 //! - The writer sends the wakes and the `tail` event of a message to
 //!   two broadcast channels, after the write of its record. Each open
 //!   stream filters the channel for its own session or thread.
+//! - After the write of a command that changes the free work of a
+//!   repository thread, the writer sends one event of the thread to the
+//!   plans channel ([`engine::Engine::plans`], #1729). A
+//!   `GET /v1/plan/watch` stream gives each event of its thread
+//!   (`plan_watch`). The riff daemon of each host of a wave follows it,
+//!   so its wave looks at once.
 //! - Each stream starts with the comment `: ready`, see [`opened`].
 //! - A watch stream then gives the wake from [`state::State::missed`],
 //!   if there is one. It subscribes to the wakes channel first, so no
@@ -1923,7 +1930,8 @@ impl Service {
             .route(NotesShow::PATH, post(notes_show))
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
-            .route("/v1/tail", get(tail_thread));
+            .route("/v1/tail", get(tail_thread))
+            .route("/v1/plan/watch", get(plan_watch));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
         // The settings of idle workers: the query, and the command
         // `set_idle` on a path of its own (01M3WRD9BSBKS9TN66H29TGTBV).
@@ -3169,6 +3177,33 @@ async fn tail_thread(
     let stream = until_lagged(s.engine.tail()).filter_map(move |tailed| {
         let event = (tailed.thread == q.thread)
             .then(|| Event::default().json_data(tailed).ok())
+            .flatten();
+        std::future::ready(event.map(Ok))
+    });
+    let stream = stream.take_until(s.stopping());
+    Ok(Sse::new(opened(stream)).keep_alive(KeepAlive::default()))
+}
+
+/// Streams each change of the free work of one repository thread
+/// (#1729): one `PlanChanged` for each command that holds an item,
+/// frees an item, releases a claim, sets the plan or ends it. The caller
+/// acts as its token, as for `tail`, and the stream is no sign of life.
+/// The riff daemon of each host of a wave follows it, so its wave looks
+/// at once.
+async fn plan_watch(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Query(q): Query<TailQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
+    let rx = s.engine.plans();
+    let caller = admit(&s, &proof, &q.uri)?;
+    s.engine.peek(&caller, |_| ())?;
+    if !may_read(q.uri.who(), &q.thread) {
+        return Err(not_found(format!("no thread named {}", q.thread)));
+    }
+    let stream = until_lagged(rx).filter_map(move |changed| {
+        let event = (changed.thread == q.thread)
+            .then(|| Event::default().json_data(changed).ok())
             .flatten();
         std::future::ready(event.map(Ok))
     });

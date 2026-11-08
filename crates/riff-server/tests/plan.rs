@@ -4,7 +4,7 @@
 
 use crate::common;
 
-use riff_core::wire::{PlanOffReply, PlanReply, REFUSED_HEADER};
+use riff_core::wire::{PlanChanged, PlanOffReply, PlanReply, REFUSED_HEADER};
 use serde_json::{Value, json};
 
 const ANN: &str = "riff://ann@heron/acme/app?session=a1";
@@ -93,4 +93,87 @@ async fn a_worker_gets_not_allowed_for_a_plan() {
     let off = json!({"me": WORKER, "thread": "acme/app"});
     let refused = call(&base, "/v1/plan/off", off).await;
     assert_eq!(refused.headers()[REFUSED_HEADER], "not_allowed");
+}
+
+/// The bound of a wait for an event. It only ends a test that hangs.
+const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// An open `GET /v1/plan/watch` stream, and the text that it gave and
+/// that no event took yet.
+struct Changes {
+    reply: reqwest::Response,
+    buffer: String,
+}
+
+impl Changes {
+    async fn open(base: &str, thread: &str) -> Changes {
+        let reply = common::client()
+            .get(format!("{base}/v1/plan/watch"))
+            .query(&[("uri", ANN), ("thread", thread)])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), 200);
+        Changes {
+            reply,
+            buffer: String::new(),
+        }
+    }
+
+    /// The next event, or `None` when none comes in `wait`.
+    async fn next(&mut self, wait: std::time::Duration) -> Option<PlanChanged> {
+        loop {
+            if let Some(end) = self.buffer.find('\n') {
+                let line: String = self.buffer.drain(..=end).collect();
+                match line.trim().strip_prefix("data:") {
+                    Some(data) => return Some(serde_json::from_str(data.trim()).unwrap()),
+                    None => continue,
+                }
+            }
+            let chunk = tokio::time::timeout(wait, self.reply.chunk()).await.ok()?;
+            let chunk = chunk.unwrap().expect("the stream stays open");
+            self.buffer.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    }
+}
+
+/// #1729: each command that changes the free work of a repository thread
+/// gives one event on `GET /v1/plan/watch` of that thread: a hold, the
+/// free of the hold and the release of a claim. A claim and a post give
+/// none, and the stream of another thread gets none.
+#[tokio::test]
+async fn a_hold_a_free_and_a_release_each_give_one_event_of_the_plan() {
+    let (_service, base) = common::start(false, &[]).await;
+    let _: Value = ok(&base, "/v1/register", json!({"me": ANN})).await;
+    let lead = json!({"me": "riff://ann@heron/acme/app", "session": "a1"});
+    let _: Value = ok(&base, "/v1/lead", lead).await;
+    let _: Value = ok(&base, "/v1/resume", json!({"me": ANN, "riff": true})).await;
+    let mut changes = Changes::open(&base, "acme/app").await;
+    let mut other = Changes::open(&base, "acme/web").await;
+
+    let item = json!({"me": ANN, "thread": "acme/app", "item": "issue-12"});
+    let mut hold = item.clone();
+    hold["reason"] = json!("a reading");
+    let _: Value = ok(&base, "/v1/plan/hold", hold).await;
+    let held = changes.next(WAIT).await.expect("an event of the hold");
+    assert_eq!(held.thread.to_string(), "acme/app");
+
+    let _: Value = ok(&base, "/v1/plan/free", item).await;
+    let freed = changes.next(WAIT).await.expect("an event of the free");
+    assert!(freed.position > held.position, "{freed:?} {held:?}");
+
+    let claim = json!({"me": ANN, "thread": "acme/app", "item": "issue-13"});
+    let _: Value = ok(&base, "/v1/claim", claim.clone()).await;
+    let post = json!({"me": ANN, "thread": "acme/app", "to": [], "body": "hi"});
+    let _: Value = ok(&base, "/v1/post", post).await;
+    let _: Value = ok(&base, "/v1/release", claim).await;
+    let released = changes.next(WAIT).await.expect("an event of the release");
+    assert!(released.position > freed.position + 1, "{released:?}");
+    let short = std::time::Duration::from_millis(300);
+    assert_eq!(
+        changes.next(short).await,
+        None,
+        "one event for each command"
+    );
+    assert_eq!(other.next(short).await, None, "no event of another thread");
 }

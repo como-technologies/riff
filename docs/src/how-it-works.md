@@ -127,6 +127,47 @@ too. `riff join --host HOST` adds it: see
 [Add a host to the wave](development.md#add-a-host-to-the-wave). The
 claims on riff-server keep two machines from one item.
 
+### Which host takes a free item
+
+When a wave runs on two hosts or more, the host with the most free room
+takes a free item first:
+
+- A change of the plan wakes the wave of each host. When a lead holds or
+  frees an item, or a session releases its claim, riff-server tells the
+  riff daemon of each host. Each wave looks at once, also a wave that
+  waits 5 minutes with no work. So each host sees the free item at the
+  same time.
+- Before the claim, the daemon of a host waits a short time that grows
+  with its load: 10 s × its live sessions / its limit. An empty host
+  waits 0 s. A host with 3 sessions of its limit of 4 waits 7.5 s.
+- After the wait, the daemon claims the item only when it is still free.
+  When another host took it, the daemon claims nothing, and the start
+  does not count.
+- With the same load, the first host to look takes the item. No host has
+  a fixed preference.
+
+```mermaid
+sequenceDiagram
+    participant S as riff-server
+    participant P as the wave of pangolin: 3 of 4 sessions
+    participant T as the wave of thelio: 0 of 8 sessions
+    Note over S: the lead frees issue-12
+    S->>P: a change of the plan
+    S->>T: a change of the plan
+    P->>P: issue-12 is free: wait 7.5 s
+    T->>T: issue-12 is free: wait 0 s
+    T->>S: claim issue-12: granted
+    P->>S: the claims: issue-12 is claimed
+    Note over P: no claim, the start does not count
+```
+
+A host with a higher limit gets more of the work. To give a host more
+room, raise its limit, for example on `thelio`:
+
+```sh
+riff daemon limit --sessions 8 --host thelio
+```
+
 ### What sessions share
 
 Each row is a thing that two sessions on one machine share. The last
