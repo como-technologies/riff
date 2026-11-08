@@ -541,7 +541,9 @@ enum Command {
     /// ruleset of the default branch requires, but riff/verify. A repository
     /// with no CI has none: riff/verify is its only check. riff refuses a
     /// pass when the body has Closes #N for an issue with a line Live: in
-    /// Done when: change that line to Refs #N.
+    /// Done when: change that line to Refs #N. Before its comment, a pass
+    /// gives the squash message to the auto-merge: the title with (#N), and
+    /// the body with its trailers as the last paragraph.
     Verify {
         /// pass sets the status success, fail sets failure.
         verdict: VerdictArg,

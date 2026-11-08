@@ -8828,7 +8828,10 @@ esac
         let calls = limit_log(built.dir.path());
         assert_eq!(
             calls,
-            ["pr view 40 --json headRefOid,body", "api rate_limit"]
+            [
+                "pr view 40 --json headRefOid,body,title,autoMergeRequest",
+                "api rate_limit"
+            ]
         );
         let report =
             || kept::report_all(&gh, &built.api, &built.lead, &built.wave, sessions.path());

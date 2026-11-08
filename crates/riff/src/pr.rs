@@ -12,7 +12,7 @@
 //! |---|---|
 //! | `riff pr open` | `issue view`, `pr create`, `pr merge --auto --squash` |
 //! | `riff pr wait N` | `pr view`, `pr checks --required`, again at the [`pace`] of `--every`. After the merge: the total of the tokens of the issue ([`crate::usage`]) |
-//! | `riff verify pass\|fail N` | `pr view`, `issue view` (a pass of a body with `Closes #N`), `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs` and `api …/pulls/N/files` (a pass), `pr comment`, `api …/statuses/COMMIT` |
+//! | `riff verify pass\|fail N` | `pr view`, `issue view` (a pass of a body with `Closes #N`), `api …/rules/branches/BRANCH`, `api …/commits/COMMIT/check-runs`, `api …/pulls/N/files` and `pr merge --auto --squash` with the squash message (a pass), `pr comment`, `api …/statuses/COMMIT` |
 //!
 //! `riff pr open` takes the issue from the claim of the session, and
 //! writes the body in the form of the hygiene check: the link line and
@@ -78,6 +78,23 @@
 //! that the verifier tested, `HEAD` of its worktree or `--commit`
 //! ([`same_commit`]).
 //!
+//! A pass gives the squash message to the auto-merge before its comment
+//! ([`squash`], 01M6Y95BMYDXFDYG3DKE2KG2PP): the subject `TITLE (#N)`
+//! and the body of the pull request, with its trailers as one last
+//! paragraph. With no message, GitHub adds a last paragraph
+//! `Co-authored-by:` with the bot, and the line of the person, one
+//! paragraph up, does not count. A new push needs a new pass, so the
+//! message is that of the commit that passed: `--match-head-commit`.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     A{"auto-merge has<br/>the message?"} -- yes --> C["pr comment,<br/>status riff/verify"]
+//!     A -- no --> M["pr merge --auto --squash<br/>--subject --body-file -"]
+//!     M --> W{"auto-merge was on,<br/>and has another message?"}
+//!     W -- no --> C
+//!     W -- yes --> O["pr merge --disable-auto,<br/>then pr merge --auto again"] --> C
+//! ```
+//!
 //! GitHub sometimes fails a call with a 502, 503 or 504. A [`Gh`] made
 //! with [`Gh::retrying`] runs such a call again, up to [`RETRIES`] times,
 //! after [`RETRY_WAIT`] and double that for each next try
@@ -121,7 +138,7 @@
 //!     participant G as gh
 //!     participant E as riff-server
 //!     A->>G: riff pr open: pr create, pr merge --auto --squash
-//!     V->>G: riff verify pass 40: pr comment, status riff/verify
+//!     V->>G: riff verify pass 40: pr merge --auto --squash with the message, pr comment, status riff/verify
 //!     V->>E: post to [claim=issue-12], and to the lead when no session holds issue-12
 //!     A->>G: riff pr wait 40: pr view until MERGED
 //! ```
@@ -2275,7 +2292,8 @@ impl Verdict {
     }
 }
 
-/// A pull request, as `gh pr view --json headRefOid,body` gives it.
+/// A pull request, as `gh pr view --json
+/// headRefOid,body,title,autoMergeRequest` gives it.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Head {
@@ -2284,6 +2302,182 @@ pub struct Head {
     pub head_ref_oid: String,
     /// The body, with the `Issue:` trailer.
     pub body: String,
+    /// The title.
+    #[serde(default)]
+    pub title: String,
+    /// The auto-merge, when it is on.
+    #[serde(default)]
+    pub auto_merge_request: Option<AutoMerge>,
+}
+
+/// The auto-merge of a pull request, as `gh pr view --json
+/// autoMergeRequest` gives it. GitHub gives no subject and no body when
+/// the call that turned it on gave none.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoMerge {
+    /// `SQUASH`, `MERGE` or `REBASE`.
+    #[serde(default)]
+    pub merge_method: String,
+    /// The subject of the merge commit.
+    #[serde(default)]
+    pub commit_headline: Option<String>,
+    /// The body of the merge commit.
+    #[serde(default)]
+    pub commit_body: Option<String>,
+}
+
+/// The squash message that `riff verify pass` gives to the auto-merge of
+/// a pull request ([`squash`], 01M6Y95BMYDXFDYG3DKE2KG2PP).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Squash {
+    /// `TITLE (#N)`.
+    pub subject: String,
+    /// The body of the pull request, with its trailers as one last
+    /// paragraph.
+    pub body: String,
+}
+
+impl Squash {
+    /// True when the auto-merge `auto` squashes with this message. An end
+    /// of line `\r\n` and the space at the start and at the end do not
+    /// count.
+    ///
+    /// ```
+    /// use riff::pr::{AutoMerge, squash};
+    ///
+    /// let message = squash(40, "Show the wave", "Closes #12\n\nIssue: #12\n");
+    /// let auto = |method: &str, body: Option<&str>| AutoMerge {
+    ///     merge_method: method.into(),
+    ///     commit_headline: Some("Show the wave (#40)".into()),
+    ///     commit_body: body.map(Into::into),
+    /// };
+    /// assert!(message.is(&auto("SQUASH", Some("Closes #12\r\n\r\nIssue: #12"))));
+    /// assert!(!message.is(&auto("SQUASH", None)));
+    /// assert!(!message.is(&auto("MERGE", Some("Closes #12\n\nIssue: #12\n"))));
+    /// ```
+    pub fn is(&self, auto: &AutoMerge) -> bool {
+        let same = |given: Option<&str>, ours: &str| {
+            given.is_some_and(|given| given.replace("\r\n", "\n").trim() == ours.trim())
+        };
+        auto.merge_method == "SQUASH"
+            && same(auto.commit_headline.as_deref(), &self.subject)
+            && same(auto.commit_body.as_deref(), &self.body)
+    }
+}
+
+/// The squash message of pull request `number` with `title` and `body`
+/// (01M6Y95BMYDXFDYG3DKE2KG2PP): the subject `TITLE (#N)`, as GitHub
+/// writes it, and the body of the pull request. The trailers of the body
+/// ([`hygiene::trailers`]) become one last paragraph. GitHub reads a
+/// co-author only from the last paragraph, and with this message it adds
+/// no paragraph of its own.
+///
+/// ```
+/// use riff::pr::squash;
+///
+/// let body = "Refs #12\r\n\r\nShow the wave.\r\n\r\nIssue: #12\r\nMilestone: Wave 3\r\n\r\n\
+///             Riff-Session: 21c026a1\r\nCo-authored-by: Mike <1+mike@users.noreply.github.com>\r\n";
+/// let message = squash(40, "Show the wave", body);
+/// assert_eq!(message.subject, "Show the wave (#40)");
+/// assert_eq!(
+///     message.body,
+///     "Refs #12\n\nShow the wave.\n\nIssue: #12\nMilestone: Wave 3\n\
+///      Riff-Session: 21c026a1\nCo-authored-by: Mike <1+mike@users.noreply.github.com>\n"
+/// );
+///
+/// // A body with no trailer stays as it is.
+/// assert_eq!(squash(40, "T", "Text.\n\nMore text.\n\n\n").body, "Text.\n\nMore text.\n");
+/// ```
+pub fn squash(number: u64, title: &str, body: &str) -> Squash {
+    let body = body.replace("\r\n", "\n");
+    let lines: Vec<&str> = body.lines().map(str::trim_end).collect();
+    let mut end = lines.len();
+    let mut trailers: Vec<&str> = Vec::new();
+    loop {
+        while end > 0 && lines[end - 1].is_empty() {
+            end -= 1;
+        }
+        let mut start = end;
+        while start > 0 && !lines[start - 1].is_empty() {
+            start -= 1;
+        }
+        let paragraph = &lines[start..end];
+        if paragraph.is_empty() || hygiene::trailers(&paragraph.join("\n")).len() != paragraph.len()
+        {
+            break;
+        }
+        trailers.splice(0..0, paragraph.iter().copied());
+        end = start;
+    }
+    let text = lines[..end].join("\n");
+    let paragraphs: Vec<String> = [text.trim().to_owned(), trailers.join("\n")]
+        .into_iter()
+        .filter(|paragraph| !paragraph.is_empty())
+        .collect();
+    Squash {
+        subject: format!("{} (#{number})", title.trim()),
+        body: format!("{}\n", paragraphs.join("\n\n")),
+    }
+}
+
+/// Gives the squash message `message` to the auto-merge of pull request
+/// `number` at its head `commit`, before the pass makes its comment and
+/// sets its status (01M6Y95BMYDXFDYG3DKE2KG2PP). `auto` is the auto-merge
+/// before the call. An auto-merge with the message gets no call. Else
+/// `gh pr merge --auto --squash` gives the message. When an auto-merge
+/// that was on has another message after it, it turns auto-merge off and
+/// on again with the message.
+fn give_squash(
+    gh: &Gh,
+    number: u64,
+    commit: &str,
+    auto: Option<&AutoMerge>,
+    message: &Squash,
+) -> Result<()> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Auto {
+        #[serde(default)]
+        auto_merge_request: Option<AutoMerge>,
+    }
+    if auto.is_some_and(|auto| message.is(auto)) {
+        return Ok(());
+    }
+    let n = number.to_string();
+    let merge = [
+        "pr",
+        "merge",
+        &n,
+        "--auto",
+        "--squash",
+        "--match-head-commit",
+        commit,
+        "--subject",
+        &message.subject,
+        "--body-file",
+        "-",
+    ];
+    let give = || {
+        gh.run(&merge, Some(message.body.as_str()))
+            .map(drop)
+            .with_context(|| text::verify_no_squash(number))
+    };
+    give()?;
+    if auto.is_none() {
+        return Ok(());
+    }
+    let after: Auto = gh.json(&["pr", "view", &n, "--json", "autoMergeRequest"])?;
+    if after
+        .auto_merge_request
+        .as_ref()
+        .is_some_and(|auto| message.is(auto))
+    {
+        return Ok(());
+    }
+    gh.run(&["pr", "merge", &n, "--disable-auto"], None)
+        .with_context(|| text::verify_no_squash(number))?;
+    give()
 }
 
 /// The issue of a body: its `Issue: #N` trailer.
@@ -2939,7 +3133,9 @@ fn closes_no_live_check(gh: &Gh, number: u64, body: &str) -> Result<()> {
 /// request pins is one that a host cannot pull with no login
 /// (01M5SMRRAG1WPBJMQKKTPSRHRP). It reports no pass of a pull request
 /// whose body closes an issue with a line `Live:` in "Done when"
-/// ([`rollout::has_live_check`], 01M6WW5WSSRMTBP882FQP3TS2Q). The caller
+/// ([`rollout::has_live_check`], 01M6WW5WSSRMTBP882FQP3TS2Q). Before
+/// the comment of a pass, it gives the squash message to the auto-merge
+/// ([`squash`], 01M6Y95BMYDXFDYG3DKE2KG2PP). The caller
 /// posts it to the holder of the issue.
 pub fn report(
     gh: &Gh,
@@ -2950,7 +3146,8 @@ pub fn report(
     result: &str,
 ) -> Result<Reported> {
     let n = number.to_string();
-    let head: Head = gh.json(&["pr", "view", &n, "--json", "headRefOid,body"])?;
+    let fields = "headRefOid,body,title,autoMergeRequest";
+    let head: Head = gh.json(&["pr", "view", &n, "--json", fields])?;
     same_commit(&head.head_ref_oid, tested)?;
     let Some(issue) = trailer_issue(&head.body) else {
         bail!("pull request #{number} has no trailer `Issue: #N`");
@@ -2964,6 +3161,14 @@ pub fn report(
             bail!("{}", text::gate_not_passed(number, &commit, &checks, &gate));
         }
         image_pullable(gh, repo, number, &commit)?;
+        let message = squash(number, &head.title, &head.body);
+        give_squash(
+            gh,
+            number,
+            &commit,
+            head.auto_merge_request.as_ref(),
+            &message,
+        )?;
     }
     let text = comment(verdict, issue, &commit, result);
     let url = text::forge(
@@ -3000,7 +3205,8 @@ mod tests {
     use hygiene::{Issue, Rules};
 
     use super::{
-        CheckRun, Gate, Gh, Link, body, body_for, check, full_done, full_state, gate_state,
+        AutoMerge, CheckRun, Gate, Gh, Link, body, body_for, check, full_done, full_state,
+        gate_state, give_squash, squash,
     };
     use crate::text;
 
@@ -3633,5 +3839,75 @@ mod tests {
                 "{limit:?}"
             );
         }
+    }
+
+    /// A fake `gh` in `dir` that logs each call, and whose `pr view 40
+    /// --json autoMergeRequest` gives `after`.
+    fn squash_gh(dir: &std::path::Path, after: &str) -> Gh {
+        let script = format!(
+            "#!/bin/sh\n\
+             echo \"$*\" >> {log}\n\
+             case \"$*\" in *'--body-file -'*) cat >> {log} ;; esac\n\
+             case \"$*\" in *'--json autoMergeRequest') printf '%s' '{{\"autoMergeRequest\":{after}}}' ;; esac\n",
+            log = dir.join("log").display()
+        );
+        Gh::at(isolated::write_program(dir.join("gh"), script))
+    }
+
+    /// #1807, 01M6Y95BMYDXFDYG3DKE2KG2PP: the calls of each auto-merge
+    /// before the pass: off, on with the message, on with another message
+    /// that the call changes, and on with another message that stays.
+    #[test]
+    fn the_squash_message_goes_to_each_auto_merge_once() {
+        let message = squash(40, "Show the wave", "Closes #12\n\nIssue: #12\n");
+        let merge = "pr merge 40 --auto --squash --match-head-commit 1a2b3c4d \
+                     --subject Show the wave (#40) --body-file -\n\
+                     Closes #12\n\nIssue: #12\n";
+        let view = "pr view 40 --json autoMergeRequest\n";
+        let mine = r#"{"mergeMethod":"SQUASH","commitHeadline":"Show the wave (#40)","commitBody":"Closes #12\n\nIssue: #12"}"#;
+        let other = r#"{"mergeMethod":"SQUASH","commitHeadline":null,"commitBody":null}"#;
+        let on = AutoMerge {
+            merge_method: "SQUASH".into(),
+            ..AutoMerge::default()
+        };
+        let with = AutoMerge {
+            commit_headline: Some(message.subject.clone()),
+            commit_body: Some(message.body.clone()),
+            ..on.clone()
+        };
+        let cases = [
+            (None, other, merge.to_owned()),
+            (Some(&with), other, String::new()),
+            (Some(&on), mine, format!("{merge}{view}")),
+            (
+                Some(&on),
+                other,
+                format!("{merge}{view}pr merge 40 --disable-auto\n{merge}"),
+            ),
+        ];
+        for (auto, after, calls) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let gh = squash_gh(dir.path(), after);
+            give_squash(&gh, 40, "1a2b3c4d", auto, &message).unwrap();
+            let log = std::fs::read_to_string(dir.path().join("log")).unwrap_or_default();
+            assert_eq!(log, calls, "{auto:?}");
+        }
+    }
+
+    /// A call that fails names the pull request, and gives the error of
+    /// `gh`.
+    #[test]
+    fn a_squash_message_that_does_not_go_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = "#!/bin/sh\necho 'GraphQL: Head sha did not match' >&2\nexit 1\n";
+        let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+        let message = squash(40, "Show the wave", "Closes #12\n\nIssue: #12\n");
+        let error = give_squash(&gh, 40, "1a2b3c4d", None, &message).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.starts_with(&text::verify_no_squash(40)), "{error}");
+        assert!(
+            error.ends_with("GraphQL: Head sha did not match"),
+            "{error}"
+        );
     }
 }

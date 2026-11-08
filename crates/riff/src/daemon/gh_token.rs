@@ -382,9 +382,9 @@ pub fn give(spec: &mut SessionSpec, values: &mut Vec<(String, String)>, dir: &Pa
 /// token of the bot `bot`: the login of the bot as the name
 /// (01M6Y6B8VBM3TKC3YHZKSA4PFZ), and its noreply address with its user
 /// ID `bot_id` ([`crate::pr::noreply`], 01M6WZ2C8JXEA888XYMRXTS17V).
-/// GitHub links the commit to the App. The author is the author of the
-/// pull request, so the squash merge adds no `Co-authored-by:` line of
-/// its own. The trailer `Riff-Session:` of each commit names the session.
+/// GitHub links the commit to the App. The trailer `Riff-Session:` of
+/// each commit names the session. The squash message of `riff verify
+/// pass` keeps the person as a co-author ([`crate::pr::squash`]).
 ///
 /// ```
 /// use riff::daemon::gh_token::author;

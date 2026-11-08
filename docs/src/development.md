@@ -1816,18 +1816,18 @@ links the commit to the App. The trailer `Riff-Session:` of each commit
 names the session. Where the Apps are not on the repository, a session
 acts with your token, and its commits keep your git identity.
 
-The squash merge makes one commit on `main`, with the body of the pull
-request as its message. The body of a session ends with two trailers:
-`Riff-Session:` with the session ID, and `Co-authored-by:` with your
-account on GitHub. The bot is the author of the pull request and of
-each commit, so GitHub adds no `Co-authored-by:` line of its own, and
-your line stays in the last paragraph. So GitHub shows you as a
-co-author of the commit on `main`.
+The squash merge makes one commit on `main`. The body of a session ends
+with two trailers: `Riff-Session:` with the session ID, and
+`Co-authored-by:` with your account on GitHub. `riff verify pass` gives
+the squash message to the auto-merge: the title and the body of the
+pull request, with the trailers as the last paragraph. See
+[The squash message of a pass](how-it-works.md#the-squash-message-of-a-pass).
+So GitHub shows you as a co-author of the commit on `main`.
 
 ```mermaid
 flowchart LR
     B["a commit on the branch<br/>author: riff-como-technologies[bot]<br/>Riff-Session: 21c026a1-…"] --> P["the pull request of the session<br/>by riff-como-technologies[bot]"]
-    P -- "squash merge" --> M["the commit on main<br/>Riff-Session: 21c026a1-…<br/>Co-authored-by: you"]
+    P -- "riff verify pass: the squash message" --> M["the commit on main<br/>Riff-Session: 21c026a1-…<br/>Co-authored-by: you"]
 ```
 
 To find the commits of one session on its branch, search for its
@@ -2365,7 +2365,7 @@ GitHub GraphQL limit: out. riff makes no call of it until 15:00:49 UTC (in 7m). 
 When a verify ends in this time, your lead also gets this note:
 
 ```text
-verify-issue-12: riff could not report the verify of pull request #40: gh pr view 40 --json headRefOid,body: GraphQL: API rate limit already exceeded for user ID 1. riff keeps the result, and reports it after the reset.
+verify-issue-12: riff could not report the verify of pull request #40: gh pr view 40 --json headRefOid,body,title,autoMergeRequest: GraphQL: API rate limit already exceeded for user ID 1. riff keeps the result, and reports it after the reset.
 ```
 
 After the reset, the wave looks again at once, and the status line goes.
@@ -4649,12 +4649,14 @@ Milestone: Wave 3
   `Riff-Session:` and `Co-authored-by:`. See
   [Find the commits of a session](#find-the-commits-of-a-session).
 - Give the pull request the milestone of its issue. Do not end the
-  title with `(#N)`. GitHub adds the number of the pull request.
+  title with `(#N)`. The squash adds the number of the pull request.
 
-A pull request with a co-author gets a `Co-authored-by:` line for each
-one at the squash, after a blank line. `Hygiene` reads the commits of
-the pull request, and checks the message that the squash will make.
-This commit on `main` passes:
+When GitHub makes the squash message, a pull request with a co-author
+gets a `Co-authored-by:` line for each one, after a blank line.
+`riff verify pass` gives a message of its own: see
+[The squash message of a pass](how-it-works.md#the-squash-message-of-a-pass).
+`Hygiene` reads the commits of the pull request, and checks the message
+that the squash will make. This commit on `main` passes:
 
 ```text
 Pause and resume the riff (#90)

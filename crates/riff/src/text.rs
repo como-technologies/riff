@@ -213,6 +213,24 @@ pub fn verify_closes_live(number: u64, issue: u64) -> String {
     )
 }
 
+/// The line of `riff verify pass` for pull request `number` when the
+/// squash message did not go to its auto-merge
+/// (01M6Y95BMYDXFDYG3DKE2KG2PP). The error of `gh` comes after it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::verify_no_squash(40),
+///     "riff verify pass: the squash message did not go to the auto-merge of pull request #40. \
+///      Nothing is reported. Report again when the cause is fixed"
+/// );
+/// ```
+pub fn verify_no_squash(number: u64) -> String {
+    format!(
+        "riff verify pass: the squash message did not go to the auto-merge of pull request \
+         #{number}. Nothing is reported. Report again when the cause is fixed"
+    )
+}
+
 /// The fix for a session image that a host cannot pull with no login
 /// (01M5SMRRAG1WPBJMQKKTPSRHRP, 01M5SMSB3H1E9NXMBDN8ZDJ6CD).
 ///
