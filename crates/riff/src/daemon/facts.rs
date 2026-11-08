@@ -15,9 +15,11 @@
 //!   container, the starts that wait, and the state of each wave
 //!   ([`of_status`]);
 //! - from the host: the load, the free memory, the disk of the session
-//!   folders, the version of podman, and the merged pin of each wave
+//!   folders, the version of podman, the merged pin of each wave
 //!   with whether podman has it ([`look`], [`pins`],
-//!   01M5TKPG5WZ1T58FNAMZNP6CJ5);
+//!   01M5TKPG5WZ1T58FNAMZNP6CJ5), and `update.auto`: the watch of a
+//!   deploy on another host waits for this host when it is on
+//!   ([`crate::watches::Riffs`], 01M6WFNDS76NESPXHMQPGHHQSS);
 //! - the sign-ins of riff, `gh` and `claude` (01M57D3FGV57W96A7SWTEFRCGW),
 //!   and whether the token of `riff claude-token` is set
 //!   (01M58B7HA8CRCW0MJ17QP3R5QG).
@@ -184,10 +186,14 @@ pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
             gh(&main),
             claude(crate::run::now_ms()),
             riff_client::login::stored(&server),
+            crate::settings::path()
+                .and_then(|path| crate::settings::update_auto(&path))
+                .ok(),
         )
     })
     .await?;
-    let (machine, disk, podman, waves, gh, claude, stored) = host;
+    let (machine, disk, podman, waves, gh, claude, stored, auto) = host;
+    facts.auto = auto;
     facts.machine = Some(machine);
     facts.disk = disk;
     facts.podman = podman;

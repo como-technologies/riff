@@ -1658,7 +1658,21 @@ fn main() -> Result<()> {
 #[tokio::main]
 async fn cli() -> Result<()> {
     riff::platform::install();
-    let matches = help::matches(help::grouped(Cli::command(), help::GROUPS));
+    let cmd = help::grouped(Cli::command(), help::GROUPS);
+    let matches = match help::try_matches(cmd, std::env::args_os()) {
+        Ok(matches) => matches,
+        Err(e) => {
+            // A hook of riff never blocks claude (01M6WFN93ZDCSAVRTNYDX4MRJR).
+            let args: Vec<_> = std::env::args_os().collect();
+            if e.use_stderr()
+                && let Some(line) = riff::session_relay::unknown_hook(&args, hook_input)
+            {
+                eprintln!("{line}");
+                std::process::exit(0);
+            }
+            e.exit()
+        }
+    };
     let cli = Cli::from_arg_matches(&matches)?;
     // With no command: the TUI in a terminal, else the help
     // (01M6VAZ7WH3MFAYF4PAZW6EDVY).
@@ -2758,6 +2772,17 @@ async fn update_check() -> Result<i32> {
 /// the hook.
 const PROMPT_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// The stdin of a hook of `claude`: its JSON. A terminal gives no hook
+/// input, so it reads nothing there.
+fn hook_input() -> String {
+    use std::io::IsTerminal;
+    let mut input = String::new();
+    if !std::io::stdin().is_terminal() {
+        let _ = std::io::stdin().read_to_string(&mut input);
+    }
+    input
+}
+
 /// `riff relay`: the riff in a session of the riff daemon
 /// ([`riff::session_relay`]). It ends with the exit code of the command
 /// of the session.
@@ -2784,8 +2809,11 @@ async fn relay_command(
                 return Ok(());
             };
             if send {
-                let socket = riff::session_relay::socket_here()?;
-                if let Err(e) = riff::session_relay::send_denials(&socket, &queue).await {
+                let sent = async {
+                    let socket = riff::session_relay::socket_here()?;
+                    riff::session_relay::send_denials(&socket, &queue).await
+                };
+                if let Err(e) = sent.await {
                     eprintln!("riff: cannot send the refusals of auto mode: {e:#}");
                 }
                 return Ok(());

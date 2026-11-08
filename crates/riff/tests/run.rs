@@ -3596,9 +3596,17 @@ async fn prompt_hook(socket: &Path) -> Output {
 /// Runs the hook `riff relay HOOK` with the socket `socket`, and `input`
 /// on its stdin.
 async fn relay_hook(socket: &Path, hook: &str, input: &'static [u8]) -> Output {
+    relay_args(socket, &[hook], input).await
+}
+
+/// Runs `riff relay ARGS` with the socket `socket`, and `input` on its
+/// stdin. Its Claude folder is the folder of the socket.
+async fn relay_args(socket: &Path, args: &[&str], input: &'static [u8]) -> Output {
     let mut cmd = Command::new(Isolated::shared().riff_path());
-    cmd.args(["relay", hook])
+    cmd.arg("relay")
+        .args(args)
         .env("RIFF_SOCKET", socket)
+        .env("CLAUDE_CONFIG_DIR", socket.parent().unwrap())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -3676,6 +3684,59 @@ async fn the_prompt_hook_tells_the_daemon_and_prints_nothing() {
         "{}",
         text(&away.stderr)
     );
+}
+
+/// 01M6WFN93ZDCSAVRTNYDX4MRJR: a hook of riff never blocks `claude`. A
+/// hook with arguments that this riff cannot read, as a subcommand of a
+/// newer riff after a rollback, prints one line on stderr and exits with
+/// 0. With no hook input, the error of the arguments stays.
+#[tokio::test]
+async fn a_hook_that_this_riff_cannot_read_exits_with_0_and_one_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let away = dir.path().join("none.sock");
+    let stop = br#"{"hook_event_name":"Stop","stop_hook_active":false}"#;
+    for args in [&["NOSUCH"][..], &["idle", "--newer-flag"]] {
+        let out = relay_args(&away, args, stop).await;
+        let stderr = text(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {stderr}");
+        assert_eq!(text(&out.stdout), "");
+        assert_eq!(stderr.lines().count(), 1, "{stderr}");
+        assert!(
+            stderr.contains(&format!("`riff relay {}`", args.join(" "))),
+            "{stderr}"
+        );
+        assert!(stderr.contains("the Stop hook does nothing"), "{stderr}");
+    }
+
+    let no_hook = relay_args(&away, &["NOSUCH"], b"").await;
+    assert_eq!(no_hook.status.code(), Some(2), "{}", text(&no_hook.stderr));
+}
+
+/// 01M6WFN93ZDCSAVRTNYDX4MRJR: each hook subcommand exits with 0 when the
+/// daemon does not answer.
+#[tokio::test]
+async fn each_hook_exits_with_0_when_the_daemon_does_not_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let away = dir.path().join("none.sock");
+    let denied = br#"{"hook_event_name":"PermissionDenied","session_id":"s1","tool_name":"Bash","tool_input":{"command":"ls"},"reason":"no"}"#;
+    let prompt = br#"{"hook_event_name":"UserPromptSubmit","prompt":"go on"}"#;
+    let stop = br#"{"hook_event_name":"Stop","stop_hook_active":false}"#;
+    let hooks: [(&[&str], &'static [u8]); 4] = [
+        (&["denied"], denied),
+        (&["denied", "--send"], b""),
+        (&["prompt"], prompt),
+        (&["idle"], stop),
+    ];
+    for (args, input) in hooks {
+        let out = relay_args(&away, args, input).await;
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            text(&out.stderr)
+        );
+        assert_eq!(text(&out.stdout), "", "{args:?}");
+    }
 }
 
 /// 01M5TKPG5WZ1T58FNAMZNP6CJ5: `riff who --long` shows the merged pin of

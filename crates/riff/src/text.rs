@@ -6075,6 +6075,20 @@ pub const RELAY_NO_SOCKET: &str =
 pub const RELAY_NO_COMMAND: &str =
     "riff relay needs the command of the session: riff relay -- claude -p ...";
 
+/// `riff relay ARGS` runs as the hook `event` of `claude`, and this riff
+/// cannot read `args`: a newer riff wrote the hook
+/// (01M6WFN93ZDCSAVRTNYDX4MRJR).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::relay_unknown_hook("nosuch", "Stop"),
+///     "riff: this riff cannot read `riff relay nosuch`: the Stop hook does nothing"
+/// );
+/// ```
+pub fn relay_unknown_hook(args: &str, event: &str) -> String {
+    format!("riff: this riff cannot read `riff relay {args}`: the {event} hook does nothing")
+}
+
 /// A call of a riff tool that the daemon did not answer before it went
 /// away (01M4ZHSZXAY7F7E17B3CMHG562).
 pub const RELAY_CALL_LOST: &str =

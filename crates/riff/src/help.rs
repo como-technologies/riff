@@ -153,11 +153,6 @@ pub fn grouped(cmd: Command, groups: &[Group]) -> Command {
     cmd.help_template(template).max_term_width(WIDTH)
 }
 
-/// Parse the arguments of this process with `cmd`. See [`try_matches`].
-pub fn matches(cmd: Command) -> ArgMatches {
-    try_matches(cmd, std::env::args_os()).unwrap_or_else(|e| e.exit())
-}
-
 /// Show the help of `cmd` on stderr and exit with 2: `riff` with no
 /// command and no terminal (01M6VAZ7WH3MFAYF4PAZW6EDVY).
 pub fn exit_with_help(mut cmd: Command) -> ! {

@@ -3118,6 +3118,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             replaced: (self.own_replaced)(),
             auto: (self.auto)(),
             leads,
+            hosts: BTreeMap::new(),
         }
     }
 

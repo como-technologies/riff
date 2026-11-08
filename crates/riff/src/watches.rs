@@ -94,8 +94,8 @@
 //!     Runs --> Passed: the job Deploy passed
 //!     Runs --> Failed: the job Deploy failed
 //!     Waits --> Failed: a job failed
-//!     Passed --> Passed: the daemon or the lead runs an old riff, up to 30 minutes
-//!     Passed --> [*]: the daemon and the lead run the new riff: message to the lead: next: riff release check
+//!     Passed --> Passed: a daemon or the lead runs an old riff, up to 30 minutes
+//!     Passed --> [*]: each daemon and the lead run the new riff: message to the lead: next: riff release check
 //!     Failed --> [*]: message to the lead: the jobs, next: riff release retry
 //! ```
 //!
@@ -109,16 +109,27 @@
 //! repository on this host runs the riff of the daemon
 //! ([`Riffs::waits_for`]). A host with `update.auto` off does not wait for
 //! its daemon, and a host with no lead of the repository does not wait for
-//! a lead. After [`DEPLOY_SETTLE`] the message goes all the same, and says
-//! what it waited for.
+//! a lead.
+//!
+//! The message also waits for the daemon of each other host of the riff
+//! with `update.auto` on (01M6WFNDS76NESPXHMQPGHHQSS): `riff release
+//! check` reads the build of each host. Each daemon sends its build and
+//! its `update.auto` in its facts ([`riff_client::daemons::Facts`]), and
+//! the look reads them from `who` ([`Lookout::hosts`],
+//! [`Riffs::hosts_of`]). After [`DEPLOY_SETTLE`] the message goes all the
+//! same, and says what it waited for, for example the host that still runs
+//! an old riff.
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant W as the watch of the deploy
 //!     participant D as riff daemon (the host)
+//!     participant O as riff daemon (each other host)
 //!     participant L as the lead (its container)
 //!     Note over W: the job Deploy passed: the message waits
 //!     D->>D: riff update, then a new start on the release
+//!     O->>O: riff update, then a new start on the release
+//!     O->>W: its facts in who: the build of the release
 //!     L->>D: the end of a turn (the Stop hook)
 //!     D->>L: a new container on the release
 //!     W->>L: the deploy passed, your container runs the release. next: riff release check
@@ -147,6 +158,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use nix::fcntl::{Flock, FlockArg};
+use riff_client::daemons::Host;
+use riff_core::build::Semver;
 use riff_core::wire::Kind;
 use serde::{Deserialize, Serialize};
 
@@ -211,13 +224,57 @@ pub struct Riffs {
     /// an old riff ([`crate::lead::old`]): the daemon starts it again at the
     /// end of its turn.
     pub leads: BTreeMap<String, bool>,
+    /// The version of the riff daemon of each other host of the riff with
+    /// `update.auto` on, by `USER@HOST` ([`Riffs::hosts_of`],
+    /// 01M6WFNDS76NESPXHMQPGHHQSS).
+    pub hosts: BTreeMap<String, Semver>,
 }
 
 impl Riffs {
+    /// The version of the riff daemon of each host of `hosts`, the facts
+    /// of `who`, by `USER@HOST` (01M6WFNDS76NESPXHMQPGHHQSS). It skips the
+    /// host `host` of the user `user`: the daemon of the watch knows its
+    /// own riff better. It skips a host with `update.auto` off, and a build
+    /// that riff cannot read. A daemon of an older riff tells no
+    /// `update.auto`: its host counts as on.
+    ///
+    /// ```
+    /// use riff::watches::Riffs;
+    /// use riff_client::daemons::{Facts, Host};
+    ///
+    /// let host = |user: &str, host: &str, build: &str, auto| Host {
+    ///     user: user.into(),
+    ///     host: host.into(),
+    ///     age_secs: 10,
+    ///     facts: Facts { build: build.into(), auto, ..Facts::default() },
+    /// };
+    /// let hosts = [
+    ///     host("mike", "thelio", "4.12.0 7213825ab1c2 2026-11-08T10:00:00Z", Some(true)),
+    ///     host("mike", "pangolin", "4.11.0 929605821e54 2026-11-01T10:00:00Z", Some(true)),
+    ///     host("bob", "thelio", "4.11.0", None),
+    ///     host("bob", "laptop", "4.11.0", Some(false)),
+    ///     host("ann", "box", "next", Some(true)),
+    /// ];
+    /// let found = Riffs::hosts_of(&hosts, "mike", "thelio");
+    /// let found: Vec<(&str, String)> = found.iter().map(|(h, v)| (h.as_str(), v.to_string())).collect();
+    /// assert_eq!(found, [("bob@thelio", "4.11.0".into()), ("mike@pangolin", "4.11.0".into())]);
+    /// ```
+    pub fn hosts_of(hosts: &[Host], user: &str, host: &str) -> BTreeMap<String, Semver> {
+        hosts
+            .iter()
+            .filter(|h| !(h.user == user && h.host == host) && h.facts.auto != Some(false))
+            .filter_map(|h| {
+                let version = h.facts.build.split_whitespace().next()?.parse().ok()?;
+                Some((format!("{}@{}", h.user, h.host), version))
+            })
+            .collect()
+    }
+
     /// What the message of the passed deploy of `tag` in `repo` waits for,
     /// or `None` when it goes now. A host with `update.auto` off does not
     /// wait for its daemon, and a host with no lead of `repo` does not
-    /// wait for a lead.
+    /// wait for a lead. Each other host of [`Riffs::hosts`] waits for its
+    /// daemon (01M6WFNDS76NESPXHMQPGHHQSS).
     ///
     /// ```
     /// use std::collections::BTreeMap;
@@ -228,6 +285,7 @@ impl Riffs {
     ///     replaced: false,
     ///     auto: true,
     ///     leads: BTreeMap::from([("o/r".to_owned(), false)]),
+    ///     hosts: BTreeMap::new(),
     /// };
     /// assert_eq!(riffs.waits_for("o/r", "v4.11.0"), None);
     /// // A rollback to an older release waits for no daemon.
@@ -242,9 +300,24 @@ impl Riffs {
     /// assert!(why.contains("your container still runs an old riff"), "{why}");
     /// assert_eq!(old.waits_for("o/other", "v4.11.0"), None);
     ///
-    /// let replaced = Riffs { replaced: true, ..riffs };
+    /// let replaced = Riffs { replaced: true, ..riffs.clone() };
     /// let why = replaced.waits_for("o/r", "v4.11.0").unwrap();
     /// assert!(why.contains("starts again on the new riff"), "{why}");
+    ///
+    /// // Another host with `update.auto` on still runs an older riff.
+    /// let version = |v: &str| v.parse().unwrap();
+    /// let hosts = BTreeMap::from([("bob@pangolin".to_owned(), version("4.10.0"))]);
+    /// let other = Riffs { hosts, ..riffs.clone() };
+    /// let why = other.waits_for("o/r", "v4.11.0").unwrap();
+    /// assert_eq!(why, "the riff daemon of bob@pangolin still runs v4.10.0, not v4.11.0");
+    /// assert_eq!(other.waits_for("o/r", "v4.10.0"), None);
+    /// let mut two = other.clone();
+    /// two.hosts.insert("ann@box".into(), version("4.9.0"));
+    /// assert_eq!(
+    ///     two.waits_for("o/r", "v4.11.0").unwrap(),
+    ///     "the riff daemons of ann@box (v4.9.0), bob@pangolin (v4.10.0) still run an older \
+    ///      riff than v4.11.0"
+    /// );
     /// ```
     pub fn waits_for(&self, repo: &str, tag: &str) -> Option<String> {
         if self.replaced {
@@ -254,12 +327,33 @@ impl Riffs {
                     .to_owned(),
             );
         }
-        if let (true, Some(daemon), Ok(release)) = (self.auto, self.daemon, cycle::tag_version(tag))
+        let release = cycle::tag_version(tag).ok();
+        if let (true, Some(daemon), Some(release)) = (self.auto, self.daemon, release)
             && daemon < release
         {
             return Some(format!(
                 "the riff daemon of this host still runs v{daemon}, not {tag}"
             ));
+        }
+        let old: Vec<(&String, &Semver)> = self
+            .hosts
+            .iter()
+            .filter(|(_, version)| release.is_some_and(|release| **version < release))
+            .collect();
+        match old[..] {
+            [] => {}
+            [(host, version)] => {
+                return Some(format!(
+                    "the riff daemon of {host} still runs v{version}, not {tag}"
+                ));
+            }
+            _ => {
+                let hosts: Vec<String> = old.iter().map(|(h, v)| format!("{h} (v{v})")).collect();
+                return Some(format!(
+                    "the riff daemons of {} still run an older riff than {tag}",
+                    hosts.join(", ")
+                ));
+            }
         }
         if self.leads.get(repo) == Some(&true) {
             return Some(
@@ -472,6 +566,11 @@ pub trait Lookout: Send + Sync {
     /// (01M5SNV7BC5J58WRZRJ5HS4NSJ).
     fn holds<'a>(&'a self, wave: &'a Wave, tag: &'a str) -> BoxFuture<'a, Result<Vec<Hold>>>;
 
+    /// The riff of the daemon of each other host of the riff of `wave`
+    /// with `update.auto` on, from `who` as the person ([`Riffs::hosts_of`],
+    /// 01M6WFNDS76NESPXHMQPGHHQSS).
+    fn hosts<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<BTreeMap<String, Semver>>>;
+
     /// The limit of GitHub that waits for its reset now (#1557). The watches
     /// make no call then. The default has none.
     fn limit(&self) -> Option<crate::ghcalls::Wait> {
@@ -539,6 +638,16 @@ impl Lookout for Here {
         Box::pin(async move {
             let lines = crate::hold::read_as_person(&wave.server, &wave.place(None)?).await?;
             Ok(crate::hold::holds(&lines, tag))
+        })
+    }
+
+    fn hosts<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<BTreeMap<String, Semver>>> {
+        Box::pin(async move {
+            let person = crate::identity::person(&wave.place(None)?, &wave.server)?;
+            let api = riff_client::api::Api::new(&wave.server).signed_in(None)?;
+            let sessions = api.who(&person, true).await?;
+            let hosts = riff_client::daemons::hosts(&sessions);
+            Ok(Riffs::hosts_of(&hosts, person.who().user(), &wave.host))
         })
     }
 
@@ -705,7 +814,9 @@ impl Watches {
     /// gives `true` when no watch but the watch of a wave stands: that
     /// watch ends at no time, and it needs no quick look
     /// ([`Watches::pause`], #1549). `riffs` is what the daemon and its leads
-    /// run, for a deploy that passed ([`Riffs`]).
+    /// run, for a deploy that passed ([`Riffs`]). For a repository with the
+    /// watch of a deploy, the look adds the riff of the daemon of each
+    /// other host ([`Lookout::hosts`]).
     pub async fn look_all(
         &self,
         lookout: &Arc<dyn Lookout>,
@@ -733,8 +844,15 @@ impl Watches {
                     continue;
                 }
             };
+            let mut riffs = riffs.clone();
+            if watches.iter().any(|w| matches!(w.op, Op::Deploy { .. })) {
+                match lookout.hosts(&wave).await {
+                    Ok(hosts) => riffs.hosts = hosts,
+                    Err(e) => eprintln!("riff daemon: {repo}: cannot read the hosts: {e:#}"),
+                }
+            }
             let seen = {
-                let (lookout, wave, riffs) = (lookout.clone(), wave.clone(), riffs.clone());
+                let (lookout, wave) = (lookout.clone(), wave.clone());
                 tokio::task::spawn_blocking(move || {
                     read_all(&*lookout, &wave, watches, now_ms, &riffs)
                 })
@@ -1275,6 +1393,8 @@ mod tests {
         limit: Mutex<Option<(crate::ghcalls::Wait, bool)>>,
         /// What the daemon and its leads run.
         riffs: Mutex<Riffs>,
+        /// What the daemon of each other host runs, as `who` tells it.
+        hosts: Mutex<BTreeMap<String, Semver>>,
     }
 
     impl Ground {
@@ -1291,11 +1411,18 @@ mod tests {
                 fetches: Mutex::default(),
                 limit: Mutex::default(),
                 riffs: Mutex::default(),
+                hosts: Mutex::default(),
             })
         }
 
         fn riffs(&self, change: impl FnOnce(&mut Riffs)) {
             change(&mut self.riffs.lock().unwrap());
+        }
+
+        /// The daemon of the other host `host` runs `version`.
+        fn host(&self, host: &str, version: &str) {
+            let version = version.parse().unwrap();
+            self.hosts.lock().unwrap().insert(host.to_owned(), version);
         }
 
         fn forge(&self, change: impl FnOnce(&mut Fake)) {
@@ -1376,6 +1503,10 @@ mod tests {
 
         fn holds<'a>(&'a self, _: &'a Wave, _: &'a str) -> BoxFuture<'a, Result<Vec<Hold>>> {
             Box::pin(async move { Ok(self.holds.lock().unwrap().clone()) })
+        }
+
+        fn hosts<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<BTreeMap<String, Semver>>> {
+            Box::pin(async move { Ok(self.hosts.lock().unwrap().clone()) })
         }
     }
 
@@ -1897,6 +2028,77 @@ mod tests {
                  waited 30 minutes for the new riff, but your container still runs an old riff: \
                  riff starts it again on the riff of the daemon at the end of your turn. next: \
                  riff release check v3.3.0"
+            ]
+        );
+        assert_eq!(ground.leads().len(), 1);
+        assert!(kept(dir.path()).is_empty());
+    }
+
+    /// A deploy that passed, with this host on the release and its lead on
+    /// the riff of the daemon: only the other hosts make it wait.
+    fn passed_on_this_host(ground: &Ground) {
+        ground.forge(|f| {
+            f.deploy = deploy(DeployState::Passed, &[]);
+            f.tags = vec!["v3.3.0".into()];
+        });
+        ground.riffs(|r| {
+            r.daemon = Some("3.3.0".parse().unwrap());
+            r.auto = true;
+            r.leads = BTreeMap::from([(REPO.to_owned(), false)]);
+        });
+    }
+
+    /// 01M6WFNDS76NESPXHMQPGHHQSS: with two hosts, the message of a deploy
+    /// that passed waits until the daemon of the other host runs the
+    /// release too.
+    #[tokio::test]
+    async fn a_deploy_that_passed_waits_until_each_host_runs_the_release() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        passed_on_this_host(&ground);
+        ground.host("bob@pangolin", "3.2.0");
+        watch(dir.path(), deploy_op(None));
+
+        look(dir.path(), &ground, MINUTE).await;
+        look(dir.path(), &ground, 10 * MINUTE).await;
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
+        assert_eq!(kept(dir.path()), [deploy_op(None)]);
+
+        // The daemon of the other host starts again on the release.
+        ground.host("bob@pangolin", "3.3.0");
+        look(dir.path(), &ground, 11 * MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            [
+                "The deploy of v3.3.0 passed: https://github.com/o/r/actions/runs/9. Your \
+                 container runs v3.3.0, as the riff daemon of this host does. next: riff \
+                 release check v3.3.0"
+            ]
+        );
+        assert_eq!(ground.leads().len(), 1);
+        assert!(kept(dir.path()).is_empty());
+    }
+
+    /// 01M6WFNDS76NESPXHMQPGHHQSS: after 30 minutes the message goes all
+    /// the same, and names the host that still runs the old riff.
+    #[tokio::test]
+    async fn a_deploy_that_passed_names_after_30_minutes_the_host_on_the_old_riff() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        passed_on_this_host(&ground);
+        ground.host("bob@pangolin", "3.2.0");
+        watch(dir.path(), deploy_op(None));
+        look(dir.path(), &ground, MINUTE).await;
+        look(dir.path(), &ground, 30 * MINUTE).await;
+        assert!(ground.told().is_empty() && ground.leads().is_empty());
+
+        look(dir.path(), &ground, 31 * MINUTE).await;
+        assert_eq!(
+            ground.told(),
+            [
+                "The deploy of v3.3.0 passed: https://github.com/o/r/actions/runs/9. riff \
+                 waited 30 minutes for the new riff, but the riff daemon of bob@pangolin still \
+                 runs v3.2.0, not v3.3.0. next: riff release check v3.3.0"
             ]
         );
         assert_eq!(ground.leads().len(), 1);
