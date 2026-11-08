@@ -30,11 +30,16 @@
 //! and the container sessions of the daemon of its machine. It draws each
 //! entry.
 //!
-//! The tree of `riff top` has four levels: person, host, repository,
-//! session (01M3NT4M5D36KTZ5XZMDP6QFQT, 01M42KHN33M4K13GKTX2WM6CMM).
-//! [`By::Repo`] puts the repository first. [`Show`] picks a part of the
-//! riff (01M42KHNCBMBCT3TFBYWE339H5). [`Sessions::tree`] makes the rows,
-//! and [`Sessions::people`] the person of each row.
+//! The model gives two shapes of the tree. The tree of `riff top` has
+//! four levels: person, host, repository, session
+//! (01M3NT4M5D36KTZ5XZMDP6QFQT, 01M42KHN33M4K13GKTX2WM6CMM,
+//! [`By::top_levels`]). [`By::Repo`] puts the repository first. [`Show`]
+//! picks a part of the riff (01M42KHNCBMBCT3TFBYWE339H5).
+//! [`Sessions::tree`] makes the rows, and [`Sessions::people`] the
+//! person of each row. The tree of the Sessions tab has three levels:
+//! repository, person, session, with the host as a column of each
+//! session row ([`By::tab_levels`]). [`By::Person`] puts the person
+//! first there.
 //!
 //! ```
 //! use riff_client::sessions::{Live, Phase, Sessions};
@@ -295,9 +300,10 @@ impl Sessions {
             .filter(|s| show.shows(s))
             .filter(|s| s.uri.who().session().is_some())
             .collect();
+        let levels = show.by.top_levels();
         match show.by {
             By::Person => {
-                let mut tops = groups(&agents, &[Level::Person, Level::Host, Level::Repo]);
+                let mut tops = groups(&agents, &levels);
                 for user in people.keys().filter(|u| show.shows_person(u)) {
                     if !tops.iter().any(|g| &g.key == user) {
                         tops.push(Group {
@@ -311,7 +317,7 @@ impl Sessions {
                 tops.sort_by(|a, b| a.key.cmp(&b.key));
                 tops
             }
-            By::Repo => groups(&agents, &[Level::Repo, Level::Person, Level::Host]),
+            By::Repo => groups(&agents, &levels),
         }
     }
 }
@@ -351,15 +357,52 @@ pub fn out_of_date(s: &SessionInfo, server: Option<&Build>) -> bool {
     s.binary.as_ref().is_some_and(|b| b.out_of_date(server))
 }
 
-/// The top level of the tree of `riff top` (01M42KHNCBMBCT3TFBYWE339H5).
+/// The top level of a tree: of `riff top` (01M42KHNCBMBCT3TFBYWE339H5)
+/// and of the Sessions tab of the TUI. Each has its own shape of the
+/// levels: [`By::top_levels`] and [`By::tab_levels`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum By {
-    /// Person, host, repository, session.
+    /// The person first.
     #[default]
     Person,
-    /// Repository, person, host, session: a look across people.
+    /// The repository first: a look across people.
     Repo,
+}
+
+impl By {
+    /// The levels of the tree of `riff top` above the sessions: person,
+    /// host, repository, or repository, person, host.
+    ///
+    /// ```
+    /// use riff_client::sessions::{By, Level};
+    ///
+    /// assert_eq!(By::Person.top_levels(), [Level::Person, Level::Host, Level::Repo]);
+    /// assert_eq!(By::Repo.top_levels(), [Level::Repo, Level::Person, Level::Host]);
+    /// ```
+    pub fn top_levels(self) -> [Level; 3] {
+        match self {
+            By::Person => [Level::Person, Level::Host, Level::Repo],
+            By::Repo => [Level::Repo, Level::Person, Level::Host],
+        }
+    }
+
+    /// The levels of the tree of the Sessions tab above the sessions:
+    /// repository, person, or person, repository. The host is a column
+    /// of each session row, and no level.
+    ///
+    /// ```
+    /// use riff_client::sessions::{By, Level};
+    ///
+    /// assert_eq!(By::Repo.tab_levels(), [Level::Repo, Level::Person]);
+    /// assert_eq!(By::Person.tab_levels(), [Level::Person, Level::Repo]);
+    /// ```
+    pub fn tab_levels(self) -> [Level; 2] {
+        match self {
+            By::Person => [Level::Person, Level::Repo],
+            By::Repo => [Level::Repo, Level::Person],
+        }
+    }
 }
 
 /// The part of the riff that a view shows: `--user`, `--host`, `--repo`

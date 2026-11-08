@@ -7389,13 +7389,12 @@ that builds it merges.
   01M6VG1PCXHNVJP7TSP0J5G5K9 in part.
 - **01M6VGGW73KKG6Q0TZNBGYN7E0** The Sessions tab of the TUI shows the
   sessions of riff-server and the container sessions of the riff daemon
-  of this machine in one tree: person, host, repository, session. A
-  container session that is on riff-server too is one row. `b` puts the
-  repository at the top. A group row with one group under it takes that
-  group after `›`, and ends with the counts of its sessions. A session
-  row has its mark, its short ID, its item, its tag, its state with its
-  age, and its last words: the reason of a block, what it waits for, or
-  its last step.
+  of this machine in one tree. A container session that is on
+  riff-server too is one row. A group row with one group under it takes
+  that group after `›`, and ends with the counts of its sessions. A
+  session row has its mark, its short ID, its item, its tag, its state
+  with its age, and its last words: the reason of a block, what it waits
+  for, or its last step.
 - **01M6VGGWAAKQ3HPXZ7JX5FE7B0** In the Sessions tab, the sessions of a
   group come by their worst mark, then by their ID. The groups come by
   their worst row, with a session that runs an old riff (`↑`) after
@@ -7418,10 +7417,8 @@ that builds it merges.
   the Sessions tab shows the detail of the selected row under a line
   with its name. A session shows the detail of `riff top`, its claims,
   its pull request and its riff, and on this machine its container, its
-  phase and its last step. A host of this machine shows the line of its
-  riff daemon, the starts that wait for room and the waves; another host
-  shows the facts that its daemon sends. In a smaller terminal, Enter on
-  a session shows its detail on the whole screen, and Esc goes back.
+  phase and its last step. In a smaller terminal, Enter on a session
+  shows its detail on the whole screen, and Esc goes back.
 - **01M6VGH4V01H3CC6GE45FHGF5J** Under 80 columns, the Sessions tab has
   one column of rows: a group row has its name and the count of its
   sessions, and a session row has its mark, the first 4 characters of
@@ -7545,6 +7542,35 @@ that builds it merges.
   sessions that still run. These lines are no fault: the order of the
   rows and the count of the faults stay. When the hosts do not fit, the
   rows scroll by lines, and the selected row shows with its lines.
+- **01M6WKCC98EGKB3MSYKN3X2JMH** The tree of the Sessions tab of the TUI
+  has the levels repository, person and session. `b` puts the person at
+  the top: person, repository, session. The host is no level of the
+  tree: a session row has its host after its tag, in a column of up to
+  12 columns, and the detail of a session names its host. The Machines
+  tab shows the facts of a host. `riff top` keeps its tree and its flags
+  `--user`, `--host`, `--repo` and `--by`: the sessions model gives both
+  shapes. Supersedes 01M6VGGW73KKG6Q0TZNBGYN7E0 and
+  01M6VGH4QSE8BP51R3TZ9SJDVY in part.
+- **01M6WKCKNSCT73R2DSR01CGN5J** From 50 to 79 columns, a session row of
+  the Sessions tab has its host after its item, in a column of up to 8
+  columns. A longer host ends in `…`. Under 50 columns, a session row
+  has no host.
+- **01M6WKCKRN073FHR719KJNG3CQ** A folded group row of the Sessions tab
+  names what it holds after its label: the groups of the next level,
+  then the hosts of its sessions, each in the order of its worst row,
+  for example `▶ strata · brett, mike · kadomony, pangolin`. With no
+  room for the names and each count, the row has the names and the count
+  of its sessions. With no room for the names, it has no names.
+- **01M6WKCKVJTJZSXVTZDZ9FZPFY** While a filter is on, the summary line
+  of the Sessions tab starts with it in the normal style, then the count
+  of the sessions that show of all the sessions, for example `filter
+  host:pangolin · 1 of 6 sessions: 1 busy · Esc clears`. The narrow
+  layout has only `filter host:pangolin · 1 of 6 sessions`. The key
+  line has `Esc clear the filter`. Esc clears the filter, and the note
+  line with it.
+- **01M6WKCKYBMXQHB25V9ZW49DBK** Enter on a host in the Machines tab
+  opens the Sessions tab with the filter `host:HOST`, and the note line
+  says `The sessions of HOST: Esc shows all.` one time for each Enter.
 
 ## The notes of the lead
 

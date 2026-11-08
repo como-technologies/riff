@@ -947,7 +947,8 @@ pub fn filter_typed(state: &mut State, key: Key) -> Option<Action> {
 /// Takes the key `key` of the Machines tab (01M6VFD0M3RHT488D0RQ84RVMC,
 /// 01M6VFD0PPXDNH3NKD3YE4W9SB, 01M6VJQPJXKHKJ8WT1CAQMN1YR). `/` types
 /// the filter, and `Esc` clears it. With no host that shows, no other
-/// key acts.
+/// key acts. Enter opens the Sessions tab with the filter of the host,
+/// and the note line says so (01M6WKCKYBMXQHB25V9ZW49DBK).
 pub fn on_key(state: &mut State, key: Key) -> Option<Action> {
     match key {
         Key::Char('/') => {
@@ -978,7 +979,7 @@ pub fn on_key(state: &mut State, key: Key) -> Option<Action> {
             let host = safe(&rows[at].name.host);
             state.sessions.set_filter(format!("host:{host}"));
             state.open(Tab::Sessions);
-            state.note(format!("The filter of the Sessions tab: host:{host}."));
+            state.note(text::sessions_of_host(&host));
             return None;
         }
         Key::Char('l') => {
@@ -2672,11 +2673,45 @@ mod tests {
         assert_eq!(state.choices().filter(), "host:pangolin");
         assert_eq!(
             state.shown_note(),
-            Some("The filter of the Sessions tab: host:pangolin.")
+            Some(text::sessions_of_host("pangolin").as_str())
         );
         // The selection stays after the jump.
         state.on_key(Key::Open(Tab::Machines));
         assert_eq!(host(&state), "pangolin");
+    }
+
+    /// 01M6WKCKYBMXQHB25V9ZW49DBK, 01M6WKCKVJTJZSXVTZDZ9FZPFY: Enter on a
+    /// host opens the Sessions tab with the filter. The summary line
+    /// starts with the filter, and the note line says so once: Esc
+    /// clears the filter and the note.
+    #[test]
+    fn enter_on_a_host_gives_the_note_line_once() {
+        let mut state = mock_up();
+        state.on_key(Key::Down);
+        state.on_key(Key::Enter);
+        let note = " The sessions of pangolin: Esc shows all.";
+        let rows = drawn(&state, 80, 24);
+        assert!(rows[2].starts_with(" filter host:pangolin · "), "{rows:#?}");
+        assert_eq!(rows[22], note);
+        assert_eq!(
+            rows.iter().filter(|r| r.contains("Esc shows all")).count(),
+            1
+        );
+        assert!(rows[23].contains("Esc clear the filter"), "{rows:#?}");
+        // A move keeps the note: nothing changed.
+        state.on_key(Key::Down);
+        assert_eq!(drawn(&state, 80, 24)[22], note);
+        // Esc clears the filter, and the note with it.
+        state.on_key(Key::Esc);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(state.choices().filter(), "");
+        assert_eq!(state.shown_note(), None);
+        assert_eq!(rows[22], "");
+        assert!(!rows[2].starts_with(" filter"), "{rows:#?}");
+        // Each jump says it again.
+        state.on_key(Key::Open(Tab::Machines));
+        state.on_key(Key::Enter);
+        assert_eq!(drawn(&state, 80, 24)[22], note);
     }
 
     /// 01M6VFD0M3RHT488D0RQ84RVMC: when the hosts do not fit, the rows

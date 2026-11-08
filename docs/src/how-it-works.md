@@ -1439,9 +1439,9 @@ riff who --all
 
 ## See what each session does
 
-The Sessions tab of the TUI shows each person and each session: the
-sessions of riff-server, and the containers of the riff daemon of this
-machine. It is the first tab of `riff`:
+The Sessions tab of the TUI shows each repository, each person and
+each session: the sessions of riff-server, and the containers of the
+riff daemon of this machine. It is the first tab of `riff`:
 
 ```sh
 riff
@@ -1450,16 +1450,13 @@ riff
 ```text
 [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
  riff running · owner mike · build 10df8a4 · link ok 2s
- 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person
- ▼ mike  owner  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle
-   ▼ thelio › riff            4 sessions · 1 blocked · 1 done · 1 busy · 1 idle
- >   ! 3a3f8d5d  #994   worker     blocked 32m  which of two designs?
-     ✓ 8f1c2d3e  #1599  container  done         waits for a verify of PR #1614
-     ● 5b1e2a90  #1590  container  busy 12m     Bash: just check
-     ○ 4e54d4e5  ↑      lead       idle 2h      monitoring work
-   ▶ pangolin › strata                                       1 session · 1 busy
- ▶ brett  online  › kadomony › strata                        1 session · 1 busy
- ▶ ann  admin  offline  seen 1h ago
+ 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo
+ ▼ riff › mike  owner  online                                        4 sessions
+ > ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?
+   ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of PR
+   ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check
+   ○ 4e54d4e5  ↑      lead       thelio   idle 2h      monitoring work
+ ▶ strata · brett, mike · kadomony, pangolin                2 sessions · 2 busy
 ──3a3f8d5d · #994 Design: the TUI of riff · thelio ─────────────────────────────
  which of two designs? (32m ago)
  the lead gave no answer
@@ -1470,22 +1467,30 @@ riff
 
 - The third row counts the sessions by their mark, then the sessions
   that run an old riff (`↑`).
-- The tree has the levels person, host, repository and session, as in
-  `riff top` below. A row with one row under it takes that row after a
-  `›`. A group row ends with the counts of its sessions.
+- The tree has the levels repository, person and session. A row with
+  one row under it takes that row after a `›`. A group row ends with
+  the counts of its sessions. The tree of `riff top` below has the
+  host as a level too.
 - A session row has its mark, its short session ID, its item, its tag,
-  its state with its age, and its last words: the reason of a block,
-  what it waits for, or its last step.
+  its host (`HOST`), its state with its age, and its last words: the
+  reason of a block, what it waits for, or its last step.
 - The worst row comes first. A group with a `!`, a `✓` or a `↑` row is
-  open. Each other group is one line with its counts: press `→` to
-  open it.
+  open. Each other group is one line: it names what it holds, then its
+  counts. `▶ strata · brett, mike · kadomony, pangolin` holds the
+  sessions of brett and mike on the hosts kadomony and pangolin. Press
+  `→` to open it.
 - Under the tree comes the detail of the selected row: the detail of
   its state (see [The state of a session](#the-state-of-a-session)),
-  its claims, its pull request and its riff. A session in a container
-  of this machine also shows the name of its container, its phase and
-  its last step. The detail needs 80 columns and 24 rows. In a smaller
-  terminal, Enter shows it on the whole screen, and Esc goes back. For
-  a worker in a container, Enter there shows its events.
+  its claims, its pull request and its riff. Its line names its host.
+  A session in a container of this machine also shows the name of its
+  container, its phase and its last step. The detail needs 80 columns
+  and 24 rows. In a smaller terminal, Enter shows it on the whole
+  screen, and Esc goes back. For a worker in a container, Enter there
+  shows its events. The facts of a host are in the Machines tab: see
+  [See the facts of each host](#see-the-facts-of-each-host).
+- Under 80 columns, the rows have fewer words. From 50 columns, the
+  column `HOST` shows up to 8 characters of the host. Under 50
+  columns, a session row has no host: its detail names it.
 - When a session turns `!` or `✓` while you look at another tab, the
   strip shows `Sessions•`.
 - With no riff daemon on this machine, the tab shows the sessions of
@@ -1516,8 +1521,9 @@ riff
 | `x` | End the selected session of the daemon, and free its item, as `riff daemon end` does. |
 | `p`, `P` | Pause or resume the repository of the row, or the whole riff. |
 | `e` | Open each group, or fold the groups that need no look. |
-| `b` | Put the repository at the top of the tree, or the person again. |
+| `b` | Put the person at the top of the tree, or the repository again. See [Put the people at the top of the tab](#put-the-people-at-the-top-of-the-tab). |
 | `/` | Filter the rows. See [Filter the sessions](#filter-the-sessions). |
+| `Esc` | Leave the detail on the whole screen, or clear the filter. |
 
 `t`, `x`, `p` and `P` ask first in the row before the last, for
 example `Pause como-technologies/riff? y/N`. Press `y` to do it. `q`
@@ -1533,8 +1539,32 @@ flowchart LR
     S["riff-server: riff, who<br/>each 3 s"] --> M["the sessions model"]
     D["the riff daemon of this machine:<br/>status, each second"] --> M
     G["gh: the titles of the issues<br/>each minute"] --> T
-    M --> T["the tree: person › host › repository › session"]
+    M --> T["the tree: repository › person › session,<br/>the host in each session row"]
     T --> P["the detail of the selected row"]
+```
+
+### Put the people at the top of the tab
+
+In the Sessions tab, press `b`. The tree turns to person, repository
+and session, and each session row keeps its host. A person with no
+session shows too. Press `b` again to put the repositories at the top.
+Start the TUI, then press `b`:
+
+```sh
+riff
+```
+
+```text
+ 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person
+ ▼ mike  owner  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle
+   ▼ riff                     4 sessions · 1 blocked · 1 done · 1 busy · 1 idle
+ >   ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?
+     ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of P
+     ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check
+     ○ 4e54d4e5  ↑      lead       thelio   idle 2h      monitoring work
+   ▶ strata · pangolin                                       1 session · 1 busy
+ ▶ brett  online  › strata · kadomony                        1 session · 1 busy
+ ▶ ann  admin  offline  seen 1h ago
 ```
 
 ### Filter the sessions
@@ -1543,15 +1573,33 @@ In the Sessions tab, press `/` and type a word. The tab shows only the
 sessions that match it, with each group open. A word matches a part of
 the user, the host, the repository, the item, the state, the tag, the
 session ID or the name of the container. Give a key to match only that
-fact, for example `host:thelio` or `state:blocked`. Press Enter to keep
-the filter, and Esc to clear it. For example, type this after `/`:
+fact, for example `host:thelio`, `user:brett`, `repo:riff` or
+`state:blocked`. Press Enter to keep the filter. For example, type
+this after `/`:
 
 ```text
 host:thelio blocked
 ```
 
-The third row shows the filter on its right, for example
-`/host:thelio blocked`.
+While a filter is on, the third row starts with it, and the last row
+has `Esc clear the filter`. `1 of 6 sessions` counts the sessions that
+match, of all the sessions:
+
+```text
+ filter host:pangolin · 1 of 6 sessions: 1 busy · Esc clears            by repo
+ ▼ strata › mike  owner  online                              1 session · 1 busy
+ > ● 9c0d1e2f  #88    worker     pangolin busy 10m
+ ↑↓ select  Enter open  l lead  t take over  Esc clear the filter  ? help
+```
+
+Press Esc to clear the filter and see each session again.
+
+Enter on a host in the Machines tab sets the filter of that host, for
+example `host:pangolin` (see
+[See the facts of each host](#see-the-facts-of-each-host)). Then the
+row before the last says so one time, for example
+`The sessions of pangolin: Esc shows all.` Esc clears the filter and
+that row.
 
 ### See each session in a live table
 
