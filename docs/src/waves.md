@@ -150,8 +150,8 @@ Run this in a clone of the repository. It shows each open wave in
 number order, then the backlog, with the number of the open and the
 closed items. The current wave has the mark `current` and the hosts
 of its loop. The open items of each wave follow in the groups `free`,
-`held`, `claimed`, `verify`, `verify waits for #N`, `stuck`, `tracker`
-and `question` (see
+`held`, `claimed`, `verify`, `verify waits for #N`,
+`rebase waits for #N`, `stuck`, `tracker` and `question` (see
 [See which wave runs, and where](development.md#see-which-wave-runs-and-where)):
 
 ```sh
@@ -306,6 +306,18 @@ for each of its open items:
   not passed.
 - `NEXT WAVES` counts the open items of the later waves and of the
   Backlog of the repository of the selected row.
+
+A verify or a rebase that waits for its turn is a `verify` row. The row
+names the pull request before it (see
+[The order of the verifies of a wave](how-it-works.md#the-order-of-the-verifies-of-a-wave)).
+Here the verify of #1599 and the rebase of #1601 wait for the merge of
+#1613:
+
+```text
+   ◐   verify  #1599  The wave takes an issue         PR #1614 after #1613 5m
+   ◐   verify  #1600  The book tells how to detach    PR #1613 merge       9m
+   ◐   verify  #1601  Fix the help                    PR #1604 after #1613 2h
+```
 
 | Key | Does |
 |---|---|

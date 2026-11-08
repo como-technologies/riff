@@ -1,39 +1,48 @@
 //! The order of the verifies of a wave (#1710, 01M6WCGNCC3HWS47158WTWNQ8B):
 //! the pull requests of the items that change the same files get their
-//! verifies one at a time.
+//! verifies one at a time, and their rebases too (#1801,
+//! 01M6YPYTGR2JEBDHGX4K1RDCAW, 01M6YPYTKQKSJRS0A8WZQRCCFD).
 //!
 //! # Design
 //!
 //! A merge can give each other open pull request that changes the same
 //! files a conflict. A conflict costs a rebase session, a new full check
 //! and a new verify, and a verify that passed before the conflict is
-//! lost. So the wave ([`crate::wave::pick`]) starts the verify of one of
-//! them, and the others wait until it merges or fails:
+//! lost. So the wave ([`crate::wave::pick`]) starts the verify or the
+//! rebase of one of them, and the others wait until it merges or fails:
 //!
-//! - A pull request goes first while its verify runs, and while its
-//!   verify passed and nothing stops its merge ([`Lane::passed`]). A pull
-//!   request that cannot merge by itself ([`crate::rollout::Stuck`]) does
-//!   not go first: for example a conflict gets its rebase, and the others
-//!   go on.
-//! - Among the pull requests that wait for a verify, the one whose
-//!   verify request came first goes first ([`Lane::asked`],
-//!   [`crate::wave::requests`]). A pull request with no request in the
-//!   thread comes after those with one. A tie goes by the number of the
-//!   pull request.
-//! - A verify waits for the first pull request before it that shares a
-//!   file with it ([`waits`]). A verify that shares no file starts beside
-//!   the others.
+//! - A pull request goes first while its verify runs, while a session
+//!   holds its item, for example to rebase it, and while its verify
+//!   passed and nothing stops its merge ([`Lane::passed`]). A pull request
+//!   that cannot merge by itself for another reason
+//!   ([`crate::rollout::Stuck`]) does not go first, for example with a
+//!   failed check or with auto-merge off.
+//! - Then come the pull requests that wait for a verify or for a rebase
+//!   ([`Lane::conflict`]). The one whose item had its first verify request
+//!   first goes first ([`Lane::asked`], [`crate::wave::requests`]): a new
+//!   head after a rebase or a fix keeps the place. A pull request with no
+//!   request in the thread comes after those with one. A tie goes by the
+//!   number of the pull request.
+//! - A verify or a rebase waits for the first pull request before it that
+//!   shares a file with it ([`waits`]). So only the next pull request of
+//!   the order gets a rebase, and the others keep their conflict until
+//!   their turn. A pull request that shares no file starts beside the
+//!   others.
+//! - A pull request whose state GitHub does not know yet keeps its place
+//!   ([`Lane::unknown`]): for a short time after the push of its rebase,
+//!   GitHub does not say that it has no conflict now.
 //! - The files come from GitHub, one REST read for each head commit
 //!   ([`files`]). The wave reads them only when two pull requests or more
-//!   are on their way to the merge, and one of them waits for a verify. A
-//!   read that fails gives no file: that verify waits for nobody.
+//!   are on their way to the merge, and one of them waits for a verify or
+//!   for a rebase. A read that fails gives no file: that pull request
+//!   waits for nobody.
 //!
 //! The daemon tells the waits in the facts of its wave
 //! ([`riff_client::daemons::Wave::waits`]), and `riff wave list` shows
-//! each one as `verify waits for #N`
+//! each one as `verify waits for #N` or `rebase waits for #N`
 //! ([`riff_client::waves::Board::groups`]). The look of the daemon sends
-//! no message "waits for a verify" for such a pull request
-//! ([`crate::look::PullWatch::news`]).
+//! no message "waits for a verify" for such a pull request, and no
+//! message of its conflict ([`crate::look::PullWatch::news`]).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -45,6 +54,18 @@
 //!     E -- "merges" --> R["#42: a rebase when it has a conflict,<br/>then its verify"]
 //!     E -- "its verify fails, or it cannot merge" --> V["the verify of #42 starts"]
 //! ```
+//!
+//! Three pull requests that change one file, in the order #41, #42, #43:
+//!
+//! ```mermaid
+//! flowchart TD
+//!     M["#41 merges: #42 and #43 have a conflict"] --> R["the rebase of #42 starts"]
+//!     M --> X["#43: rebase waits for #42"]
+//!     R --> V["the verify of the new head of #42"]
+//!     V --> N["#42 merges"]
+//!     X --> N
+//!     N --> T["the rebase of #43 starts"]
+//! ```
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -53,7 +74,7 @@ use anyhow::Result;
 use crate::pr::Gh;
 
 /// An open pull request of an item on its way to the merge: its verify
-/// waits, runs or passed.
+/// waits, runs or passed, or it waits for a rebase.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lane {
     /// The issue of the item.
@@ -65,8 +86,17 @@ pub struct Lane {
     /// True when its verify passed and nothing stops its merge: it waits
     /// for the merge.
     pub passed: bool,
-    /// The place of the first verify request of its head commit among the
-    /// messages of the thread, oldest first. `None`: the thread has none.
+    /// True when it has a conflict with the default branch
+    /// ([`crate::rollout::Pull::conflict`]): its rebase comes at its turn
+    /// (#1801).
+    pub conflict: bool,
+    /// True when GitHub does not know yet if it has a conflict
+    /// ([`crate::rollout::Pull::unknown`]): it keeps its place, and its
+    /// verify or its rebase waits for the next look.
+    pub unknown: bool,
+    /// The place of the first verify request of its item among the
+    /// messages of the thread, oldest first. A new head keeps it. `None`:
+    /// the thread has none.
     pub asked: Option<usize>,
 }
 
@@ -90,11 +120,12 @@ impl Lane {
     }
 }
 
-/// The verifies that wait for another pull request: for each issue of
-/// `asked`, the pull requests whose verify the wave can start, the pull
-/// request before it that shares a file with it. The pull requests of
-/// `first` go first: their verify runs, or passed. Then `asked` go in the
-/// order of their verify requests ([`Lane::asked`]). A verify that waits
+/// The verifies and the rebases that wait for another pull request: for
+/// each issue of `asked`, the pull requests whose verify or rebase the
+/// wave can start, the pull request before it that shares a file with it.
+/// The pull requests of `first` go first: their verify runs or passed, or
+/// a session rebases them. Then `asked` go in the order of the verify
+/// requests of their items ([`Lane::asked`]). A pull request that waits
 /// for nobody goes before the next ones.
 ///
 /// ```
@@ -105,8 +136,8 @@ impl Lane {
 ///     issue,
 ///     pull: 40 + issue,
 ///     files: files.iter().map(|f| f.to_string()).collect(),
-///     passed: false,
 ///     asked,
+///     ..Lane::default()
 /// };
 /// // The verify request of 2 came first: 1 waits for its pull request #42.
 /// let one = lane(1, &["tui.rs"], Some(5));
@@ -119,6 +150,9 @@ impl Lane {
 /// // A request with no place in the thread comes last.
 /// let five = lane(5, &["view.rs"], None);
 /// assert_eq!(waits([], [&five, &two]), BTreeMap::from([(5, 42)]));
+/// // A rebase takes its place as a verify does (#1801): 2 waits for the rebase of 6.
+/// let six = Lane { conflict: true, ..lane(6, &["tui.rs"], Some(1)) };
+/// assert_eq!(waits([], [&two, &six]), BTreeMap::from([(2, 46)]));
 /// ```
 pub fn waits<'a>(
     first: impl IntoIterator<Item = &'a Lane>,
@@ -178,6 +212,7 @@ mod tests {
             files: files.iter().map(|f| (*f).to_owned()).collect(),
             passed,
             asked,
+            ..Lane::default()
         }
     }
 
@@ -228,5 +263,24 @@ mod tests {
         );
         // With no 1, 2 starts and 3 waits for it.
         assert_eq!(waits([], [&second, &third]), BTreeMap::from([(3, 42)]));
+    }
+
+    /// #1801: the merge of 1 gave 2 and 3 a conflict. Only the rebase of 2
+    /// starts. While a session rebases 2, and after its push, 3 waits.
+    #[test]
+    fn only_the_next_rebase_of_the_order_starts() {
+        let conflict = |issue, asked| Lane {
+            conflict: true,
+            ..lane(issue, &["tui.rs"], false, Some(asked))
+        };
+        let (two, three) = (conflict(2, 2), conflict(3, 3));
+        assert_eq!(waits([], [&two, &three]), BTreeMap::from([(3, 42)]));
+        // A session rebases 2: it goes first.
+        assert_eq!(waits([&two], [&three]), BTreeMap::from([(3, 42)]));
+        // The new head of 2 keeps the place of its item, and waits for a verify.
+        let pushed = lane(2, &["tui.rs"], false, Some(2));
+        assert_eq!(waits([], [&three, &pushed]), BTreeMap::from([(3, 42)]));
+        // 2 merged: the rebase of 3 starts.
+        assert!(waits([], [&three]).is_empty());
     }
 }

@@ -334,13 +334,11 @@
 - **01M6WCGNCC3HWS47158WTWNQ8B** The wave starts one verify at a time
   among the open pull requests that change the same files. A pull
   request goes first while its verify runs, and while its verify passed
-  and nothing stops its merge. Then the verifies go in the order of
-  their verify requests in the repository thread. A verify that shares a
-  file with a pull request before it waits until that pull request
-  merges or its verify fails. A verify that shares no file starts beside
-  the others. The wave reads the files of a pull request with one REST
-  call for each head commit, and only while two pull requests or more
-  are on their way to the merge and one of them waits for a verify.
+  and nothing stops its merge. A verify that shares a file with a pull
+  request before it waits until that pull request merges or its verify
+  fails. A verify that shares no file starts beside the others. The wave
+  reads the files of a pull request with one REST call for each head
+  commit.
 - **01M6WCGNGNQXG443D5EMC8JRAC** riff wave list shows each verify that
   waits for another pull request in the group verify waits for #N, where
   N is the number of that pull request. The riff daemon of the wave
@@ -365,6 +363,30 @@
   repository thread on the stream GET /v1/plan/watch. The riff daemon of
   each host follows the stream of each wave that it runs, and the wave
   looks at once, also while it waits 5 minutes.
+- **01M6YPYTGR2JEBDHGX4K1RDCAW** The rebases go in the order of the
+  verifies (01M6WCGNCC3HWS47158WTWNQ8B). A pull request with a conflict
+  takes its place in the order. It gets its rebase only when no pull
+  request before it shares a file with it, and the others keep their
+  conflict until their turn. A pull request goes first also while a
+  session holds its item, for example to rebase it. A pull request that
+  GitHub reads as UNKNOWN keeps its place. The wave reads the files only
+  while two pull requests or more are on their way to the merge and one
+  of them waits for a verify or for a rebase. Supersedes
+  01M6WCGNCC3HWS47158WTWNQ8B in part.
+- **01M6YPYTKQKSJRS0A8WZQRCCFD** After the pull requests that go first,
+  the verifies and the rebases go in the order of the first verify
+  request of each item in the repository thread. A new head after a
+  rebase or a fix keeps the place of its item. Supersedes
+  01M6WCGNCC3HWS47158WTWNQ8B in part.
+- **01M6YPYTPG8RJY7PRERR2ZM10H** riff wave list shows each pull request
+  whose rebase waits for its turn in the group rebase waits for #N,
+  where N is the number of the pull request before it. Such an item is
+  not in the group stuck. The riff daemon of the wave sends these waits
+  in its facts, with the waits of the verifies.
+- **01M6YPYTS72CG6J033WC2RPENP** The look of the riff daemon sends no
+  message of a conflict (01M49Q30XMVRFX42YTM1PHX0RZ) while the rebase of
+  the pull request waits for its turn. The message comes when the turn
+  comes.
 
 ## Waves on GitHub
 
@@ -8129,6 +8151,11 @@ that builds it merges.
   and the focus stays in the prompt. With no list, `Tab` in the prompt
   opens the next tab, and `Esc` moves the focus to the log. Supersedes
   01M6VG1PA4PM47777ZT4PNGETF in part: `Tab` and `Esc` in the prompt.
+- **01M6YPYTW6CVCDBZ9631CFXQBJ** The Waves tab shows an item whose
+  verify or rebase waits for another pull request as a verify row. Its
+  column of the pull request is PR #P after #N, where N is the number of
+  the pull request before it. The waits come from the facts of the riff
+  daemons.
 
 ## The notes of the lead
 

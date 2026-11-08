@@ -109,9 +109,10 @@ pub struct Issues {
     /// The issues with the label [`QUESTION`].
     #[serde(default)]
     pub questions: BTreeSet<u64>,
-    /// The issues whose verify waits for the merge of another pull request
-    /// with a file in common, with the number of that pull request
-    /// (#1710). The daemon of the wave tells them in its facts
+    /// The issues whose verify or rebase waits for another pull request
+    /// with a file in common, with the number of that pull request (#1710,
+    /// #1801). An issue in `stuck` with a conflict waits for its rebase.
+    /// The daemon of the wave tells them in its facts
     /// ([`crate::daemons::Wave::waits`]).
     #[serde(default)]
     pub waits: BTreeMap<u64, u64>,
@@ -207,9 +208,9 @@ impl Issues {
         self
     }
 
-    /// These issues with `waits`, the issues whose verify waits for the
-    /// merge of another pull request, each with the number of that pull
-    /// request (#1710).
+    /// These issues with `waits`, the issues whose verify or rebase waits
+    /// for another pull request, each with the number of that pull request
+    /// (#1710, #1801).
     #[must_use]
     pub fn with_waits(mut self, waits: impl IntoIterator<Item = (u64, u64)>) -> Issues {
         self.waits = waits.into_iter().collect();
@@ -276,6 +277,10 @@ pub const TRACKER: &str = "tracker";
 /// The label of an issue that waits for the answer of a person (#1605). It
 /// is the default label of GitHub, "Further information is requested".
 pub const QUESTION: &str = "question";
+
+/// The reason of a stuck pull request with a conflict with the default
+/// branch ([`Issues::stuck`]).
+pub const CONFLICT: &str = "conflict";
 
 /// The start of the title of a tracker issue.
 pub const TRACKER_TITLE: &str = "Tracker:";
@@ -412,6 +417,12 @@ pub struct Board {
     /// number of that pull request ([`Issues::waits`], #1710).
     #[serde(default)]
     pub waits: Vec<(u64, u64)>,
+    /// The items with no claim whose pull request has a conflict, and
+    /// whose rebase waits for its turn: each with the number of the pull
+    /// request before it ([`Issues::waits`], #1801). They are not in
+    /// `stuck`: nobody has to act.
+    #[serde(default)]
+    pub rebases: Vec<(u64, u64)>,
 }
 
 impl Board {
@@ -495,6 +506,7 @@ impl Board {
             tracker: Vec::new(),
             question: Vec::new(),
             waits: Vec::new(),
+            rebases: Vec::new(),
         };
         for &n in items {
             let claims: Vec<&String> = sessions
@@ -506,7 +518,11 @@ impl Board {
             if claims.iter().any(|c| c.starts_with("verify-")) {
                 board.verify.push(n);
             } else if let Some(why) = issues.stuck.get(&n).filter(|_| claims.is_empty()) {
-                board.stuck.push((n, why.clone()));
+                // A conflict whose rebase waits for its turn (#1801).
+                match issues.waits.get(&n).filter(|_| why == CONFLICT) {
+                    Some(pull) => board.rebases.push((n, *pull)),
+                    None => board.stuck.push((n, why.clone())),
+                }
             } else if claims.is_empty() && issues.verify.contains(&n) {
                 board.verify.push(n);
                 if let Some(pull) = issues.waits.get(&n) {
@@ -529,13 +545,16 @@ impl Board {
 
     /// One line for each group of the board that is not empty, in the
     /// order `free`, `held`, `claimed`, `verify`, `verify waits for #N`,
-    /// `stuck`, `tracker`, `question`. With `paused`, no group `free`:
-    /// nobody can claim its items (01M588G5K0B58QXD35AA5MTZ6E). The reason
-    /// of each hold follows its items (01M58ATZ1F42DWNNB24C2HJPEY), and so
-    /// does the reason of each stuck pull request (#279). The reason of a
-    /// hold is text of the lead: the UI makes it safe. An item whose verify
-    /// waits for the merge of the pull request #N is in the group `verify
-    /// waits for #N`, not in `verify` (01M6WCGNGNQXG443D5EMC8JRAC).
+    /// `rebase waits for #N`, `stuck`, `tracker`, `question`. With
+    /// `paused`, no group `free`: nobody can claim its items
+    /// (01M588G5K0B58QXD35AA5MTZ6E). The reason of each hold follows its
+    /// items (01M58ATZ1F42DWNNB24C2HJPEY), and so does the reason of each
+    /// stuck pull request (#279). The reason of a hold is text of the lead:
+    /// the UI makes it safe. An item whose verify waits for the merge of
+    /// the pull request #N is in the group `verify waits for #N`, not in
+    /// `verify` (01M6WCGNGNQXG443D5EMC8JRAC). An item whose rebase waits
+    /// for its turn after the pull request #N is in the group `rebase waits
+    /// for #N` (01M6YPYTPG8RJY7PRERR2ZM10H).
     ///
     /// ```
     /// use riff_client::waves::Board;
@@ -551,6 +570,7 @@ impl Board {
     ///     tracker: vec![18],
     ///     question: vec![22],
     ///     waits: vec![(23, 41), (24, 43), (25, 41)],
+    ///     rebases: vec![(26, 41), (27, 41)],
     /// };
     /// assert_eq!(board.groups(false), [
     ///     "free: #14 #15",
@@ -558,6 +578,7 @@ impl Board {
     ///     "verify: #17",
     ///     "verify waits for #41: #23 #25",
     ///     "verify waits for #43: #24",
+    ///     "rebase waits for #41: #26 #27",
     ///     "stuck: #19 #21 (checks), #20 (auto-merge off)",
     ///     "tracker: #18",
     ///     "question: #22",
@@ -569,6 +590,7 @@ impl Board {
     ///         "verify: #17",
     ///         "verify waits for #41: #23 #25",
     ///         "verify waits for #43: #24",
+    ///         "rebase waits for #41: #26 #27",
     ///         "stuck: #19 #21 (checks), #20 (auto-merge off)",
     ///         "tracker: #18",
     ///         "question: #22",
@@ -601,11 +623,19 @@ impl Board {
             .copied()
             .filter(|n| !self.waits.iter().any(|(w, _)| w == n))
             .collect();
-        // The verifies that wait, by the pull request that they wait for.
-        let mut waits: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
-        for (n, pull) in &self.waits {
-            waits.entry(*pull).or_default().push(*n);
-        }
+        // The verifies or the rebases that wait, by the pull request that
+        // they wait for.
+        let by_pull = |what: &str, pairs: &[(u64, u64)]| {
+            let mut waits: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+            for (n, pull) in pairs {
+                waits.entry(*pull).or_default().push(*n);
+            }
+            let groups: Vec<(String, String)> = waits
+                .iter()
+                .map(|(pull, items)| (format!("{what} waits for #{pull}"), list(items)))
+                .collect();
+            groups
+        };
         let free = if paused {
             String::new()
         } else {
@@ -618,11 +648,8 @@ impl Board {
             ("verify".to_owned(), list(&verify)),
         ]
         .into_iter()
-        .chain(
-            waits
-                .iter()
-                .map(|(pull, items)| (format!("verify waits for #{pull}"), list(items))),
-        )
+        .chain(by_pull("verify", &self.waits))
+        .chain(by_pull("rebase", &self.rebases))
         .chain([
             ("stuck".to_owned(), by_reason(&self.stuck)),
             ("tracker".to_owned(), list(&self.tracker)),

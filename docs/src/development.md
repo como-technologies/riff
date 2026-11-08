@@ -1977,7 +1977,9 @@ wave starts a build session for its item. The session rebases the
 branch on `main`, resolves the conflict, runs `just check`, and pushes
 to the same pull request. Then a new Gate runs, and a new session
 verifies the new commit. The wave starts no verify of a commit with a
-conflict.
+conflict. Of the pull requests that change the same files, only the
+next of the order of the verifies gets its rebase (see
+[The order of the verifies of a wave](how-it-works.md#the-order-of-the-verifies-of-a-wave)).
 
 A verify waits until GitHub knows that the pull request has no
 conflict. After a push, and after `main` moves, GitHub does not know it
@@ -2581,7 +2583,7 @@ flowchart TD
 
 | The pull request | What the wave does | In `riff top` |
 |---|---|---|
-| A conflict, auto-merge on | A session rebases it (see [Run the wave](#run-the-wave)) | `stuck: #12 (conflict)` |
+| A conflict, auto-merge on | A session rebases it at its turn (see [Run the wave](#run-the-wave)) | `stuck: #12 (conflict)` |
 | The verify passed or waits, a run of GitHub Actions failed | A session fixes the check. The wave starts no verify of this commit (see [See why a verify waits](#see-why-a-verify-waits)) | `stuck: #12 (checks)` |
 | The verify passed or waits, a check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
 | The verify passed, auto-merge off | Your lead gets one message. No session starts | `stuck: #12 (auto-merge off)` |
@@ -3134,7 +3136,8 @@ tracker (see [Track a group of items](waves.md#track-a-group-of-items)).
 An item in `question` waits for the answer of a person (see
 [Ask the person a question](#ask-the-person-a-question)). A verify that
 waits for the merge of the pull request #N is in the group
-`verify waits for #N` (see
+`verify waits for #N`, and a rebase that waits for its turn after #N is
+in the group `rebase waits for #N` (see
 [The order of the verifies of a wave](how-it-works.md#the-order-of-the-verifies-of-a-wave)).
 A stuck item has a pull request that cannot merge by itself (see
 [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)):

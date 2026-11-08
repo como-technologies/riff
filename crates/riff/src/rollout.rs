@@ -1365,7 +1365,7 @@ impl Stuck {
     /// ```
     pub fn word(&self) -> &'static str {
         match self {
-            Stuck::Conflict => "conflict",
+            Stuck::Conflict => riff_client::waves::CONFLICT,
             Stuck::Checks(_) | Stuck::Other(_) => "checks",
             Stuck::AutoMergeOff => "auto-merge off",
             Stuck::Dequeued(_) => "removed from queue",

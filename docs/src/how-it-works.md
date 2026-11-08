@@ -2635,21 +2635,25 @@ shell loop.
 ### The order of the verifies of a wave
 
 The wave orders the verifies of the pull requests that change the same
-files. The merge of one of them can give each of the others a conflict.
-A conflict costs a rebase session, a new Gate run and a new verify, and
-a verify that passed before the conflict is lost. So the wave starts
-the verify of one of them, and the others wait until it merges or its
-verify fails:
+files. The rebases follow the same order. The merge of one of them can
+give each of the others a conflict. A conflict costs a rebase session,
+a new Gate run and a new verify, and a verify that passed before the
+conflict is lost. So the wave starts the verify or the rebase of one of
+them, and the others wait until it merges or its verify fails:
 
-- A pull request goes first while its verify runs, and while its
-  verify passed and it waits for the merge.
-- Then come the pull requests that wait for a verify, in the order of
-  their verify requests in the repository thread.
-- A verify that shares a file with a pull request before it waits. A
-  verify that shares no file starts beside the others.
-- A pull request that cannot merge by itself does not go first, for
-  example with a conflict or with auto-merge off. A conflict gets no
-  verify: the wave starts its rebase first.
+- A pull request goes first while its verify runs, while a session
+  holds its item, for example to rebase it, and while its verify passed
+  and it waits for the merge.
+- Then come the pull requests that wait for a verify or for a rebase,
+  in the order of the first verify request of their item in the
+  repository thread. A new head after a rebase keeps the place.
+- A verify or a rebase that shares a file with a pull request before it
+  waits. One that shares no file starts beside the others.
+- So after a merge, only the next pull request of the order gets its
+  rebase. The others keep their conflict until their turn.
+- A pull request that cannot merge by itself for another reason does
+  not go first, for example with a failed check or with auto-merge off.
+  A conflict gets no verify: its rebase comes first.
 
 ```mermaid
 flowchart TD
@@ -2662,27 +2666,47 @@ flowchart TD
     E -- "its verify fails, or it cannot merge" --> V["the verify of #42 starts"]
 ```
 
+Three pull requests change one file, in the order #41, #42, #43:
+
+```mermaid
+flowchart TD
+    M["#41 merges: #42 and #43 have a conflict"] --> R["the rebase of #42 starts"]
+    M --> X["#43: rebase waits for #42"]
+    R --> V["the verify of the new head of #42"]
+    V --> N["#42 merges"]
+    X --> N
+    N --> T["the rebase of #43 starts"]
+```
+
 The wave reads the files of each pull request from GitHub: one REST
 call for each head commit. It reads them only while two pull requests
 or more are on their way to the merge.
 
-To see the verifies that wait, in your clone of the repository:
+To see the verifies and the rebases that wait, in your clone of the
+repository:
 
 ```sh
 riff wave list
 ```
 
 Each verify that waits is in the group `verify waits for #N`, where
-`#N` is the pull request that goes first:
+`#N` is the pull request that goes first. Each rebase that waits for
+its turn is in the group `rebase waits for #N`, where `#N` is the pull
+request before it:
 
 ```text
 Wave 50: The TUI  current  runs on thelio  6 open, 12 closed
   verify: #1637
   verify waits for #1701: #1638 #1640
+  rebase waits for #1701: #1642
 ```
 
-The lead gets no message that these pull requests wait for a verify
-(see [When a pull request stops](#when-a-pull-request-stops)). To keep
+The Waves tab shows each of them as a `verify` row with `after #N` (see
+[See the open items of a wave](waves.md#see-the-open-items-of-a-wave)).
+
+The lead gets no message that these pull requests wait for a verify,
+and no message of the conflict of a rebase that waits for its turn (see
+[When a pull request stops](#when-a-pull-request-stops)). To keep
 a verify out of the order, hold it (see
 [Keep the verify of an item from the
 workers](#keep-the-verify-of-an-item-from-the-workers)).
@@ -2790,7 +2814,9 @@ while the wave is idle), and sends a message in two cases (see
 ```mermaid
 flowchart TD
     L["the look of the daemon, each minute"] --> C{"auto-merge on, and a conflict?"}
-    C -- yes --> H{"a session holds the item?"}
+    C -- yes --> T{"its rebase waits for its turn?"}
+    T -- yes --> N["no message yet"]
+    T -- no --> H{"a session holds the item?"}
     H -- yes --> M1["message to that session"]
     H -- no --> M2["message to the lead"]
     L --> V{"waits for a verify, and no verify- claim?"}
@@ -2801,7 +2827,10 @@ flowchart TD
   request and the commit. The session that holds the item rebases it
   and pushes. When no session holds it, the lead gives it to a free
   session. The wave of the riff daemon starts a session for it by
-  itself (see [Run the wave](development.md#run-the-wave)).
+  itself (see [Run the wave](development.md#run-the-wave)). While the
+  rebase waits for its turn, no message comes (see
+  [The order of the verifies of a
+  wave](#the-order-of-the-verifies-of-a-wave)).
 - A verify that no session claims for 30 minutes: the lead gives the
   verify to a free session, or starts a worker. No message comes while
   the pull request has a conflict, while the lead holds its verify, or

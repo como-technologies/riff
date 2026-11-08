@@ -219,9 +219,10 @@ pub struct Wave {
     /// has no good merged pin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<Image>,
-    /// The verifies that wait for the merge of another pull request with
+    /// The verifies and the rebases that wait for another pull request with
     /// a file in common, by issue, with the number of that pull request
-    /// (#1710). `riff wave list` shows them ([`crate::waves::Board`]).
+    /// (#1710, #1801). `riff wave list` and the Waves tab show them
+    /// ([`crate::waves::Board`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub waits: BTreeMap<u64, u64>,
 }
@@ -649,6 +650,36 @@ pub fn hosts<'a>(sessions: impl IntoIterator<Item = &'a SessionInfo>) -> Vec<Hos
         }
     }
     found
+}
+
+/// The verifies and the rebases of the waves of `repo` that wait for
+/// another pull request ([`Wave::waits`]), from the daemons of `hosts`
+/// ([`hosts`]), by issue.
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use riff_client::daemons::{Facts, Host, Wave, waits};
+///
+/// let host = |repo: &str, waits: BTreeMap<u64, u64>| Host {
+///     user: "mike".into(),
+///     host: "thelio".into(),
+///     age_secs: 5,
+///     facts: Facts {
+///         waves: vec![Wave { repo: repo.into(), word: String::new(), image: None, waits }],
+///         ..Facts::default()
+///     },
+/// };
+/// let hosts = [host("o/r", BTreeMap::from([(15, 54)])), host("o/s", BTreeMap::from([(14, 60)]))];
+/// assert_eq!(waits(&hosts, "o/r"), BTreeMap::from([(15, 54)]));
+/// assert!(waits(&hosts, "o/t").is_empty());
+/// ```
+pub fn waits(hosts: &[Host], repo: &str) -> BTreeMap<u64, u64> {
+    hosts
+        .iter()
+        .flat_map(|h| h.facts.waves.iter())
+        .filter(|w| w.repo == repo)
+        .flat_map(|w| w.waits.iter().map(|(n, pull)| (*n, *pull)))
+        .collect()
 }
 
 #[cfg(test)]
