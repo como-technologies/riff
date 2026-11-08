@@ -1745,7 +1745,7 @@ another host, add `--host thelio`.
   `GH_TOKEN`. riff gives podman only the name of the variable, so the
   token is in no command line.
 - With the token of an App, the author of each commit: `user.name` and
-  `user.email` of the session in `GIT_CONFIG_*`. They win over your
+  `user.email` of the bot in `GIT_CONFIG_*`. They win over your
   `~/.gitconfig`. See
   [Find the commits of a session](#find-the-commits-of-a-session).
 - A Claude folder of its own. `claude` runs in the auto permission
@@ -1799,47 +1799,58 @@ another host, add `--host thelio`.
   See
   [Choose the MCP servers of the container sessions](#choose-the-mcp-servers-of-the-container-sessions).
 
-A commit of the session has the session as its author, no signature,
-and a `Riff-Session:` trailer. See
+A commit of the session has the bot of its GitHub App as its author,
+no signature, and a `Riff-Session:` trailer. See
 [Find the commits of a session](#find-the-commits-of-a-session). The
 table of what sessions share is in
 [What sessions share](how-it-works.md#what-sessions-share).
 
 ### Find the commits of a session
 
-Each commit of a session in a container has the session as its author
-and its committer: `riff ROLE ID8`, with the role and the first 8
-characters of the session ID, for example `riff worker 21c026a1`. The
-email is the noreply address of the bot of the GitHub App of the role,
-for example
+Each commit of a session in a container has the bot of the GitHub App
+of its role as its author and its committer, for example
+`riff-como-technologies[bot]`. The email is the noreply address of the
+bot, for example
 `1101+riff-como-technologies[bot]@users.noreply.github.com`. So GitHub
-links the commit to the App. Where the Apps are not on the repository,
-a session acts with your token, and its commits keep your git identity.
+links the commit to the App. The trailer `Riff-Session:` of each commit
+names the session. Where the Apps are not on the repository, a session
+acts with your token, and its commits keep your git identity.
 
 The squash merge makes one commit on `main`, with the body of the pull
 request as its message. The body of a session ends with two trailers:
 `Riff-Session:` with the session ID, and `Co-authored-by:` with your
-account on GitHub. So GitHub shows you as a co-author of the commit on
-`main`.
+account on GitHub. The bot is the author of the pull request and of
+each commit, so GitHub adds no `Co-authored-by:` line of its own, and
+your line stays in the last paragraph. So GitHub shows you as a
+co-author of the commit on `main`.
 
 ```mermaid
 flowchart LR
-    B["a commit on the branch<br/>author: riff worker 21c026a1"] --> P["the pull request of the session"]
+    B["a commit on the branch<br/>author: riff-como-technologies[bot]<br/>Riff-Session: 21c026a1-…"] --> P["the pull request of the session<br/>by riff-como-technologies[bot]"]
     P -- "squash merge" --> M["the commit on main<br/>Riff-Session: 21c026a1-…<br/>Co-authored-by: you"]
 ```
 
-To find the commits of the workers on a branch, search by the author:
+To find the commits of one session on its branch, search for its
+trailer with the start of its session ID, for example the 8 characters
+at the end of the name of its container, `riff-issue-12-21c026a1`.
+`riff who --long` shows the whole ID:
 
 ```sh
-git log --author='riff worker' origin/worktree-issue-12
+git log --grep 'Riff-Session: 21c026a1' origin/worktree-issue-12
 ```
 
-To find the commit on `main` of one session, search for its trailer
-with the start of its session ID, for example the 8 characters in the
-name of its author. `riff who --long` shows the whole ID:
+To find the commit on `main` of the same session:
 
 ```sh
 git log --grep 'Riff-Session: 21c026a1' origin/main
+```
+
+To find the commits of each session on a branch, search by the name of
+the bot. With `-F`, git reads the name as plain text, not as a
+pattern:
+
+```sh
+git log -F --author='riff-como-technologies[bot]' origin/worktree-issue-12
 ```
 
 ### The riff tools of a session

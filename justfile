@@ -6,7 +6,7 @@ session_env := (
     " GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false" +
     " GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1=" +
     " GIT_CONFIG_KEY_2=credential.https://github.com.helper GIT_CONFIG_VALUE_2='!gh auth git-credential'" +
-    " GIT_CONFIG_KEY_3=user.name GIT_CONFIG_VALUE_3='riff worker 1a2b3c4d'" +
+    " GIT_CONFIG_KEY_3=user.name GIT_CONFIG_VALUE_3='riff-test[bot]'" +
     " GIT_CONFIG_KEY_4=user.email GIT_CONFIG_VALUE_4='1101+riff-test[bot]@users.noreply.github.com'" +
     " GH_CONFIG_DIR='" + justfile_directory() / "crates/isolated/session-gh" + "'"
 )

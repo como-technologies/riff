@@ -1704,34 +1704,25 @@ fn how_to(heading: &str) -> String {
     rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)].to_owned()
 }
 
-/// 01M6WZ2C8JXEA888XYMRXTS17V, 01M6WZ2CB56PNSYKEX4E0ZJV3Y: the how-to
-/// "Find the commits of a session" of development.md finds the commits of
-/// a session by their author on a branch and by the trailer on `main`, in
-/// copyable `sh` blocks. Its author is the one of the daemon, and the
-/// line `Co-authored-by:` of "Open a pull request" is the one of riff.
+/// 01M6Y6B8VBM3TKC3YHZKSA4PFZ, 01M6WZ2C8JXEA888XYMRXTS17V,
+/// 01M6WZ2CB56PNSYKEX4E0ZJV3Y: the how-to "Find the commits of a
+/// session" of development.md finds the commits of a session by the
+/// trailer `Riff-Session:` on its branch and on `main`, and the commits
+/// of each session by the name of the bot, in copyable `sh` blocks. Its
+/// author is the one of the daemon, and the line `Co-authored-by:` of
+/// "Open a pull request" is the one of riff.
 #[test]
 fn the_book_shows_how_to_find_the_commits_of_a_session() {
-    let page = book::page("development.md");
-    let start = page
-        .find("\n### Find the commits of a session\n")
-        .expect("the how-to Find the commits of a session");
-    let rest = &page[start + 1..];
-    let found = &rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)];
+    let found = &commits_how_to();
     let commands = book::commands_in(found);
-    assert!(
-        commands.contains(&"git log --author='riff worker' origin/worktree-issue-12".to_owned()),
-        "{commands:?}"
-    );
-    assert!(
-        commands.contains(&"git log --grep 'Riff-Session: 21c026a1' origin/main".to_owned()),
-        "{commands:?}"
-    );
-    let (name, email) = riff::daemon::gh_token::author(
-        riff_core::wire::GitHubRole::Worker,
-        "21c026a1-ee2a-4451-9729-59e6332cb974",
-        "riff-como-technologies[bot]",
-        Some(1101),
-    );
+    let (name, email) = riff::daemon::gh_token::author("riff-como-technologies[bot]", Some(1101));
+    for command in [
+        "git log --grep 'Riff-Session: 21c026a1' origin/worktree-issue-12".to_owned(),
+        "git log --grep 'Riff-Session: 21c026a1' origin/main".to_owned(),
+        format!("git log -F --author='{name}' origin/worktree-issue-12"),
+    ] {
+        assert!(commands.contains(&command), "{command}\n{commands:?}");
+    }
     assert!(found.contains(&format!("`{name}`")), "{found}");
     assert!(found.contains(&format!("`{email}`")), "{found}");
 
@@ -1742,6 +1733,79 @@ fn the_book_shows_how_to_find_the_commits_of_a_session() {
     };
     let line = mike.co_author().unwrap();
     assert!(how_to("Open a pull request").contains(&line), "{line}");
+}
+
+/// The how-to "Find the commits of a session" of development.md.
+fn commits_how_to() -> String {
+    let page = book::page("development.md");
+    let start = page
+        .find("\n### Find the commits of a session\n")
+        .expect("the how-to Find the commits of a session");
+    let rest = &page[start + 1..];
+    rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)].to_owned()
+}
+
+/// 01M6Y6B8VBM3TKC3YHZKSA4PFZ: each command of "Find the commits of a
+/// session" runs in a real git repository. The search for the trailer
+/// finds the commit of the session and no other, and the search for the
+/// bot finds each commit of the bot and none of a person.
+#[test]
+fn the_commands_of_the_book_find_the_commits_of_a_session() {
+    let env = Isolated::new();
+    let repo = env.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let run = |cmd: &mut Command| {
+        let out = cmd.current_dir(&repo).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        text(&out.stdout)
+    };
+    run(env.command("git").args(["init", "-q"]));
+    let (bot, email) = riff::daemon::gh_token::author("riff-como-technologies[bot]", Some(1101));
+    let session = "Riff-Session: 21c026a1-ee2a-4451-9729-59e6332cb974";
+    let other = "Riff-Session: 9de7b86a-39a2-4f79-aa5e-b9508cc7a0a2";
+    for (name, email, subject, trailer) in [
+        (bot.as_str(), email.as_str(), "of the session", session),
+        (bot.as_str(), email.as_str(), "of another session", other),
+        ("Mike", "mike@example.com", "of a person", "Issue: #12"),
+    ] {
+        run(env.command("git").args([
+            "-c",
+            &format!("user.name={name}"),
+            "-c",
+            &format!("user.email={email}"),
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            subject,
+            "--trailer",
+            trailer,
+        ]));
+    }
+    for branch in ["origin/worktree-issue-12", "origin/main"] {
+        let to = format!("refs/remotes/{branch}");
+        run(env.command("git").args(["update-ref", &to, "HEAD"]));
+    }
+    let found = |command: &str| run(env.command("sh").args(["-c", command]));
+    let commands = book::commands_in(&commits_how_to());
+    for command in commands.iter().filter(|c| c.contains("--grep")) {
+        let log = found(command);
+        assert!(log.contains("of the session"), "{command}\n{log}");
+        assert!(
+            !log.contains("another") && !log.contains("person"),
+            "{command}\n{log}"
+        );
+    }
+    let by_bot = commands
+        .iter()
+        .find(|c| c.contains("--author"))
+        .expect("a search by the bot");
+    let log = found(by_bot);
+    assert!(
+        log.contains("of the session") && log.contains("of another session"),
+        "{log}"
+    );
+    assert!(!log.contains("of a person"), "{log}");
 }
 
 /// The help of `riff pr open` and of `--title` says what holds in each

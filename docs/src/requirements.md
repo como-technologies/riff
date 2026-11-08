@@ -6818,16 +6818,24 @@ of this part when they merge.
 - **01M6WPMX18BECQPTQNSTZMBN16** The daemon and the relay take each
   token of a GitHub App out of each event and each line: `ghs_` and the
   letters, digits and `_` after it.
-- **01M6WZ2C8JXEA888XYMRXTS17V** Each commit of a session with a token
-  of a GitHub App has the session as its author and its committer. The
-  daemon sets `user.name` to `riff ROLE ID8`, with the role of the token
-  and the first 8 characters of the session ID, for example `riff worker
-  21c026a1`, and `user.email` to the noreply address of the bot of the
-  App, `BOTID+LOGIN@users.noreply.github.com`, with `GIT_CONFIG_*` at
-  the start of the container. BOTID is the user ID of the bot that
-  riff-server gives with the token; with none, the address is
-  `LOGIN@users.noreply.github.com`. A session with the token of the
-  person keeps the git identity of `~/.gitconfig`.
+- **01M6WZ2C8JXEA888XYMRXTS17V** The daemon sets `user.email` of each
+  commit of a session with a token of a GitHub App to the noreply
+  address of the bot of the App, `BOTID+LOGIN@users.noreply.github.com`,
+  with `GIT_CONFIG_*` at the start of the container. BOTID is the user
+  ID of the bot that riff-server gives with the token; with none, the
+  address is `LOGIN@users.noreply.github.com`. A session with the token
+  of the person keeps the git identity of `~/.gitconfig`. Superseded in
+  part by 01M6Y6B8VBM3TKC3YHZKSA4PFZ.
+- **01M6Y6B8VBM3TKC3YHZKSA4PFZ** Each commit of a session with a token
+  of a GitHub App has the bot of the App as its author and its
+  committer: `user.name` is the login of the bot, for example
+  `riff-como-technologies[bot]`, with `GIT_CONFIG_*` at the start of the
+  container. So the squash merge on GitHub adds no `Co-authored-by:`
+  line and no line `---------` of its own, and the `Co-authored-by:` of
+  the person stays in the last paragraph of the message. The trailer
+  `Riff-Session: ID` of each commit names the session, and `git log
+  --grep 'Riff-Session: ID'` finds its commits. This supersedes
+  01M6WZ2C8JXEA888XYMRXTS17V in part.
 
 ### The security of riff's own code
 

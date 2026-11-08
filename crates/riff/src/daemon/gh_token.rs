@@ -50,8 +50,8 @@
 //! end from the record of the session ([`ActsAs::Bot`]).
 //!
 //! With the token, the daemon also gives each commit of the session its
-//! author: `riff ROLE ID8` and the noreply address of the bot
-//! ([`author`], [`give_author`], 01M6WZ2C8JXEA888XYMRXTS17V).
+//! author: the login of the bot and its noreply address ([`author`],
+//! [`give_author`], 01M6Y6B8VBM3TKC3YHZKSA4PFZ).
 //!
 //! A session keeps the token of the person, in `GH_TOKEN` as before, when
 //! riff-server gives no token of an App ([`ActsAs::Person`]): the riff
@@ -378,34 +378,30 @@ pub fn give(spec: &mut SessionSpec, values: &mut Vec<(String, String)>, dir: &Pa
     });
 }
 
-/// The author and the committer of each commit of the session `session`
-/// with the token of the bot `bot` for the role `role`
-/// (01M6WZ2C8JXEA888XYMRXTS17V): the name `riff ROLE ID8`, as `riff who`
-/// shows the session, and the noreply address of the bot with its user ID
-/// `bot_id` ([`crate::pr::noreply`]). GitHub links the commit to the App.
+/// The author and the committer of each commit of a session with the
+/// token of the bot `bot`: the login of the bot as the name
+/// (01M6Y6B8VBM3TKC3YHZKSA4PFZ), and its noreply address with its user
+/// ID `bot_id` ([`crate::pr::noreply`], 01M6WZ2C8JXEA888XYMRXTS17V).
+/// GitHub links the commit to the App. The author is the author of the
+/// pull request, so the squash merge adds no `Co-authored-by:` line of
+/// its own. The trailer `Riff-Session:` of each commit names the session.
 ///
 /// ```
 /// use riff::daemon::gh_token::author;
-/// use riff_core::wire::GitHubRole;
 ///
-/// let session = "21c026a1-ee2a-4451-9729-59e6332cb974";
-/// let bot = "riff-como-technologies[bot]";
 /// assert_eq!(
-///     author(GitHubRole::Worker, session, bot, Some(1101)),
+///     author("riff-como-technologies[bot]", Some(1101)),
 ///     (
-///         "riff worker 21c026a1".to_owned(),
+///         "riff-como-technologies[bot]".to_owned(),
 ///         "1101+riff-como-technologies[bot]@users.noreply.github.com".to_owned()
 ///     )
 /// );
-/// let (name, email) = author(GitHubRole::Lead, session, "riff-acme-lead[bot]", None);
-/// assert_eq!(name, "riff lead 21c026a1");
+/// let (name, email) = author("riff-acme-lead[bot]", None);
+/// assert_eq!(name, "riff-acme-lead[bot]");
 /// assert_eq!(email, "riff-acme-lead[bot]@users.noreply.github.com");
 /// ```
-pub fn author(role: GitHubRole, session: &str, bot: &str, bot_id: Option<u64>) -> (String, String) {
-    (
-        format!("riff {role} {}", crate::run::short(session)),
-        crate::pr::noreply(bot_id, bot),
-    )
+pub fn author(bot: &str, bot_id: Option<u64>) -> (String, String) {
+    (bot.to_owned(), crate::pr::noreply(bot_id, bot))
 }
 
 /// Gives each commit of the container of `spec` the author `name` and
@@ -429,11 +425,11 @@ pub fn author(role: GitHubRole, session: &str, bot: &str, bot_id: Option<u64>) -
 ///     command: vec![],
 /// };
 /// riff::run::git_config(&mut spec.env, "commit.gpgsign", "false");
-/// give_author(&mut spec, "riff worker 1a2b3c4d", "1101+riff-acme[bot]@users.noreply.github.com");
+/// give_author(&mut spec, "riff-acme[bot]", "1101+riff-acme[bot]@users.noreply.github.com");
 /// let value = |n: &str, v: &str| Env::Value(n.into(), v.into());
 /// assert!(spec.env.contains(&value("GIT_CONFIG_COUNT", "3")));
 /// assert!(spec.env.contains(&value("GIT_CONFIG_KEY_1", "user.name")));
-/// assert!(spec.env.contains(&value("GIT_CONFIG_VALUE_1", "riff worker 1a2b3c4d")));
+/// assert!(spec.env.contains(&value("GIT_CONFIG_VALUE_1", "riff-acme[bot]")));
 /// assert!(spec.env.contains(&value("GIT_CONFIG_KEY_2", "user.email")));
 /// ```
 pub fn give_author(spec: &mut SessionSpec, name: &str, email: &str) {
