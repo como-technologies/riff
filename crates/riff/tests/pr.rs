@@ -1440,6 +1440,35 @@ async fn pr_open_refuses_a_title_that_breaks_the_hygiene_check() {
     assert!(!log(machine.bin.path()).contains("gh pr create"));
 }
 
+/// A `gh` with no sign-in ends before it reads the body of `pr create`.
+/// `riff pr open` shows the error of `gh`, and not a broken pipe
+/// (01M6Y4XHQADF27SHMMMV8RQ7Q1). The body is more than a pipe holds, so
+/// the write meets the closed pipe.
+#[tokio::test]
+async fn pr_open_shows_the_error_of_a_gh_that_ends_before_it_reads_the_body() {
+    let machine = Machine::new(OPEN).await;
+    machine.claim("author", "issue-12").await;
+    let cases = OPEN.replace(
+        "*'pr create'*) echo 'https://github.com/como-technologies/riff/pull/40' ;;",
+        "*'pr create'*) echo 'To get started with GitHub CLI, please run:  gh auth login' >&2; exit 4 ;;",
+    );
+    isolated::write_program(
+        machine.bin.path().join("gh"),
+        format!("#!/bin/sh\ncase \"$*\" in\n{cases}\nesac\nexit 0\n"),
+    );
+    let summary = machine.write("summary.md", &"Show the wave in riff who.\n".repeat(4096));
+    let out = machine
+        .run(
+            "author",
+            &["pr", "open", "--title", "Show the wave", "--file", &summary],
+        )
+        .await;
+    let stderr = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("please run:  gh auth login"), "{stderr}");
+    assert!(!stderr.contains("Broken pipe"), "{stderr}");
+}
+
 /// A worker writes `Tests: ...` at the end of its summary, and the
 /// rule reads the line as a trailer. A line of 300 characters stops the
 /// pull request with the rule `trailer-wrap`, and riff opens nothing. The
