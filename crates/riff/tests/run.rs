@@ -54,7 +54,8 @@ fn script(path: &Path, body: &str) {
     isolated::write_program(path, body);
 }
 
-/// A fake `gh` that logs each call to `bin/gh.log`. The branch has no
+/// A fake `gh` that logs each call to `bin/gh.log`. `api user` gives the
+/// account of mike on GitHub. The branch has no
 /// pull request when `bin/no-pr` is there. The issue has the label
 /// `no-verify` when `bin/no-verify` is there. `pr view` waits while
 /// `bin/pr-hold` is there, and the view of the milestone of the issue
@@ -76,6 +77,7 @@ case "$*" in
     if [ -f "$dir/branch-fails" ]; then echo 'gh: HTTP 502' >&2; exit 1; fi
     echo "$branch" ;;
   'auth token') echo GHTOKEN ;;
+  'api user') echo '{"login":"mike","id":7,"name":"Mike Sandman"}' ;;
   'api repos/como-technologies/riff --jq .permissions.push') echo true ;;
   'issue view 12 --json number,state,milestone,body')
     while [ -f "$dir/milestone-hold" ]; do sleep 0.05; done
@@ -1028,11 +1030,17 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
     let start: Value = serde_json::from_str(machine.read("run.stdin").trim()).unwrap();
     assert_eq!(start["type"], "user");
     let start = start["message"]["content"][0]["text"].as_str().unwrap();
+    // The body form ends with the trailers of the session and of its
+    // person on GitHub (01M6WZ2CB56PNSYKEX4E0ZJV3Y).
+    let frame = format!(
+        "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 27\nRiff-Session: {session}\n\
+         Co-authored-by: Mike Sandman <7+mike@users.noreply.github.com>\n"
+    );
     for part in [
         "Do the work item issue-12",
         "git push -u origin worktree-issue-12",
         &format!("Riff-Session: {session}"),
-        "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 27\n",
+        &frame,
         "gh pr merge --auto --squash NUMBER",
     ] {
         assert!(start.contains(part), "{part}\nnot in\n{start}");
@@ -2550,6 +2558,27 @@ async fn riff_leave_now_ends_the_sessions_and_frees_their_items() {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    // The body form of the start text of the wave ends with the trailers
+    // of the session and of its person on GitHub
+    // (01M6WZ2CB56PNSYKEX4E0ZJV3Y).
+    wait_for(&bin.join("run.stdin"), "user").await;
+    let start: Value = serde_json::from_str(machine.read("run.stdin").trim()).unwrap();
+    let start = start["message"]["content"][0]["text"].as_str().unwrap();
+    let session = start
+        .split("Milestone: Wave 27\nRiff-Session: ")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .unwrap_or_else(|| panic!("no Riff-Session line in\n{start}"));
+    assert!(
+        start.contains(&format!(
+            "Riff-Session: {session}\nCo-authored-by: Mike Sandman <7+mike@users.noreply.github.com>\n"
+        )),
+        "{start}"
+    );
+    assert!(
+        start.contains(&format!("--trailer \"Riff-Session: {session}\"")),
+        "{start}"
+    );
 
     // A leave alone: the host loses the part, the session goes on.
     let out = machine.ok(None, &["leave"]).await;

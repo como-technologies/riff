@@ -49,6 +49,10 @@
 //! token of a session that runs from its file ([`read_token`]), and its
 //! end from the record of the session ([`ActsAs::Bot`]).
 //!
+//! With the token, the daemon also gives each commit of the session its
+//! author: `riff ROLE ID8` and the noreply address of the bot
+//! ([`author`], [`give_author`], 01M6WZ2C8JXEA888XYMRXTS17V).
+//!
 //! A session keeps the token of the person, in `GH_TOKEN` as before, when
 //! riff-server gives no token of an App ([`ActsAs::Person`]): the riff
 //! has no App of the role or no sign-in, the App is not on the
@@ -138,6 +142,9 @@ pub struct Grant {
     pub token: Option<Zeroizing<String>>,
     /// How the session acts with it.
     pub acts: ActsAs,
+    /// The user ID of the bot, when riff-server has it: the email of a
+    /// commit ([`author`]).
+    pub bot_id: Option<u64>,
 }
 
 impl Grant {
@@ -148,6 +155,7 @@ impl Grant {
             acts: ActsAs::Person {
                 why: why.to_owned(),
             },
+            bot_id: None,
         }
     }
 
@@ -162,7 +170,7 @@ impl Grant {
     ///     role: GitHubRole::Verifier,
     ///     repo: "acme/app".into(),
     ///     bot: Some("riff-acme[bot]".into()),
-    ///     bot_id: None,
+    ///     bot_id: Some(1101),
     ///     token: Some("ghs_abcd".into()),
     ///     rights: [("contents".to_owned(), "read".to_owned())].into(),
     ///     ends: Some("2026-11-08T13:00:00Z".into()),
@@ -171,6 +179,7 @@ impl Grant {
     /// let grant = Grant::of(reply.clone());
     /// assert_eq!(grant.token.as_deref().map(String::as_str), Some("ghs_abcd"));
     /// assert!(matches!(grant.acts, ActsAs::Bot { role: GitHubRole::Verifier, .. }));
+    /// assert_eq!(grant.bot_id, Some(1101));
     ///
     /// let why = "riff-acme is not installed on acme/app: riff github install acme";
     /// let missing = SessionToken { token: None, problem: Some(why.into()), ..reply };
@@ -188,6 +197,7 @@ impl Grant {
                     rights: reply.rights,
                     ends: reply.ends.unwrap_or_default(),
                 },
+                bot_id: reply.bot_id,
             },
             (None, problem) => {
                 Grant::person(&problem.unwrap_or_else(|| crate::text::GH_TOKEN_NONE.to_owned()))
@@ -330,6 +340,69 @@ pub fn give(spec: &mut SessionSpec, values: &mut Vec<(String, String)>, dir: &Pa
         target: dir.to_owned(),
         write: false,
     });
+}
+
+/// The author and the committer of each commit of the session `session`
+/// with the token of the bot `bot` for the role `role`
+/// (01M6WZ2C8JXEA888XYMRXTS17V): the name `riff ROLE ID8`, as `riff who`
+/// shows the session, and the noreply address of the bot with its user ID
+/// `bot_id` ([`crate::pr::noreply`]). GitHub links the commit to the App.
+///
+/// ```
+/// use riff::daemon::gh_token::author;
+/// use riff_core::wire::GitHubRole;
+///
+/// let session = "21c026a1-ee2a-4451-9729-59e6332cb974";
+/// let bot = "riff-como-technologies[bot]";
+/// assert_eq!(
+///     author(GitHubRole::Worker, session, bot, Some(1101)),
+///     (
+///         "riff worker 21c026a1".to_owned(),
+///         "1101+riff-como-technologies[bot]@users.noreply.github.com".to_owned()
+///     )
+/// );
+/// let (name, email) = author(GitHubRole::Lead, session, "riff-acme-lead[bot]", None);
+/// assert_eq!(name, "riff lead 21c026a1");
+/// assert_eq!(email, "riff-acme-lead[bot]@users.noreply.github.com");
+/// ```
+pub fn author(role: GitHubRole, session: &str, bot: &str, bot_id: Option<u64>) -> (String, String) {
+    (
+        format!("riff {role} {}", crate::run::short(session)),
+        crate::pr::noreply(bot_id, bot),
+    )
+}
+
+/// Gives each commit of the container of `spec` the author `name` and
+/// `email` of [`author`]: `user.name` and `user.email` with
+/// `GIT_CONFIG_*` ([`crate::run::git_config`]). They win over
+/// `~/.gitconfig`.
+///
+/// ```
+/// use riff::daemon::gh_token::give_author;
+/// use riff::runtime::{Env, SessionSpec};
+///
+/// let mut spec = SessionSpec {
+///     name: "riff-issue-12-1a2b3c4d".into(),
+///     image: "img".into(),
+///     home: "/home/mike".into(),
+///     workdir: "/w".into(),
+///     binds: vec![],
+///     env: vec![],
+///     memory: String::new(),
+///     cpus: 0,
+///     command: vec![],
+/// };
+/// riff::run::git_config(&mut spec.env, "commit.gpgsign", "false");
+/// give_author(&mut spec, "riff worker 1a2b3c4d", "1101+riff-acme[bot]@users.noreply.github.com");
+/// let value = |n: &str, v: &str| Env::Value(n.into(), v.into());
+/// assert!(spec.env.contains(&value("GIT_CONFIG_COUNT", "3")));
+/// assert!(spec.env.contains(&value("GIT_CONFIG_KEY_1", "user.name")));
+/// assert!(spec.env.contains(&value("GIT_CONFIG_VALUE_1", "riff worker 1a2b3c4d")));
+/// assert!(spec.env.contains(&value("GIT_CONFIG_KEY_2", "user.email")));
+/// ```
+pub fn give_author(spec: &mut SessionSpec, name: &str, email: &str) {
+    crate::run::git_config(&mut spec.env, "user.name", name);
+    crate::run::git_config(&mut spec.env, "user.email", email);
 }
 
 /// The wait from `now_secs` until [`RENEW_BEFORE`] before the end `ends`

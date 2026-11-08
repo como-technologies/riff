@@ -177,7 +177,8 @@
 //! | The objects of the main clone | no write, at the same path | 01M4Z60B7PQ07HRJBXS1TA73PX |
 //! | `~/.gitconfig` | no write, when it exists. No `~/.config/gh` | 01M4Z60B7QDWEFQ96H448RE9N2, 01M6WPMP035A93SM6SAJGS6MTC |
 //! | The sign-in of `gh` | `-e GH_TOKEN`: the name only. The daemon puts the folder of the token of the session in its place, when riff-server gives one ([`crate::daemon::gh_token`]) | 01M6WPMWSMQABE97YCMS5Z3M1P, 01M6WPMNXN1BSBEH74TG5DDRTF |
-//! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` | 01M4Z60B89G8YNVMTEPGX7FQCV |
+//! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` ([`git_config`]) | 01M4Z60B89G8YNVMTEPGX7FQCV |
+//! | The author of a commit | `user.name` `riff ROLE ID8` and `user.email` the noreply address of the bot, by `GIT_CONFIG_*`: the daemon adds them with the token of an App ([`crate::daemon::gh_token::give_author`]). With the token of the person, the identity of `~/.gitconfig` | 01M6WZ2C8JXEA888XYMRXTS17V |
 //! | The token of git | the credential helper `!gh auth git-credential` of `https://github.com` by `GIT_CONFIG_*`, after an empty one: no helper of `~/.gitconfig` | 01M6WPMNXN1BSBEH74TG5DDRTF |
 //! | The Claude folder | with write | 01M4Z60B86N999JRN7Z1G52PG4 |
 //! | The sign-in of `claude` | `-e CLAUDE_CODE_OAUTH_TOKEN`: the name only, when a token is set ([`crate::claude_token`]); else the sign-in file of the host with no write | 01M58B7H2HMYT6VTY0B8T2G0KW, 01M4Z60B869HWDTZMSYPVYACD8 |
@@ -360,17 +361,13 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         value("USER", &facts.user),
         value("LOGNAME", &facts.user),
         Env::Host("GH_TOKEN".into()),
-        value("GIT_CONFIG_COUNT", "3"),
-        value("GIT_CONFIG_KEY_0", "commit.gpgsign"),
-        value("GIT_CONFIG_VALUE_0", "false"),
-        // git asks gh for the token of the session: an empty helper first
-        // drops each helper of `~/.gitconfig` (01M6WPMNXN1BSBEH74TG5DDRTF).
-        value("GIT_CONFIG_KEY_1", GIT_HELPER),
-        value("GIT_CONFIG_VALUE_1", ""),
-        value("GIT_CONFIG_KEY_2", GIT_HELPER),
-        value("GIT_CONFIG_VALUE_2", "!gh auth git-credential"),
-        value("CLAUDE_CONFIG_DIR", &shown(&claude_dir)),
     ];
+    git_config(&mut env, "commit.gpgsign", "false");
+    // git asks gh for the token of the session: an empty helper first
+    // drops each helper of `~/.gitconfig` (01M6WPMNXN1BSBEH74TG5DDRTF).
+    git_config(&mut env, GIT_HELPER, "");
+    git_config(&mut env, GIT_HELPER, "!gh auth git-credential");
+    env.push(value("CLAUDE_CONFIG_DIR", &shown(&claude_dir)));
     if facts.sign_in == ClaudeSignIn::Token {
         env.push(Env::Host(crate::claude_token::VAR.into()));
     }
@@ -408,6 +405,52 @@ pub fn spec(facts: &Facts) -> SessionSpec {
 
 /// The key of the credential helper of git for GitHub.
 pub const GIT_HELPER: &str = "credential.https://github.com.helper";
+
+/// Adds the git setting `key` with `value` to `env` with `GIT_CONFIG_*`:
+/// the next `GIT_CONFIG_KEY_N` and `GIT_CONFIG_VALUE_N`, and
+/// `GIT_CONFIG_COUNT` one more. Each git call of the container gets it,
+/// over each git config file.
+///
+/// ```
+/// use riff::run::git_config;
+/// use riff::runtime::Env;
+///
+/// let mut env = vec![Env::Value("HOME".into(), "/home/mike".into())];
+/// git_config(&mut env, "commit.gpgsign", "false");
+/// git_config(&mut env, "user.name", "riff worker 21c026a1");
+/// let value = |n: &str, v: &str| Env::Value(n.into(), v.into());
+/// assert_eq!(
+///     env,
+///     [
+///         value("HOME", "/home/mike"),
+///         value("GIT_CONFIG_COUNT", "2"),
+///         value("GIT_CONFIG_KEY_0", "commit.gpgsign"),
+///         value("GIT_CONFIG_VALUE_0", "false"),
+///         value("GIT_CONFIG_KEY_1", "user.name"),
+///         value("GIT_CONFIG_VALUE_1", "riff worker 21c026a1"),
+///     ]
+/// );
+/// ```
+pub fn git_config(env: &mut Vec<Env>, key: &str, value: &str) {
+    const COUNT: &str = "GIT_CONFIG_COUNT";
+    let count = env.iter_mut().find_map(|e| match e {
+        Env::Value(name, count) if name == COUNT => Some(count),
+        _ => None,
+    });
+    let n = match count {
+        Some(count) => {
+            let n: u32 = count.parse().unwrap_or(0);
+            *count = (n + 1).to_string();
+            n
+        }
+        None => {
+            env.push(Env::Value(COUNT.into(), "1".into()));
+            0
+        }
+    };
+    env.push(Env::Value(format!("GIT_CONFIG_KEY_{n}"), key.into()));
+    env.push(Env::Value(format!("GIT_CONFIG_VALUE_{n}"), value.into()));
+}
 
 /// The first 8 characters of a session ID.
 ///
@@ -1348,6 +1391,34 @@ pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
     })
 }
 
+/// The trailers of the pull request of the session `session` in its
+/// start text (01M6WZ2CB56PNSYKEX4E0ZJV3Y): the session, and the person
+/// that `gh` reads on the host (01M6WZ2CG9DFB45E3BQCGQQYNY). When the
+/// read fails, it says so in one line, and the frame has no line
+/// `Co-authored-by:`. `riff run` and the wave of the daemon use it.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let reply = r#"{"login":"mona","id":583231,"name":"Mona Lisa"}"#;
+/// let gh = isolated::write_program(dir.path().join("gh"), &format!("#!/bin/sh\necho '{reply}'\n"));
+/// let made = riff::run::made_by(&riff::pr::Gh::at(gh), "21c026a1-ee2a");
+/// assert_eq!(made.session, "21c026a1-ee2a");
+/// assert_eq!(made.person.unwrap().login, "mona");
+///
+/// let broken = isolated::write_program(dir.path().join("broken"), "#!/bin/sh\nexit 1\n");
+/// assert_eq!(riff::run::made_by(&riff::pr::Gh::at(broken), "21c026a1-ee2a").person, None);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn made_by(gh: &pr::Gh, session: &str) -> pr::MadeBy {
+    let person = pr::read_user(gh)
+        .inspect_err(|e| println!("{}", text::no_co_author(&format!("{e:#}"))))
+        .ok();
+    pr::MadeBy {
+        session: session.to_owned(),
+        person,
+    }
+}
+
 /// What the start text of a build takes from its issue: the milestone,
 /// and the link line of the frame of the body of the pull request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2003,6 +2074,7 @@ async fn work(
         text::run_started(item, session, &clone, image, &spec.name)
     );
     let frame = checked.frame.body()?;
+    let frame = pr::with_session(&frame, &made_by(&pr::Gh::here("run"), session))?;
     // The clone has the `origin/HEAD` of the forge: its branch is the default branch.
     let base = crate::permissions::Project::of(&clone).branch;
     let start = text::run_start(

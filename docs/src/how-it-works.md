@@ -186,7 +186,7 @@ hold each decision of the design.
 | The files of your machine | Each session is a rootless podman container (`--userns=keep-id`). It writes only its binds: its own clone, its own Claude folder, the folder of its socket and the volumes that `riff.toml` names. Each other write goes to the copy-on-write layer of the container, and goes when the session ends. | Nothing outside its binds. See the rows of git and of the caches. |
 | git: the clone and its alternates | Each session has its own clone, made with `git clone --reference MAIN` in a folder of riff. The container sees the objects of the main clone at the same path, with no write. No session writes the git dir of the main clone or of another session. The clone goes when its item ends, after its push. | Nothing in the clone of another session. A `git gc` of the main clone can remove an object that a session clone reads. |
 | git: the config | `~/.gitconfig` is bound with no write, or as an overlay whose changes go when the session ends. riff writes no git config of yours. A session writes only the config of its own clone. | Nothing. |
-| git: the commit | A commit has your git identity and a `Riff-Session:` trailer. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main`. No gpg agent goes into a container. | Nothing. Only the trailer tells the commits of two sessions apart. |
+| git: the commit | A commit has the session as its author, for example `riff worker 21c026a1`, with the noreply email of the bot of its GitHub App, and a `Riff-Session:` trailer. Where the Apps are not on the repository, it has your git identity. A session commits with no signature: riff sets `commit.gpgsign=false` in the environment of the container, so it applies to each git call of the session. The squash merge on GitHub makes the commit on `main` from the body of the pull request, which ends with `Riff-Session:` and `Co-authored-by:` you. No gpg agent goes into a container. See [Find the commits of a session](development.md#find-the-commits-of-a-session). | Nothing. The author and the trailer tell the commits of two sessions apart. |
 | git: the repository on GitHub | Each session pushes its own branch from its own clone. The daemon makes the claims, not the session: see the next row. | With your sign-in, a session can push to the branch of another session, or delete it. |
 | The claims | The daemon claims each item on riff-server, as the worker session of the item, with your sign-in of riff. riff-server gives each item to one session. The daemon releases the claim at the end of the session. riff-server ends the claim of a session that stops. | Nothing. A session has no sign-in of riff-server, and no riff tool of a session claims or releases. |
 | The processes | Each container has its own processes. Its PID 1 is the init of podman (`podman run --init`): it reaps each process that ends, so no zombie stays. A `pkill` in one session does not hit another. `podman stop` ends a session and each of its processes. | Nothing: it does not see the processes of another container. |
@@ -2628,6 +2628,26 @@ rules of your repository.
 `riff pr open` adds only the lines that are missing. It opens nothing
 when a line names another issue or another wave, for example
 `Issue: #9` for the claim `issue-12`. The message names the line.
+
+In a session, the body also ends with two trailers: `Riff-Session:`
+with the session ID, and `Co-authored-by:` with your account on
+GitHub. So GitHub shows you as a co-author of the commit on `main`:
+
+```text
+Issue: #12
+Riff-Session: 21c026a1-ee2a-4451-9729-59e6332cb974
+Co-authored-by: Mike <1234567+mike@users.noreply.github.com>
+```
+
+riff reads your account with your `gh` on the host (`gh api user`):
+in a container, the daemon reads it for the session. With no name on
+GitHub, your login is the name. When the line with your name is longer
+than 72 characters, your login is the name too. When riff cannot read
+your account, the body gets no line `Co-authored-by:`, and riff says
+why. A `Riff-Session:` of another session in `summary.md` stops the
+pull request. You in a terminal are the author, so your body gets
+neither line. See
+[Find the commits of a session](development.md#find-the-commits-of-a-session).
 
 When a later pull request closes the issue, link with `Refs #12`:
 
@@ -5554,7 +5574,10 @@ sequenceDiagram
 
 The container gets no token of yours: no `GH_TOKEN`, and no
 `~/.config/gh`. `gh` reads the token from the folder `gh` of the
-session, and git gets it from `gh auth git-credential`.
+session, and git gets it from `gh auth git-credential`. Each commit of
+the session has the session as its author, `riff ROLE ID8`, with the
+noreply email of the bot. See
+[Find the commits of a session](development.md#find-the-commits-of-a-session).
 
 See how a session acts on GitHub. In the session, run:
 

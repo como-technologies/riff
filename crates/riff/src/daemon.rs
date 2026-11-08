@@ -1270,6 +1270,11 @@ pub enum ServerCall {
     },
     /// What `riff whoami` reads: [`crate::reach::WhoamiFacts`] (#1338).
     Whoami,
+    /// The person of the session on GitHub, as [`crate::pr::GitHubUser`],
+    /// for the line `Co-authored-by:` of `riff pr open`. The daemon reads
+    /// it with the `gh` of the person on the host
+    /// (01M6WZ2CG9DFB45E3BQCGQQYNY). Each session may.
+    Person,
     /// What `riff who` reads: [`crate::reach::WhoFacts`] (#1338). `all`
     /// adds the gone sessions.
     WhoFacts {
@@ -1470,6 +1475,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
             Value::String(text::freed(reply, thread, item))
         }
         ServerCall::CloudLog { .. } => bail!("the daemon reads the log itself"),
+        ServerCall::Person => bail!("the daemon reads the person itself"),
         ServerCall::Run { .. } => bail!("the daemon runs the item itself"),
         ServerCall::Watch { .. } => bail!("the daemon watches itself"),
         ServerCall::Status => bail!("the daemon answers the status itself"),
@@ -3247,10 +3253,13 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// its container ([`gh_token`], 01M6WPMNXN1BSBEH74TG5DDRTF): the daemon
     /// asks riff-server as the person, writes the token in the folder of
     /// the session, gives the container that folder in place of
-    /// `GH_TOKEN` in `spec` and `values`, and renews the token until the
-    /// end. A session with no token of an App keeps `GH_TOKEN`: the token
-    /// of the person (01M6WPMWSMQABE97YCMS5Z3M1P). It gives how the
-    /// session acts on GitHub. An error starts no container.
+    /// `GH_TOKEN` in `spec` and `values`, gives each commit the author of
+    /// the session ([`gh_token::author`], 01M6WZ2C8JXEA888XYMRXTS17V), and
+    /// renews the token until the end. A session with no token of an App
+    /// keeps `GH_TOKEN`, the token of the person
+    /// (01M6WPMWSMQABE97YCMS5Z3M1P), and the git identity of
+    /// `~/.gitconfig`. It gives how the session acts on GitHub. An error
+    /// starts no container.
     async fn give_github(
         self: &Arc<Self>,
         owned: &Arc<Owned>,
@@ -3269,6 +3278,9 @@ impl<R: Runtime + 'static> Daemon<R> {
         {
             let dir = gh_token::write(&record.folder, bot, token)?;
             gh_token::give(spec, values, &dir);
+            // The author of each commit (01M6WZ2C8JXEA888XYMRXTS17V).
+            let (name, email) = gh_token::author(*role, &record.live.session, bot, grant.bot_id);
+            gh_token::give_author(spec, &name, &email);
             self.person_tokens_lock().remove(&repo);
             text::daemon_gh_token(&owned.name, bot, *role, ends)
         } else {
@@ -4936,6 +4948,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     }
                     ServerCall::Run { item } => self.run_item(&record, &item),
                     ServerCall::Watch { op } => self.watch_op(&record, op),
+                    ServerCall::Person => self.person(&record).await,
                     _ => server_call(&record, &call).await,
                 };
                 out.say(match done {
@@ -5120,6 +5133,17 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
         let page = remote::page(&self.dir, name, after, remote::EVENT_HOLD).await?;
         Ok(Value::String(page.to_string()))
+    }
+
+    /// The person of the session of `record` on GitHub, with the `gh` of
+    /// the person on this host (`gh api user`, 01M6WZ2CG9DFB45E3BQCGQQYNY),
+    /// for the line `Co-authored-by:` of `riff pr open`. Its call counts
+    /// under the caller `token`.
+    async fn person(&self, record: &Record) -> Result<Value> {
+        let repo = record.me.place().repo_text();
+        let gh = self.world.gh(&repo).as_ref().clone().by("token");
+        let person = tokio::task::spawn_blocking(move || crate::pr::read_user(&gh)).await??;
+        Ok(serde_json::to_value(person)?)
     }
 
     /// `gcloud logging read` for the lead of `record`, with the `gcloud`
@@ -8079,6 +8103,22 @@ mod tests {
     /// The answer of a fake riff-server to the ask `n` of a token.
     type GiveToken = dyn Fn(usize) -> Result<gh_token::Grant> + Send + Sync;
 
+    /// The value of the git setting `key` that `env` gives with
+    /// `GIT_CONFIG_*`, when it gives one.
+    fn git_setting(env: &[Env], key: &str) -> Option<String> {
+        let value_of = |name: &str| {
+            env.iter().find_map(|e| match e {
+                Env::Value(n, v) if n == name => Some(v.clone()),
+                _ => None,
+            })
+        };
+        let count: usize = value_of("GIT_CONFIG_COUNT")?.parse().ok()?;
+        (0..count)
+            .rev()
+            .filter(|n| value_of(&format!("GIT_CONFIG_KEY_{n}")).as_deref() == Some(key))
+            .find_map(|n| value_of(&format!("GIT_CONFIG_VALUE_{n}")))
+    }
+
     /// A token of the session App for a worker, `token`, which ends
     /// `ends_in` from now.
     fn app_token(token: &str, ends_in: Duration) -> gh_token::Grant {
@@ -8091,6 +8131,7 @@ mod tests {
                 rights: [("contents".to_owned(), "write".to_owned())].into(),
                 ends: sweep::date_text(end),
             },
+            bot_id: Some(1101),
         }
     }
 
@@ -12307,6 +12348,7 @@ mod tests {
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
         let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
         let folder = start.folder.clone();
+        let session = start.session.clone();
         let (mut client, name) = here.started(start).await;
         until(|| here.fake.spec(&name).is_some()).await;
 
@@ -12323,6 +12365,14 @@ mod tests {
         let named = |e: &Env| matches!(e, Env::Host(n) | Env::Value(n, _) if n == "GH_TOKEN");
         assert!(!spec.env.iter().any(named), "{:?}", spec.env);
         assert!(here.fake.values(&name).iter().all(|(n, _)| n != "GH_TOKEN"));
+        // Each commit has the session as its author and the bot of the App
+        // as its email (01M6WZ2C8JXEA888XYMRXTS17V).
+        let author = format!("riff worker {}", crate::run::short(&session));
+        assert_eq!(git_setting(&spec.env, "user.name"), Some(author));
+        assert_eq!(
+            git_setting(&spec.env, "user.email").as_deref(),
+            Some("1101+riff-acme[bot]@users.noreply.github.com")
+        );
         let text = std::fs::read_to_string(&hosts).unwrap();
         assert!(text.contains("oauth_token: ghs_first\n"), "{text}");
         assert!(text.contains("user: \"riff-acme[bot]\"\n"), "{text}");
@@ -12382,6 +12432,43 @@ mod tests {
         assert!(!dir.exists());
     }
 
+    /// 01M6WZ2CG9DFB45E3BQCGQQYNY: a session asks the daemon on its socket
+    /// for its person on GitHub, for the line `Co-authored-by:` of `riff pr
+    /// open`. The daemon reads it with the `gh` of the person on the host.
+    #[tokio::test]
+    async fn the_daemon_reads_the_person_of_a_session_on_github_with_the_gh_of_the_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let reply = r#"{"login":"mike","id":7,"name":"Mike Sandman","plan":{}}"#;
+        let gh = isolated::write_program(
+            dir.path().join("gh"),
+            format!(
+                "#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/asked\"\n\
+                 [ \"$*\" = 'api user' ] && echo '{reply}'\n"
+            ),
+        );
+        let world: Arc<dyn World> = Arc::new(Server::with_gh(crate::pr::Gh::at(gh)));
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let (_client, name) = here
+            .started(here.start("riff-issue-12-1a2b3c4d", "issue-12"))
+            .await;
+        let socket = session_dir(&here.dir, &name).join(SOCKET);
+        let reply = crate::session_relay::ask_server(&socket, &ServerCall::Person)
+            .await
+            .unwrap();
+        let person: crate::pr::GitHubUser = serde_json::from_value(reply).unwrap();
+        assert_eq!(
+            person,
+            crate::pr::GitHubUser {
+                login: "mike".into(),
+                id: 7,
+                name: Some("Mike Sandman".into()),
+            }
+        );
+        let asked = std::fs::read_to_string(dir.path().join("asked")).unwrap();
+        assert_eq!(asked, "api user\n");
+    }
+
     /// 01M6WPMWSMQABE97YCMS5Z3M1P: a repository with no installation of
     /// the App keeps the token of the person in `GH_TOKEN`, and `riff
     /// daemon status` names `riff github install OWNER`.
@@ -12412,6 +12499,9 @@ mod tests {
             [("GH_TOKEN".to_owned(), "gho_secret1".to_owned())]
         );
         assert!(!gh_token::dir(&folder).exists());
+        // The git identity of `~/.gitconfig` stays (01M6WZ2C8JXEA888XYMRXTS17V).
+        assert_eq!(git_setting(&spec.env, "user.name"), None);
+        assert_eq!(git_setting(&spec.env, "user.email"), None);
 
         let status = status(&here.dir).await.unwrap();
         assert_eq!(

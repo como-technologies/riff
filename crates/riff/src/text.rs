@@ -4826,6 +4826,24 @@ pub fn pr_opened(number: u64, url: &str) -> String {
     format!("Opened pull request #{number} with auto-merge on: {url}")
 }
 
+/// riff could not read the person on GitHub, for the error `error`: the
+/// body of the pull request has no line `Co-authored-by:`
+/// (01M6WZ2CG9DFB45E3BQCGQQYNY).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_co_author("gh api user: HTTP 403"),
+///     "riff cannot read your account on GitHub (gh api user: HTTP 403). The body of the \
+///      pull request gets no line Co-authored-by."
+/// );
+/// ```
+pub fn no_co_author(error: &str) -> String {
+    format!(
+        "riff cannot read your account on GitHub ({error}). The body of the pull request gets \
+         no line Co-authored-by."
+    )
+}
+
 /// The line of `riff verify` after the comment and the status
 /// (01M3NB6FYXXKX80VHEVA5CV6RY).
 pub fn verify_reported(verdict: Verdict, number: u64, done: &Reported) -> String {

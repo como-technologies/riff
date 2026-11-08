@@ -1720,6 +1720,10 @@ another host, add `--host thelio`.
 - Where the Apps are not on the repository, your token of `gh` in
   `GH_TOKEN`. riff gives podman only the name of the variable, so the
   token is in no command line.
+- With the token of an App, the author of each commit: `user.name` and
+  `user.email` of the session in `GIT_CONFIG_*`. They win over your
+  `~/.gitconfig`. See
+  [Find the commits of a session](#find-the-commits-of-a-session).
 - A Claude folder of its own. `claude` runs in the auto permission
   mode.
 - The token of `riff claude-token` in `CLAUDE_CODE_OAUTH_TOKEN`, by
@@ -1767,9 +1771,48 @@ another host, add `--host thelio`.
   See
   [Choose the MCP servers of the container sessions](#choose-the-mcp-servers-of-the-container-sessions).
 
-A commit of the session has your git identity, no signature, and a
-`Riff-Session:` trailer. The table of what sessions share is in
+A commit of the session has the session as its author, no signature,
+and a `Riff-Session:` trailer. See
+[Find the commits of a session](#find-the-commits-of-a-session). The
+table of what sessions share is in
 [What sessions share](how-it-works.md#what-sessions-share).
+
+### Find the commits of a session
+
+Each commit of a session in a container has the session as its author
+and its committer: `riff ROLE ID8`, with the role and the first 8
+characters of the session ID, for example `riff worker 21c026a1`. The
+email is the noreply address of the bot of the GitHub App of the role,
+for example
+`1101+riff-como-technologies[bot]@users.noreply.github.com`. So GitHub
+links the commit to the App. Where the Apps are not on the repository,
+a session acts with your token, and its commits keep your git identity.
+
+The squash merge makes one commit on `main`, with the body of the pull
+request as its message. The body of a session ends with two trailers:
+`Riff-Session:` with the session ID, and `Co-authored-by:` with your
+account on GitHub. So GitHub shows you as a co-author of the commit on
+`main`.
+
+```mermaid
+flowchart LR
+    B["a commit on the branch<br/>author: riff worker 21c026a1"] --> P["the pull request of the session"]
+    P -- "squash merge" --> M["the commit on main<br/>Riff-Session: 21c026a1-…<br/>Co-authored-by: you"]
+```
+
+To find the commits of the workers on a branch, search by the author:
+
+```sh
+git log --author='riff worker' origin/worktree-issue-12
+```
+
+To find the commit on `main` of one session, search for its trailer
+with the start of its session ID, for example the 8 characters in the
+name of its author. `riff who --long` shows the whole ID:
+
+```sh
+git log --grep 'Riff-Session: 21c026a1' origin/main
+```
 
 ### The riff tools of a session
 
@@ -4505,6 +4548,9 @@ Milestone: Wave 3
   does a paragraph of text after it.
 - Keep each trailer line to 72 characters. See
   [Keep a trailer line short](#keep-a-trailer-line-short).
+- The body of a pull request of a session ends with two more trailers:
+  `Riff-Session:` and `Co-authored-by:`. See
+  [Find the commits of a session](#find-the-commits-of-a-session).
 - Give the pull request the milestone of its issue. Do not end the
   title with `(#N)`. GitHub adds the number of the pull request.
 

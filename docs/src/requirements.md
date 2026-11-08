@@ -843,6 +843,28 @@
   When the only failure of a check is the pull of the image, the session
   changes no code, pushes nothing, runs the failed jobs again one time
   with `gh run rerun RUN_ID --failed`, and says so in its reply.
+- **01M6WZ2CB56PNSYKEX4E0ZJV3Y** The body of a pull request of a session
+  ends with two more trailers in its last block: `Riff-Session: ID` with
+  the session ID, then `Co-authored-by: NAME
+  <ID+LOGIN@users.noreply.github.com>` of the person of the session on
+  GitHub. NAME is the name of the profile of the person, or the login
+  when the person has no name. The body form of the start text of a
+  worker has both, and so does the body of `riff pr open` of a session.
+  `riff pr open` adds each line only when the text of `--file` does not
+  have it, and refuses a `Riff-Session:` of another session. `riff pr
+  open` of a person adds neither.
+- **01M6WZ2CDQAJ5TE8HPWCH8HH57** A line `Co-authored-by:` that is longer
+  than 72 characters with the name of the person takes the login as the
+  name (01M6FYR8XH4WPAH2AFW6B0NARJ). When the line is longer than 72
+  characters with the login too, the body has no line `Co-authored-by:`.
+- **01M6WZ2CG9DFB45E3BQCGQQYNY** riff reads the login, the ID and the
+  name of the person with the `gh` of the person on the host (`gh api
+  user`): `riff run` and the wave of the daemon for the start text, and
+  the daemon for `riff pr open` in a container, through the socket of
+  the session. So riff needs no link of a riff user to a GitHub account.
+  When the read fails, the body has no line `Co-authored-by:`, and riff
+  says why in one line. The daemon counts the read under the caller
+  `token` (01M6WQWARBTYSN3SCB86DZQ5QV).
 
 ## Tokens on GitHub
 
@@ -6630,6 +6652,16 @@ of this part when they merge.
 - **01M6WPMX18BECQPTQNSTZMBN16** The daemon and the relay take each
   token of a GitHub App out of each event and each line: `ghs_` and the
   letters, digits and `_` after it.
+- **01M6WZ2C8JXEA888XYMRXTS17V** Each commit of a session with a token
+  of a GitHub App has the session as its author and its committer. The
+  daemon sets `user.name` to `riff ROLE ID8`, with the role of the token
+  and the first 8 characters of the session ID, for example `riff worker
+  21c026a1`, and `user.email` to the noreply address of the bot of the
+  App, `BOTID+LOGIN@users.noreply.github.com`, with `GIT_CONFIG_*` at
+  the start of the container. BOTID is the user ID of the bot that
+  riff-server gives with the token; with none, the address is
+  `LOGIN@users.noreply.github.com`. A session with the token of the
+  person keeps the git identity of `~/.gitconfig`.
 
 ### The security of riff's own code
 
