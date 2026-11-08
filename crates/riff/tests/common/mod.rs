@@ -406,6 +406,18 @@ pub async fn start_signed_at(
     loaded: Option<Loaded>,
     wrap: impl FnOnce(axum::Router) -> axum::Router,
 ) -> Signed {
+    start_signed_config(listener, url, loaded, wrap, |_| {}).await
+}
+
+/// As [`start_signed_at`], with the settings of the server changed by
+/// `edit`: for example the GitHub of a test.
+pub async fn start_signed_config(
+    listener: tokio::net::TcpListener,
+    url: &str,
+    loaded: Option<Loaded>,
+    wrap: impl FnOnce(axum::Router) -> axum::Router,
+    edit: impl FnOnce(&mut riff_server::auth::Config),
+) -> Signed {
     let url = url.to_owned();
     let mut config = riff_server::auth::Config {
         require_sign_in: true,
@@ -415,6 +427,7 @@ pub async fn start_signed_at(
             .collect(),
         ..riff_server::auth::Config::new(&url)
     };
+    edit(&mut config);
     let service = match loaded {
         Some((store, lease)) => {
             config.lease = lease;

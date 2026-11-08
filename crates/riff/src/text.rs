@@ -5090,6 +5090,178 @@ pub fn cloud_no_client(name: &str) -> String {
     format!("The settings {name} have no client ID. Run: riff cloud signin {name}")
 }
 
+/// The refusal of `riff github COMMAND` in an agent session or in a
+/// container (01M6WG537B67VWVENY3821RV33).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::github_refused("create", false),
+///     "riff: a session never runs riff github create. riff github create changed nothing. \
+///      next: a person runs riff github create in a plain terminal, outside Claude Code"
+/// );
+/// assert!(riff::text::github_refused("check", true).starts_with("riff: a container never runs"));
+/// ```
+pub fn github_refused(command: &str, container: bool) -> String {
+    let step = format!("riff github {command}");
+    let who = if container {
+        "a container"
+    } else {
+        "a session"
+    };
+    format!(
+        "riff: {who} never runs {step}. {step} changed nothing. \
+         next: a person runs {step} in a plain terminal, outside Claude Code"
+    )
+}
+
+/// The lines of `riff github create` before the browser opens.
+///
+/// ```
+/// let text = riff::text::github_create_opens("acme", "https://riff.example.com/github/start?state=S");
+/// assert!(text.contains("riff-acme and riff-acme-lead on acme"), "{text}");
+/// assert!(text.contains("\n  https://riff.example.com/github/start?state=S\n"), "{text}");
+/// ```
+pub fn github_create_opens(owner: &str, url: &str) -> String {
+    format!(
+        "riff github create makes the GitHub Apps riff-{owner} and riff-{owner}-lead on {owner}.\n\
+         Your browser opens the start page. When it does not, open this URL:\n  {url}\n\
+         On GitHub, click \"Create GitHub App\" for each App, then \"Install\" for each App.\n\
+         riff waits at most 10 minutes for the two installs."
+    )
+}
+
+/// The line of `riff github install` before the browser opens the
+/// install page of the App `slug`.
+pub fn github_install_opens(slug: &str, url: &str) -> String {
+    format!(
+        "Install {slug}: your browser opens the page. When it does not, open this URL:\n  {url}"
+    )
+}
+
+/// The refusal of `riff github install` on a riff with no Apps.
+pub fn github_no_apps(owner: &str) -> String {
+    format!(
+        "riff: the riff has not both GitHub Apps. riff github install changed nothing. \
+         next: riff github create --owner {owner}"
+    )
+}
+
+/// The error of the wait after 10 minutes with no two installs.
+pub fn github_wait_ended(owner: &str) -> String {
+    format!(
+        "riff: after 10 minutes, the two GitHub Apps are not both installed on {owner}. \
+         next: riff github install {owner}"
+    )
+}
+
+/// The line when riff-server has the keys of a new App.
+pub fn github_app_made(slug: &str, bot: &str) -> String {
+    format!("{slug}: made. Its bot is {bot}.")
+}
+
+/// The line when an App is installed on the account.
+pub fn github_app_installed(slug: &str, owner: &str) -> String {
+    format!("{slug}: installed on {owner}.")
+}
+
+/// The line after the installs, in a folder of no repository of
+/// `owner`.
+pub fn github_check_elsewhere(owner: &str) -> String {
+    format!(
+        "The Apps are installed. next: run riff github check in a clone of a repository of {owner}"
+    )
+}
+
+/// The output of `riff github check` for `repo`: one line for each role,
+/// with its bot and its rights, then the result
+/// (01M6WG534PPE2JW8JQFRJDEK86).
+///
+/// ```
+/// use riff_core::wire::{GitHubChecked, GitHubRole, RoleChecked};
+///
+/// let worker = RoleChecked {
+///     role: GitHubRole::Worker,
+///     bot: Some("riff-acme[bot]".into()),
+///     rights: [("contents".to_owned(), "write".to_owned()), ("metadata".to_owned(), "read".to_owned())].into(),
+///     missing: vec![],
+///     extra: vec![],
+///     problem: None,
+/// };
+/// let lead = RoleChecked {
+///     role: GitHubRole::Lead,
+///     bot: Some("riff-acme-lead[bot]".into()),
+///     rights: Default::default(),
+///     missing: vec![],
+///     extra: vec![],
+///     problem: Some("riff-acme-lead is not installed on acme/app: riff github install acme".into()),
+/// };
+/// let text = riff::text::github_checked("acme/app", &GitHubChecked { roles: vec![worker, lead] });
+/// assert_eq!(
+///     text,
+///     "riff github check acme/app:\n\
+///      \x20 worker  riff-acme[bot]       contents: write, metadata: read\n\
+///      \x20 lead    riff-acme-lead[bot]  fail: riff-acme-lead is not installed on acme/app: riff github install acme\n\
+///      riff github check: 1 role failed. riff-server revoked each token.\n"
+/// );
+/// ```
+pub fn github_checked(repo: &str, checked: &riff_core::wire::GitHubChecked) -> String {
+    let rows: Vec<(String, String, String)> = checked
+        .roles
+        .iter()
+        .map(|role| {
+            let rights = role
+                .rights
+                .iter()
+                .map(|(name, level)| format!("{name}: {level}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let shown = if let Some(problem) = &role.problem {
+                format!("fail: {problem}")
+            } else if role.passed() {
+                rights
+            } else {
+                let mut parts = vec![rights];
+                if !role.missing.is_empty() {
+                    parts.push(format!("fail: it misses {}", role.missing.join(", ")));
+                }
+                if !role.extra.is_empty() {
+                    parts.push(format!("fail: it has more: {}", role.extra.join(", ")));
+                }
+                parts.join("; ")
+            };
+            (
+                role.role.to_string(),
+                role.bot.clone().unwrap_or_else(|| "-".into()),
+                shown,
+            )
+        })
+        .collect();
+    let role_width = rows.iter().map(|r| r.0.len()).max().unwrap_or(0);
+    let bot_width = rows.iter().map(|r| r.1.len()).max().unwrap_or(0);
+    let mut text = format!("riff github check {repo}:\n");
+    for (role, bot, shown) in &rows {
+        text.push_str(&format!(
+            "  {role:<role_width$}  {bot:<bot_width$}  {shown}\n"
+        ));
+    }
+    let failed = checked.roles.iter().filter(|role| !role.passed()).count();
+    match failed {
+        0 => text.push_str(
+            "riff github check: each role has its rights and no more. \
+             riff-server revoked each token.\n",
+        ),
+        1 => text.push_str("riff github check: 1 role failed. riff-server revoked each token.\n"),
+        n => text.push_str(&format!(
+            "riff github check: {n} roles failed. riff-server revoked each token.\n"
+        )),
+    }
+    text
+}
+
+/// The error of `riff github check` outside a clone of a repository.
+pub const GITHUB_CHECK_NO_REPO: &str =
+    "riff github check runs in a clone of a repository on GitHub: this folder has no origin";
+
 /// The refusal of `riff cloud deploy` with no `RIFF_OWNER`.
 pub const CLOUD_NO_OWNER: &str = "RIFF_OWNER is not set: the cloud riff needs an owner. Run: \
 export RIFF_OWNER=YOUR_EMAIL";

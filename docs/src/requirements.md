@@ -3121,6 +3121,66 @@
   `RIFF_OIDC_CLIENT_ID`, `RIFF_OIDC_CLIENT_SECRET` and `--insecure`.
 - **01M3JCE51T84JZKJ0NR89TPDNY** `riff-server` never terminates TLS. A
   proxy or the platform in front of it does, for example Cloud Run.
+- **01M6WG52J7WTP079W1AYEQ4W08** A riff has two GitHub Apps on one
+  account: the session App `riff-OWNER` for each worker and each
+  verifier, and the lead App `riff-OWNER-lead` for the lead. Both are
+  public. Each account with a repository of the riff installs both.
+- **01M6WG52MWZB1SVQMMH6BKJSJ5** The rights of each role on GitHub: a
+  worker gets `metadata`, `checks` and `statuses` read, and `contents`,
+  `pull_requests`, `issues`, `actions` and `workflows` write. A verifier
+  gets read only, of `metadata`, `contents`, `pull_requests`, `issues`,
+  `statuses`, `checks` and `actions`. The lead gets the rights of a
+  worker, with `statuses` write and no `workflows`. No role gets
+  `administration`, `deployments`, `environments`, `secrets`,
+  `variables` or `packages`.
+- **01M6WG52QHC8E24RJ33ZPVHZSJ** The manifest of each App asks for the
+  highest right of its roles and no more. The manifest of the session
+  App also asks for `merge_queues` read, and sets the webhook
+  `PUBLIC_URL/hooks/github` with the events `issues`, `issue_comment`,
+  `pull_request`, `check_run`, `status`, `workflow_run` and
+  `merge_group`. The lead App has no webhook. riff-server takes each
+  delivery with status 202, and drops it.
+- **01M6WG52T5PAD9NGQ597CP56K7** `riff github create --owner OWNER`
+  makes the two Apps on OWNER, an organization or a personal account,
+  with the manifest flow of GitHub. Only the owner or an admin of the
+  riff runs it. riff-server gives the start page with a new state. A
+  state is good for 10 minutes and for one use. riff-server refuses a
+  state that it did not make, an old one and a used one.
+- **01M6WG52WSWM8A9CN6X448AGAJ** riff-server swaps the code of GitHub
+  for the ID, the slug, the private key and the webhook secret of the
+  App, and reads the user ID of its bot. On Cloud Run, it keeps them in
+  the secret of the instance in Secret Manager. On a host, it keeps them
+  in the file `github-apps.json` with mode `0600` in `--dir`. A
+  riff-server with neither keeps them in memory, and one with a bucket
+  and no secret refuses `riff github create`. The key and the webhook
+  secret are in no reply, no log line, no record and no object of the
+  bucket.
+- **01M6WG52ZEVRSQ463FTDS94M54** `riff cloud create NAME` makes the
+  secret of the GitHub Apps, `CLOUD_GITHUB_SECRET` of the settings
+  (`NAME-github-apps` when the settings have none). It lets only the
+  account of the server read it and add a version. `riff cloud deploy
+  NAME` names the secret in `RIFF_GITHUB_SECRET`.
+- **01M6WG5322WRWQA79RCSCY4MSS** `riff github install OWNER` opens the
+  install page of each App with OWNER as the target. It waits at most 10
+  minutes for the two installs. Then it runs `riff github check` when
+  the repository of the folder is a repository of OWNER. `riff github
+  create` ends with the same steps.
+- **01M6WG534PPE2JW8JQFRJDEK86** `riff github check` asks riff-server
+  for a token of each role for the repository of the folder. riff-server
+  compares the rights that GitHub gave with the rights of the role, and
+  revokes each token at once. The reply holds no token. riff prints one
+  line for each role: the role, the bot and the rights. It exits with
+  status 1 when a role misses a right, has a right more, or has no
+  installation.
+- **01M6WG537B67VWVENY3821RV33** `riff github create`, `install` and
+  `check` refuse in an agent session and in a container, before each
+  call. A person runs them in a plain terminal.
+- **01M6WHG7A736K9N01TXGAQS0MZ** The book has the how-to "Make the
+  GitHub Apps of riff" in "Start a Team Riff", with a copyable `sh`
+  block for `riff github create` and one for `riff github check`. The
+  how-to "Add another repository to the riff" of "Start a Riff" has the
+  step "Install the GitHub Apps of riff on the account", with a copyable
+  `sh` block for `riff github install OWNER`.
 
 ## Sign-in and tokens
 
@@ -6445,11 +6505,9 @@ of this part when they merge.
   in its own Claude folder, as the person trusts the main clone: the
   `.claude.json` of the folder has
   `projects[CLONE].hasTrustDialogAccepted: true`.
-- **01M4Z60B88DC67N3GVHY8JGRPQ** A session uses the sign-in of the
-  person for git and `gh` (01M4Z60B7QDWEFQ96H448RE9N2,
-  01M4Z60B89BHXQVJ2MGRRQ2CKJ), as a plain `claude` does. A commit has
-  the git identity of the person and a `Riff-Session:` trailer. riff has
-  no GitHub App.
+- **01M4Z60B88DC67N3GVHY8JGRPQ** A plain `claude` of the person keeps
+  the sign-in of the person for git and `gh`. A commit has the git
+  identity of the person and a `Riff-Session:` trailer.
 - **01M4Z60B89BHXQVJ2MGRRQ2CKJ** The daemon reads `gh auth token` on the
   host, and gives it to the container in `GH_TOKEN`. riff gives podman
   only the name of the variable (`-e GH_TOKEN`), so the value is in no
@@ -6459,6 +6517,10 @@ of this part when they merge.
   (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`), so
   it applies to each git call of the session. The squash merge on GitHub
   makes the commit on `main`. No gpg agent goes into a container.
+- **01M6WG4PFA843R82J0N6MW33VP** Each session acts on GitHub with an
+  identity of its own: a token of a GitHub App of the riff, for the one
+  repository of the session, with the rights of its role. Supersedes
+  01M4Z60B88DC67N3GVHY8JGRPQ in part.
 
 ### The security of riff's own code
 

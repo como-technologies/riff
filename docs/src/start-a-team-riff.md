@@ -118,7 +118,10 @@ riff cloud create NAME --project PROJECT --region REGION
 ```
 
 It writes the settings file `deploy/cloud/NAME.env`. The service, the
-bucket, the accounts and the secret take the name of the riff. Then it
+bucket, the accounts and the two secrets take the name of the riff: the
+secret of the sign-in client, and the secret that keeps the keys of the
+GitHub Apps (see
+[Make the GitHub Apps of riff](#make-the-github-apps-of-riff)). Then it
 makes each of them. It checks each one first, so you can run it again.
 To get an email for each error of the riff, give your email:
 
@@ -201,6 +204,90 @@ opens:
 ```sh
 riff login
 ```
+
+## Make the GitHub Apps of riff
+
+A riff has two GitHub Apps, so that each session can act on GitHub as
+a bot of riff, with only the rights of its role:
+
+| App | Its bot | For |
+|---|---|---|
+| The session App `riff-OWNER` | `riff-OWNER[bot]` | each worker and each verifier |
+| The lead App `riff-OWNER-lead` | `riff-OWNER-lead[bot]` | the lead |
+
+Make them one time, on the account that holds the repositories of the
+riff. You must be the owner or an admin of the riff, and an owner of
+the account on GitHub. Run the command in a plain terminal, not in
+Claude Code: it refuses in a session and in a container. Put the
+account in place of `OWNER`, for example `como-technologies`:
+
+```sh
+riff github create --owner OWNER
+```
+
+Your browser opens the start page of the riff. On GitHub, click
+**Create GitHub App** for each App, then **Install** for each App, on
+the repositories of the riff. riff waits at most 10 minutes for the
+two installs. Then, in a clone of a repository of the account, it
+checks the token of each role.
+
+```mermaid
+sequenceDiagram
+    participant R as riff github create
+    participant B as your browser
+    participant S as riff-server
+    participant G as GitHub
+    R->>S: start (the owner or an admin)
+    R->>B: open the start page
+    B->>G: the manifest of riff-OWNER: "Create GitHub App"
+    G-->>S: a code
+    S->>G: the code for the keys of the App
+    B->>G: the manifest of riff-OWNER-lead: "Create GitHub App"
+    B->>G: "Install" for each App
+    R->>S: wait for the two installs, then check
+```
+
+GitHub gives the keys of the Apps only to riff-server. riff-server
+keeps them in the secret of the riff in Secret Manager on Cloud Run:
+`riff cloud create` makes it, and `riff cloud deploy` names it in
+`RIFF_GITHUB_SECRET`. On a host, riff-server keeps them in the file
+`github-apps.json` of `--dir`. A riff-server with no `--dir` keeps
+them in memory: a restart loses them. The keys are in no reply and in
+no log line.
+
+The session App also has the webhook `URL/hooks/github` of the riff.
+riff-server takes each event of GitHub there, and drops it for now.
+
+### Check the tokens of each role
+
+In a clone of a repository of the riff, riff-server asks GitHub for a
+token of each role. It compares the rights of each token with the
+rights of the role, and revokes each token at once. riff prints the
+bot and the rights of each role, and exits with status 1 when a role
+fails:
+
+```sh
+riff github check
+```
+
+| Right | worker | verifier | lead |
+|---|---|---|---|
+| `metadata` | read | read | read |
+| `contents` | write | read | write |
+| `pull_requests` | write | read | write |
+| `issues` | write | read | write |
+| `statuses` | read | read | write |
+| `checks` | read | read | read |
+| `actions` | write | read | write |
+| `workflows` | write | none | none |
+
+No role gets `administration`, `deployments`, `environments`,
+`secrets`, `variables` or `packages`. To add a repository of another
+account, see
+[Add another repository to the riff](start-a-riff.md#add-another-repository-to-the-riff).
+
+To make the Apps again, first delete both Apps in the settings of the
+account on GitHub. Then run `riff github create` again.
 
 ## Invite a person
 

@@ -623,6 +623,26 @@ steps and change nothing, run `riff init --check`. A person who is not
 an admin of the repository gets the fix of each check, and riff changes
 nothing: ask an admin to run `riff init`.
 
+### Install the GitHub Apps of riff on the account
+
+Each session acts on GitHub as a bot of the two GitHub Apps of the
+riff. See
+[Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff).
+A repository of another account, for example `n8behavior`, needs both
+Apps on that account. The owner or an admin of the riff runs this in a
+plain terminal, in a clone of the repository. Put the account in place
+of `OWNER`:
+
+```sh
+riff github install OWNER
+```
+
+Your browser opens the install page of each App. The owner of the
+account clicks **Install** for each App, on the repositories of the
+riff. riff waits at most 10 minutes for the two installs. Then it
+checks the token of each role for the repository of the folder, as
+`riff github check` does.
+
 ### Run the checks in the container of the lead
 
 A lead can run `riff init --check` in its container. A container runs

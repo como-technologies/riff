@@ -62,8 +62,9 @@ flowchart LR
 
 - A person plans on GitHub, as today. The book and the
   leads keep the waves and the `Needs:` lines.
-- The server has no credential of the forge (#424). So the server never
-  reads GitHub. A client tells it the plan.
+- The server holds the keys of the GitHub Apps of the riff
+  (01M6WG52WSWM8A9CN6X448AGAJ), for the tokens of the sessions. It
+  still reads no plan from GitHub (#424): a client tells it the plan.
 - The plan is opt-in for each repository. `riff plan on` sends the
   first `plan`. `riff plan off` sends `plan_off`, and the server
   forgets the plan of the repository. A repository with no plan gets

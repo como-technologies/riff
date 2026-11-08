@@ -31,6 +31,7 @@ mod gh_costs;
 mod gh_wrapper;
 mod git_fault;
 mod github;
+mod github_apps;
 mod help;
 mod identity;
 mod lead_book;
