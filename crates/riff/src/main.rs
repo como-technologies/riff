@@ -2397,6 +2397,20 @@ async fn cli() -> Result<()> {
                 None => String::new(),
             };
             let rules = riff::hygiene_rules::of_folder(&identity::working_dir()?)?;
+            // The trailers of a session (01M6WZ2CB56PNSYKEX4E0ZJV3Y).
+            let made = match me.who().session() {
+                Some(session) => Some(pr::MadeBy {
+                    session: session.to_owned(),
+                    person: match reach.person().await {
+                        Ok(person) => Some(person),
+                        Err(e) => {
+                            eprintln!("riff: {}", text::no_co_author(&format!("{e:#}")));
+                            None
+                        }
+                    },
+                }),
+                None => None,
+            };
             let (number, url) = pr::open(
                 &pr::Gh::here("pr open"),
                 &title,
@@ -2404,6 +2418,7 @@ async fn cli() -> Result<()> {
                 issue,
                 refs,
                 rules,
+                made.as_ref(),
             )?;
             println!("{}", text::pr_opened(number, &url));
             riff::look::tell_fact(&api, &me, issue, number, PullState::Asked).await;

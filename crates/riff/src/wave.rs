@@ -2698,7 +2698,13 @@ impl Live {
                 .await
                 .unwrap_or_default();
                 let frame = frame.context("a build has a milestone")?;
-                let (body, milestone) = (frame.body()?, &frame.milestone);
+                // The trailers of the session (01M6WZ2CB56PNSYKEX4E0ZJV3Y).
+                let made = {
+                    let (gh, session) = (forge(&wave.repo).by("token"), session.to_owned());
+                    blocking(move || Ok(run::made_by(&gh, &session))).await?
+                };
+                let body = pr::with_session(&frame.body()?, &made)?;
+                let milestone = &frame.milestone;
                 let mut text = text::run_start(
                     &wave.repo, base, issue, &branch, session, &body, milestone, earlier,
                 );

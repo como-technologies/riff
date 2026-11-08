@@ -1098,7 +1098,13 @@ async fn verify_takes_head_as_the_tested_commit() {
 }
 
 const OPEN: &str = r#"*'issue view 12 --json number,state,milestone'*) echo '{"number":12,"state":"OPEN","milestone":{"title":"Wave 3"}}' ;;
-*'pr create'*) echo 'https://github.com/como-technologies/riff/pull/40' ;;"#;
+*'pr create'*) echo 'https://github.com/como-technologies/riff/pull/40' ;;
+'api user') echo '{"login":"mike","id":7,"name":"Mike Sandman"}' ;;"#;
+
+/// The trailers of the session `author` of mike at the end of each body
+/// (01M6WZ2CB56PNSYKEX4E0ZJV3Y).
+const SIGNED: &str =
+    "Riff-Session: author\nCo-authored-by: Mike Sandman <7+mike@users.noreply.github.com>\n";
 
 /// The title and the body that the fake `gh` got for `pr create`.
 fn created(bin: &Path) -> (String, String) {
@@ -1137,7 +1143,9 @@ async fn pr_open_makes_a_body_that_passes_the_hygiene_check_and_turns_on_auto_me
     assert_eq!(title, "Show the wave");
     assert_eq!(
         body,
-        "Closes #12\n\nShow the wave in riff who.\n\nIssue: #12\nMilestone: Wave 3\n"
+        format!(
+            "Closes #12\n\nShow the wave in riff who.\n\nIssue: #12\nMilestone: Wave 3\n{SIGNED}"
+        )
     );
     // The check of `hygiene pr`, on what gh got.
     let pr = hygiene::PullRequest::new(&title, &body, Some("Wave 3"));
@@ -1161,7 +1169,10 @@ async fn pr_open_names_a_wave_with_a_name_by_its_number() {
         .ok("author", &["pr", "open", "--title", "Show the wave"])
         .await;
     let (_, body) = created(machine.bin.path());
-    assert_eq!(body, "Closes #12\n\nIssue: #12\nMilestone: Wave 3\n");
+    assert_eq!(
+        body,
+        format!("Closes #12\n\nIssue: #12\nMilestone: Wave 3\n{SIGNED}")
+    );
     let log = log(machine.bin.path());
     assert!(
         log.contains("gh pr create --title Show the wave --milestone Wave 3: Cloud --body-file -"),
@@ -1186,7 +1197,10 @@ async fn pr_open_with_refs_links_with_refs() {
         )
         .await;
     let (_, body) = created(machine.bin.path());
-    assert_eq!(body, "Refs #12\n\nIssue: #12\nMilestone: Wave 3\n");
+    assert_eq!(
+        body,
+        format!("Refs #12\n\nIssue: #12\nMilestone: Wave 3\n{SIGNED}")
+    );
 }
 
 /// #1747, 01M6WW5WSSRMTBP882FQP3TS2Q: issue 12 has a line `Live:` in
@@ -1214,7 +1228,8 @@ async fn pr_open_links_an_issue_with_a_live_line_with_refs() {
         machine.ok("author", &args).await;
         let (_, body) = created(machine.bin.path());
         assert_eq!(
-            body, "Refs #12\n\nMake the Apps.\n\nIssue: #12\nMilestone: Wave 3\n",
+            body,
+            format!("Refs #12\n\nMake the Apps.\n\nIssue: #12\nMilestone: Wave 3\n{SIGNED}"),
             "--refs {refs}"
         );
         let calls = log(machine.bin.path());
@@ -1246,14 +1261,19 @@ async fn pr_open_links_an_issue_with_a_live_line_with_refs() {
 }
 
 /// A body that has the link line and the trailers gets none of them a
-/// second time (01M3W2627GYXR8CFW76KB6CB9W).
+/// second time (01M3W2627GYXR8CFW76KB6CB9W, 01M6WZ2CB56PNSYKEX4E0ZJV3Y).
 #[tokio::test]
 async fn pr_open_adds_no_line_that_the_body_has() {
-    let full = "Closes #12\n\nShow the wave in riff who.\n\nIssue: #12\nMilestone: Wave 3\n";
+    let full = format!(
+        "Closes #12\n\nShow the wave in riff who.\n\nIssue: #12\nMilestone: Wave 3\n{SIGNED}"
+    );
+    let session_only =
+        "Show the wave in riff who.\n\nIssue: #12\nMilestone: Wave 3\nRiff-Session: author\n";
     for content in [
-        full,
+        &full,
         "Show the wave in riff who.\n\nIssue: #12\nMilestone: Wave 3\n",
         "Closes #12\n\nShow the wave in riff who.\n\nIssue: #12\n",
+        session_only,
     ] {
         let machine = Machine::new(OPEN).await;
         machine.claim("author", "issue-12").await;
@@ -1266,10 +1286,106 @@ async fn pr_open_adds_no_line_that_the_body_has() {
             .await;
         let (_, body) = created(machine.bin.path());
         assert_eq!(body, full, "{content}");
-        for line in ["Closes #12\n", "Issue: #12\n", "Milestone: Wave 3\n"] {
+        for line in [
+            "Closes #12\n",
+            "Issue: #12\n",
+            "Milestone: Wave 3\n",
+            "Riff-Session: author\n",
+            "Co-authored-by: ",
+        ] {
             assert_eq!(body.matches(line).count(), 1, "{line} in {body}");
         }
     }
+}
+
+/// A person in a terminal is the author: the body has no trailer of a
+/// session (01M6WZ2CB56PNSYKEX4E0ZJV3Y), and riff reads no account.
+#[tokio::test]
+async fn pr_open_of_a_person_adds_no_trailer_of_a_session() {
+    let machine = Machine::new(OPEN).await;
+    machine
+        .ok(
+            "",
+            &["pr", "open", "--title", "Show the wave", "--issue", "12"],
+        )
+        .await;
+    let (_, body) = created(machine.bin.path());
+    assert_eq!(body, "Closes #12\n\nIssue: #12\nMilestone: Wave 3\n");
+    assert!(!log(machine.bin.path()).contains("gh api user"));
+}
+
+/// With no name on GitHub, the login is the name of the line
+/// `Co-authored-by:` (01M6WZ2CB56PNSYKEX4E0ZJV3Y).
+#[tokio::test]
+async fn pr_open_takes_the_login_when_the_person_has_no_name() {
+    let no_name = OPEN.replace(r#""name":"Mike Sandman""#, r#""name":null"#);
+    let machine = Machine::new(&no_name).await;
+    machine.claim("author", "issue-12").await;
+    machine
+        .ok("author", &["pr", "open", "--title", "Show the wave"])
+        .await;
+    let (_, body) = created(machine.bin.path());
+    assert!(
+        body.ends_with(
+            "Riff-Session: author\nCo-authored-by: mike <7+mike@users.noreply.github.com>\n"
+        ),
+        "{body}"
+    );
+}
+
+/// When riff cannot read the account of the person, for example with a
+/// token of a GitHub App, the body has the session and no line
+/// `Co-authored-by:`, and riff says why (01M6WZ2CG9DFB45E3BQCGQQYNY).
+#[tokio::test]
+async fn pr_open_says_why_the_body_has_no_co_author() {
+    let refused = OPEN.replace(
+        r#"'api user') echo '{"login":"mike","id":7,"name":"Mike Sandman"}' ;;"#,
+        r#"'api user') echo 'Resource not accessible by integration (HTTP 403)' >&2; exit 1 ;;"#,
+    );
+    let machine = Machine::new(&refused).await;
+    machine.claim("author", "issue-12").await;
+    let out = machine
+        .run("author", &["pr", "open", "--title", "Show the wave"])
+        .await;
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("riff cannot read your account on GitHub (the read of the person on GitHub failed: Resource not accessible by integration (HTTP 403)). The body of the pull request gets no line Co-authored-by."),
+        "{err}"
+    );
+    let (_, body) = created(machine.bin.path());
+    assert_eq!(
+        body,
+        "Closes #12\n\nIssue: #12\nMilestone: Wave 3\nRiff-Session: author\n"
+    );
+}
+
+/// A body with the line `Riff-Session:` of another session is refused,
+/// and riff opens nothing (01M6WZ2CB56PNSYKEX4E0ZJV3Y).
+#[tokio::test]
+async fn pr_open_refuses_the_session_line_of_another_session() {
+    let machine = Machine::new(OPEN).await;
+    machine.claim("author", "issue-12").await;
+    let summary = machine.write(
+        "summary.md",
+        "Text.\n\nIssue: #12\nRiff-Session: 9f8e7d6c\n",
+    );
+    let out = machine
+        .run(
+            "author",
+            &["pr", "open", "--title", "Show the wave", "--file", &summary],
+        )
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    let err = text(&out.stderr);
+    assert!(
+        err.contains(
+            "the body has the line `Riff-Session: 9f8e7d6c`, but this pull request needs \
+             `Riff-Session: author`."
+        ),
+        "{err}"
+    );
+    assert!(!log(machine.bin.path()).contains("gh pr create"));
 }
 
 /// A body with a line for another issue or another milestone is
@@ -1365,7 +1481,9 @@ async fn pr_open_refuses_a_tests_line_of_300_characters_and_takes_the_same_text_
     let (_, body) = created(machine.bin.path());
     assert_eq!(
         body,
-        format!("Closes #12\n\nShow the wave.\n\n{sentence}\n\nIssue: #12\nMilestone: Wave 3\n")
+        format!(
+            "Closes #12\n\nShow the wave.\n\n{sentence}\n\nIssue: #12\nMilestone: Wave 3\n{SIGNED}"
+        )
     );
     let pr = hygiene::PullRequest::new("Show the wave", &body, Some("Wave 3"));
     let issue = hygiene::Issue::new(12, "OPEN", Some("Wave 3"));
@@ -1374,7 +1492,8 @@ async fn pr_open_refuses_a_tests_line_of_300_characters_and_takes_the_same_text_
 
 /// The issue 12 of the fake `gh` has no milestone.
 const OPEN_NO_WAVE: &str = r#"*'issue view 12 --json number,state,milestone'*) echo '{"number":12,"state":"OPEN","milestone":null}' ;;
-*'pr create'*) echo 'https://github.com/como-technologies/riff/pull/40' ;;"#;
+*'pr create'*) echo 'https://github.com/como-technologies/riff/pull/40' ;;
+'api user') echo '{"login":"mike","id":7,"name":"Mike Sandman"}' ;;"#;
 
 /// The riff config of a repository that is not riff: it has no table
 /// `[hygiene]`.
@@ -1402,7 +1521,11 @@ async fn pr_open_keeps_only_what_riff_reads_in_a_repository_with_no_hygiene_tabl
         );
         assert!(!log.contains("--milestone"), "{log}");
         let body = std::fs::read_to_string(machine.bin.path().join("body")).unwrap();
-        assert_eq!(body, "Closes #12\n\nIssue: #12\n", "{config:?}");
+        assert_eq!(
+            body,
+            format!("Closes #12\n\nIssue: #12\n{SIGNED}"),
+            "{config:?}"
+        );
         let create = log.find("gh pr create");
         let merge = log.find("gh pr merge 40 --auto --squash");
         assert!(create.is_some() && create < merge, "{log}");
@@ -1427,7 +1550,7 @@ async fn pr_open_gives_the_milestone_but_no_trailer_in_a_repository_with_no_hygi
     let (_, body) = created(machine.bin.path());
     assert_eq!(
         body,
-        "Closes #12\n\nShow the wave. It fixes #13.\n\nIssue: #12\n"
+        format!("Closes #12\n\nShow the wave. It fixes #13.\n\nIssue: #12\n{SIGNED}")
     );
     let log = log(machine.bin.path());
     assert!(
@@ -1550,6 +1673,46 @@ fn how_to(heading: &str) -> String {
         .unwrap_or_else(|| panic!("no how-to {heading:?}"));
     let rest = &page[start + 1..];
     rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)].to_owned()
+}
+
+/// 01M6WZ2C8JXEA888XYMRXTS17V, 01M6WZ2CB56PNSYKEX4E0ZJV3Y: the how-to
+/// "Find the commits of a session" of development.md finds the commits of
+/// a session by their author on a branch and by the trailer on `main`, in
+/// copyable `sh` blocks. Its author is the one of the daemon, and the
+/// line `Co-authored-by:` of "Open a pull request" is the one of riff.
+#[test]
+fn the_book_shows_how_to_find_the_commits_of_a_session() {
+    let page = book::page("development.md");
+    let start = page
+        .find("\n### Find the commits of a session\n")
+        .expect("the how-to Find the commits of a session");
+    let rest = &page[start + 1..];
+    let found = &rest[..rest[4..].find("\n#").map_or(rest.len(), |i| i + 4)];
+    let commands = book::commands_in(found);
+    assert!(
+        commands.contains(&"git log --author='riff worker' origin/worktree-issue-12".to_owned()),
+        "{commands:?}"
+    );
+    assert!(
+        commands.contains(&"git log --grep 'Riff-Session: 21c026a1' origin/main".to_owned()),
+        "{commands:?}"
+    );
+    let (name, email) = riff::daemon::gh_token::author(
+        riff_core::wire::GitHubRole::Worker,
+        "21c026a1-ee2a-4451-9729-59e6332cb974",
+        "riff-como-technologies[bot]",
+        Some(1101),
+    );
+    assert!(found.contains(&format!("`{name}`")), "{found}");
+    assert!(found.contains(&format!("`{email}`")), "{found}");
+
+    let mike = pr::GitHubUser {
+        login: "mike".into(),
+        id: 1234567,
+        name: Some("Mike".into()),
+    };
+    let line = mike.co_author().unwrap();
+    assert!(how_to("Open a pull request").contains(&line), "{line}");
 }
 
 /// The help of `riff pr open` and of `--title` says what holds in each

@@ -39,7 +39,8 @@
 //!
 //! Through the socket, each session can read the build of riff-server,
 //! the sessions, the holds of a thread, the members, the state of `riff who`
-//! and `riff whoami`, and the records of the thread `ends`. Only the lead
+//! and `riff whoami`, the records of the thread `ends`, and the person on
+//! GitHub for `riff pr open` ([`Reach::person`]). Only the lead
 //! can resume the whole riff, read the log for an audit, run an item and
 //! follow the events of a session with `riff daemon events`: the daemon
 //! knows by the socket which session asks. `riff daemon events NAME` asks
@@ -232,6 +233,21 @@ impl Reach {
             })
             .map_err(|e| format!("{e:#}"));
         crate::cycle::Served { server, hosts }
+    }
+
+    /// The person of this session on GitHub, for the line
+    /// `Co-authored-by:` of `riff pr open` (01M6WZ2CG9DFB45E3BQCGQQYNY):
+    /// read with the `gh` here, or by the daemon with the `gh` of the
+    /// person on the host. A container with a token of an App has no
+    /// account of the person.
+    pub async fn person(&self) -> Result<crate::pr::GitHubUser> {
+        match self {
+            Reach::Direct(_) => {
+                crate::pr::on_thread(|| crate::pr::read_user(&crate::pr::Gh::here("pr open")))
+                    .await?
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::Person).await,
+        }
     }
 
     /// The state of the riff daemon on the socket of the session, for

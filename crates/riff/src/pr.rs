@@ -1606,6 +1606,176 @@ pub fn body_for(link: Link, summary: &str, milestone: Option<&str>) -> Result<St
     Ok(body)
 }
 
+/// The noreply address of the account `login` with the user ID `id` on
+/// GitHub: GitHub links a commit with it to the account. With no ID, the
+/// address has the login only.
+///
+/// ```
+/// use riff::pr::noreply;
+///
+/// assert_eq!(noreply(Some(583231), "octocat"), "583231+octocat@users.noreply.github.com");
+/// assert_eq!(
+///     noreply(Some(41898282), "github-actions[bot]"),
+///     "41898282+github-actions[bot]@users.noreply.github.com"
+/// );
+/// assert_eq!(noreply(None, "octocat"), "octocat@users.noreply.github.com");
+/// ```
+pub fn noreply(id: Option<u64>, login: &str) -> String {
+    match id {
+        Some(id) => format!("{id}+{login}@users.noreply.github.com"),
+        None => format!("{login}@users.noreply.github.com"),
+    }
+}
+
+/// An account on GitHub, as `gh api user` gives it: the person of a
+/// session (01M6WZ2CG9DFB45E3BQCGQQYNY).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHubUser {
+    /// The login, for example `octocat`.
+    #[serde(deserialize_with = "crate::text::forge_de")]
+    pub login: String,
+    /// The user ID.
+    pub id: u64,
+    /// The name of the profile, when the person gave one.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+impl GitHubUser {
+    /// The trailer line `Co-authored-by:` of the person: the name of the
+    /// profile, or the login when the person has no name, and the
+    /// noreply address ([`noreply`], 01M6WZ2CB56PNSYKEX4E0ZJV3Y). A line
+    /// with the name over [`hygiene::MERGE_WIDTH`] characters takes the
+    /// login. `None` when the line with the login is longer too: the merge
+    /// would wrap it (01M6WZ2CDQAJ5TE8HPWCH8HH57).
+    ///
+    /// ```
+    /// use riff::pr::GitHubUser;
+    ///
+    /// let mona = GitHubUser { login: "mona".into(), id: 583231, name: Some("Mona Lisa".into()) };
+    /// assert_eq!(
+    ///     mona.co_author().unwrap(),
+    ///     "Co-authored-by: Mona Lisa <583231+mona@users.noreply.github.com>"
+    /// );
+    /// let no_name = GitHubUser { name: None, ..mona.clone() };
+    /// assert_eq!(
+    ///     no_name.co_author().unwrap(),
+    ///     "Co-authored-by: mona <583231+mona@users.noreply.github.com>"
+    /// );
+    /// // A name that makes the line too long: the login.
+    /// let long = GitHubUser { name: Some("Mona Lisa of the Louvre".into()), ..mona.clone() };
+    /// assert_eq!(long.co_author(), no_name.co_author());
+    /// // A login that makes the line too long: no line.
+    /// let longest = GitHubUser { login: "m".repeat(39), ..mona };
+    /// assert_eq!(longest.co_author(), None);
+    /// ```
+    pub fn co_author(&self) -> Option<String> {
+        let email = noreply(Some(self.id), &self.login);
+        let name = self.name.as_deref().map(|name| {
+            let plain = text::forge(name).replace(['<', '>'], " ");
+            plain.split_whitespace().collect::<Vec<_>>().join(" ")
+        });
+        name.into_iter()
+            .chain([self.login.clone()])
+            .filter(|name| !name.is_empty())
+            .map(|name| format!("{CO_AUTHOR}: {name} <{email}>"))
+            .find(|line| line.chars().count() <= hygiene::MERGE_WIDTH)
+    }
+}
+
+/// The key of the trailer of a co-author.
+pub const CO_AUTHOR: &str = "Co-authored-by";
+
+/// The key of the trailer of a session.
+pub const SESSION_TRAILER: &str = "Riff-Session";
+
+/// Reads the account of `gh` on GitHub (`gh api user`): the person, with
+/// the `gh` of the person on the host (01M6WZ2CG9DFB45E3BQCGQQYNY). A
+/// token of a GitHub App has no account, so the read fails in a
+/// container with one.
+pub fn read_user(gh: &Gh) -> Result<GitHubUser> {
+    let out = gh.run_as("the read of the person on GitHub", &["api", "user"])?;
+    serde_json::from_str(&out).context("gh api user")
+}
+
+/// The session that makes a pull request, and its person on GitHub: the
+/// trailers that [`with_session`] adds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MadeBy {
+    /// The riff session ID.
+    pub session: String,
+    /// The person of the session, when riff could read it.
+    pub person: Option<GitHubUser>,
+}
+
+/// The body `body` of [`body_for`] with the trailers of the session of
+/// `made` at the end of its last block: `Riff-Session: ID`, then the line
+/// `Co-authored-by:` of the person ([`GitHubUser::co_author`],
+/// 01M6WZ2CB56PNSYKEX4E0ZJV3Y). It adds each line only when the body
+/// does not have it. It refuses a trailer `Riff-Session:` of another
+/// session, and names the line.
+///
+/// ```
+/// use riff::pr::{GitHubUser, MadeBy, with_session};
+///
+/// let body = "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n";
+/// let mona = GitHubUser { login: "mona".into(), id: 583231, name: None };
+/// let made = MadeBy { session: "21c026a1-ee2a".into(), person: Some(mona) };
+/// let full = with_session(body, &made)?;
+/// assert_eq!(
+///     full,
+///     "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\nRiff-Session: 21c026a1-ee2a\n\
+///      Co-authored-by: mona <583231+mona@users.noreply.github.com>\n"
+/// );
+/// // The lines are trailers of the last block.
+/// let keys: Vec<_> = hygiene::trailers(&full).into_iter().map(|(k, _)| k).collect();
+/// assert_eq!(keys, ["Issue", "Milestone", "Riff-Session", "Co-authored-by"]);
+/// // A body that has them stays as it is.
+/// assert_eq!(with_session(&full, &made)?, full);
+///
+/// // With no person, only the session.
+/// let alone = MadeBy { person: None, ..made.clone() };
+/// assert!(with_session(body, &alone)?.ends_with("Milestone: Wave 3\nRiff-Session: 21c026a1-ee2a\n"));
+///
+/// // A line of another session is refused.
+/// let other = with_session("Text.\n\nIssue: #12\nRiff-Session: 9f8e7d6c\n", &made);
+/// assert_eq!(
+///     other.unwrap_err().to_string(),
+///     "the body has the line `Riff-Session: 9f8e7d6c`, but this pull request needs \
+///      `Riff-Session: 21c026a1-ee2a`. Change the line, or remove it."
+/// );
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn with_session(body: &str, made: &MadeBy) -> Result<String> {
+    let trailers = hygiene::trailers(body);
+    let is = |key: &str, wanted: &str| key.eq_ignore_ascii_case(wanted);
+    if let Some((_, other)) = trailers
+        .iter()
+        .find(|(k, v)| is(k, SESSION_TRAILER) && *v != made.session)
+    {
+        bail!(
+            "the body has the line `{SESSION_TRAILER}: {other}`, but this pull request needs \
+             `{SESSION_TRAILER}: {}`. Change the line, or remove it.",
+            made.session
+        );
+    }
+    let mut lines = vec![format!("{SESSION_TRAILER}: {}", made.session)];
+    lines.extend(made.person.as_ref().and_then(GitHubUser::co_author));
+    let mut body = body.trim_end().to_owned();
+    body.push('\n');
+    if trailers.is_empty() {
+        body.push('\n');
+    }
+    for line in lines {
+        let (key, value) = line.split_once(": ").unwrap_or((&line, ""));
+        if !trailers.iter().any(|(k, v)| is(k, key) && v == value) {
+            body.push_str(&line);
+            body.push('\n');
+        }
+    }
+    Ok(body)
+}
+
 /// The issue of the claims of a session: the one claim `issue-N`.
 ///
 /// ```
@@ -1731,6 +1901,10 @@ pub fn view_issue(gh: &Gh, issue: u64) -> Result<IssueView> {
 /// The link line comes from `refs` and from the body of the issue
 /// ([`Link::of`], 01M6WW5WSSRMTBP882FQP3TS2Q): an issue with a line
 /// `Live:` in "Done when" gets `Refs #N`, also with no `refs`.
+///
+/// The pull request of a session, `made`, also gets the trailers of the
+/// session at the end of its body ([`with_session`],
+/// 01M6WZ2CB56PNSYKEX4E0ZJV3Y). A person gives `None`.
 pub fn open(
     gh: &Gh,
     title: &str,
@@ -1738,6 +1912,7 @@ pub fn open(
     issue: u64,
     refs: bool,
     rules: hygiene::Rules,
+    made: Option<&MadeBy>,
 ) -> Result<(u64, String)> {
     let viewed = view_issue(gh, issue)?;
     let found = &viewed.issue;
@@ -1760,7 +1935,10 @@ pub fn open(
     let wave = milestone
         .as_deref()
         .filter(|_| rules == hygiene::Rules::All);
-    let body = body_for(link, summary, wave)?;
+    let mut body = body_for(link, summary, wave)?;
+    if let Some(made) = made {
+        body = with_session(&body, made)?;
+    }
     check(rules, title, &body, found)?;
     let mut args = vec!["pr", "create", "--title", title];
     if let Some(milestone) = &milestone {
