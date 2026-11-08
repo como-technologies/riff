@@ -7935,6 +7935,13 @@ that builds it merges.
   code of `riff questions --answered`. The label comes from the last
   read of the forge, so an item in work can have it too. On an item with
   no label, `a` puts a note in the note line, and asks nothing.
+- **01M6Y0ZQWDYVC23WA5CVN0QSH8** The board of a repository in the Waves
+  tab also has an asked row for each open issue with the label
+  `question` in a later wave, also when it has a claim or a pull
+  request, as `riff questions` lists it. The row names its wave before
+  its title, as `Wave N · TITLE`, and `Enter` on it puts its wave in
+  the note line too. The asked rows of all the waves go in number order,
+  and the counts of the line of the repository count them.
 
 ## The notes of the lead
 

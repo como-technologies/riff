@@ -1097,7 +1097,8 @@ case "$*" in
   *'issues?state=open'*)
     printf 'HTTP/2.0 200 OK\r\nEtag: "v1"\r\n\r\n'
     printf '[{"number":12,"title":"Show the board","milestone":{"number":5,"title":"Wave 3"}},'
-    printf '{"number":13,"title":"Hold this one","milestone":{"number":5,"title":"Wave 3"}}]' ;;
+    printf '{"number":13,"title":"Hold this one","milestone":{"number":5,"title":"Wave 3"}},'
+    printf '{"number":14,"title":"Which name?","milestone":{"number":6,"title":"Wave 4"},"labels":[{"name":"question"}]}]' ;;
   *'issues?state=closed'*) printf 'HTTP/2.0 200 OK\r\n\r\n[]' ;;
   'api repos/acme/app') echo '{"default_branch":"main"}' ;;
   *) echo '[]' ;;
@@ -1110,10 +1111,11 @@ fn path_with(bin: &std::path::Path) -> String {
 }
 
 /// 01M6VFG882T794B1CTHK5AKPDG, 01M6VFGK9XXWCA8X7CE8EZNSJV,
-/// 01M6VFGK4P2FWMFQHBZKR3JXSZ: in a clone of acme/app, the Waves tab
-/// shows the board of its current wave from `gh`, and holds, frees and
-/// pauses with the code of `riff plan hold`, `riff plan free` and `riff
-/// pause`, each after `y`.
+/// 01M6VFGK4P2FWMFQHBZKR3JXSZ, 01M6Y0ZQWDYVC23WA5CVN0QSH8: in a clone of
+/// acme/app, the Waves tab shows the board of its current wave from `gh`,
+/// with the question of a later wave, and holds, frees and pauses with
+/// the code of `riff plan hold`, `riff plan free` and `riff pause`, each
+/// after `y`.
 #[tokio::test]
 async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
     let server = crate::common::start_signed().await;
@@ -1157,6 +1159,12 @@ async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
     );
     assert!(
         rows[5].starts_with("   ○   free    #13    Hold this one"),
+        "{rows:#?}"
+    );
+    // 01M6Y0ZQWDYVC23WA5CVN0QSH8: the question of Wave 4, a wave that is
+    // not current.
+    assert_eq!(
+        rows[6], "   ?   asked   #14    Wave 4 · Which name?            waits for a person   -",
         "{rows:#?}"
     );
     let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();

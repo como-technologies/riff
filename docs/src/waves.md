@@ -297,6 +297,8 @@ for each of its open items:
   session of the claim and its state. A `stuck` or `verify` row shows
   the pull request and what it waits for: `verify`, `merge`, or why it
   is stuck, for example `conflict`.
+- The `asked` rows have the questions of the later waves too: see
+  [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui).
 - The line `done 4 · closed 1` counts the items that closed in the
   wave. `Enter` on it shows them.
 - The line `main` shows only when the full check of `main` runs or

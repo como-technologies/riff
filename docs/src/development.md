@@ -3324,6 +3324,8 @@ From then on, riff waits for the answer:
 - `riff wave list` and the board of `riff top` show the issue in the
   group `question`, next to `held` and `tracker` (see
   [See which wave runs, and where](#see-which-wave-runs-and-where)).
+  The Waves tab of the TUI shows it in each wave (see
+  [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)).
 - The look of the daemon tells the person one time in `riff chat`, with
   the title and the link of the issue. It tells again only when the
   label goes on again.

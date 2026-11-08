@@ -50,6 +50,11 @@
 //!   that holds the claim with its state and mark
 //!   ([`super::Mark`]), a verify or stuck row its pull request. The
 //!   closed items of the wave are one line, and `Enter` shows them.
+//! - **The questions of each wave** (01M6Y0ZQWDYVC23WA5CVN0QSH8): the
+//!   asked rows have the issues with the label `question` of the later
+//!   waves too ([`later_questions`]), in number order, as `riff
+//!   questions` lists them. Such a row names its wave before its title:
+//!   `Wave 56 · Design: …`.
 //! - **The lines under a board** (01M6VFGJZF7XGNGVWTECKAH429): the full
 //!   check of `main` when it needs a look, and each release whose checks
 //!   after the deploy have not passed.
@@ -97,7 +102,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use riff_client::sessions::{Sessions, Show};
-use riff_client::waves::{Board, board_repos, wave_number};
+use riff_client::waves::{Board, Issues, board_repos, wave_number};
 use riff_core::name::ThreadName;
 use riff_core::wire::{HoldInfo, RiffState, SessionInfo};
 
@@ -213,6 +218,9 @@ pub struct ItemRow {
     pub mark: (&'static str, Style),
     /// The number of its open pull request.
     pub pull: Option<u64>,
+    /// The wave of a question of a later wave, as `Wave N`. `None` for an
+    /// item of the current wave.
+    pub wave: Option<String>,
 }
 
 /// The wave of the line of a repository.
@@ -740,6 +748,9 @@ fn whole(item: &ItemRow, now_ms: i64) -> String {
         format!("#{} {}", item.number, text::safe(&item.title)),
         item.state.word().to_owned(),
     ];
+    if let Some(wave) = &item.wave {
+        parts.push(text::safe(wave));
+    }
     if item.who != "-" {
         parts.push(text::safe(&item.who));
     }
@@ -770,7 +781,8 @@ fn short(s: &SessionInfo) -> String {
 
 /// The rows of the item of the board `board` of `repo`, with the facts
 /// `forge`, the sessions `sessions`, the holds `holds` and the time of
-/// the look `look_ms` (01M6VFGJWVB3WEEYBCNSZ2FJT0).
+/// the look `look_ms` (01M6VFGJWVB3WEEYBCNSZ2FJT0). The asked rows have
+/// the questions of the later waves too ([`later_questions`]).
 fn items(
     repo: &str,
     board: &Board,
@@ -790,6 +802,7 @@ fn items(
         since_ms,
         mark: state.mark(),
         pull: pull(number).map(|p| p.number),
+        wave: None,
     };
     // The session of the claim `claim` of the item in `repo`.
     let holder = |n: u64, verify: bool| {
@@ -817,8 +830,19 @@ fn items(
             .and_then(|h| i64::try_from(h.at_ms).ok());
         rows.push(row(*n, ItemState::Held, reason.clone(), at));
     }
-    for n in &board.question {
-        rows.push(row(*n, ItemState::Asked, "waits for a person".into(), None));
+    // The questions of the current wave and of each later wave, in
+    // number order.
+    let mut asked: Vec<(u64, Option<String>)> = board.question.iter().map(|n| (*n, None)).collect();
+    asked.extend(
+        later_questions(&forge.issues)
+            .into_iter()
+            .map(|(n, wave)| (n, Some(wave))),
+    );
+    asked.sort_unstable();
+    for (n, wave) in asked {
+        let mut item = row(n, ItemState::Asked, "waits for a person".into(), None);
+        item.wave = wave;
+        rows.push(item);
     }
     for n in &board.claimed {
         let mut item = row(*n, ItemState::Work, "-".into(), None);
@@ -863,6 +887,7 @@ fn ended(closed: &Closed) -> ItemRow {
         since_ms: None,
         mark: state.mark(),
         pull: None,
+        wave: None,
     }
 }
 
@@ -918,12 +943,10 @@ pub fn rows(waves: &Waves, look: &Look, look_ms: i64) -> Vec<Row> {
         if !open {
             counted.extend(counts(&closed.iter().map(ended).collect::<Vec<_>>()));
         }
-        let wave =
-            wave_number(&board.wave).map_or_else(|| board.wave.clone(), |n| format!("Wave {n}"));
         let line = RepoRow {
             repo: repo.clone(),
             open,
-            wave: Wave::Named(wave),
+            wave: Wave::Named(wave_name(&board.wave)),
             counts: counted,
             paused,
         };
@@ -990,15 +1013,66 @@ fn next_waves(forge: &Forge) -> Option<Vec<(String, usize)>> {
         .waves
         .iter()
         .skip(1)
-        .map(|(title, items)| {
-            let name = wave_number(title).map_or_else(|| title.clone(), |n| format!("Wave {n}"));
-            (name, items.len())
-        })
+        .map(|(title, items)| (wave_name(title), items.len()))
         .collect();
     if forge.backlog > 0 {
         next.push((super::forge::BACKLOG.to_owned(), forge.backlog));
     }
     (!next.is_empty()).then_some(next)
+}
+
+/// The short name of the wave with the milestone `title`: `Wave N`, or
+/// the title when it names no wave.
+///
+/// ```
+/// use riff::tui::waves::wave_name;
+///
+/// assert_eq!(wave_name("Wave 56: the projects and the roles"), "Wave 56");
+/// assert_eq!(wave_name("Wave 49"), "Wave 49");
+/// assert_eq!(wave_name("Backlog"), "Backlog");
+/// ```
+pub fn wave_name(title: &str) -> String {
+    wave_number(title).map_or_else(|| title.to_owned(), |n| format!("Wave {n}"))
+}
+
+/// The questions of the later waves of `issues`, as `riff questions`
+/// finds them: each open issue of a wave after the current one with the
+/// label [`riff_client::waves::QUESTION`], with the name of its wave
+/// ([`wave_name`]), in the order of the waves
+/// (01M6Y0ZQWDYVC23WA5CVN0QSH8). The board of the current wave shows them
+/// as asked rows.
+///
+/// ```
+/// use riff::tui::waves::later_questions;
+/// use riff_client::waves::{Issue, Issues};
+///
+/// let issue = |number, wave: &str, question| Issue {
+///     number,
+///     title: "t".into(),
+///     milestone: Some(wave.into()),
+///     tracker: false,
+///     question,
+/// };
+/// let issues = Issues::of(vec![
+///     issue(1700, "Wave 52", true),
+///     issue(1668, "Wave 56: the projects", true),
+///     issue(1669, "Wave 56: the projects", false),
+///     issue(1500, "Backlog", true),
+/// ]);
+/// assert_eq!(later_questions(&issues), [(1668, "Wave 56".to_owned())]);
+/// ```
+pub fn later_questions(issues: &Issues) -> Vec<(u64, String)> {
+    issues
+        .waves
+        .iter()
+        .skip(1)
+        .flat_map(|(title, items)| {
+            items
+                .iter()
+                .filter(|n| issues.questions.contains(n))
+                .map(|n| (*n, wave_name(title)))
+        })
+        .collect()
 }
 
 /// `n items`, or `1 item`.
@@ -1212,7 +1286,12 @@ fn repo_line(repo: &RepoRow, wide: bool, columns: usize) -> Line<'static> {
 fn item_line(item: &ItemRow, sel: &str, wide: bool, columns: usize, now_ms: i64) -> Line<'static> {
     let (mark, style) = item.mark;
     let number = format!("#{}", item.number);
-    let title = text::safe(&item.title);
+    // A question of a later wave names its wave first
+    // (01M6Y0ZQWDYVC23WA5CVN0QSH8).
+    let title = match &item.wave {
+        Some(wave) => format!("{} · {}", text::safe(wave), text::safe(&item.title)),
+        None => text::safe(&item.title),
+    };
     if !wide {
         // `> ○ free    #1620  Add the flag --format`: the title starts at
         // the column 19 (01M6VFGKF574TCZ7C3AW3MWX4S).
@@ -2129,5 +2208,124 @@ mod tests {
         state.read_forge(vec![(RIFF.to_owned(), Ok(forge))], NOW);
         assert!(drawn(&state, 80, 24)[5].contains("A title that is longer than th…"));
         assert!(drawn(&state, 120, 24)[5].contains(long));
+    }
+
+    /// The facts of riff of the mock-up with three questions: #1622 of the
+    /// current wave, #1610 of Wave 49 and #1801 of Wave 50.
+    fn questions_forge() -> Forge {
+        let mut forge = riff_forge();
+        forge.issues.waves[1].1.push(1610);
+        forge
+            .issues
+            .titles
+            .insert(1610, "Design: the projects of the riff".into());
+        forge.issues.questions = [1610, 1622, 1801].into();
+        forge
+    }
+
+    /// 01M6Y0ZQWDYVC23WA5CVN0QSH8: an issue with the label `question` in a
+    /// wave that is not current shows on the board with "waits for a
+    /// person" and its wave, in number order with the questions of the
+    /// current wave. An item of a later wave with no label does not show.
+    #[test]
+    fn a_question_of_a_wave_that_is_not_current_shows_with_waits_for_a_person() {
+        let mut state = mock_up();
+        state.read_forge(vec![(RIFF.to_owned(), Ok(questions_forge()))], NOW);
+        let rows = drawn(&state, 80, 30);
+        assert_eq!(
+            rows[2],
+            " ▼ como-technologies/riff · Wave 48 · 1 stuck 1 free 1 held 3 asked 3 work 2 ve…"
+        );
+        assert_eq!(
+            rows[6..10],
+            [
+                "   ◌   held    #1631  Design: the web UI              waits for mike       3d",
+                "   ?   asked   #1610  Wave 49 · Design: the projects… waits for a person   -",
+                "   ?   asked   #1622  The book names the flag         waits for a person   -",
+                "   ?   asked   #1801  Wave 50 · later                 waits for a person   -",
+            ],
+            "{rows:#?}"
+        );
+        // "See the questions of each wave in the TUI" of the book shows
+        // these rows.
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/how-it-works.md"
+        ))
+        .unwrap();
+        let book =
+            crate::tui::text_block(&book, "### See the questions of each wave in the TUI", "");
+        assert_eq!(book, rows[6..10]);
+        assert!(!rows.iter().any(|r| r.contains("#1702")), "{rows:#?}");
+        assert!(
+            rows.iter()
+                .any(|r| r == "   Wave 49: 9 items    Wave 50: 3 items    Backlog: 41 items")
+        );
+        // The narrow layout names the wave too.
+        assert_eq!(
+            drawn(&state, 40, 30)[6],
+            "  ? asked   #1610  Wave 49 · Design: th…"
+        );
+        // The row is an item: the person selects it under #1620 and #1631,
+        // and `Enter` names its wave.
+        state.on_key(Key::Down);
+        state.on_key(Key::Down);
+        assert_eq!(state.waves().picked(), Some(&Pick::Item(RIFF.into(), 1610)));
+        state.on_key(Key::Enter);
+        assert_eq!(
+            state.shown_note(),
+            Some("#1610 Design: the projects of the riff · asked · Wave 49 · waits for a person")
+        );
+        // `a` marks its questions as answered after `y`
+        // (01M6XZ2TCBVN69GTJYV9X8GBW5).
+        state.on_key(Key::Char('a'));
+        assert_eq!(
+            state.asked().as_deref(),
+            Some("Mark the questions of #1610 of como-technologies/riff as answered? y/N")
+        );
+        let answered = Effect::Answered {
+            repo: RIFF.into(),
+            item: 1610,
+        };
+        assert_eq!(state.on_key(Key::Char('y')), Some(Action::Do(answered)));
+        // A folded board counts the questions of the later waves.
+        state.on_key(Key::Char('g'));
+        state.on_key(Key::Enter);
+        assert!(
+            drawn(&state, 80, 30)[2].contains("3 asked"),
+            "{:#?}",
+            drawn(&state, 80, 30)
+        );
+    }
+
+    /// 01M6Y0ZQWDYVC23WA5CVN0QSH8: a repository with no free, held or stuck
+    /// item and a question of a later wave has a folded board that counts
+    /// it.
+    #[test]
+    fn a_folded_board_counts_the_question_of_a_later_wave() {
+        let mut state = mock_up();
+        let strata = Forge {
+            issues: Issues::of(vec![
+                issue(31, "Ship it", "Wave 5"),
+                Issue {
+                    question: true,
+                    ..issue(40, "Which name?", "Wave 7")
+                },
+            ]),
+            ..Forge::default()
+        };
+        state.read_forge(
+            vec![
+                (RIFF.to_owned(), Ok(riff_forge())),
+                ("como-technologies/strata".to_owned(), Ok(strata)),
+            ],
+            NOW,
+        );
+        let rows = drawn(&state, 80, 24);
+        let strata = rows
+            .iter()
+            .find(|r| r.contains("como-technologies/strata"))
+            .unwrap();
+        assert!(strata.ends_with("1 asked 1 work"), "{strata}");
     }
 }
