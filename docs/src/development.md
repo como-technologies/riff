@@ -4494,7 +4494,9 @@ Milestone: Wave 3
 
 - The first line links the issue. Use `Closes #N` in the last pull
   request of the issue. Use `Refs #N` in each other one, and when a
-  check after the release is left.
+  check after the release is left (see
+  [Leave the issue open for a check after the
+  release](#leave-the-issue-open-for-a-check-after-the-release)).
 - The last lines are trailers: the issue, and its wave by the number
   (see [Rename a wave](waves.md#rename-a-wave)). They stand in the last
   block of trailers of the message. Other trailers may stand in the
@@ -4703,6 +4705,44 @@ on. It waits for `riff/verify`: see
 [Wait for the merge](how-it-works.md#wait-for-the-merge) and
 [Report a verify](how-it-works.md#report-a-verify). A new commit on
 the pull request has no status. It needs a new verify.
+
+### Leave the issue open for a check after the release
+
+A criterion that only the shared riff can test is a check after the
+release. Write it in "Done when" as a line that starts with `Live:`:
+
+```markdown
+## Done when:
+
+- A test with a fake GitHub: `riff github check` prints the bot.
+- Live: the owner runs `riff github check`, and it passes.
+```
+
+A line of "Done when" is a line after the "Done when" line or heading,
+to the next heading. `Live:` starts the line, after its list mark.
+
+riff then links each pull request of the issue with `Refs #N`, not
+`Closes #N`, so the merge leaves the issue open. The start text of a
+worker gives the body with `Refs #N`. `riff pr open` writes `Refs #N`
+with no `--refs`:
+
+```sh
+riff pr open --title "Make the GitHub Apps" --file summary.md
+```
+
+`riff pr open` refuses a body with `Closes #N` for such an issue, and
+opens nothing. `riff verify pass` refuses a pass of a pull request with
+`Closes #N` for such an issue, and reports nothing. The fix: change the
+first line of the body to `Refs #N`. Write the new body to a file, and
+give it to the pull request:
+
+```sh
+gh pr edit 40 --body-file body.md
+```
+
+After the merge, riff adds the comment `Merged in #PR (COMMIT)` to the
+issue (see [What the wave does](#what-the-wave-does)). The issue closes
+after its check: see [The life of a wave](waves.md#the-life-of-a-wave).
 
 ## See the tokens of an issue
 

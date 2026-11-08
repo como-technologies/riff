@@ -42,6 +42,9 @@
 //! the session (the daemon pulls it when it must), the sign-in of `gh`,
 //! the sign-in of `claude`, `HOME` and `USER`, and the milestone of the
 //! issue. A failed check takes no claim (01M4Z81B3A324KKE8M8Z71TM4M).
+//! The same read of the issue gives the link line of the frame of the
+//! body in the start text: `Refs #N` for an issue with a line `Live:` in
+//! "Done when", else `Closes #N` ([`Frame`], 01M6WW5WSSRMTBP882FQP3TS2Q).
 //!
 //! The image is the merged pin: the one that `riff.toml` on the default
 //! branch of `origin` pins by its digest ([`session_image::merged`],
@@ -1114,7 +1117,7 @@ pub(crate) fn output(program: &str, dir: &Path, args: &[&str]) -> Result<String>
 
 /// The facts of the host that `riff run` checks before the claim.
 struct Checked {
-    milestone: String,
+    frame: Frame,
     host: Host,
 }
 
@@ -1345,26 +1348,44 @@ pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
     })
 }
 
-/// The milestone of the issue `issue`, with `gh`. An issue with no
-/// milestone, or with one that `text::forge` changes, is refused: the
-/// milestone goes into the start text and into a command of the
-/// session, as in `riff pr open`.
-pub(crate) fn milestone(gh: &pr::Gh, issue: u64) -> Result<String> {
-    let found: hygiene::Issue = gh.json(&[
-        "issue",
-        "view",
-        &issue.to_string(),
-        "--json",
-        "number,state,milestone",
-    ])?;
+/// What the start text of a build takes from its issue: the milestone,
+/// and the link line of the frame of the body of the pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frame {
+    /// The milestone of the issue.
+    pub milestone: String,
+    /// The link line: `Refs #N` for an issue with a line `Live:` in "Done
+    /// when", else `Closes #N` ([`pr::Link::of`],
+    /// 01M6WW5WSSRMTBP882FQP3TS2Q).
+    pub link: pr::Link,
+}
+
+impl Frame {
+    /// The frame of the body of the pull request: [`pr::body`] with the
+    /// summary `SUMMARY`.
+    pub fn body(&self) -> Result<String> {
+        pr::body(self.link, "SUMMARY", &self.milestone)
+    }
+}
+
+/// The milestone and the link line of the issue `issue`, with `gh`. An
+/// issue with no milestone, or with one that `text::forge` changes, is
+/// refused: the milestone goes into the start text and into a command
+/// of the session, as in `riff pr open`.
+pub(crate) fn frame(gh: &pr::Gh, issue: u64) -> Result<Frame> {
+    let found = pr::view_issue(gh, issue)?;
     let milestone = found
+        .issue
         .milestone
         .map(|m| m.title)
         .ok_or_else(|| anyhow!("{}", text::run_no_milestone(issue)))?;
     if text::forge(&milestone) != milestone {
         bail!("{}", text::run_no_milestone(issue));
     }
-    Ok(milestone)
+    Ok(Frame {
+        milestone,
+        link: pr::Link::of(issue, &found.body, false),
+    })
 }
 
 /// True when the issue `issue` has the label [`rollout::NO_VERIFY`], with
@@ -1456,7 +1477,7 @@ async fn check(daemon: &Path, main: &Path, issue: u64, image: &str) -> Result<Ch
     daemon::image(daemon, image, |line| println!("{line}")).await?;
     let host = host_facts(main)?;
     Ok(Checked {
-        milestone: milestone(&pr::Gh::here("run"), issue)?,
+        frame: frame(&pr::Gh::here("run"), issue)?,
         host,
     })
 }
@@ -1981,7 +2002,7 @@ async fn work(
         "{}",
         text::run_started(item, session, &clone, image, &spec.name)
     );
-    let frame = pr::body(hygiene::Link::Closes(issue), "SUMMARY", &checked.milestone)?;
+    let frame = checked.frame.body()?;
     // The clone has the `origin/HEAD` of the forge: its branch is the default branch.
     let base = crate::permissions::Project::of(&clone).branch;
     let start = text::run_start(
@@ -1991,7 +2012,7 @@ async fn work(
         &branch,
         session,
         &frame,
-        &checked.milestone,
+        &checked.frame.milestone,
         earlier,
     );
     let secrets = checked.host.secrets();
@@ -2065,6 +2086,45 @@ async fn work(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1747, 01M6WW5WSSRMTBP882FQP3TS2Q: the frame of the body in the
+    /// start text of a build has `Refs #12` for an issue with a line
+    /// `Live:` in "Done when", and `Closes #12` for another issue. An
+    /// issue with no milestone has no frame.
+    #[test]
+    fn the_frame_of_an_issue_with_a_live_line_has_refs() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = |body: &str| {
+            let program = isolated::write_program(
+                dir.path().join("gh"),
+                format!(
+                    "#!/bin/sh\n\
+                     [ \"$*\" = 'issue view 12 --json number,state,milestone,body' ] || exit 1\n\
+                     printf '%s' '{body}'\n"
+                ),
+            );
+            pr::Gh::at(program)
+        };
+        let wave = r#""number":12,"state":"OPEN","milestone":{"title":"Wave 3"}"#;
+        let live = format!(
+            r#"{{{wave},"body":"Text.\n\n## Done when:\n\n- A test.\n- Live: it runs on pangolin.\n"}}"#
+        );
+        let built = frame(&gh(&live), 12).unwrap();
+        assert_eq!(built.link, pr::Link::Live(12));
+        assert_eq!(
+            built.body().unwrap(),
+            "Refs #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n"
+        );
+        let plain = format!(r#"{{{wave},"body":"Text.\n\n## Done when:\n\n- A test.\n"}}"#);
+        let built = frame(&gh(&plain), 12).unwrap();
+        assert_eq!(
+            built.body().unwrap(),
+            "Closes #12\n\nSUMMARY\n\nIssue: #12\nMilestone: Wave 3\n"
+        );
+        let none = r#"{"number":12,"state":"OPEN","milestone":null,"body":"Done when: x."}"#;
+        let error = frame(&gh(none), 12).unwrap_err().to_string();
+        assert_eq!(error, text::run_no_milestone(12));
+    }
 
     #[test]
     fn with_a_token_podman_gets_the_name_of_the_variable_and_no_sign_in_file() {

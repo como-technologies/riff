@@ -531,7 +531,9 @@ enum Command {
     /// the result to the session that holds its issue. A pass needs a
     /// success of the full check of the head commit: each check that the
     /// ruleset of the default branch requires, but riff/verify. A repository
-    /// with no CI has none: riff/verify is its only check.
+    /// with no CI has none: riff/verify is its only check. riff refuses a
+    /// pass when the body has Closes #N for an issue with a line Live: in
+    /// Done when: change that line to Refs #N.
     Verify {
         /// pass sets the status success, fail sets failure.
         verdict: VerdictArg,
@@ -1174,7 +1176,8 @@ enum Pr {
         file: Option<std::path::PathBuf>,
         /// Link with Refs #N, not Closes #N: the merge leaves the issue
         /// open. Use it for each pull request before the last one of the
-        /// issue, and when a check after the release is left.
+        /// issue. An issue with a line Live: in Done when gets Refs #N
+        /// also without it.
         #[arg(long)]
         refs: bool,
         /// The issue. The default is the claim issue-N of this session.
