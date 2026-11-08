@@ -848,6 +848,8 @@ mod tests {
         );
     }
 
+    // A test binary is an ELF file on Linux only.
+    #[cfg(target_os = "linux")]
     #[test]
     fn this_test_binary_is_read_as_the_loader_sees_it() {
         let me = std::fs::read(std::env::current_exe().unwrap()).unwrap();

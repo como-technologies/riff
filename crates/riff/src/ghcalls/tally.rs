@@ -349,23 +349,13 @@ fn forget(folder: &Path, hour: i64) {
 /// ([`SessionAsk::GhCalls`]), and does not wait for its answer.
 fn send(socket: &Path, records: Vec<Record>) -> std::io::Result<()> {
     use std::os::unix::net::UnixStream;
-    #[cfg(target_os = "linux")]
-    let mut conn = {
-        use std::os::fd::AsRawFd;
-        let (Some(dir), Some(name)) = (socket.parent(), socket.file_name()) else {
-            return Err(std::io::ErrorKind::InvalidInput.into());
-        };
-        // Through a descriptor of the folder, so that a long path works.
-        let folder = File::open(dir)?;
-        let path = format!(
-            "/proc/self/fd/{}/{}",
-            folder.as_raw_fd(),
-            name.to_string_lossy()
-        );
-        UnixStream::connect(path)?
+    let (Some(dir), Some(name)) = (socket.parent(), socket.file_name()) else {
+        return Err(std::io::ErrorKind::InvalidInput.into());
     };
-    #[cfg(not(target_os = "linux"))]
-    let mut conn = UnixStream::connect(socket)?;
+    // A path that fits in the address of a Unix socket, also in a long
+    // folder.
+    let short = crate::platform::Socket::in_folder(dir, &name.to_string_lossy())?;
+    let mut conn = UnixStream::connect(short.path())?;
     conn.set_write_timeout(Some(SEND_WAIT))?;
     let ask = SessionAsk::GhCalls {
         protocol: PROTOCOL,

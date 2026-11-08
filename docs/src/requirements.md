@@ -4638,6 +4638,17 @@ of this part when they merge.
   commands. The daemon, the sessions and `riff init` need Linux: on
   macOS, each of them stops with an error that says so. Supersedes
   01M4Z60B7GTV4HHF9R3TMZRS7J in part.
+- **01M6YQDWT387EV7Y7XMT2G6YVM** Each read of the OS that differs
+  between Linux and macOS is in the module `platform` of `riff`: a
+  process and its parent, its start, its arguments, its binary, its
+  environment, its working folder and its open files; the processes of
+  the user; the memory, the load and the CPU of the machine; the cgroups
+  of podman; the path of a socket in a long folder; and the service
+  manager of the daemon. On Linux, it reads `/proc` and `/sys`, and runs
+  `systemctl`. On macOS, it reads `libproc` and `sysctl`, and has no
+  service manager. No other module of `riff` reads `/proc` or `/sys`, or
+  runs `systemctl`. A test checks each file of `crates/riff/src` up to
+  its tests. The tests of the module run on Linux and on macOS.
 
 ### Ship
 

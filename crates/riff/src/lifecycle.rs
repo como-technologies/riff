@@ -407,7 +407,7 @@ pub async fn daemon_after_update() -> Vec<String> {
         return Vec::new();
     };
     let done = async {
-        let manager = crate::service::Systemd::here()?;
+        let manager = crate::platform::service_manager()?;
         crate::daemon::after_update(&manager, &riff, &crate::daemon::dir()?).await
     };
     done.await

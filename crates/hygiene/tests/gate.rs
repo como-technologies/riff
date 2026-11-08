@@ -164,7 +164,7 @@ fn the_job_macos_tests_three_crates_on_a_mac_with_apple_silicon() {
         body,
         [
             format!("cargo clippy {crates} --all-targets -- -D warnings"),
-            format!("{{{{just_executable()}}}} cargo-test {crates}"),
+            format!("{{{{just_executable()}}}} cargo-test {crates} --no-fail-fast"),
         ]
     );
 }

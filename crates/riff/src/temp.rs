@@ -239,7 +239,7 @@ impl User {
     }
 }
 
-/// The values of [`VARS`] in an environment of `/proc/PID/environ`.
+/// The values of [`VARS`] in an environment of [`crate::platform::environ`].
 ///
 /// ```
 /// let env = b"HOME=/h\0TMPDIR=/t/w1\0CLAUDE_CODE_TMPDIR=/c\0";
@@ -255,34 +255,26 @@ pub fn parse_environ(env: &[u8]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Each process of this user that riff can read, but this process.
+/// Each process of this user that riff can read, but this process
+/// ([`crate::platform::processes`]).
 pub fn users() -> Vec<User> {
-    let Ok(dir) = std::fs::read_dir("/proc") else {
-        return Vec::new();
-    };
     let me = std::process::id();
-    dir.filter_map(|e| e.ok()?.file_name().to_str()?.parse::<u32>().ok())
-        .filter(|&pid| pid != me)
-        .filter_map(|pid| {
-            let dir = PathBuf::from(format!("/proc/{pid}"));
-            let tmp = parse_environ(&std::fs::read(dir.join("environ")).ok()?);
-            let files = std::fs::read_dir(dir.join("fd"))
-                .map(|fds| {
-                    fds.filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok())
-                        .collect()
-                })
-                .unwrap_or_default();
+    crate::platform::processes()
+        .into_iter()
+        .filter(|process| process.pid != me)
+        .filter_map(|process| {
+            let pid = process.pid;
             Some(User {
                 pid,
-                cwd: std::fs::read_link(dir.join("cwd")).ok(),
-                files,
-                tmp,
+                tmp: parse_environ(&crate::platform::environ(pid)?),
+                files: crate::platform::open_files(pid),
+                cwd: crate::platform::cwd(pid),
             })
         })
         .collect()
 }
 
-/// `dir` and its real path, when they differ: `/proc` shows real paths.
+/// `dir` and its real path, when they differ: the OS shows real paths.
 fn both(dir: &Path) -> Vec<PathBuf> {
     let mut paths = vec![dir.to_owned()];
     if let Ok(real) = std::fs::canonicalize(dir)

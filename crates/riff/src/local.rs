@@ -26,7 +26,7 @@
 //! |---|---|---|
 //! | `mcp-PID` | `riff mcp`. PID is its parent: the agent tool. | The session ID. |
 //! | `build-PID` | The same `riff mcp`, next to `mcp-PID`. | The build of that `riff mcp`. |
-//! | `start-PID` | The same `riff mcp`, next to `mcp-PID`. | The start time of the agent process PID, from `/proc`. |
+//! | `start-PID` | The same `riff mcp`, next to `mcp-PID`. | The start time of the agent process PID ([`crate::platform::Process::start`]). |
 //! | `stuck-PID` | The PostToolUse hook of the session of the agent process PID, when it told the session that its `riff mcp` is stuck on an old riff (see [`first_tell`]). | The inode of the new riff. |
 //! | `notools-PID` | The `riff mcp` of the agent process PID, when its tools refused the `tools/list` of Claude Code (see [`set_no_tools`]). It removes the file after a list that works. | The start time of the agent process, and the time of the mark. |
 //! | `notools-told-PID` | The hooks of the session of the agent process PID, when they told the session that it has no riff tools (see [`first_no_tools_tell`]). | The mark that they told. |
@@ -85,7 +85,6 @@ use std::ffi::OsString;
 use std::fs::{File, TryLockError};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub use riff_client::files::{make_dir, options, private, secure, write};
 
@@ -187,7 +186,7 @@ pub fn record(dir: &Path, agent: u32, session: &str) -> io::Result<Option<Held>>
 /// and still runs (01M43F5KE7G2A2A9PSVRJPPNET): its `mcp-PID` has no
 /// lock, and `start-PID` holds the start time of this same process,
 /// not of an earlier process with the same PID. False when no
-/// `riff mcp` ever ran for it, and on a system with no `/proc`.
+/// `riff mcp` ever ran for it, and when riff cannot read the process.
 ///
 /// ```standalone_crate
 /// let run = tempfile::tempdir()?;
@@ -196,12 +195,10 @@ pub fn record(dir: &Path, agent: u32, session: &str) -> io::Result<Option<Held>>
 /// let mcp = riff::local::record(run.path(), agent, "a6cf")?.expect("free");
 /// assert!(!riff::local::mcp_gone(run.path(), agent));
 /// drop(mcp);
-/// # if std::path::Path::new("/proc/self/stat").exists() {
 /// assert!(riff::local::mcp_gone(run.path(), agent));
 /// // An earlier process with the same PID.
 /// std::fs::write(run.path().join(format!("start-{agent}")), "1")?;
 /// assert!(!riff::local::mcp_gone(run.path(), agent));
-/// # }
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn mcp_gone(dir: &Path, agent: u32) -> bool {
@@ -224,28 +221,10 @@ pub fn mcp_gone_above(dir: &Path) -> bool {
         .is_some_and(|pid| mcp_gone(dir, pid))
 }
 
-/// The start time of the process `pid`, in clock ticks after the boot.
-/// `None` with no `/proc`.
+/// The start of the process `pid` ([`crate::platform::Process::start`]).
+/// `None` when riff cannot read it.
 fn started(pid: u32) -> Option<u64> {
-    start_in_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
-}
-
-/// The start time in the text of `/proc/PID/stat`: field 22.
-///
-/// ```
-/// use riff::local::start_in_stat;
-///
-/// let stat = "1234 (a b) S 42 1234 1234 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 1 0 98765 1 2";
-/// assert_eq!(start_in_stat(stat), Some(98765));
-/// assert_eq!(start_in_stat("garbage"), None);
-/// ```
-pub fn start_in_stat(stat: &str) -> Option<u64> {
-    stat.rsplit_once(')')?
-        .1
-        .split_whitespace()
-        .nth(19)?
-        .parse()
-        .ok()
+    crate::platform::process(pid).map(|process| process.start)
 }
 
 /// The build of the live `riff mcp` of the agent process `agent`
@@ -336,7 +315,6 @@ fn first(file: &Path, key: &str) -> bool {
 /// let run = tempfile::tempdir()?;
 /// let agent = std::process::id();
 /// assert_eq!(riff::local::no_tools(run.path(), agent), None);
-/// # if std::path::Path::new("/proc/self/stat").exists() {
 /// riff::local::set_no_tools(run.path(), agent, true)?;
 /// assert!(riff::local::no_tools(run.path(), agent).is_some());
 /// riff::local::set_no_tools(run.path(), agent, false)?;
@@ -346,7 +324,6 @@ fn first(file: &Path, key: &str) -> bool {
 /// // A mark of an earlier process with the same PID.
 /// std::fs::write(run.path().join(format!("notools-{agent}")), "1 2")?;
 /// assert_eq!(riff::local::no_tools(run.path(), agent), None);
-/// # }
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn set_no_tools(dir: &Path, agent: u32, none: bool) -> io::Result<()> {
@@ -379,11 +356,9 @@ pub fn no_tools(dir: &Path, agent: u32) -> Option<String> {
 /// let run = tempfile::tempdir()?;
 /// let agent = std::process::id();
 /// assert!(!riff::local::first_no_tools_tell(run.path(), agent));
-/// # if std::path::Path::new("/proc/self/stat").exists() {
 /// riff::local::set_no_tools(run.path(), agent, true)?;
 /// assert!(riff::local::first_no_tools_tell(run.path(), agent));
 /// assert!(!riff::local::first_no_tools_tell(run.path(), agent));
-/// # }
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn first_no_tools_tell(dir: &Path, agent: u32) -> bool {
@@ -732,41 +707,16 @@ fn up_from(first: Option<u32>) -> impl Iterator<Item = u32> {
         .take(MAX_DEPTH)
 }
 
-/// The parent of `pid`: from `/proc` on Linux, from `ps` elsewhere.
+/// The parent of `pid` ([`crate::platform::process`]).
 fn parent_of(pid: u32) -> Option<u32> {
-    if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        return parent_in_stat(&stat);
-    }
-    let out = Command::new("ps")
-        .args(["-o", "ppid=", "-p", &pid.to_string()])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
-}
-
-/// The parent PID in the text of `/proc/PID/stat`. The command name can
-/// hold spaces and parentheses, so the fields start after the last `)`.
-///
-/// ```
-/// use riff::local::parent_in_stat;
-///
-/// assert_eq!(parent_in_stat("1234 (riff) S 42 1234 1234 0 -1"), Some(42));
-/// assert_eq!(parent_in_stat("1234 (a) b (c) S 7 1 1"), Some(7));
-/// assert_eq!(parent_in_stat("garbage"), None);
-/// ```
-pub fn parent_in_stat(stat: &str) -> Option<u32> {
-    stat.rsplit_once(')')?
-        .1
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()
+    crate::platform::process(pid).map(|process| process.ppid)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
