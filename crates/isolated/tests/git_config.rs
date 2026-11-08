@@ -18,6 +18,9 @@ fn gpgsign() -> String {
 
 #[test]
 fn the_helper_clears_the_config_of_git_from_the_environment_of_the_test() {
+    // The keys of a session container go first, so only the keys of the
+    // test stay (01M6XWACAZH79NK727KMC3AQ0D).
+    isolated::clear_git_config_env();
     // SAFETY: this test binary changes the environment only here.
     unsafe {
         std::env::set_var("GIT_CONFIG_COUNT", "2");

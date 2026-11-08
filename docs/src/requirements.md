@@ -1200,6 +1200,17 @@
   lets the server send a reply that the test holds only after the screen
   shows each key that the test sent: for example, the prompt holds the
   whole line that the test typed.
+- **01M6XWAC88HABQRKPG9MM1SCY0** For each command that it runs, the
+  helper crate `isolated` sets `GH_CONFIG_DIR` to an empty dir of the
+  test, and removes `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*` and
+  `GIT_CONFIG_VALUE_*`. So the sign-in of `gh` and the git config of a
+  session container never reach the `riff` of a test.
+- **01M6XWACAZH79NK727KMC3AQ0D** Each test run of `just` has the git
+  config and the `gh` sign-in of a session container with the token of
+  an App: five `GIT_CONFIG_*` keys (`commit.gpgsign`, two credential
+  helpers, `user.name` and `user.email`), and a `GH_CONFIG_DIR` with the
+  sign-in of a bot whose token is not real. So a test that depends on
+  them fails on each machine and on the Gate, not only in a session.
 
 ## Saved state
 

@@ -12,6 +12,8 @@
 //! |---|---|
 //! | Each `RIFF_…` and `CLAUDE_…` variable | removed |
 //! | `GH_TOKEN`, `GITHUB_TOKEN` | removed: the `gh` of the machine has no sign-in in a test, so no test reaches the forge |
+//! | `GH_CONFIG_DIR` | an empty dir of its own, `HOME/.config/gh`: the `gh` of a session container has its sign-in in another dir, and a test has none (01M6XWAC88HABQRKPG9MM1SCY0) |
+//! | Each `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_N` and `GIT_CONFIG_VALUE_N` | removed: the git config of a session container (01M6XWAC88HABQRKPG9MM1SCY0) |
 //! | `RIFF_SERVER` | [`DEAD_SERVER`]: nothing listens there |
 //! | `RIFF_RELEASES` | an empty dir of its own: no release is Latest and no release has static binaries, so `riff update` reaches no GitHub, and runs the fake `cargo` of a test (01M4ZPJ0DJ9FTYNPTBBVJCTB37, 01M510MPR1S0EQNRK2195XTXG5) |
 //! | `RIFF_MACHINE` | [`MACHINE`]: the numbers of a machine with free memory and no load, so no test depends on the machine that runs it (01M3WFZ08D8VT9KD6HXY09NHSE) |
@@ -41,11 +43,19 @@
 //! - A test that needs a place outside each git repository gets its
 //!   temp dir from [`outside_git`] (01M43B48Z8R0SXAWBQP75CPR55).
 //!
-//! A container of riff sets `commit.gpgsign=false` in `GIT_CONFIG_COUNT`,
-//! `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`, and code under test that
-//! runs git in the test process takes them. A test of such code starts
-//! with [`rerun_without_git_config`], and a doc test with
+//! A container of riff sets git config in `GIT_CONFIG_COUNT`,
+//! `GIT_CONFIG_KEY_N` and `GIT_CONFIG_VALUE_N`: `commit.gpgsign=false`,
+//! and with the token of an App also two credential helpers,
+//! `user.name` and `user.email`. Code under test that runs git in the
+//! test process takes them. A test of such code starts with
+//! [`rerun_without_git_config`], and a doc test with
 //! [`clear_git_config_env`] (01M6FYHS06W0Y98GQTQY6Q37F0).
+//!
+//! `just` runs each test with the environment of such a container
+//! (01M6XWACAZH79NK727KMC3AQ0D): the five keys, and `GH_CONFIG_DIR` at
+//! [`SESSION_GH`], the sign-in of a bot whose token is not real. So a
+//! test that depends on them fails on each machine and on the Gate, not
+//! only in a session. A test of this crate checks it.
 //!
 //! A check of a time in a test uses a [`Span`]: it fails only when the
 //! logic is slow, not when the machine is busy. See [`time`].
@@ -100,6 +110,12 @@ pub const MACHINE: &str = "cpu 8x3000MHz, mem 32GB, 32GB available, load 0.00";
 /// The other variables that the helper removes: the tokens of `gh`. With `HOME` in a temp dir, `gh` then has no
 /// sign-in, so a test never reaches the forge.
 pub const REMOVED: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
+
+/// The dir of the `gh` sign-in that `just` gives each test run, from the
+/// root of the repository: the sign-in of a bot, as in a session
+/// container with the token of an App (01M6XWACAZH79NK727KMC3AQ0D). Its
+/// token is not real.
+pub const SESSION_GH: &str = "crates/isolated/session-gh";
 
 /// A test environment in a temp dir of its own.
 pub struct Isolated {
@@ -159,7 +175,7 @@ impl Isolated {
     fn in_dir(dir: TempDir) -> Isolated {
         let env = Isolated { dir };
         for dir in [
-            env.home().join(".config"),
+            env.gh_config(),
             env.home().join(".local/share"),
             env.home().join(".local/state"),
             env.path().join("run"),
@@ -187,6 +203,12 @@ impl Isolated {
         self.path().join("riff")
     }
 
+    /// `GH_CONFIG_DIR` of the environment: an empty dir, so `gh` has no
+    /// sign-in (01M6XWAC88HABQRKPG9MM1SCY0).
+    pub fn gh_config(&self) -> PathBuf {
+        self.home().join(".config/gh")
+    }
+
     /// `RIFF_RELEASES` of the environment: the release files of
     /// `riff update`, at `TAG/NAME`. It is empty.
     pub fn releases(&self) -> PathBuf {
@@ -212,6 +234,7 @@ impl Isolated {
             ("RIFF_HOME".into(), path(self.riff_home())),
             ("HOME".into(), path(home.clone())),
             ("XDG_CONFIG_HOME".into(), path(home.join(".config"))),
+            ("GH_CONFIG_DIR".into(), path(self.gh_config())),
             ("XDG_DATA_HOME".into(), path(home.join(".local/share"))),
             ("XDG_STATE_HOME".into(), path(home.join(".local/state"))),
             ("XDG_RUNTIME_DIR".into(), path(self.path().join("run"))),
@@ -279,18 +302,24 @@ impl Isolated {
     }
 }
 
-/// True when the helper removes the variable `name`.
+/// True when the helper removes the variable `name`: each
+/// [`git_config_var`] too (01M6XWAC88HABQRKPG9MM1SCY0).
 ///
 /// ```
 /// assert!(isolated::removed("RIFF_SERVER".as_ref()));
 /// assert!(isolated::removed("CLAUDE_CODE_SESSION_ID".as_ref()));
 /// assert!(isolated::removed("GH_TOKEN".as_ref()));
 /// assert!(isolated::removed("GITHUB_TOKEN".as_ref()));
+/// assert!(isolated::removed("GIT_CONFIG_COUNT".as_ref()));
+/// assert!(isolated::removed("GIT_CONFIG_VALUE_4".as_ref()));
+/// assert!(!isolated::removed("GIT_CONFIG_GLOBAL".as_ref()));
 /// assert!(!isolated::removed("PATH".as_ref()));
 /// ```
 pub fn removed(name: &OsStr) -> bool {
-    let name = name.to_string_lossy();
-    REMOVED_PREFIXES.iter().any(|p| name.starts_with(p)) || REMOVED.contains(&name.as_ref())
+    let text = name.to_string_lossy();
+    REMOVED_PREFIXES.iter().any(|p| text.starts_with(p))
+        || REMOVED.contains(&text.as_ref())
+        || git_config_var(name)
 }
 
 /// True when git reads config from the variable `name`:
@@ -316,13 +345,16 @@ pub fn git_config_var(name: &OsStr) -> bool {
 /// Removes each [`git_config_var`] from the environment of this process,
 /// and gives their names (01M6FYHS06W0Y98GQTQY6Q37F0).
 ///
-/// A container of riff sets `commit.gpgsign=false` in them, and code under
-/// test that runs git takes them from the process. Call it first in a doc
+/// A container of riff sets git config in them, for example
+/// `commit.gpgsign=false`, and code under test that runs git takes them
+/// from the process. Call it first in a doc
 /// test: each doc test is a process of its own. Never call it in a test
 /// binary with other tests: they run at the same time, and some of them
 /// need the variables. Such a test calls [`rerun_without_git_config`].
 ///
 /// ```
+/// // The keys of a session container go first, so only these three stay.
+/// isolated::clear_git_config_env();
 /// // SAFETY: a doc test is one process, and it has one thread here.
 /// unsafe {
 ///     std::env::set_var("GIT_CONFIG_COUNT", "1");
@@ -348,6 +380,48 @@ pub fn clear_git_config_env() -> Vec<OsString> {
         unsafe { std::env::remove_var(name) };
     }
     names
+}
+
+/// Each variable that `just` sets for each test run in the repository at
+/// `root`, as a name and a value: its `test_env`, with the environment of
+/// a session container with the token of an App
+/// (01M6XWACAZH79NK727KMC3AQ0D).
+///
+/// ```
+/// let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+/// let vars = isolated::test_env(&root);
+/// let value = |name: &str| vars.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str());
+/// assert_eq!(value("RIFF_SERVER"), Some(isolated::DEAD_SERVER));
+/// assert_eq!(value("GIT_CONFIG_COUNT"), Some("5"));
+/// assert_eq!(value("GIT_CONFIG_VALUE_2"), Some("!gh auth git-credential"));
+/// assert!(value("GH_CONFIG_DIR").is_some_and(|dir| dir.ends_with(isolated::SESSION_GH)));
+/// ```
+///
+/// # Panics
+///
+/// When `just` or `sh` does not run.
+pub fn test_env(root: &Path) -> Vec<(String, String)> {
+    let just = std::process::Command::new("just")
+        .arg("--justfile")
+        .arg(root.join("justfile"))
+        .args(["--evaluate", "test_env"])
+        .output()
+        .expect("just runs");
+    assert!(just.status.success(), "just --evaluate test_env: {just:?}");
+    let words = String::from_utf8(just.stdout).expect("the test_env of just is UTF-8");
+    // The shell reads the quotes of the words, and env prints only them.
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("exec env -i {words} env -0"))
+        .output()
+        .expect("sh runs");
+    assert!(out.status.success(), "env -i {words}: {out:?}");
+    String::from_utf8(out.stdout)
+        .expect("the variables are UTF-8")
+        .split_terminator('\0')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect()
 }
 
 /// The variable that tells a test that [`rerun_without_git_config`] runs it
