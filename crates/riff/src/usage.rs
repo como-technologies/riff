@@ -78,11 +78,20 @@
 //! text of a transcript, no path and no email.
 //!
 //! A second report of the same claim replaces the comment that the same
-//! person wrote (01M3Y1YP2TVYQC7GCCAMN6111K). A report never fails a
-//! release: with no `gh`, or with an item that names no issue, the sum
-//! stays in the marks of the machine, and the text says so
-//! (01M3Y1YP39VFX6GH33H7B8A8KR). A claim with no tokens gets no
-//! comment.
+//! person wrote (01M3Y1YP2TVYQC7GCCAMN6111K). The same person is the
+//! login of the token of `gh` (01M6WYWGA9NCHAH3TWMAJASPQG). GitHub
+//! refuses `GET /user` for the token of a GitHub App, so riff takes the
+//! bot of the App from the config of `gh`:
+//!
+//! | The token of `gh` | The login | From |
+//! |---|---|---|
+//! | of a GitHub App (a container session) | the bot of the App, `SLUG[bot]`, as `riff whoami` shows it | the user of the config of `gh` that the daemon writes ([`bot_of`]) |
+//! | of a person | the login of the person | `gh api user` |
+//!
+//! A report never fails a release: with no `gh`, or with an item that
+//! names no issue, the sum stays in the marks of the machine, and the
+//! text says so (01M3Y1YP39VFX6GH33H7B8A8KR). A claim with no tokens
+//! gets no comment.
 //!
 //! # `riff usage`
 //!
@@ -1030,6 +1039,32 @@ pub fn short_model(name: &str) -> String {
     }
 }
 
+/// The host of GitHub in the config of `gh`.
+const HOST: &str = "github.com";
+
+/// The bot in `user`, the user of the config of `gh`
+/// (`gh config get user -h github.com`): `Some` for the bot of a GitHub
+/// App, `SLUG[bot]`. The daemon writes the bot of the token of a session
+/// there ([`crate::daemon::gh_token::hosts_yml`]), and gives that
+/// container no `GH_TOKEN` (01M6WPMP035A93SM6SAJGS6MTC). So that bot is
+/// the account of the token of `gh`. The login of a person has only
+/// letters, digits and `-`, so it is never a bot.
+///
+/// ```
+/// use riff::usage::bot_of;
+///
+/// assert_eq!(bot_of("riff-acme[bot]\n"), Some("riff-acme[bot]"));
+/// assert_eq!(bot_of("mike\n"), None);
+/// assert_eq!(bot_of(""), None);
+/// assert_eq!(bot_of("[bot]"), None);
+/// assert_eq!(bot_of("a b[bot]"), None);
+/// ```
+pub fn bot_of(user: &str) -> Option<&str> {
+    let user = user.trim();
+    let slug = user.strip_suffix("[bot]")?;
+    is_name(slug, NAME_CHARS).then_some(user)
+}
+
 /// The issues of one repository on GitHub, through the `gh` of the
 /// machine.
 pub struct Forge<'a> {
@@ -1076,14 +1111,25 @@ impl<'a> Forge<'a> {
         Ok(())
     }
 
+    /// The login of the token of `gh` (01M6WYWGA9NCHAH3TWMAJASPQG): the
+    /// bot of the App for the token of a GitHub App, with no call to
+    /// GitHub, else `gh api user`.
     fn login(&self) -> Result<String> {
+        let user = self
+            .gh
+            .run(&["config", "get", "user", "-h", HOST], None)
+            .unwrap_or_default();
+        if let Some(bot) = bot_of(&user) {
+            return Ok(text::forge(bot));
+        }
         let out = self.gh.run(&["api", "user", "--jq", ".login"], None)?;
         Ok(text::forge(out.trim()))
     }
 
     /// Puts `report` on `issue`: it replaces the comment of the same
-    /// claim that this person wrote, else it adds a comment
-    /// (01M3Y1YP2TVYQC7GCCAMN6111K). Then it writes the total of the
+    /// claim that the login of the token of `gh` wrote, the person or the
+    /// bot of an App, else it adds a comment (01M3Y1YP2TVYQC7GCCAMN6111K,
+    /// 01M6WYWGA9NCHAH3TWMAJASPQG). Then it writes the total of the
     /// issue again, when the issue has one. A total that it cannot
     /// write does not fail the report: it returns why
     /// (01M3ZRQY9F9P7DF187Q0PJDS30).
@@ -2107,6 +2153,49 @@ mod tests {
             ..claim
         };
         assert_eq!(Report::of(&open, "a6cf"), None);
+    }
+
+    /// A fake `gh` in `dir` whose config names the user in the file
+    /// `user`, and whose `gh api user` gives `brett`, or fails for the
+    /// token of an App. It logs each call to `gh.log`.
+    fn fake_gh(dir: &Path) -> Gh {
+        let d = dir.display();
+        let script = format!(
+            "#!/bin/sh\necho \"$*\" >> {d}/gh.log\n\
+             case \"$*\" in\n\
+             'config get user -h github.com') cat {d}/user 2>/dev/null \
+                 || {{ echo 'could not find key \"user\"' >&2; exit 1; }} ;;\n\
+             'api user --jq .login') grep -q '\\[bot\\]' {d}/user 2>/dev/null \
+                 && {{ echo 'HTTP 403: Resource not accessible by integration' >&2; exit 1; }}\n\
+                 echo brett ;;\n\
+             esac\n"
+        );
+        Gh::at(isolated::write_program(dir.join("gh"), script))
+    }
+
+    #[test]
+    fn the_login_of_the_token_of_an_app_is_its_bot_and_of_a_person_is_gh_api_user() {
+        let dir = tempfile::tempdir().unwrap();
+        let gh = fake_gh(dir.path());
+        let forge = Forge::of(&gh, "acme/app").unwrap();
+        let log = || std::fs::read_to_string(dir.path().join("gh.log")).unwrap_or_default();
+
+        std::fs::write(dir.path().join("user"), "riff-acme[bot]\n").unwrap();
+        assert_eq!(forge.login().unwrap(), "riff-acme[bot]");
+        assert_eq!(log(), "config get user -h github.com\n");
+
+        // A person: `GH_TOKEN` can give `gh` another account than the
+        // user of its config. So the login comes from GitHub.
+        std::fs::write(dir.path().join("user"), "mike\n").unwrap();
+        assert_eq!(forge.login().unwrap(), "brett");
+        std::fs::remove_file(dir.path().join("user")).unwrap();
+        assert_eq!(forge.login().unwrap(), "brett");
+        assert_eq!(
+            log().matches("api user --jq .login").count(),
+            2,
+            "{}",
+            log()
+        );
     }
 
     #[test]
