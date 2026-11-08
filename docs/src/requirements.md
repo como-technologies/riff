@@ -622,8 +622,7 @@
   rule. It exits with status 1 on a broken rule, and with status 2 when
   `gh` or `git` fails.
 - **01M5RP9PSKWXCD1F2SKCQN5379** The trailers `Issue: #N` and
-  `Milestone: M` of a message stand in its last block of git trailers:
-  the last paragraphs of the message that hold only lines `Key: value`.
+  `Milestone: M` of a message stand in its last block of git trailers.
   Other trailers (`Co-authored-by:`, `Signed-off-by:`, `Generated-by:`)
   may stand in the block, before or after them. A message that ends with
   a paragraph of text, or with a line of text in the paragraph of its
@@ -643,6 +642,15 @@
   The rule is one of the rules of riff (`rules = "riff"`), and a
   repository that is not riff does not get it. The book says how long a
   trailer line may be.
+- **01M6Y5WW313W74AE6TC0C3KTS4** The last block of git trailers of a
+  message is its last paragraphs that hold only lines `Key: value`. A
+  paragraph of the one line `---------` among them does not end the
+  block. At the squash of a pull request with more than one commit,
+  GitHub puts that line in a paragraph of its own before its
+  `Co-authored-by:` lines. So `hygiene commit` reads the trailers on
+  both sides of the line, and `hygiene pr` puts the line in the message
+  that the squash will make. Supersedes 01M5RP9PSKWXCD1F2SKCQN5379 in
+  part.
 ## Pull requests on GitHub
 
 - **01M3JFEXG85AJK8ZE8N807EQVB** `just github` sets up the repository
