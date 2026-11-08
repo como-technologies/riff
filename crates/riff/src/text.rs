@@ -6436,6 +6436,61 @@ pub fn daemon_gh_status(repo: &str, why: &str) -> String {
     format!("GitHub: the sessions of {repo} act with the token of the person: {why}.")
 }
 
+/// Why the daemon writes on a repository with the token of the person
+/// when it knows no riff-server to ask for a token of the lead App
+/// (01M6XZJFE2ZTR5RE3AWM30R704).
+pub const GH_NO_SERVER: &str =
+    "the daemon runs no wave and no session there, so it knows no riff-server to ask";
+
+/// Why the daemon writes with the token of the person when the ask for a
+/// token of the lead App failed with `error`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::gh_daemon_token_failed("HTTP 502"),
+///     "riff got no token of the lead App: HTTP 502"
+/// );
+/// ```
+pub fn gh_daemon_token_failed(error: &str) -> String {
+    format!("riff got no token of the lead App: {error}")
+}
+
+/// The line of `riff daemon status` for how the daemon writes on `repo`
+/// (01M6XZJFE2ZTR5RE3AWM30R704): as the bot of the lead App, or with the
+/// token of the person and why.
+///
+/// ```
+/// use riff::daemon::gh_token::ActsAs;
+/// use riff_core::wire::GitHubRole;
+///
+/// let bot = ActsAs::Bot {
+///     bot: "riff-acme-lead[bot]".into(),
+///     role: GitHubRole::Lead,
+///     rights: Default::default(),
+///     ends: "2026-11-08T13:00:00Z".into(),
+/// };
+/// assert_eq!(
+///     riff::text::daemon_writes("acme/app", &bot),
+///     "GitHub: the daemon writes on acme/app as riff-acme-lead[bot]."
+/// );
+/// let why = "riff-acme-lead is not installed on acme/app: riff github install acme";
+/// assert_eq!(
+///     riff::text::daemon_writes("acme/app", &ActsAs::Person { why: why.into() }),
+///     "GitHub: the daemon writes on acme/app with the token of the person: \
+///      riff-acme-lead is not installed on acme/app: riff github install acme."
+/// );
+/// ```
+pub fn daemon_writes(repo: &str, acts: &crate::daemon::gh_token::ActsAs) -> String {
+    match acts {
+        crate::daemon::gh_token::ActsAs::Bot { bot, .. } => {
+            format!("GitHub: the daemon writes on {repo} as {bot}.")
+        }
+        crate::daemon::gh_token::ActsAs::Person { why } => {
+            format!("GitHub: the daemon writes on {repo} with the token of the person: {why}.")
+        }
+    }
+}
+
 /// A session of the daemon ended with the exit code `code`.
 pub fn daemon_session_ends(name: &str, code: Option<i32>) -> String {
     match code {
@@ -7515,6 +7570,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     person_tokens: vec![],
+///     writes: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -7592,6 +7648,18 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     "GitHub: the sessions of acme/app act with the token of the person: \
 ///      riff-acme is not installed on acme/app: riff github install acme.\n"
 /// ), "{text}");
+/// // How the daemon writes on a repository (01M6XZJFE2ZTR5RE3AWM30R704).
+/// status.writes.push(riff::daemon::WritesShown {
+///     repo: "acme/app".into(),
+///     acts: riff::daemon::gh_token::ActsAs::Bot {
+///         bot: "riff-acme-lead[bot]".into(),
+///         role: riff_core::wire::GitHubRole::Lead,
+///         rights: Default::default(),
+///         ends: "2026-11-08T13:00:00Z".into(),
+///     },
+/// });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// assert!(text.contains("GitHub: the daemon writes on acme/app as riff-acme-lead[bot].\n"), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -7620,6 +7688,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     for person in &status.person_tokens {
         let _ = writeln!(out, "{}", daemon_gh_status(&person.repo, &person.why));
+    }
+    for writes in &status.writes {
+        let _ = writeln!(out, "{}", daemon_writes(&writes.repo, &writes.acts));
     }
     if status.sessions.is_empty() {
         out.push_str("Sessions: none.\n");
@@ -8903,6 +8974,7 @@ pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: 
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     person_tokens: vec![],
+///     writes: vec![],
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");

@@ -1111,10 +1111,15 @@ impl<'a> Forge<'a> {
         Ok(())
     }
 
-    /// The login of the token of `gh` (01M6WYWGA9NCHAH3TWMAJASPQG): the
-    /// bot of the App for the token of a GitHub App, with no call to
-    /// GitHub, else `gh api user`.
+    /// The login of the token of the writes of `gh`
+    /// (01M6WYWGA9NCHAH3TWMAJASPQG): the bot of the App for the token of a
+    /// GitHub App, with no call to GitHub, else `gh api user`. A `gh` that
+    /// writes as the daemon writes as its bot
+    /// ([`Gh::writer`], 01M6XZJFE2ZTR5RE3AWM30R704).
     fn login(&self) -> Result<String> {
+        if let Some(bot) = self.gh.writer() {
+            return Ok(text::forge(bot));
+        }
         let user = self
             .gh
             .run(&["config", "get", "user", "-h", HOST], None)
@@ -2196,6 +2201,19 @@ mod tests {
             "{}",
             log()
         );
+    }
+
+    /// 01M6XZJFE2ZTR5RE3AWM30R704: a `gh` that writes as the daemon writes
+    /// as the bot of the lead App, so its login is that bot, with no call:
+    /// the next report of the claim finds the comment of the bot.
+    #[test]
+    fn the_login_of_a_gh_that_writes_as_the_daemon_is_the_bot_of_the_lead_app() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("user"), "mike\n").unwrap();
+        let gh = fake_gh(dir.path()).writing_as("riff-acme-lead[bot]", "ghs_lead");
+        let forge = Forge::of(&gh, "acme/app").unwrap();
+        assert_eq!(forge.login().unwrap(), "riff-acme-lead[bot]");
+        assert!(!dir.path().join("gh.log").exists());
     }
 
     #[test]

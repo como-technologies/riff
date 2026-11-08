@@ -106,7 +106,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
-use super::Daemon;
+use super::{Daemon, gh_token};
 use crate::runtime::Runtime;
 use crate::{identity, pr, rollout, run, text};
 
@@ -1003,7 +1003,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             BTreeSet::new()
         };
         for repo in old_branches {
-            match self.world.delete_old_kept(&repo).await {
+            let gh = self.writer(&repo).await;
+            match self.world.delete_old_kept(gh, &repo).await {
                 Ok(names) => swept.extend(names.into_iter().map(|name| Swept {
                     line: text::swept_branch_deleted(&name, KEPT_DAYS),
                     folder: PathBuf::from(name),
@@ -1029,6 +1030,22 @@ impl<R: Runtime + 'static> Daemon<R> {
             }
         }
         swept
+    }
+
+    /// The `gh` of the sweep on `repo`, whose writes go as the daemon
+    /// ([`gh_token::writer`], 01M6XZJFE2ZTR5RE3AWM30R704): with the token
+    /// of the lead App of the riff-server of the wave of `repo`, else of a
+    /// session there, else of the last ask for `repo`.
+    async fn writer(&self, repo: &str) -> pr::Gh {
+        let gh = pr::Gh::clone(&self.world.gh(repo)).by("sweep");
+        let server = self.waves_lock().get(repo).map(|r| r.wave.server.clone());
+        let server = server.or_else(|| {
+            self.records()
+                .into_iter()
+                .find(|r| r.me.place().repo_text() == repo)
+                .map(|r| r.server)
+        });
+        gh_token::writer(&*self.world, server.as_deref(), repo, gh).await
     }
 
     /// Sweeps as [`Daemon::sweep`], and gives the lines for the log of
@@ -1113,7 +1130,10 @@ impl<R: Runtime + 'static> Daemon<R> {
                 refs: true,
             } = &fate
             {
-                self.world.merged_in(&repo, issue, *pull, commit).await?;
+                let gh = self.writer(&repo).await;
+                self.world
+                    .merged_in(gh, &repo, issue, *pull, commit)
+                    .await?;
             }
             anyhow::Ok(fate)
         };

@@ -5829,12 +5829,26 @@ refuses each step that the rights of the role do not give. See
 | A worker | `riff-OWNER[bot]`, the session App | Push a branch, open a pull request, comment, run a workflow again, and change `.github/workflows`. It cannot set `riff/verify` or push a tag `v*`. |
 | A verifier | `riff-OWNER[bot]`, the session App | Read only. The daemon reports the verify on the pull request. |
 | The lead in a container | `riff-OWNER-lead[bot]`, the lead App | The steps of a worker, set `riff/verify`, and push a tag `v*` (see [Who tags and who approves a release](#who-tags-and-who-approves-a-release)). It cannot change `.github/workflows`, and it cannot approve a deploy. |
-| You in a terminal, a plain `claude`, the daemon on the host | You | Each step that you can do. |
+| The daemon on the host, for its writes | `riff-OWNER-lead[bot]`, the lead App | The comment of the tokens of a claim, the comment `Merged in #PR`, the result of a verify with `riff/verify`, the issue of a broken main, and the delete of an old branch `riff-kept`. Its reads, its pushes with git and the real-session test have your token. |
+| You in a terminal, a plain `claude` | You | Each step that you can do. |
 
 riff-server takes the role from its own facts: the lead, a session
 with a claim `verify-ITEM`, else a worker. The token is good for one
 hour and for the one repository of the session. The daemon asks for it
 only when your `gh` can push to that repository.
+
+The daemon gets the token of its own writes in the same way, from the
+lead App, for one repository. It keeps the token until 10 minutes
+before its end. So the history of an issue shows the bot, not you, for
+each comment and each step of the daemon.
+
+```mermaid
+flowchart LR
+    W["a write of the daemon"] --> K{"a token of the lead App<br/>for the repository?"}
+    K -- yes --> B["GitHub shows riff-OWNER-lead[bot]"]
+    K -- "no: no lead App there,<br/>no sign-in, or your gh cannot push" --> Y["GitHub shows you<br/>riff daemon status says why"]
+    R["a read of the daemon"] --> Y2["your token"]
+```
 
 ```mermaid
 sequenceDiagram
@@ -5872,8 +5886,9 @@ rights   actions: write, checks: read, contents: write, issues: write, metadata:
 ```
 
 When the Apps are not on the repository, the sessions there act with
-your token, as before. The row `github` then says why, and so does
-`riff daemon status` on the host:
+your token, and the daemon writes with your token, as before. The row
+`github` then says why. `riff daemon status` on the host says it too,
+and names how the daemon writes on each repository:
 
 ```sh
 riff daemon status
@@ -5881,8 +5896,12 @@ riff daemon status
 
 ```text
 GitHub: the sessions of acme/app act with the token of the person: riff-acme is not installed on acme/app: riff github install acme.
+GitHub: the daemon writes on acme/app with the token of the person: riff-acme-lead is not installed on acme/app: riff github install acme.
+GitHub: the daemon writes on acme/web as riff-acme-lead[bot].
 ```
 
 Do the fix, for example
 [Install the GitHub Apps of riff on the account](start-a-riff.md#install-the-github-apps-of-riff-on-the-account).
-`riff init --check` names the same fix.
+`riff init --check` names the same fix. The daemon asks riff-server
+again 10 minutes after an answer with no token. So its writes show the
+bot at the latest 10 minutes after the fix.

@@ -79,10 +79,10 @@
 //! `admin` and `owner`. `owner` to a person who is not a member or an
 //! admin gets status 400. `remove` of the owner or of an admin gets status 400.
 //!
-//! Four calls make and check the GitHub Apps of the riff, and give the
-//! token of a session (01M6WG52J7WTP079W1AYEQ4W08,
-//! 01M6WPMEEWX09DHJZF18BKBPYW). Each needs an access token and a DPoP
-//! proof too:
+//! Five calls make and check the GitHub Apps of the riff, and give the
+//! token of a session and of a daemon (01M6WG52J7WTP079W1AYEQ4W08,
+//! 01M6WPMEEWX09DHJZF18BKBPYW, 01M6XZJFGNVG6B7DF5VQ3H1DNX). Each needs an
+//! access token and a DPoP proof too:
 //!
 //! | Path | Request | Reply | Who |
 //! |---|---|---|---|
@@ -90,6 +90,7 @@
 //! | `POST /v1/github/apps` | [`GitHubApps`] | [`GitHubAppsReply`] | an admin; each person with no `owner` |
 //! | `POST /v1/github/check` | [`GitHubCheck`] | [`GitHubChecked`] | each person |
 //! | `POST /v1/github/token` | [`GitHubToken`] | [`SessionToken`] | the person of the session, with no session token |
+//! | `POST /v1/github/daemon` | [`GitHubDaemonToken`] | [`SessionToken`] | each person, with no session token |
 //!
 //! Two metadata documents follow the MCP authorization spec (R22):
 //!
@@ -261,6 +262,7 @@ calls! {
     GitHubApps => "/v1/github/apps", GitHubAppsReply;
     GitHubCheck => "/v1/github/check", GitHubChecked;
     GitHubToken => "/v1/github/token", SessionToken;
+    GitHubDaemonToken => "/v1/github/daemon", SessionToken;
 }
 
 /// `POST /v1/register`: a session says that it exists and where it
@@ -3150,6 +3152,24 @@ impl RoleChecked {
 pub struct GitHubToken {
     /// The session ID.
     pub session: String,
+}
+
+/// `POST /v1/github/daemon`: a token of the lead App for the writes of
+/// the daemon of the person on the repository `repo`
+/// (01M6XZJFGNVG6B7DF5VQ3H1DNX, 01M6XZJFE2ZTR5RE3AWM30R704). The reply
+/// is a [`SessionToken`] of the role `lead`.
+///
+/// ```
+/// use riff_core::wire::{Call, GitHubDaemonToken};
+///
+/// let ask = GitHubDaemonToken { repo: "acme/app".into() };
+/// assert_eq!(serde_json::to_string(&ask).unwrap(), r#"{"repo":"acme/app"}"#);
+/// assert_eq!(GitHubDaemonToken::PATH, "/v1/github/daemon");
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubDaemonToken {
+    /// The repository, `OWNER/NAME`.
+    pub repo: String,
 }
 
 /// The reply to [`GitHubToken`]: a token of the App of the role, for the

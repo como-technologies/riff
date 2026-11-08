@@ -1455,15 +1455,23 @@ pub trait World: Send + Sync {
     fn fate<'a>(&'a self, repo: &'a str, issue: u64) -> BoxFuture<'a, Result<Fate>>;
 
     /// Deletes each branch `riff-kept/*` of `repo` that is older than 30
-    /// days, and gives their names ([`crate::daemon::sweep::delete_old_kept_on`]).
-    fn delete_old_kept<'a>(&'a self, _repo: &'a str) -> BoxFuture<'a, Result<Vec<String>>> {
+    /// days with `gh`, and gives their names
+    /// ([`crate::daemon::sweep::delete_old_kept_on`]). `gh` writes as the
+    /// daemon ([`gh_token::writer`]).
+    fn delete_old_kept<'a>(
+        &'a self,
+        _gh: pr::Gh,
+        _repo: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<String>>> {
         Box::pin(async { Ok(Vec::new()) })
     }
 
     /// Adds the comment `Merged in #PULL (COMMIT)` to the issue `issue` of
-    /// `repo`, when it has none ([`crate::daemon::sweep`]).
+    /// `repo` with `gh`, when it has none ([`crate::daemon::sweep`]). `gh`
+    /// writes as the daemon ([`gh_token::writer`]).
     fn merged_in<'a>(
         &'a self,
+        gh: pr::Gh,
         repo: &'a str,
         issue: u64,
         pull: u64,
@@ -1598,6 +1606,26 @@ pub trait World: Send + Sync {
     fn revoke_token<'a>(&'a self, _repo: &'a str, _token: &'a str) -> BoxFuture<'a, Result<()>> {
         Box::pin(async { Ok(()) })
     }
+
+    /// How the daemon writes on GitHub ([`gh_token::Writes`],
+    /// 01M6XZJFE2ZTR5RE3AWM30R704). `None`: each write has the token of
+    /// the person. The default has none.
+    fn writes(&self) -> Option<&gh_token::Writes> {
+        None
+    }
+
+    /// A token of the lead App of the riff-server `server` for the writes
+    /// of the daemon on `repo`, asked as the person
+    /// (01M6XZJFGNVG6B7DF5VQ3H1DNX): or the token of the person and why.
+    /// An error is a fault: the daemon writes with the token of the person
+    /// then. The default gives the token of the person.
+    fn daemon_token<'a>(
+        &'a self,
+        _server: &'a str,
+        _repo: &'a str,
+    ) -> BoxFuture<'a, Result<gh_token::Grant>> {
+        Box::pin(async { Ok(gh_token::Grant::person(text::GH_TOKEN_NONE)) })
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -1719,14 +1747,25 @@ async fn limit_pause(
 /// `look.merged` ([`World::merged_in`], #1754) one time: `said` holds each
 /// issue and pull request that got it from the loop, while the look still
 /// finds it with no comment. A comment that fails comes at the next look.
+/// The comment goes as the daemon ([`gh_token::writer`],
+/// 01M6XZJFE2ZTR5RE3AWM30R704).
 async fn say_merged(world: &dyn World, wave: &Wave, look: &Look, said: &mut BTreeSet<(u64, u64)>) {
     said.retain(|(issue, pull)| look.merged.get(issue).is_some_and(|m| m.pull == *pull));
+    let mut writer = None;
     for (issue, merge) in &look.merged {
         if said.contains(&(*issue, merge.pull)) {
             continue;
         }
+        let gh = match &writer {
+            Some(gh) => pr::Gh::clone(gh),
+            None => {
+                let gh = pr::Gh::clone(&world.gh(&wave.repo)).by("wave");
+                let gh = gh_token::writer(world, Some(&wave.server), &wave.repo, gh).await;
+                writer.insert(gh).clone()
+            }
+        };
         match world
-            .merged_in(&wave.repo, *issue, merge.pull, &merge.commit)
+            .merged_in(gh, &wave.repo, *issue, merge.pull, &merge.commit)
             .await
         {
             Ok(()) => {
@@ -2304,6 +2343,9 @@ pub struct Live {
     /// The `gh` of the look of each repository: its calls share one token
     /// (01M54510SFK1Z9VPFYBYYSV10F).
     ghs: Mutex<HashMap<String, Arc<pr::Gh>>>,
+    /// The token of the writes of the daemon on each repository
+    /// (01M6XZJFE2ZTR5RE3AWM30R704).
+    writes: gh_token::Writes,
 }
 
 /// Posts `body` of `kind` as the person of `wave`: to the session that
@@ -3575,15 +3617,11 @@ impl World for Live {
                         .map(Finish::from)
                 }
                 Work::Verify { pull, commit, .. } => {
-                    after_verify(
-                        forge(&wave.repo),
-                        &api,
-                        record,
-                        wave,
-                        (*pull, commit),
-                        ended,
-                    )
-                    .await
+                    // The result and its status go as the daemon
+                    // (01M6XZJFE2ZTR5RE3AWM30R704).
+                    let gh = forge(&wave.repo);
+                    let gh = gh_token::writer(self, Some(&wave.server), &wave.repo, gh).await;
+                    after_verify(gh, &api, record, wave, (*pull, commit), ended).await
                 }
             };
             self.end(&api, &record.me, &thread, &record.live.item).await;
@@ -3607,19 +3645,24 @@ impl World for Live {
         Box::pin(blocking(move || sweep::fate_on(&gh, &repo, issue)))
     }
 
-    fn delete_old_kept<'a>(&'a self, repo: &'a str) -> BoxFuture<'a, Result<Vec<String>>> {
-        let (gh, repo) = (sweep::gh(repo), repo.to_owned());
+    fn delete_old_kept<'a>(
+        &'a self,
+        gh: pr::Gh,
+        repo: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<String>>> {
+        let repo = repo.to_owned();
         Box::pin(blocking(move || sweep::delete_old_kept_on(&gh, &repo)))
     }
 
     fn merged_in<'a>(
         &'a self,
-        repo: &'a str,
+        gh: pr::Gh,
+        _: &'a str,
         issue: u64,
         pull: u64,
         commit: &'a str,
     ) -> BoxFuture<'a, Result<()>> {
-        let (gh, commit) = (sweep::gh(repo), commit.to_owned());
+        let commit = commit.to_owned();
         Box::pin(blocking(move || {
             sweep::merged_in_on(&gh, issue, pull, &commit)
         }))
@@ -3854,6 +3897,7 @@ impl World for Live {
                 let person = identity::person(&wave.place(None)?, &wave.server)?;
                 let api = Api::new(&wave.server).signed_in(None)?;
                 let gh = self.gh(&wave.repo).as_ref().clone().by("wave");
+                let gh = gh_token::writer(self, Some(&wave.server), &wave.repo, gh).await;
                 Ok::<_, anyhow::Error>(kept::report_all(&gh, &api, &person, wave, &sessions).await)
             };
             reported.await.unwrap_or_else(|e| {
@@ -3873,30 +3917,63 @@ impl World for Live {
                 .who()
                 .session()
                 .ok_or_else(|| anyhow!("the URI {me} names no session"))?;
-            let api = Api::new(server).signed_in(None)?;
-            if !api.sends_token() {
-                return Ok(gh_token::Grant::person(text::GH_NO_SIGN_IN));
-            }
-            // No more rights than the person (01M6WPMNXN1BSBEH74TG5DDRTF).
-            let repo = me.place().repo_text();
-            let gh = self.gh(&repo).as_ref().clone().by("token");
-            let checked = repo.clone();
-            if !blocking(move || gh_token::can_push(&gh, &checked)).await? {
-                return Ok(gh_token::Grant::person(&text::gh_no_push(&repo)));
-            }
-            match api.github_token(session).await {
-                Ok(Some(reply)) => Ok(gh_token::Grant::of(reply)),
-                Ok(None) => Ok(gh_token::Grant::person(text::GH_NO_SIGN_IN)),
-                Err(e) if is_not_found(&e) => Ok(gh_token::Grant::person(text::GH_OLD_SERVER)),
-                Err(e) => Err(e),
-            }
+            self.grant(server, &me.place().repo_text(), Some(session))
+                .await
         })
+    }
+
+    fn writes(&self) -> Option<&gh_token::Writes> {
+        Some(&self.writes)
+    }
+
+    fn daemon_token<'a>(
+        &'a self,
+        server: &'a str,
+        repo: &'a str,
+    ) -> BoxFuture<'a, Result<gh_token::Grant>> {
+        Box::pin(self.grant(server, repo, None))
     }
 
     fn revoke_token<'a>(&'a self, repo: &'a str, token: &'a str) -> BoxFuture<'a, Result<()>> {
         let gh = self.gh(repo).as_ref().clone().by("token");
         let token = zeroize::Zeroizing::new(token.to_owned());
         Box::pin(blocking(move || gh_token::revoke(&gh, &token)))
+    }
+}
+
+impl Live {
+    /// A token of a GitHub App from the riff-server `server`, asked as the
+    /// person: for the session `session`, or for the writes of the daemon
+    /// on `repo` with none (01M6WPMEEWX09DHJZF18BKBPYW,
+    /// 01M6XZJFGNVG6B7DF5VQ3H1DNX). The token of the person, and why, when
+    /// riff-server has no sign-in or gives none, and when the `gh` of the
+    /// person cannot push to `repo`.
+    async fn grant(
+        &self,
+        server: &str,
+        repo: &str,
+        session: Option<&str>,
+    ) -> Result<gh_token::Grant> {
+        let api = Api::new(server).signed_in(None)?;
+        if !api.sends_token() {
+            return Ok(gh_token::Grant::person(text::GH_NO_SIGN_IN));
+        }
+        // No more rights than the person (01M6WPMNXN1BSBEH74TG5DDRTF).
+        let gh = self.gh(repo).as_ref().clone().by("token");
+        let checked = repo.to_owned();
+        if !blocking(move || gh_token::can_push(&gh, &checked)).await? {
+            return Ok(gh_token::Grant::person(&text::gh_no_push(repo)));
+        }
+        let reply = match session {
+            Some(session) => api.github_token(session).await,
+            None => api.github_daemon_token(repo).await,
+        };
+        match reply {
+            Ok(Some(reply)) => Ok(gh_token::Grant::of(reply)),
+            Ok(None) => Ok(gh_token::Grant::person(text::GH_NO_SIGN_IN)),
+            Err(e) if is_not_found(&e) => Ok(gh_token::Grant::person(text::GH_OLD_SERVER)),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -4380,6 +4457,7 @@ mod tests {
 
         fn merged_in<'a>(
             &'a self,
+            _: pr::Gh,
             _: &'a str,
             issue: u64,
             pull: u64,

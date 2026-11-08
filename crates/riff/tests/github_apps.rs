@@ -602,13 +602,21 @@ fn the_book_says_who_acts_on_github_for_each_role() {
         "| A worker | `riff-OWNER[bot]`",
         "| A verifier | `riff-OWNER[bot]`",
         "| The lead in a container | `riff-OWNER-lead[bot]`",
-        "| You in a terminal",
+        // 01M6XZJFE2ZTR5RE3AWM30R704: the daemon writes as the lead App.
+        "| The daemon on the host, for its writes | `riff-OWNER-lead[bot]`",
+        "| You in a terminal, a plain `claude` | You |",
     ] {
         assert!(who.contains(row), "{row}: {who}");
     }
     let commands = crate::book::commands_in(who);
     assert_eq!(commands, ["riff whoami", "riff daemon status"]);
     crate::book::each_is_real(&commands);
+    // The lines of `riff daemon status` are the lines of riff.
+    let acts = riff::daemon::gh_token::ActsAs::Person {
+        why: "riff-acme-lead is not installed on acme/app: riff github install acme".into(),
+    };
+    let line = riff::text::daemon_writes("acme/app", &acts);
+    assert!(who.contains(&format!("\n{line}\n")), "{line}: {who}");
 }
 
 /// 01M6WWG3S60XYGTNBQH7S3F6D1: the token of a verifier reads only, so a

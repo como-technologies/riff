@@ -975,6 +975,115 @@ pub fn kind_of(args: &[&str]) -> String {
     }
 }
 
+/// The commands of `gh` that write on GitHub: the first two words.
+const WRITES: &[(&str, &[&str])] = &[
+    (
+        "issue",
+        &[
+            "close", "comment", "create", "delete", "develop", "edit", "lock", "pin", "reopen",
+            "transfer", "unlock", "unpin",
+        ],
+    ),
+    (
+        "pr",
+        &[
+            "close",
+            "comment",
+            "create",
+            "edit",
+            "lock",
+            "merge",
+            "ready",
+            "reopen",
+            "review",
+            "unlock",
+            "update-branch",
+        ],
+    ),
+    ("label", &["clone", "create", "delete", "edit"]),
+    (
+        "release",
+        &["create", "delete", "delete-asset", "edit", "upload"],
+    ),
+    ("run", &["cancel", "delete", "rerun"]),
+    ("workflow", &["disable", "enable", "run"]),
+];
+
+/// True when the call `gh ARGS` writes on GitHub: a command such as
+/// `gh issue comment` or `gh label create`, or `gh api` with a method
+/// other than `GET`. `gh api` with a field and no method is a `POST`.
+/// `gh api graphql` writes only with a `mutation`. The daemon makes each
+/// write with its own token, and each read with the token of the person
+/// ([`crate::pr::Gh::writing_as`]).
+///
+/// ```
+/// use riff::ghcalls::writes;
+///
+/// assert!(writes(&["issue", "comment", "12", "--body-file", "-"]));
+/// assert!(writes(&["pr", "comment", "40", "--body-file", "-"]));
+/// assert!(writes(&["label", "create", "broken-main", "--force"]));
+/// assert!(writes(&["api", "-X", "POST", "repos/o/r/issues/12/comments", "--input", "f"]));
+/// assert!(writes(&["api", "--method", "DELETE", "repos/o/r/git/refs/heads/x"]));
+/// assert!(writes(&["api", "--method=PATCH", "repos/o/r/issues/comments/1"]));
+/// assert!(writes(&["api", "-XPUT", "repos/o/r/topics"]));
+/// // A field with no method is a POST: the status of a commit.
+/// assert!(writes(&["api", "repos/o/r/statuses/abc", "-f", "state=success"]));
+/// assert!(writes(&["api", "graphql", "-f", "query=mutation { x }"]));
+///
+/// assert!(!writes(&["issue", "view", "12", "--json", "comments"]));
+/// assert!(!writes(&["pr", "list", "--json", "number"]));
+/// assert!(!writes(&["api", "--paginate", "repos/o/r/issues/12/comments"]));
+/// assert!(!writes(&["api", "-X", "GET", "repos/o/r/commits", "-f", "sha=main"]));
+/// assert!(!writes(&["api", "graphql", "-f", "query=query { viewer { login } }"]));
+/// assert!(!writes(&["auth", "token"]));
+/// assert!(!writes(&[]));
+/// ```
+pub fn writes(args: &[&str]) -> bool {
+    match args {
+        ["api", rest @ ..] => api_writes(rest),
+        [first, second, ..] => WRITES
+            .iter()
+            .any(|(command, verbs)| command == first && verbs.contains(second)),
+        _ => false,
+    }
+}
+
+/// True when `gh api ARGS` writes on GitHub ([`writes`]).
+fn api_writes(args: &[&str]) -> bool {
+    let mut method = None;
+    let mut fields = false;
+    let mut query = None;
+    let mut path = None;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match *arg {
+            "-X" | "--method" => method = args.next().copied(),
+            "-f" | "--raw-field" | "-F" | "--field" => {
+                fields = true;
+                if let Some(value) = args.next().and_then(|field| field.strip_prefix("query=")) {
+                    query = Some(value);
+                }
+            }
+            "--input" => {
+                fields = true;
+                args.next();
+            }
+            flag if API_VALUE_FLAGS.contains(&flag) => {
+                args.next();
+            }
+            flag if flag.starts_with("--method=") => method = flag.strip_prefix("--method="),
+            flag if flag.starts_with("-X") => method = flag.strip_prefix("-X"),
+            flag if flag.starts_with('-') => {}
+            other => path = path.or(Some(other)),
+        }
+    }
+    if path.map(|path| path.trim_matches('/')) == Some("graphql") {
+        return query.is_some_and(|query| query.trim_start().starts_with("mutation"));
+    }
+    let method = method.unwrap_or(if fields { "POST" } else { "GET" });
+    !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("HEAD")
+}
+
 /// The kind of `gh api ARGS`.
 fn api_kind(args: &[&str]) -> String {
     let mut path = None;

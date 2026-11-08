@@ -1528,6 +1528,11 @@ pub struct Status {
     /// An old daemon gives none.
     #[serde(default)]
     pub person_tokens: Vec<PersonToken>,
+    /// How the daemon writes on GitHub in each repository: as the bot of
+    /// the lead App, or with the token of the person and why
+    /// (01M6XZJFE2ZTR5RE3AWM30R704). An old daemon gives none.
+    #[serde(default)]
+    pub writes: Vec<WritesShown>,
 }
 
 /// A repository whose sessions act on GitHub with the token of the
@@ -1539,6 +1544,16 @@ pub struct PersonToken {
     /// Why, for example `riff-acme is not installed on acme/app: riff
     /// github install acme`.
     pub why: String,
+}
+
+/// How the daemon writes on GitHub in one repository
+/// ([`Status::writes`], [`gh_token::Writes`]). It holds no token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WritesShown {
+    /// The repository, `OWNER/NAME`.
+    pub repo: String,
+    /// The bot of the lead App, or the token of the person and why.
+    pub acts: gh_token::ActsAs,
 }
 
 impl Status {
@@ -3502,6 +3517,11 @@ impl<R: Runtime + 'static> Daemon<R> {
                     why: why.clone(),
                 })
                 .collect(),
+            writes: self
+                .world
+                .writes()
+                .map(gh_token::Writes::shown)
+                .unwrap_or_default(),
         }
     }
 
@@ -4753,8 +4773,9 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// (01M588N85Z94PX1ZP0BDXTPX83). It sums the claim at once, and
     /// writes the comment in the background: the end of the session never
     /// waits for `gh`, and never fails by the report
-    /// (01M3Y1YP39VFX6GH33H7B8A8KR). The line of the report goes to the
-    /// log of the daemon.
+    /// (01M3Y1YP39VFX6GH33H7B8A8KR). The comment goes as the daemon
+    /// ([`gh_token::writer`], 01M6XZJFE2ZTR5RE3AWM30R704). The line of the
+    /// report goes to the log of the daemon.
     fn count_tokens(&self, record: &Record) {
         let Some(thread) = record.me.default_thread().map(|t| t.to_string()) else {
             return;
@@ -4771,10 +4792,18 @@ impl<R: Runtime + 'static> Daemon<R> {
         else {
             return;
         };
-        tokio::task::spawn_blocking(move || {
+        let (world, server) = (self.world.clone(), record.server.clone());
+        tokio::spawn(async move {
             let line = match ended {
                 Ok(claim) => {
-                    usage::reported(&claim, &usage::report(&meter.gh, &live.session, &claim))
+                    let gh = gh_token::writer(&*world, Some(&server), &thread, meter.gh).await;
+                    let session = live.session.clone();
+                    let reported = tokio::task::spawn_blocking(move || {
+                        usage::reported(&claim, &usage::report(&gh, &session, &claim))
+                    });
+                    reported
+                        .await
+                        .unwrap_or_else(|e| format!("riff cannot report the tokens: {e}."))
                 }
                 Err(e) => format!("riff cannot count the tokens of {}: {e}.", live.item),
             };
@@ -8076,10 +8105,11 @@ mod tests {
     /// keep-alive and each end, and gives a wake at once. It gives each
     /// wake of [`Server::wake_all`] to the watch of each worker, and
     /// notes each refusal. No wave runs.
-    /// The forge gives the fate of the folders of each issue of `fates`,
-    /// and [`Fate::Stays`](sweep::Fate::Stays) for each other issue. With
-    /// `gh`, the fate comes from that `gh` ([`sweep::fate_on`]). With
-    /// `gate`, the steps after the end of a job wait for a permit of it.
+    /// The forge gives the fate of the folders of each issue of `fates`.
+    /// With `gh`, the fate of each other issue comes from that `gh`
+    /// ([`sweep::fate_on`]), else it is [`Fate::Stays`](sweep::Fate::Stays).
+    /// With `gate`, the steps after the end of a job wait for a permit of
+    /// it.
     #[derive(Default)]
     pub(super) struct Server {
         said: Mutex<Vec<String>>,
@@ -8103,6 +8133,13 @@ mod tests {
         asks: std::sync::atomic::AtomicUsize,
         /// Each token of [`World::revoke_token`], with its repository.
         revoked: Mutex<Vec<(String, String)>>,
+        /// The answer of [`World::daemon_token`] to each ask, by its
+        /// number from 0 ([`Server::with_daemon_token`]).
+        daemon: Option<Arc<GiveToken>>,
+        /// The number of the asks of [`World::daemon_token`].
+        daemon_asks: std::sync::atomic::AtomicUsize,
+        /// The tokens of the writes of the daemon ([`World::writes`]).
+        writes: Option<gh_token::Writes>,
     }
 
     /// The answer of a fake riff-server to the ask `n` of a token.
@@ -8176,6 +8213,26 @@ mod tests {
         /// The number of the asks of a token.
         fn asks(&self) -> usize {
             self.asks.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        /// The same riff-server, which gives `give(n)` to the ask `n` of a
+        /// token for the writes of the daemon: the daemon keeps them
+        /// ([`World::writes`]), and the comment `Merged in` goes out with
+        /// the `gh` of the daemon.
+        fn with_daemon_token(
+            self,
+            give: impl Fn(usize) -> Result<gh_token::Grant> + Send + Sync + 'static,
+        ) -> Server {
+            Server {
+                daemon: Some(Arc::new(give)),
+                writes: Some(gh_token::Writes::default()),
+                ..self
+            }
+        }
+
+        /// The number of the asks of a token for the writes of the daemon.
+        fn daemon_asks(&self) -> usize {
+            self.daemon_asks.load(std::sync::atomic::Ordering::SeqCst)
         }
 
         /// Each token that the daemon revoked, with its repository.
@@ -8352,22 +8409,21 @@ mod tests {
             repo: &'a str,
             issue: u64,
         ) -> crate::wave::BoxFuture<'a, Result<sweep::Fate>> {
+            if let Some(fate) = self.fates.get(&issue).cloned() {
+                return Box::pin(async move { Ok(fate) });
+            }
             if let Some(gh) = self.gh.clone() {
                 let repo = repo.to_owned();
                 return Box::pin(async move {
                     tokio::task::spawn_blocking(move || sweep::fate_on(&gh, &repo, issue)).await?
                 });
             }
-            let fate = self
-                .fates
-                .get(&issue)
-                .cloned()
-                .unwrap_or(sweep::Fate::Stays);
-            Box::pin(async move { Ok(fate) })
+            Box::pin(async { Ok(sweep::Fate::Stays) })
         }
 
         fn delete_old_kept<'a>(
             &'a self,
+            _: crate::pr::Gh,
             _: &'a str,
         ) -> crate::wave::BoxFuture<'a, Result<Vec<String>>> {
             let now = sweep::date_seconds("2026-10-24T12:00:00Z").unwrap_or(0);
@@ -8377,8 +8433,11 @@ mod tests {
             Box::pin(async move { Ok(old) })
         }
 
+        /// Notes the comment. With [`Server::with_daemon_token`], the
+        /// comment also goes out with `gh`, as the daemon gives it.
         fn merged_in<'a>(
             &'a self,
+            gh: crate::pr::Gh,
             repo: &'a str,
             issue: u64,
             pull: u64,
@@ -8389,8 +8448,33 @@ mod tests {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .push((repo.to_owned(), issue, pull, commit.to_owned()));
+                if self.writes.is_some() {
+                    let commit = commit.to_owned();
+                    tokio::task::spawn_blocking(move || {
+                        sweep::merged_in_on(&gh, issue, pull, &commit)
+                    })
+                    .await??;
+                }
                 Ok(())
             })
+        }
+
+        fn writes(&self) -> Option<&gh_token::Writes> {
+            self.writes.as_ref()
+        }
+
+        fn daemon_token<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a str,
+        ) -> crate::wave::BoxFuture<'a, Result<gh_token::Grant>> {
+            let Some(give) = self.daemon.clone() else {
+                return Box::pin(async { Ok(gh_token::Grant::person(text::GH_TOKEN_NONE)) });
+            };
+            let n = self
+                .daemon_asks
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async move { give(n) })
         }
 
         fn tell<'a>(
@@ -9867,6 +9951,16 @@ mod tests {
         gh: crate::pr::Gh,
     ) -> Ended {
         let server = Arc::new(Server::default().with_meter(marks, gh));
+        a_session_with_tokens_on(server, name, item).await.1
+    }
+
+    /// [`a_session_with_tokens`] on a daemon whose world is `server`, with
+    /// its marks and its `gh`. Gives the daemon and how the session ended.
+    async fn a_session_with_tokens_on(
+        server: Arc<Server>,
+        name: &str,
+        item: &str,
+    ) -> (Here, Ended) {
         let world: Arc<dyn World> = server.clone();
         let here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
@@ -9901,7 +9995,7 @@ mod tests {
         }
         relay.exit(4, 0).await;
         match to_the_end(&mut client).await.1 {
-            Some(Say::Ended(ended)) => ended,
+            Some(Say::Ended(ended)) => (here, ended),
             other => panic!("{other:?}"),
         }
     }
@@ -9979,6 +10073,113 @@ mod tests {
         // The daemon tried gh, and wrote no comment.
         until(|| bin.path().join("tried").exists()).await;
         assert!(!bin.path().join("posted").exists());
+    }
+
+    /// A fake `gh` in `dir` with the token of the person: it logs each
+    /// call as `TOKEN ARGS` in the file `calls`. An issue has no comment,
+    /// and each write does nothing.
+    fn writes_gh(dir: &Path) -> crate::pr::Gh {
+        let script = concat!(
+            "#!/bin/sh\n",
+            "echo \"${GH_TOKEN:-none} $*\" >> \"$(dirname \"$0\")/calls\"\n",
+            "case \"$1 $2\" in\n",
+            "  'issue view') echo '{\"comments\":[]}' ;;\n",
+            "  'issue comment') cat > /dev/null ;;\n",
+            "esac\n",
+        );
+        crate::pr::Gh::at(isolated::write_program(dir.join("gh"), script))
+            .with_given_token("gho_person")
+    }
+
+    /// 01M6XZJFE2ZTR5RE3AWM30R704: the daemon writes the comment of the
+    /// tokens of a container session and the comment `Merged in` with the
+    /// token of the lead App that riff-server gives, and reads with the
+    /// token of the person. With no lead App, it writes with the token of
+    /// the person, and `riff daemon status` says why.
+    #[tokio::test]
+    async fn the_daemon_writes_its_comments_with_the_token_of_the_lead_app() {
+        let why = "riff-como-technologies-lead is not installed on como-technologies/riff: \
+                   riff github install como-technologies";
+        let lead = || {
+            let ends = sweep::date_text(gh_token::now_secs() + 3600);
+            gh_token::Grant {
+                token: Some(Zeroizing::new("ghs_lead".to_owned())),
+                acts: gh_token::ActsAs::Bot {
+                    bot: "riff-como-technologies-lead[bot]".into(),
+                    role: riff_core::wire::GitHubRole::Lead,
+                    rights: [("issues".to_owned(), "write".to_owned())].into(),
+                    ends,
+                },
+                bot_id: Some(1202),
+            }
+        };
+        for app in [true, false] {
+            let (bin, marks) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+            let gh = writes_gh(bin.path());
+            let merged = sweep::Fate::Merged {
+                pull: 41,
+                commit: "c41".into(),
+                refs: true,
+            };
+            let server = Server {
+                gh: Some(gh.clone()),
+                ..Server::with_fates(&[(1, merged)])
+            }
+            .with_meter(marks.path(), gh)
+            .with_daemon_token(move |_| match app {
+                true => Ok(lead()),
+                false => Ok(gh_token::Grant::person(why)),
+            });
+            let server = Arc::new(server);
+            let name = "riff-issue-12-1a2b3c4d";
+            let (here, ended) = a_session_with_tokens_on(server.clone(), name, "issue-12").await;
+            assert!(!ended.failed);
+            let calls = || std::fs::read_to_string(bin.path().join("calls")).unwrap_or_default();
+            until(|| calls().contains(" api -X POST ")).await;
+
+            // The pull request of the folder of issue-1 merged: the sweep
+            // adds the comment `Merged in` to the issue.
+            let folder = here.daemon.sessions_dir().join("issue-1-00000001");
+            let url = "https://github.com/como-technologies/riff.git";
+            sweep::tests::origin(&folder.join("clone"), url);
+            here.daemon.sweep(None).await;
+            assert_eq!(server.comments().len(), 1);
+
+            let calls = calls();
+            let writer = if app { "ghs_lead" } else { "gho_person" };
+            let repo = "como-technologies/riff";
+            let comment = format!("{writer} api -X POST repos/{repo}/issues/12/comments --include");
+            assert!(calls.contains(&comment), "{calls}");
+            let merged_in = format!("{writer} issue comment 1 --body-file -\n");
+            assert!(calls.contains(&merged_in), "{calls}");
+            // Each read has the token of the person.
+            let reads = [
+                format!("gho_person api --paginate repos/{repo}/issues/12/comments"),
+                "gho_person issue view 1 --json comments\n".to_owned(),
+            ];
+            for read in reads {
+                assert!(calls.contains(&read), "{read}: {calls}");
+            }
+            // The token of the App goes only to the two writes.
+            let as_app = calls.lines().filter(|l| l.starts_with("ghs_lead ")).count();
+            assert_eq!(as_app, if app { 2 } else { 0 }, "{calls}");
+            // One ask for the two writes.
+            assert_eq!(server.daemon_asks(), 1);
+
+            let status = here.daemon.status().await;
+            assert_eq!(status.writes.len(), 1, "{:?}", status.writes);
+            assert_eq!(status.writes[0].repo, repo);
+            let text = text::daemon_status(&status, now_ms());
+            let line = match app {
+                true => format!(
+                    "GitHub: the daemon writes on {repo} as riff-como-technologies-lead[bot].\n"
+                ),
+                false => format!(
+                    "GitHub: the daemon writes on {repo} with the token of the person: {why}.\n"
+                ),
+            };
+            assert!(text.contains(&line), "{text}");
+        }
     }
 
     /// The record of the session `name` on disk.

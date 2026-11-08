@@ -1114,3 +1114,99 @@ async fn the_log_line_of_a_token_names_the_session_and_holds_no_token() {
         assert!(!log.contains(token.as_str()), "a token in: {log}");
     }
 }
+
+/// `POST /v1/github/daemon` of `person` for the repository `repo`.
+async fn daemon_token_of(s: &Sessions, person: &Person, repo: &str) -> (u16, String) {
+    call(&s.url, person, "/v1/github/daemon", json!({ "repo": repo })).await
+}
+
+/// 01M6XZJFGNVG6B7DF5VQ3H1DNX: each person gets a token of the lead App
+/// for the writes of its daemon on one repository, with the rights of the
+/// lead and no more. A repository with no installation gives the fix and
+/// no token. A session token and a text that is no repository are refused.
+#[tokio::test]
+async fn the_daemon_of_each_person_gets_a_token_of_the_lead_app_for_one_repository() {
+    let s = sessions().await;
+    for person in [&s.ada, &s.bob] {
+        let (status, text) = daemon_token_of(&s, person, REPO).await;
+        assert_eq!(status, 200, "{text}");
+        let reply: SessionToken = serde_json::from_str(&text).unwrap();
+        assert_eq!((reply.role, reply.repo.as_str()), (GitHubRole::Lead, REPO));
+        assert_eq!(reply.bot.as_deref(), Some("riff-acme-lead[bot]"));
+        assert_eq!(reply.bot_id, Some(1202));
+        assert_eq!(reply.rights, table(GitHubRole::Lead));
+        assert_eq!(reply.ends.as_deref(), Some("2026-11-08T13:00:00Z"));
+        assert!(reply.token.as_deref().unwrap().starts_with("ghs_"));
+        assert!(reply.problem.is_none(), "{text}");
+    }
+    let body = json!({ "repositories": ["app"], "permissions": table(GitHubRole::Lead) });
+    assert_eq!(s.fake.seen().asked, [(202, body.clone()), (202, body)]);
+    assert!(s.fake.seen().revoked.is_empty());
+
+    let (status, text) = daemon_token_of(&s, &s.ada, "acme/other").await;
+    assert_eq!(status, 200, "{text}");
+    let reply: SessionToken = serde_json::from_str(&text).unwrap();
+    assert!(reply.token.is_none());
+    assert_eq!(
+        reply.problem.as_deref(),
+        Some("riff-acme-lead is not installed on acme/other: riff github install acme")
+    );
+
+    let w1 = session_of(&s.url, &s.ada, "w1").await;
+    let (status, text) = daemon_token_of(&s, &w1, REPO).await;
+    assert_eq!(status, 403, "{text}");
+    assert!(text.contains("the daemon of its person asks"), "{text}");
+    let (status, text) = daemon_token_of(&s, &s.ada, "acme").await;
+    assert_eq!(status, 400, "{text}");
+    assert_eq!(s.fake.seen().asked.len(), 2);
+}
+
+/// 01M6XZJFGNVG6B7DF5VQ3H1DNX: a token of the daemon with other rights
+/// than the lead has goes back to GitHub at once, and the reply is an
+/// error with no token. Its log line names the person, the repository
+/// and the end, and never holds the token.
+#[tokio::test]
+async fn a_token_of_the_daemon_has_a_log_line_with_no_token_and_the_rights_of_the_lead() {
+    // The log of this thread misses lines while other tests run.
+    if !isolated::rerun_alone(
+        module_path!(),
+        "a_token_of_the_daemon_has_a_log_line_with_no_token_and_the_rights_of_the_lead",
+    ) {
+        return;
+    }
+    let lines = Lines::default();
+    let writer = lines.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .event_format(riff_server::logline::JsonLines)
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _log = tracing::subscriber::set_default(subscriber);
+
+    let s = sessions().await;
+    let (status, text) = daemon_token_of(&s, &s.ada, REPO).await;
+    assert_eq!(status, 200, "{text}");
+    let log = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+    let line: Value = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|line| line["message"] == "a token of the daemon on GitHub")
+        .unwrap_or_else(|| panic!("no line of the token in {log}"));
+    assert_eq!(line["person"], "ada", "{line}");
+    assert_eq!(line["repo"], REPO, "{line}");
+    assert_eq!(line["ends"], "2026-11-08T13:00:00Z", "{line}");
+
+    let mut more = table(GitHubRole::Lead);
+    more.insert("workflows".into(), "write".into());
+    s.fake.seen().give = Some(more);
+    let (status, text) = daemon_token_of(&s, &s.ada, REPO).await;
+    assert_eq!(status, 502, "{text}");
+    assert!(text.contains("more: workflows: write"), "{text}");
+    let seen = s.fake.seen();
+    assert_eq!(seen.revoked, seen.tokens[1..]);
+    let log = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+    for token in seen.tokens.iter() {
+        assert!(!log.contains(token.as_str()), "a token in: {log}");
+        assert!(!text.contains(token.as_str()), "a token in: {text}");
+    }
+}

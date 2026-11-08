@@ -59,9 +59,39 @@
 //! repository, or the `gh` of the person cannot push there. `riff daemon
 //! status` names the repository with the fix, for example `riff github
 //! install OWNER`.
+//!
+//! # The writes of the daemon
+//!
+//! The daemon itself writes on GitHub with a token of the lead App
+//! (01M6XZJFE2ZTR5RE3AWM30R704): the comment of the tokens of a claim,
+//! the comment `Merged in`, the result of a verify, the issue of a broken
+//! main, and the delete of an old branch `riff-kept`. So GitHub shows the
+//! bot of the lead App, not the person. [`Writes`] keeps one token for
+//! each repository, from riff-server ([`crate::wave::World::daemon_token`],
+//! 01M6XZJFGNVG6B7DF5VQ3H1DNX), and gives it to the `gh` of each such
+//! step ([`writer`]). That `gh` makes each write with the token of the
+//! App, and each read with the token of the person
+//! ([`crate::pr::Gh::writing_as`]).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     W["a write step of the daemon"] --> K{"a token of the lead App<br/>for the repository,<br/>10 minutes or more left?"}
+//!     K -- yes --> A["the write as riff-OWNER-lead[bot]"]
+//!     K -- no --> S["POST /v1/github/daemon<br/>(signed in as the person)"]
+//!     S -- "a token" --> A
+//!     S -- "none, and why" --> P["the write with the token of the person<br/>riff daemon status says why"]
+//! ```
+//!
+//! The daemon asks only for a repository where the `gh` of the person can
+//! push, as for a session. After an answer with no token, it asks again
+//! after [`PERSON_AGAIN`], and after a fault after [`RETRY`]. `riff daemon
+//! status` names each repository with the bot of its writes, or with the
+//! token of the person and why ([`Writes::shown`]).
 
+use std::collections::BTreeMap;
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -70,6 +100,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::runtime::{Bind, Env, SessionSpec, Source};
+use crate::wave::World;
 
 /// The folder of the token in the folder of a session.
 pub const FOLDER: &str = "gh";
@@ -93,6 +124,11 @@ pub const RENEW_BEFORE: Duration = Duration::from_secs(10 * 60);
 /// The wait before the next ask, after an ask that failed, or for a
 /// token whose end does not read.
 pub const RETRY: Duration = Duration::from_secs(60);
+
+/// The wait before the daemon asks again for the token of its writes on
+/// a repository, after an answer with the token of the person
+/// (01M6XZJFE2ZTR5RE3AWM30R704).
+pub const PERSON_AGAIN: Duration = Duration::from_secs(10 * 60);
 
 /// How a session acts on GitHub. It holds no token, so the record of the
 /// session keeps it, and `riff whoami` shows it
@@ -452,4 +488,148 @@ pub fn revoke(gh: &crate::pr::Gh, token: &str) -> Result<()> {
         &["api", "--method", "DELETE", "installation/token"],
     )?;
     Ok(())
+}
+
+/// How the daemon writes on GitHub in each repository
+/// (01M6XZJFE2ZTR5RE3AWM30R704): the token of the lead App that
+/// riff-server gave, or the token of the person and why. It holds each
+/// token in memory only, and keeps no file.
+#[derive(Default)]
+pub struct Writes {
+    /// The grant of each repository, by `OWNER/NAME`.
+    kept: Mutex<BTreeMap<String, Kept>>,
+    /// One ask to riff-server at a time: two writes that need a token ask
+    /// one time.
+    asking: tokio::sync::Mutex<()>,
+}
+
+/// The grant of the writes on one repository.
+struct Kept {
+    grant: Grant,
+    /// The riff-server that gave it. Empty when the daemon knew none.
+    server: String,
+    /// The second since 1970 from which the daemon asks again.
+    again: i64,
+}
+
+impl Writes {
+    /// The `gh` `gh` for a step of the daemon on `repo`: its writes go
+    /// with the token of the lead App of the riff-server `server`, and its
+    /// reads keep their token ([`crate::pr::Gh::writing_as`]). The daemon
+    /// asks `world` for a token when it has none with [`RENEW_BEFORE`] or
+    /// more left, and after [`PERSON_AGAIN`] or [`RETRY`] when it had
+    /// none. With no `server`, it asks the riff-server of the last ask for
+    /// `repo`. With no token, `gh` stays as it is: the token of the person.
+    pub async fn gh(
+        &self,
+        world: &dyn World,
+        server: Option<&str>,
+        repo: &str,
+        gh: crate::pr::Gh,
+    ) -> crate::pr::Gh {
+        let grant = self.grant(world, server, repo).await;
+        match (&grant.token, &grant.acts) {
+            (Some(token), ActsAs::Bot { bot, .. }) => gh.writing_as(bot, token),
+            _ => gh,
+        }
+    }
+
+    /// The grant for the writes on `repo`: the one it keeps, or a new one
+    /// of `world`.
+    async fn grant(&self, world: &dyn World, server: Option<&str>, repo: &str) -> Grant {
+        if let Some(grant) = self.fresh(server, repo) {
+            return grant;
+        }
+        let _one = self.asking.lock().await;
+        if let Some(grant) = self.fresh(server, repo) {
+            return grant;
+        }
+        let server = server
+            .map(str::to_owned)
+            .or_else(|| self.lock().get(repo).map(|kept| kept.server.clone()))
+            .filter(|server| !server.is_empty());
+        let now = now_secs();
+        let (grant, again) = match &server {
+            None => (Grant::person(crate::text::GH_NO_SERVER), now),
+            Some(server) => match world.daemon_token(server, repo).await {
+                Ok(grant) => {
+                    let wait = match &grant.acts {
+                        ActsAs::Bot { ends, .. } => renew_in(ends, now),
+                        ActsAs::Person { .. } => PERSON_AGAIN,
+                    };
+                    (grant, now.saturating_add(secs(wait)))
+                }
+                Err(e) => {
+                    let why = crate::text::gh_daemon_token_failed(&format!("{e:#}"));
+                    (Grant::person(&why), now.saturating_add(secs(RETRY)))
+                }
+            },
+        };
+        let kept = Kept {
+            grant: grant.clone(),
+            server: server.unwrap_or_default(),
+            again,
+        };
+        let old = self.lock().insert(repo.to_owned(), kept);
+        if old.is_none_or(|old| !same_writer(&old.grant.acts, &grant.acts)) {
+            println!(
+                "riff daemon: {}",
+                crate::text::daemon_writes(repo, &grant.acts)
+            );
+        }
+        grant
+    }
+
+    /// The grant of `repo` that it keeps, while the daemon need not ask
+    /// again, and when it is of `server`.
+    fn fresh(&self, server: Option<&str>, repo: &str) -> Option<Grant> {
+        let kept = self.lock();
+        let kept = kept.get(repo)?;
+        let of_server = server.is_none_or(|server| server == kept.server);
+        (of_server && kept.again > now_secs()).then(|| kept.grant.clone())
+    }
+
+    /// How the daemon wrote last on each repository: `riff daemon status`
+    /// shows it.
+    pub fn shown(&self) -> Vec<crate::daemon::WritesShown> {
+        self.lock()
+            .iter()
+            .map(|(repo, kept)| crate::daemon::WritesShown {
+                repo: repo.clone(),
+                acts: kept.grant.acts.clone(),
+            })
+            .collect()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Kept>> {
+        self.kept.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// True when `a` and `b` write as the same bot, or both with the token of
+/// the person for the same reason: the end of a token does not count.
+fn same_writer(a: &ActsAs, b: &ActsAs) -> bool {
+    match (a, b) {
+        (ActsAs::Bot { bot: a, .. }, ActsAs::Bot { bot: b, .. }) => a == b,
+        (a, b) => a == b,
+    }
+}
+
+/// The seconds of `wait`.
+fn secs(wait: Duration) -> i64 {
+    i64::try_from(wait.as_secs()).unwrap_or(i64::MAX)
+}
+
+/// The `gh` `gh` whose writes on `repo` go as the daemon of `world`
+/// ([`Writes::gh`]): as it is when `world` has no [`Writes`].
+pub async fn writer(
+    world: &dyn World,
+    server: Option<&str>,
+    repo: &str,
+    gh: crate::pr::Gh,
+) -> crate::pr::Gh {
+    match world.writes() {
+        Some(writes) => writes.gh(world, server, repo, gh).await,
+        None => gh,
+    }
 }

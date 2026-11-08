@@ -907,6 +907,9 @@ mod tests {
         c.trip(&GitHubToken {
             session: text("1a2b3c4d-0000"),
         });
+        c.trip(&GitHubDaemonToken {
+            repo: text("acme/app"),
+        });
         c.trip(&SessionToken {
             role: GitHubRole::Worker,
             repo: text("acme/app"),
