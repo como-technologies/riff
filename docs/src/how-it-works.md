@@ -3675,8 +3675,9 @@ command. The new lines stay. The prompt shows each one as `↵`:
 ```
 
 Press Enter. The lines go as one message, and the log shows each one
-under the sender. A line has at most 64 KiB. A longer paste stays out
-of the line, and the row under the prompt says so:
+under the sender. A line has at most 64 KiB, also when you type. A
+paste or a key that makes the line longer stays out of it, and the row
+under the prompt says so until your next key:
 
 ```text
  The paste is too long: a post has at most 64 KiB. The line stays as it was.

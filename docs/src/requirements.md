@@ -7851,6 +7851,10 @@ that builds it merges.
   cursor shows at its place, and each key types in the line again. A
   click on the log of the Chat tab does not take the focus from the
   prompt.
+- **01M6XVCDEP1ZP9RS7DV795W79E** A typed character that makes the line
+  of the Chat tab longer than 64 KiB stays out of it, as a paste does:
+  the line keeps its text, and the note line says the note of
+  01M6XSK4K2MDA2SK0A6KHN9HDT at once, until the next key.
 
 ## The notes of the lead
 

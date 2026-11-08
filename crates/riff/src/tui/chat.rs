@@ -38,13 +38,14 @@
 //! - **A paste** goes into the prompt at the cursor, also from the log
 //!   ([`super::State::on_paste`], 01M6XSK4GHNBJCR0RHMBGZE57G). Its new
 //!   lines stay: the prompt shows each one as `↵`, and `Enter` sends the
-//!   line as one message. A paste that makes the line longer than
-//!   [`POST_MAX`] stays out ([`too_long`], 01M6XSK4K2MDA2SK0A6KHN9HDT).
+//!   line as one message. A paste or a typed character that makes the
+//!   line longer than [`POST_MAX`] stays out ([`too_long`],
+//!   01M6XSK4K2MDA2SK0A6KHN9HDT, 01M6XVCDEP1ZP9RS7DV795W79E).
 //! - **The note line** says whom the line will wake before you send it
 //!   ([`wake_note`]), with the rules of `riff chat`
-//!   (01M6VG1PCXHNVJP7TSP0J5G5K9). A post that fails, or a paste that is
-//!   too long, shows there at once, before that note, until the next key
-//!   (01M6VMACJGF4A0ZXC6YK13KNCH).
+//!   (01M6VG1PCXHNVJP7TSP0J5G5K9). A post that fails, or a paste or a
+//!   key that makes the line too long, shows there at once, before that
+//!   note, until the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
 //! - **News:** each new line of the thread while another tab shows
 //!   adds one to `Chat•N` in the strip (01M6VG1PFPMHRQ4F9XHJTYMSJY).
 //!
@@ -101,9 +102,9 @@ use crate::text::safe;
 /// The most lines that the log keeps. An older line goes.
 pub const KEEP: usize = 1000;
 
-/// The most bytes of a line of the Chat tab: 64 KiB. A paste that makes
-/// the line longer stays out of it ([`too_long`],
-/// 01M6XSK4K2MDA2SK0A6KHN9HDT).
+/// The most bytes of a line of the Chat tab: 64 KiB. A paste or a typed
+/// character that makes the line longer stays out of it ([`too_long`],
+/// 01M6XSK4K2MDA2SK0A6KHN9HDT, 01M6XVCDEP1ZP9RS7DV795W79E).
 pub const POST_MAX: usize = 64 * 1024;
 
 /// The rows that a turn of the mouse wheel scrolls.
@@ -810,10 +811,12 @@ impl State {
         self.chat.focus = Focus::Prompt;
     }
 
-    /// Takes the key `key` of the Chat tab.
+    /// Takes the key `key` of the Chat tab. A typed character that makes
+    /// the line longer than [`POST_MAX`] stays out, as a paste does: the
+    /// note line says [`too_long`] until the next key.
     ///
     /// ```
-    /// use riff::tui::chat::{Focus, Key};
+    /// use riff::tui::chat::{Focus, Key, POST_MAX, too_long};
     /// use riff::tui::{Action, Key as Frame, Look, State, Tab};
     /// use riff_core::build::Build;
     ///
@@ -851,6 +854,13 @@ impl State {
     /// assert_eq!(state.chat().focus(), Focus::Log);
     /// state.on_key(Frame::Chat(Key::Prompt));
     /// assert_eq!(state.chat().focus(), Focus::Prompt);
+    /// // A character that makes the line longer than 64 KiB stays out,
+    /// // and the note line says the limit.
+    /// state.on_key(Frame::Chat(Key::Clear));
+    /// state.on_paste(&"x".repeat(POST_MAX));
+    /// state.on_key(Frame::Chat(Key::Type('y')));
+    /// assert_eq!(state.chat().prompt().text().len(), POST_MAX);
+    /// assert_eq!(state.shown_note(), Some(too_long().as_str()));
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub(super) fn on_chat(&mut self, key: Key) -> Option<Action> {
@@ -866,6 +876,10 @@ impl State {
             }
             Key::Scroll(scroll) => {
                 self.chat.scroll_by(scroll);
+                None
+            }
+            Key::Type(c) if self.chat.prompt.text().len() + c.len_utf8() > POST_MAX => {
+                self.over_limit();
                 None
             }
             edit => {
@@ -884,12 +898,18 @@ impl State {
         self.chat.focus = Focus::Prompt;
         let text = pasted(text);
         if self.chat.prompt.text().len() + text.len() > POST_MAX {
-            let note = too_long();
-            self.chat.warning = Some(note.clone());
-            self.note(note);
+            self.over_limit();
             return;
         }
         self.chat.prompt.paste(&text);
+    }
+
+    /// A paste or a typed key that makes the line longer than
+    /// [`POST_MAX`]: the note line says [`too_long`] until the next key.
+    fn over_limit(&mut self) {
+        let note = too_long();
+        self.chat.warning = Some(note.clone());
+        self.note(note);
     }
 
     /// `Enter` in the prompt: the line to post, with the rules of
@@ -950,7 +970,8 @@ pub fn pasted(text: &str) -> String {
     safe(&text.replace("\r\n", "\n").replace('\r', "\n"))
 }
 
-/// The note of a paste that makes the line longer than [`POST_MAX`].
+/// The note of a paste or a typed character that makes the line longer
+/// than [`POST_MAX`].
 ///
 /// ```
 /// assert_eq!(
@@ -1029,9 +1050,9 @@ fn whom(to: &[Selector], user: &str) -> String {
     }
 }
 
-/// The note of the Chat tab, with its style: a post that failed or a
-/// paste that was too long after the last key, else whom the line in
-/// the prompt will wake, while the prompt holds a line
+/// The note of the Chat tab, with its style: a post that failed, or a
+/// paste or a key that made the line too long, after the last key, else
+/// whom the line in the prompt will wake, while the prompt holds a line
 /// (01M6VMACJGF4A0ZXC6YK13KNCH).
 pub(super) fn note(state: &State) -> Option<Row<'static>> {
     let chat = &state.chat;
@@ -1965,6 +1986,46 @@ mod tests {
         // A paste up to the limit goes in.
         state.on_paste(&"x".repeat(POST_MAX - 2));
         assert_eq!(state.chat().prompt().text().len(), POST_MAX);
+        assert_eq!(state.chat().warning(), None);
+    }
+
+    /// A typed character that makes the line longer than [`POST_MAX`]
+    /// stays out, as a paste does: the line keeps its text, and the note
+    /// line says the limit until the next key. A Backspace then works.
+    #[test]
+    fn a_key_over_the_limit_gives_the_note_and_types_nothing() {
+        let mut state = mock_up();
+        let full = "x".repeat(POST_MAX);
+        state.on_paste(&full);
+        state.on_key(FrameKey::Chat(Key::Type('y')));
+        assert_eq!(state.chat().prompt().text(), full);
+        assert_eq!(state.chat().prompt().cursor(), POST_MAX);
+        assert_eq!(state.chat().warning(), Some(too_long().as_str()));
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[22], format!(" {}", too_long()));
+        let note = &view.rows.iter().find(|r| r.area.y == 22).unwrap().line;
+        assert_eq!(note.style, WARNING);
+        // Also at the start of the line, the key types nothing.
+        state.on_key(FrameKey::Chat(Key::Home));
+        state.on_key(FrameKey::Chat(Key::Type('y')));
+        assert_eq!(state.chat().prompt().text(), full);
+        assert_eq!(state.chat().warning(), Some(too_long().as_str()));
+        // A Backspace at the end deletes a character, and the note of
+        // the wake comes back.
+        state.on_key(FrameKey::Chat(Key::End));
+        state.on_key(FrameKey::Chat(Key::Backspace));
+        assert_eq!(state.chat().prompt().text().len(), POST_MAX - 1);
+        assert_eq!(state.chat().warning(), None);
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[22], " Enter wakes each lead of yours.");
+        // The limit counts bytes: a character of two bytes stays out,
+        // and a character of one byte goes in.
+        state.on_key(FrameKey::Chat(Key::Type('é')));
+        assert_eq!(state.chat().prompt().text().len(), POST_MAX - 1);
+        assert_eq!(state.chat().warning(), Some(too_long().as_str()));
+        state.on_key(FrameKey::Chat(Key::Type('y')));
+        assert_eq!(state.chat().prompt().text().len(), POST_MAX);
+        assert!(state.chat().prompt().text().ends_with('y'));
         assert_eq!(state.chat().warning(), None);
     }
 

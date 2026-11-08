@@ -969,6 +969,37 @@ async fn the_chat_tab_keeps_the_line_when_the_window_loses_and_gets_back_the_foc
     tty.wrote("\x1b[?1004l").await;
 }
 
+/// A line of the Chat tab has at most 64 KiB, also when the person
+/// types: after a paste of 64 KiB, a key types nothing, and the note
+/// line says the limit until the next key. A Backspace then works, and
+/// a key types again.
+#[tokio::test]
+async fn a_key_over_the_limit_of_the_chat_line_types_nothing() {
+    let server = crate::common::start_signed().await;
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("2").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    let full = "x".repeat(riff::tui::chat::POST_MAX);
+    tty.press(&format!("\x1b[200~{full}\x1b[201~")).await;
+    let wakes = " Enter wakes each lead of yours.";
+    tty.shows(|rows| rows[22] == wakes).await;
+    let too_long = format!(" {}", riff::tui::chat::too_long());
+    tty.press("y").await;
+    let rows = tty.shows(|rows| rows[22] == too_long).await;
+    assert!(rows[21].ends_with('x'), "{rows:#?}");
+    // Backspace deletes a character, and the note of the wake comes back.
+    tty.press("\x7f").await;
+    tty.shows(|rows| rows[22] == wakes).await;
+    tty.press("y").await;
+    let rows = tty.shows(|rows| rows[21].ends_with('y')).await;
+    assert_eq!(rows[22], wakes, "{rows:#?}");
+    tty.press("\x1b").await;
+    tty.shows(|rows| rows[23].starts_with(" i type")).await;
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// A fake `gh` for the clone of acme/app: the open issues of Wave 3, as
 /// the REST list gives them, and no closed item, no pull request and no
 /// check. It logs each call to the file `calls` of its folder.
