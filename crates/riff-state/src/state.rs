@@ -104,9 +104,9 @@
 //!   takes any thread by name, except a direct thread of others
 //!   ([`may_read`]).
 //! - `read` returns one page of the messages after the cursor, then moves
-//!   the cursor to the end of the page ([`State::read_page`]). A read
-//!   that skips an unread message keeps the cursor
-//!   (01M51TKZSYR7PH629S29JX00ZD).
+//!   the cursor to the end of the page ([`State::read_page`]). A read of
+//!   all moves it to the last message that it returns, and never back
+//!   (01M6WBQQEGZKVV49QWCQGTE4CY).
 //! - A thread keeps its last [`KEEP_MESSAGES`] messages
 //!   (01M3TBZBT7MME9BG1RWX5SZAZ6).
 //! - [`State::forget_expired`] forgets each session with no sign of life
@@ -2644,10 +2644,10 @@ impl State {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     ///
-    /// A read moves the cursor only over the messages that it shows. A
-    /// read of all after a seq past the cursor skips unread messages, so
-    /// it keeps the cursor, and the next unread read shows them
-    /// (01M51TKZSYR7PH629S29JX00ZD):
+    /// A read of all marks as read each message up to the last one that
+    /// it returns, also the messages before `after`. It never moves the
+    /// cursor back, and a read of all that returns no message keeps it
+    /// (01M6WBQQEGZKVV49QWCQGTE4CY):
     ///
     /// ```
     /// # use std::time::Instant;
@@ -2660,13 +2660,17 @@ impl State {
     /// # let mut state = State::default();
     /// # state.register(&bob, now);
     /// # let thread = ann.default_thread().unwrap();
-    /// for body in ["one", "two", "three"] {
+    /// for body in ["one", "two", "three", "four"] {
     ///     state.post(Post::new(&ann, Some(thread.clone()), vec![], body), now, 0).unwrap();
     /// }
-    /// let page = state.read_page(&bob, &thread, true, Some(2), 50, now).unwrap();
+    /// let page = state.read_page(&bob, &thread, true, Some(2), 1, now).unwrap();
     /// assert_eq!(page.messages[0].body, "three");
+    /// let page = state.read_page(&bob, &thread, true, Some(9), 50, now).unwrap();
+    /// assert!(page.messages.is_empty());
+    /// let page = state.read_page(&bob, &thread, true, None, 1, now).unwrap();
+    /// assert_eq!(page.messages[0].body, "one");
     /// let page = state.read_page(&bob, &thread, false, None, 50, now).unwrap();
-    /// assert_eq!(page.messages.len(), 3);
+    /// assert_eq!(page.messages[0].body, "four");
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     ///
@@ -2748,13 +2752,6 @@ impl State {
         } else {
             None
         };
-        // A read of all after a seq past the cursor skips the unread
-        // messages up to that seq: it keeps the cursor
-        // (01M51TKZSYR7PH629S29JX00ZD).
-        let skips = t
-            .messages
-            .iter()
-            .any(|m| (cursor + 1..=from).contains(&m.message.seq) && m.message.from.who() != who);
         // An unread page also gives each message after it that woke the
         // reader and that no read showed (01M588J4XNV1TXEPMGTKRVY9VK).
         let seen = self.presence.seen_woken(who, thread);
@@ -2768,32 +2765,24 @@ impl State {
                 .collect(),
             _ => Vec::new(),
         };
-        // A skipping read keeps the cursor, but it still shows its
-        // messages: the newest of them that woke the reader counts as seen.
-        let read = t.messages.back().map(|last| {
-            if skips {
-                let shown = t
-                    .messages
-                    .iter()
-                    .rfind(|m| {
-                        m.woken.contains(who) && messages.iter().any(|r| r.seq == m.message.seq)
-                    })
-                    .map_or(0, |m| m.message.seq);
-                Signal::Read {
-                    thread: thread.clone(),
-                    seq: 0,
-                    all: true,
-                    woken: shown,
-                }
-            } else {
-                Signal::Read {
-                    thread: thread.clone(),
-                    seq: next.unwrap_or(last.message.seq),
-                    all,
-                    woken: woken.last().map_or(0, |m| m.seq),
-                }
-            }
-        });
+        // A read of all marks each message up to the last one that it
+        // returns, also the ones before `after`. A read of all that
+        // returns none marks none (01M6WBQQEGZKVV49QWCQGTE4CY).
+        let read = if all {
+            messages.last().map(|last| Signal::Read {
+                thread: thread.clone(),
+                seq: last.seq,
+                all,
+                woken: 0,
+            })
+        } else {
+            t.messages.back().map(|last| Signal::Read {
+                thread: thread.clone(),
+                seq: next.unwrap_or(last.message.seq),
+                all,
+                woken: woken.last().map_or(0, |m| m.seq),
+            })
+        };
         Ok((
             Page {
                 messages,
@@ -3414,22 +3403,67 @@ mod tests {
         assert!(all.woken.is_empty());
     }
 
+    /// A read of all after a number marks the messages up to its last
+    /// one as read, also the unread ones before the number. The
+    /// checkpoint keeps the cursor, so a new watch after a start gives no
+    /// wake for them (01M6WBQQEGZKVV49QWCQGTE4CY).
     #[test]
     fn a_read_of_all_after_a_number_leaves_no_wake_for_a_new_watch() {
         let now = Instant::now();
         let mut state = setup(now);
         let b = tests().who().clone();
+        let chat = thread("chat");
+        // The reader joins first: each message is unread, as in the
+        // backlog of a lead.
+        state.join(&tests(), &chat, now);
         post(&mut state, &api(), "chat", &[], "old");
         post(&mut state, &api(), "chat", &["session=b2"], "for you");
         assert_eq!(state.missed(&b).unwrap().seq, 2);
-        // The read skips the unread message 1 and keeps the cursor.
-        state
-            .read_page(&tests(), &thread("chat"), true, Some(1), PAGE, now)
+        let page = state
+            .read_page(&tests(), &chat, true, Some(1), PAGE, now)
             .unwrap();
+        assert_eq!(page.messages[0].seq, 2);
         assert!(state.missed(&b).is_none());
+        assert_eq!(unread_in(&state, &tests(), &chat, now), 0);
+        let mut state = State::load(Some(through_json(&state, now)), [], now, T0);
+        state.watch_started(&tests(), now);
+        assert!(state.missed(&b).is_none(), "a wake after a start");
         // A new addressed message wakes the watch again.
         post(&mut state, &api(), "chat", &["session=b2"], "again");
+        let made = state.take_queue();
+        state.written(&made);
         assert_eq!(state.missed(&b).unwrap().seq, 3);
+    }
+
+    /// A read of all after a number that returns nothing of a thread
+    /// keeps its cursor: a direct message before the number stays
+    /// unread, and still wakes a new watch (01M6WBQQEGZKVV49QWCQGTE4CY).
+    #[test]
+    fn a_read_of_all_that_returns_nothing_keeps_the_cursor() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let b = tests().who().clone();
+        let dm = state
+            .post(Post::new(&docs(), None, to(&["session=b2"]), "hi"), now, 3)
+            .unwrap()
+            .tailed
+            .thread;
+        let page = state
+            .read_page(&tests(), &dm, true, Some(50), PAGE, now)
+            .unwrap();
+        assert!(page.messages.is_empty());
+        assert_eq!(unread_in(&state, &tests(), &dm, now), 1);
+        assert_eq!(state.missed(&b).unwrap().thread, dm);
+        // A read of all of an older page does not move the cursor back.
+        let two = Post::new(&docs(), None, to(&["session=b2"]), "two");
+        state.post(two, now, 4).unwrap();
+        state
+            .read_page(&tests(), &dm, false, None, PAGE, now)
+            .unwrap();
+        let page = state.read_page(&tests(), &dm, true, None, 1, now).unwrap();
+        assert_eq!(page.messages[0].body, "hi");
+        assert_eq!(unread_in(&state, &tests(), &dm, now), 0);
+        assert!(state.missed(&b).is_none());
     }
 
     #[test]

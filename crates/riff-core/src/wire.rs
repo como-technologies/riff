@@ -1530,7 +1530,9 @@ pub struct Posted {
 }
 
 /// `POST /v1/read`: returns the messages that `me` has not read, or
-/// all of them when `all` is true. It marks them as read.
+/// all of them when `all` is true. It marks them as read. A read of all
+/// marks each message up to the last one that it returns, also the ones
+/// before `after` (01M6WBQQEGZKVV49QWCQGTE4CY).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Read {
     pub me: SessionUri,

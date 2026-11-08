@@ -183,10 +183,11 @@ pub struct ReadArgs {
     /// the other side or its start, or the user of a person, as
     /// `threads` shows it.
     thread: Option<String>,
-    /// True returns the full history, not only the unread messages.
+    /// True returns the full history, not only the unread messages. It
+    /// marks each message up to the last one that it returns as read.
     all: Option<bool>,
-    /// With all: the page after this message number. A page that has
-    /// more messages after it names the number.
+    /// With all and a thread: the page after this message number. A page
+    /// that has more messages after it names the number.
     after: Option<u64>,
 }
 

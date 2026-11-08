@@ -135,7 +135,7 @@ async fn a_new_watch_has_no_wake_for_a_message_that_a_read_returned() {
                 .unwrap();
         }
         // The read shows the messages. With `skip`, it reads all after 1
-        // and keeps the cursor.
+        // (01M6WBQQEGZKVV49QWCQGTE4CY).
         let (shown, _) = me_api
             .read_page(&me, &thread, skip, skip.then_some(1))
             .await
@@ -153,5 +153,81 @@ async fn a_new_watch_has_no_wake_for_a_message_that_a_read_returned() {
             .unwrap();
         let wake = isolated::in_time(Duration::from_secs(30), wakes.next()).await;
         assert!(matches!(wake, Ok(Some(Ok(_)))), "skip {skip}: no wake");
+    }
+}
+
+/// A read of `all` after a number marks the message of a wake read, also
+/// with an unread backlog before the number (01M6WBQQEGZKVV49QWCQGTE4CY,
+/// #1690). The checkpoint keeps the read cursor, so a new watch after a
+/// start of the server prints no line for that message. The next message
+/// to the session still wakes the watch.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_watch_after_a_start_has_no_wake_for_a_message_that_a_read_of_all_returned() {
+    use riff_core::name::ThreadName;
+    use riff_core::selector::Selector;
+    use riff_core::wire::Kind;
+    use riff_state::store::{Memory, Store};
+
+    let store: Arc<dyn Store> = Arc::new(Memory::default());
+    let lease = riff_server::lease::Timing {
+        wait: Duration::from_millis(50),
+        read_every: Duration::from_millis(50),
+        valid_for: Duration::from_millis(500),
+        exit_after: Duration::from_secs(1),
+        ..Default::default()
+    };
+    let start = |store: Arc<dyn Store>| async {
+        let (listener, url) = crate::common::listen().await;
+        let loaded = Some((store, lease));
+        crate::common::start_signed_at(listener, &url, loaded, |router| router).await
+    };
+    let lead: SessionUri = "riff://mike@a/local/riff?session=l1".parse().unwrap();
+    let me: SessionUri = "riff://mike@b/local/riff?session=h1".parse().unwrap();
+    let thread: ThreadName = "chat".parse().unwrap();
+    let to = [Selector::session("h1")];
+
+    let old = start(store.clone()).await;
+    let (lead_api, person_api) = (old.api("mike", Some("l1")), old.api("mike", None));
+    lead_api.register(&lead).await.unwrap();
+    crate::common::name_lead(&person_api, &lead).await;
+    lead_api.set_riff(&lead, RiffState::Running).await.unwrap();
+    let me_api = old.api("mike", Some("h1"));
+    me_api.register(&me).await.unwrap();
+    // The session joins first, so each later message is unread: the
+    // backlog of a lead.
+    me_api.join(&me, &thread).await.unwrap();
+    lead_api
+        .post(&lead, Some(&thread), &[], "old", Kind::Message)
+        .await
+        .unwrap();
+    let n = lead_api
+        .post(&lead, Some(&thread), &to, "for you", Kind::Message)
+        .await
+        .unwrap()
+        .seq;
+    let (shown, _) = me_api
+        .read_page(&me, &thread, true, Some(n - 1))
+        .await
+        .unwrap();
+    let seqs: Vec<u64> = shown.iter().map(|c| c.message.seq).collect();
+    assert_eq!(seqs, [n]);
+    old.service.shutdown().await.unwrap();
+
+    let new = start(store).await;
+    let (lead_api, me_api) = (new.api("mike", Some("l1")), new.api("mike", Some("h1")));
+    // A session is gone after a start until it calls. The riff daemon
+    // sends its keep-alives.
+    me_api.alive(&me).await.unwrap();
+    let mut wakes = Box::pin(follow(|| me_api.watch(&me), Duration::from_secs(5)));
+    let none = isolated::in_time(Duration::from_secs(2), wakes.next()).await;
+    assert!(none.is_err(), "a wake for message {n} after a start");
+    let posted = lead_api
+        .post(&lead, Some(&thread), &to, "next", Kind::Message)
+        .await
+        .unwrap();
+    assert_eq!(posted.woken.len(), 1, "{posted:?}");
+    match isolated::in_time(Duration::from_secs(30), wakes.next()).await {
+        Ok(Some(Ok(wake))) => assert_eq!(wake.seq, n + 1),
+        other => panic!("no wake for message {}: {other:?}", n + 1),
     }
 }
