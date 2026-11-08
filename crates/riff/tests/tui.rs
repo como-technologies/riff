@@ -1028,7 +1028,8 @@ async fn a_paste_of_three_lines_in_the_chat_tab_sends_one_message() {
     tty.shows(|rows| rows[21] == ">").await;
     // A terminal gives each line end of a paste as `\r`.
     tty.press("\x1b[200~one\rtwo\rthree\x1b[201~").await;
-    tty.shows(|rows| rows[21] == "> one↵two↵three").await;
+    tty.shows(|rows| rows[19..22] == ["> one↵", "  two↵", "  three"])
+        .await;
     tty.press("\r").await;
     let rows = tty
         .shows(|rows| rows.iter().any(|r| r.ends_with("<brett> one")))
@@ -1112,6 +1113,39 @@ async fn a_key_over_the_limit_of_the_chat_line_types_nothing() {
     tty.press("\x1b").await;
     tty.shows(|rows| rows[23].starts_with(" i type")).await;
     tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
+/// 01M6XXDDYQG7M6WYNRXP35DZ1Y: a long line in the Chat tab wraps over
+/// more rows of the terminal (#1777). The prompt grows up, the cursor is
+/// at the end of the line, and `Home` and `↓` move it through the rows.
+#[tokio::test]
+async fn a_long_line_in_the_chat_tab_wraps_over_more_rows() {
+    let server = crate::common::start_signed().await;
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("2").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    tty.press(
+        "typing in the TUI chat does not wrap lines, they just scroll off the screen \
+         to the left. Now the line wraps.",
+    )
+    .await;
+    tty.shows(|rows| {
+        rows[20..22]
+            == [
+                "> typing in the TUI chat does not wrap lines, they just scroll off the screen",
+                "  to the left. Now the line wraps.",
+            ]
+            && tty.cursor() == (21, 34, true)
+    })
+    .await;
+    // Home, then ↓: the second row, at the same column.
+    tty.press("\x1b[H").await;
+    tty.shows(|_| tty.cursor() == (20, 2, true)).await;
+    tty.press("\x1b[B").await;
+    tty.shows(|_| tty.cursor() == (21, 2, true)).await;
+    tty.press("\x03").await;
     assert_eq!(tty.exits().await, Some(0));
 }
 

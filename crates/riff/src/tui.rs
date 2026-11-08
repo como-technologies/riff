@@ -1497,8 +1497,8 @@ impl State {
 
     /// Keeps what the person saw in `view`, the view of the last draw:
     /// the window of the tree of the Sessions tab, its first row and the
-    /// rows that fit for `PgUp` and `PgDn`, and the rows of the log of
-    /// the Chat tab for a scroll.
+    /// rows that fit for `PgUp` and `PgDn`, and the window of the log and
+    /// of the line of the Chat tab ([`chat::Window`]).
     pub fn drawn(&mut self, view: &view::View) {
         (self.sessions.top, self.sessions.page) = (view.top, view.page);
         self.sessions.pane = view.pane;
