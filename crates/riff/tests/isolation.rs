@@ -252,8 +252,10 @@ fn the_helper_keeps_the_riff_of_the_machine_out() {
 }
 
 /// A child process that ends when it drops.
+#[cfg(target_os = "linux")]
 struct Kill(std::process::Child);
 
+#[cfg(target_os = "linux")]
 impl Drop for Kill {
     fn drop(&mut self) {
         let _ = self.0.kill();

@@ -563,16 +563,18 @@ fn steps(job: &str) -> Vec<String> {
 }
 
 /// 01M6QQ1NXY0CXMZEEEP413W4PK: the job Build is the only job of CI that
-/// compiles the code. A job of a deploy, a check or a release runs no
-/// cargo, no rustup, no cache of a build and no build of an image from
-/// the source.
+/// compiles the code for Linux. A job of a deploy, a check or a release
+/// runs no cargo, no rustup, no cache of a build and no build of an
+/// image from the source. The job macOS compiles for macOS
+/// (01M6YPB5DZ9M3VEJ7V7P7EF797).
 #[test]
-fn only_the_job_build_compiles() {
+fn only_the_job_build_compiles_for_linux() {
     let names = job_names();
     assert!(names.contains(&"build".to_owned()), "{names:?}");
+    assert!(names.contains(&"macos".to_owned()), "{names:?}");
     for name in names {
         // The audit reads Cargo.lock with cargo-audit, and compiles nothing.
-        if name == "build" || name == "audit" {
+        if name == "build" || name == "audit" || name == "macos" {
             continue;
         }
         let job = job(&name);

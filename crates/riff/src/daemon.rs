@@ -776,6 +776,7 @@ pub fn stale(unit: Option<&crate::service::Unit>, own: &Path, replaced: bool) ->
 /// daemon of a `RIFF_HOME` or a `RIFF_DATA` is never the daemon of the
 /// unit ([`crate::run::machine_data`]). While an update of riff runs
 /// ([`update_waits`]), it waits (01M58AW9YR84SKSYBYBJ6V7TNJ).
+#[cfg(target_os = "linux")]
 fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
     if !crate::run::machine_data() || crate::local::dir().is_some_and(|dir| update_waits(&dir)) {
         return false;

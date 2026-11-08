@@ -41,19 +41,21 @@ permissions:
   actions: read
 
 jobs:
-  # CI compiles the code of a tree two times, both in the job Build: the
-  # test build and the release build (01M6QQ1NXY0CXMZEEEP413W4PK). Each
-  # other job takes the binaries of Build from its artifacts. The
-  # artifacts have the git tree of the commit in their name, so a push to
-  # main, a merge group and a tag take the binaries that the pull request
-  # with the same tree made (01M6QQ1P0GH9AGCDA5N8EMEFGF,
-  # 01M6QQ1P37XW7N465MQGPHCXZM).
+  # For Linux, CI compiles the code of a tree two times, both in the job
+  # Build: the test build and the release build
+  # (01M6QQ1NXY0CXMZEEEP413W4PK). Each other job but macOS takes the
+  # binaries of Build from its artifacts. The artifacts have the git tree
+  # of the commit in their name, so a push to main, a merge group and a
+  # tag take the binaries that the pull request with the same tree made
+  # (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM).
   #
   # The Gate runs its checks as jobs (01M513W2K3HNRWPQTQNBQPT8MZ): Build,
   # and the tests in parts. Together they run each check of just ci-full
-  # (01M3WNN7VQJKN5MJH7JN50VF4D). The last job, Gate, needs each of them.
-  # Each job runs on the runner of the repository variable RIFF_RUNNER,
-  # with the default ubuntu-latest (01M513W2RERJES76ZXKKHCV0DP).
+  # (01M3WNN7VQJKN5MJH7JN50VF4D). The job macOS runs the lint and the
+  # tests of riff, riff-client and riff-core on a Mac
+  # (01M6YPB5DZ9M3VEJ7V7P7EF797). The last job, Gate, needs each of them.
+  # Each job but macOS runs on the runner of the repository variable
+  # RIFF_RUNNER, with the default ubuntu-latest (01M513W2RERJES76ZXKKHCV0DP).
   build:
     # The plan finds the artifacts of the tree. A step builds only what is
     # missing: the checks and the test build run in the session image, as
@@ -173,17 +175,49 @@ jobs:
 
       - run: deploy/session-test.sh --archive ${{ matrix.part }}
 
+  macos:
+    # The lint and the tests of riff, riff-client and riff-core on macOS,
+    # on a macOS runner of GitHub with Apple silicon
+    # (01M6YPB5DZ9M3VEJ7V7P7EF797). It compiles them for macOS, with no
+    # session image and no artifact of Build. It runs for the same events
+    # as Tests I/N, and the Gate needs it.
+    name: macOS
+    if: github.event_name != 'schedule' && github.ref_type != 'tag'
+    runs-on: macos-latest
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      # The same history as Build: a test that reads the git history of
+      # the checkout finds what the build found.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check that the runner is a Mac with Apple silicon
+        run: test "$(uname -sm)" = "Darwin arm64"
+
+      # rust-toolchain.toml pins the toolchain; rustup reads it.
+      - run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - run: just test-macos
+
   gate:
     # A skipped required check counts as a pass on GitHub. So the Gate
     # runs also when a part fails or is cancelled, and fails then.
     name: Gate
-    needs: [build, test]
+    needs: [build, test, macos]
     if: always() && github.event_name != 'schedule' && github.ref_type != 'tag'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Each part passed
         env:
-          RESULTS: build=${{ needs.build.result }} test=${{ needs.test.result }}
+          RESULTS: build=${{ needs.build.result }} test=${{ needs.test.result }} macos=${{ needs.macos.result }}
         run: |
           echo "The parts of the Gate: $RESULTS"
           for result in $RESULTS; do

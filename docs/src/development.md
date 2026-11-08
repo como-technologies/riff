@@ -131,14 +131,16 @@ test in the Gate.
 ## How the Gate runs
 
 The Gate on GitHub runs the checks of `just ci-full` as jobs. The job
-`Build` runs first. The jobs with the tests start when it ends:
+`Build` runs first. The jobs with the tests start when it ends. The job
+`macOS` starts at once, beside `Build`:
 
 | Job | Runs |
 |---|---|
 | `Build` | In the session image: `fmt-check`, `reqs`, `wrap`, `versions`, `book`, `lint`, `doc`, the test build and the doc tests. Then the static build, in `rust:CHANNEL-alpine`. |
 | `Tests 1/4` to `Tests 4/4` | Part 1 to part 4 of the tests, from the test binaries of `Build`, in the session image. They compile nothing. |
 | `Static riff` | Checks the static `riff` and `riff-server` of `Build`: no interpreter, and `riff --version` runs in the session image. |
-| `Gate` | Starts when `Build` and the tests ended. It passes only when each of them passed. |
+| `macOS` | On a Mac with Apple silicon, the runner `macos-latest` of GitHub: the lint and the tests of `riff`, `riff-client` and `riff-core`, compiled for macOS. It takes nothing from `Build`. |
+| `Gate` | Starts when `Build`, the tests and `macOS` ended. It passes only when each of them passed. |
 
 The tests run in a container of the session image, as a session runs
 them (see
@@ -150,6 +152,8 @@ flowchart LR
     B --> T["Tests 1/4 … 4/4<br/>no compile"]
     T --> G{"Gate: did each<br/>job pass?"}
     B --> G
+    P --> M["macOS: lint and tests<br/>on a Mac"]
+    M --> G
     G -- yes --> S["Gate passes"]
     G -- no --> F["Gate fails"]
 ```
@@ -191,16 +195,18 @@ pull of the image is the only failure (see
 
 ### Build once for each tree
 
-CI compiles the code of a tree two times, and no more:
+For Linux, CI compiles the code of a tree two times, and no more:
 
 - the **test build**: the test binaries of the workspace, with
   `cfg(test)`. The tests cannot run on the release binary.
 - the **release build**: the static `riff` and `riff-server` that ship.
 
 Both builds run in the job `Build`. Clippy, rustdoc and the doc tests
-run there too, on the same build folder. No other job of CI compiles a
-crate of the workspace. A test part, the static check, the tag and the
-deploy take the binaries of `Build`.
+run there too, on the same build folder. No other job of CI but
+`macOS` compiles a crate of the workspace. A test part, the static
+check, the tag and the deploy take the binaries of `Build`. The job
+`macOS` compiles `riff`, `riff-client` and `riff-core` for macOS (see
+[Run the tests of the job macOS on a Mac](#run-the-tests-of-the-job-macos-on-a-mac)).
 
 `Build` keeps its binaries as artifacts. The name of an artifact has
 the git tree of the commit, `git rev-parse HEAD^{tree}`. A commit of
@@ -375,12 +381,28 @@ runs only in a checkout at the path that built it. At another path the
 run fails and says so. This is also why you cannot run the artifact of
 a CI run in your clone: build the archive in your clone.
 
+### Run the tests of the job macOS on a Mac
+
+The job `macOS` runs the lint and the tests of `riff`, `riff-client`
+and `riff-core` on a Mac with Apple silicon. riff does not support a
+Mac with Intel. To run the same checks on your Mac, install Rust with
+rustup, and `just`. Then run this in your clone:
+
+```sh
+just test-macos
+```
+
+It needs no podman and no session image. A test that needs Linux, for
+example a test of podman, of systemd or of the daemon, does not run on
+macOS. On macOS, riff has no daemon and starts no session.
+
 ### Choose the runner of CI
 
-Each job of CI runs on the runner that the repository variable
-`RIFF_RUNNER` names. With no variable, the runner is `ubuntu-latest`:
-it has 4 cores for a public repository. To use a larger runner, set
-the variable to the label of that runner. LABEL is the label, for
+Each job of CI but `macOS` runs on the runner that the repository
+variable `RIFF_RUNNER` names. With no variable, the runner is
+`ubuntu-latest`: it has 4 cores for a public repository. The job
+`macOS` always runs on `macos-latest`. To use a larger runner, set the
+variable to the label of that runner. LABEL is the label, for
 example the name of a larger runner of your organization:
 
 ```sh

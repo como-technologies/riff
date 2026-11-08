@@ -352,6 +352,7 @@ async fn a_failed_update_keeps_the_old_riff_and_tells_the_lead_once() {
 
 /// Puts the riff under test at `bin/riff`: a build of this release that
 /// links the libc of the machine, as `cargo install` gives.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 fn install_cargo_build(env: &Isolated, bin: &Path) -> PathBuf {
     std::fs::create_dir_all(bin).unwrap();
     let riff = bin.join("riff");

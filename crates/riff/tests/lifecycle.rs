@@ -4,7 +4,6 @@
 //! `riff` and a fake `riff-server` that log their arguments.
 
 use isolated::{Isolated, Span};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -720,6 +719,7 @@ async fn update_with_no_latest_release_names_the_flag() {
 /// A fake binary of a release: a 64-bit ELF of x86-64 with one program
 /// header, then `text`. With `interpreter`, the header is a `PT_INTERP`
 /// that names it, so the binary is not static.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn fake_binary(text: &str, interpreter: Option<&str>) -> Vec<u8> {
     let mut bytes = vec![0u8; 64 + 56];
     bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
@@ -739,12 +739,14 @@ pub fn fake_binary(text: &str, interpreter: Option<&str>) -> Vec<u8> {
 }
 
 /// The name of the release file of `binary` for this machine.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn asset(binary: &str) -> String {
     riff::release::asset(binary, riff::release::TARGET.unwrap())
 }
 
 /// Puts the release `tag` in the folder `dir`: each binary of `files`,
 /// and `SHA256SUMS` with `sums`, else with the sum of each file.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub fn put_release(dir: &Path, tag: &str, files: &[(&str, &[u8])], sums: Option<&str>) {
     let dir = dir.join(tag);
     std::fs::create_dir_all(&dir).unwrap();
@@ -783,6 +785,7 @@ async fn release_server(dir: &Path) -> String {
 
 /// `riff update --tag TAG` with the release files at `releases` and
 /// the bin folder of cargo in `root`.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn update_from(bin: &Path, tag: &str, releases: &str, root: &Path) -> Command {
     let mut cmd = update(bin, 0, "http://127.0.0.1:9");
     cmd.args(["--tag", tag])
@@ -792,6 +795,7 @@ fn update_from(bin: &Path, tag: &str, releases: &str, root: &Path) -> Command {
 }
 
 /// The names of the files in `dir`, in order.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn names(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .unwrap()
@@ -835,7 +839,11 @@ async fn update_downloads_the_static_binaries_of_the_release() {
         assert_eq!(std::fs::read(dir.join("riff-server")).unwrap(), new_server);
         for binary in ["riff", "riff-server"] {
             let mode = std::fs::metadata(dir.join(binary)).unwrap().permissions();
-            assert_eq!(mode.mode() & 0o777, 0o755, "{binary}");
+            assert_eq!(
+                std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777,
+                0o755,
+                "{binary}"
+            );
         }
         assert_eq!(names(&dir), ["riff", "riff-server"], "no new file stays");
         assert_eq!(log(bin.path(), "cargo"), "");

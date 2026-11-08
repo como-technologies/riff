@@ -4188,9 +4188,9 @@
   fails. The N parts together run each test. The Gate runs the same
   split from the archive of `Build`, and runs the doc tests in `Build`
   (01M6QQ1P5YCT0JX90X5FCKM4W1).
-- **01M513W2RERJES76ZXKKHCV0DP** Each job of the CI workflow runs on the
-  runner that the repository variable `RIFF_RUNNER` names. With no
-  `RIFF_RUNNER`, the runner is `ubuntu-latest`.
+- **01M513W2RERJES76ZXKKHCV0DP** Each job of the CI workflow but `macOS`
+  runs on the runner that the repository variable `RIFF_RUNNER` names.
+  With no `RIFF_RUNNER`, the runner is `ubuntu-latest`.
 - **01M4A4T67MPF0BCNX7AFZRDA8J** The dev and test profiles of the
   workspace keep only the line tables for the code of the workspace,
   and no debug info for the dependencies. A backtrace still names the
@@ -4272,14 +4272,14 @@
   server end when the server ends. A later server at the same URL, for
   example on a port that the OS gave again, gets no old sign-in of an
   earlier test. A machine at an open riff-server holds no sign-in.
-- **01M6QQ1NXY0CXMZEEEP413W4PK** CI compiles the code of a tree two
-  times: one test build and one release build. Both run in the job
-  `Build`. The test build makes the test binaries of the workspace in
-  the session image. The release build makes the static `riff` and
+- **01M6QQ1NXY0CXMZEEEP413W4PK** For Linux, CI compiles the code of a
+  tree two times: one test build and one release build. Both run in the
+  job `Build`. The test build makes the test binaries of the workspace
+  in the session image. The release build makes the static `riff` and
   `riff-server`. The job `Build` also runs `fmt-check`, `lint`, `doc`,
   `book`, `reqs`, `wrap`, `versions` and the doc tests on the build
-  folder of the test build. Each other job of the CI workflow compiles
-  no crate of the workspace.
+  folder of the test build. Each other job of the CI workflow but
+  `macOS` compiles no crate of the workspace.
 - **01M6QQ1P0GH9AGCDA5N8EMEFGF** `Build` keeps its binaries as artifacts
   that the git tree of the commit names, `git rev-parse HEAD^{tree}`.
   The artifact `tests-TREE` holds the test binaries and the archive
@@ -4315,6 +4315,17 @@
 - **01M6WKP4GA1VM4XNPA2MGRXH8Q** A variable that holds the name of a
   secret, of a key or of a token is not named `secret`, `key` or
   `token`: it is `name` or `secret_name`, for example.
+- **01M6YPB5DZ9M3VEJ7V7P7EF797** The job `macOS` of the CI workflow runs
+  `just test-macos` on the runner `macos-latest` of GitHub, a Mac with
+  Apple silicon: the lint and the tests of `riff`, `riff-client` and
+  `riff-core`, compiled for macOS. Its first step fails on a runner that
+  is not a Mac with Apple silicon. The job has the condition of `Tests
+  I/N`, and `Gate` needs it. It takes no artifact of `Build`. Supersedes
+  01M513W2RERJES76ZXKKHCV0DP and 01M6QQ1NXY0CXMZEEEP413W4PK in part.
+- **01M6YPB5GTHFQG8HGM57DVBGBN** A test that needs Linux, for example a
+  test of podman, of systemd, of the daemon or of `/proc`, has
+  `cfg(target_os = "linux")`. Each other test of `riff`, `riff-client`
+  and `riff-core` runs on Linux and on macOS.
 
 ## The phone app
 
@@ -4594,13 +4605,13 @@ of this part when they merge.
   Cloud workers are future work. riff-server stays a second binary.
 - **01M4Z60B7FCREZDCTVR73WWRY1** The daemon of riff is a systemd user
   unit. It owns the sessions. riff-server stays the server of the riff.
-- **01M4Z60B7GTV4HHF9R3TMZRS7J** riff runs on Linux only. Each platform
-  part is a trait, and its Linux implementation is behind `cfg(target_os
-  = "linux")`: `Runtime` (the start, the stop, the attach and the events
-  of a session) and `ServiceManager`. A session is a `SessionSpec` of
-  plain data: the image, the binds, the environment and the limits. The
-  OCI implementation makes a container from it. A pod backend can use
-  the same spec later.
+- **01M4Z60B7GTV4HHF9R3TMZRS7J** Each platform part is a trait, and its
+  Linux implementation is behind `cfg(target_os = "linux")`: `Runtime`
+  (the start, the stop, the attach and the events of a session) and
+  `ServiceManager`. A session is a `SessionSpec` of plain data: the
+  image, the binds, the environment and the limits. The OCI
+  implementation makes a container from it. A pod backend can use the
+  same spec later.
 - **01M4ZBGK3A977KZW50AZFR95E9** The steps of a `Runtime` are: find an
   image, pull an image, start a `SessionSpec`, stop a session, and
   attach a terminal to a session. A start gives the input, the events,
@@ -4620,6 +4631,13 @@ of this part when they merge.
   child process still fails with an error and does not kill the process.
   `riff daemon`, `riff relay` and the server of `riff-server` keep the
   default panic hook.
+- **01M6YPB5B42FZP7GCDAVTN4PWY** riff runs on Linux, and on macOS on
+  Apple silicon. riff does not support a Mac with Intel. On macOS, the
+  commands that talk to riff-server and to GitHub run, for example `riff
+  chat`, `riff who`, `riff top`, `riff wave list` and the release
+  commands. The daemon, the sessions and `riff init` need Linux: on
+  macOS, each of them stops with an error that says so. Supersedes
+  01M4Z60B7GTV4HHF9R3TMZRS7J in part.
 
 ### Ship
 
