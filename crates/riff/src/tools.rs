@@ -505,8 +505,8 @@ or says \"join the riff\". Then start the watch and follow \"Start routine\" in 
 
     #[tool(
         description = "Post a message to a thread. Only the sessions that `to` selects wake. A selector \
-names fields (user, session, host, repo, worktree, claim, lead, person); `person: true` picks the terminals of a person and no agent session. A session matches when each named field \
-matches."
+names fields (user, session, host, repo, worktree, claim, lead, person, name); `person: true` picks the terminals of a person and no agent session. A session matches when each named field \
+matches. `name` stands alone: a name of the chat, a person (`brett`) or a project (`riff`, the lead of your user there)."
     )]
     async fn post(&self, Parameters(a): Parameters<PostArgs>) -> ToolResult {
         let thread = self.thread(a.thread)?;

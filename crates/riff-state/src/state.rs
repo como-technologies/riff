@@ -29,6 +29,7 @@
 //! | [`presence`] | [`Presence`], the session in memory, [`Signal`]: a change of the presence only, and `Presence::applied`: what a record changes in memory. |
 //! | [`view`] | [`View`]: one copy of the riff with the presence, read only. `handle` and each query read it. |
 //! | [`command`] | The trait [`Command`] with `handle` and `reply`, the [`Caller`], [`permits`], and the [`Refused`] of a refusal. |
+//! | [`names`] | The names of the chat, `@person` and `@project`: the list, and the resolve of each name of a post. |
 //! | [`snapshot`] | [`Snapshot`]: the parts of each group in one checkpoint. |
 //! | `state/rules.rs` | The given/when/then tests of `handle` and `apply`. |
 //!
@@ -264,7 +265,7 @@ use riff_core::wire::{
     SetStep, Start, StartReason, Status, StatusInfo, StepChange, StepInfo, Tailed, ThreadInfo,
     Waits, Wake,
 };
-use riff_core::wire::{MachineInfo, NotesReply, SetMachine};
+use riff_core::wire::{ChatName, MachineInfo, NotesReply, SetMachine};
 
 /// A blocked session that the look of the lead found, with its reason
 /// ([`State::look_blocks`]).
@@ -272,6 +273,7 @@ pub type Blocked = (SessionUri, String);
 
 pub mod calls;
 pub mod command;
+pub mod names;
 pub mod notes;
 pub mod people;
 pub mod plan;
@@ -2549,6 +2551,13 @@ impl State {
         self.written_view().live_leads(user, now)
     }
 
+    /// The names of the chat for the caller `me`, sorted by name, with
+    /// the kind of each name and whether its role is online: the list
+    /// for the type-ahead of `@` ([`names`]).
+    pub fn names(&self, me: &Who, now: Instant) -> Vec<ChatName> {
+        self.written_view().names(me, now)
+    }
+
     /// True when `user` shows a sign of life at `now`: a session of the
     /// user that is not gone, or a call of the user at `since` or later,
     /// also a call as a person (01M3Q546335NBTKG5BHQ27QC93). A person
@@ -4187,7 +4196,7 @@ mod tests {
             "seq": 1, "from": "riff://mike@pangolin/como-technologies/riff?session=a1#api",
             "to": [{"user": "mike", "session": "b2", "host": "pangolin",
                     "repo": "como-technologies/riff", "worktree": "docs",
-                    "claim": "issue-7", "lead": true, "person": false}],
+                    "claim": "issue-7", "lead": true, "person": false, "name": "riff"}],
             "body": "hi", "at_ms": T0, "kind": "note", "sig": "h.p.s", "payload": "cA",
         });
         serde_json::json!({

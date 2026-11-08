@@ -248,7 +248,6 @@ use riff_core::dpop;
 use riff_core::name::{SessionUri, ThreadName, Who};
 use riff_core::record::Record;
 use riff_core::selector::Selector;
-use riff_core::wire::SetMachine;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
     Claim, DenyOwner, End, FactError, Free, GitHubApps, GitHubCheck, GitHubCreate, GitHubToken,
@@ -260,6 +259,7 @@ use riff_core::wire::{
     SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
     TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
+use riff_core::wire::{Names, NamesReply, SetMachine};
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
     Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
@@ -1938,6 +1938,7 @@ impl Service {
             .route(Alive::PATH, post(alive))
             .route(WhoRequest::PATH, post(who))
             .route(Threads::PATH, post(threads))
+            .route(Names::PATH, post(names))
             .route(Read::PATH, post(read))
             .route(RiffQuery::PATH, post(riff))
             .route(PlanSeen::PATH, post(plan_seen))
@@ -2674,6 +2675,22 @@ async fn threads(
         })
         .await?;
     Ok(Json(ThreadsReply { threads }))
+}
+
+/// The names of the chat for the caller, for the type-ahead of `@`
+/// (01M6XZ27XV8RAC8B72DCM937ST). A query: it counts as a call of the
+/// caller.
+async fn names(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<Names>,
+) -> Reply<NamesReply> {
+    let caller = admit(&s, &proof, &r.me)?;
+    let names = s
+        .engine
+        .query(&caller, |state| state.names(r.me.who(), Instant::now()))
+        .await?;
+    Ok(Json(NamesReply { names }))
 }
 
 /// Gives the messages. With sign-in, the reply holds the keys of each

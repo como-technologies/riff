@@ -87,8 +87,10 @@ enum Command {
         thread: Option<String>,
         /// Wake the sessions that match: FIELD=VALUE pairs with commas
         /// between them, for example user=mike,claim=issue-6. The fields
-        /// are user, session, host, repo, worktree, claim, lead and person. Give
-        /// --to again to wake more sessions.
+        /// are user, session, host, repo, worktree, claim, lead, person and
+        /// name. name=NAME stands alone: a person of the chat, or a project
+        /// that wakes your lead there, for example name=brett or name=riff.
+        /// Give --to again to wake more sessions.
         #[arg(long)]
         to: Vec<Selector>,
         /// The kind of post: message, status or note. A status request

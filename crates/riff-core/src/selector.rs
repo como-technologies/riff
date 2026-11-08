@@ -19,9 +19,34 @@
 //! | `claim` | One of the claims that the session holds. |
 //! | `lead` | `true`: the lead of its user in its repository. `false`: each other session. |
 //! | `person` | `true`: the terminals of a person (`riff chat`, `riff tail`, the phone), which have no session ID. `false`: each agent session. |
+//! | `name` | A name of the chat: a person or a project. riff-server resolves it when the message is posted. |
 //!
 //! On the command line, a selector is `FIELD=VALUE` pairs with commas
 //! between them.
+//!
+//! # A name of the chat
+//!
+//! The field `name` holds a name of the chat, as a person types it
+//! after `@`: the user of a person (`brett`), or a project by its
+//! repository after the slash (`riff`). It stands alone in a selector.
+//! Only riff-server knows the names, so [`Selector::matches`] matches no
+//! session for it. riff-server resolves the name when the message is
+//! posted: to the terminals of the person, or to the lead of the sender
+//! in the project (see `riff_state::state::names`).
+//!
+//! ```
+//! use riff_core::name::SessionUri;
+//! use riff_core::selector::Selector;
+//!
+//! let brett: Selector = "name=brett".parse()?;
+//! assert_eq!(brett, Selector::name("brett"));
+//! assert_eq!(serde_json::to_string(&brett).unwrap(), r#"{"name":"brett"}"#);
+//! let terminal: SessionUri = "riff://brett@heron".parse()?;
+//! assert!(!brett.matches(&terminal), "riff-server resolves the name");
+//! assert!(!brett.is_empty() && brett.stands_alone());
+//! assert!(!"name=brett,host=heron".parse::<Selector>()?.stands_alone());
+//! # Ok::<(), riff_core::name::NameError>(())
+//! ```
 //!
 //! # A selector of a later build (01M3XSF90E9JYYTC13D9THY4WE)
 //!
@@ -121,6 +146,11 @@ pub struct Selector {
     /// reach a person and no agent session of that person.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub person: Option<bool>,
+    /// A name of the chat: the user of a person, or a project by its
+    /// repository after the slash. riff-server resolves it when the
+    /// message is posted. Use it with no other field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// The JSON of a selector that this build does not know, as it
     /// came. Each field above is then empty, and the selector matches
     /// no session.
@@ -183,6 +213,24 @@ impl Selector {
         }
     }
 
+    /// A selector for a name of the chat: a person or a project.
+    pub fn name(name: &str) -> Self {
+        Self {
+            name: Some(name.to_owned()),
+            ..Self::default()
+        }
+    }
+
+    /// True when the selector names no field but `name`: the one form
+    /// of a selector with a name.
+    pub fn stands_alone(&self) -> bool {
+        let rest = Selector {
+            name: None,
+            ..self.clone()
+        };
+        rest.is_empty()
+    }
+
     /// True when the selector names no field.
     pub fn is_empty(&self) -> bool {
         self.lead.is_none()
@@ -192,7 +240,8 @@ impl Selector {
     }
 
     /// True when each named field matches the session. A selector
-    /// `other` matches no session.
+    /// `other` matches no session, and a selector with a `name` neither:
+    /// riff-server resolves the name.
     pub fn matches(&self, uri: &SessionUri) -> bool {
         let place = uri.place();
         let who = uri.who();
@@ -201,6 +250,7 @@ impl Selector {
         };
         !self.is_empty()
             && !self.is_other()
+            && self.name.is_none()
             && eq(&self.user, Some(who.user()))
             && eq(&self.session, who.session())
             && eq(&self.host, Some(place.host()))
@@ -211,7 +261,7 @@ impl Selector {
             && self.person.is_none_or(|p| p == who.session().is_none())
     }
 
-    fn fields(&self) -> [(&'static str, &Option<String>); 6] {
+    fn fields(&self) -> [(&'static str, &Option<String>); 7] {
         [
             ("user", &self.user),
             ("session", &self.session),
@@ -219,6 +269,7 @@ impl Selector {
             ("repo", &self.repo),
             ("worktree", &self.worktree),
             ("claim", &self.claim),
+            ("name", &self.name),
         ]
     }
 }
@@ -285,9 +336,10 @@ impl FromStr for Selector {
                 "repo" => &mut out.repo,
                 "worktree" => &mut out.worktree,
                 "claim" => &mut out.claim,
+                "name" => &mut out.name,
                 _ => {
                     return Err(NameError::new(format!(
-                        "no field named {key}. Use user, session, host, repo, worktree, claim, lead or person."
+                        "no field named {key}. Use user, session, host, repo, worktree, claim, lead, person or name."
                     )));
                 }
             };
@@ -461,8 +513,28 @@ mod tests {
         assert_eq!(
             fields,
             [
-                "claim", "host", "lead", "person", "repo", "session", "user", "worktree"
+                "claim", "host", "lead", "name", "person", "repo", "session", "user", "worktree"
             ]
+        );
+    }
+
+    /// riff-server resolves a name, so a selector with a name matches
+    /// no session by itself, also with other fields that match.
+    #[test]
+    fn a_name_matches_no_session_by_itself() {
+        let person = uri("riff://brett@heron");
+        let lead = uri("riff://brett@heron/como-technologies/riff?session=b1").with_lead(true);
+        for s in ["name=brett", "name=riff", "name=brett,user=brett"] {
+            assert!(!sel(s).matches(&person) && !sel(s).matches(&lead), "{s}");
+        }
+        assert!(sel("name=brett").stands_alone());
+        assert!(!sel("name=brett,person=true").stands_alone());
+        assert!(!sel("name=brett,lead=true").stands_alone());
+        assert_eq!(sel("name=riff").to_string(), "name=riff");
+        let json = r#"{"name":"riff"}"#;
+        assert_eq!(
+            serde_json::from_str::<Selector>(json).unwrap(),
+            Selector::name("riff")
         );
     }
 }
