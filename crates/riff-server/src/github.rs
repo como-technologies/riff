@@ -69,7 +69,8 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use riff_core::name::{Repo, SessionUri, Who};
 use riff_core::wire::{
     GitHubApp, GitHubAppFacts, GitHubApps, GitHubAppsReply, GitHubCheck, GitHubChecked,
-    GitHubCreate, GitHubRole, GitHubStarted, GitHubToken, Rights, RoleChecked, SessionToken,
+    GitHubCreate, GitHubDaemonToken, GitHubRole, GitHubStarted, GitHubToken, Rights, RoleChecked,
+    SessionToken,
 };
 use riff_state::state::{Code, Refused, Role};
 use serde::{Deserialize, Serialize};
@@ -850,6 +851,25 @@ impl GitHub {
         Ok(keys)
     }
 
+    /// `granted` when GitHub gave it the rights of `role` and no more
+    /// (01M6WPMEEWX09DHJZF18BKBPYW). Else the token goes back to GitHub at
+    /// once, and the error says why.
+    async fn of_role(&self, role: GitHubRole, granted: Granted) -> Result<Granted, String> {
+        let (missing, extra) = differ(&rights(role), &granted.permissions);
+        if missing.is_empty() && extra.is_empty() {
+            return Ok(granted);
+        }
+        if let Err(e) = self.client.revoke(&granted.token).await {
+            tracing::warn!("the revoke of a token with wrong rights: {e}");
+        }
+        Err(format!(
+            "GitHub gave the token of the {role} other rights than the role has \
+             (missing: {}; more: {}). Run riff github check",
+            missing.join(", "),
+            extra.join(", ")
+        ))
+    }
+
     /// A token of the App of `role` for the one repository `repo`, with
     /// the rights of the role: the App, its installation on the
     /// repository, and the token.
@@ -1308,20 +1328,13 @@ pub(crate) async fn token(
             return Err((StatusCode::BAD_GATEWAY, why));
         }
     };
-    let (missing, extra) = differ(&rights(role), &granted.permissions);
-    if !missing.is_empty() || !extra.is_empty() {
-        if let Err(e) = s.github.client.revoke(&granted.token).await {
-            tracing::warn!("the revoke of a token with wrong rights: {e}");
+    let granted = match s.github.of_role(role, granted).await {
+        Ok(granted) => granted,
+        Err(why) => {
+            tracing::warn!(session = %r.session, person, repo, role = %role, "{why}");
+            return Err((StatusCode::BAD_GATEWAY, why));
         }
-        let why = format!(
-            "GitHub gave the token of the {role} other rights than the role has \
-             (missing: {}; more: {}). Run riff github check",
-            missing.join(", "),
-            extra.join(", ")
-        );
-        tracing::warn!(session = %r.session, person, repo, role = %role, "{why}");
-        return Err((StatusCode::BAD_GATEWAY, why));
-    }
+    };
     tracing::info!(
         session = %r.session,
         person,
@@ -1329,6 +1342,78 @@ pub(crate) async fn token(
         role = %role,
         ends = granted.expires_at.as_deref().unwrap_or("unknown"),
         "a token of a session on GitHub"
+    );
+    reply.rights = granted.permissions;
+    reply.ends = granted.expires_at;
+    reply.token = Some(granted.token);
+    Ok(Json(reply))
+}
+
+/// `POST /v1/github/daemon`: a token of the lead App for the writes of the
+/// daemon of the person on one repository, with the rights of the lead and
+/// no more (01M6XZJFGNVG6B7DF5VQ3H1DNX). Each person asks, signed in as
+/// the person, with no session token: a person can start a lead in each
+/// repository of the riff, and the lead gets the same token. A riff with
+/// no lead App, or a lead App that is not on the repository, gives no
+/// token and says why: the daemon writes with the token of the person.
+/// The log line names the person, the repository and the end, never the
+/// token.
+pub(crate) async fn daemon_token(
+    AxumState(s): AxumState<crate::Shared>,
+    Extension(signed_in): Extension<SignedIn>,
+    Json(r): Json<GitHubDaemonToken>,
+) -> crate::Reply<SessionToken> {
+    let person = signed_in.who.user().to_owned();
+    if signed_in.who.session().is_some() {
+        let reason = "a session gets no token of the daemon: the daemon of its person asks";
+        return Err(Failed::Refused(Refused::new(Code::NotAllowed, reason)).into());
+    }
+    let repo = r.repo;
+    if !valid_repo(&repo) {
+        let why = format!("{repo:?} is no repository OWNER/NAME of GitHub");
+        return Err((StatusCode::BAD_REQUEST, why));
+    }
+    let role = GitHubRole::Lead;
+    let apps = s.github.keys.load().await.map_err(keys_failed)?;
+    let keys = apps.of(role.app());
+    let mut reply = SessionToken {
+        role,
+        repo: repo.clone(),
+        bot: keys.map(AppKeys::bot),
+        bot_id: keys.and_then(|keys| keys.bot_id),
+        token: None,
+        rights: Rights::new(),
+        ends: None,
+        problem: None,
+    };
+    let granted = match s.github.grant(&apps, role, &repo).await {
+        Ok((_, granted)) => granted,
+        Err(NoGrant::Missing(why)) => {
+            tracing::info!(
+                person,
+                repo,
+                "no token of the lead App for the daemon, which writes with the token of its person: {why}"
+            );
+            reply.problem = Some(why);
+            return Ok(Json(reply));
+        }
+        Err(NoGrant::Failed(why)) => {
+            tracing::warn!(person, repo, "no token of the daemon: {why}");
+            return Err((StatusCode::BAD_GATEWAY, why));
+        }
+    };
+    let granted = match s.github.of_role(role, granted).await {
+        Ok(granted) => granted,
+        Err(why) => {
+            tracing::warn!(person, repo, "{why}");
+            return Err((StatusCode::BAD_GATEWAY, why));
+        }
+    };
+    tracing::info!(
+        person,
+        repo,
+        ends = granted.expires_at.as_deref().unwrap_or("unknown"),
+        "a token of the daemon on GitHub"
     );
     reply.rights = granted.permissions;
     reply.ends = granted.expires_at;

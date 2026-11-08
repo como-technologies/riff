@@ -197,7 +197,9 @@
 //! - `POST /v1/github/create`, `/v1/github/apps` and `/v1/github/check`
 //!   make and check the GitHub Apps of the riff (01M6WG52J7WTP079W1AYEQ4W08).
 //!   `POST /v1/github/token` gives the daemon the token of a session of
-//!   its person (01M6WPMEEWX09DHJZF18BKBPYW).
+//!   its person (01M6WPMEEWX09DHJZF18BKBPYW), and `POST /v1/github/daemon`
+//!   a token of the lead App for its own writes
+//!   (01M6XZJFGNVG6B7DF5VQ3H1DNX).
 //!   The pages `/github/start` and `/github/created` of the browser, and
 //!   the webhook `/hooks/github`, need no token and no build. See
 //!   [`github`]. The keys of the Apps are in no record: see [`keys`].
@@ -250,14 +252,14 @@ use riff_core::record::Record;
 use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
-    Claim, DenyOwner, End, FactError, Free, GitHubApps, GitHubCheck, GitHubCreate, GitHubToken,
-    Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join, Keys, Kind, Lead, Leave,
-    LogQuery, LogReply, MeReply, Members, MembersReply, NotesReply, NotesShow, PassOwner, Pause,
-    Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Pruned, Read, ReadReply, Register,
-    Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply,
-    ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetNotes, SetPlan, SetStatus,
-    SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
-    TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    Claim, DenyOwner, End, FactError, Free, GitHubApps, GitHubCheck, GitHubCreate,
+    GitHubDaemonToken, GitHubToken, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join,
+    Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply, NotesReply,
+    NotesShow, PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Pruned,
+    Read, ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke,
+    RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle,
+    SetNotes, SetPlan, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads,
+    ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use riff_core::wire::{Names, NamesReply, SetMachine};
 use riff_state::owner::{Check, Checks};
@@ -1982,6 +1984,7 @@ impl Service {
             .route(GitHubApps::PATH, post(github::apps))
             .route(GitHubCheck::PATH, post(github::check))
             .route(GitHubToken::PATH, post(github::token))
+            .route(GitHubDaemonToken::PATH, post(github::daemon_token))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {

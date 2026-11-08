@@ -963,6 +963,21 @@
   shows it: riff reads it from the user of the config of `gh`, and calls
   no `GET /user`. For the token of a person, riff reads the login with
   `gh api user`.
+- **01M6XZJFE2ZTR5RE3AWM30R704** The daemon makes each of its writes on
+  GitHub with a token of the lead App of the repository, so GitHub shows
+  the bot of the lead App: the comment of the tokens of a claim, the
+  comment `Merged in`, the result of a verify with its status
+  `riff/verify`, the issue of a broken main with its label and its
+  comments, and the delete of an old branch `riff-kept`. It asks
+  riff-server for the token only for a repository where the `gh` of the
+  person can push, keeps it until 10 minutes before its end, and after
+  an answer with no token asks again 10 minutes later. Its reads, its
+  pushes with git and the real-session test keep the token of the
+  person. When the riff has no lead App on the repository, no sign-in,
+  or riff-server gives no token, the daemon writes with the token of the
+  person. `riff daemon status` names, for each repository, the bot of
+  its writes, or the token of the person and why. This supersedes
+  01M6WPMWW7T0Y8SY3522GS4YF0 in part.
 
 ## Pause
 
@@ -3328,6 +3343,14 @@
   each token of a session: the session, the person, the repository, the
   role and the end. No log line, reply to another call, record or object
   of the bucket holds the token.
+- **01M6XZJFGNVG6B7DF5VQ3H1DNX** The daemon asks riff-server for the
+  token of its own writes on a repository with `POST /v1/github/daemon`
+  and the repository, signed in as the person. riff-server refuses a
+  session token. It asks GitHub for a token of the lead App, for that
+  one repository, with the rights of the lead
+  (01M6WG52MWZB1SVQMMH6BKJSJ5), and it refuses and revokes a token with
+  other rights. Its log line names the person, the repository and the
+  end, never the token.
 
 ## Sign-in and tokens
 
@@ -6749,8 +6772,8 @@ of this part when they merge.
   OWNER`, and `riff init --check` fails a check with the same fix.
 - **01M6WPMWW7T0Y8SY3522GS4YF0** The lead in a container gets the token
   of the lead App at `riff lead start`, and the daemon renews it for the
-  life of the lead. Each `riff` command of a person in a terminal, and
-  each step of the daemon on the host, keeps the token of the person.
+  life of the lead. Each `riff` command of a person in a terminal keeps
+  the token of the person.
 - **01M6WPMWYSW98MQYQCCJ54ZX04** `riff whoami` in a container shows how
   the session acts on GitHub: the bot, the role, the rights and the end
   of its token, or that it has the token of the person and why.

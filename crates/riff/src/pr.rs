@@ -308,6 +308,24 @@ pub struct Gh {
     /// True when a call that fails on a limit of GitHub fails with
     /// [`ghcalls::LimitOut`] ([`Gh::stopping_on_limit`]).
     stops_on_limit: bool,
+    /// The token and the bot of each write ([`Gh::writing_as`]). With
+    /// none, a write has the token of a read.
+    writer: Option<Writer>,
+}
+
+/// The token of the writes of a `gh`: a token of a GitHub App, and its
+/// bot ([`Gh::writing_as`]). Its debug text has no token, and the memory
+/// of the token is cleared when it drops.
+#[derive(Clone)]
+struct Writer {
+    bot: String,
+    token: Zeroizing<String>,
+}
+
+impl fmt::Debug for Writer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Writer({})", self.bot)
+    }
 }
 
 impl Default for Gh {
@@ -325,6 +343,7 @@ impl Default for Gh {
             retries: 0,
             retry_wait: RETRY_WAIT,
             stops_on_limit: false,
+            writer: None,
         }
     }
 }
@@ -715,7 +734,56 @@ impl Gh {
                 keep: Duration::MAX,
                 read: Arc::new(Mutex::new(Some(read))),
             }),
+            writer: None,
             ..self
+        }
+    }
+
+    /// The same `gh`, whose writes on GitHub get `token`, a token of the
+    /// GitHub App whose bot is `bot`, in `GH_TOKEN` ([`ghcalls::writes`]).
+    /// Its reads keep their token. The daemon writes as the lead App
+    /// ([`crate::daemon::gh_token::Writes`], 01M6XZJFE2ZTR5RE3AWM30R704).
+    ///
+    /// ```
+    /// let dir = tempfile::tempdir()?;
+    /// let script = "#!/bin/sh\necho \"$GH_TOKEN $*\"\n";
+    /// let gh = isolated::write_program(dir.path().join("gh"), script);
+    /// let gh = riff::pr::Gh::at(&gh)
+    ///     .with_given_token("gho_person")
+    ///     .writing_as("riff-acme-lead[bot]", "ghs_lead");
+    /// assert_eq!(gh.writer(), Some("riff-acme-lead[bot]"));
+    /// let read = gh.run(&["issue", "view", "12", "--json", "comments"], None)?;
+    /// assert_eq!(read, "gho_person issue view 12 --json comments\n");
+    /// let write = gh.run(&["issue", "comment", "12", "--body-file", "-"], Some("Hi."))?;
+    /// assert_eq!(write, "ghs_lead issue comment 12 --body-file -\n");
+    /// // A token for each call takes the place of the writer.
+    /// let given = gh.with_given_token("ghs_session");
+    /// assert_eq!(given.writer(), None);
+    /// assert_eq!(given.run(&["api", "-X", "DELETE", "installation/token"], None)?, "ghs_session api -X DELETE installation/token\n");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn writing_as(self, bot: &str, token: &str) -> Self {
+        Self {
+            writer: Some(Writer {
+                bot: bot.to_owned(),
+                token: Zeroizing::new(token.to_owned()),
+            }),
+            ..self
+        }
+    }
+
+    /// The bot of the writes of this `gh`, when it writes as a GitHub App
+    /// ([`Gh::writing_as`]).
+    pub fn writer(&self) -> Option<&str> {
+        self.writer.as_ref().map(|writer| writer.bot.as_str())
+    }
+
+    /// The token for the call `gh ARGS`: the token of the writer for a
+    /// write ([`Gh::writing_as`]), else [`Gh::token`].
+    fn token_for(&self, args: &[&str]) -> Option<Zeroizing<String>> {
+        match &self.writer {
+            Some(writer) if ghcalls::writes(args) => Some(writer.token.clone()),
+            _ => self.token(),
         }
     }
 
@@ -744,6 +812,7 @@ impl Gh {
         }
         let plain = Gh {
             token: None,
+            writer: None,
             ..self.clone()
         };
         let (ok, stdout, _) = plain.output(&["auth", "token"], None).ok()?;
@@ -1261,7 +1330,7 @@ impl Gh {
         if let Some(repo) = &self.repo {
             command.env("GH_REPO", repo);
         }
-        if let Some(token) = self.token() {
+        if let Some(token) = self.token_for(args) {
             command.env("GH_TOKEN", token.as_str());
         }
         if self.tally.is_some() {

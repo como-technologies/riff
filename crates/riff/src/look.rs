@@ -1360,6 +1360,11 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
     };
     let before = watch.main.clone();
     let repo = &wave.repo;
+    // The issue of a broken main, its label and its comments go as the
+    // daemon (01M6XZJFE2ZTR5RE3AWM30R704).
+    let gh = Arc::new(
+        crate::daemon::gh_token::writer(world, Some(&wave.server), repo, Gh::clone(&gh)).await,
+    );
     let posted = match main_post(&gh, repo, &branch, (issues, pulls), claims, &mut watch.main).await
     {
         Ok(Some((body, kind, key))) => {

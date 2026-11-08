@@ -116,15 +116,15 @@ use riff_core::wire::SetMachine;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, ChatName, Claim,
     ClaimReply, DenyOwner, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
-    GitHubChecked, GitHubCreate, GitHubStarted, GitHubToken, Hold, HoldReply, Invite, Invited,
-    ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
-    Members, MembersReply, Message, Names, NotesReply, NotesShow, OwnerAsked, OwnerDenied,
-    OwnerPassed, PassOwner, Pause, PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER,
-    Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked,
-    RiffBinary, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SessionToken, SetAdmin,
-    SetBlocked, SetNotes, SetNotesReply, SetStatus, SetStep, SignInConfig, Start, StartReason,
-    Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply,
-    TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
+    GitHubChecked, GitHubCreate, GitHubDaemonToken, GitHubStarted, GitHubToken, Hold, HoldReply,
+    Invite, Invited, ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery,
+    LogReply, MeReply, Members, MembersReply, Message, Names, NotesReply, NotesShow, OwnerAsked,
+    OwnerDenied, OwnerPassed, PassOwner, Pause, PlanChanged, PlanReply, PlanShow, Post, Posted,
+    REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume,
+    Revoke, Revoked, RiffBinary, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo,
+    SessionToken, SetAdmin, SetBlocked, SetNotes, SetNotesReply, SetStatus, SetStep, SignInConfig,
+    Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads, TokenError,
+    TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -2115,6 +2115,20 @@ impl Api {
         }
         let ask = GitHubToken {
             session: session.to_owned(),
+        };
+        Ok(Some(self.call(&ask).await?))
+    }
+
+    /// A token of the lead App for the writes of the daemon of this person
+    /// on the repository `repo`, `OWNER/NAME` (01M6XZJFGNVG6B7DF5VQ3H1DNX).
+    /// `None` when this client sends no token: riff-server then knows no
+    /// person to give a token to.
+    pub async fn github_daemon_token(&self, repo: &str) -> Result<Option<SessionToken>> {
+        if self.auth.is_none() {
+            return Ok(None);
+        }
+        let ask = GitHubDaemonToken {
+            repo: repo.to_owned(),
         };
         Ok(Some(self.call(&ask).await?))
     }
