@@ -7648,10 +7648,9 @@ that builds it merges.
   to `Alt-6`, `Tab` and `Shift-Tab` open a tab, and `Ctrl-C` ends the
   TUI. `Esc` moves the focus to the log, where the keys of the frame
   work and `?` shows the keys of the Chat tab. `i` or `Enter` gives the
-  focus back to the prompt. `↑` and `↓` in the prompt show the lines
-  that you sent. `PgUp` and `PgDn` show older and newer lines.
-  Supersedes 01M6VAZJYYQZDHD6YDB0NBQ7KW and 01M6VAZKDEQ6951KGPGAMF1SNJ
-  in part.
+  focus back to the prompt. `PgUp` and `PgDn` show older and newer
+  lines. Supersedes 01M6VAZJYYQZDHD6YDB0NBQ7KW and
+  01M6VAZKDEQ6951KGPGAMF1SNJ in part.
 - **01M6VG1PCXHNVJP7TSP0J5G5K9** A line of the Chat tab has the rules of
   `riff chat`, with the same code: `/me TEXT` sends an action, `/quit`
   ends the TUI, and `//` starts a line with `/`. The Chat tab posts as
@@ -7989,6 +7988,17 @@ that builds it merges.
   comes back as after q: riff turns off the mouse capture, the bracketed
   paste and the focus events, ends the raw mode and leaves the alternate
   screen. Then it prints the message of the panic.
+- **01M6XXDDYQG7M6WYNRXP35DZ1Y** The line of the Chat tab wraps at the
+  width of the tab, after a space when it can, and each more row starts
+  under the text of the first row. A new line of a paste ends its row.
+  The prompt grows up by one row for each row of the line, up to 5 rows
+  or a third of the rows of the tab, the smaller, and the log above it
+  has as many rows less. A longer line scrolls by rows, so that the row
+  of the cursor shows. `←` and `→` go over the end of a row, and
+  `Home` and `End` go to the start and the end of the line. `↑` and
+  `↓` move the cursor one row. `↑` on the first row and `↓` on the
+  last row show the lines that you sent. Supersedes
+  01M6VG1PA4PM47777ZT4PNGETF in part.
 
 ## The notes of the lead
 

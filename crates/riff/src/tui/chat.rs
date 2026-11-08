@@ -35,16 +35,28 @@
 //!   ([`Focus`]). There each key types, also the digits, `q` and `?`.
 //!   `Alt-1` to `Alt-6`, `Tab` and `Ctrl-C` keep their work. `Esc` moves
 //!   the focus to the log, where the keys of the frame work, and `i` or
-//!   `Enter` gives it back. `↑` and `↓` bring back the lines that you
-//!   sent (01M6VG1PA4PM47777ZT4PNGETF). A switch to another window and
-//!   back gives the focus to the prompt too ([`State::focused`]), and a
-//!   click on the log keeps it there (01M6XT6MCZ38XEN7ZHWTRF50Z5).
+//!   `Enter` gives it back (01M6VG1PA4PM47777ZT4PNGETF). A switch to
+//!   another window and back gives the focus to the prompt too
+//!   ([`State::focused`]), and a click on the log keeps it there
+//!   (01M6XT6MCZ38XEN7ZHWTRF50Z5).
+//! - **The line** wraps in rows of the width of the tab ([`wrap`],
+//!   01M6XXDDYQG7M6WYNRXP35DZ1Y). The prompt grows up, one row for each
+//!   row of the line, up to [`LINE_ROWS`], and the log has the rows over
+//!   it. A longer line scrolls, so that the row of the cursor shows. `↑`
+//!   and `↓` move the cursor one row ([`Prompt::edit`]). On the first
+//!   row and the last row, they bring back the lines that you sent.
+//!
+//!   ```text
+//!   > @riff please look at the plan of wave 52, and tell me which item goes first:
+//!     the highlight in riff chat, or /msg. Then start it, and tell me when its pull
+//!     request is open.█
+//!   ```
 //! - **A paste** goes into the prompt at the cursor, also from the log
 //!   ([`super::State::on_paste`], 01M6XSK4GHNBJCR0RHMBGZE57G). Its new
-//!   lines stay: the prompt shows each one as `↵`, and `Enter` sends the
-//!   line as one message. A paste or a typed character that makes the
-//!   line longer than [`POST_MAX`] stays out ([`too_long`],
-//!   01M6XSK4K2MDA2SK0A6KHN9HDT, 01M6XVCDEP1ZP9RS7DV795W79E).
+//!   lines stay: the prompt shows each one as `↵` at the end of a row,
+//!   and `Enter` sends the line as one message. A paste or a typed
+//!   character that makes the line longer than [`POST_MAX`] stays out
+//!   ([`too_long`], 01M6XSK4K2MDA2SK0A6KHN9HDT, 01M6XVCDEP1ZP9RS7DV795W79E).
 //! - **The note line** says what `Enter` does with a command, or why
 //!   the chat will not send it ([`prompt_note`]). It never says whom a
 //!   line wakes (01M6Y1A5PTCVZ6GRJ0FXMART2T). A post that fails, or a
@@ -150,10 +162,12 @@ pub enum Key {
     End,
     /// Delete the text before the cursor: `Ctrl-U`.
     Clear,
-    /// Show the line that you sent before the one that shows: `↑`.
-    Earlier,
-    /// Show the line that you sent after the one that shows: `↓`.
-    Later,
+    /// Move the cursor one row up, or on the first row show the line
+    /// that you sent before the one that shows: `↑`.
+    Up,
+    /// Move the cursor one row down, or on the last row show the line
+    /// that you sent after the one that shows: `↓`.
+    Down,
     /// Send the line: `Enter` in the prompt.
     Send,
     /// Move the focus to the log: `Esc`.
@@ -199,7 +213,7 @@ pub enum Scroll {
 /// }
 /// assert_eq!(key_of(&press(KeyCode::Enter, none), Focus::Prompt), Some(Key::Send));
 /// assert_eq!(key_of(&press(KeyCode::Esc, none), Focus::Prompt), Some(Key::Log));
-/// assert_eq!(key_of(&press(KeyCode::Up, none), Focus::Prompt), Some(Key::Earlier));
+/// assert_eq!(key_of(&press(KeyCode::Up, none), Focus::Prompt), Some(Key::Up));
 /// assert_eq!(
 ///     key_of(&press(KeyCode::PageUp, none), Focus::Prompt),
 ///     Some(Key::Scroll(Scroll::PageUp))
@@ -236,8 +250,8 @@ pub fn key_of(event: &Event, focus: Focus) -> Option<Key> {
                 (Focus::Prompt, KeyCode::Right) => Key::Right,
                 (Focus::Prompt, KeyCode::Home) => Key::Home,
                 (Focus::Prompt, KeyCode::End) => Key::End,
-                (Focus::Prompt, KeyCode::Up) => Key::Earlier,
-                (Focus::Prompt, KeyCode::Down) => Key::Later,
+                (Focus::Prompt, KeyCode::Up) => Key::Up,
+                (Focus::Prompt, KeyCode::Down) => Key::Down,
                 (Focus::Prompt, KeyCode::Enter) => Key::Send,
                 (Focus::Prompt, KeyCode::Esc) => Key::Log,
                 (Focus::Log, KeyCode::Enter) => Key::Prompt,
@@ -266,32 +280,35 @@ pub fn key_of(event: &Event, focus: Focus) -> Option<Key> {
 }
 
 /// The line that the person types, and the lines that the person sent.
+/// [`Prompt::edit`] takes a key in rows of a number of columns of text
+/// ([`wrap`]).
 ///
 /// ```
 /// use riff::tui::chat::{Key, Prompt};
 ///
 /// let mut prompt = Prompt::default();
 /// for c in "hi al".chars() {
-///     prompt.edit(Key::Type(c));
+///     prompt.edit(Key::Type(c), 40);
 /// }
-/// prompt.edit(Key::Type('l'));
-/// prompt.edit(Key::Home);
-/// prompt.edit(Key::Delete);
-/// prompt.edit(Key::Type('H'));
+/// prompt.edit(Key::Type('l'), 40);
+/// prompt.edit(Key::Home, 40);
+/// prompt.edit(Key::Delete, 40);
+/// prompt.edit(Key::Type('H'), 40);
 /// assert_eq!((prompt.text(), prompt.cursor()), ("Hi all", 1));
-/// prompt.edit(Key::End);
-/// prompt.edit(Key::Backspace);
+/// prompt.edit(Key::End, 40);
+/// prompt.edit(Key::Backspace, 40);
 /// assert_eq!(prompt.text(), "Hi al");
 /// assert_eq!(prompt.take(), "Hi al");
 /// assert_eq!(prompt.text(), "");
-/// // ↑ brings back the line that you sent, and ↓ the text before it.
-/// prompt.edit(Key::Type('x'));
-/// prompt.edit(Key::Earlier);
+/// // On a line of one row, ↑ brings back the line that you sent, and ↓
+/// // the text before it.
+/// prompt.edit(Key::Type('x'), 40);
+/// prompt.edit(Key::Up, 40);
 /// assert_eq!(prompt.text(), "Hi al");
-/// prompt.edit(Key::Later);
+/// prompt.edit(Key::Down, 40);
 /// assert_eq!(prompt.text(), "x");
 /// // Ctrl-U deletes the text before the cursor.
-/// prompt.edit(Key::Clear);
+/// prompt.edit(Key::Clear, 40);
 /// assert_eq!(prompt.text(), "");
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -327,9 +344,41 @@ impl Prompt {
             .map_or(self.text.len(), |(i, _)| i)
     }
 
-    /// Takes a key of the prompt. A key that scrolls or moves the focus
-    /// does nothing here.
-    pub fn edit(&mut self, key: Key) {
+    /// Takes a key of the prompt, with the line in rows of `columns`
+    /// columns ([`wrap`], 01M6XXDDYQG7M6WYNRXP35DZ1Y). `←` and `→` go
+    /// over the end of a row, and `Home` and `End` go to the start and
+    /// the end of the line. `↑` and `↓` move the cursor one row, to the
+    /// same column or to the end of a shorter row. `↑` on the first row
+    /// and `↓` on the last row show the lines that you sent. A key that
+    /// scrolls or moves the focus does nothing here.
+    ///
+    /// ```
+    /// use riff::tui::chat::{Key, Prompt};
+    ///
+    /// // In rows of 10 columns: "hello big " and "world".
+    /// let mut prompt = Prompt::default();
+    /// prompt.paste("hello big world");
+    /// prompt.edit(Key::Up, 10);
+    /// assert_eq!(prompt.cursor(), 5);
+    /// prompt.edit(Key::Down, 10);
+    /// assert_eq!(prompt.cursor(), 15);
+    /// // Home and End go to the start and the end of the line.
+    /// prompt.edit(Key::Home, 10);
+    /// assert_eq!(prompt.cursor(), 0);
+    /// prompt.edit(Key::End, 10);
+    /// assert_eq!(prompt.cursor(), 15);
+    /// // From the end of the first row, `→` goes to the start of the next.
+    /// prompt.edit(Key::Up, 10);
+    /// prompt.edit(Key::End, 10);
+    /// for _ in 0..6 {
+    ///     prompt.edit(Key::Left, 10);
+    /// }
+    /// assert_eq!(prompt.cursor(), 9);
+    /// prompt.edit(Key::Right, 10);
+    /// prompt.edit(Key::Up, 10);
+    /// assert_eq!(prompt.cursor(), 0);
+    /// ```
+    pub fn edit(&mut self, key: Key, columns: usize) {
         let length = self.text.chars().count();
         match key {
             Key::Type(c) => {
@@ -355,30 +404,75 @@ impl Prompt {
                 self.text.replace_range(..at, "");
                 self.cursor = 0;
             }
-            Key::Earlier if !self.sent.is_empty() => {
-                let back = match self.back {
-                    None => {
-                        self.draft = std::mem::take(&mut self.text);
-                        self.sent.len() - 1
-                    }
-                    Some(i) => i.saturating_sub(1),
-                };
-                self.back = Some(back);
-                self.show(self.sent[back].clone());
-            }
-            Key::Later => match self.back {
-                Some(i) if i + 1 < self.sent.len() => {
-                    self.back = Some(i + 1);
-                    self.show(self.sent[i + 1].clone());
-                }
-                Some(_) => {
-                    self.back = None;
-                    let draft = std::mem::take(&mut self.draft);
-                    self.show(draft);
-                }
-                None => {}
+            Key::Up => match self.row_to(true, columns) {
+                Some(at) => self.cursor = at,
+                None => self.earlier(),
+            },
+            Key::Down => match self.row_to(false, columns) {
+                Some(at) => self.cursor = at,
+                None => self.later(),
             },
             _ => {}
+        }
+    }
+
+    /// The place of the cursor one row up (`up`) or down, in rows of
+    /// `columns` columns: at the same column, or at the end of a shorter
+    /// row. `None` on the first row up and on the last row down.
+    fn row_to(&self, up: bool, columns: usize) -> Option<usize> {
+        let rows = Rows::of(&self.text, columns);
+        let row = rows.row(self.cursor);
+        let to = if up {
+            row.checked_sub(1)?
+        } else {
+            Some(row + 1).filter(|&r| r < rows.starts.len())?
+        };
+        let column = rows.column(self.cursor);
+        let range = rows.range(to);
+        // The place after the last character of a row is the start of
+        // the next row. Only the last row ends at the end of the line.
+        let last = if to + 1 < rows.starts.len() {
+            range.end - 1
+        } else {
+            range.end
+        };
+        let mut at = range.start;
+        while at < last && rows.x[at + 1] - rows.x[range.start] <= column {
+            at += 1;
+        }
+        Some(at)
+    }
+
+    /// Shows the line that the person sent before the one that shows.
+    fn earlier(&mut self) {
+        if self.sent.is_empty() {
+            return;
+        }
+        let back = match self.back {
+            None => {
+                self.draft = std::mem::take(&mut self.text);
+                self.sent.len() - 1
+            }
+            Some(i) => i.saturating_sub(1),
+        };
+        self.back = Some(back);
+        self.show(self.sent[back].clone());
+    }
+
+    /// Shows the line that the person sent after the one that shows, or
+    /// after the last one the text before the first `↑`.
+    fn later(&mut self) {
+        match self.back {
+            Some(i) if i + 1 < self.sent.len() => {
+                self.back = Some(i + 1);
+                self.show(self.sent[i + 1].clone());
+            }
+            Some(_) => {
+                self.back = None;
+                let draft = std::mem::take(&mut self.draft);
+                self.show(draft);
+            }
+            None => {}
         }
     }
 
@@ -389,9 +483,9 @@ impl Prompt {
     ///
     /// let mut prompt = Prompt::default();
     /// for c in "ab".chars() {
-    ///     prompt.edit(Key::Type(c));
+    ///     prompt.edit(Key::Type(c), 40);
     /// }
-    /// prompt.edit(Key::Left);
+    /// prompt.edit(Key::Left, 40);
     /// prompt.paste("1\n2");
     /// assert_eq!((prompt.text(), prompt.cursor()), ("a1\n2b", 4));
     /// ```
@@ -418,6 +512,108 @@ impl Prompt {
         self.back = None;
         self.draft.clear();
         text
+    }
+}
+
+/// The first character of each row of the line `text`, in rows of
+/// `columns` columns (01M6XXDDYQG7M6WYNRXP35DZ1Y). When a character does
+/// not fit, its row ends after the last space that fits in it. With no
+/// such space, the row ends after the last character that fits. A new
+/// line ends its row, and shows as `↵` at its end. When the last row is
+/// full, an empty row comes after it: the cursor at the end of the line
+/// needs a column of its own.
+///
+/// ```
+/// use riff::tui::chat::wrap;
+///
+/// assert_eq!(wrap("hi all", 10), [0]);
+/// // "hello big " and "world".
+/// assert_eq!(wrap("hello big world", 10), [0, 10]);
+/// // The space after "big" does not fit: "hello ", then "big world",
+/// // a full row, then the empty row of the cursor.
+/// assert_eq!(wrap("hello big world", 9), [0, 6, 15]);
+/// // A word longer than a row breaks.
+/// assert_eq!(wrap(&"x".repeat(25), 10), [0, 10, 20]);
+/// // A full last row, and a new line at the end: an empty row comes
+/// // after them.
+/// assert_eq!(wrap(&"x".repeat(20), 10), [0, 10, 20]);
+/// assert_eq!(wrap("one\ntwo\n", 10), [0, 4, 8]);
+/// // A wide character takes two columns.
+/// assert_eq!(wrap(&"日".repeat(5), 9), [0, 4]);
+/// ```
+pub fn wrap(text: &str, columns: usize) -> Vec<usize> {
+    Rows::of(text, columns).starts
+}
+
+/// The line of the prompt in rows ([`wrap`]).
+struct Rows {
+    /// The characters as the prompt shows them: a new line as `↵`, and a
+    /// tab as a space.
+    shown: Vec<char>,
+    /// The width of the first `i` characters, at `i`.
+    x: Vec<usize>,
+    /// The first character of each row.
+    starts: Vec<usize>,
+}
+
+impl Rows {
+    /// The rows of `text` in `columns` columns. With 0 columns, before
+    /// the first draw, only a new line ends a row.
+    fn of(text: &str, columns: usize) -> Rows {
+        let columns = if columns == 0 { usize::MAX } else { columns };
+        let chars: Vec<char> = text.chars().collect();
+        let shown: Vec<char> = chars
+            .iter()
+            .map(|&c| match c {
+                '\n' => '↵',
+                '\t' => ' ',
+                c => c,
+            })
+            .collect();
+        let mut x = vec![0];
+        for c in &shown {
+            let wide = textwrap::core::display_width(c.encode_utf8(&mut [0; 4]));
+            x.push(x[x.len() - 1] + wide);
+        }
+        let mut starts = vec![0];
+        // The first character after the last space of the row.
+        let mut space = None;
+        for (i, c) in chars.iter().enumerate() {
+            let start = starts[starts.len() - 1];
+            if i > start && x[i + 1] - x[start] > columns {
+                let soft = space.filter(|&s| x[i + 1] - x[s] <= columns);
+                starts.push(soft.unwrap_or(i));
+                space = None;
+            }
+            match c {
+                ' ' | '\t' => space = Some(i + 1),
+                '\n' => {
+                    starts.push(i + 1);
+                    space = None;
+                }
+                _ => {}
+            }
+        }
+        if x[chars.len()] - x[starts[starts.len() - 1]] >= columns {
+            starts.push(chars.len());
+        }
+        Rows { shown, x, starts }
+    }
+
+    /// The row of the cursor before the character `at`.
+    fn row(&self, at: usize) -> usize {
+        self.starts.partition_point(|&s| s <= at) - 1
+    }
+
+    /// The characters of the row `row`.
+    fn range(&self, row: usize) -> std::ops::Range<usize> {
+        let end = self.starts.get(row + 1).copied();
+        self.starts[row]..end.unwrap_or(self.shown.len())
+    }
+
+    /// The column of the cursor before the character `at`, in its row.
+    fn column(&self, at: usize) -> usize {
+        self.x[at] - self.x[self.starts[self.row(at)]]
     }
 }
 
@@ -481,14 +677,20 @@ pub enum Down {
     Fault(String),
 }
 
-/// What the person saw of the log at the last draw: the columns of a
-/// row and the rows of the log. A scroll needs it.
+/// What the person saw of the log and of the line at the last draw. A
+/// scroll of the log needs the columns of a row and the rows, and `↑`
+/// and `↓` in the line need the columns of a row of the line. The next
+/// draw starts the rows of the line at the same row when it can.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Window {
-    /// The columns of a row of text.
+    /// The columns of a row of text of the log.
     pub columns: u16,
     /// The rows of the log.
     pub rows: u16,
+    /// The columns of a row of text of the line.
+    pub line: u16,
+    /// The first row of the line that shows.
+    pub line_top: usize,
 }
 
 /// The state of the Chat tab: the log, the prompt, the focus and the
@@ -889,7 +1091,8 @@ impl State {
                 None
             }
             edit => {
-                self.chat.prompt.edit(edit);
+                let columns = usize::from(self.chat.window.line);
+                self.chat.prompt.edit(edit, columns);
                 None
             }
         }
@@ -1066,11 +1269,12 @@ pub(super) fn keys(
 
 /// The keys of the Chat tab in the help popup, before the keys of the
 /// frame (01M6VAZKDEQ6951KGPGAMF1SNJ).
-pub const HELP: [(&str, &str); 9] = [
+pub const HELP: [(&str, &str); 10] = [
     ("Enter", "send the line, or go back to the prompt"),
     ("Esc", "leave the prompt: the keys of the tab work"),
     ("i", "go back to the prompt"),
-    ("↑ ↓", "a line that you sent, or scroll the log"),
+    ("↑ ↓", "a row of the line, a line that you sent, or scroll"),
+    ("Home, End", "the start or the end of the line"),
     ("PgUp, PgDn", "older or newer lines"),
     ("g, G", "the oldest or the newest line, in the log"),
     ("Alt-1 to 6", "open a tab, also from the prompt"),
@@ -1078,10 +1282,24 @@ pub const HELP: [(&str, &str); 9] = [
     ("a paste", "goes into the line, with its new lines"),
 ];
 
+/// The mark before the first row of the line.
+const MARK: &str = "> ";
+
+/// The start of each more row of the line: under the text of the first
+/// row.
+const UNDER: &str = "  ";
+
+/// The most rows of the line in the prompt (01M6XXDDYQG7M6WYNRXP35DZ1Y).
+/// A third of the rows of the tab is the most in a short terminal.
+pub const LINE_ROWS: usize = 5;
+
 /// Places the body of the Chat tab in `area` on `view`: the summary
 /// row, the log, the prompt, the places that a click hits, the cursor
-/// and the window of the log. The log is no place that a click hits: a
-/// click there keeps the focus in the prompt (01M6XT6MCZ38XEN7ZHWTRF50Z5).
+/// and the window of the log and of the line. The prompt grows up from
+/// the row over the note line, one row for each row of the line, and
+/// the log has the rows over it. The log is no place that a click hits:
+/// a click there keeps the focus in the prompt
+/// (01M6XT6MCZ38XEN7ZHWTRF50Z5).
 pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) {
     let chat = &state.chat;
     let margin = u16::from(layout == Layout::Wide);
@@ -1092,8 +1310,14 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
         line: summary(state, layout),
     });
 
+    // The tab has the rows between the header and the note line.
+    let most = LINE_ROWS.min(usize::from(area.height - 4) / 3).max(1);
+    let line = area.width.saturating_sub(super::view::width(MARK)).max(1);
+    let shown = prompt_rows(chat, usize::from(line), most);
+    let high = u16::try_from(shown.rows.len()).unwrap_or(1);
+    let prompt = area.height - 2 - high;
+
     let top = 3;
-    let prompt = area.height - 3;
     let rows = prompt - top;
     for (y, (line, rule)) in (top..).zip(window(chat, columns, area.width, rows)) {
         let place = if rule {
@@ -1103,16 +1327,23 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
         };
         view.rows.push(Placed { area: place, line });
     }
-    view.chat = Some(Window { columns, rows });
+    view.chat = Some(Window {
+        columns,
+        rows,
+        line,
+        line_top: shown.top,
+    });
 
-    let place = Rect::new(area.x, area.y + prompt, area.width, 1);
-    let (line, cursor) = prompt_row(chat, area.width);
-    view.rows.push(Placed { area: place, line });
+    for (y, line) in (prompt..).zip(shown.rows) {
+        let place = Rect::new(area.x, area.y + y, area.width, 1);
+        view.rows.push(Placed { area: place, line });
+    }
     if chat.focus == Focus::Prompt {
-        view.cursor = Some(Position::new(area.x + cursor, area.y + prompt));
+        let (x, y) = shown.cursor;
+        view.cursor = Some(Position::new(area.x + x, area.y + prompt + y));
     }
     view.hits.push(Hit {
-        area: place,
+        area: Rect::new(area.x, area.y + prompt, area.width, high),
         key: FrameKey::Chat(Key::Prompt),
     });
 }
@@ -1318,49 +1549,49 @@ pub fn ratatui_style(style: anstyle::Style) -> Style {
     out
 }
 
-/// The prompt row in `width` columns, and the column of the cursor. A
-/// long line shows the part around the cursor. A new line of a paste
-/// shows as `↵`, and a tab as a space. While the log has the focus, the
-/// prompt is dim.
-fn prompt_row(chat: &Chat, width: u16) -> (Row<'static>, u16) {
-    const MARK: &str = "> ";
-    let room = usize::from(width).saturating_sub(MARK.len()).max(1);
-    let chars: Vec<char> = chat
-        .prompt
-        .text()
-        .chars()
-        .map(|c| match c {
-            '\n' => '↵',
-            '\t' => ' ',
-            c => c,
-        })
-        .collect();
-    let cursor = chat.prompt.cursor().min(chars.len());
-    // `at[i]` is the width of the first `i` characters.
-    let mut at = vec![0];
-    for c in &chars {
-        let wide = textwrap::core::display_width(c.encode_utf8(&mut [0; 4]));
-        at.push(at[at.len() - 1] + wide);
-    }
-    // The cursor needs a column of its own after the text.
-    let mut start = 0;
-    while start < cursor && at[cursor] - at[start] >= room {
-        start += 1;
-    }
-    let mut end = cursor;
-    while end < chars.len() && at[end + 1] - at[start] <= room {
-        end += 1;
-    }
-    let shown: String = chars[start..end].iter().collect();
-    let x = MARK.len() + at[cursor] - at[start];
+/// The prompt as it shows ([`prompt_rows`]).
+struct PromptRows {
+    /// The rows of the line that show.
+    rows: Vec<Row<'static>>,
+    /// The first row of the line that shows.
+    top: usize,
+    /// The column of the cursor, and its row in `rows`.
+    cursor: (u16, u16),
+}
+
+/// The prompt: the line in rows of `columns` columns of text ([`wrap`]),
+/// at most `most` of them. A longer line shows the rows around the row
+/// of the cursor, from the first row of the last draw when it can. The
+/// first row of the line starts with `> `, and each more row starts
+/// under its text. A new line shows as `↵` and a tab as a space. While
+/// the log has the focus, the prompt is dim.
+fn prompt_rows(chat: &Chat, columns: usize, most: usize) -> PromptRows {
+    let rows = Rows::of(chat.prompt.text(), columns);
+    let cursor = chat.prompt.cursor().min(rows.shown.len());
+    let at = rows.row(cursor);
+    let len = rows.starts.len();
+    let fit = len.min(most);
+    let top = super::sessions::window(chat.window.line_top, at, fit, len);
     let style = match chat.focus {
         Focus::Prompt => Style::new(),
         Focus::Log => DIM,
     };
-    (
-        Row::styled(format!("{MARK}{shown}"), style),
-        u16::try_from(x).unwrap_or(width),
-    )
+    let shown = (top..top + fit)
+        .map(|row| {
+            let head = if row == 0 { MARK } else { UNDER };
+            let text: String = rows.shown[rows.range(row)].iter().collect();
+            Row::styled(format!("{head}{text}"), style)
+        })
+        .collect();
+    let x = MARK.len() + rows.column(cursor);
+    PromptRows {
+        rows: shown,
+        top,
+        cursor: (
+            u16::try_from(x).unwrap_or(u16::MAX),
+            u16::try_from(at - top).unwrap_or(0),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1883,9 +2114,10 @@ mod tests {
     }
 
     /// A bracketed paste of three lines puts the three lines in the
-    /// prompt, at the cursor: the prompt shows each new line as `↵`.
-    /// Enter posts them as one message with the new lines, and the
-    /// message shows each line under the sender.
+    /// prompt, at the cursor: the prompt shows each new line as `↵` at
+    /// the end of a row, and the next line on a new row
+    /// (01M6XXDDYQG7M6WYNRXP35DZ1Y). Enter posts them as one message with
+    /// the new lines, and the message shows each line under the sender.
     #[test]
     fn a_paste_of_three_lines_is_one_message_with_its_new_lines() {
         let mut state = mock_up();
@@ -1896,15 +2128,9 @@ mod tests {
         assert_eq!(state.on_paste(&text), None);
         assert_eq!(state.chat().prompt().text(), "one\ntwo\nthree");
         let (rows, view) = drawn(&mut state, 80, 24);
-        assert_eq!(rows[21], "> one↵two↵three");
+        assert_eq!(rows[19..22], ["> one↵", "  two↵", "  three"]);
         assert_eq!(rows[22], "");
-        assert_eq!(
-            view.cursor,
-            Some(Position::new(
-                u16::try_from("> one↵two↵three".chars().count()).unwrap(),
-                21
-            ))
-        );
+        assert_eq!(view.cursor, Some(Position::new(7, 21)));
         // A paste goes in at the cursor.
         state.on_key(FrameKey::Chat(Key::Home));
         state.on_paste("zero\n");
@@ -2014,27 +2240,166 @@ mod tests {
         assert_eq!(state.chat().focus(), Focus::Log);
     }
 
-    /// A long line in the prompt shows the part around the cursor.
-    #[test]
-    fn a_long_line_in_the_prompt_shows_the_part_at_the_cursor() {
+    /// The line of 200 characters of the tests of the wrap.
+    const LONG: &str = "Mike asked for this: typing in the TUI chat does not wrap lines, \
+                        they just scroll off the screen to the left. Now the line wraps at \
+                        the width of the tab, and the prompt grows up to five rows high now.";
+
+    /// The mock-up with 5 more lines: the log fills the window also at
+    /// 80 x 24.
+    fn full() -> State {
         let mut state = mock_up();
-        let long = "a".repeat(30) + &"b".repeat(30);
-        type_in(&mut state, &long);
+        for n in 0..5 {
+            state.chat_came(said(
+                &format!("13:2{n}"),
+                "riff://brett@strata",
+                &format!("line {n}"),
+            ));
+        }
+        state
+    }
+
+    /// A line of 200 characters wraps after a space
+    /// (01M6XXDDYQG7M6WYNRXP35DZ1Y): on 3 rows at 80 x 24, and on 5 rows
+    /// at 40 x 24, the last 5 of its 6 rows. The cursor is at the end,
+    /// the log has as many rows less, and a click on each row of the
+    /// prompt hits the prompt. A short terminal has a third of the rows
+    /// of the tab.
+    #[test]
+    fn a_line_of_200_characters_shows_on_3_rows_at_80_and_on_5_rows_at_40() {
+        assert_eq!(LONG.chars().count(), 200);
+        let mut state = full();
+        let (before, _) = drawn(&mut state, 80, 24);
+        type_in(&mut state, LONG);
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(
+            rows[19..24],
+            [
+                "> Mike asked for this: typing in the TUI chat does not wrap lines, they just",
+                "  scroll off the screen to the left. Now the line wraps at the width of the",
+                "  tab, and the prompt grows up to five rows high now.",
+                "",
+                " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit",
+            ]
+        );
+        let end = "  tab, and the prompt grows up to five rows high now.".len();
+        assert_eq!(
+            view.cursor,
+            Some(Position::new(u16::try_from(end).unwrap(), 21))
+        );
+        assert_eq!(view.chat.map(|w| w.rows), Some(16));
+        assert_eq!(rows[3..19], before[5..21]);
+        for y in 19..22 {
+            assert_eq!(view.hit(30, y), Some(FrameKey::Chat(Key::Prompt)), "{y}");
+        }
+        assert_eq!(view.hit(30, 18), None);
+
+        let mut state = full();
+        let (before, _) = drawn(&mut state, 40, 24);
+        type_in(&mut state, LONG);
         let (rows, view) = drawn(&mut state, 40, 24);
-        assert_eq!(rows[21], format!("> {}{}", "a".repeat(7), "b".repeat(30)));
-        assert_eq!(view.cursor, Some(Position::new(39, 21)));
-        state.on_key(FrameKey::Chat(Key::Home));
+        assert_eq!(
+            rows[17..22],
+            [
+                "  TUI chat does not wrap lines, they",
+                "  just scroll off the screen to the",
+                "  left. Now the line wraps at the width",
+                "  of the tab, and the prompt grows up",
+                "  to five rows high now.",
+            ]
+        );
+        let end = "  to five rows high now.".len();
+        assert_eq!(
+            view.cursor,
+            Some(Position::new(u16::try_from(end).unwrap(), 21))
+        );
+        assert_eq!(view.chat.map(|w| w.rows), Some(14));
+        assert_eq!(rows[3..17], before[7..21]);
+
+        // 12 rows: the tab has 8, and the line a third of them.
+        let (rows, view) = drawn(&mut state, 80, 12);
+        assert_eq!(
+            rows[8..10],
+            [
+                "  scroll off the screen to the left. Now the line wraps at the width of the",
+                "  tab, and the prompt grows up to five rows high now.",
+            ]
+        );
+        assert_eq!(view.chat.map(|w| w.rows), Some(5));
+    }
+
+    /// `↑`, `↓`, `Home` and `End` move the cursor through the rows of the
+    /// line, and `←` and `→` go over the end of a row
+    /// (01M6XXDDYQG7M6WYNRXP35DZ1Y). A line of more than 5 rows scrolls,
+    /// so that the row of the cursor shows. `↑` on the first row and `↓`
+    /// on the last row show the lines that you sent.
+    #[test]
+    fn the_keys_move_through_the_rows_and_a_long_line_scrolls_to_the_cursor() {
+        let mut state = mock_up();
+        type_in(&mut state, "ok");
+        assert_eq!(
+            state.on_key(FrameKey::Chat(Key::Send)),
+            Some(Action::Post("ok".into()))
+        );
+        type_in(&mut state, LONG);
         let (rows, view) = drawn(&mut state, 40, 24);
-        assert_eq!(rows[21], format!("> {}{}", "a".repeat(30), "b".repeat(8)));
-        assert_eq!(view.cursor, Some(Position::new(2, 21)));
-        // A wide character takes two columns: the buffer has a blank cell
-        // after it.
-        state.on_key(FrameKey::Chat(Key::End));
-        state.on_key(FrameKey::Chat(Key::Clear));
+        assert_eq!(rows[21], "  to five rows high now.");
+        assert_eq!(view.cursor, Some(Position::new(24, 21)));
+        let mut press = |key| {
+            state.on_key(FrameKey::Chat(key));
+            let (rows, view) = drawn(&mut state, 40, 24);
+            (rows, view.cursor.map(|c| (c.x, c.y)))
+        };
+        // Home goes to the start of the line, and the first row shows.
+        let (rows, cursor) = press(Key::Home);
+        assert_eq!(rows[17], "> Mike asked for this: typing in the");
+        assert_eq!(cursor, Some((2, 17)));
+        // ↓ moves one row, to the same column.
+        for (key, x, y) in [(Key::Right, 3, 17), (Key::Down, 3, 18), (Key::Down, 3, 19)] {
+            assert_eq!(press(key).1, Some((x, y)), "{key:?}");
+        }
+        // The row of the cursor shows: the rows scroll by one.
+        press(Key::Down);
+        press(Key::Down);
+        let (rows, cursor) = press(Key::Down);
+        assert_eq!(rows[17], "  TUI chat does not wrap lines, they");
+        assert_eq!(rows[21], "  to five rows high now.");
+        assert_eq!(cursor, Some((3, 21)));
+        // ↑ in the window does not scroll.
+        let (rows, cursor) = press(Key::Up);
+        assert_eq!(rows[17], "  TUI chat does not wrap lines, they");
+        assert_eq!(cursor, Some((3, 20)));
+        // End goes to the end of the line, and ↑ to the same column, or
+        // to the end of a shorter row.
+        assert_eq!(press(Key::End).1, Some((24, 21)));
+        assert_eq!(press(Key::Up).1, Some((24, 20)));
+        // ← at the start of a row goes to the end of the row before it,
+        // and → back.
+        press(Key::Home);
+        assert_eq!(press(Key::Down).1, Some((2, 18)));
+        assert_eq!(press(Key::Left).1, Some((36, 17)));
+        assert_eq!(press(Key::Right).1, Some((2, 18)));
+        // ↑ on the first row shows the line that you sent, and ↓ on its
+        // last row the line that you type, with the cursor at its end.
+        press(Key::Up);
+        let (rows, cursor) = press(Key::Up);
+        assert_eq!(rows[21], "> ok");
+        assert_eq!(cursor, Some((4, 21)));
+        let (rows, cursor) = press(Key::Down);
+        assert_eq!(rows[21], "  to five rows high now.");
+        assert_eq!(cursor, Some((24, 21)));
+    }
+
+    /// A wide character takes two columns: the buffer has a blank cell
+    /// after it, and a row has room for 19 of them at 40 columns.
+    #[test]
+    fn a_wide_character_takes_two_columns_of_a_row() {
+        let mut state = mock_up();
         type_in(&mut state, &"日".repeat(25));
         let (rows, view) = drawn(&mut state, 40, 24);
-        assert_eq!(rows[21], format!("> {}", "日 ".repeat(18).trim_end()));
-        assert_eq!(view.cursor, Some(Position::new(38, 21)));
+        assert_eq!(rows[20], format!("> {}", "日 ".repeat(19).trim_end()));
+        assert_eq!(rows[21], format!("  {}", "日 ".repeat(6).trim_end()));
+        assert_eq!(view.cursor, Some(Position::new(14, 21)));
     }
 
     /// The text of a line from the thread is safe: no escape reaches the

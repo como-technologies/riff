@@ -3805,7 +3805,9 @@ until you send the next line.
 | `Enter` | Send the line. |
 | `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `6`, `?` and `q`. |
 | `i`, `Enter` | Go back to the prompt. |
-| `↑`, `↓` | Show a line that you sent. Out of the prompt: scroll one row. |
+| `↑`, `↓` | Move the cursor one row in a long line. On the first row, `↑` shows a line that you sent, and on the last row, `↓` shows the next one. Out of the prompt: scroll one row. |
+| `←`, `→` | Move the cursor one character, also over the end of a row. |
+| `Home`, `End` | Go to the start or the end of the line. Out of the prompt: show the oldest or the newest line. |
 | `PgUp`, `PgDn` | Show older or newer lines. |
 | `g`, `G` | Out of the prompt: show the oldest or the newest line. |
 | `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. |
@@ -3839,13 +3841,36 @@ the tab: `2 Chat•3` is three new lines. While the TUI cannot reach the
 chat, the row under the header says `(reconnecting…)`. `riff chat`
 stays: use it in a pipe, or in a split of tmux next to a lead.
 
+#### Type a long line
+
+A long line wraps at the width of the tab, after a space when it can.
+The prompt grows up by one row for each row of the line, and the log
+above it has as many rows less:
+
+```text
+ 13:12 <riff> #1608 merged
+> @riff please look at the plan of wave 52, and tell me which item goes first:
+  the highlight in riff chat, or /msg. Then start it, and tell me when its pull
+  request is open.
+```
+
+The prompt has at most 5 rows, and in a short terminal at most a third
+of the rows of the tab. A longer line scrolls by rows, so that the row
+of the cursor shows. Move through the rows with `↑`, `↓`, `←`, `→`,
+`Home` and `End`: see the table of keys above.
+
 #### Paste lines into the chat
 
 Paste text into the prompt of the Chat tab, for example the error of a
-command. The new lines stay. The prompt shows each one as `↵`:
+command. The new lines stay. The prompt shows each one as `↵` at the
+end of a row, and the next line on a new row:
 
 ```text
-> riff lead start failed:↵{↵  "step": "attach",↵  "error": "no lead"↵}
+> riff lead start failed:↵
+  {↵
+    "step": "attach",↵
+    "error": "no lead"↵
+  }
 ```
 
 Press Enter. The lines go as one message, and the log shows each one

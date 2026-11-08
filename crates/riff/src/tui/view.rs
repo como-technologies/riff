@@ -164,8 +164,8 @@ pub struct View {
     /// The place of the cursor of the terminal: the prompt of the Chat
     /// tab. `None` hides the cursor.
     pub cursor: Option<Position>,
-    /// The window of the log of the Chat tab, while it shows
-    /// ([`State::drawn`](super::State::drawn)).
+    /// The window of the log and of the line of the Chat tab, while it
+    /// shows ([`State::drawn`](super::State::drawn)).
     pub chat: Option<chat::Window>,
     /// True when the Sessions tab shows its detail pane.
     pub pane: bool,
@@ -663,7 +663,7 @@ fn key_line(
 /// assert_eq!(help_keys(Tab::Machines)[0], ("↑ ↓ j k", "select a host"));
 /// assert!(help_keys(Tab::Waves).contains(&("q, Ctrl-C", "end the TUI")));
 /// assert!(help_keys(Tab::Machines).contains(&("q, Ctrl-C", "end the TUI")));
-/// assert_eq!(help_keys(Tab::Chat)[7], ("/me TEXT", "send an action"));
+/// assert_eq!(help_keys(Tab::Chat)[8], ("/me TEXT", "send an action"));
 /// assert!(help_keys(Tab::Chat).contains(&("q, Ctrl-C", "end the TUI")));
 /// ```
 pub fn help_keys(tab: Tab) -> Vec<(&'static str, &'static str)> {
