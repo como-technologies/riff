@@ -35,13 +35,29 @@
 //! When a host has no part in a repository any more, its daemon stops
 //! serving it, and removes the main clone that it made for it
 //! ([`crate::daemon::Daemon::retire`]).
+//!
+//! After `riff leave`, the sessions that run go on to their end. The
+//! daemon adds each repository where the host gives no workers and still
+//! runs sessions to its status and its facts, with those sessions
+//! ([`leaving`], 01M6WJYQJ58MHQF1XPXXZW2ET6). At the look after its last
+//! session, when the daemon serves the repository no more, the facts name
+//! the repository with no session: the host left it
+//! ([`crate::daemon::facts::look`]).
+//!
+//! ```mermaid
+//! stateDiagram-v2
+//!     workers --> leaving: riff leave, 3 sessions run
+//!     leaving --> leaving: a session ends, 2 run
+//!     leaving --> left: the last session ends
+//!     left --> [*]: the next look
+//! ```
 
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
-use riff_client::daemons::{Parts, RepoParts};
+use riff_client::daemons::{Leaving, Parts, RepoParts};
 
 /// The file of the parts of the host, in the folder of the daemon.
 pub const FILE: &str = "parts.json";
@@ -154,6 +170,49 @@ pub fn shown(dir: &Path) -> Vec<RepoParts> {
         .into_iter()
         .filter(|(_, parts)| !parts.none())
         .map(|(repo, parts)| RepoParts { repo, parts })
+        .collect()
+}
+
+/// The repositories where the host takes no new claim and still runs
+/// sessions (01M6WJYQJ58MHQF1XPXXZW2ET6): each repository of `sessions`
+/// where `parts` gives the host no part workers, in order, with the
+/// sessions that still run there. `sessions` holds the repository and the
+/// name of the container of each live session but the lead. A `riff
+/// leave` makes them: the sessions go on to their end.
+///
+/// ```
+/// use riff::daemon::parts::leaving;
+/// use riff_client::daemons::{Parts, RepoParts};
+///
+/// let parts = [RepoParts { repo: "o/s".into(), parts: Parts { workers: true, lead: false } }];
+/// let sessions = [
+///     ("o/r", "riff-issue-12-1a2b3c4d"),
+///     ("o/s", "riff-issue-7-2b3c4d5e"),
+///     ("o/r", "riff-issue-13-3c4d5e6f"),
+/// ];
+/// let found = leaving(&parts, sessions);
+/// assert_eq!(found.len(), 1, "the host gives workers to o/s");
+/// assert_eq!(found[0].repo, "o/r");
+/// assert_eq!(found[0].sessions, ["riff-issue-12-1a2b3c4d", "riff-issue-13-3c4d5e6f"]);
+/// assert!(leaving(&parts, []).is_empty());
+/// ```
+pub fn leaving<'a>(
+    parts: &[RepoParts],
+    sessions: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Vec<Leaving> {
+    let workers = |repo: &str| parts.iter().any(|p| p.repo == repo && p.parts.workers);
+    let mut found: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for (repo, name) in sessions {
+        if !workers(repo) {
+            found.entry(repo).or_default().push(name.to_owned());
+        }
+    }
+    found
+        .into_iter()
+        .map(|(repo, sessions)| Leaving {
+            repo: repo.to_owned(),
+            sessions,
+        })
         .collect()
 }
 

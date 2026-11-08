@@ -356,6 +356,77 @@ async fn a_long_step_shows_and_a_failed_step_wakes_the_lead() {
     );
 }
 
+/// 01M6WJYQJ58MHQF1XPXXZW2ET6: after `riff leave`, the block of the host
+/// in `riff who` names the repository that the host is leaving and the
+/// sessions that go on to their end, under its parts. A host that left
+/// shows `left REPO`.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_block_of_a_host_names_the_repository_that_it_is_leaving() {
+    use riff_client::daemons::{Facts, Leaving, Parts, RepoParts};
+
+    let server = start_server().await;
+    let dir = repo();
+    let dir = dir.path();
+    // The session of the daemon of mike on thelio sends its facts.
+    let daemon: SessionUri = format!("riff://mike@thelio/{THREAD}?session=d1")
+        .parse()
+        .unwrap();
+    let api = server.api("mike", Some("d1"));
+    api.register(&daemon).await.unwrap();
+    let _watch = api.watch(&daemon).await.unwrap();
+    let sessions = [
+        "riff-issue-12-1a2b3c4d",
+        "riff-issue-13-2b3c4d5e",
+        "riff-verify-issue-9-3c4d5e6f",
+    ];
+    let mut facts = Facts {
+        build: "3.1.0".into(),
+        limit: 4,
+        floor_gb: 8,
+        parts: vec![RepoParts {
+            repo: "n8behavior/sens-o-matic".into(),
+            parts: Parts {
+                workers: true,
+                lead: false,
+            },
+        }],
+        leaving: vec![Leaving {
+            repo: THREAD.into(),
+            sessions: sessions.map(String::from).to_vec(),
+        }],
+        ..Facts::default()
+    };
+    api.machine(&daemon, &facts.line()).await.unwrap();
+    let who = output(riff(&server, dir, None, &["who", "--color", "never"])).await;
+    let block: Vec<&str> = who
+        .lines()
+        .skip_while(|line| !line.starts_with("mike@thelio "))
+        .collect();
+    let parts = block
+        .iter()
+        .position(|l| *l == "  parts n8behavior/sens-o-matic workers");
+    let leaving = block
+        .iter()
+        .position(|l| *l == "  leaving como-technologies/riff: 3 sessions go on to their end");
+    assert!(
+        parts.is_some() && leaving == parts.map(|at| at + 1),
+        "{who}"
+    );
+    // The book shows the same two lines.
+    let book = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/development.md"),
+    )
+    .unwrap();
+    let shown = format!("\n{}\n{}\n", block[parts.unwrap()], block[leaving.unwrap()]);
+    assert!(book.contains(&shown), "{shown}");
+
+    // The last session ended: the host left the repository.
+    facts.leaving[0].sessions.clear();
+    api.machine(&daemon, &facts.line()).await.unwrap();
+    let who = output(riff(&server, dir, None, &["who", "--color", "never"])).await;
+    assert!(who.contains("\n  left como-technologies/riff\n"), "{who}");
+}
+
 /// Each `riff who` command in the `sh` blocks of How It Works is real,
 /// and the book shows `--color`.
 #[test]

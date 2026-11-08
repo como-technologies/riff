@@ -6583,6 +6583,9 @@ pub fn daemon_facts(
     if !facts.parts.is_empty() {
         lines.push(vec![(parts_line(&facts.parts), plain())]);
     }
+    for leaving in &facts.leaving {
+        lines.push(vec![(leaving_line(leaving), plain())]);
+    }
     for wave in &facts.waves {
         let line = format!("wave {}: {}", safe(&wave.repo), safe(&wave.word));
         let image = match &wave.image {
@@ -6642,6 +6645,37 @@ pub fn parts_line(parts: &[riff_client::daemons::RepoParts]) -> String {
         .map(|p| format!("{} {}", safe(&p.repo), p.parts.word()))
         .collect();
     format!("parts {}", list.join(", "))
+}
+
+/// A repository where a host takes no new claim and still runs sessions,
+/// on one line, for `riff who`, `riff top` and the detail of the Machines
+/// tab (01M6WJYQJ58MHQF1XPXXZW2ET6): the repository and the sessions that
+/// go on to their end. With no session, the host left the repository.
+///
+/// ```
+/// use riff_client::daemons::Leaving;
+///
+/// let leaving = |n: usize| Leaving {
+///     repo: "como-technologies/riff".into(),
+///     sessions: (0..n).map(|i| format!("riff-issue-{i}-1a2b3c4d")).collect(),
+/// };
+/// assert_eq!(
+///     riff::text::leaving_line(&leaving(3)),
+///     "leaving como-technologies/riff: 3 sessions go on to their end"
+/// );
+/// assert_eq!(
+///     riff::text::leaving_line(&leaving(1)),
+///     "leaving como-technologies/riff: 1 session goes on to its end"
+/// );
+/// assert_eq!(riff::text::leaving_line(&leaving(0)), "left como-technologies/riff");
+/// ```
+pub fn leaving_line(leaving: &riff_client::daemons::Leaving) -> String {
+    let repo = safe(&leaving.repo);
+    match leaving.sessions.len() {
+        0 => format!("left {repo}"),
+        1 => format!("leaving {repo}: 1 session goes on to its end"),
+        n => format!("leaving {repo}: {n} sessions go on to their end"),
+    }
 }
 
 /// The real-session test that a daemon runs, on one line
@@ -6984,6 +7018,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     waiting: vec![],
 ///     waves: vec![],
 ///     parts: vec![],
+///     leaving: vec![],
 ///     jobs: 0,
 ///     test: None,
 ///     mcp: vec![],
@@ -8103,6 +8138,7 @@ pub const INIT_CONTAINER_DONE: &str =
 ///     waiting: vec![],
 ///     waves: vec![],
 ///     parts: vec![],
+///     leaving: vec![],
 ///     jobs: 0,
 ///     test: None,
 ///     mcp: vec![],

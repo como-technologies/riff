@@ -18,13 +18,13 @@
 //!  limit 3 sessions and a floor of 8 GB · 1 start waits · 1 job
 //!  at its limit: 3 of 3 sessions live, a new start waits for room
 //!  low on memory: the daemon starts no session until 8 GB are free
+//!  parts como-technologies/riff workers and lead
 //!  wave como-technologies/riff: started issue-1594
 //!  sessions: 5b1e2a90 works · 9c0d1e2f works · 3a3f8d5d ends
 //!
 //! ──the link and the server ──────────────────────────────────────────────────────
 //!  link ok: 118 ms · 1 reconnect · riff-server build 10df8a4, same as yours
 //!  GitHub: 4,210 of 5,000 points left · riff spent 310, others 480, in the hour
-//!
 //!
 //!
 //!
@@ -60,6 +60,40 @@
 //! the disk, rounded to the nearest percent
 //! ([`riff_client::machines::Disk::used_percent`],
 //! 01M6VJQPG6RM3Q4QAJEHFJ6RQK).
+//!
+//! # A host that leaves a repository
+//!
+//! After `riff leave`, a host takes no new claim for the repository, and
+//! its sessions there go on to their end. Its daemon names the
+//! repository and those sessions in its facts
+//! ([`riff_client::daemons::Leaving`], 01M6WJYQJ58MHQF1XPXXZW2ET6). The
+//! row of the host gets a line under it for each repository that it
+//! leaves ([`marks`], 01M6WJYQN2WY5NH3DVDBAAY8ST), with the short name of
+//! the repository: `leaving riff: 3 to end`, and `left riff` at the look
+//! after the last session. A host that gives workers to no repository
+//! gets `takes no work`. The detail lists the parts of the host by
+//! repository, and the sessions of each repository that it leaves. A
+//! mark is no fault: the order of the rows stays. When the hosts do not
+//! fit, the rows scroll by lines, so the selected row shows with its
+//! marks. The screen after `riff leave --host pangolin`, with pangolin
+//! selected:
+//!
+//! ```text
+//!  3 hosts · 1 at its limit · 1 low on memory
+//!      HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN
+//!    ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   79%   1     0s
+//!  >   pangolin   3/4   3.1/16   14/32 GB    90/200 GB   55%   0     12s
+//!                 leaving riff: 3 to end
+//!      strata-ci  0/2   0.4/8    30/64 GB    140/500 GB  72%   0     28s
+//!
+//! ──pangolin · riff daemon build d2ae080 ─────────────────────────────────────────
+//!  cpu 16x4500MHz (now 4400MHz), mem 32GB, 14GB available, load 3.10
+//!  limit 4 sessions and a floor of 8 GB · 0 starts wait
+//!  parts n8behavior/sens-o-matic workers
+//!  leaving como-technologies/riff: 3 sessions go on to their end
+//!    issue-1610 works · issue-1611 works · issue-1612 ends
+//!  sessions: 7a8b9c0d works · 1e2f3a4b works · 5c6d7e8f ends
+//! ```
 //!
 //! # The wide rows
 //!
@@ -424,6 +458,71 @@ pub fn stopping_sign_ins(facts: &Facts) -> Vec<String> {
         stops.push(format!("claude token {}", facts.claude_token.word()));
     }
     stops
+}
+
+/// The marks under the row of a host with the facts `facts`
+/// (01M6WJYQN2WY5NH3DVDBAAY8ST), a line each: `leaving riff: 3 to end`
+/// for each repository where the host takes no new claim and still runs
+/// sessions, with the short name of the repository, `left riff` when no
+/// session of it runs any more, and `takes no work` when the host gives
+/// workers to no repository. A mark is no fault: it does not change the
+/// order of the rows.
+///
+/// ```
+/// use riff::tui::machines::marks;
+/// use riff_client::daemons::{Facts, Leaving, Parts, RepoParts};
+///
+/// let workers = Parts { workers: true, lead: false };
+/// let gives = Facts {
+///     parts: vec![RepoParts { repo: "n8behavior/sens-o-matic".into(), parts: workers }],
+///     ..Facts::default()
+/// };
+/// assert!(marks(&gives).is_empty());
+/// let riff = |n: usize| Leaving {
+///     repo: "como-technologies/riff".into(),
+///     sessions: vec!["riff-issue-12-1a2b3c4d".into(); n],
+/// };
+/// let leaving = Facts { leaving: vec![riff(3)], ..gives.clone() };
+/// assert_eq!(marks(&leaving), ["leaving riff: 3 to end"]);
+/// let left = Facts { leaving: vec![riff(0)], ..gives };
+/// assert_eq!(marks(&left), ["left riff"]);
+/// // A host with no part workers takes no work: one with no part at
+/// // all, and one that runs a lead only.
+/// assert_eq!(
+///     marks(&Facts { parts: vec![], ..leaving }),
+///     ["leaving riff: 3 to end", "takes no work"]
+/// );
+/// let lead = Parts { workers: false, lead: true };
+/// let lead = Facts { parts: vec![RepoParts { repo: "o/r".into(), parts: lead }], ..Facts::default() };
+/// assert_eq!(marks(&lead), ["takes no work"]);
+/// ```
+pub fn marks(facts: &Facts) -> Vec<String> {
+    let mut marks: Vec<String> = facts
+        .leaving
+        .iter()
+        .map(|leaving| {
+            let repo = safe(super::waves::short_repo(&leaving.repo));
+            if leaving.left() {
+                format!("left {repo}")
+            } else {
+                format!("leaving {repo}: {} to end", leaving.sessions.len())
+            }
+        })
+        .collect();
+    if !facts.parts.iter().any(|p| p.parts.workers) {
+        marks.push("takes no work".to_owned());
+    }
+    marks
+}
+
+/// The session of `facts` with the container `name`, for the detail of
+/// a host (01M6WJYQN2WY5NH3DVDBAAY8ST): its item and its phase, or the
+/// name when the facts do not list the session.
+fn session_word(facts: &Facts, name: &str) -> String {
+    match facts.sessions.iter().find(|s| s.name == name) {
+        Some(s) => format!("{} {}", safe(&s.item), text::phase_word(s.phase)),
+        None => safe(name),
+    }
 }
 
 /// The process of the daemon of this host, from its socket.
@@ -1214,7 +1313,9 @@ pub fn daemon_build(build: &str) -> String {
 
 /// The lines of the detail of `row` (01M6VFD0EXECEEVNN969SAPV4C): the
 /// numbers of its machine, its limit and its floor with the starts that
-/// wait, a line for each fault, its waves and its sessions.
+/// wait, a line for each fault, its parts by repository, each repository
+/// that it left with the sessions that still run
+/// (01M6WJYQN2WY5NH3DVDBAAY8ST), its waves and its sessions.
 fn detail_lines(row: &Row) -> Vec<Line<'static>> {
     let facts = &row.facts;
     let mut lines = Vec::new();
@@ -1238,6 +1339,22 @@ fn detail_lines(row: &Row) -> Vec<Line<'static>> {
     lines.push(Line::raw(limit));
     for fault in &row.faults {
         lines.push(Line::styled(fault.line(facts), WARNING));
+    }
+    lines.push(Line::raw(if facts.parts.is_empty() {
+        "parts none".to_owned()
+    } else {
+        text::parts_line(&facts.parts)
+    }));
+    for leaving in &facts.leaving {
+        lines.push(Line::raw(text::leaving_line(leaving)));
+        if !leaving.left() {
+            let sessions: Vec<String> = leaving
+                .sessions
+                .iter()
+                .map(|name| session_word(facts, name))
+                .collect();
+            lines.push(Line::raw(format!("  {}", sessions.join(" · "))));
+        }
     }
     for wave in &facts.waves {
         lines.push(Line::raw(format!(
@@ -1455,11 +1572,7 @@ pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Plac
     } else {
         detail.len() + 2
     };
-    let list = rows
-        .len()
-        .min(room.saturating_sub(detail_rows.min(room / 2)));
-    let first = if at < list { 0 } else { at + 1 - list };
-    let shown = first..first + list;
+    let (shown, list) = window(&rows, at, room.saturating_sub(detail_rows.min(room / 2)));
     let columns: &[(Column, usize)] = match layout {
         Layout::Wide if area.width >= view::WIDER => &WIDER_COLUMNS,
         Layout::Wide => &WIDE_COLUMNS,
@@ -1472,6 +1585,9 @@ pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Plac
         &mut placed,
     );
     push(heads_line(columns), false, &mut placed);
+    // The marks of a row go under it, in the column after the host.
+    let indent = 4 + columns.first().map_or(0, |(_, width)| *width);
+    let mut lines_left = list;
     for index in shown {
         let row = &rows[index];
         let choice = if index == at {
@@ -1487,15 +1603,18 @@ pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Plac
                 Mark::Blocked.style(),
             )
         };
-        hits.push(Hit {
-            area: Rect::new(area.x, next_row(&placed), area.width, 1),
-            key: Key::Row(index),
-        });
-        push(
-            columns_line(vec![choice, mark], row, &name_of(&all, row), columns),
-            false,
-            &mut placed,
-        );
+        let line = columns_line(vec![choice, mark], row, &name_of(&all, row), columns);
+        let under = marks(&row.facts)
+            .into_iter()
+            .map(|mark| Line::raw(format!("{:indent$}{mark}", "")));
+        for line in std::iter::once(line).chain(under).take(lines_left) {
+            hits.push(Hit {
+                area: Rect::new(area.x, next_row(&placed), area.width, 1),
+                key: Key::Row(index),
+            });
+            push(line, false, &mut placed);
+            lines_left -= 1;
+        }
     }
     // The detail gets the rows that the hosts leave: a blank row, the
     // title, and as many lines as fit.
@@ -1523,6 +1642,26 @@ pub fn body(state: &State, area: Rect, layout: Layout, now_ms: i64) -> (Vec<Plac
         }
     }
     (placed, hits)
+}
+
+/// The rows of `rows` that show in `lines` lines with the selected row
+/// `at`, and the lines that they take (01M6VFD0M3RHT488D0RQ84RVMC): a row
+/// takes a line, and a line for each of its [`marks`]
+/// (01M6WJYQN2WY5NH3DVDBAAY8ST). The rows scroll with the selection, so
+/// the selected row and its marks show. The last row that shows can lose
+/// its last marks.
+fn window(rows: &[Row], at: usize, lines: usize) -> (std::ops::Range<usize>, usize) {
+    let height = |row: &Row| 1 + marks(&row.facts).len();
+    let mut first = 0;
+    while first < at && rows[first..=at].iter().map(height).sum::<usize>() > lines {
+        first += 1;
+    }
+    let (mut end, mut used) = (first, 0);
+    while end < rows.len() && used < lines {
+        used += height(&rows[end]);
+        end += 1;
+    }
+    (first..end, used.min(lines))
 }
 
 /// The note when the loop starts [`set_limit`].
@@ -1578,7 +1717,7 @@ mod tests {
     use crate::tui::view::{compute_view, render};
     use crate::tui::{News, text_block};
     use ratatui::buffer::Buffer;
-    use riff_client::daemons::{Caps, Session, Wave};
+    use riff_client::daemons::{Caps, Leaving, Parts, RepoParts, Session, Wave};
     use riff_client::sessions::Phase;
     use riff_core::wire::{MachineInfo, RiffOwner, SessionInfo};
 
@@ -1625,13 +1764,25 @@ mod tests {
         }
     }
 
-    /// Facts of a fine host: podman, each sign-in on, and caps of 8
-    /// CPUs and 8 GB.
+    /// The part `workers` in `repo`.
+    fn workers(repo: &str) -> RepoParts {
+        RepoParts {
+            repo: repo.into(),
+            parts: Parts {
+                workers: true,
+                lead: false,
+            },
+        }
+    }
+
+    /// Facts of a fine host: the part workers in como-technologies/riff,
+    /// podman, each sign-in on, and caps of 8 CPUs and 8 GB.
     fn fine(limit: u32, machine: Machine, disk: Disk) -> Facts {
         Facts {
             build: "0.1.0 d2ae0801c0de 2026-11-06T12:00:00Z".into(),
             limit,
             floor_gb: 8,
+            parts: vec![workers("como-technologies/riff")],
             machine: Some(machine),
             disk: Some(disk),
             caps: Some(Caps {
@@ -1648,7 +1799,8 @@ mod tests {
 
     /// The status of the daemon of thelio on its socket: pid 4242, up 2
     /// days, a limit of 3 sessions, three sessions and a lead, one start
-    /// that waits, one wave and one job, and the GitHub points.
+    /// that waits, one wave and one job, the parts workers and lead, and
+    /// the GitHub points.
     fn thelio_status() -> crate::daemon::Status {
         let live = |name: &str, item: &str, phase: &str| {
             serde_json::json!({
@@ -1670,6 +1822,7 @@ mod tests {
             "limit": {"sessions": 3, "floor_gb": 8, "cpus": 8, "memory_gb": 8},
             "waiting": ["riff-issue-1601-1c2d3e4f"],
             "waves": [{"repo": "como-technologies/riff", "word": "started issue-1594"}],
+            "parts": [{"repo": "como-technologies/riff", "workers": true, "lead": true}],
             "jobs": 1,
         }))
         .unwrap();
@@ -1842,8 +1995,13 @@ mod tests {
         let screen = drawn(&mock_up(), 80, 24);
         let wider = drawn(&mock_up(), 132, 24);
         let filter = drawn(&filtered(), 80, 24);
+        let leaves = drawn(&leaving(), 80, 24);
         let doc = include_str!("machines.rs");
         assert_eq!(text_block(doc, "//! # Design", "//! "), screen);
+        assert_eq!(
+            text_block(doc, "//! # A host that leaves a repository", "//! "),
+            leaves[2..16]
+        );
         assert_eq!(text_block(doc, "//! # The wide rows", "//! "), wider[3..7]);
         assert_eq!(text_block(doc, "//! # The filter", "//! "), filter[2..5]);
         let book = std::fs::read_to_string(concat!(
@@ -1852,7 +2010,8 @@ mod tests {
         ))
         .unwrap();
         let block = |after: &str| text_block(&book, after, "");
-        assert_eq!(block("#### See the hosts in the TUI"), screen[2..19]);
+        assert_eq!(block("#### See the hosts in the TUI"), screen[2..20]);
+        assert_eq!(block("After `riff leave --host pangolin`"), leaves[2..16]);
         assert_eq!(block("In a terminal of 120 columns or more"), wider[3..7]);
         assert_eq!(block("#### Filter the hosts in the TUI"), filter[2..5]);
     }
@@ -1877,9 +2036,9 @@ mod tests {
         .to_vec();
         want.push(ruled("thelio · riff daemon pid 4242, up 2d", 132));
         let narrow = drawn(&state, 80, 24);
-        want.extend(narrow[9..16].iter().cloned());
+        want.extend(narrow[9..17].iter().cloned());
         want.push(ruled("the link and the server", 132));
-        want.extend(narrow[17..19].iter().cloned());
+        want.extend(narrow[18..20].iter().cloned());
         want.resize(23, String::new());
         want.push(
             " ↑↓ select  Enter sessions of the host  l limit  / filter  r read again  ? help  q quit"
@@ -2091,6 +2250,7 @@ mod tests {
                 " limit 3 sessions and a floor of 8 GB · 1 start waits · 1 job",
                 " at its limit: 3 of 3 sessions live, a new start waits for room",
                 " low on memory: the daemon starts no session until 8 GB are free",
+                " parts como-technologies/riff workers and lead",
                 " wave como-technologies/riff: started issue-1594",
                 " sessions: 5b1e2a90 works · 9c0d1e2f works · 3a3f8d5d ends",
                 "",
@@ -2143,6 +2303,180 @@ mod tests {
         want.resize(23, String::new());
         want.push("↑↓ select  l limit  ? help  q quit".into());
         assert_eq!(drawn(&state, 40, 24), want);
+    }
+
+    /// The state of [`mock_up`] after `riff leave --host pangolin` in
+    /// como-technologies/riff (01M6WJYQN2WY5NH3DVDBAAY8ST): pangolin gives
+    /// workers to n8behavior/sens-o-matic only, and its 3 sessions of
+    /// como-technologies/riff go on to their end. Pangolin is selected.
+    fn leaving() -> State {
+        let mut state = mock_up();
+        let (look, at) = state.last_look().unwrap();
+        let mut look = look.clone();
+        let sent = look
+            .who
+            .sessions
+            .iter_mut()
+            .find(|s| s.uri.place().host() == "pangolin")
+            .unwrap();
+        let mut facts = Facts::parse(&sent.machine.as_ref().unwrap().numbers).unwrap();
+        facts
+            .sessions
+            .push(session("5c6d7e8f", "issue-1612", Phase::Ends));
+        facts.parts = vec![workers("n8behavior/sens-o-matic")];
+        facts.leaving = vec![Leaving {
+            repo: "como-technologies/riff".into(),
+            sessions: facts.sessions.iter().map(|s| s.name.clone()).collect(),
+        }];
+        *sent = daemon("mike", "pangolin", &facts, 12);
+        state.looked(look, at);
+        state.on_key(Key::Down);
+        state
+    }
+
+    /// 01M6WJYQN2WY5NH3DVDBAAY8ST: at 80 x 24, a host that left a
+    /// repository with 3 sessions shows `leaving riff: 3 to end` under its
+    /// row. Its detail lists its parts, and the sessions that go on to
+    /// their end. Leaving is no fault: the order of the rows and the count
+    /// of the faults stay.
+    #[test]
+    fn a_host_that_leaves_a_repository_at_80_x_24_shows_its_sessions_to_end() {
+        let rows = drawn(&leaving(), 80, 24);
+        let want: Vec<String> = [
+            " 3 hosts · 1 at its limit · 1 low on memory",
+            "     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN",
+            "   ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   79%   1     0s",
+            " >   pangolin   3/4   3.1/16   14/32 GB    90/200 GB   55%   0     12s",
+            "                leaving riff: 3 to end",
+            "     strata-ci  0/2   0.4/8    30/64 GB    140/500 GB  72%   0     28s",
+            "",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(rows[2..9], want);
+        assert_eq!(rows[9], ruled("pangolin · riff daemon build d2ae080", 80));
+        assert_eq!(
+            rows[12..16],
+            [
+                " parts n8behavior/sens-o-matic workers",
+                " leaving como-technologies/riff: 3 sessions go on to their end",
+                "   issue-1610 works · issue-1611 works · issue-1612 ends",
+                " sessions: 7a8b9c0d works · 1e2f3a4b works · 5c6d7e8f ends",
+            ]
+        );
+        // A click on the mark selects the host of the row.
+        let mut state = leaving();
+        state.on_key(Key::First);
+        let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
+        assert_eq!(view.hit(20, 6), Some(Key::Row(1)));
+        assert_eq!(view.hit(20, 7), Some(Key::Row(2)));
+    }
+
+    /// 01M6WJYQN2WY5NH3DVDBAAY8ST: at 40 x 24, the narrow layout shows the
+    /// mark under the row too.
+    #[test]
+    fn a_host_that_leaves_a_repository_at_40_x_24_shows_the_mark() {
+        let rows = drawn(&leaving(), 40, 24);
+        assert_eq!(
+            rows[2..9],
+            [
+                "3 hosts · 1 needs a look",
+                "    HOST       WORK  LOAD    MEM GB",
+                "  ! thelio     3/3   19.0/32 2/124 !",
+                ">   pangolin   3/4   3.1/16  14/32",
+                "               leaving riff: 3 to end",
+                "    strata-ci  0/2   0.4/8   30/64",
+                "",
+            ]
+        );
+    }
+
+    /// 01M6WJYQN2WY5NH3DVDBAAY8ST: when the last session ends, the host
+    /// shows `left riff` until the next look. A host that gives workers to
+    /// no repository shows `takes no work`, under the marks of the
+    /// repositories that it left.
+    #[test]
+    fn a_host_that_left_shows_left_and_a_host_with_no_workers_takes_no_work() {
+        let row = |facts: Facts| {
+            let mut state = leaving();
+            let (look, at) = state.last_look().unwrap();
+            let mut look = look.clone();
+            let sent = look
+                .who
+                .sessions
+                .iter_mut()
+                .find(|s| s.uri.place().host() == "pangolin")
+                .unwrap();
+            *sent = daemon("mike", "pangolin", &facts, 12);
+            state.looked(look, at);
+            drawn(&state, 80, 24)
+        };
+        let (look, _) = leaving()
+            .last_look()
+            .map(|(l, at)| (l.clone(), at))
+            .unwrap();
+        let facts = rows(&look)
+            .into_iter()
+            .find(|r| r.name.host == "pangolin")
+            .unwrap()
+            .facts;
+        let mut left = facts.clone();
+        left.leaving[0].sessions.clear();
+        left.sessions.clear();
+        let rows = row(left.clone());
+        assert_eq!(rows[6], "                left riff");
+        assert!(
+            rows.contains(&" left como-technologies/riff".to_owned()),
+            "{rows:#?}"
+        );
+        let none = Facts {
+            parts: vec![],
+            ..left
+        };
+        let rows = row(none);
+        assert_eq!(
+            rows[6..8],
+            ["                left riff", "                takes no work"]
+        );
+        assert!(rows.contains(&" parts none".to_owned()), "{rows:#?}");
+        assert!(rows[8].starts_with("     strata-ci "), "{rows:#?}");
+    }
+
+    /// 01M6WJYQN2WY5NH3DVDBAAY8ST, 01M6VFD0M3RHT488D0RQ84RVMC: when the
+    /// hosts do not fit, the rows scroll by lines: the selected row and its
+    /// marks show, and the first line shows the place of the rows.
+    #[test]
+    fn the_rows_scroll_by_lines_with_the_marks() {
+        let row = |host: &str, marks: usize| {
+            let leaving = (0..marks)
+                .map(|i| Leaving {
+                    repo: format!("o/r{i}"),
+                    sessions: vec!["riff-issue-1-1a2b3c4d".into()],
+                })
+                .collect();
+            let facts = Facts {
+                parts: vec![workers("o/w")],
+                leaving,
+                ..Facts::default()
+            };
+            let name = Name {
+                user: "mike".into(),
+                host: host.into(),
+            };
+            Row::new(name, 0, facts, None)
+        };
+        let rows = [row("a", 0), row("b", 2), row("c", 0), row("d", 1)];
+        // All fit in 7 lines.
+        assert_eq!(window(&rows, 0, 7), (0..4, 7));
+        // In 4 lines, from the first row: a, b and its 2 marks.
+        assert_eq!(window(&rows, 0, 4), (0..2, 4));
+        // d and its mark show at the end.
+        assert_eq!(window(&rows, 3, 4), (2..4, 3));
+        // c: b loses its place, and d loses its mark.
+        assert_eq!(window(&rows, 2, 2), (2..4, 2));
+        // A row that does not fit loses its marks.
+        assert_eq!(window(&rows, 1, 2), (1..2, 2));
+        assert_eq!(window(&rows, 1, 0), (1..1, 0));
     }
 
     /// 01M6VFD0CAS71DNBGE7K56JJ2H: the marks of the cells of a host over
@@ -2365,18 +2699,18 @@ mod tests {
         state.looked(look, NOW);
         state.on_key(Key::Open(Tab::Machines));
         let rows = drawn(&state, 80, 24);
-        assert_eq!(rows[2], " 50 hosts · 1-9 of 50");
+        assert_eq!(rows[2], " 50 hosts · 1-8 of 50");
         assert!(rows[4].starts_with(" >   host-00"), "{rows:#?}");
-        assert!(rows[12].starts_with("     host-08"), "{rows:#?}");
-        assert_eq!(rows[14], ruled("host-00 · riff daemon build d2ae080", 80));
+        assert!(rows[11].starts_with("     host-07"), "{rows:#?}");
+        assert_eq!(rows[13], ruled("host-00 · riff daemon build d2ae080", 80));
         state.on_key(Key::Row(30));
         let rows = drawn(&state, 80, 24);
-        assert_eq!(rows[2], " 50 hosts · 23-31 of 50");
-        assert!(rows[12].starts_with(" >   host-30"), "{rows:#?}");
+        assert_eq!(rows[2], " 50 hosts · 24-31 of 50");
+        assert!(rows[11].starts_with(" >   host-30"), "{rows:#?}");
         let view = compute_view(&state, Rect::new(0, 0, 80, 24), NOW);
-        assert_eq!(view.hit(5, 4), Some(Key::Row(22)));
+        assert_eq!(view.hit(5, 4), Some(Key::Row(23)));
         state.on_key(Key::Last);
-        assert_eq!(drawn(&state, 80, 24)[2], " 50 hosts · 42-50 of 50");
+        assert_eq!(drawn(&state, 80, 24)[2], " 50 hosts · 43-50 of 50");
         // The narrow layout has no detail: more hosts fit.
         assert_eq!(drawn(&state, 40, 24)[2], "50 hosts · 38-50 of 50");
     }
@@ -2472,13 +2806,13 @@ mod tests {
         state.failed("riff: no good look since 21:35:07: cannot reach riff-server");
         let rows = drawn(&state, 80, 24);
         assert_eq!(
-            rows[17],
+            rows[18],
             " link down: no good look for 41s · 0 reconnects · riff-server build 3f2a91c, yours is 10df8a4"
                 .chars()
                 .take(80)
                 .collect::<String>()
         );
-        assert_eq!(rows[18], " GitHub: riff spent 310 in the hour");
+        assert_eq!(rows[19], " GitHub: riff spent 310 in the hour");
         let narrow = drawn(&state, 40, 24);
         assert_eq!(narrow[10], "riff-server 3f2a91c, yours is 10df8a4");
     }

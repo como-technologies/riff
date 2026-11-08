@@ -1142,8 +1142,9 @@ fn title_columns(columns: usize) -> usize {
 }
 
 /// The name of `repo` with no owner, for the narrow layout
-/// (01M6VFGKF574TCZ7C3AW3MWX4S).
-fn short_repo(repo: &str) -> &str {
+/// (01M6VFGKF574TCZ7C3AW3MWX4S) and the marks of the Machines tab
+/// ([`super::machines::marks`]).
+pub(super) fn short_repo(repo: &str) -> &str {
     repo.rsplit_once('/').map_or(repo, |(_, name)| name)
 }
 
