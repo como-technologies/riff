@@ -23,7 +23,9 @@ Needs: #51, #58
 An item is merged when it is closed, or when it has the comment
 `Merged in #PR (COMMIT)`. The author adds this comment when a check
 after the release is left (see
-[Verify finished work](how-it-works.md#verify-finished-work)).
+[Verify finished work](how-it-works.md#verify-finished-work)). riff
+adds it too, at the first look of the wave after the merge (see
+[Leave the issue open for a check after the release](development.md#leave-the-issue-open-for-a-check-after-the-release)).
 
 ## Pick an item
 

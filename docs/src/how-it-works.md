@@ -5350,9 +5350,12 @@ flowchart TD
 
 - **Free work.** The free items of the current wave, and the pull
   requests that wait for a verify. A free item is an open issue of the
-  current wave (see [Waves](waves.md)). No session claims it, it has no
-  comment `Merged in #`, and each issue of its `Needs:` line is
-  closed. A pull request counts for the issue that it names (see
+  current wave (see [Waves](waves.md)). No session claims it, it is not
+  merged, and each issue of its `Needs:` line is closed. An issue is
+  merged when it has the comment `Merged in #`, or when its pull request
+  merged with `Refs #N` (see
+  [Leave the issue open for a check after the release](development.md#leave-the-issue-open-for-a-check-after-the-release)).
+  A pull request counts for the issue that it names (see
   [See the item of a pull request](#see-the-item-of-a-pull-request)).
   An item counts one time: while its pull request waits for a verify
   or for the merge, the item is no free item. This is also true for a

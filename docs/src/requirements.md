@@ -573,6 +573,13 @@
   sets no status, when the link line `Closes #N` of the pull request
   names an issue with a `Live:` line. It names the fix: change the first
   line to `Refs #N`. Supersedes 01M3NB6FTGPD0S5JTXXXNGNNDT in part.
+- **01M6XSSCTA3E1GJ8EC9646PP1R** A merged pull request with `Refs #N`
+  (R194) makes the item merged at once: the free work counts the open
+  issue as merged, also before it has the comment `Merged in #PR
+  (COMMIT)`. The look reads the last 100 merged pull requests of the
+  repository with gh. The look of the wave that finds such an issue with
+  no comment adds the comment one time, before it starts any work. A
+  comment that fails comes at the next look.
 
 ## Issue hygiene on GitHub
 
