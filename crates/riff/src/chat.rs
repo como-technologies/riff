@@ -83,6 +83,14 @@
 //!     S-->>L: wake
 //!     Note over A,S: no lead or two leads fit: the chat sends nothing
 //! ```
+//!
+//! A line for the person at the terminal is a highlight, as in IRC
+//! ([`crate::highlight`], 01M6XSHCZB0Y08XRJ3J16Q4RTF): a line that names
+//! them, a direct line, a word of their list, or an ask of riff. The chat
+//! shows it in bold, and puts the marks of `[chat]` after it: the bell,
+//! the title and the toast. A key, or a new prompt, clears the number in
+//! the title (01M6XSHMNNTRC66CMZ0DF2X5RA). A highlight in the history at
+//! the start is only bold (01M6XSHMX4VJKQHAHP8H4XDSBQ).
 
 use std::fmt::Write as _;
 use std::io::{IsTerminal, Write as _};
@@ -106,6 +114,7 @@ use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
 
 use crate::binary::{Follow, with_last, with_place};
 use crate::catch_up::{self, Seen, Start};
+use crate::highlight::{Highlights, Lit, Out, Title};
 use crate::style::{DIM, WARNING, styled};
 use crate::text::{lost_messages, safe};
 use riff_client::api::{Api, Refusal};
@@ -446,12 +455,17 @@ pub fn said(m: &Line) -> Said {
 /// (01M4A804AWYEHPYZ966A6PXRPF). So the screen takes input while a post
 /// waits for its budget. At the end, it waits for the posts of the lines
 /// that the person typed.
+///
+/// It reads the table `[chat]` of the settings at its start, and marks
+/// each highlight for `me` ([`crate::highlight`]). A line of the history
+/// of the first connect is not new: it is only bold.
 pub async fn run(
     api: &Api,
     me: &SessionUri,
     after: Option<u64>,
     draft: Option<&str>,
 ) -> Result<()> {
+    let config = crate::settings::chat_here()?;
     let thread = thread();
     api.join(me, &thread).await?;
     if after.is_none() {
@@ -472,7 +486,7 @@ pub async fn run(
             .read_page(me, thread, true, Some(seq.saturating_sub(1)))
             .await?;
         if let Some(last) = read.first().filter(|c| c.message.seq == seq) {
-            day.line(&Line::of(last, thread));
+            day.line(&Line::of(last, thread), false);
         }
     }
     // Connected first, then read: no line falls between the two
@@ -480,9 +494,16 @@ pub async fn run(
     let start = after.map_or(Start::History, Start::After);
     let shown = Arc::new(Mutex::new(catch_up::Shown::new(start)));
     let first = catch_up::connect(api, me, thread, &shown).await?;
+    // The connect read the history: its last line. After an update, each
+    // line that the read gives is new.
+    let history = match after {
+        None => shown.lock().map_or(None, |s| s.last()),
+        Some(_) => None,
+    };
     let again = catch_up::follow_thread(api, me, thread, Arc::clone(&shown), STREAM_RETRY);
     let mut stream = Box::pin(first.chain(again));
-    let (screen, mut input) = Screen::start(draft)?;
+    let highlights = Highlights::new(me, config, "riff chat", Out::stdout());
+    let (screen, mut input) = Screen::start(draft, highlights.title())?;
     let _ = LINES.set(screen.lines.clone());
     let lines = screen.lines.clone();
     let (send, posts) = posts(api, me, thread, move |text| lines.warn(text));
@@ -521,7 +542,12 @@ pub async fn run(
                     screen.warn(&line);
                 }
                 match item {
-                    Ok(Seen::Message(c)) => screen.print(&day.line(&Line::of(&c, thread))),
+                    Ok(Seen::Message(c)) => {
+                        let line = Line::of(&c, thread);
+                        let new = history.is_none_or(|last| line.seq > last);
+                        let lit = highlights.line(&line, thread, new);
+                        screen.print(&day.line(&line, lit.bold), &lit);
+                    }
                     Ok(Seen::Lost(n)) => screen.warn(&styled(WARNING, &lost_messages(n))),
                     Err(_) => {}
                 }
@@ -595,10 +621,14 @@ enum Lines {
 }
 
 impl Lines {
-    /// Prints a chat line.
-    fn print(&self, text: &str) {
+    /// Prints a chat line, and the marks of `lit` after it, as they are:
+    /// the bell, the title and the toast of a highlight.
+    fn print(&self, text: &str, lit: &Lit) {
         match self {
-            Lines::Plain => anstream::println!("{text}"),
+            Lines::Plain => {
+                anstream::println!("{text}");
+                lit.put();
+            }
             Lines::Editor { printer, color } => {
                 let text = if *color {
                     text.to_owned()
@@ -606,7 +636,7 @@ impl Lines {
                     anstream::adapter::strip_str(text).to_string()
                 };
                 if let Ok(mut printer) = printer.lock() {
-                    let _ = printer.print(format!("{text}\n"));
+                    let _ = printer.print(format!("{text}{}\n", lit.marks));
                 }
             }
         }
@@ -617,27 +647,35 @@ impl Lines {
     fn warn(&self, text: &str) {
         match self {
             Lines::Plain => anstream::eprintln!("{text}"),
-            Lines::Editor { .. } => self.print(text),
+            Lines::Editor { .. } => self.print(text, &Lit::default()),
         }
     }
 }
 
 /// A copy of the text that the person is typing. The line editor lives
 /// on a thread of its own and has no call to read its line, but it asks
-/// a hinter for a hint after each edit. This hinter keeps the line and
-/// gives no hint.
+/// a hinter for a hint after each edit, and at each new prompt. This
+/// hinter keeps the line and gives no hint. It also clears the number of
+/// the highlights in the title of the terminal: a key or a new prompt
+/// clears it (01M6XSHMNNTRC66CMZ0DF2X5RA).
 #[derive(Clone, Default)]
-struct Typing(Arc<Mutex<String>>);
+struct Typing {
+    text: Arc<Mutex<String>>,
+    title: Option<Title>,
+}
 
 impl Typing {
     /// The text now.
     fn text(&self) -> String {
-        self.0.lock().map(|text| text.clone()).unwrap_or_default()
+        self.text
+            .lock()
+            .map(|text| text.clone())
+            .unwrap_or_default()
     }
 
     /// Keeps `line` as the text now.
     fn set(&self, line: &str) {
-        if let Ok(mut text) = self.0.lock() {
+        if let Ok(mut text) = self.text.lock() {
             line.clone_into(&mut text);
         }
     }
@@ -648,6 +686,13 @@ impl Hinter for Typing {
 
     fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
         self.set(line);
+        // The line editor calls this on its own thread, the thread that
+        // writes the screen: the title goes out between two of its writes.
+        if let Some(clear) = self.title.as_ref().and_then(Title::clear) {
+            let mut out = std::io::stdout();
+            let _ = out.write_all(clear.as_bytes());
+            let _ = out.flush();
+        }
         None
     }
 }
@@ -677,8 +722,9 @@ impl Screen {
     /// receiver. It closes when stdin ends, on Ctrl-C or Ctrl-D, and
     /// after [`QUIT`], so the terminal is back in its normal mode. In a
     /// terminal, the prompt starts with `draft`, the text that the
-    /// person typed in the chat before an update.
-    fn start(draft: Option<&str>) -> Result<(Screen, mpsc::Receiver<String>)> {
+    /// person typed in the chat before an update, and a key clears the
+    /// number of `title`.
+    fn start(draft: Option<&str>, title: Title) -> Result<(Screen, mpsc::Receiver<String>)> {
         let (tx, rx) = mpsc::channel(16);
         if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
             // A thread, not a task: a read of stdin that waits does not
@@ -699,7 +745,10 @@ impl Screen {
             return Ok((screen, rx));
         }
         let normal = tcgetattr(std::io::stdin()).ok();
-        let typing = Typing::default();
+        let typing = Typing {
+            title: Some(title),
+            ..Typing::default()
+        };
         let mut editor = rustyline::Editor::<Typing, DefaultHistory>::new()?;
         editor.set_helper(Some(typing.clone()));
         let printer: Printer = Arc::new(Mutex::new(Box::new(editor.create_external_printer()?)));
@@ -762,9 +811,9 @@ impl Screen {
         }
     }
 
-    /// Prints a chat line.
-    fn print(&self, text: &str) {
-        self.lines.print(text);
+    /// Prints a chat line, and the marks of its highlight.
+    fn print(&self, text: &str, lit: &Lit) {
+        self.lines.print(text, lit);
     }
 
     /// Prints a line of riff itself.
@@ -789,15 +838,19 @@ fn clear_typed(line: &str) {
 struct Day(Option<NaiveDate>);
 
 impl Day {
-    /// The chat line of `l`, with a date line when its day is new.
-    fn line(&mut self, l: &Line) -> String {
+    /// The chat line of `l`, with a date line when its day is new. With
+    /// `bold`, the line is in bold, and the date line is not.
+    fn line(&mut self, l: &Line, bold: bool) -> String {
         let at = i64::try_from(l.at_ms)
             .ok()
             .and_then(|ms| Local.timestamp_millis_opt(ms).single())
             .unwrap_or_else(Local::now);
-        let line = line(l, &at, self.0);
+        let mut shown = line(l, &at, self.0);
+        if bold {
+            shown = crate::highlight::bold(&shown, &line(l, &at, Some(at.date_naive())));
+        }
         self.0 = Some(at.date_naive());
-        line
+        shown
     }
 }
 

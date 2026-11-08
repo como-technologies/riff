@@ -73,15 +73,7 @@ use crate::api::Api;
 /// ```
 pub fn wakes(line: &str, sender: &str) -> Vec<Selector> {
     let mut named: Vec<(&str, Option<&str>)> = Vec::new();
-    for word in line.split_whitespace() {
-        let Some(name) = word.strip_prefix('@') else {
-            continue;
-        };
-        let name = name.trim_end_matches(|c: char| !c.is_alphanumeric());
-        let (user, repo) = match name.split_once(':') {
-            Some((user, repo)) if is_repo(repo) => (user, Some(repo)),
-            _ => (name, None),
-        };
+    for (user, repo) in names(line) {
         let user = if user == "lead" { sender } else { user };
         if !user.is_empty() && !named.contains(&(user, repo)) {
             named.push((user, repo));
@@ -101,6 +93,29 @@ pub fn wakes(line: &str, sender: &str) -> Vec<Selector> {
             },
         })
         .collect()
+}
+
+/// Each name of a chat line, in its order: the word after each `@`, and
+/// the repository after a colon (`@USER:REPO`). `lead` stays `lead`.
+/// Punctuation after the name does not count. [`wakes`] reads the names
+/// so, and the highlight of a line in `riff chat` too.
+///
+/// ```
+/// use riff_client::chat::names;
+///
+/// let named: Vec<_> = names("@brett: can @lead:strata, or (@ann) ask mike@thelio?").collect();
+/// assert_eq!(named, [("brett", None), ("lead", Some("strata"))]);
+/// ```
+pub fn names(line: &str) -> impl Iterator<Item = (&str, Option<&str>)> {
+    line.split_whitespace().filter_map(|word| {
+        let name = word
+            .strip_prefix('@')?
+            .trim_end_matches(|c: char| !c.is_alphanumeric());
+        Some(match name.split_once(':') {
+            Some((user, repo)) if is_repo(repo) => (user, Some(repo)),
+            _ => (name, None),
+        })
+    })
 }
 
 /// True when `text` is `REPO` or `OWNER/REPO`, with letters, digits, `-`,

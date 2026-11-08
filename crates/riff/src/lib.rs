@@ -80,6 +80,7 @@ pub mod ghcalls;
 pub mod github;
 pub mod guard;
 pub mod help;
+pub mod highlight;
 pub mod hold;
 pub mod home;
 pub mod hygiene_rules;

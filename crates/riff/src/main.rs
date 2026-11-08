@@ -160,7 +160,7 @@ enum Command {
     /// Follow a thread, for people
     ///
     /// It shows each new message of the thread in a block, with color in
-    /// a terminal.
+    /// a terminal. A message for you is a highlight, as in riff chat.
     Tail {
         /// The thread. The default is your repository thread.
         thread: Option<String>,
@@ -173,6 +173,12 @@ enum Command {
     /// has @lead too. @lead:REPO or @USER:REPO wakes only the lead in the
     /// repository REPO (OWNER/REPO, or the name after the slash). /me TEXT
     /// sends an action. /quit or Ctrl-C exits.
+    ///
+    /// A line for you is a highlight: it names you (@USER, or USER: at the
+    /// start), it is a direct line to you, it holds a word of your list,
+    /// or it is an ask of riff. It shows in bold, and rings the bell. The
+    /// table [chat] of ~/.config/riff/config.toml says what a highlight
+    /// does: highlight, bold, bell, title, toast, on_highlight and quiet.
     Chat {
         /// The last line that the chat showed before an update. Only
         /// riff gives it (01M3NT6WXGCNKW3EQ7MBJDQTR4).
@@ -2461,7 +2467,8 @@ async fn cli() -> Result<()> {
             println!("{}", text::posted(&posted));
         }
         Command::Tail { thread } => {
-            tail(&api, &me, &thread_or_default(thread, &here)?, &here).await;
+            let config = settings::chat_here()?;
+            tail(&api, &me, &thread_or_default(thread, &here)?, &here, config).await;
         }
         Command::Top {
             once,
@@ -3849,11 +3856,18 @@ fn use_color(color: ColorWhen) {
 /// (01M3MNVTC248YYJJQKFD9H1WY9). The first poll reads the binary of
 /// this process before the first line goes out, so a test that waits
 /// for that line and then puts a new binary in place sees the update.
-async fn tail(api: &Api, me: &SessionUri, thread: &ThreadName, here: &Place) {
+/// `config` is the table `[chat]` of the settings (01M6XSHMK5QPP73CV98F8BHRRT).
+async fn tail(
+    api: &Api,
+    me: &SessionUri,
+    thread: &ThreadName,
+    here: &Place,
+    config: riff::highlight::Config,
+) {
     tokio::select! {
         biased;
         () = binary::follow_update(here) => {}
-        () = tail_each(api, me, thread) => {}
+        () = tail_each(api, me, thread, config) => {}
     }
 }
 
@@ -3862,10 +3876,19 @@ async fn tail(api: &Api, me: &SessionUri, thread: &ThreadName, here: &Place) {
 /// or the error in red for a version that it cannot talk to
 /// (01M3MNVTC248YYJJQKFD9H1WY9, 01M3NK7VHXB0PAR8VH8GQQA06K). After a
 /// break, it shows each message of the break one time, or a line with
-/// the number of the lost messages (see [`riff::catch_up`]).
-async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
+/// the number of the lost messages (see [`riff::catch_up`]). A highlight
+/// for `me` is bold, and gets the marks of `[chat]` of the settings after
+/// it ([`riff::highlight`], 01M6XSHCZB0Y08XRJ3J16Q4RTF).
+async fn tail_each(
+    api: &Api,
+    me: &SessionUri,
+    thread: &ThreadName,
+    config: riff::highlight::Config,
+) {
     use riff::catch_up::{Seen, Shown, Start, follow_thread};
+    use riff::highlight::{Highlights, Out};
     let error = riff::style::ERROR;
+    let highlights = Highlights::new(me, config, &format!("riff tail {thread}"), Out::stdout());
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let shown = std::sync::Arc::new(std::sync::Mutex::new(Shown::new(Start::New)));
     let mut stream = Box::pin(follow_thread(api, me, thread, shown, STREAM_RETRY));
@@ -3889,9 +3912,16 @@ async fn tail_each(api: &Api, me: &SessionUri, thread: &ThreadName) {
             .ok()
             .and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single())
             .unwrap_or_else(chrono::Local::now);
-        let block = text::block(&line, &at, last_day, textwrap::termwidth());
+        let width = textwrap::termwidth();
+        let mut block = text::block(&line, &at, last_day, width);
+        let lit = highlights.line(&line, thread, true);
+        if lit.bold {
+            let own = text::block(&line, &at, Some(at.date_naive()), width);
+            block = riff::highlight::bold(&block, &own);
+        }
         last_day = Some(at.date_naive());
         anstream::println!("{block}");
+        lit.put();
     }
     anstream::eprintln!("{error}riff: the stream of {thread} ended.{error:#}");
 }
