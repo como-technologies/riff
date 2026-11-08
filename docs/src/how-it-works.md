@@ -3400,8 +3400,10 @@ typed text then too: the text shows again after the new prompt.
 You have one lead in each repository that you work in. A chat line
 with no name wakes each lead of yours. A line with `@lead` wakes each
 of your leads too. A line with `@USER` wakes each lead of USER, and not
-yours. The lead answers in the chat. Type the lines in `riff chat`,
-not in a shell:
+yours. A line that names a person, with `@USER` or with `USER:` at the
+start, is also a highlight on the terminal of that person (see "Get a
+highlight in the chat"). The lead answers in the chat. Type the lines
+in `riff chat`, not in a shell:
 
 ```text
 is #12 done?
@@ -3461,6 +3463,102 @@ only. On the command line:
 
 ```sh
 riff post --thread chat --to user=mike,host=pangolin,person=true "it is merged"
+```
+
+### Get a highlight in the chat
+
+A line for you is a highlight in `riff chat` and `riff tail`, as in
+IRC. The line shows in bold, and your terminal rings its bell. A line
+is a highlight on your terminal when:
+
+- it names you: `@mike` anywhere, or `mike:` at the start;
+- it is a direct line to you: a post to your terminals with
+  `person=true`, or a line of the other person in a direct thread;
+- it holds a word of your list, as a whole word, in any case;
+- it is an ask of riff to you, for example `riff release v3.3.0 waits
+  for your approval`.
+
+A line that you typed is no highlight. The server does not change the
+line: your own riff finds the highlight. The Chat tab of the TUI and
+the phone show no highlight yet.
+
+```text
+14:02 <brett@heron> is the release out?
+14:03 <brett@heron> mike: can you look at #12?
+```
+
+The table `[chat]` of `~/.config/riff/config.toml` says what a
+highlight does on this machine. Each key is optional. These are the
+defaults:
+
+```toml
+[chat]
+highlight = []       # words of your own; your name and the direct lines are always a highlight
+bold = true          # the line in bold, off with --color never and NO_COLOR
+bell = true          # the terminal bell (BEL)
+title = false        # a mark in the title of the terminal, for example "(2) riff chat"
+toast = false        # a desktop toast through OSC 9 or OSC 777
+on_highlight = ""    # a hook command: it gets the line on stdin, and the sender and the thread in the environment
+quiet = ""           # a quiet time, for example "22:00-07:00": the marks stay, no bell, no toast, no hook
+```
+
+To add the words `release` and `approve`, a mark in the title, a toast
+of the desktop, and a quiet time at night, run this, then start the
+chat again:
+
+```sh
+mkdir -p ~/.config/riff
+cat >> ~/.config/riff/config.toml <<'EOF'
+[chat]
+highlight = ["release", "approve"]
+title = true
+toast = true
+on_highlight = 'notify-send "riff: $RIFF_SENDER" "$(cat)"'
+quiet = "22:00-07:00"
+EOF
+riff chat
+```
+
+`riff chat` and `riff tail` read the table when they start. A value of
+the wrong type stops them with an error that names the key.
+
+- `bold`: `--color never` and `NO_COLOR` turn it off, as each color.
+- `bell`, `title` and `toast` go only to a terminal: not to a pipe or a
+  file.
+- `title`: the title shows the number of the highlights since your
+  last key, for example `(2) riff chat`. A key, or a new prompt, sets
+  it back to `riff chat`. `riff tail` shows `(2) riff tail chat`, and
+  keeps the number.
+- `toast`: riff sends OSC 777 in a terminal of VTE (for example GNOME
+  Terminal), foot or rxvt, and OSC 9 in each other terminal, for
+  example iTerm2, kitty or WezTerm. A terminal that knows neither shows
+  no toast.
+- `on_highlight`: riff runs the command with `sh -c` for each
+  highlight, and does not wait for it. The command gets the line on
+  stdin, as the chat shows it with no time, for example
+  `<brett@heron> mike: can you look at #12?`. `RIFF_SENDER` holds the
+  sender, for example `brett@heron`, and `RIFF_THREAD` the thread. The
+  output of the command goes nowhere. When the command fails, the chat
+  shows a line `riff: on_highlight failed:` with the error.
+- `quiet`: in the quiet time, the line is bold and the title counts it,
+  but no bell rings, no toast shows and no hook runs. The time is the
+  local time of the machine. A time that ends before it starts goes
+  over midnight.
+
+The chat shows its history at the start: a highlight in it is bold,
+and does nothing more. Only a new line rings.
+
+```mermaid
+flowchart LR
+    L["a line"] --> W{"for you?"}
+    W -- no --> P["the line as it is"]
+    W -- "your name, a direct line,<br/>your word, an ask of riff" --> B["bold"]
+    B --> H{"a new line?"}
+    H -- "the history" --> E["no more"]
+    H -- yes --> T["the title: (N) riff chat"]
+    T --> Q{"the quiet time?"}
+    Q -- yes --> E
+    Q -- no --> R["the bell, the toast, the hook"]
 ```
 
 ### Send an action with /me

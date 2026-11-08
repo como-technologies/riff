@@ -535,6 +535,67 @@ fn the_book_shows_how_to_chat() {
     assert!(help.contains("  chat "), "{help}");
 }
 
+/// How It Works has the how-to of a highlight: its own heading, each key
+/// of `[chat]`, and a copyable `sh` block that riff reads. "Ask a lead in
+/// the chat" says that a name is a highlight.
+#[test]
+fn the_book_shows_how_to_get_a_highlight() {
+    let page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/src/how-it-works.md"),
+    )
+    .unwrap();
+    let section = |heading: &str| {
+        let start = page
+            .find(&format!("\n### {heading}\n"))
+            .unwrap_or_else(|| panic!("the how-to {heading:?} has its own heading"));
+        let part = &page[start + 1..];
+        part[..part[3..].find("\n### ").map_or(part.len(), |end| end + 3)].to_owned()
+    };
+    let ask = section("Ask a lead in the chat");
+    assert!(
+        ask.contains("is also a highlight on the terminal of that person"),
+        "{ask}"
+    );
+    let how = section("Get a highlight in the chat");
+    for key in [
+        "highlight = []",
+        "bold = true",
+        "bell = true",
+        "title = false",
+        "toast = false",
+        "on_highlight = \"\"",
+        "quiet = \"\"",
+    ] {
+        assert!(how.contains(&format!("\n{key} ")), "{key}: {how}");
+    }
+    for words in [
+        "--color never",
+        "NO_COLOR",
+        "RIFF_SENDER",
+        "RIFF_THREAD",
+        "(2) riff chat",
+    ] {
+        assert!(how.contains(words), "{words}: {how}");
+    }
+    let sh = how.find("```sh\n").expect("a copyable sh block");
+    let sh = &how[sh + 6..];
+    let sh = &sh[..sh.find("```").unwrap()];
+    assert!(sh.contains("~/.config/riff/config.toml"), "{sh}");
+    assert!(sh.ends_with("riff chat\n"), "{sh}");
+    // riff reads the table of the how-to.
+    let table = sh
+        .split_once("<<'EOF'\n")
+        .and_then(|(_, rest)| rest.split_once("EOF\n"))
+        .expect("the sh block writes a table")
+        .0;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, table).unwrap();
+    let chat = riff::settings::chat(&path).unwrap();
+    assert_eq!(chat.words, ["release", "approve"]);
+    assert!(chat.title && chat.toast && chat.hook.is_some() && chat.quiet.is_some());
+}
+
 impl Client {
     /// The next line of stderr that contains `text`.
     async fn warns(&mut self, text: &str) -> String {
@@ -699,8 +760,32 @@ const PROMPT: &str = riff::chat::PROMPT;
 struct Tty {
     _child: Child,
     master: std::fs::File,
-    screen: Arc<Mutex<vt100::Parser>>,
+    screen: Arc<Mutex<vt100::Parser<Marks>>>,
     dir: tempfile::TempDir,
+}
+
+/// What the terminal got besides the screen: each bell, the title, and
+/// each other OSC (a toast).
+#[derive(Default)]
+struct Marks {
+    bells: usize,
+    title: String,
+    osc: Vec<String>,
+}
+
+impl vt100::Callbacks for Marks {
+    fn audible_bell(&mut self, _: &mut vt100::Screen) {
+        self.bells += 1;
+    }
+
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.title = String::from_utf8_lossy(title).into_owned();
+    }
+
+    fn unhandled_osc(&mut self, _: &mut vt100::Screen, params: &[&[u8]]) {
+        let params: Vec<_> = params.iter().map(|p| String::from_utf8_lossy(p)).collect();
+        self.osc.push(params.join(";"));
+    }
 }
 
 impl Tty {
@@ -714,11 +799,19 @@ impl Tty {
     }
 
     /// [`Tty::start`] with `riff`, a command of a riff binary.
-    async fn start_with(
+    async fn start_with(url: &str, user: &str, host: &str, riff: tokio::process::Command) -> Tty {
+        Self::start_in(url, user, host, riff, "", &[]).await
+    }
+
+    /// [`Tty::start_with`] with the settings file `settings`, and the
+    /// variables `env`.
+    async fn start_in(
         url: &str,
         user: &str,
         host: &str,
         mut riff: tokio::process::Command,
+        settings: &str,
+        env: &[(&str, &str)],
     ) -> Tty {
         let size = nix::pty::Winsize {
             ws_row: Self::ROWS,
@@ -729,6 +822,7 @@ impl Tty {
         let pty = nix::pty::openpty(Some(&size), None).unwrap();
         let dir = tempfile::tempdir().unwrap();
         crate::common::sign_in(url, dir.path(), user);
+        std::fs::write(dir.path().join("config.toml"), settings).unwrap();
         let slave = std::fs::File::from(pty.slave);
         let child = riff
             .arg("chat")
@@ -740,6 +834,8 @@ impl Tty {
             .env("TERM", "xterm")
             .env_remove("NO_COLOR")
             .env_remove("CLICOLOR_FORCE")
+            .env_remove("VTE_VERSION")
+            .envs(env.iter().copied())
             .stdin(slave.try_clone().unwrap())
             .stdout(slave.try_clone().unwrap())
             .stderr(slave)
@@ -747,7 +843,12 @@ impl Tty {
             .spawn()
             .unwrap();
         let master = std::fs::File::from(pty.master);
-        let screen = Arc::new(Mutex::new(vt100::Parser::new(Self::ROWS, Self::COLUMNS, 0)));
+        let screen = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
+            Self::ROWS,
+            Self::COLUMNS,
+            0,
+            Marks::default(),
+        )));
         let mut reader = master.try_clone().unwrap();
         let parser = Arc::clone(&screen);
         std::thread::spawn(move || {
@@ -813,6 +914,46 @@ impl Tty {
         }
     }
 
+    /// True when the first cell of `text` on the screen is bold. `None`
+    /// when no row has `text`.
+    fn bold(&self, text: &str) -> Option<bool> {
+        let rows = self.rows();
+        let (row, at) = rows
+            .iter()
+            .enumerate()
+            .find_map(|(row, line)| line.find(text).map(|at| (row, at)))?;
+        let parser = self.screen.lock().unwrap();
+        let cell = parser.screen().cell(row as u16, at as u16)?;
+        Some(cell.bold())
+    }
+
+    /// The marks of the terminal, once `test` holds for them.
+    async fn marked(&self, test: impl Fn(&Marks) -> bool) {
+        let span = Span::start();
+        loop {
+            {
+                let parser = self.screen.lock().unwrap();
+                let marks = parser.callbacks();
+                if test(marks) {
+                    return;
+                }
+                assert!(
+                    span.within(WAIT),
+                    "the marks in time: {} bells, title {:?}, OSC {:?}",
+                    marks.bells,
+                    marks.title,
+                    marks.osc
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// The number of bells so far.
+    fn bells(&self) -> usize {
+        self.screen.lock().unwrap().callbacks().bells
+    }
+
     fn rows(&self) -> Vec<String> {
         let parser = self.screen.lock().unwrap();
         let mut rows: Vec<String> = parser
@@ -825,6 +966,147 @@ impl Tty {
         }
         rows
     }
+}
+
+/// A line that names the person is a highlight (01M6XSHCZB0Y08XRJ3J16Q4RTF,
+/// 01M6XSHMNNTRC66CMZ0DF2X5RA): it is bold, it rings the bell, and the
+/// title counts it. A key clears the number. The hook gets the line
+/// (01M6XSHMR46J353DK9HKSHVN0P). Another line is plain.
+#[tokio::test]
+async fn in_a_terminal_a_highlight_is_bold_rings_and_marks_the_title() {
+    let server = crate::common::start_signed().await;
+    let out = tempfile::tempdir().unwrap();
+    let (stdin, env) = (out.path().join("stdin"), out.path().join("env"));
+    let settings = format!(
+        "[chat]\ntitle = true\non_highlight = '''cat > \"{}\"; \
+         printf '%s|%s' \"$RIFF_SENDER\" \"$RIFF_THREAD\" > \"{}\"'''\n",
+        stdin.display(),
+        env.display()
+    );
+    let riff = Isolated::shared().tokio_riff();
+    let mut mike = Tty::start_in(&server, "mike", "thelio", riff, &settings, &[]).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+
+    brett.say("a line for all").await;
+    mike.shows(|rows| rows.iter().any(|row| row.contains("a line for all")))
+        .await;
+    brett.say("mike: look at #12").await;
+    mike.shows(|rows| rows.iter().any(|row| row.contains("look at #12")))
+        .await;
+    mike.marked(|m| m.bells == 1 && m.title == "(1) riff chat")
+        .await;
+    assert_eq!(mike.bold("look at #12"), Some(true));
+    assert_eq!(mike.bold("a line for all"), Some(false));
+    let span = Span::start();
+    while std::fs::read_to_string(&env).unwrap_or_default() != "brett@heron|chat" {
+        assert!(span.within(WAIT), "the hook runs in time");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        std::fs::read_to_string(&stdin).unwrap(),
+        "<brett@heron> mike: look at #12\n"
+    );
+
+    brett.say("can @mike see #13?").await;
+    mike.marked(|m| m.bells == 2 && m.title == "(2) riff chat")
+        .await;
+    mike.keys("x").await;
+    mike.marked(|m| m.title == "riff chat").await;
+    assert_eq!(mike.bells(), 2);
+}
+
+/// `--color never` and `NO_COLOR` turn off the bold of a highlight, and
+/// the bell still rings (01M6XSHMNNTRC66CMZ0DF2X5RA).
+#[tokio::test]
+async fn in_a_terminal_never_and_no_color_turn_off_the_bold_of_a_highlight() {
+    let server = crate::common::start_signed().await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+    let never: (&[&str], &[(&str, &str)]) = (&["--color", "never"], &[]);
+    let no_color: (&[&str], &[(&str, &str)]) = (&[], &[("NO_COLOR", "1")]);
+    for (n, (args, env)) in [never, no_color].into_iter().enumerate() {
+        let mut riff = Isolated::shared().tokio_riff();
+        riff.args(args);
+        let mike = Tty::start_in(&server, "mike", "thelio", riff, "", env).await;
+        let body = format!("mike: plain {n}");
+        brett.say(&body).await;
+        mike.shows(|rows| rows.iter().any(|row| row.contains(&body)))
+            .await;
+        mike.marked(|m| m.bells == 1).await;
+        assert_eq!(mike.bold(&body), Some(false), "{args:?} {env:?}");
+    }
+}
+
+/// A highlight in the history at the start of the chat is bold, and
+/// rings no bell. A new one rings (01M6XSHMX4VJKQHAHP8H4XDSBQ).
+#[tokio::test]
+async fn in_a_terminal_a_highlight_of_the_history_rings_no_bell() {
+    let server = crate::common::start_signed().await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+    brett.say("mike: an old line").await;
+    brett.shows("an old line").await;
+
+    let mike = Tty::start(&server, "mike", "thelio").await;
+    mike.shows(|rows| rows.iter().any(|row| row.contains("an old line")))
+        .await;
+    assert_eq!(mike.bold("an old line"), Some(true));
+    brett.say("mike: a new line").await;
+    mike.shows(|rows| rows.iter().any(|row| row.contains("a new line")))
+        .await;
+    mike.marked(|m| m.bells >= 1).await;
+    assert_eq!(mike.bells(), 1);
+}
+
+/// With `toast`, a highlight shows a desktop toast: OSC 9, or OSC 777 in
+/// a terminal of VTE (01M6XSHMNNTRC66CMZ0DF2X5RA).
+#[tokio::test]
+async fn in_a_terminal_a_highlight_shows_a_toast() {
+    let server = crate::common::start_signed().await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+    let settings = "[chat]\ntoast = true\n";
+    let osc9: (&[(&str, &str)], &str) = (&[], "9;<brett@heron> mike: toast 0");
+    let osc777: (&[(&str, &str)], &str) = (
+        &[("VTE_VERSION", "7600")],
+        "777;notify;riff chat;<brett@heron> mike: toast 1",
+    );
+    for (n, (env, toast)) in [osc9, osc777].into_iter().enumerate() {
+        let riff = Isolated::shared().tokio_riff();
+        let mike = Tty::start_in(&server, "mike", "thelio", riff, settings, env).await;
+        brett.say(&format!("mike: toast {n}")).await;
+        mike.marked(|m| m.osc.iter().any(|osc| osc == toast)).await;
+    }
+}
+
+/// `riff tail` runs the hook of a highlight, also with no terminal
+/// (01M6XSHMR46J353DK9HKSHVN0P).
+#[tokio::test]
+async fn tail_runs_the_hook_of_a_highlight() {
+    let server = crate::common::start_signed().await;
+    let api = crate::common::api_of(&server, &lead_of("mike"));
+    let dir = tempfile::tempdir().unwrap();
+    let env = dir.path().join("env");
+    std::fs::write(
+        dir.path().join("config.toml"),
+        format!(
+            "[chat]\non_highlight = '''printf '%s|%s|%s' \"$RIFF_SENDER\" \"$RIFF_THREAD\" \
+             \"$(cat)\" > \"{}\"'''\n",
+            env.display()
+        ),
+    )
+    .unwrap();
+    let (_tail, mut tailed) = tail(&server, "mike", dir.path());
+    connected(&api, &mut tailed).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+
+    brett.say("@mike the release is out").await;
+    let span = Span::start();
+    while std::fs::read_to_string(&env).unwrap_or_default().is_empty() {
+        assert!(span.within(WAIT), "the hook of riff tail runs in time");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        std::fs::read_to_string(&env).unwrap(),
+        "brett@heron|chat|<brett@heron> @mike the release is out"
+    );
 }
 
 #[tokio::test]

@@ -19,6 +19,11 @@
 //!
 //! [connect]
 //! scope = "repo"
+//!
+//! [chat]
+//! highlight = ["release"]
+//! title = true
+//! quiet = "22:00-07:00"
 //! ```
 //!
 //! | Key | Default | Meaning |
@@ -29,6 +34,11 @@
 //! | `lead.notify` | true | riff shows a block with no answer of the lead in a desktop notification on the machine of the lead (01M41FZQKZKW131Z8822G31T5G). |
 //! | `update.auto` | false | riff installs each new release of the riff by itself (see [`auto_update`](crate::auto_update)). `riff login` asks a person once when the key is missing (see [`ask_update_auto`]). |
 //! | `tui.mouse` | true | The TUI takes the mouse (see [`tui`](crate::tui), 01M6VAZKG8FS4HEA9VSA4Z4YF1). |
+//! | `chat.highlight` | `[]` | The words of the person that make a line a highlight in `riff chat` and `riff tail` (see [`highlight`](crate::highlight), [`chat`], 01M6XSHMK5QPP73CV98F8BHRRT). |
+//! | `chat.bold`, `chat.bell` | true | A highlight is bold, and rings the bell. |
+//! | `chat.title`, `chat.toast` | false | A highlight marks the title of the terminal, and shows a desktop toast. |
+//! | `chat.on_highlight` | `""` | The hook command of a highlight. |
+//! | `chat.quiet` | `""` | The quiet time, for example `22:00-07:00`: no bell, no toast and no hook. |
 
 use std::path::{Path, PathBuf};
 
@@ -228,6 +238,78 @@ pub fn tui_mouse(path: &Path) -> Result<bool> {
     mouse
         .as_bool()
         .with_context(|| format!("tui.mouse in {} is not true or false", path.display()))
+}
+
+/// What a highlight in `riff chat` and `riff tail` does: the table
+/// `chat` (01M6XSHMK5QPP73CV98F8BHRRT). Each key that is missing has its
+/// default ([`Config::default`](crate::highlight::Config)). An empty
+/// `on_highlight` or `quiet` is none. A value of the wrong type is an
+/// error.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("config.toml");
+/// assert_eq!(riff::settings::chat(&path)?, riff::highlight::Config::default());
+/// std::fs::write(
+///     &path,
+///     "[chat]\nhighlight = [\"release\"]\nbell = false\ntitle = true\n\
+///      on_highlight = \"notify-send riff\"\nquiet = \"22:00-07:00\"\n",
+/// )?;
+/// let chat = riff::settings::chat(&path)?;
+/// assert_eq!(chat.words, ["release"]);
+/// assert!(chat.bold && !chat.bell && chat.title && !chat.toast);
+/// assert_eq!(chat.hook.as_deref(), Some("notify-send riff"));
+/// assert_eq!(chat.quiet, Some("22:00-07:00".parse()?));
+/// std::fs::write(&path, "[chat]\nquiet = \"late\"\n")?;
+/// assert!(riff::settings::chat(&path).is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn chat(path: &Path) -> Result<crate::highlight::Config> {
+    let doc = read(path)?;
+    let mut config = crate::highlight::Config::default();
+    let Some(chat) = doc.get("chat") else {
+        return Ok(config);
+    };
+    let file = path.display();
+    let flag = |key: &str, default: bool| match chat.get(key) {
+        None => Ok(default),
+        Some(item) => item
+            .as_bool()
+            .with_context(|| format!("chat.{key} in {file} is not true or false")),
+    };
+    let text = |key: &str| match chat.get(key) {
+        None => Ok(None),
+        Some(item) => item
+            .as_str()
+            .map(|t| Some(t.trim().to_owned()).filter(|t| !t.is_empty()))
+            .with_context(|| format!("chat.{key} in {file} is not a text")),
+    };
+    if let Some(words) = chat.get("highlight") {
+        let words: Option<Vec<String>> = words
+            .as_array()
+            .and_then(|list| list.iter().map(|w| w.as_str().map(str::to_owned)).collect());
+        config.words =
+            words.with_context(|| format!("chat.highlight in {file} is not a list of words"))?;
+    }
+    config.bold = flag("bold", config.bold)?;
+    config.bell = flag("bell", config.bell)?;
+    config.title = flag("title", config.title)?;
+    config.toast = flag("toast", config.toast)?;
+    config.hook = text("on_highlight")?;
+    config.quiet = text("quiet")?
+        .map(|quiet| quiet.parse())
+        .transpose()
+        .with_context(|| format!("chat.quiet in {file}"))?;
+    Ok(config)
+}
+
+/// [`chat`] of the settings file of this process ([`path`]). With no
+/// settings file to find, each key has its default.
+pub fn chat_here() -> Result<crate::highlight::Config> {
+    match path() {
+        Ok(path) => chat(&path),
+        Err(_) => Ok(crate::highlight::Config::default()),
+    }
 }
 
 /// The question about `update.auto` on a new machine.

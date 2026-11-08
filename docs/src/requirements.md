@@ -3086,6 +3086,46 @@
   01M51TKZSYR7PH629S29JX00ZD, and 01M5P1XN9EX680KQNKRHWGRWJT in part.
 - **01M6WBQQH3Y1K56FQEN161B0D9** The `read` tool of `riff mcp` refuses
   `after` with no `thread`: a message number is of one thread.
+- **01M6XSHCZB0Y08XRJ3J16Q4RTF** `riff chat` and `riff tail` mark a line
+  as a highlight for the person at the terminal when it names the person
+  (`@USER` anywhere, or `USER:` at the start), when it is a direct line
+  to the person, when it holds a word of the list `chat.highlight`, or
+  when it is an ask of riff to the person. The server and the selectors
+  do not change.
+- **01M6XSHMGM82QSABRWCYH595VH** A direct line is a line of the other
+  member of a direct thread of the person, or a line to the terminals of
+  the person (`person=true`). An ask of riff is a line of the kind
+  `riff`, or with the mark `[by riff]`, that names the person or goes to
+  the terminals of the person. A name and a word match with no regard to
+  case. A word matches only as a whole word. A line that the person
+  typed is no highlight.
+- **01M6XSHMK5QPP73CV98F8BHRRT** The table `[chat]` of the settings of
+  each machine says what a highlight does: `highlight` (a list of words,
+  empty by default), `bold` (true by default), `bell` (true), `title`
+  (false), `toast` (false), `on_highlight` (a command, empty by default)
+  and `quiet` (a time such as `22:00-07:00`, empty by default). `riff
+  chat` and `riff tail` read the table when they start. A value of the
+  wrong type is an error.
+- **01M6XSHMNNTRC66CMZ0DF2X5RA** A highlight shows the line in bold.
+  `--color never` and `NO_COLOR` turn off the bold. The bell is the
+  character BEL. The title of the terminal becomes `(N) riff chat`, with
+  N the highlights since the last key, and a key or a new prompt sets it
+  back to `riff chat`. In `riff tail`, the title is `(N) riff tail
+  THREAD`. The toast is OSC 777 in a terminal of VTE, foot or rxvt, else
+  OSC 9, with the line. The bell, the title and the toast go only to a
+  terminal.
+- **01M6XSHMR46J353DK9HKSHVN0P** riff runs `on_highlight` with `sh -c`
+  for each highlight, and does not wait for it. The command gets the
+  line on stdin, as the chat shows it with no time, the sender in
+  `RIFF_SENDER` and the thread in `RIFF_THREAD`. Its output goes
+  nowhere. A command that fails gives a line of riff with the error.
+- **01M6XSHMTNBVMMGNBCSRCSQDYJ** In the quiet time `chat.quiet`, a
+  highlight is bold and marks the title, but it rings no bell, shows no
+  toast and runs no hook. The time is the local time of the machine. A
+  quiet time that ends before its start goes over midnight.
+- **01M6XSHMX4VJKQHAHP8H4XDSBQ** A highlight in the history that `riff
+  chat` shows at its start is bold. It rings no bell, marks no title,
+  shows no toast and runs no hook.
 
 ## Security
 
