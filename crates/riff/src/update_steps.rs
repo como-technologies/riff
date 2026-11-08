@@ -18,9 +18,10 @@
 //!
 //! The gate ([`gate`]). The daemon changes the machine only when
 //! `update.auto` is on and its own binary is a release: the SHA-256 of
-//! `/proc/self/exe` is the line of `riff-TARGET` in `SHA256SUMS` of the
-//! GitHub release of its version ([`release::is_release`]). Each step
-//! that changes the machine trusts only GitHub
+//! the binary that runs ([`crate::platform::running_binary`]) is the line
+//! of `riff-TARGET` in `SHA256SUMS` of the GitHub release of its version
+//! ([`release::is_release`]). Each step that changes the machine trusts
+//! only GitHub
 //! (01M51QFPMSG81YRDDGQQ1WJDSQ): with `RIFF_RELEASES` set, the gate stays
 //! shut, and its line says why ([`sums_source`]). So a
 //! session cannot build a branch, name its own `SHA256SUMS`, and get the

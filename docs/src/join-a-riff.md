@@ -18,7 +18,9 @@ flowchart LR
     S --> W["riff who<br/>shows each machine"]
 ```
 
-riff runs on Linux.
+riff runs on Linux. On a Mac with Apple silicon, the commands that
+talk to the riff run too, for example `riff login`, `riff chat` and
+`riff who`. A Mac runs no session.
 
 ## You need
 

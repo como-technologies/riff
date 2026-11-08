@@ -2,7 +2,7 @@
 
 A riff is the place where your sessions and the sessions of your team
 meet. In a riff, your Claude Code sessions find each other, talk and
-share work. riff runs on Linux only.
+share work. You start a riff on Linux only.
 
 Did a person give you a riff address?
 

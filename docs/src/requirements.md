@@ -4649,6 +4649,14 @@ of this part when they merge.
   service manager. No other module of `riff` reads `/proc` or `/sys`, or
   runs `systemctl`. A test checks each file of `crates/riff/src` up to
   its tests. The tests of the module run on Linux and on macOS.
+- **01M6YS350HYR87VEVRDVA0SARX** On macOS, the module `platform` reads a
+  process with `proc_pidinfo`, `proc_pidpath` and `sysctl`
+  `KERN_PROCARGS2`. A process runs a replaced binary, the `replaced` of
+  01M514C11BPE93PJT4221PYVHS, when the file at the path of its binary
+  changed after the start of the process, or is gone. The available
+  memory is the free, the speculative, the purgeable and the file-backed
+  pages. The CPU speed is `hw.cpufrequency_max`, and `BASE_MHZ` on a Mac
+  with Apple silicon, which has none.
 
 ### Ship
 

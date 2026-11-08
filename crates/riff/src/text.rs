@@ -5937,7 +5937,7 @@ pub fn no_program(program: &str) -> String {
 }
 
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
-pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff runs on Linux only.";
+pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff starts no session on this OS.";
 
 /// The daemon pulls the image of the session, for `riff run` or
 /// `riff init`.
@@ -6521,8 +6521,9 @@ pub fn daemon_silent(limit: std::time::Duration) -> String {
     format!("The riff daemon gave no answer in {} s.", limit.as_secs())
 }
 
-/// `riff daemon` on a host that is not Linux.
-pub const DAEMON_LINUX_ONLY: &str = "riff daemon needs Linux: riff runs on Linux only.";
+/// `riff daemon`, and each command that needs the daemon, on a host that
+/// is not Linux (01M6YPB5B42FZP7GCDAVTN4PWY).
+pub const DAEMON_LINUX_ONLY: &str = "riff daemon needs Linux: riff has no daemon on this OS.";
 
 /// A second daemon on the control socket of a daemon that runs.
 pub fn daemon_runs_already(pid: u32, socket: &Path) -> String {
@@ -9258,7 +9259,7 @@ pub fn init_image_here(image: &str) -> String {
 pub const INIT_READY: &str = "This machine is ready. Run one item in a container: riff run ITEM";
 
 /// `riff init` on a host that is not Linux.
-pub const INIT_LINUX_ONLY: &str = "riff init needs Linux: riff runs on Linux only.";
+pub const INIT_LINUX_ONLY: &str = "riff init needs Linux: riff starts no session on this OS.";
 
 /// A text that no line of a unit file can hold.
 pub fn unit_bad_text(text: &str) -> String {

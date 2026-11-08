@@ -1,7 +1,8 @@
-//! The reads of the OS on macOS (01M6YQDWT387EV7Y7XMT2G6YVM): `libproc`
-//! for the processes and `sysctl` for the machine. macOS has no service
-//! manager of the daemon yet: the daemon needs Linux
-//! (01M6YPB5B42FZP7GCDAVTN4PWY). See [`crate::platform`].
+//! The reads of the OS on macOS (01M6YQDWT387EV7Y7XMT2G6YVM,
+//! 01M6YS350HYR87VEVRDVA0SARX): `libproc` for the processes and `sysctl`
+//! for the machine. macOS has no service manager of the daemon yet: the
+//! daemon needs Linux (01M6YPB5B42FZP7GCDAVTN4PWY). See
+//! [`crate::platform`].
 
 use std::fs::File;
 use std::path::{Path, PathBuf};

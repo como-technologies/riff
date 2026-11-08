@@ -8,7 +8,7 @@
 //! So the daemon keeps one limit for the whole host ([`Limit`]): the
 //! number of live sessions, and a floor of free memory. A host has room
 //! when fewer sessions than the limit live, and the free memory
-//! (`MemAvailable` of `/proc/meminfo`) is at or above the floor.
+//! ([`crate::platform::Memory::available`]) is at or above the floor.
 //!
 //! Each start of a session takes a [`Slot`] first ([`Room::admit`]). The
 //! starts wait in order: the first that asks is the first that starts. A

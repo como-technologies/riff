@@ -6,10 +6,10 @@
 //! A session is a [`SessionSpec`] of plain data: the name, the image, the
 //! binds, the environment, the limits and the command. A [`Runtime`]
 //! makes a running session from it, and stops it
-//! (01M4ZBGK3A977KZW50AZFR95E9). riff runs on Linux only. Its
-//! runtime there is rootless podman, [`crate::podman::Podman`], behind
-//! `cfg(target_os = "linux")`. A pod backend can take the same spec
-//! later.
+//! (01M4ZBGK3A977KZW50AZFR95E9). The sessions run on Linux only
+//! (01M6YPB5B42FZP7GCDAVTN4PWY). Their runtime is rootless podman,
+//! [`crate::podman::Podman`], behind `cfg(target_os = "linux")`. A pod
+//! backend can take the same spec later.
 //!
 //! The code that drives a session takes its runtime as a parameter: the
 //! daemon ([`crate::daemon::Daemon`]). So its tests take [`Fake`], a
