@@ -1578,7 +1578,7 @@ fn is_served(dir: &Path, served: &Served) -> bool {
 }
 
 /// Ends a task when it drops.
-struct Abort(tokio::task::JoinHandle<()>);
+pub(crate) struct Abort(pub(crate) tokio::task::JoinHandle<()>);
 
 impl Drop for Abort {
     fn drop(&mut self) {

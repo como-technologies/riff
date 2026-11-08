@@ -180,9 +180,9 @@ use riff_core::name::{SessionUri, Who};
 use riff_core::record::{Change, Record};
 use riff_core::wire::{
     AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, Free, Hold, Invite, Join, Keys, Lead,
-    Leave, PassOwner, Pause, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER, Register, Release,
-    ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetNotes, SetPlan, Start, Tailed,
-    TakeOwner, Wake,
+    Leave, PassOwner, Pause, PlanChanged, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER, Register,
+    Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetNotes, SetPlan, Start,
+    Tailed, TakeOwner, Wake,
 };
 use riff_state::log::Written;
 use riff_state::state::{
@@ -623,6 +623,7 @@ struct Shared {
     queued: Arc<Notify>,
     wakes: broadcast::Sender<(Who, Wake)>,
     tail: broadcast::Sender<Tailed>,
+    plans: broadcast::Sender<PlanChanged>,
     sign_ins: Box<dyn SignIns>,
     /// The limit of rate of the `denied` lines of this server.
     limit: Limit,
@@ -639,6 +640,7 @@ impl Engine {
     pub fn new(state: State, sign_ins: impl SignIns) -> Engine {
         let (wakes, _) = broadcast::channel(EVENT_BUFFER);
         let (tail, _) = broadcast::channel(EVENT_BUFFER);
+        let (plans, _) = broadcast::channel(EVENT_BUFFER);
         Engine(Arc::new(Shared {
             core: Mutex::new(Core {
                 state,
@@ -649,6 +651,7 @@ impl Engine {
             queued: Arc::new(Notify::new()),
             wakes,
             tail,
+            plans,
             sign_ins: Box::new(sign_ins),
             limit: Limit::default(),
         }))
@@ -1152,6 +1155,12 @@ impl Engine {
         self.0.tail.subscribe()
     }
 
+    /// A stream of each change of the free work of a repository thread,
+    /// for the `plan/watch` streams (#1729).
+    pub fn plans(&self) -> broadcast::Receiver<PlanChanged> {
+        self.0.plans.subscribe()
+    }
+
     /// Wakes the writer when an entry waits in the queue. The writer
     /// waits on it when [`Engine::take`] gives nothing.
     pub fn queued(&self) -> Arc<Notify> {
@@ -1276,7 +1285,20 @@ impl Engine {
     ///   sign-in that started before the position of the record (R20,
     ///   01M3XA87A9GGFA89RQXWSKY0V6). A stop before this effect ends no
     ///   sign-in now: the next load drops them by the same rule.
+    /// - One [`PlanChanged`] for each repository thread whose free work the
+    ///   records change ([`Record::plan_thread`], #1729): the riff daemon
+    ///   of each host of the wave looks at once.
     fn effects(&self, made: &[Record], sent: &[(Who, Wake)]) -> usize {
+        let mut plans = BTreeMap::new();
+        for record in made {
+            if let Some(thread) = record.plan_thread() {
+                plans.insert(thread.clone(), record.envelope.position);
+            }
+        }
+        for (thread, position) in plans {
+            // A send fails only when nobody listens. That is not an error.
+            let _ = self.0.plans.send(PlanChanged { thread, position });
+        }
         let mut ended = 0;
         for record in made {
             let posted = match &record.change {

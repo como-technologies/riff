@@ -609,6 +609,40 @@ impl Record {
         }
     }
 
+    /// The repository thread whose free work this record changes, for the
+    /// stream of the changes of the plan (#1729): a hold, the free of a
+    /// hold, the release of a claim, a plan and the end of a plan. `None`
+    /// for each other record.
+    ///
+    /// ```
+    /// use riff_core::record::{Change, Claimed, Envelope, ItemFreed, Record, Released};
+    ///
+    /// let envelope = Envelope { position: 1, written_at_ms: 1, by: None, command: None, call: None };
+    /// let record = |change| Record { envelope: envelope.clone(), change };
+    /// let thread: riff_core::name::ThreadName = "acme/app".parse()?;
+    /// let freed = record(Change::ItemFreed(ItemFreed { thread: thread.clone(), item: "issue-7".into() }));
+    /// assert_eq!(freed.plan_thread(), Some(&thread));
+    /// let claim = Claimed {
+    ///     session: "riff://ann@heron/acme/app?session=s1".parse()?,
+    ///     thread: thread.clone(),
+    ///     item: "issue-7".into(),
+    /// };
+    /// assert_eq!(record(Change::Released(Released::of(claim.clone()))).plan_thread(), Some(&thread));
+    /// // A claim takes free work: the plan does not change.
+    /// assert_eq!(record(Change::Claimed(claim)).plan_thread(), None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn plan_thread(&self) -> Option<&ThreadName> {
+        match &self.change {
+            Change::ItemHeld(held) => Some(&held.thread),
+            Change::ItemFreed(freed) => Some(&freed.thread),
+            Change::Released(released) => Some(&released.thread),
+            Change::PlanSet(set) => Some(&set.thread),
+            Change::PlanEnded(ended) => Some(&ended.thread),
+            _ => None,
+        }
+    }
+
     /// This record for an audit: a post has only its mark
     /// ([`Posted::for_audit`]). Each other record stays as it is.
     pub fn for_audit(self) -> Record {

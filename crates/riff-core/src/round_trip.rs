@@ -773,6 +773,10 @@ mod tests {
             keys: keys(),
             trusted: true,
         });
+        c.trip(&PlanChanged {
+            thread: thread(),
+            position: 7,
+        });
         c.trip(&TokenRequest {
             grant_type: text("refresh_token"),
             refresh_token: Some(text("r")),

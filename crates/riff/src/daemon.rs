@@ -2342,6 +2342,9 @@ pub struct Daemon<R> {
     /// The time between two looks of a wave at `main` and the pull requests
     /// ([`crate::look::LOOK_EVERY`]).
     look_every: Duration,
+    /// The wait of a full host before a claim of a wave
+    /// ([`crate::wave::CLAIM_WAIT`], #1729).
+    claim_wait: Duration,
     /// A session ended, or a job of a wave ended: the waves look again.
     changed: Notify,
     /// The folders of the sessions: the jobs that run, and one sweep at
@@ -2498,6 +2501,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             world: Arc::new(crate::wave::Live::default()),
             waves: Mutex::new(BTreeMap::new()),
             look_every: crate::look::LOOK_EVERY,
+            claim_wait: crate::wave::CLAIM_WAIT,
             changed: Notify::new(),
             folders: Arc::default(),
             again: None,
@@ -2622,6 +2626,19 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// requests.
     pub(crate) fn look_every(&self) -> Duration {
         self.look_every
+    }
+
+    /// The daemon whose waves wait `wait` before a claim on a full host in
+    /// place of [`crate::wave::CLAIM_WAIT`], for a test.
+    #[must_use]
+    pub fn with_claim_wait(mut self, wait: Duration) -> Self {
+        self.claim_wait = wait;
+        self
+    }
+
+    /// The wait of a full host before a claim of a wave ([`crate::wave::claim_wait`]).
+    pub(crate) fn claim_wait(&self) -> Duration {
+        self.claim_wait
     }
 
     /// The daemon with a session on riff-server for each repository that

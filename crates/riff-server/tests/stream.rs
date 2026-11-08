@@ -83,3 +83,11 @@ async fn the_watch_connect_finishes_at_once() {
     let first = first_bytes(&format!("/v1/watch?uri={uri}")).await;
     assert!(first.starts_with(": ready"), "{first:?}");
 }
+
+#[tokio::test]
+async fn the_plan_watch_connect_finishes_at_once() {
+    let uri = "riff%3A%2F%2Fmike%40pangolin%2Fcomo-technologies%2Friff%3Fsession%3Da";
+    let path = format!("/v1/plan/watch?uri={uri}&thread=como-technologies%2Friff");
+    let first = first_bytes(&path).await;
+    assert!(first.starts_with(": ready"), "{first:?}");
+}
