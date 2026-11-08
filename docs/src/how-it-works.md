@@ -601,6 +601,27 @@ gh api "repos/como-technologies/riff/rulesets/$ID" --jq .bypass_actors
 The list has the admin role, `RepositoryRole` 5, and the lead App, an
 `Integration` with the App ID of the lead App.
 
+#### See the state of an open release
+
+While a release deploys, and until the lead checks it, `riff who` and
+the header of the TUI have one line of the release: what runs, what it
+waits for, and who acts next. For example, after the approval of the
+deploy:
+
+```sh
+riff who
+```
+
+```text
+riff     paused
+release  v3.3.0: the deploy runs; the riff is paused
+```
+
+The line comes from the watches of the riff daemons and from the pause
+of the riff. With no open release, there is no line. See
+[See who acts next on the release](development.md#see-who-acts-next-on-the-release)
+for the line of each step.
+
 ### Install one release
 
 To install one release, for example the release of another riff, name
@@ -1913,6 +1934,7 @@ flowchart TD
     I -- no --> W["wait: look again at the end of the turn,<br/>or in a minute"]
     I -- yes --> S["stop the container, start it again:<br/>claude --resume of the conversation"]
     S --> C["one line in riff chat"]
+    S --> T["one line in your terminal<br/>when you are attached"]
 ```
 
 The order is fixed: first the daemon starts again on the new riff, then
@@ -1996,8 +2018,8 @@ riff lead start
 ```
 
 Or press `l` in the Sessions tab of `riff`. When you are attached at
-that moment, your terminal shows the end of the container. Attach
-again in the same way.
+that moment, riff attaches you to the new container: see
+[See the restart in the terminal of the lead](#see-the-restart-in-the-terminal-of-the-lead).
 
 When the daemon cannot start the lead again, you get one line in riff
 chat for it. The line says which case it is:
@@ -2011,6 +2033,33 @@ chat for it. The line says which case it is:
   ```sh
   riff lead start
   ```
+
+#### See the restart in the terminal of the lead
+
+When you are attached to the lead, with `riff lead start` or `l` in the
+Sessions tab of the TUI, the stop of the old container ends the attach.
+riff waits for the new container, up to 2 minutes, writes one line in
+your terminal, and attaches you to the new container:
+
+```sh
+riff lead start
+```
+
+```text
+riff started this lead again on riff v3.3.0; its conversation goes on
+```
+
+When the start fails after the stop, the attach ends at once, and your
+terminal shows the end of the lead.
+
+The daemon tells the terminal with the file `started-again` in the
+folder of the lead. To see the last start again of the lead: the riff
+of the new container, the time of the stop in milliseconds since 1970,
+and whether the new container runs:
+
+```sh
+cat ~/.local/share/riff/leads/OWNER-REPO/started-again
+```
 
 ### When the riff daemon runs another riff than the container
 

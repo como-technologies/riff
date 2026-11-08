@@ -6319,6 +6319,7 @@ sequenceDiagram
 | The CI run of the tag | `riff release publish` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
 | The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed and your container runs the release (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check)) |
 | The wave | `riff join` | the last open item of the current wave closed |
+| The check of the lead | the watch of the job `Deploy`, at its end | never: it gives the step to `riff who` and the TUI (see [See who acts next on the release](#see-who-acts-next-on-the-release)) |
 
 The message ends with `next:` and the command of the next step. A
 second command for the same operation, for example a second `riff
@@ -6332,7 +6333,8 @@ to the owner in `riff chat` only when the job `Deploy` waits for
 chat` each 4 hours.
 
 The daemon keeps the watches in the file `watches.json` of its folder,
-so a restart of the daemon keeps them. A watch that cannot read the
+so a restart of the daemon keeps them. The watches of a check are in
+`checks.json` of the same folder. A watch that cannot read the
 state of its operation, for example when GitHub does not answer, goes
 on and tries again. The lead gets the fault one time for each
 repository: the watches of the repository that fail with the same fault
@@ -6355,7 +6357,13 @@ riff daemon status
 In a container, the same command shows the daemon of the host. The
 part `Watches:` has one line for each watch, with the repository, the
 operation and its age. The part `Waves:` shows each wave, and the
-watch of its current wave has no line in `Watches:`.
+watch of its current wave has no line in `Watches:`. After the end of
+the job `Deploy`, the line of the watch of the check is, for example:
+
+```text
+Watches:
+  como-technologies/riff  the check of v3.3.0 after its deploy, for 4m
+```
 
 The message of a merge names the step after the merge. When the release
 pull request merged, `next:` is `riff release test`, not "wait for the
@@ -6392,6 +6400,43 @@ the next step:
 ```sh
 riff release status
 ```
+
+#### See who acts next on the release
+
+From the deploy to the check, `riff who` and the TUI say in one line
+what runs, what the release waits for, and who acts next. Each person
+in the riff sees the line:
+
+```sh
+riff who
+```
+
+`riff who` shows the line in the row `release`, under the state of the
+riff. The TUI shows the same line under its header, on each tab:
+
+```text
+riff     paused
+release  v3.3.0: the deploy runs; the riff is paused
+```
+
+| Step | The line | Who acts next |
+|---|---|---|
+| The job `Deploy` waits | `v3.3.0: the deploy waits for a person (riff release approve v3.3.0)` | a person in a terminal |
+| The deploy runs | `v3.3.0: the deploy runs; the riff is paused` | nobody: the job runs |
+| The deploy passed | `v3.3.0: the deploy passed; it waits for the check of the lead of como-technologies/riff` | the lead: `riff release check v3.3.0` |
+| The deploy failed | `v3.3.0: the deploy failed; it waits for the check of the lead of como-technologies/riff` | the lead: `riff release check v3.3.0` files the issue |
+| A check failed | `v3.3.0: the check failed: the owner resumes or rolls back` | the owner: `riff resume --riff`, or a rollback |
+| A check failed, and the riff runs | `v3.3.0: the check failed: the lead of como-technologies/riff fixes forward or rolls back` | the lead |
+| No open release | no line | |
+
+The line comes from the watches of the daemon of each host (see
+[See the watches of the daemon](#see-the-watches-of-the-daemon)) and
+from the pause of the riff. At the end of the job `Deploy`, the watch
+of the deploy leaves a watch of the check in its place. It reads the
+release issue each minute, posts nothing, and ends with a passed check,
+the check of a failed deploy, a rollback or a newer release. Only a
+comment after its start counts, so a check before a retry ends no
+watch. So the line can come up to a minute after a step.
 
 #### Know what the other leads hear
 

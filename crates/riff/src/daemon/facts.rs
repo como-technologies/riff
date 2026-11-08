@@ -13,9 +13,11 @@
 //!   floor, the caps of each new container, the live sessions with their
 //!   item, phase, last step and the digest of the image of their
 //!   container, the starts that wait, the state of each wave, the parts
-//!   of the host, and each repository where the host takes no new claim
+//!   of the host, each repository where the host takes no new claim
 //!   and still runs sessions ([`of_status`], [`left`],
-//!   01M6WJYQJ58MHQF1XPXXZW2ET6);
+//!   01M6WJYQJ58MHQF1XPXXZW2ET6), and the release of each watch of a
+//!   deploy or of a check, at its step ([`crate::watches::Watch::release`],
+//!   01M6XTS7RGXB30MFM6DZ7PVZ75);
 //! - from the host: the load, the free memory, the disk of the session
 //!   folders, the version of podman, the merged pin of each wave
 //!   with whether podman has it ([`look`], [`pins`],
@@ -115,6 +117,11 @@ pub fn every() -> Duration {
 ///     "leaving": [{"repo": "o/s", "sessions": ["riff-issue-7-3c4d5e6f"]}],
 ///     "test": {"tag": "v4.1.1", "commit": "90e36bfd", "secs": 185},
 ///     "claude_token": "set",
+///     "watches": [
+///         {"repo": "o/r", "what": "the deploy of v4.1.1", "since_ms": 0,
+///          "release": {"repo": "o/r", "tag": "v4.1.1", "step": "waits"}},
+///         {"repo": "o/r", "what": "the release pull request #9", "since_ms": 0},
+///     ],
 /// }))?;
 /// let facts = of_status(&status);
 /// assert_eq!((facts.build.as_str(), facts.limit, facts.floor_gb), ("3.1.0", 4, 8));
@@ -132,6 +139,10 @@ pub fn every() -> Duration {
 /// assert_eq!(facts.leaving[0].sessions, ["riff-issue-7-3c4d5e6f"]);
 /// assert_eq!(facts.test.as_ref().map(|t| t.secs), Some(185));
 /// assert_eq!(facts.claude_token, riff_client::daemons::Token::Set);
+/// // The release of each watch of a deploy or of a check
+/// // (01M6XTS7RGXB30MFM6DZ7PVZ75).
+/// assert_eq!(facts.releases.len(), 1);
+/// assert_eq!(facts.releases[0].step, riff_client::daemons::ReleaseStep::Waits);
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 pub fn of_status(status: &Status) -> Facts {
@@ -171,6 +182,11 @@ pub fn of_status(status: &Status) -> Facts {
         leaving: status.leaving.clone(),
         test: status.test.clone(),
         claude_token: status.claude_token,
+        releases: status
+            .watches
+            .iter()
+            .filter_map(|w| w.release.clone())
+            .collect(),
         ..Facts::default()
     }
 }

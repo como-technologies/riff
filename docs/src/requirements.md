@@ -6082,6 +6082,16 @@ of this part when they merge.
   run the command again after the restart. With an older daemon, the
   next step is to wait for the new start of the daemon, or `riff daemon
   restart` on the host. With the same build, it is a fault of riff.
+- **01M6XTS7V47RFX1G37FRGRBWCY** When the daemon starts a lead again on
+  a new riff while a person is attached to it with `riff lead start` or
+  the TUI, the terminal of the person gets one line: `riff started this
+  lead again on riff vX.Y.Z; its conversation goes on`. Then riff
+  attaches the terminal to the new container. Before the daemon stops
+  the old container, it writes the file `started-again` in the folder of
+  the lead, with the riff of the new container and the time of the stop.
+  It marks the file when the new container runs, and removes the file
+  when the start fails. The attach waits for the new container for up to
+  2 minutes.
 
 ### The first run
 
@@ -7131,6 +7141,20 @@ of this part when they merge.
   the message names a host that still runs an older riff. This adds to
   01M57D3F50347RD8ED79KEA9V7, and supersedes 01M6WBX2G1PX11D89HNBAZ6MCM
   in part: the hosts that the watch waits for.
+- **01M6XTS7RGXB30MFM6DZ7PVZ75** The facts of each host in `who` carry
+  the release of each watch of a deploy and of each watch of a check
+  that its daemon follows, with its step: the job `Deploy` waits for a
+  person, runs or passed, the deploy failed, or a check failed. When the
+  job `Deploy` passed or failed, the watch of the deploy goes, and a
+  watch of the check of the lead takes its place. The watch of the check
+  reads the releases and the release issue with `gh` each minute, and
+  posts nothing. Only a comment and a newer release after its start
+  count. It ends when the release issue gets a passed check, a check of
+  a failed deploy or a rollback, when a newer release is published, when
+  the release issue of the newest release closes, and when a new watch
+  of a deploy of the same repository starts. The daemon keeps the
+  watches of a check in `checks.json` of its folder, and no watch of a
+  check in `watches.json`.
 
 ### The real-session test
 
@@ -7866,6 +7890,20 @@ that builds it merges.
   of the Chat tab longer than 64 KiB stays out of it, as a paste does:
   the line keeps its text, and the note line says the note of
   01M6XSK4K2MDA2SK0A6KHN9HDT at once, until the next key.
+- **01M6XTS1GCW7PTWSMM1HKQTHSN** The TUI and `riff who` show the state
+  of an open release and who acts next, in one line with the same words:
+  in the TUI on the rows under the header, and in `riff who` in the row
+  `release` under the state of the riff. The line names the tag and the
+  step: `vX.Y.Z: the deploy waits for a person (riff release approve
+  vX.Y.Z)`, `vX.Y.Z: the deploy runs; the riff is paused`, `vX.Y.Z: the
+  deploy passed; it waits for the check of the lead of OWNER/REPO`,
+  `vX.Y.Z: the deploy failed; it waits for the check of the lead of
+  OWNER/REPO`, or `vX.Y.Z: the check failed: the owner resumes or rolls
+  back`. After a resume, a failed check gives `vX.Y.Z: the check failed:
+  the lead of OWNER/REPO fixes forward or rolls back`, and a passed
+  deploy or a failed deploy gives no line. The line comes from the facts
+  of the hosts in `who` and from the pause of the riff. With no open
+  release, there is no line.
 
 ## The notes of the lead
 

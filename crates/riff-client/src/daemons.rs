@@ -22,13 +22,16 @@
 //! ```
 //!
 //! The facts carry the [`Parts`] of the host in each repository that its
-//! daemon serves: `workers`, `lead`, both or none (#1643). `riff who`
-//! shows them as the line `parts`. A daemon of an older build sends none.
-//! They carry the [`Leaving`] of each repository where the host takes no
-//! new claim and still runs sessions, for example after a `riff leave`
-//! (01M6WJYQJ58MHQF1XPXXZW2ET6): `riff who` and the Machines tab of the
-//! TUI show it. They carry the [`Caps`] of each new container of the
-//! host too: the Machines tab shows them.
+//! daemon serves: `workers`, `lead`, both or none (#1643). `riff who` shows
+//! them as the line `parts`. A daemon of an older build sends none. They
+//! carry the [`Leaving`] of each repository where the host takes no new claim
+//! and still runs sessions, for example after a `riff leave`
+//! (01M6WJYQJ58MHQF1XPXXZW2ET6): `riff who` and the Machines tab of the TUI
+//! show it. They carry the [`Caps`] of each new container of the host too:
+//! the Machines tab shows them. They carry the [`Release`] of each watch of a
+//! deploy or of a check that the daemon follows (01M6XTS7RGXB30MFM6DZ7PVZ75):
+//! `riff who` and the header of the TUI make the line of the open release
+//! from the facts of each host ([`release`]).
 //!
 //! A line has at most [`MACHINE_CHARS`] characters. The last step of
 //! each session has at most [`LAST_CHARS`]. When the line is still too
@@ -314,6 +317,99 @@ pub struct Test {
     pub secs: u64,
 }
 
+/// A step of a release that a watch of the daemon follows
+/// (01M6XTS7RGXB30MFM6DZ7PVZ75): the watch of the deploy, then the watch of
+/// the check of the lead. The order of the variants is the order of the
+/// steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseStep {
+    /// The job `Deploy` waits for a person.
+    Waits,
+    /// The job `Deploy` runs.
+    Runs,
+    /// The job `Deploy` passed: the lead checks the release next.
+    Passed,
+    /// The job `Deploy` failed: the lead checks next, and riff files the
+    /// issue.
+    DeployFailed,
+    /// A check after the deploy failed.
+    CheckFailed,
+}
+
+/// The release that a watch of the daemon follows, at its step
+/// (01M6XTS7RGXB30MFM6DZ7PVZ75).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Release {
+    /// The repository, as `OWNER/REPO`.
+    pub repo: String,
+    /// The tag of the release, `vX.Y.Z`.
+    pub tag: String,
+    /// The step that the watch saw last.
+    pub step: ReleaseStep,
+}
+
+/// The open release of the riff in the facts of `hosts`
+/// (01M6XTS7RGXB30MFM6DZ7PVZ75). Of the releases of one repository, the
+/// newest tag wins, at the latest step that a host saw. Of more repositories,
+/// the first by name wins. `None` when no watch of a host follows a release.
+///
+/// ```
+/// use riff_client::daemons::{Facts, Host, Release, ReleaseStep, release};
+///
+/// let host = |name: &str, releases: Vec<Release>| Host {
+///     user: "mike".into(),
+///     host: name.into(),
+///     age_secs: 5,
+///     facts: Facts { releases, ..Facts::default() },
+/// };
+/// let of = |repo: &str, tag: &str, step| Release { repo: repo.into(), tag: tag.into(), step };
+/// assert_eq!(release(&[host("a", vec![])]), None);
+/// // The watch of the person's host saw the run first.
+/// let hosts = [
+///     host("a", vec![of("o/r", "v3.3.0", ReleaseStep::Waits)]),
+///     host("b", vec![of("o/r", "v3.3.0", ReleaseStep::Runs)]),
+/// ];
+/// assert_eq!(release(&hosts), Some(of("o/r", "v3.3.0", ReleaseStep::Runs)));
+/// // A fix forward: the newer tag wins, also at an earlier step.
+/// let hosts = [
+///     host("a", vec![of("o/r", "v3.3.0", ReleaseStep::CheckFailed)]),
+///     host("b", vec![of("o/r", "v3.3.1", ReleaseStep::Waits), of("o/q", "v1.0.0", ReleaseStep::Runs)]),
+/// ];
+/// assert_eq!(release(&hosts), Some(of("o/q", "v1.0.0", ReleaseStep::Runs)));
+/// assert_eq!(release(&hosts[..1]), Some(of("o/r", "v3.3.0", ReleaseStep::CheckFailed)));
+/// let fixed = [host("b", vec![of("o/r", "v3.3.1", ReleaseStep::Waits)]), hosts[0].clone()];
+/// assert_eq!(release(&fixed), Some(of("o/r", "v3.3.1", ReleaseStep::Waits)));
+/// ```
+pub fn release(hosts: &[Host]) -> Option<Release> {
+    let mut found: Option<&Release> = None;
+    for release in hosts.iter().flat_map(|h| &h.facts.releases) {
+        let better = match found {
+            None => true,
+            Some(old) if old.repo != release.repo => release.repo < old.repo,
+            Some(old) if old.tag != release.tag => newer(&release.tag, &old.tag),
+            Some(old) => release.step > old.step,
+        };
+        if better {
+            found = Some(release);
+        }
+    }
+    found.cloned()
+}
+
+/// True when the tag `a` names a newer release than the tag `b`. A tag
+/// with no version `vX.Y.Z` counts by its text.
+fn newer(a: &str, b: &str) -> bool {
+    let version = |tag: &str| {
+        tag.strip_prefix('v')
+            .and_then(|v| v.parse::<riff_core::build::Semver>().ok())
+    };
+    match (version(a), version(b)) {
+        (Some(a), Some(b)) => a > b,
+        _ => a > b,
+    }
+}
+
 /// The session image that the merged pin of a wave names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Image {
@@ -410,6 +506,12 @@ pub struct Facts {
     /// of an older build sends none (01M6WFNDS76NESPXHMQPGHHQSS).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto: Option<bool>,
+    /// The release of each watch of a deploy or of a check that the daemon
+    /// follows, at its step (01M6XTS7RGXB30MFM6DZ7PVZ75): `riff who` and the
+    /// TUI make the line of the release from them ([`release`]). A daemon of
+    /// an older build sends none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub releases: Vec<Release>,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -615,7 +717,13 @@ mod tests {
             claude: Sign::Left { minutes: 90 },
             claude_token: Token::Set,
             auto: Some(true),
+            releases: vec![Release {
+                repo: "o/r".into(),
+                tag: "v4.1.1".into(),
+                step: ReleaseStep::CheckFailed,
+            }],
         };
+        assert!(facts.line().contains(r#""step":"check_failed""#));
         assert_eq!(Facts::parse(&facts.line()), Some(facts.clone()));
         assert!(!facts.line().contains('\n'));
     }

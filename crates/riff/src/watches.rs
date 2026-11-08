@@ -26,6 +26,7 @@
 //! | `riff release test --host HOST` | [`Op::Test`] | the real-session test passes or fails |
 //! | `riff release publish`, `approve`, `retry`, `rollback` | [`Op::Deploy`] | the job `Deploy` of the tag passes or fails |
 //! | `riff join` | [`Op::Wave`] | never: it posts each time the last open item of the current wave closes |
+//! | the end of the watch of a deploy | [`Op::Check`] | the check of the lead ends the release, or another deploy follows (see "The check" below) |
 //!
 //! The same watch is one watch: a second `riff release verify` of the
 //! same pull request registers nothing new ([`Registered::Kept`]).
@@ -47,7 +48,9 @@
 //! access to the folder. The file holds the repository, the [`Op`], the
 //! start, and what the watch saw ([`Seen`]). The daemon finds the clone
 //! and the riff-server of a repository in `waves.json`, or in
-//! `served.json` ([`wave_of`]).
+//! `served.json` ([`wave_of`]). The watches of a check ([`Op::Check`])
+//! are in [`CHECKS`] of the same folder, under the same lock: a daemon of
+//! an older riff reads [`FILE`] only.
 //!
 //! # A look
 //!
@@ -95,8 +98,9 @@
 //!     Runs --> Failed: the job Deploy failed
 //!     Waits --> Failed: a job failed
 //!     Passed --> Passed: a daemon or the lead runs an old riff, up to 30 minutes
-//!     Passed --> [*]: each daemon and the lead run the new riff: message to the lead: next: riff release check
-//!     Failed --> [*]: message to the lead: the jobs, next: riff release retry
+//!     Passed --> Check: each daemon and the lead run the new riff: message to the lead: next: riff release check
+//!     Failed --> Check: message to the lead: the jobs, next: riff release retry
+//!     Check --> [*]: the watch of the check (see "The check" below)
 //! ```
 //!
 //! At "Passed" the message waits for the new riff
@@ -148,6 +152,44 @@
 //! above, and the other leads have the note, with what comes next for
 //! them. The note comes after the message and the line to the owner, so
 //! a post that fails leaves the message to the lead as the first fact.
+//!
+//! # The check
+//!
+//! At the end of the job `Deploy`, the watch of the deploy goes, and the
+//! watch of the check of the lead takes its place in the same write
+//! ([`Outcome::then`], [`Op::Check`], 01M6XTS7RGXB30MFM6DZ7PVZ75). The watch
+//! of the check posts nothing and fetches nothing: each look reads the
+//! releases and the release issue with `gh`. It gives the step of the release
+//! to the facts of the host, so `riff who` and the TUI say who acts next
+//! ([`Watch::release`], [`crate::view::release`]). Only what comes after its
+//! start counts: the watch keeps the count of the comments of the release
+//! issue and of the newer releases at its start. So the check of a failed
+//! deploy before a retry, and the newer release and the closed issue of an
+//! older release after a rollback, end no watch.
+//!
+//! ```mermaid
+//! stateDiagram-v2
+//!     [*] --> Waits: the job Deploy passed or failed
+//!     Waits --> Failed: riff release check v3.3.0 failed
+//!     Failed --> Failed: the owner resumes, or the lead fixes
+//!     Waits --> [*]: a passed check, the check of a failed deploy, a closed issue
+//!     Failed --> [*]: a passed check, a rollback, a newer release
+//!     Waits --> [*]: a new watch of a deploy of the repository
+//!     Failed --> [*]: a new watch of a deploy of the repository
+//! ```
+//!
+//! | The watch | Its step in the facts |
+//! |---|---|
+//! | [`Op::Deploy`], the job waits for `production` | [`ReleaseStep::Waits`] |
+//! | [`Op::Deploy`], the job runs | [`ReleaseStep::Runs`] |
+//! | [`Op::Deploy`], the job passed, the message waits for the new riff | [`ReleaseStep::Passed`] |
+//! | [`Op::Check`] after a pass | [`ReleaseStep::Passed`] |
+//! | [`Op::Check`] after a failure | [`ReleaseStep::DeployFailed`] |
+//! | [`Op::Check`], the last check failed | [`ReleaseStep::CheckFailed`] |
+//!
+//! A new watch of a deploy ends each watch of a check of its repository
+//! ([`Watches::register`]): a retry, a rollback and the next release
+//! follow their own deploy.
 
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
@@ -158,7 +200,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use nix::fcntl::{Flock, FlockArg};
-use riff_client::daemons::Host;
+use riff_client::daemons::{self, Host, ReleaseStep};
 use riff_core::build::Semver;
 use riff_core::wire::Kind;
 use serde::{Deserialize, Serialize};
@@ -172,8 +214,35 @@ use crate::wave::{BoxFuture, Wave};
 /// The file of the watches, in the folder of the daemon.
 pub const FILE: &str = "watches.json";
 
-/// The file that locks [`FILE`] between the daemon and a command.
+/// The file of the watches of a check ([`Op::Check`]), in the folder of the
+/// daemon (01M6XTS7RGXB30MFM6DZ7PVZ75). A daemon of an older riff reads
+/// only [`FILE`], and refuses a file with a kind of watch that it does not
+/// know: after a rollback of riff, it still reads its watches.
+pub const CHECKS: &str = "checks.json";
+
+/// The file that locks [`FILE`] and [`CHECKS`] between the daemon and a
+/// command.
 const LOCK: &str = "watches.lock";
+
+/// The watches in the file `path`. With no file, none.
+fn read_file(path: &Path) -> Result<Vec<Watch>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text)
+            .with_context(|| format!("cannot read the watches in {}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
+    }
+}
+
+/// Writes `watches` to the file `path` in one rename.
+fn write_file(path: &Path, watches: &[&Watch]) -> Result<()> {
+    let tmp = path.with_extension("json.new");
+    let mut file =
+        std::fs::File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
+    file.write_all(&serde_json::to_vec_pretty(watches)?)?;
+    file.sync_all()?;
+    std::fs::rename(&tmp, path).with_context(|| format!("cannot write {}", path.display()))
+}
 
 /// The variable that gives the time between two looks at the watches in
 /// milliseconds. Only a test sets it.
@@ -417,17 +486,43 @@ pub enum Op {
     },
     /// The current wave of the repository: the last open item closes.
     Wave,
+    /// The check of the lead after the end of the job `Deploy` of `tag`
+    /// (01M6XTS7RGXB30MFM6DZ7PVZ75): the watch of the deploy leaves it at its
+    /// end. It posts nothing. It gives the step of the release to the facts
+    /// of the host ([`Watch::release`]).
+    Check {
+        /// The tag of the release, `vX.Y.Z`.
+        tag: String,
+        /// True when the job `Deploy` passed, false when it failed.
+        deployed: bool,
+        /// The comments of the release issue at the start of the watch:
+        /// only a later comment counts, for example after a retry.
+        #[serde(default)]
+        comments: usize,
+        /// The published releases newer than `tag` at the start of the
+        /// watch: one or more for the deploy of an older release, a
+        /// rollback.
+        #[serde(default)]
+        newer: usize,
+    },
 }
 
 impl Op {
     /// The name of the watch in its repository. Two watches with the
     /// same key are one watch.
+    ///
+    /// ```
+    /// use riff::watches::Op;
+    ///
+    /// assert_eq!(Op::Check { tag: "v4.3.0".into(), deployed: true, comments: 0, newer: 0 }.key(), "check-v4.3.0");
+    /// ```
     pub fn key(&self) -> String {
         match self {
             Op::Pull { number, .. } => format!("pull-{number}"),
             Op::Test { commit, .. } => format!("test-{commit}"),
             Op::Deploy { tag, .. } => format!("deploy-{tag}"),
             Op::Wave => "wave".to_owned(),
+            Op::Check { tag, .. } => format!("check-{tag}"),
         }
     }
 
@@ -439,6 +534,8 @@ impl Op {
     /// let test = Op::Test { tag: "v4.3.0".into(), commit: "abc1234".into() };
     /// assert_eq!(test.what(), "the real-session test of v4.3.0 on abc1234");
     /// assert_eq!(Op::Wave.what(), "the current wave");
+    /// let check = Op::Check { tag: "v4.3.0".into(), deployed: true, comments: 0, newer: 0 };
+    /// assert_eq!(check.what(), "the check of v4.3.0 after its deploy");
     /// ```
     pub fn what(&self) -> String {
         match self {
@@ -446,6 +543,7 @@ impl Op {
             Op::Test { tag, commit } => format!("the real-session test of {tag} on {commit}"),
             Op::Deploy { tag, .. } => format!("the deploy of {tag}"),
             Op::Wave => "the current wave".to_owned(),
+            Op::Check { tag, .. } => format!("the check of {tag} after its deploy"),
         }
     }
 }
@@ -471,6 +569,11 @@ pub struct Seen {
     pub deployed_ms: Option<i64>,
     /// The last fault that the lead got, until a look reads the forge.
     pub fault: Option<String>,
+    /// [`Op::Deploy`]: where the job `Deploy` was at the last look, from
+    /// the look that saw the state move ([`Watch::release`]).
+    pub state: Option<DeployState>,
+    /// [`Op::Check`]: the last check on the release issue failed.
+    pub check_failed: bool,
 }
 
 /// A watch in [`FILE`].
@@ -487,6 +590,57 @@ pub struct Watch {
     pub seen: Seen,
 }
 
+impl Watch {
+    /// The release that the watch follows, at the step that it saw last
+    /// (01M6XTS7RGXB30MFM6DZ7PVZ75), or `None`: a watch of no deploy and of
+    /// no check, a watch of a deploy before the state moved, and a CI run
+    /// that builds.
+    ///
+    /// ```
+    /// use riff::cycle::DeployState;
+    /// use riff::watches::{Op, Seen, Watch};
+    /// use riff_client::daemons::ReleaseStep;
+    ///
+    /// let watch = |op: Op, seen: Seen| Watch { repo: "o/r".into(), op, since_ms: 0, seen };
+    /// let deploy = Op::Deploy { tag: "v3.3.0".into(), stale: None };
+    /// let step = |watch: Watch| watch.release().map(|r| r.step);
+    /// assert_eq!(step(watch(deploy.clone(), Seen::default())), None);
+    /// let at = |state| Seen { moved: true, state: Some(state), ..Seen::default() };
+    /// assert_eq!(step(watch(deploy.clone(), at(DeployState::Before))), None);
+    /// assert_eq!(step(watch(deploy.clone(), at(DeployState::Waiting))), Some(ReleaseStep::Waits));
+    /// assert_eq!(step(watch(deploy.clone(), at(DeployState::Running))), Some(ReleaseStep::Runs));
+    /// assert_eq!(step(watch(deploy.clone(), at(DeployState::Passed))), Some(ReleaseStep::Passed));
+    /// let check = |deployed| Op::Check { tag: "v3.3.0".into(), deployed, comments: 0, newer: 0 };
+    /// assert_eq!(step(watch(check(true), Seen::default())), Some(ReleaseStep::Passed));
+    /// assert_eq!(step(watch(check(false), Seen::default())), Some(ReleaseStep::DeployFailed));
+    /// let failed = Seen { check_failed: true, ..Seen::default() };
+    /// assert_eq!(step(watch(check(true), failed)), Some(ReleaseStep::CheckFailed));
+    /// assert_eq!(watch(check(true), Seen::default()).release().unwrap().repo, "o/r");
+    /// assert_eq!(watch(Op::Wave, Seen::default()).release(), None);
+    /// ```
+    pub fn release(&self) -> Option<daemons::Release> {
+        let (tag, step) = match &self.op {
+            Op::Deploy { tag, .. } if self.seen.moved => match self.seen.state? {
+                DeployState::Waiting => (tag, ReleaseStep::Waits),
+                DeployState::Running => (tag, ReleaseStep::Runs),
+                DeployState::Passed => (tag, ReleaseStep::Passed),
+                DeployState::Before | DeployState::Failed => return None,
+            },
+            Op::Check { tag, .. } if self.seen.check_failed => (tag, ReleaseStep::CheckFailed),
+            Op::Check { tag, deployed, .. } => match deployed {
+                true => (tag, ReleaseStep::Passed),
+                false => (tag, ReleaseStep::DeployFailed),
+            },
+            _ => return None,
+        };
+        Some(daemons::Release {
+            repo: self.repo.clone(),
+            tag: tag.clone(),
+            step,
+        })
+    }
+}
+
 /// What [`look`] decided about one watch.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Outcome {
@@ -494,6 +648,9 @@ pub struct Outcome {
     pub posts: Vec<Post>,
     /// True when the operation ended: the watch goes.
     pub end: bool,
+    /// The watch that takes the place of the watch at its end: the watch
+    /// of the check after a deploy ([`Op::Check`], 01M6XTS7RGXB30MFM6DZ7PVZ75).
+    pub then: Option<Op>,
 }
 
 /// A post of a watch.
@@ -710,25 +867,22 @@ impl Watches {
             .map_err(|(_, e)| anyhow!("cannot lock {}: {e}", path.display()))
     }
 
-    /// Each watch, in the order of their start. With no file, none.
+    /// Each watch of [`FILE`] in the order of their start, then each watch
+    /// of [`CHECKS`]. With no file, none.
     pub fn read(&self) -> Result<Vec<Watch>> {
-        let path = self.path();
-        match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text)
-                .with_context(|| format!("cannot read the watches in {}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
-        }
+        let mut watches = read_file(&self.path())?;
+        watches.extend(read_file(&self.dir.join(CHECKS))?);
+        Ok(watches)
     }
 
+    /// Writes the watches of a check to [`CHECKS`], and the others to
+    /// [`FILE`].
     fn write(&self, watches: &[Watch]) -> Result<()> {
-        let path = self.path();
-        let tmp = path.with_extension("json.new");
-        let mut file = std::fs::File::create(&tmp)
-            .with_context(|| format!("cannot write {}", tmp.display()))?;
-        file.write_all(&serde_json::to_vec_pretty(watches)?)?;
-        file.sync_all()?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+        let (checks, others): (Vec<&Watch>, Vec<&Watch>) = watches
+            .iter()
+            .partition(|w| matches!(w.op, Op::Check { .. }));
+        write_file(&self.path(), &others)?;
+        write_file(&self.dir.join(CHECKS), &checks)
     }
 
     /// Registers the watch of `op` in `repo`, started at `now_ms`. It
@@ -744,6 +898,10 @@ impl Watches {
     /// assert!(watches.register("o/r", Op::Wave, 0).is_err());
     /// # Ok::<(), anyhow::Error>(())
     /// ```
+    ///
+    /// A new watch of a deploy ends each watch of a check of the same
+    /// repository (01M6XTS7RGXB30MFM6DZ7PVZ75): a retry, a rollback or the
+    /// next release follows its own deploy.
     pub fn register(&self, repo: &str, op: Op, now_ms: i64) -> Result<Registered> {
         wave_of(&self.dir, repo)?;
         let _lock = self.lock()?;
@@ -751,6 +909,9 @@ impl Watches {
         let key = op.key();
         if watches.iter().any(|w| w.repo == repo && w.op.key() == key) {
             return Ok(Registered::Kept);
+        }
+        if matches!(op, Op::Deploy { .. }) {
+            watches.retain(|w| w.repo != repo || !matches!(w.op, Op::Check { .. }));
         }
         watches.push(Watch {
             repo: repo.to_owned(),
@@ -763,9 +924,10 @@ impl Watches {
     }
 
     /// Keeps `watch` in the file in place of the watch with its key, or
-    /// removes it when `end` is true. A watch that the file lost stays
-    /// lost.
-    fn settle(&self, watch: &Watch, end: bool) -> Result<()> {
+    /// removes it when `end` is true. At the end, `then` takes its place,
+    /// when the repository has no watch with the key of `then` yet. A
+    /// watch that the file lost stays lost.
+    fn settle(&self, watch: &Watch, end: bool, then: Option<Watch>) -> Result<()> {
         let _lock = self.lock()?;
         let mut watches = self.read()?;
         let key = watch.op.key();
@@ -775,10 +937,19 @@ impl Watches {
         else {
             return Ok(());
         };
-        if end {
-            watches.remove(at);
-        } else {
+        if !end {
             watches[at] = watch.clone();
+            return self.write(&watches);
+        }
+        watches.remove(at);
+        if let Some(then) = then {
+            let key = then.op.key();
+            if !watches
+                .iter()
+                .any(|w| w.repo == then.repo && w.op.key() == key)
+            {
+                watches.insert(at, then);
+            }
         }
         self.write(&watches)
     }
@@ -861,7 +1032,10 @@ impl Watches {
             let mut failed = Vec::new();
             for (watch, result) in seen {
                 match result {
-                    Ok(outcome) => self.settle_one(lookout, &wave, watch, outcome).await,
+                    Ok(outcome) => {
+                        self.settle_one(lookout, &wave, watch, outcome, now_ms)
+                            .await
+                    }
                     Err(e) => failed.push((watch, format!("{e:#}"))),
                 }
             }
@@ -920,19 +1094,21 @@ impl Watches {
             }
             eprintln!("riff daemon: {}: {fault}", watch.repo);
             watch.seen.fault = Some(fault.to_owned());
-            if let Err(e) = self.settle(&watch, false) {
+            if let Err(e) = self.settle(&watch, false, None) {
                 eprintln!("riff daemon: {e:#}");
             }
         }
     }
 
-    /// Posts what one look found, then keeps or removes the watch.
+    /// Posts what one look at `now_ms` found, then keeps or removes the
+    /// watch. At its end, the watch of [`Outcome::then`] takes its place.
     async fn settle_one(
         &self,
         lookout: &Arc<dyn Lookout>,
         wave: &Wave,
         mut watch: Watch,
         outcome: Outcome,
+        now_ms: i64,
     ) {
         watch.seen.fault = None;
         for post in &outcome.posts {
@@ -944,7 +1120,13 @@ impl Watches {
                 }
             }
         }
-        if let Err(e) = self.settle(&watch, outcome.end) {
+        let then = outcome.then.map(|op| Watch {
+            repo: watch.repo.clone(),
+            op,
+            since_ms: now_ms,
+            seen: Seen::default(),
+        });
+        if let Err(e) = self.settle(&watch, outcome.end, then) {
             eprintln!("riff daemon: {e:#}");
         }
     }
@@ -986,7 +1168,7 @@ impl Watches {
                     continue;
                 }
                 watch.seen.fault = Some(fault.clone());
-                if let Err(e) = self.settle(&watch, false) {
+                if let Err(e) = self.settle(&watch, false, None) {
                     eprintln!("riff daemon: {e:#}");
                 }
             }
@@ -1021,7 +1203,10 @@ fn read_all(
     now_ms: i64,
     riffs: &Riffs,
 ) -> Vec<(Watch, Result<Outcome>)> {
-    let fetch = watches.iter().any(|w| w.op != Op::Wave);
+    // The watch of a wave and the watch of a check need only `gh`.
+    let fetch = watches
+        .iter()
+        .any(|w| !matches!(w.op, Op::Wave | Op::Check { .. }));
     let forge = match lookout.forge(wave, fetch) {
         Ok(forge) => forge,
         Err(e) => {
@@ -1104,6 +1289,12 @@ pub fn look(forge: &dyn Forge, watch: &mut Watch, now_ms: i64, riffs: &Riffs) ->
             look_deploy(forge, &mut watch.seen, &deploy, stale)
         }
         Op::Wave => look_wave(forge, &mut watch.seen),
+        Op::Check {
+            tag,
+            comments,
+            newer,
+            ..
+        } => look_check(forge, &mut watch.seen, &tag, (comments, newer)),
     }
 }
 
@@ -1123,6 +1314,7 @@ fn say(body: String, end: bool) -> Outcome {
     Outcome {
         posts: vec![Post::Lead(body)],
         end,
+        then: None,
     }
 }
 
@@ -1132,6 +1324,38 @@ fn say_and_tell_leads(body: String, note: String, end: bool) -> Outcome {
     Outcome {
         posts: vec![Post::Lead(body), Post::Leads(note)],
         end,
+        then: None,
+    }
+}
+
+/// The end of the watch of the deploy of `tag` with `outcome`: the watch of
+/// the check of the lead takes its place (01M6XTS7RGXB30MFM6DZ7PVZ75).
+/// `deployed` is true when the job `Deploy` passed. The watch of the check
+/// starts with the comments of the release issue and the releases newer
+/// than `tag` that the forge has now ([`Op::Check`]). A read that fails
+/// counts none: the end of the deploy waits for no read.
+fn then_check(outcome: Outcome, forge: &dyn Forge, tag: &str, deployed: bool) -> Outcome {
+    let (comments, newer) = cycle::tag_version(tag)
+        .ok()
+        .and_then(|version| {
+            let newer = forge
+                .releases()
+                .ok()?
+                .iter()
+                .filter(|r| **r > version)
+                .count();
+            let issue = forge.issue_of(&cycle::title(version)).ok()?;
+            Some((issue.map_or(0, |i| i.comments.len()), newer))
+        })
+        .unwrap_or_default();
+    Outcome {
+        then: Some(Op::Check {
+            tag: tag.to_owned(),
+            deployed,
+            comments,
+            newer,
+        }),
+        ..outcome
     }
 }
 
@@ -1228,6 +1452,7 @@ fn look_deploy(
         }
         seen.moved = true;
     }
+    seen.state = Some(deploy.state);
     let run = deploy.url.as_str();
     match deploy.state {
         DeployState::Before | DeployState::Running => {
@@ -1252,6 +1477,7 @@ fn look_deploy(
                     Post::Leads(crate::text::release_note(Step::Waits, tag, &hold::by(repo))),
                 ],
                 end: false,
+                then: None,
             })
         }
         DeployState::Waiting => {
@@ -1269,6 +1495,7 @@ fn look_deploy(
                     reminder: true,
                 }],
                 end: false,
+                then: None,
             })
         }
         DeployState::Passed => {
@@ -1295,11 +1522,12 @@ fn look_deploy(
                 },
                 (None, false) => String::new(),
             };
-            Ok(say_and_tell_leads(
+            let said = say_and_tell_leads(
                 format!("The deploy of {tag} passed: {run}.{riff} next: {next}"),
                 crate::text::release_note(Step::Deployed, tag, &hold::by(repo)),
                 true,
-            ))
+            );
+            Ok(then_check(said, forge, tag, true))
         }
         DeployState::Failed => {
             let next = next_of(
@@ -1307,7 +1535,7 @@ fn look_deploy(
                 tag,
                 &format!("riff release retry {tag}, or riff release rollback vPREVIOUS"),
             );
-            Ok(say_and_tell_leads(
+            let said = say_and_tell_leads(
                 format!(
                     "The deploy of {tag} failed{}: {run}. The old revision still serves. next: \
                      {next}",
@@ -1315,9 +1543,62 @@ fn look_deploy(
                 ),
                 crate::text::release_note(Step::DeployFailed, tag, &hold::by(repo)),
                 true,
-            ))
+            );
+            Ok(then_check(said, forge, tag, false))
         }
     }
+}
+
+/// One look of the watch of the check of `tag` (01M6XTS7RGXB30MFM6DZ7PVZ75).
+/// It reads the releases and the release issue, and posts nothing. Only the
+/// comments after the first `comments` count, and only the releases newer
+/// than `tag` past the first `newer`. A failed check keeps the watch with
+/// [`Seen::check_failed`]. The watch ends when a newer release is
+/// published, when the release issue gets a passed check, a check of a
+/// failed deploy or a rollback ([`cycle::check_mark`],
+/// [`cycle::rollback_mark`]), and when the release issue is closed. The
+/// issue of an older release is closed from before: after a rollback only
+/// a check ends the watch. A tag with no version ends it.
+fn look_check(
+    forge: &dyn Forge,
+    seen: &mut Seen,
+    tag: &str,
+    (comments, newer): (usize, usize),
+) -> Result<Outcome> {
+    let ended = Outcome {
+        end: true,
+        ..Outcome::default()
+    };
+    let Ok(version) = cycle::tag_version(tag) else {
+        return Ok(ended);
+    };
+    if forge.releases()?.iter().filter(|r| **r > version).count() > newer {
+        return Ok(ended);
+    }
+    let Some(issue) = forge.issue_of(&cycle::title(version))? else {
+        return Ok(Outcome::default());
+    };
+    let fresh = issue.comments.get(comments..).unwrap_or_default();
+    let marks = [
+        cycle::check_mark(tag, "passed"),
+        cycle::check_mark(tag, "failed"),
+        cycle::check_mark(tag, "unknown"),
+        cycle::check_mark(tag, "failed deploy"),
+    ];
+    let last = fresh
+        .iter()
+        .rev()
+        .filter_map(|c| c.lines().next())
+        .find(|line| marks.iter().any(|m| m.as_str() == *line));
+    let rolled_back = fresh
+        .iter()
+        .any(|c| c.starts_with("riff release rollback v"));
+    let closed = !issue.open && newer == 0;
+    if closed || rolled_back || last.is_some_and(|l| *l == marks[0] || *l == marks[3]) {
+        return Ok(ended);
+    }
+    seen.check_failed = last.is_some_and(|l| *l == marks[1]);
+    Ok(Outcome::default())
 }
 
 fn look_wave(forge: &dyn Forge, seen: &mut Seen) -> Result<Outcome> {
@@ -1343,6 +1624,7 @@ fn look_wave(forge: &dyn Forge, seen: &mut Seen) -> Result<Outcome> {
             key: wave_complete_key(number),
         }],
         end: false,
+        then: None,
     })
 }
 
@@ -1803,6 +2085,17 @@ mod tests {
         }
     }
 
+    /// The watch of the check that the watch of the deploy of v3.3.0
+    /// leaves at its end (01M6XTS7RGXB30MFM6DZ7PVZ75).
+    fn check_op(deployed: bool) -> Op {
+        Op::Check {
+            tag: "v3.3.0".into(),
+            deployed,
+            comments: 0,
+            newer: 0,
+        }
+    }
+
     #[tokio::test]
     async fn a_run_that_still_builds_says_nothing_of_the_approval() {
         let dir = daemon_dir();
@@ -1936,7 +2229,7 @@ mod tests {
         );
         look(dir.path(), &ground, 4 * MINUTE).await;
         assert!(ground.told().is_empty() && ground.leads().is_empty());
-        assert!(kept(dir.path()).is_empty());
+        assert_eq!(kept(dir.path()), [check_op(true)]);
     }
 
     /// #1693, 01M6WBX2G1PX11D89HNBAZ6MCM: the message of a deploy that
@@ -1997,7 +2290,7 @@ mod tests {
                 "the lead of o/r"
             )]
         );
-        assert!(kept(dir.path()).is_empty());
+        assert_eq!(kept(dir.path()), [check_op(true)]);
     }
 
     /// 01M6WBX2G1PX11D89HNBAZ6MCM: after 30 minutes the message goes all
@@ -2031,7 +2324,7 @@ mod tests {
             ]
         );
         assert_eq!(ground.leads().len(), 1);
-        assert!(kept(dir.path()).is_empty());
+        assert_eq!(kept(dir.path()), [check_op(true)]);
     }
 
     /// A deploy that passed, with this host on the release and its lead on
@@ -2076,7 +2369,7 @@ mod tests {
             ]
         );
         assert_eq!(ground.leads().len(), 1);
-        assert!(kept(dir.path()).is_empty());
+        assert_eq!(kept(dir.path()), [check_op(true)]);
     }
 
     /// 01M6WFNDS76NESPXHMQPGHHQSS: after 30 minutes the message goes all
@@ -2102,7 +2395,7 @@ mod tests {
             ]
         );
         assert_eq!(ground.leads().len(), 1);
-        assert!(kept(dir.path()).is_empty());
+        assert_eq!(kept(dir.path()), [check_op(true)]);
     }
 
     #[tokio::test]
@@ -2132,7 +2425,7 @@ mod tests {
         );
         look(dir.path(), &ground, 2 * MINUTE).await;
         assert!(ground.told().is_empty() && ground.leads().is_empty());
-        assert!(kept(dir.path()).is_empty());
+        assert_eq!(kept(dir.path()), [check_op(false)]);
     }
 
     #[tokio::test]
@@ -2161,7 +2454,7 @@ mod tests {
         ground.forge(|f| f.deploy = deploy(DeployState::Failed, &["Deploy"]));
         look(dir.path(), &ground, 3 * MINUTE).await;
         assert_eq!(ground.told().len(), 1);
-        assert!(kept(dir.path()).is_empty());
+        assert_eq!(kept(dir.path()), [check_op(false)]);
     }
 
     #[tokio::test]
@@ -2193,6 +2486,277 @@ mod tests {
         });
         look(dir.path(), &ground, 2 * MINUTE).await;
         assert_eq!(ground.told().len(), 1);
+    }
+
+    /// The step of each watch in the file, as the facts of the host carry
+    /// it (01M6XTS7RGXB30MFM6DZ7PVZ75).
+    fn steps(dir: &Path) -> Vec<ReleaseStep> {
+        let watches = Watches::new(dir).read().unwrap();
+        watches
+            .iter()
+            .filter_map(Watch::release)
+            .map(|r| r.step)
+            .collect()
+    }
+
+    /// The release issue of v3.3.0, open, with a comment for each of
+    /// `results` of `riff release check`.
+    fn issue_with(open: bool, results: &[&str]) -> Option<crate::cycle::ReleaseIssue> {
+        Some(crate::cycle::ReleaseIssue {
+            number: 7,
+            open,
+            comments: results
+                .iter()
+                .map(|r| format!("{}\n\n- a: x\n", cycle::check_mark("v3.3.0", r)))
+                .collect(),
+        })
+    }
+
+    /// 01M6XTS7RGXB30MFM6DZ7PVZ75: the watch of a deploy gives the step of
+    /// the release at each look: it waits for a person, it runs, it passed.
+    /// At its end the watch of the check takes its place: it posts nothing
+    /// and fetches nothing, gives the failed check, and ends with the check
+    /// that passed.
+    #[tokio::test]
+    async fn the_watches_give_each_step_of_a_release_up_to_the_check_that_passed() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        ground.forge(|f| f.tags = vec!["v3.3.0".into()]);
+        watch(dir.path(), deploy_op(None));
+        // The CI run builds: no step yet.
+        ground.forge(|f| f.deploy = deploy(DeployState::Before, &[]));
+        look(dir.path(), &ground, MINUTE).await;
+        assert!(steps(dir.path()).is_empty());
+
+        ground.forge(|f| f.deploy = deploy(DeployState::Waiting, &[]));
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert_eq!(steps(dir.path()), [ReleaseStep::Waits]);
+        ground.forge(|f| f.deploy = deploy(DeployState::Running, &[]));
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert_eq!(steps(dir.path()), [ReleaseStep::Runs]);
+
+        // The job passed, and the message waits for the new riff.
+        ground.forge(|f| f.deploy = deploy(DeployState::Passed, &[]));
+        ground.riffs(|r| {
+            r.daemon = Some("3.2.0".parse().unwrap());
+            r.auto = true;
+        });
+        look(dir.path(), &ground, 4 * MINUTE).await;
+        assert_eq!(steps(dir.path()), [ReleaseStep::Passed]);
+        assert_eq!(kept(dir.path()), [deploy_op(None)]);
+        ground.told();
+
+        // The message goes: the watch of the check stays at the same step.
+        ground.riffs(|r| r.daemon = Some("3.3.0".parse().unwrap()));
+        look(dir.path(), &ground, 5 * MINUTE).await;
+        assert_eq!(ground.told().len(), 1);
+        assert_eq!(kept(dir.path()), [check_op(true)]);
+        assert_eq!(steps(dir.path()), [ReleaseStep::Passed]);
+        ground.fetches.lock().unwrap().clear();
+        ground.leads();
+        ground.chats();
+        look(dir.path(), &ground, 6 * MINUTE).await;
+        assert_eq!(steps(dir.path()), [ReleaseStep::Passed]);
+        assert_eq!(*ground.fetches.lock().unwrap(), [false], "only gh");
+
+        // A check could not run, then a check failed, then one passed.
+        ground.forge(|f| f.issue = issue_with(true, &["unknown"]));
+        look(dir.path(), &ground, 7 * MINUTE).await;
+        assert_eq!(steps(dir.path()), [ReleaseStep::Passed]);
+        ground.forge(|f| f.issue = issue_with(true, &["unknown", "failed"]));
+        look(dir.path(), &ground, 8 * MINUTE).await;
+        assert_eq!(steps(dir.path()), [ReleaseStep::CheckFailed]);
+        look(dir.path(), &ground, 9 * MINUTE).await;
+        assert_eq!(steps(dir.path()), [ReleaseStep::CheckFailed]);
+        ground.forge(|f| f.issue = issue_with(true, &["failed", "passed"]));
+        look(dir.path(), &ground, 10 * MINUTE).await;
+        assert!(kept(dir.path()).is_empty(), "the watch of the check goes");
+        assert!(ground.told().is_empty() && ground.leads().is_empty() && ground.chats().is_empty());
+    }
+
+    /// 01M6XTS7RGXB30MFM6DZ7PVZ75: after a failed deploy, the watch of the
+    /// check gives the step until the check of the lead files the issue.
+    #[tokio::test]
+    async fn the_watch_of_the_check_of_a_failed_deploy_ends_with_the_check() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        ground.forge(|f| {
+            f.tags = vec!["v3.3.0".into()];
+            f.deploy = deploy(DeployState::Failed, &["Deploy"]);
+        });
+        watch(dir.path(), deploy_op(None));
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(kept(dir.path()), [check_op(false)]);
+        assert_eq!(steps(dir.path()), [ReleaseStep::DeployFailed]);
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert_eq!(steps(dir.path()), [ReleaseStep::DeployFailed]);
+        ground.forge(|f| f.issue = issue_with(true, &["failed deploy"]));
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert!(kept(dir.path()).is_empty());
+    }
+
+    /// 01M6XTS7RGXB30MFM6DZ7PVZ75: the watch of a check ends at a newer
+    /// release, at a rollback, at a release issue that closed, and at a new
+    /// watch of a deploy of the repository: a retry, or the deploy of an
+    /// older release.
+    #[tokio::test]
+    async fn the_watch_of_a_check_ends_when_another_deploy_follows() {
+        let ends: [Ends; 3] = [
+            (Box::new(|f| f.releases.push("3.3.1")), "a newer release"),
+            (
+                Box::new(|f| {
+                    f.issue = issue_with(true, &["failed"]);
+                    let rollback = format!(
+                        "{}\n\nThe deploy of v3.2.0 ...",
+                        cycle::rollback_mark("v3.2.0")
+                    );
+                    f.issue.as_mut().unwrap().comments.push(rollback);
+                }),
+                "a rollback",
+            ),
+            (
+                Box::new(|f| f.issue = issue_with(false, &[])),
+                "a closed issue",
+            ),
+        ];
+        for (end, name) in ends {
+            let dir = daemon_dir();
+            let ground = Ground::new(Fake::ready("3.3.0"));
+            ground.forge(|f| {
+                f.tags = vec!["v3.3.0".into()];
+                f.deploy = deploy(DeployState::Passed, &[]);
+            });
+            watch(dir.path(), deploy_op(None));
+            look(dir.path(), &ground, MINUTE).await;
+            ground.forge(|f| f.issue = issue_with(true, &["failed"]));
+            look(dir.path(), &ground, 2 * MINUTE).await;
+            assert_eq!(steps(dir.path()), [ReleaseStep::CheckFailed], "{name}");
+            ground.forge(|f| end(f));
+            look(dir.path(), &ground, 3 * MINUTE).await;
+            assert!(kept(dir.path()).is_empty(), "{name}");
+        }
+
+        // A retry of a failed deploy follows its own run.
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        ground.forge(|f| {
+            f.tags = vec!["v3.3.0".into()];
+            f.deploy = deploy(DeployState::Failed, &["Deploy"]);
+        });
+        watch(dir.path(), deploy_op(None));
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(kept(dir.path()), [check_op(false)]);
+        let stale = Stale {
+            run: 9,
+            state: DeployState::Failed,
+        };
+        watch(dir.path(), deploy_op(Some(stale)));
+        assert_eq!(kept(dir.path()), [deploy_op(Some(stale))]);
+        assert!(
+            steps(dir.path()).is_empty(),
+            "GitHub still shows the failure"
+        );
+        // A watch of another operation keeps the watch of the check.
+        let dir = daemon_dir();
+        watch(dir.path(), check_op(true));
+        watch(dir.path(), pull());
+        assert_eq!(kept(dir.path()), [pull(), check_op(true)]);
+    }
+
+    /// 01M6XTS7RGXB30MFM6DZ7PVZ75: the watch of a check is in its own file.
+    /// [`FILE`] holds only the kinds of watch that an older riff knows, so
+    /// its daemon still reads its watches after a rollback of riff.
+    #[tokio::test]
+    async fn the_watch_of_a_check_stays_out_of_the_file_of_an_older_riff() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        ground.forge(|f| {
+            f.tags = vec!["v3.3.0".into()];
+            f.deploy = deploy(DeployState::Passed, &[]);
+        });
+        watch(dir.path(), deploy_op(None));
+        watch(dir.path(), pull());
+        look(dir.path(), &ground, MINUTE).await;
+        let kinds = |file: &str| -> Vec<String> {
+            let text = std::fs::read_to_string(dir.path().join(file)).unwrap();
+            let all: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
+            all.iter().map(|w| w["op"]["kind"].to_string()).collect()
+        };
+        assert_eq!(kinds(FILE), [r#""pull""#, r#""wave""#]);
+        assert_eq!(kinds(CHECKS), [r#""check""#]);
+        assert_eq!(kept(dir.path()), [pull(), check_op(true)]);
+    }
+
+    /// 01M6XTS7RGXB30MFM6DZ7PVZ75: after a retry, the release issue holds
+    /// the check of the failed deploy from before. Only a later check ends
+    /// the watch of the check of the deploy that passed.
+    #[tokio::test]
+    async fn the_watch_of_a_check_after_a_retry_waits_for_a_new_check() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        ground.forge(|f| {
+            f.tags = vec!["v3.3.0".into()];
+            f.deploy = deploy(DeployState::Passed, &[]);
+            f.issue = issue_with(true, &["failed deploy"]);
+        });
+        let stale = Stale {
+            run: 9,
+            state: DeployState::Failed,
+        };
+        watch(dir.path(), deploy_op(Some(stale)));
+        look(dir.path(), &ground, MINUTE).await;
+        let check = Op::Check {
+            tag: "v3.3.0".into(),
+            deployed: true,
+            comments: 1,
+            newer: 0,
+        };
+        assert_eq!(kept(dir.path()), [check]);
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert_eq!(steps(dir.path()), [ReleaseStep::Passed]);
+        ground.forge(|f| f.issue = issue_with(true, &["failed deploy", "passed"]));
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert!(kept(dir.path()).is_empty());
+    }
+
+    /// 01M6XTS7RGXB30MFM6DZ7PVZ75: after the deploy of an older release, the
+    /// newer release and the closed issue of the older release are from
+    /// before. Only the check of the older release ends the watch.
+    #[tokio::test]
+    async fn the_watch_of_a_check_after_a_rollback_waits_for_the_check() {
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::ready("3.3.0"));
+        ground.forge(|f| {
+            f.releases = vec!["3.0.0", "3.2.0", "3.3.0"];
+            f.tags = vec!["v3.2.0".into(), "v3.3.0".into()];
+            f.deploy = deploy(DeployState::Passed, &[]);
+            f.issue = Some(crate::cycle::ReleaseIssue {
+                number: 6,
+                open: false,
+                comments: vec![cycle::check_mark("v3.2.0", "passed")],
+            });
+        });
+        let older = Op::Deploy {
+            tag: "v3.2.0".into(),
+            stale: None,
+        };
+        watch(dir.path(), older);
+        look(dir.path(), &ground, MINUTE).await;
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        let check = Op::Check {
+            tag: "v3.2.0".into(),
+            deployed: true,
+            comments: 1,
+            newer: 1,
+        };
+        assert_eq!(kept(dir.path()), [check]);
+        assert_eq!(steps(dir.path()), [ReleaseStep::Passed]);
+        ground.forge(|f| {
+            let issue = f.issue.as_mut().unwrap();
+            issue.comments.push(cycle::check_mark("v3.2.0", "passed"));
+        });
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert!(kept(dir.path()).is_empty());
     }
 
     #[tokio::test]
@@ -2747,7 +3311,24 @@ mod tests {
                 assert_eq!(told.len(), 1, "{name}: {told:?}");
                 assert!(told[0].contains(words), "{name}: {told:?}");
                 let stays = ok && case.stays_on_ok;
-                assert_eq!(kept(dir.path()).len(), usize::from(stays), "{name}");
+                // The end of a deploy leaves the watch of its check
+                // (01M6XTS7RGXB30MFM6DZ7PVZ75).
+                let (checks, others): (Vec<Op>, Vec<Op>) = kept(dir.path())
+                    .into_iter()
+                    .partition(|op| matches!(op, Op::Check { .. }));
+                assert_eq!(others.len(), usize::from(stays), "{name}");
+                match &case.op {
+                    Op::Deploy { tag, .. } if !stays => {
+                        let check = Op::Check {
+                            tag: tag.clone(),
+                            deployed: ok,
+                            comments: 0,
+                            newer: 0,
+                        };
+                        assert_eq!(checks, [check], "{name}");
+                    }
+                    _ => assert!(checks.is_empty(), "{name}"),
+                }
             }
         }
     }

@@ -194,6 +194,11 @@ Each tab has the same five parts:
   of your riff, and the link: `link ok` with the age of the last look,
   or `link down`. When riff-server runs another build, the header
   names it.
+- While a release is open, the line of its state comes under the
+  header, on one or two rows, the same as the row `release` of `riff
+  who`: for example `v3.3.0: the deploy runs; the riff is paused`. The
+  body of the tab starts under it. See
+  [See who acts next on the release](development.md#see-who-acts-next-on-the-release).
 - The TUI looks at riff-server each 3 seconds, and each 15 seconds
   after 2 minutes with no key. A look that fails keeps the last
   screen, puts `link down` in the header and the fault in the note
