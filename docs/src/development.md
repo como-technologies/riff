@@ -3869,9 +3869,10 @@ tree names its container, its phase and its last step, for example:
  last step: > Bash: just check
 ```
 
-Select the row of this host: the detail shows the line of the daemon
-with the limit of the host, each start that waits for room, and each
-wave. The whole tree and each key are in
+The Machines tab shows the limit of this host, each start that waits
+for room, and each wave: see
+[See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui).
+The whole tree and each key of the Sessions tab are in
 [See what each session does](how-it-works.md#see-what-each-session-does).
 These keys act on the containers of this machine:
 
@@ -4090,7 +4091,9 @@ real-session test of v3.3.0 on 90e36bfd, for 4 min
 ```
 
 `riff top` and `riff who` show the same line on the line of the host,
-and the Sessions tab of `riff` in the detail of the host. The daemon
+and the Machines tab of `riff` in the detail of the host: see
+[See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui).
+The daemon
 counts the test as work: after `riff update`, it starts again on the
 new riff only after the test. The line goes away when the test ends.
 Then `riff release status` shows the result.

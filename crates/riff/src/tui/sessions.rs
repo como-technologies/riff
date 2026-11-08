@@ -8,16 +8,13 @@
 //! ```text
 //! [1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports
 //!  riff running · owner mike · build 10df8a4 · link ok 2s
-//!  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person
-//!  ▼ mike  owner  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle
-//!    ▼ thelio › riff            4 sessions · 1 blocked · 1 done · 1 busy · 1 idle
-//!  >   ! 3a3f8d5d  #994   worker     blocked 32m  which of two designs?
-//!      ✓ 8f1c2d3e  #1599  container  done         waits for a verify of PR #1614
-//!      ● 5b1e2a90  #1590  container  busy 12m     Bash: just check
-//!      ○ 4e54d4e5  ↑      lead       idle 2h      monitoring work
-//!    ▶ pangolin › strata                                       1 session · 1 busy
-//!  ▶ brett  online  › kadomony › strata                        1 session · 1 busy
-//!  ▶ ann  admin  offline  seen 1h ago
+//!  6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo
+//!  ▼ riff › mike  owner  online                                        4 sessions
+//!  > ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?
+//!    ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of PR
+//!    ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check
+//!    ○ 4e54d4e5  ↑      lead       thelio   idle 2h      monitoring work
+//!  ▶ strata · brett, mike · kadomony, pangolin                2 sessions · 2 busy
 //! ──3a3f8d5d · #994 Design: the TUI of riff · thelio ─────────────────────────────
 //!  which of two designs? (32m ago)
 //!  the lead gave no answer
@@ -37,13 +34,21 @@
 //! - **The summary line** counts the sessions by their [`Mark`], then
 //!   the words (`offline`, `paused`, `must clear`), the sessions that
 //!   run an old riff, and the leads that wait for a person. On the
-//!   right: the filter, the place in a long tree, and the top level.
-//!   With no room, the top level goes first, then the place.
-//! - **The tree** (01M6VGGW73KKG6Q0TZNBGYN7E0) has four levels: person,
-//!   host, repository, session. `b` puts the repository first, as
-//!   `riff top --by repo` does. A row with one row under it takes that
-//!   row after `›`, as in `riff top`. A group row ends with the counts of
-//!   its sessions, or the count of its sessions with no room for each.
+//!   right: the place in a long tree, and the top level. With no room,
+//!   the top level goes first, then the place. While a filter is on, the
+//!   line starts with it (01M6WKCKVJTJZSXVTZDZ9FZPFY):
+//!   `filter host:pangolin · 1 of 6 sessions: 1 busy · Esc clears`, and
+//!   the key line has `Esc clear the filter`. Enter on a host in the
+//!   Machines tab sets the filter, and the note line says so
+//!   (01M6WKCKYBMXQHB25V9ZW49DBK).
+//! - **The tree** (01M6VGGW73KKG6Q0TZNBGYN7E0,
+//!   01M6WKCC98EGKB3MSYKN3X2JMH) has three levels: repository, person,
+//!   session ([`By::tab_levels`]). `b` puts the person first. The host
+//!   is a column of each session row, after its tag, and no level: the
+//!   tree of `riff top` keeps the host as a level. A row with one row
+//!   under it takes that row after `›`, as in `riff top`. A group row
+//!   ends with the counts of its sessions, or the count of its sessions
+//!   with no room for each.
 //! - **The order** (01M6VAZKRTVZTY73PQV5GE2WY6,
 //!   01M6VGGWAAKQ3HPXZ7JX5FE7B0): in a group, the worst mark first, then
 //!   the session ID. The groups by their worst row: `!`, a session that
@@ -52,8 +57,9 @@
 //! - **The fold** (01M6VGGWAAKQ3HPXZ7JX5FE7B0): a group is open when it
 //!   holds a `!`, a `✓` or a `↑` row, or the selected row, or when a
 //!   filter is set ([`matches()`], 01M6VGH4JTM81PZH3F4R51VWG5). Each other
-//!   group is one folded line with its counts. The person folds and
-//!   opens a group: the choice lives while the TUI runs.
+//!   group is one folded line that names what it holds, then its counts
+//!   (01M6WKCKRN073FHR719KJNG3CQ). The person folds and opens a group:
+//!   the choice lives while the TUI runs.
 //! - **The marks** (01M6VGGWE75Y1XEXG0TM60P6S5): a `✓` stays until the
 //!   person selects its row. A session that turns `!` or `✓` while the
 //!   person is in another tab gives the tab the news `•`.
@@ -62,19 +68,20 @@
 //!   more and 80 columns or more. A session shows the detail of
 //!   `riff top` ([`crate::state::detail`]), its claims, its pull request
 //!   and its riff, and on this machine its container, its phase and its
-//!   last step. A host of this machine shows the line of the daemon, the
-//!   starts that wait for room and the waves; another host the facts
-//!   that its daemon sends.
+//!   last step. Its line names its host. The Machines tab shows the
+//!   facts of a host.
 //! - **The narrow layout** (01M6VGH4V01H3CC6GE45FHGF5J) has one column
-//!   of rows, fewer words, and no pane. Enter on a session opens its
-//!   detail on the whole screen, and Esc goes back.
+//!   of rows, fewer words, and no pane. From 50 columns, a session row
+//!   has its host, cut to 8 columns (01M6WKCKNSCT73R2DSR01CGN5J). Enter
+//!   on a session opens its detail on the whole screen, and Esc goes
+//!   back.
 //! - **The window:** the tab builds only the rows that fit the body
 //!   ([`window`]), so a long tree costs no more to draw than a short one.
 //!
 //! ```mermaid
 //! flowchart TD
 //!     M["the model:<br/>each session, each container here"] --> F["the filter: each word matches"]
-//!     F --> T["the tree: person › host › repository › session"]
+//!     F --> T["the tree: repository › person › session,<br/>the host in each session row"]
 //!     T --> O["the order: the worst row first"]
 //!     O --> D["the fold: open with !, ✓, ↑,<br/>the selection, or a choice"]
 //!     D --> W["the window: only the rows that fit"]
@@ -92,9 +99,9 @@
 //! | `x` | End the selected session of the daemon, after `y` (`riff daemon end NAME`). |
 //! | `p`, `P` | Pause or resume the repository of the row, or the whole riff, after `y`. |
 //! | `e` | Open each group, or fold the groups that need no look. |
-//! | `b` | Put the person or the repository at the top of the tree. |
+//! | `b` | Put the person at the top of the tree, or the repository again. |
 //! | `/` | Filter. Enter keeps the filter, Esc clears it. |
-//! | `Esc` | Leave the detail on the whole screen, or clear the filter. |
+//! | `Esc` | Leave the detail on the whole screen, or clear the filter and the note line. |
 //!
 //! Each action calls the code of its CLI command, and asks `y` or `n`
 //! first, but the attach (01M6VGH4Y0G25VYBBD5ZV4GG2H). `l`, `t` and `x`
@@ -155,8 +162,9 @@ pub struct Choices {
     /// The filter, and true while the person types it.
     filter: String,
     typing: bool,
-    /// The top level of the tree.
-    by: By,
+    /// True when `b` put the person at the top of the tree. The
+    /// repository is the top level at the start.
+    person_first: bool,
     /// The sessions with a `✓` that the person selected: their `✓` goes.
     pub(super) seen: BTreeSet<String>,
     /// The first row of the tree in the window, and the rows that fit, at
@@ -195,14 +203,24 @@ impl Choices {
         self.full
     }
 
-    /// The top level of the tree.
+    /// True while a filter is on: it has a word.
+    pub fn filtered(&self) -> bool {
+        !self.filter.trim().is_empty()
+    }
+
+    /// The top level of the tree: the repository, or after `b` the
+    /// person.
     pub fn by(&self) -> By {
-        self.by
+        if self.person_first {
+            By::Person
+        } else {
+            By::Repo
+        }
     }
 
     /// The fold key of the group with the keys `path`.
     fn fold_key(&self, path: &[String]) -> (bool, Vec<String>) {
-        (self.by == By::Repo, path.to_vec())
+        (self.by() == By::Repo, path.to_vec())
     }
 }
 
@@ -663,19 +681,16 @@ impl State {
     }
 
     /// The tree of the tab: the groups of the sessions that the filter
-    /// shows, and with the person at the top, each person with no
-    /// session that the filter shows.
+    /// shows ([`By::tab_levels`]), and with the person at the top, each
+    /// person with no session that the filter shows.
     pub fn tree(&self) -> Tree<'_> {
         let facts = Facts {
             seen: &self.sessions.seen,
             server: self.server(),
         };
-        let levels = match self.sessions.by {
-            By::Person => [Level::Person, Level::Host, Level::Repo],
-            By::Repo => [Level::Repo, Level::Person, Level::Host],
-        };
-        let mut groups = groups(self.items(), &levels, &[], &facts);
-        if self.sessions.by == By::Person {
+        let by = self.sessions.by();
+        let mut groups = groups(self.items(), &by.tab_levels(), &[], &facts);
+        if by == By::Person {
             let words: Vec<&str> = self.sessions.filter.split_whitespace().collect();
             for user in self.people().into_keys() {
                 let shown = [("user", user.clone())];
@@ -752,7 +767,7 @@ impl State {
         if let Some(open) = choices.folds.get(&choices.fold_key(&group.path)) {
             return *open;
         }
-        !choices.filter.trim().is_empty()
+        choices.filtered()
             || group.items.iter().any(|item| {
                 facts.needs_look(item)
                     || choices.selected == Some(Selected::Session(item.id().to_owned()))
@@ -903,7 +918,7 @@ impl State {
         walk(&tree.groups, &mut keys);
         drop(rows);
         drop(tree);
-        let by = self.sessions.by == By::Repo;
+        let by = self.sessions.by() == By::Repo;
         self.sessions.folds.retain(|(repo, _), _| *repo != by);
         if folded {
             for key in keys {
@@ -921,10 +936,7 @@ impl State {
                     self.sessions.filter.pop();
                 }
                 Key::Enter => self.sessions.typing = false,
-                Key::Esc => {
-                    self.sessions.filter.clear();
-                    self.sessions.typing = false;
-                }
+                Key::Esc => self.clear_filter(),
                 _ => {}
             }
             return None;
@@ -947,20 +959,25 @@ impl State {
             Key::Char('p') => self.pause(false),
             Key::Char('P') => self.pause(true),
             Key::Char('e') => self.open_each(),
-            Key::Char('b') => {
-                self.sessions.by = match self.sessions.by {
-                    By::Person => By::Repo,
-                    By::Repo => By::Person,
-                };
-            }
+            Key::Char('b') => self.sessions.person_first = !self.sessions.person_first,
             Key::Char('/') => self.sessions.typing = true,
             Key::Esc if self.sessions.full => self.sessions.full = false,
-            Key::Esc => self.sessions.filter.clear(),
+            Key::Esc => self.clear_filter(),
             Key::Row(at) => self.move_to(|_, _| at),
             Key::Fold(at) => self.fold(Some(at), None),
             _ => {}
         }
         None
+    }
+
+    /// Esc: clears the filter. With a filter, the note goes too: it can
+    /// name the filter, as after Enter in the Machines tab.
+    fn clear_filter(&mut self) {
+        if self.sessions.filtered() {
+            self.note = None;
+        }
+        self.sessions.filter.clear();
+        self.sessions.typing = false;
     }
 
     /// `←`: folds an open group, else selects the group of the row.
@@ -1283,6 +1300,7 @@ pub fn body(
         line: summary(state, layout, place, area.width - margin),
     });
     let width = area.width - margin;
+    let hosts = host_cols(&tree, layout, area.width);
     for ((i, shown), y) in rows.iter().enumerate().skip(top).zip(1..).take(fit) {
         let selected = Some(i) == at;
         let line = match shown {
@@ -1290,7 +1308,7 @@ pub fn body(
                 group_line(state, chain, *depth, *open, selected, layout, width)
             }
             Row::Session { item, depth } => {
-                session_line(state, item, *depth, selected, layout, now_ms)
+                session_line(state, item, *depth, hosts, selected, layout, now_ms)
             }
         };
         let area = row(y);
@@ -1360,13 +1378,30 @@ fn rule(title: &str, width: u16) -> Line<'static> {
 }
 
 /// The summary line: the counts of the sessions that show, then on the
-/// right the filter, the place in a long tree and the top level.
+/// right the place in a long tree and the top level. While a filter is
+/// on, the line starts with it, and the count is of all the sessions:
+/// `filter host:pangolin · 1 of 6 sessions: 1 busy · Esc clears`. The
+/// narrow layout has `filter host:pangolin · 1 of 6 sessions`
+/// (01M6WKCKVJTJZSXVTZDZ9FZPFY).
 fn summary(state: &State, layout: Layout, place: Option<String>, width: u16) -> Line<'static> {
     let items = state.items();
     let items: Vec<&Item> = items.iter().collect();
     let counts = Counts::of(&items, &state.sessions.seen, state.server());
     let states = counts.states();
-    let left = if layout == Layout::Wide {
+    let filtered = state.sessions.filtered();
+    let wide = layout == Layout::Wide;
+    let total = if filtered {
+        let all = state
+            .model
+            .entries
+            .iter()
+            .filter_map(|entry| Item::of(entry, &state.me))
+            .count();
+        format!("{} of {}", counts.sessions, many(all, "session"))
+    } else {
+        counts.total()
+    };
+    let mut left = if wide {
         let mut parts = states;
         if counts.old > 0 {
             parts.push(format!("{} to update", counts.old));
@@ -1378,23 +1413,26 @@ fn summary(state: &State, layout: Layout, place: Option<String>, width: u16) -> 
             ));
         }
         if parts.is_empty() {
-            counts.total()
+            total
         } else {
-            format!("{}: {}", counts.total(), parts.join(" · "))
+            format!("{total}: {}", parts.join(" · "))
         }
-    } else if states.is_empty() {
-        counts.total()
+    } else if filtered || states.is_empty() {
+        total
     } else {
         states.join(" · ")
     };
-    let mut right = Vec::new();
-    if !state.sessions.filter.is_empty() {
-        right.push(format!("/{}", safe(&state.sessions.filter)));
+    if filtered {
+        left = format!("filter {} · {left}", safe(state.sessions.filter.trim()));
+        if wide {
+            left.push_str(" · Esc clears");
+        }
     }
-    if layout == Layout::Wide {
+    let mut right = Vec::new();
+    if wide {
         right.extend(place);
         right.push(
-            match state.sessions.by {
+            match state.sessions.by() {
                 By::Person => "by person",
                 By::Repo => "by repo",
             }
@@ -1460,9 +1498,36 @@ fn label(state: &State, group: &Group, layout: Layout) -> Vec<Span<'static>> {
             );
             parts
         }
-        Level::Host => vec![Span::raw(safe(&group.key))],
-        Level::Repo => vec![Span::raw(repo_name(state, &group.key))],
+        Level::Host | Level::Repo => vec![Span::raw(name(state, group))],
     }
+}
+
+/// The name of the group `group`: a user, a host, or a repository by
+/// [`repo_name`].
+fn name(state: &State, group: &Group) -> String {
+    match group.level {
+        Level::Repo => repo_name(state, &group.key),
+        Level::Person | Level::Host => safe(&group.key),
+    }
+}
+
+/// What the folded group `group` holds, after its label: the names of
+/// the groups under it, then the hosts of its sessions, the worst row
+/// first: ` · mike, brett · thelio, pangolin` (01M6WKCKRN073FHR719KJNG3CQ).
+fn held(state: &State, group: &Group) -> String {
+    let mut hosts: Vec<String> = Vec::new();
+    for item in &group.items {
+        let host = safe(item.key(Level::Host));
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    let kids: Vec<String> = group.kids.iter().map(|kid| name(state, kid)).collect();
+    [kids, hosts]
+        .iter()
+        .filter(|names| !names.is_empty())
+        .map(|names| format!(" · {}", names.join(", ")))
+        .collect()
 }
 
 /// The name of the repository `repo`: its short name when the
@@ -1499,13 +1564,8 @@ fn group_line(
     let mut left = vec![Span::raw(indent(depth, selected))];
     left.push(Span::raw(if open { "▼ " } else { "▶ " }));
     let wide = layout == Layout::Wide;
-    let shown = if wide || chain[0].level != Level::Person {
-        chain
-    } else {
-        &chain[..1]
-    };
     let mut before = 0;
-    for (i, group) in shown.iter().enumerate() {
+    for (i, group) in chain.iter().enumerate() {
         let parts = label(state, group, layout);
         if i > 0 {
             left.push(Span::raw(if before > 1 { "  › " } else { " › " }));
@@ -1531,16 +1591,34 @@ fn group_line(
                 .unwrap_or_default()
         }
     } else {
-        // A row with no room for each count has the count of its
-        // sessions.
+        // A folded row names what it holds, then each count. With no
+        // room, it has the count of its sessions, and with no room for
+        // the names too, no names.
         let counts = Counts::of(&items, &state.sessions.seen, state.server());
         let used: usize = left.iter().map(Span::width).sum();
-        let line = counts.line();
-        if wide && used + 2 + Line::raw(line.as_str()).width() < usize::from(width) {
-            line
+        let held = if open {
+            String::new()
         } else {
-            counts.total()
+            held(state, end)
+        };
+        let fits =
+            |used: usize, text: &str| used + 2 + Line::raw(text).width() < usize::from(width);
+        let with = used + Line::raw(held.as_str()).width();
+        let line = counts.line();
+        let total = counts.total();
+        let (held, right) = if wide && fits(with, &line) {
+            (held, line)
+        } else if fits(with, &total) {
+            (held, total)
+        } else if wide && fits(used, &line) {
+            (String::new(), line)
+        } else {
+            (String::new(), total)
+        };
+        if !held.is_empty() {
+            left.push(Span::raw(held));
         }
+        right
     };
     let line = aligned(left, vec![Span::styled(right, muted())], width);
     if selected {
@@ -1561,14 +1639,46 @@ fn indent(depth: usize, selected: bool) -> String {
     }
 }
 
-/// The line of a session row. The wide layout:
-/// `MARK ID8  ITEM   TAG        STATE AGE    LAST`. The narrow layout:
-/// `MARK  ID4  ITEM   [lead] STATE AGE`, with each session after two
-/// columns.
+/// The most columns of the host of a session row: in the wide layout,
+/// and in the narrow layout.
+const HOST_COLS: u16 = 12;
+const NARROW_HOST_COLS: u16 = 8;
+
+/// The fewest columns of a terminal with the host in each session row.
+pub const HOST_FROM: u16 = 50;
+
+/// The columns of the host of each session row of `tree` in `columns`:
+/// the widest host, up to [`HOST_COLS`], or up to [`NARROW_HOST_COLS`]
+/// in the narrow layout. Under [`HOST_FROM`] columns, none
+/// (01M6WKCC98EGKB3MSYKN3X2JMH, 01M6WKCKNSCT73R2DSR01CGN5J).
+fn host_cols(tree: &Tree, layout: Layout, columns: u16) -> u16 {
+    if columns < HOST_FROM {
+        return 0;
+    }
+    let most = if layout == Layout::Wide {
+        HOST_COLS
+    } else {
+        NARROW_HOST_COLS
+    };
+    tree.groups
+        .iter()
+        .flat_map(|group| &group.items)
+        .map(|item| width(&safe(item.key(Level::Host))))
+        .max()
+        .unwrap_or(0)
+        .min(most)
+}
+
+/// The line of a session row, with the host in `hosts` columns (none
+/// for 0). The wide layout:
+/// `MARK ID8  ITEM   TAG        HOST      STATE AGE    LAST`. The narrow
+/// layout: `MARK  ID4  ITEM   HOST      [lead] STATE AGE`, with each
+/// session after two columns.
 fn session_line(
     state: &State,
     item: &Item,
     depth: usize,
+    hosts: u16,
     selected: bool,
     layout: Layout,
     now_ms: i64,
@@ -1599,6 +1709,10 @@ fn session_line(
     let id_style = item
         .info()
         .map_or_else(Style::new, |s| style_of(crate::style::session(&s.uri)));
+    let host = (hosts > 0).then(|| {
+        let host = super::waves::cut(&safe(item.key(Level::Host)), usize::from(hosts));
+        Span::raw(format!("{} ", pad(&host, hosts)))
+    });
     let mut spans = vec![
         Span::raw(indent(depth, selected)),
         Span::styled(symbol, mark_style),
@@ -1612,6 +1726,9 @@ fn session_line(
             Span::raw(" "),
             Span::styled(pad(item.tag(), 10), muted()),
             Span::raw(" "),
+        ]);
+        spans.extend(host);
+        spans.extend([
             Span::styled(pad(&state_text, 12), word_style),
             Span::raw(" "),
             Span::raw(item.last()),
@@ -1624,6 +1741,7 @@ fn session_line(
             Span::raw(pad(&item_text, 6)),
             Span::raw(" "),
         ]);
+        spans.extend(host);
         if item.lead() {
             spans.push(Span::styled("lead ", muted()));
         }
@@ -1717,9 +1835,8 @@ fn session_detail(state: &State, item: &Item, now_ms: i64) -> (String, Vec<Line<
     (head.join(" · "), lines)
 }
 
-/// The detail of a group: its name, its counts, and for a host the facts
-/// of its daemon: of the daemon of this machine from its status, of
-/// another host from riff-server.
+/// The detail of a group: its name, its counts, and for a repository its
+/// pause. The facts of a host are in the Machines tab.
 fn group_detail(state: &State, chain: &[&Group]) -> (String, Vec<Line<'static>>) {
     let end = last(chain);
     let title: Vec<String> = chain
@@ -1749,45 +1866,6 @@ fn group_detail(state: &State, chain: &[&Group]) -> (String, Vec<Line<'static>>)
                 style_of(crate::style::WARNING),
             ));
         }
-        if group.level != Level::Host {
-            continue;
-        }
-        let user = end.items.first().map(|item| item.key(Level::Person));
-        let here = group.key == state.me.place().host() && user == Some(state.me.who().user());
-        if here {
-            match &state.daemon {
-                Some(Ok(status)) => {
-                    lines.push(Line::raw(text::daemon_line(status)));
-                    if !status.waiting.is_empty() {
-                        lines.push(Line::raw(text::daemon_waiting(&status.waiting)));
-                    }
-                    lines.extend(status.waves.iter().map(|w| Line::raw(text::daemon_wave(w))));
-                }
-                Some(Err(e)) => lines.push(Line::raw(text::no_daemon(e))),
-                None => {}
-            }
-            continue;
-        }
-        let hosts = riff_client::daemons::hosts(state.model.on_server());
-        if let Some(host) = hosts
-            .iter()
-            .find(|h| h.host == group.key && Some(h.user.as_str()) == user)
-        {
-            lines.extend(
-                text::daemon_facts(&host.facts, false)
-                    .into_iter()
-                    .map(|parts| {
-                        let mut spans = Vec::new();
-                        for (i, (text, style)) in parts.into_iter().enumerate() {
-                            if i > 0 {
-                                spans.push(Span::raw("  "));
-                            }
-                            spans.push(Span::styled(text, style_of(style)));
-                        }
-                        Line::from(spans)
-                    }),
-            );
-        }
     }
     (title.join(" › "), lines)
 }
@@ -1795,7 +1873,9 @@ fn group_detail(state: &State, chain: &[&Group]) -> (String, Vec<Line<'static>>)
 /// The keys of the key line of the Sessions tab: the text of the key,
 /// its word, and the key that a click on it presses. While the person
 /// types the filter, the line has the keys of the filter
-/// ([`super::machines::filter_keys`]).
+/// ([`super::machines::filter_keys`]). While a filter is on, the line
+/// has `Esc clear the filter`, in place of keys of less use
+/// (01M6WKCKVJTJZSXVTZDZ9FZPFY).
 pub fn keys(state: &State, layout: Layout) -> Vec<(&'static str, &'static str, Option<Key>)> {
     if state.sessions.full {
         let log = state
@@ -1813,7 +1893,21 @@ pub fn keys(state: &State, layout: Layout) -> Vec<(&'static str, &'static str, O
         keys.push(("?", "help", Some(Key::Help)));
         return keys;
     }
+    let clear = ("Esc", "clear the filter", Some(Key::Esc));
     match layout {
+        Layout::Wide if state.sessions.filtered() => vec![
+            ("↑↓", "select", None),
+            ("Enter", "open", Some(Key::Enter)),
+            ("l", "lead", Some(Key::Char('l'))),
+            ("t", "take over", Some(Key::Char('t'))),
+            clear,
+            ("?", "help", Some(Key::Help)),
+        ],
+        _ if state.sessions.filtered() => vec![
+            ("Enter", "open", Some(Key::Enter)),
+            clear,
+            ("?", "help", Some(Key::Help)),
+        ],
         Layout::Wide => vec![
             ("↑↓", "select", None),
             ("←→", "fold", None),

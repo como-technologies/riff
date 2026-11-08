@@ -208,8 +208,10 @@ fn rule(head: &str, width: usize) -> String {
 }
 
 /// The mock-up of the Sessions tab of #994 at 80 x 24
-/// (01M6VAZKNXZV1RTG7MT0GMHKT3). The rows of a group come by their
-/// worst mark (01M6VAZKRTVZTY73PQV5GE2WY6), and the counts too.
+/// (01M6VAZKNXZV1RTG7MT0GMHKT3), in the tree of #1735: repository ›
+/// person › session, with the host in each session row. The rows of a
+/// group come by their worst mark (01M6VAZKRTVZTY73PQV5GE2WY6), and the
+/// counts too. The folded row names its people and its hosts.
 #[test]
 fn the_sessions_tab_at_80_x_24_is_the_mock_up() {
     let mut state = mock_up();
@@ -217,27 +219,26 @@ fn the_sessions_tab_at_80_x_24_is_the_mock_up() {
     let mut want = vec![
         "[1 Sessions]  2 Chat•2  3 Waves•  4 Machines  5 Devices  6 Reports".to_owned(),
         " riff running · owner mike · build 10df8a4 · link ok 2s".to_owned(),
-        " 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person"
+        " 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update         by repo"
             .to_owned(),
-        " ▼ mike  owner  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle"
+        " ▼ riff › mike  owner  online                                        4 sessions"
             .to_owned(),
-        "   ▼ thelio › riff            4 sessions · 1 blocked · 1 done · 1 busy · 1 idle"
+        " > ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?".to_owned(),
+        "   ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of PR"
             .to_owned(),
-        " >   ! 3a3f8d5d  #994   worker     blocked 32m  which of two designs?".to_owned(),
-        "     ✓ 8f1c2d3e  #1599  container  done         waits for a verify of PR #1614".to_owned(),
-        "     ● 5b1e2a90  #1590  container  busy 12m     Bash: just check".to_owned(),
-        "     ○ 4e54d4e5  ↑      lead       idle 2h      monitoring work".to_owned(),
-        "   ▶ pangolin › strata                                       1 session · 1 busy"
+        "   ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check".to_owned(),
+        "   ○ 4e54d4e5  ↑      lead       thelio   idle 2h      monitoring work".to_owned(),
+        " ▶ strata · brett, mike · kadomony, pangolin                2 sessions · 2 busy"
             .to_owned(),
-        " ▶ brett  online  › kadomony › strata                        1 session · 1 busy"
-            .to_owned(),
-        " ▶ ann  admin  offline  seen 1h ago".to_owned(),
+    ];
+    want.resize(12, String::new());
+    want.extend([
         rule("──3a3f8d5d · #994 Design: the TUI of riff · thelio ", 80),
         " which of two designs? (32m ago)".to_owned(),
         " the lead gave no answer".to_owned(),
         " working on #994 Design: the TUI of riff".to_owned(),
         " claim #994   pull request none   riff build current".to_owned(),
-    ];
+    ]);
     want.resize(22, String::new());
     want.extend([
         " The lead of riff runs on. (Ctrl-P Ctrl-Q detached.)".to_owned(),
@@ -249,7 +250,8 @@ fn the_sessions_tab_at_80_x_24_is_the_mock_up() {
 
 /// The mock-up of the narrow layout of #994 at 40 x 24
 /// (01M6VAZKK4KHCDCX4RKG9B95D7): one column of rows, fewer words, and no
-/// detail pane.
+/// detail pane. Under 50 columns, a session row has no host, and a
+/// folded row with no room for its names has none.
 #[test]
 fn the_sessions_tab_at_40_x_24_is_the_narrow_mock_up() {
     let mut state = mock_up();
@@ -258,15 +260,12 @@ fn the_sessions_tab_at_40_x_24_is_the_narrow_mock_up() {
         "‹ 1/6 Sessions ›",
         "riff running · link ok 2s",
         "1 blocked · 1 done · 3 busy · 1 idle",
-        "▼ mike                       5 sessions",
-        "  ▼ thelio › riff            4 sessions",
+        "▼ riff › mike                4 sessions",
         "> !  3a3f  #994   blocked 32m",
         "  ✓  8f1c  #1599  done",
         "  ●  5b1e  #1590  busy 12m",
         "  ○  4e54  ↑      lead idle 2h",
-        "  ▶ pangolin › strata         1 session",
-        "▶ brett                       1 session",
-        "▶ ann                           offline",
+        "▶ strata                     2 sessions",
     ];
     want.resize(22, "");
     want.extend([
@@ -276,17 +275,145 @@ fn the_sessions_tab_at_40_x_24_is_the_narrow_mock_up() {
     assert_eq!(drawn(&state, 40, 24), want);
 }
 
-/// The detail of a container session of this machine names its
-/// container, its phase and its last step, as the view of the daemon
-/// did. The detail of the host of this machine has the line of the
-/// daemon.
+/// From 50 columns, the narrow layout has the host in each session row,
+/// up to 8 columns, and a folded row names what it holds when it fits.
 #[test]
-fn the_detail_shows_the_container_and_the_daemon_of_this_machine() {
+fn the_narrow_layout_from_50_columns_has_the_host() {
+    let state = mock_up();
+    let rows = drawn(&state, 60, 24);
+    assert_eq!(
+        rows[3..9],
+        [
+            "▼ riff › mike                                    4 sessions",
+            "> !  3a3f  #994   thelio   blocked 32m",
+            "  ✓  8f1c  #1599  thelio   done",
+            "  ●  5b1e  #1590  thelio   busy 12m",
+            "  ○  4e54  ↑      thelio   lead idle 2h",
+            "▶ strata · brett, mike · kadomony, pangolin      2 sessions",
+        ]
+    );
+    assert!(drawn(&state, 49, 24)[4].starts_with("> !  3a3f  #994   blocked"));
+    // A host of more than 8 columns is cut.
+    let mut state = mock_up();
+    let (mut look, at) = state.last_look().map(|(l, at)| (l.clone(), at)).unwrap();
+    let mut far = info(
+        "riff://mike@strata-ci-runner/como-technologies/riff?session=fafafafa&claim=issue-5",
+        SessionState::Blocked,
+    );
+    far.worker = true;
+    look.who.sessions.push(far);
+    state.looked(look, at);
+    let rows = drawn(&state, 60, 24);
+    assert!(
+        rows.iter()
+            .any(|r| r.starts_with("  !  fafa  #5     strata-… blocked")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|r| r.contains("#994   thelio   blocked")),
+        "{rows:#?}"
+    );
+}
+
+/// `b` gives person › repository › session, with the host in each
+/// session row, at 80 x 24 and at 40 x 24. A person with no session
+/// shows, and a folded row names its repository and its host.
+#[test]
+fn b_puts_the_person_at_the_top() {
+    let mut state = mock_up();
+    state.on_key(Key::Char('b'));
+    assert_eq!(state.sessions.by(), By::Person);
+    let rows = drawn(&state, 80, 24);
+    assert_eq!(
+        rows[2..12],
+        [
+            " 6 sessions: 1 blocked · 1 done · 3 busy · 1 idle · 1 to update       by person",
+            " ▼ mike  owner  online        5 sessions · 1 blocked · 1 done · 2 busy · 1 idle",
+            "   ▼ riff                     4 sessions · 1 blocked · 1 done · 1 busy · 1 idle",
+            " >   ! 3a3f8d5d  #994   worker     thelio   blocked 32m  which of two designs?",
+            "     ✓ 8f1c2d3e  #1599  container  thelio   done         waits for a verify of P",
+            "     ● 5b1e2a90  #1590  container  thelio   busy 12m     Bash: just check",
+            "     ○ 4e54d4e5  ↑      lead       thelio   idle 2h      monitoring work",
+            "   ▶ strata · pangolin                                       1 session · 1 busy",
+            " ▶ brett  online  › strata · kadomony                        1 session · 1 busy",
+            " ▶ ann  admin  offline  seen 1h ago",
+        ]
+    );
+    assert_eq!(
+        book("### Put the people at the top of the tab", " 6 sessions"),
+        rows[2..12]
+    );
+    let rows = drawn(&state, 40, 24);
+    assert_eq!(
+        rows[2..12],
+        [
+            "1 blocked · 1 done · 3 busy · 1 idle",
+            "▼ mike                       5 sessions",
+            "  ▼ riff                     4 sessions",
+            "> !  3a3f  #994   blocked 32m",
+            "  ✓  8f1c  #1599  done",
+            "  ●  5b1e  #1590  busy 12m",
+            "  ○  4e54  ↑      lead idle 2h",
+            "  ▶ strata · pangolin         1 session",
+            "▶ brett › strata · kadomony   1 session",
+            "▶ ann                           offline",
+        ]
+    );
+    // `b` again: the repository at the top.
+    state.on_key(Key::Char('b'));
+    assert!(drawn(&state, 80, 24)[2].ends_with("by repo"));
+    assert!(drawn(&state, 80, 24)[3].starts_with(" ▼ riff › mike"));
+}
+
+/// 01M6VAZKNXZV1RTG7MT0GMHKT3: the filter `host:pangolin` at 80 x 24
+/// and at 40 x 24. The summary line starts with the filter, and the key
+/// line has `Esc`.
+#[test]
+fn an_active_filter_is_plain_to_see() {
+    let mut state = mock_up();
+    state.sessions.set_filter("host:pangolin".into());
+    let rows = drawn(&state, 80, 24);
+    assert_eq!(
+        rows[2..5],
+        [
+            " filter host:pangolin · 1 of 6 sessions: 1 busy · Esc clears            by repo",
+            " ▼ strata › mike  owner  online                              1 session · 1 busy",
+            " > ● 9c0d1e2f  #88    worker     pangolin busy 10m",
+        ]
+    );
+    assert_eq!(
+        rows[23],
+        " ↑↓ select  Enter open  l lead  t take over  Esc clear the filter  ? help"
+    );
+    let mut shown = rows[2..5].to_vec();
+    shown.push(rows[23].clone());
+    assert_eq!(book("### Filter the sessions", " filter"), shown);
+    let rows = drawn(&state, 40, 24);
+    assert_eq!(rows[2], "filter host:pangolin · 1 of 6 sessions");
+    assert_eq!(rows[23], "Enter open  Esc clear the filter  ? help");
+    // A click on `Esc clear the filter` presses Esc.
+    let view = compute_view(&state, Rect::new(0, 0, 40, 24), NOW);
+    assert_eq!(view.hit(12, 23), Some(Key::Esc));
+    state.on_click(&view, 12, 23, false);
+    assert!(!state.sessions.filtered());
+    let rows = drawn(&state, 80, 24);
+    assert!(rows[2].starts_with(" 6 sessions: 1 blocked"), "{rows:#?}");
+    assert!(rows[23].contains("/ filter"), "{rows:#?}");
+    // A filter of spaces is no filter.
+    state.sessions.set_filter("  ".into());
+    assert!(drawn(&state, 80, 24)[2].starts_with(" 6 sessions: 1 blocked"));
+}
+
+/// The detail of a container session of this machine names its host,
+/// its container, its phase and its last step, as the view of the
+/// daemon did. The detail of a group has its counts.
+#[test]
+fn the_detail_shows_the_container_of_this_machine() {
     let mut state = mock_up();
     state.on_key(Key::Down);
     state.on_key(Key::Down);
     let rows = drawn(&state, 80, 24);
-    assert!(rows[7].starts_with(" >   ● 5b1e2a90"), "{rows:#?}");
+    assert!(rows[6].starts_with(" > ● 5b1e2a90"), "{rows:#?}");
     assert_eq!(
         rows[12],
         rule("──5b1e2a90 · #1590 · thelio · 5m ", 80),
@@ -302,15 +429,16 @@ fn the_detail_shows_the_container_and_the_daemon_of_this_machine() {
         "{text}"
     );
 
-    // The host thelio: the line of the daemon of this machine.
+    // The group riff › mike: its counts.
     state.on_key(Key::First);
-    state.on_key(Key::Down);
     let rows = drawn(&state, 80, 24);
-    assert!(rows[4].starts_with(" > ▼ thelio › riff"), "{rows:#?}");
-    let text = rows.join("\n");
-    assert!(
-        text.contains("\n riff daemon b, pid 4242, 0 waiting\n"),
-        "{text}"
+    assert!(rows[3].starts_with(" ▼ riff › mike"), "{rows:#?}");
+    assert_eq!(
+        rows[12..14],
+        [
+            rule("──riff › mike · owner · online ", 80),
+            " 4 sessions · 1 blocked · 1 waiting · 1 busy · 1 idle".to_owned(),
+        ]
     );
 }
 
@@ -327,35 +455,49 @@ fn the_keys_select_fold_and_open() {
     state.on_key(Key::Down);
     // The `✓` goes once the person selects its row.
     let rows = drawn(&state, 80, 24);
-    assert!(rows[6].starts_with(" >   ◐ 8f1c2d3e"), "{rows:#?}");
-    // `←` on a session selects its group, `←` again folds it.
+    assert!(rows[5].starts_with(" > ◐ 8f1c2d3e"), "{rows:#?}");
+    // `←` on a session selects its group, `←` again folds it. The
+    // folded row names its host.
     state.on_key(Key::Left);
     state.on_key(Key::Left);
+    assert_eq!(
+        state.sessions.selected,
+        Some(Selected::Group(vec![
+            "como-technologies/riff".into(),
+            "mike".into()
+        ]))
+    );
     let rows = drawn(&state, 80, 24);
-    assert!(rows[4].starts_with(" > ▶ thelio › riff"), "{rows:#?}");
-    assert!(rows[5].starts_with("   ▶ pangolin"), "{rows:#?}");
+    assert!(
+        rows[3].starts_with(" ▶ riff › mike  owner  online · thelio "),
+        "{rows:#?}"
+    );
+    assert!(rows[4].starts_with(" ▶ strata"), "{rows:#?}");
     // `→` opens it, Space folds it, Enter opens it.
     state.on_key(Key::Right);
-    assert!(drawn(&state, 80, 24)[4].starts_with(" > ▼ thelio"));
+    assert!(drawn(&state, 80, 24)[3].starts_with(" ▼ riff"));
     state.on_key(Key::Char(' '));
-    assert!(drawn(&state, 80, 24)[4].starts_with(" > ▶ thelio"));
+    assert!(drawn(&state, 80, 24)[3].starts_with(" ▶ riff"));
     state.on_key(Key::Enter);
-    assert!(drawn(&state, 80, 24)[4].starts_with(" > ▼ thelio"));
+    assert!(drawn(&state, 80, 24)[3].starts_with(" ▼ riff"));
     // `G` and `g`: the last and the first row.
     state.on_key(Key::Char('G'));
-    assert!(drawn(&state, 80, 24)[11].starts_with(" ▶ ann"));
+    assert!(drawn(&state, 80, 24)[8].starts_with(" ▶ strata"));
     state.on_key(Key::Char('g'));
     assert_eq!(state.sessions.at, 0);
     // `e` opens each group, and again folds the groups that need no
     // look.
     state.on_key(Key::Char('e'));
     let text = drawn(&state, 80, 30).join("\n");
-    assert!(text.contains("\n   ▼ pangolin › strata"), "{text}");
-    assert!(text.contains("     ● 9c0d1e2f  #88"), "{text}");
-    assert!(text.contains("\n ▼ brett"), "{text}");
+    assert!(text.contains("\n ▼ strata  "), "{text}");
+    assert!(text.contains("\n   ▼ brett  online  "), "{text}");
+    assert!(
+        text.contains("\n     ● 9c0d1e2f  #88    worker     pangolin busy 10m"),
+        "{text}"
+    );
     state.on_key(Key::Char('e'));
     let text = drawn(&state, 80, 30).join("\n");
-    assert!(text.contains("\n   ▶ pangolin › strata"), "{text}");
+    assert!(text.contains("\n ▶ strata · brett, mike"), "{text}");
 }
 
 /// The help popup has the keys of the tab first, and it takes no key of
@@ -380,23 +522,6 @@ fn the_help_takes_no_key_of_the_tab() {
     assert!(!state.help_shown());
 }
 
-/// `b` puts the repository at the top of the tree, as `riff top --by
-/// repo` does.
-#[test]
-fn b_puts_the_repository_at_the_top() {
-    let mut state = mock_up();
-    state.on_key(Key::Char('b'));
-    let rows = drawn(&state, 80, 24);
-    assert!(rows[2].ends_with("by repo"), "{rows:#?}");
-    assert!(
-        rows[3].starts_with(" ▼ riff › mike  owner  online  › thelio  "),
-        "{rows:#?}"
-    );
-    assert!(rows.iter().any(|r| r.starts_with(" ▶ strata")), "{rows:#?}");
-    state.on_key(Key::Char('b'));
-    assert!(drawn(&state, 80, 24)[2].ends_with("by person"));
-}
-
 /// `/` filters the rows by a word: a user, a host, a repository, an
 /// item or a state. Enter keeps the filter, Esc clears it.
 #[test]
@@ -414,18 +539,34 @@ fn the_filter_shows_the_rows_that_match() {
     state.on_key(Key::Enter);
     let rows = drawn(&state, 80, 24);
     assert!(
-        rows[2].starts_with(" 2 sessions: 2 busy") && rows[2].ends_with("/strata · by person"),
+        rows[2].starts_with(" filter strata · 2 of 6 sessions: 2 busy · Esc clears")
+            && rows[2].ends_with(" by repo"),
         "{rows:#?}"
     );
     // With a filter, each group is open.
-    assert!(rows[3].starts_with(" ▼ brett"), "{rows:#?}");
+    assert!(rows[3].starts_with(" ▼ strata"), "{rows:#?}");
+    assert!(rows[4].starts_with("   ▼ brett"), "{rows:#?}");
     assert!(rows.iter().any(|r| r.contains("7a8b9c0d")), "{rows:#?}");
     assert!(!rows.iter().any(|r| r.contains("thelio")), "{rows:#?}");
-    assert!(!rows.iter().any(|r| r.contains("ann")), "{rows:#?}");
     // `host:` matches only a host, and a state matches too.
     state.sessions.filter = "host:thelio blocked".into();
     let rows = drawn(&state, 80, 24);
-    assert!(rows[2].starts_with(" 1 session: 1 blocked"), "{rows:#?}");
+    assert!(
+        rows[2].starts_with(" filter host:thelio blocked · 1 of 6 sessions: 1 blocked"),
+        "{rows:#?}"
+    );
+    // `user:` matches only a person, and `repo:` only a repository.
+    state.sessions.filter = "user:brett".into();
+    assert!(drawn(&state, 80, 24)[2].starts_with(" filter user:brett · 1 of 6 sessions"));
+    state.sessions.filter = "repo:riff".into();
+    assert!(drawn(&state, 80, 24)[2].starts_with(" filter repo:riff · 4 of 6 sessions"));
+    // With the person at the top, a person with no session that the
+    // filter matches shows.
+    state.on_key(Key::Char('b'));
+    state.sessions.filter = "ann".into();
+    let rows = drawn(&state, 80, 24);
+    assert!(rows[3].starts_with(" ▶ ann  admin"), "{rows:#?}");
+    state.on_key(Key::Char('b'));
     // Esc clears the filter.
     state.on_key(Key::Esc);
     assert_eq!(state.sessions.filter(), "");
@@ -449,13 +590,13 @@ fn l_and_enter_attach_to_the_lead() {
     let lead = Action::Attach("riff-lead-como-technologies-riff".into());
     assert_eq!(state.on_key(Key::Char('l')), Some(lead.clone()));
     state.on_key(Key::Char('G'));
-    // The row of ann has no repository: the first lead.
+    // The repository strata has no lead here: the first lead.
     assert_eq!(state.on_key(Key::Char('l')), Some(lead.clone()));
     state.on_key(Key::Char('g'));
-    for _ in 0..5 {
+    for _ in 0..4 {
         state.on_key(Key::Down);
     }
-    assert!(drawn(&state, 80, 24)[8].starts_with(" >   ○ 4e54d4e5"));
+    assert!(drawn(&state, 80, 24)[7].starts_with(" > ○ 4e54d4e5"));
     assert_eq!(state.on_key(Key::Enter), Some(lead));
     // `t` on the lead says that `l` attaches.
     assert_eq!(state.on_key(Key::Char('t')), None);
@@ -490,7 +631,6 @@ fn t_and_x_ask_first() {
     assert_eq!(state.on_key(Key::Char('y')), Some(Action::End(name.into())));
     // A session with no container of this machine.
     state.on_key(Key::Char('g'));
-    state.on_key(Key::Down);
     state.on_key(Key::Down);
     assert_eq!(state.on_key(Key::Char('t')), None);
     assert_eq!(state.shown_note(), Some(text::NO_CONTAINER_HERE));
@@ -545,7 +685,6 @@ fn p_and_capital_p_pause_after_a_question() {
     }];
     paused.looked(look, at);
     paused.on_key(Key::Char('G'));
-    paused.on_key(Key::Up);
     paused.on_key(Key::Char('p'));
     assert_eq!(
         paused.asked().as_deref(),
@@ -558,7 +697,8 @@ fn p_and_capital_p_pause_after_a_question() {
             state: RiffState::Running
         }))
     );
-    // A row of no one repository.
+    // A row of no one repository: a person with two.
+    paused.on_key(Key::Char('b'));
     paused.on_key(Key::Char('g'));
     paused.on_key(Key::Char('p'));
     assert_eq!(paused.shown_note(), Some(text::PICK_A_REPOSITORY));
@@ -699,19 +839,19 @@ fn a_click_selects_a_row_and_folds_a_group() {
     let mut state = mock_up();
     let area = Rect::new(0, 0, 80, 24);
     let view = compute_view(&state, area, NOW);
-    // The row of 5b1e2a90 is the screen row 7.
-    assert_eq!(view.hit(30, 7), Some(Key::Row(4)));
-    state.on_click(&view, 30, 7, false);
-    assert!(drawn(&state, 80, 24)[7].starts_with(" >   ● 5b1e2a90"));
-    // The `▼` of thelio at the column 3 of the row 4.
-    assert_eq!(view.hit(3, 4), Some(Key::Fold(1)));
+    // The row of 5b1e2a90 is the screen row 6.
+    assert_eq!(view.hit(30, 6), Some(Key::Row(3)));
+    state.on_click(&view, 30, 6, false);
+    assert!(drawn(&state, 80, 24)[6].starts_with(" > ● 5b1e2a90"));
+    // The `▼` of riff at the column 1 of the row 3.
+    assert_eq!(view.hit(1, 3), Some(Key::Fold(0)));
     let view = compute_view(&state, area, NOW);
-    state.on_click(&view, 3, 4, false);
-    assert!(drawn(&state, 80, 24)[4].starts_with(" > ▶ thelio"));
+    state.on_click(&view, 1, 3, false);
+    assert!(drawn(&state, 80, 24)[3].starts_with(" ▶ riff"));
     // A double click on the group opens it.
     let view = compute_view(&state, area, NOW);
-    state.on_click(&view, 30, 4, true);
-    assert!(drawn(&state, 80, 24)[4].starts_with(" > ▼ thelio"));
+    state.on_click(&view, 30, 3, true);
+    assert!(drawn(&state, 80, 24)[3].starts_with(" ▼ riff"));
     // A click on a key of the key line.
     let view = compute_view(&state, area, NOW);
     let keys = " ↑↓ select  ←→ fold  Enter open  l lead  t take over  p pause  / filter  ? help";
@@ -739,7 +879,7 @@ fn a_long_tree_shows_its_window() {
     state.looked(look, at);
     // With no room for the top level, the summary line has the place.
     let rows = drawn(&state, 80, 24);
-    assert!(rows[2].ends_with("  1-9 of 49"), "{rows:#?}");
+    assert!(rows[2].ends_with("  1-9 of 46"), "{rows:#?}");
     let area = Rect::new(0, 0, 80, 24);
     for _ in 0..2 {
         state.drawn(&compute_view(&state, area, NOW));
@@ -747,9 +887,9 @@ fn a_long_tree_shows_its_window() {
     }
     state.drawn(&compute_view(&state, area, NOW));
     let rows = drawn(&state, 80, 24);
-    assert!(rows[2].ends_with("  13-21 of 49"), "{rows:#?}");
-    assert_eq!(state.sessions.at, 20);
-    assert!(rows.iter().any(|r| r.starts_with(" >   !")), "{rows:#?}");
+    assert!(rows[2].ends_with("  12-20 of 46"), "{rows:#?}");
+    assert_eq!(state.sessions.at, 19);
+    assert!(rows.iter().any(|r| r.starts_with(" > !")), "{rows:#?}");
 }
 
 /// 01M6VAZK1R932VQMJBC32MTTJB: a session that turns `!` or `✓` while
@@ -805,7 +945,7 @@ fn the_tab_and_riff_top_draw_one_sessions_model() {
         );
     }
     // A container with no session on riff-server shows under the person
-    // and the host of the TUI, with no repository.
+    // of the TUI, with no repository, on the host of the TUI.
     let mut state = mock_up();
     state.daemon_looked(Ok(status(vec![live(
         "riff-issue-77-cccc3333",
@@ -815,10 +955,9 @@ fn the_tab_and_riff_top_draw_one_sessions_model() {
     )])));
     state.on_key(Key::Char('e'));
     let text = drawn(&state, 80, 40).join("\n");
-    assert!(text.contains("\n   ▼ thelio  "), "{text}");
-    assert!(text.contains("\n     ▼ -"), "{text}");
+    assert!(text.contains("\n ▼ - › mike  "), "{text}");
     assert!(
-        text.contains("         cccc3333  #77    container  holds for a takeover"),
+        text.contains("\n     cccc3333  #77    container  thelio   holds for a takeover"),
         "{text}"
     );
     let top = crate::top::Top {
@@ -845,25 +984,117 @@ fn the_tab_and_riff_top_draw_one_sessions_model() {
 /// row (01M6VGGW73KKG6Q0TZNBGYN7E0).
 #[test]
 fn the_book_shows_the_screen_of_the_tab() {
+    let drawn = drawn(&mock_up(), 80, 24);
+    let drawn: Vec<String> = drawn.into_iter().filter(|row| !row.is_empty()).collect();
+    assert_eq!(book("## See what each session does", "[1 Sessions]"), drawn);
+}
+
+/// The lines of the first `text` block that starts with `first` under
+/// the heading `heading` of "How riff works" in the book.
+fn book(heading: &str, first: &str) -> Vec<String> {
     let page = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../docs/src/how-it-works.md"
     ))
     .unwrap();
-    let part = page
-        .split("\n## See what each session does\n")
-        .nth(1)
-        .unwrap();
-    let screen = part
+    let part = page.split(&format!("\n{heading}\n")).nth(1).unwrap();
+    let block = part
         .split("```text\n")
-        .find(|block| block.starts_with("[1 Sessions]"))
-        .unwrap();
-    let screen: Vec<&str> = screen.split("```").next().unwrap().lines().collect();
-    let drawn = drawn(&mock_up(), 80, 24);
-    let drawn: Vec<&str> = drawn
-        .iter()
-        .map(String::as_str)
-        .filter(|row| !row.is_empty())
-        .collect();
-    assert_eq!(screen, drawn);
+        .find(|block| block.starts_with(first))
+        .unwrap_or_else(|| panic!("no block {first} under {heading}"));
+    block
+        .split("```")
+        .next()
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The tree of `riff top --once` stays as it was: person › host ›
+/// repository › session, and with `--by repo` repository › person ›
+/// host › session (01M42KHNCBMBCT3TFBYWE339H5). The tab has its own
+/// shape of the shared sessions model.
+#[test]
+fn riff_top_keeps_its_own_tree() {
+    let state = mock_up();
+    let (look, _) = state.last_look().unwrap();
+    let tree = |by: By| {
+        let show = riff_client::sessions::Show {
+            by,
+            ..riff_client::sessions::Show::default()
+        };
+        let top = crate::top::Top {
+            pauses: &RiffState::Running.into(),
+            owner: &look.who.owner,
+            server: look.server.as_ref(),
+            sessions: &state.model,
+            people: &look.who.people,
+            issues: &BTreeMap::new(),
+            holds: &BTreeMap::new(),
+            repo: None,
+            show: &show,
+            width: 100,
+            fault: None,
+            machines: &[],
+        };
+        let text = anstream::adapter::strip_str(&top.view()).to_string();
+        // The header and the blocks come first, each after an empty line.
+        text.split("\n\n").last().unwrap().to_owned()
+    };
+    assert_eq!(
+        tree(By::Person).lines().collect::<Vec<_>>(),
+        [
+            "ann  admin  offline  seen 1h ago",
+            "brett  online  › kadomony  › strata  1 session: 1 worker; 1 busy, 1 claim",
+            "│  no numbers",
+            "└─ 7a8b9c0d  worker  busy",
+            "     working on #12",
+            "mike  owner  online  5 sessions: 2 busy, 1 idle, 1 blocked, 4 claims",
+            "├─ pangolin  › strata  1 session: 1 worker; 1 busy, 1 claim",
+            "│  │  no numbers",
+            "│  └─ 9c0d1e2f  worker  busy",
+            "│       working on #88",
+            "└─ thelio  › riff  4 sessions: 1 lead, 2 containers, 1 worker; 1 to update; 1 busy, 1 idle, 1 block…",
+            "   │  no numbers",
+            "   ├─ 3a3f8d5d  worker  blocked",
+            "   │    which of two designs? (32m ago)",
+            "   │    the lead gave no answer",
+            "   │    working on #994",
+            "   ├─ 4e54d4e5  ↑  lead  idle",
+            "   │    monitoring work for 2h",
+            "   ├─ 5b1e2a90  container  busy",
+            "   │    working on #1590",
+            "   └─ 8f1c2d3e  container  waiting",
+            "        working on #1599",
+            "        waits for a verify of PR #1614",
+        ]
+    );
+    assert_eq!(
+        tree(By::Repo).lines().collect::<Vec<_>>(),
+        [
+            "riff  › mike  owner  online  › thelio  4 sessions: 1 lead, 2 containers, 1 worker; 1 to update; 1 b…",
+            "│  no numbers",
+            "├─ 3a3f8d5d  worker  blocked",
+            "│    which of two designs? (32m ago)",
+            "│    the lead gave no answer",
+            "│    working on #994",
+            "├─ 4e54d4e5  ↑  lead  idle",
+            "│    monitoring work for 2h",
+            "├─ 5b1e2a90  container  busy",
+            "│    working on #1590",
+            "└─ 8f1c2d3e  container  waiting",
+            "     working on #1599",
+            "     waits for a verify of PR #1614",
+            "strata  2 sessions: 2 busy, 2 claims",
+            "├─ brett  online  › kadomony  1 session: 1 worker; 1 busy, 1 claim",
+            "│  │  no numbers",
+            "│  └─ 7a8b9c0d  worker  busy",
+            "│       working on #12",
+            "└─ mike  owner  online  › pangolin  1 session: 1 worker; 1 busy, 1 claim",
+            "   │  no numbers",
+            "   └─ 9c0d1e2f  worker  busy",
+            "        working on #88",
+        ]
+    );
 }

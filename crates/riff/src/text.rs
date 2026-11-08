@@ -6852,8 +6852,9 @@ pub fn leaving_line(leaving: &riff_client::daemons::Leaving) -> String {
 
 /// The real-session test that a daemon runs, on one line
 /// (01M5QVBTXE8YRY44A1C1VP71QS): `riff daemon status`, `riff top`,
-/// `riff who` and the Sessions tab of the TUI show it. The commit has at most 8
-/// characters, and the minutes are whole.
+/// `riff who` and the Machines tab of the TUI show it
+/// (01M6WPJHM4XTAQ1BQ8BQH862S5). The commit has at most 8 characters,
+/// and the minutes are whole.
 ///
 /// ```
 /// use riff_client::daemons::Test;
@@ -11312,6 +11313,19 @@ pub fn on_host_only(host: &str) -> String {
     format!("l, t and x work only on {}: run riff there.", safe(host))
 }
 
+/// The Sessions tab after Enter on the host `host` in the Machines tab:
+/// the filter `host:HOST` is on (01M6WKCKYBMXQHB25V9ZW49DBK).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::sessions_of_host("pangolin"),
+///     "The sessions of pangolin: Esc shows all."
+/// );
+/// ```
+pub fn sessions_of_host(host: &str) -> String {
+    format!("The sessions of {}: Esc shows all.", safe(host))
+}
+
 /// The Sessions tab: `t` on the lead.
 pub fn no_takeover_of_lead(name: &str) -> String {
     format!(
@@ -11351,64 +11365,19 @@ pub fn daemon_ended(name: &str) -> String {
     format!("The riff daemon ended {}.", safe(name))
 }
 
-/// The detail of the host of this machine in the Sessions tab: the
-/// starts that wait for room in the limit of the host.
+/// The detail of a host in the Machines tab: the starts that wait for
+/// room in the limit of the host (01M6WPJHM4XTAQ1BQ8BQH862S5).
 ///
 /// ```
-/// let line = riff::text::daemon_waiting(&["riff-issue-13-2b3c4d5e".into()]);
-/// assert_eq!(line, "waits for room: riff-issue-13-2b3c4d5e");
+/// let names = ["riff-issue-13-2b3c4d5e".into(), "riff-issue-14-3c4d5e6f".into()];
+/// assert_eq!(
+///     riff::text::waits_for_room(&names),
+///     "waits for room: riff-issue-13-2b3c4d5e, riff-issue-14-3c4d5e6f"
+/// );
 /// ```
-pub fn daemon_waiting(names: &[String]) -> String {
+pub fn waits_for_room(names: &[String]) -> String {
     let names: Vec<String> = names.iter().map(|n| safe(n)).collect();
     format!("waits for room: {}", names.join(", "))
-}
-
-/// The detail of the host of this machine in the Sessions tab: the riff
-/// daemon does not answer.
-pub fn no_daemon(error: &str) -> String {
-    format!(
-        "No riff daemon answers: {}. Start it: riff daemon install",
-        safe(error)
-    )
-}
-
-/// The detail of the host of this machine in the Sessions tab: the line
-/// of the daemon. A real-session test that runs ends it
-/// (01M5QVBTXE8YRY44A1C1VP71QS).
-///
-/// ```
-/// let mut status: riff::daemon::Status = serde_json::from_value(serde_json::json!({
-///     "pid": 7, "build": "b", "since_ms": 0, "dir": "/d", "sessions": [],
-/// }))?;
-/// assert_eq!(riff::text::daemon_line(&status), "riff daemon b, pid 7, 0 waiting");
-/// status.test = Some(riff_client::daemons::Test {
-///     tag: "v4.1.1".into(),
-///     commit: "90e36bfd".into(),
-///     secs: 120,
-/// });
-/// assert_eq!(
-///     riff::text::daemon_line(&status),
-///     "riff daemon b, pid 7, 0 waiting, real-session test of v4.1.1 on 90e36bfd, for 2 min"
-/// );
-/// # Ok::<(), serde_json::Error>(())
-/// ```
-pub fn daemon_line(status: &crate::daemon::Status) -> String {
-    let limit = status.limit.map_or_else(String::new, |l| {
-        format!(
-            ", limit {} sessions and a floor of {} GB",
-            l.sessions, l.floor_gb
-        )
-    });
-    let test = status
-        .test
-        .as_ref()
-        .map_or_else(String::new, |t| format!(", {}", real_session_test(t)));
-    format!(
-        "riff daemon {}, pid {}{limit}, {} waiting{test}",
-        safe(&status.build),
-        status.pid,
-        status.waiting.len()
-    )
 }
 
 /// `riff daemon status` and the Sessions tab: the word of a phase of a
@@ -11422,12 +11391,6 @@ pub fn phase_word(phase: riff_client::sessions::Phase) -> &'static str {
         Phase::Taken => "taken over",
         Phase::Terminal => "lead",
     }
-}
-
-/// The detail of the host of this machine in the Sessions tab: the line
-/// of a wave of the daemon.
-pub fn daemon_wave(wave: &crate::daemon::WaveShown) -> String {
-    format!("wave {}: {}", safe(&wave.repo), safe(&wave.word))
 }
 
 /// A job of a wave: the daemon sent the verify request of the pull

@@ -174,7 +174,7 @@ async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
     );
     // The Sessions tab: no session yet, and no riff daemon here.
     assert!(
-        rows[2].starts_with(" 0 sessions") && rows[2].ends_with("by person"),
+        rows[2].starts_with(" 0 sessions") && rows[2].ends_with("by repo"),
         "{rows:#?}"
     );
     assert_eq!(rows[22], format!(" {}", riff::text::NO_DAEMON_HERE));
@@ -260,6 +260,12 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
                 lead: false,
             },
         }],
+        waiting: vec!["riff-issue-7-1a2b3c4d".into()],
+        test: Some(riff_client::daemons::Test {
+            tag: "v4.1.1".into(),
+            commit: "90e36bfd1c2b".into(),
+            secs: 185,
+        }),
         ..Facts::default()
     };
     api.machine(&daemon, &facts.line()).await.unwrap();
@@ -275,8 +281,22 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
         "     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN"
     );
     assert!(
-        rows[4].starts_with(" >   thelio     0/3   1.5/16   24/32 GB    200/455 GB  56%   0     "),
+        rows[4].starts_with(" >   thelio     0/3   1.5/16   24/32 GB    200/455 GB  56%   1     "),
         "{rows:#?}"
+    );
+    // 01M6WPJHM4XTAQ1BQ8BQH862S5: the detail names the start that waits
+    // and the real-session test, from the facts that the daemon sent.
+    let at = rows
+        .iter()
+        .position(|row| row.starts_with(" limit 3 sessions and a floor of 8 GB"))
+        .unwrap_or_else(|| panic!("{rows:#?}"));
+    assert_eq!(
+        rows[at..at + 3],
+        [
+            " limit 3 sessions and a floor of 8 GB · 1 start waits",
+            " waits for room: riff-issue-7-1a2b3c4d",
+            " real-session test of v4.1.1 on 90e36bfd, for 3 min",
+        ]
     );
     let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
     assert!(
@@ -320,11 +340,20 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
     let limit: riff::room::Limit = serde_json::from_str(&limit).unwrap();
     assert_eq!((limit.sessions, limit.floor_gb), (5, 8));
 
-    // Enter: the Sessions tab, with the filter of the host.
+    // Enter: the Sessions tab, with the filter of the host. The
+    // summary line starts with it, and the note line says so.
     tty.press("\r").await;
     let rows = tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
-    assert_eq!(rows[22], " The filter of the Sessions tab: host:thelio.");
-    assert!(rows[2].ends_with("/host:thelio · by person"), "{rows:#?}");
+    assert_eq!(rows[22], " The sessions of thelio: Esc shows all.");
+    assert!(
+        rows[2].starts_with(" filter host:thelio · ") && rows[2].ends_with(" by repo"),
+        "{rows:#?}"
+    );
+    assert!(rows[23].contains("  Esc clear the filter  "), "{rows:#?}");
+    // Esc clears the filter and the note.
+    tty.press("\x1b").await;
+    tty.shows(|rows| !rows[2].starts_with(" filter") && !rows[22].contains("Esc shows all"))
+        .await;
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));
 }
@@ -377,13 +406,20 @@ async fn the_sessions_tab_shows_the_tree_filters_it_and_pauses_a_repository() {
     )
     .await;
     let mut tty = Tty::start(&server, "brett", "thelio", true);
-    // The groups of mike need no look: one folded line with the counts.
+    // The tree is repository › person › session. The groups need no
+    // look: each is one folded line that names its host, with the
+    // counts.
     let rows = tty
-        .shows(|rows| rows.iter().any(|row| row.starts_with(" ▶ mike")))
+        .shows(|rows| rows.iter().any(|row| row.starts_with(" ▶ strata › mike")))
         .await;
     assert!(rows[2].starts_with(" 2 sessions: 2 busy"), "{rows:#?}");
-    let mike = rows.iter().find(|row| row.starts_with(" ▶ mike")).unwrap();
-    assert!(mike.ends_with("2 sessions · 2 busy"), "{rows:#?}");
+    assert!(rows[2].ends_with(" by repo"), "{rows:#?}");
+    let riff = rows
+        .iter()
+        .find(|row| row.starts_with(" ▶ riff › mike"))
+        .unwrap();
+    assert!(riff.contains(" · pangolin "), "{rows:#?}");
+    assert!(riff.ends_with("1 session · 1 busy"), "{rows:#?}");
 
     // `/` and a word: only the rows that match, in open groups.
     tty.press("/").await;
@@ -395,14 +431,18 @@ async fn the_sessions_tab_shows_the_tree_filters_it_and_pauses_a_repository() {
     let rows = tty
         .shows(|rows| rows.iter().any(|row| row.contains("5b1e2a90")))
         .await;
-    assert!(rows[2].starts_with(" 1 session: 1 busy"), "{rows:#?}");
-    assert!(rows[2].ends_with("/#12 · by person"), "{rows:#?}");
+    // The summary line starts with the filter.
+    assert!(
+        rows[2].starts_with(" filter #12 · 1 of 2 sessions: 1 busy · Esc clears"),
+        "{rows:#?}"
+    );
     assert!(
         !rows.iter().any(|row| row.contains("9c0d1e2f")),
         "{rows:#?}"
     );
     let row = rows.iter().find(|row| row.contains("5b1e2a90")).unwrap();
     assert!(row.contains("5b1e2a90  #12 "), "{rows:#?}");
+    assert!(row.contains(" pangolin "), "{rows:#?}");
     // The detail of the selected session has the title from `gh`.
     tty.shows(|rows| {
         rows.iter()
@@ -425,7 +465,7 @@ async fn the_sessions_tab_shows_the_tree_filters_it_and_pauses_a_repository() {
         .await;
     // The next look shows the pause: the session is paused.
     tty.press("r").await;
-    tty.shows(|rows| rows[2].starts_with(" 1 session: 1 paused"))
+    tty.shows(|rows| rows[2].starts_with(" filter #12 · 1 of 2 sessions: 1 paused"))
         .await;
     assert!(!rows.is_empty());
 
