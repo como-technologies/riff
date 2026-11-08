@@ -6680,8 +6680,9 @@ pub fn leaving_line(leaving: &riff_client::daemons::Leaving) -> String {
 
 /// The real-session test that a daemon runs, on one line
 /// (01M5QVBTXE8YRY44A1C1VP71QS): `riff daemon status`, `riff top`,
-/// `riff who` and the Sessions tab of the TUI show it. The commit has at most 8
-/// characters, and the minutes are whole.
+/// `riff who` and the Machines tab of the TUI show it
+/// (01M6WPJHM4XTAQ1BQ8BQH862S5). The commit has at most 8 characters,
+/// and the minutes are whole.
 ///
 /// ```
 /// use riff_client::daemons::Test;
@@ -11190,6 +11191,21 @@ pub fn ask_end(name: &str) -> String {
 /// The Sessions tab: the line after `x` when the daemon said nothing.
 pub fn daemon_ended(name: &str) -> String {
     format!("The riff daemon ended {}.", safe(name))
+}
+
+/// The detail of a host in the Machines tab: the starts that wait for
+/// room in the limit of the host (01M6WPJHM4XTAQ1BQ8BQH862S5).
+///
+/// ```
+/// let names = ["riff-issue-13-2b3c4d5e".into(), "riff-issue-14-3c4d5e6f".into()];
+/// assert_eq!(
+///     riff::text::waits_for_room(&names),
+///     "waits for room: riff-issue-13-2b3c4d5e, riff-issue-14-3c4d5e6f"
+/// );
+/// ```
+pub fn waits_for_room(names: &[String]) -> String {
+    let names: Vec<String> = names.iter().map(|n| safe(n)).collect();
+    format!("waits for room: {}", names.join(", "))
 }
 
 /// `riff daemon status` and the Sessions tab: the word of a phase of a

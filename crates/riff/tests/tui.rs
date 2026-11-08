@@ -260,6 +260,12 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
                 lead: false,
             },
         }],
+        waiting: vec!["riff-issue-7-1a2b3c4d".into()],
+        test: Some(riff_client::daemons::Test {
+            tag: "v4.1.1".into(),
+            commit: "90e36bfd1c2b".into(),
+            secs: 185,
+        }),
         ..Facts::default()
     };
     api.machine(&daemon, &facts.line()).await.unwrap();
@@ -275,8 +281,22 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
         "     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN"
     );
     assert!(
-        rows[4].starts_with(" >   thelio     0/3   1.5/16   24/32 GB    200/455 GB  56%   0     "),
+        rows[4].starts_with(" >   thelio     0/3   1.5/16   24/32 GB    200/455 GB  56%   1     "),
         "{rows:#?}"
+    );
+    // 01M6WPJHM4XTAQ1BQ8BQH862S5: the detail names the start that waits
+    // and the real-session test, from the facts that the daemon sent.
+    let at = rows
+        .iter()
+        .position(|row| row.starts_with(" limit 3 sessions and a floor of 8 GB"))
+        .unwrap_or_else(|| panic!("{rows:#?}"));
+    assert_eq!(
+        rows[at..at + 3],
+        [
+            " limit 3 sessions and a floor of 8 GB · 1 start waits",
+            " waits for room: riff-issue-7-1a2b3c4d",
+            " real-session test of v4.1.1 on 90e36bfd, for 3 min",
+        ]
     );
     let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
     assert!(

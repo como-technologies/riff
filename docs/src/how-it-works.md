@@ -1227,6 +1227,7 @@ riff
 ──thelio · riff daemon pid 4242, up 2d ─────────────────────────────────────────
  cpu 32x5883MHz (now 4100MHz), mem 124GB, 2GB available, load 18.96
  limit 3 sessions and a floor of 8 GB · 1 start waits · 1 job
+ waits for room: riff-issue-1601-1c2d3e4f
  at its limit: 3 of 3 sessions live, a new start waits for room
  low on memory: the daemon starts no session until 8 GB are free
  parts como-technologies/riff workers and lead
@@ -1247,10 +1248,14 @@ riff
   its limit, a host with less free memory than its floor, a disk with
   less than 15% free, a sign-in that stops the sessions, or a host that
   tells no numbers. The first line counts each fault.
-- Under the rows is the detail of the selected host. The row and the
-  detail of your own host come from its daemon at each look, so they
-  are not 30 seconds old. They add the pid of the daemon, the time since
-  its start and the jobs of its waves.
+- Under the rows is the detail of the selected host: its limit, each
+  start that waits for room, each fault, its parts, each wave and its
+  sessions. While the daemon of the host runs a real-session test, the
+  detail has the line of the test under the starts that wait, for
+  example `real-session test of v4.1.1 on 90e36bfd, for 3 min`. The row
+  and the detail of your own host come from its daemon at each look, so
+  they are not 30 seconds old. They add the pid of the daemon, the time
+  since its start and the jobs of its waves.
 - The last lines show the link: the time of the last call, the
   reconnects, and the build of riff-server against your build. The
   GitHub line shows the points that are left, and the points that riff

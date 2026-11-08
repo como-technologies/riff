@@ -16,6 +16,7 @@
 //! ──thelio · riff daemon pid 4242, up 2d ─────────────────────────────────────────
 //!  cpu 32x5883MHz (now 4100MHz), mem 124GB, 2GB available, load 18.96
 //!  limit 3 sessions and a floor of 8 GB · 1 start waits · 1 job
+//!  waits for room: riff-issue-1601-1c2d3e4f
 //!  at its limit: 3 of 3 sessions live, a new start waits for room
 //!  low on memory: the daemon starts no session until 8 GB are free
 //!  parts como-technologies/riff workers and lead
@@ -25,7 +26,6 @@
 //! ──the link and the server ──────────────────────────────────────────────────────
 //!  link ok: 118 ms · 1 reconnect · riff-server build 10df8a4, same as yours
 //!  GitHub: 4,210 of 5,000 points left · riff spent 310, others 480, in the hour
-//!
 //!
 //!
 //!  ↑↓ select  Enter sessions of the host  l limit  r read again  ? help  q quit
@@ -52,7 +52,9 @@
 //! A host with a fault ([`Fault`], 01M6VFD0CAS71DNBGE7K56JJ2H) gets `!`
 //! and comes first. The first line counts the hosts and each fault.
 //! Under the rows comes the detail of the selected host
-//! (01M6VFD0EXECEEVNN969SAPV4C), and at the end the lines of the link
+//! (01M6VFD0EXECEEVNN969SAPV4C). Under its limit, it names each start
+//! that waits for room, and the real-session test that its daemon runs
+//! (01M6WPJHM4XTAQ1BQ8BQH862S5). At the end come the lines of the link
 //! and the server (01M6VFD0HGCVMYNNC3H4788W9X). The narrow layout has no
 //! detail. When the hosts do not fit, the rows scroll with the
 //! selection, and the first line shows the place
@@ -1314,9 +1316,10 @@ pub fn daemon_build(build: &str) -> String {
 
 /// The lines of the detail of `row` (01M6VFD0EXECEEVNN969SAPV4C): the
 /// numbers of its machine, its limit and its floor with the starts that
-/// wait, a line for each fault, its parts by repository, each repository
-/// that it left with the sessions that still run
-/// (01M6WJYQN2WY5NH3DVDBAAY8ST), its waves and its sessions.
+/// wait, the names of those starts and the real-session test that runs
+/// (01M6WPJHM4XTAQ1BQ8BQH862S5), a line for each fault, its parts by
+/// repository, each repository that it left with the sessions that still
+/// run (01M6WJYQN2WY5NH3DVDBAAY8ST), its waves and its sessions.
 fn detail_lines(row: &Row) -> Vec<Line<'static>> {
     let facts = &row.facts;
     let mut lines = Vec::new();
@@ -1338,6 +1341,12 @@ fn detail_lines(row: &Row) -> Vec<Line<'static>> {
         limit.push_str(&format!(" · {} {jobs}", p.jobs));
     }
     lines.push(Line::raw(limit));
+    if !facts.waiting.is_empty() {
+        lines.push(Line::raw(text::waits_for_room(&facts.waiting)));
+    }
+    if let Some(test) = &facts.test {
+        lines.push(Line::raw(text::real_session_test(test)));
+    }
     for fault in &row.faults {
         lines.push(Line::styled(fault.line(facts), WARNING));
     }
@@ -1718,7 +1727,7 @@ mod tests {
     use crate::tui::view::{compute_view, render};
     use crate::tui::{News, text_block};
     use ratatui::buffer::Buffer;
-    use riff_client::daemons::{Caps, Leaving, Parts, RepoParts, Session, Wave};
+    use riff_client::daemons::{Caps, Leaving, Parts, RepoParts, Session, Test, Wave};
     use riff_client::sessions::Phase;
     use riff_core::wire::{MachineInfo, RiffOwner, SessionInfo};
 
@@ -2011,7 +2020,7 @@ mod tests {
         ))
         .unwrap();
         let block = |after: &str| text_block(&book, after, "");
-        assert_eq!(block("#### See the hosts in the TUI"), screen[2..20]);
+        assert_eq!(block("#### See the hosts in the TUI"), screen[2..21]);
         assert_eq!(block("After `riff leave --host pangolin`"), leaves[2..16]);
         assert_eq!(block("In a terminal of 120 columns or more"), wider[3..7]);
         assert_eq!(block("#### Filter the hosts in the TUI"), filter[2..5]);
@@ -2037,9 +2046,9 @@ mod tests {
         .to_vec();
         want.push(ruled("thelio · riff daemon pid 4242, up 2d", 132));
         let narrow = drawn(&state, 80, 24);
-        want.extend(narrow[9..17].iter().cloned());
+        want.extend(narrow[9..18].iter().cloned());
         want.push(ruled("the link and the server", 132));
-        want.extend(narrow[18..20].iter().cloned());
+        want.extend(narrow[19..21].iter().cloned());
         want.resize(23, String::new());
         want.push(
             " ↑↓ select  Enter sessions of the host  l limit  / filter  r read again  ? help  q quit"
@@ -2249,6 +2258,7 @@ mod tests {
             [
                 " cpu 32x5883MHz (now 4100MHz), mem 124GB, 2GB available, load 18.96",
                 " limit 3 sessions and a floor of 8 GB · 1 start waits · 1 job",
+                " waits for room: riff-issue-1601-1c2d3e4f",
                 " at its limit: 3 of 3 sessions live, a new start waits for room",
                 " low on memory: the daemon starts no session until 8 GB are free",
                 " parts como-technologies/riff workers and lead",
@@ -2304,6 +2314,66 @@ mod tests {
         want.resize(23, String::new());
         want.push("↑↓ select  l limit  ? help  q quit".into());
         assert_eq!(drawn(&state, 40, 24), want);
+    }
+
+    /// 01M6WPJHM4XTAQ1BQ8BQH862S5: at 80 x 24, the detail of a host names
+    /// each start that waits for room and the real-session test that its
+    /// daemon runs, under its limit: from the socket for this host, from
+    /// riff-server for another host. A host with neither has no line.
+    #[test]
+    fn the_detail_of_a_host_shows_the_starts_that_wait_and_the_test() {
+        let mut state = mock_up();
+        state.on_key(Key::Down);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[8], ruled("pangolin · riff daemon build d2ae080", 80));
+        assert_eq!(
+            rows[10..12],
+            [
+                " limit 4 sessions and a floor of 8 GB · 0 starts wait",
+                " parts como-technologies/riff workers",
+            ]
+        );
+        let (look, at) = state.last_look().unwrap();
+        let mut look = look.clone();
+        let test = Test {
+            tag: "v4.1.1".into(),
+            commit: "90e36bfd1c2b".into(),
+            secs: 185,
+        };
+        let status = look.here.as_mut().unwrap().daemon.as_mut().unwrap();
+        status.test = Some(test.clone());
+        let sent = look
+            .who
+            .sessions
+            .iter_mut()
+            .find(|s| s.uri.place().host() == "pangolin")
+            .unwrap();
+        let mut facts = Facts::parse(&sent.machine.as_ref().unwrap().numbers).unwrap();
+        facts.waiting = vec!["riff-issue-1612-5c6d7e8f".into()];
+        facts.test = Some(Test { secs: 61, ..test });
+        *sent = daemon("mike", "pangolin", &facts, 12);
+        state.looked(look, at);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(
+            rows[10..13],
+            [
+                " limit 4 sessions and a floor of 8 GB · 1 start waits",
+                " waits for room: riff-issue-1612-5c6d7e8f",
+                " real-session test of v4.1.1 on 90e36bfd, for 1 min",
+            ]
+        );
+        state.on_key(Key::Up);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[8], ruled("thelio · riff daemon pid 4242, up 2d", 80));
+        assert_eq!(
+            rows[10..14],
+            [
+                " limit 3 sessions and a floor of 8 GB · 1 start waits · 1 job",
+                " waits for room: riff-issue-1601-1c2d3e4f",
+                " real-session test of v4.1.1 on 90e36bfd, for 3 min",
+                " at its limit: 3 of 3 sessions live, a new start waits for room",
+            ]
+        );
     }
 
     /// The state of [`mock_up`] after `riff leave --host pangolin` in
@@ -2841,13 +2911,13 @@ mod tests {
         state.failed("riff: no good look since 21:35:07: cannot reach riff-server");
         let rows = drawn(&state, 80, 24);
         assert_eq!(
-            rows[18],
+            rows[19],
             " link down: no good look for 41s · 0 reconnects · riff-server build 3f2a91c, yours is 10df8a4"
                 .chars()
                 .take(80)
                 .collect::<String>()
         );
-        assert_eq!(rows[19], " GitHub: riff spent 310 in the hour");
+        assert_eq!(rows[20], " GitHub: riff spent 310 in the hour");
         let narrow = drawn(&state, 40, 24);
         assert_eq!(narrow[10], "riff-server 3f2a91c, yours is 10df8a4");
     }

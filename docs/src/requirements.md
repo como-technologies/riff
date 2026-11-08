@@ -7571,6 +7571,11 @@ that builds it merges.
 - **01M6WKCKYBMXQHB25V9ZW49DBK** Enter on a host in the Machines tab
   opens the Sessions tab with the filter `host:HOST`, and the note line
   says `The sessions of HOST: Esc shows all.` one time for each Enter.
+- **01M6WPJHM4XTAQ1BQ8BQH862S5** The detail of the selected host in the
+  Machines tab names each start that waits for room, for example `waits
+  for room: riff-issue-1601-1c2d3e4f`, and the real-session test that
+  its daemon runs, as `riff daemon status` shows it: `real-session test
+  of TAG on COMMIT, for N min`.
 
 ## The notes of the lead
 
