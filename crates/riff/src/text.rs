@@ -1526,6 +1526,7 @@ pub fn setup_check(path: &std::path::Path, left: &Rules) -> String {
 ///     tracker: vec![],
 ///     question: vec![],
 ///     waits: vec![],
+///     rebases: vec![],
 /// };
 /// let items = Items {
 ///     boards: vec![

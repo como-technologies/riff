@@ -587,8 +587,8 @@ impl Items {
     /// `issues`, the sessions `who` of riff-server and the `holds` of
     /// its thread, and the hosts from the facts of the daemons in `who`
     /// ([`riff_client::daemons::hosts`]). The facts of a daemon also give
-    /// each verify that waits for the merge of another pull request
-    /// ([`riff_client::daemons::Wave::waits`], #1710).
+    /// each verify and each rebase that waits for another pull request
+    /// ([`riff_client::daemons::waits`], #1710, #1801).
     ///
     /// ```
     /// use std::collections::BTreeMap;
@@ -638,18 +638,18 @@ impl Items {
         who: Vec<SessionInfo>,
         holds: &BTreeMap<String, HoldInfo>,
     ) -> Items {
-        let mut hosts: Vec<String> = Vec::new();
-        let mut waits: BTreeMap<u64, u64> = BTreeMap::new();
-        for daemon in riff_client::daemons::hosts(&who) {
-            for wave in daemon.facts.waves.iter().filter(|w| w.repo == repo) {
-                hosts.push(daemon.host.clone());
-                waits.extend(&wave.waits);
-            }
-        }
+        let daemons = riff_client::daemons::hosts(&who);
+        let mut hosts: Vec<String> = daemons
+            .iter()
+            .filter(|d| d.facts.waves.iter().any(|w| w.repo == repo))
+            .map(|d| d.host.clone())
+            .collect();
         hosts.sort();
         hosts.dedup();
         let sessions = Sessions::new(who, Vec::new());
-        let issues = issues.clone().with_waits(waits);
+        let issues = issues
+            .clone()
+            .with_waits(riff_client::daemons::waits(&daemons, repo));
         Items {
             boards: Board::each(repo, &issues, &sessions, holds),
             hosts,

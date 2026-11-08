@@ -48,7 +48,10 @@
 //! - **The rows** ([`ItemRow`], 01M6VFGJWVB3WEEYBCNSZ2FJT0): stuck, free,
 //!   held, asked, work, verify and tracker. A work row shows the session
 //!   that holds the claim with its state and mark
-//!   ([`super::Mark`]), a verify or stuck row its pull request. The
+//!   ([`super::Mark`]), a verify or stuck row its pull request. A verify
+//!   or a rebase that waits for its turn is a verify row that names the
+//!   pull request before it, as `PR #42 after #41`
+//!   (01M6YPYTW6CVCDBZ9631CFXQBJ). The
 //!   closed items of the wave are one line, and `Enter` shows them.
 //! - **The questions of each wave** (01M6Y0ZQWDYVC23WA5CVN0QSH8): the
 //!   asked rows have the issues with the label `question` of the later
@@ -150,7 +153,8 @@ pub enum ItemState {
     Asked,
     /// A session holds a claim of it.
     Work,
-    /// Its pull request waits for a verify or for the merge.
+    /// Its pull request waits for a verify or for the merge, or its rebase
+    /// waits for its turn (#1801).
     Verify,
     /// A tracker issue: no session does it.
     Tracker,
@@ -858,13 +862,24 @@ fn items(
         }
         rows.push(item);
     }
-    for n in &board.verify {
-        let who = match (pull(*n), holder(*n, true)) {
-            (Some(p), _) => format!("PR #{} {}", p.number, p.word),
-            (None, Some(s)) => format!("{} verifies", short(s)),
-            (None, None) => "-".into(),
+    // A verify or a rebase that waits for its turn names the pull request
+    // before it (#1801).
+    let before = |n: u64| {
+        let mut waits = board.waits.iter().chain(&board.rebases);
+        waits.find(|(w, _)| *w == n).map(|(_, first)| *first)
+    };
+    let mut verify: Vec<u64> = board.verify.clone();
+    verify.extend(board.rebases.iter().map(|(n, _)| *n));
+    verify.sort_unstable();
+    for n in verify {
+        let who = match (pull(n), holder(n, true), before(n)) {
+            (Some(p), _, Some(first)) => format!("PR #{} after #{first}", p.number),
+            (Some(p), _, None) => format!("PR #{} {}", p.number, p.word),
+            (None, Some(s), _) => format!("{} verifies", short(s)),
+            (None, None, Some(first)) => format!("after #{first}"),
+            (None, None, None) => "-".into(),
         };
-        rows.push(row(*n, ItemState::Verify, who, pulled(*n)));
+        rows.push(row(n, ItemState::Verify, who, pulled(n)));
     }
     for n in &board.tracker {
         rows.push(row(*n, ItemState::Tracker, "-".into(), None));
@@ -910,6 +925,7 @@ pub fn rows(waves: &Waves, look: &Look, look_ms: i64) -> Vec<Row> {
         return NO_BOARD.map(|line| Row::Text(line.into())).to_vec();
     }
     let none = BTreeMap::new();
+    let daemons = riff_client::daemons::hosts(&look.who.sessions);
     // Each repository: the order key, its line, and the rows of its board.
     let mut boards: Vec<(u8, RepoRow, Vec<Row>)> = Vec::new();
     for repo in repos {
@@ -926,7 +942,11 @@ pub fn rows(waves: &Waves, look: &Look, look_ms: i64) -> Vec<Row> {
             continue;
         };
         let holds = look.holds.get(&repo).unwrap_or(&none);
-        let Some(board) = Board::of(&repo, &forge.issues, &sessions, holds) else {
+        // The verifies and the rebases that wait for their turn, from the
+        // facts of the daemons (#1801).
+        let waits = riff_client::daemons::waits(&daemons, &repo);
+        let issues = forge.issues.clone().with_waits(waits);
+        let Some(board) = Board::of(&repo, &issues, &sessions, holds) else {
             boards.push((2, folded(Wave::None), Vec::new()));
             continue;
         };
@@ -2295,6 +2315,58 @@ mod tests {
             drawn(&state, 80, 30)[2].contains("3 asked"),
             "{:#?}",
             drawn(&state, 80, 30)
+        );
+    }
+
+    /// #1801: the daemon of the wave tells that the verify of #1599 and the
+    /// rebase of #1601 wait for #1613. Each is a verify row that names the
+    /// pull request before it, as "See the open items of a wave" of the book
+    /// shows.
+    #[test]
+    fn a_verify_and_a_rebase_that_wait_for_their_turn_name_the_pull_request_before_them() {
+        let mut state = mock_up();
+        let (look, at) = state.last_look().unwrap();
+        let mut look = look.clone();
+        let facts = riff_client::daemons::Facts {
+            waves: vec![riff_client::daemons::Wave {
+                repo: RIFF.into(),
+                word: "no free work now".into(),
+                image: None,
+                waits: BTreeMap::from([(1599, 1613), (1601, 1613)]),
+            }],
+            ..riff_client::daemons::Facts::default()
+        };
+        let mut daemon = session("d1d1d1d100", RIFF, "", "idle", serde_json::json!({}));
+        daemon.machine = Some(riff_core::wire::MachineInfo {
+            numbers: facts.line(),
+            age_secs: 5,
+        });
+        look.who.sessions.push(daemon);
+        state.looked(look, at);
+        let rows = drawn(&state, 80, 24);
+        assert!(
+            rows[2].ends_with("2 free 1 held 3 work 3 verify"),
+            "no stuck item: {rows:#?}"
+        );
+        let verify: Vec<String> = rows
+            .iter()
+            .filter(|r| r.contains("verify  #"))
+            .cloned()
+            .collect();
+        let book = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/src/waves.md"
+        ))
+        .unwrap();
+        let book = crate::tui::text_block(&book, "names the pull request before it", "");
+        assert_eq!(verify, book);
+        assert_eq!(
+            verify,
+            [
+                "   ◐   verify  #1599  The wave takes an issue         PR #1614 after #1613 5m",
+                "   ◐   verify  #1600  The book tells how to detach    PR #1613 merge       9m",
+                "   ◐   verify  #1601  Fix the help                    PR #1604 after #1613 2h",
+            ]
         );
     }
 

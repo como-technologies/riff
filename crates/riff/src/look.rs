@@ -80,7 +80,9 @@
 //! ```mermaid
 //! flowchart TD
 //!     L["each look"] --> C{"auto-merge on, and CONFLICTING?"}
-//!     C -- yes --> H{"a session holds the item?"}
+//!     C -- yes --> T{"its rebase waits for its turn?"}
+//!     T -- yes --> N["no message yet"]
+//!     T -- no --> H{"a session holds the item?"}
 //!     H -- yes --> M1["message to that session: rebase and push"]
 //!     H -- no --> M2["message to the lead"]
 //!     L --> V{"waits for a verify, with no verify- claim?"}
@@ -89,10 +91,11 @@
 //!     V -- "a conflict, a held verify,<br/>or a verify that waits for another merge" --> R
 //! ```
 //!
-//! A verify that waits for the merge of another pull request is in the
+//! A verify or a rebase that waits for another pull request is in the
 //! order of the wave ([`crate::order`]): the look takes these waits from
 //! the loop of the wave ([`Watch::waits`]), and the holds from riff-server
-//! ([`World::holds`], 01M6WCGNN0X2DGYYM97656RQK1).
+//! ([`World::holds`], 01M6WCGNN0X2DGYYM97656RQK1). The message of a
+//! conflict comes when the turn of its rebase comes (#1801).
 //!
 //! Each message comes one time for each pull request, head commit and
 //! state (01M49Q31FASDM7CG3JEGPYCZB9). The daemon keeps what it told in
@@ -431,12 +434,15 @@ impl PullWatch {
 
     /// The messages for the open pull requests `pulls` at `now`, with the
     /// claims `claims` and the holds `holds` of the repository, and the
-    /// verifies `waits` that wait for another pull request, by issue
-    /// ([`crate::wave::order`]):
+    /// verifies and the rebases `waits` that wait for another pull request,
+    /// by issue ([`crate::wave::order`]):
     ///
     /// - A pull request of an item with auto-merge on and a conflict
     ///   ([`Pull::conflict`]) goes to the session that holds the item, or
     ///   to the lead when no session holds it (01M49Q30XMVRFX42YTM1PHX0RZ).
+    ///   It comes when the turn of its rebase comes: no message names a
+    ///   conflict whose rebase waits for another pull request (#1801,
+    ///   01M6YPYTS72CG6J033WC2RPENP).
     /// - A pull request that waits for a verify ([`Verify::Asked`]) with
     ///   no `verify-` claim for the wait of this watch goes to the lead
     ///   (01M49Q316RXNATJP587DWGDNCD). A claim starts the wait again. So
@@ -490,6 +496,12 @@ impl PullWatch {
     /// assert_eq!(news.len(), 1);
     /// assert_eq!(news[0].to, None);
     /// assert!(news[0].body.contains("No session holds issue-12"));
+    ///
+    /// // The rebase of 14 waits for its turn after #40: no message yet.
+    /// let turn = [pull(42, 14, "CONFLICTING")];
+    /// assert!(watch.news(&turn, &none, &none, &BTreeMap::from([(14, 40)]), later).is_empty());
+    /// // Its turn comes: the message.
+    /// assert_eq!(watch.news(&turn, &none, &none, &no_wait, later).len(), 1);
     /// ```
     pub fn news(
         &mut self,
@@ -512,7 +524,11 @@ impl PullWatch {
             };
             let item = format!("issue-{issue}");
             let (number, head) = (pull.number, pull.head.clone());
-            if pull.conflict() && self.told.insert((number, head.clone(), Stop::Conflict)) {
+            // A rebase that waits for its turn needs nobody yet (#1801).
+            if pull.conflict()
+                && !waits.contains_key(&issue)
+                && self.told.insert((number, head.clone(), Stop::Conflict))
+            {
                 let held = claims.contains(&item);
                 news.push(PullNews {
                     to: held.then(|| item.clone()),
@@ -1288,9 +1304,10 @@ pub struct Watch {
     /// issues and pull requests, so the look takes its reply and calls no
     /// `gh` for them (#1549). Zero: the look reads the forge itself.
     pub accepts: Duration,
-    /// The verifies of the wave that wait for another pull request, from
-    /// the last look of its loop ([`crate::wave::order`], #1710): no
-    /// message "waits for a verify" names them.
+    /// The verifies and the rebases of the wave that wait for another pull
+    /// request, from the last look of its loop ([`crate::wave::order`],
+    /// #1710, #1801): no message "waits for a verify" and no message of a
+    /// conflict names them.
     pub waits: BTreeMap<u64, u64>,
 }
 

@@ -3,6 +3,8 @@
 //! `gh`, and the order of the verify requests from the bodies of the
 //! thread. The verify of one starts, and the others wait until it merges.
 //! Pull requests that change other files get their verifies side by side.
+//! The rebases go in the same order (#1801): of the pull requests with a
+//! conflict, only the next of the order gets a rebase.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -44,12 +46,17 @@ const ISSUES: &str = r#"[
 /// The pull request `40 + issue` of `issue` at `head`, with auto-merge on,
 /// no conflict, and the status `verify` of `riff/verify` (or none).
 fn pull(issue: u64, head: &str, verify: Option<&str>) -> String {
+    pull_in(issue, head, verify, "MERGEABLE")
+}
+
+/// [`pull`] with the state `mergeable`, for example `CONFLICTING`.
+fn pull_in(issue: u64, head: &str, verify: Option<&str>, mergeable: &str) -> String {
     let checks = match verify {
         Some(state) => format!(r#"[{{"context":"riff/verify","state":"{state}"}}]"#),
         None => "[]".into(),
     };
     format!(
-        r#"{{"number":{},"headRefName":"worktree-issue-{issue}","headRefOid":"{head}","isDraft":false,"statusCheckRollup":{checks},"mergeable":"MERGEABLE","autoMergeRequest":{{"mergeMethod":"SQUASH"}},"body":"Closes #{issue}\n\nIssue: #{issue}\nMilestone: Wave 1\n"}}"#,
+        r#"{{"number":{},"headRefName":"worktree-issue-{issue}","headRefOid":"{head}","isDraft":false,"statusCheckRollup":{checks},"mergeable":"{mergeable}","autoMergeRequest":{{"mergeMethod":"SQUASH"}},"body":"Closes #{issue}\n\nIssue: #{issue}\nMilestone: Wave 1\n"}}"#,
         40 + issue
     )
 }
@@ -90,6 +97,97 @@ fn verify(issue: u64, head: &str) -> Work {
         pull: 40 + issue,
         commit: head.into(),
     }
+}
+
+fn rebase(issue: u64, head: &str) -> Work {
+    Work::Rebase {
+        issue,
+        pull: 40 + issue,
+        commit: head.into(),
+    }
+}
+
+/// The open issues `numbers` of the wave, in the file `issues` of the fake
+/// `gh` in `dir`: a merge closes its issue.
+fn open(dir: &Path, numbers: &[u64]) {
+    let issues: Vec<String> = numbers
+        .iter()
+        .map(|n| {
+            format!(
+                r#"{{"number":{n},"body":"Done when: x.","comments":[],"milestone":{{"title":"Wave 1"}},"labels":[]}}"#
+            )
+        })
+        .collect();
+    std::fs::write(dir.join("issues"), format!("[{}]", issues.join(","))).unwrap();
+}
+
+/// #1801: issues 1, 2 and 3 each change `tui.rs`, and their verify
+/// requests came in that order. 1 merged, and gave 2 and 3 a conflict.
+/// Only 2 gets its rebase. 3 keeps its conflict while a session rebases
+/// 2, while the new head of 2 reads `UNKNOWN`, while it waits for its
+/// verify and for its merge. After the merge of 2, 3 gets its rebase.
+#[test]
+fn only_the_next_pull_request_of_the_order_gets_a_rebase() {
+    let dir = tempfile::tempdir().unwrap();
+    let (two, three, rebased) = ("bbbb2222", "cccc3333", "dddd4444");
+    let tui: &[&str] = &["crates/riff/src/tui.rs"];
+    let files = [(42, tui), (43, tui)];
+    // The open pull requests: 2 with `second`, and 3 with its conflict.
+    let at = |second: Option<String>| {
+        let third = pull_in(3, three, None, "CONFLICTING");
+        let gh = forge(
+            dir.path(),
+            &[second.into_iter().collect(), vec![third]].concat(),
+            &files,
+        );
+        open(dir.path(), &[2, 3]);
+        gh
+    };
+    let gh = at(Some(pull_in(2, two, None, "CONFLICTING")));
+    let mut bodies = vec![request(1, "aaaa1111"), request(2, two), request(3, three)];
+    let none = BTreeSet::new();
+    let starts = BTreeMap::new();
+
+    let merged = look(&gh, &bodies);
+    assert!(merged.lanes[&2].conflict);
+    assert_eq!(merged.lanes[&3].asked, Some(2));
+    assert_eq!(
+        wave::order(&merged, &none, &starts),
+        BTreeMap::from([(3, 42)])
+    );
+    assert_eq!(wave::pick(&merged, &none, &starts), Some(rebase(2, two)));
+    // A session rebases 2: 3 waits.
+    let rebasing: BTreeSet<String> = ["issue-2".to_owned()].into();
+    assert_eq!(wave::pick(&merged, &rebasing, &starts), None);
+
+    // 2 pushed its new head, and sent its verify request. GitHub does not
+    // know yet whether it has a conflict: 2 keeps the place of its item.
+    bodies.push(request(2, rebased));
+    at(Some(pull_in(2, rebased, None, "UNKNOWN")));
+    let unknown = look(&gh, &bodies);
+    assert!(unknown.lanes[&2].unknown);
+    assert_eq!(unknown.lanes[&2].asked, Some(1), "the place of the item");
+    assert_eq!(wave::pick(&unknown, &none, &starts), None);
+
+    // The new head has no conflict: its verify starts, and 3 waits.
+    at(Some(pull_in(2, rebased, None, "MERGEABLE")));
+    let next = look(&gh, &bodies);
+    assert_eq!(wave::pick(&next, &none, &starts), Some(verify(2, rebased)));
+    assert_eq!(
+        wave::order(&next, &none, &starts),
+        BTreeMap::from([(3, 42)])
+    );
+
+    // The verify of 2 passed: 3 waits for its merge.
+    at(Some(pull_in(2, rebased, Some("SUCCESS"), "MERGEABLE")));
+    assert_eq!(wave::pick(&look(&gh, &bodies), &none, &starts), None);
+
+    // 2 merged: the rebase of 3 starts.
+    at(None);
+    open(dir.path(), &[3]);
+    let last = look(&gh, &bodies);
+    assert!(wave::order(&last, &none, &starts).is_empty());
+    assert_eq!(wave::pick(&last, &none, &starts), Some(rebase(3, three)));
 }
 
 /// Issues 1 and 2 each change `tui.rs`, and the verify request of 2 came

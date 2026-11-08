@@ -230,12 +230,14 @@
 //!   run is not done, also when another check failed (#1575);
 //! - a verify of a head with a failed check: the fix of the checks comes
 //!   first (see "A pull request that cannot merge", #1575);
-//! - a verify of a pull request that shares a file with a pull request
-//!   before it: one whose verify runs or passed, or whose verify request
-//!   came first ([`order()`], [`crate::order`],
-//!   01M6WCGNCC3HWS47158WTWNQ8B). It waits until that pull request merges
-//!   or its verify fails. The loop keeps these waits for the look and for
-//!   `riff wave list` ([`Daemon::verify_waits`]);
+//! - a verify or a rebase of a pull request that shares a file with a
+//!   pull request before it: one whose verify runs or passed, whose item
+//!   a session holds, or whose item had its verify request first
+//!   ([`order()`], [`crate::order`], 01M6WCGNCC3HWS47158WTWNQ8B,
+//!   01M6YPYTGR2JEBDHGX4K1RDCAW).
+//!   It waits until that pull request merges or its verify fails. The loop
+//!   keeps these waits for the look and for `riff wave list`
+//!   ([`Daemon::order_waits`]);
 //! - an item that started [`STARTS`] times in this run of the wave. The
 //!   lead gets one message for it. A start whose claim riff-server
 //!   refused for a pause does not count (01M558EYCXPFW8CJV3XJ7HK3NR).
@@ -332,6 +334,14 @@
 //! and a verify that ends with no result starts again. The verify waits
 //! for the next look. It reads `MERGEABLE` (the verify) or
 //! `CONFLICTING` (the rebase).
+//!
+//! The rebases go in the order of the verifies ([`order()`], #1801). A
+//! merge can give each open pull request that changes the same files a
+//! conflict. Of these, only the next of the order gets its rebase. The
+//! others keep their conflict until the pull request before them merges
+//! or its verify fails, and the look sends no message of their conflict.
+//! A pull request goes first while a session rebases it, and keeps its
+//! place after its push, also while it reads `UNKNOWN`.
 //!
 //! Each head commit with a conflict starts one session in a run of the
 //! wave: [`Work::key`] names the rebase by the item and the head. A pause
@@ -1114,9 +1124,10 @@ pub struct Look {
     /// The pull requests that wait for a verify, by issue.
     pub pulls: BTreeMap<u64, Waiting>,
     /// The open pull requests of the items whose verify waits, runs or
-    /// passed, by issue, with the files of each, for the order of the
-    /// verifies ([`order()`], #1710). None while fewer than two are open or
-    /// no verify of them is free work.
+    /// passed, or that wait for a rebase, by issue, with the files of
+    /// each, for the order of the verifies and the rebases ([`order()`],
+    /// #1710, #1801). None while fewer than two are open or no verify and
+    /// no rebase of them is free work.
     pub lanes: BTreeMap<u64, order::Lane>,
     /// The pull requests that cannot merge by themselves.
     pub fixes: Fixes,
@@ -1194,8 +1205,8 @@ fn verify_issue(item: &str) -> Option<u64> {
 /// assert_eq!(pick(&look, &verifying, &BTreeMap::new()), None);
 /// ```
 ///
-/// A verify that waits for another pull request with a file in common
-/// does not start ([`order()`]).
+/// A verify or a rebase that waits for another pull request with a file
+/// in common does not start ([`order()`]).
 pub fn pick(
     look: &Look,
     running: &BTreeSet<String>,
@@ -1232,6 +1243,8 @@ pub fn pick(
                 look.fixes.conflicts.get(&issue),
                 look.fixes.failed.get(&issue),
             ) {
+                // The rebase waits for its turn in the order (#1801).
+                (Some(_), _) if waits.contains_key(&issue) => return None,
                 (Some(conflict), _) => Work::Rebase {
                     issue,
                     pull: conflict.pull,
@@ -1250,15 +1263,18 @@ pub fn pick(
     })
 }
 
-/// The verifies of `look` that wait for another pull request with a
-/// file in common, by issue, with the number of that pull request
-/// ([`order::waits`], 01M6WCGNCC3HWS47158WTWNQ8B). A pull request goes
-/// first while a session claims its verify, or a job of the wave runs it
-/// (`running`), and while its verify passed and nothing stops its merge.
-/// Then come the verifies that the pick can start, in the order of their
-/// requests: each is in the free work, not held, has no session on its
-/// item, and has starts left (`starts`). A verify whose full check is not
-/// done yet takes its place too: it starts when the check is done.
+/// The verifies and the rebases of `look` that wait for another pull
+/// request with a file in common, by issue, with the number of that pull
+/// request ([`order::waits`], 01M6WCGNCC3HWS47158WTWNQ8B, #1801). A pull
+/// request goes first while a session claims its verify or its item, or
+/// a job of the wave runs them (`running`), and while its verify passed
+/// and nothing stops its merge. So a pull request goes first while a
+/// session rebases it. Then come the pull requests whose next step the
+/// pick can start, in the order of the requests of their items: the
+/// rebase of a conflict, or a verify. Each is in the free work, not held,
+/// and has starts left (`starts`). A verify whose full check is not done
+/// yet takes its place too: it starts when the check is done. So does a
+/// pull request that reads `UNKNOWN` and whose verify is not held.
 ///
 /// ```
 /// use std::collections::{BTreeMap, BTreeSet};
@@ -1269,8 +1285,8 @@ pub fn pick(
 ///     issue,
 ///     pull: 40 + issue,
 ///     files: [file.to_owned()].into(),
-///     passed: false,
 ///     asked: Some(asked),
+///     ..Lane::default()
 /// };
 /// let waiting = |issue: u64| Waiting { pull: 40 + issue, commit: format!("c{issue}"), gate_done: true };
 /// let look = Look {
@@ -1295,6 +1311,31 @@ pub fn pick(
 ///     ..look
 /// };
 /// assert_eq!(pick(&passed, &none, &BTreeMap::new()), None);
+///
+/// // #1801: the merge of 2 gave 4 and 5 a conflict. Only the rebase of 4 starts.
+/// use riff::wave::{Conflict, Fixes};
+/// let conflict = |issue| (issue, Conflict { pull: 40 + issue, commit: format!("c{issue}") });
+/// let rebases = Look {
+///     free: vec!["issue-4".into(), "issue-5".into()],
+///     lanes: [4, 5].map(|n| (n, Lane { conflict: true, ..lane(n, "tui.rs", n as usize) })).into(),
+///     fixes: Fixes { conflicts: [conflict(4), conflict(5)].into(), ..Fixes::default() },
+///     ..Look::default()
+/// };
+/// assert_eq!(order(&rebases, &none, &BTreeMap::new()), BTreeMap::from([(5, 44)]));
+/// let rebase = Work::Rebase { issue: 4, pull: 44, commit: "c4".into() };
+/// assert_eq!(pick(&rebases, &none, &BTreeMap::new()), Some(rebase));
+/// // A job rebases 4: it goes first, and 5 still waits.
+/// let rebasing: BTreeSet<String> = ["issue-4".to_owned()].into();
+/// assert_eq!(pick(&rebases, &rebasing, &BTreeMap::new()), None);
+/// // 4 pushed, and reads UNKNOWN: it keeps its place.
+/// let pushed = Look {
+///     free: vec!["issue-5".into()],
+///     lanes: [(4, Lane { unknown: true, ..lane(4, "tui.rs", 4) }), (5, rebases.lanes[&5].clone())].into(),
+///     fixes: Fixes { conflicts: [conflict(5)].into(), ..Fixes::default() },
+///     ..Look::default()
+/// };
+/// assert_eq!(order(&pushed, &none, &BTreeMap::new()), BTreeMap::from([(5, 44)]));
+/// assert_eq!(pick(&pushed, &none, &BTreeMap::new()), None);
 /// ```
 pub fn order(
     look: &Look,
@@ -1302,29 +1343,42 @@ pub fn order(
     starts: &BTreeMap<String, u32>,
 ) -> BTreeMap<u64, u64> {
     let busy = |item: &str| running.contains(item) || look.claims.contains(item);
-    let verifying = |issue: u64| busy(&format!("verify-issue-{issue}"));
-    let free = |issue: u64| {
+    let left = |work: Work| starts.get(&work.key()).copied().unwrap_or(0) < work.most();
+    // Its verify runs, a session holds its item, or it waits for its merge.
+    let goes = |lane: &order::Lane| {
+        lane.passed
+            || busy(&format!("verify-issue-{}", lane.issue))
+            || busy(&format!("issue-{}", lane.issue))
+    };
+    // The pick can start its next step: the rebase of its conflict, or its
+    // verify. One that reads `UNKNOWN` keeps its place for the next look.
+    let next = |lane: &order::Lane| {
+        let issue = lane.issue;
+        if lane.conflict {
+            let item = format!("issue-{issue}");
+            return look.free.contains(&item)
+                && !look.holds.contains(&item)
+                && look.fixes.conflicts.get(&issue).is_some_and(|c| {
+                    left(Work::Rebase {
+                        issue,
+                        pull: c.pull,
+                        commit: c.commit.clone(),
+                    })
+                });
+        }
         let item = format!("verify-issue-{issue}");
-        look.free.contains(&item)
-            && !look.holds.contains(&item)
-            && !busy(&format!("issue-{issue}"))
+        let free = look.free.contains(&item)
             && look.pulls.get(&issue).is_some_and(|waiting| {
-                let verify = Work::Verify {
+                left(Work::Verify {
                     issue,
                     pull: waiting.pull,
                     commit: waiting.commit.clone(),
-                };
-                starts.get(&verify.key()).copied().unwrap_or(0) < verify.most()
-            })
+                })
+            });
+        !look.holds.contains(&item) && (lane.unknown || free)
     };
-    let first = look
-        .lanes
-        .values()
-        .filter(|lane| lane.passed || verifying(lane.issue));
-    let asked = look
-        .lanes
-        .values()
-        .filter(|lane| !lane.passed && !verifying(lane.issue) && free(lane.issue));
+    let first = look.lanes.values().filter(|lane| goes(lane));
+    let asked = look.lanes.values().filter(|lane| !goes(lane) && next(lane));
     order::waits(first, asked)
 }
 
@@ -1979,7 +2033,7 @@ pub(crate) async fn watch<R: Runtime + 'static>(daemon: Arc<Daemon<R>>, wave: Wa
         // (#1549). The loop of the wave reads the same issues and pull
         // requests, so this look takes its reply when the reply is not older
         // than the wait and one more look.
-        watch.waits = daemon.verify_waits(&wave.repo);
+        watch.waits = daemon.order_waits(&wave.repo);
         let quiet = match look::look_wave(&*world, &wave, &mut watch).await {
             Ok(told) => {
                 last_error = None;
@@ -2019,9 +2073,10 @@ fn has_session<R: Runtime + 'static>(daemon: &Daemon<R>, wave: &Wave) -> bool {
 /// (01M57A7A48A70Y7PTD95A3MBYC).
 pub(crate) type Starts = Arc<Mutex<BTreeMap<String, u32>>>;
 
-/// The verifies of a wave that wait for another pull request, by issue,
-/// with the number of that pull request ([`order()`]). Its loop writes them
-/// at each look. Its look and the status of the daemon read them.
+/// The verifies and the rebases of a wave that wait for another pull
+/// request, by issue, with the number of that pull request ([`order()`]).
+/// Its loop writes them at each look. Its look and the status of the
+/// daemon read them.
 pub(crate) type Waits = Arc<Mutex<BTreeMap<u64, u64>>>;
 
 /// True when `error` is a refusal of riff-server for a pause: the riff
@@ -3262,25 +3317,28 @@ fn item_commit(rest: &str) -> Option<(u64, String)> {
     Some((issue, commit))
 }
 
-/// The place of the first verify request of each pair of an issue and a
-/// commit (7 characters) in `bodies`, the bodies of the messages of the
-/// thread, oldest first: the order of the verifies ([`order()`], #1710).
+/// The place of the first verify request of each issue in `bodies`, the
+/// bodies of the messages of the thread, oldest first: the order of the
+/// verifies and the rebases ([`order()`], #1710). A request for a new
+/// head, after a rebase or a fix, keeps the place of the item (#1801,
+/// 01M6YPYTKQKSJRS0A8WZQRCCFD).
 ///
 /// ```
 /// use riff::wave::requests;
 ///
 /// let request = |issue, commit| format!("verify request: issue-{issue}, PR #4{issue}, branch worktree-issue-{issue}, commit {commit}, from the riff daemon (session 65f510d7).");
 /// let (one, two) = (request(1, "1a2b3c4"), request(2, "5e6f7a8"));
-/// let places = requests(&["hello", &two, &one, &two]);
-/// assert_eq!(places[&(2, "5e6f7a8".to_owned())], 1);
-/// assert_eq!(places[&(1, "1a2b3c4".to_owned())], 2);
+/// let rebased = request(2, "9b0c1d2");
+/// let places = requests(&["hello", &two, &one, &rebased]);
+/// assert_eq!(places[&2], 1);
+/// assert_eq!(places[&1], 2);
 /// assert_eq!(places.len(), 2);
 /// ```
-pub fn requests(bodies: &[&str]) -> HashMap<(u64, String), usize> {
+pub fn requests(bodies: &[&str]) -> HashMap<u64, usize> {
     let mut places = HashMap::new();
     for (place, body) in bodies.iter().enumerate() {
-        if let Some(found) = body.strip_prefix(VERIFY_REQUEST).and_then(item_commit) {
-            places.entry(found).or_insert(place);
+        if let Some((issue, _)) = body.strip_prefix(VERIFY_REQUEST).and_then(item_commit) {
+            places.entry(issue).or_insert(place);
         }
     }
     places
@@ -3350,13 +3408,15 @@ pub fn look_with(
     })
 }
 
-/// The lanes of the order of the verifies ([`order()`], #1710): each open
-/// pull request of an item whose verify waits or runs, and each whose
-/// verify passed and that nothing stops ([`rollout::Pull::stuck`]), with
-/// the files that it changes (`files`) and the place of its first verify
-/// request (`places`, [`requests`]). None when fewer than two are open, or
-/// no verify of them is in the free work `free`: then no verify waits, and
-/// no file is read.
+/// The lanes of the order of the verifies and the rebases ([`order()`],
+/// #1710, #1801): each open pull request of an item whose verify waits or
+/// runs, each with a conflict ([`rollout::Pull::conflict`]), also after a
+/// pass, and each whose verify passed and that nothing stops
+/// ([`rollout::Pull::stuck`]), with the files that it changes (`files`)
+/// and the place of the first verify request of its item (`places`,
+/// [`requests`]). None when fewer than two are open, or no verify and no
+/// rebase of them is in the free work `free`: then nothing waits, and no
+/// file is read.
 ///
 /// ```
 /// use std::collections::HashMap;
@@ -3371,6 +3431,7 @@ pub fn look_with(
 ///     auto_merge: true,
 ///     ..Pull::default()
 /// };
+/// let mergeable = |state: &str, pull: Pull| Pull { mergeable: Some(state.into()), ..pull };
 /// let open = Open {
 ///     pulls: vec![
 ///         pull(1, vec![]),
@@ -3378,23 +3439,30 @@ pub fn look_with(
 ///         pull(3, vec![Check::verify("FAILURE")]),
 ///         // The verify passed, and auto-merge is off: it cannot merge.
 ///         Pull { auto_merge: false, ..pull(4, vec![Check::verify("SUCCESS")]) },
+///         // The verify passed, and then a merge gave it a conflict.
+///         mergeable("CONFLICTING", pull(5, vec![Check::verify("SUCCESS")])),
+///         mergeable("UNKNOWN", pull(6, vec![])),
 ///     ],
 ///     ..Open::default()
 /// };
-/// let places = HashMap::from([((1, "c1".to_owned()), 7)]);
+/// let places = HashMap::from([(1, 7)]);
 /// let free = ["verify-issue-1".to_owned()];
 /// let lanes = riff::wave::lanes(&open, &free, &places, |p| [format!("f{}", p.number)].into());
-/// assert_eq!(lanes.keys().copied().collect::<Vec<_>>(), [1, 2]);
+/// assert_eq!(lanes.keys().copied().collect::<Vec<_>>(), [1, 2, 5, 6]);
 /// assert_eq!((lanes[&1].asked, lanes[&1].passed), (Some(7), false));
 /// assert_eq!((lanes[&2].asked, lanes[&2].passed), (None, true));
 /// assert_eq!(lanes[&2].files, ["f42".to_owned()].into());
+/// assert_eq!((lanes[&5].conflict, lanes[&5].passed), (true, false));
+/// assert!(lanes[&6].unknown);
 /// // No verify in the free work: no lane, and no read of the files.
 /// assert!(riff::wave::lanes(&open, &[], &places, |_| panic!("no read")).is_empty());
+/// // The rebase of 5 in the free work: the lanes.
+/// assert_eq!(riff::wave::lanes(&open, &["issue-5".into()], &places, |_| [].into()).len(), 4);
 /// ```
 pub fn lanes(
     open: &rollout::Open,
     free: &[String],
-    places: &HashMap<(u64, String), usize>,
+    places: &HashMap<u64, usize>,
     files: impl Fn(&rollout::Pull) -> BTreeSet<String>,
 ) -> BTreeMap<u64, order::Lane> {
     let stuck: HashSet<u64> = open.stuck().iter().map(|(p, _)| p.number).collect();
@@ -3405,27 +3473,31 @@ pub fn lanes(
             let issue = p.issue()?;
             match p.verify()? {
                 rollout::Verify::Asked => Some((p, issue, false)),
+                // A pass is lost with a conflict: the rebase comes first.
+                rollout::Verify::Passed if p.conflict() => Some((p, issue, false)),
                 rollout::Verify::Passed if !stuck.contains(&p.number) => Some((p, issue, true)),
                 _ => None,
             }
         })
         .collect();
-    let free_verify = on_way
-        .iter()
-        .any(|(_, issue, passed)| !passed && free.contains(&format!("verify-issue-{issue}")));
-    if on_way.len() < 2 || !free_verify {
+    let next = on_way.iter().any(|(p, issue, passed)| {
+        let rebase = p.conflict() && free.contains(&format!("issue-{issue}"));
+        !passed && (rebase || free.contains(&format!("verify-issue-{issue}")))
+    });
+    if on_way.len() < 2 || !next {
         return BTreeMap::new();
     }
     on_way
         .into_iter()
         .map(|(p, issue, passed)| {
-            let commit: String = p.head.chars().take(7).collect();
             let lane = order::Lane {
                 issue,
                 pull: p.number,
                 files: files(p),
                 passed,
-                asked: places.get(&(issue, commit)).copied(),
+                conflict: p.conflict(),
+                unknown: p.unknown(),
+                asked: places.get(&issue).copied(),
             };
             (issue, lane)
         })
@@ -5183,6 +5255,13 @@ mod tests {
     /// What `riff wave list` shows of the items 1 and 2 in verify, with the
     /// facts that the daemon of `here` sends.
     async fn listed(here: &Here) -> String {
+        listed_with(here, &[1, 2], &[]).await
+    }
+
+    /// What `riff wave list` shows of the items `verify` in verify and the
+    /// items `conflicts` with a conflict, with the facts that the daemon of
+    /// `here` sends.
+    async fn listed_with(here: &Here, verify: &[u64], conflicts: &[u64]) -> String {
         let facts = crate::daemon::facts::of_status(&here.daemon.status().await);
         let mut daemon: riff_core::wire::SessionInfo = serde_json::from_value(
             serde_json::json!({ "uri": "riff://mike@thelio/o/r?session=d1", "live": true }),
@@ -5199,12 +5278,19 @@ mod tests {
             tracker: false,
             question: false,
         };
-        let issues = riff_client::waves::Issues::of(vec![issue(1), issue(2)]).with_verify([1, 2]);
+        let all: BTreeSet<u64> = verify.iter().chain(conflicts).copied().collect();
+        let issues = riff_client::waves::Issues::of(all.iter().map(|n| issue(*n)).collect())
+            .with_verify(all.iter().copied())
+            .with_stuck(
+                conflicts
+                    .iter()
+                    .map(|n| (*n, riff_client::waves::CONFLICT.to_owned())),
+            );
         let items = crate::waves::Items::of("o/r", &issues, vec![daemon], &BTreeMap::new());
         let milestone = riff_client::waves::Milestone {
             number: 1,
             title: "Wave 1".into(),
-            open_issues: 2,
+            open_issues: all.len() as u64,
             closed_issues: 0,
         };
         text::waves_list(&[milestone], Some(&items))
@@ -5223,7 +5309,7 @@ mod tests {
             .await;
         here.idle(3).await;
         assert!(here.running("verify-issue-2").is_none(), "it waits");
-        assert_eq!(here.daemon.verify_waits("o/r"), BTreeMap::from([(2, 41)]));
+        assert_eq!(here.daemon.order_waits("o/r"), BTreeMap::from([(2, 41)]));
         // The daemon sends the wait in its facts, and `riff wave list`
         // shows it.
         assert!(
@@ -5236,7 +5322,7 @@ mod tests {
         here.until(3, |h| h.forge().finished.len() == 1).await;
         here.idle(3).await;
         assert!(here.running("verify-issue-2").is_none(), "no merge yet");
-        assert_eq!(here.daemon.verify_waits("o/r"), BTreeMap::from([(2, 41)]));
+        assert_eq!(here.daemon.order_waits("o/r"), BTreeMap::from([(2, 41)]));
         // The pull request of 1 merges: the verify of 2 starts.
         {
             let mut forge = here.forge();
@@ -5245,7 +5331,7 @@ mod tests {
         }
         here.until(3, |h| h.running("verify-issue-2").is_some())
             .await;
-        assert!(here.daemon.verify_waits("o/r").is_empty());
+        assert!(here.daemon.order_waits("o/r").is_empty());
         let forge = here.forge();
         let items: Vec<String> = forge.works.iter().map(Work::item).collect();
         assert_eq!(items, ["verify-issue-1", "verify-issue-2"]);
@@ -5261,7 +5347,7 @@ mod tests {
             h.running("verify-issue-1").is_some() && h.running("verify-issue-2").is_some()
         })
         .await;
-        assert!(here.daemon.verify_waits("o/r").is_empty());
+        assert!(here.daemon.order_waits("o/r").is_empty());
     }
 
     /// #1710: the verify of a pull request that cannot merge by itself does
@@ -5278,7 +5364,82 @@ mod tests {
         here.run();
         here.until(3, |h| h.running("verify-issue-2").is_some())
             .await;
-        assert!(here.daemon.verify_waits("o/r").is_empty());
+        assert!(here.daemon.order_waits("o/r").is_empty());
+    }
+
+    /// #1801: three pull requests change one file, and the verify of the
+    /// first passed. Its merge gives the two others a conflict. Only the
+    /// next of the order gets a rebase. The third keeps its conflict, and
+    /// gets its rebase after the second merges.
+    #[tokio::test]
+    async fn the_rebases_of_pull_requests_with_a_file_in_common_go_one_after_the_other() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2, 3], 3, free).await;
+        {
+            let mut forge = here.forge();
+            for issue in [1, 2, 3] {
+                forge.pulls.insert(issue, Pr::Asked);
+                forge
+                    .files
+                    .insert(issue, vec!["crates/riff/src/tui.rs".into()]);
+            }
+            forge.pulls.insert(1, Pr::Passed);
+        }
+        here.run();
+        let first = BTreeMap::from([(2, 41), (3, 41)]);
+        here.until(3, |h| h.daemon.order_waits("o/r") == first)
+            .await;
+        // 1 merges: 2 and 3 have a conflict.
+        {
+            let mut forge = here.forge();
+            forge.pulls.remove(&1);
+            forge.items.retain(|n| *n != 1);
+            forge.conflicting.extend([2, 3]);
+        }
+        here.until(3, |h| h.running("issue-2").is_some()).await;
+        here.idle(3).await;
+        assert!(here.running("issue-3").is_none(), "3 keeps its conflict");
+        assert_eq!(here.daemon.order_waits("o/r"), BTreeMap::from([(3, 42)]));
+        let list = listed_with(&here, &[], &[2, 3]).await;
+        assert!(list.contains("  rebase waits for #42: #3"), "{list}");
+        // The rebase of 2 pushes a new head, and GitHub does not know yet
+        // whether it has a conflict: 2 keeps its place.
+        here.forge().unknown.insert(2);
+        here.end("issue-2").await;
+        here.until(3, |h| h.forge().finished == ["issue-2"]).await;
+        here.idle(3).await;
+        assert!(here.running("issue-3").is_none(), "2 keeps its place");
+        // The verify of the new head of 2, and its pass: 3 still waits.
+        here.forge().unknown.remove(&2);
+        here.until(3, |h| h.running("verify-issue-2").is_some())
+            .await;
+        here.end("verify-issue-2").await;
+        here.until(3, |h| h.forge().finished.len() == 2).await;
+        here.idle(3).await;
+        assert!(here.running("issue-3").is_none(), "2 waits for its merge");
+        assert_eq!(here.daemon.order_waits("o/r"), BTreeMap::from([(3, 42)]));
+        // 2 merges: the rebase of 3 starts.
+        {
+            let mut forge = here.forge();
+            forge.pulls.remove(&2);
+            forge.items.retain(|n| *n != 2);
+        }
+        here.until(3, |h| h.running("issue-3").is_some()).await;
+        assert!(here.daemon.order_waits("o/r").is_empty());
+        let rebase = |issue, commit: &str| Work::Rebase {
+            issue,
+            pull: 40 + issue,
+            commit: commit.into(),
+        };
+        let verify = Work::Verify {
+            issue: 2,
+            pull: 42,
+            commit: "c2r".into(),
+        };
+        assert_eq!(
+            here.forge().works,
+            [rebase(2, "c2"), verify, rebase(3, "c3")]
+        );
     }
 
     #[tokio::test]

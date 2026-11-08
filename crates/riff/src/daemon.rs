@@ -1652,9 +1652,9 @@ pub struct WaveShown {
     pub repo: String,
     /// What the wave did last, in a few words.
     pub word: String,
-    /// The verifies that wait for another pull request with a file in
-    /// common, by issue, with the number of that pull request
-    /// ([`crate::wave::order`], #1710).
+    /// The verifies and the rebases that wait for another pull request
+    /// with a file in common, by issue, with the number of that pull
+    /// request ([`crate::wave::order`], #1710, #1801).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub waits: BTreeMap<u64, u64>,
 }
@@ -2523,7 +2523,7 @@ struct Running {
     starts: crate::wave::Starts,
     /// What it did last.
     word: Arc<Mutex<String>>,
-    /// The verifies that wait for another pull request.
+    /// The verifies and the rebases that wait for another pull request.
     waits: crate::wave::Waits,
 }
 
@@ -3753,10 +3753,10 @@ impl<R: Runtime + 'static> Daemon<R> {
             .collect()
     }
 
-    /// The verifies of the wave of `repo` that wait for another pull
-    /// request at the last look of its loop ([`crate::wave::order`]). None
-    /// when no wave of `repo` runs.
-    pub fn verify_waits(&self, repo: &str) -> BTreeMap<u64, u64> {
+    /// The verifies and the rebases of the wave of `repo` that wait for
+    /// another pull request at the last look of its loop
+    /// ([`crate::wave::order`]). None when no wave of `repo` runs.
+    pub fn order_waits(&self, repo: &str) -> BTreeMap<u64, u64> {
         self.waves_lock()
             .get(repo)
             .map(|running| {
