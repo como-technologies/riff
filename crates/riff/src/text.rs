@@ -11410,17 +11410,183 @@ pub const PICK_A_REPOSITORY: &str =
 pub const NO_CONTAINER_HERE: &str = "This session runs in no container of the riff daemon of \
      this machine: t and x work only on such a session.";
 
-/// The Sessions tab: `l`, `t` and `x` on a session of another host
-/// (01M57D4FZGCVE62AP4MVG59HM4).
+/// The Sessions tab: `l` or `t` on the lead of another host, in the
+/// repository `repo`: the step there (01M6WMAXEVZB2XJN4XPR879J6W).
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::on_host_only("thelio"),
-///     "l, t and x work only on thelio: run riff there."
+///     riff::text::lead_there("pangolin", Some("o/r")),
+///     "The lead runs on pangolin: ssh pangolin, then riff lead start in a clone of o/r."
+/// );
+/// assert_eq!(
+///     riff::text::lead_there("pangolin", None),
+///     "The lead runs on pangolin: ssh pangolin, then riff lead start."
 /// );
 /// ```
-pub fn on_host_only(host: &str) -> String {
-    format!("l, t and x work only on {}: run riff there.", safe(host))
+pub fn lead_there(host: &str, repo: Option<&str>) -> String {
+    let host = safe(host);
+    match repo {
+        Some(repo) => format!(
+            "The lead runs on {host}: ssh {host}, then riff lead start in a clone of {}.",
+            safe(repo)
+        ),
+        None => format!("The lead runs on {host}: ssh {host}, then riff lead start."),
+    }
+}
+
+/// The Sessions tab: `t` on a session of another host, in the container
+/// `name` that the daemon of the host names: the step there
+/// (01M6WMAXEVZB2XJN4XPR879J6W). With no name, the step names `riff
+/// daemon status`, which shows it.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::takeover_there("pangolin", Some("riff-issue-88-9c0d1e2f")),
+///     "Take over on pangolin: ssh pangolin, then riff takeover riff-issue-88-9c0d1e2f"
+/// );
+/// assert_eq!(
+///     riff::text::takeover_there("pangolin", None),
+///     "Take over on pangolin: ssh pangolin, then riff daemon status, and riff takeover NAME"
+/// );
+/// ```
+pub fn takeover_there(host: &str, name: Option<&str>) -> String {
+    let host = safe(host);
+    match name {
+        Some(name) => format!(
+            "Take over on {host}: ssh {host}, then riff takeover {}",
+            safe(name)
+        ),
+        None => format!(
+            "Take over on {host}: ssh {host}, then riff daemon status, and riff takeover NAME"
+        ),
+    }
+}
+
+/// The Sessions tab: `x` on a session of another host in no container
+/// that a riff daemon of the person names (01M6WMAXEVZB2XJN4XPR879J6W).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::no_container_there("pangolin"),
+///     "No riff daemon of yours on pangolin names a container of this session: x ends only such a session."
+/// );
+/// ```
+pub fn no_container_there(host: &str) -> String {
+    format!(
+        "No riff daemon of yours on {} names a container of this session: x ends only such a \
+         session.",
+        safe(host)
+    )
+}
+
+/// The Sessions tab: `x` on the row of the daemon of another person.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::not_your_daemon("kadomony"),
+///     "This riff daemon of kadomony is not yours: x acts only on a daemon of yours."
+/// );
+/// ```
+pub fn not_your_daemon(host: &str) -> String {
+    format!(
+        "This riff daemon of {} is not yours: x acts only on a daemon of yours.",
+        safe(host)
+    )
+}
+
+/// The Sessions tab: the question before `x` ends the session in the
+/// container `name` of another host (01M6WMAXEVZB2XJN4XPR879J6W).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::ask_end_there("riff-issue-88-9c0d1e2f", "pangolin"),
+///     "End riff-issue-88-9c0d1e2f on pangolin, and free its item?"
+/// );
+/// ```
+pub fn ask_end_there(name: &str, host: &str) -> String {
+    format!("End {} on {}, and free its item?", safe(name), safe(host))
+}
+
+/// The Sessions tab: the question before `x` on the row of the daemon of
+/// `host` stops its work for `repo` (01M6WMAXEVZB2XJN4XPR879J6W). The
+/// note line adds `y/N`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::ask_leave_there("pangolin", "o/r"),
+///     "pangolin stops taking work for o/r (riff leave):"
+/// );
+/// ```
+pub fn ask_leave_there(host: &str, repo: &str) -> String {
+    format!(
+        "{} stops taking work for {} (riff leave):",
+        safe(host),
+        safe(repo)
+    )
+}
+
+/// The Sessions tab: the note while the TUI waits for the reply of the
+/// daemon of `host` to `request`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::asking_host("pangolin", "leave o/r"),
+///     "riff asks the riff daemon of pangolin: leave o/r"
+/// );
+/// ```
+pub fn asking_host(host: &str, request: &str) -> String {
+    format!(
+        "riff asks the riff daemon of {}: {}",
+        safe(host),
+        safe(request)
+    )
+}
+
+/// The Sessions tab: the reply of the daemon of `host`, on one line.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_replied("pangolin", "issue-88 is free.\nThe riff daemon stops the container n."),
+///     "pangolin: issue-88 is free. The riff daemon stops the container n."
+/// );
+/// ```
+pub fn host_replied(host: &str, reply: &str) -> String {
+    let lines: Vec<&str> = reply.lines().filter(|l| !l.trim().is_empty()).collect();
+    format!("{}: {}", safe(host), safe(&lines.join(" ")))
+}
+
+/// The Sessions tab: the note after the daemon of `host` stopped taking
+/// work for `repo` (01M6WMAXEVZB2XJN4XPR879J6W).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_left("pangolin", "o/r"),
+///     "pangolin takes no new work for o/r. Its sessions there go on to their end: x on each one ends it."
+/// );
+/// ```
+pub fn host_left(host: &str, repo: &str) -> String {
+    format!(
+        "{} takes no new work for {}. Its sessions there go on to their end: x on each one ends it.",
+        safe(host),
+        safe(repo)
+    )
+}
+
+/// The Sessions tab: the daemon of `host` refused or failed, or riff
+/// cannot reach it. The note has the first line of the error.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::host_failed("pangolin", "refused: no.\nmore"),
+///     "riff cannot act on pangolin: refused: no."
+/// );
+/// ```
+pub fn host_failed(host: &str, error: &str) -> String {
+    format!(
+        "riff cannot act on {}: {}",
+        safe(host),
+        safe(error.lines().next().unwrap_or_default())
+    )
 }
 
 /// The Sessions tab after Enter on the host `host` in the Machines tab:

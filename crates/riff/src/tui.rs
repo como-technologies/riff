@@ -175,15 +175,16 @@
 //! the loop. The attach asks nothing. The attach and the takeover leave
 //! the screen of the TUI, as `riff lead start` and `riff takeover` do in
 //! a terminal, and the TUI draws again at their end
-//! (01M6VGHC59FJS10FJEYH6K4CAQ). The limit and each [`Effect`] run in a
-//! task of their own. The result of an action goes to the note line, and
-//! the TUI looks again at once.
+//! (01M6VGHC59FJS10FJEYH6K4CAQ). The limit, a request to the daemon of a
+//! host and each [`Effect`] run in a task of their own. The result of an
+//! action goes to the note line, and the TUI looks again at once.
 //!
 //! | Action | The code of |
 //! |---|---|
 //! | [`Action::Attach`] | `riff lead start`: [`crate::lead::attach`] |
 //! | [`Action::Takeover`] | `riff takeover NAME`: [`crate::takeover::takeover`] |
 //! | [`Action::End`] | `riff daemon end NAME`: [`crate::daemon::ask_end`] |
+//! | [`Action::Host`] | `riff daemon end NAME --host HOST`, `riff leave --host HOST`: [`sessions::ask_host`] |
 //! | [`Action::Limit`] | `riff daemon limit --sessions N`: [`machines::set_limit`] |
 //! | [`Action::Do`] | `riff plan hold`, `riff plan free`, `riff pause`, `riff resume`: [`Effect::run`] |
 //! | [`Action::Post`] | `riff chat`: [`crate::chat::posts`], through [`chat::Link`] |
@@ -564,6 +565,14 @@ pub enum Action {
     /// End the session of the daemon of this machine in this container
     /// ([`crate::daemon::ask_end`]).
     End(String),
+    /// Ask the riff daemon of `host` for `request` in the repository
+    /// `repo`, as `--host HOST` does: `daemon end NAME` or `leave REPO`
+    /// ([`sessions::ask_host`], 01M6WMAXEVZB2XJN4XPR879J6W).
+    Host {
+        host: String,
+        repo: String,
+        request: crate::daemon::remote::Request,
+    },
     /// Set the most live sessions of `host` with the code of `riff
     /// daemon limit --sessions N` (01M6VFD0PPXDNH3NKD3YE4W9SB).
     Limit { host: String, sessions: u32 },
@@ -2044,8 +2053,21 @@ async fn frames(
                 state.done(end(dir.as_deref(), &name).await);
                 (tasks.next, tasks.next_ask) = (Instant::now(), Instant::now());
             }
-            Action::Limit { .. } | Action::Do(_) if tasks.acting.is_some() => {
+            Action::Limit { .. } | Action::Host { .. } | Action::Do(_)
+                if tasks.acting.is_some() =>
+            {
                 state.note(STILL_ACTING);
+            }
+            Action::Host {
+                host,
+                repo,
+                request,
+            } => {
+                state.note(text::asking_host(&host, &request.to_string()));
+                let (api, me, reach) = (api.clone(), me.clone(), reach.clone());
+                tasks.acting = Some(tokio::spawn(async move {
+                    sessions::ask_host(&api, &me, &reach, &host, &repo, &request).await
+                }));
             }
             Action::Limit { host, sessions } => {
                 state.note(machines::setting(&host, sessions));

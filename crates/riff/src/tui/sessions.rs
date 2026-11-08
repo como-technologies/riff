@@ -94,9 +94,9 @@
 //! | `↑` `↓` `j` `k`, `PgUp` `PgDn`, `g` `G`, `Home` `End` | Select a row. |
 //! | `←` `→`, `Space` | Fold or open a group. `←` on a session selects its group. |
 //! | `Enter` | A group: fold or open. A lead of this machine: attach. A worker in a container of a daemon of yours: its Session log in the Reports tab, and with no detail pane, its detail on the whole screen first. Each other session: its detail on the whole screen. |
-//! | `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. |
-//! | `t` | Take over the selected session, after `y` (`riff takeover NAME`). |
-//! | `x` | End the selected session of the daemon, after `y` (`riff daemon end NAME`). |
+//! | `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. |
+//! | `t` | Take over the selected session, after `y` (`riff takeover NAME`). On another host: a note with the step there. |
+//! | `x` | End the selected session of the daemon, after `y` (`riff daemon end NAME`, on another host with `--host HOST`). On the row of a daemon: the host stops taking work for the repository, after `y` (`riff leave --host HOST`). |
 //! | `p`, `P` | Pause or resume the repository of the row, or the whole riff, after `y`. |
 //! | `e` | Open each group, or fold the groups that need no look. |
 //! | `b` | Put the person at the top of the tree, or the repository again. |
@@ -104,26 +104,60 @@
 //! | `Esc` | Leave the detail on the whole screen, or clear the filter and the note line. |
 //!
 //! Each action calls the code of its CLI command, and asks `y` or `n`
-//! first, but the attach (01M6VGH4Y0G25VYBBD5ZV4GG2H). `l`, `t` and `x`
-//! work only on a container session of the daemon of this machine. On a
-//! session of another host they put a note in the note line
+//! first, but the attach (01M6VGH4Y0G25VYBBD5ZV4GG2H). `l` and `t` work
+//! only on a container session of the daemon of this machine
 //! (01M6VGHC981887SCEKGBNRPHJV). A click selects a row, a click on `▶`
 //! or `▼` folds its group, and a double click presses Enter
 //! (01M6VGHCJ8WNT6H9VJYE2HP8SP).
+//!
+//! # Another host
+//!
+//! The TUI acts on another host through the signed requests of `--host`
+//! (01M579Z9MPS86MX7890T6HV18S, 01M6WMAXEVZB2XJN4XPR879J6W), with the
+//! code of [`crate::daemon::remote::ask`]. The daemon of that host acts
+//! only on a verified request of the person or of the lead of the
+//! person, and replies with a direct note: the note line shows it
+//! ([`ask_host`]).
+//!
+//! | Row | `x`, then `y` | `t`, `l` |
+//! |---|---|---|
+//! | A session of another host | `daemon end NAME` to the daemon of its host: NAME is the container that the facts of that daemon name | A note: `ssh HOST`, then `riff takeover NAME`, or `riff lead start` for a lead |
+//! | The session of a daemon | `leave REPO`: `HOST stops taking work for REPO (riff leave)`. Its sessions go on to their end | as for each other session |
+//!
+//! `p` and `P` go to riff-server, on each host. The TUI asks as the
+//! person in the repository of the row. In a container, it asks through
+//! the socket of its session ([`Reach::host`]): only the lead may.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant T as the TUI on thelio
+//!     participant S as riff-server
+//!     participant D as riff daemon on pangolin
+//!     T->>T: x on riff-issue-88-9c0d1e2f, then y
+//!     T->>S: a signed direct message: "daemon end riff-issue-88-9c0d1e2f"
+//!     S->>D: wake
+//!     D->>D: judge: verified, the person
+//!     D->>S: a direct note: "re 41, the daemon of pangolin: done"
+//!     T->>S: read the direct thread after 41
+//!     S-->>T: the note: the note line shows it
+//! ```
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use riff_client::api::Api;
 use riff_client::sessions::{By, Entry, Level, Live, PersonRow, Phase, out_of_date};
 use riff_core::build::Build;
-use riff_core::name::{Repo, ThreadName};
+use riff_core::name::{Place, Repo, SessionUri, ThreadName};
 use riff_core::wire::{PersonRole, RiffState, SessionInfo, SessionState, Waits};
 
 use super::reports::Source;
 use super::view::{Hit, Layout, Placed, style_of, width};
 use super::{Action, Effect, Key, Mark, Question, State};
+use crate::daemon::remote::{self, Request};
+use crate::reach::Reach;
 use crate::text::{self, SessionKind, safe};
 
 /// The rows of the detail pane: its line and the lines under it.
@@ -237,7 +271,7 @@ impl<'a> Item<'a> {
     /// container session of this machine at the place of `me`, with no
     /// repository. A session with no session ID, a person on the command
     /// line, has no row.
-    fn of(entry: &'a Entry, me: &riff_core::name::SessionUri) -> Option<Item<'a>> {
+    fn of(entry: &'a Entry, me: &SessionUri) -> Option<Item<'a>> {
         let place = match &entry.server {
             Some(s) => {
                 s.uri.who().session()?;
@@ -805,6 +839,9 @@ impl State {
                 lead: item.lead(),
                 host: item.key(Level::Host).to_owned(),
                 log: self.log_of(item),
+                there: self.named(item),
+                daemon: item.info().is_some_and(remote::is_daemon),
+                mine: item.key(Level::Person) == self.me.who().user(),
             }),
             Row::Group { .. } => None,
         };
@@ -813,10 +850,8 @@ impl State {
 
     /// The Session log of the worker `item` (01M6VT3JS3HRKXEJKDV0C97VZS):
     /// its container on this machine, else the container of the session
-    /// in the facts that the daemon of its host sent, when the host is of
-    /// the person of the TUI. A container of the daemon is named
-    /// `riff-ITEM-ID8`, with the first 8 characters of the session ID. A
-    /// lead has none: Enter attaches to it.
+    /// in the facts that the daemon of its host sent ([`State::named`]).
+    /// A lead has none: Enter attaches to it.
     fn log_of(&self, item: &Item) -> Option<Source> {
         if item.lead() {
             return None;
@@ -827,6 +862,20 @@ impl State {
                 host: None,
             });
         }
+        let name = self.named(item)?;
+        let host = item.key(Level::Host);
+        let here = host == self.me.place().host();
+        Some(Source {
+            name,
+            host: (!here).then(|| host.to_owned()),
+        })
+    }
+
+    /// The container of the session `item` in the facts that the daemon
+    /// of its host sent, when the host is of the person of the TUI. A
+    /// container of the daemon is named `riff-ITEM-ID8`, with the first 8
+    /// characters of the session ID.
+    fn named(&self, item: &Item) -> Option<String> {
         let [user, host, _] = &item.place;
         let id: String = item.id().chars().take(8).collect();
         if user != self.me.who().user() || id.is_empty() {
@@ -843,11 +892,7 @@ impl State {
             .find(|s| s.name.ends_with(&end))?
             .name
             .clone();
-        let here = host == self.me.place().host();
-        Some(Source {
-            name,
-            host: (!here).then(|| host.clone()),
-        })
+        Some(name)
     }
 
     /// Selects the row that `to` gives from the place of the selected row
@@ -1040,7 +1085,9 @@ impl State {
     }
 
     /// `l`: the attach to the lead of the repository of the row, else to
-    /// the first lead of this machine (01M51PD7M04HZR2PVVJA4WCBK5).
+    /// the first lead of this machine (01M51PD7M04HZR2PVVJA4WCBK5). On
+    /// the lead of another host, the note names the step there
+    /// (01M6WMAXEVZB2XJN4XPR879J6W).
     fn lead(&mut self) -> Option<Action> {
         let picked = self.picked();
         if let Some(Picked {
@@ -1051,11 +1098,11 @@ impl State {
                     host,
                     ..
                 }),
-            ..
+            repo,
         }) = &picked
             && host != self.me.place().host()
         {
-            self.note(text::on_host_only(host));
+            self.note(text::lead_there(host, repo.as_deref()));
             return None;
         }
         let repo = picked.as_ref().and_then(|p| p.repo.clone());
@@ -1089,51 +1136,110 @@ impl State {
         }
     }
 
-    /// The container session of this machine of the selected row, for `t`
-    /// and `x`, or the note that says why there is none.
-    fn container(&mut self) -> Option<(String, bool)> {
-        match self.picked().and_then(|p| p.session) {
-            None => {
+    /// The selected session, for `t` and `x`, and the repository of its
+    /// row, or the note that says to select one.
+    fn session(&mut self) -> Option<(Picked1, Option<String>)> {
+        match self.picked() {
+            Some(Picked {
+                session: Some(session),
+                repo,
+            }) => Some((session, repo)),
+            _ => {
                 self.note(text::PICK_A_SESSION);
-                None
-            }
-            Some(Picked1 {
-                name: Some(name),
-                lead,
-                ..
-            }) => Some((name, lead)),
-            Some(Picked1 { host, .. }) if host != self.me.place().host() => {
-                self.note(text::on_host_only(&host));
-                None
-            }
-            Some(_) => {
-                self.note(text::NO_CONTAINER_HERE);
                 None
             }
         }
     }
 
     /// `t`: asks, then takes over the selected session
-    /// (01M51KJ1R9K7A7RW8T8XH8VW43).
+    /// (01M51KJ1R9K7A7RW8T8XH8VW43). On another host, the note names the
+    /// step there (01M6WMAXEVZB2XJN4XPR879J6W).
     fn takeover(&mut self) {
-        match self.container() {
-            Some((name, true)) => self.note(text::no_takeover_of_lead(&name)),
-            Some((name, false)) => {
+        let Some((session, repo)) = self.session() else {
+            return;
+        };
+        let here = session.host == self.me.place().host();
+        match session {
+            Picked1 {
+                name: Some(name),
+                lead: true,
+                ..
+            } => self.note(text::no_takeover_of_lead(&name)),
+            Picked1 {
+                name: Some(name), ..
+            } => {
                 self.ask(Question::new(
                     text::ask_takeover(&name),
                     Action::Takeover(name),
                 ));
             }
-            None => {}
+            Picked1 {
+                lead: true, host, ..
+            } if !here => self.note(text::lead_there(&host, repo.as_deref())),
+            Picked1 { there, host, .. } if !here => {
+                self.note(text::takeover_there(&host, there.as_deref()));
+            }
+            Picked1 { .. } => self.note(text::NO_CONTAINER_HERE),
         }
     }
 
     /// `x`: asks, then ends the selected session of the daemon
-    /// (01M579Z9VRD12FRK6DSYVKDHQB).
+    /// (01M579Z9VRD12FRK6DSYVKDHQB): on this machine through its socket,
+    /// on another host through riff-server (01M6WMAXEVZB2XJN4XPR879J6W).
+    /// On the row of a daemon of the person, it asks, then the host stops
+    /// taking work for the repository, as `riff leave --host HOST` does.
     fn end(&mut self) {
-        if let Some((name, _)) = self.container() {
-            self.ask(Question::new(text::ask_end(&name), Action::End(name)));
-        }
+        let Some((session, repo)) = self.session() else {
+            return;
+        };
+        let here = session.host == self.me.place().host();
+        let host = session.host.clone();
+        let question = match (session, repo) {
+            (
+                Picked1 {
+                    name: Some(name), ..
+                },
+                _,
+            ) => Question::new(text::ask_end(&name), Action::End(name)),
+            (Picked1 { daemon: true, .. }, None) => {
+                return self.note(text::PICK_A_REPOSITORY);
+            }
+            (
+                Picked1 {
+                    daemon: true,
+                    mine: false,
+                    ..
+                },
+                _,
+            ) => return self.note(text::not_your_daemon(&host)),
+            (Picked1 { daemon: true, .. }, Some(repo)) => Question::new(
+                text::ask_leave_there(&host, &repo),
+                Action::Host {
+                    request: Request::Leave {
+                        repo: repo.clone(),
+                        now: false,
+                    },
+                    host,
+                    repo,
+                },
+            ),
+            (Picked1 { .. }, _) if here => return self.note(text::NO_CONTAINER_HERE),
+            (
+                Picked1 {
+                    there: Some(name), ..
+                },
+                Some(repo),
+            ) => Question::new(
+                text::ask_end_there(&name, &host),
+                Action::Host {
+                    request: Request::End(name),
+                    host,
+                    repo,
+                },
+            ),
+            (Picked1 { .. }, _) => return self.note(text::no_container_there(&host)),
+        };
+        self.ask(question);
     }
 
     /// `p` and `P`: asks, then pauses or resumes the repository of the
@@ -1183,6 +1289,71 @@ struct Picked1 {
     host: String,
     /// Its Session log, for a worker in a container.
     log: Option<Source>,
+    /// The name of its container in the facts of the daemon of its host
+    /// ([`State::named`]).
+    there: Option<String>,
+    /// True for the session of a riff daemon.
+    daemon: bool,
+    /// True for a session of the person of the TUI.
+    mine: bool,
+}
+
+/// Asks the riff daemon of `host` for `request` in the repository
+/// `repo`, with the code of `--host HOST` (01M579Z9MPS86MX7890T6HV18S,
+/// 01M6WMAXEVZB2XJN4XPR879J6W): through riff-server as [`asker`], or in
+/// a container through the socket of its session ([`Reach::host`]). It
+/// gives the note: the reply of the daemon, or why there is none.
+pub async fn ask_host(
+    api: &Api,
+    me: &SessionUri,
+    reach: &Reach,
+    host: &str,
+    repo: &str,
+    request: &Request,
+) -> String {
+    let asked = match reach {
+        Reach::Daemon(_) => reach.host(host, request).await,
+        Reach::Direct(_) => match asker(me, repo) {
+            Ok(asker) => remote::ask(api, &asker, host, request, remote::REPLY_WAIT).await,
+            Err(e) => Err(e),
+        },
+    };
+    match (asked, request) {
+        (Ok(_), Request::Leave { repo, .. }) => text::host_left(host, repo),
+        (Ok(reply), _) => text::host_replied(host, &reply),
+        (Err(e), _) => text::host_failed(host, &format!("{e:#}")),
+    }
+}
+
+/// The caller of a request of the TUI `me` in the repository `repo`
+/// (`OWNER/REPO`): the person in `repo`, as `riff daemon end NAME --host
+/// HOST` in a clone of `repo` asks. The daemon routes the request by
+/// that repository. A session asks as itself.
+///
+/// ```
+/// use riff::tui::sessions::asker;
+///
+/// let person = "riff://mike@thelio".parse()?;
+/// let asker = asker(&person, "o/r")?;
+/// assert_eq!(asker.to_string(), "riff://mike@thelio/o/r");
+/// let lead = "riff://mike@thelio/o/r?session=l1&lead=true".parse()?;
+/// assert_eq!(riff::tui::sessions::asker(&lead, "o/s")?, lead);
+/// assert!(riff::tui::sessions::asker(&person, "o").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn asker(me: &SessionUri, repo: &str) -> anyhow::Result<SessionUri> {
+    if me.who().session().is_some() {
+        return Ok(me.clone());
+    }
+    let Some((owner, name)) = repo.split_once('/') else {
+        anyhow::bail!("{}", text::daemon_bad_repo(repo));
+    };
+    let repo = Repo::Git {
+        owner: owner.to_owned(),
+        name: name.to_owned(),
+    };
+    let place = Place::new(me.place().host(), repo, None)?;
+    Ok(me.clone().moved(place))
 }
 
 /// The counts of a list of sessions: by mark, by word, the sessions that
@@ -1939,7 +2110,7 @@ pub fn help_keys() -> Vec<(&'static str, &'static str)> {
         ),
         ("l", "attach to the lead"),
         ("t", "take over the session, after y"),
-        ("x", "end the session of the daemon, after y"),
+        ("x", "end the session, or riff leave on a daemon, after y"),
         (
             "p, P",
             "pause or resume the repository, or the riff, after y",
