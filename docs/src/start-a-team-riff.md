@@ -258,6 +258,11 @@ no log line.
 The session App also has the webhook `URL/hooks/github` of the riff.
 riff-server takes each event of GitHub there, and drops it for now.
 
+The lead App pushes the release tag of a repository with the release
+cycle. After you make the Apps, run `riff init` in that repository: it
+adds the lead App to the ruleset `releases`. See
+[Let the lead push the release tag](start-a-riff.md#let-the-lead-push-the-release-tag).
+
 ### Check the tokens of each role
 
 In a clone of a repository of the riff, riff-server asks GitHub for a

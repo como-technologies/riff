@@ -520,8 +520,9 @@ Update the older side:
 - **riff** on this machine, and **riff-server** of your own riff: do
   [Update riff](start-a-riff.md#update-riff). When you joined a riff,
   see [Update riff](join-a-riff.md#update-riff) of Join a Riff.
-- **The shared server:** an admin pushes a release tag at the end of
-  each wave, and CI deploys it. A push to `main` does not deploy it.
+- **The shared server:** the lead pushes a release tag at the end of
+  each wave, and CI deploys it after a person approves the deploy. A
+  push to `main` does not deploy it.
   See
   [Deploy the shared server at the end of a
   wave](development.md#deploy-the-shared-server-at-the-end-of-a-wave).
@@ -565,6 +566,40 @@ Latest release and prints this line:
 ```text
 riff cannot read the build of the riff at https://riff.example.com, so riff installs the Latest release, v0.3.0.
 ```
+
+#### Who tags and who approves a release
+
+The lead publishes each release, and a person approves its deploy.
+GitHub decides each step, not the words of a session:
+
+```mermaid
+flowchart LR
+    L["the lead in its container<br/>riff-OWNER-lead[bot]"] -- "riff release publish:<br/>the tag vX.Y.Z" --> R{"the ruleset releases<br/>on the tags v*"}
+    A["an admin in a terminal"] -- "riff release publish" --> R
+    W["a worker<br/>riff-OWNER[bot]"] -. "refused" .-> R
+    R --> C["CI builds the release"]
+    C --> D["the job Deploy waits<br/>for production"]
+    P["you in a terminal"] -- "riff release approve" --> D
+    L -. "refused, also when you<br/>say approve in riff chat" .-> D
+```
+
+| Step | Who | What decides |
+|---|---|---|
+| Push the tag `vX.Y.Z` | the lead in its container, with the token of the lead App, or an admin of the repository in a terminal | The ruleset `releases` lets only the admin role of the repository and the lead App push a tag `v*`. `riff release publish` checks no role: when GitHub refuses the push, riff names the ruleset and deletes the tag on its machine. |
+| Approve the deploy | you, the owner or an admin of the riff, in a plain terminal | `riff release approve` refuses each session, also the lead, also when you say approve in riff chat. Only a person is a reviewer of the environment `production`. |
+
+`just github` and `riff init` make the ruleset `releases`: see
+[Let the lead push the release tag](start-a-riff.md#let-the-lead-push-the-release-tag).
+To see who can push a release tag, read the bypass actors of the
+ruleset. Only an admin of the repository sees them:
+
+```sh
+ID=$(gh api repos/como-technologies/riff/rulesets --jq '.[] | select(.name == "releases") | .id')
+gh api "repos/como-technologies/riff/rulesets/$ID" --jq .bypass_actors
+```
+
+The list has the admin role, `RepositoryRole` 5, and the lead App, an
+`Integration` with the App ID of the lead App.
 
 ### Install one release
 
@@ -5518,7 +5553,7 @@ refuses each step that the rights of the role do not give. See
 |---|---|---|
 | A worker | `riff-OWNER[bot]`, the session App | Push a branch, open a pull request, comment, run a workflow again, and change `.github/workflows`. It cannot set `riff/verify` or push a tag `v*`. |
 | A verifier | `riff-OWNER[bot]`, the session App | Read only. The daemon reports the verify on the pull request. |
-| The lead in a container | `riff-OWNER-lead[bot]`, the lead App | The steps of a worker, and set `riff/verify`. It cannot change `.github/workflows`. |
+| The lead in a container | `riff-OWNER-lead[bot]`, the lead App | The steps of a worker, set `riff/verify`, and push a tag `v*` (see [Who tags and who approves a release](#who-tags-and-who-approves-a-release)). It cannot change `.github/workflows`, and it cannot approve a deploy. |
 | You in a terminal, a plain `claude`, the daemon on the host | You | Each step that you can do. |
 
 riff-server takes the role from its own facts: the lead, a session

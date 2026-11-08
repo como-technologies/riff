@@ -233,17 +233,20 @@ for `riff update --check`.
 
 ## Approve a release
 
-The owner or an admin of a riff that deploys its own server gives the
-human gates of each release: the deploy, a rollback and a skip. The
-riff daemon tells you in `riff chat` when a deploy waits. Approve it in
-a plain terminal, outside Claude Code:
+The lead publishes each release: in its container, it pushes the tag
+`vX.Y.Z` with the token of the lead App. Only a person approves the
+deploy: the owner or an admin of a riff that deploys its own server.
+No session approves, also not the lead when you say approve in riff
+chat. The riff daemon tells you in `riff chat` when a deploy waits.
+Approve it in a plain terminal, outside Claude Code:
 
 ```sh
 riff release approve v3.3.0
 ```
 
-See [The release cycle](development.md#the-release-cycle) for each
-gate.
+You also give the other human gates: a rollback and a skip. See
+[Who tags and who approves a release](how-it-works.md#who-tags-and-who-approves-a-release)
+and [The release cycle](development.md#the-release-cycle).
 
 ## Get this machine ready
 
@@ -281,7 +284,7 @@ flowchart LR
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |
 | The riff binary | It is static, so `riff relay` starts in each session image. |
-| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, a pull request runs a CI check, and the default branch has the guard of the bot of the session App. `riff init` checks no `CLAUDE.md` or `AGENTS.md`: such a file is the choice of the repository. `riff init` does the first five and the guard itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
+| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, a pull request runs a CI check, and the default branch has the guard of the bot of the session App. With `[release]` in `riff.toml`, the ruleset `releases` lets the lead App push a release tag. `riff init` checks no `CLAUDE.md` or `AGENTS.md`: such a file is the choice of the repository. `riff init` does the first five, the guard and the ruleset `releases` itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
 
 A line with `fail` also gives the fix. A line with `step` is a check of
 your repository on GitHub that `riff init` fixes itself, after one
@@ -580,6 +583,7 @@ each step that is done already:
 | The Backlog | It makes the `Backlog`. |
 | The first wave | When the repository has no open wave, it makes `Wave 1`, and the label `question` when the repository has none. |
 | The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks that your CI runs on a pull request, and `riff/verify`. A repository with no CI gets `riff/verify` alone. |
+| The ruleset `releases` | In a repository with `[release]` in `riff.toml`, it makes the ruleset `releases` on the tags `v*`: only the admin role of the repository and the lead App of the riff push a release tag. See [Let the lead push the release tag](#let-the-lead-push-the-release-tag). |
 
 ```mermaid
 flowchart LR
@@ -657,12 +661,15 @@ riff init --check
 ```text
 riff checks this machine:
   skip  the checks of the machine: the host runs them
+  skip  the steps of the repository: a person runs riff init in a terminal for them
   ...
 ```
 
-`riff init` with no `--check` does the steps of the repository in the
-container, as on the host. It installs no daemon and pulls no image: the
-host has them.
+In a container, `riff init` only checks, also with `--yes`. It does no
+step of the repository: the lead has no right to change the settings or
+the rulesets of the repository. It installs no daemon and pulls no
+image: the host has them. To do the steps, you run `riff init` in a
+plain terminal, in your clone of the repository.
 
 ### Read the output for a repository on GitHub
 
@@ -778,6 +785,7 @@ flowchart LR
 | the Backlog, the first wave | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
 | the checks of a pull request | [Use the checks that you have](#use-the-checks-that-you-have) |
 | the guard | [Add the guard](#add-the-guard) |
+| the ruleset `releases` | [Let the lead push the release tag](#let-the-lead-push-the-release-tag) |
 
 The checks of a pull request are your own work. Your repository may
 have a CI already: see
@@ -928,6 +936,41 @@ gh api -X POST repos/{owner}/{repo}/rulesets --input - <<'JSON'
 }
 JSON
 ```
+
+#### Let the lead push the release tag
+
+A repository with `[release]` in `riff.toml` has the release cycle of
+riff: the lead pushes the tag `vX.Y.Z` of each release with the token
+of the lead App. This ruleset lets only the admin role of the
+repository and the lead App create, move or delete a tag `v*`. A
+worker cannot push one. `riff github check` names the bot of the lead
+App, `SLUG[bot]`: see
+[Check the tokens of each role](start-a-team-riff.md#check-the-tokens-of-each-role).
+Put its slug in place of `riff-acme-lead`:
+
+```sh
+LEAD_ID=$(gh api apps/riff-acme-lead --jq .id)
+gh api -X POST repos/{owner}/{repo}/rulesets --input - <<JSON
+{
+  "name": "releases",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
+    { "actor_id": $LEAD_ID, "actor_type": "Integration", "bypass_mode": "always" }
+  ],
+  "rules": [
+    { "type": "creation" },
+    { "type": "update" },
+    { "type": "deletion" }
+  ]
+}
+JSON
+```
+
+The repository of riff gets the same ruleset from `just github`: see
+[Set up the repository](development.md#set-up-the-repository).
 
 #### Make the Backlog and the first wave
 
