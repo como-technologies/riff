@@ -32,7 +32,9 @@
 //!   `Alt-1` to `Alt-6`, `Tab` and `Ctrl-C` keep their work. `Esc` moves
 //!   the focus to the log, where the keys of the frame work, and `i` or
 //!   `Enter` gives it back. `↑` and `↓` bring back the lines that you
-//!   sent (01M6VG1PA4PM47777ZT4PNGETF).
+//!   sent (01M6VG1PA4PM47777ZT4PNGETF). A switch to another window and
+//!   back gives the focus to the prompt too ([`State::focused`]), and a
+//!   click on the log keeps it there (01M6XT6MCZ38XEN7ZHWTRF50Z5).
 //! - **A paste** goes into the prompt at the cursor, also from the log
 //!   ([`super::State::on_paste`], 01M6XSK4GHNBJCR0RHMBGZE57G). Its new
 //!   lines stay: the prompt shows each one as `↵`, and `Enter` sends the
@@ -781,6 +783,33 @@ impl State {
             .unwrap_or_default()
     }
 
+    /// The window of the terminal got the focus back
+    /// (01M6XT6MCZ38XEN7ZHWTRF50Z5): the prompt of the Chat tab gets the
+    /// focus, as when the person opens the tab. So an `Esc` that the
+    /// terminal sent with the switch of windows does not keep the keys
+    /// out of the line.
+    ///
+    /// ```
+    /// use riff::tui::chat::{Focus, Key};
+    /// use riff::tui::{Key as Frame, State, Tab};
+    /// use riff_core::build::Build;
+    ///
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
+    /// state.chat_as("mike", 0);
+    /// state.on_key(Frame::Open(Tab::Chat));
+    /// state.on_key(Frame::Chat(Key::Type('h')));
+    /// state.on_key(Frame::Chat(Key::Log));
+    /// assert_eq!(state.chat().focus(), Focus::Log);
+    /// state.focused();
+    /// assert_eq!(state.chat().focus(), Focus::Prompt);
+    /// state.on_key(Frame::Chat(Key::Type('i')));
+    /// assert_eq!(state.chat().prompt().text(), "hi");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn focused(&mut self) {
+        self.chat.focus = Focus::Prompt;
+    }
+
     /// Takes the key `key` of the Chat tab.
     ///
     /// ```
@@ -1076,7 +1105,8 @@ pub const HELP: [(&str, &str); 9] = [
 
 /// Places the body of the Chat tab in `area` on `view`: the summary
 /// row, the log, the prompt, the places that a click hits, the cursor
-/// and the window of the log.
+/// and the window of the log. The log is no place that a click hits: a
+/// click there keeps the focus in the prompt (01M6XT6MCZ38XEN7ZHWTRF50Z5).
 pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) {
     let chat = &state.chat;
     let margin = u16::from(layout == Layout::Wide);
@@ -1109,10 +1139,6 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
     view.hits.push(Hit {
         area: place,
         key: FrameKey::Chat(Key::Prompt),
-    });
-    view.hits.push(Hit {
-        area: Rect::new(area.x, area.y + top, area.width, rows),
-        key: FrameKey::Chat(Key::Log),
     });
 }
 
@@ -1358,9 +1384,10 @@ fn prompt_row(chat: &Chat, width: u16) -> (Row<'static>, u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::Look;
     use crate::tui::view::{compute_view, render};
+    use crate::tui::{Input, Look};
     use ratatui::buffer::Buffer;
+    use ratatui::crossterm::event::{KeyEvent, MouseButton, MouseEvent};
     use riff_core::build::Build;
     use riff_core::wire::{Kind, RiffOwner};
 
@@ -1620,15 +1647,112 @@ mod tests {
         assert_eq!(rows[22], " Enter wakes each lead of yours.");
         let (narrow, _) = drawn(&mut state, 40, 24);
         assert_eq!(narrow[23], "i type  ↑↓ scroll  ? help  q quit");
-        // A click on `i type` or on the prompt gives the focus back.
+        // A click on `i type` or on the prompt gives the focus back. The
+        // log is no place that a click hits.
         assert_eq!(view.hit(2, 23), Some(FrameKey::Chat(Key::Prompt)));
         assert_eq!(view.hit(10, 21), Some(FrameKey::Chat(Key::Prompt)));
-        assert_eq!(view.hit(10, 5), Some(FrameKey::Chat(Key::Log)));
+        assert_eq!(view.hit(10, 5), None);
         state.on_click(&view, 10, 21, false);
         assert_eq!(state.chat().focus(), Focus::Prompt);
         let (_, view) = drawn(&mut state, 80, 24);
         assert_eq!(view.hit(2, 23), Some(FrameKey::Chat(Key::Send)));
         assert_eq!(view.hit(14, 23), Some(FrameKey::Chat(Key::Log)));
+    }
+
+    /// A press of the key `code` with `modifiers`.
+    fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
+        Event::Key(KeyEvent::new(code, modifiers))
+    }
+
+    /// A click of the left button at `column` and `row`.
+    fn click(column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// Gives the event `event` of the terminal to `state` as the loop of
+    /// the TUI does, on the view `view` of the last draw.
+    fn send(state: &mut State, view: &View, event: &Event) {
+        match state.input(event) {
+            Some(Input::Key(key)) => {
+                state.on_key(key);
+            }
+            Some(Input::Click { column, row }) => {
+                state.on_click(view, column, row, false);
+            }
+            Some(Input::Paste(text)) => {
+                state.on_paste(&text);
+            }
+            Some(Input::Focused) => state.focused(),
+            None => {}
+        }
+    }
+
+    /// The events that a switch to another window and back can send to
+    /// the TUI (#1762). An `Esc` takes the focus from the prompt, as the
+    /// key does. A click on the log took it too: the click that gives
+    /// the window the focus often lands there. Now the click keeps the
+    /// prompt. `Alt-Tab` opens the next tab, as `Tab` does. `FocusLost`
+    /// and `FocusGained` keep the prompt.
+    #[test]
+    fn of_the_events_of_a_switch_of_windows_esc_takes_the_focus_from_the_prompt() {
+        let mut state = mock_up();
+        let (_, view) = drawn(&mut state, 80, 24);
+        for event in [Event::FocusLost, Event::FocusGained, click(10, 5)] {
+            send(&mut state, &view, &event);
+            assert_eq!(
+                (state.tab(), state.chat().focus()),
+                (Tab::Chat, Focus::Prompt),
+                "{event:?}"
+            );
+        }
+        send(&mut state, &view, &press(KeyCode::Tab, KeyModifiers::ALT));
+        assert_eq!(state.tab(), Tab::Waves);
+        state.on_key(FrameKey::Open(Tab::Chat));
+        send(&mut state, &view, &press(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(state.chat().focus(), Focus::Log);
+    }
+
+    /// The line keeps the focus after a switch to another window and back
+    /// (#1762, 01M6XT6MCZ38XEN7ZHWTRF50Z5). After the event of the cause,
+    /// `FocusLost` and `FocusGained`, the keys go into the line, and the
+    /// cursor shows at the end of the text. The cause is an `Esc` that
+    /// the terminal sends, or a click on the log, before the loss of the
+    /// focus or after its return.
+    #[test]
+    fn the_line_keeps_the_focus_after_a_switch_of_windows() {
+        let (esc, on_log) = (press(KeyCode::Esc, KeyModifiers::NONE), click(10, 5));
+        let (lost, gained) = (Event::FocusLost, Event::FocusGained);
+        for events in [
+            [esc, lost.clone(), gained.clone()],
+            [on_log.clone(), lost.clone(), gained.clone()],
+            [lost, gained, on_log],
+        ] {
+            let mut state = mock_up();
+            type_in(&mut state, "half a li");
+            let (_, view) = drawn(&mut state, 80, 24);
+            for event in &events {
+                send(&mut state, &view, event);
+            }
+            for c in "ne".chars() {
+                send(
+                    &mut state,
+                    &view,
+                    &press(KeyCode::Char(c), KeyModifiers::NONE),
+                );
+            }
+            let (rows, view) = drawn(&mut state, 80, 24);
+            assert_eq!(rows[21], "> half a line", "{events:?}");
+            assert_eq!(view.cursor, Some(Position::new(13, 21)), "{events:?}");
+            assert_eq!(
+                rows[23], " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit",
+                "{events:?}"
+            );
+        }
     }
 
     /// A post that fails while the prompt holds a line shows at once in

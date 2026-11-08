@@ -134,7 +134,11 @@
 //! [`view::Hit`] for each place that a click hits, with its key, and
 //! [`State::on_click`] presses that key. A double click on a row presses
 //! Enter, and the wheel moves the selection. The setting `tui.mouse`
-//! turns the mouse off ([`crate::settings::tui_mouse`]).
+//! turns the mouse off ([`crate::settings::tui_mouse`]). The TUI also
+//! asks the terminal for focus events: when its window gets the focus
+//! back, [`input_of`] gives [`Input::Focused`], and the prompt of the
+//! Chat tab gets the focus ([`State::focused`],
+//! 01M6XT6MCZ38XEN7ZHWTRF50Z5).
 //!
 //! A plain character is a [`Key::Char`]. The state gives it its meaning:
 //! while the note line asks for a text, it types into it
@@ -1585,8 +1589,8 @@ impl State {
     }
 }
 
-/// What the person does: a key, a click of the mouse at a place, or a
-/// paste.
+/// What the person does: a key, a click of the mouse at a place, a
+/// paste, or a switch back to the window of the terminal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
     /// A key.
@@ -1595,10 +1599,14 @@ pub enum Input {
     Click { column: u16, row: u16 },
     /// The text of a bracketed paste ([`State::on_paste`]).
     Paste(String),
+    /// The window of the terminal got the focus back ([`State::focused`],
+    /// 01M6XT6MCZ38XEN7ZHWTRF50Z5).
+    Focused,
 }
 
-/// The input of the person in `event`: a key, a click or a paste, or
-/// `None` for another event.
+/// The input of the person in `event`: a key, a click, a paste or the
+/// return of the focus, or `None` for another event. The loss of the
+/// focus is no input.
 ///
 /// ```
 /// use ratatui::crossterm::event::{
@@ -1654,6 +1662,9 @@ pub enum Input {
 ///     input_of(&Event::Paste("one\ntwo".into())),
 ///     Some(Input::Paste("one\ntwo".into()))
 /// );
+/// // The terminal sends `CSI I` when its window gets the focus back.
+/// assert_eq!(input_of(&Event::FocusGained), Some(Input::Focused));
+/// assert_eq!(input_of(&Event::FocusLost), None);
 /// ```
 pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
     use ratatui::crossterm::event::{
@@ -1696,6 +1707,7 @@ pub fn input_of(event: &ratatui::crossterm::event::Event) -> Option<Input> {
             _ => None,
         },
         Event::Paste(text) => Some(Input::Paste(text.clone())),
+        Event::FocusGained => Some(Input::Focused),
         _ => None,
     }
 }
@@ -1721,16 +1733,25 @@ async fn next_event() -> Result<Option<ratatui::crossterm::event::Event>> {
 }
 
 /// Takes the terminal for the TUI, with its bracketed paste
-/// (01M6XSK4GHNBJCR0RHMBGZE57G), and with `mouse`, the mouse
+/// (01M6XSK4GHNBJCR0RHMBGZE57G), its focus events
+/// (01M6XT6MCZ38XEN7ZHWTRF50Z5), and with `mouse`, the mouse
 /// (01M6VAZKG8FS4HEA9VSA4Z4YF1). A terminal with no bracketed paste
 /// gives a paste as keys.
 fn enter(mouse: bool) -> Result<ratatui::DefaultTerminal> {
-    use ratatui::crossterm::event::{EnableBracketedPaste, EnableMouseCapture};
+    use ratatui::crossterm::event::{EnableBracketedPaste, EnableFocusChange, EnableMouseCapture};
     use ratatui::crossterm::execute;
     let terminal = ratatui::try_init()?;
-    let _ = execute!(std::io::stdout(), EnableBracketedPaste);
-    if mouse && let Err(e) = execute!(std::io::stdout(), EnableMouseCapture) {
-        leave(false);
+    let mut out = std::io::stdout();
+    let _ = execute!(out, EnableBracketedPaste);
+    let taken = execute!(out, EnableFocusChange).and_then(|()| {
+        if mouse {
+            execute!(out, EnableMouseCapture)
+        } else {
+            Ok(())
+        }
+    });
+    if let Err(e) = taken {
+        leave(mouse);
         return Err(e.into());
     }
     Ok(terminal)
@@ -1738,12 +1759,15 @@ fn enter(mouse: bool) -> Result<ratatui::DefaultTerminal> {
 
 /// Gives the terminal back: for an attach, a takeover, or the end.
 fn leave(mouse: bool) {
-    use ratatui::crossterm::event::{DisableBracketedPaste, DisableMouseCapture};
+    use ratatui::crossterm::event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture,
+    };
     use ratatui::crossterm::execute;
     if mouse {
         let _ = execute!(std::io::stdout(), DisableMouseCapture);
     }
     let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+    let _ = execute!(std::io::stdout(), DisableFocusChange);
     ratatui::restore();
 }
 
@@ -2095,6 +2119,10 @@ async fn frames(
                     .and_then(|(shown, _)| state.on_click(shown, column, row, double))
             }
             Input::Paste(text) => state.on_paste(&text),
+            Input::Focused => {
+                state.focused();
+                None
+            }
         };
         let Some(action) = action else {
             continue;
