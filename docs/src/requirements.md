@@ -3167,14 +3167,12 @@
   in the place of the lead: the line waits in the log.
 - **01M6Y1FB5MZNZ971CJRBWZ2F9X** `riff chat`, the Chat tab of the TUI
   and `riff tail` show the sender of a line by the name to type to reach
-  it: a person as `<USER>`, a verified lead as `<PROJECT>`, the name of
-  its project in the names of riff-server, and a line of the kind `riff`
-  or with the mark `[by riff]` as `<riff-bot>`. Each other session has
-  no name, and shows as `[USER ID]`, with the first 8 characters of its
+  it: a person as `<USER>`, and a verified lead as `<PROJECT>`, the name
+  of its project in the names of riff-server. Each other session has no
+  name, and shows as `[USER ID]`, with the first 8 characters of its
   session ID. An action shows as `* NAME TEXT`. They read the names when
-  they start. `riff chat` and the Chat tab show a line of riff with no
-  mark `[by riff]`. The host shows only in the detail of a line: after
-  the name in the head of `riff tail`, and in `read`. Supersedes
+  they start. The host shows only in the detail of a line: after the
+  name in the head of `riff tail`, and in `read`. Supersedes
   01M3NJD3BR0XAYNNFTEY0CG761 in full, and 01M3NB5MY93KV9RKZGGSMZW00D,
   01M3NJD37CNQX580YC24S7K6ES, 01M5QVH7KDK3R2S4NDFB2V1XY9 and
   01M6VG1P7BH32E5YAP0GJSNJJP in part.
@@ -3199,6 +3197,19 @@
   01M6VG1PJDWE523TR9X9WJ5VXG, 01M3NB5N0D99JB5CE6RB4VEYPF and
   01M5QVH7KDK3R2S4NDFB2V1XY9 in full, and 01M3NJD37CNQX580YC24S7K6ES,
   01M6VG1PCXHNVJP7TSP0J5G5K9 and 01M6VMACJGF4A0ZXC6YK13KNCH in part.
+- **01M6Y4ZCTSTVM971BDC1F7GJPK** Only riff-server posts a line of the
+  kind `riff`. riff-server refuses a post of the kind `riff` from each
+  client, of a person and of a session, and keeps the kind of its own
+  lines. Each line of riff-server in the chat has the kind `riff`. A
+  line that riff writes as the person of the riff, for example the line
+  "waits for your approval" of the watch of a deploy, has the kind
+  `message` and the mark `[by riff] ` at the start of its body. `riff
+  chat`, the Chat tab of the TUI and `riff tail` show as `<riff-bot>`
+  only a line of the kind `riff` from riff-server itself, the sender
+  `riff://riff@server`. A line with the mark `[by riff]` shows its real
+  sender and its whole body, as each other line does. Supersedes
+  01M5TQ0DX4M2EJJGE7QA8DZVYS in full, and 01M6Y1FB5MZNZ971CJRBWZ2F9X and
+  01M5TKMVB7CF0QNAWXEVGEQETJ in part.
 
 ## Security
 
@@ -6970,20 +6981,12 @@ of this part when they merge.
   approval. The only ask is the line of riff while the job `Deploy`
   waits ("riff release vX.Y.Z waits for your approval", also "still
   waits" in a reminder).
-- **01M5TKMVB7CF0QNAWXEVGEQETJ** A line that riff writes as the person
-  of the riff has the kind `riff`: the line "waits for your approval" of
-  the watch of the deploy and its reminder, the other lines of the
-  daemon in riff chat, and the lines of `riff release cut` and `riff
-  release publish`. riff-server keeps the kind, a reader shows the line
-  as a message, and it wakes as a message. The kind `riff` has no name
-  in `riff post`.
-- **01M5TQ0DX4M2EJJGE7QA8DZVYS** After a rollback of riff-server to the
-  release before, the kind `riff` is refused, and a line of riff in riff
-  chat must still post. When riff-server refuses a post of the kind
-  `riff` with "no such kind", riff posts the line again with the kind
-  `message` and the mark `[by riff] ` at the start of the body. Any
-  other refusal of the post is an error. This adds to
-  01M5TKMVB7CF0QNAWXEVGEQETJ.
+- **01M5TKMVB7CF0QNAWXEVGEQETJ** The lines that riff writes as the
+  person of the riff are the line "waits for your approval" of the watch
+  of the deploy and its reminder, the other lines of the daemon in riff
+  chat, and the lines of `riff release cut` and `riff release publish`.
+  A reader shows a line of the kind `riff` as a message, and it wakes as
+  a message. The kind `riff` has no name in `riff post`.
 - **01M6WZ40SFVZ6CRQ1H4Z27CWP4** Only a person approves a deploy. `riff
   release approve` refuses the lead of each user, in a container and in
   a terminal, also when the owner or an admin said approve in riff chat.

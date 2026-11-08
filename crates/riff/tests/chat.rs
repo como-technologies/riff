@@ -285,9 +285,9 @@ async fn named_leads(
 
 /// #1786 (01M6Y1FB5MZNZ971CJRBWZ2F9X): each line shows its sender by the
 /// name to type to reach it: a person as `<brett>`, a lead as the name of
-/// its project, `<riff>`, and riff itself as `<riff-bot>`. The host shows
-/// nowhere. On a clash, the project has the name `OWNER/REPO` from the
-/// names of riff-server, which the chat reads at its start.
+/// its project, `<riff>`, and riff-server itself as `<riff-bot>`. The
+/// host shows nowhere. On a clash, the project has the name `OWNER/REPO`
+/// from the names of riff-server, which the chat reads at its start.
 #[tokio::test]
 async fn each_line_shows_its_sender_by_the_name_to_type() {
     let server = crate::common::start_signed().await;
@@ -318,6 +318,9 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
         "{line:?}"
     );
 
+    // Only a line of riff-server itself shows as <riff-bot>
+    // (01M6Y4ZCTSTVM971BDC1F7GJPK). A line that riff writes as mike shows
+    // as mike, with the mark, and so does a line that mike types with it.
     let person: SessionUri = "riff://mike@thelio".parse().unwrap();
     let waits = "the deploy waits for your approval";
     riff::chat::post_by_riff(&server.api("mike", None), &person, &[], waits)
@@ -325,7 +328,24 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
         .unwrap();
     for client in [&mut mike, &mut brett] {
         let line = client.shows(waits).await;
-        assert!(is_line(&line, "riff-bot", waits), "{line:?}");
+        assert!(
+            is_line(&line, "mike", &format!("[by riff] {waits}")),
+            "{line:?}"
+        );
+    }
+    let typed = "[by riff] the deploy is approved";
+    mike.say(typed).await;
+    let line = brett.shows("is approved").await;
+    assert!(is_line(&line, "mike", typed), "{line:?}");
+    // brett, the owner, passes the role: riff-server posts the line.
+    let owner: SessionUri = "riff://brett@heron".parse().unwrap();
+    let mike_email = "mike@comotechnologies.io";
+    let pass = server.api("brett", None);
+    pass.pass_owner(&owner, mike_email).await.unwrap();
+    let passed = riff_state::owner::passed_news("brett", mike_email, "brett@comotechnologies.io");
+    for client in [&mut mike, &mut brett] {
+        let line = client.shows("passed the owner role").await;
+        assert!(is_line(&line, "riff-bot", &passed), "{line:?}");
     }
 
     // The line of mike shows at brett as <mike>.

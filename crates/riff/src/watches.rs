@@ -707,8 +707,8 @@ pub trait Lookout: Send + Sync {
     /// `line` gets the USER of the owner of the riff, or an empty text
     /// when it has none. The line names the owner with `@USER`, so it
     /// wakes the terminals of the owner (01M6Y1A5PTCVZ6GRJ0FXMART2T). It
-    /// has the kind `riff`: it is no word of the person
-    /// (01M5TKMVB7CF0QNAWXEVGEQETJ).
+    /// has the mark `[by riff]`: it is no word of the person
+    /// (01M6Y4ZCTSTVM971BDC1F7GJPK).
     fn chat<'a>(
         &'a self,
         wave: &'a Wave,

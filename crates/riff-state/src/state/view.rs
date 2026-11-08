@@ -90,10 +90,10 @@ impl Settings {
 
 impl View<'_> {
     /// The place of a session. The server is not a session: it has the
-    /// place of [`crate::owner::server_uri`].
+    /// place of [`SessionUri::server`](riff_core::name::SessionUri::server).
     pub(super) fn place(&self, who: &Who) -> Place {
         self.presence.sessions.get(who).map_or_else(
-            || crate::owner::server_uri().place().clone(),
+            || riff_core::name::SessionUri::server().place().clone(),
             |s| s.place.clone(),
         )
     }

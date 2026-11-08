@@ -226,7 +226,7 @@ impl View<'_> {
         if self.gone(who, now.at) {
             return Vec::new();
         }
-        let server = crate::owner::server_uri();
+        let server = riff_core::name::SessionUri::server();
         let message = Message {
             seq: 0,
             from: server.clone(),
@@ -493,7 +493,7 @@ impl Command for ReleaseFor {
             item: item.clone(),
             must_clear: false,
         })];
-        let server = crate::owner::server_uri();
+        let server = riff_core::name::SessionUri::server();
         let news = released_for(&view.uri(who, now.at), item, &view.uri(holder, now.at));
         let note = Message {
             seq: 0,

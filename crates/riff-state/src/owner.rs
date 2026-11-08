@@ -42,15 +42,18 @@
 //!     Missed --> Seen: a sign of the owner
 //!     Warned --> Seen: a sign of the owner
 //! ```
-//! - The server posts each note as [`server_uri`]: the USER
-//!   [`SERVER_USER`], which no person can sign in as
+//! - The server posts each note as
+//!   [`SessionUri::server`](riff_core::name::SessionUri::server): the
+//!   USER [`SERVER_USER`](riff_core::name::SERVER_USER), which no person
+//!   can sign in as
 //!   (01M3N7K4BC1RPZKQ1XNDTBRPGF). A note has no signature.
 //! - Each change posts one note to the thread of each repository of the
 //!   riff. It wakes no session. A change that changes who the owner is
 //!   also posts one line in the chat, with the same text
 //!   (01M6FYH5XZAZYJFPFQVAFQSSVT): a pass, a grant, a gone owner, and a
 //!   take on a riff with no owner. A request and a deny post none. The
-//!   line has no `to`, so it wakes no session. A change that needs a
+//!   line has no `to`, so it wakes no session. It has the kind `riff`, so
+//!   the chat shows it as `<riff-bot>`. A change that needs a
 //!   person also sends the same text to each live lead of that person,
 //!   as a direct message: the owner for a request, the admin for a deny,
 //!   each admin when the owner is gone.
@@ -59,13 +62,7 @@
 
 use std::time::{Duration, Instant};
 
-use riff_core::name::SessionUri;
-
 use crate::state::OwnerChange;
-
-/// The USER of the riff server itself. The server posts its own notes as
-/// this USER, so no person signs in with it (01M3N7K4BC1RPZKQ1XNDTBRPGF).
-pub const SERVER_USER: &str = "riff";
 
 /// The times of the owner role (01M3Q5460YESBSQHTV3M15PE53).
 ///
@@ -216,18 +213,6 @@ impl Checks {
     pub fn reset(&mut self, now: Instant, timing: &Timing) {
         *self = Checks::new(now, timing);
     }
-}
-
-/// The URI that the server posts its notes as
-/// (01M3N7K4BC1RPZKQ1XNDTBRPGF).
-///
-/// ```
-/// assert_eq!(riff_state::owner::server_uri().to_string(), "riff://riff@server");
-/// ```
-pub fn server_uri() -> SessionUri {
-    format!("riff://{SERVER_USER}@server")
-        .parse()
-        .expect("the URI of the server is valid")
 }
 
 /// A time in whole minutes for people: `10 minutes`, `1 minute`, or

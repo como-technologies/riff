@@ -27,7 +27,7 @@ use riff_core::wire::{Kind, RiffOwner, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::oidc::Provider;
-use riff_state::owner::{Timing, server_uri};
+use riff_state::owner::Timing;
 use riff_state::store::{Memory, Store};
 
 /// A long time: no request ends, and no check runs, in a test.
@@ -144,7 +144,7 @@ fn repo() -> ThreadName {
 /// The direct messages of the server to the lead of `user`.
 async fn told(api: &Api, user: &str) -> Vec<String> {
     let me = lead(user);
-    let thread = ThreadName::direct(server_uri().who(), me.who());
+    let thread = ThreadName::direct(SessionUri::server().who(), me.who());
     let Ok(messages) = Api::new(api.base()).read(&me, &thread, true).await else {
         return Vec::new();
     };
@@ -499,7 +499,11 @@ async fn the_owner_gets_a_warning_one_check_before_the_drop() {
         bodies,
         [warning.message.body.as_str(), gone.message.body.as_str()]
     );
-    assert!(chat.iter().all(|m| m.message.from == server_uri()));
+    // Each is a line of riff-server itself (01M6Y4ZCTSTVM971BDC1F7GJPK).
+    let server = |m: &riff_client::api::Checked| {
+        m.message.from == SessionUri::server() && m.message.kind == Kind::Riff
+    };
+    assert!(chat.iter().all(server), "{chat:?}");
 }
 
 /// A call of the owner as a person, for example `riff who`, is a sign
@@ -593,7 +597,7 @@ async fn each_step_posts_one_note() {
     // Each note but the pass comes from the server.
     let from_server = notes
         .iter()
-        .filter(|n| n.message.from == server_uri())
+        .filter(|n| n.message.from == SessionUri::server())
         .count();
     assert_eq!(from_server, starts.len() - 1);
 }
@@ -694,8 +698,8 @@ async fn each_change_of_who_the_owner_is_posts_one_line_in_the_chat() {
     let bodies: Vec<&str> = chat.iter().map(|m| m.message.body.as_str()).collect();
     assert_eq!(bodies, expected);
     for line in &chat {
-        assert_eq!(line.message.from, server_uri());
-        assert_eq!(line.message.kind, Kind::Message);
+        assert_eq!(line.message.from, SessionUri::server());
+        assert_eq!(line.message.kind, Kind::Riff);
         assert!(line.message.to.is_empty(), "{line:?}");
     }
 }

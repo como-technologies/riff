@@ -422,7 +422,7 @@ impl Old {
 
         let sessions: BTreeMap<&Who, &SavedSession> =
             self.sessions(now_ms).map(|s| (s.uri.who(), s)).collect();
-        let server = riff_state::owner::server_uri();
+        let server = riff_core::name::SessionUri::server();
         let mut senders = BTreeMap::new();
         for thread in self.threads(now_ms) {
             let skip = thread.messages.len().saturating_sub(KEEP_MESSAGES);

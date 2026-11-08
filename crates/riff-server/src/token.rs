@@ -221,9 +221,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use riff_core::name::SERVER_USER;
 use riff_core::name::Who;
 use riff_core::wire::TokenReply;
-use riff_state::owner::SERVER_USER;
 use riff_state::state::people::user_of;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

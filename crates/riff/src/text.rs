@@ -12720,15 +12720,15 @@ mod tests {
     }
 
     /// #1786: a sender with a name shows it in its style, and the
-    /// address after it is the dim detail. A line of riff itself shows
-    /// `<riff-bot>`.
+    /// address after it is the dim detail. Only a line of riff-server
+    /// itself shows `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK).
     #[test]
     fn the_block_shows_the_name_of_the_sender_and_the_address_as_the_detail() {
         let message = riff_core::wire::Message {
             seq: 4,
-            from: "riff://mike@thelio".parse().unwrap(),
+            from: riff_core::name::SessionUri::server(),
             to: vec![],
-            body: "the deploy waits for your approval".into(),
+            body: "members: ann passed the owner role to mike.".into(),
             at_ms: 0,
             kind: Kind::Riff,
             sig: None,
@@ -12747,13 +12747,26 @@ mod tests {
             "{text:?}"
         );
         assert!(
-            text.contains(&format!("{DIM}mike@thelio{DIM:#}")),
+            text.contains(&format!("{DIM}riff@server{DIM:#}")),
             "{text:?}"
         );
         let plain = anstream::adapter::strip_str(&text).to_string();
         assert_eq!(
             plain,
-            "00:00  <riff-bot>  mike@thelio  verified  #4\n       the deploy waits for your approval"
+            "00:00  <riff-bot>  riff@server  verified  #4\n       members: ann passed the owner role to mike."
+        );
+        // The same line from mike shows as mike.
+        let from = "riff://mike@thelio".parse().unwrap();
+        let mike = Checked {
+            message: riff_core::wire::Message { from, ..c.message },
+            verified: true,
+        };
+        let line = Line::of(&mike, &"chat".parse().unwrap());
+        let text = block(&line, &Names::default(), &at, Some(at.date_naive()), 80);
+        let plain = anstream::adapter::strip_str(&text).to_string();
+        assert!(
+            plain.starts_with("00:00  <mike>  mike@thelio  verified"),
+            "{plain}"
         );
     }
 

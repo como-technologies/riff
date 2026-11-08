@@ -2991,6 +2991,13 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   owner or of an admin with `stop` or `wait` after the approval cancels
   it, and the lead stops before the next step. Superseded by
   01M6WZ40SFVZ6CRQ1H4Z27CWP4.
+- **01M5TQ0DX4M2EJJGE7QA8DZVYS** After a rollback of riff-server to the
+  release before, the kind `riff` is refused, and a line of riff in riff
+  chat must still post. When riff-server refuses a post of the kind
+  `riff` with "no such kind", riff posts the line again with the kind
+  `message` and the mark `[by riff] ` at the start of the body. Any
+  other refusal of the post is an error. This adds to
+  01M5TKMVB7CF0QNAWXEVGEQETJ. Superseded by 01M6Y4ZCTSTVM971BDC1F7GJPK.
 
 ### The release cycle
 
