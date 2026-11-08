@@ -8009,9 +8009,8 @@ that builds it merges.
   has as many rows less. A longer line scrolls by rows, so that the row
   of the cursor shows. `←` and `→` go over the end of a row, and
   `Home` and `End` go to the start and the end of the line. `↑` and
-  `↓` move the cursor one row. `↑` on the first row and `↓` on the
-  last row show the lines that you sent. Supersedes
-  01M6VG1PA4PM47777ZT4PNGETF in part.
+  `↓` move the cursor one row. Supersedes 01M6VG1PA4PM47777ZT4PNGETF
+  in part.
 - **01M6XZX237NRXSR4FN0XBP4MCA** The note of the limit of the line of
   the Chat tab says `The line is too long: a post has at most 64 KiB.
   The line stays as it was.`, for a paste and for a typed character.
@@ -8021,6 +8020,17 @@ that builds it merges.
   of the last action for a line that the chat does not send. The note of
   the prompt says why, and it goes with the line: no old note shows
   under an empty prompt or in another tab.
+- **01M6Y8N8W5RE5H6MW3TNDH5BSY** `↑` and `↓` in the line of the Chat
+  tab and of `riff chat` never put a sent line in place of a typed text.
+  On the first row of a line with text, `↑` moves the cursor to the
+  start of the line, and on the last row `↓` moves it to the end. On
+  an empty line, `↑` brings back the last line that you sent. While a
+  sent line shows as it came back, `↑` on its first row brings back
+  the line before it, and `↓` on its last row the line after it, or
+  after the last one an empty line. A change to a sent line that came
+  back makes it a typed text. In `riff chat`, a new line of a paste
+  starts a row, and a long line is one row. Supersedes
+  01M6XXDDYQG7M6WYNRXP35DZ1Y in part.
 
 ## The notes of the lead
 

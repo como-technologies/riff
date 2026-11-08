@@ -1181,6 +1181,44 @@ async fn the_note_of_an_unknown_command_goes_with_the_line() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// 01M6Y8N8W5RE5H6MW3TNDH5BSY: with a typed text, `↑` in the Chat tab
+/// keeps the text and goes to its start (#1788). On an empty line, `↑`
+/// brings back the last sent line, and `↓` empties the line again.
+#[tokio::test]
+async fn up_in_the_chat_tab_keeps_the_typed_text_and_brings_back_a_sent_line_on_an_empty_line() {
+    let server = crate::common::start_signed().await;
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("2").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    let shown = |rows: &[String], text: &str| rows.iter().filter(|r| r.ends_with(text)).count();
+    tty.press("the first line\r").await;
+    tty.shows(|rows| shown(rows, "<brett> the first line") == 1 && rows[21] == ">")
+        .await;
+
+    tty.press("my words").await;
+    tty.press("\x1b[A").await;
+    tty.shows(|rows| rows[21] == "> my words" && tty.cursor() == (21, 2, true))
+        .await;
+    tty.press("Note: ").await;
+    tty.shows(|rows| rows[21] == "> Note: my words").await;
+    tty.press("\r").await;
+    tty.shows(|rows| shown(rows, "<brett> Note: my words") == 1 && rows[21] == ">")
+        .await;
+
+    tty.press("\x1b[A").await;
+    tty.shows(|rows| rows[21] == "> Note: my words").await;
+    tty.press("\x1b[A").await;
+    tty.shows(|rows| rows[21] == "> the first line").await;
+    tty.press("\x1b[B").await;
+    tty.shows(|rows| rows[21] == "> Note: my words").await;
+    tty.press("\x1b[B").await;
+    tty.shows(|rows| rows[21] == ">" && tty.cursor() == (21, 2, true))
+        .await;
+    tty.press("\x03").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// A fake `gh` for the clone of acme/app: the open issues of Wave 3, as
 /// the REST list gives them, and no closed item, no pull request and no
 /// check. It logs each call to the file `calls` of its folder.

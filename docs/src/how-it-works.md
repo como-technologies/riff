@@ -3500,6 +3500,39 @@ sequenceDiagram
 When a new riff is on disk, the chat runs it in place. It keeps your
 typed text then too: the text shows again after the new prompt.
 
+### Send a line again
+
+On an empty line, `↑` brings back the last line that you sent. Press
+`↑` again for the line before it, and `↓` for the line after it. After
+the last line, `↓` empties the line again. Change the line if you
+want, and press Enter. The Chat tab of the TUI does the same. Start
+the chat, send a line, and press `↑`:
+
+```sh
+riff chat
+```
+
+```text
+14:02 <mike> is the release out?
+[riff] > is the release out?
+```
+
+`↑` never takes the place of the text that you type. With a text, `↑`
+moves the cursor to the start of the line, and `↓` to its end. A sent
+line that you change is a text that you type too:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Empty
+    Empty --> Sent: ↑, the last line that you sent
+    Sent --> Sent: ↑ the line before, ↓ the line after
+    Sent --> Empty: ↓ after the last line
+    Sent --> Typed: you change the line
+    Empty --> Typed: you type
+    Typed --> Typed: ↑ the start, ↓ the end
+    Typed --> Empty: Enter
+```
+
 ### Ask a lead in the chat
 
 A chat line wakes only the names that it holds. `@riff` wakes your
@@ -3817,7 +3850,7 @@ until you send the next line.
 | `Enter` | Send the line. |
 | `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `6`, `?` and `q`. |
 | `i`, `Enter` | Go back to the prompt. |
-| `↑`, `↓` | Move the cursor one row in a long line. On the first row, `↑` shows a line that you sent, and on the last row, `↓` shows the next one. Out of the prompt: scroll one row. |
+| `↑`, `↓` | Move the cursor one row in a long line. On the first row, `↑` goes to the start of the line, and on the last row, `↓` goes to the end. `↑` brings back a line that you sent only on an empty line: see "Send a line again". Out of the prompt: scroll one row. |
 | `←`, `→` | Move the cursor one character, also over the end of a row. |
 | `Home`, `End` | Go to the start or the end of the line. Out of the prompt: show the oldest or the newest line. |
 | `PgUp`, `PgDn` | Show older or newer lines. |

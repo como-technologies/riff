@@ -100,12 +100,15 @@ use futures::StreamExt;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::Kind;
-use rustyline::ExternalPrinter;
 use rustyline::completion::Completer;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
+use rustyline::{
+    Cmd, ConditionalEventHandler, Event, EventContext, EventHandler, ExternalPrinter, KeyCode,
+    KeyEvent, Modifiers, Movement, RepeatCount,
+};
 use tokio::sync::mpsc;
 
 use nix::sys::termios::{SetArg, Termios, tcgetattr, tcsetattr};
@@ -251,6 +254,108 @@ pub fn unknown(name: &str) -> String {
          To send a line that starts with /, start it with //.",
         safe(name)
     )
+}
+
+/// The lines that the person sent, for `↑` and `↓` in the line of
+/// `riff chat` and of the Chat tab of the TUI
+/// (01M6Y8N8W5RE5H6MW3TNDH5BSY). A sent line never takes the place of a
+/// typed text: [`Sent::up`] brings one back only on an empty line, or on
+/// a sent line that shows as it came back. A change to that line makes
+/// it a typed text.
+///
+/// ```mermaid
+/// stateDiagram-v2
+///     [*] --> Empty
+///     Empty --> Back: ↑, the last sent line
+///     Back --> Back: ↑ the line before, ↓ the line after
+///     Back --> Empty: ↓ after the last sent line
+///     Back --> Typed: a change to the line
+///     Empty --> Typed: a key types
+///     Typed --> Typed: ↑ the start, ↓ the end of the line
+///     Typed --> Empty: Enter, or each character deleted
+/// ```
+///
+/// ```
+/// use riff::chat::Sent;
+///
+/// let mut sent = Sent::default();
+/// sent.push("one");
+/// sent.push("two");
+/// // With a typed text, ↑ and ↓ keep it.
+/// assert_eq!(sent.up("my text"), None);
+/// assert_eq!(sent.down("my text"), None);
+/// // On an empty line, ↑ brings back the last sent line, and then the
+/// // line before it. ↓ goes the other way, and after the last sent line
+/// // empties the line.
+/// assert_eq!(sent.up(""), Some("two"));
+/// assert_eq!(sent.up("two"), Some("one"));
+/// assert_eq!(sent.up("one"), None);
+/// assert_eq!(sent.down("one"), Some("two"));
+/// assert_eq!(sent.down("two"), Some(""));
+/// // A sent line that came back and changed is a typed text.
+/// assert_eq!(sent.up(""), Some("two"));
+/// assert_eq!(sent.up("two and more"), None);
+/// assert_eq!(sent.down("two and more"), None);
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Sent {
+    /// The lines, the oldest first.
+    lines: Vec<String>,
+    /// The line that came back last, while it shows.
+    back: Option<usize>,
+}
+
+impl Sent {
+    /// Keeps `line` after a send. A blank line, or the same line as the
+    /// last one, adds nothing.
+    ///
+    /// ```
+    /// use riff::chat::Sent;
+    ///
+    /// let mut sent = Sent::default();
+    /// for line in ["ok", "ok", " "] {
+    ///     sent.push(line);
+    /// }
+    /// assert_eq!(sent.up(""), Some("ok"));
+    /// assert_eq!(sent.up("ok"), None);
+    /// ```
+    pub fn push(&mut self, line: &str) {
+        self.back = None;
+        if !line.trim().is_empty() && self.lines.last().is_none_or(|last| last != line) {
+            self.lines.push(line.to_owned());
+        }
+    }
+
+    /// The line to show after `↑` on the first row of `text`: the last
+    /// sent line on an empty line, or the line before a sent line that
+    /// shows as it came back. `None` keeps `text`: the cursor goes to
+    /// its start. It is also `None` on the oldest line.
+    pub fn up(&mut self, text: &str) -> Option<&str> {
+        let at = match self.shown(text) {
+            Some(i) => i.checked_sub(1)?,
+            None if text.is_empty() => self.lines.len().checked_sub(1)?,
+            None => return None,
+        };
+        self.back = Some(at);
+        Some(&self.lines[at])
+    }
+
+    /// The line to show after `↓` on the last row of `text`: the line
+    /// after a sent line that shows as it came back, or an empty line
+    /// after the last one. `None` keeps `text`: the cursor goes to its
+    /// end.
+    pub fn down(&mut self, text: &str) -> Option<&str> {
+        let i = self.shown(text)?;
+        self.back = (i + 1 < self.lines.len()).then_some(i + 1);
+        Some(self.back.map_or("", |at| &self.lines[at]))
+    }
+
+    /// The sent line that `text` is, when it came back and did not
+    /// change. A change ends the walk through the sent lines.
+    fn shown(&mut self, text: &str) -> Option<usize> {
+        self.back = self.back.filter(|&i| self.lines[i] == text);
+        self.back
+    }
 }
 
 /// One chat line ([`Line`]) for people, with the names `names` of
@@ -694,6 +799,41 @@ impl Validator for Typing {}
 
 impl rustyline::Helper for Typing {}
 
+/// `↑` (`up`) or `↓` of the line editor, with the lines that the person
+/// sent ([`arrow`]).
+struct Arrow {
+    up: bool,
+    sent: Arc<Mutex<Sent>>,
+}
+
+impl ConditionalEventHandler for Arrow {
+    fn handle(&self, _: &Event, _: RepeatCount, _: bool, ctx: &EventContext) -> Option<Cmd> {
+        let mut sent = self.sent.lock().ok()?;
+        Some(arrow(&mut sent, self.up, ctx.line(), ctx.pos()))
+    }
+}
+
+/// The command of `↑` (`up`) or `↓` on `line`, with the cursor at the
+/// byte `pos` (01M6Y8N8W5RE5H6MW3TNDH5BSY). It moves one line up or down
+/// in a text with new lines. On the first or the last line, it shows a
+/// line that the person sent ([`Sent`]), or it moves the cursor to the
+/// start or the end of a typed text, and the text stays.
+fn arrow(sent: &mut Sent, up: bool, line: &str, pos: usize) -> Cmd {
+    let (before, after) = line.split_at_checked(pos).unwrap_or((line, ""));
+    if up && before.contains('\n') {
+        return Cmd::Move(Movement::LineUp(1));
+    }
+    if !up && after.contains('\n') {
+        return Cmd::Move(Movement::LineDown(1));
+    }
+    let shown = if up { sent.up(line) } else { sent.down(line) };
+    match shown {
+        Some(text) => Cmd::Replace(Movement::WholeBuffer, Some(text.to_owned())),
+        None if up => Cmd::Move(Movement::BeginningOfBuffer),
+        None => Cmd::Move(Movement::EndOfBuffer),
+    }
+}
+
 /// The screen of the chat.
 struct Screen {
     lines: Lines,
@@ -738,6 +878,12 @@ impl Screen {
         };
         let mut editor = rustyline::Editor::<Typing, DefaultHistory>::new()?;
         editor.set_helper(Some(typing.clone()));
+        let sent = Arc::new(Mutex::new(Sent::default()));
+        for (code, up) in [(KeyCode::Up, true), (KeyCode::Down, false)] {
+            let sent = Arc::clone(&sent);
+            let arrow = EventHandler::Conditional(Box::new(Arrow { up, sent }));
+            editor.bind_sequence(KeyEvent(code, Modifiers::NONE), arrow);
+        }
         let printer: Printer = Arc::new(Mutex::new(Box::new(editor.create_external_printer()?)));
         let held = Arc::clone(&printer);
         let mut draft = draft.unwrap_or_default().to_owned();
@@ -758,6 +904,9 @@ impl Screen {
                     clear_typed(&line);
                 }
                 let _ = editor.add_history_entry(line.as_str());
+                if let Ok(mut sent) = sent.lock() {
+                    sent.push(&line);
+                }
                 let quit = typed(&line) == Typed::Quit;
                 if tx.blocking_send(line).is_err() || quit {
                     break;
@@ -861,6 +1010,48 @@ mod tests {
         assert_eq!(typing.text(), "half");
         typing.set("");
         assert_eq!(typing.text(), "");
+    }
+
+    /// 01M6Y8N8W5RE5H6MW3TNDH5BSY: with a typed text, `↑` and `↓` keep
+    /// it, and go to its start and its end. On an empty line, `↑` brings
+    /// back the last sent line, and `↓` empties the line again.
+    #[test]
+    fn an_arrow_keeps_a_typed_text_and_brings_back_a_sent_line_on_an_empty_line() {
+        let mut sent = Sent::default();
+        sent.push("the first line");
+        let start = Cmd::Move(Movement::BeginningOfBuffer);
+        let end = Cmd::Move(Movement::EndOfBuffer);
+        let show = |text: &str| Cmd::Replace(Movement::WholeBuffer, Some(text.into()));
+        assert_eq!(arrow(&mut sent, true, "my words", 3), start);
+        assert_eq!(arrow(&mut sent, false, "my words", 3), end);
+        assert_eq!(arrow(&mut sent, true, "", 0), show("the first line"));
+        assert_eq!(arrow(&mut sent, false, "the first line", 14), show(""));
+        // No sent line before the first one: the cursor goes to the start.
+        assert_eq!(arrow(&mut sent, true, "", 0), show("the first line"));
+        assert_eq!(arrow(&mut sent, true, "the first line", 14), start);
+        // A change makes it a typed text.
+        assert_eq!(arrow(&mut sent, false, "the first line!", 15), end);
+        assert_eq!(arrow(&mut sent, true, "the first line!", 15), start);
+    }
+
+    /// In a text with new lines, the arrows move one line, and only on
+    /// the first or the last line do they show a sent line.
+    #[test]
+    fn an_arrow_moves_a_line_in_a_text_with_new_lines() {
+        let mut sent = Sent::default();
+        sent.push("one\ntwo");
+        assert_eq!(
+            arrow(&mut sent, true, "", 0),
+            Cmd::Replace(Movement::WholeBuffer, Some("one\ntwo".into()))
+        );
+        let up = arrow(&mut sent, true, "one\ntwo", 7);
+        assert_eq!(up, Cmd::Move(Movement::LineUp(1)));
+        let down = arrow(&mut sent, false, "one\ntwo", 2);
+        assert_eq!(down, Cmd::Move(Movement::LineDown(1)));
+        assert_eq!(
+            arrow(&mut sent, false, "one\ntwo", 7),
+            Cmd::Replace(Movement::WholeBuffer, Some(String::new()))
+        );
     }
 
     #[test]
