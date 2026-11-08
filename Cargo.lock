@@ -1504,6 +1504,7 @@ name = "hygiene"
 version = "4.12.0"
 dependencies = [
  "isolated",
+ "reqs",
  "serde",
  "serde_json",
  "tempfile",

@@ -4242,6 +4242,45 @@ the same ID, also one on each page, or when a file cites an ID that no
 requirement has on either page. It warns when a new ID does not have
 that form, for example the next `R` number.
 
+### Supersede a requirement in part
+
+A new requirement can replace only a part of an old one. Say so in the
+new one. Put the ID of the old requirement in place of OLD:
+
+```sh
+just req "Sessions" "A session does this other thing. Supersedes OLD in part."
+```
+
+In the same change, cut the old requirement in
+`docs/src/requirements.md`. Remove or write again each sentence that
+the new one replaces, so that its text keeps only the part that holds.
+Keep its ID. When no part holds, move it to the history page (see
+[Move a superseded requirement](#move-a-superseded-requirement)).
+
+The job `Hygiene` checks the cut on each pull request. It reads
+`docs/src/requirements.md` at the merge base and at the head of the
+pull request. It fails with the rule `in-part` when the pull request
+adds "Supersedes OLD in part" to a requirement, or "Superseded in part
+by NEW" to OLD, and the text of OLD stays as it was. A new wrap of OLD
+is no cut, and the mark "Superseded in part by NEW" alone is no cut.
+The error names OLD and the new ID.
+
+```mermaid
+flowchart LR
+    B[requirements.md at the merge base] --> P{a new pair: NEW supersedes OLD in part?}
+    H[requirements.md at the head] --> P
+    P -- no --> K[ok]
+    P -- yes --> T{text of OLD changed?}
+    T -- yes --> K
+    T -- no --> E[in-part: names OLD and NEW]
+```
+
+To run the check on your pull request, give its number:
+
+```sh
+just hygiene pr 90
+```
+
 ## Move a superseded requirement
 
 `docs/src/requirements.md` holds the rules of today. When a new
@@ -4255,8 +4294,8 @@ requirement replaces an old one in full, move the old one to
 4. Add the new requirement with `just req`.
 
 When a new requirement replaces only a part of an old one, the old one
-stays in `requirements.md`. Write its text again, so that it keeps only
-the part that holds.
+stays in `requirements.md` (see
+[Supersede a requirement in part](#supersede-a-requirement-in-part)).
 
 To check the move:
 
@@ -4459,7 +4498,9 @@ just hygiene commit HEAD
 ```
 
 Each error names its rule. The
-[API docs of hygiene](api/hygiene/index.html) list the rules.
+[API docs of hygiene](api/hygiene/index.html) list the rules. The rule
+`in-part` checks the requirements of the pull request (see
+[Supersede a requirement in part](#supersede-a-requirement-in-part)).
 
 GitHub runs no check on a pull request that has a conflict with
 `main`. When `Hygiene` does not run, rebase your branch on `main` and
