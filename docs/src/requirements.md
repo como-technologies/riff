@@ -1897,10 +1897,6 @@
 - **01M3MRMAY3P1K151RGAP9K6GSH** The deploy takes a release tag as its
   input. It checks out that tag and deploys only it. It refuses an input
   that is not a tag `vX.Y.Z` of the version of the crates.
-- **01M3MRMB0AJVPD952AQYD7X1RN** Only an admin of the repository makes
-  a release: the tag ruleset `releases` on `v*` lets only the
-  repository admin role create, move or delete a tag. `just github`
-  makes it.
 - **01M3NB3EWE2V9PCTMNTZAKEXMA** Each release has a GitHub release on
   its tag. Its notes start with the level line of the release pull
   request and the command that each person runs. GitHub generates the
@@ -2027,6 +2023,13 @@
   `gcloud` replies that it does not exist. A reply that the account has
   no permission is an error, also when it says that the resource may not
   exist.
+- **01M6WZ40PZNBHW2BZHMQX80WJ8** The tag ruleset `releases` on `v*` lets
+  the repository admin role and the lead App of the riff create, move or
+  delete a tag. `just github` makes it. It reads the App ID of the lead
+  App with `gh api apps/SLUG`: `LEAD_APP` gives the slug, and
+  `riff-como-technologies-lead` is the default. When GitHub has no such
+  App, it stops before its first change. Supersedes
+  01M3MRMB0AJVPD952AQYD7X1RN.
 
 ## One instance
 
@@ -6109,9 +6112,9 @@ of this part when they merge.
   the host runs those checks. In place of them, riff prints one line,
   `skip` and the words `the checks of the machine: the host runs them`,
   and then runs the checks of the repository. A run of `riff init` with
-  no `--check` in a session container does the steps of the repository,
-  installs no daemon and pulls no image: the host has the daemon. On a
-  host, the checks stay as 01M4ZJN6TEWCYCB39XTH6BBD9H gives them.
+  no `--check` in a session container installs no daemon and pulls no
+  image: the host has the daemon. On a host, the checks stay as
+  01M4ZJN6TEWCYCB39XTH6BBD9H gives them.
 - **01M5SMMP7ZW2PZNGK63WWZAC8P** `riff init` counts the open issues of
   the repository that have no "Done when" line, and names them in a
   note, as `riff init --check` does too. A tracker and a release issue
@@ -6138,6 +6141,22 @@ of this part when they merge.
 - **01M6WPV89D01D8WQTQ9KKY9HCT** The section "Add to an issue" of "How
   it works" says what the guard does, with a copyable `sh` block for `gh
   run list --workflow riff-guard.yml`.
+- **01M6WZ40YED6THKVJ2JQRXFK4N** In a repository whose `riff.toml` on
+  the default branch has the table `[release]`, `riff init` checks the
+  ruleset `releases` on the tags `v*`. It asks riff-server for the App
+  ID of the lead App. The check passes when the ruleset has the lead App
+  as a bypass actor, when the riff has no lead App, and when GitHub does
+  not show the bypass actors to the person: only an admin of the
+  repository sees them. Else it fails with the step `Step::Releases`,
+  after the step of the ruleset `riff`: it makes or updates the ruleset
+  `releases` as `just github` does. When riff cannot ask riff-server,
+  the check passes when the ruleset is there, and fails with no step
+  when it is not. A repository with no `[release]` has no such check.
+- **01M6WZ410X4RPG1KMPEBVEP2DF** In a session container, `riff init` and
+  `riff init --yes` only check, as `riff init --check` does: they ask no
+  question and do no step of the repository, and one line says that a
+  person does the steps in a terminal. Supersedes
+  01M5SMJMR5KS1Z1Z7CEPH9JVBB in part.
 
 ### The permission rules
 
@@ -6677,18 +6696,17 @@ of this part when they merge.
   `riff/verify` of its head commit is a success; its merge commit is on
   `origin/main`, and `Cargo.toml` there has X.Y.Z; the tag does not
   exist on GitHub; a commit from the merge commit to `origin/main` has a
-  pass of `just real-session` (01M58KMKZ2EG8NZG4F085S6NQX); the account
-  of `gh` is an admin of the repository. Then it makes the annotated tag
-  on the newest commit with a pass, pushes only that tag, and makes the
-  GitHub release: the body of the pull request with no link line, no
-  line `Part of` and no trailer, then the generated notes from the last
-  release tag, marked as the latest. It prints the URL of the CI run of
-  the tag, and says that the deploy waits for the approval of
-  `production` by a person. When GitHub refuses the push of the tag, it
-  says so, names the ruleset of the tags, and deletes the local tag.
-  After the release, it posts a chat line to the owner in `riff chat`:
-  the version, the CI run, and `riff release approve vX.Y.Z`
-  (01M58KMM1BHX3YY81BPZG04JSX).
+  pass of `just real-session` (01M58KMKZ2EG8NZG4F085S6NQX). Then it
+  makes the annotated tag on the newest commit with a pass, pushes only
+  that tag, and makes the GitHub release: the body of the pull request
+  with no link line, no line `Part of` and no trailer, then the
+  generated notes from the last release tag, marked as the latest. It
+  prints the URL of the CI run of the tag, and says that the deploy
+  waits for the approval of `production` by a person. When GitHub
+  refuses the push of the tag, it says so, names the ruleset of the
+  tags, and deletes the local tag. After the release, it posts a chat
+  line to the owner in `riff chat`: the version, the CI run, and `riff
+  release approve vX.Y.Z` (01M58KMM1BHX3YY81BPZG04JSX).
 - **01M58B0JEYNAW67NS226FMX5XH** `riff release status` shows, for each
   session: the version on `origin/main`, the last published release
   tag, a merged release pull request whose version has no published
@@ -6708,9 +6726,7 @@ of this part when they merge.
   roles, so there each person and each lead may. `riff release approve`
   refuses in each agent session: a worker, a container session, a
   process with a session ID, and a process under Claude Code
-  (`CLAUDECODE`), also a `!` command. The lead of the owner may approve
-  with a message of the owner in the thread `chat`
-  (01M594XQJMXAXY3JXP66Y8EVQ7). A lead in a container may publish
+  (`CLAUDECODE`), also a `!` command. A lead in a container may publish
   (01M59269HHZ5C82DR3RG3QHAM3). The instructions of the lead have no
   tag line and no `gh release` line.
 - **01M59269HHZ5C82DR3RG3QHAM3** `riff release publish`, `check`,
@@ -6728,16 +6744,6 @@ of this part when they merge.
   that its body has the format of `riff release cut`, and that the full
   check of its head commit passed. Then it sets the status
   `riff/verify`. It refuses else, and sets nothing.
-- **01M5NCYW06FJ8P5X629VFK1BNR** One message of the owner or of an admin
-  in riff chat approves the deploy of a release: "approved", "approve
-  4.0.1" or "approve v4.0.1", from a person and not a session. A message
-  with no version counts for the version of the last release line of
-  riff before it. With it, the lead runs `riff release approve` and
-  `riff release check`. `riff release approve` of the lead accepts this
-  message, and replaces 01M594XQJMXAXY3JXP66Y8EVQ7 in part. A message
-  with `not`, `never` or `don't` does not approve. A message of the
-  owner or of an admin with `stop` or `wait` after the approval cancels
-  it, and the lead stops before the next step.
 - **01M5R13DK401K3TZ91E2QK2DYM** The refusal of `riff release verify`
   for the full check of the head commit names the commit, the checks of
   the full check and their state, as the line of `riff verify pass`
@@ -6767,32 +6773,34 @@ of this part when they merge.
   cut and that riff tells the owner when the deploy waits for an
   approval. The only ask is the line of riff while the job `Deploy`
   waits ("riff release vX.Y.Z waits for your approval", also "still
-  waits" in a reminder). The message of the owner or of an admin that
-  approves a release counts only after the first such line, or after the
-  line `riff release vX.Y.Z is published`. A line of riff approves
-  nothing. Supersedes 01M5NCYW06FJ8P5X629VFK1BNR in part.
-- **01M5TKMVB7CF0QNAWXEVGEQETJ** Only a message that a person wrote
-  counts as the word of the owner or of an admin in riff chat. A line
-  that riff writes as the person of the riff has the kind `riff`: the
-  line "waits for your approval" of the watch of the deploy and its
-  reminder, the other lines of the daemon in riff chat, and the lines of
-  `riff release cut` and `riff release publish`. riff-server keeps the
-  kind, a reader shows the line as a message, and it wakes as a message.
-  The kind `riff` has no name in `riff post`. `riff release approve` of
-  the lead skips each line of the kind `riff` when it looks for the
-  approval and for a stop. With only lines of riff in riff chat, it
-  refuses and changes nothing. A line of a session never counts, also
-  with no kind. This adds to 01M5NCYW06FJ8P5X629VFK1BNR,
-  01M594XQJMXAXY3JXP66Y8EVQ7 and 01M5TKDYAFA683KNAJTGYTQD5W.
+  waits" in a reminder).
+- **01M5TKMVB7CF0QNAWXEVGEQETJ** A line that riff writes as the person
+  of the riff has the kind `riff`: the line "waits for your approval" of
+  the watch of the deploy and its reminder, the other lines of the
+  daemon in riff chat, and the lines of `riff release cut` and `riff
+  release publish`. riff-server keeps the kind, a reader shows the line
+  as a message, and it wakes as a message. The kind `riff` has no name
+  in `riff post`.
 - **01M5TQ0DX4M2EJJGE7QA8DZVYS** After a rollback of riff-server to the
   release before, the kind `riff` is refused, and a line of riff in riff
   chat must still post. When riff-server refuses a post of the kind
   `riff` with "no such kind", riff posts the line again with the kind
-  `message` and the mark `[by riff] ` at the start of the body. A line
-  with the kind `riff`, or with this mark, is a line of riff: `riff
-  release approve` of the lead skips it when it looks for the approval
-  and for a stop. Any other refusal of the post is an error. This adds
-  to 01M5TKMVB7CF0QNAWXEVGEQETJ.
+  `message` and the mark `[by riff] ` at the start of the body. Any
+  other refusal of the post is an error. This adds to
+  01M5TKMVB7CF0QNAWXEVGEQETJ.
+- **01M6WZ40SFVZ6CRQ1H4Z27CWP4** Only a person approves a deploy. `riff
+  release approve` refuses the lead of each user, in a container and in
+  a terminal, also when the owner or an admin said approve in riff chat.
+  riff reads no approval from riff chat. Supersedes
+  01M5NCYW06FJ8P5X629VFK1BNR in full, and 01M594XQJMXAXY3JXP66Y8EVQ7,
+  01M58B0JSQMWNCMSNX19536XT8, 01M5TKDYAFA683KNAJTGYTQD5W,
+  01M5TKMVB7CF0QNAWXEVGEQETJ and 01M5TQ0DX4M2EJJGE7QA8DZVYS in part.
+- **01M6WZ40VYDBBTJBTQEBY2984P** `riff release publish` does not check
+  that the account of `gh` is an admin of the repository: the ruleset
+  `releases` decides. The lead in a container pushes the tag with the
+  token of the lead App. When GitHub refuses the push, the refusal names
+  the ruleset `releases`, the admin role and the lead App. Supersedes
+  01M58B0JABCET719T3HFB19NDW in part.
 
 ### The release cycle
 
@@ -7297,17 +7305,9 @@ that builds it merges.
   links #982: the TUI (#994), the phone app (#951), the web UI (#995)
   and the desktop GUI (#996). The build items of a UI come from its
   child design, after Mike signs it off.
-- **01M594XQJMXAXY3JXP66Y8EVQ7** `riff release approve vX.Y.Z` also
-  works for the lead of the owner, also in a container, when riff-server
-  holds a verified message of the owner or of an admin in the thread
-  `chat`, from a person and not a session, that says `approve` or
-  `deploy`. Code reads the thread from riff-server. The lead asks no yes
-  or no. The approval comment names the message number. It refuses a
-  message of a session, of another version, before the publish, or of a
-  member, and a worker, a work session in a container, and a session
-  that is not the lead. In a plain terminal it works as before. When the
-  auto mode checker blocks a release command, `riff denials` has a
-  record, and the lead files an issue for it.
+- **01M594XQJMXAXY3JXP66Y8EVQ7** When the auto mode checker blocks a
+  release command, `riff denials` has a record, and the lead files an
+  issue for it.
 - **01M6QEXNM0QCGH6RG4Q8M9VH4W** With the TUI too, `riff top` stays the
   live table that it draws again in place until Ctrl-C, and `riff top
   --once` prints one table and exits. `riff top` gets no alias.

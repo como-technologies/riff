@@ -400,6 +400,10 @@ page [Requirements](requirements.md) holds the rules of today.
   release line. `riff --help` lists no `retire`, and `riff retire`
   fails: riff does not know the command. Superseded by
   01M5RG6BTXAJY8DV6MT315VZWF.
+- **01M3MRMB0AJVPD952AQYD7X1RN** Only an admin of the repository makes
+  a release: the tag ruleset `releases` on `v*` lets only the
+  repository admin role create, move or delete a tag. `just github`
+  makes it. Superseded by 01M6WZ40PZNBHW2BZHMQX80WJ8.
 
 ## One instance
 
@@ -2953,6 +2957,20 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   service, the GCS bucket, the Secret Manager entries and the GitHub App
   of riff go. Mike decides when. Superseded by Wave C
   (01M51R8HK0VPBD4W6CKACWC1WW).
+
+### The release commands
+
+- **01M5NCYW06FJ8P5X629VFK1BNR** One message of the owner or of an admin
+  in riff chat approves the deploy of a release: "approved", "approve
+  4.0.1" or "approve v4.0.1", from a person and not a session. A message
+  with no version counts for the version of the last release line of
+  riff before it. With it, the lead runs `riff release approve` and
+  `riff release check`. `riff release approve` of the lead accepts this
+  message, and replaces 01M594XQJMXAXY3JXP66Y8EVQ7 in part. A message
+  with `not`, `never` or `don't` does not approve. A message of the
+  owner or of an admin with `stop` or `wait` after the approval cancels
+  it, and the lead stops before the next step. Superseded by
+  01M6WZ40SFVZ6CRQ1H4Z27CWP4.
 
 ### The release cycle
 

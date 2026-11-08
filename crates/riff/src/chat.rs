@@ -143,32 +143,16 @@ pub fn thread() -> ThreadName {
 /// (01M5TQ0DX4M2EJJGE7QA8DZVYS).
 pub const BY_RIFF: &str = "[by riff] ";
 
-/// True when `body` has the mark [`BY_RIFF`]: riff wrote the line, also
-/// when its kind is `message`. [`crate::cycle::chat_lines`] reads such a
-/// line as a line of the kind `riff`.
-///
-/// ```
-/// use riff::chat::{BY_RIFF, marked};
-///
-/// assert!(marked(&format!("{BY_RIFF}@mike riff release v3.3.0 is cut.")));
-/// assert!(!marked("approve v3.3.0"));
-/// ```
-pub fn marked(body: &str) -> bool {
-    body.starts_with(BY_RIFF)
-}
-
 /// Posts `body` in riff chat as `me`, as a line that riff writes: the
 /// kind of the post is `riff` (01M5TKMVB7CF0QNAWXEVGEQETJ). The watch of
 /// a deploy, the daemon and `riff release` post so, as the person of the
 /// riff. `to` is what [`riff_client::chat::wakes`] gave for `body`. A
-/// line of the kind `riff` is no word of the person: `riff release
-/// approve` skips it.
+/// line of the kind `riff` is no word of the person.
 ///
 /// A riff-server of the release before refuses the kind `riff`. After a
 /// rollback of the server to that release, the line goes again with the
 /// kind `message` and the mark [`BY_RIFF`] at the start of its body
-/// (01M5TQ0DX4M2EJJGE7QA8DZVYS). The mark keeps the line out of the words
-/// of the owner, as the kind does. Any other refusal is an error.
+/// (01M5TQ0DX4M2EJJGE7QA8DZVYS). Any other refusal is an error.
 ///
 /// ```mermaid
 /// sequenceDiagram

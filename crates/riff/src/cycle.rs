@@ -17,10 +17,10 @@
 //! |---|---|---|
 //! | `riff release cut X.Y.Z` | a lead or a worker; `--skip` only a person | the release pull request from `origin/main` ([`cut`], 01M58B0HZYMAK1B2AJMWKHCXG0) |
 //! | `riff release verify N` | each session; no model | the status `riff/verify` of a release pull request, after the checks of its label, diff, body and Gate ([`verify`], 01M5ND0ZNFFAPT1AWD3DP1Y77N) |
-//! | `riff release publish vX.Y.Z` | the owner or an admin of the riff, or its lead, with a `gh` of an admin | the tag on the tested commit, the GitHub release, the chat line to the owner ([`publish`], 01M58B0JABCET719T3HFB19NDW) |
+//! | `riff release publish vX.Y.Z` | the owner or an admin of the riff, or its lead; the ruleset `releases` lets the admin role and the lead App push the tag | the tag on the tested commit, the GitHub release, the chat line to the owner ([`publish`], 01M58B0JABCET719T3HFB19NDW, 01M6WZ40VYDBBTJBTQEBY2984P) |
 //! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test on the daemon of a host ([`test_target`], [`crate::daemon::release_test`], 01M5924C8BTT6CW05Q0YZJ1GCY) |
 //! | `riff release status` | each session | the versions, what waits, the state and the next step ([`status`], 01M58KMKTE2XC35CNJBFKZWAXF) |
-//! | `riff release approve vX.Y.Z` | a person in a terminal, or the lead of the owner with a word of the owner in riff chat | the pause of the riff, then the approval of `production`; it refuses while a lead holds the version, unless a person passes `--over-holds` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2, 01M5SNV7E775DRY9QY60E8JPJR) |
+//! | `riff release approve vX.Y.Z` | only a person in a terminal: never a session, also not the lead (01M6WZ40SFVZ6CRQ1H4Z27CWP4) | the pause of the riff, then the approval of `production`; it refuses while a lead holds the version, unless a person passes `--over-holds` ([`approve`], 01M58KMM3NFGJRW4CCV50KJQB2, 01M5SNV7E775DRY9QY60E8JPJR) |
 //! | `riff release hold vX.Y.Z REASON` | the lead of any user, also of a member | the hold of the version: each other lead hears it, `riff release status` shows it ([`crate::hold`], 01M5SNV78EBAYY4SZ891DM2MQG) |
 //! | `riff release check vX.Y.Z` | the lead | the checks after the deploy, the result on the release issue ([`check`], 01M58KMM5ZPAQ289S2YJVQ5WW6) |
 //! | `riff release retry vX.Y.Z` | the lead | the failed jobs of the CI run again ([`retry`], 01M58KMM8CV9731AWGVZQBB80D) |
@@ -70,7 +70,23 @@
 //! The guards of the callers are in [`Caller`]: the steps of the lead
 //! refuse a worker, a container session and a session that is not the
 //! lead ([`Caller::lead_step`]). The steps of a person refuse each agent
-//! session ([`Caller::person_step`], 01M58B0JSQMWNCMSNX19536XT8).
+//! session, also the lead ([`Caller::person_step`],
+//! 01M58B0JSQMWNCMSNX19536XT8, 01M6WZ40SFVZ6CRQ1H4Z27CWP4). riff reads no
+//! approval from riff chat. GitHub decides the push of the tag: the
+//! ruleset `releases` lets the admin role of the repository and the lead
+//! App of the riff push it (01M6WZ40PZNBHW2BZHMQX80WJ8), and `publish`
+//! checks no role of `gh` (01M6WZ40VYDBBTJBTQEBY2984P).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     L["the lead in its container<br/>riff-OWNER-lead[bot]"] -- "riff release publish:<br/>push the tag v*" --> R{"the ruleset releases"}
+//!     A["an admin in a terminal"] -- "riff release publish" --> R
+//!     W["a worker<br/>riff-OWNER[bot]"] -. "refused" .-> R
+//!     R --> T["the tag and the CI run"]
+//!     T --> D["the job Deploy waits<br/>for production"]
+//!     P["a person in a terminal"] -- "riff release approve" --> D
+//!     L -. "refused, also with the word<br/>of the owner in riff chat" .-> D
+//! ```
 //!
 //! Each step goes through [`Forge`]. [`GitHub`] runs `gh` and `git`; a
 //! test gives a fake forge. The checks after a deploy read the Cloud Run
@@ -542,10 +558,8 @@ pub trait Forge {
     fn on_main(&self, commit: &str) -> Result<bool>;
     /// True when the forge has the tag `tag`.
     fn tag_exists(&self, tag: &str) -> Result<bool>;
-    /// True when the account of the forge is an admin of the
-    /// repository: the ruleset of the tags lets it push a tag.
-    fn admin(&self) -> Result<bool>;
-    /// Makes the annotated tag `tag` on `commit`, and pushes only it.
+    /// Makes the annotated tag `tag` on `commit`, and pushes only it. The
+    /// ruleset `releases` of the forge decides the push.
     fn push_tag(&self, tag: &str, commit: &str) -> Result<()>;
     /// Makes the GitHub release of `tag`: `notes`, then the generated
     /// notes from `since`, marked as the latest. Returns its URL.
@@ -1330,8 +1344,10 @@ fn mention(owner: &str) -> String {
 
 /// Publishes the release `tag` (01M58B0JABCET719T3HFB19NDW,
 /// 01M58KMM1BHX3YY81BPZG04JSX): it checks each fact first, then makes and
-/// pushes the tag, then makes the GitHub release. The riff runs on: only
-/// the approval of the deploy pauses it.
+/// pushes the tag, then makes the GitHub release. It checks no role of
+/// the account of the forge: the ruleset `releases` decides the push
+/// (01M6WZ40VYDBBTJBTQEBY2984P). The riff runs on: only the approval of
+/// the deploy pauses it.
 pub fn publish(forge: &dyn Forge, tag_text: &str) -> Result<Published> {
     let version = tag_version(tag_text)?;
     let tag = tag(version);
@@ -1382,13 +1398,6 @@ pub fn publish(forge: &dyn Forge, tag_text: &str) -> Result<Published> {
     if forge.tag_exists(&tag)? {
         bail!(
             "riff release publish: the tag {tag} exists on GitHub already. next: riff release status"
-        );
-    }
-    if !forge.admin()? {
-        bail!(
-            "riff release publish: the account of gh is not an admin of the repository, so the \
-             ruleset of the tags refuses its push. next: gh auth login as an admin, then riff \
-             release publish {tag}"
         );
     }
     let since = last(&forge.releases()?).map(self::tag);
@@ -1569,117 +1578,6 @@ pub fn approve_run(forge: &dyn Forge, run: &Waiting) -> Result<()> {
     forge.approve(run, &format!("Release {}", run.tag))
 }
 
-/// Approves `run` for the lead, with the comment that names the message
-/// `seq` of the owner in riff chat (01M594XQJMXAXY3JXP66Y8EVQ7).
-pub fn approve_run_said(forge: &dyn Forge, run: &Waiting, seq: u64) -> Result<()> {
-    forge.approve(
-        run,
-        &format!(
-            "Release {}, approved by the owner in riff chat, message {seq}",
-            run.tag
-        ),
-    )
-}
-
-/// The CI run of `tag_text` that waits for [`PRODUCTION`], or `None`.
-pub fn waiting_run(forge: &dyn Forge, tag_text: &str) -> Result<Option<Waiting>> {
-    let tag = tag(tag_version(tag_text)?);
-    Ok(forge.waiting()?.into_iter().find(|w| w.tag == tag))
-}
-
-/// The messages of the thread `chat` as [`ChatLine`]s. A line of the kind
-/// `riff`, or with the mark [`crate::chat::BY_RIFF`], is a line of riff.
-pub fn chat_lines(read: Vec<riff_client::api::Checked>) -> Vec<ChatLine> {
-    read.into_iter()
-        .map(|c| ChatLine {
-            seq: c.message.seq,
-            user: c.message.from.who().user().to_owned(),
-            session: c.message.from.who().session().is_some(),
-            verified: c.verified,
-            riff: c.message.kind.by_riff() || crate::chat::marked(&c.message.body),
-            body: c.message.body,
-        })
-        .collect()
-}
-
-/// One message of the thread `chat`, as [`owner_said`] reads it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ChatLine {
-    /// The number of the message in the thread.
-    pub seq: u64,
-    /// The USER of the sender.
-    pub user: String,
-    /// True when the sender is a session, not a person.
-    pub session: bool,
-    /// True when riff proved the sender.
-    pub verified: bool,
-    /// True when riff wrote the line, as the person: it has the kind
-    /// `riff`, or the mark [`crate::chat::BY_RIFF`] (a riff-server of the
-    /// release before refuses the kind). It is never the word of a person.
-    #[serde(default)]
-    pub riff: bool,
-    /// The text.
-    pub body: String,
-}
-
-/// The words of `body`, in lower case, with no mark around them.
-fn words(body: &str) -> Vec<String> {
-    body.split_whitespace()
-        .map(|w| {
-            w.trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase()
-        })
-        .collect()
-}
-
-/// True when `word` is a version: three numbers with dots, and maybe a `v`.
-fn is_version(word: &str) -> bool {
-    let bare = word.strip_prefix('v').unwrap_or(word);
-    let parts: Vec<&str> = bare.split('.').collect();
-    parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-}
-
-/// How `body` approves `tag`: `Some(true)` when it names the version
-/// (with or without the `v`), `Some(false)` when it names no version,
-/// and `None` when it does not approve, names another version, or denies.
-fn approves(body: &str, tag: &str) -> Option<bool> {
-    let words = words(body);
-    let has = |f: &dyn Fn(&str) -> bool| words.iter().any(|w| f(w));
-    if has(&|w| matches!(w, "not" | "never" | "dont"))
-        || body.to_lowercase().contains("don't")
-        || !has(&|w| matches!(w, "approve" | "approved" | "deploy"))
-    {
-        return None;
-    }
-    let tag = tag.to_lowercase();
-    let bare = tag.strip_prefix('v').unwrap_or(&tag);
-    let named: Vec<&str> = words
-        .iter()
-        .map(String::as_str)
-        .filter(|w| is_version(w))
-        .collect();
-    if named.is_empty() {
-        Some(false)
-    } else if named
-        .iter()
-        .any(|w| w.strip_prefix('v').unwrap_or(w) == bare)
-    {
-        Some(true)
-    } else {
-        None
-    }
-}
-
-/// True when `body` says `stop` or `wait`.
-fn says_stop(body: &str) -> bool {
-    words(body)
-        .iter()
-        .any(|w| matches!(w.as_str(), "stop" | "wait"))
-}
-
 /// The line that `riff release cut` writes in riff chat to the owner
 /// `owner`: the version, and that riff tells the owner when the deploy
 /// waits for an approval. It asks for nothing: the only ask is
@@ -1698,119 +1596,6 @@ pub fn cut_line(owner: &str, tag: &str) -> String {
         "{}riff release {tag} is cut. riff tells you when its deploy waits for your approval.",
         mention(owner)
     )
-}
-
-/// The tag of the release line of riff in `body`: `riff release TAG is
-/// published`, `riff release TAG waits for your approval` or `riff
-/// release TAG still waits for your approval`. The line of the cut is no
-/// release line: it asks for nothing.
-fn release_line_tag(body: &str) -> Option<&str> {
-    const ENDS: [&str; 3] = [
-        " is published",
-        " waits for your approval",
-        " still waits for your approval",
-    ];
-    let mut rest = body;
-    while let Some(at) = rest.find("riff release ") {
-        rest = &rest[at + "riff release ".len()..];
-        let (tag, after) = rest.split_at(rest.find(char::is_whitespace).unwrap_or(rest.len()));
-        if ENDS.iter().any(|end| after.starts_with(end)) {
-            return Some(tag);
-        }
-    }
-    None
-}
-
-/// The number of the message in which the owner approved the release
-/// `tag` (01M5NCYW06FJ8P5X629VFK1BNR, in part instead of
-/// 01M594XQJMXAXY3JXP66Y8EVQ7, 01M5TKDYAFA683KNAJTGYTQD5W). `lines` are
-/// the messages of the thread `chat`. `may` tells whether a USER is the
-/// owner or an admin.
-///
-/// The release starts at the first verified line of riff, from a USER
-/// that `may`, that says `riff release TAG is published` or `riff release
-/// TAG waits for your approval` ([`waits_line`]). The line of the cut does
-/// not start it. After it, a verified message of a person who `may` and
-/// says `approve`, `approved` or `deploy` counts when it names the
-/// version, with or without the `v`. With no version, it counts when the
-/// last release line before it is of this tag: the owner answers the line
-/// of riff. A release line approves nothing, also when it names `riff
-/// release approve`. A message that denies (`not`, `never`, `don't`) does
-/// not count. A message of the owner or of an admin with `stop` or `wait`
-/// after the approval cancels it.
-///
-/// A message that riff wrote, as the person (`riff`: the line "waits for
-/// your approval" of the watch of the deploy, and its reminder), is no
-/// word of a person: it never counts, and it never cancels
-/// (01M5TKMVB7CF0QNAWXEVGEQETJ).
-///
-/// ```
-/// use riff::cycle::{owner_said, ChatLine};
-///
-/// let line = |seq, session, body: &str| ChatLine {
-///     seq, user: "mike".into(), session, verified: true, riff: false, body: body.into(),
-/// };
-/// let may = |user: &str| user == "mike";
-/// let lines = [
-///     line(1, true, "riff release v3.3.0 is cut. riff tells you when its deploy waits for your approval."),
-///     line(2, false, "approve 3.3.0"),
-///     line(3, false, "riff release v3.3.0 waits for your approval: https://x/runs/9. In a terminal, run: riff release approve v3.3.0"),
-///     line(4, false, "approve 3.3.0"),
-///     line(5, false, "approved"),
-/// ];
-/// // The word before the line of the wait does not count, nor does the line.
-/// assert_eq!(owner_said(&lines[..3], "v3.3.0", &may), None);
-/// assert_eq!(owner_said(&lines, "v3.3.0", &may), Some(5));
-/// assert_eq!(owner_said(&lines, "v3.3.1", &may), None);
-/// let stopped = [lines[2].clone(), lines[3].clone(), line(5, false, "stop")];
-/// assert_eq!(owner_said(&stopped, "v3.3.0", &may), None);
-///
-/// // The line of riff, as the person, is no approval.
-/// let waits = ChatLine {
-///     riff: true,
-///     ..line(2, false, "@mike riff release v3.3.0 waits for your approval: https://x/runs/9. \
-///                       In a terminal, run: riff release approve v3.3.0")
-/// };
-/// assert_eq!(owner_said(&[lines[0].clone(), waits], "v3.3.0", &may), None);
-/// ```
-pub fn owner_said(lines: &[ChatLine], tag: &str, may: &dyn Fn(&str) -> bool) -> Option<u64> {
-    // A line of riff about `tag`, or about any release when `tag` is `None`.
-    let release = |l: &ChatLine, tag: Option<&str>| {
-        l.verified
-            && may(&l.user)
-            && release_line_tag(&l.body).is_some_and(|named| tag.is_none_or(|t| named == t))
-    };
-    let start = lines
-        .iter()
-        .filter(|l| release(l, Some(tag)))
-        .map(|l| l.seq)
-        .min()?;
-    // The last release line before `seq` is of `tag`.
-    let asked = |seq: u64| {
-        lines
-            .iter()
-            .filter(|l| l.seq < seq && release(l, None))
-            .max_by_key(|l| l.seq)
-            .is_some_and(|l| release(l, Some(tag)))
-    };
-    // A line of riff is of riff, also when riff posts it as the person: it
-    // has the kind `riff`, and a release line has its words.
-    let owner = |l: &ChatLine| {
-        l.verified && !l.session && !l.riff && may(&l.user) && release_line_tag(&l.body).is_none()
-    };
-    let approved = lines
-        .iter()
-        .filter(|l| l.seq > start && owner(l))
-        .filter(|l| match approves(&l.body, tag) {
-            Some(named) => named || asked(l.seq),
-            None => false,
-        })
-        .map(|l| l.seq)
-        .max()?;
-    let stopped = lines
-        .iter()
-        .any(|l| l.seq > approved && owner(l) && says_stop(&l.body));
-    (!stopped).then_some(approved)
 }
 
 /// One line of the log of the Cloud Run service of the shared riff.
@@ -2519,11 +2304,8 @@ pub enum Refusal {
     Member,
     /// riff cannot ask riff-server for the role of the person.
     RoleUnknown,
-    /// An agent session, for a step of a person.
+    /// An agent session, for a step of a person: also the lead.
     Agent,
-    /// The lead, for `riff release approve`: riff chat has no verified
-    /// message of the owner that says approve for the version.
-    OwnerSilent,
 }
 
 impl Caller {
@@ -2637,7 +2419,9 @@ impl Caller {
     /// approve`, and `riff release cut --skip`, or `None`
     /// (01M58B0JSQMWNCMSNX19536XT8, 01M58KMMKZ8T11KT3R3Z7D0RE1). Only a
     /// person in a plain terminal may: never an agent session, also not
-    /// the lead. A member may not, when riff knows the role.
+    /// the lead of the owner, in a container or in a terminal
+    /// (01M6WZ40SFVZ6CRQ1H4Z27CWP4). A member may not, when riff knows the
+    /// role.
     ///
     /// ```
     /// use riff::cycle::{Caller, Refusal};
@@ -2646,6 +2430,8 @@ impl Caller {
     /// assert!(Caller::default().person_step().is_none());
     /// let lead = Caller { agent: true, lead: Some(true), ..Caller::default() };
     /// assert_eq!(lead.person_step(), Some(Refusal::Agent));
+    /// let owner = Caller { role: Some(PersonRole::Owner), container: true, lead_container: true, ..lead };
+    /// assert_eq!(owner.person_step(), Some(Refusal::Agent));
     /// let member = Caller { role: Some(PersonRole::Member), ..Caller::default() };
     /// assert_eq!(member.person_step(), Some(Refusal::Member));
     /// ```
@@ -3174,25 +2960,13 @@ impl Forge for GitHub {
             .is_empty())
     }
 
-    fn admin(&self) -> Result<bool> {
-        let out = self.gh.run(
-            &["api", "repos/{owner}/{repo}", "--jq", ".permissions.admin"],
-            None,
-        )?;
-        Ok(out.trim() == "true")
-    }
-
     fn push_tag(&self, tag: &str, commit: &str) -> Result<()> {
         let message = format!("Release {tag}");
         self.git(&["tag", "-a", tag, commit, "-m", &message])?;
         let name = format!("refs/tags/{tag}");
         if let Err(e) = self.git(&["push", "-q", "origin", &name]) {
             let _ = self.git(&["tag", "-d", tag]);
-            bail!(
-                "riff release publish: GitHub refused the push of the tag {tag}. The ruleset of the \
-                 tags lets only an admin of the repository make a tag: sign in to git and gh as an \
-                 admin. riff deleted the tag on this machine. {e}"
-            );
+            bail!("{} {e}", crate::text::tag_refused(tag));
         }
         Ok(())
     }
@@ -3561,7 +3335,6 @@ pub(crate) mod tests {
         pub(crate) gate: pr::Gate,
         pub(crate) on_main: bool,
         pub(crate) tags: Vec<String>,
-        pub(crate) admin: bool,
         pub(crate) waiting: Vec<Waiting>,
         /// The commits with a pass or a fail of the real-session test.
         pub(crate) real: Vec<(&'static str, bool)>,
@@ -3592,7 +3365,6 @@ pub(crate) mod tests {
                 releases: vec!["3.0.0", "3.2.0"],
                 verify: true,
                 on_main: true,
-                admin: true,
                 ..Fake::default()
             }
         }
@@ -3679,9 +3451,6 @@ pub(crate) mod tests {
         }
         fn tag_exists(&self, tag: &str) -> Result<bool> {
             Ok(self.tags.iter().any(|t| t == tag))
-        }
-        fn admin(&self) -> Result<bool> {
-            Ok(self.admin)
         }
         fn push_tag(&self, tag: &str, commit: &str) -> Result<()> {
             self.write(format!("tag {tag} {commit}"));
@@ -4139,13 +3908,6 @@ pub(crate) mod tests {
                     ..Fake::ready("3.3.0")
                 },
                 "the tag v3.3.0 exists",
-            ),
-            (
-                Fake {
-                    admin: false,
-                    ..Fake::ready("3.3.0")
-                },
-                "not an admin of the repository",
             ),
         ];
         for (forge, want) in cases {
@@ -5232,42 +4994,74 @@ pub(crate) mod tests {
         assert_eq!(new.lines().count(), lock.lines().count());
     }
 
-    fn chat(seq: u64, user: &str, session: bool, body: &str) -> ChatLine {
-        ChatLine {
-            seq,
-            user: user.into(),
-            session,
-            verified: true,
-            riff: false,
-            body: body.into(),
+    /// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: `riff release approve` refuses each
+    /// agent session, also the lead of the owner or of an admin, in a
+    /// container and in a terminal. The guard reads no word of the owner in
+    /// riff chat: only a person in a terminal gets past it.
+    #[test]
+    fn approve_refuses_each_agent_session_also_the_lead_of_the_owner() {
+        let lead = Caller {
+            agent: true,
+            lead: Some(true),
+            ..Caller::default()
+        };
+        let lead_container = Caller {
+            container: true,
+            lead_container: true,
+            ..lead
+        };
+        let sessions = [
+            Caller {
+                worker: true,
+                agent: true,
+                lead: Some(false),
+                ..Caller::default()
+            },
+            Caller {
+                container: true,
+                agent: true,
+                ..Caller::default()
+            },
+            Caller {
+                agent: true,
+                lead: Some(false),
+                ..Caller::default()
+            },
+            Caller {
+                agent: true,
+                ..Caller::default()
+            },
+            lead,
+            lead_container,
+        ];
+        let roles = [
+            None,
+            Some(PersonRole::Owner),
+            Some(PersonRole::Admin),
+            Some(PersonRole::Member),
+        ];
+        for session in sessions {
+            for role in roles {
+                let caller = Caller { role, ..session };
+                assert_eq!(caller.person_step(), Some(Refusal::Agent), "{caller:?}");
+            }
         }
-    }
-
-    /// A line that riff wrote as the person of the riff.
-    fn by_riff(seq: u64, user: &str, body: &str) -> ChatLine {
-        ChatLine {
-            riff: true,
-            ..chat(seq, user, false, body)
+        // The lead of the owner still runs the steps of the lead.
+        for lead in [lead, lead_container] {
+            let owner = Caller {
+                role: Some(PersonRole::Owner),
+                ..lead
+            };
+            assert_eq!(owner.lead_step(), None, "{owner:?}");
         }
-    }
-
-    fn mike(user: &str) -> bool {
-        user == "mike"
-    }
-
-    /// The line of the job `Deploy` that waits, as the daemon posts it: as
-    /// the person, not as a session.
-    fn waits(seq: u64, tag: &str) -> ChatLine {
-        chat(
-            seq,
-            "mike",
-            false,
-            &waits_line("mike", tag, "https://x/runs/9", false, &[]),
-        )
-    }
-
-    fn published(seq: u64, tag: &str) -> ChatLine {
-        chat(seq, "mike", true, &publish_line("mike", tag, None))
+        // Only a person in a terminal approves.
+        for role in &roles[..3] {
+            let person = Caller {
+                role: *role,
+                ..Caller::default()
+            };
+            assert_eq!(person.person_step(), None, "{person:?}");
+        }
     }
 
     #[test]
@@ -5282,315 +5076,5 @@ pub(crate) mod tests {
             assert!(!lower.contains(ask), "{line}: {ask}");
         }
         assert!(cut_line("", "v4.0.1").starts_with("riff release v4.0.1 is cut."));
-        // It is no release line: no approval counts after it.
-        assert_eq!(release_line_tag(&line), None);
-    }
-
-    #[test]
-    fn a_release_line_names_its_tag() {
-        for (body, tag) in [
-            (
-                "riff release v4.0.1 is published. Its CI run builds",
-                Some("v4.0.1"),
-            ),
-            (
-                "@mike riff release v4.0.1 waits for your approval: https://x. In a terminal",
-                Some("v4.0.1"),
-            ),
-            (
-                "Reminder: @mike riff release v4.0.2 still waits for your approval: https://x.",
-                Some("v4.0.2"),
-            ),
-            (
-                "riff release v4.0.1 is cut. riff tells you when its deploy waits",
-                None,
-            ),
-            ("riff release approve v4.0.1", None),
-            ("approve 4.0.1", None),
-        ] {
-            assert_eq!(release_line_tag(body), tag, "{body}");
-        }
-    }
-
-    #[test]
-    fn owner_said_takes_a_version_with_and_without_the_v() {
-        for body in [
-            "approve 4.0.1",
-            "approve v4.0.1",
-            "I approve 4.0.1. proceed",
-        ] {
-            let lines = [waits(1, "v4.0.1"), chat(2, "mike", false, body)];
-            assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(2), "{body}");
-            assert_eq!(owner_said(&lines, "v4.0.2", &mike), None, "{body}");
-        }
-    }
-
-    #[test]
-    fn owner_said_takes_approved_as_the_answer_to_the_last_release_line() {
-        let lines = [
-            published(1, "v4.0.0"),
-            waits(2, "v4.0.1"),
-            chat(3, "mike", false, "approved"),
-        ];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(3));
-        assert_eq!(owner_said(&lines, "v4.0.0", &mike), None);
-    }
-
-    #[test]
-    fn owner_said_counts_an_approval_after_the_line_that_the_deploy_waits() {
-        let lines = [
-            published(1, "v4.0.1"),
-            waits(2, "v4.0.1"),
-            chat(3, "mike", false, "approved"),
-        ];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(3));
-        // The reminder is a release line too.
-        let again = [
-            chat(
-                1,
-                "mike",
-                false,
-                &waits_line("mike", "v4.0.1", "https://x/runs/9", true, &[]),
-            ),
-            chat(2, "mike", false, "approved"),
-        ];
-        assert_eq!(owner_said(&again, "v4.0.1", &mike), Some(2));
-    }
-
-    #[test]
-    fn owner_said_counts_an_approval_after_the_publish_alone() {
-        let lines = [
-            published(1, "v4.0.1"),
-            chat(2, "mike", false, "approve 4.0.1"),
-        ];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(2));
-    }
-
-    #[test]
-    fn owner_said_ignores_an_approval_before_the_publish_and_after_the_cut_alone() {
-        let cut = chat(1, "mike", true, &cut_line("mike", "v4.0.1"));
-        let early = chat(2, "mike", false, "approve 4.0.1");
-        // Only the cut: no word of the owner counts, also a late one.
-        let lines = [
-            cut.clone(),
-            early.clone(),
-            chat(3, "mike", false, "approved"),
-        ];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
-        // The word before the publish does not count.
-        let lines = [cut.clone(), early.clone(), published(3, "v4.0.1")];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
-        // The word before the line of the wait does not count.
-        let lines = [cut, early, waits(3, "v4.0.1")];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
-    }
-
-    #[test]
-    fn owner_said_takes_a_line_of_riff_as_no_approval() {
-        // The line of the wait names `riff release approve vX.Y.Z`, and
-        // the daemon posts it as the owner.
-        let lines = [waits(1, "v4.0.1")];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
-        let lines = [published(1, "v4.0.1"), waits(2, "v4.0.1")];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
-        // A reminder with a hold says `wait`, and it stops nothing.
-        let held = Hold {
-            user: "nate".into(),
-            repo: "o/s".into(),
-            reason: "A demo runs.".into(),
-        };
-        let reminder = chat(
-            3,
-            "mike",
-            false,
-            &waits_line("mike", "v4.0.1", "https://x/runs/9", true, &[held]),
-        );
-        let lines = [
-            waits(1, "v4.0.1"),
-            chat(2, "mike", false, "approved"),
-            reminder,
-        ];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(2));
-    }
-
-    #[test]
-    fn owner_said_ignores_a_line_of_a_member_for_the_start() {
-        let line = waits_line("mike", "v4.0.1", "https://x/runs/9", false, &[]);
-        let lines = [
-            chat(1, "mike", false, "approve 4.0.1"),
-            chat(2, "bob", true, &line),
-            chat(3, "bob", false, &line),
-        ];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
-        let mut loud = waits(2, "v4.0.1");
-        loud.verified = false;
-        let lines = [chat(1, "mike", false, "approve 4.0.1"), loud];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), None);
-    }
-
-    #[test]
-    fn owner_said_ignores_a_member_a_session_and_a_denial() {
-        let start = waits(2, "v4.0.1");
-        for (who, session, body) in [
-            ("bob", false, "approve 4.0.1"),
-            ("mike", true, "approve 4.0.1"),
-            ("mike", false, "do not approve 4.0.1"),
-            ("mike", false, "I don't approve 4.0.1"),
-        ] {
-            let lines = [start.clone(), chat(3, who, session, body)];
-            assert_eq!(owner_said(&lines, "v4.0.1", &mike), None, "{body}");
-        }
-        let mut loud = chat(3, "mike", false, "approved");
-        loud.verified = false;
-        assert_eq!(owner_said(&[start, loud], "v4.0.1", &mike), None);
-    }
-
-    /// The lines that riff writes in riff chat for the release of `tag`
-    /// (01M5TKMVB7CF0QNAWXEVGEQETJ): the cut line and the publish line of
-    /// the lead, the line "waits for your approval" of the watch and its
-    /// reminder as the person.
-    fn lines_of_riff(tag: &str) -> Vec<ChatLine> {
-        let run = "https://github.com/o/r/actions/runs/9";
-        vec![
-            chat(1, "mike", true, &cut_line("mike", tag)),
-            chat(2, "mike", true, &publish_line("mike", tag, Some(run))),
-            by_riff(3, "mike", &waits_line("mike", tag, run, false, &[])),
-            by_riff(4, "mike", &waits_line("mike", tag, run, true, &[])),
-        ]
-    }
-
-    #[test]
-    fn owner_said_gives_no_approval_for_the_lines_of_riff_alone() {
-        let lines = lines_of_riff("v4.0.1");
-        for n in 1..=lines.len() {
-            assert_eq!(owner_said(&lines[..n], "v4.0.1", &mike), None, "{n}");
-        }
-        // The cut line and the publish line also name the command: a
-        // person who did not mark them is still no approval, but a line
-        // that riff wrote and marked never is, also from a person.
-        let mut marked = lines.clone();
-        marked[0].session = false;
-        marked[0].riff = true;
-        marked[1].session = false;
-        marked[1].riff = true;
-        assert_eq!(owner_said(&marked, "v4.0.1", &mike), None);
-    }
-
-    #[test]
-    fn owner_said_gives_the_message_of_the_owner_among_the_lines_of_riff() {
-        let mut lines = lines_of_riff("v4.0.1");
-        lines.push(chat(5, "mike", false, "approve 4.0.1"));
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(5));
-        // A reminder after the message is not a newer approval.
-        lines.push(by_riff(
-            6,
-            "mike",
-            &waits_line("mike", "v4.0.1", "https://x/runs/9", true, &[]),
-        ));
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(5));
-        // A message of the owner after the publish and before the line of
-        // the wait counts, too.
-        let between = [lines[0].clone(), lines[1].clone()]
-            .into_iter()
-            .chain([chat(3, "mike", false, "approved")])
-            .chain(lines[2..4].iter().cloned().map(|l| ChatLine {
-                seq: l.seq + 1,
-                ..l
-            }))
-            .collect::<Vec<_>>();
-        assert_eq!(owner_said(&between, "v4.0.1", &mike), Some(3));
-    }
-
-    #[test]
-    fn owner_said_does_not_stop_at_a_line_of_riff() {
-        let lines = [
-            published(1, "v4.0.1"),
-            chat(2, "mike", false, "approved"),
-            by_riff(3, "mike", "stop. wait for me"),
-        ];
-        assert_eq!(owner_said(&lines, "v4.0.1", &mike), Some(2));
-    }
-
-    #[test]
-    fn a_line_of_the_log_reads_the_kind_riff_and_the_old_line_has_none() {
-        let line = chat(2, "mike", false, "approved");
-        let json = serde_json::to_value(&line).unwrap();
-        assert_eq!(json["riff"], false);
-        let old = serde_json::json!({
-            "seq": 2, "user": "mike", "session": false, "verified": true, "body": "approved",
-        });
-        assert_eq!(serde_json::from_value::<ChatLine>(old).unwrap(), line);
-    }
-
-    #[test]
-    fn chat_lines_mark_the_kind_riff_and_no_other_kind() {
-        let checked = |kind| riff_client::api::Checked {
-            message: riff_core::wire::Message {
-                seq: 1,
-                from: "riff://mike@pangolin".parse().unwrap(),
-                to: vec![],
-                body: "@mike riff release v4.0.1 waits for your approval".into(),
-                at_ms: 0,
-                kind,
-                sig: None,
-                payload: None,
-            },
-            verified: true,
-        };
-        use riff_core::wire::Kind;
-        let marks: Vec<bool> = [Kind::Message, Kind::Note, Kind::Other, Kind::Riff]
-            .into_iter()
-            .map(|kind| chat_lines(vec![checked(kind)])[0].riff)
-            .collect();
-        assert_eq!(marks, [false, false, false, true]);
-    }
-
-    /// A server of the release before refuses the kind `riff`: the line
-    /// goes with the kind `message` and the mark (01M5TQ0DX4M2EJJGE7QA8DZVYS).
-    #[test]
-    fn chat_lines_mark_a_message_with_the_mark_of_riff() {
-        let checked = |body: String| riff_client::api::Checked {
-            message: riff_core::wire::Message {
-                seq: 1,
-                from: "riff://mike@pangolin".parse().unwrap(),
-                to: vec![],
-                body,
-                at_ms: 0,
-                kind: riff_core::wire::Kind::Message,
-                sig: None,
-                payload: None,
-            },
-            verified: true,
-        };
-        let cut = cut_line("mike", "v4.0.1");
-        let marked = format!("{}{cut}", crate::chat::BY_RIFF);
-        let lines = chat_lines(vec![checked(cut.clone()), checked(marked)]);
-        assert_eq!([lines[0].riff, lines[1].riff], [false, true]);
-        // The cut line says "deploy" and names the version: as the word
-        // of the owner it would approve. With the mark, it does not.
-        let said = |line: &ChatLine| {
-            let published = published(0, "v4.0.1");
-            owner_said(&[published, line.clone()], "v4.0.1", &mike)
-        };
-        assert_eq!([said(&lines[0]), said(&lines[1])], [Some(1), None]);
-    }
-
-    #[test]
-    fn owner_said_stops_at_a_stop_after_the_approval() {
-        let start = waits(1, "v4.0.1");
-        let said = chat(2, "mike", false, "approved");
-        for body in ["stop", "wait for me"] {
-            let lines = [start.clone(), said.clone(), chat(3, "mike", false, body)];
-            assert_eq!(owner_said(&lines, "v4.0.1", &mike), None, "{body}");
-        }
-        let again = [
-            start.clone(),
-            said.clone(),
-            chat(3, "mike", false, "stop"),
-            chat(4, "mike", false, "approved"),
-        ];
-        assert_eq!(owner_said(&again, "v4.0.1", &mike), Some(4));
-        let member = [start, said, chat(3, "bob", false, "stop")];
-        assert_eq!(owner_said(&member, "v4.0.1", &mike), Some(2));
     }
 }

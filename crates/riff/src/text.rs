@@ -2244,6 +2244,29 @@ pub struct LeadOnly {
 pub const NO_RELEASE: &str =
     "this repository has no release cycle of riff: riff.toml has no [release]";
 
+/// The error of `riff release publish` when GitHub refused the push of
+/// the tag `tag` (01M6WZ40VYDBBTJBTQEBY2984P): the ruleset `releases`
+/// lets only the admin role of the repository and the lead App of the
+/// riff push it (01M6WZ40PZNBHW2BZHMQX80WJ8). The error of git follows.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::tag_refused("v3.3.0"),
+///     "riff release publish: GitHub refused the push of the tag v3.3.0. The ruleset releases \
+///      lets only the admin role of the repository and the lead App of the riff push a tag v*. \
+///      riff deleted the tag on this machine. next: the lead runs riff release publish v3.3.0 in \
+///      its container, or an admin of the repository runs it in a terminal. The error of git:"
+/// );
+/// ```
+pub fn tag_refused(tag: &str) -> String {
+    format!(
+        "riff release publish: GitHub refused the push of the tag {tag}. The ruleset releases lets \
+         only the admin role of the repository and the lead App of the riff push a tag v*. riff \
+         deleted the tag on this machine. next: the lead runs riff release publish {tag} in its \
+         container, or an admin of the repository runs it in a terminal. The error of git:"
+    )
+}
+
 /// The refusal of the command `riff release COMMAND` for `refusal`
 /// (01M58B0JSQMWNCMSNX19536XT8, 01M58KMMF9WMH39ZMD0MKGRVZB), with its
 /// line `next:` (01M58KMKWRKSV1DR42FRH2K43X).
@@ -2255,6 +2278,12 @@ pub const NO_RELEASE: &str =
 ///     riff::text::release_refused("check", Refusal::Worker),
 ///     "riff: a worker never runs riff release check. riff release check changed nothing. \
 ///      next: the lead runs riff release check"
+/// );
+/// assert_eq!(
+///     riff::text::release_refused("approve", Refusal::Agent),
+///     "riff: only a person runs riff release approve, never a session, also not the lead. \
+///      riff release approve changed nothing. next: a person runs riff release approve in a \
+///      plain terminal, outside Claude Code"
 /// );
 /// ```
 pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String {
@@ -2294,16 +2323,11 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
             "riff whoami".to_owned(),
         ),
         Refusal::Agent => (
-            format!("riff: a session never runs {step}. {step} changed nothing."),
-            format!("a person runs {step} in a plain terminal, outside Claude Code"),
-        ),
-        Refusal::OwnerSilent => (
             format!(
-                "riff: riff chat has no verified message of the owner, after the line that the deploy \
-                 waits for the approval, that says approve or deploy and names the version. \
-                 {step} changed nothing."
+                "riff: only a person runs {step}, never a session, also not the lead. {step} \
+                 changed nothing."
             ),
-            "ask the owner to say approve and the version in riff chat".to_owned(),
+            format!("a person runs {step} in a plain terminal, outside Claude Code"),
         ),
     };
     format!("{why} next: {next}")
@@ -6427,10 +6451,6 @@ pub fn daemon_other_answer(fault: &str, ours: &Build, theirs: Option<&str>) -> S
         ),
     }
 }
-
-/// A session that is not the lead asks the daemon to pause the riff.
-pub const DAEMON_PAUSE_ONLY_LEAD: &str =
-    "Only the lead can pause the riff through the riff daemon.";
 
 /// The note to the lead before the daemon starts again on a new riff
 /// (01M5SNV7H3739PXW73H14XM4B8).

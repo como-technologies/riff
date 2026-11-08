@@ -427,20 +427,40 @@ fn the_help_of_blocked_says_that_a_prompt_ends_only_the_block_of_the_lead() {
     assert!(book.contains("Give the lead a prompt"), "{book}");
 }
 
+/// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: only a person approves a deploy. The help
+/// of `riff release approve` says so, and it names no approval of the
+/// lead.
 #[test]
 fn release_approve_help_says_who_may_approve() {
     let help = riff(&["release", "approve", "--help"]);
+    let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
     for words in [
-        "A person in a plain terminal may approve",
-        "The lead of the owner or of an admin may approve too",
-        "verified message",
-        "says approve or deploy and names the version",
-        "A worker and each other agent session may not",
+        "Only a person in a plain terminal approves",
+        "It refuses each agent session: a worker, a container session, and the lead, also \
+         when the owner said approve in riff chat",
     ] {
-        let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(flat.contains(words), "{words:?} missing in {help}");
     }
-    assert!(!help.contains("it refuses in each agent"), "{help}");
+    for words in ["may approve too", "verified message", "asks no yes or no"] {
+        assert!(!flat.contains(words), "{words:?} in {help}");
+    }
+}
+
+/// 01M6WZ40VYDBBTJBTQEBY2984P: the help of `riff release publish` says
+/// that the ruleset `releases` decides the push of the tag, and asks for
+/// no `gh` of an admin.
+#[test]
+fn release_publish_help_says_that_the_ruleset_decides_the_tag() {
+    let help = riff(&["release", "publish", "--help"]);
+    let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains(
+            "The ruleset releases of GitHub decides the push of the tag: it lets an admin of \
+             the repository and the lead App push it, so the lead pushes it from its container."
+        ),
+        "{help}"
+    );
+    assert!(!flat.contains("with a gh of an admin"), "{help}");
 }
 
 /// 01M5SMPX8NM75P8E38DGQ17W7B: the release gate of `riff wave end`

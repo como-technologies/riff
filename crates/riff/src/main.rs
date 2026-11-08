@@ -1038,9 +1038,10 @@ enum ReleaseCommand {
     /// Tag the release, make the GitHub release, and tell the owner
     ///
     /// Only the owner or an admin of the riff in a terminal, or the lead
-    /// of one, with a gh of an admin of the repository. A riff with no
-    /// sign-in has no roles. It refuses in a worker and in a container
-    /// session.
+    /// of one. A riff with no sign-in has no roles. It refuses in a worker
+    /// and in a container session. The ruleset releases of GitHub decides
+    /// the push of the tag: it lets an admin of the repository and the
+    /// lead App push it, so the lead pushes it from its container.
     /// It checks first: the pull request "Release vX.Y.Z" with the label
     /// release merged with riff/verify passed, its merge commit is on
     /// origin/main, a commit from it to origin/main passed the
@@ -1061,16 +1062,12 @@ enum ReleaseCommand {
     Status,
     /// Approve the deploy of a release to production
     ///
-    /// A person in a plain terminal may approve. The lead of the owner or
-    /// of an admin may approve too, when riff chat has a verified message
-    /// of the owner or of an admin, after the publish or after the line
-    /// that the deploy waits for the approval, that says approve or
-    /// deploy and names the version. Else it refuses. A worker and each
-    /// other agent session may not. It finds the CI run of the tag
-    /// that waits for the environment production, shows the tag, the
-    /// commit and the run, and a person answers yes or no. On yes, it
-    /// pauses the whole riff, which tells each other lead, then approves.
-    /// The lead asks no yes or no.
+    /// Only a person in a plain terminal approves. It refuses each agent
+    /// session: a worker, a container session, and the lead, also when
+    /// the owner said approve in riff chat. It finds the CI run of the
+    /// tag that waits for the environment production, shows the tag, the
+    /// commit and the run, and asks yes or no. On yes, it pauses the
+    /// whole riff, which tells each other lead, then approves.
     ///
     /// It refuses while a lead holds the version (riff release hold).
     /// A person in a plain terminal passes --over-holds to approve all
@@ -3469,72 +3466,24 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             print!("{}", cycle::render_status(&status));
         }
         ReleaseCommand::Approve { tag, over_holds } => {
+            // Only a person in a terminal approves: never a session, also
+            // not the lead, and riff reads no word of the owner in riff
+            // chat (01M6WZ40SFVZ6CRQ1H4Z27CWP4). riff asks riff-server for
+            // the role only of a person.
             let first = release_caller(server, false).await;
-            let caller = if first.person_step().is_some() && !first.worker {
-                release_caller(server, true).await
-            } else {
-                first
+            let caller = match first.person_step() {
+                None => release_caller(server, true).await,
+                Some(_) => first,
             };
-            if caller.person_step().is_some() {
-                // Only the lead of the owner goes on, and only with the
-                // word of the owner in riff chat (01M594XQJMXAXY3JXP66Y8EVQ7).
-                match caller.lead_step() {
-                    None => {}
-                    Some(why @ (cycle::Refusal::Member | cycle::Refusal::RoleUnknown)) => {
-                        refuse("approve", why)
-                    }
-                    Some(_) => refuse("approve", cycle::Refusal::Agent),
-                }
-                if *over_holds {
-                    refuse("approve --over-holds", cycle::Refusal::Agent);
-                }
-                let roster = reach.roster().await?;
-                let me = roster.user.clone();
-                let owner_or_admin = |user: &str| match &roster.owner {
-                    riff_core::wire::RiffOwner::NoSignIn => user == me,
-                    owner => {
-                        owner.is(user)
-                            || roster.people.iter().any(|p| {
-                                p.user == user && p.role == riff_core::wire::PersonRole::Admin
-                            })
-                    }
-                };
-                let lines = reach.chat_read().await?;
-                let tag = cycle::tag(cycle::tag_version(tag)?);
-                let Some(seq) = cycle::owner_said(&lines, &tag, &owner_or_admin) else {
-                    refuse("approve", cycle::Refusal::OwnerSilent);
-                };
-                let forge = forge()?;
-                let Some(run) = cycle::waiting_run(&forge, &tag)? else {
-                    println!(
-                        "No CI run of {tag} waits for the environment production. riff changed nothing."
-                    );
-                    return Ok(());
-                };
-                let holds = holds_on(reach, &tag).await?;
-                if !holds.is_empty() {
-                    eprintln!("{}", text::release_held(&tag, &holds));
-                    std::process::exit(1);
-                }
-                println!("{}", reach.pause_riff().await?);
-                cycle::approve_run_said(&forge, &run, seq).with_context(|| {
-                    format!(
-                        "riff release approve: the approval of {} failed, and the riff stays \
-                         paused. next: riff release approve {} again, or riff resume --riff",
-                        run.tag, run.tag
-                    )
-                })?;
-                println!(
-                    "Approved with message {seq} of the owner: the deploy of {} runs: {}",
-                    run.tag, run.url
+            if let Some(why) = caller.person_step() {
+                refuse(
+                    if *over_holds {
+                        "approve --over-holds"
+                    } else {
+                        "approve"
+                    },
+                    why,
                 );
-                watch_started(reach, &here, approved(&run)).await;
-                tell_other_leads(reach, &here, riff::hold::Step::Approved, &run.tag).await;
-                println!(
-                    "next: the lead runs riff release check {} after the deploy",
-                    run.tag
-                );
-                return Ok(());
             }
             let forge = forge()?;
             let answer = &mut std::io::stdin().lock();
