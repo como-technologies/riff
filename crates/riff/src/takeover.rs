@@ -10,8 +10,9 @@
 //! (01M51KJ1R9K7A7RW8T8XH8VW43). MODEL is the model of the session: the
 //! daemon keeps it in its record, and says it with the session ID
 //! (01M6VD1NSHTJQGR31VZ4689S8J). With `--at-end`, it waits for the end
-//! of the turn. When that `claude` ends, the worker goes on with its
-//! item.
+//! of the turn. When that `claude` ends, riff writes the reset of the
+//! modes of the terminal ([`crate::runtime::reset_terminal`],
+//! 01M6XVBRQMBMK68K8GCDRZ5GJ5), and the worker goes on with its item.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -23,6 +24,7 @@
 //!     D-->>P: held: the session ID and the model
 //!     P->>C: podman exec -it NAME riff relay --terminal -- claude --resume ID --model MODEL
 //!     Note over P,C: the person works, then types /exit
+//!     Note over P: the reset of the modes of the terminal
 //!     P->>D: go on
 //!     D->>C: go on: claude -p --resume ID, with one new input
 //!     D-->>P: done
@@ -35,6 +37,7 @@
 //! terminal, the daemon gives the session back at once: the person runs
 //! `riff takeover NAME` again only when the session still holds.
 
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -78,15 +81,18 @@ pub fn command(session: &str, model: Option<&str>) -> Vec<String> {
 
 /// Takes over the session in the container `name` of the daemon in the
 /// folder `dir`, with the terminal of `runtime`. It interrupts the turn
-/// of the session, or with `at_end` waits for its end. It gives `show`
-/// each line for the person. It gives the exit code: 0 when the session
-/// goes on after the takeover, 1 when it ended before.
+/// of the session, or with `at_end` waits for its end. `out` is the
+/// terminal of this process: it gets each line for the person. After
+/// the terminal of the takeover, also a failed one, it gets the reset of
+/// the modes of the terminal ([`crate::runtime::reset_terminal`],
+/// 01M6XVBRQMBMK68K8GCDRZ5GJ5). It gives the exit code: 0 when the
+/// session goes on after the takeover, 1 when it ended before.
 pub async fn takeover(
     dir: &Path,
     runtime: &impl Runtime,
     name: &str,
     at_end: bool,
-    mut show: impl FnMut(&str),
+    out: &mut (impl Write + Send),
 ) -> Result<i32> {
     let mut client = daemon::Client::connect(dir).await?;
     client
@@ -98,22 +104,25 @@ pub async fn takeover(
     let mut back = false;
     loop {
         match client.next().await? {
-            Some(Say::Line { text }) => show(&text),
+            Some(Say::Line { text }) => writeln!(out, "{text}")?,
             Some(Say::Held { session, model }) if !back => {
-                show(&text::takeover_held(name));
+                writeln!(out, "{}", text::takeover_held(name))?;
+                out.flush()?;
                 let exit = runtime
                     .exec(name, &command(&session, model.as_deref()))
                     .await;
+                let reset = crate::runtime::reset_terminal(out);
                 back = true;
                 client.go_on().await?;
                 exit?;
+                reset?;
             }
             Some(Say::Done) => {
-                show(&text::takeover_back(name));
+                writeln!(out, "{}", text::takeover_back(name))?;
                 return Ok(0);
             }
             Some(Say::Ended(_)) => {
-                show(&text::takeover_session_ended(name));
+                writeln!(out, "{}", text::takeover_session_ended(name))?;
                 return Ok(1);
             }
             Some(Say::Failed { error }) => bail!("{error}"),
@@ -133,9 +142,7 @@ pub async fn here(name: &str, at_end: bool) -> Result<i32> {
             &crate::podman::Podman,
             name,
             at_end,
-            |line| {
-                println!("{line}");
-            },
+            &mut std::io::stdout(),
         )
         .await
     }

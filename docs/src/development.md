@@ -1761,6 +1761,10 @@ another host, add `--host thelio`.
   that Claude folder. `claude` adds no attribution line, so the
   trailers end each commit and each pull request body. riff does not
   read your own Claude settings.
+- The setting `"tui": "default"` in the same `settings.json`. `claude`
+  draws with its classic renderer, and takes no mouse. So you select
+  text in the terminal of a takeover or of the lead as in a plain
+  terminal. A `tui` that is there stays.
 - The permission rules of the steps of a session in the same
   `settings.json`, for example `Bash(gh issue view *)` and
   `Bash(gh pr create *)`. So the auto mode check does not refuse a step
@@ -4053,6 +4057,14 @@ When you are done, type `/exit`. The session goes on with its item:
 riff starts `claude -p` again with `--resume`, and tells it that a
 person used the session. While you have the session, the quiet limit
 of the daemon does not stop it.
+
+In the terminal of the takeover, select text with the mouse, then copy
+and paste, as in a plain terminal: `claude` takes no mouse there. When
+a program in the container takes the mouse, hold Shift when you use
+the mouse. When `claude` ends, riff turns off each mode that a program
+in the container can leave on in your terminal, for example the mouse
+reports. So your terminal is whole again. The same holds after each
+attach to the lead.
 
 riff cannot stop a turn after the result of the session (the state
 `ends`), or of a session with an old relay. Then

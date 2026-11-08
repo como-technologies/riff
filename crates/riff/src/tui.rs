@@ -2330,7 +2330,13 @@ async fn attach(name: &str) -> Result<crate::lead::Left> {
     #[cfg(target_os = "linux")]
     {
         let folder = crate::lead::folder_of_name(&crate::run::data_dir()?, name);
-        crate::lead::attach(&crate::podman::Podman, name, &folder).await
+        crate::lead::attach(
+            &crate::podman::Podman,
+            name,
+            &folder,
+            &mut std::io::stdout(),
+        )
+        .await
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -2346,9 +2352,13 @@ async fn take_over(dir: Option<&std::path::Path>, name: &str) -> Result<i32> {
     let dir = dir.ok_or_else(|| anyhow::anyhow!(text::NO_DAEMON_HERE))?;
     #[cfg(target_os = "linux")]
     {
-        crate::takeover::takeover(dir, &crate::podman::Podman, name, false, |line| {
-            println!("{line}");
-        })
+        crate::takeover::takeover(
+            dir,
+            &crate::podman::Podman,
+            name,
+            false,
+            &mut std::io::stdout(),
+        )
         .await
     }
     #[cfg(not(target_os = "linux"))]

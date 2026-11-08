@@ -599,8 +599,9 @@ pub fn sessions_dir() -> Result<PathBuf> {
 /// It has the auto mode settings of `auto`: no `/auto-mode-setup`, and
 /// the places of riff work ([`crate::permissions::auto_mode`],
 /// 01M516HEX3GVTN9K2QS12A4PG3). It has the hooks `PermissionDenied`,
-/// `UserPromptSubmit` and `Stop` ([`session_hooks`]). It is a setting of
-/// riff for its sessions, not a copy of a setting of the person.
+/// `UserPromptSubmit` and `Stop` ([`session_hooks`]), and the renderer
+/// [`TUI`] (01M6XVBRT2T838TX53SSXR6HRH). It is a setting of riff for its
+/// sessions, not a copy of a setting of the person.
 ///
 /// ```
 /// use riff::permissions::{Role, Trust, auto_mode, session_rules};
@@ -608,6 +609,7 @@ pub fn sessions_dir() -> Result<PathBuf> {
 /// let auto = Trust { owner: Some("acme"), server: Some("http://h:7878"), sources: &[] };
 /// let settings = riff::run::settings(&auto, Role::Worker);
 /// assert_eq!(settings["includeCoAuthoredBy"], false);
+/// assert_eq!(settings["tui"], "default");
 /// assert_eq!(settings["hooks"], riff::run::session_hooks());
 /// let allow = settings["permissions"]["allow"].as_array().unwrap();
 /// assert!(allow.iter().any(|r| r == "Bash(gh issue view *)"));
@@ -636,6 +638,7 @@ pub fn settings(auto: &crate::permissions::Trust, role: crate::permissions::Role
         "includeCoAuthoredBy": false,
         "permissions": permissions,
         "hooks": session_hooks(),
+        "tui": TUI,
     });
     if let (Some(settings), Value::Object(auto)) = (
         settings.as_object_mut(),
@@ -763,6 +766,56 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
     Ok(true)
 }
 
+/// The renderer of `claude` in each session, the key `tui` of its
+/// settings: `default`, the classic renderer of the main screen
+/// (01M6XVBRT2T838TX53SSXR6HRH).
+///
+/// The cause of the mouse reports in the terminal of an attach: with no
+/// `tui`, `claude` can pick its fullscreen renderer by itself, for
+/// example in a new Claude folder, as for a new install. That renderer
+/// takes the alternate screen and turns on the mouse reports `?1000`,
+/// `?1002`, `?1003` and `?1006`. Then the terminal of the person does not
+/// select text, and after a detach its shell prints each move of the
+/// mouse as text. The classic renderer turns on no mouse report.
+pub const TUI: &str = "default";
+
+/// Gives the settings file `path` the key `tui` of [`TUI`] when it has
+/// no `tui`. A `tui` that is there stays: the person chose it, for
+/// example with `/tui fullscreen` in a takeover. True when it wrote the
+/// file.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("settings.json");
+/// std::fs::write(&path, r#"{"model":"opus"}"#)?;
+/// assert!(riff::run::add_tui(&path)?);
+/// assert!(!riff::run::add_tui(&path)?, "the key is there");
+/// let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+/// assert_eq!(settings["tui"], "default");
+/// assert_eq!(settings["model"], "opus");
+///
+/// // The choice of the person stays.
+/// std::fs::write(&path, r#"{"tui":"fullscreen"}"#)?;
+/// assert!(!riff::run::add_tui(&path)?);
+/// assert_eq!(std::fs::read_to_string(&path)?, r#"{"tui":"fullscreen"}"#);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn add_tui(path: &Path) -> Result<bool> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let mut settings: Value =
+        serde_json::from_str(&text).with_context(|| format!("{} is no JSON", path.display()))?;
+    let Some(root) = settings.as_object_mut() else {
+        bail!("{} is no JSON object", path.display());
+    };
+    if root.contains_key("tui") {
+        return Ok(false);
+    }
+    root.insert("tui".into(), json!(TUI));
+    std::fs::write(path, serde_json::to_string_pretty(&settings)?)
+        .with_context(|| format!("cannot write {}", path.display()))?;
+    Ok(true)
+}
+
 /// Writes the own Claude folder `dir` of a session: the lead, a session
 /// of `riff run` and a session of the daemon (01M51JACH6TQP318ZFG6NQ9GRM).
 ///
@@ -779,7 +832,9 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
 /// [`crate::permissions::session_rules`] for `role` that it lacks
 /// (01M5084K4YQCZF20XA0P2485SG, 01M6FZXZ9267YKMH97E6A2Y2EP), and the auto
 /// mode settings of `auto` that it lacks
-/// ([`crate::permissions::with_auto_mode`], 01M516HEX3GVTN9K2QS12A4PG3).
+/// ([`crate::permissions::with_auto_mode`], 01M516HEX3GVTN9K2QS12A4PG3),
+/// the hooks of riff ([`add_session_hooks`]), and the key `tui` when it
+/// has none ([`add_tui`], 01M6XVBRT2T838TX53SSXR6HRH).
 ///
 /// ```
 /// use riff::permissions::{Role, Trust};
@@ -815,6 +870,7 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
 /// assert_eq!(settings["skillOverrides"], riff::run::settings(&auto, Role::Worker)["skillOverrides"]);
 /// assert_eq!(settings["autoMode"], riff::run::settings(&auto, Role::Worker)["autoMode"]);
 /// assert_eq!(settings["hooks"], riff::run::session_hooks());
+/// assert_eq!(settings["tui"], riff::run::TUI);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn claude_folder(
@@ -859,6 +915,7 @@ pub fn claude_folder(
         crate::permissions::add(&settings_file, &crate::permissions::session_rules(role))?;
         crate::permissions::add_auto_mode(&settings_file, auto)?;
         add_session_hooks(&settings_file)?;
+        add_tui(&settings_file)?;
     } else {
         std::fs::write(
             &settings_file,
