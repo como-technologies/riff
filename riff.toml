@@ -19,15 +19,11 @@ sources = ["crates.io", "index.crates.io", "static.crates.io"]
 
 # The env and the volumes of a session come from here: riff sets none of
 # its own. See "Where the env of a session comes from" in
-# docs/src/how-it-works.md. $HOME is the home of the person. The model
-# of each session, and the build cache of riff: sccache, and the cargo
-# home. The toolchain is in the image.
+# docs/src/how-it-works.md. $HOME is the home of the person. The build
+# cache of riff: sccache, and the cargo home. The toolchain is in the
+# image. The model comes from the key model above: riff refuses
+# ANTHROPIC_MODEL here.
 [session.env]
-# Each session of riff runs on Opus (#1692): the lead, each work item and
-# each verify. A host on an older riff does not know the key model of
-# [session], and takes the model from this variable. claude --model wins
-# over it. #1696 removes it.
-ANTHROPIC_MODEL = "opus"
 CARGO_HOME = "$HOME/.cargo"
 SCCACHE_DIR = "$HOME/.cache/sccache"
 SCCACHE_CACHE_SIZE = "40G"

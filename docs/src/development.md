@@ -944,6 +944,8 @@ riff refuses a `riff.toml` that it cannot keep:
 - A variable that riff sets itself: `HOME`, `USER`, `LOGNAME`,
   `GH_TOKEN`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, and each
   name that starts with `GIT_CONFIG_` or `RIFF_`.
+- `ANTHROPIC_MODEL`: see
+  [Set the model of the sessions](#set-the-model-of-the-sessions).
 - A volume name that podman could read as a path. A name starts with a
   letter or a digit, and has letters, digits, `_`, `.` and `-`.
 - A path that is not absolute, or that has a colon or a comma.
@@ -985,11 +987,17 @@ A model is a name that `claude --model` takes: an alias, for example
 or that starts with `-`. The error names the key and the file. To check
 your working tree, run `riff image`.
 
-`ANTHROPIC_MODEL` in `[session.env]` also names a model. riff gives it
-to the session as any other variable, but `claude --model` wins over
-it. The `riff.toml` of riff has both, `model = "opus"` and
-`ANTHROPIC_MODEL = "opus"`: a host on an older riff does not know the
-key `model`, and its sessions take the model from the variable.
+`[session.env]` cannot set the model: the key `model` in `[session]` is
+its only place. riff refuses `ANTHROPIC_MODEL` in `[session.env]`. The
+error names the key and the file, and says what to write in its place:
+
+```text
+riff.toml: [session.env] ANTHROPIC_MODEL: riff sets the model itself, with claude --model. Put model = "opus" in [session]
+```
+
+To move the model, remove the line of `ANTHROPIC_MODEL` from
+`[session.env]`, and put its value in the key `model` of `[session]`, as
+above.
 
 Only the merged `riff.toml` counts, as for the image. Merge your change
 with a pull request. A new session reads the model at its start. A

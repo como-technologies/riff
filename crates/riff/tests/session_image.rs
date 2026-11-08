@@ -222,6 +222,38 @@ fn riff_image_refuses_a_tag() {
     }
 }
 
+/// 01M6W7VC9REZKE87T6YT5Z47A2: `riff image` refuses `ANTHROPIC_MODEL`
+/// in `[session.env]`, and the error names the key and the file.
+#[test]
+fn riff_image_refuses_anthropic_model_in_the_env() {
+    let image = format!("ghcr.io/o/i@sha256:{}", "ab".repeat(32));
+    let root = repository(Some(&format!(
+        "[session]\nimage = \"{image}\"\n\n[session.env]\nANTHROPIC_MODEL = \"sonnet\"\n"
+    )));
+    let out = riff_image(root.path());
+    assert!(!out.status.success(), "{out:?}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+    let error = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        error.contains(&format!(
+            "{FILE}: [session.env] ANTHROPIC_MODEL: riff sets the model"
+        )),
+        "{error}"
+    );
+    assert!(
+        error.contains("Put model = \"sonnet\" in [session]"),
+        "{error}"
+    );
+
+    fs::write(
+        root.path().join(FILE),
+        format!("[session]\nimage = \"{image}\"\nmodel = \"sonnet\"\n"),
+    )
+    .unwrap();
+    let out = riff_image(root.path());
+    assert!(out.status.success(), "{out:?}");
+}
+
 #[test]
 fn riff_image_names_a_missing_config() {
     let root = repository(None);
