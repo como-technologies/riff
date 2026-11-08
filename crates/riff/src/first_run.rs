@@ -82,10 +82,13 @@
 //! | the first wave | the open milestones | one is a wave |
 //! | the checks of a pull request | the required checks and the check runs of the latest pull requests | the full check can end |
 //! | the guard | `.github/workflows/riff-guard.yml` on the default branch, and the bot of the session App from riff-server ([`crate::guard::session_bot`], 01M6WPV86SW4AAVA2NCBQNYXK3) | it is the guard of that bot, or the riff has no session App |
+//! | the ruleset `releases` | only with `[release]` in `riff.toml` of the default branch: the ruleset of the tags `v*`, and the lead App from riff-server ([`crate::repo_setup::lead_app`], 01M6WZ40YED6THKVJ2JQRXFK4N) | it has the lead App as a bypass actor, or the riff has no lead App |
 //!
 //! The first five checks of the repository have a step that `riff init`
 //! can do. So has the check of the guard when riff-server gives the bot:
-//! the pull request of `riff.toml` adds the guard. The check of the session image has the step of `riff.toml` when
+//! the pull request of `riff.toml` adds the guard. So has the check of
+//! the ruleset `releases` when riff-server gives the lead App.
+//! The check of the session image has the step of `riff.toml` when
 //! the default branch has none. The check of a pull request has the step of
 //! the ruleset when no pull request ran a check yet: else its fix is the
 //! work of the person. `riff init` reads no file of rules for agents, such
@@ -103,11 +106,12 @@
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
 //!
-//! The last seven checks run only in a folder whose remote `origin` is on
+//! The checks of the repository run only in a folder whose remote `origin` is on
 //! GitHub, with the `gh` of the machine. They read the repository and
 //! change nothing, also without `--check`; only the steps of the setup
 //! change it. Only there `riff init` asks riff-server for the bot of the
-//! session App: a riff with no sign-in has no session App. When `gh` cannot read the
+//! session App and for the lead App: a riff with no sign-in has neither.
+//! When `gh` cannot read the
 //! repository, one check fails and its fix is `gh auth login`
 //! ([`crate::repo_setup`]).
 //!
@@ -119,11 +123,13 @@
 //!
 //! A session container, for example a lead, runs no podman: the host
 //! runs the containers. When `RIFF_SOCKET` is set ([`Facts::container`]),
-//! `riff init` and `riff init --check` skip the first five checks, print
-//! the line [`text::INIT_MACHINE_SKIPPED`] in their place, and run the
-//! other checks. `riff init` then does the steps of the repository, and
-//! stops after the checks: the host has the daemon and the session image
-//! (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
+//! `riff init` skips the first five checks, prints the line
+//! [`text::INIT_MACHINE_SKIPPED`] in their place, and runs the other
+//! checks. It only checks there, also with `--yes`: it prints the line
+//! [`text::INIT_STEPS_SKIPPED`], asks no question, does no step of the
+//! repository, and stops after the checks. A person does the steps in a
+//! terminal, and the host has the daemon and the session image
+//! (01M5SMJMR5KS1Z1Z7CEPH9JVBB, 01M6WZ410X4RPG1KMPEBVEP2DF).
 //!
 //! ```mermaid
 //! flowchart LR
@@ -131,7 +137,7 @@
 //!     S -- "no: a host" --> M["the checks of the machine"]
 //!     S -- "yes: a session<br/>container" --> K["skip, and say so"]
 //!     M --> R["the checks of the repository"]
-//!     K --> R
+//!     K --> C["the checks of the repository,<br/>no step: a person runs<br/>riff init in a terminal"]
 //! ```
 //!
 //! ```
@@ -487,10 +493,15 @@ fn podman_version() -> Result<String, String> {
 
 impl Facts {
     /// The facts of this machine, with the repository of the folder
-    /// `dir` and the bot `bot` of the session App of the riff
-    /// ([`crate::guard::session_bot`]).
-    pub fn here(dir: &Path, bot: Result<Option<String>, String>) -> Facts {
-        let github = crate::repo_setup::here(dir, bot);
+    /// `dir`, the bot `bot` of the session App of the riff
+    /// ([`crate::guard::session_bot`]) and its lead App `lead`
+    /// ([`crate::repo_setup::lead_app`]).
+    pub fn here(
+        dir: &Path,
+        bot: Result<Option<String>, String>,
+        lead: Result<Option<crate::repo_setup::LeadApp>, String>,
+    ) -> Facts {
+        let github = crate::repo_setup::here(dir, bot, lead);
         let no_done_when = match &github {
             Some(Ok(_)) => crate::repo_setup::no_done_when_here(dir),
             _ => None,
@@ -690,6 +701,8 @@ impl Check {
     ///     ci: vec!["lint".into()],
     ///     guard: None,
     ///     bot: Ok(None),
+    ///     lead: Ok(None),
+    ///     releases: None,
     /// };
     /// let lines: Vec<String> = checks(&github)
     ///     .iter()
@@ -917,8 +930,9 @@ pub fn ask(
 /// [`Question::Setup`] in [`Mode::Ask`], and with no question in
 /// [`Mode::Yes`] (01M5R1672NF56P15VD0JEX51K4). It prints the list of the
 /// checks again after the steps, and the end of a failed run names each
-/// failed check with its fix. With [`Mode::Check`], it stops after the
-/// checks. When no daemon answers, it installs `unit` with
+/// failed check with its fix. With [`Mode::Check`], and in a session
+/// container with each mode, it stops after the checks
+/// (01M6WZ410X4RPG1KMPEBVEP2DF). When no daemon answers, it installs `unit` with
 /// `manager`, and waits up to `wait` for the daemon.
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -932,9 +946,17 @@ pub async fn run(
     forge: &Forge,
 ) -> Result<i32> {
     println!("{}", text::INIT_CHECKS);
-    if facts.container {
-        println!("  {}", text::INIT_MACHINE_SKIPPED);
-    }
+    // In a session container, riff init only checks, also with --yes: a
+    // person does the steps of the repository in a terminal
+    // (01M6WZ410X4RPG1KMPEBVEP2DF).
+    let mode = match facts.container {
+        true => {
+            println!("  {}", text::INIT_MACHINE_SKIPPED);
+            println!("  {}", text::INIT_STEPS_SKIPPED);
+            Mode::Check
+        }
+        false => mode,
+    };
     let mut list = checks(facts);
     // A step fixes a failed check only when riff can do the step now
     // (01M5RGG9KJXCKH8C94145WS8SM).
@@ -991,12 +1013,12 @@ pub async fn run(
         println!("{}", text::init_failed(&failed));
         return Ok(1);
     }
-    if mode == Mode::Check {
-        println!("{}", text::INIT_CHECKED);
-        return Ok(0);
-    }
     if facts.container {
         println!("{}", text::INIT_CONTAINER_DONE);
+        return Ok(0);
+    }
+    if mode == Mode::Check {
+        println!("{}", text::INIT_CHECKED);
         return Ok(0);
     }
     let Ok(image) = &facts.image else {
@@ -1141,8 +1163,9 @@ pub fn pull(clone: &Path, branch: &str) -> Result<(), String> {
 /// (`riff init --image`, 01M5SNTPEP41NMSP3SEKR7KVB0). In a folder of a
 /// repository on GitHub, it asks the riff-server `server` for the bot of
 /// the session App, for the check of the guard
-/// (01M6WPV86SW4AAVA2NCBQNYXK3), and for the GitHub Apps of riff on the
-/// repository (01M6WPMWSMQABE97YCMS5Z3M1P).
+/// (01M6WPV86SW4AAVA2NCBQNYXK3), for the lead App, for the check of the
+/// ruleset `releases` (01M6WZ40YED6THKVJ2JQRXFK4N), and for the GitHub
+/// Apps of riff on the repository (01M6WPMWSMQABE97YCMS5Z3M1P).
 pub async fn init(mode: Mode, image: Option<session_image::Image>, server: &str) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
@@ -1150,14 +1173,23 @@ pub async fn init(mode: Mode, image: Option<session_image::Image>, server: &str)
         use std::io::IsTerminal;
         let here = std::env::current_dir().context("cannot read the current folder")?;
         let origin = crate::identity::github_origin(&here);
-        let bot = match origin {
+        let (bot, lead) = match origin {
             Some(_) => match riff_client::api::Api::new(server).signed_in(None) {
-                Ok(api) => crate::guard::session_bot(&api).await,
-                Err(e) => Err(text::guard_unasked(server, &format!("{e:#}"))),
+                Ok(api) => (
+                    crate::guard::session_bot(&api).await,
+                    crate::repo_setup::lead_app(&api).await,
+                ),
+                Err(e) => {
+                    let why = format!("{e:#}");
+                    (
+                        Err(text::guard_unasked(server, &why)),
+                        Err(text::lead_unasked(server, &why)),
+                    )
+                }
             },
-            None => Ok(None),
+            None => (Ok(None), Ok(None)),
         };
-        let mut facts = Facts::here(&here, bot);
+        let mut facts = Facts::here(&here, bot, lead);
         if let Some(repo) = origin {
             facts.apps = apps_of(server, &repo).await;
         }
@@ -1377,6 +1409,8 @@ mod tests {
             ci: vec!["Gate".into()],
             guard: None,
             bot: Ok(None),
+            lead: Ok(None),
+            releases: None,
         }
     }
 
@@ -1605,6 +1639,42 @@ mod tests {
             assert_eq!(code, 0, "{mode:?}");
             assert!(manager.0.lock().unwrap().is_empty(), "{mode:?}");
             assert!(!dir_in(root.path()).exists(), "{mode:?}");
+        }
+    }
+
+    /// 01M6WZ410X4RPG1KMPEBVEP2DF: in a session container, `riff init` and
+    /// `riff init --yes` only check: they ask nothing and change nothing on
+    /// GitHub, also for a bare repository and a person who is an admin. The
+    /// failed checks give their fix, and the run exits with 1.
+    #[tokio::test]
+    async fn a_run_in_a_session_container_only_checks_also_with_yes() {
+        for mode in [Mode::Ask, Mode::Yes] {
+            let forged = Forged::bare();
+            let root = tempfile::tempdir().unwrap();
+            let manager = Manager::default();
+            let facts = Facts {
+                container: true,
+                ..forged.facts(None)
+            };
+            let code = run(
+                &facts,
+                mode,
+                no_question,
+                &dir_in(root.path()),
+                &manager,
+                &unit(),
+                WAIT,
+                &forged.forge(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(code, 1, "{mode:?}");
+            assert!(
+                forged.changes().is_empty(),
+                "{mode:?}: {:?}",
+                forged.changes()
+            );
+            assert!(manager.0.lock().unwrap().is_empty(), "{mode:?}");
         }
     }
 
@@ -2048,7 +2118,11 @@ mod tests {
                 image: image
                     .map(str::to_owned)
                     .ok_or("no riff.toml in this clone".into()),
-                github: Some(repo_setup::read(&self.forge().gh, self.bot.clone())),
+                github: Some(repo_setup::read(
+                    &self.forge().gh,
+                    self.bot.clone(),
+                    Ok(None),
+                )),
                 ..ready()
             }
         }

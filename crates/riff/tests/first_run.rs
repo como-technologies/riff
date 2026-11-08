@@ -457,10 +457,12 @@ fn names_of<'a>(lines: &[&'a str]) -> Vec<&'a str> {
         .collect()
 }
 
-/// 01M5SMJMR5KS1Z1Z7CEPH9JVBB: `riff init --check` in a session container
-/// (`RIFF_SOCKET` is set) prints no line of podman, its init, `subuid`,
-/// `subgid` or cgroup v2, prints the line of the skip, and runs the checks
-/// of the repository. On a host, the same machine prints the five lines.
+/// 01M5SMJMR5KS1Z1Z7CEPH9JVBB, 01M6WZ410X4RPG1KMPEBVEP2DF: `riff init` in
+/// a session container (`RIFF_SOCKET` is set) prints no line of podman,
+/// its init, `subuid`, `subgid` or cgroup v2, prints the lines of the
+/// skip, and runs the checks of the repository. It only checks, also with
+/// `--yes`: it changes nothing on GitHub. On a host, the same machine
+/// prints the five lines.
 #[tokio::test]
 async fn riff_init_check_in_a_session_container_skips_the_checks_of_the_machine() {
     let machine = Machine::new();
@@ -482,30 +484,33 @@ async fn riff_init_check_in_a_session_container_skips_the_checks_of_the_machine(
     );
     assert!(!host.contains("the checks of the machine"), "{host}");
 
-    let out = machine.container_init(&machine.repo, &["--check"]).await;
-    let stdout = text(&out.stdout);
-    assert_eq!(out.status.code(), Some(1), "{stdout}");
-    assert!(
-        stdout.starts_with(
-            "riff checks this machine:\n  skip  the checks of the machine: the host runs them\n"
-        ),
-        "{stdout}"
-    );
-    for word in ["podman", "subuid", "subgid", "cgroup"] {
-        assert!(!stdout.contains(word), "{word}\nin\n{stdout}");
+    for args in [&["--check"][..], &[], &["--yes"]] {
+        let out = machine.container_init(&machine.repo, args).await;
+        let stdout = text(&out.stdout);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stdout}");
+        assert!(
+            stdout.starts_with(
+                "riff checks this machine:\n  skip  the checks of the machine: the host runs them\n  \
+                 skip  the steps of the repository: a person runs riff init in a terminal for them\n"
+            ),
+            "{stdout}"
+        );
+        for word in ["podman", "subuid", "subgid", "cgroup", "step  ", "Do them?"] {
+            assert!(!stdout.contains(word), "{word}\nin\n{stdout}");
+        }
+        assert_eq!(
+            names_of(&failed_lines(&stdout)),
+            [
+                "riff.toml on main",
+                "auto-merge and squash merge",
+                "the ruleset of main",
+                "the milestone Backlog",
+                "the first wave"
+            ],
+            "{stdout}"
+        );
+        assert!(stdout.contains("\n5 checks failed. "), "{stdout}");
     }
-    assert_eq!(
-        names_of(&failed_lines(&stdout)),
-        [
-            "riff.toml on main",
-            "auto-merge and squash merge",
-            "the ruleset of main",
-            "the milestone Backlog",
-            "the first wave"
-        ],
-        "{stdout}"
-    );
-    assert!(stdout.contains("\n5 checks failed. "), "{stdout}");
     assert!(machine.forge_changes().is_empty());
     assert_eq!(machine.read("systemctl.log"), "");
 }
@@ -534,8 +539,8 @@ async fn riff_init_in_a_session_container_installs_no_daemon() {
         assert!(!stdout.contains("fail  "), "{stdout}");
         assert!(
             stdout.ends_with(
-                "Each check passed. riff installed no daemon and pulled no image: the host has \
-                 the daemon.\n"
+                "Each check passed. riff changed nothing: the host has the daemon, and a person \
+                 does the steps of the repository in a terminal.\n"
             ),
             "{stdout}"
         );

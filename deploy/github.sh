@@ -3,6 +3,7 @@
 # (01M3JFEXG85AJK8ZE8N807EQVB). It is safe to run again.
 #
 #   deploy/github.sh [OWNER/REPO]
+#   LEAD_APP=riff-acme-lead deploy/github.sh acme/app
 #
 # - Repository settings: auto-merge on, squash merge only. The squash
 #   commit takes the title and the body of the pull request. GitHub
@@ -12,8 +13,10 @@
 #   riff/verify. No force push, no deletion. No actor can bypass it
 #   (01M3JN4QQCM0GXK9BCGXVS2YC7).
 # - The ruleset `releases` on the tags `v*`: only the repository admin
-#   role creates, moves or deletes a release tag
-#   (01M3MRMB0AJVPD952AQYD7X1RN).
+#   role and the lead App of the riff create, move or delete a release
+#   tag (01M6WZ40PZNBHW2BZHMQX80WJ8). LEAD_APP is the slug of the lead
+#   App; the default is riff-como-technologies-lead. The script reads its
+#   App ID first, and changes nothing when GitHub has no such App.
 #
 # Run it from a checkout of `main` only (01M56H9Q0757ESXMJEDM16Z7AT): an
 # older copy on another branch can remove a check.
@@ -21,6 +24,16 @@ set -euo pipefail
 
 REPO="${1:-como-technologies/riff}"
 GH="${GH:-gh}"
+LEAD_APP="${LEAD_APP:-riff-como-technologies-lead}"
+
+# The App ID of the lead App, before the first change.
+LEAD_ID=$("$GH" api "apps/$LEAD_APP" --jq .id 2>/dev/null || true)
+case "$LEAD_ID" in
+'' | *[!0-9]*)
+    echo "GitHub has no App $LEAD_APP, so the setup of $REPO changed nothing. Make the Apps with riff github create, or put the slug of the lead App in LEAD_APP." >&2
+    exit 1
+    ;;
+esac
 
 # Makes the ruleset NAME from the JSON on stdin, or updates it.
 ruleset() {
@@ -81,15 +94,17 @@ ruleset main <<'JSON'
 }
 JSON
 
-# RepositoryRole 5 is the admin role.
-ruleset releases <<'JSON'
+# RepositoryRole 5 is the admin role. An Integration is a GitHub App, by
+# its App ID. riff init makes the same ruleset (riff::repo_setup::releases).
+ruleset releases <<JSON
 {
   "name": "releases",
   "target": "tag",
   "enforcement": "active",
   "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
   "bypass_actors": [
-    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
+    { "actor_id": $LEAD_ID, "actor_type": "Integration", "bypass_mode": "always" }
   ],
   "rules": [
     { "type": "creation" },
@@ -98,4 +113,4 @@ ruleset releases <<'JSON'
   ]
 }
 JSON
-echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify on main, release tags only by an admin."
+echo "Set up $REPO: auto-merge, squash only, the checks Gate, Hygiene and riff/verify on main, release tags only by an admin and the lead App $LEAD_APP."

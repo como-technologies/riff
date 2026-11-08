@@ -377,7 +377,7 @@ fn the_how_to_starts_with_riff_init_and_lists_what_it_sets_up() {
         .expect("the table");
     let table = table.split("\n\n").next().unwrap();
     let rows: Vec<&str> = table.lines().skip(2).collect();
-    assert_eq!(rows.len(), 5, "{rows:?}");
+    assert_eq!(rows.len(), 6, "{rows:?}");
     // The order of the table is the order of the steps in the code.
     let order = [
         "allows auto-merge and squash merge",
@@ -385,6 +385,7 @@ fn the_how_to_starts_with_riff_init_and_lists_what_it_sets_up() {
         "makes the `Backlog`",
         "makes `Wave 1`",
         "ruleset `riff`",
+        "ruleset `releases`",
     ];
     for (row, word) in rows.iter().zip(order) {
         assert!(
@@ -398,6 +399,7 @@ fn the_how_to_starts_with_riff_init_and_lists_what_it_sets_up() {
         riff::repo_setup::Step::Backlog,
         riff::repo_setup::Step::Wave,
         riff::repo_setup::Step::Ruleset,
+        riff::repo_setup::Step::Releases,
     ];
     assert!(steps.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(
@@ -510,6 +512,36 @@ fn the_ruleset_of_the_how_to_is_the_ruleset_of_the_step() {
         .map(|c| c["context"].as_str().unwrap())
         .collect();
     assert_eq!(checks, [riff::pr::VERIFY_CONTEXT]);
+}
+
+/// 01M6WZ40YED6THKVJ2JQRXFK4N, 01M6WZ40PZNBHW2BZHMQX80WJ8: the how-to
+/// "Let the lead push the release tag" makes the ruleset `releases` that
+/// the step of `riff init` makes, with the App ID of the lead App from
+/// `gh api apps/SLUG`. The fix of the check names the how-to.
+#[test]
+fn the_ruleset_releases_of_the_how_to_is_the_ruleset_of_the_step() {
+    let how_to = part(PAGE, HOW_TO);
+    let step = how_to
+        .split("\n#### Let the lead push the release tag\n")
+        .nth(1)
+        .expect("the how-to");
+    let step = step.split("\n#### ").next().unwrap();
+    assert_eq!(
+        book::commands_in(step)[..2],
+        [
+            "LEAD_ID=$(gh api apps/riff-acme-lead --jq .id)",
+            "gh api -X POST repos/{owner}/{repo}/rulesets --input - <<JSON",
+        ]
+    );
+    let start = step.find("<<JSON\n").expect("the ruleset") + "<<JSON\n".len();
+    let json = &step[start..start + step[start..].find("\nJSON\n").expect("its end")];
+    let ruleset: serde_json::Value =
+        serde_json::from_str(&json.replace("$LEAD_ID", "7")).expect("the ruleset is JSON");
+    assert_eq!(ruleset, riff::repo_setup::releases(7));
+    assert!(
+        riff::text::init_fix_releases("riff-acme-lead")
+            .contains("See \"Let the lead push the release tag\" in the book")
+    );
 }
 
 /// The commands of the how-to that write `riff.toml` write a file that

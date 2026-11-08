@@ -2301,6 +2301,29 @@ pub struct LeadOnly {
 pub const NO_RELEASE: &str =
     "this repository has no release cycle of riff: riff.toml has no [release]";
 
+/// The error of `riff release publish` when GitHub refused the push of
+/// the tag `tag` (01M6WZ40VYDBBTJBTQEBY2984P): the ruleset `releases`
+/// lets only the admin role of the repository and the lead App of the
+/// riff push it (01M6WZ40PZNBHW2BZHMQX80WJ8). The error of git follows.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::tag_refused("v3.3.0"),
+///     "riff release publish: GitHub refused the push of the tag v3.3.0. The ruleset releases \
+///      lets only the admin role of the repository and the lead App of the riff push a tag v*. \
+///      riff deleted the tag on this machine. next: the lead runs riff release publish v3.3.0 in \
+///      its container, or an admin of the repository runs it in a terminal. The error of git:"
+/// );
+/// ```
+pub fn tag_refused(tag: &str) -> String {
+    format!(
+        "riff release publish: GitHub refused the push of the tag {tag}. The ruleset releases lets \
+         only the admin role of the repository and the lead App of the riff push a tag v*. riff \
+         deleted the tag on this machine. next: the lead runs riff release publish {tag} in its \
+         container, or an admin of the repository runs it in a terminal. The error of git:"
+    )
+}
+
 /// The refusal of the command `riff release COMMAND` for `refusal`
 /// (01M58B0JSQMWNCMSNX19536XT8, 01M58KMMF9WMH39ZMD0MKGRVZB), with its
 /// line `next:` (01M58KMKWRKSV1DR42FRH2K43X).
@@ -2312,6 +2335,12 @@ pub const NO_RELEASE: &str =
 ///     riff::text::release_refused("check", Refusal::Worker),
 ///     "riff: a worker never runs riff release check. riff release check changed nothing. \
 ///      next: the lead runs riff release check"
+/// );
+/// assert_eq!(
+///     riff::text::release_refused("approve", Refusal::Agent),
+///     "riff: only a person runs riff release approve, never a session, also not the lead. \
+///      riff release approve changed nothing. next: a person runs riff release approve in a \
+///      plain terminal, outside Claude Code"
 /// );
 /// ```
 pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String {
@@ -2351,16 +2380,11 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
             "riff whoami".to_owned(),
         ),
         Refusal::Agent => (
-            format!("riff: a session never runs {step}. {step} changed nothing."),
-            format!("a person runs {step} in a plain terminal, outside Claude Code"),
-        ),
-        Refusal::OwnerSilent => (
             format!(
-                "riff: riff chat has no verified message of the owner, after the line that the deploy \
-                 waits for the approval, that says approve or deploy and names the version. \
-                 {step} changed nothing."
+                "riff: only a person runs {step}, never a session, also not the lead. {step} \
+                 changed nothing."
             ),
-            "ask the owner to say approve and the version in riff chat".to_owned(),
+            format!("a person runs {step} in a plain terminal, outside Claude Code"),
         ),
     };
     format!("{why} next: {next}")
@@ -6503,10 +6527,6 @@ pub fn daemon_other_answer(fault: &str, ours: &Build, theirs: Option<&str>) -> S
     }
 }
 
-/// A session that is not the lead asks the daemon to pause the riff.
-pub const DAEMON_PAUSE_ONLY_LEAD: &str =
-    "Only the lead can pause the riff through the riff daemon.";
-
 /// The note to the lead before the daemon starts again on a new riff
 /// (01M5SNV7H3739PXW73H14XM4B8).
 ///
@@ -7711,6 +7731,11 @@ pub const INIT_CHECKS: &str = "riff checks this machine:";
 /// the machine: the host runs them (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
 pub const INIT_MACHINE_SKIPPED: &str = "skip  the checks of the machine: the host runs them";
 
+/// The line of `riff init` in a session container, also with `--yes`: it
+/// only checks, and a person does the steps (01M6WZ410X4RPG1KMPEBVEP2DF).
+pub const INIT_STEPS_SKIPPED: &str =
+    "skip  the steps of the repository: a person runs riff init in a terminal for them";
+
 /// The line before the second list of `riff init`, after the steps of the
 /// setup (01M5RGGD6YR36EXZEG61XCJVRY).
 pub const INIT_CHECKS_AGAIN: &str = "riff checks this machine again:";
@@ -8293,6 +8318,134 @@ pub fn guard_bad_bot(bot: &str) -> String {
     )
 }
 
+/// The name of the check of the ruleset of the release tags
+/// (01M6WZ40YED6THKVJ2JQRXFK4N).
+pub const INIT_RELEASES: &str = "the ruleset releases";
+
+/// The riff has no lead App: no lead pushes a tag with a token of an App.
+pub const INIT_RELEASES_NO_APP: &str =
+    "the riff has no lead App, so the ruleset releases needs no bypass of it";
+
+/// The ruleset `releases` of `repo` lets the lead App `slug` push a tag.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_releases_on("o/r", "riff-o-lead"),
+///     "the ruleset releases of o/r lets riff-o-lead push a tag v*"
+/// );
+/// ```
+pub fn init_releases_on(repo: &str, slug: &str) -> String {
+    format!("the ruleset releases of {repo} lets {slug} push a tag v*")
+}
+
+/// The ruleset `releases` of `repo` has no bypass of the lead App `slug`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_releases_other("o/r", "riff-o-lead"),
+///     "the ruleset releases of o/r has no bypass of riff-o-lead, so riff release publish of \
+///      the lead cannot push a tag v*"
+/// );
+/// ```
+pub fn init_releases_other(repo: &str, slug: &str) -> String {
+    format!(
+        "the ruleset releases of {repo} has no bypass of {slug}, so riff release publish of the \
+         lead cannot push a tag v*"
+    )
+}
+
+/// The repository `repo` has the release cycle of riff, and no ruleset
+/// `releases`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_releases_off("o/r"),
+///     "o/r has the release cycle of riff and no ruleset releases, so each session can push a tag v*"
+/// );
+/// ```
+pub fn init_releases_off(repo: &str) -> String {
+    format!(
+        "{repo} has the release cycle of riff and no ruleset releases, so each session can push a \
+         tag v*"
+    )
+}
+
+/// GitHub shows the bypass actors of the ruleset `releases` of `repo`
+/// only to an admin of the repository.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_releases_unseen("o/r"),
+///     "o/r has the ruleset releases, and only an admin of o/r sees its bypass actors"
+/// );
+/// ```
+pub fn init_releases_unseen(repo: &str) -> String {
+    format!("{repo} has the ruleset releases, and only an admin of {repo} sees its bypass actors")
+}
+
+/// The repository `repo` has the ruleset `releases`, and riff cannot ask
+/// riff-server for the lead App.
+///
+/// ```
+/// assert_eq!(riff::text::init_releases_there("o/r"), "o/r has the ruleset releases");
+/// ```
+pub fn init_releases_there(repo: &str) -> String {
+    format!("{repo} has the ruleset releases")
+}
+
+/// The repository `repo` has no ruleset `releases`, and riff cannot ask
+/// riff-server for the lead App: `why`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_releases_unknown("o/r", "riff cannot ask riff-server"),
+///     "o/r has no ruleset releases, and riff cannot ask riff-server"
+/// );
+/// ```
+pub fn init_releases_unknown(repo: &str, why: &str) -> String {
+    format!("{repo} has no ruleset releases, and {why}")
+}
+
+/// The fix of the ruleset `releases` for the lead App `slug`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_fix_releases("riff-o-lead"),
+///     "make the ruleset releases on the tags v*, with the admin role and riff-o-lead as bypass \
+///      actors. See \"Let the lead push the release tag\" in the book. Then run riff init again"
+/// );
+/// ```
+pub fn init_fix_releases(slug: &str) -> String {
+    format!(
+        "make the ruleset releases on the tags v*, with the admin role and {slug} as bypass \
+         actors. See \"Let the lead push the release tag\" in the book. Then run riff init again"
+    )
+}
+
+/// What the step of the ruleset `releases` did for the lead App `slug`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_releases_done("riff-o-lead"),
+///     "only the admin role and riff-o-lead push a tag v*"
+/// );
+/// ```
+pub fn init_releases_done(slug: &str) -> String {
+    format!("only the admin role and {slug} push a tag v*")
+}
+
+/// riff cannot ask the riff-server at `server` for the lead App: `why`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::lead_unasked("http://127.0.0.1:9", "connection refused"),
+///     "riff cannot ask riff-server at http://127.0.0.1:9 for the lead App: connection refused"
+/// );
+/// ```
+pub fn lead_unasked(server: &str, why: &str) -> String {
+    format!("riff cannot ask riff-server at {server} for the lead App: {why}")
+}
+
 /// GitHub did not merge the pull request `url` of the step `riff.toml`.
 ///
 /// ```
@@ -8590,9 +8743,9 @@ pub fn init_failed(failed: &[(&str, &str)]) -> String {
 pub const INIT_CHECKED: &str = "Each check passed. riff changed nothing: --check.";
 
 /// Each check passed in a session container, and `riff init` stops there
-/// (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
-pub const INIT_CONTAINER_DONE: &str =
-    "Each check passed. riff installed no daemon and pulled no image: the host has the daemon.";
+/// (01M5SMJMR5KS1Z1Z7CEPH9JVBB, 01M6WZ410X4RPG1KMPEBVEP2DF).
+pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: the host has the daemon, and a person does the \
+     steps of the repository in a terminal.";
 
 /// A daemon answers, and `riff init` keeps it (01M4ZJN6Z1DGD43CKZ19QPN2NK).
 ///

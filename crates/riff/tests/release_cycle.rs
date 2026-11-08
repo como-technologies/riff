@@ -687,7 +687,6 @@ impl Machine {
             "'pr list --state merged --label release'*) printf '%s\n' '[{{\"number\":1140,\"title\":\"Release v3.3.0\",\"url\":\"https://github.com/como-technologies/riff/pull/1140\",\"body\":\"Refs #7\\n\\nPart of #7: the release pull request.\\n\\nLevel: minor, 3.3.0.\\n\\nIssue: #7\\nMilestone: Wave 34\\n\",\"mergeCommit\":{{\"oid\":\"{merge}\"}},\"headRefOid\":\"h1\"}}]' ;;\n\
              'api repos/{{owner}}/{{repo}}/commits/h1/status') printf '%s\n' '{{\"statuses\":[{{\"context\":\"riff/verify\",\"state\":\"success\"}}]}}' ;;\n\
              'api repos/{{owner}}/{{repo}}/commits/{merge}/status') printf '%s\n' '{real}' ;;\n\
-             'api repos/{{owner}}/{{repo}} --jq .permissions.admin') echo true ;;\n\
              'release create'*) printf '%s\n' 'https://github.com/como-technologies/riff/releases/tag/v3.3.0' ;;\n\
              'run list --workflow CI --branch v3.3.0'*) printf '%s\n' '[{{\"databaseId\":9,\"url\":\"https://github.com/como-technologies/riff/actions/runs/9\"}}]' ;;"
         )
@@ -718,6 +717,45 @@ async fn merged_release_on(server: crate::common::Signed) -> (Machine, String) {
     git(&clone, &["tag", "v9.9.9"]);
     machine.fake_gh(&machine.release_cases(&merge, true));
     (machine, merge)
+}
+
+/// 01M6WZ40VYDBBTJBTQEBY2984P: `riff release publish` asks `gh` for no
+/// role: the ruleset `releases` decides the push of the tag. When GitHub
+/// refuses the push, publish names the ruleset, the admin role and the
+/// lead App, deletes the local tag, and makes no GitHub release.
+#[tokio::test]
+async fn publish_asks_no_role_and_names_the_ruleset_when_github_refuses_the_tag() {
+    let (machine, _) = merged_release().await;
+    // The origin refuses each push, as the ruleset `releases` refuses an
+    // account that is not an admin and not the lead App.
+    isolated::write_program(
+        machine.origin().join("hooks/pre-receive"),
+        "#!/bin/sh\necho 'the ruleset releases refuses the tag' >&2\nexit 1\n",
+    );
+    let lead = [("RIFF_SESSION", "s1")];
+    machine.name_lead(&lead).await;
+    let out = machine
+        .run(&lead, &["release", "publish", "v3.3.0"], "")
+        .await;
+    assert_eq!(out.status.code(), Some(1));
+    let error = text(&out.stderr);
+    assert!(
+        error.contains(&riff::text::tag_refused("v3.3.0")),
+        "{error}"
+    );
+    assert!(
+        error.contains("the ruleset releases refuses the tag"),
+        "{error}"
+    );
+    assert_eq!(git(&machine.origin(), &["tag"]), "v3.2.0");
+    assert!(
+        !git(&machine.clone(), &["tag"])
+            .lines()
+            .any(|t| t == "v3.3.0")
+    );
+    let log = machine.log();
+    assert!(!log.contains("permissions"), "{log}");
+    assert!(!log.contains("release create"), "{log}");
 }
 
 #[tokio::test]
@@ -1894,11 +1932,6 @@ impl Machine {
             .await
             .unwrap();
     }
-
-    /// `riff release approve v3.3.0` as the lead.
-    async fn lead_approves(&self) -> Output {
-        self.run(&LEAD, &["release", "approve", "v3.3.0"], "").await
-    }
 }
 
 /// The lead with the lead mark, and the fake `gh` that knows the
@@ -1915,97 +1948,37 @@ async fn lead_with_a_waiting_run_on(server: crate::common::Signed) -> Machine {
     machine
 }
 
+/// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: only a person approves a deploy. The lead
+/// of the owner is refused, also when the owner said approve in riff chat
+/// after the line that the deploy waits, and so is each other agent
+/// session. `gh` approves nothing, and riff pauses nothing.
 #[tokio::test]
-async fn the_lead_approves_with_the_message_of_the_owner_and_the_comment_names_it() {
-    let machine = lead_with_a_waiting_run().await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-    let seq = machine.say("mike", "Yes, approve v3.3.0 please.").await;
-    let out = machine.lead_approves().await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let shown = text(&out.stdout);
-    assert!(
-        shown.contains(&format!("Approved with message {seq} of the owner")),
-        "{shown}"
-    );
-    let log = machine.log();
-    assert!(
-        log.contains(&format!(
-            r#""comment":"Release v3.3.0, approved by the owner in riff chat, message {seq}""#
-        )),
-        "{log}"
-    );
-}
-
-#[tokio::test]
-async fn the_lead_cannot_approve_without_the_message_of_the_owner() {
-    let machine = lead_with_a_waiting_run().await;
-    // The cut of the release is no start: a message after it, before the
-    // publish, does not count (01M5TKDYAFA683KNAJTGYTQD5W).
-    machine
-        .say("mike:abc1", &riff::cycle::cut_line("mike", "v3.3.0"))
-        .await;
-    machine.say("mike", "approve v3.3.0").await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-    let before = machine.log();
-    let refused = riff::text::release_refused("approve", Refusal::OwnerSilent);
-    let check = |label: &str, out: Output| {
-        assert_eq!(out.status.code(), Some(1), "{label}");
-        assert_eq!(text(&out.stderr), format!("{refused}\n"), "{label}");
-        assert_eq!(machine.log(), before, "{label}: gh ran");
-    };
-    check("before the publish", machine.lead_approves().await);
-    machine.say("mike:abc1", "approve v3.3.0").await;
-    check("a session", machine.lead_approves().await);
-    machine.say("mike", "approve v3.3.1").await;
-    check("another version", machine.lead_approves().await);
-    machine.say("mike", "do not approve v3.3.0").await;
-    check("a denial", machine.lead_approves().await);
-    machine.say("bob", "approve v3.3.0").await;
-    check("another person", machine.lead_approves().await);
-}
-
-/// 01M5TKMVB7CF0QNAWXEVGEQETJ: the line of the watch of the deploy, "waits
-/// for your approval", and its reminder come from riff as the person of
-/// the owner. They are no approval. The lines of the lead (the publish
-/// line) are no approval, too.
-#[tokio::test]
-async fn the_lead_cannot_approve_with_the_lines_of_riff_alone() {
-    let machine = lead_with_a_waiting_run().await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-    let before = machine.log();
-    let refused = riff::text::release_refused("approve", Refusal::OwnerSilent);
-    let check = |label: &str, out: Output| {
-        assert_eq!(out.status.code(), Some(1), "{label}: {}", text(&out.stdout));
-        assert_eq!(text(&out.stderr), format!("{refused}\n"), "{label}");
-        assert_eq!(machine.log(), before, "{label}: gh ran");
-    };
-    check("the publish line", machine.lead_approves().await);
-    let run = "https://github.com/como-technologies/riff/actions/runs/9";
-    let waits = riff::cycle::waits_line("mike", "v3.3.0", run, false, &[]);
-    machine.say_as_riff("mike", &waits).await;
-    check("the waits line", machine.lead_approves().await);
-    let reminder = riff::cycle::waits_line("mike", "v3.3.0", run, true, &[]);
-    machine.say_as_riff("mike", &reminder).await;
-    check("the reminder", machine.lead_approves().await);
-}
-
-#[tokio::test]
-async fn the_lead_approves_with_the_message_of_the_owner_and_not_with_the_line_of_riff_after_it() {
+async fn approve_refuses_each_agent_session_also_the_lead_with_the_word_of_the_owner() {
     let machine = lead_with_a_waiting_run().await;
     machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
     let run = "https://github.com/como-technologies/riff/actions/runs/9";
     let waits = riff::cycle::waits_line("mike", "v3.3.0", run, false, &[]);
     machine.say_as_riff("mike", &waits).await;
-    let seq = machine.say("mike", "approve v3.3.0").await;
-    let reminder = riff::cycle::waits_line("mike", "v3.3.0", run, true, &[]);
-    machine.say_as_riff("mike", &reminder).await;
-    let out = machine.lead_approves().await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    let shown = text(&out.stdout);
-    assert!(
-        shown.contains(&format!("Approved with message {seq} of the owner")),
-        "{shown}"
-    );
+    machine.say("mike", "Yes, approve v3.3.0 please.").await;
+    machine.say("mike", "approved").await;
+    let socket = machine.no_daemon();
+    let before = machine.log();
+    let refused = riff::text::release_refused("approve", Refusal::Agent);
+    for vars in [
+        &LEAD[..],
+        &[("RIFF_SESSION", "s1"), ("RIFF_WORKER", "1")],
+        &[("RIFF_SESSION", "s2")],
+        &[("RIFF_SOCKET", socket.as_str())],
+        &[("CLAUDECODE", "1")],
+    ] {
+        let out = machine
+            .run(vars, &["release", "approve", "v3.3.0"], "yes\n")
+            .await;
+        assert_eq!(out.status.code(), Some(1), "{vars:?}");
+        assert_eq!(text(&out.stderr), format!("{refused}\n"), "{vars:?}");
+        assert!(!text(&out.stdout).contains("paused"), "{vars:?}");
+    }
+    assert_eq!(machine.log(), before, "gh ran");
 }
 
 /// 01M5TKMVB7CF0QNAWXEVGEQETJ: `riff release cut` and `publish` write
@@ -2039,11 +2012,9 @@ async fn chat_of(server: &crate::common::Signed) -> Vec<riff_client::api::Checke
 
 /// 01M5TQ0DX4M2EJJGE7QA8DZVYS: after a rollback of riff-server to the
 /// release before, the server refuses the kind `riff`. The lines of riff
-/// still post, with the kind `message` and the mark, and they are no
-/// approval of the owner.
+/// still post, with the kind `message` and the mark.
 #[tokio::test]
-async fn a_server_that_refuses_the_kind_riff_still_gets_the_lines_of_riff_and_they_approve_nothing()
-{
+async fn a_server_that_refuses_the_kind_riff_still_gets_the_lines_of_riff() {
     let old = crate::common::start_signed_with(crate::common::refuse_kind_riff).await;
     let machine = lead_with_a_waiting_run_on(old).await;
     machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
@@ -2065,92 +2036,9 @@ async fn a_server_that_refuses_the_kind_riff_still_gets_the_lines_of_riff_and_th
             .find(|c| c.message.body.contains(body))
             .unwrap_or_else(|| panic!("no line with {body}"));
         assert_eq!(line.message.kind, riff_core::wire::Kind::Message, "{body}");
-        assert!(riff::chat::marked(&line.message.body), "{body}");
+        assert!(line.message.body.starts_with(riff::chat::BY_RIFF), "{body}");
     }
     assert!(read.iter().any(|c| c.message.body.ends_with(&waits)));
-
-    // The lines are no word of the owner.
-    let lines = riff::cycle::chat_lines(read);
-    assert!(lines.iter().filter(|l| l.riff).count() >= 3, "{lines:?}");
-    let may = |user: &str| user == "mike";
-    assert_eq!(riff::cycle::owner_said(&lines, "v3.3.0", &may), None);
-    let before = machine.log();
-    let out = machine.lead_approves().await;
-    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
-    assert_eq!(
-        text(&out.stderr),
-        format!(
-            "{}\n",
-            riff::text::release_refused("approve", Refusal::OwnerSilent)
-        )
-    );
-    assert_eq!(machine.log(), before, "gh ran");
-
-    // The word of the owner counts, and a later line of riff does not
-    // take it back.
-    let seq = machine.say("mike", "approve v3.3.0").await;
-    machine.say_as_riff("mike", &reminder).await;
-    let out = machine.lead_approves().await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    assert!(
-        text(&out.stdout).contains(&format!("Approved with message {seq} of the owner")),
-        "{}",
-        text(&out.stdout)
-    );
-}
-
-#[tokio::test]
-async fn approve_for_the_lead_refuses_a_worker_and_a_session_that_is_not_the_lead() {
-    let machine = lead_with_a_waiting_run().await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-    let socket = machine.no_daemon();
-    machine.say("mike", "approve v3.3.0").await;
-    let before = machine.log();
-    for vars in [
-        &[("RIFF_SESSION", "s1"), ("RIFF_WORKER", "1")][..],
-        &[("RIFF_SESSION", "s2")],
-        &[("RIFF_SOCKET", socket.as_str())],
-    ] {
-        let out = machine
-            .run(vars, &["release", "approve", "v3.3.0"], "")
-            .await;
-        assert_eq!(out.status.code(), Some(1), "{vars:?}");
-        assert_eq!(
-            text(&out.stderr),
-            format!(
-                "{}\n",
-                riff::text::release_refused("approve", Refusal::Agent)
-            )
-        );
-    }
-    assert_eq!(machine.log(), before);
-}
-
-#[tokio::test]
-async fn the_lead_approves_with_one_approved_and_with_a_version_with_no_v() {
-    for said in ["approved", "approve 3.3.0"] {
-        let machine = lead_with_a_waiting_run().await;
-        machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-        let seq = machine.say("mike", said).await;
-        let out = machine.lead_approves().await;
-        assert!(out.status.success(), "{said}: {}", text(&out.stderr));
-        assert!(
-            text(&out.stdout).contains(&format!("Approved with message {seq} of the owner")),
-            "{said}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn the_lead_stops_at_a_stop_of_the_owner_after_the_approval() {
-    let machine = lead_with_a_waiting_run().await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-    machine.say("mike", "approved").await;
-    machine.say("mike", "stop").await;
-    let before = machine.log();
-    let out = machine.lead_approves().await;
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(machine.log(), before, "gh ran");
 }
 
 /// What a fake daemon of a lead container saw: the `call` of each
@@ -2292,62 +2180,32 @@ async fn publish_in_the_lead_container_tells_the_chat_through_the_socket() {
     assert_eq!(op, serde_json::json!({"kind": "deploy", "tag": "v3.3.0"}));
 }
 
+/// 01M6WZ40SFVZ6CRQ1H4Z27CWP4: in the container of the lead of the owner,
+/// `riff release approve` refuses before each call: it reads no riff chat
+/// and pauses nothing through the socket, and `gh` approves nothing.
 #[tokio::test]
-async fn approve_in_the_lead_container_reads_and_pauses_through_the_socket() {
+async fn approve_in_the_lead_container_refuses_and_asks_the_daemon_nothing() {
     let machine = Machine::new().await;
     machine.fake_gh(WAITS);
-    let line = |seq: u64, user: &str, session: bool, body: &str| {
-        serde_json::json!({
-            "seq": seq, "user": user, "session": session, "verified": true, "body": body,
-        })
-    };
-    let chat = serde_json::json!([
-        line(
-            1,
-            "mike",
-            false,
-            "@mike riff release v3.3.0 waits for your approval: https://x/runs/9. \
-             In a terminal, run: riff release approve v3.3.0"
-        ),
-        line(2, "mike", false, "approve 3.3.0"),
-    ]);
-    let (_dir, socket, seen) = lead_daemon(move |call| match call {
-        "roster" => roster(),
-        "chat_read" => chat.clone(),
-        "release_lines" => serde_json::json!([]),
-        "pause_riff" => serde_json::json!("The riff is paused now."),
-        "watch" => serde_json::json!("new"),
-        "release_news" => serde_json::json!(0),
-        other => panic!("{other}"),
-    });
+    let (_dir, socket, seen) =
+        lead_daemon(|call| -> serde_json::Value { panic!("the server call {call}") });
     let out = machine
-        .run(&lead_vars(&socket), &["release", "approve", "v3.3.0"], "")
+        .run(
+            &lead_vars(&socket),
+            &["release", "approve", "v3.3.0"],
+            "yes\n",
+        )
         .await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
-    assert!(
-        text(&out.stdout).contains("The riff is paused now.\nApproved with message 2"),
-        "{}",
-        text(&out.stdout)
-    );
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
     assert_eq!(
-        names(&seen),
-        [
-            "roster",
-            "chat_read",
-            "release_lines",
-            "pause_riff",
-            "watch",
-            "release_news"
-        ]
+        text(&out.stderr),
+        format!(
+            "{}\n",
+            riff::text::release_refused("approve", Refusal::Agent)
+        )
     );
-    let op = seen.lock().unwrap()[4]["op"].clone();
-    assert_eq!(
-        op,
-        serde_json::json!({
-            "kind": "deploy", "tag": "v3.3.0", "stale": {"run": 9, "state": "waiting"}
-        })
-    );
-    assert!(machine.log().contains("pending_deployments"));
+    assert!(names(&seen).is_empty(), "{:?}", names(&seen));
+    assert_eq!(machine.log(), "");
 }
 
 /// The cases of `gh` for `riff release verify 1140`: an open release pull
@@ -2860,41 +2718,6 @@ async fn approve_refuses_while_a_hold_stands_and_over_holds_approves() {
         shown.contains("Approved: the deploy of v3.3.0 runs"),
         "{shown}"
     );
-    assert!(machine.log().contains("-X POST"), "{}", machine.log());
-}
-
-/// 01M5SNV7E775DRY9QY60E8JPJR: the lead of the owner refuses while a hold
-/// stands, never passes `--over-holds`, and approves when the hold ends.
-#[tokio::test]
-async fn the_lead_of_the_owner_waits_for_the_end_of_a_hold_and_never_passes_over_holds() {
-    let machine = lead_with_a_waiting_run().await;
-    machine.other_lead().await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-    machine.say("mike", "approve v3.3.0").await;
-    machine.other_holds(&[REASON]).await;
-
-    let out = machine.lead_approves().await;
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(
-        text(&out.stderr),
-        format!("{}\n", riff::text::release_held("v3.3.0", &[the_hold()]))
-    );
-    let out = machine
-        .run(&LEAD, &["release", "approve", "v3.3.0", "--over-holds"], "")
-        .await;
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(
-        text(&out.stderr),
-        format!(
-            "{}\n",
-            riff::text::release_refused("approve --over-holds", Refusal::Agent)
-        )
-    );
-    assert!(!machine.log().contains("-X POST"), "{}", machine.log());
-
-    machine.other_holds(&["--end"]).await;
-    let out = machine.lead_approves().await;
-    assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(machine.log().contains("-X POST"), "{}", machine.log());
 }
 

@@ -4718,14 +4718,30 @@ two rulesets:
 
 - `main`: a change needs a pull request and the checks `Gate`,
   `Hygiene` and `riff/verify`.
-- `releases` on the tags `v*`: only the repository admin role can
-  create, move or delete a release tag.
+- `releases` on the tags `v*`: only the repository admin role and the
+  lead App of the riff can create, move or delete a release tag. So the
+  lead pushes the tag of a release from its container, and a worker
+  cannot. See
+  [Who tags and who approves a release](how-it-works.md#who-tags-and-who-approves-a-release).
+
+It reads the App ID of the lead App first, with
+`gh api apps/riff-como-technologies-lead`. When GitHub has no such App,
+it stops before its first change: make the Apps first, see
+[Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff).
 
 To see the result:
 
 ```sh
 gh api repos/como-technologies/riff --jq '{allow_auto_merge, allow_squash_merge, allow_merge_commit, allow_rebase_merge, squash_merge_commit_title, squash_merge_commit_message, delete_branch_on_merge}'
 gh api repos/como-technologies/riff/rulesets
+```
+
+#### Name another lead App
+
+When the lead App has another slug, put it in `LEAD_APP`:
+
+```sh
+LEAD_APP=riff-acme-lead just github
 ```
 
 ### Push an urgent fix to main
@@ -6110,7 +6126,8 @@ signs in as the deploy account of the shared riff (see
 A release is a git tag `vX.Y.Z`. X.Y.Z is the version of the crates in
 `Cargo.toml`. [Versions](how-it-works.md#versions) tells you the
 level: a patch, a minor or a major. Only an admin of the repository
-can push a release tag: the ruleset `releases` makes this so (see
+and the lead App can push a release tag: the ruleset `releases` makes
+this so (see
 [Set up the repository](#set-up-the-repository)). `riff update`
 installs the release that the shared server runs, so the tag and the
 deploy make a release current.
@@ -6145,8 +6162,8 @@ flowchart TD
     E -- "wakes the lead: the pull request merged" --> F{just real-session on origin/main}
     F -- "riff release test: wakes the lead at the end of the test" --> F2{Result}
     F2 -- FAIL --> F1[Bug issue in the wave, fix merges] --> F
-    F2 -- PASS --> G[riff release publish vX.Y.Z: tag, GitHub release, chat line to the owner]
-    G -- "wakes the lead and the owner when the job Deploy waits" --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, or one \"approved\" that the owner or an admin wrote in riff chat (pauses the riff, approves production)"}}
+    F2 -- PASS --> G[riff release publish vX.Y.Z: the lead pushes the tag with the lead App, the GitHub release, chat line to the owner]
+    G -- "wakes the lead and the owner when the job Deploy waits" --> H{{"HUMAN GATE 1: riff release approve vX.Y.Z, by a person in a terminal (pauses the riff, approves production)"}}
     H -- no answer --> H1[Waits. Work goes on. The next cut refuses. Reminder in chat each 4 h]
     H1 --> H
     H -- "a lead holds: riff release hold" --> H2[approve refuses until the hold ends, or a person passes --over-holds]
@@ -6169,7 +6186,7 @@ The gates:
 |---|---|---|---|
 | Verify | a session that did not write the change | the verify of riff | the release pull request waits |
 | Real session | a session that wrote none of the items, on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
-| HUMAN GATE 1: deploy | the owner or an admin, in a terminal, or one message "approved" that the owner or an admin wrote in riff chat, after the line "waits for your approval". No line of riff counts, also that line | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
+| HUMAN GATE 1: deploy | the owner or an admin, in a terminal. No session, also not the lead: a message in riff chat approves nothing | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
 | Hold | a lead of another repository, in a critical place | `riff release hold vX.Y.Z REASON` | `approve` refuses until the lead ends the hold, or a person passes `--over-holds` |
 | HUMAN GATE 2: rollback | the owner or an admin, in a terminal | `riff release approve vPREV` | the new release keeps serving; the riff stays paused |
 | HUMAN GATE 3: skip | the owner or an admin, in a terminal | `riff release cut --skip VERSION --reason TEXT` | no skip |
@@ -6324,7 +6341,10 @@ permission rules for `cut` and `status` (see
 There is no rule for `approve`. `publish`, `check`, `retry` and
 `rollback` refuse a worker, a container session, a session that is not
 the lead, and the lead of a member. `approve` and `cut --skip` refuse
-each agent session.
+each agent session, also the lead.
+
+When the auto mode checker blocks a release command, `riff denials`
+has a record. The lead files an issue for it.
 
 #### See the state of the release
 
@@ -6351,6 +6371,7 @@ sequenceDiagram
     participant A as lead of como-technologies/riff
     participant S as riff-server
     participant B as lead of n8behavior/sens-o-matic
+    participant P as a person in a terminal
     A->>S: riff release cut 3.3.0
     S-->>B: note: the cut. next for you: nothing yet
     A->>S: riff release publish v3.3.0
@@ -6358,8 +6379,8 @@ sequenceDiagram
     Note over S,B: the job Deploy waits: the watch of the daemon posts a note
     B->>S: riff release hold v3.3.0 "I migrate a database"
     S-->>A: wake: the lead of n8behavior/sens-o-matic asks to wait
-    A->>S: riff release approve v3.3.0
-    S-->>A: refused: a hold stands
+    P->>S: riff release approve v3.3.0
+    S-->>P: refused: a hold stands
 ```
 
 | Step | The note comes from | The other leads hear |
@@ -6414,9 +6435,8 @@ passes `--over-holds`, in a plain terminal:
 riff release approve v3.3.0 --over-holds
 ```
 
-The lead of the owner never passes `--over-holds`: it waits for the end
-of the hold, or it tells the owner. A lead ends its own hold when it can
-go on:
+Only a person approves, so no session passes `--over-holds`. A lead
+ends its own hold when it can go on:
 
 ```sh
 riff release hold v3.3.0 --end
@@ -6837,19 +6857,25 @@ gh issue view ISSUE --comments
 
 Only the owner or an admin of the riff, in a terminal or by the lead,
 publishes. A riff with no sign-in has no roles: there each person and
-each lead may. `gh` and `git` must sign in as an admin of the
-repository: the ruleset `releases` lets only an admin push a release
-tag. The riff runs on:
+each lead may. The riff runs on:
 
 ```sh
 riff release publish v3.3.0
 ```
 
 The lead in a container (`riff lead start`) publishes too, with the
-same line. A work session in a container never publishes. The lead in
-a container builds the riff of main with `riff build` in its own
-folder `RIFF_CHECK`, and its riff commands know their user from
-`RIFF_USER`: the daemon sets both.
+same line: it pushes the tag with the token of the lead App. A work
+session in a container never publishes. The lead in a container builds
+the riff of main with `riff build` in its own folder `RIFF_CHECK`, and
+its riff commands know their user from `RIFF_USER`: the daemon sets
+both. `publish` writes its line in riff chat through the riff daemon of
+the host, so the container needs no `--server` and no sign-in.
+
+GitHub decides the push of the tag: the ruleset `releases` lets only
+an admin of the repository and the lead App push a tag `v*`. riff
+checks no role of `gh`. When GitHub refuses the push, riff says so,
+names the ruleset, and deletes the tag on this machine. See
+[Who tags and who approves a release](how-it-works.md#who-tags-and-who-approves-a-release).
 
 riff checks each fact first, and names the check that fails:
 
@@ -6898,13 +6924,12 @@ environment `production`. See
 
 #### Approve the deploy
 
-A person, the owner or an admin, approves the deploy in a plain
+Only a person, the owner or an admin, approves the deploy, in a plain
 terminal (HUMAN GATE 1). Exit each Claude Code session first: the
-command refuses a worker and each other agent session, also in a `!`
-command of Claude Code. The lead of the owner or of an admin may
-approve too, but only after the owner or an admin said it in riff chat:
-see [Let the lead approve when the owner said
-so](#let-the-lead-approve-when-the-owner-said-so).
+command refuses each agent session, also in a `!` command of Claude
+Code. It refuses the lead too, in its container and in a terminal,
+also when you said approve in riff chat: riff reads no approval from
+riff chat.
 
 ```sh
 riff release approve v3.3.0
@@ -7030,51 +7055,6 @@ The owner approves each deploy to the shared riff with
 `riff release approve` in a plain terminal: see
 [Approve the deploy](#approve-the-deploy). Do not approve in the GitHub
 app or on the page of the run: they do not pause the riff.
-
-#### Let the lead approve when the owner said so
-
-One message of the owner lets the lead approve the deploy. riff asks
-the owner only when the job `Deploy` waits: the daemon posts the line
-"waits for your approval" in riff chat (see [Know what wakes the
-lead](#know-what-wakes-the-lead)). The owner answers in riff chat, after
-that line or after the publish line, with one message: `approved`,
-`approve 3.3.0` or `approve v3.3.0`. The word `deploy` works too. A
-message from before the publish does not count. A message with no
-version counts for the version of the last release line of riff before
-it. With it, the lead runs `riff release approve` and `riff release
-check`, with no other question.
-
-riff reads the chat from riff-server, not from the model. The message
-must come from the owner or an admin, as a person, not as a session.
-Only a message that the person wrote counts. riff marks each line that
-it writes itself in riff chat with the kind `riff`: the line "waits for
-your approval" of the watch of the deploy, its reminder, and the lines
-of `riff release cut` and `publish`. Such a line is never an approval
-and never a `stop`, also when it names `riff release approve`. A
-riff-server of the release before refuses the kind `riff`: riff then
-posts the line with the kind `message` and the mark `[by riff] ` at the
-start, and the lead skips that line too. The
-comment of the approval names the number of the message.
-
-```sh
-riff release approve v3.3.0
-```
-
-A message with `not`, `never` or `don't` does not approve. A `stop` or a
-`wait` of the owner or of an admin after the approval stops the lead
-before the next step: say `approved` again to go on. `riff release
-approve` refuses, and `gh` does not run, when no such message exists: a
-line of riff, a message of a session, of another version, from before
-the publish, or from a member. It also refuses a worker, a work session
-in a container and a session that is not the lead.
-
-The lead runs these commands in its container. `cut` and `publish`
-write their line in riff chat, and `approve` reads the roster and the
-chat and pauses the riff, all through the riff daemon of the host. The
-container needs no `--server` and no sign-in.
-
-When the auto mode checker blocks a release command, `riff denials`
-has a record. The lead files an issue for it.
 
 #### Let only an approved job deploy
 

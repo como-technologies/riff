@@ -5,8 +5,9 @@
 //! # Design
 //!
 //! `riff init` checks seven facts of the repository of the current
-//! folder. Each fact that fails carries its fix for a person, and for
-//! six of them its [`Step`]: the code that does the fix. A person does
+//! folder, and an eighth in a repository with the release cycle of riff.
+//! Each fact that fails carries its fix for a person, and for seven of
+//! them its [`Step`]: the code that does the fix. A person does
 //! the fix, for example from the how-to "Add another repository to the
 //! riff" in the book. Or `riff init` does the steps after one question,
 //! or with `--yes` ([`setup`]). The step and the how-to make the same
@@ -21,13 +22,15 @@
 //!     O --> F["gh api repos/OWNER/REPO/contents"]
 //!     O --> P["gh api repos/OWNER/REPO/pulls<br/>and the check runs of their heads"]
 //!     O --> G["gh api .../contents/.github/workflows/riff-guard.yml"]
-//!     S0["riff-server: the bot<br/>of the session App"] --> C
-//!     R --> C["the seven checks"]
+//!     O --> T["with [release] in riff.toml:<br/>gh api .../rulesets and .../rulesets/ID"]
+//!     S0["riff-server: the bot of the session App<br/>and the lead App"] --> C
+//!     R --> C["the checks"]
 //!     B --> C
 //!     M --> C
 //!     F --> C
 //!     P --> C
 //!     G --> C
+//!     T --> C
 //!     C --> L["pass or fail lines of riff init"]
 //!     C -- "a step, one question or --yes" --> S["the steps, in order"]
 //! ```
@@ -41,6 +44,7 @@
 //! | the first wave | the open milestones | one is a wave: the lead has a wave to plan | [`Step::Wave`] |
 //! | the checks of a pull request | the required checks, and the check runs of the latest pull requests | a rule requires a check of the CI, or the ruleset that the step makes will require the checks that the pull requests ran, or the repository has no CI and [`VERIFY_CONTEXT`] is the only check (a note says so) | [`Step::Ruleset`] when no pull request ran a check yet and the default branch has no `riff.toml`: the pull request of [`Step::Config`] may run the first check. Else none |
 //! | the guard | the file [`guard::PATH`] on the default branch, and the bot of the session App from riff-server ([`Github::bot`]) | the file is the guard of that bot ([`guard::workflow`]), or the riff has no session App, or riff cannot ask riff-server and the file is there (01M6WPV86SW4AAVA2NCBQNYXK3) | [`Step::Config`] when riff knows the bot: the pull request adds the guard. Else none |
+//! | the ruleset `releases` | only with `[release]` in `riff.toml` of the default branch ([`crate::release_config`]): the ruleset [`RELEASES`] and its bypass actors ([`TagRules`]), and the lead App from riff-server ([`lead_app`]) | the ruleset has the lead App as a bypass actor, or the riff has no lead App, or GitHub does not show the bypass actors to the person (only an admin sees them), or riff cannot ask riff-server and the ruleset is there (01M6WZ40YED6THKVJ2JQRXFK4N) | [`Step::Releases`] when riff knows the lead App. Else none |
 //!
 //! The fix of the ruleset names the check [`VERIFY_CONTEXT`] and the checks
 //! of the CI.
@@ -62,6 +66,7 @@
 //!     B --> K["the milestone Backlog"]
 //!     K --> W["the milestone Wave 1"]
 //!     W --> R["the ruleset riff"]
+//!     R --> T["the ruleset releases"]
 //! ```
 //!
 //! - The merge settings come first: the pull request of `riff.toml` has
@@ -86,6 +91,10 @@
 //!   [`Waits::ci`] for them. A repository with no check run has no CI: the
 //!   ruleset requires [`VERIFY_CONTEXT`] only, and riff invents no check
 //!   for it (01M5SMNKDWBD1J6Y18ENQG87CK).
+//! - The ruleset `releases` of the tags `v*` comes after it, in a
+//!   repository with the release cycle of riff: the admin role and the
+//!   lead App bypass it, as `just github` makes it ([`releases`],
+//!   01M6WZ40PZNBHW2BZHMQX80WJ8).
 //! - A person who is not an admin gets no step: riff names the fix of
 //!   each failed check and changes nothing ([`Github::admin`]).
 //!
@@ -136,6 +145,8 @@
 //!     ci: vec![],
 //!     guard: None,
 //!     bot: Ok(None),
+//!     lead: Ok(None),
+//!     releases: None,
 //! };
 //! assert!(checks(&github).iter().all(|c| c.passed()));
 //!
@@ -172,6 +183,9 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use riff_client::api::Api;
+use riff_core::wire::GitHubApp;
+
 use crate::first_run::Check;
 use crate::guard;
 use crate::pr::{Gh, VERIFY_CONTEXT, percent};
@@ -207,6 +221,8 @@ pub const SETUP_TITLE: &str = "Set up riff";
 ///     ci: vec![],
 ///     guard: None,
 ///     bot: Ok(Some("riff-acme[bot]".into())),
+///     lead: Ok(None),
+///     releases: None,
 /// };
 /// assert_eq!(
 ///     setup_body(&github),
@@ -389,6 +405,44 @@ pub fn ruleset_for(checks: &[String]) -> Value {
     ruleset
 }
 
+/// The name of the ruleset of the release tags that [`Step::Releases`]
+/// makes (01M6WZ40YED6THKVJ2JQRXFK4N).
+pub const RELEASES: &str = "releases";
+
+/// The ruleset [`RELEASES`] on the tags `v*` for the lead App with the App
+/// ID `lead`, as `just github` makes it (01M6WZ40PZNBHW2BZHMQX80WJ8): only
+/// the admin role of the repository (`RepositoryRole` 5) and the lead App
+/// (an `Integration`) create, move or delete a release tag. So the lead
+/// pushes the tag of `riff release publish` from its container, and a
+/// worker cannot.
+///
+/// ```
+/// let ruleset = riff::repo_setup::releases(7);
+/// assert_eq!(ruleset["target"], "tag");
+/// assert_eq!(ruleset["conditions"]["ref_name"]["include"][0], "refs/tags/v*");
+/// assert_eq!(
+///     ruleset["bypass_actors"][1],
+///     serde_json::json!({ "actor_id": 7, "actor_type": "Integration", "bypass_mode": "always" })
+/// );
+/// ```
+pub fn releases(lead: u64) -> Value {
+    json!({
+        "name": RELEASES,
+        "target": "tag",
+        "enforcement": "active",
+        "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+        "bypass_actors": [
+            { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
+            { "actor_id": lead, "actor_type": "Integration", "bypass_mode": "always" }
+        ],
+        "rules": [
+            { "type": "creation" },
+            { "type": "update" },
+            { "type": "deletion" }
+        ]
+    })
+}
+
 /// The step that fixes a failed check of the repository on GitHub. The
 /// order of the variants is the order of the steps. Each step needs the
 /// rights of an admin of the repository, and it is safe to do again.
@@ -408,6 +462,8 @@ pub fn ruleset_for(checks: &[String]) -> Value {
 ///     ci: vec!["checks / lint".into()],
 ///     guard: None,
 ///     bot: Ok(None),
+///     lead: Ok(None),
+///     releases: None,
 /// };
 /// let steps: Vec<Step> = checks(&github).iter().filter_map(|c| c.step).collect();
 /// assert_eq!(steps, [Step::Merge, Step::Ruleset, Step::Backlog]);
@@ -433,6 +489,10 @@ pub enum Step {
     /// `gh api -X POST .../rulesets`, or `PUT` when a ruleset named `riff`
     /// is there.
     Ruleset,
+    /// Make the ruleset [`releases`] of the tags `v*` with the lead App as
+    /// a bypass actor: `POST`, or `PUT` when a ruleset named [`RELEASES`]
+    /// is there (01M6WZ40YED6THKVJ2JQRXFK4N).
+    Releases,
 }
 
 /// The pull request of [`Step::Config`].
@@ -491,6 +551,8 @@ impl Step {
     ///     ci: vec![],
     ///     guard: None,
     ///     bot: Ok(None),
+    ///     lead: Ok(None),
+    ///     releases: None,
     /// };
     /// assert_eq!(Step::Config.title(&github), "make riff.toml on main with a pull request");
     /// assert_eq!(Step::Wave.title(&github), "make the milestone Wave 1");
@@ -520,6 +582,7 @@ impl Step {
             Step::Backlog => format!("make the milestone {BACKLOG}"),
             Step::Wave => format!("make the milestone {FIRST_WAVE}"),
             Step::Ruleset => format!("make the ruleset riff on {}", github.default_branch),
+            Step::Releases => format!("make the ruleset {RELEASES} on the tags v*"),
         }
     }
 
@@ -603,6 +666,29 @@ impl Step {
                     }
                 }
                 Ok(format!("requires {}", required.join(" and ")))
+            }
+            Step::Releases => {
+                let Ok(Some(lead)) = &github.lead else {
+                    anyhow::bail!(text::INIT_RELEASES_NO_APP);
+                };
+                let body = releases(lead.id);
+                let rulesets: Vec<Value> =
+                    gh.json(&["api", "repos/{owner}/{repo}/rulesets?per_page=100"])?;
+                let there = rulesets.iter().find(|r| r["name"] == RELEASES);
+                match there.and_then(|r| r["id"].as_u64()) {
+                    Some(id) => gh.send(
+                        "PUT",
+                        &format!("repos/{{owner}}/{{repo}}/rulesets/{id}"),
+                        &body,
+                    ),
+                    None => gh.send("POST", "repos/{owner}/{repo}/rulesets", &body),
+                }?;
+                let done = text::init_releases_done(&lead.slug);
+                github.releases = Some(TagRules {
+                    there: true,
+                    apps: Some(vec![lead.id]),
+                });
+                Ok(done)
             }
         }
     }
@@ -934,6 +1020,77 @@ pub struct Github {
     /// `Ok(None)` when the riff has no session App, `Err` with why riff
     /// cannot ask riff-server.
     pub bot: Result<Option<String>, String>,
+    /// The lead App of the riff ([`lead_app`]): `Ok(None)` when the riff
+    /// has no lead App, `Err` with why riff cannot ask riff-server.
+    pub lead: Result<Option<LeadApp>, String>,
+    /// The ruleset [`RELEASES`] of a repository with the release cycle of
+    /// riff: `riff.toml` on the default branch has `[release]`
+    /// ([`crate::release_config`]). `None` for a repository with no
+    /// release cycle.
+    pub releases: Option<TagRules>,
+}
+
+/// The lead App of the riff, as riff-server gives it ([`lead_app`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeadApp {
+    /// The App ID: a bypass actor of a ruleset names it.
+    pub id: u64,
+    /// The slug of the App on GitHub.
+    pub slug: String,
+}
+
+/// The ruleset [`RELEASES`] of a repository, as the API of GitHub gives
+/// it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TagRules {
+    /// True when the repository has the ruleset [`RELEASES`].
+    pub there: bool,
+    /// The App IDs of its bypass actors of the kind `Integration`, or
+    /// `None` when GitHub gives no bypass actors: it shows them only to an
+    /// admin of the repository.
+    pub apps: Option<Vec<u64>>,
+}
+
+/// The lead App of the riff of `api`, as riff-server gives it
+/// (01M6WZ40YED6THKVJ2JQRXFK4N). `Ok(None)` when the riff has no lead
+/// App: a riff with no sign-in has none. `Err` says why riff cannot ask.
+pub async fn lead_app(api: &Api) -> Result<Option<LeadApp>, String> {
+    let apps = match api.github_apps(None).await {
+        Ok(apps) => apps,
+        // A riff with no sign-in has no lead App.
+        Err(_) if matches!(api.has_sign_in().await, Ok(false)) => return Ok(None),
+        Err(e) => return Err(text::lead_unasked(api.base(), &format!("{e:#}"))),
+    };
+    Ok(apps
+        .apps
+        .into_iter()
+        .find(|app| app.app == GitHubApp::Lead)
+        .map(|app| LeadApp {
+            id: app.id,
+            slug: app.slug,
+        }))
+}
+
+/// The ruleset [`RELEASES`] of the repository of `gh`, with one call of
+/// `gh`, or two when the ruleset is there.
+fn tag_rules(gh: &Gh) -> anyhow::Result<TagRules> {
+    let rulesets: Vec<Value> = gh.json(&["api", "repos/{owner}/{repo}/rulesets?per_page=100"])?;
+    let Some(id) = rulesets
+        .iter()
+        .find(|r| r["name"] == RELEASES)
+        .and_then(|r| r["id"].as_u64())
+    else {
+        return Ok(TagRules::default());
+    };
+    let ruleset: Value = gh.json(&["api", &format!("repos/{{owner}}/{{repo}}/rulesets/{id}")])?;
+    let apps = ruleset["bypass_actors"].as_array().map(|actors| {
+        actors
+            .iter()
+            .filter(|a| a["actor_type"] == "Integration")
+            .filter_map(|a| a["actor_id"].as_u64())
+            .collect()
+    });
+    Ok(TagRules { there: true, apps })
 }
 
 impl Github {
@@ -961,6 +1118,8 @@ impl Github {
     ///     ci: vec![],
     ///     guard: None,
     ///     bot: Ok(Some("riff-acme[bot]".into())),
+    ///     lead: Ok(None),
+    ///     releases: None,
     /// };
     /// let text = github.guard_to_write().unwrap();
     /// assert_eq!(text, riff::guard::workflow("riff-acme[bot]"));
@@ -1119,10 +1278,16 @@ fn files(gh: &Gh, branch: &str) -> anyhow::Result<Vec<String>> {
 }
 
 /// Reads the facts of the repository of `gh` with five calls, or with
-/// more when the rules require no check of the CI, or says why it
-/// cannot. `bot` is the bot of the session App of the riff
-/// ([`guard::session_bot`]).
-pub fn read(gh: &Gh, bot: Result<Option<String>, String>) -> Result<Github, String> {
+/// more when the rules require no check of the CI, or when the default
+/// branch has `riff.toml`, or says why it cannot. `bot` is the bot of the
+/// session App of the riff ([`guard::session_bot`]), and `lead` its lead
+/// App ([`lead_app`]). When `riff.toml` has `[release]`, it reads the
+/// ruleset [`RELEASES`] too.
+pub fn read(
+    gh: &Gh,
+    bot: Result<Option<String>, String>,
+    lead: Result<Option<LeadApp>, String>,
+) -> Result<Github, String> {
     let why = |e: anyhow::Error| format!("{e:#}");
     let repo: Repository = gh.json(&["api", "repos/{owner}/{repo}"]).map_err(why)?;
     let rules: Vec<Rule> = gh
@@ -1133,6 +1298,19 @@ pub fn read(gh: &Gh, bot: Result<Option<String>, String>) -> Result<Github, Stri
     let guard = match file_on(gh, guard::PATH, &repo.default_branch).map_err(why)? {
         Some(file) => Some(file.text().map_err(why)?),
         None => None,
+    };
+    let cycle = match files.iter().any(|f| f == CONFIG) {
+        true => match file_on(gh, CONFIG, &repo.default_branch).map_err(why)? {
+            Some(file) => {
+                crate::release_config::in_config(&file.text().map_err(why)?).unwrap_or(false)
+            }
+            None => false,
+        },
+        false => false,
+    };
+    let releases = match cycle {
+        true => Some(tag_rules(gh).map_err(why)?),
+        false => None,
     };
     let required: Vec<String> = rules.iter().flat_map(Rule::required).collect();
     let custom = required.iter().any(|c| c != VERIFY_CONTEXT);
@@ -1153,18 +1331,21 @@ pub fn read(gh: &Gh, bot: Result<Option<String>, String>) -> Result<Github, Stri
         ci,
         guard,
         bot,
+        lead,
+        releases,
     })
 }
 
 /// The facts of the repository of the folder `dir`, with the `gh` of
-/// the machine and the bot `bot` of the session App: `None` when the
-/// folder has no remote `origin` on GitHub.
+/// the machine, the bot `bot` of the session App and the lead App `lead`:
+/// `None` when the folder has no remote `origin` on GitHub.
 pub fn here(
     dir: &std::path::Path,
     bot: Result<Option<String>, String>,
+    lead: Result<Option<LeadApp>, String>,
 ) -> Option<Result<Github, String>> {
     let repo = crate::identity::github_origin(dir)?;
-    Some(read(&Forge::of(&repo).gh, bot))
+    Some(read(&Forge::of(&repo).gh, bot, lead))
 }
 
 /// The numbers of the open issues of the repository of `gh` that have no
@@ -1234,7 +1415,8 @@ pub fn checks_of(github: &Result<Github, String>) -> Vec<Check> {
 
 /// The checks on `github`, in order: `riff.toml`, the merge settings,
 /// the ruleset of the default branch, the milestone `Backlog`, the first
-/// wave, the checks of a pull request and the guard.
+/// wave, the checks of a pull request, the guard, and the ruleset
+/// `releases` in a repository with the release cycle.
 pub fn checks(github: &Github) -> Vec<Check> {
     let repo = &github.repo;
     let branch = &github.default_branch;
@@ -1295,7 +1477,7 @@ pub fn checks(github: &Github) -> Vec<Check> {
         )
         .with_step(Step::Wave),
     };
-    vec![
+    let mut checks = vec![
         config,
         merge,
         ruleset,
@@ -1303,7 +1485,87 @@ pub fn checks(github: &Github) -> Vec<Check> {
         wave,
         ci_check(github),
         guard_check(github),
-    ]
+    ];
+    checks.extend(releases_check(github));
+    checks
+}
+
+/// The check of the ruleset [`RELEASES`] (01M6WZ40YED6THKVJ2JQRXFK4N), in
+/// a repository with the release cycle of riff only: `None` else. It
+/// passes when the ruleset has the lead App as a bypass actor, when the
+/// riff has no lead App, and when GitHub does not show the bypass actors
+/// to the person. It fails with [`Step::Releases`] when the ruleset is
+/// missing or has no bypass of the lead App. When riff cannot ask
+/// riff-server for the lead App, it passes when the ruleset is there, and
+/// fails with no step when it is not.
+///
+/// ```
+/// use riff::repo_setup::{Github, LeadApp, Step, TagRules, checks};
+///
+/// let mut github = Github {
+///     repo: "acme/app".into(),
+///     default_branch: "main".into(),
+///     auto_merge: true,
+///     squash_merge: true,
+///     required: vec!["riff/verify".into()],
+///     milestones: vec!["Backlog".into(), "Wave 1".into()],
+///     admin: true,
+///     files: vec!["riff.toml".into()],
+///     ci: vec![],
+///     guard: None,
+///     bot: Ok(None),
+///     lead: Ok(Some(LeadApp { id: 7, slug: "riff-acme-lead".into() })),
+///     releases: None,
+/// };
+/// // No release cycle: no check.
+/// assert_eq!(checks(&github).len(), 7);
+/// github.releases = Some(TagRules::default());
+/// let check = checks(&github).pop().unwrap();
+/// assert_eq!(check.step, Some(Step::Releases));
+/// assert_eq!(
+///     check.line(),
+///     "fail  the ruleset releases: acme/app has the release cycle of riff and no ruleset \
+///      releases, so each session can push a tag v*. Fix: make the ruleset releases on the tags \
+///      v*, with the admin role and riff-acme-lead as bypass actors. See \"Let the lead push \
+///      the release tag\" in the book. Then run riff init again"
+/// );
+/// github.releases = Some(TagRules { there: true, apps: Some(vec![7]) });
+/// assert_eq!(
+///     checks(&github).pop().unwrap().line(),
+///     "pass  the ruleset releases: the ruleset releases of acme/app lets riff-acme-lead push a tag v*"
+/// );
+/// ```
+fn releases_check(github: &Github) -> Option<Check> {
+    let ruleset = github.releases.as_ref()?;
+    let repo = &github.repo;
+    let name = text::INIT_RELEASES;
+    Some(match (&github.lead, ruleset.there) {
+        (Ok(None), _) => Check::pass(name, text::INIT_RELEASES_NO_APP.into()),
+        (Ok(Some(lead)), true) => match &ruleset.apps {
+            Some(apps) if apps.contains(&lead.id) => {
+                Check::pass(name, text::init_releases_on(repo, &lead.slug))
+            }
+            Some(_) => Check::fail(
+                name,
+                text::init_releases_other(repo, &lead.slug),
+                text::init_fix_releases(&lead.slug),
+            )
+            .with_step(Step::Releases),
+            None => Check::pass(name, text::init_releases_unseen(repo)),
+        },
+        (Ok(Some(lead)), false) => Check::fail(
+            name,
+            text::init_releases_off(repo),
+            text::init_fix_releases(&lead.slug),
+        )
+        .with_step(Step::Releases),
+        (Err(_), true) => Check::pass(name, text::init_releases_there(repo)),
+        (Err(why), false) => Check::fail(
+            name,
+            text::init_releases_unknown(repo, why),
+            text::INIT_FIX_GUARD_UNKNOWN.into(),
+        ),
+    })
 }
 
 /// The check of the guard (01M6WPV86SW4AAVA2NCBQNYXK3). It passes when
@@ -1329,6 +1591,8 @@ pub fn checks(github: &Github) -> Vec<Check> {
 ///     ci: vec![],
 ///     guard: None,
 ///     bot: Err("riff cannot ask riff-server".into()),
+///     lead: Ok(None),
+///     releases: None,
 /// };
 /// let line = |github: &Github| checks(github).pop().unwrap().line();
 /// assert_eq!(
@@ -1425,6 +1689,8 @@ mod tests {
             ci: vec![],
             guard: None,
             bot: Ok(None),
+            lead: Ok(None),
+            releases: None,
         }
     }
 
@@ -1707,6 +1973,8 @@ mod tests {
         dir: tempfile::TempDir,
         /// The bot of the session App that riff-server gives.
         bot: Result<Option<String>, String>,
+        /// The lead App that riff-server gives.
+        lead: Result<Option<LeadApp>, String>,
     }
 
     impl Fake {
@@ -1722,13 +1990,29 @@ mod tests {
                 std::fs::write(path.join(name), text).unwrap();
             }
             isolated::write_program(path.join("gh"), FORGE);
-            Fake { dir, bot: Ok(None) }
+            Fake {
+                dir,
+                bot: Ok(None),
+                lead: Ok(None),
+            }
         }
 
         /// The same forge, in a riff whose session App has the bot `bot`.
         fn with_bot(self, bot: &str) -> Fake {
             Fake {
                 bot: Ok(Some(bot.into())),
+                ..self
+            }
+        }
+
+        /// The same forge, in a riff whose lead App is `riff-acme-lead`, with
+        /// the App ID 7.
+        fn with_lead(self) -> Fake {
+            Fake {
+                lead: Ok(Some(LeadApp {
+                    id: 7,
+                    slug: "riff-acme-lead".into(),
+                })),
                 ..self
             }
         }
@@ -1790,7 +2074,7 @@ mod tests {
 
         /// The facts that riff reads from the forge.
         fn github(&self) -> Github {
-            read(&self.gh(), self.bot.clone()).unwrap()
+            read(&self.gh(), self.bot.clone(), self.lead.clone()).unwrap()
         }
 
         /// Reads, and does each step of each failed check.
@@ -1819,6 +2103,8 @@ mod tests {
                 ci: vec!["checks / lint".into(), "checks / test".into()],
                 guard: None,
                 bot: Ok(None),
+                lead: Ok(None),
+                releases: None,
             }
         );
         // The repository, the rules, the milestones, the files, the guard,
@@ -2375,7 +2661,7 @@ esac
             dir.path().join("gh"),
             "#!/bin/sh\necho 'gh: not logged in' >&2\nexit 4\n",
         ));
-        let why = read(&gh, Ok(None)).unwrap_err();
+        let why = read(&gh, Ok(None), Ok(None)).unwrap_err();
         assert!(why.contains("not logged in"), "{why}");
         let failed = checks_of(&Err(why));
         assert_eq!(failed.len(), 1);
@@ -2560,5 +2846,161 @@ esac
         assert_eq!(body_of("{}"), "{}");
         assert_eq!(ref_of("feature/x"), "feature/x");
         assert_eq!(ref_of("a b"), "a%20b");
+    }
+
+    /// A repository that is set up for riff, with the release cycle: each
+    /// check but the ruleset `releases` passes.
+    fn with_the_release_cycle(extra: &[(&str, &str)]) -> Fake {
+        let mut state = vec![
+            ("files", "riff.toml\n"),
+            ("config", "[session]\nimage = \"x\"\n\n[release]\n"),
+            ("auto_merge", ""),
+            ("milestones", "Backlog\nWave 1\n"),
+            (
+                "static_rules",
+                r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"riff/verify"}]}}]"#,
+            ),
+        ];
+        state.extend_from_slice(extra);
+        Fake::new(&state).with_lead()
+    }
+
+    /// 01M6WZ40YED6THKVJ2JQRXFK4N: riff reads the ruleset `releases` only
+    /// in a repository whose `riff.toml` on the default branch has
+    /// `[release]`. A repository with no release cycle has no such check.
+    #[test]
+    fn read_gets_the_ruleset_releases_only_with_the_release_cycle() {
+        let fake = with_the_release_cycle(&[]);
+        let github = fake.github();
+        assert_eq!(github.releases, Some(TagRules::default()));
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|c| c == "api repos/{owner}/{repo}/rulesets?per_page=100"),
+            "{:?}",
+            fake.calls()
+        );
+        let fake = Fake::new(&[("files", "riff.toml\n")]).with_lead();
+        let github = fake.github();
+        assert_eq!(github.releases, None);
+        assert!(!fake.calls().iter().any(|c| c.contains("rulesets")));
+        assert!(!lines(&github).iter().any(|l| l.contains("releases")));
+    }
+
+    /// 01M6WZ40YED6THKVJ2JQRXFK4N, 01M6WZ40PZNBHW2BZHMQX80WJ8: the step
+    /// makes the ruleset `releases` of `just github`, with the lead App as
+    /// a bypass actor. Then the check passes, and a second run changes
+    /// nothing.
+    #[test]
+    fn the_step_makes_the_ruleset_releases_with_the_lead_app() {
+        let fake = with_the_release_cycle(&[]);
+        let github = fake.github();
+        let failed: Vec<Check> = checks(&github)
+            .into_iter()
+            .filter(|c| !c.passed())
+            .collect();
+        assert_eq!(failed.len(), 1, "{:#?}", lines(&github));
+        assert_eq!(failed[0].name, "the ruleset releases");
+        assert_eq!(failed[0].step, Some(Step::Releases));
+        assert_eq!(
+            Step::Releases.title(&github),
+            "make the ruleset releases on the tags v*"
+        );
+        let done = fake.set_up();
+        assert_eq!(
+            done,
+            [(
+                Step::Releases,
+                Ok("only the admin role and riff-acme-lead push a tag v*".into())
+            )]
+        );
+        assert!(fake.has_change("api -X POST repos/{owner}/{repo}/rulesets"));
+        assert_eq!(fake.json("releases"), releases(7));
+        let again = fake.github();
+        assert!(
+            checks(&again).iter().all(Check::passed),
+            "{:#?}",
+            lines(&again)
+        );
+        assert_eq!(
+            lines(&again).pop().unwrap(),
+            "pass  the ruleset releases: the ruleset releases of acme/app lets riff-acme-lead push a tag v*"
+        );
+        let changes = fake.changes().len();
+        assert!(fake.set_up().is_empty());
+        assert_eq!(fake.changes().len(), changes);
+    }
+
+    /// 01M6WZ40YED6THKVJ2JQRXFK4N: a ruleset `releases` with no bypass of
+    /// the lead App fails, and the step puts the ruleset of riff in its
+    /// place. A person who is not an admin sees no bypass actors: the
+    /// check passes and says so.
+    #[test]
+    fn the_step_updates_a_ruleset_releases_with_no_lead_app() {
+        let old = r#"{"name":"releases","target":"tag","bypass_actors":[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}],"rules":[]}"#;
+        let fake = with_the_release_cycle(&[("releases", old)]);
+        let github = fake.github();
+        assert_eq!(
+            github.releases,
+            Some(TagRules {
+                there: true,
+                apps: Some(vec![])
+            })
+        );
+        assert_eq!(
+            lines(&github).pop().unwrap(),
+            "fail  the ruleset releases: the ruleset releases of acme/app has no bypass of \
+             riff-acme-lead, so riff release publish of the lead cannot push a tag v*. Fix: make \
+             the ruleset releases on the tags v*, with the admin role and riff-acme-lead as bypass \
+             actors. See \"Let the lead push the release tag\" in the book. Then run riff init again"
+        );
+        let person = with_the_release_cycle(&[("releases", old), ("not_admin", "")]);
+        let github = person.github();
+        assert_eq!(
+            github.releases,
+            Some(TagRules {
+                there: true,
+                apps: None
+            })
+        );
+        assert_eq!(
+            lines(&github).pop().unwrap(),
+            "pass  the ruleset releases: acme/app has the ruleset releases, and only an admin of \
+             acme/app sees its bypass actors"
+        );
+        fake.set_up();
+        assert!(fake.has_change("api -X PUT repos/{owner}/{repo}/rulesets/78"));
+        assert_eq!(fake.json("releases"), releases(7));
+    }
+
+    /// 01M6WZ40YED6THKVJ2JQRXFK4N: a riff with no lead App passes. When
+    /// riff cannot ask riff-server, the check passes with the ruleset, and
+    /// fails with no step without it.
+    #[test]
+    fn the_check_of_the_ruleset_releases_with_no_lead_app_or_no_answer() {
+        let mut github = with_the_release_cycle(&[]).github();
+        github.lead = Ok(None);
+        assert_eq!(
+            lines(&github).pop().unwrap(),
+            "pass  the ruleset releases: the riff has no lead App, so the ruleset releases needs \
+             no bypass of it"
+        );
+        github.lead = Err("riff cannot ask riff-server".into());
+        let check = checks(&github).pop().unwrap();
+        assert_eq!(check.step, None);
+        assert_eq!(
+            check.line(),
+            "fail  the ruleset releases: acme/app has no ruleset releases, and riff cannot ask \
+             riff-server. Fix: start riff-server, or sign in with riff login. Then run riff init \
+             again"
+        );
+        github.releases = Some(TagRules {
+            there: true,
+            apps: None,
+        });
+        assert_eq!(
+            lines(&github).pop().unwrap(),
+            "pass  the ruleset releases: acme/app has the ruleset releases"
+        );
     }
 }

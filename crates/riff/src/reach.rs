@@ -8,9 +8,9 @@
 //! of the host is not there. So `http://127.0.0.1:7878`, the default, does
 //! not answer in the container. The riff tools already go through the
 //! socket. [`Reach`] makes `riff wave list`, `riff wave move`, `riff wave end
-//! --move-open-to-backlog`, `riff release check` and the chat and pause
-//! steps of `riff release cut`, `publish` and `approve` go
-//! the same way: the daemon makes the call on the riff-server of the
+//! --move-open-to-backlog`, `riff release check` and the chat steps of
+//! `riff release cut` and `publish` go the same way: the daemon makes
+//! the call on the riff-server of the
 //! session, with the sign-in of the person on the host
 //! ([`crate::daemon::ServerCall`]). So do `riff members`, `riff audit`,
 //! `riff session why`, `riff who` and `riff whoami` (#1338,
@@ -68,7 +68,7 @@ use crate::watches::{Op, Registered, Watches};
 use crate::{identity, session_relay, text};
 use riff_client::api::{Api, PauseScope};
 
-/// What `riff release cut`, `publish` and `approve` read of the riff.
+/// What `riff release cut` and `publish` read of the riff.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Roster {
     /// The USER of this session.
@@ -349,18 +349,6 @@ impl Reach {
         }
     }
 
-    /// Each kept message of riff chat.
-    pub async fn chat_read(&self) -> Result<Vec<crate::cycle::ChatLine>> {
-        match self {
-            Reach::Direct(server) => {
-                let (api, me) = signed(server)?;
-                let read = api.read(&me, &crate::chat::thread(), true).await?;
-                Ok(crate::cycle::chat_lines(read))
-            }
-            Reach::Daemon(socket) => ask(socket, &ServerCall::ChatRead).await,
-        }
-    }
-
     /// What `riff whoami` reads, through the socket of the session. On a
     /// host, `riff whoami` reads straight with [`WhoamiFacts::read`].
     pub async fn whoami(&self) -> Result<WhoamiFacts> {
@@ -534,7 +522,10 @@ impl Reach {
         }
     }
 
-    /// Pauses the whole riff, and gives the line for the person.
+    /// Pauses the whole riff, and gives the line for the person. Only
+    /// `riff release approve` of a person in a terminal pauses so: a
+    /// session in a container gets the refusal of a step of a person
+    /// (01M6WZ40SFVZ6CRQ1H4Z27CWP4).
     pub async fn pause_riff(&self) -> Result<String> {
         match self {
             Reach::Direct(server) => {
@@ -543,7 +534,10 @@ impl Reach {
                 let (reply, posted) = api.set_pause(&me, &PauseScope::Riff, state).await?;
                 Ok(text::riff_set(None, state, &reply, &posted))
             }
-            Reach::Daemon(socket) => ask(socket, &ServerCall::PauseRiff).await,
+            Reach::Daemon(_) => anyhow::bail!(text::release_refused(
+                "approve",
+                crate::cycle::Refusal::Agent
+            )),
         }
     }
 

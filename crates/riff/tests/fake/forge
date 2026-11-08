@@ -24,6 +24,9 @@
 #   guard           the text of .github/workflows/riff-guard.yml on main
 #   guard.json      the body of the put of the guard on riff-setup; the merge
 #                   puts its text in guard
+#   config          the text of riff.toml on main; with no file, it is empty
+#   releases        the body of the ruleset releases on the tags, when it is
+#                   made; a person who is not an admin sees no bypass actors
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
 flag() { [ -f "$dir/$1" ]; }
@@ -68,7 +71,9 @@ case "$*" in
     printf '{"sha":"9a4d000","content":"%s"}' "$(base64 -w 60 < "$dir/guard" | sed 's/$/\\n/' | paste -sd '' -)" ;;
   'api repos/{owner}/{repo}/contents/riff.toml?ref='*)
     grep -qx riff.toml "$dir/files" || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
-    printf '{"sha":"c0f1111","content":""}' ;;
+    if flag config; then
+      printf '{"sha":"c0f1111","content":"%s"}' "$(base64 -w 60 < "$dir/config" | sed 's/$/\\n/' | paste -sd '' -)"
+    else printf '{"sha":"c0f1111","content":""}'; fi ;;
   'api repos/{owner}/{repo}/pulls?state=all&base=main&per_page=5')
     if flag prior_pulls; then cat "$dir/prior_pulls"; else printf '[]'; fi ;;
   'api repos/{owner}/{repo}/commits/'*'/check-runs?per_page=100')
@@ -104,9 +109,15 @@ case "$*" in
   'api -X DELETE repos/{owner}/{repo}/git/refs/heads/riff-setup') rm -f "$dir/branch" ;;
   'api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_merge=true') touch "$dir/auto_merge" ;;
   'api repos/{owner}/{repo}/rulesets?per_page=100')
-    if flag ruleset; then printf '[{"id":77,"name":"riff"}]'; else printf '[]'; fi ;;
-  'api -X POST repos/{owner}/{repo}/rulesets --include --input '*|'api -X PUT repos/{owner}/{repo}/rulesets/77 --include --input '*)
-    cp "$last" "$dir/ruleset"; reply '201 Created' '{}' ;;
+    sep=''; printf '['
+    if flag ruleset; then printf '{"id":77,"name":"riff","target":"branch"}'; sep=','; fi
+    if flag releases; then printf '%s{"id":78,"name":"releases","target":"tag"}' "$sep"; fi
+    printf ']' ;;
+  'api repos/{owner}/{repo}/rulesets/78')
+    if flag not_admin; then sed 's/"bypass_actors":\[[^]]*\],//' "$dir/releases"; else cat "$dir/releases"; fi ;;
+  'api -X POST repos/{owner}/{repo}/rulesets --include --input '*|'api -X PUT repos/{owner}/{repo}/rulesets/7'[78]' --include --input '*)
+    if grep -q '"name":"releases"' "$last"; then cp "$last" "$dir/releases"; else cp "$last" "$dir/ruleset"; fi
+    reply '201 Created' '{}' ;;
   'api -X POST repos/{owner}/{repo}/milestones -f title='*)
     echo "${last#title=}" >> "$dir/milestones"
     printf '{"number":9,"title":"%s","open_issues":0,"closed_issues":0}' "${last#title=}" ;;
