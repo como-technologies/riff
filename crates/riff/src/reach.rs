@@ -331,12 +331,12 @@ impl Reach {
         }
     }
 
-    /// Posts `body` in riff chat. It wakes the leads that it names.
+    /// Posts `body` in riff chat. It wakes the names that it holds.
     pub async fn chat_post(&self, body: &str) -> Result<()> {
         match self {
             Reach::Direct(server) => {
                 let (api, me) = signed(server)?;
-                let to = riff_client::chat::wakes(body, me.who().user());
+                let to = riff_client::chat::to(body);
                 crate::chat::post_by_riff(&api, &me, &to, body).await
             }
             Reach::Daemon(socket) => {

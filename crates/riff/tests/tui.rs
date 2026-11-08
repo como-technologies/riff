@@ -166,6 +166,16 @@ echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
         (row, column, !parser.screen().hide_cursor())
     }
 
+    /// The color of the text at the start of the row `row`, after its
+    /// first column.
+    fn color_at(&self, row: u16) -> vt100::Color {
+        let parser = self.screen.lock().unwrap();
+        parser
+            .screen()
+            .cell(row, 1)
+            .map_or(vt100::Color::Default, |cell| cell.fgcolor())
+    }
+
     fn rows(&self) -> Vec<String> {
         let parser = self.screen.lock().unwrap();
         parser
@@ -903,8 +913,9 @@ async fn a_first_look_that_fails_ends_the_tui_with_the_error_of_the_cli() {
 
 /// The Chat tab (#1640): it shows the history of the thread `chat` as
 /// `riff chat` does, a new line while another tab shows adds to
-/// `Chat•N`, the note line says whom a line will wake, and Enter sends
-/// the line as the person. The lead wakes, and the line shows once.
+/// `Chat•N`, and Enter sends the line as the person, with the names that
+/// it holds. `@riff` wakes the lead, and the line shows once. No line is
+/// refused for a name.
 #[tokio::test]
 async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
     use futures::StreamExt;
@@ -962,9 +973,10 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
         " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit"
     );
 
-    // The note line says whom the line will wake, before Enter.
-    tty.press("@lead:riff is #12 done?").await;
-    tty.shows(|rows| rows[22] == " Enter wakes your lead in como-technologies/riff.")
+    // The note line says nothing of whom the line wakes. Enter sends the
+    // line with the name of the project: the lead of brett in riff wakes.
+    tty.press("@riff is #12 done?").await;
+    tty.shows(|rows| rows[21] == "> @riff is #12 done?" && rows[22].is_empty())
         .await;
     tty.press("\r").await;
     let wake = in_time(WAIT, wakes.next())
@@ -975,9 +987,25 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
     assert_eq!(wake.thread, chat);
     assert_eq!(wake.from.to_string(), "riff://brett@thelio");
     let rows = tty
-        .shows(|rows| shown(rows, "<brett> @lead:riff is #12 done?") == 1)
+        .shows(|rows| shown(rows, "<brett> @riff is #12 done?") == 1)
         .await;
     assert_eq!(rows[21], ">", "{rows:#?}");
+
+    // No line is refused for a name: a line with no name goes with no
+    // name, and a name that no one has goes with its name
+    // (01M6Y1A5PTCVZ6GRJ0FXMART2T).
+    tty.press("hello all\r").await;
+    tty.press("@lead:strata hi\r").await;
+    tty.shows(|rows| shown(rows, "<brett> @lead:strata hi") == 1)
+        .await;
+    let read = lead_api.read(&lead, &chat, true).await.unwrap();
+    let to = |body: &str| -> Vec<String> {
+        let line = read.iter().find(|c| c.message.body == body).unwrap();
+        line.message.to.iter().map(ToString::to_string).collect()
+    };
+    assert_eq!(to("@riff is #12 done?"), ["name=riff"]);
+    assert!(to("hello all").is_empty());
+    assert_eq!(to("@lead:strata hi"), ["name=lead"]);
 
     // Esc leaves the prompt, and `q` ends the TUI.
     tty.press("\x1b").await;
@@ -1069,18 +1097,18 @@ async fn a_key_over_the_limit_of_the_chat_line_types_nothing() {
     tty.shows(|rows| rows[21] == ">").await;
     let full = "x".repeat(riff::tui::chat::POST_MAX);
     tty.press(&format!("\x1b[200~{full}\x1b[201~")).await;
-    let wakes = " Enter wakes each lead of yours.";
-    tty.shows(|rows| rows[22] == wakes).await;
+    tty.shows(|rows| rows[21].ends_with('x') && rows[22].is_empty())
+        .await;
     let too_long = format!(" {}", riff::tui::chat::too_long());
     tty.press("y").await;
     let rows = tty.shows(|rows| rows[22] == too_long).await;
     assert!(rows[21].ends_with('x'), "{rows:#?}");
-    // Backspace deletes a character, and the note of the wake comes back.
+    // Backspace deletes a character, and the note goes.
     tty.press("\x7f").await;
-    tty.shows(|rows| rows[22] == wakes).await;
+    tty.shows(|rows| rows[22].is_empty()).await;
     tty.press("y").await;
     let rows = tty.shows(|rows| rows[21].ends_with('y')).await;
-    assert_eq!(rows[22], wakes, "{rows:#?}");
+    assert!(rows[22].is_empty(), "{rows:#?}");
     tty.press("\x1b").await;
     tty.shows(|rows| rows[23].starts_with(" i type")).await;
     tty.press("q").await;
@@ -1311,7 +1339,8 @@ async fn q_ends_the_tui_at_once_while_a_slow_read_of_gh_runs() {
 
 /// 01M6VMACJGF4A0ZXC6YK13KNCH: a post of the Chat tab that fails while
 /// the prompt holds a line shows `cannot send the line` in the note line
-/// at once. The next key brings back the note of the wake. The server
+/// at once, as a warning. After the next key, it stays as the result of
+/// the last line, with no color. The server
 /// holds the post of the line `this line fails` until the prompt shows
 /// each key of the next line, then it refuses the post: a key that the
 /// TUI reads after the refusal ends the note (01M6WH1FN4N3DDFY6FR1CH1M7X).
@@ -1364,20 +1393,23 @@ async fn a_post_that_fails_while_the_prompt_holds_a_line_shows_until_the_next_ke
         .await
         .expect("the server holds the post in time");
     tty.press("hi all").await;
-    let wake = " Enter wakes each lead of yours.";
-    tty.shows(|rows| rows[21] == "> hi all" && rows[22] == wake)
+    tty.shows(|rows| rows[21] == "> hi all" && rows[22].is_empty())
         .await;
 
-    // The post fails while the prompt holds a line: the failure shows.
+    // The post fails while the prompt holds a line: the failure shows,
+    // as a warning.
     go.notify_one();
     let failed = " riff: cannot send the line: post failed (400 Bad Request): no post now";
     tty.shows(|rows| rows[21] == "> hi all" && rows[22] == failed)
         .await;
+    assert_ne!(tty.color_at(22), vt100::Color::Default);
 
-    // The next key brings back the note of the wake.
+    // The next key ends the warning: the failure stays as the result of
+    // the last line, with no color.
     tty.press("!").await;
-    tty.shows(|rows| rows[21] == "> hi all!" && rows[22] == wake)
+    tty.shows(|rows| rows[21] == "> hi all!" && rows[22] == failed)
         .await;
+    assert_eq!(tty.color_at(22), vt100::Color::Default);
     tty.press("\x03").await;
     assert_eq!(tty.exits().await, Some(0));
 }

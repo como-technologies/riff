@@ -137,7 +137,7 @@ fn names(text: &str, user: &str) -> bool {
         .next()
         .and_then(|word| word.strip_suffix(':'))
         .is_some_and(|name| name.eq_ignore_ascii_case(user));
-    start || riff_client::chat::names(text).any(|(name, _)| name.eq_ignore_ascii_case(user))
+    start || riff_client::chat::names(text).any(|name| name.eq_ignore_ascii_case(user))
 }
 
 /// True when `text` holds `word` as a whole word, with no regard to

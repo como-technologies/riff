@@ -3038,9 +3038,6 @@
   time and the sender, and posts each line that the person types.
   `--color` works as in `riff tail`. `/quit` or Ctrl-C exits. The
   chat has no private channels, no nick changes and no files.
-- **01M3NB5N0D99JB5CE6RB4VEYPF** A chat line wakes the lead of the
-  sender, unless it names a lead: `@lead` wakes the lead of the sender,
-  and `@USER` wakes the lead of USER.
 - **01M3NJD39JVJHY5G71CD79JBY3** In a terminal, `riff chat` has a
   prompt line at the bottom. A new line prints above the prompt, and
   the typed text stays. After Enter, the typed line goes away, so the
@@ -3050,8 +3047,7 @@
 - **01M3NJD37CNQX580YC24S7K6ES** `/me TEXT` in `riff chat` posts an
   action line: a plain message with the body `/me TEXT`, so the riff of
   the release before reads it. `read` shows it as `* USER@HOST TEXT`
-  after the head. `@lead` and `@USER` in an action wake as in a chat
-  line.
+  after the head.
   `riff chat` sends no line that starts with an unknown command, and
   names its commands. A line that starts with `//` sends the line from
   its second `/`.
@@ -3075,22 +3071,11 @@
 - **01M3Q59CAA46C316BD4D1ED7C6** When the first connect after a stream
   ends fails, riff tries once more at once, and shows nothing for it.
   Only when that try fails too does it show `(reconnecting…)`.
-- **01M5P1V9SZP9EF475MK3G9WK5E** A chat line of a person that names no
-  one with @ wakes the lead of the sender, as @lead does. `riff chat`
-  and its help say what wakes whom.
 
 - **01M5P207CN20TQTP017X6RTMWG** The selector field `person` is `true`
   for the terminals of a person (`riff chat`, `riff tail`, the phone),
   which have no session ID, and `false` for each agent session. The
   instructions of the riff tools name this selector.
-- **01M5QVH7KDK3R2S4NDFB2V1XY9** A chat line with `@lead:REPO` wakes
-  only the lead of the sender in the repository REPO, and `@USER:REPO`
-  only the lead of USER in REPO. REPO is `OWNER/REPO`, or the name after
-  the slash when one lead of that user has a repository with that name.
-  `riff chat` reads the leads from riff-server. When no lead or more
-  than one lead matches, it sends nothing and names the leads that it
-  found. `@lead`, `@USER` and a line with no name still wake each lead
-  of the user.
 - **01M5QVD3B1GT7STHBQS7NK4DR0** A session starts each thread that it
   joins at the newest message of the thread: the messages before its
   join are not unread, and `read` with `all` shows them. A session that
@@ -3197,6 +3182,20 @@
   thread `chat` with the selector `name=USER`, and the answer starts
   with `@USER`, the person who asked. Supersedes
   01M3NB5N0D99JB5CE6RB4VEYPF and 01M5P207CN20TQTP017X6RTMWG in part.
+- **01M6Y1A5PTCVZ6GRJ0FXMART2T** A chat line wakes only the names that
+  it holds. `riff chat`, the Chat tab of the TUI and each chat line of
+  riff itself post a line with one selector `name=NAME` for each `@NAME`
+  of the line, and with no selector of their own. A name is the word
+  after an `@` at the start of a word: letters, digits, `-`, `_`, `.`
+  and `/`, with no punctuation at its end. A line with no name wakes no
+  one, also an action. The UIs check no name, refuse no line for a name,
+  and do not say whom a line wakes: riff-server resolves each name. The
+  read of the names of a line is in `riff-client`, and each UI shares
+  it. An ask of riff names its person with `@USER`. The help of `riff
+  chat` says the rule. Supersedes 01M5P1V9SZP9EF475MK3G9WK5E,
+  01M6VG1PJDWE523TR9X9WJ5VXG, 01M3NB5N0D99JB5CE6RB4VEYPF and
+  01M5QVH7KDK3R2S4NDFB2V1XY9 in full, and 01M3NJD37CNQX580YC24S7K6ES,
+  01M6VG1PCXHNVJP7TSP0J5G5K9 and 01M6VMACJGF4A0ZXC6YK13KNCH in part.
 
 ## Security
 
@@ -7639,12 +7638,10 @@ that builds it merges.
   in part.
 - **01M6VG1PCXHNVJP7TSP0J5G5K9** A line of the Chat tab has the rules of
   `riff chat`, with the same code: `/me TEXT` sends an action, `/quit`
-  ends the TUI, `//` starts a line with `/`, and the line wakes the
-  leads that `riff chat` wakes. The Chat tab posts as the person,
-  `USER@HOST`, also when the TUI runs in a session. A line with a
-  command that the chat does not know, or that names a lead that fits no
-  lead or two leads of the last look, is not sent: it stays in the
-  prompt, and the note line says why. Supersedes
+  ends the TUI, and `//` starts a line with `/`. The Chat tab posts as
+  the person, `USER@HOST`, also when the TUI runs in a session. A line
+  with a command that the chat does not know is not sent: it stays in
+  the prompt, and the note line says why. Supersedes
   01M6VAZKDEQ6951KGPGAMF1SNJ in part.
 - **01M6VG1PFPMHRQ4F9XHJTYMSJY** The TUI follows the thread `chat` from
   its start, also while another tab shows, as `riff chat` does: after a
@@ -7652,9 +7649,6 @@ that builds it merges.
   new line while another tab shows adds one to `Chat•N`. A line from
   before the start of the TUI is no news. While the stream is down, the
   row under the header of the Chat tab says `(reconnecting…)`.
-- **01M6VG1PJDWE523TR9X9WJ5VXG** The rules of whom a line of the chat
-  wakes, `wakes` and `resolve`, are in `riff-client`. `riff chat` and
-  the Chat tab of the TUI share them.
 - **01M6VFG882T794B1CTHK5AKPDG** The Waves tab of the TUI shows a board
   for each repository of a live session and for the repository of the
   working folder: its current wave as `Wave N`, its items, their claims
@@ -7717,8 +7711,8 @@ that builds it merges.
   that it asks for, the fault of the link, a post that failed after the
   last key, the note of the line in the prompt, and the result of the
   last action. Only the Chat tab shows the third and the fourth. The
-  note of the line in the prompt says whom `Enter` will wake, or why the
-  chat will not send the line. A post that failed shows `riff: cannot
+  note of the line in the prompt says why the chat will not send the
+  line. A post that failed shows `riff: cannot
   send the line:` and the error at once, also while the prompt holds a
   line. Supersedes 01M6VFGYW0XVJ5JSX6R1NCR6W7 and
   01M6VG1PCXHNVJP7TSP0J5G5K9 in part.

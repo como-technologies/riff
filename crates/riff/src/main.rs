@@ -170,11 +170,11 @@ enum Command {
     /// Chat with the people of the riff
     ///
     /// It works in the style of IRC. It shows the chat and each new line,
-    /// and sends each line that you type. A line wakes each lead of yours.
-    /// A line with @USER wakes each lead of USER, and not yours, unless it
-    /// has @lead too. @lead:REPO or @USER:REPO wakes only the lead in the
-    /// repository REPO (OWNER/REPO, or the name after the slash). /me TEXT
-    /// sends an action. /quit or Ctrl-C exits.
+    /// and sends each line that you type. A line wakes only the names that
+    /// it holds: @USER wakes the person USER (@brett), and @PROJECT your
+    /// lead in the project, the repository after the slash (@riff). A
+    /// line with no name wakes no one. /me TEXT sends an action. /quit or
+    /// Ctrl-C exits.
     ///
     /// A line for you is a highlight: it names you (@USER, or USER: at the
     /// start), it is a direct line to you, it holds a word of your list,

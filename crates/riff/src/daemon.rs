@@ -1213,9 +1213,8 @@ pub enum ServerCall {
     /// The user of the session, the owner and the people of the riff, as
     /// [`crate::reach::Roster`], for `riff release cut` and `publish`.
     Roster,
-    /// Post `body` in the thread `chat`. The daemon picks the sessions
-    /// that the line wakes ([`riff_client::chat::wakes`]). The answer is
-    /// `null`.
+    /// Post `body` in the thread `chat`, with the names of the line
+    /// ([`riff_client::chat::to`]). The answer is `null`.
     ChatPost {
         /// The line.
         body: String,
@@ -1384,7 +1383,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
             })?
         }
         ServerCall::ChatPost { body } => {
-            let to = riff_client::chat::wakes(body, record.me.who().user());
+            let to = riff_client::chat::to(body);
             crate::chat::post_by_riff(&signed()?, &record.me, &to, body).await?;
             Value::Null
         }

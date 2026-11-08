@@ -14,8 +14,8 @@ The first app does four things:
 
 - It shows the thread `chat`: the history, then each new line.
 - It posts a line.
-- It sends `@lead`, `@USER` and `/me` as `riff chat` does. `@lead`
-  wakes your lead, and `@USER` wakes the lead of USER.
+- It sends `@NAME` and `/me` as `riff chat` does. `@riff` wakes your
+  lead in the project riff, and `@brett` wakes the person brett.
 - It shows a notice on the phone when a line names you.
 
 Later items can add `riff top`, the questions of the lead, and the

@@ -856,7 +856,10 @@ mod tests {
             assert_eq!(rows[0], strip, "{tab:?}");
             // A built tab draws its own body.
             if tab == Tab::Chat {
-                assert_eq!(rows[2], " chat · a line wakes your leads", "{rows:#?}");
+                assert_eq!(
+                    rows[2], " chat · @NAME wakes a person or a project",
+                    "{rows:#?}"
+                );
             }
             if tab == Tab::Reports {
                 assert_eq!(rows[2], " [Usage]  Audit  Session log", "{rows:#?}");
@@ -1029,7 +1032,10 @@ mod tests {
         state.on_key(Key::Open(Tab::Chat));
         let rows = drawn(&state, 80, 24);
         assert_eq!(rows[2], " v3.3.0: the deploy runs; the riff is paused");
-        assert_eq!(rows[3], " chat · a line wakes your leads", "{rows:#?}");
+        assert_eq!(
+            rows[3], " chat · @NAME wakes a person or a project",
+            "{rows:#?}"
+        );
         // The narrow layout wraps the line at its width.
         let rows = drawn(&with_release(Some(ReleaseStep::Runs), true), 40, 24);
         assert_eq!(

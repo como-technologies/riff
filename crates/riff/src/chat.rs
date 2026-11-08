@@ -55,45 +55,28 @@
 //! `/me TEXT` (01M3NJD37CNQX580YC24S7K6ES), so an older riff reads it
 //! too. It shows as `* NAME TEXT`.
 //!
-//! A line wakes each lead of the sender, unless it names a lead
-//! (01M3NB5N0D99JB5CE6RB4VEYPF): `@lead` wakes each lead of the sender,
-//! and `@USER` wakes each lead of USER. A user has one lead in each
-//! repository, so a person with two repositories has two leads. A lead
-//! answers with a post to the chat thread.
+//! A line wakes only the names that it holds
+//! (01M6Y1A5PTCVZ6GRJ0FXMART2T): `@brett` wakes the person brett, and
+//! `@riff` the lead of the sender in the project riff. The chat posts
+//! the line with one selector `name=NAME` for each name
+//! ([`riff_client::chat::to`]), and checks no name: riff-server resolves
+//! each name when the line is posted. A line with no name wakes no one.
+//! `riff chat` and the Chat tab of the TUI share the code
+//! ([`crate::tui::chat`]). A lead answers with a post to the chat thread.
 //!
 //! ```mermaid
 //! sequenceDiagram
 //!     participant A as riff chat (mike)
 //!     participant S as riff-server
 //!     participant B as riff chat (brett)
-//!     participant L as lead of brett
-//!     A->>S: post "hi @brett" to chat, to user=brett,lead=true
+//!     participant L as lead of mike in riff
+//!     A->>S: post "@brett @riff is #12 done?" to chat, to name=brett, name=riff
 //!     S-->>A: tail: the line
-//!     S-->>B: tail: the line
+//!     S-->>B: tail: the line, and a wake of the terminals of brett
 //!     S-->>L: wake
 //!     L->>S: post the answer to chat
 //!     S-->>A: tail: the answer
 //!     S-->>B: tail: the answer
-//! ```
-//!
-//! `@lead:REPO` and `@USER:REPO` wake one lead: the lead in the
-//! repository REPO (01M5QVH7KDK3R2S4NDFB2V1XY9). REPO is `OWNER/REPO`, or
-//! the name after the slash. [`riff_client::chat::wakes`] reads the line,
-//! and [`riff_client::chat::resolve`] picks the lead from the leads that
-//! riff-server lists. `riff chat` and the Chat tab of the TUI share them
-//! ([`crate::tui::chat`]). When no lead or more than one lead fits, the
-//! chat sends nothing and names the leads that it found.
-//!
-//! ```mermaid
-//! sequenceDiagram
-//!     participant A as riff chat (mike)
-//!     participant S as riff-server
-//!     participant L as lead of brett in strata
-//!     A->>S: who
-//!     S-->>A: the sessions, with each lead
-//!     A->>S: post "@brett:strata hi" to chat, to user=brett,repo=como-technologies/strata,lead=true
-//!     S-->>L: wake
-//!     Note over A,S: no lead or two leads fit: the chat sends nothing
 //! ```
 //!
 //! A line for the person at the terminal is a highlight, as in IRC
@@ -162,7 +145,7 @@ pub fn thread() -> ThreadName {
 /// Posts `body` in riff chat as `me`, as a line that riff writes: the
 /// kind of the post is `riff` (01M5TKMVB7CF0QNAWXEVGEQETJ). The watch of
 /// a deploy, the daemon and `riff release` post so, as the person of the
-/// riff. `to` is what [`riff_client::chat::wakes`] gave for `body`. A
+/// riff. `to` is what [`riff_client::chat::to`] gave for `body`. A
 /// line of the kind `riff` is no word of the person.
 ///
 /// A riff-server of the release before refuses the kind `riff`. After a
@@ -508,8 +491,8 @@ pub async fn run(
     if after.is_none() {
         anstream::eprintln!(
             "riff: chat as {}@{}. Type a line and press Enter. /me TEXT sends an action. \
-             A line wakes each lead of yours; @USER wakes each lead of USER; \
-             @lead:REPO or @USER:REPO wakes one lead. {QUIT} or Ctrl-C exits.",
+             @NAME wakes a person or a project, for example @brett or @riff; \
+             a line with no name wakes no one. {QUIT} or Ctrl-C exits.",
             me.who().user(),
             me.place().host()
         );
@@ -598,11 +581,10 @@ pub async fn run(
 
 /// The task that posts each line of the chat that `me` sends, in
 /// order (01M4A804AWYEHPYZ966A6PXRPF): `riff chat` and the Chat tab of
-/// the TUI give it each body. The receivers come from
-/// [`riff_client::chat::receivers`]. A post that fails gives `fault` its
-/// error, as a safe line for the person. A line with a lead that the
-/// chat cannot pick ([`riff_client::chat::resolve`]) is not sent, and
-/// the line names the leads that the chat found.
+/// the TUI give it each body. Each post has the names of its line
+/// ([`riff_client::chat::to`]), and no selector of its own: the chat
+/// checks no name. A post that fails gives `fault` its error, as a safe
+/// line for the person.
 pub fn posts(
     api: &Api,
     me: &SessionUri,
@@ -613,11 +595,8 @@ pub fn posts(
     let (api, me, thread) = (api.clone(), me.clone(), thread.clone());
     let task = tokio::spawn(async move {
         while let Some(body) = typed.recv().await {
-            let sent = async {
-                let to = riff_client::chat::receivers(&api, &me, &body).await?;
-                api.post(&me, Some(&thread), &to, &body, Kind::Message)
-                    .await
-            };
+            let to = riff_client::chat::to(&body);
+            let sent = api.post(&me, Some(&thread), &to, &body, Kind::Message);
             if let Err(e) = sent.await {
                 fault(&safe(&format!("riff: cannot send the line: {e:#}")));
             }

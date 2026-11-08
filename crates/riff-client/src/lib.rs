@@ -32,7 +32,7 @@
 //! | [`platform`] | The trait of the parts that each UI gives. |
 //! | [`sessions`] | The sessions model: the tree of `riff top` and of the Sessions tab of the TUI. |
 //! | [`threads`] | The threads model: the lines of `riff read`, `riff tail` and `riff chat`. |
-//! | [`chat`] | The wakes of the chat: the sessions that a line of `riff chat` and of the Chat tab of the TUI wakes. |
+//! | [`chat`] | The names of a chat line: the selectors of a line of `riff chat`, of the Chat tab of the TUI and of riff itself. |
 //! | [`waves`] | The waves model: the board of `riff top` and the waves of `riff wave list`. |
 //! | [`machines`] | The machines model: the numbers of each host in `riff top` and `riff workers`. |
 //! | [`daemons`] | The daemons model: the facts of the riff daemon of each host in `riff who` and `riff top`. |
