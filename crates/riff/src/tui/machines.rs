@@ -1758,6 +1758,7 @@ mod tests {
                 repo: "como-technologies/riff".into(),
                 word: "waits".into(),
                 image: None,
+                waits: Default::default(),
             }],
             ..fine(
                 3,
@@ -2209,6 +2210,7 @@ mod tests {
                 digest: "0123456789ab".into(),
                 here: true,
             }),
+            waits: Default::default(),
         }];
         look.who.sessions[1] = daemon("mike", "thelio", &sent, 20);
         let found = rows(&look);

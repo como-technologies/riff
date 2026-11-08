@@ -53,6 +53,8 @@
 //! assert_eq!(Facts::parse("workers host: limit 2, floor 4GB, no workers"), None);
 //! ```
 
+use std::collections::BTreeMap;
+
 use riff_core::wire::{MACHINE_CHARS, SessionInfo};
 use serde::{Deserialize, Serialize};
 
@@ -211,6 +213,11 @@ pub struct Wave {
     /// has no good merged pin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<Image>,
+    /// The verifies that wait for the merge of another pull request with
+    /// a file in common, by issue, with the number of that pull request
+    /// (#1710). `riff wave list` shows them ([`crate::waves::Board`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub waits: BTreeMap<u64, u64>,
 }
 
 /// What a host does in one repository: it gives workers (the daemon runs
@@ -526,6 +533,7 @@ mod tests {
                     digest: "0123456789ab".into(),
                     here: true,
                 }),
+                waits: BTreeMap::from([(13, 41)]),
             }],
             parts: vec![RepoParts {
                 repo: "o/r".into(),

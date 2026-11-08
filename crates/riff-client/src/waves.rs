@@ -109,6 +109,12 @@ pub struct Issues {
     /// The issues with the label [`QUESTION`].
     #[serde(default)]
     pub questions: BTreeSet<u64>,
+    /// The issues whose verify waits for the merge of another pull request
+    /// with a file in common, with the number of that pull request
+    /// (#1710). The daemon of the wave tells them in its facts
+    /// ([`crate::daemons::Wave::waits`]).
+    #[serde(default)]
+    pub waits: BTreeMap<u64, u64>,
 }
 
 impl Issues {
@@ -175,6 +181,7 @@ impl Issues {
             waves,
             verify: BTreeSet::new(),
             stuck: BTreeMap::new(),
+            waits: BTreeMap::new(),
         }
     }
 
@@ -197,6 +204,15 @@ impl Issues {
     #[must_use]
     pub fn with_stuck(mut self, stuck: impl IntoIterator<Item = (u64, String)>) -> Issues {
         self.stuck = stuck.into_iter().collect();
+        self
+    }
+
+    /// These issues with `waits`, the issues whose verify waits for the
+    /// merge of another pull request, each with the number of that pull
+    /// request (#1710).
+    #[must_use]
+    pub fn with_waits(mut self, waits: impl IntoIterator<Item = (u64, u64)>) -> Issues {
+        self.waits = waits.into_iter().collect();
         self
     }
 
@@ -391,6 +407,11 @@ pub struct Board {
     /// never here.
     #[serde(default)]
     pub question: Vec<u64>,
+    /// The items of `verify` with no claim whose verify waits for the
+    /// merge of another pull request with a file in common, each with the
+    /// number of that pull request ([`Issues::waits`], #1710).
+    #[serde(default)]
+    pub waits: Vec<(u64, u64)>,
 }
 
 impl Board {
@@ -473,6 +494,7 @@ impl Board {
             stuck: Vec::new(),
             tracker: Vec::new(),
             question: Vec::new(),
+            waits: Vec::new(),
         };
         for &n in items {
             let claims: Vec<&String> = sessions
@@ -487,6 +509,9 @@ impl Board {
                 board.stuck.push((n, why.clone()));
             } else if claims.is_empty() && issues.verify.contains(&n) {
                 board.verify.push(n);
+                if let Some(pull) = issues.waits.get(&n) {
+                    board.waits.push((n, *pull));
+                }
             } else if !claims.is_empty() {
                 board.claimed.push(n);
             } else if issues.trackers.contains(&n) {
@@ -503,12 +528,14 @@ impl Board {
     }
 
     /// One line for each group of the board that is not empty, in the
-    /// order `free`, `held`, `claimed`, `verify`, `stuck`, `tracker`,
-    /// `question`. With `paused`, no group `free`: nobody can claim its
-    /// items (01M588G5K0B58QXD35AA5MTZ6E). The reason of each hold follows its
-    /// items (01M58ATZ1F42DWNNB24C2HJPEY), and so does the reason of each
-    /// stuck pull request (#279). The reason of a hold is text of the
-    /// lead: the UI makes it safe.
+    /// order `free`, `held`, `claimed`, `verify`, `verify waits for #N`,
+    /// `stuck`, `tracker`, `question`. With `paused`, no group `free`:
+    /// nobody can claim its items (01M588G5K0B58QXD35AA5MTZ6E). The reason
+    /// of each hold follows its items (01M58ATZ1F42DWNNB24C2HJPEY), and so
+    /// does the reason of each stuck pull request (#279). The reason of a
+    /// hold is text of the lead: the UI makes it safe. An item whose verify
+    /// waits for the merge of the pull request #N is in the group `verify
+    /// waits for #N`, not in `verify` (01M6WCGNGNQXG443D5EMC8JRAC).
     ///
     /// ```
     /// use riff_client::waves::Board;
@@ -519,15 +546,18 @@ impl Board {
     ///     free: vec![14, 15],
     ///     held: vec![(12, "a reading".into()), (13, "a reading".into()), (16, "later".into())],
     ///     claimed: vec![],
-    ///     verify: vec![17],
+    ///     verify: vec![17, 23, 24, 25],
     ///     stuck: vec![(19, "checks".into()), (20, "auto-merge off".into()), (21, "checks".into())],
     ///     tracker: vec![18],
     ///     question: vec![22],
+    ///     waits: vec![(23, 41), (24, 43), (25, 41)],
     /// };
     /// assert_eq!(board.groups(false), [
     ///     "free: #14 #15",
     ///     "held: #12 #13 (a reading), #16 (later)",
     ///     "verify: #17",
+    ///     "verify waits for #41: #23 #25",
+    ///     "verify waits for #43: #24",
     ///     "stuck: #19 #21 (checks), #20 (auto-merge off)",
     ///     "tracker: #18",
     ///     "question: #22",
@@ -537,6 +567,8 @@ impl Board {
     ///     [
     ///         "held: #12 #13 (a reading), #16 (later)",
     ///         "verify: #17",
+    ///         "verify waits for #41: #23 #25",
+    ///         "verify waits for #43: #24",
     ///         "stuck: #19 #21 (checks), #20 (auto-merge off)",
     ///         "tracker: #18",
     ///         "question: #22",
@@ -563,23 +595,39 @@ impl Board {
                 .collect();
             groups.join(", ")
         };
+        let verify: Vec<u64> = self
+            .verify
+            .iter()
+            .copied()
+            .filter(|n| !self.waits.iter().any(|(w, _)| w == n))
+            .collect();
+        // The verifies that wait, by the pull request that they wait for.
+        let mut waits: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+        for (n, pull) in &self.waits {
+            waits.entry(*pull).or_default().push(*n);
+        }
+        let free = if paused {
+            String::new()
+        } else {
+            list(&self.free)
+        };
         [
-            (
-                "free",
-                if paused {
-                    String::new()
-                } else {
-                    list(&self.free)
-                },
-            ),
-            ("held", by_reason(&self.held)),
-            ("claimed", list(&self.claimed)),
-            ("verify", list(&self.verify)),
-            ("stuck", by_reason(&self.stuck)),
-            ("tracker", list(&self.tracker)),
-            ("question", list(&self.question)),
+            ("free".to_owned(), free),
+            ("held".to_owned(), by_reason(&self.held)),
+            ("claimed".to_owned(), list(&self.claimed)),
+            ("verify".to_owned(), list(&verify)),
         ]
         .into_iter()
+        .chain(
+            waits
+                .iter()
+                .map(|(pull, items)| (format!("verify waits for #{pull}"), list(items))),
+        )
+        .chain([
+            ("stuck".to_owned(), by_reason(&self.stuck)),
+            ("tracker".to_owned(), list(&self.tracker)),
+            ("question".to_owned(), list(&self.question)),
+        ])
         .filter(|(_, items)| !items.is_empty())
         .map(|(name, items)| format!("{name}: {items}"))
         .collect()

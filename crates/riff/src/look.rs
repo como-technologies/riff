@@ -86,7 +86,13 @@
 //!     L --> V{"waits for a verify, with no verify- claim?"}
 //!     V -- "yes, for 30 minutes" --> M3["message to the lead"]
 //!     V -- "no: a claim or a result" --> R["the wait starts again"]
+//!     V -- "a conflict, a held verify,<br/>or a verify that waits for another merge" --> R
 //! ```
+//!
+//! A verify that waits for the merge of another pull request is in the
+//! order of the wave ([`crate::order`]): the look takes these waits from
+//! the loop of the wave ([`Watch::waits`]), and the holds from riff-server
+//! ([`World::holds`], 01M6WCGNN0X2DGYYM97656RQK1).
 //!
 //! Each message comes one time for each pull request, head commit and
 //! state (01M49Q31FASDM7CG3JEGPYCZB9). The daemon keeps what it told in
@@ -423,54 +429,63 @@ impl PullWatch {
     }
 
     /// The messages for the open pull requests `pulls` at `now`, with the
-    /// claims `claims` of the repository:
+    /// claims `claims` and the holds `holds` of the repository, and the
+    /// verifies `waits` that wait for another pull request, by issue
+    /// ([`crate::wave::order`]):
     ///
     /// - A pull request of an item with auto-merge on and a conflict
     ///   ([`Pull::conflict`]) goes to the session that holds the item, or
     ///   to the lead when no session holds it (01M49Q30XMVRFX42YTM1PHX0RZ).
     /// - A pull request that waits for a verify ([`Verify::Asked`]) with
     ///   no `verify-` claim for the wait of this watch goes to the lead
-    ///   (01M49Q316RXNATJP587DWGDNCD). A claim starts the wait again.
+    ///   (01M49Q316RXNATJP587DWGDNCD). A claim starts the wait again. So
+    ///   does a conflict, a hold of its `verify-` item, and a verify that
+    ///   waits for another pull request: nobody has to take that verify
+    ///   (01M6WCGNN0X2DGYYM97656RQK1).
     ///
     /// Each state comes one time, until the head of the pull request
     /// changes.
     ///
     /// ```
-    /// use std::collections::HashSet;
+    /// use std::collections::{BTreeMap, HashSet};
     /// use std::time::{Duration, Instant};
     /// use riff::look::PullWatch;
     /// use riff::rollout::Pull;
     ///
     /// let mut watch = PullWatch::new(Duration::from_secs(30 * 60));
-    /// let pull = Pull {
-    ///     number: 40,
-    ///     branch: "worktree-issue-12".into(),
+    /// let pull = |number, issue: u64, mergeable: &str| Pull {
+    ///     number,
+    ///     branch: format!("worktree-issue-{issue}"),
     ///     head: "1a2b3c4d".into(),
-    ///     mergeable: Some("CONFLICTING".into()),
+    ///     mergeable: Some(mergeable.into()),
     ///     auto_merge: true,
     ///     ..Pull::default()
     /// };
+    /// let (conflict, asked) = (pull(40, 12, "CONFLICTING"), pull(41, 13, "MERGEABLE"));
+    /// let pulls = [conflict.clone(), asked];
     /// let held: HashSet<String> = ["issue-12".to_owned()].into();
+    /// let (none, no_wait) = (HashSet::new(), BTreeMap::new());
     /// let start = Instant::now();
     ///
     /// // The conflict goes to the holder of the item, one time.
-    /// let news = watch.news(&[pull.clone()], &held, start);
+    /// let news = watch.news(&pulls, &held, &none, &no_wait, start);
     /// assert_eq!(news.len(), 1);
     /// assert_eq!(news[0].to.as_deref(), Some("issue-12"));
-    /// assert!(watch.news(&[pull.clone()], &held, start).is_empty());
+    /// assert!(watch.news(&pulls, &held, &none, &no_wait, start).is_empty());
     ///
-    /// // 30 minutes with no verify claim: one message to the lead.
+    /// // 30 minutes with no verify claim: one message to the lead, for the
+    /// // pull request with no conflict.
     /// let later = start + Duration::from_secs(30 * 60);
-    /// let news = watch.news(&[pull.clone()], &held, later);
+    /// let news = watch.news(&pulls, &held, &none, &no_wait, later);
     /// assert_eq!(news.len(), 1);
     /// assert_eq!(news[0].to, None);
-    /// assert!(news[0].body.contains("no session claims verify-issue-12"));
-    /// assert!(watch.news(&[pull.clone()], &held, later).is_empty());
+    /// assert!(news[0].body.contains("no session claims verify-issue-13"));
+    /// assert!(watch.news(&pulls, &held, &none, &no_wait, later).is_empty());
     ///
     /// // A new head is a new state: the conflict comes again, to the
     /// // lead now that no session holds the item.
-    /// let pushed = Pull { head: "5e6f7a8b".into(), ..pull };
-    /// let news = watch.news(&[pushed], &HashSet::new(), later);
+    /// let pushed = Pull { head: "5e6f7a8b".into(), ..conflict };
+    /// let news = watch.news(&[pushed], &none, &none, &no_wait, later);
     /// assert_eq!(news.len(), 1);
     /// assert_eq!(news[0].to, None);
     /// assert!(news[0].body.contains("No session holds issue-12"));
@@ -479,6 +494,8 @@ impl PullWatch {
         &mut self,
         pulls: &[Pull],
         claims: &HashSet<String>,
+        holds: &HashSet<String>,
+        waits: &BTreeMap<u64, u64>,
         now: Instant,
     ) -> Vec<PullNews> {
         let heads: HashSet<(u64, &str)> =
@@ -502,8 +519,14 @@ impl PullWatch {
                     told: (number, head.clone(), Stop::Conflict),
                 });
             }
-            let waits =
-                pull.verify() == Some(Verify::Asked) && !claims.contains(&format!("verify-{item}"));
+            // A conflict gets its rebase first, a held verify waits for the
+            // lead, and an ordered verify waits for another merge (#1710).
+            let verify = format!("verify-{item}");
+            let waits = pull.verify() == Some(Verify::Asked)
+                && !claims.contains(&verify)
+                && !holds.contains(&verify)
+                && pull.mergeable.as_deref() != Some("CONFLICTING")
+                && !waits.contains_key(&issue);
             if !waits {
                 self.since.remove(&(number, head));
                 continue;
@@ -1264,6 +1287,10 @@ pub struct Watch {
     /// issues and pull requests, so the look takes its reply and calls no
     /// `gh` for them (#1549). Zero: the look reads the forge itself.
     pub accepts: Duration,
+    /// The verifies of the wave that wait for another pull request, from
+    /// the last look of its loop ([`crate::wave::order`], #1710): no
+    /// message "waits for a verify" names them.
+    pub waits: BTreeMap<u64, u64>,
 }
 
 /// One look of the daemon at the repository of `wave`
@@ -1288,7 +1315,10 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
         tokio::task::spawn_blocking(move || read_forge(&gh, &repo)).await??
     };
     let claims = world.claims(wave).await?;
-    let news = watch.pulls.news(&pulls, &claims, Instant::now());
+    let holds = world.holds(wave).await?;
+    let news = watch
+        .pulls
+        .news(&pulls, &claims, &holds, &watch.waits, Instant::now());
     let mut told = !news.is_empty();
     for (at, one) in news.iter().enumerate() {
         let item = one.to.as_deref();
@@ -1505,7 +1535,8 @@ pub async fn once(
     }
     if let Some((issues, pulls)) = forge {
         let claims = claims(&api.who(me, false).await?);
-        for news in watch.news(&pulls, &claims, Instant::now()) {
+        let (holds, waits) = (HashSet::new(), BTreeMap::new());
+        for news in watch.news(&pulls, &claims, &holds, &waits, Instant::now()) {
             if let Err(e) = tell_news(api, me, &news).await {
                 watch.untell(&news);
                 return Err(e);
@@ -1528,6 +1559,47 @@ pub async fn once(
 mod tests {
     use super::*;
     use crate::rollout::Label;
+
+    /// #1710: in Wave 50 the lead heard "PR #1703 waits for a verify" while
+    /// the head had a conflict and the lead held its verify. A pull request
+    /// with a conflict, a held verify, or a verify that waits for the merge
+    /// of another pull request gets no message after 30 minutes. When it
+    /// waits for a verify again, the wait starts again.
+    #[test]
+    fn no_verify_message_names_a_conflict_a_held_verify_or_a_verify_that_waits_for_a_merge() {
+        let wait = VERIFY_WAIT;
+        let mut watch = PullWatch::new(wait);
+        let pull = |number, issue: u64, mergeable: &str| Pull {
+            number,
+            branch: format!("worktree-issue-{issue}"),
+            head: format!("{issue}a2b3c4d"),
+            mergeable: Some(mergeable.into()),
+            auto_merge: true,
+            ..Pull::default()
+        };
+        let pulls = [
+            pull(40, 12, "CONFLICTING"),
+            pull(41, 13, "MERGEABLE"),
+            pull(42, 14, "MERGEABLE"),
+        ];
+        let holds: HashSet<String> = ["verify-issue-13".to_owned()].into();
+        let waits = BTreeMap::from([(14, 43)]);
+        let (none, no_wait) = (HashSet::new(), BTreeMap::new());
+        let start = Instant::now();
+        let stops = |news: Vec<PullNews>| -> Vec<(u64, Stop)> {
+            news.into_iter().map(|n| (n.told.0, n.told.2)).collect()
+        };
+        // The conflict goes to the lead: no session holds issue-12.
+        let first = watch.news(&pulls, &none, &holds, &waits, start);
+        assert_eq!(stops(first), [(40, Stop::Conflict)]);
+        let later = start + wait;
+        assert!(watch.news(&pulls, &none, &holds, &waits, later).is_empty());
+        // The lead frees the verify of 13, and 14 gets its turn: the wait
+        // starts now.
+        assert!(watch.news(&pulls, &none, &none, &no_wait, later).is_empty());
+        let news = watch.news(&pulls, &none, &none, &no_wait, later + wait);
+        assert_eq!(stops(news), [(41, Stop::NoVerify), (42, Stop::NoVerify)]);
+    }
 
     /// A fake `gh` in a new folder: it logs each call to `gh.log` there
     /// on one line, then runs `script`.

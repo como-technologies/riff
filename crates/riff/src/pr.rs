@@ -806,10 +806,39 @@ impl Gh {
     /// than `age`, whatever [`Gh::accepting`] says. A fact that never
     /// changes, or that changes rarely, asks for a long age.
     pub fn read_within(&self, args: &[&str], age: Duration) -> Result<String> {
+        self.read_keyed(args, self.key(args), age)
+    }
+
+    /// [`Gh::read_within`] of a reply that holds while the fact `of`
+    /// holds, also when the arguments do not name it: the key of the
+    /// shared reply has `of`. The files of a pull request hold while its
+    /// head commit does.
+    ///
+    /// ```
+    /// use riff::pr::Gh;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let log = dir.path().join("log");
+    /// let script = format!("#!/bin/sh\necho x >> {}\necho src/a.rs\n", log.display());
+    /// let gh = Gh::at(isolated::write_program(dir.path().join("gh"), &script)).with_shared_reads();
+    /// let args = ["api", "repos/o/r/pulls/40/files"];
+    /// gh.read_while(&args, "1a2b3c4", Gh::LONG)?;
+    /// gh.read_while(&args, "1a2b3c4", Gh::LONG)?;
+    /// assert_eq!(std::fs::read_to_string(&log)?.lines().count(), 1);
+    /// // A new head is a new read.
+    /// assert_eq!(gh.read_while(&args, "5e6f7a8", Gh::LONG)?, "src/a.rs\n");
+    /// assert_eq!(std::fs::read_to_string(&log)?.lines().count(), 2);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn read_while(&self, args: &[&str], of: &str, age: Duration) -> Result<String> {
+        self.read_keyed(args, format!("{}\u{1f}{of}", self.key(args)), age)
+    }
+
+    /// [`Gh::read_within`] with the key `key` of the shared reply.
+    fn read_keyed(&self, args: &[&str], key: String, age: Duration) -> Result<String> {
         if !self.shares {
             return self.run(args, None);
         }
-        let key = self.key(args);
         if let Some(reply) = replies::get(&key, age) {
             return Ok(reply);
         }

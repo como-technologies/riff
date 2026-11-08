@@ -94,6 +94,7 @@ mod wave_conflict;
 mod wave_done_when;
 mod wave_idle;
 mod wave_list;
+mod wave_order;
 mod wave_question;
 mod wave_queue;
 mod wave_stuck;

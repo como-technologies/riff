@@ -586,7 +586,9 @@ impl Items {
     /// The items of `repo` (`OWNER/REPO`): the boards from its open
     /// `issues`, the sessions `who` of riff-server and the `holds` of
     /// its thread, and the hosts from the facts of the daemons in `who`
-    /// ([`riff_client::daemons::hosts`]).
+    /// ([`riff_client::daemons::hosts`]). The facts of a daemon also give
+    /// each verify that waits for the merge of another pull request
+    /// ([`riff_client::daemons::Wave::waits`], #1710).
     ///
     /// ```
     /// use std::collections::BTreeMap;
@@ -600,17 +602,21 @@ impl Items {
     ///     s.machine = facts.map(|f| MachineInfo { numbers: f.line(), age_secs: 5 });
     ///     s
     /// };
-    /// let runs = |repo: &str| Facts {
-    ///     waves: vec![Wave { repo: repo.into(), word: "no free work now".into(), image: None }],
+    /// let runs = |repo: &str, waits: BTreeMap<u64, u64>| Facts {
+    ///     waves: vec![Wave { repo: repo.into(), word: "no free work now".into(), image: None, waits }],
     ///     ..Facts::default()
     /// };
     /// let who = vec![
-    ///     session("riff://mike@thelio/o/r?session=d1", Some(&runs("o/r"))),
-    ///     session("riff://mike@pangolin/o/s?session=d2", Some(&runs("o/s"))),
+    ///     // The verify of 15 waits for the merge of #54.
+    ///     session("riff://mike@thelio/o/r?session=d1", Some(&runs("o/r", BTreeMap::from([(15, 54)])))),
+    ///     session("riff://mike@pangolin/o/s?session=d2", Some(&runs("o/s", BTreeMap::from([(14, 60)])))),
     ///     session("riff://mike@thelio/o/r?session=a1&claim=issue-12", None),
     /// ];
     /// let issue = |number, wave: &str| Issue { number, title: "t".into(), milestone: Some(wave.into()), tracker: false, question: false };
-    /// let issues = Issues::of(vec![issue(12, "Wave 3"), issue(13, "Wave 3"), issue(20, "Wave 4")]);
+    /// let issues = Issues::of(vec![
+    ///     issue(12, "Wave 3"), issue(13, "Wave 3"), issue(14, "Wave 3"), issue(15, "Wave 3"), issue(20, "Wave 4"),
+    /// ])
+    /// .with_verify([14, 15]);
     /// let holds = BTreeMap::from([(
     ///     "issue-13".to_owned(),
     ///     HoldInfo { reason: "a reading".into(), by: None, at_ms: 0 },
@@ -618,7 +624,13 @@ impl Items {
     /// let items = Items::of("o/r", &issues, who, &holds);
     /// assert_eq!(items.hosts, ["thelio"]);
     /// let groups: Vec<Vec<String>> = items.boards.iter().map(|b| b.groups(false)).collect();
-    /// assert_eq!(groups, [vec!["held: #13 (a reading)", "claimed: #12"], vec!["free: #20"]]);
+    /// assert_eq!(
+    ///     groups,
+    ///     [
+    ///         vec!["held: #13 (a reading)", "claimed: #12", "verify: #14", "verify waits for #54: #15"],
+    ///         vec!["free: #20"],
+    ///     ]
+    /// );
     /// ```
     pub fn of(
         repo: &str,
@@ -626,16 +638,20 @@ impl Items {
         who: Vec<SessionInfo>,
         holds: &BTreeMap<String, HoldInfo>,
     ) -> Items {
-        let mut hosts: Vec<String> = riff_client::daemons::hosts(&who)
-            .into_iter()
-            .filter(|h| h.facts.waves.iter().any(|w| w.repo == repo))
-            .map(|h| h.host)
-            .collect();
+        let mut hosts: Vec<String> = Vec::new();
+        let mut waits: BTreeMap<u64, u64> = BTreeMap::new();
+        for daemon in riff_client::daemons::hosts(&who) {
+            for wave in daemon.facts.waves.iter().filter(|w| w.repo == repo) {
+                hosts.push(daemon.host.clone());
+                waits.extend(&wave.waits);
+            }
+        }
         hosts.sort();
         hosts.dedup();
         let sessions = Sessions::new(who, Vec::new());
+        let issues = issues.clone().with_waits(waits);
         Items {
-            boards: Board::each(repo, issues, &sessions, holds),
+            boards: Board::each(repo, &issues, &sessions, holds),
             hosts,
         }
     }
@@ -1052,6 +1068,7 @@ mod tests {
                 repo: repo.into(),
                 word: "no free work now".into(),
                 image: None,
+                waits: Default::default(),
             }],
             ..Facts::default()
         };

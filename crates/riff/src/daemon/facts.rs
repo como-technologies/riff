@@ -106,7 +106,7 @@ pub fn every() -> Duration {
 ///     ],
 ///     "limit": {"sessions": 4, "floor_gb": 8, "cpus": 8, "memory_gb": 8},
 ///     "waiting": ["riff-issue-13-2b3c4d5e"],
-///     "waves": [{"repo": "o/r", "word": "started issue-12"}],
+///     "waves": [{"repo": "o/r", "word": "started issue-12", "waits": {"13": 41}}],
 ///     "parts": [{"repo": "o/r", "workers": true, "lead": true}],
 ///     "test": {"tag": "v4.1.1", "commit": "90e36bfd", "secs": 185},
 ///     "claude_token": "set",
@@ -119,6 +119,8 @@ pub fn every() -> Duration {
 /// assert_eq!(facts.sessions[0].digest, "0123456789ab");
 /// assert_eq!(facts.waiting, ["riff-issue-13-2b3c4d5e"]);
 /// assert_eq!(facts.waves[0].word, "started issue-12");
+/// // The verify of 13 waits for the merge of #41 (#1710).
+/// assert_eq!(facts.waves[0].waits[&13], 41);
 /// assert_eq!(facts.parts[0].parts.word(), "workers and lead");
 /// assert_eq!(facts.test.as_ref().map(|t| t.secs), Some(185));
 /// assert_eq!(facts.claude_token, riff_client::daemons::Token::Set);
@@ -154,6 +156,7 @@ pub fn of_status(status: &Status) -> Facts {
                 repo: w.repo.clone(),
                 word: w.word.clone(),
                 image: None,
+                waits: w.waits.clone(),
             })
             .collect(),
         parts: status.parts.clone(),
@@ -277,7 +280,7 @@ fn podman_has(image: &str) -> bool {
 ///     ("o/sens".to_owned(), known("o/sens", sens)),
 /// ]))?;
 ///
-/// let wave = |repo: &str| Wave { repo: repo.into(), word: "waits".into(), image: None };
+/// let wave = |repo: &str| Wave { repo: repo.into(), word: "waits".into(), image: None, waits: BTreeMap::new() };
 /// let mut waves = vec![wave("o/riff"), wave("o/sens"), wave("o/other")];
 /// pins(&folder, &mut waves, |image| image == pin("a"));
 /// let image = |digit: &str, here| Some(Image { digest: digit.repeat(12), here });
@@ -449,6 +452,7 @@ mod tests {
             repo: repo.into(),
             word: "waits".into(),
             image: None,
+            waits: BTreeMap::new(),
         }
     }
 

@@ -1520,7 +1520,7 @@ impl Status {
     /// assert_eq!(run.busy(), 1);
     /// let wave = riff::daemon::Status {
     ///     waiting: vec![riff::text::wave_slot("o/r")],
-    ///     waves: vec![riff::daemon::WaveShown { repo: "o/r".into(), word: "waits".into() }],
+    ///     waves: vec![riff::daemon::WaveShown { repo: "o/r".into(), word: "waits".into(), waits: Default::default() }],
     ///     ..status.clone()
     /// };
     /// assert_eq!(wave.busy(), 0);
@@ -1574,6 +1574,11 @@ pub struct WaveShown {
     pub repo: String,
     /// What the wave did last, in a few words.
     pub word: String,
+    /// The verifies that wait for another pull request with a file in
+    /// common, by issue, with the number of that pull request
+    /// ([`crate::wave::order`], #1710).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub waits: BTreeMap<u64, u64>,
 }
 
 /// How a session ended.
@@ -2408,6 +2413,8 @@ struct Running {
     starts: crate::wave::Starts,
     /// What it did last.
     word: Arc<Mutex<String>>,
+    /// The verifies that wait for another pull request.
+    waits: crate::wave::Waits,
 }
 
 impl Running {
@@ -3269,8 +3276,29 @@ impl<R: Runtime + 'static> Daemon<R> {
                     },
                     |pull| text::wave_pull_word(&pull.image, &pull.reason),
                 ),
+                waits: running
+                    .waits
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone(),
             })
             .collect()
+    }
+
+    /// The verifies of the wave of `repo` that wait for another pull
+    /// request at the last look of its loop ([`crate::wave::order`]). None
+    /// when no wave of `repo` runs.
+    pub fn verify_waits(&self, repo: &str) -> BTreeMap<u64, u64> {
+        self.waves_lock()
+            .get(repo)
+            .map(|running| {
+                running
+                    .waits
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone()
+            })
+            .unwrap_or_default()
     }
 
     fn waves_lock(&self) -> MutexGuard<'_, BTreeMap<String, Running>> {
@@ -3312,12 +3340,14 @@ impl<R: Runtime + 'static> Daemon<R> {
         };
         let starts = crate::wave::Starts::default();
         let word = Arc::new(Mutex::new(text::wave_starts()));
+        let waits = crate::wave::Waits::default();
         let task = tokio::spawn(crate::wave::run(
             self.clone(),
             wave.clone(),
             taken.clone(),
             starts.clone(),
             word.clone(),
+            waits.clone(),
         ));
         let look = tokio::spawn(crate::wave::watch(self.clone(), wave.clone()));
         running.insert(
@@ -3329,6 +3359,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 taken,
                 starts,
                 word,
+                waits,
             },
         );
     }
