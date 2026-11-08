@@ -126,7 +126,6 @@ pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
 ///     claude: "/d/riff/leads/o-r/claude".into(),
 ///     sign_in: riff::run::ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: None,
-///     gh_config: None,
 ///     setup: Default::default(),
 /// };
 /// let spec = riff::lead::spec(&facts, "o/r", &riff::text::lead_start("o/r"));
@@ -168,7 +167,6 @@ pub fn spec(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 ///     claude: "/d/riff/leads/o-r/claude".into(),
 ///     sign_in: riff::run::ClaudeSignIn::Token,
 ///     gitconfig: None,
-///     gh_config: None,
 ///     setup: Default::default(),
 /// };
 /// let spec = riff::lead::spec_again(&facts, "o/r", &riff::text::lead_again("o/r"));
@@ -226,7 +224,7 @@ fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Sess
 /// let status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![live],
 ///     limit: None, waiting: vec![], waves: vec![], parts: vec![], leaving: vec![], jobs: 0, test: None, mcp: vec![],
-///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(),
+///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), person_tokens: vec![],
 /// };
 /// assert!(riff::lead::runs(&status, "riff-lead-o-r"));
 /// assert!(!riff::lead::runs(&status, "riff-lead-o-other"));
@@ -245,7 +243,7 @@ pub fn runs(status: &Status, name: &str) -> bool {
 /// let mut status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![],
 ///     limit: None, waiting: vec![], waves: vec![], parts: vec![], leaving: vec![], jobs: 0, test: None, mcp: vec![],
-///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(),
+///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), person_tokens: vec![],
 /// };
 /// assert!(!riff::lead::gives_workers(&status, "o/r"));
 /// let part = |repo: &str, workers, lead| RepoParts { repo: repo.into(), parts: Parts { workers, lead } };
@@ -431,6 +429,7 @@ pub async fn old(runtime: &impl Runtime, name: &str) -> bool {
 ///     takeover: false,
 ///     interrupt: false,
 ///     model: Some("opus".into()),
+///     github: None,
 /// };
 /// let idle = Duration::from_secs(300);
 /// // A write now: a turn runs.
@@ -702,7 +701,6 @@ impl Parts<'_> {
             claude: self.folder.join("claude"),
             sign_in: host.claude.sign_in(),
             gitconfig: existing(host.home.join(".gitconfig")),
-            gh_config: existing(host.home.join(".config/gh")),
             setup: self.merged.setup.clone(),
         };
         daemon::Start {
@@ -1193,7 +1191,6 @@ mod tests {
             claude: home.join("lead-claude"),
             sign_in: run::ClaudeSignIn::File(file.clone()),
             gitconfig: None,
-            gh_config: None,
             setup: Default::default(),
         };
         let spec = spec(&facts, "como-technologies/riff", "start");
@@ -1342,7 +1339,6 @@ mod tests {
             claude: "/d/riff/leads/o-r/claude".into(),
             sign_in: run::ClaudeSignIn::Token,
             gitconfig: None,
-            gh_config: None,
             setup: crate::session_setup::Setup::of_config(
                 "[session]\nmodel = \"sonnet\"\n",
                 "riff.toml",
@@ -1401,6 +1397,7 @@ mod tests {
             takeover: false,
             interrupt: false,
             model: None,
+            github: None,
         }
     }
 

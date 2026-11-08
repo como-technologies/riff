@@ -88,6 +88,11 @@ pub struct WhoamiFacts {
     /// The URI of the session as the server holds it (its claims and
     /// its lead), or `None` when the server does not know the session.
     pub uri: Option<SessionUri>,
+    /// How the session acts on GitHub, from the daemon of a container
+    /// (01M6WPMWYSW98MQYQCCJ54ZX04). `None` on a host, and from an older
+    /// daemon.
+    #[serde(default)]
+    pub github: Option<crate::daemon::gh_token::ActsAs>,
 }
 
 impl WhoamiFacts {
@@ -97,6 +102,7 @@ impl WhoamiFacts {
         WhoamiFacts {
             state: api.pauses(me).await.map_err(|e| format!("{e:#}")),
             uri: api.me(me).await.ok().and_then(|r| r.session).map(|s| s.uri),
+            github: None,
         }
     }
 }

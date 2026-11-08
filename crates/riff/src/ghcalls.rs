@@ -195,7 +195,8 @@ pub const OTHER: &str = "other";
 
 /// The names of the callers that the daemon gives to its own `gh`
 /// ([`Gh::by`](crate::pr::Gh::by), [`Gh::in_daemon`](crate::pr::Gh::in_daemon)):
-/// its loops, the clone of a main clone, and the real-session test. Their
+/// its loops, the clone of a main clone, the real-session test, and the
+/// tokens of the sessions on GitHub ([`crate::daemon::gh_token`]). Their
 /// calls go to [`Calls`] and not through a send, so a session never gives
 /// them. `usage` is also in [`CALLERS`]: a command of `riff` runs it
 /// too.
@@ -214,6 +215,7 @@ pub const DAEMON: &[&str] = &[
     "usage",
     "clone",
     "release test",
+    "token",
 ];
 
 /// How long riff waits after the reset that GitHub names: the reset is in

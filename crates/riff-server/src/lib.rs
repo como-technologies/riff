@@ -196,6 +196,8 @@
 //!   stays as the last error.
 //! - `POST /v1/github/create`, `/v1/github/apps` and `/v1/github/check`
 //!   make and check the GitHub Apps of the riff (01M6WG52J7WTP079W1AYEQ4W08).
+//!   `POST /v1/github/token` gives the daemon the token of a session of
+//!   its person (01M6WPMEEWX09DHJZF18BKBPYW).
 //!   The pages `/github/start` and `/github/created` of the browser, and
 //!   the webhook `/hooks/github`, need no token and no build. See
 //!   [`github`]. The keys of the Apps are in no record: see [`keys`].
@@ -249,11 +251,11 @@ use riff_core::selector::Selector;
 use riff_core::wire::SetMachine;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
-    Claim, DenyOwner, End, FactError, Free, GitHubApps, GitHubCheck, GitHubCreate, Hold,
-    ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery,
-    LogReply, MeReply, Members, MembersReply, NotesReply, NotesShow, PassOwner, Pause, Person,
-    PlanOff, PlanReply, PlanSeen, PlanShow, Post, Pruned, Read, ReadReply, Register, Release,
-    ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply,
+    Claim, DenyOwner, End, FactError, Free, GitHubApps, GitHubCheck, GitHubCreate, GitHubToken,
+    Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join, Keys, Kind, Lead, Leave,
+    LogQuery, LogReply, MeReply, Members, MembersReply, NotesReply, NotesShow, PassOwner, Pause,
+    Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Pruned, Read, ReadReply, Register,
+    Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke, RiffOwner, RiffQuery, RiffReply,
     ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle, SetNotes, SetPlan, SetStatus,
     SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads, ThreadsReply, TokenError,
     TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
@@ -1978,6 +1980,7 @@ impl Service {
             .route(GitHubCreate::PATH, post(github::create))
             .route(GitHubApps::PATH, post(github::apps))
             .route(GitHubCheck::PATH, post(github::check))
+            .route(GitHubToken::PATH, post(github::token))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {
@@ -3288,7 +3291,7 @@ where
     futures::stream::once(std::future::ready(Ok(Event::default().comment("ready")))).chain(stream)
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))

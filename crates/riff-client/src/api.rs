@@ -116,15 +116,15 @@ use riff_core::wire::SetMachine;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, Claim, ClaimReply,
     DenyOwner, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
-    GitHubChecked, GitHubCreate, GitHubStarted, Hold, HoldReply, Invite, Invited, ItemFact,
-    ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members,
-    MembersReply, Message, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner,
-    Pause, PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release,
-    ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery,
-    RiffReply, RiffState, ServerFacts, SessionInfo, SetAdmin, SetBlocked, SetNotes, SetNotesReply,
-    SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange, Tailed, TakeOwner,
-    ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake, WhoReply,
-    WhoRequest,
+    GitHubChecked, GitHubCreate, GitHubStarted, GitHubToken, Hold, HoldReply, Invite, Invited,
+    ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply,
+    Members, MembersReply, Message, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed,
+    PassOwner, Pause, PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read,
+    Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked,
+    RiffBinary, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo, SessionToken, SetAdmin,
+    SetBlocked, SetNotes, SetNotesReply, SetStatus, SetStep, SignInConfig, Start, StartReason,
+    Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply,
+    TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -701,6 +701,12 @@ impl Api {
             riff_checked: tokio::sync::OnceCell::new(),
         }));
         Ok(self)
+    }
+
+    /// True when this client sends a token on each request: this device
+    /// has a sign-in at the server.
+    pub fn sends_token(&self) -> bool {
+        self.auth.is_some()
     }
 
     /// The same server with no token.
@@ -2089,6 +2095,20 @@ impl Api {
             repo: repo.to_owned(),
         })
         .await
+    }
+
+    /// The token on GitHub of the session `session` of this person
+    /// (01M6WPMEEWX09DHJZF18BKBPYW): the daemon asks, signed in as the
+    /// person. `None` when this client sends no token: riff-server then
+    /// knows no person to give a token to.
+    pub async fn github_token(&self, session: &str) -> Result<Option<SessionToken>> {
+        if self.auth.is_none() {
+            return Ok(None);
+        }
+        let ask = GitHubToken {
+            session: session.to_owned(),
+        };
+        Ok(Some(self.call(&ask).await?))
     }
 
     /// Fails with what to do when this device has no sign-in.

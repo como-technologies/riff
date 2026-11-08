@@ -193,11 +193,11 @@ hold each decision of the design.
 | `/tmp` | Each container has its own `/tmp`. It goes when the session ends. | Nothing. |
 | The ports | Each container has its own loopback. A test port of one session does not hit another. | It can reach a port that listens on the network of your machine, as each program on it can. |
 | The caches | riff sets no cache. A repository names its cache volumes in `riff.toml`. The `riff.toml` of riff names one volume for `CARGO_HOME` and one for the folder of sccache. Both are bound with write. The tools lock them themselves. The toolchain is in the image, with no write. A new clone has no `target/`: a warm sccache makes its build short. | It can write a bad file in a cache, and a later build of another session uses it. |
-| Your home | The home of the container is an empty tmpfs at the path of your home. riff binds your `~/.gitconfig` and the Claude folder of the session on top of it. Each other write in that home goes when the session ends. riff writes nothing in your home outside its own folders. It does not write `~/.claude`, `~/.claude.json`, a git config or a shell file. | It reads `~/.gitconfig` and `~/.config/gh`. |
+| Your home | The home of the container is an empty tmpfs at the path of your home. riff binds your `~/.gitconfig` and the Claude folder of the session on top of it. Each other write in that home goes when the session ends. riff writes nothing in your home outside its own folders. It does not write `~/.claude`, `~/.claude.json`, a git config or a shell file. | It reads `~/.gitconfig`. It does not see `~/.config/gh`. |
 | The CPU | Each container gets `--cpus`, 8 by default. riff sets no build jobs: a tool reads the CPUs of its container. `riff daemon limit --cpus N` sets it for the host. The daemon keeps one limit for the host: the number of live sessions, at most 3 by default. | A build of one session makes the builds of the others slower, up to its limit. |
 | The memory | Each container gets `--memory`, 8 GB by default. `riff daemon limit --memory GB` sets it for the host. A session past its limit loses its own processes, not those of another session. The daemon starts no new session while the free memory is below a floor, 8 GB by default. | It takes memory, up to its limit, that a new session needs. |
 | The network | Each session reaches the internet, as a plain `claude` does. No proxy and no filter. | It uses the same connection and reaches each service that your machine reaches. |
-| The sign-in of `gh` | The daemon reads `gh auth token` on the host and gives the container `GH_TOKEN`. podman gets only the name of the variable, so the value is in no command line. The image has `gh` at `/usr/bin/gh`. The daemon binds the binary of riff at `/usr/local/bin/gh`: it counts each call for `riff daemon status` (see [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)), and runs the real `gh`. An image with its own `gh` at `/usr/local/bin/gh` gets no bind: its `gh` runs as it is, with no count. A session has your rights on GitHub, as a plain `claude` has. No GitHub App. No secret goes into a log line, a message or a file of a clone. | It can do on GitHub each thing that you can do, also to the issues and the pull requests of another session. |
+| The sign-in of `gh` | The session acts on GitHub as a bot of a GitHub App of the riff, with a token for its one repository and the rights of its role: see [Who acts on GitHub for each role](#who-acts-on-github-for-each-role). The container gets no token of yours. Where the Apps are not on the repository, the daemon gives the container your token in `GH_TOKEN`, as before: podman gets only the name of the variable, so the value is in no command line. The image has `gh` at `/usr/bin/gh`. The daemon binds the binary of riff at `/usr/local/bin/gh`: it counts each call for `riff daemon status` (see [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)), and runs the real `gh`. An image with its own `gh` at `/usr/local/bin/gh` gets no bind: its `gh` runs as it is, with no count. No secret goes into a log line, a message or a file of a clone. | A worker can change an issue or a comment of another session: the right `issues: write` has no smaller part. The guard puts the change back: see [Add to an issue](#add-to-an-issue). Where the Apps are not, a session can do on GitHub each thing that you can do. |
 | The sign-in of `claude` | Each session has its own Claude folder in a folder of riff. riff trusts the clone of the session there, as you trust the main clone. The daemon gives the session the long-lived token of `riff claude-token`, kept in the OS keyring, in `CLAUDE_CODE_OAUTH_TOKEN`. With no token, riff binds your `~/.claude/.credentials.json` with no write, and starts no session while its access token has less than 60 minutes left. riff never changes your own Claude config. | It uses the limits of your plan that another session needs. |
 | The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. The daemon serves the riff tools of the session on riff-server, as its worker session. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The owner and admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |
 
@@ -5469,7 +5469,7 @@ check judges it.
 
 A worker and a verifier act on GitHub as the bot of the session App of
 the riff: see
-[Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff).
+[Who acts on GitHub for each role](#who-acts-on-github-for-each-role).
 The right `issues: write` of GitHub has no smaller part, so their token
 can change the body or the title of an issue, and change or delete a
 comment of another account. So each repository of the riff has a guard:
@@ -5502,3 +5502,70 @@ change of another account has the status `skipped`:
 ```sh
 gh run list --workflow riff-guard.yml
 ```
+
+#### Who acts on GitHub for each role
+
+Each session in a container acts on GitHub with a token of a GitHub App
+of the riff, not with your token. GitHub shows the bot of the App, and
+refuses each step that the rights of the role do not give. See
+[Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff).
+
+| Who | Acts on GitHub as | What GitHub lets it do |
+|---|---|---|
+| A worker | `riff-OWNER[bot]`, the session App | Push a branch, open a pull request, comment, run a workflow again, and change `.github/workflows`. It cannot set `riff/verify` or push a tag `v*`. |
+| A verifier | `riff-OWNER[bot]`, the session App | Read only. The daemon reports the verify on the pull request. |
+| The lead in a container | `riff-OWNER-lead[bot]`, the lead App | The steps of a worker, and set `riff/verify`. It cannot change `.github/workflows`. |
+| You in a terminal, a plain `claude`, the daemon on the host | You | Each step that you can do. |
+
+riff-server takes the role from its own facts: the lead, a session
+with a claim `verify-ITEM`, else a worker. The token is good for one
+hour and for the one repository of the session. The daemon asks for it
+only when your `gh` can push to that repository.
+
+```mermaid
+sequenceDiagram
+    participant D as riff daemon (host)
+    participant S as riff-server
+    participant G as GitHub
+    participant C as the container
+    D->>S: the token of the session (signed in as you)
+    S->>G: a token: one repository, the rights of the role
+    S-->>D: the token, its bot, its rights, its end
+    D->>C: the folder gh of the session, GH_CONFIG_DIR
+    Note over D,C: 10 minutes before the end: a new token in the same file
+    D->>G: at the end of the session: revoke the token
+```
+
+The container gets no token of yours: no `GH_TOKEN`, and no
+`~/.config/gh`. `gh` reads the token from the folder `gh` of the
+session, and git gets it from `gh auth git-credential`.
+
+See how a session acts on GitHub. In the session, run:
+
+```sh
+riff whoami
+```
+
+The rows `github` and `rights` show the bot, the role, the end and the
+rights of its token:
+
+```text
+github   riff-como-technologies[bot], a worker, until 2026-11-08T13:00:00Z
+rights   actions: write, checks: read, contents: write, issues: write, metadata: read, pull_requests: write, statuses: read, workflows: write
+```
+
+When the Apps are not on the repository, the sessions there act with
+your token, as before. The row `github` then says why, and so does
+`riff daemon status` on the host:
+
+```sh
+riff daemon status
+```
+
+```text
+GitHub: the sessions of acme/app act with the token of the person: riff-acme is not installed on acme/app: riff github install acme.
+```
+
+Do the fix, for example
+[Install the GitHub Apps of riff on the account](start-a-riff.md#install-the-github-apps-of-riff-on-the-account).
+`riff init --check` names the same fix.

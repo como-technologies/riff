@@ -51,7 +51,7 @@
 //! A spec holds no secret. Each [`Env::Host`] of a spec names a variable
 //! only. Its value goes to [`Runtime::start`] beside the spec, and the
 //! runtime gives it to the session with no command line
-//! (01M4Z60B89BHXQVJ2MGRRQ2CKJ).
+//! (01M6WPMWSMQABE97YCMS5Z3M1P).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -95,7 +95,7 @@ pub enum Env {
     Value(String, String),
     /// Only the name. The value goes to [`Runtime::start`] beside the
     /// spec, so it is in no spec and in no command line
-    /// (01M4Z60B89BHXQVJ2MGRRQ2CKJ).
+    /// (01M6WPMWSMQABE97YCMS5Z3M1P).
     Host(String),
 }
 

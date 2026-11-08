@@ -76,6 +76,7 @@ case "$*" in
     if [ -f "$dir/branch-fails" ]; then echo 'gh: HTTP 502' >&2; exit 1; fi
     echo "$branch" ;;
   'auth token') echo GHTOKEN ;;
+  'api repos/como-technologies/riff --jq .permissions.push') echo true ;;
   'issue view 12 --json number,state,milestone')
     while [ -f "$dir/milestone-hold" ]; do sleep 0.05; done
     echo '{"number":12,"state":"OPEN","milestone":{"title":"Wave 27"}}' ;;
@@ -518,7 +519,8 @@ impl Machine {
         );
 
         // The home of the person: a git config, the sign-in of claude
-        // for 3 hours, and a gh config.
+        // for 3 hours, and a gh config: no container gets a bind of it
+        // (01M6WPMP035A93SM6SAJGS6MTC).
         let home = env.home();
         std::fs::write(home.join(".gitconfig"), "[user]\n\tname = Mike\n").unwrap();
         std::fs::create_dir_all(home.join(".claude")).unwrap();
@@ -903,8 +905,6 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "-v",
         &format!("{h}/.gitconfig:{h}/.gitconfig:ro"),
         "-v",
-        &format!("{h}/.config/gh:{h}/.config/gh:ro"),
-        "-v",
         &format!("{claude}:{h}/.claude"),
         "-v",
         &format!("{h}/.claude/.credentials.json:{h}/.claude/.credentials.json:ro"),
@@ -928,11 +928,19 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "-e",
         "GH_TOKEN",
         "-e",
-        "GIT_CONFIG_COUNT=1",
+        "GIT_CONFIG_COUNT=3",
         "-e",
         "GIT_CONFIG_KEY_0=commit.gpgsign",
         "-e",
         "GIT_CONFIG_VALUE_0=false",
+        "-e",
+        "GIT_CONFIG_KEY_1=credential.https://github.com.helper",
+        "-e",
+        "GIT_CONFIG_VALUE_1=",
+        "-e",
+        "GIT_CONFIG_KEY_2=credential.https://github.com.helper",
+        "-e",
+        "GIT_CONFIG_VALUE_2=!gh auth git-credential",
         "-e",
         &format!("CLAUDE_CONFIG_DIR={h}/.claude"),
         "-e",

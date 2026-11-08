@@ -248,23 +248,45 @@ pub(crate) fn state_facts(
     (rows, action.map(|action| styled(WARNING, &action)))
 }
 
-/// `riff whoami`: the session, its URI, the pauses of the riff and the
-/// build. `state` is the error text when riff cannot read the pauses.
+/// `riff whoami`: the session, its URI, the pauses of the riff, the
+/// build, and in a container how the session acts on GitHub
+/// (01M6WPMWYSW98MQYQCCJ54ZX04). `state` is the error text when riff
+/// cannot read the pauses.
 ///
 /// ```
 /// use riff_core::record::By;
-/// use riff_core::wire::{PauseInfo, RepositoryPause, RiffReply, RiffState};
+/// use riff_core::wire::{GitHubRole, PauseInfo, RepositoryPause, RiffReply, RiffState};
+/// use riff::daemon::gh_token::ActsAs;
 ///
 /// let me = "riff://mike@pangolin/como-technologies/riff?session=a6cf2205-1".parse()?;
-/// let out = riff::view::whoami(&me, Ok(RiffState::Running.into()));
+/// let out = riff::view::whoami(&me, Ok(RiffState::Running.into()), None);
 /// let plain = anstream::adapter::strip_str(&out).to_string();
 /// let lines: Vec<&str> = plain.lines().collect();
 /// assert_eq!(lines[0], "session  mike@pangolin:riff (a6cf2205)");
 /// assert_eq!(lines[1], "uri      riff://mike@pangolin/como-technologies/riff?session=a6cf2205-1");
 /// assert_eq!(lines[2], "riff     running");
 /// assert!(lines[3].starts_with("build    v"), "{plain}");
+/// assert!(!plain.contains("github"), "{plain}");
 ///
-/// let paused = riff::view::whoami(&me, Ok(RiffState::Paused.into()));
+/// // In a container: the bot, the role, the rights and the end of the token.
+/// let bot = ActsAs::Bot {
+///     bot: "riff-acme[bot]".into(),
+///     role: GitHubRole::Worker,
+///     rights: [("contents".to_owned(), "write".to_owned()), ("metadata".to_owned(), "read".to_owned())].into(),
+///     ends: "2026-11-08T13:00:00Z".into(),
+/// };
+/// let out = riff::view::whoami(&me, Ok(RiffState::Running.into()), Some(&bot));
+/// let plain = anstream::adapter::strip_str(&out).to_string();
+/// assert!(plain.contains("github   riff-acme[bot], a worker, until 2026-11-08T13:00:00Z\n"), "{plain}");
+/// assert!(plain.contains("rights   contents: write, metadata: read\n"), "{plain}");
+/// let person = ActsAs::Person { why: "riff-acme is not installed on acme/app: riff github install acme".into() };
+/// let out = riff::view::whoami(&me, Ok(RiffState::Running.into()), Some(&person));
+/// let plain = anstream::adapter::strip_str(&out).to_string();
+/// assert!(plain.contains(
+///     "github   the token of the person: riff-acme is not installed on acme/app: riff github install acme\n"
+/// ), "{plain}");
+///
+/// let paused = riff::view::whoami(&me, Ok(RiffState::Paused.into()), None);
 /// let plain = anstream::adapter::strip_str(&paused).to_string();
 /// assert!(plain.ends_with("resumes it with: riff resume --riff\n"), "{plain}");
 ///
@@ -278,16 +300,21 @@ pub(crate) fn state_facts(
 ///     repositories: vec![pause],
 ///     ..RiffState::Running.into()
 /// };
-/// let plain = anstream::adapter::strip_str(&riff::view::whoami(&me, Ok(pauses))).to_string();
+/// let plain = anstream::adapter::strip_str(&riff::view::whoami(&me, Ok(pauses), None)).to_string();
 /// let lines: Vec<&str> = plain.lines().collect();
 /// assert_eq!(lines[2], "riff     running");
 /// assert_eq!(lines[3], "paused   como-technologies/riff by the person mike");
 /// assert!(plain.ends_with("lead resumes it with: riff resume\n"), "{plain}");
-/// let down = riff::view::whoami(&me, Err("refused".into()));
+/// let down = riff::view::whoami(&me, Err("refused".into()), None);
 /// assert!(anstream::adapter::strip_str(&down).to_string().contains("riff     unknown: refused\n"));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
+pub fn whoami(
+    me: &SessionUri,
+    state: Result<RiffReply, String>,
+    github: Option<&crate::daemon::gh_token::ActsAs>,
+) -> String {
+    use crate::daemon::gh_token::ActsAs;
     let mut rows = vec![
         (
             "session",
@@ -304,6 +331,30 @@ pub fn whoami(me: &SessionUri, state: Result<RiffReply, String>) -> String {
             rows.extend(build_facts(riff_client::link::server_build().as_ref()));
         }
         Err(e) => rows.push(("riff", styled(ERROR, &format!("unknown: {}", safe(&e))))),
+    }
+    match github {
+        Some(ActsAs::Bot {
+            bot,
+            role,
+            rights,
+            ends,
+        }) => {
+            let role = match role {
+                riff_core::wire::GitHubRole::Lead => "the lead".to_owned(),
+                role => format!("a {role}"),
+            };
+            rows.push(("github", safe(&format!("{bot}, {role}, until {ends}"))));
+            let rights: Vec<String> = rights
+                .iter()
+                .map(|(name, level)| format!("{name}: {level}"))
+                .collect();
+            rows.push(("rights", safe(&rights.join(", "))));
+        }
+        Some(ActsAs::Person { why }) => rows.push((
+            "github",
+            styled(WARNING, &safe(&format!("the token of the person: {why}"))),
+        )),
+        None => {}
     }
     let mut out = facts(&rows);
     if let Some(action) = action {

@@ -640,10 +640,6 @@
 - **01M3JFEXJG2D651PWA30DNRGWF** No session pushes to `main` or runs
   `gh pr merge --admin`. The project settings of Claude Code deny
   both.
-- **01M3JN4QVR3JCRWC8TFJJTCPHF** Each session uses the GitHub account
-  of our user, so the author of a pull request can set `riff/verify`
-  on its own commit. We accept this gap until the sessions act with
-  their own GitHub identity (#97).
 - **01M3JFEXMPNFEV4HBZJQ15JD25** The author opens a pull request with
   `riff pr open`, with the milestone of the issue and the body form of
   the rules that apply (01M5SMSHNQ9E4P9W6RCB8E1WTN,
@@ -3199,6 +3195,21 @@
   riff-server for the Apps of the riff with no account: the ID, the slug
   and the bot of each App. Only the owner or an admin asks with an
   account.
+- **01M6WPMEEWX09DHJZF18BKBPYW** The daemon asks riff-server for the
+  token of a session on GitHub with `POST /v1/github/token` and the
+  session ID, signed in as the person. riff-server refuses a session
+  token, and a session ID that is no session of that person. It takes
+  the role and the repository from its own facts: the lead of the
+  repository, else a verifier for a session with a claim `verify-ITEM`,
+  else a worker. It asks GitHub for a token of the App of the role, for
+  the one repository of the session, with the rights of the role
+  (01M6WG52MWZB1SVQMMH6BKJSJ5). It refuses a token that GitHub gave with
+  other rights, and revokes it. The socket of a session does not pass
+  this call.
+- **01M6WPMNV3YX526YD54S5R2HR5** riff-server writes one log line for
+  each token of a session: the session, the person, the repository, the
+  role and the end. No log line, reply to another call, record or object
+  of the bucket holds the token.
 
 ## Sign-in and tokens
 
@@ -4605,6 +4616,9 @@ of this part when they merge.
   no `ANTHROPIC_MODEL`, and a test checks it. This supersedes
   01M6V8GQ1297PCZEKY311KRRWC in full, and 01M6VAQWMKDX4VY8QRPA8EYFN9 in
   part.
+- **01M6WPMX3RXXPX2AZKTPM18BXP** riff refuses a `riff.toml` whose
+  `[session.env]` names `GH_CONFIG_DIR`, as for the other variables that
+  riff sets (01M5SMW2B4GMJ3V6BCX1KGC1ZY).
 
 ### Sessions
 
@@ -4625,10 +4639,9 @@ of this part when they merge.
   repository. riff binds with write only: the clone of the session, its
   Claude folder, the folder of its socket, and the volumes that
   `riff.toml` names (01M5SMVVC4GQS310CVK3H9CMQ7). riff binds
-  `~/.gitconfig` and `~/.config/gh` with no write, or as an overlay
-  (`:O`) whose changes go when the session ends. Each other write goes
-  to the copy-on-write layer of the container, and goes when the
-  session ends.
+  `~/.gitconfig` with no write, or as an overlay (`:O`) whose changes
+  go when the session ends. Each other write goes to the copy-on-write
+  layer of the container, and goes when the session ends.
 - **01M4Z60B7SHAMXXFK15BE3KZSP** The home of the person is a tmpfs in
   the container, at the same path, with `HOME` set:
   `--mount type=tmpfs,destination=$HOME,tmpfs-mode=0700,U=true`. The
@@ -5676,6 +5689,10 @@ of this part when they merge.
   note: a lead on it only watches. This supersedes
   01M53NGVE839TRH7XB7CDPQNZE in part, and 01M5515CFHRA6AJG4GKX0ZV77W in
   full.
+- **01M6WQWARBTYSN3SCB86DZQ5QV** The daemon counts the calls of `gh` for
+  the token of a session (01M6WPMNXN1BSBEH74TG5DDRTF), the check of the
+  push right and the revoke, under the caller `token` of DAEMON
+  (01M6QCDH3VXFFEFEWJT1H2HQT0).
 
 ### The lead, the view and the takeover
 
@@ -6550,10 +6567,6 @@ of this part when they merge.
 - **01M4Z60B88DC67N3GVHY8JGRPQ** A plain `claude` of the person keeps
   the sign-in of the person for git and `gh`. A commit has the git
   identity of the person and a `Riff-Session:` trailer.
-- **01M4Z60B89BHXQVJ2MGRRQ2CKJ** The daemon reads `gh auth token` on the
-  host, and gives it to the container in `GH_TOKEN`. riff gives podman
-  only the name of the variable (`-e GH_TOKEN`), so the value is in no
-  command line.
 - **01M4Z60B89G8YNVMTEPGX7FQCV** A session commits with no signature.
   riff sets `commit.gpgsign=false` in the environment of the container
   (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`), so
@@ -6563,6 +6576,38 @@ of this part when they merge.
   identity of its own: a token of a GitHub App of the riff, for the one
   repository of the session, with the rights of its role. Supersedes
   01M4Z60B88DC67N3GVHY8JGRPQ in part.
+- **01M6WPMNXN1BSBEH74TG5DDRTF** The daemon asks for the token of a
+  session (01M6WPMEEWX09DHJZF18BKBPYW) only for a repository where the
+  `gh` of the person can push (`permissions.push`). It writes the token
+  to `hosts.yml` in the folder `gh` of the session, with mode `0600`,
+  binds that folder at the same path with no write, and sets
+  `GH_CONFIG_DIR` to it. git uses `gh auth git-credential`: riff sets
+  the credential helper of `https://github.com` with `GIT_CONFIG_*`. The
+  daemon writes a new token 10 minutes before the end of the token. At
+  the end of the session, it revokes the token and removes the folder.
+- **01M6WPMP035A93SM6SAJGS6MTC** A container whose session has a token
+  of a GitHub App gets no token of the person: no `GH_TOKEN`. No
+  container gets a bind of `~/.config/gh` of the host. This supersedes
+  01M4Z60B89BHXQVJ2MGRRQ2CKJ in full, and 01M4Z60B7QDWEFQ96H448RE9N2 in
+  part.
+- **01M6WPMWSMQABE97YCMS5Z3M1P** When riff-server gives no token of an
+  App, the session keeps the token of the person: the riff has no App of
+  the role or no sign-in, the App is not on the repository, or the `gh`
+  of the person cannot push there. The daemon then reads `gh auth token`
+  on the host, and gives it in `GH_TOKEN` with the name only on the
+  command line of podman (`-e GH_TOKEN`). `riff daemon status` names
+  each such repository with the fix, for example `riff github install
+  OWNER`, and `riff init --check` fails a check with the same fix.
+- **01M6WPMWW7T0Y8SY3522GS4YF0** The lead in a container gets the token
+  of the lead App at `riff lead start`, and the daemon renews it for the
+  life of the lead. Each `riff` command of a person in a terminal, and
+  each step of the daemon on the host, keeps the token of the person.
+- **01M6WPMWYSW98MQYQCCJ54ZX04** `riff whoami` in a container shows how
+  the session acts on GitHub: the bot, the role, the rights and the end
+  of its token, or that it has the token of the person and why.
+- **01M6WPMX18BECQPTQNSTZMBN16** The daemon and the relay take each
+  token of a GitHub App out of each event and each line: `ghs_` and the
+  letters, digits and `_` after it.
 
 ### The security of riff's own code
 

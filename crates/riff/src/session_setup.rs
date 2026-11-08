@@ -82,6 +82,7 @@ const RESERVED: &[&str] = &[
     "USER",
     "LOGNAME",
     "GH_TOKEN",
+    crate::daemon::gh_token::CONFIG_VAR,
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_OAUTH_TOKEN",
     MODEL_VARIABLE,
@@ -429,7 +430,8 @@ mod tests {
         assert_eq!(expand("none", home), "none");
     }
 
-    /// 01M5SMW2B4GMJ3V6BCX1KGC1ZY: a variable that riff sets itself.
+    /// 01M5SMW2B4GMJ3V6BCX1KGC1ZY, 01M6WPMX3RXXPX2AZKTPM18BXP: a variable that
+    /// riff sets itself.
     #[test]
     fn a_variable_that_riff_sets_is_refused() {
         for name in [
@@ -437,6 +439,7 @@ mod tests {
             "USER",
             "LOGNAME",
             "GH_TOKEN",
+            "GH_CONFIG_DIR",
             "CLAUDE_CONFIG_DIR",
             "CLAUDE_CODE_OAUTH_TOKEN",
             "GIT_CONFIG_COUNT",

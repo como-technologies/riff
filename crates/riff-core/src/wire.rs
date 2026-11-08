@@ -79,8 +79,9 @@
 //! `admin` and `owner`. `owner` to a person who is not a member or an
 //! admin gets status 400. `remove` of the owner or of an admin gets status 400.
 //!
-//! Three calls make and check the GitHub Apps of the riff
-//! (01M6WG52J7WTP079W1AYEQ4W08). Each needs an access token and a DPoP
+//! Four calls make and check the GitHub Apps of the riff, and give the
+//! token of a session (01M6WG52J7WTP079W1AYEQ4W08,
+//! 01M6WPMEEWX09DHJZF18BKBPYW). Each needs an access token and a DPoP
 //! proof too:
 //!
 //! | Path | Request | Reply | Who |
@@ -88,6 +89,7 @@
 //! | `POST /v1/github/create` | [`GitHubCreate`] | [`GitHubStarted`] | an admin |
 //! | `POST /v1/github/apps` | [`GitHubApps`] | [`GitHubAppsReply`] | an admin; each person with no `owner` |
 //! | `POST /v1/github/check` | [`GitHubCheck`] | [`GitHubChecked`] | each person |
+//! | `POST /v1/github/token` | [`GitHubToken`] | [`SessionToken`] | the person of the session, with no session token |
 //!
 //! Two metadata documents follow the MCP authorization spec (R22):
 //!
@@ -257,6 +259,7 @@ calls! {
     GitHubCreate => "/v1/github/create", GitHubStarted;
     GitHubApps => "/v1/github/apps", GitHubAppsReply;
     GitHubCheck => "/v1/github/check", GitHubChecked;
+    GitHubToken => "/v1/github/token", SessionToken;
 }
 
 /// `POST /v1/register`: a session says that it exists and where it
@@ -3075,6 +3078,86 @@ impl RoleChecked {
     /// no more.
     pub fn passed(&self) -> bool {
         self.problem.is_none() && self.missing.is_empty() && self.extra.is_empty()
+    }
+}
+
+/// `POST /v1/github/token`: a token of GitHub for the session `session`
+/// (01M6WPMEEWX09DHJZF18BKBPYW). The daemon of the person of the session
+/// asks, at the start of its container and 10 minutes before the end of
+/// each token. riff-server takes the role and the repository from its
+/// own facts, so the request names neither.
+///
+/// ```
+/// use riff_core::wire::{Call, GitHubToken};
+///
+/// let ask = GitHubToken { session: "1a2b".into() };
+/// assert_eq!(serde_json::to_string(&ask).unwrap(), r#"{"session":"1a2b"}"#);
+/// assert_eq!(GitHubToken::PATH, "/v1/github/token");
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubToken {
+    /// The session ID.
+    pub session: String,
+}
+
+/// The reply to [`GitHubToken`]: a token of the App of the role, for the
+/// one repository of the session, with the rights of the role. Or why
+/// riff-server gave none: then the session keeps the token of the
+/// person. Its `Debug` hides the token.
+///
+/// ```
+/// use riff_core::wire::{GitHubRole, SessionToken};
+///
+/// let reply: SessionToken = serde_json::from_str(r#"{
+///     "role": "worker", "repo": "acme/app", "bot": "riff-acme[bot]",
+///     "token": "ghs_abcd", "rights": {"contents": "write"},
+///     "ends": "2026-11-08T13:00:00Z"
+/// }"#).unwrap();
+/// assert_eq!(reply.role, GitHubRole::Worker);
+/// assert!(reply.problem.is_none());
+/// assert!(!format!("{reply:?}").contains("ghs_abcd"));
+/// ```
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionToken {
+    /// The role of the session: the lead, a session with a claim
+    /// `verify-ITEM`, else a worker.
+    pub role: GitHubRole,
+    /// The repository of the session, `OWNER/NAME`.
+    pub repo: String,
+    /// The login of the bot of the App of the role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot: Option<String>,
+    /// The user ID of the bot, when riff-server has it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<u64>,
+    /// The token of the installation. `None` with a [`problem`](Self::problem).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// The rights of the token.
+    #[serde(default, skip_serializing_if = "Rights::is_empty")]
+    pub rights: Rights,
+    /// The end of the token, as GitHub gives it, for example
+    /// `2026-11-08T13:00:00Z`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ends: Option<String>,
+    /// Why riff-server gave no token, with the fix: the riff has no App
+    /// of the role, or the App is not on the repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+}
+
+impl std::fmt::Debug for SessionToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionToken")
+            .field("role", &self.role)
+            .field("repo", &self.repo)
+            .field("bot", &self.bot)
+            .field("bot_id", &self.bot_id)
+            .field("token", &self.token.as_ref().map(|_| "[secret]"))
+            .field("rights", &self.rights)
+            .field("ends", &self.ends)
+            .field("problem", &self.problem)
+            .finish()
     }
 }
 

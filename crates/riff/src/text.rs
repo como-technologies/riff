@@ -17,9 +17,9 @@ use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_client::api::{Claimed, Inbox, Told};
 use riff_client::threads::{Line, Thread};
 use riff_core::wire::{
-    AdminSet, FreeReply, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied, OwnerPassed,
-    PauseInfo, Posted, ReleaseReply, Removed, Revoked, RiffOwner, RiffReply, RiffState,
-    SessionInfo, StepChange, ThreadInfo, Wake,
+    AdminSet, FreeReply, GitHubRole, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied,
+    OwnerPassed, PauseInfo, Posted, ReleaseReply, Removed, Revoked, RiffOwner, RiffReply,
+    RiffState, SessionInfo, StepChange, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -6117,6 +6117,88 @@ pub fn daemon_session_starts(name: &str, item: &str, session: &str) -> String {
     format!("The session {session} starts: {item} in the container {name}.")
 }
 
+/// Why a session keeps the token of the person when riff-server gave no
+/// token and named no problem (01M6WPMWSMQABE97YCMS5Z3M1P).
+pub const GH_TOKEN_NONE: &str = "riff-server gave no token of a GitHub App";
+
+/// Why a session keeps the token of the person on a riff with no
+/// sign-in: riff-server knows no person to give a token to.
+pub const GH_NO_SIGN_IN: &str = "this riff has no sign-in, so it gives no token of a GitHub App";
+
+/// Why a session keeps the token of the person on a riff-server of an
+/// older build, which has no call for the token of a session.
+pub const GH_OLD_SERVER: &str = "riff-server is older and gives no token of a GitHub App";
+
+/// Why a session keeps the token of the person when the `gh` of the
+/// person cannot push to `repo` (01M6WPMNXN1BSBEH74TG5DDRTF).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::gh_no_push("acme/app"),
+///     "the gh of the person cannot push to acme/app"
+/// );
+/// ```
+pub fn gh_no_push(repo: &str) -> String {
+    format!("the gh of the person cannot push to {repo}")
+}
+
+/// The line of the daemon for the token of a session: the bot, the role
+/// and the end. It never holds the token.
+///
+/// ```
+/// use riff_core::wire::GitHubRole;
+///
+/// assert_eq!(
+///     riff::text::daemon_gh_token("riff-issue-12-1a2b3c4d", "riff-acme[bot]", GitHubRole::Worker, "2026-11-08T13:00:00Z"),
+///     "The container riff-issue-12-1a2b3c4d acts on GitHub as riff-acme[bot], with the rights of a worker, until 2026-11-08T13:00:00Z."
+/// );
+/// ```
+pub fn daemon_gh_token(name: &str, bot: &str, role: GitHubRole, ends: &str) -> String {
+    let role = match role {
+        GitHubRole::Lead => "the lead".to_owned(),
+        role => format!("a {role}"),
+    };
+    format!(
+        "The container {name} acts on GitHub as {bot}, with the rights of {role}, until {ends}."
+    )
+}
+
+/// The line of the daemon for a session that keeps the token of the
+/// person, and why (01M6WPMWSMQABE97YCMS5Z3M1P).
+pub fn daemon_gh_person(name: &str, why: &str) -> String {
+    format!("The container {name} acts on GitHub with the token of the person: {why}.")
+}
+
+/// The line of the daemon when it cannot get a new token for a session:
+/// it keeps the old one, and asks again soon.
+pub fn daemon_gh_renew_failed(name: &str, error: &str) -> String {
+    format!(
+        "riff daemon: {name}: riff got no new token on GitHub: {error}. The session keeps its token \
+         until its end, and riff asks again in a minute."
+    )
+}
+
+/// The line of the daemon when the revoke of the token of a session
+/// failed: the token ends by itself within the hour.
+pub fn daemon_gh_revoke_failed(name: &str, error: &str) -> String {
+    format!("riff daemon: {name}: {error}. The token ends by itself within the hour.")
+}
+
+/// The line of `riff daemon status` for a repository whose sessions
+/// act on GitHub with the token of the person, and why: the fix of the
+/// reason is the command (01M6WPMWSMQABE97YCMS5Z3M1P).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_gh_status("acme/app", "riff-acme is not installed on acme/app: riff github install acme"),
+///     "GitHub: the sessions of acme/app act with the token of the person: \
+///      riff-acme is not installed on acme/app: riff github install acme."
+/// );
+/// ```
+pub fn daemon_gh_status(repo: &str, why: &str) -> String {
+    format!("GitHub: the sessions of {repo} act with the token of the person: {why}.")
+}
+
 /// A session of the daemon ended with the exit code `code`.
 pub fn daemon_session_ends(name: &str, code: Option<i32>) -> String {
     match code {
@@ -7199,6 +7281,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     watches: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
+///     person_tokens: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -7264,6 +7347,17 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// let line = riff::text::lead_lost_network("o/r", "riff-lead-o-r");
 /// assert!(text.contains(&format!("{line}\n")), "{text}");
 /// assert!(text.find(&line) < text.find("Sessions:\n"), "{text}");
+/// // A repository whose sessions act on GitHub with the token of the
+/// // person, with the fix (01M6WPMWSMQABE97YCMS5Z3M1P).
+/// status.person_tokens.push(riff::daemon::PersonToken {
+///     repo: "acme/app".into(),
+///     why: "riff-acme is not installed on acme/app: riff github install acme".into(),
+/// });
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// assert!(text.contains(
+///     "GitHub: the sessions of acme/app act with the token of the person: \
+///      riff-acme is not installed on acme/app: riff github install acme.\n"
+/// ), "{text}");
 /// ```
 pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     let age = |since: i64| ago(u64::try_from((now_ms - since) / 1000).unwrap_or(0));
@@ -7289,6 +7383,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     for lost in &status.lost {
         let _ = writeln!(out, "{}", lead_lost_network(&lost.repo, &lost.name));
+    }
+    for person in &status.person_tokens {
+        let _ = writeln!(out, "{}", daemon_gh_status(&person.repo, &person.why));
     }
     if status.sessions.is_empty() {
         out.push_str("Sessions: none.\n");
@@ -7707,6 +7804,15 @@ pub fn init_riff_not_static(path: &Path, why: &str) -> String {
 /// The fix of a riff binary that is not static.
 pub const INIT_FIX_RIFF: &str = "run riff update. It installs the static riff and riff-server of \
      the release, so riff relay starts in each session image";
+
+/// The name of the check of the GitHub Apps of riff on the repository
+/// (01M6WPMWSMQABE97YCMS5Z3M1P).
+pub const INIT_APPS: &str = "the GitHub Apps of riff";
+
+/// The GitHub Apps of riff are on the repository `repo`.
+pub fn init_apps_on(repo: &str) -> String {
+    format!("on {repo}")
+}
 
 /// The name of the check of the merge settings of the repository on
 /// GitHub (01M5QVF5535YRN1EF3DZAB4W8G).
@@ -8429,6 +8535,7 @@ pub const INIT_CONTAINER_DONE: &str =
 ///     watches: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
+///     person_tokens: vec![],
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");

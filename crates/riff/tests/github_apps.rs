@@ -461,3 +461,72 @@ async fn riff_init_check_names_a_repository_with_no_guard() {
     assert!(calls.contains("riff-guard.yml?ref=main"), "{calls}");
     assert!(!calls.contains(" -X "), "{calls}");
 }
+
+/// 01M6WPMWSMQABE97YCMS5Z3M1P: `riff init --check` in a clone of a
+/// repository with no installation of the Apps fails a check, and names
+/// `riff github install OWNER`. With the Apps on the repository, the
+/// check passes.
+#[tokio::test]
+async fn riff_init_check_names_the_install_of_the_apps() {
+    let fake = FakeGitHub::start().await;
+    let keys = keys_dir();
+    let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
+    let env = Isolated::new();
+    common::sign_in(&server, &env.riff_home(), "bob");
+    let repo = clone();
+    let init = || {
+        env.tokio_riff()
+            .args(["init", "--check"])
+            .current_dir(repo.path())
+            .env("RIFF_SERVER", &*server)
+            .output()
+    };
+    let out = init().await.unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    let line = "  fail  the GitHub Apps of riff: riff-acme is not installed on acme/app. \
+                Fix: riff github install acme\n";
+    assert!(stdout.contains(line), "{stdout}");
+    // riff-server revoked each token of the check.
+    {
+        let seen = fake.seen();
+        assert_eq!(seen.revoked, seen.tokens);
+    }
+
+    fake.seen().installed = true;
+    let out = init().await.unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("  pass  the GitHub Apps of riff: on acme/app\n"),
+        "{stdout}"
+    );
+}
+
+/// 01M6WPMWYSW98MQYQCCJ54ZX04: "The auto mode settings of a session" in
+/// "How It Works" says who acts on GitHub for each role, with a copyable
+/// `sh` block of `riff whoami`.
+#[test]
+fn the_book_says_who_acts_on_github_for_each_role() {
+    let page = crate::book::page("how-it-works.md");
+    let settings = page
+        .split("\n### The auto mode settings of a session\n")
+        .nth(1)
+        .expect("the part is in How It Works");
+    let settings = settings.split("\n### ").next().unwrap();
+    let who = settings
+        .split("\n#### Who acts on GitHub for each role\n")
+        .nth(1)
+        .expect("the how-to is in the part");
+    let who = who.split("\n#### ").next().unwrap();
+    for row in [
+        "| A worker | `riff-OWNER[bot]`",
+        "| A verifier | `riff-OWNER[bot]`",
+        "| The lead in a container | `riff-OWNER-lead[bot]`",
+        "| You in a terminal",
+    ] {
+        assert!(who.contains(row), "{row}: {who}");
+    }
+    let commands = crate::book::commands_in(who);
+    assert_eq!(commands, ["riff whoami", "riff daemon status"]);
+    crate::book::each_is_real(&commands);
+}

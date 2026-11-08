@@ -942,8 +942,9 @@ command line of podman: put no secret in `riff.toml`.
 riff refuses a `riff.toml` that it cannot keep:
 
 - A variable that riff sets itself: `HOME`, `USER`, `LOGNAME`,
-  `GH_TOKEN`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, and each
-  name that starts with `GIT_CONFIG_` or `RIFF_`.
+  `GH_TOKEN`, `GH_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
+  `CLAUDE_CODE_OAUTH_TOKEN`, and each name that starts with
+  `GIT_CONFIG_` or `RIFF_`.
 - `ANTHROPIC_MODEL`: see
   [Set the model of the sessions](#set-the-model-of-the-sessions).
 - A volume name that podman could read as a path. A name starts with a
@@ -1711,9 +1712,14 @@ another host, add `--host thelio`.
 
 - The clone of the session, with write. The objects of your main clone,
   with no write.
-- Your `~/.gitconfig` and `~/.config/gh`, with no write.
-- Your token of `gh` in `GH_TOKEN`. riff gives podman only the name of
-  the variable, so the token is in no command line.
+- Your `~/.gitconfig`, with no write. No `~/.config/gh`.
+- The token of a GitHub App of the riff for the session, in the folder
+  `gh` of the session with no write, and `GH_CONFIG_DIR`. git gets it
+  from `gh auth git-credential`. See
+  [Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role).
+- Where the Apps are not on the repository, your token of `gh` in
+  `GH_TOKEN`. riff gives podman only the name of the variable, so the
+  token is in no command line.
 - A Claude folder of its own. `claude` runs in the auto permission
   mode.
 - The token of `riff claude-token` in `CLAUDE_CODE_OAUTH_TOKEN`, by
@@ -2053,11 +2059,12 @@ Each row has the caller and the kind of the call. The caller is `wave`
 (the loop and the jobs of the wave), `look` (the look of the daemon),
 `watches`, `sweep`, `usage`, `clone` (the clone of a repository that
 the daemon starts to serve), `release test` (the real-session test of a
-release), or the command of `riff` that made the call: `top`,
-`pr open`, `pr wait`, `verify`, `release`, `waves` (`riff wave ...`),
-`audit`, `questions`, `run`, `init`, `claim` (the pull request line
-of a claim), `github` (`riff github create` and `install` read the
-account), or `tui` (the Waves tab of the TUI, see
+release), `token` (the token of a session on GitHub: the push right of
+the person and the revoke), or the command of `riff` that made the
+call: `top`, `pr open`, `pr wait`, `verify`, `release`, `waves` (`riff
+wave ...`), `audit`, `questions`, `run`, `init`, `claim` (the pull
+request line of a claim), `github` (`riff github create` and `install`
+read the account), or `tui` (the Waves tab of the TUI, see
 [See the open items of a wave](waves.md#see-the-open-items-of-a-wave)).
 The caller `session` is a `gh` that a session runs in its
 container. A call of REST costs no GraphQL point. The points of a row
