@@ -602,7 +602,7 @@ fn keys_of(
     }
     let mut keys = match state.tab() {
         Tab::Sessions => return super::sessions::keys(state, layout),
-        Tab::Chat => return chat::keys(state.chat().focus(), layout),
+        Tab::Chat => return chat::keys(state.chat(), layout),
         Tab::Waves => return super::waves::keys_of(layout),
         Tab::Reports => return super::reports::keys(state, layout),
         Tab::Machines => super::machines::keys(layout, columns >= WIDER),

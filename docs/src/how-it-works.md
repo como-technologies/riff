@@ -3462,8 +3462,9 @@ person too.
 The lead of each person in a project shows with the same name, and the
 name wakes your own lead there (see "Wake a person or a project by
 name"). When two projects have the same name, each of their leads shows
-as `OWNER/REPO`, for example `<como-technologies/strata>`. The chat
-reads the names when it starts. The host shows only in the detail of a
+as `OWNER/REPO`, for example `<como-technologies/strata>`. Each one
+reads the names when it starts, and `riff chat` and the Chat tab read
+them again each 30 seconds. The host shows only in the detail of a
 line: in `riff tail chat`, and in `riff read --thread chat`. Start the
 chat:
 
@@ -3706,6 +3707,46 @@ flowchart LR
     L -- "your lead does not run" --> W["no one: the line waits in the chat"]
 ```
 
+### Pick a name with @
+
+In `riff chat`, type `@` and the first letters of a name. The rows
+under the prompt show the names of the chat that start with the
+letters, or whose part after the slash starts with them. The list shows
+at most five names, each with its kind and whether it is online. Start
+the chat:
+
+```sh
+riff chat
+```
+
+Then type `is #12 done? @r`:
+
+```text
+[riff] > is #12 done? @r
+  riff  project  online
+  rita  person   offline
+  Tab or Enter picks riff. Esc closes the list.
+```
+
+| Key | Does |
+|---|---|
+| `Tab`, `Enter` | Put the first name of the list in the line, with a space after it. |
+| `Esc` | Close the list. It stays closed until the cursor leaves the word. |
+
+The list does not stop your keys. To get another name of the list, type
+more of its letters. A name that is not in the list goes as you typed
+it: riff-server finds each name when it gets the line. The Chat tab of
+the TUI has the same list (see "Pick a name in the Chat tab").
+
+```mermaid
+stateDiagram-v2
+    [*] --> Typing
+    Typing --> List: @ and letters that fit a name
+    List --> Typing: Tab or Enter puts the name in the line
+    List --> Closed: Esc
+    Closed --> Typing: the cursor leaves the word
+```
+
 ### Get a highlight in the chat
 
 A line for you is a highlight in `riff chat` and `riff tail`, as in
@@ -3874,17 +3915,18 @@ until you send the next line.
 
 | Key | Does |
 |---|---|
-| `Enter` | Send the line. |
-| `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `6`, `?` and `q`. |
+| `Enter` | Send the line. While the list of the names shows: pick a name. |
+| `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `6`, `?` and `q`. While the list of the names shows: close the list. |
 | `i`, `Enter` | Go back to the prompt. |
 | `↑`, `↓` | Move the cursor one row in a long line. On the first row, `↑` goes to the start of the line, and on the last row, `↓` goes to the end. `↑` brings back a line that you sent only on an empty line: see "Send a line again". Out of the prompt: scroll one row. |
 | `←`, `→` | Move the cursor one character, also over the end of a row. |
 | `Home`, `End` | Go to the start or the end of the line. Out of the prompt: show the oldest or the newest line. |
 | `PgUp`, `PgDn` | Show older or newer lines. |
 | `g`, `G` | Out of the prompt: show the oldest or the newest line. |
-| `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. |
+| `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. While the list of the names shows, `Tab` picks a name. |
 | `Ctrl-C` | End the TUI. The sessions go on. |
 | a paste | Put the text in the line at the cursor, with its new lines. Also from the log. |
+| `@` | Show the list of the names: see "Pick a name in the Chat tab". |
 
 ```mermaid
 stateDiagram-v2
@@ -3930,6 +3972,30 @@ The prompt has at most 5 rows, and in a short terminal at most a third
 of the rows of the tab. A longer line scrolls by rows, so that the row
 of the cursor shows. Move through the rows with `↑`, `↓`, `←`, `→`,
 `Home` and `End`: see the table of keys above.
+
+#### Pick a name in the Chat tab
+
+The Chat tab has the list of the names of `riff chat` (see "Pick a name
+with @"). Start the TUI, press `2`, and type `ask @r`:
+
+```sh
+riff
+```
+
+```text
+ 13:12 <riff> #1608 merged
+  riff  project  online
+  rita  person   offline
+> ask @r
+ Tab or Enter picks riff. Esc closes the list.
+ Tab pick  Esc close  Ctrl-C quit
+```
+
+The list takes the last rows of the log, over the prompt. The first
+name is in reverse video: `Tab` or `Enter` puts it in the line. `Esc`
+closes the list, and the prompt keeps the focus. A second `Esc` leaves
+the prompt. With no list, `Tab` opens the next tab, and `Enter` sends
+the line.
 
 #### Paste lines into the chat
 

@@ -1541,7 +1541,7 @@ impl State {
     pub fn input(&self, event: &ratatui::crossterm::event::Event) -> Option<Input> {
         if self.tab == Tab::Chat
             && !self.help
-            && let Some(key) = chat::key_of(event, self.chat.focus())
+            && let Some(key) = chat::key_of(event, self.chat.focus(), self.chat.list().is_some())
         {
             return Some(Input::Key(Key::Chat(key)));
         }

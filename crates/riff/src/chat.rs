@@ -15,11 +15,13 @@
 //! 01M6Y1FB5MZNZ971CJRBWZ2F9X): a person as `<mike>`, a verified lead as
 //! the name of its project, `<riff>`, and riff-server itself as
 //! `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK). The chat reads the names of
-//! riff-server ([`Names`]) at its start: on a clash, a project has the
-//! name `OWNER/REPO`. A session with no name, for example a worker, shows
-//! as `[USER SESSION]`. The host shows only in the detail of a line: in
-//! `riff tail` and `riff read`. A line that riff writes as the person
-//! ([`post_by_riff`]) shows as the person, with the mark `[by riff]`.
+//! riff-server ([`Names`]) at its start, and again each [`READ_EVERY`]
+//! (01M6Y1EKKCCZ5215V49Z5T3HKH): on a clash, a project has the name
+//! `OWNER/REPO`. The log and the type-ahead share them. A session with no
+//! name, for example a worker, shows as `[USER SESSION]`. The host shows
+//! only in the detail of a line: in `riff tail` and `riff read`. A line
+//! that riff writes as the person ([`post_by_riff`]) shows as the person,
+//! with the mark `[by riff]`.
 //!
 //! ```text
 //! 14:02 <mike> is the release out?
@@ -82,6 +84,20 @@
 //!     S-->>B: tail: the answer
 //! ```
 //!
+//! In a terminal, `@` at the start of a word shows the names of the chat
+//! that fit the letters after it, on the rows under the prompt
+//! ([`crate::typeahead`], 01M6Y1EKGKNW2MH970PDF6PJK1). `Tab` or `Enter`
+//! picks the first name, and `Esc` closes the list. The list is the hint
+//! of the line editor, and the three keys are bindings of it: with no
+//! list, each key does its work of the line editor.
+//!
+//! ```text
+//! [riff] > @r
+//!   riff  project  online
+//!   rita  person   offline
+//!   Tab or Enter picks riff. Esc closes the list.
+//! ```
+//!
 //! A line for the person at the terminal is a highlight, as in IRC
 //! ([`crate::highlight`], 01M6XSHCZB0Y08XRJ3J16Q4RTF): a line that names
 //! them, a direct line, a word of their list, or an ask of riff. The chat
@@ -101,13 +117,14 @@ use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
 use riff_core::wire::Kind;
 use rustyline::completion::Completer;
+use rustyline::config::Config;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{
-    Cmd, ConditionalEventHandler, Event, EventContext, EventHandler, ExternalPrinter, KeyCode,
-    KeyEvent, Modifiers, Movement, RepeatCount,
+    Cmd, CompletionType, ConditionalEventHandler, Event, EventContext, EventHandler,
+    ExternalPrinter, KeyCode, KeyEvent, Modifiers, Movement, RepeatCount,
 };
 use tokio::sync::mpsc;
 
@@ -118,6 +135,7 @@ use crate::catch_up::{self, Seen, Start};
 use crate::highlight::{Highlights, Lit, Out, Title};
 use crate::style::{DIM, WARNING, styled};
 use crate::text::{lost_messages, safe};
+use crate::typeahead::{Ahead, List, READ_EVERY};
 use riff_client::api::Api;
 use riff_client::link::STREAM_RETRY;
 use riff_client::threads::{ACTION, BY_RIFF, Line, Names, Sender, action_text};
@@ -561,9 +579,11 @@ pub async fn run(
     let config = crate::settings::chat_here()?;
     let thread = thread();
     api.join(me, &thread).await?;
-    // A riff-server that gives no names: each project has the name
-    // after the slash.
-    let names = Names::new(api.names(me).await.unwrap_or_default());
+    // The log and the type-ahead share the names of the last read. A
+    // riff-server that gives no names: each project has the name after
+    // the slash.
+    let known = Arc::new(Mutex::new(Known::default()));
+    read_names(api, me, &known).await;
     if after.is_none() {
         anstream::eprintln!(
             "riff: chat as {}@{}. Type a line and press Enter. /me TEXT sends an action. \
@@ -582,7 +602,7 @@ pub async fn run(
             .read_page(me, thread, true, Some(seq.saturating_sub(1)))
             .await?;
         if let Some(last) = read.first().filter(|c| c.message.seq == seq) {
-            day.line(&Line::of(last, thread), &names, false);
+            day.line(&Line::of(last, thread), &names_of(&known), false);
         }
     }
     // Connected first, then read: no line falls between the two
@@ -599,7 +619,16 @@ pub async fn run(
     let again = catch_up::follow_thread(api, me, thread, Arc::clone(&shown), STREAM_RETRY);
     let mut stream = Box::pin(first.chain(again));
     let highlights = Highlights::new(me, config, "riff chat", Out::stdout());
-    let (screen, mut input) = Screen::start(draft, highlights.title())?;
+    let reads = {
+        let (api, me, known) = (api.clone(), me.clone(), Arc::clone(&known));
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(READ_EVERY).await;
+                read_names(&api, &me, &known).await;
+            }
+        })
+    };
+    let (screen, mut input) = Screen::start(draft, highlights.title(), Arc::clone(&known))?;
     let _ = LINES.set(screen.lines.clone());
     let lines = screen.lines.clone();
     let (send, posts) = posts(api, me, thread, move |text| lines.warn(text));
@@ -641,6 +670,7 @@ pub async fn run(
                     Ok(Seen::Message(c)) => {
                         let line = Line::of(&c, thread);
                         let new = history.is_none_or(|last| line.seq > last);
+                        let names = names_of(&known);
                         let lit = highlights.line(&line, &names, thread, new);
                         screen.print(&day.line(&line, &names, lit.bold), &lit);
                     }
@@ -650,9 +680,32 @@ pub async fn run(
             }
         }
     }
+    reads.abort();
     drop(send);
     let _ = posts.await;
     Ok(())
+}
+
+/// Reads the names of the chat into `known`. A read that fails keeps
+/// the names of the last read (01M6Y1EKKCCZ5215V49Z5T3HKH).
+async fn read_names(api: &Api, me: &SessionUri, known: &Mutex<Known>) {
+    if let Ok(read) = api.names(me).await
+        && let Ok(mut known) = known.lock()
+    {
+        known.names = Names::new(read);
+    }
+}
+
+/// The names of the chat of the last read in `known`, for a line of the
+/// log.
+fn names_of(known: &Mutex<Known>) -> Names {
+    known.lock().map(|k| k.names.clone()).unwrap_or_default()
+}
+
+/// True when stdin and stdout are a terminal: then the chat has a line
+/// editor.
+fn terminal() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
 /// The task that posts each line of the chat that `me` sends, in
@@ -744,16 +797,42 @@ impl Lines {
     }
 }
 
+/// The names of the chat from the last read, and the type-ahead of the
+/// prompt. The log, the hinter and the keys of the line editor share
+/// them.
+#[derive(Debug, Default)]
+struct Known {
+    names: Names,
+    ahead: Ahead,
+}
+
+impl Known {
+    /// The list for `line` with the cursor at the byte `pos`.
+    fn list(&self, line: &str, pos: usize) -> Option<List> {
+        self.ahead.list(self.names.list(), line, pos)
+    }
+}
+
+/// The hint of a list: its rows and its note, on the rows under the
+/// prompt.
+fn listed(list: &List) -> String {
+    let mut rows = list.rows();
+    rows.push(list.note());
+    rows.iter().map(|row| format!("\n  {row}")).collect()
+}
+
 /// A copy of the text that the person is typing. The line editor lives
 /// on a thread of its own and has no call to read its line, but it asks
 /// a hinter for a hint after each edit, and at each new prompt. This
-/// hinter keeps the line and gives no hint. It also clears the number of
-/// the highlights in the title of the terminal: a key or a new prompt
-/// clears it (01M6XSHMNNTRC66CMZ0DF2X5RA).
+/// hinter keeps the line, and gives the list of the names of the word at
+/// the cursor as the hint ([`crate::typeahead`]). It also clears the
+/// number of the highlights in the title of the terminal: a key or a new
+/// prompt clears it (01M6XSHMNNTRC66CMZ0DF2X5RA).
 #[derive(Clone, Default)]
 struct Typing {
     text: Arc<Mutex<String>>,
     title: Option<Title>,
+    names: Arc<Mutex<Known>>,
 }
 
 impl Typing {
@@ -776,7 +855,7 @@ impl Typing {
 impl Hinter for Typing {
     type Hint = String;
 
-    fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
+    fn hint(&self, line: &str, pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
         self.set(line);
         // The line editor calls this on its own thread, the thread that
         // writes the screen: the title goes out between two of its writes.
@@ -785,12 +864,60 @@ impl Hinter for Typing {
             let _ = out.write_all(clear.as_bytes());
             let _ = out.flush();
         }
-        None
+        let mut names = self.names.lock().ok()?;
+        names.ahead.edited(line, pos);
+        names.list(line, pos).map(|list| listed(&list))
     }
 }
 
+/// A key of the type-ahead in the line editor, while the list of the
+/// names shows (01M6Y1EKGKNW2MH970PDF6PJK1): `Enter` picks the first
+/// name, as `Tab` does ([`Typing`] is the completer), and `Esc` closes
+/// the list. With no list, the key does its work of the line editor:
+/// `Enter` sends the line.
+struct ListKey {
+    names: Arc<Mutex<Known>>,
+    /// True for `Enter`, false for `Esc`.
+    pick: bool,
+}
+
+impl ConditionalEventHandler for ListKey {
+    fn handle(&self, _: &Event, _: RepeatCount, _: bool, ctx: &EventContext) -> Option<Cmd> {
+        let mut names = self.names.lock().ok()?;
+        let (line, pos) = (ctx.line(), ctx.pos());
+        names.list(line, pos)?;
+        if self.pick {
+            Some(Cmd::Complete)
+        } else {
+            names.ahead.close(line, pos);
+            Some(Cmd::Repaint)
+        }
+    }
+}
+
+/// The time that the line editor waits for the next byte after an
+/// `Esc`: a lone `Esc` closes the list of the type-ahead, and the bytes
+/// of a key with Alt come in one write.
+const ESC_WAIT_MS: u16 = 50;
+
+/// `Tab`, and `Enter` while the list shows: the one completion is the
+/// first name of the list, in the place of the `@` word. With no list,
+/// there is no completion.
 impl Completer for Typing {
     type Candidate = String;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
+        let list = self.names.lock().ok().and_then(|n| n.list(line, pos));
+        Ok(match list {
+            Some(list) => (list.at, vec![list.text(line)]),
+            None => (pos, Vec::new()),
+        })
+    }
 }
 
 impl Highlighter for Typing {}
@@ -849,11 +976,15 @@ impl Screen {
     /// receiver. It closes when stdin ends, on Ctrl-C or Ctrl-D, and
     /// after [`QUIT`], so the terminal is back in its normal mode. In a
     /// terminal, the prompt starts with `draft`, the text that the
-    /// person typed in the chat before an update, and a key clears the
-    /// number of `title`.
-    fn start(draft: Option<&str>, title: Title) -> Result<(Screen, mpsc::Receiver<String>)> {
+    /// person typed in the chat before an update, a key clears the
+    /// number of `title`, and `@` shows a list of `names`.
+    fn start(
+        draft: Option<&str>,
+        title: Title,
+        names: Arc<Mutex<Known>>,
+    ) -> Result<(Screen, mpsc::Receiver<String>)> {
         let (tx, rx) = mpsc::channel(16);
-        if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        if !terminal() {
             // A thread, not a task: a read of stdin that waits does not
             // stop the exit.
             std::thread::spawn(move || {
@@ -874,15 +1005,30 @@ impl Screen {
         let normal = tcgetattr(std::io::stdin()).ok();
         let typing = Typing {
             title: Some(title),
+            names,
             ..Typing::default()
         };
-        let mut editor = rustyline::Editor::<Typing, DefaultHistory>::new()?;
+        let config = Config::builder()
+            .completion_type(CompletionType::List)
+            .keyseq_timeout(Some(ESC_WAIT_MS))
+            .build();
+        let mut editor = rustyline::Editor::<Typing, DefaultHistory>::with_config(config)?;
         editor.set_helper(Some(typing.clone()));
         let sent = Arc::new(Mutex::new(Sent::default()));
         for (code, up) in [(KeyCode::Up, true), (KeyCode::Down, false)] {
             let sent = Arc::clone(&sent);
             let arrow = EventHandler::Conditional(Box::new(Arrow { up, sent }));
             editor.bind_sequence(KeyEvent(code, Modifiers::NONE), arrow);
+        }
+        for (code, pick) in [(KeyCode::Enter, true), (KeyCode::Esc, false)] {
+            let key = ListKey {
+                names: Arc::clone(&typing.names),
+                pick,
+            };
+            editor.bind_sequence(
+                KeyEvent(code, Modifiers::NONE),
+                EventHandler::Conditional(Box::new(key)),
+            );
         }
         let printer: Printer = Arc::new(Mutex::new(Box::new(editor.create_external_printer()?)));
         let held = Arc::clone(&printer);

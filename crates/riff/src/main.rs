@@ -176,6 +176,10 @@ enum Command {
     /// line with no name wakes no one. /me TEXT sends an action. /quit or
     /// Ctrl-C exits.
     ///
+    /// In a terminal, @ and the first letters of a name show the names of
+    /// the chat under the prompt. Tab or Enter picks the first name, and
+    /// Esc closes the list.
+    ///
     /// A line for you is a highlight: it names you (@USER, or USER: at the
     /// start), it is a direct line to you, it holds a word of your list,
     /// or it is an ask of riff. It shows in bold, and rings the bell. The

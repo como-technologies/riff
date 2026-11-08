@@ -1014,6 +1014,55 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// `@` in the Chat tab shows the names of the chat from riff-server
+/// (01M6Y1EKGKNW2MH970PDF6PJK1, 01M6Y1EKKCCZ5215V49Z5T3HKH,
+/// 01M6Y1ES82XHFGANKZS7AF3CP2): `@r` shows `riff`, the project of the
+/// lead of brett, over the prompt, and `Tab` completes it. Then Enter
+/// sends the line with the name.
+#[tokio::test]
+async fn at_in_the_chat_tab_shows_the_names_and_tab_completes_one() {
+    use riff_core::name::SessionUri;
+
+    let server = crate::common::start_signed().await;
+    let lead: SessionUri = "riff://brett@thelio/como-technologies/riff?session=brett-lead"
+        .parse()
+        .unwrap();
+    crate::common::api_of(&server, &lead)
+        .register(&lead)
+        .await
+        .unwrap();
+    crate::common::name_lead(&server.api("brett", None), &lead).await;
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("2").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    tty.press("@r").await;
+    let rows = tty
+        .shows(|rows| rows[22] == " Tab or Enter picks riff. Esc closes the list.")
+        .await;
+    assert_eq!(
+        rows[20..22],
+        ["  riff  project  online", "> @r"],
+        "{rows:#?}"
+    );
+    assert_eq!(rows[23], " Tab pick  Esc close  Ctrl-C quit");
+    tty.press("\t").await;
+    let rows = tty.shows(|rows| rows[21] == "> @riff").await;
+    assert_eq!(
+        rows[0],
+        " 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports"
+    );
+    assert_eq!(rows[20], "", "{rows:#?}");
+    tty.press("is #12 done?\r").await;
+    tty.shows(|rows| {
+        rows.iter()
+            .any(|r| r.ends_with("<brett> @riff is #12 done?"))
+    })
+    .await;
+    tty.press("\x03").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// The TUI turns on the bracketed paste of the terminal. A paste of
 /// three lines in the Chat tab goes into the prompt, and Enter sends
 /// the three lines as one message: the log shows one sender, and each

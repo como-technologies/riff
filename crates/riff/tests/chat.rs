@@ -1325,6 +1325,75 @@ async fn in_a_terminal_up_keeps_the_typed_text_and_brings_back_a_sent_line_on_an
     mike.shows(prompt("")).await;
 }
 
+/// `@` shows the names of the chat on the rows under the prompt
+/// (01M6Y1EKGKNW2MH970PDF6PJK1, 01M6Y1EKKCCZ5215V49Z5T3HKH): `@r` shows
+/// `riff`, the project of the lead of mike, and `Tab` completes it.
+/// `Enter` picks the name too, `Esc` closes the list, and a name that is
+/// not in the list still posts.
+#[tokio::test]
+async fn in_a_terminal_at_shows_the_names_and_tab_completes_one() {
+    let server = crate::common::start_signed().await;
+    let lead = lead_of("mike");
+    crate::common::api_of(&server, &lead)
+        .register(&lead)
+        .await
+        .unwrap();
+    crate::common::name_lead(&server.api("mike", None), &lead).await;
+    let mut mike = Tty::start(&server, "mike", "thelio").await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+    let note = "  Tab or Enter picks riff. Esc closes the list.";
+    let listed = |rows: &[String]| {
+        rows.last().is_some_and(|row| row == note)
+            && rows.iter().any(|row| row.starts_with("  riff  project"))
+    };
+    let prompt = |text: &str| {
+        let want = format!("{PROMPT}{text}").trim_end().to_owned();
+        move |rows: &[String]| rows.last().is_some_and(|row| *row == want)
+    };
+
+    // Tab completes the name, with a space after it.
+    mike.keys("@r").await;
+    let rows = mike.shows(listed).await;
+    assert_eq!(rows[rows.len() - 3], format!("{PROMPT}@r"), "{rows:#?}");
+    mike.keys("\t").await;
+    mike.shows(prompt("@riff ")).await;
+    // The cursor is after the space: the next key types there.
+    let after = u16::try_from(PROMPT.len() + "@riff ".len()).unwrap();
+    let span = Span::start();
+    while mike.cursor().1 != after {
+        assert!(span.within(WAIT), "the cursor in time: {:?}", mike.cursor());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    mike.keys("is #12 done?\r").await;
+    let line = brett.shows("is #12 done?").await;
+    assert!(is_line(&line, "mike", "@riff is #12 done?"), "{line:?}");
+
+    // Enter picks the name too, and sends nothing.
+    mike.keys("ask @r").await;
+    mike.shows(listed).await;
+    mike.keys("\r").await;
+    mike.shows(prompt("ask @riff ")).await;
+    mike.keys("now\r").await;
+    let line = brett.shows("ask @riff now").await;
+    assert!(is_line(&line, "mike", "ask @riff now"), "{line:?}");
+
+    // Esc closes the list: then Enter sends the line as it is.
+    mike.keys("@r").await;
+    mike.shows(listed).await;
+    mike.press("\x1b").await;
+    mike.shows(prompt("@r")).await;
+    mike.keys("\r").await;
+    let line = brett.shows("@r").await;
+    assert!(is_line(&line, "mike", "@r"), "{line:?}");
+
+    // A name that is not in the list shows no list, and posts.
+    mike.keys("@zed hi").await;
+    mike.shows(prompt("@zed hi")).await;
+    mike.keys("\r").await;
+    let line = brett.shows("@zed hi").await;
+    assert!(is_line(&line, "mike", "@zed hi"), "{line:?}");
+}
+
 /// A server that names a build and holds each post for `wait`: the
 /// reply of a post comes a while after the post.
 struct Deploy {

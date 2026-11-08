@@ -134,6 +134,7 @@ pub mod temp;
 pub mod text;
 pub mod top;
 pub mod tui;
+pub mod typeahead;
 pub mod update_steps;
 pub mod usage;
 pub mod view;
