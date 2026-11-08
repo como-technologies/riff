@@ -578,6 +578,10 @@ enum Command {
     /// branch, allows auto-merge and squash merges, has a ruleset of the
     /// default branch that requires riff/verify, has the milestone Backlog
     /// and an open wave, and has a CI check that a pull request runs. It
+    /// asks riff-server for the bot of the session App of the riff, and
+    /// checks that the default branch has the guard of that bot:
+    /// .github/workflows/riff-guard.yml puts back a change of that bot to
+    /// the body, the title or a comment of an issue. It
     /// reads no CLAUDE.md or AGENTS.md: that file is the choice of the
     /// repository. It names the open issues with no "Done when:" line and no
     /// "## Done when" heading in a note: the wave starts no session for
@@ -585,7 +589,7 @@ enum Command {
     /// checks, riff init does the fix itself: it asks one question, and then it
     /// makes riff.toml with a pull request that it merges, allows auto-merge
     /// and squash merges, makes the Backlog and Wave 1,
-    /// and makes the ruleset riff. It needs the rights of an admin of the
+    /// and makes the ruleset riff. The same pull request adds the guard. It needs the rights of an admin of the
     /// repository, and a second run changes nothing. The riff.toml that it
     /// makes pins riff-base: claude, git and gh, with no language. --image
     /// pins another image. It writes no rule into
@@ -1796,7 +1800,8 @@ async fn cli() -> Result<()> {
             (false, true) => Mode::Yes,
             (false, false) => Mode::Ask,
         };
-        let code = riff::first_run::init(mode, image).await?;
+        let (server, _) = server_of(cli.server.as_deref())?;
+        let code = riff::first_run::init(mode, image, &server).await?;
         if code != 0 {
             std::process::exit(code);
         }

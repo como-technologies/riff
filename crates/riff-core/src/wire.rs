@@ -86,7 +86,7 @@
 //! | Path | Request | Reply | Who |
 //! |---|---|---|---|
 //! | `POST /v1/github/create` | [`GitHubCreate`] | [`GitHubStarted`] | an admin |
-//! | `POST /v1/github/apps` | [`GitHubApps`] | [`GitHubAppsReply`] | an admin |
+//! | `POST /v1/github/apps` | [`GitHubApps`] | [`GitHubAppsReply`] | an admin; each person with no `owner` |
 //! | `POST /v1/github/check` | [`GitHubCheck`] | [`GitHubChecked`] | each person |
 //!
 //! Two metadata documents follow the MCP authorization spec (R22):
@@ -2959,7 +2959,8 @@ pub struct GitHubStarted {
 }
 
 /// `POST /v1/github/apps`: the Apps of the riff, and whether each is
-/// installed on `owner`. Only the owner and the admins can.
+/// installed on `owner`. Each person can ask with no `owner`. Only the
+/// owner and the admins can ask with one (01M6WPV8473EBABR1ZMEPZMTQQ).
 ///
 /// ```
 /// use riff_core::wire::{Call, GitHubApps};

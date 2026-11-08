@@ -3,8 +3,10 @@
 //!
 //! # Design
 //!
-//! `riff init` gets a machine ready for `riff run`. It needs no
-//! riff-server and no sign-in. It does these steps, in order:
+//! `riff init` gets a machine ready for `riff run`. The checks of the
+//! machine need no riff-server and no sign-in. In a clone of a repository
+//! on GitHub, riff asks riff-server for the bot of the session App, for
+//! the check of the guard. It does these steps, in order:
 //!
 //! ```mermaid
 //! flowchart LR
@@ -79,9 +81,11 @@
 //! | the milestone `Backlog` | the open milestones | one has that title |
 //! | the first wave | the open milestones | one is a wave |
 //! | the checks of a pull request | the required checks and the check runs of the latest pull requests | the full check can end |
+//! | the guard | `.github/workflows/riff-guard.yml` on the default branch, and the bot of the session App from riff-server ([`crate::guard::session_bot`], 01M6WPV86SW4AAVA2NCBQNYXK3) | it is the guard of that bot, or the riff has no session App |
 //!
 //! The first five checks of the repository have a step that `riff init`
-//! can do. The check of the session image has the step of `riff.toml` when
+//! can do. So has the check of the guard when riff-server gives the bot:
+//! the pull request of `riff.toml` adds the guard. The check of the session image has the step of `riff.toml` when
 //! the default branch has none. The check of a pull request has the step of
 //! the ruleset when no pull request ran a check yet: else its fix is the
 //! work of the person. `riff init` reads no file of rules for agents, such
@@ -99,10 +103,11 @@
 //! The fix of `/etc/subuid` or `/etc/subgid` adds a free range of
 //! [`MIN_IDS`] IDs from [`free_sub_id`].
 //!
-//! The last six checks run only in a folder whose remote `origin` is on
+//! The last seven checks run only in a folder whose remote `origin` is on
 //! GitHub, with the `gh` of the machine. They read the repository and
 //! change nothing, also without `--check`; only the steps of the setup
-//! change it. When `gh` cannot read the
+//! change it. Only there `riff init` asks riff-server for the bot of the
+//! session App: a riff with no sign-in has no session App. When `gh` cannot read the
 //! repository, one check fails and its fix is `gh auth login`
 //! ([`crate::repo_setup`]).
 //!
@@ -404,9 +409,10 @@ fn podman_version() -> Result<String, String> {
 
 impl Facts {
     /// The facts of this machine, with the repository of the folder
-    /// `dir`.
-    pub fn here(dir: &Path) -> Facts {
-        let github = crate::repo_setup::here(dir);
+    /// `dir` and the bot `bot` of the session App of the riff
+    /// ([`crate::guard::session_bot`]).
+    pub fn here(dir: &Path, bot: Result<Option<String>, String>) -> Facts {
+        let github = crate::repo_setup::here(dir, bot);
         let no_done_when = match &github {
             Some(Ok(_)) => crate::repo_setup::no_done_when_here(dir),
             _ => None,
@@ -603,6 +609,8 @@ impl Check {
     ///     admin: true,
     ///     files: vec!["riff.toml".into()],
     ///     ci: vec!["lint".into()],
+    ///     guard: None,
+    ///     bot: Ok(None),
     /// };
     /// let lines: Vec<String> = checks(&github)
     ///     .iter()
@@ -1050,14 +1058,24 @@ pub fn pull(clone: &Path, branch: &str) -> Result<(), String> {
 /// question on the terminal. It gives the exit code. On a host that is
 /// not Linux, it changes nothing. `image` is the session image that the
 /// new `riff.toml` pins in place of the base of the release
-/// (`riff init --image`, 01M5SNTPEP41NMSP3SEKR7KVB0).
-pub async fn init(mode: Mode, image: Option<session_image::Image>) -> Result<i32> {
+/// (`riff init --image`, 01M5SNTPEP41NMSP3SEKR7KVB0). In a folder of a
+/// repository on GitHub, it asks the riff-server `server` for the bot of
+/// the session App, for the check of the guard
+/// (01M6WPV86SW4AAVA2NCBQNYXK3).
+pub async fn init(mode: Mode, image: Option<session_image::Image>, server: &str) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
         use anyhow::Context;
         use std::io::IsTerminal;
         let here = std::env::current_dir().context("cannot read the current folder")?;
-        let facts = Facts::here(&here);
+        let bot = match crate::identity::github_origin(&here) {
+            Some(_) => match riff_client::api::Api::new(server).signed_in(None) {
+                Ok(api) => crate::guard::session_bot(&api).await,
+                Err(e) => Err(text::guard_unasked(server, &format!("{e:#}"))),
+            },
+            None => Ok(None),
+        };
+        let facts = Facts::here(&here, bot);
         let manager = crate::service::Systemd::here()?;
         let unit = Unit::of_this()?;
         let question = |question: Question| {
@@ -1080,7 +1098,7 @@ pub async fn init(mode: Mode, image: Option<session_image::Image>) -> Result<i32
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (mode, image);
+        let _ = (mode, image, server);
         anyhow::bail!("{}", text::INIT_LINUX_ONLY)
     }
 }
@@ -1271,6 +1289,8 @@ mod tests {
             admin: true,
             files: vec!["riff.toml".into()],
             ci: vec!["Gate".into()],
+            guard: None,
+            bot: Ok(None),
         }
     }
 
@@ -1278,7 +1298,7 @@ mod tests {
     /// the checks of the machine, and only for a folder with a remote on
     /// GitHub.
     #[test]
-    fn the_repository_on_github_has_six_checks_after_the_machine() {
+    fn the_repository_on_github_has_seven_checks_after_the_machine() {
         let names = |facts: &Facts| {
             checks(facts)
                 .into_iter()
@@ -1299,7 +1319,8 @@ mod tests {
                 "the ruleset of main",
                 "the milestone Backlog",
                 "the first wave",
-                "the checks of a pull request"
+                "the checks of a pull request",
+                "the guard"
             ]
         );
         let none = Facts {
@@ -1889,6 +1910,8 @@ mod tests {
     /// in a folder of its own.
     struct Forged {
         dir: tempfile::TempDir,
+        /// The bot of the session App that riff-server gives.
+        bot: Result<Option<String>, String>,
     }
 
     impl Forged {
@@ -1912,7 +1935,15 @@ mod tests {
                 std::fs::write(dir.path().join(name), text).unwrap();
             }
             isolated::write_program(dir.path().join("gh"), include_str!("../tests/fake/forge"));
-            Forged { dir }
+            Forged { dir, bot: Ok(None) }
+        }
+
+        /// The same forge, in a riff whose session App has the bot `bot`.
+        fn with_bot(self, bot: &str) -> Forged {
+            Forged {
+                bot: Ok(Some(bot.into())),
+                ..self
+            }
         }
 
         fn forge(&self) -> Forge {
@@ -1931,7 +1962,7 @@ mod tests {
                 image: image
                     .map(str::to_owned)
                     .ok_or("no riff.toml in this clone".into()),
-                github: Some(repo_setup::read(&self.forge().gh)),
+                github: Some(repo_setup::read(&self.forge().gh, self.bot.clone())),
                 ..ready()
             }
         }
@@ -2086,6 +2117,37 @@ mod tests {
         assert_eq!((code, asked), (1, 0));
         assert!(forged.changes().is_empty(), "{:?}", forged.changes());
         assert!(!forged.has("ruleset"));
+    }
+
+    /// 01M6WPV86SW4AAVA2NCBQNYXK3: in a riff with a session App, `riff init
+    /// --check` names the missing guard with its step and changes nothing.
+    /// `--yes` puts the guard of the bot in the pull request of
+    /// `riff.toml`, and the check of the guard passes after it.
+    #[tokio::test]
+    async fn the_check_names_a_missing_guard_and_yes_puts_it_with_riff_toml() {
+        let forged = Forged::bare().with_bot("riff-acme[bot]");
+        let facts = forged.facts(Some(IMAGE));
+        let guard = checks(&facts).pop().unwrap();
+        assert_eq!(guard.name, "the guard");
+        assert_eq!(guard.step, Some(repo_setup::Step::Config));
+        assert!(
+            guard
+                .line()
+                .contains("has no .github/workflows/riff-guard.yml"),
+            "{}",
+            guard.line()
+        );
+        let (code, asked) = run_stopped(&forged, &facts, Mode::Check, true).await;
+        assert_eq!((code, asked), (1, 0));
+        assert!(forged.changes().is_empty(), "{:?}", forged.changes());
+
+        let (code, _) = run_stopped(&forged, &facts, Mode::Yes, true).await;
+        assert_eq!(code, 1, "podman fails");
+        let written = std::fs::read_to_string(forged.dir.path().join("guard")).unwrap();
+        assert_eq!(written, crate::guard::workflow("riff-acme[bot]"));
+        let after = forged.facts(Some(IMAGE));
+        let guard = checks(&after).pop().unwrap();
+        assert!(guard.passed(), "{}", guard.line());
     }
 
     /// 01M5R1672NF56P15VD0JEX51K4: a person who is not an admin gets the

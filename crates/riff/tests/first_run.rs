@@ -76,6 +76,9 @@ struct Machine {
     init: PathBuf,
     repo: PathBuf,
     uid: u32,
+    /// The riff-server of `riff init`, when the repository has a remote
+    /// on GitHub ([`Machine::add_origin`]).
+    server: std::sync::OnceLock<String>,
 }
 
 impl Machine {
@@ -128,6 +131,7 @@ impl Machine {
             init,
             repo,
             uid,
+            server: std::sync::OnceLock::new(),
         }
     }
 
@@ -138,10 +142,14 @@ impl Machine {
         output(cmd).await
     }
 
-    /// The command of [`Machine::init`].
+    /// The command of [`Machine::init`], with the riff-server of the
+    /// machine.
     fn init_command(&self, dir: &Path, args: &[&str]) -> std::process::Command {
         let mut cmd = self.command(dir, &["init"]);
         cmd.args(args);
+        if let Some(server) = self.server.get() {
+            cmd.args(["--server", server]);
+        }
         cmd
     }
 
@@ -456,7 +464,7 @@ fn names_of<'a>(lines: &[&'a str]) -> Vec<&'a str> {
 #[tokio::test]
 async fn riff_init_check_in_a_session_container_skips_the_checks_of_the_machine() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     bare(&machine.bin);
     machine.break_machine();
 
@@ -508,7 +516,7 @@ async fn riff_init_check_in_a_session_container_skips_the_checks_of_the_machine(
 #[tokio::test]
 async fn riff_init_in_a_session_container_installs_no_daemon() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     set_up(&machine.bin);
     machine.break_machine();
 
@@ -775,8 +783,28 @@ fn set_up(bin: &Path) {
 }
 
 impl Machine {
-    /// Gives the repository of the machine a remote `origin` on GitHub.
-    fn add_origin(&self) {
+    /// Gives the repository of the machine a remote `origin` on GitHub,
+    /// and a riff-server with no sign-in: it has no session App, so the
+    /// check of the guard passes (01M6WPV86SW4AAVA2NCBQNYXK3).
+    async fn add_origin(&self) {
+        self.add_remote();
+        self.serve_riff().await;
+    }
+
+    /// Starts a riff-server with no sign-in for `riff init`.
+    async fn serve_riff(&self) {
+        let (listener, url) = crate::common::listen().await;
+        let router = riff_server::Service::new(riff_server::auth::Config::new(&url)).router();
+        tokio::spawn(async move {
+            let service = router.into_make_service_with_connect_info::<std::net::SocketAddr>();
+            axum::serve(listener, service).await.unwrap()
+        });
+        self.server.set(url).unwrap();
+    }
+
+    /// Gives the repository of the machine a remote `origin` on GitHub,
+    /// with no riff-server.
+    fn add_remote(&self) {
         let status = self
             .env
             .command("git")
@@ -832,7 +860,7 @@ fn named_at_the_end(stdout: &str) -> Vec<&str> {
 #[tokio::test]
 async fn riff_init_check_names_the_github_step_of_each_fact_that_fails() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     bare(&machine.bin);
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
@@ -893,7 +921,7 @@ async fn riff_init_check_names_the_github_step_of_each_fact_that_fails() {
 #[tokio::test]
 async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     bare(&machine.bin);
     std::fs::write(machine.bin.join("no-image"), "").unwrap();
     let out = machine.init(&machine.repo, &["--yes"]).await;
@@ -984,7 +1012,7 @@ fn made_config(machine: &Machine) -> String {
 #[tokio::test]
 async fn riff_init_yes_pins_the_base_image_and_says_to_add_the_toolchain() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     bare(&machine.bin);
     std::fs::write(machine.bin.join("no-image"), "").unwrap();
     let out = machine.init(&machine.repo, &["--yes"]).await;
@@ -1004,7 +1032,7 @@ async fn riff_init_yes_pins_the_base_image_and_says_to_add_the_toolchain() {
 #[tokio::test]
 async fn riff_init_image_pins_the_image_that_it_names_and_refuses_a_tag() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     bare(&machine.bin);
     std::fs::write(machine.bin.join("no-image"), "").unwrap();
     let mine = format!("ghcr.io/acme/app-session@sha256:{}", "ab".repeat(32));
@@ -1020,7 +1048,7 @@ async fn riff_init_image_pins_the_image_that_it_names_and_refuses_a_tag() {
     assert!(!stdout.contains("no language"), "{stdout}");
 
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     bare(&machine.bin);
     let out = machine
         .init(
@@ -1041,7 +1069,7 @@ async fn riff_init_image_pins_the_image_that_it_names_and_refuses_a_tag() {
 #[tokio::test]
 async fn riff_init_without_a_terminal_names_the_steps_and_does_none() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     bare(&machine.bin);
     let out = machine.init(&machine.repo, &[]).await;
     let stdout = text(&out.stdout);
@@ -1092,7 +1120,7 @@ async fn riff_init_without_a_terminal_names_the_steps_and_does_none() {
 #[tokio::test]
 async fn a_person_who_is_not_an_admin_gets_the_steps_named_and_riff_changes_nothing() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     bare(&machine.bin);
     std::fs::write(machine.bin.join("not_admin"), "").unwrap();
     let out = machine.init(&machine.repo, &["--yes"]).await;
@@ -1115,7 +1143,7 @@ async fn a_person_who_is_not_an_admin_gets_the_steps_named_and_riff_changes_noth
 #[tokio::test]
 async fn a_clone_that_riff_does_not_pull_gets_the_new_image_and_a_line_to_pull() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     bare(&machine.bin);
     std::fs::remove_file(machine.repo.join("riff.toml")).unwrap();
     // On another branch than the default branch of the repository.
@@ -1161,7 +1189,9 @@ impl Machine {
     /// the commit with `riff.toml` that the merge of the step makes. The
     /// remote `origin` is a folder of this machine whose path names
     /// `github.com/acme/app`, so riff takes it for the repository on GitHub.
-    fn clone_behind_origin(&self) -> PathBuf {
+    /// The machine gets a riff-server with no sign-in ([`Machine::serve_riff`]).
+    async fn clone_behind_origin(&self) -> PathBuf {
+        self.serve_riff().await;
         let root = self.env.path();
         let origin = format!("{}//github.com/acme/app.git", root.join("remote").display());
         let (work, clone) = (root.join("work"), root.join("clone"));
@@ -1194,7 +1224,7 @@ impl Machine {
 #[tokio::test]
 async fn riff_init_shows_the_steps_pulls_riff_toml_and_names_the_check_that_still_fails() {
     let machine = Machine::new();
-    let clone = machine.clone_behind_origin();
+    let clone = machine.clone_behind_origin().await;
     // The machine fails one check that no step fixes: podman.
     std::fs::write(machine.bin.join("no-podman"), "").unwrap();
     bare(&machine.bin);
@@ -1313,7 +1343,7 @@ fn ci_not_required(bin: &Path) {
 #[tokio::test]
 async fn riff_init_yes_makes_a_ruleset_with_the_verify_alone_for_a_repository_with_no_ci() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     no_ci(&machine.bin);
     let out = machine.init(&machine.repo, &["--yes"]).await;
     let stdout = text(&out.stdout);
@@ -1357,7 +1387,7 @@ async fn riff_init_yes_makes_a_ruleset_with_the_verify_alone_for_a_repository_wi
 #[tokio::test]
 async fn riff_init_check_passes_a_repository_that_is_set_up() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     set_up(&machine.bin);
     let out = machine.init(&machine.repo, &["--check"]).await;
     let stdout = text(&out.stdout);
@@ -1369,12 +1399,58 @@ async fn riff_init_check_passes_a_repository_that_is_set_up() {
         "  pass  the milestone Backlog: acme/app has it open",
         "  pass  the first wave: acme/app has the open wave Wave 1",
         "  pass  the checks of a pull request: the full check is Gate",
+        "  pass  the guard: the riff has no session App, so riff writes no guard",
     ] {
         assert!(
             stdout.lines().any(|l| l == line),
             "{line}\nnot in\n{stdout}"
         );
     }
+}
+
+/// 01M6WPV86SW4AAVA2NCBQNYXK3: when riff cannot ask riff-server for the
+/// bot of the session App, `riff init --check` names a repository with no
+/// guard, with the fix and no step. A guard that is there passes.
+#[tokio::test]
+async fn riff_init_check_names_a_repository_with_no_guard_when_riff_server_does_not_answer() {
+    let machine = Machine::new();
+    machine.add_remote();
+    set_up(&machine.bin);
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    let failed = failed_lines(&stdout);
+    assert_eq!(failed.len(), 1, "{stdout}");
+    assert!(
+        failed[0].starts_with(
+            "  fail  the guard: main of acme/app has no .github/workflows/riff-guard.yml, and \
+             riff cannot ask riff-server at http://127.0.0.1:9 for the bot of the session App: "
+        ),
+        "{}",
+        failed[0]
+    );
+    assert!(
+        failed[0].ends_with(
+            "Fix: start riff-server, or sign in with riff login. Then run riff init again"
+        ),
+        "{}",
+        failed[0]
+    );
+    assert!(step_lines(&stdout).is_empty(), "{stdout}");
+
+    std::fs::write(
+        machine.bin.join("guard"),
+        riff::guard::workflow("riff-acme[bot]"),
+    )
+    .unwrap();
+    let out = machine.init(&machine.repo, &["--check"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("\n  pass  the guard: main of acme/app has it\n"),
+        "{stdout}"
+    );
+    assert!(machine.forge_changes().is_empty());
 }
 
 /// The open issues of the fake forge: `(number, title, label, body)`.
@@ -1400,7 +1476,7 @@ fn issues(bin: &Path, open: &[(u64, &str, &str, &str)]) {
 #[tokio::test]
 async fn riff_init_names_the_open_issues_with_no_done_when_line() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     set_up(&machine.bin);
     issues(
         &machine.bin,
@@ -1458,7 +1534,7 @@ async fn riff_init_names_the_open_issues_with_no_done_when_line() {
 #[tokio::test]
 async fn riff_init_prints_no_note_when_each_open_issue_has_the_line() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     set_up(&machine.bin);
     issues(
         &machine.bin,
@@ -1492,7 +1568,7 @@ async fn riff_init_prints_no_note_when_each_open_issue_has_the_line() {
 async fn riff_init_names_the_fix_of_a_ci_check_that_no_rule_requires_and_has_no_line_for_claude_md()
 {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     ci_not_required(&machine.bin);
     let out = machine.init(&machine.repo, &["--yes"]).await;
     let stdout = text(&out.stdout);
@@ -1520,7 +1596,7 @@ async fn riff_init_names_the_fix_of_a_ci_check_that_no_rule_requires_and_has_no_
 #[tokio::test]
 async fn riff_init_check_fails_one_check_when_gh_cannot_read_the_repository() {
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     set_up(&machine.bin);
     std::fs::write(machine.bin.join("no_login"), "").unwrap();
     let out = machine.init(&machine.repo, &["--check"]).await;
@@ -1636,14 +1712,14 @@ async fn the_book_shows_the_output_of_a_container_run_a_first_run_a_failed_run_a
 
     // The run in the container of the lead (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     set_up(&machine.bin);
     let out = machine.container_init(&machine.repo, &["--check"]).await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_is_output(&blocks[0], &text(&out.stdout));
 
     let machine = Machine::new();
-    let clone = machine.clone_behind_origin();
+    let clone = machine.clone_behind_origin().await;
     bare(&machine.bin);
     std::fs::write(machine.bin.join("no-image"), "").unwrap();
     let out = machine.init(&clone, &["--yes"]).await;
@@ -1652,14 +1728,14 @@ async fn the_book_shows_the_output_of_a_container_run_a_first_run_a_failed_run_a
     assert_is_output(&blocks[1], &real);
 
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     ci_not_required(&machine.bin);
     let out = machine.init(&machine.repo, &["--yes"]).await;
     assert_eq!(out.status.code(), Some(1));
     assert_is_output(&blocks[2], &text(&out.stdout));
 
     let machine = Machine::new();
-    machine.add_origin();
+    machine.add_origin().await;
     no_ci(&machine.bin);
     let out = machine.init(&machine.repo, &["--yes"]).await;
     assert_eq!(out.status.code(), Some(0));
