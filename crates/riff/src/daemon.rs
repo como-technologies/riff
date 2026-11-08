@@ -11261,7 +11261,10 @@ mod tests {
             riff_core::name::Who::new(&pair.user, None).unwrap(),
             place.clone(),
         );
-        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        // A fake forge: the token of a session on GitHub asks no real `gh`.
+        let world: Arc<dyn World> = Arc::new(Server::default());
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
 
         let mut sockets = Vec::new();
         for (name, item, terminal) in [
