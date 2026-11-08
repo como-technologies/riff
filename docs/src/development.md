@@ -3703,8 +3703,9 @@ the repository whose work is over (see
 [Remove the folders of old sessions](#remove-the-folders-of-old-sessions)).
 It asks GitHub about a folder that stays one time in 10 minutes.
 For a merged pull request with `Refs #N`, it first adds the comment
-`Merged in #PR (COMMIT)` to the issue, so the item is not free work
-again.
+`Merged in #PR (COMMIT)` to the issue, when the look did not add it
+already (see
+[Leave the issue open for a check after the release](#leave-the-issue-open-for-a-check-after-the-release)).
 
 When the daemon stops during a session, the session runs on. A new
 daemon takes it up, and does the steps after its end.
@@ -4802,9 +4803,20 @@ give it to the pull request:
 gh pr edit 40 --body-file body.md
 ```
 
-After the merge, riff adds the comment `Merged in #PR (COMMIT)` to the
-issue (see [What the wave does](#what-the-wave-does)). The issue closes
-after its check: see [The life of a wave](waves.md#the-life-of-a-wave).
+The merge makes the item merged at once. riff reads the last 100
+merged pull requests at each look of the wave. An open issue whose pull
+request merged with `Refs #N` is no free work, so no session claims it
+again. At the first look after the merge, riff adds the comment `Merged
+in #PR (COMMIT)` to the issue, one time (see
+[What the wave does](#what-the-wave-does)). To see the comment of issue
+12:
+
+```sh
+gh issue view 12 --comments
+```
+
+The issue closes after its check: see
+[The life of a wave](waves.md#the-life-of-a-wave).
 
 ## See the tokens of an issue
 

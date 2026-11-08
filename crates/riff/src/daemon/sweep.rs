@@ -31,8 +31,9 @@
 //! The folder of a verify, `verify-issue-N-ID8`, has the fate of the
 //! branch of its item. A merged pull request with `Refs #N` first gets
 //! the comment `Merged in #PR (COMMIT)` on its issue ([`World::merged_in`]),
-//! so the item is not free work again. riff never removes a folder whose
-//! name has no issue, or whose clone has no `origin`.
+//! when the look of the wave did not add it at the merge (#1754). riff
+//! never removes a folder whose name has no issue, or whose clone has no
+//! `origin`.
 //!
 //! The fate looks only at the forge. So before riff removes a folder, it
 //! looks at the clone too
@@ -225,7 +226,6 @@ impl Fate {
             return Ok(Fate::Stays);
         }
         if let Some(pull) = with("MERGED") {
-            let refs = format!("Refs #{issue}");
             return Ok(Fate::Merged {
                 pull: pull.number,
                 commit: pull
@@ -233,7 +233,7 @@ impl Fate {
                     .as_ref()
                     .map(|c| c.oid.clone())
                     .unwrap_or_default(),
-                refs: pull.body.lines().any(|l| l.trim() == refs),
+                refs: rollout::refs(&pull.body, issue),
             });
         }
         if let Some(pull) = with("CLOSED") {
@@ -293,16 +293,13 @@ pub fn fate_on(gh: &pr::Gh, repo: &str, issue: u64) -> Result<Fate> {
 }
 
 /// Adds the comment `Merged in #PULL (COMMIT)` to the issue `issue` with
-/// `gh`, when no comment of the issue starts with `Merged in #PULL`.
+/// `gh`, when no comment of the issue starts with `Merged in #PULL`
+/// ([`rollout::Comment::merged_in`]). The sweep and the look of the wave
+/// call it ([`crate::wave::World::merged_in`]).
 pub fn merged_in_on(gh: &pr::Gh, issue: u64, pull: u64, commit: &str) -> Result<()> {
     let comments: Comments =
         gh.json(&["issue", "view", &issue.to_string(), "--json", "comments"])?;
-    let said = format!("Merged in #{pull}");
-    if !comments
-        .comments
-        .iter()
-        .any(|c| c.body.trim_start().starts_with(&said))
-    {
+    if !comments.comments.iter().any(|c| c.merged_in(pull)) {
         let body = text::wave_merged(pull, commit);
         gh.run(
             &["issue", "comment", &issue.to_string(), "--body-file", "-"],

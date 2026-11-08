@@ -10684,6 +10684,24 @@ pub fn wave_merged(number: u64, commit: &str) -> String {
     )
 }
 
+/// The log line of a look of the wave that could not add the comment
+/// [`wave_merged`] of the pull request `pull` to the issue `issue`
+/// (#1754).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_no_merged_in(12, 40, "HTTP 502"),
+///     "cannot add the comment Merged in #40 to issue #12: HTTP 502. The issue is no free \
+///      work, and the next look tries again."
+/// );
+/// ```
+pub fn wave_no_merged_in(issue: u64, pull: u64, error: &str) -> String {
+    format!(
+        "cannot add the comment Merged in #{pull} to issue #{issue}: {error}. The issue is no \
+         free work, and the next look tries again."
+    )
+}
+
 /// The sweep removed the folder `folder` of a session, for the reason
 /// `why` ([`swept_why`], 01M53NJ5V27BCHDNHK2THQQZZQ).
 ///

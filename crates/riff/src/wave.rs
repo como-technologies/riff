@@ -212,6 +212,9 @@
 //!   lead gets one message for each such issue ([`Look::no_done_when`],
 //!   [`text::wave_no_done_when`]). The wave takes the issue at its next
 //!   look after the line comes. A verify and a rebase do not change;
+//! - a build of an issue whose pull request merged with `Refs #N`: the
+//!   item is merged, also before its comment `Merged in` (see "A merge
+//!   that leaves the issue open");
 //! - an item that a session claims, or that a job of the wave runs;
 //! - the verify of an item while a session holds the item: its author
 //!   still works. The verify is a new session: an author never verifies
@@ -261,6 +264,31 @@
 //!   for each image, with the fix: make the package public, or run
 //!   `podman login REGISTRY` on each host of the wave
 //!   (01M5SMSB3H1E9NXMBDN8ZDJ6CD).
+//!
+//! # A merge that leaves the issue open
+//!
+//! The pull request of an issue with a check after the release has
+//! `Refs #N` (R194), so the merge leaves the issue open. The look reads the
+//! last 100 merged pull requests with `gh` ([`rollout::merges`],
+//! 01M6XSSCTA3E1GJ8EC9646PP1R). An issue whose pull request merged with
+//! `Refs #N` is merged at once ([`rollout::Issue::merged`]): it is no free
+//! work, also before it has the comment `Merged in #PR (COMMIT)`. The loop
+//! adds that comment at the first look that finds the issue with no
+//! comment, before it starts any work ([`Look::merged`],
+//! [`World::merged_in`]). It adds it one time. A comment that fails comes
+//! at the next look. The sweep adds it too, when it is still missing (see
+//! "The clones").
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant G as GitHub
+//!     participant W as the loop of the wave
+//!     G->>G: pull request #40 merges with Refs #12: the issue stays open
+//!     W->>G: look: open issues, open and merged pull requests
+//!     Note over W: #12 is merged: no free work
+//!     W->>G: gh issue comment 12: Merged in #40 (COMMIT)
+//!     W->>W: pick: the next free item
+//! ```
 //!
 //! # A conflict with main
 //!
@@ -507,8 +535,8 @@
 //! issue is closed, and its clone holds no work that is not on `origin`
 //! ([`crate::daemon::sweep`], 01M53NJ5V27BCHDNHK2THQQZZQ,
 //! 01M53S7WAXD46YPN0DR96XSTMG). For a merged pull request with `Refs #N`,
-//! it first adds the comment `Merged in #PR (COMMIT)` to the issue, as
-//! the verifier of a worker does, so the item is not free work again.
+//! it first adds the comment `Merged in #PR (COMMIT)` to the issue, when
+//! the issue does not have it (see "A merge that leaves the issue open").
 //! The folder of a verify that did not pass goes at its end. The daemon
 //! also sweeps with no wave.
 //!
@@ -1096,6 +1124,11 @@ pub struct Look {
     /// `Done when:` in their body
     /// ([`rollout::Open::no_done_when`]). The lead hears of each once.
     pub no_done_when: BTreeSet<u64>,
+    /// The open issues whose pull request merged with `Refs #N` and that
+    /// have no comment `Merged in #PULL` yet ([`rollout::Open::unsaid`]),
+    /// by issue. They are no free work. The loop adds the comment to each
+    /// before it starts any work ([`World::merged_in`], #1754).
+    pub merged: BTreeMap<u64, rollout::Merge>,
     /// The default branch of the repository on the forge, for example
     /// `main` or `master`. The look reads it from the forge (a read of the
     /// last [`pr::Gh::SLOW`] serves), and keeps it in no file
@@ -1682,6 +1715,32 @@ async fn limit_pause(
     Some((until(&wait), text::wave_limit_word(&wait)))
 }
 
+/// Adds the comment `Merged in #PULL (COMMIT)` to each issue of
+/// `look.merged` ([`World::merged_in`], #1754) one time: `said` holds each
+/// issue and pull request that got it from the loop, while the look still
+/// finds it with no comment. A comment that fails comes at the next look.
+async fn say_merged(world: &dyn World, wave: &Wave, look: &Look, said: &mut BTreeSet<(u64, u64)>) {
+    said.retain(|(issue, pull)| look.merged.get(issue).is_some_and(|m| m.pull == *pull));
+    for (issue, merge) in &look.merged {
+        if said.contains(&(*issue, merge.pull)) {
+            continue;
+        }
+        match world
+            .merged_in(&wave.repo, *issue, merge.pull, &merge.commit)
+            .await
+        {
+            Ok(()) => {
+                said.insert((*issue, merge.pull));
+            }
+            Err(e) => {
+                let e = format!("{e:#}");
+                let line = text::wave_no_merged_in(*issue, merge.pull, &e);
+                eprintln!("riff daemon: {}: {line}", wave.repo);
+            }
+        }
+    }
+}
+
 /// The loop of the wave `wave` in `daemon`, until the daemon stops it.
 /// `taken` holds the items of its jobs before the start, `starts` the
 /// starts of each item, `word` what it did last, and `ordered` the verifies
@@ -1701,6 +1760,9 @@ pub(crate) async fn run<R: Runtime + 'static>(
     let mut noticed: BTreeSet<String> = BTreeSet::new();
     // The issues with no `Done when:` line that the lead heard of.
     let mut bare: BTreeSet<u64> = BTreeSet::new();
+    // The issues and the merged pull requests whose comment `Merged in`
+    // this loop added.
+    let mut said: BTreeSet<(u64, u64)> = BTreeSet::new();
     // True while the wave waits for a fact of the host: the lead heard
     // of it.
     let mut waits = false;
@@ -1747,6 +1809,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
         let mut wait = LOOK_EVERY;
         let next = match world.look(&wave).await {
             Ok(look) => {
+                say_merged(&*world, &wave, &look, &mut said).await;
                 let spent = spent(&look, &running(&daemon, &wave, &taken), &lock(&starts));
                 // `riff join` cleared the starts of these items.
                 told.retain(|key| lock(&starts).get(key).is_some_and(|n| *n >= STARTS));
@@ -3208,6 +3271,7 @@ pub fn look_with(
     }
     let (free, fixes) = fixes(&open, open.free_work(&claimed, &held));
     let no_done_when = open.no_done_when(&claimed, &held).into_iter().collect();
+    let merged = open.unsaid();
     let pulls = waiting(gh, repo, &free, &open)?;
     let lanes = lanes(&open, &free, &requests(bodies), |pull| {
         order::files(gh, repo, pull.number, &pull.head).unwrap_or_default()
@@ -3221,6 +3285,7 @@ pub fn look_with(
         lanes,
         fixes,
         no_done_when,
+        merged,
         branch,
     })
 }
@@ -3980,6 +4045,15 @@ mod tests {
         /// A `gh` that the look calls, with its own count of calls: the look
         /// fails when it fails (#1557). Else the look calls no `gh`.
         limit_gh: Option<Arc<pr::Gh>>,
+        /// The merged pull request with `Refs #N` of each issue (#1754).
+        merges: BTreeMap<u64, rollout::Merge>,
+        /// The comments of each issue.
+        comments: BTreeMap<u64, Vec<String>>,
+        /// Each comment `Merged in` of the wave: the issue, the pull
+        /// request and the commit.
+        merged_ins: Vec<(u64, u64, String)>,
+        /// The number of the next comments `Merged in` that fail.
+        merged_in_fails: usize,
     }
 
     impl Forge {
@@ -4027,7 +4101,14 @@ mod tests {
                     .flatten()
                     .map(|name| rollout::Label { name: name.clone() })
                     .collect(),
-                ..rollout::Issue::default()
+                comments: self
+                    .comments
+                    .get(n)
+                    .into_iter()
+                    .flatten()
+                    .map(|body| rollout::Comment { body: body.clone() })
+                    .collect(),
+                merge: self.merges.get(n).cloned(),
             });
             let pulls = self.pulls.iter().map(|(n, pr)| rollout::Pull {
                 number: 40 + n,
@@ -4146,6 +4227,7 @@ mod tests {
                     lanes,
                     fixes,
                     no_done_when: no_done_when.into_iter().collect(),
+                    merged: open.unsaid(),
                     branch: "main".into(),
                 })
             })
@@ -4299,11 +4381,21 @@ mod tests {
         fn merged_in<'a>(
             &'a self,
             _: &'a str,
-            _: u64,
-            _: u64,
-            _: &'a str,
+            issue: u64,
+            pull: u64,
+            commit: &'a str,
         ) -> BoxFuture<'a, Result<()>> {
-            Box::pin(async { Ok(()) })
+            Box::pin(async move {
+                let mut forge = lock(&self.forge);
+                if forge.merged_in_fails > 0 {
+                    forge.merged_in_fails -= 1;
+                    bail!("gh issue comment: HTTP 502");
+                }
+                forge.merged_ins.push((issue, pull, commit.to_owned()));
+                let body = text::wave_merged(pull, commit);
+                forge.comments.entry(issue).or_default().push(body);
+                Ok(())
+            })
         }
 
         fn tell<'a>(
@@ -4914,6 +5006,69 @@ mod tests {
         here.until(4, |h| h.running("issue-1").is_some()).await;
         here.idle(4).await;
         assert_eq!(here.forge().told.len(), 1, "no more message");
+    }
+
+    /// 01M6XSSCTA3E1GJ8EC9646PP1R (#1754): the pull request of an item
+    /// merges with `Refs #N`, so the issue stays open, with no comment
+    /// `Merged in` yet. No session claims the item at the next look, and
+    /// the wave adds the comment one time.
+    #[tokio::test]
+    async fn an_item_whose_pull_request_merged_with_refs_never_starts_again() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 2, free).await;
+        here.run();
+        for item in ["issue-1", "verify-issue-1"] {
+            here.until(2, |h| h.running(item).is_some()).await;
+            here.end(item).await;
+        }
+        here.until(2, |h| h.forge().finished.len() == 2).await;
+        assert_eq!(here.forge().pulls.get(&1), Some(&Pr::Passed));
+
+        // GitHub merges the pull request: it is no more open, and the issue
+        // stays open with no comment.
+        {
+            let mut forge = here.forge();
+            forge.pulls.remove(&1);
+            let merge = rollout::Merge {
+                pull: 41,
+                commit: "1a2b3c4d".into(),
+            };
+            forge.merges.insert(1, merge);
+        }
+        here.until(2, |h| !h.forge().merged_ins.is_empty()).await;
+        here.idle(2).await;
+        let forge = here.forge();
+        let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(started, ["issue-1", "verify-issue-1"], "no new claim");
+        assert_eq!(forge.merged_ins, [(1, 41, "1a2b3c4d".to_owned())]);
+        assert_eq!(forge.comments[&1], [text::wave_merged(41, "1a2b3c4d")]);
+    }
+
+    /// 01M6XSSCTA3E1GJ8EC9646PP1R (#1754): a comment `Merged in` that
+    /// fails comes at the next look. The item stays no free work in the
+    /// meantime.
+    #[tokio::test]
+    async fn a_comment_merged_in_that_failed_comes_at_the_next_look() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 2, free).await;
+        {
+            let mut forge = here.forge();
+            let merge = rollout::Merge {
+                pull: 41,
+                commit: "1a2b3c4d".into(),
+            };
+            forge.merges.insert(1, merge);
+            forge.merged_in_fails = 1;
+        }
+        here.run();
+        here.until(2, |h| h.running("issue-2").is_some()).await;
+        here.until(2, |h| !h.forge().merged_ins.is_empty()).await;
+        here.idle(2).await;
+        let forge = here.forge();
+        let started: Vec<&str> = forge.starts.iter().map(|(i, _)| i.as_str()).collect();
+        assert_eq!(started, ["issue-2"], "no build of the merged item");
+        assert_eq!(forge.merged_in_fails, 0);
+        assert_eq!(forge.merged_ins, [(1, 41, "1a2b3c4d".to_owned())]);
     }
 
     /// The wave of the open items 1 and 2: each pull request waits for a
@@ -8193,16 +8348,17 @@ esac
 
     /// 01M6GYN97HH70E4C1FGM6HA2B0, 01M6GYN92N3Z99GPXTYHDDWF4R (#1549): a wave
     /// with no session, 1 open pull request and 20 open issues reads the
-    /// forge with 12 calls and 6 GraphQL points at its first tick: two of
+    /// forge with 13 calls and 7 GraphQL points at its first tick: two of
     /// them are the conditional reads of the look (#1566), which cost no
-    /// point. The look of the daemon takes the reads of the loop of the
-    /// wave. A second tick with no change makes 9 calls: it reads the
-    /// default branch and the rules one time. A pull request is open, so
-    /// the conditional reads save nothing here: see
+    /// point, and one reads the last merged pull requests (#1754). The look
+    /// of the daemon takes the reads of the loop of the wave. A second tick
+    /// with no change makes 10 calls: it reads the default branch and the
+    /// rules one time. A pull request is open, so the conditional reads
+    /// save nothing here: see
     /// `an_idle_wave_with_no_pull_request_asks_github_first_and_reads_nothing`.
-    /// A daemon that shares no read made 16 calls and 11 points in each
+    /// A daemon that shares no read made 17 calls and 12 points in each
     /// tick. With a tick each 5 minutes the two waves of an idle host use
-    /// 144 points an hour, under the target of 300.
+    /// 168 points an hour, under the target of 300.
     #[tokio::test]
     async fn an_idle_wave_reads_the_forge_with_few_calls_and_fewer_at_the_second_tick() {
         let forge = reads_forge(1);
@@ -8216,15 +8372,15 @@ esac
         watch.accepts = 2 * LOOK_EVERY;
 
         let first = tick(&forge, &gh, &calls, &mut watch).await;
-        assert_eq!(first["wave"], (7, 5), "{first:?}");
+        assert_eq!(first["wave"], (8, 6), "{first:?}");
         // The look of the daemon reads the rules and the Gate of `main`
         // only: the issues and the pull requests came from the wave.
         assert_eq!(first["look"], (3, 0), "{first:?}");
         assert_eq!(first["watches"], (2, 1), "{first:?}");
-        assert_eq!(sum(&first), (12, 6));
+        assert_eq!(sum(&first), (13, 7));
 
         let second = tick(&forge, &gh, &calls, &mut watch).await;
-        assert_eq!(sum(&second), (9, 6), "{second:?}");
+        assert_eq!(sum(&second), (10, 7), "{second:?}");
         assert!(sum(&second).0 < sum(&first).0);
 
         // The same tick of a daemon that shares no read: each loop reads
@@ -8233,12 +8389,12 @@ esac
         let alone = pr::Gh::at(forge.path().join("gh")).with_calls(alone_calls.clone());
         let mut watch = look::Watch::default();
         let before = tick(&forge, &alone, &alone_calls, &mut watch).await;
-        assert_eq!(sum(&before), (16, 11), "{before:?}");
+        assert_eq!(sum(&before), (17, 12), "{before:?}");
 
         // The target of two idle waves: one tick each 5 minutes.
         let ticks = 3600 / IDLE_LOOK_EVERY.as_secs() as u32;
         let hour = 2 * ticks * sum(&second).1;
-        assert_eq!(hour, 144);
+        assert_eq!(hour, 168);
         assert!(hour <= crate::ghcalls::IDLE_POINTS_AN_HOUR, "{hour}");
         // A daemon that shares no read and looks each minute.
         assert!(2 * 60 * sum(&before).1 > crate::ghcalls::IDLE_POINTS_AN_HOUR);
@@ -8249,7 +8405,7 @@ esac
     /// loop of the wave looks each minute, the look of the daemon takes its
     /// reads, the watch of the wave looks each 5 minutes, and the sweep of
     /// the folders makes no call: each branch has an open pull request in the
-    /// reply of the wave. That is 312 GraphQL points an hour, under the
+    /// reply of the wave. That is 372 GraphQL points an hour, under the
     /// target of 1,500.
     #[tokio::test]
     async fn a_wave_with_eight_sessions_stays_under_its_target() {
@@ -8263,7 +8419,7 @@ esac
         tick(&forge, &gh, &calls, &mut watch).await;
         let second = tick(&forge, &gh, &calls, &mut watch).await;
         let (wave, look, watches) = (second["wave"].1, second["look"].1, second["watches"].1);
-        assert_eq!((wave, look, watches), (5, 0, 1), "{second:?}");
+        assert_eq!((wave, look, watches), (6, 0, 1), "{second:?}");
 
         // The sweep: 8 folders, 8 branches with an open pull request.
         let before = spent(&calls);
@@ -8279,7 +8435,7 @@ esac
         let minutes = 3600 / LOOK_EVERY.as_secs() as u32;
         let watches_ticks = 3600 / IDLE_LOOK_EVERY.as_secs() as u32;
         let hour = minutes * (wave + look) + watches_ticks * watches;
-        assert_eq!(hour, 312);
+        assert_eq!(hour, 372);
         assert!(hour <= crate::ghcalls::BUSY_POINTS_AN_HOUR, "{hour}");
     }
 
@@ -8302,7 +8458,7 @@ esac
         watch.accepts = Duration::from_millis(250);
 
         let first = tick(&forge, &gh, &calls, &mut watch).await;
-        assert_eq!(first["wave"], (7, 5), "{first:?}");
+        assert_eq!(first["wave"], (8, 6), "{first:?}");
         tokio::time::sleep(Duration::from_millis(400)).await;
 
         let second = tick(&forge, &gh, &calls, &mut watch).await;
@@ -8324,7 +8480,7 @@ esac
         std::fs::write(forge.path().join("etag-issues"), r#"W/"issues-2""#).unwrap();
         let third = tick(&forge, &gh, &calls, &mut watch).await;
         // The default branch is a shared reply of the first tick.
-        assert_eq!(third["wave"], (6, 5), "{third:?}");
+        assert_eq!(third["wave"], (7, 6), "{third:?}");
     }
 
     /// The seconds since the epoch now.
