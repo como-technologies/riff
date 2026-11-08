@@ -598,42 +598,55 @@ pub fn settings(auto: &crate::permissions::Trust, role: crate::permissions::Role
 /// prompt` (01M5GVQQ8NK3RD9CM3VTGXEHZQ), and `Stop` runs `/opt/riff/riff
 /// relay idle` at the end of each turn (01M6WBX2FQEHW92Y1A5HM4H8BM).
 ///
+/// A hook of riff never blocks `claude` (01M6WFN93ZDCSAVRTNYDX4MRJR).
+/// `claude` runs the command of a hook in a shell, and each command ends
+/// with `|| true`. So a hook exits with 0 also on an older riff, for
+/// example after a rollback, that does not know the subcommand and exits
+/// with 2. The output of the hook stays.
+///
 /// ```
 /// let hooks = riff::run::session_hooks();
 /// let hook = &hooks["PermissionDenied"][0];
 /// assert_eq!(hook["matcher"], "*");
-/// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay denied");
+/// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay denied || true");
 /// let hook = &hooks["UserPromptSubmit"][0];
-/// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay prompt");
+/// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay prompt || true");
 /// let hook = &hooks["Stop"][0];
-/// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay idle");
+/// assert_eq!(hook["hooks"][0]["command"], "/opt/riff/riff relay idle || true");
 /// ```
 pub fn session_hooks() -> Value {
+    let hook = |subcommand: &str| {
+        json!({
+            "type": "command",
+            "command": format!("{} relay {subcommand} || true", daemon::RELAY_BIN),
+        })
+    };
     json!({
-        "PermissionDenied": [{
-            "matcher": "*",
-            "hooks": [{
-                "type": "command",
-                "command": format!("{} relay denied", daemon::RELAY_BIN),
-            }],
-        }],
-        "UserPromptSubmit": [{
-            "hooks": [{
-                "type": "command",
-                "command": format!("{} relay prompt", daemon::RELAY_BIN),
-            }],
-        }],
-        "Stop": [{
-            "hooks": [{
-                "type": "command",
-                "command": format!("{} relay idle", daemon::RELAY_BIN),
-            }],
-        }],
+        "PermissionDenied": [{ "matcher": "*", "hooks": [hook("denied")] }],
+        "UserPromptSubmit": [{ "hooks": [hook("prompt")] }],
+        "Stop": [{ "hooks": [hook("idle")] }],
     })
 }
 
-/// Adds each hook of [`session_hooks`] that the settings file `path`
-/// lacks. Each other key stays. True when it wrote the file.
+/// True when each hook of the group `group` of a settings file runs
+/// `riff relay` at [`daemon::RELAY_BIN`]: a group of this riff or of an
+/// older one.
+fn of_riff(group: &Value) -> bool {
+    let relay = format!("{} relay ", daemon::RELAY_BIN);
+    group["hooks"].as_array().is_some_and(|hooks| {
+        !hooks.is_empty()
+            && hooks.iter().all(|hook| {
+                hook["command"]
+                    .as_str()
+                    .is_some_and(|command| command.starts_with(&relay))
+            })
+    })
+}
+
+/// Gives the settings file `path` the hooks of [`session_hooks`]. A group
+/// of riff that is not one of them goes, as the hook of an older riff:
+/// the new group takes its place (01M6WFN93ZDCSAVRTNYDX4MRJR). Each other
+/// key and each other hook stays. True when it wrote the file.
 ///
 /// ```
 /// let dir = tempfile::tempdir()?;
@@ -647,6 +660,13 @@ pub fn session_hooks() -> Value {
 /// let hooks = riff::run::session_hooks();
 /// assert_eq!(settings["hooks"]["PermissionDenied"], hooks["PermissionDenied"]);
 /// assert_eq!(settings["hooks"]["UserPromptSubmit"], hooks["UserPromptSubmit"]);
+/// assert_eq!(settings["hooks"]["Stop"], hooks["Stop"]);
+///
+/// // The hook of an older riff gets the new command.
+/// let old = r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/opt/riff/riff relay idle"}]}]}}"#;
+/// std::fs::write(&path, old)?;
+/// assert!(riff::run::add_session_hooks(&path)?);
+/// let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
 /// assert_eq!(settings["hooks"]["Stop"], hooks["Stop"]);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
@@ -670,9 +690,13 @@ pub fn add_session_hooks(path: &Path) -> Result<bool> {
         let Some(have) = have.as_array_mut() else {
             bail!("`hooks.{event}` in {} is no list", path.display());
         };
-        for hook in list.as_array().into_iter().flatten() {
-            if !have.contains(hook) {
-                have.push(hook.clone());
+        let list = list.as_array().cloned().unwrap_or_default();
+        let before = have.len();
+        have.retain(|group| !of_riff(group) || list.contains(group));
+        changed |= have.len() != before;
+        for group in list {
+            if !have.contains(&group) {
+                have.push(group);
                 changed = true;
             }
         }
@@ -2490,5 +2514,73 @@ mod tests {
         let sign_in = sign_in(file, 120 * 60_000).unwrap();
         assert_eq!(sign_in.minutes, -120);
         assert_eq!(sign_in.secrets, ["sk-a"]);
+    }
+
+    /// The command of each hook of [`session_hooks`].
+    fn commands(hooks: &Value) -> Vec<String> {
+        let groups = hooks.as_object().unwrap().values();
+        groups
+            .flat_map(|list| list.as_array().unwrap().clone())
+            .flat_map(|group| group["hooks"].as_array().unwrap().clone())
+            .map(|hook| hook["command"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// 01M6WFN93ZDCSAVRTNYDX4MRJR: each hook command ends with `|| true`,
+    /// so an older riff that does not know the subcommand blocks no turn
+    /// and no prompt.
+    #[test]
+    fn each_hook_of_riff_exits_with_0_also_on_an_older_riff() {
+        let commands = commands(&session_hooks());
+        assert_eq!(commands.len(), 3);
+        for command in commands {
+            assert!(command.starts_with("/opt/riff/riff relay "), "{command}");
+            assert!(command.ends_with(" || true"), "{command}");
+        }
+    }
+
+    /// 01M6WFN93ZDCSAVRTNYDX4MRJR: the Claude folder of an earlier start
+    /// gets the new command in the place of each hook of the older riff.
+    /// A hook of the person stays.
+    #[test]
+    fn the_hooks_of_an_older_claude_folder_get_the_new_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let group = |command: &str| json!({"hooks": [{"type": "command", "command": command}]});
+        let own = group("notify-send done");
+        let old = json!({
+            "model": "opus",
+            "hooks": {
+                "PermissionDenied": [{
+                    "matcher": "*",
+                    "hooks": [{"type": "command", "command": "/opt/riff/riff relay denied"}],
+                }],
+                "UserPromptSubmit": [group("/opt/riff/riff relay prompt")],
+                "Stop": [group("/opt/riff/riff relay idle"), own.clone()],
+            },
+        });
+        std::fs::write(&path, old.to_string()).unwrap();
+        assert!(add_session_hooks(&path).unwrap());
+        assert!(!add_session_hooks(&path).unwrap(), "the hooks are new");
+
+        let settings: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let hooks = session_hooks();
+        assert_eq!(settings["model"], "opus");
+        assert_eq!(
+            settings["hooks"]["PermissionDenied"],
+            hooks["PermissionDenied"]
+        );
+        assert_eq!(
+            settings["hooks"]["UserPromptSubmit"],
+            hooks["UserPromptSubmit"]
+        );
+        assert_eq!(settings["hooks"]["Stop"], json!([own, hooks["Stop"][0]]));
+        assert!(
+            commands(&settings["hooks"])
+                .iter()
+                .filter(|c| c.starts_with("/opt/riff/riff "))
+                .all(|c| c.ends_with(" || true")),
+            "{settings}"
+        );
     }
 }

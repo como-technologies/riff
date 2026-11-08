@@ -125,6 +125,14 @@
 //! daemon keeps the end of the turn of the lead, and an old lead starts
 //! again on the new riff then (01M6WBX2FQEHW92Y1A5HM4H8BM).
 //!
+//! A hook of riff never blocks `claude` (01M6WFN93ZDCSAVRTNYDX4MRJR).
+//! Each hook subcommand exits with 0 on each fault of its own, and prints
+//! the fault on stderr. A hook with arguments that this riff cannot read,
+//! as the hook of a newer riff after a rollback, prints one line and
+//! exits with 0 too ([`unknown_hook`]). The command of each hook ends with
+//! `|| true` ([`crate::run::session_hooks`]), so also an older riff with
+//! no such rule blocks nothing.
+//!
 //! # Versions
 //!
 //! An update of riff reaches a worker and a verify at their next start
@@ -1051,6 +1059,45 @@ pub async fn idle(socket: &Path) -> Result<()> {
         }
     }
     anyhow::bail!("the daemon went away")
+}
+
+/// The line on stderr of `riff relay` that runs as a hook of `claude`
+/// with arguments that this riff cannot read, for example a subcommand
+/// of a newer riff after a rollback (01M6WFN93ZDCSAVRTNYDX4MRJR). The
+/// hook then does nothing, and exits with 0: an exit with 2 would block
+/// the turn or the prompt. `args` are the arguments of the process, the
+/// program first, and `input` reads the stdin. `None` when `args` are no
+/// call of `riff relay`, or the stdin is no JSON of a hook: the error of
+/// the arguments stays.
+///
+/// ```
+/// use riff::session_relay::unknown_hook;
+///
+/// let args = |line: &str| line.split(' ').map(std::ffi::OsString::from).collect::<Vec<_>>();
+/// let stop = || r#"{"hook_event_name":"Stop","stop_hook_active":false}"#.to_owned();
+/// assert_eq!(
+///     unknown_hook(&args("/opt/riff/riff relay nosuch"), stop).unwrap(),
+///     riff::text::relay_unknown_hook("nosuch", "Stop")
+/// );
+/// assert_eq!(unknown_hook(&args("/opt/riff/riff relay idle --new"), stop).unwrap(),
+///     riff::text::relay_unknown_hook("idle --new", "Stop"));
+/// // No hook: the error stays.
+/// assert_eq!(unknown_hook(&args("/opt/riff/riff relay nosuch"), String::new), None);
+/// assert_eq!(unknown_hook(&args("/opt/riff/riff relay nosuch"), || "{}".into()), None);
+/// assert_eq!(unknown_hook(&args("/opt/riff/riff nosuch"), stop), None);
+/// ```
+pub fn unknown_hook(args: &[OsString], input: impl FnOnce() -> String) -> Option<String> {
+    let (relay, rest) = args.get(1..)?.split_first()?;
+    if relay != "relay" {
+        return None;
+    }
+    let hook: Value = serde_json::from_str(&input()).ok()?;
+    let event = hook.get("hook_event_name")?.as_str()?;
+    let rest: Vec<String> = rest
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    Some(text::relay_unknown_hook(&rest.join(" "), event))
 }
 
 /// Asks the daemon on the socket at `socket` who this session is for

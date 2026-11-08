@@ -362,6 +362,10 @@ pub struct Facts {
     /// The long-lived token of `claude setup-token`.
     #[serde(default)]
     pub claude_token: Token,
+    /// True when the host updates riff by itself (`update.auto`). A daemon
+    /// of an older build sends none (01M6WFNDS76NESPXHMQPGHHQSS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<bool>,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -560,9 +564,25 @@ mod tests {
             gh: Sign::Off,
             claude: Sign::Left { minutes: 90 },
             claude_token: Token::Set,
+            auto: Some(true),
         };
         assert_eq!(Facts::parse(&facts.line()), Some(facts.clone()));
         assert!(!facts.line().contains('\n'));
+    }
+
+    /// 01M6WFNDS76NESPXHMQPGHHQSS: the facts carry `update.auto` of the
+    /// host. An older daemon sends none.
+    #[test]
+    fn the_facts_carry_update_auto_and_an_older_daemon_sends_none() {
+        let old = r#"daemon facts: {"build":"4.12.0","limit":8,"floor_gb":8}"#;
+        assert_eq!(Facts::parse(old).unwrap().auto, None);
+        let off = Facts {
+            auto: Some(false),
+            ..Facts::default()
+        };
+        assert!(off.line().contains(r#""auto":false"#), "{}", off.line());
+        assert_eq!(Facts::parse(&off.line()).unwrap().auto, Some(false));
+        assert!(!Facts::default().line().contains("auto"));
     }
 
     #[test]

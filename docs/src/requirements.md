@@ -5021,6 +5021,15 @@ of this part when they merge.
   it showed. So it shows each event one time. When no daemon comes
   back, `riff run` says so, finds the pull request, and releases the
   item.
+- **01M6WFN93ZDCSAVRTNYDX4MRJR** A hook of riff never blocks `claude`.
+  The command of each hook in the settings of a container session ends
+  with `|| true`, so the hook exits with 0 also on an older riff that
+  does not know its subcommand. Each hook subcommand of `riff relay`
+  exits with 0 on each fault of its own, and prints the fault on stderr.
+  When `riff relay` runs as a hook, with the JSON of a hook on its
+  stdin, and cannot read its arguments, it prints one line on stderr and
+  exits with 0. The Claude folder of an earlier start gets the new
+  command in the place of the hook of the older riff.
 
 ### The waves of the daemon
 
@@ -6796,15 +6805,25 @@ of this part when they merge.
   read the reset, the time is a guess and the error says so.
 - **01M6WBX2G1PX11D89HNBAZ6MCM** When the job `Deploy` passed, the watch
   of the deploy holds its message to the lead and its note to the other
-  leads until the riff daemon of its host runs the release or a newer
-  riff, and the lead of the repository on that host runs the riff of the
-  daemon. Then one look posts both. The message says that the container
-  of the lead runs the new riff, and its next step is `riff release
-  check vX.Y.Z`. A host with `update.auto` off does not wait for its
-  daemon, and a host with no lead of the repository does not wait for a
-  lead. After 30 minutes the watch posts all the same, and the message
-  says what it waited for. This supersedes 01M5RGD0RTXYA7FF5K1TH72MGX in
-  part: the time of the message of a deploy that passed.
+  leads while the riff daemon of its host runs an older riff than the
+  release, or the lead of the repository on that host runs another riff
+  than the daemon. One look posts both. The message says that the
+  container of the lead runs the new riff, and its next step is `riff
+  release check vX.Y.Z`. A host with `update.auto` off does not wait for
+  its daemon, and a host with no lead of the repository does not wait
+  for a lead. After 30 minutes the watch posts all the same, and the
+  message says what it waited for. This supersedes
+  01M5RGD0RTXYA7FF5K1TH72MGX in part: the time of the message of a
+  deploy that passed.
+- **01M6WFNDS76NESPXHMQPGHHQSS** The watch of a deploy that passed also
+  holds its message to the lead and its note to the other leads while
+  the riff daemon of another host of the riff with `update.auto` on runs
+  an older riff than the release. The facts of each host in `who` carry
+  its build and its `update.auto`. The facts of a daemon of an older
+  riff carry no `update.auto`: that host counts as on. After 30 minutes
+  the message names a host that still runs an older riff. This adds to
+  01M57D3F50347RD8ED79KEA9V7, and supersedes 01M6WBX2G1PX11D89HNBAZ6MCM
+  in part: the hosts that the watch waits for.
 
 ### The real-session test
 

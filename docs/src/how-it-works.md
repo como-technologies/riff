@@ -1716,12 +1716,13 @@ the lead never runs a newer riff than the daemon of its host.
 
 The daemon looks at its start, at the end of each turn of the lead, and
 each minute. The settings of each container session run the hook `Stop`
-at the end of each turn of `claude`: `/opt/riff/riff relay idle`. It
-tells the riff daemon on the socket of the session, prints nothing, and
-never holds the turn. The daemon writes the time of the end in the
-folder of the lead, and looks at the lead 2 seconds later. So an old
-lead starts again on the new riff at the first end of its turn, also
-when a wake starts the next turn a minute later.
+at the end of each turn of `claude`:
+`/opt/riff/riff relay idle || true`. It tells the riff daemon on the
+socket of the session, prints nothing, and never holds the turn. The
+daemon writes the time of the end in the folder of the lead, and looks
+at the lead 2 seconds later. So an old lead starts again on the new
+riff at the first end of its turn, also when a wake starts the next
+turn a minute later.
 
 ```mermaid
 sequenceDiagram
@@ -1734,6 +1735,25 @@ sequenceDiagram
     D-->>H: done
     Note over D: 2 s later: the lead is old and idle
     D->>C: stop the container, start it again on the new riff
+```
+
+A hook of riff never blocks `claude`, also after a rollback to an
+older riff. For Claude Code, a hook that exits with status 2 blocks: a
+`Stop` hook keeps the turn open, and a `UserPromptSubmit` hook refuses
+your prompt. So each hook of riff exits with 0:
+
+- The command of each hook ends with `|| true`, so an older riff that
+  does not know the subcommand blocks nothing.
+- Each hook prints its fault on stderr, for example when the riff
+  daemon does not answer, and exits with 0.
+- A riff that cannot read the arguments of a hook prints one line on
+  stderr and exits with 0.
+
+A Claude folder of an earlier start gets the new commands at the next
+start of the session. To see the hook commands of the lead:
+
+```sh
+grep '"command"' ~/.local/share/riff/leads/OWNER-REPO/claude/settings.json
 ```
 
 A turn writes the transcript of the conversation at each message and

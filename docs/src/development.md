@@ -6298,16 +6298,25 @@ The lead runs `riff release check` in its container, and the riff
 daemon of the host answers each riff command there. A riff of the
 container that is older than the daemon can fail to read an answer.
 So the order after a deploy that passed is fixed: first the daemon of
-the host starts again on the release, then riff starts the container of
-the lead again on it, and only then the watch tells the lead to check.
+each host starts again on the release, then riff starts the container
+of the lead again on it, and only then the watch tells the lead to
+check. The check "each host takes the build" reads the build of the
+daemon of each host, so the watch waits for each host of the riff with
+`update.auto` on, not only for its own host. Each daemon sends its build
+and its `update.auto` with the facts of its host, and the watch reads
+them from `who`. A daemon of an older riff sends no `update.auto`: the
+watch waits for it too.
 
 ```mermaid
 sequenceDiagram
     participant W as the watch of the deploy
     participant D as riff daemon (the host)
+    participant O as riff daemon (each other host)
     participant L as the lead (its container)
     Note over W: the job Deploy passed: the message waits
     D->>D: riff update, then a new start on the release, after its last session
+    O->>O: riff update, then a new start on the release
+    O->>W: the facts of its host in who: the build of the release
     L->>D: the end of a turn: the Stop hook
     D->>L: a new container on the release: claude --resume
     W->>L: the deploy passed, and your container runs the release. next: riff release check
@@ -6324,8 +6333,16 @@ The watch waits for no daemon on a host with `update.auto` off, and for
 no lead on a host with no lead of the repository. After 30 minutes it
 tells the lead all the same, and says what it waited for, for example
 `riff waited 30 minutes for the new riff, but your container still runs
-an old riff`. When a command of an old container cannot read an answer
-of the daemon, see
+an old riff`, or a host that still runs the old build: `the riff daemon
+of bob@pangolin still runs v3.2.0, not v3.3.0`. To see the build of the
+daemon of each host, look at the part `Hosts`:
+
+```sh
+riff who
+```
+
+When a command of an old container cannot read an answer of the daemon,
+see
 [When the riff daemon runs another riff than the container](how-it-works.md#when-the-riff-daemon-runs-another-riff-than-the-container).
 To see the riff of the daemon and of the container, in the container:
 
