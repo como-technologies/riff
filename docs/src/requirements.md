@@ -7783,6 +7783,21 @@ that builds it merges.
   takeover NAME` or `riff lead start`. `p` and `P` go to riff-server on
   each host. This supersedes 01M6VGHC981887SCEKGBNRPHJV in part: `x` on
   another host, and the note of `l` and `t` there.
+- **01M6XSK4GHNBJCR0RHMBGZE57G** The TUI turns on the bracketed paste of
+  the terminal, and turns it off when it gives the terminal back. In the
+  Chat tab, also from the log, a paste goes into the prompt at the
+  cursor, and the prompt gets the focus. The new lines of the paste
+  stay: the prompt shows each one as `↵`, and `Enter` sends the line
+  with them as one message. A text of one line takes a paste with each
+  new line and tab as a space: the filter of the Sessions tab and of the
+  Machines tab, and the reason of a hold. The limit of a host takes the
+  digits of a paste. A paste answers no question, and it is no key of a
+  tab.
+- **01M6XSK4K2MDA2SK0A6KHN9HDT** A line of the Chat tab has at most 64
+  KiB. A paste that makes the line longer stays out of it: the line
+  keeps its text, and the note line says `The paste is too long: a post
+  has at most 64 KiB. The line stays as it was.` at once, in the place
+  of a post that failed, until the next key.
 
 ## The notes of the lead
 

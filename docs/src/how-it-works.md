@@ -1661,8 +1661,8 @@ sessions that match it, with each group open. A word matches a part of
 the user, the host, the repository, the item, the state, the tag, the
 session ID or the name of the container. Give a key to match only that
 fact, for example `host:thelio`, `user:brett`, `repo:riff` or
-`state:blocked`. Press Enter to keep the filter. For example, type
-this after `/`:
+`state:blocked`. Press Enter to keep the filter. A paste types too, on
+one line. For example, type this after `/`:
 
 ```text
 host:thelio blocked
@@ -3537,13 +3537,14 @@ next key gives the row back to the note of the line that you type.
 | `g`, `G` | Out of the prompt: show the oldest or the newest line. |
 | `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. |
 | `Ctrl-C` | End the TUI. The sessions go on. |
+| a paste | Put the text in the line at the cursor, with its new lines. Also from the log. |
 
 ```mermaid
 stateDiagram-v2
     [*] --> Prompt: press 2
     Prompt --> Prompt: a key types, Enter sends
     Prompt --> Log: Esc
-    Log --> Prompt: i or Enter
+    Log --> Prompt: i, Enter or a paste
     Log --> [*]: q
     Prompt --> [*]: Ctrl-C or /quit
 ```
@@ -3553,6 +3554,24 @@ another tab. Then each new line adds to the count after the name of
 the tab: `2 Chat•3` is three new lines. While the TUI cannot reach the
 chat, the row under the header says `(reconnecting…)`. `riff chat`
 stays: use it in a pipe, or in a split of tmux next to a lead.
+
+#### Paste lines into the chat
+
+Paste text into the prompt of the Chat tab, for example the error of a
+command. The new lines stay. The prompt shows each one as `↵`:
+
+```text
+> riff lead start failed:↵{↵  "step": "attach",↵  "error": "no lead"↵}
+ Enter wakes each lead of yours.
+```
+
+Press Enter. The lines go as one message, and the log shows each one
+under the sender. A line has at most 64 KiB. A longer paste stays out
+of the line, and the row under the prompt says so:
+
+```text
+ The paste is too long: a post has at most 64 KiB. The line stays as it was.
+```
 
 ## A signed message
 
