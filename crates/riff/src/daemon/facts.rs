@@ -12,8 +12,10 @@
 //! - from the status of the daemon: the riff build, the limit and the
 //!   floor, the caps of each new container, the live sessions with their
 //!   item, phase, last step and the digest of the image of their
-//!   container, the starts that wait, and the state of each wave
-//!   ([`of_status`]);
+//!   container, the starts that wait, the state of each wave, the parts
+//!   of the host, and each repository where the host takes no new claim
+//!   and still runs sessions ([`of_status`], [`left`],
+//!   01M6WJYQJ58MHQF1XPXXZW2ET6);
 //! - from the host: the load, the free memory, the disk of the session
 //!   folders, the version of podman, the merged pin of each wave
 //!   with whether podman has it ([`look`], [`pins`],
@@ -110,6 +112,7 @@ pub fn every() -> Duration {
 ///     "waiting": ["riff-issue-13-2b3c4d5e"],
 ///     "waves": [{"repo": "o/r", "word": "started issue-12", "waits": {"13": 41}}],
 ///     "parts": [{"repo": "o/r", "workers": true, "lead": true}],
+///     "leaving": [{"repo": "o/s", "sessions": ["riff-issue-7-3c4d5e6f"]}],
 ///     "test": {"tag": "v4.1.1", "commit": "90e36bfd", "secs": 185},
 ///     "claude_token": "set",
 /// }))?;
@@ -124,6 +127,9 @@ pub fn every() -> Duration {
 /// // The verify of 13 waits for the merge of #41 (#1710).
 /// assert_eq!(facts.waves[0].waits[&13], 41);
 /// assert_eq!(facts.parts[0].parts.word(), "workers and lead");
+/// // The host left o/s, and one session of it goes on
+/// // (01M6WJYQJ58MHQF1XPXXZW2ET6).
+/// assert_eq!(facts.leaving[0].sessions, ["riff-issue-7-3c4d5e6f"]);
 /// assert_eq!(facts.test.as_ref().map(|t| t.secs), Some(185));
 /// assert_eq!(facts.claude_token, riff_client::daemons::Token::Set);
 /// # Ok::<(), serde_json::Error>(())
@@ -162,6 +168,7 @@ pub fn of_status(status: &Status) -> Facts {
             })
             .collect(),
         parts: status.parts.clone(),
+        leaving: status.leaving.clone(),
         test: status.test.clone(),
         claude_token: status.claude_token,
         ..Facts::default()
@@ -171,13 +178,19 @@ pub fn of_status(status: &Status) -> Facts {
 /// The facts of the daemon in the folder `dir` and of its host, for the
 /// repository of `wave`. Each step that can block runs on a thread for
 /// blocking work. A fact that riff cannot read stays empty.
+///
+/// When the daemon serves the repository of `wave` no more, the facts
+/// name it as a repository that the host left ([`left`],
+/// 01M6WJYQJ58MHQF1XPXXZW2ET6).
 pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
     let mut facts = of_status(&super::status(dir).await?);
     let (dir, main) = (dir.to_owned(), wave.main.clone());
-    let server = wave.server.clone();
+    let (server, repo) = (wave.server.clone(), wave.repo.clone());
     let mut waves = std::mem::take(&mut facts.waves);
     let host = tokio::task::spawn_blocking(move || {
         pins(&dir, &mut waves, podman_has);
+        // A file that cannot be read counts as served.
+        let served = super::remote::read_served(&dir).map_or(true, |all| all.contains_key(&repo));
         (
             crate::machine::here(),
             crate::disk::here(&dir),
@@ -189,10 +202,14 @@ pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
             crate::settings::path()
                 .and_then(|path| crate::settings::update_auto(&path))
                 .ok(),
+            served,
         )
     })
     .await?;
-    let (machine, disk, podman, waves, gh, claude, stored, auto) = host;
+    let (machine, disk, podman, waves, gh, claude, stored, auto, served) = host;
+    if !served {
+        left(&mut facts, &wave.repo);
+    }
     facts.auto = auto;
     facts.machine = Some(machine);
     facts.disk = disk;
@@ -206,6 +223,39 @@ pub async fn look(dir: &Path, wave: &Wave, api: &Api) -> anyhow::Result<Facts> {
         Err(_) => Sign::Unknown,
     };
     Ok(facts)
+}
+
+/// Names `repo` in `facts` as a repository that the host left, with no
+/// session (01M6WJYQJ58MHQF1XPXXZW2ET6), when the facts give the host no
+/// part in it and do not name it yet. [`look`] calls it when the daemon
+/// serves `repo` no more: the look after the last session, before the
+/// session of the daemon for `repo` ends ([`super::remote::serve`]).
+///
+/// ```
+/// use riff::daemon::facts::left;
+/// use riff_client::daemons::{Facts, Leaving, Parts, RepoParts};
+///
+/// let mut facts = Facts::default();
+/// left(&mut facts, "o/r");
+/// assert_eq!(facts.leaving, [Leaving { repo: "o/r".into(), sessions: vec![] }]);
+/// // One time only.
+/// left(&mut facts, "o/r");
+/// assert_eq!(facts.leaving.len(), 1);
+/// // A host with a part in the repository did not leave it.
+/// let lead = Parts { workers: false, lead: true };
+/// let mut facts = Facts { parts: vec![RepoParts { repo: "o/r".into(), parts: lead }], ..Facts::default() };
+/// left(&mut facts, "o/r");
+/// assert!(facts.leaving.is_empty());
+/// ```
+pub fn left(facts: &mut Facts, repo: &str) {
+    let named =
+        facts.parts.iter().any(|p| p.repo == repo) || facts.leaving.iter().any(|l| l.repo == repo);
+    if !named {
+        facts.leaving.push(daemons::Leaving {
+            repo: repo.to_owned(),
+            sessions: Vec::new(),
+        });
+    }
 }
 
 /// The version of podman on `PATH`, or `None` with no podman.

@@ -1488,6 +1488,11 @@ pub struct Status {
     /// ([`parts`], #1643). An old daemon gives none.
     #[serde(default)]
     pub parts: Vec<riff_client::daemons::RepoParts>,
+    /// The repositories where this host takes no new claim and still runs
+    /// sessions ([`parts::leaving`], 01M6WJYQJ58MHQF1XPXXZW2ET6). An old
+    /// daemon gives none.
+    #[serde(default)]
+    pub leaving: Vec<riff_client::daemons::Leaving>,
     /// The jobs of the waves that run: from the pick of the item to the
     /// end of the steps after its session.
     #[serde(default)]
@@ -3221,6 +3226,19 @@ impl<R: Runtime + 'static> Daemon<R> {
             .unwrap_or_default();
         // Before the struct: its `sessions` holds the lock of the sessions.
         let lost = self.lost_shown();
+        let parts = parts::shown(&self.dir);
+        let workers: Vec<(String, String)> = self
+            .records()
+            .into_iter()
+            .filter(|r| !r.terminal)
+            .map(|r| (r.me.place().repo_text(), r.live.name))
+            .collect();
+        let leaving = parts::leaving(
+            &parts,
+            workers
+                .iter()
+                .map(|(repo, name)| (repo.as_str(), name.as_str())),
+        );
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
@@ -3234,7 +3252,8 @@ impl<R: Runtime + 'static> Daemon<R> {
             limit: Some(self.room.limit()),
             waiting: self.room.waiting(),
             waves: self.waves_shown(),
-            parts: parts::shown(&self.dir),
+            parts,
+            leaving,
             jobs: self
                 .waves_lock()
                 .values()
@@ -9160,6 +9179,7 @@ mod tests {
         let mut lead = here.start("riff-lead-o-r", "lead");
         lead.terminal = true;
         let (_lead, lead) = here.started(lead).await;
+        assert!(here.daemon.status().await.leaving.is_empty());
 
         // A leave without --now lets the session go on.
         let lines = here.daemon.leave_repo(repo, false).await.unwrap();
@@ -9169,6 +9189,16 @@ mod tests {
         );
         assert!(here.fake.calls().iter().all(|c| !c.starts_with("stop ")));
         assert!(!parts::of(&here.dir, repo).workers);
+        // 01M6WJYQJ58MHQF1XPXXZW2ET6: the status and the facts name the
+        // repository and the session that goes on to its end, and not the
+        // lead.
+        let status = here.daemon.status().await;
+        let goes_on = riff_client::daemons::Leaving {
+            repo: repo.into(),
+            sessions: vec![worker.clone()],
+        };
+        assert_eq!(status.leaving, [goes_on]);
+        assert_eq!(facts::of_status(&status).leaving, status.leaving);
 
         // A leave with --now ends it, also with no part workers any more.
         let lines = here.daemon.leave_repo(repo, true).await.unwrap();

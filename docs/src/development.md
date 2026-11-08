@@ -3160,6 +3160,29 @@ its daemon also stops serving it. It removes the main clone that it made
 for it, when no clone links to that main clone. It never removes a clone
 of yours.
 
+#### See when the host is empty
+
+After `riff leave`, the sessions of the repository on the host go on to
+their end. To see how many are left:
+
+```sh
+riff who
+```
+
+The block of the host names the repository and the count:
+
+```text
+  parts n8behavior/sens-o-matic workers
+  leaving como-technologies/riff: 3 sessions go on to their end
+```
+
+When the last session ends, the line says `left como-technologies/riff`
+until the next look of the daemon. Then the line goes away: the host is
+empty. A host with no part in another repository goes away from
+`riff who`. The Machines tab of the TUI shows `leaving riff: 3 to end`
+under the row of the host: see
+[See the hosts in the TUI](how-it-works.md#see-the-hosts-in-the-tui).
+
 ### End the sessions of a host now
 
 To end the sessions that run, and free their items:

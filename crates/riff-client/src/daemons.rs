@@ -24,8 +24,11 @@
 //! The facts carry the [`Parts`] of the host in each repository that its
 //! daemon serves: `workers`, `lead`, both or none (#1643). `riff who`
 //! shows them as the line `parts`. A daemon of an older build sends none.
-//! They carry the [`Caps`] of each new container of the host too: the
-//! Machines tab of the TUI shows them.
+//! They carry the [`Leaving`] of each repository where the host takes no
+//! new claim and still runs sessions, for example after a `riff leave`
+//! (01M6WJYQJ58MHQF1XPXXZW2ET6): `riff who` and the Machines tab of the
+//! TUI show it. They carry the [`Caps`] of each new container of the
+//! host too: the Machines tab shows them.
 //!
 //! A line has at most [`MACHINE_CHARS`] characters. The last step of
 //! each session has at most [`LAST_CHARS`]. When the line is still too
@@ -270,6 +273,36 @@ pub struct RepoParts {
     pub parts: Parts,
 }
 
+/// A repository where the host takes no new claim, and still runs
+/// sessions of it: they go on to their end after a `riff leave`
+/// (01M6WJYQJ58MHQF1XPXXZW2ET6). A leaving with no session is a
+/// repository that the daemon stopped serving at the look before its
+/// last one.
+///
+/// ```
+/// use riff_client::daemons::Leaving;
+///
+/// let leaving = Leaving { repo: "o/r".into(), sessions: vec!["riff-issue-12-1a2b3c4d".into()] };
+/// assert!(!leaving.left());
+/// assert!(Leaving { sessions: vec![], ..leaving }.left());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Leaving {
+    /// The repository, as `OWNER/REPO`.
+    pub repo: String,
+    /// The names of the containers of its sessions that still run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<String>,
+}
+
+impl Leaving {
+    /// True when no session of the repository runs any more: the host
+    /// left it.
+    pub fn left(&self) -> bool {
+        self.sessions.is_empty()
+    }
+}
+
 /// The real-session test that the daemon runs (01M5QVBTXE8YRY44A1C1VP71QS).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Test {
@@ -341,6 +374,10 @@ pub struct Facts {
     /// (#1643).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<RepoParts>,
+    /// The repositories where the host takes no new claim and still runs
+    /// sessions (01M6WJYQJ58MHQF1XPXXZW2ET6).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leaving: Vec<Leaving>,
     /// The real-session test that the daemon runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<Test>,
@@ -431,6 +468,7 @@ impl Facts {
             } else if facts.waiting.pop().is_none()
                 && facts.waves.pop().is_none()
                 && facts.parts.pop().is_none()
+                && facts.leaving.pop().is_none()
             {
                 return line;
             }
@@ -546,6 +584,10 @@ mod tests {
                     lead: false,
                 },
             }],
+            leaving: vec![Leaving {
+                repo: "o/s".into(),
+                sessions: vec!["riff-issue-14-3c4d5e6f".into()],
+            }],
             test: Some(Test {
                 tag: "v4.1.1".into(),
                 commit: "90e36bfd".into(),
@@ -647,6 +689,37 @@ mod tests {
         assert!(line.contains(r#""parts":[{"repo":"o/r","workers":true,"lead":true}"#));
         assert_eq!(Facts::parse(&line), Some(facts));
         assert!(!Facts::default().line().contains("parts"));
+    }
+
+    /// 01M6WJYQJ58MHQF1XPXXZW2ET6: the leaving of each repository
+    /// round-trips with the line, a left repository has no list of
+    /// sessions, and an older daemon sends none.
+    #[test]
+    fn the_leaving_comes_back_from_the_line_and_an_older_daemon_sends_none() {
+        let old = r#"daemon facts: {"build":"4.12.0","limit":8,"floor_gb":8}"#;
+        assert!(Facts::parse(old).unwrap().leaving.is_empty());
+        let facts = Facts {
+            leaving: vec![
+                Leaving {
+                    repo: "o/r".into(),
+                    sessions: vec!["riff-issue-12-1a2b3c4d".into()],
+                },
+                Leaving {
+                    repo: "o/s".into(),
+                    sessions: vec![],
+                },
+            ],
+            ..Facts::default()
+        };
+        let line = facts.line();
+        assert!(
+            line.contains(
+                r#""leaving":[{"repo":"o/r","sessions":["riff-issue-12-1a2b3c4d"]},{"repo":"o/s"}]"#
+            ),
+            "{line}"
+        );
+        assert_eq!(Facts::parse(&line), Some(facts));
+        assert!(!Facts::default().line().contains("leaving"));
     }
 
     #[test]

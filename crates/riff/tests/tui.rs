@@ -228,7 +228,7 @@ async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
 /// `y`, and `Enter` opens the Sessions tab with the filter of the host.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
-    use riff_client::daemons::Facts;
+    use riff_client::daemons::{Facts, Parts, RepoParts};
     use riff_client::machines::{Disk, Machine};
 
     let server = crate::common::start_signed().await;
@@ -253,6 +253,13 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
             free_gb: 200,
             total_gb: 455,
         }),
+        parts: vec![RepoParts {
+            repo: "o/r".into(),
+            parts: Parts {
+                workers: true,
+                lead: false,
+            },
+        }],
         ..Facts::default()
     };
     api.machine(&daemon, &facts.line()).await.unwrap();
@@ -436,7 +443,7 @@ async fn the_sessions_tab_shows_the_tree_filters_it_and_pauses_a_repository() {
 /// TUI.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_machines_tab_filters_the_hosts() {
-    use riff_client::daemons::Facts;
+    use riff_client::daemons::{Facts, Parts, RepoParts};
     use riff_client::machines::{Disk, Machine};
 
     let server = crate::common::start_signed().await;
@@ -456,6 +463,15 @@ async fn the_machines_tab_filters_the_hosts() {
             free_gb: 200,
             total_gb: 455,
         }),
+        // The hosts take work: they show no mark
+        // (01M6WJYQN2WY5NH3DVDBAAY8ST).
+        parts: vec![RepoParts {
+            repo: "o/r".into(),
+            parts: Parts {
+                workers: true,
+                lead: false,
+            },
+        }],
         ..Facts::default()
     };
     // The daemons of brett on thelio and on pangolin send their facts.

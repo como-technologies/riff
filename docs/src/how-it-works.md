@@ -1229,6 +1229,7 @@ riff
  limit 3 sessions and a floor of 8 GB · 1 start waits · 1 job
  at its limit: 3 of 3 sessions live, a new start waits for room
  low on memory: the daemon starts no session until 8 GB are free
+ parts como-technologies/riff workers and lead
  wave como-technologies/riff: started issue-1594
  sessions: 5b1e2a90 works · 9c0d1e2f works · 3a3f8d5d ends
 
@@ -1255,6 +1256,34 @@ riff
   GitHub line shows the points that are left, and the points that riff
   and the other callers used in the last hour. The daemon of your host
   counts them.
+
+A host that takes no new claim for a repository, and still runs
+sessions of it, gets a line under its row: the short name of the
+repository and the count of the sessions that go on to their end, for
+example `leaving riff: 3 to end`. You see it after `riff leave`. When
+the last session ends, the line says `left riff` until the next look of
+the daemon. A host that gives workers to no repository gets `takes no
+work`. These lines are no fault: the host keeps its place in the rows.
+The detail lists the parts of the host by repository, and the sessions
+that go on to their end. After `riff leave --host pangolin`, with
+pangolin selected:
+
+```text
+ 3 hosts · 1 at its limit · 1 low on memory
+     HOST       WORK  LOAD     MEM FREE    DISK FREE   USED  WAITS SEEN
+   ! thelio     3/3   19.0/32  2/124 GB !  95/455 GB   79%   1     0s
+ >   pangolin   3/4   3.1/16   14/32 GB    90/200 GB   55%   0     12s
+                leaving riff: 3 to end
+     strata-ci  0/2   0.4/8    30/64 GB    140/500 GB  72%   0     28s
+
+──pangolin · riff daemon build d2ae080 ─────────────────────────────────────────
+ cpu 16x4500MHz (now 4400MHz), mem 32GB, 14GB available, load 3.10
+ limit 4 sessions and a floor of 8 GB · 0 starts wait
+ parts n8behavior/sens-o-matic workers
+ leaving como-technologies/riff: 3 sessions go on to their end
+   issue-1610 works · issue-1611 works · issue-1612 ends
+ sessions: 7a8b9c0d works · 1e2f3a4b works · 5c6d7e8f ends
+```
 
 | Key | Does |
 |---|---|

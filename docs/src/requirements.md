@@ -5002,6 +5002,15 @@ of this part when they merge.
   clone, and it keeps the clone while the clone of a session folder or
   of a lead links to it. The end of a session and the end of a lead make
   the daemon look again, and so does its start.
+- **01M6WJYQJ58MHQF1XPXXZW2ET6** After `riff leave`, the facts of a host
+  name each repository where the host gives no workers and still runs
+  sessions, with the names of the containers of those sessions: they go
+  on to their end. At the look after the last of them, when the daemon
+  serves the repository no more, the facts name the repository with no
+  session. `riff who` and `riff top` show a line for each such
+  repository in the block of the host, for example `leaving
+  como-technologies/riff: 3 sessions go on to their end`, and then `left
+  como-technologies/riff`.
 
 ### riff relay
 
@@ -7526,6 +7535,16 @@ that builds it merges.
   in a container of a riff daemon of the person opens its Session log in
   the Reports tab. With no detail pane, Enter first shows the detail of
   the session on the whole screen, and Enter there opens its log.
+- **01M6WJYQN2WY5NH3DVDBAAY8ST** The Machines tab shows a host that
+  takes no new claim for a repository and still runs its sessions: a
+  line under its row, for example `leaving riff: 3 to end`, with the
+  short name of the repository. When no session of it runs any more, the
+  line is `left riff`. A host that gives workers to no repository gets
+  the line `takes no work`. The detail of the selected host lists its
+  parts by repository and, for each repository that it leaves, the
+  sessions that still run. These lines are no fault: the order of the
+  rows and the count of the faults stay. When the hosts do not fit, the
+  rows scroll by lines, and the selected row shows with its lines.
 
 ## The notes of the lead
 
