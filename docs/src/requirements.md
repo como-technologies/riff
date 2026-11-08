@@ -7503,10 +7503,9 @@ that builds it merges.
   lead ended, or that the session goes on or ended before the takeover.
   The TUI reads the keys in a blocking task of tokio that ends after 200
   ms, so no read of the TUI takes a key from an attach or a takeover.
-- **01M6VGHC981887SCEKGBNRPHJV** `l`, `t` and `x` in the Sessions tab
-  work only on a container session of the riff daemon of this machine.
-  On a session of another host they put a note in the note line. With no
-  riff daemon on this machine, the Sessions tab shows the sessions of
+- **01M6VGHC981887SCEKGBNRPHJV** `l` and `t` in the Sessions tab work
+  only on a container session of the riff daemon of this machine. With
+  no riff daemon on this machine, the Sessions tab shows the sessions of
   riff-server, and the note line says so.
 - **01M6VGHCDTDJ69B7C02B5K61PW** While the Sessions tab is open, the TUI
   asks the riff daemon of this machine for its status each second. It
@@ -7641,6 +7640,20 @@ that builds it merges.
   for room: riff-issue-1601-1c2d3e4f`, and the real-session test that
   its daemon runs, as `riff daemon status` shows it: `real-session test
   of TAG on COMMIT, for N min`.
+- **01M6WMAXEVZB2XJN4XPR879J6W** The TUI acts on another host through
+  the signed requests of `--host` (01M579Z9MPS86MX7890T6HV18S). In the
+  Sessions tab, `x` on a session of another host asks `y` or `n` first,
+  then sends `daemon end NAME` to the session of the daemon of that host
+  with the code of `riff daemon end NAME --host HOST`, and the note line
+  shows the reply. NAME is the container that the facts of that daemon
+  name. `x` on the row of a daemon asks `HOST stops taking work for REPO
+  (riff leave): y/N`, then sends `leave REPO` with the code of `riff
+  leave --host HOST`, and the note says that the sessions there go on to
+  their end, and that `x` on each one ends it. `t` and `l` on a session
+  of another host put a note with the step there: `ssh HOST`, then `riff
+  takeover NAME` or `riff lead start`. `p` and `P` go to riff-server on
+  each host. This supersedes 01M6VGHC981887SCEKGBNRPHJV in part: `x` on
+  another host, and the note of `l` and `t` there.
 
 ## The notes of the lead
 

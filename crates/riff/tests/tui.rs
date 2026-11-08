@@ -476,6 +476,181 @@ async fn the_sessions_tab_shows_the_tree_filters_it_and_pauses_a_repository() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// A fake riff daemon of mike on pangolin in `o/r`, as the session
+/// `d0d0d0d0` on the riff-server `server`: its status is the status of
+/// a daemon, and its facts name the container `riff-issue-88-9c0d1e2f`.
+/// It judges each request as a daemon does, keeps its body, and replies
+/// with a direct note to mike, as a daemon replies. It gives the bodies.
+async fn fake_daemon(server: &str) -> Arc<Mutex<Vec<String>>> {
+    use riff::daemon::remote::{self, Request};
+    use riff_client::daemons::{Facts, Session};
+
+    let me: riff_core::name::SessionUri =
+        "riff://mike@pangolin/o/r?session=d0d0d0d0".parse().unwrap();
+    let api = crate::common::api_of(server, &me);
+    api.register(&me).await.unwrap();
+    let step = remote::status_line(812, "3.3.0", 1);
+    api.status(&me, &riff_core::wire::Status { step })
+        .await
+        .unwrap();
+    let facts = Facts {
+        build: riff_core::build::Build::this().to_string(),
+        sessions: vec![Session {
+            name: "riff-issue-88-9c0d1e2f".into(),
+            item: "issue-88".into(),
+            phase: riff_client::sessions::Phase::Works,
+            last: String::new(),
+            digest: String::new(),
+        }],
+        ..Facts::default()
+    };
+    api.machine(&me, &facts.line()).await.unwrap();
+    let got = Arc::new(Mutex::new(Vec::new()));
+    let kept = Arc::clone(&got);
+    let (open, opened) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let _watch = api.watch(&me).await.unwrap();
+        open.send(()).unwrap();
+        loop {
+            let inbox = api.inbox(&me, None, false).await.unwrap_or_default();
+            for checked in inbox.into_iter().flat_map(|i| i.messages) {
+                let Some(judged) = remote::judge(&checked, &me) else {
+                    continue;
+                };
+                let reply = match &judged {
+                    Ok(Request::End(name)) => Ok(format!(
+                        "{}\n{}",
+                        riff::text::daemon_freed("issue-88"),
+                        riff::text::daemon_ends(name)
+                    )),
+                    Ok(Request::Leave { repo, .. }) => Ok(riff::text::leave_stops(repo)),
+                    Ok(_) => Ok(String::new()),
+                    Err(refused) => Err(refused.clone()),
+                };
+                kept.lock().unwrap().push(match judged {
+                    Ok(request) => request.to_string(),
+                    Err(refused) => refused,
+                });
+                let body = remote::reply_body(checked.message.seq, "pangolin", &reply);
+                let to = [riff_core::selector::Selector {
+                    user: Some("mike".into()),
+                    ..riff_core::selector::Selector::default()
+                }];
+                let kind = riff_core::wire::Kind::Note;
+                api.post(&me, None, &to, &body, kind).await.unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+    opened.await.unwrap();
+    got
+}
+
+/// 01M6WMAXEVZB2XJN4XPR879J6W: the TUI of mike on thelio acts on
+/// pangolin through the signed requests of `--host`. `x` on a session of
+/// pangolin asks first: `n` sends nothing, and `y` sends `daemon end
+/// NAME` to the session of the daemon of pangolin, and the note line
+/// shows its reply. `x` and `y` on the row of the daemon send `leave
+/// REPO`, and the note says that its sessions go on. `t` there names
+/// the step on pangolin.
+#[tokio::test(flavor = "multi_thread")]
+async fn x_on_a_session_of_another_host_asks_the_daemon_of_that_host() {
+    let server = crate::common::start_signed().await;
+    // A new riff starts paused: the owner brett resumes it. The clients
+    // of mike come after this one.
+    let brett: riff_core::name::SessionUri = "riff://brett@thelio".parse().unwrap();
+    crate::common::api_of(&server, &brett)
+        .set_pause(
+            &brett,
+            &riff_client::api::PauseScope::Riff,
+            riff_core::wire::RiffState::Running,
+        )
+        .await
+        .unwrap();
+    let got = fake_daemon(&server).await;
+    session(
+        &server,
+        "riff://mike@pangolin/o/r?session=9c0d1e2f",
+        "issue-88",
+    )
+    .await;
+    let mut tty = Tty::start(&server, "mike", "thelio", true);
+    tty.shows(|rows| rows.iter().any(|row| row.contains("pangolin")))
+        .await;
+    // The filter selects the worker of pangolin.
+    tty.press("/").await;
+    for key in ["9", "c", "0", "d"] {
+        tty.press(key).await;
+    }
+    tty.press("\r").await;
+    tty.shows(|rows| rows.iter().any(|row| row.starts_with(" > ● 9c0d1e2f")))
+        .await;
+
+    // `t`: the step on pangolin.
+    tty.press("t").await;
+    let step = riff::text::takeover_there("pangolin", Some("riff-issue-88-9c0d1e2f"));
+    tty.shows(|rows| rows[22] == format!(" {step}")).await;
+
+    // `x` asks first, and `n` sends nothing.
+    tty.press("x").await;
+    let ask = format!(
+        " {} y/N",
+        riff::text::ask_end_there("riff-issue-88-9c0d1e2f", "pangolin")
+    );
+    tty.shows(|rows| rows[22] == ask).await;
+    tty.press("n").await;
+    tty.shows(|rows| rows[22] == format!(" {}", riff::tui::NOTHING_CHANGED))
+        .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(got.lock().unwrap().is_empty(), "{:?}", got.lock().unwrap());
+
+    // `x` and `y`: the request goes to the daemon of pangolin, and the
+    // note line shows its reply.
+    tty.press("x").await;
+    tty.shows(|rows| rows[22] == ask).await;
+    tty.press("y").await;
+    let reply = riff::text::host_replied(
+        "pangolin",
+        &format!(
+            "{}\n{}",
+            riff::text::daemon_freed("issue-88"),
+            riff::text::daemon_ends("riff-issue-88-9c0d1e2f")
+        ),
+    );
+    let shown: String = format!(" {reply}").chars().take(80).collect();
+    tty.shows(|rows| rows[22] == shown.trim_end()).await;
+    assert_eq!(*got.lock().unwrap(), ["daemon end riff-issue-88-9c0d1e2f"]);
+
+    // The row of the daemon: `x` and `y` send `leave o/r`.
+    tty.press("\x1b").await;
+    tty.press("/").await;
+    for key in ["d", "0", "d", "0"] {
+        tty.press(key).await;
+    }
+    tty.press("\r").await;
+    tty.shows(|rows| {
+        rows.iter().any(|row| {
+            row.starts_with(" > ") && row.contains("d0d0d0d0  ") && row.contains("daemon")
+        })
+    })
+    .await;
+    tty.press("x").await;
+    tty.shows(|rows| rows[22] == " pangolin stops taking work for o/r (riff leave): y/N")
+        .await;
+    tty.press("y").await;
+    let left: String = format!(" {}", riff::text::host_left("pangolin", "o/r"))
+        .chars()
+        .take(80)
+        .collect();
+    tty.shows(|rows| rows[22] == left.trim_end()).await;
+    assert_eq!(
+        *got.lock().unwrap(),
+        ["daemon end riff-issue-88-9c0d1e2f", "leave o/r"]
+    );
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// 01M6VJQPJXKHKJ8WT1CAQMN1YR, 01M6VJQPNJ4AX4RT877F1QAPPX: in the
 /// Machines tab, `/` with a word shows only the hosts that match, and
 /// Esc shows each host again. While the person types, `g` and `q` are

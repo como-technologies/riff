@@ -634,7 +634,8 @@ fn t_and_x_ask_first() {
     state.on_key(Key::Down);
     assert_eq!(state.on_key(Key::Char('t')), None);
     assert_eq!(state.shown_note(), Some(text::NO_CONTAINER_HERE));
-    // A session of another host: only there.
+    // A session of another host: the step there. No daemon of pangolin
+    // names its container.
     state.on_key(Key::Char('e'));
     let rows = drawn(&state, 80, 30);
     let at = rows.iter().position(|r| r.contains("9c0d1e2f")).unwrap() - 3;
@@ -642,12 +643,159 @@ fn t_and_x_ask_first() {
     assert_eq!(state.on_key(Key::Char('t')), None);
     assert_eq!(
         state.shown_note(),
-        Some(text::on_host_only("pangolin").as_str())
+        Some(text::takeover_there("pangolin", None).as_str())
+    );
+    assert_eq!(state.on_key(Key::Char('x')), None);
+    assert_eq!(state.asked(), None);
+    assert_eq!(
+        state.shown_note(),
+        Some(text::no_container_there("pangolin").as_str())
     );
     // A group row is no session.
     state.on_key(Key::Char('g'));
     assert_eq!(state.on_key(Key::Char('x')), None);
     assert_eq!(state.shown_note(), Some(text::PICK_A_SESSION));
+}
+
+/// The session of the riff daemon `uri` in `who`, with the facts that
+/// name the containers `names`.
+fn daemon_of(uri: &str, names: &[&str]) -> SessionInfo {
+    let facts = riff_client::daemons::Facts {
+        build: "0.1.0 d2ae0801c0de 2026-11-06T12:00:00Z".into(),
+        sessions: names
+            .iter()
+            .map(|name| riff_client::daemons::Session {
+                name: (*name).into(),
+                item: "issue-88".into(),
+                phase: Phase::Works,
+                last: String::new(),
+                digest: String::new(),
+            })
+            .collect(),
+        ..riff_client::daemons::Facts::default()
+    };
+    let mut daemon = info(uri, SessionState::Idle);
+    daemon.machine = Some(riff_core::wire::MachineInfo {
+        numbers: facts.line(),
+        age_secs: 10,
+    });
+    let step = crate::daemon::remote::status_line(812, "3.3.0", names.len());
+    daemon.status = Some(riff_core::wire::StatusInfo {
+        status: riff_core::wire::Status { step },
+        age_secs: 1,
+        stale: false,
+    });
+    daemon
+}
+
+/// [`mock_up`] with the daemon of mike on pangolin, which names the
+/// container of 9c0d1e2f, the lead of mike on pangolin, and the daemon of
+/// brett on kadomony. Each group is open.
+fn with_pangolin() -> State {
+    let mut state = mock_up();
+    let (mut look, at) = state.last_look().map(|(l, at)| (l.clone(), at)).unwrap();
+    look.who.sessions.extend([
+        daemon_of(
+            "riff://mike@pangolin/como-technologies/strata?session=d0d0d0d0",
+            &["riff-issue-88-9c0d1e2f"],
+        ),
+        info(
+            "riff://mike@pangolin/como-technologies/strata?session=6d2b7c1a&lead=true",
+            SessionState::Idle,
+        ),
+        daemon_of(
+            "riff://brett@kadomony/como-technologies/strata?session=e0e0e0e0",
+            &[],
+        ),
+    ]);
+    state.looked(look, at);
+    state.on_key(Key::Char('e'));
+    state
+}
+
+/// 01M6WMAXEVZB2XJN4XPR879J6W: on another host, `x` asks first, then
+/// gives the request `daemon end NAME` for the daemon of that host, with
+/// the name of the container in the facts of that daemon. `x` on the row
+/// of a daemon asks first, then gives `leave REPO`. `t` and `l` there put
+/// the step there in the note line.
+#[test]
+fn x_on_another_host_asks_its_daemon_and_t_and_l_name_the_step_there() {
+    use crate::daemon::remote::Request;
+
+    let mut state = with_pangolin();
+    let name = "riff-issue-88-9c0d1e2f";
+    state.on_key(Key::Row(row_of(&state, "9c0d1e2f")));
+    assert_eq!(state.on_key(Key::Char('x')), None);
+    assert_eq!(
+        state.asked(),
+        Some(format!("{} y/N", text::ask_end_there(name, "pangolin")))
+    );
+    // `n` changes nothing.
+    assert_eq!(state.on_key(Key::Char('n')), None);
+    assert_eq!(state.shown_note(), Some(crate::tui::NOTHING_CHANGED));
+    state.on_key(Key::Char('x'));
+    assert_eq!(
+        state.on_key(Key::Char('y')),
+        Some(Action::Host {
+            host: "pangolin".into(),
+            repo: "como-technologies/strata".into(),
+            request: Request::End(name.into()),
+        })
+    );
+    // `t` names the step on pangolin.
+    assert_eq!(state.on_key(Key::Char('t')), None);
+    assert_eq!(
+        state.shown_note(),
+        Some(text::takeover_there("pangolin", Some(name)).as_str())
+    );
+
+    // The row of the daemon of pangolin: the host stops taking work.
+    state.on_key(Key::Row(row_of(&state, "d0d0d0d0")));
+    assert!(
+        drawn(&state, 80, 40)
+            .iter()
+            .any(|row| row.contains("d0d0d0d0") && row.contains("daemon "))
+    );
+    assert_eq!(state.on_key(Key::Char('x')), None);
+    assert_eq!(
+        state.asked().as_deref(),
+        Some("pangolin stops taking work for como-technologies/strata (riff leave): y/N")
+    );
+    assert_eq!(
+        state.on_key(Key::Char('y')),
+        Some(Action::Host {
+            host: "pangolin".into(),
+            repo: "como-technologies/strata".into(),
+            request: Request::Leave {
+                repo: "como-technologies/strata".into(),
+                now: false,
+            },
+        })
+    );
+    // The daemon of brett is not of mike.
+    state.on_key(Key::Row(row_of(&state, "e0e0e0e0")));
+    assert_eq!(state.on_key(Key::Char('x')), None);
+    assert_eq!(state.asked(), None);
+    assert_eq!(
+        state.shown_note(),
+        Some(text::not_your_daemon("kadomony").as_str())
+    );
+    // A worker of brett: no daemon of mike names its container.
+    state.on_key(Key::Row(row_of(&state, "7a8b9c0d")));
+    assert_eq!(state.on_key(Key::Char('x')), None);
+    assert_eq!(
+        state.shown_note(),
+        Some(text::no_container_there("kadomony").as_str())
+    );
+
+    // `l` and `t` on the lead of pangolin name `riff lead start` there.
+    state.on_key(Key::Row(row_of(&state, "6d2b7c1a")));
+    let there = text::lead_there("pangolin", Some("como-technologies/strata"));
+    assert_eq!(state.on_key(Key::Char('l')), None);
+    assert_eq!(state.shown_note(), Some(there.as_str()));
+    state.note("");
+    assert_eq!(state.on_key(Key::Char('t')), None);
+    assert_eq!(state.shown_note(), Some(there.as_str()));
 }
 
 /// `p` pauses the repository of the row, and `P` the whole riff, after

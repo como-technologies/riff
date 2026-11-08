@@ -1521,9 +1521,9 @@ riff
 | `PgUp` `PgDn` `g` `G` | Move a page, or to the first or the last row. |
 | `←` `→` `Space` | Fold or open a group. `←` on a session selects its group. |
 | `Enter` | A group: fold or open it. A lead: attach to it. A worker in a container of a daemon of yours: its events in the Reports tab, see [See the events in the TUI](development.md#see-the-events-in-the-tui). In a smaller terminal, the detail on the whole screen first. Another session: its detail on the whole screen. |
-| `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. |
-| `t` | Take over the selected session, as `riff takeover` does. |
-| `x` | End the selected session of the daemon, and free its item, as `riff daemon end` does. |
+| `l` | Attach to the lead of the repository of the row, else to the first lead of this machine. On the lead of another host: a note with the step there. |
+| `t` | Take over the selected session, as `riff takeover` does. On another host: a note with the step there. |
+| `x` | End the selected session of the daemon, and free its item, as `riff daemon end` does, also on another host. On the row of a daemon: the host stops taking work for the repository, as `riff leave --host HOST` does. |
 | `p`, `P` | Pause or resume the repository of the row, or the whole riff. |
 | `e` | Open each group, or fold the groups that need no look. |
 | `b` | Put the person at the top of the tree, or the repository again. See [Put the people at the top of the tab](#put-the-people-at-the-top-of-the-tab). |
@@ -1532,12 +1532,13 @@ riff
 
 `t`, `x`, `p` and `P` ask first in the row before the last, for
 example `Pause como-technologies/riff? y/N`. Press `y` to do it. `q`
-and Ctrl-C end the TUI. Each other key changes nothing. `l`, `t` and
-`x` work only on a session in a container of the riff daemon of this
-machine. For a session of another host, run `riff` there. The mouse
-does the same as the keys: a click selects a row, a click on `▶` or
-`▼` folds a group, a double click presses Enter, and the wheel moves
-the selection.
+and Ctrl-C end the TUI. Each other key changes nothing. `l` and `t`
+work only on a session in a container of the riff daemon of this
+machine. `x` works on each host: see
+[Act on another host in the TUI](#act-on-another-host-in-the-tui).
+The mouse does the same as the keys: a click selects a row, a click on
+`▶` or `▼` folds a group, a double click presses Enter, and the wheel
+moves the selection.
 
 ```mermaid
 flowchart LR
@@ -1570,6 +1571,52 @@ riff
    ▶ strata · pangolin                                       1 session · 1 busy
  ▶ brett  online  › strata · kadomony                        1 session · 1 busy
  ▶ ann  admin  offline  seen 1h ago
+```
+
+### Act on another host in the TUI
+
+From the Sessions tab on one machine, you can end a session of another
+host of yours, and stop the work of another host for a repository. The
+TUI sends the same signed request as `--host` (see
+[Manage the daemon of another host](development.md#manage-the-daemon-of-another-host)).
+Open the TUI on any machine where you are signed in:
+
+```sh
+riff
+```
+
+Select the row, and press the key:
+
+| Row | Key | Does |
+|---|---|---|
+| A session of another host | `x`, then `y` | Ends the session and frees its item, as `riff daemon end NAME --host HOST` does. The row before the last shows the reply of the daemon there. `n` sends nothing. |
+| The row of a daemon, with the tag `daemon` | `x`, then `y` | The host stops taking work for the repository of the row, as `riff leave --host HOST` does. Its sessions go on to their end. Press `x` on each one to end it now. |
+| A session of another host | `t` | A note with the step there: `ssh HOST`, then `riff takeover NAME`. |
+| The lead of another host | `l` or `t` | A note with the step there: `ssh HOST`, then `riff lead start`. |
+
+`p` and `P` go to riff-server, so they work on each host. The question
+of `x` on the row of a daemon is, for example:
+
+```text
+pangolin stops taking work for como-technologies/strata (riff leave): y/N
+```
+
+NAME is the container that the daemon of the host names in its facts.
+When no daemon of yours names a container of the session, `x` says so,
+and sends nothing. Only you and your lead act on your daemons: `x` on
+the daemon of another person says that it is not yours.
+
+```mermaid
+sequenceDiagram
+    participant T as riff on thelio
+    participant S as riff-server
+    participant D as riff daemon on pangolin
+    T->>T: x on riff-issue-88-9c0d1e2f, then y
+    T->>S: a signed direct message: daemon end riff-issue-88-9c0d1e2f
+    S->>D: wake
+    D->>D: verified, from you: end the session
+    D->>S: a direct note: the reply
+    S-->>T: the row before the last shows the reply
 ```
 
 ### Filter the sessions
