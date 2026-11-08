@@ -1116,13 +1116,17 @@ pub(crate) async fn created(
 }
 
 /// `POST /v1/github/apps`: each App of the riff, and whether it is
-/// installed on the account of the query.
+/// installed on the account of the query. Each person asks with no
+/// account, for example `riff init` for the bot of the guard. Only the
+/// owner or an admin asks with an account (01M6WPV8473EBABR1ZMEPZMTQQ).
 pub(crate) async fn apps(
     AxumState(s): AxumState<crate::Shared>,
     Extension(signed_in): Extension<SignedIn>,
     Json(r): Json<GitHubApps>,
 ) -> crate::Reply<GitHubAppsReply> {
-    need_admin(&s, &signed_in, "riff github install")?;
+    if r.owner.is_some() {
+        need_admin(&s, &signed_in, "riff github install")?;
+    }
     let apps = s.github.keys.load().await.map_err(keys_failed)?;
     let mut reply = GitHubAppsReply::default();
     for app in GitHubApp::ALL {

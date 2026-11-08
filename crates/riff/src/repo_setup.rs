@@ -4,9 +4,9 @@
 //!
 //! # Design
 //!
-//! `riff init` checks six facts of the repository of the current
+//! `riff init` checks seven facts of the repository of the current
 //! folder. Each fact that fails carries its fix for a person, and for
-//! five of them its [`Step`]: the code that does the fix. A person does
+//! six of them its [`Step`]: the code that does the fix. A person does
 //! the fix, for example from the how-to "Add another repository to the
 //! riff" in the book. Or `riff init` does the steps after one question,
 //! or with `--yes` ([`setup`]). The step and the how-to make the same
@@ -20,11 +20,14 @@
 //!     O --> M["gh api repos/OWNER/REPO/milestones"]
 //!     O --> F["gh api repos/OWNER/REPO/contents"]
 //!     O --> P["gh api repos/OWNER/REPO/pulls<br/>and the check runs of their heads"]
-//!     R --> C["the six checks"]
+//!     O --> G["gh api .../contents/.github/workflows/riff-guard.yml"]
+//!     S0["riff-server: the bot<br/>of the session App"] --> C
+//!     R --> C["the seven checks"]
 //!     B --> C
 //!     M --> C
 //!     F --> C
 //!     P --> C
+//!     G --> C
 //!     C --> L["pass or fail lines of riff init"]
 //!     C -- "a step, one question or --yes" --> S["the steps, in order"]
 //! ```
@@ -37,6 +40,7 @@
 //! | the milestone `Backlog` | the open milestones ([`crate::waves::open`]) | one has the title [`BACKLOG`]: `riff wave move --to Backlog` and `riff wave end --move-open-to-backlog` need it | [`Step::Backlog`] |
 //! | the first wave | the open milestones | one is a wave: the lead has a wave to plan | [`Step::Wave`] |
 //! | the checks of a pull request | the required checks, and the check runs of the latest pull requests | a rule requires a check of the CI, or the ruleset that the step makes will require the checks that the pull requests ran, or the repository has no CI and [`VERIFY_CONTEXT`] is the only check (a note says so) | [`Step::Ruleset`] when no pull request ran a check yet and the default branch has no `riff.toml`: the pull request of [`Step::Config`] may run the first check. Else none |
+//! | the guard | the file [`guard::PATH`] on the default branch, and the bot of the session App from riff-server ([`Github::bot`]) | the file is the guard of that bot ([`guard::workflow`]), or the riff has no session App, or riff cannot ask riff-server and the file is there (01M6WPV86SW4AAVA2NCBQNYXK3) | [`Step::Config`] when riff knows the bot: the pull request adds the guard. Else none |
 //!
 //! The fix of the ruleset names the check [`VERIFY_CONTEXT`] and the checks
 //! of the CI.
@@ -54,7 +58,7 @@
 //!
 //! ```mermaid
 //! flowchart LR
-//!     A["allow auto-merge<br/>and squash merge"] --> B["riff.toml: branch riff-setup,<br/>pull request Set up riff,<br/>squash merge"]
+//!     A["allow auto-merge<br/>and squash merge"] --> B["riff.toml and the guard:<br/>branch riff-setup,<br/>pull request Set up riff,<br/>squash merge"]
 //!     B --> K["the milestone Backlog"]
 //!     K --> W["the milestone Wave 1"]
 //!     W --> R["the ruleset riff"]
@@ -62,6 +66,10 @@
 //!
 //! - The merge settings come first: the pull request of `riff.toml` has
 //!   a squash merge.
+//! - The pull request "Set up riff" puts each file that a check misses:
+//!   `riff.toml`, and the guard of the bot of the session App
+//!   ([`crate::guard`]) when the guard is missing or is not the guard of
+//!   that bot. One pull request holds both.
 //! - `riff.toml` pins the `riff-base` of the release of riff that runs
 //!   ([`crate::session_image::base`], 01M5SNTPEP41NMSP3SEKR7KVB0), or the
 //!   image that `riff init --image` gives ([`Forge::image`]). The step reuses an open pull
@@ -126,6 +134,8 @@
 //!     admin: true,
 //!     files: vec!["riff.toml".into()],
 //!     ci: vec![],
+//!     guard: None,
+//!     bot: Ok(None),
 //! };
 //! assert!(checks(&github).iter().all(|c| c.passed()));
 //!
@@ -146,6 +156,13 @@
 //! );
 //! let steps: Vec<Step> = checks(&github).iter().filter_map(|c| c.step).collect();
 //! assert_eq!(steps, [Step::Config, Step::Merge, Step::Ruleset, Step::Backlog, Step::Wave]);
+//!
+//! // The riff has a session App, and main has no guard: the pull request of
+//! // riff.toml adds it (01M6WPV86SW4AAVA2NCBQNYXK3).
+//! github.bot = Ok(Some("riff-acme[bot]".into()));
+//! let guard = checks(&github).pop().unwrap();
+//! assert_eq!((guard.name.as_str(), guard.step), ("the guard", Some(Step::Config)));
+//! assert_eq!(Step::Config.title(&github), "make riff.toml and the guard on main with a pull request");
 //! ```
 
 use std::time::{Duration, Instant};
@@ -156,6 +173,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::first_run::Check;
+use crate::guard;
 use crate::pr::{Gh, VERIFY_CONTEXT, percent};
 use crate::rollout::Issue;
 use crate::session_image;
@@ -171,9 +189,49 @@ pub const SETUP_BRANCH: &str = "riff-setup";
 /// The title of the pull request, and of the commit, of [`Step::Config`].
 pub const SETUP_TITLE: &str = "Set up riff";
 
-/// The body of the pull request of [`Step::Config`].
-const SETUP_BODY: &str = "riff init made this pull request. It adds riff.toml, which pins the \
-     session image of each session of this repository.";
+/// The body of the pull request of [`Step::Config`] in `github`: a line
+/// for each file that it puts.
+///
+/// ```
+/// use riff::repo_setup::{Github, setup_body};
+///
+/// let mut github = Github {
+///     repo: "acme/app".into(),
+///     default_branch: "main".into(),
+///     auto_merge: true,
+///     squash_merge: true,
+///     required: vec![],
+///     milestones: vec![],
+///     admin: true,
+///     files: vec![],
+///     ci: vec![],
+///     guard: None,
+///     bot: Ok(Some("riff-acme[bot]".into())),
+/// };
+/// assert_eq!(
+///     setup_body(&github),
+///     "riff init made this pull request. It adds riff.toml, which pins the session image of \
+///      each session of this repository. It writes the guard .github/workflows/riff-guard.yml \
+///      of riff-acme[bot]: it puts back a change of that bot to an issue."
+/// );
+/// github.bot = Ok(None);
+/// assert!(!setup_body(&github).contains("guard"));
+/// ```
+pub fn setup_body(github: &Github) -> String {
+    let mut body = "riff init made this pull request.".to_owned();
+    if !github.has(CONFIG) {
+        body.push_str(
+            " It adds riff.toml, which pins the session image of each session of this repository.",
+        );
+    }
+    if let (Some(_), Ok(Some(bot))) = (github.guard_to_write(), &github.bot) {
+        body.push_str(&format!(
+            " It writes the guard {} of {bot}: it puts back a change of that bot to an issue.",
+            guard::PATH
+        ));
+    }
+    body
+}
 
 /// The file that [`Step::Config`] makes.
 const CONFIG: &str = session_image::FILE;
@@ -348,6 +406,8 @@ pub fn ruleset_for(checks: &[String]) -> Value {
 ///     admin: true,
 ///     files: vec!["riff.toml".into()],
 ///     ci: vec!["checks / lint".into()],
+///     guard: None,
+///     bot: Ok(None),
 /// };
 /// let steps: Vec<Step> = checks(&github).iter().filter_map(|c| c.step).collect();
 /// assert_eq!(steps, [Step::Merge, Step::Ruleset, Step::Backlog]);
@@ -357,8 +417,10 @@ pub enum Step {
     /// Allow auto-merge and squash merge: `gh api -X PATCH`.
     Merge,
     /// Make `riff.toml` on the default branch with the session image of
-    /// this release of riff: the branch [`SETUP_BRANCH`], the pull request
-    /// [`SETUP_TITLE`] and its squash merge.
+    /// this release of riff, and the guard of the bot of the session App
+    /// ([`Github::guard_to_write`]): the branch [`SETUP_BRANCH`], the pull
+    /// request [`SETUP_TITLE`] and its squash merge. It puts each of the
+    /// two files that the default branch needs.
     Config,
     /// Make the open milestone [`BACKLOG`]
     /// ([`crate::waves::make_backlog`]).
@@ -427,17 +489,34 @@ impl Step {
     ///     admin: true,
     ///     files: vec![],
     ///     ci: vec![],
+    ///     guard: None,
+    ///     bot: Ok(None),
     /// };
     /// assert_eq!(Step::Config.title(&github), "make riff.toml on main with a pull request");
     /// assert_eq!(Step::Wave.title(&github), "make the milestone Wave 1");
+    ///
+    /// // riff.toml is there, and the guard of the session App is not.
+    /// let github = Github {
+    ///     files: vec!["riff.toml".into()],
+    ///     bot: Ok(Some("riff-acme[bot]".into())),
+    ///     ..github
+    /// };
+    /// assert_eq!(Step::Config.title(&github), "make the guard on main with a pull request");
     /// ```
     pub fn title(self, github: &Github) -> String {
         match self {
             Step::Merge => "allow auto-merge and squash merge".to_owned(),
-            Step::Config => format!(
-                "make {CONFIG} on {} with a pull request",
-                github.default_branch
-            ),
+            Step::Config => {
+                let what = match (github.has(CONFIG), github.guard_to_write().is_some()) {
+                    (false, true) => format!("{CONFIG} and the guard"),
+                    (true, true) => "the guard".to_owned(),
+                    (_, false) => CONFIG.to_owned(),
+                };
+                format!(
+                    "make {what} on {} with a pull request",
+                    github.default_branch
+                )
+            }
             Step::Backlog => format!("make the milestone {BACKLOG}"),
             Step::Wave => format!("make the milestone {FIRST_WAVE}"),
             Step::Ruleset => format!("make the ruleset riff on {}", github.default_branch),
@@ -474,8 +553,13 @@ impl Step {
                 Ok("allowed both".to_owned())
             }
             Step::Config => {
-                let made = config(forge, &github.default_branch)?;
-                github.files.push(CONFIG.to_owned());
+                let made = config(forge, github)?;
+                if !github.has(CONFIG) {
+                    github.files.push(CONFIG.to_owned());
+                }
+                if let Some(text) = github.guard_to_write() {
+                    github.guard = Some(text);
+                }
                 let said = format!(
                     "{} {} and merged it",
                     if made.opened { "opened" } else { "found" },
@@ -560,10 +644,12 @@ struct Made {
     opened: bool,
 }
 
-/// Makes `riff.toml` on `branch` with a pull request, and merges it with
-/// a squash merge. It reuses an open pull request from [`SETUP_BRANCH`].
-fn config(forge: &Forge, branch: &str) -> anyhow::Result<Made> {
+/// Makes `riff.toml` and the guard on the default branch of `github`,
+/// each when it needs it, with a pull request, and merges it with a
+/// squash merge. It reuses an open pull request from [`SETUP_BRANCH`].
+fn config(forge: &Forge, github: &Github) -> anyhow::Result<Made> {
     let gh = &forge.gh;
+    let branch = github.default_branch.as_str();
     let pulls: Vec<Pull> =
         gh.json(&["api", "repos/{owner}/{repo}/pulls?state=open&per_page=100"])?;
     let there = pulls
@@ -575,7 +661,7 @@ fn config(forge: &Forge, branch: &str) -> anyhow::Result<Made> {
             opened: false,
         },
         None => Made {
-            pull: open_pull(forge, branch)?,
+            pull: open_pull(forge, github)?,
             opened: true,
         },
     };
@@ -594,11 +680,13 @@ fn config(forge: &Forge, branch: &str) -> anyhow::Result<Made> {
     Ok(made)
 }
 
-/// Makes the branch [`SETUP_BRANCH`] from `branch`, adds `riff.toml` to
-/// it, and opens the pull request. `riff.toml` pins the image of the
-/// forge, else the base of the release ([`session_image::base`]).
-fn open_pull(forge: &Forge, branch: &str) -> anyhow::Result<Pull> {
+/// Makes the branch [`SETUP_BRANCH`] from the default branch of
+/// `github`, puts `riff.toml` and the guard on it when the default branch
+/// needs them, and opens the pull request. `riff.toml` pins the image of
+/// the forge, else the base of the release ([`session_image::base`]).
+fn open_pull(forge: &Forge, github: &Github) -> anyhow::Result<Pull> {
     let gh = &forge.gh;
+    let branch = github.default_branch.as_str();
     let base: Value = gh.json(&[
         "api",
         &format!("repos/{{owner}}/{{repo}}/git/ref/heads/{}", ref_of(branch)),
@@ -627,22 +715,79 @@ fn open_pull(forge: &Forge, branch: &str) -> anyhow::Result<Pull> {
         ),
         Err(e) => return Err(e),
     }?;
-    let config = session_image::config_of(&forge.pin());
-    gh.send(
-        "PUT",
-        &format!("repos/{{owner}}/{{repo}}/contents/{CONFIG}"),
-        &json!({
-            "message": SETUP_TITLE,
-            "content": base64::engine::general_purpose::STANDARD.encode(config),
-            "branch": SETUP_BRANCH,
-        }),
-    )?;
+    if !github.has(CONFIG) {
+        put(gh, CONFIG, &session_image::config_of(&forge.pin()))?;
+    }
+    if let Some(text) = github.guard_to_write() {
+        put(gh, guard::PATH, &text)?;
+    }
+    let body = setup_body(github);
     let reply = gh.send(
         "POST",
         "repos/{owner}/{repo}/pulls",
-        &json!({ "title": SETUP_TITLE, "head": SETUP_BRANCH, "base": branch, "body": SETUP_BODY }),
+        &json!({ "title": SETUP_TITLE, "head": SETUP_BRANCH, "base": branch, "body": body }),
     )?;
     serde_json::from_str(body_of(&reply)).context("GitHub gave no pull request")
+}
+
+/// Puts the file `path` with the text `text` on the branch
+/// [`SETUP_BRANCH`]. A file that is there has a blob, and GitHub takes
+/// the new text only with the ID of that blob.
+fn put(gh: &Gh, path: &str, text: &str) -> anyhow::Result<()> {
+    let mut body = json!({
+        "message": SETUP_TITLE,
+        "content": base64::engine::general_purpose::STANDARD.encode(text),
+        "branch": SETUP_BRANCH,
+    });
+    if let Some(file) = file_on(gh, path, SETUP_BRANCH)? {
+        body["sha"] = Value::String(file.sha);
+    }
+    gh.send(
+        "PUT",
+        &format!("repos/{{owner}}/{{repo}}/contents/{path}"),
+        &body,
+    )?;
+    Ok(())
+}
+
+/// A file of a branch, as `gh api .../contents/PATH` gives it.
+#[derive(Deserialize)]
+struct File {
+    /// The ID of its blob.
+    #[serde(default)]
+    sha: String,
+    /// Its text, in base64 with line breaks.
+    #[serde(default)]
+    content: String,
+}
+
+impl File {
+    /// The text of the file.
+    fn text(&self) -> anyhow::Result<String> {
+        let clean: String = self
+            .content
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(clean)
+            .context("GitHub gave a file that is no base64")?;
+        String::from_utf8(bytes).context("GitHub gave a file that is no UTF-8")
+    }
+}
+
+/// The file `path` of `branch`, or `None` when the branch has no such
+/// file: GitHub answers 404.
+fn file_on(gh: &Gh, path: &str, branch: &str) -> anyhow::Result<Option<File>> {
+    let path = format!(
+        "repos/{{owner}}/{{repo}}/contents/{path}?ref={}",
+        percent(branch)
+    );
+    match gh.json::<File>(&["api", &path]) {
+        Ok(file) => Ok(Some(file)),
+        Err(e) if not_found(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// Merges the pull request `number` with a squash merge. GitHub may not
@@ -782,12 +927,56 @@ pub struct Github {
     /// ([`ci_checks`]). riff reads them only when no rule requires a check
     /// but [`VERIFY_CONTEXT`].
     pub ci: Vec<String>,
+    /// The text of the guard [`guard::PATH`] on the default branch, or
+    /// `None` when it has none.
+    pub guard: Option<String>,
+    /// The bot of the session App of the riff ([`guard::session_bot`]):
+    /// `Ok(None)` when the riff has no session App, `Err` with why riff
+    /// cannot ask riff-server.
+    pub bot: Result<Option<String>, String>,
 }
 
 impl Github {
     /// The default branch has the file `name` at its root.
     pub fn has(&self, name: &str) -> bool {
         self.files.iter().any(|f| f == name)
+    }
+
+    /// The guard that [`Step::Config`] writes: the guard of the bot of the
+    /// session App ([`guard::workflow`]), when riff knows the bot and the
+    /// default branch has not that text. Else `None`.
+    ///
+    /// ```
+    /// use riff::repo_setup::Github;
+    ///
+    /// let mut github = Github {
+    ///     repo: "acme/app".into(),
+    ///     default_branch: "main".into(),
+    ///     auto_merge: true,
+    ///     squash_merge: true,
+    ///     required: vec![],
+    ///     milestones: vec![],
+    ///     admin: true,
+    ///     files: vec![],
+    ///     ci: vec![],
+    ///     guard: None,
+    ///     bot: Ok(Some("riff-acme[bot]".into())),
+    /// };
+    /// let text = github.guard_to_write().unwrap();
+    /// assert_eq!(text, riff::guard::workflow("riff-acme[bot]"));
+    /// github.guard = Some(text);
+    /// assert_eq!(github.guard_to_write(), None);
+    /// github.bot = Ok(Some("riff-other[bot]".into()));
+    /// assert!(github.guard_to_write().is_some());
+    /// github.bot = Err("no riff-server".into());
+    /// assert_eq!(github.guard_to_write(), None);
+    /// ```
+    pub fn guard_to_write(&self) -> Option<String> {
+        let Ok(Some(bot)) = &self.bot else {
+            return None;
+        };
+        let text = guard::workflow(bot);
+        (self.guard.as_ref() != Some(&text)).then_some(text)
     }
 }
 
@@ -929,10 +1118,11 @@ fn files(gh: &Gh, branch: &str) -> anyhow::Result<Vec<String>> {
     }
 }
 
-/// Reads the facts of the repository of `gh` with four calls, or with
+/// Reads the facts of the repository of `gh` with five calls, or with
 /// more when the rules require no check of the CI, or says why it
-/// cannot.
-pub fn read(gh: &Gh) -> Result<Github, String> {
+/// cannot. `bot` is the bot of the session App of the riff
+/// ([`guard::session_bot`]).
+pub fn read(gh: &Gh, bot: Result<Option<String>, String>) -> Result<Github, String> {
     let why = |e: anyhow::Error| format!("{e:#}");
     let repo: Repository = gh.json(&["api", "repos/{owner}/{repo}"]).map_err(why)?;
     let rules: Vec<Rule> = gh
@@ -940,6 +1130,10 @@ pub fn read(gh: &Gh) -> Result<Github, String> {
         .map_err(why)?;
     let milestones = waves::open(gh).map_err(why)?;
     let files = files(gh, &repo.default_branch).map_err(why)?;
+    let guard = match file_on(gh, guard::PATH, &repo.default_branch).map_err(why)? {
+        Some(file) => Some(file.text().map_err(why)?),
+        None => None,
+    };
     let required: Vec<String> = rules.iter().flat_map(Rule::required).collect();
     let custom = required.iter().any(|c| c != VERIFY_CONTEXT);
     let ci = if custom {
@@ -957,14 +1151,20 @@ pub fn read(gh: &Gh) -> Result<Github, String> {
         admin: repo.permissions.is_some_and(|p| p.admin),
         files,
         ci,
+        guard,
+        bot,
     })
 }
 
 /// The facts of the repository of the folder `dir`, with the `gh` of
-/// the machine: `None` when the folder has no remote `origin` on GitHub.
-pub fn here(dir: &std::path::Path) -> Option<Result<Github, String>> {
+/// the machine and the bot `bot` of the session App: `None` when the
+/// folder has no remote `origin` on GitHub.
+pub fn here(
+    dir: &std::path::Path,
+    bot: Result<Option<String>, String>,
+) -> Option<Result<Github, String>> {
     let repo = crate::identity::github_origin(dir)?;
-    Some(read(&Forge::of(&repo).gh))
+    Some(read(&Forge::of(&repo).gh, bot))
 }
 
 /// The numbers of the open issues of the repository of `gh` that have no
@@ -1034,7 +1234,7 @@ pub fn checks_of(github: &Result<Github, String>) -> Vec<Check> {
 
 /// The checks on `github`, in order: `riff.toml`, the merge settings,
 /// the ruleset of the default branch, the milestone `Backlog`, the first
-/// wave and the checks of a pull request.
+/// wave, the checks of a pull request and the guard.
 pub fn checks(github: &Github) -> Vec<Check> {
     let repo = &github.repo;
     let branch = &github.default_branch;
@@ -1095,7 +1295,77 @@ pub fn checks(github: &Github) -> Vec<Check> {
         )
         .with_step(Step::Wave),
     };
-    vec![config, merge, ruleset, backlog, wave, ci_check(github)]
+    vec![
+        config,
+        merge,
+        ruleset,
+        backlog,
+        wave,
+        ci_check(github),
+        guard_check(github),
+    ]
+}
+
+/// The check of the guard (01M6WPV86SW4AAVA2NCBQNYXK3). It passes when
+/// the default branch has the guard of the bot of the session App, or
+/// when the riff has no session App. When riff knows the bot, a missing
+/// guard or the guard of another bot fails with the step of the pull
+/// request [`Step::Config`]. When riff cannot ask riff-server for the
+/// bot, the check passes when the guard is there, and fails with no step
+/// when it is not.
+///
+/// ```
+/// use riff::repo_setup::{Github, checks};
+///
+/// let mut github = Github {
+///     repo: "acme/app".into(),
+///     default_branch: "main".into(),
+///     auto_merge: true,
+///     squash_merge: true,
+///     required: vec!["riff/verify".into()],
+///     milestones: vec!["Backlog".into(), "Wave 1".into()],
+///     admin: true,
+///     files: vec!["riff.toml".into()],
+///     ci: vec![],
+///     guard: None,
+///     bot: Err("riff cannot ask riff-server".into()),
+/// };
+/// let line = |github: &Github| checks(github).pop().unwrap().line();
+/// assert_eq!(
+///     line(&github),
+///     "fail  the guard: main of acme/app has no .github/workflows/riff-guard.yml, and riff \
+///      cannot ask riff-server. Fix: start riff-server, or sign in with riff login. Then run \
+///      riff init again"
+/// );
+/// github.bot = Ok(None);
+/// assert_eq!(line(&github), "pass  the guard: the riff has no session App, so riff writes no guard");
+/// github.bot = Ok(Some("riff-acme[bot]".into()));
+/// github.guard = github.guard_to_write();
+/// assert_eq!(line(&github), "pass  the guard: main of acme/app has the guard of riff-acme[bot]");
+/// ```
+fn guard_check(github: &Github) -> Check {
+    let (repo, branch) = (&github.repo, &github.default_branch);
+    match (&github.bot, &github.guard) {
+        (Ok(Some(bot)), guard) => match github.guard_to_write() {
+            None => Check::pass(text::INIT_GUARD, text::init_guard_on(repo, branch, bot)),
+            Some(_) => Check::fail(
+                text::INIT_GUARD,
+                match guard {
+                    Some(_) => text::init_guard_other(repo, branch, bot),
+                    None => text::init_guard_off(repo, branch, bot),
+                },
+                text::init_fix_guard(branch, bot),
+            )
+            .with_step(Step::Config),
+        },
+        (_, Some(_)) => Check::pass(text::INIT_GUARD, text::init_config_on(repo, branch)),
+        (Ok(None), None) => Check::pass(text::INIT_GUARD, text::INIT_GUARD_NO_APP.into()),
+        (Err(why), None) => Check::fail(
+            text::INIT_GUARD,
+            text::init_guard_unknown(repo, branch, why),
+            text::INIT_FIX_GUARD_UNKNOWN.into(),
+        ),
+    }
 }
 
 /// The check of the CI of a pull request. It passes when a rule requires a
@@ -1153,6 +1423,8 @@ mod tests {
             admin: true,
             files: vec!["riff.toml".into()],
             ci: vec![],
+            guard: None,
+            bot: Ok(None),
         }
     }
 
@@ -1179,6 +1451,7 @@ mod tests {
                 "pass  the milestone Backlog: acme/app has it open",
                 "pass  the first wave: acme/app has the open wave Wave 1",
                 "pass  the checks of a pull request: the full check is Gate",
+                "pass  the guard: the riff has no session App, so riff writes no guard",
             ]
         );
     }
@@ -1432,6 +1705,8 @@ mod tests {
     /// A fake forge in a folder of its own.
     struct Fake {
         dir: tempfile::TempDir,
+        /// The bot of the session App that riff-server gives.
+        bot: Result<Option<String>, String>,
     }
 
     impl Fake {
@@ -1447,7 +1722,15 @@ mod tests {
                 std::fs::write(path.join(name), text).unwrap();
             }
             isolated::write_program(path.join("gh"), FORGE);
-            Fake { dir }
+            Fake { dir, bot: Ok(None) }
+        }
+
+        /// The same forge, in a riff whose session App has the bot `bot`.
+        fn with_bot(self, bot: &str) -> Fake {
+            Fake {
+                bot: Ok(Some(bot.into())),
+                ..self
+            }
         }
 
         /// A bare repository whose latest pull request ran two checks.
@@ -1496,13 +1779,18 @@ mod tests {
                 .collect()
         }
 
+        /// True when a call that changes the forge has `part`.
+        fn has_change(&self, part: &str) -> bool {
+            self.changes().iter().any(|c| c.contains(part))
+        }
+
         fn json(&self, name: &str) -> Value {
             serde_json::from_str(&self.read_file(name)).unwrap()
         }
 
         /// The facts that riff reads from the forge.
         fn github(&self) -> Github {
-            read(&self.gh()).unwrap()
+            read(&self.gh(), self.bot.clone()).unwrap()
         }
 
         /// Reads, and does each step of each failed check.
@@ -1529,11 +1817,13 @@ mod tests {
                 admin: true,
                 files: vec![],
                 ci: vec!["checks / lint".into(), "checks / test".into()],
+                guard: None,
+                bot: Ok(None),
             }
         );
-        // The repository, the rules, the milestones, the files, the pull
-        // requests, and the check runs of the first one.
-        assert_eq!(fake.calls().len(), 6, "{:?}", fake.calls());
+        // The repository, the rules, the milestones, the files, the guard,
+        // the pull requests, and the check runs of the first one.
+        assert_eq!(fake.calls().len(), 7, "{:?}", fake.calls());
         assert!(fake.changes().is_empty());
     }
 
@@ -1546,7 +1836,7 @@ mod tests {
         let github = fake.github();
         assert_eq!(github.required, ["checks / docs"]);
         assert!(github.ci.is_empty());
-        assert_eq!(fake.calls().len(), 4, "{:?}", fake.calls());
+        assert_eq!(fake.calls().len(), 5, "{:?}", fake.calls());
     }
 
     #[test]
@@ -2085,7 +2375,7 @@ esac
             dir.path().join("gh"),
             "#!/bin/sh\necho 'gh: not logged in' >&2\nexit 4\n",
         ));
-        let why = read(&gh).unwrap_err();
+        let why = read(&gh, Ok(None)).unwrap_err();
         assert!(why.contains("not logged in"), "{why}");
         let failed = checks_of(&Err(why));
         assert_eq!(failed.len(), 1);
@@ -2095,6 +2385,169 @@ esac
                 .starts_with("fail  the repository on GitHub: riff cannot read the repository: ")
         );
         assert!(failed[0].line().ends_with("gh auth login. The account needs write access to the repository: riff needs gh for the pull requests and the waves"));
+    }
+
+    /// 01M6WPV86SW4AAVA2NCBQNYXK3: the check of the guard in each case of
+    /// the bot and of the file.
+    #[test]
+    fn the_check_of_the_guard_names_a_repository_with_no_guard() {
+        let bot = "riff-acme[bot]";
+        let line = |guard: Option<String>, known: Result<Option<String>, String>| {
+            let github = Github {
+                guard,
+                bot: known,
+                ..ready()
+            };
+            let check = checks(&github).pop().unwrap();
+            assert_eq!(check.name, "the guard");
+            (check.planned_line(&github), check.step)
+        };
+        let known = || Ok(Some(bot.to_owned()));
+        assert_eq!(
+            line(None, known()),
+            (
+                "step  the guard: main of acme/app has no .github/workflows/riff-guard.yml, so a \
+                 change of riff-acme[bot] to an issue stays. Step: make the guard on main with a \
+                 pull request"
+                    .to_owned(),
+                Some(Step::Config)
+            )
+        );
+        let other = Some(guard::workflow("riff-old[bot]"));
+        assert_eq!(
+            line(other.clone(), known()),
+            (
+                "step  the guard: the guard on main of acme/app is not the guard of \
+                 riff-acme[bot]. Step: make the guard on main with a pull request"
+                    .to_owned(),
+                Some(Step::Config)
+            )
+        );
+        assert_eq!(
+            line(Some(guard::workflow(bot)), known()),
+            (
+                "pass  the guard: main of acme/app has the guard of riff-acme[bot]".to_owned(),
+                None
+            )
+        );
+        // riff cannot ask riff-server: a guard that is there passes.
+        let unasked = || Err("riff cannot ask riff-server".to_owned());
+        assert_eq!(
+            line(other, unasked()),
+            ("pass  the guard: main of acme/app has it".to_owned(), None)
+        );
+        let (missing, step) = line(None, unasked());
+        assert!(
+            missing.starts_with("fail  the guard: main of acme/app has no "),
+            "{missing}"
+        );
+        assert!(missing.ends_with("Then run riff init again"), "{missing}");
+        assert_eq!(step, None);
+        // The fix of a person names the bot and the book.
+        let github = Github {
+            bot: known(),
+            ..ready()
+        };
+        assert_eq!(
+            checks(&github).pop().unwrap().line(),
+            "fail  the guard: main of acme/app has no .github/workflows/riff-guard.yml, so a \
+             change of riff-acme[bot] to an issue stays. Fix: put the guard of riff-acme[bot] \
+             on main. See \"Add the guard\" in the book"
+        );
+    }
+
+    /// 01M6WPV86SW4AAVA2NCBQNYXK3: in a bare repository of a riff with a
+    /// session App, one pull request "Set up riff" puts `riff.toml` and the
+    /// guard. After its merge each check passes, and a second run changes
+    /// nothing.
+    #[test]
+    fn the_pull_request_of_riff_toml_adds_the_guard_and_a_second_run_changes_nothing() {
+        let fake = Fake::bare().with_bot("riff-acme[bot]");
+        let github = fake.github();
+        assert_eq!(github.guard, None);
+        assert_eq!(
+            Step::Config.title(&github),
+            "make riff.toml and the guard on main with a pull request"
+        );
+        let done = fake.set_up();
+        assert!(done.iter().all(|(_, done)| done.is_ok()), "{done:?}");
+        let starts: Vec<String> = fake
+            .changes()
+            .iter()
+            .map(|c| c.split(" --").next().unwrap().to_owned())
+            .collect();
+        let puts: Vec<&String> = starts.iter().filter(|c| c.contains("contents/")).collect();
+        assert_eq!(
+            puts,
+            [
+                "api -X PUT repos/{owner}/{repo}/contents/riff.toml",
+                "api -X PUT repos/{owner}/{repo}/contents/.github/workflows/riff-guard.yml"
+            ],
+            "{starts:#?}"
+        );
+        let pulls = starts.iter().filter(|c| c.ends_with("/pulls")).count();
+        assert_eq!(pulls, 1, "{starts:#?}");
+        // The put of a new file names no blob.
+        let put = fake.json("guard.json");
+        assert_eq!(put["branch"], SETUP_BRANCH);
+        assert_eq!(put["message"], SETUP_TITLE);
+        assert!(put.get("sha").is_none(), "{put}");
+        let body = fake.json("pull.json")["body"].as_str().unwrap().to_owned();
+        assert!(body.contains("It adds riff.toml"), "{body}");
+        assert!(
+            body.contains("It writes the guard .github/workflows/riff-guard.yml of riff-acme[bot]"),
+            "{body}"
+        );
+
+        let after = fake.github();
+        assert_eq!(after.guard, Some(guard::workflow("riff-acme[bot]")));
+        assert!(
+            checks(&after).iter().all(Check::passed),
+            "{:#?}",
+            lines(&after)
+        );
+        let changes = fake.changes().len();
+        assert!(fake.set_up().is_empty());
+        assert_eq!(fake.changes().len(), changes);
+    }
+
+    /// 01M6WPV86SW4AAVA2NCBQNYXK3: a repository with `riff.toml` and the
+    /// guard of another bot gets a pull request with the new guard only. The
+    /// put names the blob of the old file.
+    #[test]
+    fn the_guard_of_another_bot_is_written_again_in_a_pull_request_of_its_own() {
+        let fake = Fake::new(&[
+            ("files", "riff.toml\n"),
+            ("guard", &guard::workflow("riff-old[bot]")),
+        ])
+        .with_bot("riff-acme[bot]");
+        let mut github = fake.github();
+        assert_eq!(github.guard, Some(guard::workflow("riff-old[bot]")));
+        let steps = steps_of(&checks(&github));
+        assert!(steps.contains(&Step::Config), "{steps:?}");
+        let done = setup(&fake.forge(), &[Step::Config], &mut github);
+        assert!(done[0].1.is_ok(), "{done:?}");
+        assert!(
+            !fake.has_change("contents/riff.toml"),
+            "{:#?}",
+            fake.changes()
+        );
+        assert_eq!(fake.json("guard.json")["sha"], "9a4d000");
+        let body = fake.json("pull.json")["body"].as_str().unwrap().to_owned();
+        assert!(!body.contains("riff.toml"), "{body}");
+        assert_eq!(github.guard, fake.github().guard);
+        assert_eq!(github.guard_to_write(), None);
+    }
+
+    /// A riff with no session App writes no guard: the pull request of
+    /// `riff.toml` has `riff.toml` only.
+    #[test]
+    fn a_riff_with_no_session_app_writes_no_guard() {
+        let fake = Fake::bare();
+        let done = fake.set_up();
+        assert!(done.iter().all(|(_, done)| done.is_ok()), "{done:?}");
+        assert!(!fake.has_change("riff-guard.yml"), "{:#?}", fake.changes());
+        assert_eq!(fake.github().guard, None);
     }
 
     #[test]

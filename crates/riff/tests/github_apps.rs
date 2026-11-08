@@ -389,3 +389,75 @@ async fn install_with_no_apps_names_create() {
         "{error}"
     );
 }
+
+/// 01M6WPV8473EBABR1ZMEPZMTQQ: `riff init` asks riff-server for the bot
+/// of the session App. Each person gets it: bob is no admin. A riff with
+/// no session App gives none, and a riff-server that does not answer
+/// gives why.
+#[tokio::test]
+async fn each_person_gets_the_bot_of_the_session_app() {
+    let fake = FakeGitHub::start().await;
+    let keys = keys_dir();
+    let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
+    let bot = riff::guard::session_bot(&server.api("bob", None)).await;
+    assert_eq!(bot, Ok(Some("riff-acme[bot]".into())));
+    let none = serve(&fake, At::Memory).await;
+    assert_eq!(
+        riff::guard::session_bot(&none.api("bob", None)).await,
+        Ok(None)
+    );
+    let dead = riff_client::api::Api::new("http://127.0.0.1:9");
+    let why = riff::guard::session_bot(&dead).await.unwrap_err();
+    assert!(
+        why.starts_with(
+            "riff cannot ask riff-server at http://127.0.0.1:9 for the bot of the session App: "
+        ),
+        "{why}"
+    );
+}
+
+/// 01M6WPV86SW4AAVA2NCBQNYXK3: `riff init --check` in a clone of a
+/// repository with no guard, in a riff with the session App, names the
+/// guard of its bot with the fix, and changes nothing. bob is no admin
+/// of the riff.
+#[tokio::test]
+async fn riff_init_check_names_a_repository_with_no_guard() {
+    let fake = FakeGitHub::start().await;
+    let keys = keys_dir();
+    let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
+    let env = Isolated::new();
+    common::sign_in(&server, &env.riff_home(), "bob");
+    let repo = clone();
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), include_str!("fake/forge"));
+    for (name, text) in [("files", "riff.toml\n"), ("milestones", "")] {
+        std::fs::write(bin.path().join(name), text).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let out = env
+        .tokio_riff()
+        .args(["init", "--check"])
+        .current_dir(repo.path())
+        .env("RIFF_SERVER", &*server)
+        .env("PATH", path)
+        .output()
+        .await
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.contains(
+            "\n  fail  the guard: main of acme/app has no .github/workflows/riff-guard.yml, so \
+             a change of riff-acme[bot] to an issue stays. Fix: put the guard of \
+             riff-acme[bot] on main. See \"Add the guard\" in the book\n"
+        ),
+        "{stdout}"
+    );
+    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    assert!(calls.contains("riff-guard.yml?ref=main"), "{calls}");
+    assert!(!calls.contains(" -X "), "{calls}");
+}

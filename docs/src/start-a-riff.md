@@ -281,7 +281,7 @@ flowchart LR
 | cgroup v2 | Your user gets `cpu` and `memory`. |
 | The session image | `riff.toml` of the project pins it. |
 | The riff binary | It is static, so `riff relay` starts in each session image. |
-| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, and a pull request runs a CI check. `riff init` checks no `CLAUDE.md` or `AGENTS.md`: such a file is the choice of the repository. `riff init` does the first five itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
+| The repository on GitHub | In a clone of a repository on GitHub: `riff.toml` is on the default branch, auto-merge and squash merge are on, a ruleset of the default branch requires `riff/verify`, the Backlog and a wave are there, a pull request runs a CI check, and the default branch has the guard of the bot of the session App. `riff init` checks no `CLAUDE.md` or `AGENTS.md`: such a file is the choice of the repository. `riff init` does the first five and the guard itself, after one question. See [Add another repository to the riff](#add-another-repository-to-the-riff). |
 
 A line with `fail` also gives the fix. A line with `step` is a check of
 your repository on GitHub that `riff init` fixes itself, after one
@@ -576,7 +576,7 @@ each step that is done already:
 | Step | What `riff init` does |
 |---|---|
 | Merge settings | It allows auto-merge and squash merge. |
-| `riff.toml` | When the default branch has none, it makes the branch `riff-setup` with `riff.toml`, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins `riff-base`, the image of riff with `claude`, `git` and `gh` and no language. |
+| `riff.toml` and the guard | When the default branch has no `riff.toml`, or no guard of the bot of the session App, it makes the branch `riff-setup` with each file that is missing, opens the pull request "Set up riff", and squash-merges it. `riff.toml` pins `riff-base`, the image of riff with `claude`, `git` and `gh` and no language. The guard is `.github/workflows/riff-guard.yml`: see [Add the guard](#add-the-guard). |
 | The Backlog | It makes the `Backlog`. |
 | The first wave | When the repository has no open wave, it makes `Wave 1`, and the label `question` when the repository has none. |
 | The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks that your CI runs on a pull request, and `riff/verify`. A repository with no CI gets `riff/verify` alone. |
@@ -777,6 +777,7 @@ flowchart LR
 | the ruleset of the default branch | [Make the ruleset of the default branch](#make-the-ruleset-of-the-default-branch) |
 | the Backlog, the first wave | [Make the Backlog and the first wave](#make-the-backlog-and-the-first-wave) |
 | the checks of a pull request | [Use the checks that you have](#use-the-checks-that-you-have) |
+| the guard | [Add the guard](#add-the-guard) |
 
 The checks of a pull request are your own work. Your repository may
 have a CI already: see
@@ -812,6 +813,37 @@ the ruleset: after the ruleset, each change needs a pull request.
 git add riff.toml
 git commit -m "Pin the session image"
 git push
+```
+
+### Add the guard
+
+The guard is the workflow `.github/workflows/riff-guard.yml`. It puts
+back a change of the bot of the session App to the body, the title or
+a comment of an issue: see
+[Add to an issue](how-it-works.md#add-to-an-issue). `riff init` asks
+riff-server for the bot, and checks the guard of that bot on the
+default branch. A riff with no session App needs no guard, and the
+check passes. When riff cannot ask riff-server, the check fails with no
+step: start riff-server, or sign in with `riff login`, and run
+`riff init` again.
+
+To write the guard yourself, take the guard of the repository of riff,
+and put the bot of your session App in it. `riff github check` names
+the bot: see
+[Check the tokens of each role](start-a-team-riff.md#check-the-tokens-of-each-role).
+Put it in place of `riff-acme[bot]`:
+
+```sh
+BOT='riff-acme[bot]'
+mkdir -p .github/workflows
+gh api repos/como-technologies/riff/contents/.github/workflows/riff-guard.yml --jq .content | base64 -d | sed "s/riff-como-technologies\[bot\]/$BOT/" > .github/workflows/riff-guard.yml
+```
+
+Then merge it with a pull request, as each change. When GitHub refuses
+the push of a workflow, give `gh` the scope `workflow`:
+
+```sh
+gh auth refresh -s workflow
 ```
 
 ### Set up the repository on GitHub

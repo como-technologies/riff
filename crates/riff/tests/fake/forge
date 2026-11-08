@@ -21,6 +21,9 @@
 #   open_pulls      the JSON list of the open pull requests
 #   issues          the JSON list of the open issues (number, title, body,
 #                   labels); with no file, the list is empty
+#   guard           the text of .github/workflows/riff-guard.yml on main
+#   guard.json      the body of the put of the guard on riff-setup; the merge
+#                   puts its text in guard
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
 flag() { [ -f "$dir/$1" ]; }
@@ -60,6 +63,12 @@ case "$*" in
       printf '%s{"name":"%s","type":"file"}' "$sep" "$name"; sep=','
     done < "$dir/files"
     printf ']' ;;
+  'api repos/{owner}/{repo}/contents/.github/workflows/riff-guard.yml?ref='*)
+    flag guard || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+    printf '{"sha":"9a4d000","content":"%s"}' "$(base64 -w 60 < "$dir/guard" | sed 's/$/\\n/' | paste -sd '' -)" ;;
+  'api repos/{owner}/{repo}/contents/riff.toml?ref='*)
+    grep -qx riff.toml "$dir/files" || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+    printf '{"sha":"c0f1111","content":""}' ;;
   'api repos/{owner}/{repo}/pulls?state=all&base=main&per_page=5')
     if flag prior_pulls; then cat "$dir/prior_pulls"; else printf '[]'; fi ;;
   'api repos/{owner}/{repo}/commits/'*'/check-runs?per_page=100')
@@ -78,6 +87,8 @@ case "$*" in
   'api -X PATCH repos/{owner}/{repo}/git/refs/heads/riff-setup --include --input '*) reply '200 OK' '{}' ;;
   'api -X PUT repos/{owner}/{repo}/contents/riff.toml --include --input '*)
     cp "$last" "$dir/config.json"; reply '201 Created' '{}' ;;
+  'api -X PUT repos/{owner}/{repo}/contents/.github/workflows/riff-guard.yml --include --input '*)
+    cp "$last" "$dir/guard.json"; reply '201 Created' '{}' ;;
   'api -X POST repos/{owner}/{repo}/pulls --include --input '*)
     cp "$last" "$dir/pull.json"; printf '[%s]' "$pull" > "$dir/open_pulls"; reply '201 Created' "$pull" ;;
   'api -X PUT repos/{owner}/{repo}/pulls/7/merge --include --input '*)
@@ -85,7 +96,11 @@ case "$*" in
       echo $(($(cat "$dir/busy") - 1)) > "$dir/busy"
       echo 'gh: Pull Request is not mergeable (HTTP 405)' >&2; exit 1
     fi
-    cp "$last" "$dir/merge.json"; echo riff.toml >> "$dir/files"; rm -f "$dir/open_pulls"; reply '200 OK' '{"merged":true}' ;;
+    cp "$last" "$dir/merge.json"; grep -qx riff.toml "$dir/files" || echo riff.toml >> "$dir/files"
+    if flag guard.json; then
+      sed 's/.*"content":"\([^"]*\)".*/\1/' "$dir/guard.json" | base64 -d > "$dir/guard"
+    fi
+    rm -f "$dir/open_pulls"; reply '200 OK' '{"merged":true}' ;;
   'api -X DELETE repos/{owner}/{repo}/git/refs/heads/riff-setup') rm -f "$dir/branch" ;;
   'api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true -F allow_squash_merge=true') touch "$dir/auto_merge" ;;
   'api repos/{owner}/{repo}/rulesets?per_page=100')

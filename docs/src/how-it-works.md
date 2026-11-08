@@ -5419,3 +5419,39 @@ A worker has no rule for the other changes of an issue, for example a
 label: the auto mode check judges them. No rule names `gh api`, so a
 write to an issue with the API has no rule either, and the auto mode
 check judges it.
+
+A worker and a verifier act on GitHub as the bot of the session App of
+the riff: see
+[Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff).
+The right `issues: write` of GitHub has no smaller part, so their token
+can change the body or the title of an issue, and change or delete a
+comment of another account. So each repository of the riff has a guard:
+the workflow `.github/workflows/riff-guard.yml`. `riff init` writes it
+with the bot of the session App, in the pull request "Set up riff": see
+[Add the guard](start-a-riff.md#add-the-guard).
+
+```mermaid
+flowchart LR
+    E["issues: edited<br/>issue_comment: edited, deleted"] --> Q{"the sender is the bot<br/>of the session App?"}
+    Q -- "no: a person, the lead App" --> K["the change stays"]
+    Q -- yes --> R["the guard puts back the old text<br/>with GITHUB_TOKEN"]
+```
+
+| The bot of the session App | The guard |
+|---|---|
+| changes the title or the body of an issue | It puts back the old title and the old body. Then it comments why, for example: "riff put back the body of this issue: a worker or a verifier changed it. A session adds to an issue with a comment (como-technologies/riff#1537)." |
+| changes a comment of another account | It puts back the old text. |
+| deletes a comment of another account | It posts the text again, after one line that names the author and the time. |
+
+A change of a person, of the lead App or of another bot stays. So does
+a change of the bot to its own comment. The guard does not stop a
+change: the issue shows it for some seconds, and the history of the
+issue keeps both edits. A change with `GITHUB_TOKEN` starts no
+workflow, so the guard does not run on its own change.
+
+To see what the guard did in a repository, list its runs. A run of a
+change of another account has the status `skipped`:
+
+```sh
+gh run list --workflow riff-guard.yml
+```

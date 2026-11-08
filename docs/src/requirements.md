@@ -3181,6 +3181,24 @@
   how-to "Add another repository to the riff" of "Start a Riff" has the
   step "Install the GitHub Apps of riff on the account", with a copyable
   `sh` block for `riff github install OWNER`.
+- **01M6WPV2HK96JH900RX9ZPYHJ3** Each repository of the riff has the
+  workflow `.github/workflows/riff-guard.yml`, the guard. On `issues:
+  edited` by the bot of the session App, it puts back the title and the
+  body from `changes.title.from` and `changes.body.from` with
+  `GITHUB_TOKEN`, and comments why. On `issue_comment: edited` by that
+  bot, of a comment of another account, it puts back the old text. On
+  `issue_comment: deleted` by that bot, of a comment of another account,
+  it posts the text again, after one line that names the author and the
+  time. A change of a person, of the lead App, of another bot, or of the
+  bot to its own comment stays.
+- **01M6WPV81PJDTFK6DAJ6MJHRQ3** The job of the guard runs only when the
+  sender of the event is the bot of the session App. Its script uses
+  only `bash` and `gh`, and reads each fact of the event from the env of
+  its step.
+- **01M6WPV8473EBABR1ZMEPZMTQQ** Each person of the riff can ask
+  riff-server for the Apps of the riff with no account: the ID, the slug
+  and the bot of each App. Only the owner or an admin asks with an
+  account.
 
 ## Sign-in and tokens
 
@@ -6091,6 +6109,18 @@ of this part when they merge.
   image. With `--image REF`, it pins REF in place of `riff-base`. riff
   refuses a tag in REF, as it does in `riff.toml`. Supersedes
   01M5R1675HZ6TJPMQ6536X37T5 in part: the image that `riff init` pins.
+- **01M6WPV86SW4AAVA2NCBQNYXK3** `riff init` checks the guard on the
+  default branch. It asks riff-server for the bot of the session App. A
+  riff with no sign-in has no session App. The check passes when the
+  guard is the guard of that bot, or when the riff has no session App.
+  It fails with the step of the pull request "Set up riff" when the
+  guard is missing or is not the guard of that bot: the pull request
+  adds the guard, and `riff.toml` when that is missing too. When riff
+  cannot ask riff-server, the check passes when the guard is there, and
+  fails with no step when it is not.
+- **01M6WPV89D01D8WQTQ9KKY9HCT** The section "Add to an issue" of "How
+  it works" says what the guard does, with a copyable `sh` block for `gh
+  run list --workflow riff-guard.yml`.
 
 ### The permission rules
 

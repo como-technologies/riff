@@ -7995,6 +7995,116 @@ pub fn init_ci_will(checks: &[String]) -> String {
     )
 }
 
+/// The name of the check of the guard (01M6WPV86SW4AAVA2NCBQNYXK3).
+pub const INIT_GUARD: &str = "the guard";
+
+/// The branch `branch` of the repository `repo` has the guard of the bot
+/// `bot`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_guard_on("o/r", "main", "riff-o[bot]"),
+///     "main of o/r has the guard of riff-o[bot]"
+/// );
+/// ```
+pub fn init_guard_on(repo: &str, branch: &str, bot: &str) -> String {
+    format!("{branch} of {repo} has the guard of {bot}")
+}
+
+/// The riff has no session App: no session acts as a bot on GitHub.
+pub const INIT_GUARD_NO_APP: &str = "the riff has no session App, so riff writes no guard";
+
+/// The branch `branch` of the repository `repo` has no guard, and the
+/// riff has the session App with the bot `bot`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_guard_off("o/r", "main", "riff-o[bot]"),
+///     "main of o/r has no .github/workflows/riff-guard.yml, so a change of riff-o[bot] to an issue stays"
+/// );
+/// ```
+pub fn init_guard_off(repo: &str, branch: &str, bot: &str) -> String {
+    format!(
+        "{branch} of {repo} has no {}, so a change of {bot} to an issue stays",
+        crate::guard::PATH
+    )
+}
+
+/// The guard on `branch` of the repository `repo` is not the guard of
+/// the bot `bot`: another bot, or the text of another riff.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_guard_other("o/r", "main", "riff-o[bot]"),
+///     "the guard on main of o/r is not the guard of riff-o[bot]"
+/// );
+/// ```
+pub fn init_guard_other(repo: &str, branch: &str, bot: &str) -> String {
+    format!("the guard on {branch} of {repo} is not the guard of {bot}")
+}
+
+/// The branch `branch` of the repository `repo` has no guard, and riff
+/// cannot ask riff-server for the bot: `why`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_guard_unknown("o/r", "main", "riff cannot ask riff-server"),
+///     "main of o/r has no .github/workflows/riff-guard.yml, and riff cannot ask riff-server"
+/// );
+/// ```
+pub fn init_guard_unknown(repo: &str, branch: &str, why: &str) -> String {
+    format!(
+        "{branch} of {repo} has no {}, and {why}",
+        crate::guard::PATH
+    )
+}
+
+/// The fix of a missing guard, or of the guard of another bot.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_fix_guard("main", "riff-o[bot]"),
+///     "put the guard of riff-o[bot] on main. See \"Add the guard\" in the book"
+/// );
+/// ```
+pub fn init_fix_guard(branch: &str, bot: &str) -> String {
+    format!("put the guard of {bot} on {branch}. See \"Add the guard\" in the book")
+}
+
+/// The fix of a missing guard when riff cannot ask riff-server for the
+/// bot.
+pub const INIT_FIX_GUARD_UNKNOWN: &str =
+    "start riff-server, or sign in with riff login. Then run riff init again";
+
+/// riff cannot ask the riff-server at `server` for the bot of the
+/// session App: `why`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::guard_unasked("http://127.0.0.1:9", "connection refused"),
+///     "riff cannot ask riff-server at http://127.0.0.1:9 for the bot of the session App: connection refused"
+/// );
+/// ```
+pub fn guard_unasked(server: &str, why: &str) -> String {
+    format!("riff cannot ask riff-server at {server} for the bot of the session App: {why}")
+}
+
+/// riff-server gave `bot` as the bot of the session App, and it is no
+/// login of the bot of a GitHub App ([`crate::guard::valid_bot`]).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::guard_bad_bot("a b"),
+///     "riff-server gave \"a b\" as the bot of the session App, which is no login of the bot of a GitHub App"
+/// );
+/// ```
+pub fn guard_bad_bot(bot: &str) -> String {
+    format!(
+        "riff-server gave {bot:?} as the bot of the session App, which is no login of the bot of \
+         a GitHub App"
+    )
+}
+
 /// GitHub did not merge the pull request `url` of the step `riff.toml`.
 ///
 /// ```

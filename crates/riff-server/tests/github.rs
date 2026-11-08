@@ -454,14 +454,30 @@ async fn a_wrong_an_old_or_a_used_state_is_refused() {
     assert_eq!(fake.seen().swapped, [SESSION_CODE, LEAD_CODE]);
 }
 
-/// 01M6WG52T5PAD9NGQ597CP56K7: a member who is not the owner or an admin
-/// cannot make the Apps or see them. Each person can check them.
+/// 01M6WG52T5PAD9NGQ597CP56K7, 01M6WPV8473EBABR1ZMEPZMTQQ: a member who
+/// is not the owner or an admin cannot make the Apps, or ask whether they
+/// are installed on an account. Each person can see the Apps with no
+/// account, and check them.
 #[tokio::test]
 async fn a_member_who_is_not_the_owner_or_an_admin_is_refused() {
     let fake = FakeGitHub::start().await;
     let (service, url) = serve(&fake, At::Memory, STATE_LIFE).await;
-    let _owner = person(&service, "ada@example.com").await;
+    let owner = person(&service, "ada@example.com").await;
     let member = person(&service, "bob@example.com").await;
+    make_apps(&url, &owner).await;
+    let (status, text) = call(&url, &member, "/v1/github/apps", json!({})).await;
+    assert_eq!(status, 200, "{text}");
+    let apps: GitHubAppsReply = serde_json::from_str(&text).unwrap();
+    let bots: Vec<(&str, Option<bool>)> = apps
+        .apps
+        .iter()
+        .map(|a| (a.bot.as_str(), a.installed))
+        .collect();
+    assert_eq!(
+        bots,
+        [("riff-acme[bot]", None), ("riff-acme-lead[bot]", None)]
+    );
+    assert!(!text.contains("PRIVATE KEY"), "{text}");
     let create = json!({ "owner": OWNER, "organization": true });
     let (status, text) = call(&url, &member, "/v1/github/create", create).await;
     assert_eq!(status, 403, "{text}");

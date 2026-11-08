@@ -78,6 +78,7 @@ pub mod first_run;
 pub mod gh_wrapper;
 pub mod ghcalls;
 pub mod github;
+pub mod guard;
 pub mod help;
 pub mod hold;
 pub mod home;

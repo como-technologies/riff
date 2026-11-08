@@ -1,0 +1,74 @@
+# The guard of riff. riff init writes this file with the bot of the
+# session App of the riff. Each worker and each verifier of riff acts
+# on GitHub as that bot. When the bot changes the body or the title of
+# an issue, or changes or deletes a comment of another account, the
+# guard puts back the old text with GITHUB_TOKEN. See "Add to an
+# issue" in the book of riff:
+# https://como-technologies.github.io/riff/how-it-works.html#add-to-an-issue
+name: riff guard
+
+on:
+  issues:
+    types: [edited]
+  issue_comment:
+    types: [edited, deleted]
+
+permissions:
+  issues: write
+
+jobs:
+  guard:
+    name: Guard
+    # A change of a person, of the lead App or of another bot stays.
+    if: github.event.sender.login == 'riff-como-technologies[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Put back the change of the bot
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          SENDER: ${{ github.event.sender.login }}
+          NUMBER: ${{ github.event.issue.number }}
+          TITLE_CHANGED: ${{ github.event.changes.title != null }}
+          OLD_TITLE: ${{ github.event.changes.title.from }}
+          BODY_CHANGED: ${{ github.event.changes.body != null }}
+          OLD_BODY: ${{ github.event.changes.body.from }}
+          COMMENT: ${{ github.event.comment.id }}
+          AUTHOR: ${{ github.event.comment.user.login }}
+          TEXT: ${{ github.event.comment.body }}
+          WRITTEN: ${{ github.event.comment.created_at }}
+        run: |
+          call() { gh api "$@" > /dev/null; }
+          comment() { call --method POST "repos/$GH_REPO/issues/$NUMBER/comments" -f "body=$1"; }
+          case "$EVENT.$ACTION" in
+            issues.edited)
+              fields=()
+              words=""
+              if [ "$TITLE_CHANGED" = true ]; then
+                fields+=(-f "title=$OLD_TITLE")
+                words="the title"
+              fi
+              if [ "$BODY_CHANGED" = true ]; then
+                fields+=(-f "body=$OLD_BODY")
+                words="${words:+$words and }the body"
+              fi
+              [ -n "$words" ] || exit 0
+              call --method PATCH "repos/$GH_REPO/issues/$NUMBER" "${fields[@]}"
+              comment "riff put back $words of this issue: a worker or a verifier changed it. A session adds to an issue with a comment (como-technologies/riff#1537)."
+              ;;
+            issue_comment.edited)
+              # A change of the bot to its own comment stays.
+              [ "$AUTHOR" != "$SENDER" ] && [ "$BODY_CHANGED" = true ] || exit 0
+              call --method PATCH "repos/$GH_REPO/issues/comments/$COMMENT" -f "body=$OLD_BODY"
+              ;;
+            issue_comment.deleted)
+              [ "$AUTHOR" != "$SENDER" ] || exit 0
+              comment "riff put back this comment: a worker or a verifier deleted it. $AUTHOR wrote it at $WRITTEN.
+
+          $TEXT"
+              ;;
+          esac
