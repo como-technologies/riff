@@ -16,10 +16,27 @@ fn run(cmd: &mut Command) -> Output {
 
 const GOOD: &str = "Closes #77\n\nPause the riff.\n\nIssue: #77\nMilestone: Wave 3\n";
 
-/// A directory with a fake `gh`. It prints `pr.json` for `gh pr view`,
-/// and `issue-N.json` for `gh issue view N`. A missing file fails. It
-/// appends each call to `calls.txt`.
+/// The requirements of the fake `gh`, the same at the merge base and at
+/// the head.
+const REQUIREMENTS: &str = "## A\n\n- **R1** One. Two.\n";
+
+/// A directory with a fake `gh`, and the same requirements at the merge
+/// base and at the head ([`fake_gh_with`]).
 fn fake_gh(pr: &serde_json::Value, issues: &[serde_json::Value]) -> tempfile::TempDir {
+    fake_gh_with(pr, issues, REQUIREMENTS, REQUIREMENTS)
+}
+
+/// A directory with a fake `gh`. It prints `pr.json` for `gh pr view`,
+/// and `issue-N.json` for `gh issue view N`. For `gh api`, the merge
+/// base of the compare is `fork`, and the file `requirements.md` at the
+/// ref `fork` is `old`, at `head` it is `new`. A missing file fails. It
+/// appends each call to `calls.txt`.
+fn fake_gh_with(
+    pr: &serde_json::Value,
+    issues: &[serde_json::Value],
+    old: &str,
+    new: &str,
+) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let write = |name: &str, value: &serde_json::Value| {
         std::fs::write(dir.path().join(name), value.to_string()).unwrap();
@@ -28,10 +45,14 @@ fn fake_gh(pr: &serde_json::Value, issues: &[serde_json::Value]) -> tempfile::Te
     for issue in issues {
         write(&format!("issue-{}.json", issue["number"]), issue);
     }
+    std::fs::write(dir.path().join("requirements-fork.md"), old).unwrap();
+    std::fs::write(dir.path().join("requirements-head.md"), new).unwrap();
     let script = format!(
         "#!/bin/sh\nd='{}'\necho \"$*\" >> \"$d/calls.txt\"\ncase \"$1 $2\" in\n\
          'pr view') cat \"$d/pr.json\" ;;\n\
          'issue view') cat \"$d/issue-$3.json\" 2>/dev/null || {{ echo \"no issue $3\" >&2; exit 1; }} ;;\n\
+         'api repos/{{owner}}/{{repo}}/compare/'*) echo fork ;;\n\
+         'api -H') for a; do ref=$a; done; cat \"$d/requirements-${{ref##*ref=}}.md\" ;;\n\
          *) echo \"unknown: $*\" >&2; exit 1 ;;\nesac\n",
         dir.path().display()
     );
@@ -64,6 +85,8 @@ fn pr_json(body: &str, milestone: Option<&str>) -> serde_json::Value {
         "title": "Pause and resume the riff",
         "body": body,
         "milestone": milestone.map(|t| serde_json::json!({"number": 8, "title": t, "description": "", "dueOn": null})),
+        "baseRefOid": "base",
+        "headRefOid": "head",
     })
 }
 
@@ -84,6 +107,62 @@ fn a_good_pull_request_passes() {
     let out = hygiene(&["pr", "90"], Some(gh.path()), None);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout), "ok: pull request #90\n");
+}
+
+/// 01M6WBVMJY79HJRQJZ3ZVD5CCC: a pull request that supersedes R1 in part
+/// and leaves the text of R1 as it was fails, and the error names R1 and
+/// the new ID. The same pull request with a cut of R1 passes.
+#[test]
+fn a_pull_request_that_supersedes_in_part_cuts_the_old_text() {
+    let id = reqs::new_id();
+    let new = format!("{REQUIREMENTS}- **{id}** Three. Supersedes R1 in part.\n");
+    let pr = pr_json(GOOD, Some("Wave 3"));
+    let issues = [issue_json(77, "OPEN", Some("Wave 3"))];
+    let gh = fake_gh_with(&pr, &issues, REQUIREMENTS, &new);
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    let stderr = text(&out.stderr);
+    for line in [
+        format!(
+            "error: in-part: {id} supersedes R1 in part, and the text of R1 in \
+             docs/src/requirements.md stays as it was; cut R1 to the part that holds, \
+             in the same change\n"
+        ),
+        "pull request #90 breaks 1 rule(s) of issue hygiene.".to_owned(),
+    ] {
+        assert!(stderr.contains(&line), "no {line:?} in:\n{stderr}");
+    }
+    let calls = std::fs::read_to_string(gh.path().join("calls.txt")).unwrap();
+    for call in [
+        "pr view 90 --json title,body,milestone,author,commits,baseRefOid,headRefOid\n",
+        "api repos/{owner}/{repo}/compare/base...head --jq .merge_base_commit.sha\n",
+        "api -H Accept: application/vnd.github.raw+json repos/{owner}/{repo}/contents/docs/src/requirements.md?ref=fork\n",
+        "api -H Accept: application/vnd.github.raw+json repos/{owner}/{repo}/contents/docs/src/requirements.md?ref=head\n",
+    ] {
+        assert!(calls.contains(call), "no {call:?} in:\n{calls}");
+    }
+
+    let cut = new.replace("One. Two.", "One.");
+    let gh = fake_gh_with(&pr, &issues, REQUIREMENTS, &cut);
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "ok: pull request #90\n");
+}
+
+#[test]
+fn a_pull_request_whose_requirements_gh_cannot_read_is_a_tool_error() {
+    let gh = fake_gh(
+        &pr_json(GOOD, Some("Wave 3")),
+        &[issue_json(77, "OPEN", Some("Wave 3"))],
+    );
+    std::fs::remove_file(gh.path().join("requirements-head.md")).unwrap();
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        text(&out.stderr).contains("error: gh api -H Accept: application/vnd.github.raw+json"),
+        "{}",
+        text(&out.stderr)
+    );
 }
 
 /// 01M3JFEXS6M5549TC6MH0G2MS0: the squash of a pull request with a

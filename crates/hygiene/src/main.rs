@@ -1,4 +1,5 @@
-//! `hygiene pr N` checks pull request N with `gh`. `hygiene commit [REV]`
+//! `hygiene pr N` checks pull request N, and the cut of each requirement
+//! that it supersedes in part, with `gh`. `hygiene commit [REV]`
 //! checks the message of a commit with `git`. `hygiene book [DIR]` builds
 //! the book in DIR with `mdbook` and checks it. `hygiene wrap [DIR]`
 //! checks the wrap of each Markdown file in DIR. `hygiene blank PATH...`
@@ -57,15 +58,21 @@ fn pr(number: &str) -> ExitCode {
         eprintln!("error: {number:?} is not the number of a pull request\n{USAGE}");
         return ExitCode::from(2);
     }
-    let pr: PullRequest = match gh(&[
+    let json: serde_json::Value = match gh(&[
         "pr",
         "view",
         number,
         "--json",
-        "title,body,milestone,author,commits",
+        "title,body,milestone,author,commits,baseRefOid,headRefOid",
     ]) {
-        Ok(pr) => pr,
+        Ok(json) => json,
         Err(e) => return tool_error(&e),
+    };
+    let (pr, refs): (PullRequest, Refs) = match serde_json::from_value(json.clone())
+        .and_then(|pr| Ok((pr, serde_json::from_value(json)?)))
+    {
+        Ok(read) => read,
+        Err(e) => return tool_error(&format!("gh pr view {number}: {e}")),
     };
     let issue: Option<Issue> = match hygiene::issue_number(&pr) {
         Some(n) => {
@@ -77,11 +84,48 @@ fn pr(number: &str) -> ExitCode {
         }
         None => None,
     };
-    report(
-        &format!("pull request #{number}"),
-        &hygiene::check_pr(&pr, issue.as_ref()),
-        HYGIENE,
-    )
+    let mut errors = hygiene::check_pr(&pr, issue.as_ref());
+    match requirements(&refs) {
+        Ok((old, new)) => errors.extend(hygiene::check_requirements(&old, &new)),
+        Err(e) => return tool_error(&e),
+    }
+    report(&format!("pull request #{number}"), &errors, HYGIENE)
+}
+
+/// The commits of a pull request, as `gh pr view --json
+/// baseRefOid,headRefOid` gives them.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Refs {
+    /// The tip of the base branch.
+    base_ref_oid: String,
+    /// The head of the pull request.
+    head_ref_oid: String,
+}
+
+/// The texts of the requirements of pull request `refs`: at the merge
+/// base of its base and its head, and at its head. It reads them with
+/// `gh api`, so it needs no clone of the pull request.
+fn requirements(refs: &Refs) -> Result<(String, String), String> {
+    let Refs {
+        base_ref_oid: base,
+        head_ref_oid: head,
+    } = refs;
+    let compare = format!("repos/{{owner}}/{{repo}}/compare/{base}...{head}");
+    let fork = gh_text(&["api", &compare, "--jq", ".merge_base_commit.sha"])?;
+    let file = |sha: &str| {
+        let path = format!(
+            "repos/{{owner}}/{{repo}}/contents/{}?ref={sha}",
+            reqs::REQUIREMENTS
+        );
+        gh_text(&[
+            "api",
+            "-H",
+            "Accept: application/vnd.github.raw+json",
+            &path,
+        ])
+    };
+    Ok((file(fork.trim())?, file(head)?))
 }
 
 /// Checks the message of commit `rev`.
@@ -658,6 +702,12 @@ fn mark(path: &Path) -> String {
 
 /// Runs `gh` and reads its JSON output.
 fn gh<T: DeserializeOwned>(args: &[&str]) -> Result<T, String> {
+    let out = gh_text(args)?;
+    serde_json::from_str(&out).map_err(|e| format!("gh {}: {e}", args.join(" ")))
+}
+
+/// Runs `gh` and reads its output.
+fn gh_text(args: &[&str]) -> Result<String, String> {
     let shown = format!("gh {}", args.join(" "));
     let out = Command::new("gh")
         .args(args)
@@ -667,7 +717,7 @@ fn gh<T: DeserializeOwned>(args: &[&str]) -> Result<T, String> {
         let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(format!("{shown}: {}", stderr.trim()));
     }
-    serde_json::from_slice(&out.stdout).map_err(|e| format!("{shown}: {e}"))
+    String::from_utf8(out.stdout).map_err(|e| format!("{shown}: {e}"))
 }
 
 /// A tool failed: exit status 2.

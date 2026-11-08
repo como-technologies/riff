@@ -44,9 +44,18 @@
 //!   fails a trailer line over the width (`trailer-wrap`) before the
 //!   merge.
 //!
+//! - A change that supersedes a requirement in part cuts its text in the
+//!   same change (01M5RGXD7WV4H3VR0YA7JW9GXR,
+//!   01M6WBVMJY79HJRQJZ3ZVD5CCC). So `hygiene pr` also
+//!   reads `docs/src/requirements.md` at the merge base and at the head
+//!   of the pull request, and runs [`check_requirements`] on the two
+//!   texts (`in-part`).
+//!
 //! `hygiene pr N` reads pull request N and its issue with `gh`, and runs
-//! [`check_pr`]. `hygiene commit [REV]` reads the message of a commit
-//! with `git`, and runs [`check_commit`]. Each error names its rule:
+//! [`check_pr`]. It reads the two texts of the requirements with
+//! `gh api`, and runs [`check_requirements`]. `hygiene commit [REV]`
+//! reads the message of a commit with `git`, and runs [`check_commit`].
+//! Each error names its rule:
 //!
 //! | Rule | Finds |
 //! |---|---|
@@ -59,6 +68,7 @@
 //! | `milestone` | A pull request or an issue with no milestone, or two different milestones. |
 //! | `issue-open` | An issue that is closed. |
 //! | `commit-title` | A commit title that does not end with `(#PR)`, or that names the issue in place of the pull request. |
+//! | `in-part` | A pull request that supersedes a requirement in part, and leaves its text as it was. The error names the two IDs. |
 //!
 //! ```
 //! use hygiene::{Issue, PullRequest};
@@ -857,6 +867,40 @@ fn all_errors(pr: &PullRequest, issue: Option<&Issue>) -> Vec<Error> {
         }
     }
     errors
+}
+
+/// Checks the change of the requirements of a pull request: `old` and
+/// `new` are the texts of `docs/src/requirements.md` at the merge base
+/// and at the head. Returns an error of the rule `in-part` for each
+/// requirement that the change supersedes in part and does not cut
+/// ([`reqs::uncut`]).
+///
+/// ```
+/// let old = "- **R1** One. Two.\n";
+/// let new = "- **R1** One. Two.\n- **R2** Three. Supersedes R1 in part.\n";
+/// let errors = hygiene::check_requirements(old, new);
+/// assert_eq!(errors.len(), 1);
+/// assert_eq!(errors[0].rule, "in-part");
+/// assert!(errors[0].text.starts_with("R2 supersedes R1 in part"));
+///
+/// let cut = "- **R1** One.\n- **R2** Three. Supersedes R1 in part.\n";
+/// assert!(hygiene::check_requirements(old, cut).is_empty());
+/// ```
+pub fn check_requirements(old: &str, new: &str) -> Vec<Error> {
+    reqs::uncut(old, new)
+        .into_iter()
+        .map(|pair| {
+            let reqs::InPart { id, by } = pair;
+            Error::new(
+                "in-part",
+                format!(
+                    "{by} supersedes {id} in part, and the text of {id} in {} stays as it was; \
+                     cut {id} to the part that holds, in the same change",
+                    reqs::REQUIREMENTS
+                ),
+            )
+        })
+        .collect()
 }
 
 /// Checks the message of a commit on `main`. Returns each broken rule.

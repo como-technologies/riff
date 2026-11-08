@@ -645,8 +645,9 @@
   each of the trailers `Issue:` and, with the rules of riff
   (01M5SMSMWE89SC3Q7XFBQCFY32), `Milestone:` only when the text of
   `--file` does not have it. When that text has a link line, or a
-  trailer `Issue:` or `Milestone:`, that is not the one of the pull
-  request, it names the line, opens nothing, and exits with status 1.
+  trailer `Issue:` or, with the rules of riff, `Milestone:`, that is not
+  the one of the pull request, it names the line, opens nothing, and
+  exits with status 1.
 - **01M3NB6FWMGBQ9VTY6RCBPKBHK** `riff pr wait N` looks at pull
   request N with `gh` until it is merged
   (01M6JE9ME6YSHV538GNPH7ZRGQ gives the pace). Then it prints the merge
@@ -669,19 +670,19 @@
   makes no comment, no status and no post, and exits with status 1.
 - **01M49HAZ7P3JMWNCG1SWCMAXQP** `riff verify pass N` reads the check
   runs of the full check (01M5QYDE41FVFX26EC8K5QGYH4) of the head commit
-  of pull request N with `gh`. When the commit has no run of the full
-  check, or a run is not completed, or a run has a conclusion that is
-  not `success`, it makes no comment, no status and no post. It exits
+  of pull request N with `gh`. When the full check of the head commit
+  stops the pass, it makes no comment, no status and no post. It exits
   with status 1 and one line that names the commit, the state of the
-  Gate and `gh pr checks N`. `riff verify fail N` needs no Gate.
+  full check and `gh pr checks N`. `riff verify fail N` needs no full
+  check.
 - **01M5QYDE41FVFX26EC8K5QGYH4** The full check of a commit is each
   check that the ruleset of the default branch requires, but
   `riff/verify`: riff reads it with `gh api
-  repos/OWNER/REPO/rules/branches/BRANCH`. `riff verify pass
-  N` and the verify of the wave read the check runs of the full check by
-  name. A pass, and the start of a verify, need each check to be done:
-  the pass needs a `success` of each. The line of a refused pass names
-  the checks. Supersedes 01M49HAZ7P3JMWNCG1SWCMAXQP in part.
+  repos/OWNER/REPO/rules/branches/BRANCH`. `riff verify pass N` and the
+  verify of the wave read the check runs of the full check by name. A
+  pass, and the start of a verify, need each check to be done: the pass
+  needs a success of each. The line of a refused pass names the checks.
+  Supersedes 01M49HAZ7P3JMWNCG1SWCMAXQP in part.
 - **01M5R13DE5XRWB13E0BQ17C80F** A check of the full check that ends
   `skipped` or `neutral` counts as a success, as on GitHub: `riff verify
   pass`, `riff release verify`, the verify of the wave and the look at
@@ -2668,14 +2669,12 @@
 - **01M49Q31FASDM7CG3JEGPYCZB9** Each message of a pull request that
   stops comes one time for each pull request, head commit and state. The
   riff daemon keeps what it told (01M5QVH3MAEPPJN9PPVDX6N2EY).
-- **01M51QEYKTD7ZEB0YA0C3MQTPN** The look of the lead reads the check
-  run `Gate` of the head commit of `main` each minute. When the Gate
-  failed (`failure` or `timed_out`) at a commit that the lead did not
-  get, and `main` passed before, the lead gets one message: the commit,
-  the run, the failed jobs and the fix item. When `main` was broken at
-  an older commit, the lead gets a note. A Gate that runs, a cancelled
-  Gate and a head with no Gate give nothing. The riff daemon keeps the
-  last broken commit that it told (01M5QVH3MAEPPJN9PPVDX6N2EY).
+- **01M51QEYKTD7ZEB0YA0C3MQTPN** When `main` is broken
+  (01M5R13DGMTNWPY88A3EG49WWS) at a commit that the lead did not get,
+  and `main` passed before, the lead gets one message: the commit, the
+  run, the failed jobs and the fix item. When `main` was broken at an
+  older commit, the lead gets a note. The riff daemon keeps the last
+  broken commit that it told (01M5QVH3MAEPPJN9PPVDX6N2EY).
 - **01M51QEYPGD6W345MZ4F85C38F** When the Gate of `main` fails, riff
   files one fix item: an issue with the label `broken-main` in the
   current wave, with the commit, the run, the failed jobs, a `Needs:`
@@ -3915,6 +3914,15 @@
   at another path. The doc tests run in `Build`, not in a part. `just
   test-part I/N` keeps the plain run with cargo, for a machine of a
   person.
+- **01M6WBVMJY79HJRQJZ3ZVD5CCC** The job Hygiene of a pull request fails
+  with the rule `in-part` when the pull request supersedes a requirement
+  A in part and leaves the text of A as it was. The pull request
+  supersedes A in part when `requirements.md` at its head has a pair
+  that `requirements.md` at the merge base does not have: a requirement
+  that says "Supersedes A in part", or A that says "Superseded in part
+  by B". A new wrap of A, or a sentence that marks A as superseded in
+  part, is no cut. The error names A and the new ID. `hygiene pr` reads
+  the two texts with `gh api`.
 
 ## The phone app
 
@@ -4792,9 +4800,8 @@ of this part when they merge.
   push has the commits of HEAD that origin has not, and the changes of
   the tracked files (git add -u). It never has a file that git does not
   track. A clone with only such files pushes nothing. When the push
-  fails, or a commit is on a local branch that is not HEAD, or git
-  cannot read the clone, the folder stays and riff daemon sweep says
-  why. This supersedes 01M53S7WAXD46YPN0DR96XSTMG in part.
+  fails, or git cannot read the clone, the folder stays and riff daemon
+  sweep says why. This supersedes 01M53S7WAXD46YPN0DR96XSTMG in part.
 - **01M5NVKNKN3PTCWB45BV03M1TW** The sweep never pushes or removes the
   folder of a session that runs, of a job of the daemon, or of an item
   whose pull request is open or whose issue is open with no pull
@@ -5092,10 +5099,10 @@ of this part when they merge.
   only when no session holds the item, and the full check of the head
   commit of its pull request is done (01M5QYDHN27RC5SRHAB56PFKK0). The
   verify is a new session, so an author never verifies its own item.
-- **01M4ZV3B6PSRH40EYQEVYH2MBA** A wave starts one item at most 3 times
-  in a run of the wave. Then the lead of the person gets one message,
-  and the wave leaves the item. A verify has its own count for each
-  head commit (01M6QQ7H2B88AT3KS8NGM3DKCZ).
+- **01M4ZV3B6PSRH40EYQEVYH2MBA** A wave starts the build of an item at
+  most 3 times in a run of the wave. Then the lead of the person gets
+  one message, and the wave leaves the item. A verify has its own count
+  for each head commit (01M6QQ7H2B88AT3KS8NGM3DKCZ).
 - **01M4ZV3B6Q0Y6AX0KSKC55S31R** For each item, the daemon does the
   host steps of `riff run` itself: the checks, a new worker session,
   the claim, the keep-alive, the clone and the start. After the end of
@@ -5159,10 +5166,9 @@ of this part when they merge.
   the commit, not the ref, so a push to the pull request after the look
   does not change what the verify reads.
 - **01M5QVH3MAEPPJN9PPVDX6N2EY** The riff daemon runs the look of the
-  repository of each wave that it runs until `riff leave`: it reads
-  the open pull requests and the Gate of `main` with
-  "gh", and posts as the person. The messages of
-  01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q316RXNATJP587DWGDNCD and
+  repository of each wave that it runs until `riff leave`: it reads the
+  open pull requests and `main` with "gh", and posts as the person. The
+  messages of 01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q316RXNATJP587DWGDNCD and
   01M51QEYKTD7ZEB0YA0C3MQTPN come from this look, and the steps of
   01M51QEYPGD6W345MZ4F85C38F and 01M51QEYVQN74Q1VDTVHB0445Q too. A
   message goes to the lead of the person, or to the session that holds
@@ -5173,13 +5179,13 @@ of this part when they merge.
   head commit: a check run that ended with failure, timed out or startup
   failure, or a status in failure or error, except riff/verify. The wave
   of the daemon reads the rollup of each open pull request at each look.
-  For the item of such a pull request, it starts a build session with
-  the names of the failed runs of GitHub Actions in the start text. The
-  text tells the session to read the failed run, to fix the work and
-  push to the same pull request, and, for a known flake, to run the job
-  again one time. Each head commit starts one such session in a run of
-  the wave. A pull request with a conflict gets the rebase first. A
-  cancelled or skipped check did not fail.
+  For the item of a pull request with a failed run of GitHub Actions, it
+  starts a build session with the names of the failed runs in the start
+  text. The text tells the session to read the failed run, to fix the
+  work and push to the same pull request, and, for a known flake, to run
+  the job again one time. Each head commit starts one such session in a
+  run of the wave. A pull request with a conflict gets the rebase first.
+  A cancelled or skipped check did not fail.
 - **01M5QW2KYFM4C287D9NMSPH8TA** When a session of a wave for failed
   checks ends with the same head commit, the daemon sends no verify
   request. It reads the checks of the pull request. The lead gets a
@@ -5199,9 +5205,9 @@ of this part when they merge.
   group stuck, with the reason: conflict, checks, or auto-merge off. The
   group comes after verify.
 - **01M5QYDHN27RC5SRHAB56PFKK0** A wave starts the verify of an item
-  when the full check of the head commit of its pull request is done
-  (01M5QYDE41FVFX26EC8K5QGYH4). A wave that cannot read the required
-  checks fails its look, and says why. Supersedes
+  only when the full check of the head commit of its pull request is
+  done (01M5QYDE41FVFX26EC8K5QGYH4). A wave that cannot read the
+  required checks fails its look, and says why. Supersedes
   01M4ZV3B6NKPEZ5FNE27X95GF0 in part.
 - **01M5R0QFM265CCKTADK4T5XREQ** While the last background_tasks_changed
   event of a session of a wave lists one task or more, the daemon uses
@@ -5224,11 +5230,10 @@ of this part when they merge.
   takes the issue at its next look after the line comes. A verify and a
   rebase do not change.
 - **01M5QYBWPAJ219BE8QKVKG1TWW** A repository can have any default
-  branch. `riff join` reads the default branch of the repository on
-  the forge one time, and the wave keeps it. The start text of a build,
-  of a rebase and of a verify names that branch, not `main`: `git diff
-  origin/BRANCH...HEAD`, `git rebase origin/BRANCH`, and "Never push to
-  BRANCH". The look reads the full check of the head of that branch
+  branch. The start text of a build, of a rebase and of a verify names
+  the default branch, not `main`: `git diff origin/BRANCH...HEAD`, `git
+  rebase origin/BRANCH`, and "Never push to BRANCH". The look reads the
+  full check of the head of the default branch
   (01M5R13DGMTNWPY88A3EG49WWS). `riff run` names the branch of
   `origin/HEAD` of its clone.
 - **01M5R0J131464KZX180BW2AK98** A default branch that does not read
@@ -5412,18 +5417,19 @@ of this part when they merge.
   rename of a wave on GitHub shows at the next full read. A conditional
   read that fails, or that gives no ETag, counts as a change (#1566).
   Supersedes 01M6GYN97HH70E4C1FGM6HA2B0 in part.
-- **01M6JGF6Z6Y8FP86Q9VAS3NPZ7** Each riff process that calls gh adds
-  its calls to the tally of the daemon, the folder gh-calls in the
-  folder of the daemon, by caller, kind and GraphQL points. A process on
-  the host appends to the folder. A process in a container sends its
-  calls to the daemon on the socket of its session, and the daemon
-  appends them: it keeps the caller only when it is a name that riff
-  knows, cuts the kind, and limits the points and the number of calls of
-  one send. A count never fails or delays a call (#1582).
+- **01M6JGF6Z6Y8FP86Q9VAS3NPZ7** Each riff process that calls gh, but
+  the daemon, adds its calls to the tally of the daemon, the folder
+  gh-calls in the folder of the daemon, by caller, kind and GraphQL
+  points. A process on the host appends to the folder. A process in a
+  container sends its calls to the daemon on the socket of its session,
+  and the daemon appends them: it keeps the caller only when it is a
+  name that riff knows, cuts the kind, and limits the points and the
+  number of calls of one send. A count never fails or delays a call
+  (#1582).
 - **01M6JGF7265VX2SDXZ4EJAGXVB** The daemon binds its own binary at
-  /usr/local/bin/gh in a container session. The binary of riff that
-  runs under the name gh adds the call to the tally as the caller
-  session, and replaces itself with /usr/bin/gh, so the terminal, the
+  /usr/local/bin/gh in a container session. The binary of riff that runs
+  under the name gh adds the call to the tally as the caller session,
+  and replaces itself with the gh of the image, so the terminal, the
   output, the exit code and the signals are those of gh. It counts a
   call before it runs, with the points of the table of the arguments. It
   counts nothing for a call that uses no limit, as gh auth, and for a
@@ -5885,9 +5891,8 @@ of this part when they merge.
   request: the check runs of the head of the latest pull request of the
   default branch that has some. When the setup pull request is the only
   one, riff waits for its check runs. `riff init` also checks the CI
-  check of the default branch. It has no step for it: the check names
-  the fix. A person who is not an admin of the repository gets each step
-  named, and riff changes nothing. A step that fails prints why and its
+  check of the default branch. riff changes nothing for a person who is
+  not an admin of the repository. A step that fails prints why and its
   fix, and the next steps run.
 - **01M5RGG9KJXCKH8C94145WS8SM** Before the question of the setup, `riff
   init` prints the line of a check that a step of the setup fixes with
@@ -6147,13 +6152,13 @@ of this part when they merge.
   the reason (01M53S7WAXD46YPN0DR96XSTMG), or one line that it removed
   none.
 - **01M53S7WAXD46YPN0DR96XSTMG** The sweep of 01M53NJ5V27BCHDNHK2THQQZZQ
-  removes a folder only when its clone has no file that is not committed
+  removes a folder when its clone has no file that is not committed
   (`git status --porcelain`) and no commit of `HEAD` or of a local
-  branch that no branch of `origin` has, or when the sweep pushed that
-  work (01M5NVKNGZPK0GG7B7ZWBS0DFE). Else, and when git cannot read the
-  clone, the folder stays. `riff daemon sweep` prints each folder that
-  stays for this reason, with the reason. The log of the daemon gets
-  that line one time, and again when the reason changes.
+  branch that no branch of `origin` has. For a clone with such work, the
+  sweep does as 01M5NVKNGZPK0GG7B7ZWBS0DFE says. When git cannot read
+  the clone, the folder stays. `riff daemon sweep` prints each folder
+  that stays because of its clone, with the reason. The log of the
+  daemon gets that line one time, and again when the reason changes.
 - **01M53S7WDPQ2GWHJWJ6SZXZ5PN** A job of the daemon keeps each folder
   of its item from before the clone of its session to the end of its
   last step after the end. The steps after the end read the folder, for
@@ -6242,13 +6247,13 @@ of this part when they merge.
   session to stop each background task that it started, and to leave
   none at the end of its work.
 - **01M5R580VCRCHJM8FY7NT485R1** The start texts of a build, a rebase, a
-  fix of checks and a verify, and the instructions of the lead, say only
-  what riff needs from a session: the item, the branch, the frame of the
-  pull request and the verify report. They name no convention of the
-  riff repository: not `just`, `requirements.md`, the book or the Gate.
-  The verify text names the checks of the full check as riff read them.
-  The `CLAUDE.md` of riff holds the rules that left the texts. A test
-  of the texts (`text::tests`) checks the words, and the how-to "Write a
+  fix of checks and a verify, and the instructions of the lead, say what
+  riff needs from a session: the item, the branch, the frame of the pull
+  request and the verify report. They name no convention of the riff
+  repository: not `just`, `requirements.md`, the book or the Gate. The
+  verify text names the checks of the full check as riff read them. The
+  `CLAUDE.md` of riff holds the rules that left the texts. A test of the
+  texts (`text::tests`) checks the words, and the how-to "Write a
   CLAUDE.md, when you want one" says what a `CLAUDE.md` of a repository
   may say.
 - **01M51R8H3TXPKAEWDJQGQ01PBK** A repository with no session image of
@@ -6317,19 +6322,18 @@ of this part when they merge.
   in with the token of the plan (`riff claude-token`).
 - **01M4Z60B869HWDTZMSYPVYACD8** The daemon gives each session the
   long-lived token of `claude setup-token` in `CLAUDE_CODE_OAUTH_TOKEN`.
-  riff gives podman only the name of the variable
-  (`-e CLAUDE_CODE_OAUTH_TOKEN`), so the value is in no command line.
-  riff keeps the token in its own folder, with mode 0600, and never in a
-  log, a message or a clone. Only on a host with no token, riff binds
-  `~/.claude/.credentials.json` into the Claude folder of the session
-  with no write, and starts no session while the access token has less
-  than 60 minutes left (01M58B7H50RCG2VXXV9XX5Y7HM).
+  riff gives podman only the name of the variable (`-e
+  CLAUDE_CODE_OAUTH_TOKEN`), so the value is in no command line. riff
+  never keeps the token in a log, a message or a clone. Only on a host
+  with no token, riff binds `~/.claude/.credentials.json` into the
+  Claude folder of the session with no write, and starts no session
+  while the access token has less than 60 minutes left
+  (01M58B7H50RCG2VXXV9XX5Y7HM).
 - **01M58B7GZT7WFSBBG1XWJHR4MH** `riff claude-token` reads the token
   from stdin, with no echo. It refuses when stdin is not a terminal, so
-  an agent session cannot run it. It keeps the token in the file
-  `claude-token` in the folder of the daemon, with mode 0600, in the
-  place of the old one. The token goes through no riff-server, no
-  message, no log and no clone.
+  an agent session cannot run it. A new token takes the place of the old
+  one. The token goes through no riff-server, no message, no log and no
+  clone.
 - **01M58B7H2HMYT6VTY0B8T2G0KW** When a token is set, the daemon starts
   each container with `-e CLAUDE_CODE_OAUTH_TOKEN` and binds no
   `.credentials.json`. The value goes in the environment of podman, and
@@ -6345,10 +6349,9 @@ of this part when they merge.
   starts no new session and the lead gets one message
   (01M57A7A1W2K9440WZA1QZ3M9T). `riff claude-token` removes the mark.
 - **01M58B7HA8CRCW0MJ17QP3R5QG** `riff daemon status` and the part
-  `Hosts` of `riff who` show `claude token`: `set`, `refused` or
-  `not set`, and never the value. With no token, `riff daemon status`
-  gives the step: run `claude setup-token`, then `riff claude-token`,
-  on this machine.
+  `Hosts` of `riff who` show `claude token`, and never the value. With
+  no token, `riff daemon status` gives the step: run `claude
+  setup-token`, then `riff claude-token`, on this machine.
 - **01M58XZF928T82YAMF4DSJBKBF** This supersedes
   01M58B7GZT7WFSBBG1XWJHR4MH, 01M4Z60B869HWDTZMSYPVYACD8 and
   01M58B7HA8CRCW0MJ17QP3R5QG in part, for the place of the token
@@ -6495,20 +6498,19 @@ of this part when they merge.
 - **01M5ND0ZNFFAPT1AWD3DP1Y77N** A release pull request needs no model
   verify. `riff release verify N` checks that the pull request has the
   label `release`, that its diff is only `Cargo.toml` and `Cargo.lock`,
-  that its body has the format of `riff release cut`, and that the Gate
-  of its head commit passed. Then it sets the status `riff/verify`. It
-  refuses else, and sets nothing.
+  that its body has the format of `riff release cut`, and that the full
+  check of its head commit passed. Then it sets the status
+  `riff/verify`. It refuses else, and sets nothing.
 - **01M5NCYW06FJ8P5X629VFK1BNR** One message of the owner or of an admin
   in riff chat approves the deploy of a release: "approved", "approve
   4.0.1" or "approve v4.0.1", from a person and not a session. A message
   with no version counts for the version of the last release line of
   riff before it. With it, the lead runs `riff release approve` and
   `riff release check`. `riff release approve` of the lead accepts this
-  message instead of the publish line, and replaces
-  01M594XQJMXAXY3JXP66Y8EVQ7 in part. A message with `not`, `never` or
-  `don't` does not approve. A message of the owner or of an admin with
-  `stop` or `wait` after the approval cancels it, and the lead stops
-  before the next step.
+  message, and replaces 01M594XQJMXAXY3JXP66Y8EVQ7 in part. A message
+  with `not`, `never` or `don't` does not approve. A message of the
+  owner or of an admin with `stop` or `wait` after the approval cancels
+  it, and the lead stops before the next step.
 - **01M5R13DK401K3TZ91E2QK2DYM** The refusal of `riff release verify`
   for the full check of the head commit names the commit, the checks of
   the full check and their state, as the line of `riff verify pass`
@@ -6615,12 +6617,12 @@ of this part when they merge.
   older than the newest one. The run by hand has the name
   `Deploy vPREV`, so `riff release approve vPREV` and `riff release
   check vPREV` find it.
-- **01M58KMMCZCE7HDNVT9PVHVZX2** `riff wave end N` refuses while a
-  merged pull request of the wave, other than a release pull request,
-  is in a release tag with no checked release, and names the next step.
-  It refuses while one is in no release tag, unless `--no-release TEXT`
-  is given: then riff writes "No release: TEXT" in the description of
-  the wave.
+- **01M58KMMCZCE7HDNVT9PVHVZX2** In a repository with the release cycle
+  of riff, `riff wave end N` refuses while a merged pull request of the
+  wave, other than a release pull request, is in a release tag with no
+  checked release, and names the next step. It refuses while one is in
+  no release tag, unless `--no-release TEXT` is given: then riff writes
+  "No release: TEXT" in the description of the wave.
 - **01M58KMMF9WMH39ZMD0MKGRVZB** `riff init` writes the permission
   rules of the lead for `riff release cut`, `publish`, `status`,
   `check`, `retry` and `rollback`, and no rule that names `approve`.
@@ -7047,18 +7049,16 @@ that builds it merges.
   and the desktop GUI (#996). The build items of a UI come from its
   child design, after Mike signs it off.
 - **01M594XQJMXAXY3JXP66Y8EVQ7** `riff release approve vX.Y.Z` also
-  works for the lead of the owner, also in a container, when
-  riff-server holds a verified message of the owner or of an admin in
-  the thread `chat`, from a person and not a session, that comes after
-  the publish line of `riff release publish vX.Y.Z`, names the
-  version, and says `approve` or `deploy`. Code reads the thread from
-  riff-server. The lead asks no yes or no. The approval comment names
-  the message number. It refuses a message of a session, of another
-  version, before the publish, or of a member, and a worker, a work
-  session in a container, and a session that is not the lead. In a
-  plain terminal it works as before. When the auto mode checker blocks
-  a release command, `riff denials` has a record, and the lead files an
-  issue for it.
+  works for the lead of the owner, also in a container, when riff-server
+  holds a verified message of the owner or of an admin in the thread
+  `chat`, from a person and not a session, that says `approve` or
+  `deploy`. Code reads the thread from riff-server. The lead asks no yes
+  or no. The approval comment names the message number. It refuses a
+  message of a session, of another version, before the publish, or of a
+  member, and a worker, a work session in a container, and a session
+  that is not the lead. In a plain terminal it works as before. When the
+  auto mode checker blocks a release command, `riff denials` has a
+  record, and the lead files an issue for it.
 - **01M6QEXNM0QCGH6RG4Q8M9VH4W** With the TUI too, `riff top` stays the
   live table that it draws again in place until Ctrl-C, and `riff top
   --once` prints one table and exits. `riff top` gets no alias.
@@ -7076,7 +7076,9 @@ that builds it merges.
   Sessions, Chat, Waves, Machines, Devices and Reports. `Alt-1` to
   `Alt-6` open a tab. `Tab` opens the next tab, and `Shift-Tab` the tab
   before. Outside the prompt of the Chat tab and a text that the note
-  line asks for, the keys `1` to `6` open a tab too.
+  line asks for, the keys `1` to `6` open a tab too. While a question of
+  the TUI waits in the note line, these keys answer no
+  (01M6VFD0S90SB8M8WV952NT4Y1).
 - **01M6VAZK1R932VQMJBC32MTTJB** Each tab of the TUI has five parts: the
   tab strip on the first row, the header on the second row, the body,
   the note line on the row before the last, and the key line on the last
@@ -7102,7 +7104,8 @@ that builds it merges.
   of the tab. `Ctrl-C` ends the TUI. The sessions go on. Outside the
   prompt of the Chat tab and a text that the note line asks for, `q`
   ends the TUI too, `?` shows each key of the tab in a popup, and `?` or
-  `Esc` closes it.
+  `Esc` closes it. While a question of the TUI waits in the note line,
+  `?` answers no (01M6VFD0S90SB8M8WV952NT4Y1).
 - **01M6VAZKG8FS4HEA9VSA4Z4YF1** The TUI takes the mouse: a click acts
   as the key of the place that it hits, for example a click on a tab
   opens it, and a click on a key of the key line presses that key. A

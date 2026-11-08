@@ -25,7 +25,8 @@ The book in `docs/src/` holds the requirements and the big picture.
   requirement that a new one supersedes in part stays, and its text
   keeps only the part that holds. `just reqs` fails on a requirement
   in `requirements.md` that says "Superseded by" or "Replaced by" with
-  no "in part".
+  no "in part". Hygiene fails a pull request that supersedes a
+  requirement in part and leaves its text as it was.
 - No users yet. Change any interface freely. No compatibility shims.
 - Work on a branch. Merge by pull request with auto-merge. Never push
   to `main`.

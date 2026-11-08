@@ -36,6 +36,22 @@
 //! keeps only the part that holds. A citation of an ID finds it on
 //! either page.
 //!
+//! The cut of a requirement superseded in part is a check of a change,
+//! not of one text: [`uncut`] compares `requirements.md` before and
+//! after the change. It finds each pair that the change adds ([`in_part`])
+//! where the text of the old requirement stays as it was. The job
+//! `Hygiene` of a pull request runs it (`hygiene pr`, rule `in-part`,
+//! 01M6WBVMJY79HJRQJZ3ZVD5CCC).
+//!
+//! ```mermaid
+//! flowchart LR
+//!     O[requirements.md before] --> P[pairs: B supersedes A in part]
+//!     N[requirements.md after] --> P
+//!     P -- "a pair the change adds" --> T{text of A changed?}
+//!     T -- no --> E[in-part: names A and B]
+//!     T -- yes --> K[ok]
+//! ```
+//!
 //! `just req SECTION "text"` adds a requirement ([`add`]): it gets an ID
 //! like `just rid`, wraps the text at 72 characters, and writes it after
 //! the last requirement of the section, never inside one. It writes to
@@ -261,6 +277,202 @@ fn superseded_in_full(block: &[&str]) -> Option<&'static str> {
     ["Superseded by", "Replaced by"]
         .into_iter()
         .find(|marker| text.contains(marker))
+}
+
+/// A requirement `by` that supersedes the requirement `id` in part.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InPart {
+    /// The ID of the old requirement: its text keeps only the part that
+    /// holds.
+    pub id: String,
+    /// The ID of the new requirement.
+    pub by: String,
+}
+
+impl InPart {
+    fn new(id: &str, by: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            by: by.to_owned(),
+        }
+    }
+}
+
+/// Each pair of `requirements` (the text of [`REQUIREMENTS`]) where one
+/// requirement supersedes another in part, in the order of the page and
+/// each pair once. A block says it in one of two forms:
+///
+/// - The new one: "Supersedes A in part", "Supersedes A and B in part",
+///   "Supersedes in part A", "Supersedes A in full, and B in part", also
+///   with "supersedes" or "replaces". Each ID before "in part" counts,
+///   up to the last "in full" or the start of the clause. After
+///   "Supersedes in part", each ID of the clause counts.
+/// - The old one: "Superseded in part by B", "Superseded by B in part",
+///   "Replaced in part by B".
+///
+/// A clause ends at `.`, `:` or `;`. A line break may split it.
+///
+/// ```
+/// use reqs::InPart;
+///
+/// let page = "- **R3** New. Supersedes R1 in full, and R2 in part.\n\
+///             - **R4** Newer. Supersedes in part R3\n  and R2: the rest stays.\n\
+///             - **R5** Old. Superseded by R4 in part.\n\
+///             - **R6** Supersedes R5.\n";
+/// let pairs = reqs::in_part(page);
+/// assert_eq!(pairs, [
+///     InPart { id: "R2".into(), by: "R3".into() },
+///     InPart { id: "R3".into(), by: "R4".into() },
+///     InPart { id: "R2".into(), by: "R4".into() },
+///     InPart { id: "R5".into(), by: "R4".into() },
+/// ]);
+/// ```
+pub fn in_part(requirements: &str) -> Vec<InPart> {
+    let mut pairs: Vec<InPart> = Vec::new();
+    for (id, text) in blocks(requirements) {
+        for pair in block_in_part(id, &text) {
+            if !pairs.contains(&pair) {
+                pairs.push(pair);
+            }
+        }
+    }
+    pairs
+}
+
+/// Each requirement that a change from `old` to `new` (two texts of
+/// [`REQUIREMENTS`]) supersedes in part, and whose text the change does
+/// not cut. The change supersedes a requirement A in part when `new`
+/// has a pair of [`in_part`] that `old` does not have, and A is in
+/// `old`. It cuts A when the text of A in `new` differs from the text
+/// in `old`. The compare skips the wrap, and each sentence that marks A
+/// as superseded in part: such a mark alone is no cut. A that `new` no
+/// longer has moved to the history page, superseded in full: no error.
+///
+/// ```
+/// use reqs::InPart;
+///
+/// let old = "- **R1** One. Two.\n";
+/// let new = "- **R1** One. Two.\n- **R2** Three. Supersedes R1 in part.\n";
+/// assert_eq!(reqs::uncut(old, new), [InPart { id: "R1".into(), by: "R2".into() }]);
+///
+/// let cut = "- **R1** One.\n- **R2** Three. Supersedes R1 in part.\n";
+/// assert!(reqs::uncut(old, cut).is_empty());
+///
+/// let marked = "- **R1** One. Two. Superseded in part\n  by R2.\n- **R2** Three.\n";
+/// assert_eq!(reqs::uncut(old, marked), [InPart { id: "R1".into(), by: "R2".into() }]);
+/// ```
+pub fn uncut(old: &str, new: &str) -> Vec<InPart> {
+    let before: BTreeMap<&str, String> = blocks(old).into_iter().collect();
+    let after: BTreeMap<&str, String> = blocks(new).into_iter().collect();
+    let known = in_part(old);
+    in_part(new)
+        .into_iter()
+        .filter(|pair| !known.contains(pair))
+        .filter(|pair| {
+            let (Some(was), Some(is)) = (before.get(pair.id.as_str()), after.get(pair.id.as_str()))
+            else {
+                return false;
+            };
+            unmarked(&pair.id, was) == unmarked(&pair.id, is)
+        })
+        .collect()
+}
+
+/// The ID and the text of each requirement of `requirements`, in the
+/// order of the page. The text is the words of the block, with one
+/// space between two words.
+fn blocks(requirements: &str) -> Vec<(&str, String)> {
+    let lines: Vec<&str> = requirements.lines().collect();
+    let mut out = Vec::new();
+    for (n, line) in lines.iter().enumerate() {
+        if let Some(id) = defined(line) {
+            let text = lines[n..=block_end(&lines, n)]
+                .iter()
+                .flat_map(|l| l.split_whitespace())
+                .collect::<Vec<_>>()
+                .join(" ");
+            out.push((id, text));
+        }
+    }
+    out
+}
+
+/// The pairs of [`in_part`] that the block `text` of requirement `id`
+/// says.
+fn block_in_part(id: &str, text: &str) -> Vec<InPart> {
+    let mut pairs = Vec::new();
+    for clause in clauses(text, &["supersedes ", "replaces "]) {
+        let words: Vec<&str> = words(clause).collect();
+        let lead = words.starts_with(&["in", "part"]);
+        let mut pending = Vec::new();
+        let mut k = 0;
+        while k < words.len() {
+            match (words[k], words.get(k + 1)) {
+                ("in", Some(&"part")) => {
+                    pairs.extend(pending.drain(..).map(|old| InPart::new(old, id)));
+                    k += 2;
+                }
+                ("in", Some(&"full")) => {
+                    pending.clear();
+                    k += 2;
+                }
+                (word, _) => {
+                    if is_citation(word) && word != id {
+                        pending.push(word);
+                    }
+                    k += 1;
+                }
+            }
+        }
+        if lead {
+            pairs.extend(pending.into_iter().map(|old| InPart::new(old, id)));
+        }
+    }
+    for clause in clauses(text, &["superseded ", "replaced "]) {
+        let words: Vec<&str> = words(clause).collect();
+        if words.windows(2).any(|w| w == ["in", "part"]) {
+            pairs.extend(
+                words
+                    .into_iter()
+                    .filter(|w| is_citation(w) && *w != id)
+                    .map(|by| InPart::new(id, by)),
+            );
+        }
+    }
+    pairs
+}
+
+/// The clauses of `text` after each of the words `starts`, in upper or
+/// lower case: up to the next `.`, `:` or `;`, or the end.
+fn clauses<'a>(text: &'a str, starts: &[&str]) -> Vec<&'a str> {
+    let lower = text.to_ascii_lowercase();
+    let mut out = Vec::new();
+    for start in starts {
+        for (at, _) in lower.match_indices(start) {
+            let rest = &text[at + start.len()..];
+            let end = rest.find(['.', ':', ';']).unwrap_or(rest.len());
+            out.push(&rest[..end]);
+        }
+    }
+    out
+}
+
+/// The text of requirement `id` with no sentence that marks it as
+/// superseded in part: such a sentence names a pair of [`in_part`] with
+/// `id` as the old requirement.
+fn unmarked(id: &str, text: &str) -> String {
+    text.split_inclusive(". ")
+        .filter(|sentence| !block_in_part(id, sentence).iter().any(|pair| pair.id == id))
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// True for a word that has the form of a citation: an old ID or a
+/// ULID.
+fn is_citation(word: &str) -> bool {
+    r_number(word).is_some() || is_ulid(word)
 }
 
 /// The last line (0-based) of the requirement block that starts on line
@@ -523,6 +735,96 @@ mod tests {
         ] {
             let requirements = format!("{text}- **{id}** New.\n");
             assert_eq!(check(&requirements, "", &[]), Report::default(), "{text}");
+        }
+    }
+
+    /// The rules of today before a change: R1 with two sentences.
+    const BEFORE: &str = "## A\n\n- **R1** The old rule. It has\n  two parts.\n";
+
+    #[test]
+    fn a_change_that_supersedes_in_part_and_leaves_the_text_fails() {
+        let id = new_id();
+        let after = format!("{BEFORE}- **{id}** The new rule. Supersedes R1 in part.\n");
+        assert_eq!(uncut(BEFORE, &after), [InPart::new("R1", &id)]);
+    }
+
+    #[test]
+    fn a_change_that_supersedes_in_part_and_cuts_the_text_passes() {
+        let id = new_id();
+        let after = format!(
+            "## A\n\n- **R1** The old rule.\n- **{id}** The new rule. Supersedes R1 in part.\n"
+        );
+        assert_eq!(uncut(BEFORE, &after), []);
+    }
+
+    #[test]
+    fn a_new_wrap_is_no_cut() {
+        let id = new_id();
+        let after = format!(
+            "## A\n\n- **R1** The old\n  rule. It has two parts.\n- **{id}** Supersedes in part\n  R1.\n"
+        );
+        assert_eq!(uncut(BEFORE, &after), [InPart::new("R1", &id)]);
+    }
+
+    #[test]
+    fn a_mark_on_the_old_requirement_alone_is_no_cut() {
+        let id = new_id();
+        for old in [
+            format!("- **R1** The old rule. It has\n  two parts. Superseded in part by {id}.\n"),
+            format!(
+                "- **R1** The old rule. Replaced in part by {id}: the second part. It has two parts.\n"
+            ),
+        ] {
+            let after = format!("## A\n\n{old}- **{id}** The new rule.\n");
+            assert_eq!(uncut(BEFORE, &after), [InPart::new("R1", &id)], "{old}");
+        }
+        let after = format!(
+            "## A\n\n- **R1** The old rule. Superseded in part by {id}.\n- **{id}** The new rule.\n"
+        );
+        assert_eq!(uncut(BEFORE, &after), []);
+    }
+
+    #[test]
+    fn each_old_requirement_of_a_new_one_needs_its_cut() {
+        let id = new_id();
+        let before = format!("{BEFORE}- **R2** Two.\n- **R3** Three.\n");
+        let after = format!(
+            "{BEFORE}- **R2** Two, cut.\n- **R3** Three.\n- **{id}** Supersedes R1, R2 and R3 in part.\n"
+        );
+        assert_eq!(
+            uncut(&before, &after),
+            [InPart::new("R1", &id), InPart::new("R3", &id)]
+        );
+    }
+
+    #[test]
+    fn a_pair_of_an_older_change_is_not_checked_again() {
+        let id = new_id();
+        let before = format!("{BEFORE}- **{id}** New. Supersedes R1 in part.\n");
+        let after = format!("{before}- **R2** Other.\n");
+        assert_eq!(uncut(&before, &after), []);
+    }
+
+    #[test]
+    fn an_old_requirement_that_is_new_or_gone_needs_no_cut() {
+        let (new, newer) = (new_id(), new_id());
+        let after =
+            format!("{BEFORE}- **{new}** New.\n- **{newer}** Newer. Supersedes {new} in part.\n");
+        assert_eq!(uncut(BEFORE, &after), [], "the old one is new too");
+        let moved = format!("## A\n\n- **{new}** New. Supersedes R1 in part.\n");
+        assert_eq!(uncut(BEFORE, &moved), [], "R1 moved to the history page");
+    }
+
+    #[test]
+    fn supersedes_in_full_is_not_in_part() {
+        let id = new_id();
+        for text in [
+            format!("- **{id}** Supersedes R1.\n"),
+            format!("- **{id}** Supersedes R1 in full.\n"),
+            format!("- **{id}** Superseded by R1.\n"),
+            format!("- **{id}** Supersedes R1. A part of the screen stays in part.\n"),
+        ] {
+            assert_eq!(in_part(&text), [], "{text}");
         }
     }
 
