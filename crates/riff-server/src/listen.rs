@@ -85,6 +85,32 @@
 //!     C->>N: each call
 //!     N-->>C: the reply
 //! ```
+//!
+//! # The shutdown
+//!
+//! On SIGTERM or Ctrl-C, [`serve`] closes the port, and
+//! [`Service::shutdown`] replies 503 to each new call, writes each
+//! record in the queue, saves the token store and a last checkpoint,
+//! and ends the lease (R129, 01M4264028A3KVDK10PPERHM0C). Then
+//! `riff-server` exits with success, or with 1 when the save failed.
+//!
+//! The shutdown does not wait for a call that is still open
+//! (01M6YP76C4592AA973ZDFSJX77): for example a refused call whose
+//! client sends a part of the body and then nothing, or a stream. The
+//! exit closes the connection of the call, and the call gets no reply.
+//! An open call does not change the exit status.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant O as a call that is still open
+//!     participant R as riff-server
+//!     participant S as store
+//!     Note over R: SIGTERM
+//!     R->>R: close the port: no new connection
+//!     R->>S: write the queue, save, end the lease
+//!     Note over R: exit with success
+//!     R--xO: the connection closes, with no reply
+//! ```
 
 use std::future::{Future, IntoFuture};
 use std::net::SocketAddr;
@@ -127,8 +153,21 @@ pub struct Port {
 
 impl Port {
     /// Takes the address `listen`, and does not listen on it. It fails
-    /// when another process has the address. With port 0, the OS gives
-    /// a free port: see [`Port::addr`].
+    /// when another process has the address, and the error names the
+    /// address (01M6YP766GCZMNB64NVEXKPPGZ). With port 0, the OS gives a
+    /// free port: see [`Port::addr`].
+    ///
+    /// ```
+    /// use riff_server::listen::Port;
+    ///
+    /// let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    /// let addr = held.local_addr().unwrap();
+    /// let Err(error) = Port::reserve(addr) else {
+    ///     panic!("another process has the address");
+    /// };
+    /// assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+    /// assert!(error.to_string().starts_with(&format!("cannot listen on {addr}: ")));
+    /// ```
     pub fn reserve(listen: SocketAddr) -> std::io::Result<Port> {
         let socket = if listen.is_ipv4() {
             TcpSocket::new_v4()?
@@ -138,7 +177,9 @@ impl Port {
         // As `TcpListener::bind`: a new start gets the address of a
         // server that stopped a moment ago.
         socket.set_reuseaddr(true)?;
-        socket.bind(listen)?;
+        socket
+            .bind(listen)
+            .map_err(|error| cannot_listen(listen, error))?;
         let addr = socket.local_addr()?;
         Ok(Port { socket, addr })
     }
@@ -148,10 +189,21 @@ impl Port {
         self.addr
     }
 
-    /// Opens the port: the server takes connections from now on.
+    /// Opens the port: the server takes connections from now on. It
+    /// fails when another process opened the address first, and the
+    /// error names the address (01M6YP766GCZMNB64NVEXKPPGZ).
     pub fn open(self) -> std::io::Result<TcpListener> {
-        self.socket.listen(BACKLOG)
+        let addr = self.addr;
+        self.socket
+            .listen(BACKLOG)
+            .map_err(|error| cannot_listen(addr, error))
     }
+}
+
+/// The error of an address that the server cannot listen on: the
+/// address and the error of the OS, with its kind.
+fn cannot_listen(addr: SocketAddr, error: std::io::Error) -> std::io::Error {
+    std::io::Error::new(error.kind(), format!("cannot listen on {addr}: {error}"))
 }
 
 /// Checks the listen address of a server. `trusted` is true for a riff
@@ -244,9 +296,10 @@ fn starting() -> Response {
 /// - `check` runs after the first save of the server, before it serves.
 ///   An error stops the start: `main` checks the listen address there.
 /// - At the end of `shutdown`, the server stops taking calls, saves and
-///   ends its lease (R129). When `shutdown` ends before the end of the
-///   wait for the lease, it ends the lease that it took, closes the port
-///   and returns at once (01M56T4SZ4Y6PSY1VTVA3758FT).
+///   ends its lease (R129). It does not wait for a call that is still
+///   open (see "The shutdown" above). When `shutdown` ends before the
+///   end of the wait for the lease, it ends the lease that it took,
+///   closes the port and returns at once (01M56T4SZ4Y6PSY1VTVA3758FT).
 /// - When the server stops for good (R141, 01M52JYGPX5ETP3HKR0S0Y0YCR),
 ///   it closes the port at once, and returns when the hand-over is
 ///   written, at most [`crate::lease::Timing::exit_after`] later. When

@@ -66,15 +66,15 @@ async fn at_an_instance_change_each_call_gets_a_reply_within_20_seconds() {
         tempfile::NamedTempFile::new().unwrap(),
         tempfile::NamedTempFile::new().unwrap(),
     );
-    let old_listen = common::free_address();
-    let mut old = common::Server(common::server_on_dir(dir.path(), &old_listen, &old_log));
+    let mut old = common::Server(common::server_on_dir(dir.path(), common::LISTEN, &old_log));
+    let old_listen = common::listen_address(&mut old.0, &old_log);
     common::wait_until_it_serves(&old_listen).await;
     let lease = dir.path().join(LEASE);
     let first_lease = fs::read(&lease).unwrap();
 
     // Cloud Run starts a second instance while the first one serves.
-    let new_listen = common::free_address();
-    let _new = common::Server(common::server_on_dir(dir.path(), &new_listen, &new_log));
+    let mut new = common::Server(common::server_on_dir(dir.path(), common::LISTEN, &new_log));
+    let new_listen = common::listen_address(&mut new.0, &new_log);
     let listens = [old_listen.as_str(), new_listen.as_str()];
     let span = Span::start();
     let mut waiting: Option<Span> = None;
@@ -160,24 +160,24 @@ fn text(log: &NamedTempFile) -> String {
 async fn at_a_deploy_a_second_old_instance_does_not_take_the_lease_of_the_new_revision() {
     let dir = tempfile::tempdir().unwrap();
     let logs: [NamedTempFile; 3] = std::array::from_fn(|_| NamedTempFile::new().unwrap());
-    let old_listen = common::free_address();
-    let _old = common::Server(common::server_of_revision(
+    let mut old = common::Server(common::server_of_revision(
         dir.path(),
-        &old_listen,
+        common::LISTEN,
         &logs[0],
         "riff-server-00025-2s5",
     ));
+    let old_listen = common::listen_address(&mut old.0, &logs[0]);
     common::wait_until_it_serves(&old_listen).await;
     let first = lease_of(dir.path());
 
     // The deploy: an instance of the new revision starts.
-    let new_listen = common::free_address();
     let mut new = common::Server(common::server_of_revision(
         dir.path(),
-        &new_listen,
+        common::LISTEN,
         &logs[1],
         "riff-server-00026-899",
     ));
+    let new_listen = common::listen_address(&mut new.0, &logs[1]);
     let span = Span::start();
     let id = loop {
         let lease = lease_of(dir.path());
@@ -195,13 +195,13 @@ async fn at_a_deploy_a_second_old_instance_does_not_take_the_lease_of_the_new_re
 
     // No instance of the old revision has an open port: Cloud Run starts
     // a second one.
-    let second_listen = common::free_address();
     let mut second = common::Server(common::server_of_revision(
         dir.path(),
-        &second_listen,
+        common::LISTEN,
         &logs[2],
         "riff-server-00025-c7d",
     ));
+    let second_listen = common::listen_address(&mut second.0, &logs[2]);
     while !text(&logs[2]).contains("does not take it") {
         assert_eq!(
             lease_of(dir.path())["id"],
@@ -280,25 +280,25 @@ async fn stop(server: &mut common::Server) -> std::process::ExitStatus {
 async fn at_a_failed_deploy_the_old_revision_serves_again_within_20_seconds() {
     let dir = tempfile::tempdir().unwrap();
     let logs: [NamedTempFile; 3] = std::array::from_fn(|_| NamedTempFile::new().unwrap());
-    let old_listen = common::free_address();
-    let _old = common::Server(common::server_of_revision(
+    let mut old = common::Server(common::server_of_revision(
         dir.path(),
-        &old_listen,
+        common::LISTEN,
         &logs[0],
         "riff-server-00025-2s5",
     ));
+    let old_listen = common::listen_address(&mut old.0, &logs[0]);
     common::wait_until_it_serves(&old_listen).await;
     let first = lease_of(dir.path());
 
     // The deploy: an instance of the new revision takes the lease, and
     // the old instance closes its port.
-    let new_listen = common::free_address();
     let mut new = common::Server(common::server_of_revision(
         dir.path(),
-        &new_listen,
+        common::LISTEN,
         &logs[1],
         "riff-server-00026-899",
     ));
+    let new_listen = common::listen_address(&mut new.0, &logs[1]);
     let span = Span::start();
     let id = loop {
         let lease = lease_of(dir.path());
@@ -316,13 +316,13 @@ async fn at_a_failed_deploy_the_old_revision_serves_again_within_20_seconds() {
 
     // Cloud Run starts a second instance of the old revision. It waits
     // for the lease of the newer revision.
-    let second_listen = common::free_address();
-    let _second = common::Server(common::server_of_revision(
+    let mut second = common::Server(common::server_of_revision(
         dir.path(),
-        &second_listen,
+        common::LISTEN,
         &logs[2],
         "riff-server-00025-c7d",
     ));
+    let second_listen = common::listen_address(&mut second.0, &logs[2]);
     while !text(&logs[2]).contains("does not take it") {
         assert!(taken.within(Duration::from_secs(12)), "{}", text(&logs[2]));
         sleep(Duration::from_millis(50)).await;

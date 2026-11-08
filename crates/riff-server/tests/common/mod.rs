@@ -164,10 +164,47 @@ impl Drop for Server {
     }
 }
 
-/// A free port on the loopback address.
-pub fn free_address() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().to_string()
+/// The listen address of each real `riff-server` of a test
+/// (01M6YP7699AQGQ0QAG7HTY9ME9): the port 0, so the OS gives the server
+/// a free port. [`listen_address`] gives the real address.
+pub const LISTEN: &str = "127.0.0.1:0";
+
+/// The address in the line `riff-server listens on ADDRESS` of `log`,
+/// when the log has that line. The server writes it when its port
+/// opens. A line that the server still writes does not count.
+pub fn listening(log: &tempfile::NamedTempFile) -> Option<String> {
+    let text = std::fs::read_to_string(log.path()).unwrap();
+    let whole = &text[..text.rfind('\n').map_or(0, |end| end + 1)];
+    whole.lines().find_map(|line| {
+        let line: Value = serde_json::from_str(line).ok()?;
+        let message = line["message"].as_str()?;
+        Some(message.strip_prefix("riff-server listens on ")?.to_owned())
+    })
+}
+
+/// Waits until the real `riff-server` `server` on [`LISTEN`] opens its
+/// port, and gives its address: see [`listening`]. It fails with the
+/// log when the server ends first.
+pub fn listen_address(server: &mut Child, log: &tempfile::NamedTempFile) -> String {
+    let text = || std::fs::read_to_string(log.path()).unwrap();
+    let span = isolated::Span::start();
+    loop {
+        if let Some(address) = listening(log) {
+            return address;
+        }
+        if let Some(status) = server.try_wait().unwrap() {
+            panic!(
+                "riff-server ended with {status} before it listened:\n{}",
+                text()
+            );
+        }
+        assert!(
+            span.within(Duration::from_secs(60)),
+            "no open port:\n{}",
+            text()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// The real `riff-server` with its state in `dir`, on `listen`. Its log

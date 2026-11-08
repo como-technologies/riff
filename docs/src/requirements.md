@@ -1287,6 +1287,16 @@
   helpers, `user.name` and `user.email`), and a `GH_CONFIG_DIR` with the
   sign-in of a bot whose token is not real. So a test that depends on
   them fails on each machine and on the Gate, not only in a session.
+- **01M6YP766GCZMNB64NVEXKPPGZ** When `riff-server` cannot listen on its
+  address, for example because another process holds it, it stops with
+  one `ERROR` line `riff-server stops: cannot listen on ADDRESS:` and
+  the error of the OS, and exits with 1.
+- **01M6YP7699AQGQ0QAG7HTY9ME9** A test that runs `riff-server` gives it
+  the port 0, and takes the real address from the log line `riff-server
+  listens on ADDRESS`. A test that must name the address before the
+  start, as the command of a page of the book does, starts the server
+  again on a new port until the log of the server says that it listens
+  there.
 
 ## Saved state
 
@@ -1361,6 +1371,10 @@
   Its log and its checkpoints have the format of riff-server: the
   format tests of riff-server check the fixtures of each release
   against it. Only riff-server uses it.
+- **01M6YP76C4592AA973ZDFSJX77** On SIGTERM (R129), `riff-server` does
+  not wait for a call that is still open, for example a call with a slow
+  body or a stream. Its exit closes the connection of the call, with no
+  reply. An open call does not change the exit status.
 
 ## The log
 
