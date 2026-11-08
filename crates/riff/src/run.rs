@@ -172,9 +172,10 @@
 //! | The home | a tmpfs at the path of `HOME`, `HOME`, `USER`, `LOGNAME` | 01M4Z60B7SHAMXXFK15BE3KZSP, 01M4Z60B7S8V9KKZPNBCQ6M99N |
 //! | The clone | with write, at the same path, the working folder | 01M4Z60B7PTJMB37578K8FV22Q |
 //! | The objects of the main clone | no write, at the same path | 01M4Z60B7PQ07HRJBXS1TA73PX |
-//! | `~/.gitconfig`, `~/.config/gh` | no write, when they exist | 01M4Z60B7QDWEFQ96H448RE9N2 |
-//! | The sign-in of `gh` | `-e GH_TOKEN`: the name only | 01M4Z60B89BHXQVJ2MGRRQ2CKJ |
+//! | `~/.gitconfig` | no write, when it exists. No `~/.config/gh` | 01M4Z60B7QDWEFQ96H448RE9N2, 01M6WPMP035A93SM6SAJGS6MTC |
+//! | The sign-in of `gh` | `-e GH_TOKEN`: the name only. The daemon puts the folder of the token of the session in its place, when riff-server gives one ([`crate::daemon::gh_token`]) | 01M6WPMWSMQABE97YCMS5Z3M1P, 01M6WPMNXN1BSBEH74TG5DDRTF |
 //! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` | 01M4Z60B89G8YNVMTEPGX7FQCV |
+//! | The token of git | the credential helper `!gh auth git-credential` of `https://github.com` by `GIT_CONFIG_*`, after an empty one: no helper of `~/.gitconfig` | 01M6WPMNXN1BSBEH74TG5DDRTF |
 //! | The Claude folder | with write | 01M4Z60B86N999JRN7Z1G52PG4 |
 //! | The sign-in of `claude` | `-e CLAUDE_CODE_OAUTH_TOKEN`: the name only, when a token is set ([`crate::claude_token`]); else the sign-in file of the host with no write | 01M58B7H2HMYT6VTY0B8T2G0KW, 01M4Z60B869HWDTZMSYPVYACD8 |
 //! | The env and the volumes of the repository | `[session.env]` and `[session.volumes]` of the merged `riff.toml` ([`crate::session_setup`]). riff sets no variable and no volume of a language or a tool | 01M5SMVVC4GQS310CVK3H9CMQ7, 01M5SMW28KT5D5HPRH7KAZ8TVC |
@@ -245,8 +246,6 @@ pub struct Facts {
     pub sign_in: ClaudeSignIn,
     /// `~/.gitconfig`, when it exists.
     pub gitconfig: Option<PathBuf>,
-    /// `~/.config/gh`, when it exists.
-    pub gh_config: Option<PathBuf>,
     /// The model, the env and the volumes of the merged `riff.toml`
     /// (01M6VAQWECJ6N6VJF66KCMNYD1, 01M5SMVVC4GQS310CVK3H9CMQ7).
     pub setup: Setup,
@@ -281,7 +280,6 @@ pub enum ClaudeSignIn {
 ///     claude: "/data/riff/sessions/issue-12-1a2b3c4d/claude".into(),
 ///     sign_in: ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
 ///     gitconfig: Some("/home/mike/.gitconfig".into()),
-///     gh_config: None,
 ///     setup: Default::default(),
 /// };
 /// let spec = spec(&facts);
@@ -290,8 +288,14 @@ pub enum ClaudeSignIn {
 /// // The objects of the main clone: at the same path, with no write.
 /// let objects = spec.binds.iter().find(|b| b.target == facts.objects).unwrap();
 /// assert_eq!((&objects.source, objects.write), (&Source::Path(facts.objects.clone()), false));
-/// // The token of gh goes by its name only.
+/// // The token of gh goes by its name only: the daemon puts the token
+/// // of the session in its place, when riff-server gives one.
 /// assert!(spec.env.contains(&Env::Host("GH_TOKEN".into())));
+/// // No bind of the config of gh of the host (01M6WPMP035A93SM6SAJGS6MTC).
+/// assert!(!spec.binds.iter().any(|b| b.target.ends_with(".config/gh")));
+/// // git gets its token from gh (01M6WPMNXN1BSBEH74TG5DDRTF).
+/// let helper = Env::Value("GIT_CONFIG_VALUE_2".into(), "!gh auth git-credential".into());
+/// assert!(spec.env.contains(&helper));
 /// assert!(spec.command.windows(2).any(|w| w == ["--session-id", facts.session.as_str()]));
 /// // With a token, the name of the variable and no sign-in file.
 /// let token = riff::run::spec(&Facts { sign_in: ClaudeSignIn::Token, ..facts.clone() });
@@ -333,11 +337,6 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         target: home.join(".gitconfig"),
         write: false,
     }));
-    binds.extend(facts.gh_config.iter().map(|p| Bind {
-        source: Source::Path(p.clone()),
-        target: home.join(".config/gh"),
-        write: false,
-    }));
     binds.push(Bind {
         source: Source::Path(facts.claude.clone()),
         target: claude_dir.clone(),
@@ -358,9 +357,15 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         value("USER", &facts.user),
         value("LOGNAME", &facts.user),
         Env::Host("GH_TOKEN".into()),
-        value("GIT_CONFIG_COUNT", "1"),
+        value("GIT_CONFIG_COUNT", "3"),
         value("GIT_CONFIG_KEY_0", "commit.gpgsign"),
         value("GIT_CONFIG_VALUE_0", "false"),
+        // git asks gh for the token of the session: an empty helper first
+        // drops each helper of `~/.gitconfig` (01M6WPMNXN1BSBEH74TG5DDRTF).
+        value("GIT_CONFIG_KEY_1", GIT_HELPER),
+        value("GIT_CONFIG_VALUE_1", ""),
+        value("GIT_CONFIG_KEY_2", GIT_HELPER),
+        value("GIT_CONFIG_VALUE_2", "!gh auth git-credential"),
         value("CLAUDE_CONFIG_DIR", &shown(&claude_dir)),
     ];
     if facts.sign_in == ClaudeSignIn::Token {
@@ -397,6 +402,9 @@ pub fn spec(facts: &Facts) -> SessionSpec {
     crate::room::Limit::default().caps(&mut spec);
     spec
 }
+
+/// The key of the credential helper of git for GitHub.
+pub const GIT_HELPER: &str = "credential.https://github.com.helper";
 
 /// The first 8 characters of a session ID.
 ///
@@ -862,7 +870,10 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
     })
 }
 
-/// Takes each secret out of a text (01M4Z60B8KDXD190RWC7D184Q3).
+/// Takes each secret out of a text (01M4Z60B8KDXD190RWC7D184Q3), and
+/// each token of a GitHub App: `ghs_` and the letters, digits and `_`
+/// after it (01M6WPMX18BECQPTQNSTZMBN16). The daemon renews the token
+/// of a session after the start of its relay, so no list holds it.
 ///
 /// ```
 /// use riff::run::Scrub;
@@ -870,6 +881,11 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
 /// let scrub = Scrub::new(["gho_secret1".to_owned(), "".to_owned()]);
 /// assert_eq!(scrub.clean("token gho_secret1 here"), "token [secret] here");
 /// assert_eq!(scrub.clean("no token"), "no token");
+/// assert_eq!(
+///     Scrub::default().clean("oauth_token: ghs_16C7e42F292c6912E7710c838347Ae178B4a, end"),
+///     "oauth_token: [secret], end"
+/// );
+/// assert_eq!(Scrub::default().clean("ghs_ alone, and ghs_a1"), "ghs_ alone, and [secret]");
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct Scrub {
@@ -893,8 +909,34 @@ impl Scrub {
                 out = Cow::Owned(out.replace(secret.as_str(), HIDDEN));
             }
         }
+        if out.contains(APP_TOKEN) {
+            out = Cow::Owned(app_tokens_out(&out));
+        }
         out
     }
+}
+
+/// The start of a token of a GitHub App.
+const APP_TOKEN: &str = "ghs_";
+
+/// `text` with each token of a GitHub App replaced by [`HIDDEN`].
+fn app_tokens_out(text: &str) -> String {
+    let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(APP_TOKEN) {
+        let after = &rest[at + APP_TOKEN.len()..];
+        let len = after.find(|c: char| !part(c)).unwrap_or(after.len());
+        out.push_str(&rest[..at]);
+        if len == 0 {
+            out.push_str(APP_TOKEN);
+        } else {
+            out.push_str(HIDDEN);
+        }
+        rest = &after[len..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The one stream-json line that gives `claude` the text of a person.
@@ -1931,7 +1973,6 @@ async fn work(
         claude,
         sign_in: checked.host.claude.sign_in(),
         gitconfig: existing(home.join(".gitconfig")),
-        gh_config: existing(home.join(".config/gh")),
         setup: setup.clone(),
     };
     let spec = spec(&facts);
@@ -2124,7 +2165,6 @@ mod tests {
             claude: "/r/sessions/issue-12-1a2b3c4d/claude".into(),
             sign_in: ClaudeSignIn::File("/home/mike/.claude/.credentials.json".into()),
             gitconfig: Some("/home/mike/.gitconfig".into()),
-            gh_config: Some("/home/mike/.config/gh".into()),
             setup: Setup::default(),
         }
     }
@@ -2206,7 +2246,6 @@ mod tests {
                 "/r/sessions/issue-12-1a2b3c4d/clone -> /r/sessions/issue-12-1a2b3c4d/clone",
                 "/src/riff/.git/objects -> /src/riff/.git/objects (no write)",
                 "/home/mike/.gitconfig -> /home/mike/.gitconfig (no write)",
-                "/home/mike/.config/gh -> /home/mike/.config/gh (no write)",
                 "/r/sessions/issue-12-1a2b3c4d/claude -> /home/mike/.claude",
                 "/home/mike/.claude/.credentials.json -> /home/mike/.claude/.credentials.json \
                  (no write)",
@@ -2307,9 +2346,13 @@ mod tests {
                 "USER=mike",
                 "LOGNAME=mike",
                 "GH_TOKEN",
-                "GIT_CONFIG_COUNT=1",
+                "GIT_CONFIG_COUNT=3",
                 "GIT_CONFIG_KEY_0=commit.gpgsign",
                 "GIT_CONFIG_VALUE_0=false",
+                "GIT_CONFIG_KEY_1=credential.https://github.com.helper",
+                "GIT_CONFIG_VALUE_1=",
+                "GIT_CONFIG_KEY_2=credential.https://github.com.helper",
+                "GIT_CONFIG_VALUE_2=!gh auth git-credential",
                 "CLAUDE_CONFIG_DIR=/home/mike/.claude",
             ]
         );
@@ -2454,10 +2497,9 @@ mod tests {
     }
 
     #[test]
-    fn the_spec_binds_no_git_or_gh_config_that_the_host_does_not_have() {
+    fn the_spec_binds_no_git_config_that_the_host_does_not_have_and_never_the_gh_config() {
         let spec = spec(&Facts {
             gitconfig: None,
-            gh_config: None,
             ..facts()
         });
         let all: Vec<String> = spec.binds.iter().map(shown).collect();

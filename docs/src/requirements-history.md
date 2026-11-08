@@ -237,6 +237,11 @@ page [Requirements](requirements.md) holds the rules of today.
 
 ## Pull requests on GitHub
 
+- **01M3JN4QVR3JCRWC8TFJJTCPHF** Each session uses the GitHub account
+  of our user, so the author of a pull request can set `riff/verify`
+  on its own commit. We accept this gap until the sessions act with
+  their own GitHub identity (#97). Superseded by
+  01M6WPMEEWX09DHJZF18BKBPYW and 01M6WG52MWZB1SVQMMH6BKJSJ5.
 - **01M3NB6G132QG4TAEJ5QPRJNAE** The skill names one `riff` command
   for each step of a pull request: open it, wait for the merge, report
   a verify. It has no `gh` recipe and no shell loop for these steps.
@@ -2909,6 +2914,13 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   mermaid diagram, how a person moves a repository, the end of
   riff-server, and how to go back. Each item of Wave C adds its how-to
   to it. Superseded by the re-cut (01M53NGWJ48MMYPQNJQ0EY9T47).
+
+### The home of the person
+
+- **01M4Z60B89BHXQVJ2MGRRQ2CKJ** The daemon reads `gh auth token` on the
+  host, and gives it to the container in `GH_TOKEN`. riff gives podman
+  only the name of the variable (`-e GH_TOKEN`), so the value is in no
+  command line. Superseded by 01M6WPMP035A93SM6SAJGS6MTC.
 
 ### The security of riff's own code
 

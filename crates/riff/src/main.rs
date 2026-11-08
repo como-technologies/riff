@@ -62,7 +62,9 @@ enum Command {
     /// Show your URI and the state of the riff
     ///
     /// Inside Claude Code, it is the URI of the session. In a container, the
-    /// riff daemon of the host reads riff-server for the session.
+    /// riff daemon of the host reads riff-server for the session, and the
+    /// rows github and rights show the bot, the role and the rights of the
+    /// token of the session on GitHub.
     Whoami,
     /// List the sessions of the riff
     ///
@@ -2192,7 +2194,7 @@ async fn cli() -> Result<()> {
             // The URI of the server holds the claims and the lead
             // (01M517N7ANC06S4GTEEZHAB255).
             let shown = seen.uri.unwrap_or(me);
-            anstream::print!("{}", view::whoami(&shown, seen.state));
+            anstream::print!("{}", view::whoami(&shown, seen.state, seen.github.as_ref()));
         }
         Command::Who { all, long } => {
             let seen = match &reach {

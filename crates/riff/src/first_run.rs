@@ -153,6 +153,7 @@
 //!     no_done_when: None,
 //!     folder: "/home/mike/riff".into(),
 //!     container: false,
+//!     apps: None,
 //! };
 //! assert!(checks(&facts).iter().all(|c| c.passed()));
 //!
@@ -286,6 +287,83 @@ pub struct Facts {
     /// runs no podman, and the host runs the checks of the machine
     /// (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
     pub container: bool,
+    /// What riff-server says of the GitHub Apps of riff on the
+    /// repository ([`apps_of`], 01M6WPMWSMQABE97YCMS5Z3M1P). `None` when
+    /// riff did not ask: no repository on GitHub, no sign-in, or no
+    /// answer.
+    pub apps: Option<Apps>,
+}
+
+/// What riff-server says of the GitHub Apps of riff on one repository,
+/// from the check of the token of each role (01M6WG534PPE2JW8JQFRJDEK86).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Apps {
+    /// The repository, `OWNER/NAME`.
+    pub repo: String,
+    /// Each App that is not on the repository, as riff-server names it,
+    /// with its fix: `riff-acme is not installed on acme/app: riff github
+    /// install acme`.
+    pub missing: Vec<String>,
+}
+
+/// The check of the GitHub Apps of riff on a repository: a session there
+/// keeps the token of the person while an App is not on it
+/// (01M6WPMWSMQABE97YCMS5Z3M1P).
+///
+/// ```
+/// use riff::first_run::{Apps, apps_check};
+///
+/// let on = Apps { repo: "acme/app".into(), missing: vec![] };
+/// assert_eq!(apps_check(&on).line(), "pass  the GitHub Apps of riff: on acme/app");
+/// let missing = Apps {
+///     repo: "acme/app".into(),
+///     missing: vec!["riff-acme is not installed on acme/app: riff github install acme".into()],
+/// };
+/// assert_eq!(
+///     apps_check(&missing).line(),
+///     "fail  the GitHub Apps of riff: riff-acme is not installed on acme/app. Fix: riff github install acme"
+/// );
+/// ```
+pub fn apps_check(apps: &Apps) -> Check {
+    match apps.missing.first() {
+        None => Check::pass(text::INIT_APPS, text::init_apps_on(&apps.repo)),
+        Some(missing) => {
+            let (found, fix) = missing
+                .rsplit_once(": ")
+                .unwrap_or((missing.as_str(), "riff github check"));
+            Check::fail(text::INIT_APPS, found.to_owned(), fix.to_owned())
+        }
+    }
+}
+
+/// How long `riff init` waits for riff-server to check the GitHub Apps.
+const APPS_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// What riff-server says of the GitHub Apps of riff on `repo`
+/// ([`Apps`]): each role with an App that is not on the repository. A
+/// riff with no App gives no check: its sessions keep the token of the
+/// person by design. `None` when riff cannot ask.
+pub async fn apps_of(server: &str, repo: &str) -> Option<Apps> {
+    let api = riff_client::api::Api::new(server).signed_in(None).ok()?;
+    if !api.sends_token() {
+        return None;
+    }
+    let checked = tokio::time::timeout(APPS_WAIT, api.github_check(repo))
+        .await
+        .ok()?
+        .ok()?;
+    let missing = checked
+        .roles
+        .into_iter()
+        .filter_map(|role| role.problem)
+        .filter(|problem| problem.contains(": riff github install "))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    Some(Apps {
+        repo: repo.to_owned(),
+        missing,
+    })
 }
 
 /// The home of the person who runs riff.
@@ -450,6 +528,7 @@ impl Facts {
             no_done_when,
             folder: dir.to_owned(),
             container: crate::cycle::in_container(),
+            apps: None,
         }
     }
 }
@@ -721,6 +800,7 @@ pub fn checks(facts: &Facts) -> Vec<Check> {
     };
     checks.extend([image, riff]);
     checks.extend(facts.github.iter().flat_map(crate::repo_setup::checks_of));
+    checks.extend(facts.apps.iter().map(apps_check));
     checks
 }
 
@@ -1061,21 +1141,26 @@ pub fn pull(clone: &Path, branch: &str) -> Result<(), String> {
 /// (`riff init --image`, 01M5SNTPEP41NMSP3SEKR7KVB0). In a folder of a
 /// repository on GitHub, it asks the riff-server `server` for the bot of
 /// the session App, for the check of the guard
-/// (01M6WPV86SW4AAVA2NCBQNYXK3).
+/// (01M6WPV86SW4AAVA2NCBQNYXK3), and for the GitHub Apps of riff on the
+/// repository (01M6WPMWSMQABE97YCMS5Z3M1P).
 pub async fn init(mode: Mode, image: Option<session_image::Image>, server: &str) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
         use anyhow::Context;
         use std::io::IsTerminal;
         let here = std::env::current_dir().context("cannot read the current folder")?;
-        let bot = match crate::identity::github_origin(&here) {
+        let origin = crate::identity::github_origin(&here);
+        let bot = match origin {
             Some(_) => match riff_client::api::Api::new(server).signed_in(None) {
                 Ok(api) => crate::guard::session_bot(&api).await,
                 Err(e) => Err(text::guard_unasked(server, &format!("{e:#}"))),
             },
             None => Ok(None),
         };
-        let facts = Facts::here(&here, bot);
+        let mut facts = Facts::here(&here, bot);
+        if let Some(repo) = origin {
+            facts.apps = apps_of(server, &repo).await;
+        }
         let manager = crate::service::Systemd::here()?;
         let unit = Unit::of_this()?;
         let question = |question: Question| {
@@ -1132,6 +1217,7 @@ mod tests {
             no_done_when: None,
             folder: "/nonexistent/clone".into(),
             container: false,
+            apps: None,
         }
     }
 

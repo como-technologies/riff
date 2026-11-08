@@ -892,6 +892,19 @@ mod tests {
         c.trip(&GitHubChecked {
             roles: GitHubRole::ALL.into_iter().map(role).collect(),
         });
+        c.trip(&GitHubToken {
+            session: text("1a2b3c4d-0000"),
+        });
+        c.trip(&SessionToken {
+            role: GitHubRole::Worker,
+            repo: text("acme/app"),
+            bot: Some(text("riff-acme[bot]")),
+            bot_id: Some(1101),
+            token: Some(text("ghs_x")),
+            rights: [(text("contents"), text("write"))].into(),
+            ends: Some(text("2026-11-08T13:00:00Z")),
+            problem: Some(text("riff github install acme")),
+        });
         c.trip(&Members {});
         c.trip(&MembersReply {
             owner: Some(text("ann@acme.io")),

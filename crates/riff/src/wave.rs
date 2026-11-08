@@ -542,6 +542,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 
+use crate::daemon::gh_token;
 use crate::daemon::remote::Abort;
 use crate::daemon::sweep::{self, Fate, InJob};
 use crate::daemon::{Daemon, Ended, Out, PullFailed, Record, Say, Start};
@@ -1543,6 +1544,26 @@ pub trait World: Send + Sync {
     /// #1557), and gives a line for each. The default reports none.
     fn report_kept<'a>(&'a self, _wave: &'a Wave) -> BoxFuture<'a, Vec<String>> {
         Box::pin(async { Vec::new() })
+    }
+
+    /// The token on GitHub of the session `me` of the riff-server
+    /// `server`, asked as the person (01M6WPMEEWX09DHJZF18BKBPYW,
+    /// [`crate::daemon::gh_token`]): a token of a GitHub App, or the token
+    /// of the person and why (01M6WPMWSMQABE97YCMS5Z3M1P). An error is a
+    /// fault: the daemon starts no container with it. The default gives
+    /// the token of the person: a riff with no App.
+    fn github_token<'a>(
+        &'a self,
+        _server: &'a str,
+        _me: &'a SessionUri,
+    ) -> BoxFuture<'a, Result<gh_token::Grant>> {
+        Box::pin(async { Ok(gh_token::Grant::person(text::GH_TOKEN_NONE)) })
+    }
+
+    /// Revokes the token `token` of a session of the repository `repo` on
+    /// GitHub, at the end of the session. The default revokes nothing.
+    fn revoke_token<'a>(&'a self, _repo: &'a str, _token: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -2737,7 +2758,6 @@ impl Live {
             claude,
             sign_in: host.claude.sign_in(),
             gitconfig: existing(host.home.join(".gitconfig")),
-            gh_config: existing(host.home.join(".config/gh")),
             setup: pinned.setup.clone(),
         };
         let secrets = host.secrets();
@@ -3771,6 +3791,50 @@ impl World for Live {
             })
         })
     }
+
+    fn github_token<'a>(
+        &'a self,
+        server: &'a str,
+        me: &'a SessionUri,
+    ) -> BoxFuture<'a, Result<gh_token::Grant>> {
+        Box::pin(async move {
+            let session = me
+                .who()
+                .session()
+                .ok_or_else(|| anyhow!("the URI {me} names no session"))?;
+            let api = Api::new(server).signed_in(None)?;
+            if !api.sends_token() {
+                return Ok(gh_token::Grant::person(text::GH_NO_SIGN_IN));
+            }
+            // No more rights than the person (01M6WPMNXN1BSBEH74TG5DDRTF).
+            let repo = me.place().repo_text();
+            let gh = self.gh(&repo).as_ref().clone().by("token");
+            let checked = repo.clone();
+            if !blocking(move || gh_token::can_push(&gh, &checked)).await? {
+                return Ok(gh_token::Grant::person(&text::gh_no_push(&repo)));
+            }
+            match api.github_token(session).await {
+                Ok(Some(reply)) => Ok(gh_token::Grant::of(reply)),
+                Ok(None) => Ok(gh_token::Grant::person(text::GH_NO_SIGN_IN)),
+                Err(e) if is_not_found(&e) => Ok(gh_token::Grant::person(text::GH_OLD_SERVER)),
+                Err(e) => Err(e),
+            }
+        })
+    }
+
+    fn revoke_token<'a>(&'a self, repo: &'a str, token: &'a str) -> BoxFuture<'a, Result<()>> {
+        let gh = self.gh(repo).as_ref().clone().by("token");
+        let token = zeroize::Zeroizing::new(token.to_owned());
+        Box::pin(blocking(move || gh_token::revoke(&gh, &token)))
+    }
+}
+
+/// True when `error` is a reply 404 of riff-server: a server of an older
+/// build has no such call.
+fn is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<api::Refusal>()
+        .is_some_and(|refusal| refusal.status == reqwest::StatusCode::NOT_FOUND)
 }
 
 #[cfg(test)]
@@ -5501,6 +5565,7 @@ mod tests {
             takeover: false,
             interrupt: false,
             model: None,
+            github: None,
         }
     }
 
@@ -7123,6 +7188,7 @@ esac
                 takeover: false,
                 interrupt: false,
                 model: None,
+                github: None,
             };
             Self {
                 api,

@@ -66,9 +66,10 @@ use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::{Extension, Json};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
+use riff_core::name::{Repo, SessionUri, Who};
 use riff_core::wire::{
     GitHubApp, GitHubAppFacts, GitHubApps, GitHubAppsReply, GitHubCheck, GitHubChecked,
-    GitHubCreate, GitHubRole, GitHubStarted, Rights, RoleChecked,
+    GitHubCreate, GitHubRole, GitHubStarted, GitHubToken, Rights, RoleChecked, SessionToken,
 };
 use riff_state::state::{Code, Refused, Role};
 use serde::{Deserialize, Serialize};
@@ -505,12 +506,33 @@ struct Account {
     login: String,
 }
 
-/// A token that GitHub gave, with its rights.
+/// A token that GitHub gave, with its rights and its end.
 #[derive(Deserialize)]
 struct Granted {
     token: String,
     #[serde(default)]
     permissions: Rights,
+    #[serde(default)]
+    expires_at: Option<String>,
+}
+
+/// Why riff-server has no token of a role for a repository.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum NoGrant {
+    /// The riff has no App of the role, or the App is not on the
+    /// repository: the text names the fix. A session then keeps the
+    /// token of the person (01M6WPMWSMQABE97YCMS5Z3M1P).
+    Missing(String),
+    /// A call to GitHub failed.
+    Failed(String),
+}
+
+impl NoGrant {
+    fn text(self) -> String {
+        match self {
+            NoGrant::Missing(why) | NoGrant::Failed(why) => why,
+        }
+    }
 }
 
 /// The claims of the JWT of an App.
@@ -828,46 +850,56 @@ impl GitHub {
         Ok(keys)
     }
 
+    /// A token of the App of `role` for the one repository `repo`, with
+    /// the rights of the role: the App, its installation on the
+    /// repository, and the token.
+    async fn grant<'a>(
+        &self,
+        apps: &'a Apps,
+        role: GitHubRole,
+        repo: &str,
+    ) -> Result<(&'a AppKeys, Granted), NoGrant> {
+        let app = role.app();
+        let (owner, name) = repo.split_once('/').unwrap_or((repo, repo));
+        let Some(keys) = apps.of(app) else {
+            return Err(NoGrant::Missing(format!(
+                "the riff has no {} App: riff github create --owner {owner}",
+                app_word(app)
+            )));
+        };
+        let installation = match self.client.installation(keys, repo).await {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                return Err(NoGrant::Missing(format!(
+                    "{} is not installed on {repo}: riff github install {owner}",
+                    keys.slug
+                )));
+            }
+            Err(e) => return Err(NoGrant::Failed(e.0)),
+        };
+        let granted = self
+            .client
+            .token(keys, installation, name, &rights(role))
+            .await
+            .map_err(|e| NoGrant::Failed(e.0))?;
+        Ok((keys, granted))
+    }
+
     /// The check of one role for the repository `repo`.
     async fn check_role(&self, apps: &Apps, role: GitHubRole, repo: &str) -> RoleChecked {
         let mut checked = RoleChecked {
             role,
-            bot: None,
+            bot: apps.of(role.app()).map(AppKeys::bot),
             rights: Rights::new(),
             missing: Vec::new(),
             extra: Vec::new(),
             problem: None,
         };
-        let app = role.app();
-        let Some(keys) = apps.of(app) else {
-            let owner = repo.split('/').next().unwrap_or(repo);
-            checked.problem = Some(format!(
-                "the riff has no {} App: riff github create --owner {owner}",
-                app_word(app)
-            ));
-            return checked;
-        };
-        checked.bot = Some(keys.bot());
-        let (owner, name) = repo.split_once('/').unwrap_or((repo, repo));
-        let installation = match self.client.installation(keys, repo).await {
-            Ok(Some(id)) => id,
-            Ok(None) => {
-                checked.problem = Some(format!(
-                    "{} is not installed on {repo}: riff github install {owner}",
-                    keys.slug
-                ));
-                return checked;
-            }
-            Err(e) => {
-                checked.problem = Some(e.0);
-                return checked;
-            }
-        };
         let need = rights(role);
-        let granted = match self.client.token(keys, installation, name, &need).await {
-            Ok(granted) => granted,
-            Err(e) => {
-                checked.problem = Some(e.0);
+        let (keys, granted) = match self.grant(apps, role, repo).await {
+            Ok(grant) => grant,
+            Err(why) => {
+                checked.problem = Some(why.text());
                 return checked;
             }
         };
@@ -1155,6 +1187,155 @@ pub(crate) async fn apps(
     Ok(Json(reply))
 }
 
+/// True when `repo` can be a repository `OWNER/NAME` of GitHub.
+///
+/// ```
+/// use riff_server::github::valid_repo;
+///
+/// assert!(valid_repo("como-technologies/riff") && valid_repo("acme/app.rs"));
+/// assert!(!valid_repo("acme") && !valid_repo("acme/") && !valid_repo("acme/a/b"));
+/// ```
+pub fn valid_repo(repo: &str) -> bool {
+    repo.split_once('/').is_some_and(|(owner, name)| {
+        valid_owner(owner)
+            && !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+    })
+}
+
+/// The role on GitHub of the session `uri`, from the facts of
+/// riff-server (01M6WPMEEWX09DHJZF18BKBPYW): the lead of its repository,
+/// else a verifier when it holds a claim `verify-ITEM`, else a worker.
+///
+/// ```
+/// use riff_core::name::SessionUri;
+/// use riff_core::wire::GitHubRole;
+/// use riff_server::github::role_of;
+///
+/// let uri = |text: &str| text.parse::<SessionUri>().unwrap();
+/// let worker = uri("riff://ada@h/acme/app?session=w1&claim=issue-12");
+/// assert_eq!(role_of(&worker), GitHubRole::Worker);
+/// assert_eq!(role_of(&uri("riff://ada@h/acme/app?session=w2")), GitHubRole::Worker);
+/// let verifier = uri("riff://ada@h/acme/app?session=v1&claim=verify-issue-12");
+/// assert_eq!(role_of(&verifier), GitHubRole::Verifier);
+/// let lead = uri("riff://ada@h/acme/app?session=l1&lead=true");
+/// assert_eq!(role_of(&lead), GitHubRole::Lead);
+/// ```
+pub fn role_of(uri: &SessionUri) -> GitHubRole {
+    if uri.lead() {
+        GitHubRole::Lead
+    } else if uri
+        .claims()
+        .iter()
+        .any(|claim| claim.starts_with("verify-"))
+    {
+        GitHubRole::Verifier
+    } else {
+        GitHubRole::Worker
+    }
+}
+
+/// `POST /v1/github/token`: a token of the session for its one
+/// repository, with the rights of its role and no more
+/// (01M6WPMEEWX09DHJZF18BKBPYW). Only the person of the session asks,
+/// signed in as the person: the daemon. riff-server takes the role and
+/// the repository from its own facts. A riff with no App of the role, or
+/// an App that is not on the repository, gives no token and says why:
+/// the session keeps the token of the person. The log line names the
+/// session, the person, the repository, the role and the end, never the
+/// token.
+pub(crate) async fn token(
+    AxumState(s): AxumState<crate::Shared>,
+    Extension(signed_in): Extension<SignedIn>,
+    Json(r): Json<GitHubToken>,
+) -> crate::Reply<SessionToken> {
+    let person = signed_in.who.user().to_owned();
+    let refused = |reason: &str| -> (StatusCode, String) {
+        Failed::Refused(Refused::new(Code::NotAllowed, reason)).into()
+    };
+    if signed_in.who.session().is_some() {
+        return Err(refused(
+            "a session gets its token on GitHub from the daemon of its person",
+        ));
+    }
+    let who = Who::new(&person, Some(&r.session))
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let info = s
+        .engine
+        .read(|state| state.me(&who, Instant::now(), crate::now_ms()));
+    let Some(info) = info else {
+        let reason = format!("riff-server knows no session {} of {person}", r.session);
+        return Err(refused(&reason));
+    };
+    let role = role_of(&info.uri);
+    let repo = match info.uri.place().repo() {
+        Repo::Git { owner, name } => format!("{owner}/{name}"),
+        Repo::None => String::new(),
+    };
+    if !valid_repo(&repo) {
+        let why = format!("the session {} works in no repository of GitHub", r.session);
+        return Err((StatusCode::BAD_REQUEST, why));
+    }
+    let apps = s.github.keys.load().await.map_err(keys_failed)?;
+    let keys = apps.of(role.app());
+    let mut reply = SessionToken {
+        role,
+        repo: repo.clone(),
+        bot: keys.map(AppKeys::bot),
+        bot_id: keys.and_then(|keys| keys.bot_id),
+        token: None,
+        rights: Rights::new(),
+        ends: None,
+        problem: None,
+    };
+    let granted = match s.github.grant(&apps, role, &repo).await {
+        Ok((_, granted)) => granted,
+        Err(NoGrant::Missing(why)) => {
+            tracing::info!(
+                session = %r.session,
+                person,
+                repo,
+                role = %role,
+                "no token of an App for the session, which keeps the token of its person: {why}"
+            );
+            reply.problem = Some(why);
+            return Ok(Json(reply));
+        }
+        Err(NoGrant::Failed(why)) => {
+            tracing::warn!(session = %r.session, person, repo, role = %role, "no token of the session: {why}");
+            return Err((StatusCode::BAD_GATEWAY, why));
+        }
+    };
+    let (missing, extra) = differ(&rights(role), &granted.permissions);
+    if !missing.is_empty() || !extra.is_empty() {
+        if let Err(e) = s.github.client.revoke(&granted.token).await {
+            tracing::warn!("the revoke of a token with wrong rights: {e}");
+        }
+        let why = format!(
+            "GitHub gave the token of the {role} other rights than the role has \
+             (missing: {}; more: {}). Run riff github check",
+            missing.join(", "),
+            extra.join(", ")
+        );
+        tracing::warn!(session = %r.session, person, repo, role = %role, "{why}");
+        return Err((StatusCode::BAD_GATEWAY, why));
+    }
+    tracing::info!(
+        session = %r.session,
+        person,
+        repo,
+        role = %role,
+        ends = granted.expires_at.as_deref().unwrap_or("unknown"),
+        "a token of a session on GitHub"
+    );
+    reply.rights = granted.permissions;
+    reply.ends = granted.expires_at;
+    reply.token = Some(granted.token);
+    Ok(Json(reply))
+}
+
 /// `POST /v1/github/check`: a token of each role for the repository,
 /// checked and revoked at once (01M6WG534PPE2JW8JQFRJDEK86).
 pub(crate) async fn check(
@@ -1162,14 +1343,7 @@ pub(crate) async fn check(
     Extension(_): Extension<SignedIn>,
     Json(r): Json<GitHubCheck>,
 ) -> crate::Reply<GitHubChecked> {
-    let valid = r.repo.split_once('/').is_some_and(|(owner, name)| {
-        valid_owner(owner)
-            && !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
-    });
-    if !valid {
+    if !valid_repo(&r.repo) {
         let why = format!("{:?} is no repository OWNER/NAME of GitHub", r.repo);
         return Err((StatusCode::BAD_REQUEST, why));
     }

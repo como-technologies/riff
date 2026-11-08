@@ -674,6 +674,32 @@ impl Gh {
         }
     }
 
+    /// The same `gh`, whose calls get `token` in `GH_TOKEN`, and read no
+    /// token: a call with the token of a session, for example its revoke
+    /// ([`crate::daemon::gh_token::revoke`]).
+    ///
+    /// ```
+    /// let dir = tempfile::tempdir()?;
+    /// let script = "#!/bin/sh\necho \"$GH_TOKEN $*\"\n";
+    /// let gh = isolated::write_program(dir.path().join("gh"), script);
+    /// let out = riff::pr::Gh::at(&gh).with_given_token("ghs_abcd").run(&["api", "x"], None)?;
+    /// assert_eq!(out, "ghs_abcd api x\n");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn with_given_token(self, token: &str) -> Self {
+        let read = GhToken {
+            at: Instant::now(),
+            token: Some(Zeroizing::new(token.to_owned())),
+        };
+        Self {
+            token: Some(Shared {
+                keep: Duration::MAX,
+                read: Arc::new(Mutex::new(Some(read))),
+            }),
+            ..self
+        }
+    }
+
     /// The token for the calls of this `gh`: `None` when it reads no
     /// token, or when the read fails.
     fn token(&self) -> Option<Zeroizing<String>> {

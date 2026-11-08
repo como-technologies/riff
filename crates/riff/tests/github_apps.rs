@@ -461,3 +461,120 @@ async fn riff_init_check_names_a_repository_with_no_guard() {
     assert!(calls.contains("riff-guard.yml?ref=main"), "{calls}");
     assert!(!calls.contains(" -X "), "{calls}");
 }
+
+/// 01M6WPMWSMQABE97YCMS5Z3M1P: `riff init --check` in a clone of a
+/// repository with no installation of the Apps fails a check, and names
+/// `riff github install OWNER`. With the Apps on the repository, the
+/// check passes.
+#[tokio::test]
+async fn riff_init_check_names_the_install_of_the_apps() {
+    let fake = FakeGitHub::start().await;
+    let keys = keys_dir();
+    let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
+    let env = Isolated::new();
+    common::sign_in(&server, &env.riff_home(), "bob");
+    let repo = clone();
+    let init = || {
+        env.tokio_riff()
+            .args(["init", "--check"])
+            .current_dir(repo.path())
+            .env("RIFF_SERVER", &*server)
+            .output()
+    };
+    let out = init().await.unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    let line = "  fail  the GitHub Apps of riff: riff-acme is not installed on acme/app. \
+                Fix: riff github install acme\n";
+    assert!(stdout.contains(line), "{stdout}");
+    // riff-server revoked each token of the check.
+    {
+        let seen = fake.seen();
+        assert_eq!(seen.revoked, seen.tokens);
+    }
+
+    fake.seen().installed = true;
+    let out = init().await.unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("  pass  the GitHub Apps of riff: on acme/app\n"),
+        "{stdout}"
+    );
+}
+
+/// 01M6WPMWYSW98MQYQCCJ54ZX04: "The auto mode settings of a session" in
+/// "How It Works" says who acts on GitHub for each role, with a copyable
+/// `sh` block of `riff whoami`.
+#[test]
+fn the_book_says_who_acts_on_github_for_each_role() {
+    let page = crate::book::page("how-it-works.md");
+    let settings = page
+        .split("\n### The auto mode settings of a session\n")
+        .nth(1)
+        .expect("the part is in How It Works");
+    let settings = settings.split("\n### ").next().unwrap();
+    let who = settings
+        .split("\n#### Who acts on GitHub for each role\n")
+        .nth(1)
+        .expect("the how-to is in the part");
+    let who = who.split("\n#### ").next().unwrap();
+    for row in [
+        "| A worker | `riff-OWNER[bot]`",
+        "| A verifier | `riff-OWNER[bot]`",
+        "| The lead in a container | `riff-OWNER-lead[bot]`",
+        "| You in a terminal",
+    ] {
+        assert!(who.contains(row), "{row}: {who}");
+    }
+    let commands = crate::book::commands_in(who);
+    assert_eq!(commands, ["riff whoami", "riff daemon status"]);
+    crate::book::each_is_real(&commands);
+}
+
+/// 01M6WWG3S60XYGTNBQH7S3F6D1: the token of a verifier reads only, so a
+/// verifier adds nothing to an issue. The Claude folder of a verify
+/// session allows no `gh issue comment`, its start text names none and
+/// sends each finding to the result, and "Add to an issue" in the book
+/// says so. A worker keeps the comment.
+#[test]
+fn a_verifier_puts_each_finding_in_its_result_and_comments_on_no_issue() {
+    use riff::permissions::{Role, Trust};
+
+    let dir = tempfile::tempdir().unwrap();
+    let auto = Trust {
+        owner: Some(OWNER),
+        server: Some("http://h:7878"),
+        sources: &[],
+    };
+    let allow_of = |role: Role| -> Vec<String> {
+        let claude = dir.path().join(role.as_str());
+        let person = dir.path().join("none.json");
+        riff::run::claude_folder(&claude, "/data/clone".as_ref(), &person, &auto, role).unwrap();
+        let text = std::fs::read_to_string(claude.join("settings.json")).unwrap();
+        let settings: serde_json::Value = serde_json::from_str(&text).unwrap();
+        serde_json::from_value(settings["permissions"]["allow"].clone()).unwrap()
+    };
+    let comment = "Bash(gh issue comment *)".to_owned();
+    assert!(!allow_of(Role::Verifier).contains(&comment));
+    assert!(allow_of(Role::Worker).contains(&comment));
+
+    let checks = ["Gate".to_owned()];
+    let text = riff::text::wave_verify_start(REPO, "main", 12, 40, "1a2b3c4", &checks, true);
+    assert!(!text.contains("gh issue comment"), "{text}");
+    assert!(text.contains(riff::text::VERIFY_READS_ONLY), "{text}");
+
+    let page = crate::book::page("how-it-works.md");
+    let part = page
+        .split("\n#### Add to an issue\n")
+        .nth(1)
+        .expect("the how-to is in How It Works");
+    let part = part.split("\n#### ").next().unwrap();
+    assert!(
+        part.contains("A verifier reads only: it puts each finding in its result"),
+        "{part}"
+    );
+    assert!(
+        part.contains("The settings of a session of a worker allow `gh issue comment`."),
+        "{part}"
+    );
+}

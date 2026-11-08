@@ -90,7 +90,7 @@
 //! | `Bash(gh run rerun *)` | allow | worker | session | run a job again that failed for a known flake (01M5QWJJBY5VW53F0XAWWDQ79K) |
 //! | `Bash(gh issue view *)` | allow | lead, worker, verifier | session | read an issue |
 //! | `Bash(gh issue list *)` | allow | lead, worker, verifier | session | find the items of a wave |
-//! | `Bash(gh issue comment *)` | allow | worker, verifier | session | add to an issue (01M6FZXZ9267YKMH97E6A2Y2EP) |
+//! | `Bash(gh issue comment *)` | allow | worker | session | add to an issue (01M6FZXZ9267YKMH97E6A2Y2EP, 01M6WWG3S60XYGTNBQH7S3F6D1) |
 //! | `Bash(gh issue edit *)` | allow | lead | session | write the `Done when:` line of an item |
 //! | `Bash(gh*issue edit*--body*)` | deny | worker, verifier | session | never change the body of an issue |
 //! | `Bash(gh*issue edit*--title*)` | deny | worker, verifier | session | never change the title of an issue |
@@ -108,12 +108,14 @@
 //! | `Bash(riff release approve *)` | person | - | - | the approval of a deploy: no rule, the guard of riff refuses each session |
 //!
 //! A session gets the rows of the session place for its own role only
-//! ([`session_rules`]). The lead edits the body of an issue. A worker and
-//! a verifier add to an issue with `gh issue comment`, and the deny rules
-//! refuse each `gh issue edit` that sets a body or a title, also with
-//! `gh -R` before the words (01M6FZXZ9267YKMH97E6A2Y2EP). No rule names
-//! `gh api`: a deny rule cannot list each form of an API write (`-X`,
-//! `--method`, `-f`, GraphQL). The guard is that no allow rule matches it
+//! ([`session_rules`]). The lead edits the body of an issue. A worker
+//! adds to an issue with `gh issue comment`. A verifier reads only, and
+//! puts each finding in its result (01M6WWG3S60XYGTNBQH7S3F6D1). The deny
+//! rules of a worker and a verifier refuse each `gh issue edit` that sets
+//! a body or a title, also with `gh -R` before the words
+//! (01M6FZXZ9267YKMH97E6A2Y2EP). No rule names `gh api`: a deny rule
+//! cannot list each form of an API write (`-X`, `--method`, `-f`,
+//! GraphQL). The guard is that no allow rule matches it
 //! ([`OUT_OF_BOUNDS`]), and the auto mode check judges the call.
 //!
 //! ```
@@ -123,13 +125,14 @@
 //! let lead = session_rules(Role::Lead);
 //! assert!(lead.allow.iter().any(|r| matches(r, edit)));
 //! assert!(lead.deny.is_empty());
+//! let comment = "gh issue comment 12 --body-file /tmp/comment.md";
 //! for role in [Role::Worker, Role::Verifier] {
 //!     let rules = session_rules(role);
 //!     assert!(!rules.allow.iter().any(|r| matches(r, edit)));
 //!     assert!(rules.deny.iter().any(|r| matches(r, edit)));
-//!     let comment = "gh issue comment 12 --body-file /tmp/comment.md";
-//!     assert!(rules.allow.iter().any(|r| matches(r, comment)));
 //!     assert!(!rules.deny.iter().any(|r| matches(r, comment)));
+//!     let allowed = rules.allow.iter().any(|r| matches(r, comment));
+//!     assert_eq!(allowed, role == Role::Worker);
 //! }
 //! ```
 //!
@@ -381,7 +384,7 @@ pub const TABLE: &[Row] = {
         allow("Bash(gh run rerun *)", &[Worker], &[Session]),
         allow("Bash(gh issue view *)", ALL, &[Session]),
         allow("Bash(gh issue list *)", ALL, &[Session]),
-        allow("Bash(gh issue comment *)", &[Worker, Verifier], &[Session]),
+        allow("Bash(gh issue comment *)", &[Worker], &[Session]),
         allow("Bash(gh issue edit *)", &[Lead], &[Session]),
         deny_for(
             "Bash(gh*issue edit*--body*)",
@@ -1877,9 +1880,10 @@ mod tests {
     }
 
     /// 01M6FZXZ9267YKMH97E6A2Y2EP: the lead may edit the body of an issue;
-    /// a worker and a verifier may not, and may comment.
+    /// a worker and a verifier may not, and a worker may comment. A
+    /// verifier reads only (01M6WWG3S60XYGTNBQH7S3F6D1).
     #[test]
-    fn the_lead_edits_an_issue_body_and_a_worker_and_a_verifier_comment() {
+    fn the_lead_edits_an_issue_body_and_a_worker_comments() {
         let edits = [
             "gh issue edit 12 --body-file /tmp/body.md",
             "gh issue edit 12 --body text",
@@ -1895,6 +1899,10 @@ mod tests {
             "gh issue edit -b text 12",
             "gh -R o/r issue edit 12 --body-file /tmp/body.md",
             "gh --repo o/r issue edit 12 -F /tmp/body.md",
+        ];
+        let comments = [
+            "gh issue comment 12 --body-file /tmp/comment.md",
+            "gh issue comment 12 --repo o/r --body-file /tmp/comment.md",
         ];
         let lead = session_rules(Role::Lead);
         assert!(lead.deny.is_empty());
@@ -1913,13 +1921,17 @@ mod tests {
                     "{role:?} is not refused `{step}`"
                 );
             }
-            // A comment is how a worker and a verifier add to an issue.
-            for step in [
-                "gh issue comment 12 --body-file /tmp/comment.md",
-                "gh issue comment 12 --repo o/r --body-file /tmp/comment.md",
-                "gh issue view 12 --comments",
-                "gh issue list --state open",
-            ] {
+            // A comment is how a worker adds to an issue. A verifier puts
+            // each finding in its result.
+            for step in comments {
+                assert_eq!(
+                    rules.allow.iter().any(|r| matches(r, step)),
+                    role == Role::Worker,
+                    "{role:?}: {step}"
+                );
+                assert!(!rules.deny.iter().any(|r| matches(r, step)), "{step}");
+            }
+            for step in ["gh issue view 12 --comments", "gh issue list --state open"] {
                 assert!(rules.allow.iter().any(|r| matches(r, step)), "{step}");
                 assert!(!rules.deny.iter().any(|r| matches(r, step)), "{step}");
             }
@@ -1935,7 +1947,7 @@ mod tests {
                 assert!(!rules.deny.iter().any(|r| matches(r, step)), "{step}");
             }
         }
-        // The lead has no rule for a comment: only a worker and a verifier.
+        // The lead has no rule for a comment: only a worker.
         assert!(!lead.allow.iter().any(|r| r.contains("issue comment")));
     }
 

@@ -18,7 +18,9 @@ use axum::Json;
 use axum::extract::State;
 use axum::routing::{get, post};
 use riff_core::dpop::Key;
-use riff_core::wire::{GitHubApp, GitHubAppsReply, GitHubChecked, GitHubRole, GitHubStarted};
+use riff_core::wire::{
+    GitHubApp, GitHubAppsReply, GitHubChecked, GitHubRole, GitHubStarted, SessionToken,
+};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_server::github::{STATE_LIFE, Settings};
@@ -823,4 +825,292 @@ async fn a_code_that_is_no_code_is_refused() {
         "{text}"
     );
     assert!(fake.seen().swapped.is_empty());
+}
+
+/// The URI of the session `id` of ada in the repository `repo`.
+fn ada_in(repo: &str, id: &str) -> String {
+    format!("riff://ada@heron/{repo}?session={id}")
+}
+
+/// The session token of the session `session` of `person`, from the
+/// swap at the token endpoint.
+async fn session_of(url: &str, person: &Person, session: &str) -> Person {
+    let form = format!(
+        "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange\
+         &subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token\
+         &subject_token={}&session={session}",
+        person.token
+    );
+    let reply = common::refresh(url, &person.key, &form).await;
+    assert_eq!(reply.status(), 200);
+    let reply: riff_core::wire::TokenReply = reply.json().await.unwrap();
+    Person {
+        key: person.key.clone(),
+        token: reply.access_token,
+    }
+}
+
+/// A riff of ada with both Apps installed on acme/app, and the sessions
+/// of ada: the worker `w1` with the claim `issue-12`, the verifier `v1`
+/// with the claim `verify-issue-12`, the lead `l1`, and `o1` in
+/// acme/other. Bob, a member, has the worker `b1`.
+struct Sessions {
+    fake: FakeGitHub,
+    url: String,
+    ada: Person,
+    bob: Person,
+    _dir: tempfile::TempDir,
+}
+
+async fn sessions() -> Sessions {
+    let fake = FakeGitHub::start().await;
+    fake.seen().installed = true;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(FILE),
+        serde_json::to_vec(&both_apps()).unwrap(),
+    )
+    .unwrap();
+    let (service, url) = serve(&fake, At::Dir(dir.path().to_owned()), STATE_LIFE).await;
+    let ada = person(&service, "ada@example.com").await;
+    let bob = person(&service, "bob@example.com").await;
+    let (status, text) = call(
+        &url,
+        &ada,
+        "/v1/resume",
+        json!({ "me": "riff://ada@heron/acme/app", "riff": true }),
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    for (who, repo, id, claim) in [
+        (&ada, "acme/app", "w1", Some("issue-12")),
+        (&ada, "acme/app", "v1", Some("verify-issue-12")),
+        (&ada, "acme/app", "l1", None),
+        (&ada, "acme/other", "o1", None),
+        (&bob, "acme/app", "b1", Some("issue-9")),
+    ] {
+        let session = session_of(&url, who, id).await;
+        let me = if std::ptr::eq(who, &bob) {
+            format!("riff://bob@heron/{repo}?session={id}")
+        } else {
+            ada_in(repo, id)
+        };
+        let (status, text) = call(&url, &session, "/v1/register", json!({ "me": me })).await;
+        assert_eq!(status, 200, "{text}");
+        if let Some(item) = claim {
+            let body = json!({ "me": me, "thread": repo, "item": item });
+            let (status, text) = call(&url, &session, "/v1/claim", body).await;
+            assert_eq!(status, 200, "{text}");
+        }
+    }
+    let lead = json!({ "me": "riff://ada@heron/acme/app", "session": "l1" });
+    let (status, text) = call(&url, &ada, "/v1/lead", lead).await;
+    assert_eq!(status, 200, "{text}");
+    Sessions {
+        fake,
+        url,
+        ada,
+        bob,
+        _dir: dir,
+    }
+}
+
+/// `POST /v1/github/token` of `person` for the session `id`.
+async fn token_of(s: &Sessions, person: &Person, body: Value) -> (u16, String) {
+    call(&s.url, person, "/v1/github/token", body).await
+}
+
+/// 01M6WPMEEWX09DHJZF18BKBPYW: riff-server takes the role from its own
+/// facts. Each role gets a token of its App, for the one repository of
+/// the session, with the rights of section 2 of #1543 and no more: a
+/// session with a claim `verify-ITEM` gets the rights of a verifier, and
+/// a worker that names the lead and another repository gets the rights
+/// of a worker for its own repository.
+#[tokio::test]
+async fn each_role_gets_a_token_of_its_own_repository_with_its_rights_and_no_more() {
+    let s = sessions().await;
+    let mut got = Vec::new();
+    for (id, body) in [
+        ("w1", json!({ "session": "w1" })),
+        ("v1", json!({ "session": "v1" })),
+        ("l1", json!({ "session": "l1" })),
+        // A worker cannot get more: the server reads no role and no
+        // repository from the request.
+        (
+            "w1",
+            json!({ "session": "w1", "role": "lead", "repo": "acme/web", "permissions": {"administration": "write"} }),
+        ),
+    ] {
+        let (status, text) = token_of(&s, &s.ada, body).await;
+        assert_eq!(status, 200, "{id}: {text}");
+        let reply: SessionToken = serde_json::from_str(&text).unwrap();
+        assert_eq!(reply.repo, REPO, "{id}");
+        assert_eq!(reply.ends.as_deref(), Some("2026-11-08T13:00:00Z"));
+        assert!(reply.problem.is_none(), "{id}: {text}");
+        assert!(reply.token.as_deref().unwrap().starts_with("ghs_"));
+        assert_eq!(reply.rights, table(reply.role), "{id}");
+        got.push((reply.role, reply.bot.unwrap(), reply.bot_id));
+    }
+    let worker = (GitHubRole::Worker, "riff-acme[bot]".to_owned(), Some(1101));
+    assert_eq!(
+        got,
+        [
+            worker.clone(),
+            (
+                GitHubRole::Verifier,
+                "riff-acme[bot]".to_owned(),
+                Some(1101)
+            ),
+            (
+                GitHubRole::Lead,
+                "riff-acme-lead[bot]".to_owned(),
+                Some(1202)
+            ),
+            worker,
+        ]
+    );
+    let body = |role| json!({ "repositories": ["app"], "permissions": table(role) });
+    let asked: Vec<_> = s.fake.seen().asked.clone();
+    assert_eq!(
+        asked,
+        [
+            (101, body(GitHubRole::Worker)),
+            (101, body(GitHubRole::Verifier)),
+            (202, body(GitHubRole::Lead)),
+            (101, body(GitHubRole::Worker)),
+        ]
+    );
+    // The verifier reads only, and only the lead sets a status.
+    assert!(table(GitHubRole::Verifier).values().all(|l| l == "read"));
+    assert_eq!(table(GitHubRole::Worker)["statuses"], "read");
+    // No token goes back to GitHub: the session keeps each one.
+    assert!(s.fake.seen().revoked.is_empty());
+}
+
+/// 01M6WPMEEWX09DHJZF18BKBPYW: only the person of a session gets its
+/// token, with a token of the person: not a session token, not another
+/// person, and not a session that riff-server does not know.
+#[tokio::test]
+async fn a_token_is_only_for_a_session_of_the_person_who_asks() {
+    let s = sessions().await;
+    let w1 = session_of(&s.url, &s.ada, "w1").await;
+    for (who, session, why) in [
+        (&w1, "w1", "from the daemon of its person"),
+        (&s.ada, "b1", "knows no session b1 of ada"),
+        (&s.bob, "w1", "knows no session w1 of bob"),
+        (&s.ada, "nobody", "knows no session nobody of ada"),
+    ] {
+        let (status, text) = token_of(&s, who, json!({ "session": session })).await;
+        assert_eq!(status, 403, "{session}: {text}");
+        assert!(text.contains(why), "{text}");
+    }
+    assert!(s.fake.seen().asked.is_empty());
+    // With no token, no call.
+    let reply = common::client()
+        .post(format!("{}/v1/github/token", s.url))
+        .json(&json!({ "session": "w1" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), 401);
+}
+
+/// 01M6WPMWSMQABE97YCMS5Z3M1P: a repository with no installation of the
+/// App gives no token, and the reply names the fix: the session keeps
+/// the token of the person. So does a riff with no App.
+#[tokio::test]
+async fn a_repository_with_no_installation_gives_the_fix_and_no_token() {
+    let s = sessions().await;
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "o1" })).await;
+    assert_eq!(status, 200, "{text}");
+    let reply: SessionToken = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        (reply.role, reply.repo.as_str()),
+        (GitHubRole::Worker, "acme/other")
+    );
+    assert!(reply.token.is_none());
+    assert_eq!(
+        reply.problem.as_deref(),
+        Some("riff-acme is not installed on acme/other: riff github install acme")
+    );
+    s.fake.seen().installed = false;
+    let (_, text) = token_of(&s, &s.ada, json!({ "session": "l1" })).await;
+    let reply: SessionToken = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        reply.problem.as_deref(),
+        Some("riff-acme-lead is not installed on acme/app: riff github install acme")
+    );
+    assert!(s.fake.seen().asked.is_empty());
+
+    // A riff with no App.
+    let fake = FakeGitHub::start().await;
+    let (service, url) = serve(&fake, At::Memory, STATE_LIFE).await;
+    let ada = person(&service, "ada@example.com").await;
+    let w1 = session_of(&url, &ada, "w1").await;
+    let me = ada_in(REPO, "w1");
+    let (status, text) = call(&url, &w1, "/v1/register", json!({ "me": me })).await;
+    assert_eq!(status, 200, "{text}");
+    let (_, text) = call(&url, &ada, "/v1/github/token", json!({ "session": "w1" })).await;
+    let reply: SessionToken = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        reply.problem.as_deref(),
+        Some("the riff has no session App: riff github create --owner acme")
+    );
+}
+
+/// 01M6WPMEEWX09DHJZF18BKBPYW: a token that GitHub gave with other
+/// rights than the role has goes back to GitHub at once, and the reply
+/// is an error with no token.
+#[tokio::test]
+async fn a_token_with_other_rights_is_revoked_and_refused() {
+    let s = sessions().await;
+    let mut more = table(GitHubRole::Worker);
+    more.insert("secrets".into(), "read".into());
+    s.fake.seen().give = Some(more);
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "w1" })).await;
+    assert_eq!(status, 502, "{text}");
+    assert!(text.contains("more: secrets: read"), "{text}");
+    let seen = s.fake.seen();
+    assert_eq!(seen.revoked, seen.tokens);
+    assert!(!text.contains(seen.tokens[0].as_str()), "{text}");
+}
+
+/// 01M6WPMNV3YX526YD54S5R2HR5: the log line of each token of a session
+/// names the session, the person, the repository, the role and the end,
+/// and never holds the token.
+#[tokio::test]
+async fn the_log_line_of_a_token_names_the_session_and_holds_no_token() {
+    // The log of this thread misses lines while other tests run.
+    if !isolated::rerun_alone(
+        module_path!(),
+        "the_log_line_of_a_token_names_the_session_and_holds_no_token",
+    ) {
+        return;
+    }
+    let lines = Lines::default();
+    let writer = lines.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .event_format(riff_server::logline::JsonLines)
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _log = tracing::subscriber::set_default(subscriber);
+
+    let s = sessions().await;
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "v1" })).await;
+    assert_eq!(status, 200, "{text}");
+    let log = String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+    let line: Value = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|line| line["message"] == "a token of a session on GitHub")
+        .unwrap_or_else(|| panic!("no line of the token in {log}"));
+    assert_eq!(line["session"], "v1", "{line}");
+    assert_eq!(line["person"], "ada", "{line}");
+    assert_eq!(line["repo"], REPO, "{line}");
+    assert_eq!(line["role"], "verifier", "{line}");
+    assert_eq!(line["ends"], "2026-11-08T13:00:00Z", "{line}");
+    for token in s.fake.seen().tokens.iter() {
+        assert!(!log.contains(token.as_str()), "a token in: {log}");
+    }
 }
