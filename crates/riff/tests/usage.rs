@@ -14,7 +14,7 @@ use std::process::{Command, Output};
 use isolated::Isolated;
 use riff::pr::Gh;
 use riff::tools::Tools;
-use riff::usage::Meter;
+use riff::usage::{Claim, Forge, Meter, Report, Tokens};
 use riff_core::name::SessionUri;
 use rmcp::model::CallToolRequestParams;
 use rmcp::{ServiceExt, service::RunningService};
@@ -27,7 +27,10 @@ use crate::book;
 /// `gh issue list` from the file `wave`. It answers the list of the
 /// milestones from the file `milestones`, else with a closed `Wave 2`
 /// and an open `Wave 3: Cloud`. The file `login` names who writes: the
-/// default is `mike`. With the file `down`, each call fails.
+/// default is `mike`. The config of `gh` names that login as its user.
+/// The file `bot` gives `gh` the token of a GitHub App: the config names
+/// the bot, the bot writes, and `gh api user` fails as GitHub fails
+/// `GET /user` for such a token. With the file `down`, each call fails.
 /// A write reads its body from the file after `--input`. With the file
 /// `empty-reply`, the next POST of a total fails as a reply with no body
 /// does, and keeps nothing. With the file `bad-gateway`, each POST of a
@@ -45,9 +48,16 @@ if [ "$1 $2 $3" = "api -X POST" ] && grep -q 'riff:usage-total' "$7" 2>/dev/null
     fi
 fi
 login=$(cat "$dir/login" 2>/dev/null || echo mike)
+bot=$(cat "$dir/bot" 2>/dev/null)
+[ -z "$bot" ] || login=$bot
 issues=repos/como-technologies/riff/issues/
 case "$1 $2" in
-'api user') echo "$login" ;;
+'api user')
+    if [ -n "$bot" ]; then
+        echo "HTTP 403: Resource not accessible by integration (https://api.github.com/user)" >&2; exit 1
+    fi
+    echo "$login" ;;
+'config get') [ "$3 $4 $5" = "user -h github.com" ] && echo "$login" ;;
 'api --paginate')
     n=${3#"$issues"}; n=${n%/comments}
     cat "$dir/comments-$n" 2>/dev/null ;;
@@ -848,6 +858,83 @@ async fn the_release_tool_puts_the_tokens_of_its_claim_on_the_issue() {
     );
 }
 
+/// Puts a report of the claim `issue-12` on the issue with the fake `gh`
+/// in `bin`, writes the total, then puts a second report of the same
+/// claim. Returns the comments of the issue and the log of `gh`.
+fn publish_two_times(bin: &Path) -> (String, String) {
+    let gh = bin.join("gh");
+    isolated::write_program(&gh, FAKE_GH);
+    let gh = Gh::at(gh);
+    let forge = Forge::of(&gh, "como-technologies/riff").unwrap();
+    let report = |output| {
+        let claim = Claim {
+            thread: "como-technologies/riff".into(),
+            item: "issue-12".into(),
+            from_ms: 1_790_931_600_000,
+            to_ms: Some(1_790_935_200_000),
+            models: [(
+                OPUS.to_owned(),
+                Tokens {
+                    output,
+                    ..Tokens::default()
+                },
+            )]
+            .into(),
+        };
+        Report::of(&claim, "e3158b7c-819a").unwrap()
+    };
+    let (issue, first) = report(5);
+    assert_eq!(forge.publish(issue, &first).unwrap(), None);
+    forge.total(issue).unwrap();
+    let (_, second) = report(7);
+    // `None`: the same account wrote the total, and edits it.
+    assert_eq!(forge.publish(issue, &second).unwrap(), None);
+    let read = |name: &str| std::fs::read_to_string(bin.join(name)).unwrap_or_default();
+    (read("comments-12"), read("gh.log"))
+}
+
+/// A session with the token of a GitHub App: its second report replaces
+/// the comment of the claim that its bot wrote, and riff calls no
+/// `GET /user` (01M6WYWGA9NCHAH3TWMAJASPQG).
+#[test]
+fn publish_with_the_token_of_an_app_replaces_the_comment_of_its_bot_with_no_get_user() {
+    let bin = tempfile::tempdir().unwrap();
+    std::fs::write(bin.path().join("bot"), "riff-como-technologies[bot]").unwrap();
+    let (comments, log) = publish_two_times(bin.path());
+    assert_eq!(comments.lines().count(), 2, "{comments}");
+    let claim = comments
+        .lines()
+        .find(|c| c.contains("riff usage: issue-12"));
+    let claim = claim.unwrap_or_else(|| panic!("{comments}"));
+    assert!(
+        claim.starts_with(r#"{"id":1,"login":"riff-como-technologies[bot]","#)
+            && claim.contains("7 tokens"),
+        "{comments}"
+    );
+    assert!(
+        comments.contains("riff usage total of #12: 7 tokens"),
+        "{comments}"
+    );
+    assert!(log.contains("gh config get user -h github.com"), "{log}");
+    assert!(log.contains("gh api -X PATCH "), "{log}");
+    assert!(!log.contains("gh api user"), "{log}");
+}
+
+/// The same with the token of a person: riff reads the login with
+/// `gh api user`.
+#[test]
+fn publish_with_the_token_of_a_person_still_reads_its_login_with_gh_api_user() {
+    let bin = tempfile::tempdir().unwrap();
+    let (comments, log) = publish_two_times(bin.path());
+    assert_eq!(comments.lines().count(), 2, "{comments}");
+    assert!(
+        comments.starts_with(r#"{"id":1,"login":"mike","#) && comments.contains("7 tokens"),
+        "{comments}"
+    );
+    assert!(log.contains("gh api user --jq .login"), "{log}");
+    assert!(log.contains("gh api -X PATCH "), "{log}");
+}
+
 #[test]
 fn the_book_shows_how_to_see_the_tokens_of_an_issue() {
     let commands = book::commands_of_part("development.md", "See the tokens of an issue");
@@ -870,6 +957,10 @@ fn the_book_shows_how_to_see_the_tokens_of_an_issue() {
     assert!(
         part.contains("Container sessions count too"),
         "the tokens of a container session count"
+    );
+    assert!(
+        part.contains("writes as the bot of its role") && part.contains("riff daemon, write"),
+        "who writes the comment: the bot of the role, or the person"
     );
     book::each_is_real(
         &commands

@@ -917,6 +917,12 @@
 - **01M49HF0ADEQ83XTJCQT0PK3RS** `riff usage ISSUE --total` writes the
   total comment of the issue again, then shows the tokens of the
   issue. The book has the how-to "Write the total of an issue again".
+- **01M6WYWGA9NCHAH3TWMAJASPQG** riff finds the comments of its own
+  account by the login of the token of `gh`. For the token of a GitHub
+  App, the login is the bot of the App, `SLUG[bot]`, as `riff whoami`
+  shows it: riff reads it from the user of the config of `gh`, and calls
+  no `GET /user`. For the token of a person, riff reads the login with
+  `gh api user`.
 
 ## Pause
 

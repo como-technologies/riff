@@ -4759,6 +4759,12 @@ sequenceDiagram
   stay on the machine.
 - `issue-12` and `verify-issue-12` are claims of the issue 12. riff
   puts one comment on the issue for each claim.
+- The account of `gh` writes the comment. A session in a container
+  with the token of a GitHub App writes as the bot of its role, for
+  example `riff-acme[bot]`: `riff whoami` in the session shows that
+  bot. Each `riff` command in your terminal, and the riff daemon, write
+  as you. A later report of a claim replaces only the comment of the
+  same account.
 - The numbers are public on the issue. The comment holds the item, the
   kind of the claim, the first characters of the session ID, the
   times, the models and the tokens. It holds no text of a transcript,
