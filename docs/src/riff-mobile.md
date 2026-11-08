@@ -142,11 +142,12 @@ sequenceDiagram
 - The key is ECDSA P-256 in the Android Keystore, in StrongBox when the
   phone has it. It cannot leave the Keystore. The device key of a
   machine is P-256 too, so the sign-in proof (DPoP) stays the same.
-- Your lines from the phone show as `<USER@NAME>`, for example
-  `<mike@pixel>`. riff-server sets the host from the name of the pair.
-  It refuses a name that is the host of a machine or of another phone
-  of yours, so a line of the phone cannot look like a line of a
-  machine.
+- Your lines from the phone show as `<USER>`, for example `<mike>`, as
+  the lines of a terminal do. riff-server sets the host from the name
+  of the pair, and the detail of a line shows it: `mike@pixel` in
+  `riff tail chat`. It refuses a name that is the host of a machine or
+  of another phone of yours, so a line of the phone cannot look like a
+  line of a machine.
 - The token of a phone acts only on the thread `chat` and on the
   notices of the phone. A phone cannot claim, pause, invite or read
   another thread. So a lost phone cannot do a step of a lead or of an

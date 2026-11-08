@@ -8,10 +8,22 @@
 //! In a terminal, the chat has a prompt line at the bottom
 //! (01M3NJD39JVJHY5G71CD79JBY3). A new line prints above the prompt, and
 //! the text that the person types stays. After Enter, the typed line
-//! goes away: the line shows once, as the chat line from the server. A
-//! person shows as `<USER@HOST>`, and a session as `[USER's lead, REPO]`
-//! or `[USER SESSION]` (01M3NJD3BR0XAYNNFTEY0CG761). With a pipe, the
-//! chat has no prompt and no line editor.
+//! goes away: the line shows once, as the chat line from the server.
+//! With a pipe, the chat has no prompt and no line editor.
+//!
+//! A line shows its sender by the name to type to reach it ([`said`],
+//! 01M6Y1FB5MZNZ971CJRBWZ2F9X): a person as `<mike>`, a verified lead as
+//! the name of its project, `<riff>`, and riff itself as `<riff-bot>`.
+//! The chat reads the names of riff-server ([`Names`]) at its start: on a
+//! clash, a project has the name `OWNER/REPO`. A session with no name,
+//! for example a worker, shows as `[USER SESSION]`. The host shows only in
+//! the detail of a line: in `riff tail` and `riff read`.
+//!
+//! ```text
+//! 14:02 <mike> is the release out?
+//! 14:03 <riff> @mike not yet: #12 waits for CI.
+//! 14:09 <riff-bot> the deploy waits for your approval
+//! ```
 //!
 //! A line of riff itself prints above the prompt too, and the typed text
 //! and the cursor stay (01M6QR3JHMC305AV29HPCA0X1Y). Code that runs in
@@ -41,7 +53,7 @@
 //!
 //! `/me TEXT` posts an action line: a plain message with the body
 //! `/me TEXT` (01M3NJD37CNQX580YC24S7K6ES), so an older riff reads it
-//! too. It shows as `* USER@HOST TEXT`.
+//! too. It shows as `* NAME TEXT`.
 //!
 //! A line wakes each lead of the sender, unless it names a lead
 //! (01M3NB5N0D99JB5CE6RB4VEYPF): `@lead` wakes each lead of the sender,
@@ -119,7 +131,7 @@ use crate::style::{DIM, WARNING, styled};
 use crate::text::{lost_messages, safe};
 use riff_client::api::{Api, Refusal};
 use riff_client::link::STREAM_RETRY;
-use riff_client::threads::{ACTION, Line, Sender};
+use riff_client::threads::{ACTION, BY_RIFF, Line, Names, Sender, action_text};
 
 /// The name of the chat thread.
 pub const THREAD: &str = riff_core::name::CHAT;
@@ -146,11 +158,6 @@ pub const DRAFT: &str = "--draft";
 pub fn thread() -> ThreadName {
     ThreadName::chat()
 }
-
-/// The mark at the start of a line of riff that went to a riff-server
-/// with the kind `message`, because the server refused the kind `riff`
-/// (01M5TQ0DX4M2EJJGE7QA8DZVYS).
-pub const BY_RIFF: &str = "[by riff] ";
 
 /// Posts `body` in riff chat as `me`, as a line that riff writes: the
 /// kind of the post is `riff` (01M5TKMVB7CF0QNAWXEVGEQETJ). The watch of
@@ -302,17 +309,17 @@ pub fn unknown(name: &str) -> String {
     )
 }
 
-/// One chat line ([`Line`]) for people. A date line comes first when the day of
-/// `at` is not `last_day`. Then the time, the sender and the body: a
-/// person as `<USER@HOST>`, a session as `[NAME]` (see [`Line::sender`]), and
-/// an action as `* NAME TEXT`. Each more line of the body is indented.
-/// The line has ANSI styles: print it through `anstream`. It removes
-/// each escape sequence from the body and the sender.
+/// One chat line ([`Line`]) for people, with the names `names` of
+/// riff-server. A date line comes first when the day of `at` is not
+/// `last_day`. Then the time, the sender and the body, as [`said`] gives
+/// them. Each more line of the body is indented. The line has ANSI
+/// styles: print it through `anstream`. It removes each escape sequence
+/// from the body and the sender.
 ///
 /// ```
 /// use chrono::TimeZone;
 /// use riff_client::api::Checked;
-/// use riff_client::threads::Line;
+/// use riff_client::threads::{Line, Names};
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let message = Message {
@@ -328,24 +335,30 @@ pub fn unknown(name: &str) -> String {
 /// let c = Checked { message, verified: true };
 /// let at = chrono::Utc.with_ymd_and_hms(2026, 9, 28, 14, 13, 0).unwrap();
 /// let chat = "chat".parse()?;
+/// let names = Names::default();
 /// let plain = |c: &Checked| {
-///     let line = riff::chat::line(&Line::of(c, &chat), &at, Some(at.date_naive()));
+///     let line = riff::chat::line(&Line::of(c, &chat), &names, &at, Some(at.date_naive()));
 ///     anstream::adapter::strip_str(&line).to_string()
 /// };
-/// assert_eq!(plain(&c), "14:13 <mike@thelio> hi all");
-/// let first = riff::chat::line(&Line::of(&c, &chat), &at, None);
+/// assert_eq!(plain(&c), "14:13 <mike> hi all");
+/// let first = riff::chat::line(&Line::of(&c, &chat), &names, &at, None);
 /// assert!(anstream::adapter::strip_str(&first).to_string().starts_with("2026-09-28\n14:13"));
 ///
-/// // A lead looks different from its person.
+/// // A lead has the name of its project.
 /// let lead = "riff://mike@thelio/o/r?session=4e54d4e5&lead=true".parse()?;
 /// let answer = Message { from: lead, ..c.message.clone() };
-/// assert_eq!(plain(&Checked { message: answer, verified: true }), "14:13 [mike's lead, r] hi all");
+/// assert_eq!(plain(&Checked { message: answer, verified: true }), "14:13 <r> hi all");
 ///
 /// let waves = Message { body: "/me waves".into(), ..c.message.clone() };
-/// assert_eq!(plain(&Checked { message: waves, verified: true }), "14:13 * mike@thelio waves");
+/// assert_eq!(plain(&Checked { message: waves, verified: true }), "14:13 * mike waves");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn line<Tz: TimeZone>(m: &Line, at: &DateTime<Tz>, last_day: Option<NaiveDate>) -> String
+pub fn line<Tz: TimeZone>(
+    m: &Line,
+    names: &Names,
+    at: &DateTime<Tz>,
+    last_day: Option<NaiveDate>,
+) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
@@ -353,7 +366,7 @@ where
     if last_day != Some(at.date_naive()) {
         let _ = writeln!(out, "{}", styled(DIM, &at.format("%Y-%m-%d").to_string()));
     }
-    let said = said(m);
+    let said = said(m, names);
     let name = styled(crate::style::session(&m.from), &said.name);
     let _ = write!(
         out,
@@ -377,25 +390,29 @@ pub const INDENT: &str = "      ";
 /// tab of the TUI show them ([`said`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Said {
-    /// The text before the name: `<` for a person, `[` for a session,
-    /// `* ` for an action.
+    /// The text before the name: `<` for a name, `[` for a session with
+    /// no name, `* ` for an action.
     pub before: &'static str,
     /// The name of the sender ([`Line::sender`]), safe.
     pub name: String,
-    /// The text after the name: `>` for a person, `]` for a session.
+    /// The text after the name: `>` for a name, `]` for a session with
+    /// no name.
     pub after: &'static str,
     /// The body, or the text of an action, safe, with four spaces for a
-    /// tab.
+    /// tab. A line of riff itself has no mark [`BY_RIFF`] here.
     pub body: String,
 }
 
-/// The sender and the body of the chat line `m`: a person as
-/// `<USER@HOST>`, a session as `[NAME]`, and an action as `* NAME
-/// TEXT`. It removes each escape sequence from the body and the sender.
+/// The sender and the body of the chat line `m`, with the names `names`
+/// of riff-server. The sender shows by the name to type to reach it
+/// (01M6Y1FB5MZNZ971CJRBWZ2F9X): a person as `<USER>`, a verified lead
+/// as `<PROJECT>`, and riff itself as `<riff-bot>`. Each other session
+/// has no name, and shows as `[USER ID]`. An action is `* NAME TEXT`. It
+/// removes each escape sequence from the body and the sender.
 ///
 /// ```
 /// use riff_client::api::Checked;
-/// use riff_client::threads::Line;
+/// use riff_client::threads::{Line, Names};
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let message = Message {
@@ -408,18 +425,35 @@ pub struct Said {
 ///     sig: None,
 ///     payload: None,
 /// };
-/// let checked = Checked { message, verified: true };
-/// let said = riff::chat::said(&Line::of(&checked, &"chat".parse()?));
-/// assert_eq!((said.before, said.name.as_str(), said.after), ("* ", "mike@thelio", ""));
-/// assert_eq!(said.body, "waves    bye");
+/// let names = Names::default();
+/// let said = |message: &Message| {
+///     let checked = Checked { message: message.clone(), verified: true };
+///     riff::chat::said(&Line::of(&checked, &"chat".parse().unwrap()), &names)
+/// };
+/// let waves = said(&message);
+/// assert_eq!((waves.before, waves.name.as_str(), waves.after), ("* ", "mike", ""));
+/// assert_eq!(waves.body, "waves    bye");
+///
+/// // riff itself, also with the mark of an old riff-server.
+/// let riff = Message { body: "[by riff] a release waits".into(), ..message.clone() };
+/// let bot = said(&riff);
+/// assert_eq!((bot.before, bot.name.as_str(), bot.after), ("<", "riff-bot", ">"));
+/// assert_eq!(bot.body, "a release waits");
+///
+/// // A worker has no name.
+/// let worker = "riff://mike@thelio/o/r?session=0271342b-7454&claim=issue-6".parse()?;
+/// let done = said(&Message { from: worker, body: "done".into(), ..message });
+/// assert_eq!((done.before, done.name.as_str(), done.after), ("[", "mike 0271342b", "]"));
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn said(m: &Line) -> Said {
-    let Sender { name, session } = m.sender();
-    let (before, after, body) = match (m.action(), session) {
+pub fn said(m: &Line, names: &Names) -> Said {
+    let Sender { name, named } = m.sender(names);
+    // A body with the mark is a line of riff itself (Line::by_riff).
+    let body = m.body.strip_prefix(BY_RIFF).unwrap_or(&m.body);
+    let (before, after, body) = match (action_text(body), named) {
         (Some(text), _) => ("* ", "", text),
-        (None, false) => ("<", ">", m.body.as_str()),
-        (None, true) => ("[", "]", m.body.as_str()),
+        (None, true) => ("<", ">", body),
+        (None, false) => ("[", "]", body),
     };
     Said {
         before,
@@ -468,6 +502,9 @@ pub async fn run(
     let config = crate::settings::chat_here()?;
     let thread = thread();
     api.join(me, &thread).await?;
+    // A riff-server that gives no names: each project has the name
+    // after the slash.
+    let names = Names::new(api.names(me).await.unwrap_or_default());
     if after.is_none() {
         anstream::eprintln!(
             "riff: chat as {}@{}. Type a line and press Enter. /me TEXT sends an action. \
@@ -486,7 +523,7 @@ pub async fn run(
             .read_page(me, thread, true, Some(seq.saturating_sub(1)))
             .await?;
         if let Some(last) = read.first().filter(|c| c.message.seq == seq) {
-            day.line(&Line::of(last, thread), false);
+            day.line(&Line::of(last, thread), &names, false);
         }
     }
     // Connected first, then read: no line falls between the two
@@ -545,8 +582,8 @@ pub async fn run(
                     Ok(Seen::Message(c)) => {
                         let line = Line::of(&c, thread);
                         let new = history.is_none_or(|last| line.seq > last);
-                        let lit = highlights.line(&line, thread, new);
-                        screen.print(&day.line(&line, lit.bold), &lit);
+                        let lit = highlights.line(&line, &names, thread, new);
+                        screen.print(&day.line(&line, &names, lit.bold), &lit);
                     }
                     Ok(Seen::Lost(n)) => screen.warn(&styled(WARNING, &lost_messages(n))),
                     Err(_) => {}
@@ -838,16 +875,18 @@ fn clear_typed(line: &str) {
 struct Day(Option<NaiveDate>);
 
 impl Day {
-    /// The chat line of `l`, with a date line when its day is new. With
-    /// `bold`, the line is in bold, and the date line is not.
-    fn line(&mut self, l: &Line, bold: bool) -> String {
+    /// The chat line of `l` with the names `names`, and a date line when
+    /// its day is new. With `bold`, the line is in bold, and the date line
+    /// is not.
+    fn line(&mut self, l: &Line, names: &Names, bold: bool) -> String {
         let at = i64::try_from(l.at_ms)
             .ok()
             .and_then(|ms| Local.timestamp_millis_opt(ms).single())
             .unwrap_or_else(Local::now);
-        let mut shown = line(l, &at, self.0);
+        let mut shown = line(l, names, &at, self.0);
         if bold {
-            shown = crate::highlight::bold(&shown, &line(l, &at, Some(at.date_naive())));
+            let own = line(l, names, &at, Some(at.date_naive()));
+            shown = crate::highlight::bold(&shown, &own);
         }
         self.0 = Some(at.date_naive());
         shown

@@ -9,9 +9,10 @@
 //!  riff running · owner mike · build 10df8a4 · link ok 2s
 //!  chat · online: mike, brett · away: ann · a line wakes your leads
 //! ──── Friday 2026-11-06 ─────────────────────────────────────────────
-//!  09:14 [mike's lead, riff] good morning: 2 pull requests merged
-//!  09:15 <ann@kadomony> morning
-//!  12:20 * mike@thelio goes for lunch
+//!  09:14 <riff> good morning: 2 pull requests merged
+//!  09:15 <ann> morning
+//!  12:20 * mike goes for lunch
+//!  12:40 <riff-bot> @mike the deploy waits for your approval
 //!
 //! > @lead:riff what is next?
 //!  Enter wakes your lead in como-technologies/riff.
@@ -22,11 +23,14 @@
 //!   the last look of `who` (01M6VG1P7BH32E5YAP0GJSNJJP). While the stream of the thread is down, it
 //!   says `reconnecting…`, or the fault in red.
 //! - **The log** ([`Chat`]) keeps the last [`KEEP`] lines of the thread.
-//!   A line shows as in `riff chat` ([`crate::chat::said`]): a person as
-//!   `<USER@HOST>`, a lead as `[USER's lead, REPO]`, an action as
-//!   `* USER@HOST TEXT`. A rule names each new day. A long line wraps,
-//!   and each more row starts under the sender. The newest lines show:
-//!   `PgUp` shows older lines ([`Scroll`], 01M6VG1P7BH32E5YAP0GJSNJJP).
+//!   A line shows as in `riff chat` ([`crate::chat::said`]), with the
+//!   sender by the name to type to reach it (01M6Y1FB5MZNZ971CJRBWZ2F9X):
+//!   a person as `<USER>`, a lead as `<PROJECT>`, riff itself as
+//!   `<riff-bot>`, an action as `* NAME TEXT`. The names come from
+//!   riff-server at the start ([`Came::Names`]). A rule names each new
+//!   day. A long line wraps, and each more row starts under the sender.
+//!   The newest lines show: `PgUp` shows older lines ([`Scroll`],
+//!   01M6VG1P7BH32E5YAP0GJSNJJP).
 //! - **The prompt** ([`Prompt`]) has the focus when you open the tab
 //!   ([`Focus`]). There each key types, also the digits, `q` and `?`.
 //!   `Alt-1` to `Alt-6`, `Tab` and `Ctrl-C` keep their work. `Esc` moves
@@ -88,9 +92,10 @@ use ratatui::text::{Line as Row, Span};
 use riff_client::api::Api;
 use riff_client::chat::{resolve, wakes};
 use riff_client::link::STREAM_RETRY;
-use riff_client::threads::{ACTION, Line};
+use riff_client::threads::{ACTION, Line, Names};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
+use riff_core::wire::ChatName;
 use tokio::sync::mpsc;
 
 use super::view::{Hit, Layout, Placed, View};
@@ -466,6 +471,9 @@ pub enum Came {
     Fault(String),
     /// A line that riff could not send, with the error.
     Unsent(String),
+    /// The names of the chat from riff-server: the log shows each lead
+    /// by the name of its project from them.
+    Names(Vec<ChatName>),
 }
 
 /// Why the stream of the thread is down.
@@ -508,6 +516,8 @@ pub struct Chat {
     /// The note of a post that failed or of a paste that is too long,
     /// until the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
     pub(super) warning: Option<String>,
+    /// The names of the chat from riff-server ([`Came::Names`]).
+    names: Names,
 }
 
 impl Chat {
@@ -560,7 +570,7 @@ impl Chat {
         if self.scroll > 0 {
             let last = self.entries.len() - 1;
             let columns = self.window.columns;
-            self.scroll += rows_of(&self.entries, last, columns, columns).len();
+            self.scroll += rows_of(self, last, columns, columns).len();
         }
         if self.entries.len() > KEEP {
             self.entries.pop_front();
@@ -571,7 +581,7 @@ impl Chat {
     fn total(&self) -> usize {
         let columns = self.window.columns;
         (0..self.entries.len())
-            .map(|i| rows_of(&self.entries, i, columns, columns).len())
+            .map(|i| rows_of(self, i, columns, columns).len())
             .sum()
     }
 
@@ -656,9 +666,10 @@ impl Link {
 }
 
 /// Joins `thread` as `me`, and follows it until the receiver of `tx`
-/// goes: the history first, then each new line, one time
-/// ([`crate::catch_up`]). A join that fails tries again after
-/// [`STREAM_RETRY`].
+/// goes: the names of the chat first, then the history, then each new
+/// line, one time ([`crate::catch_up`]). A join that fails tries again
+/// after [`STREAM_RETRY`]. A riff-server that gives no names gives none:
+/// then each project has the name after the slash.
 async fn follow(api: &Api, me: &SessionUri, thread: &ThreadName, tx: &mpsc::UnboundedSender<Came>) {
     while let Err(e) = api.join(me, thread).await {
         let fault = safe(&format!("riff: cannot join the chat: {e:#}"));
@@ -666,6 +677,9 @@ async fn follow(api: &Api, me: &SessionUri, thread: &ThreadName, tx: &mpsc::Unbo
             return;
         }
         tokio::time::sleep(STREAM_RETRY).await;
+    }
+    if let Ok(names) = api.names(me).await {
+        let _ = tx.send(Came::Names(names));
     }
     let shown = Arc::new(Mutex::new(Shown::new(Start::History)));
     let connect = || {
@@ -774,6 +788,7 @@ impl State {
                 self.chat.warning = Some(text.clone());
                 self.note(text);
             }
+            Came::Names(names) => self.chat.names = Names::new(names),
         }
     }
 
@@ -1208,7 +1223,7 @@ fn window(chat: &Chat, columns: u16, full: u16, rows: u16) -> Vec<(Row<'static>,
     let want = chat.scroll.saturating_add(rows);
     let mut got: VecDeque<(Row<'static>, bool)> = VecDeque::new();
     for i in (0..chat.entries.len()).rev() {
-        for row in rows_of(&chat.entries, i, columns, full).into_iter().rev() {
+        for row in rows_of(chat, i, columns, full).into_iter().rev() {
             got.push_front(row);
         }
         if got.len() >= want {
@@ -1221,15 +1236,12 @@ fn window(chat: &Chat, columns: u16, full: u16, rows: u16) -> Vec<(Row<'static>,
     got.range(start..end).cloned().collect()
 }
 
-/// The rows of the entry `i` of `entries`: a rule of `full` columns
-/// first when its day is new, then the line in rows of `columns`.
-fn rows_of(
-    entries: &VecDeque<Entry>,
-    i: usize,
-    columns: u16,
-    full: u16,
-) -> Vec<(Row<'static>, bool)> {
+/// The rows of the entry `i` of the log of `chat`: a rule of `full`
+/// columns first when its day is new, then the line in rows of
+/// `columns`, with the names of the chat.
+fn rows_of(chat: &Chat, i: usize, columns: u16, full: u16) -> Vec<(Row<'static>, bool)> {
     let width = usize::from(columns.max(1));
+    let entries = &chat.entries;
     let entry = &entries[i];
     let mut rows = Vec::new();
     if let Some(day) = entry.day() {
@@ -1241,7 +1253,7 @@ fn rows_of(
     match entry {
         Entry::Line { line, at } => {
             rows.extend(
-                line_rows(line, at, width)
+                line_rows(line, &chat.names, at, width)
                     .into_iter()
                     .map(|row| (row, false)),
             );
@@ -1263,11 +1275,16 @@ fn rule(day: NaiveDate, full: u16) -> Row<'static> {
     Row::styled(format!("{head}{}", "─".repeat(rest)), DIM)
 }
 
-/// The rows of a chat line in `width` columns: the time, the sender and
-/// the body, as `riff chat` shows them. Each more row starts under the
-/// sender.
-fn line_rows(line: &Line, at: &DateTime<FixedOffset>, width: usize) -> Vec<Row<'static>> {
-    let said = crate::chat::said(line);
+/// The rows of a chat line in `width` columns: the time, the sender by
+/// its name in `names`, and the body, as `riff chat` shows them. Each
+/// more row starts under the sender.
+fn line_rows(
+    line: &Line,
+    names: &Names,
+    at: &DateTime<FixedOffset>,
+    width: usize,
+) -> Vec<Row<'static>> {
+    let said = crate::chat::said(line, names);
     let time = at.format("%H:%M").to_string();
     let who = format!("{}{}{}", said.before, said.name, said.after);
     let mut body: Vec<&str> = said.body.lines().collect();
@@ -1422,6 +1439,12 @@ mod tests {
 
     /// A line of the thread at `time` on 2026-11-06, in UTC.
     fn said(time: &str, from: &str, body: &str) -> Came {
+        said_as(time, from, Kind::Message, body)
+    }
+
+    /// A line of the kind `kind` of the thread at `time` on 2026-11-06,
+    /// in UTC.
+    fn said_as(time: &str, from: &str, kind: Kind, body: &str) -> Came {
         let at = DateTime::parse_from_rfc3339(&format!("2026-11-06T{time}:00+00:00")).unwrap();
         let from: SessionUri = from.parse().unwrap();
         let line = Line {
@@ -1431,7 +1454,7 @@ mod tests {
             from,
             verified: true,
             to: vec![],
-            kind: Kind::Message,
+            kind,
             body: body.into(),
         };
         Came::Seen(Entry::Line {
@@ -1479,6 +1502,12 @@ mod tests {
                 "12:31",
                 MIKE_LEAD,
                 "blocked: 3a3f8d5d (#994) asks: which of two designs?",
+            ),
+            said_as(
+                "12:40",
+                "riff://mike@thelio",
+                Kind::Riff,
+                "@mike the deploy waits for your approval",
             ),
             said(
                 "12:46",
@@ -1563,7 +1592,9 @@ mod tests {
     /// The mock-up of the Chat tab of #994 at 80 x 24: the summary
     /// row, the rule of the day, the lines as `riff chat` shows them, the
     /// prompt with the cursor after the text, the note of the wake and
-    /// the keys of the prompt.
+    /// the keys of the prompt. Each sender shows by the name to type to
+    /// reach it (#1786): a person as `<mike>`, a lead as `<riff>`, and
+    /// riff itself as `<riff-bot>`.
     #[test]
     fn the_chat_tab_at_80_x_24_is_the_mock_up() {
         let mut state = mock_up();
@@ -1577,21 +1608,21 @@ mod tests {
         ];
         want.extend(
             [
-                " 09:14 [mike's lead, riff] good morning: 2 pull requests merged overnight",
-                " 09:15 <ann@kadomony> morning",
-                " 09:40 [ann's lead, kadomony] the plan of wave 7 is ready for ann",
-                " 11:58 [mike's lead, riff] wave 48 runs: 5 items free, 3 workers started",
-                " 12:01 <brett@strata> mike, can you look at #1608?",
-                " 12:02 <mike@thelio> @brett:strata yes, after lunch",
-                " 12:02 [brett's lead, strata] noted: mike looks at #1608 after lunch",
-                " 12:20 * mike@thelio goes for lunch",
-                " 12:31 [mike's lead, riff] blocked: 3a3f8d5d (#994) asks: which of two designs?",
-                " 12:46 [mike's lead, riff] #994 still has no answer; I wait for mike",
-                " 13:05 <mike@thelio> back. @lead:riff the first design, with the tab for waves",
-                " 13:05 [mike's lead, riff] ok: #994 goes on with the first design",
-                " 13:09 [mike's lead, riff] #1608: the verify passed; the merge waits for CI",
-                " 13:12 [mike's lead, riff] #1608 merged",
-                "",
+                " 09:14 <riff> good morning: 2 pull requests merged overnight",
+                " 09:15 <ann> morning",
+                " 09:40 <kadomony> the plan of wave 7 is ready for ann",
+                " 11:58 <riff> wave 48 runs: 5 items free, 3 workers started",
+                " 12:01 <brett> mike, can you look at #1608?",
+                " 12:02 <mike> @brett:strata yes, after lunch",
+                " 12:02 <strata> noted: mike looks at #1608 after lunch",
+                " 12:20 * mike goes for lunch",
+                " 12:31 <riff> blocked: 3a3f8d5d (#994) asks: which of two designs?",
+                " 12:40 <riff-bot> @mike the deploy waits for your approval",
+                " 12:46 <riff> #994 still has no answer; I wait for mike",
+                " 13:05 <mike> back. @lead:riff the first design, with the tab for waves",
+                " 13:05 <riff> ok: #994 goes on with the first design",
+                " 13:09 <riff> #1608: the verify passed; the merge waits for CI",
+                " 13:12 <riff> #1608 merged",
                 "",
                 "",
                 "> @lead:riff what is next?",
@@ -1623,24 +1654,24 @@ mod tests {
             "‹ 2/6 Chat ›",
             "riff running · link ok 2s",
             "chat · 2 online · 1 away",
-            "      after lunch",
-            "12:02 [brett's lead, strata] noted: mike",
-            "      looks at #1608 after lunch",
-            "12:20 * mike@thelio goes for lunch",
-            "12:31 [mike's lead, riff] blocked:",
-            "      3a3f8d5d (#994) asks: which of two",
-            "      designs?",
-            "12:46 [mike's lead, riff] #994 still has",
-            "      no answer; I wait for mike",
-            "13:05 <mike@thelio> back. @lead:riff the",
-            "      first design, with the tab for",
-            "      waves",
-            "13:05 [mike's lead, riff] ok: #994 goes",
-            "      on with the first design",
-            "13:09 [mike's lead, riff] #1608: the",
-            "      verify passed; the merge waits for",
-            "      CI",
-            "13:12 [mike's lead, riff] #1608 merged",
+            "12:02 <mike> @brett:strata yes, after",
+            "      lunch",
+            "12:02 <strata> noted: mike looks at",
+            "      #1608 after lunch",
+            "12:20 * mike goes for lunch",
+            "12:31 <riff> blocked: 3a3f8d5d (#994)",
+            "      asks: which of two designs?",
+            "12:40 <riff-bot> @mike the deploy waits",
+            "      for your approval",
+            "12:46 <riff> #994 still has no answer; I",
+            "      wait for mike",
+            "13:05 <mike> back. @lead:riff the first",
+            "      design, with the tab for waves",
+            "13:05 <riff> ok: #994 goes on with the",
+            "      first design",
+            "13:09 <riff> #1608: the verify passed;",
+            "      the merge waits for CI",
+            "13:12 <riff> #1608 merged",
             "> @brett hi",
             "Enter wakes each lead of brett.",
             "Enter send  Esc log  Ctrl-C quit",
@@ -1817,9 +1848,9 @@ mod tests {
                 &format!("line {n}"),
             ));
         }
-        // 29 rows of the mock-up and 20 more: 49 rows, and 18 show.
+        // 28 rows of the mock-up and 20 more: 48 rows, and 18 show.
         let (rows, _) = drawn(&mut state, 40, 24);
-        assert_eq!(rows[20], "14:19 <brett@strata> line 19");
+        assert_eq!(rows[20], "14:19 <brett> line 19");
         // PgUp shows a page of 17 older rows: the top row of the last
         // window stays in sight.
         state.on_key(FrameKey::Chat(Key::Scroll(Scroll::PageUp)));
@@ -1830,19 +1861,19 @@ mod tests {
         state.on_key(FrameKey::Chat(Key::Scroll(Scroll::PageUp)));
         state.on_key(FrameKey::Chat(Key::Scroll(Scroll::PageUp)));
         let (top, _) = drawn(&mut state, 40, 24);
-        assert_eq!(state.chat().scrolled(), 31);
+        assert_eq!(state.chat().scrolled(), 30);
         assert_eq!(top[3], "──── Friday 2026-11-06 ─────────────────");
-        assert_eq!(top[4], "09:14 [mike's lead, riff] good morning:");
+        assert_eq!(top[4], "09:14 <riff> good morning: 2 pull");
         // A new line: the window stays.
         state.chat_came(said("14:30", "riff://brett@strata", "a new line"));
         let (kept, _) = drawn(&mut state, 40, 24);
         assert_eq!(kept, top);
         // PgDn shows newer rows, and End the newest line.
         state.on_key(FrameKey::Chat(Key::Scroll(Scroll::PageDown)));
-        assert_eq!(state.chat().scrolled(), 15);
+        assert_eq!(state.chat().scrolled(), 14);
         state.on_key(FrameKey::Chat(Key::Scroll(Scroll::Newest)));
         let (rows, _) = drawn(&mut state, 40, 24);
-        assert_eq!(rows[20], "14:30 <brett@strata> a new line");
+        assert_eq!(rows[20], "14:30 <brett> a new line");
         // A send shows the newest line too.
         state.on_key(FrameKey::Chat(Key::Scroll(Scroll::Up(3))));
         assert_eq!(state.chat().scrolled(), 3);
@@ -1875,11 +1906,7 @@ mod tests {
         let rule = format!("──── Saturday 2026-11-07 {}", "─".repeat(55));
         assert_eq!(
             &rows[18..21],
-            [
-                rule,
-                " 08:00 <ann@kadomony> two".into(),
-                "       rows".into()
-            ]
+            [rule, " 08:00 <ann> two".into(), "       rows".into()]
         );
     }
 
@@ -1951,7 +1978,7 @@ mod tests {
         assert_eq!(
             rows[17..21],
             [
-                " 13:15 <mike@thelio> zero",
+                " 13:15 <mike> zero",
                 "       one",
                 "       two",
                 "       three"
@@ -2080,7 +2107,28 @@ mod tests {
         ));
         let (rows, _) = drawn(&mut state, 80, 24);
         assert!(
-            rows.contains(&" 13:15 <brett@strata> hi all".to_owned()),
+            rows.contains(&" 13:15 <brett> hi all".to_owned()),
+            "{rows:#?}"
+        );
+    }
+
+    /// #1786: on a clash, the names of riff-server give a project the
+    /// name `OWNER/REPO`, and the log shows its lead with that name.
+    #[test]
+    fn a_lead_of_a_project_with_a_clash_shows_as_owner_and_repo() {
+        let mut state = mock_up();
+        let project = |name: &str| ChatName {
+            name: name.into(),
+            kind: riff_core::wire::NameKind::Project,
+            online: true,
+        };
+        let names = ["acme/strata", "como-technologies/strata", "riff"];
+        state.chat_came(Came::Names(names.map(project).to_vec()));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        let clash = " 12:02 <como-technologies/strata> noted: mike looks at #1608 after lunch";
+        assert!(rows.contains(&clash.to_owned()), "{rows:#?}");
+        assert!(
+            rows.contains(&" 13:12 <riff> #1608 merged".to_owned()),
             "{rows:#?}"
         );
     }

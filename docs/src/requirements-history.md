@@ -629,6 +629,10 @@ page [Requirements](requirements.md) holds the rules of today.
   Superseded by 4.0 (#1173).
 - **01M3NK7VM1J5DDB0PECNZ28P4E** Replaced by
   01M49Z4E8QB1QDXVCPE6MX5JX2.
+- **01M3NJD3BR0XAYNNFTEY0CG761** A chat line shows a person as
+  `<USER@HOST>`, a verified lead as `[USER's lead]`, and each other
+  session as `[USER ID]`, with the first 8 characters of its session
+  ID.
 
 ## Security
 

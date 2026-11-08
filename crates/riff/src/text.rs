@@ -15,7 +15,7 @@ use riff_core::name::{SessionUri, ThreadName};
 
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_client::api::{Claimed, Inbox, Told};
-use riff_client::threads::{Line, Thread};
+use riff_client::threads::{Line, Names, Thread};
 use riff_core::wire::{
     AdminSet, FreeReply, GitHubRole, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied,
     OwnerPassed, PauseInfo, Posted, ReleaseReply, Removed, Revoked, RiffOwner, RiffReply,
@@ -3019,8 +3019,8 @@ pub fn message(line: &Line) -> String {
     }
 }
 
-/// An action line of the chat as plain text: `* USER@HOST TEXT`.
-/// `None` when the body is not an action.
+/// An action line of the chat as plain text, as `read` shows it:
+/// `* USER@HOST TEXT`. `None` when the body is not an action.
 ///
 /// ```
 /// let from = "riff://brett@kadomony".parse()?;
@@ -4042,17 +4042,19 @@ pub fn lost_messages(n: u64) -> String {
 /// `anstream`, which removes them when the output has no color.
 ///
 /// - A date line comes first when the day of `at` is not `last_day`.
-/// - The header: the time, the sender ([`name`], [`style::session`](crate::style::session)),
-///   `lead` for a verified lead, the address, the mark `verified` or
+/// - The header: the time, the name of the sender in the chat when it has
+///   one ([`Line::sender`] with `names`, 01M6Y1FB5MZNZ971CJRBWZ2F9X), the
+///   address of the sender ([`name`], [`style::session`](crate::style::session)),
+///   `lead` for a verified lead, the receivers, the mark `verified` or
 ///   `not verified` (R199), and the number.
-/// - The body is under the header, with an indent. It wraps to `width`
-///   and keeps its own line breaks. Each name and the body are
-///   [`safe`].
+/// - The body is under the header, with an indent. An action is `* NAME
+///   TEXT`. It wraps to `width` and keeps its own line breaks. Each name
+///   and the body are [`safe`].
 ///
 /// ```
 /// use chrono::{FixedOffset, TimeZone};
 /// use riff_client::api::Checked;
-/// use riff_client::threads::Line;
+/// use riff_client::threads::{Line, Names};
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let message = Message {
@@ -4066,23 +4068,33 @@ pub fn lost_messages(n: u64) -> String {
 ///     payload: None,
 /// };
 /// let thread = "como-technologies/riff".parse()?;
-/// let line = Line::of(&Checked { message, verified: true }, &thread);
-/// let utc = FixedOffset::east_opt(0).unwrap();
-/// let at = utc.timestamp_millis_opt(line.at_ms as i64).unwrap();
-/// let text = riff::text::block(&line, &at, None, 80);
+/// let names = Names::default();
+/// let plain = |m: &Message, verified| {
+///     let line = Line::of(&Checked { message: m.clone(), verified }, &thread);
+///     let utc = FixedOffset::east_opt(0).unwrap();
+///     let at = utc.timestamp_millis_opt(line.at_ms as i64).unwrap();
+///     let text = riff::text::block(&line, &names, &at, None, 80);
+///     anstream::adapter::strip_str(&text).to_string()
+/// };
 /// assert_eq!(
-///     anstream::adapter::strip_str(&text).to_string(),
+///     plain(&message, true),
 ///     "2026-09-21\n\
-///      14:13  mike@pangolin:riff#api (a6cf2205) lead  → claim=issue-6  verified  #2\n       \
+///      14:13  <riff>  mike@pangolin:riff#api (a6cf2205) lead  → claim=issue-6  verified  #2\n       \
 ///      ready. I pushed the fix to main."
 /// );
-/// // The same day: no date line.
-/// let text = riff::text::block(&line, &at, Some(at.date_naive()), 80);
-/// assert!(anstream::adapter::strip_str(&text).to_string().starts_with("14:13"));
+/// // A sender with no name shows only its address.
+/// assert!(plain(&message, false).contains("\n14:13  mike@pangolin:riff#api (a6cf2205)  → claim"));
+/// // A person and an action.
+/// let waves = Message { from: "riff://mike@thelio".parse()?, body: "/me waves".into(), ..message };
+/// assert_eq!(
+///     plain(&waves, true),
+///     "2026-09-21\n14:13  <mike>  mike@thelio  → claim=issue-6  verified  #2\n       * mike waves"
+/// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn block<Tz: TimeZone>(
     m: &Line,
+    names: &Names,
     at: &DateTime<Tz>,
     last_day: Option<NaiveDate>,
     width: usize,
@@ -4094,12 +4106,21 @@ where
     if last_day != Some(at.date_naive()) {
         let _ = writeln!(out, "{}", styled(DIM, &at.format("%Y-%m-%d").to_string()));
     }
-    let _ = write!(
-        out,
-        "{}  {}",
-        styled(DIM, &at.format("%H:%M").to_string()),
-        styled(crate::style::session(&m.from), &safe(&name(&m.from)))
-    );
+    let style = crate::style::session(&m.from);
+    let _ = write!(out, "{}", styled(DIM, &at.format("%H:%M").to_string()));
+    let sender = m.sender(names);
+    let address = safe(&name(&m.from));
+    if sender.named {
+        let named = format!("<{}>", safe(&sender.name));
+        let _ = write!(
+            out,
+            "  {}  {}",
+            styled(style, &named),
+            styled(DIM, &address)
+        );
+    } else {
+        let _ = write!(out, "  {}", styled(style, &address));
+    }
     if m.lead {
         let _ = write!(out, " {}", styled(BOLD, "lead"));
     }
@@ -4119,7 +4140,8 @@ where
     let _ = write!(out, "  {mark}  {}", styled(DIM, &format!("#{}", m.seq)));
     let body = match (m.kind, m.body.is_empty()) {
         (Kind::Message | Kind::Riff | Kind::Other, _) => {
-            safe(&action(&m.from, &m.body).unwrap_or_else(|| m.body.clone()))
+            let action = m.action().map(|text| format!("* {} {text}", sender.name));
+            safe(&action.unwrap_or_else(|| m.body.clone()))
         }
         (Kind::Status, true) => "asks for your status.".into(),
         (Kind::Status, false) => format!("asks for your status: {}", safe(&m.body)),
@@ -11127,7 +11149,9 @@ pub fn wave_asked(repo: &str) -> String {
 /// The rules of the lead (01M592593NSC1DE7A653Q8PCPS), as one text. The lead
 /// gets them in [`MCP_LEAD`]: no rule stays only in the
 /// Claude memory of one host. [`LEAD_RULES`] names each rule with a
-/// phrase of it, and a test checks the phrase.
+/// phrase of it, and a test checks the phrase. In the chat, the lead
+/// answers only a line of its user that names its project, and the answer
+/// names the user who asked (01M6Y1FB84QN0C70AJ5K1JCNMT).
 macro_rules! lead_rules {
     () => {
         "Rules. You place the issues in the waves; a worker does not. Do not run a raw shell \
@@ -11136,8 +11160,12 @@ alone, as one command: do not join it with `&&`, `;` or a pipe. Start each `tell
 request, in the first words, then the reason. Put each finding in a GitHub issue: a \
 finding only in chat or in a note is lost. When a guard refuses a good \
 action, file an issue to fix the guard in code: do not work around the refusal. State facts \
-that you read, and say \"I do not know\" for the rest: do not speculate. When your person \
-writes in the riff chat, answer in the riff chat, not only in your terminal: post to the thread `chat` with the selector `{user, host, person: true}`, so that no agent session wakes. Do not name \
+that you read, and say \"I do not know\" for the rest: do not speculate. Read each line of \
+the riff chat at your next read. Answer only a line of your user that names your project: `@` \
+and the name of your repository after the slash, as `@riff`, or `@OWNER/REPO`. Each other line \
+asks you nothing. Answer in the riff chat, not only in your terminal: start the answer with \
+`@USER`, the user who asked, and post it to the thread `chat` with the selector \
+`{name: USER}`, so that only the terminals of that person wake. Do not name \
 message numbers in the chat: say what the message said. Write a design in the body of the \
 issue, not in comments. Put each question for a person in the body of the issue, in a section \"Questions for PERSON\" \
 as Q1, Q2 and so on, and add the label `question`: riff shows it, and the wave waits for the \
@@ -11158,9 +11186,9 @@ notes."
 /// for (name, phrase) in riff::text::LEAD_RULES {
 ///     assert!(riff::text::MCP_LEAD.contains(phrase), "{name}: {phrase}");
 /// }
-/// assert_eq!(riff::text::LEAD_RULES.len(), 17);
+/// assert_eq!(riff::text::LEAD_RULES.len(), 20);
 /// ```
-pub const LEAD_RULES: [(&str, &str); 17] = [
+pub const LEAD_RULES: [(&str, &str); 20] = [
     ("lead-places-issues", "You place the issues in the waves"),
     ("no-raw-oneliners", "Do not run a raw shell one-liner"),
     ("riff-commands-alone", "Run each riff command alone"),
@@ -11175,8 +11203,20 @@ pub const LEAD_RULES: [(&str, &str); 17] = [
     ),
     ("facts-not-speculation", "State facts that you read"),
     (
+        "chat-reads-each-line",
+        "Read each line of the riff chat at your next read",
+    ),
+    (
+        "chat-answers-own-project",
+        "Answer only a line of your user that names your project",
+    ),
+    (
         "requests-in-chat",
-        "answer in the riff chat, not only in your terminal",
+        "Answer in the riff chat, not only in your terminal",
+    ),
+    (
+        "chat-answer-names-person",
+        "start the answer with `@USER`, the user who asked",
     ),
     (
         "chat-no-message-numbers",
@@ -12411,6 +12451,27 @@ mod tests {
         assert_eq!(names.len(), LEAD_RULES.len());
     }
 
+    /// #1786 (01M6Y1FB84QN0C70AJ5K1JCNMT): the lead reads each line of
+    /// the chat, answers only a line of its user that names its project,
+    /// and its answer names the user who asked. It wakes the terminals of
+    /// that person by name, not by its host.
+    #[test]
+    fn the_lead_answers_in_the_chat_only_a_line_that_names_its_project() {
+        let rules = lead_rules!();
+        for phrase in [
+            "Read each line of the riff chat at your next read.",
+            "Answer only a line of your user that names your project: `@` and the name of your \
+             repository after the slash, as `@riff`, or `@OWNER/REPO`.",
+            "Each other line asks you nothing.",
+            "start the answer with `@USER`, the user who asked, and post it to the thread `chat` \
+             with the selector `{name: USER}`, so that only the terminals of that person wake.",
+        ] {
+            assert!(rules.contains(phrase), "{phrase}");
+        }
+        assert!(!rules.contains("{user, host, person: true}"));
+        assert!(MCP_LEAD.contains(rules));
+    }
+
     /// #1572 (01M6H3EK1J3DEEV09FAKKKFPEB): the start text of a worker
     /// has the line about the body of the pull request one time, in the
     /// step that writes the body, before the step that opens the pull
@@ -12646,7 +12707,7 @@ mod tests {
         };
         let line = Line::of(&c, &"como-technologies/riff".parse().unwrap());
         let at = chrono::DateTime::from_timestamp_millis(0).unwrap();
-        let text = block(&line, &at, Some(at.date_naive()), 80);
+        let text = block(&line, &Names::default(), &at, Some(at.date_naive()), 80);
         let sender = crate::style::session(&c.message.from);
         assert!(text.contains(&format!("{sender}ann@heron:riff (77e0){sender:#}")));
         assert!(text.contains(&format!("{WARNING}not verified{WARNING:#}")));
@@ -12655,6 +12716,44 @@ mod tests {
         assert_eq!(
             plain,
             "00:00  ann@heron:riff (77e0)  not verified  #3\n       asks for your status."
+        );
+    }
+
+    /// #1786: a sender with a name shows it in its style, and the
+    /// address after it is the dim detail. A line of riff itself shows
+    /// `<riff-bot>`.
+    #[test]
+    fn the_block_shows_the_name_of_the_sender_and_the_address_as_the_detail() {
+        let message = riff_core::wire::Message {
+            seq: 4,
+            from: "riff://mike@thelio".parse().unwrap(),
+            to: vec![],
+            body: "the deploy waits for your approval".into(),
+            at_ms: 0,
+            kind: Kind::Riff,
+            sig: None,
+            payload: None,
+        };
+        let c = Checked {
+            message,
+            verified: true,
+        };
+        let line = Line::of(&c, &"chat".parse().unwrap());
+        let at = chrono::DateTime::from_timestamp_millis(0).unwrap();
+        let text = block(&line, &Names::default(), &at, Some(at.date_naive()), 80);
+        let sender = crate::style::session(&c.message.from);
+        assert!(
+            text.contains(&format!("{sender}<riff-bot>{sender:#}")),
+            "{text:?}"
+        );
+        assert!(
+            text.contains(&format!("{DIM}mike@thelio{DIM:#}")),
+            "{text:?}"
+        );
+        let plain = anstream::adapter::strip_str(&text).to_string();
+        assert_eq!(
+            plain,
+            "00:00  <riff-bot>  mike@thelio  verified  #4\n       the deploy waits for your approval"
         );
     }
 
@@ -12676,7 +12775,7 @@ mod tests {
         };
         let line = Line::of(&c, &"chat".parse().unwrap());
         let at = chrono::DateTime::from_timestamp_millis(0).unwrap();
-        let text = block(&line, &at, Some(at.date_naive()), 80);
+        let text = block(&line, &Names::default(), &at, Some(at.date_naive()), 80);
         let plain = anstream::adapter::strip_str(&text).to_string();
         assert!(plain.ends_with("\n       one\n\n       two"), "{plain:?}");
     }

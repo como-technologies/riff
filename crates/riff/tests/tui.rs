@@ -948,14 +948,14 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
     tty.press("2").await;
     let shown = |rows: &[String], text: &str| rows.iter().filter(|r| r.ends_with(text)).count();
     let rows = tty
-        .shows(|rows| shown(rows, "[brett's lead, riff] are you there?") == 1)
+        .shows(|rows| shown(rows, "<riff> are you there?") == 1)
         .await;
     assert_eq!(
         rows[0],
         " 1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports"
     );
     assert!(rows[2].starts_with(" chat · online: brett"), "{rows:#?}");
-    assert_eq!(shown(&rows, "<mike@heron> hello brett"), 1, "{rows:#?}");
+    assert_eq!(shown(&rows, "<mike> hello brett"), 1, "{rows:#?}");
     assert_eq!(rows[21], ">");
     assert_eq!(
         rows[23],
@@ -975,7 +975,7 @@ async fn the_chat_tab_shows_the_chat_and_sends_a_line_that_wakes_a_lead() {
     assert_eq!(wake.thread, chat);
     assert_eq!(wake.from.to_string(), "riff://brett@thelio");
     let rows = tty
-        .shows(|rows| shown(rows, "<brett@thelio> @lead:riff is #12 done?") == 1)
+        .shows(|rows| shown(rows, "<brett> @lead:riff is #12 done?") == 1)
         .await;
     assert_eq!(rows[21], ">", "{rows:#?}");
 
@@ -1003,11 +1003,11 @@ async fn a_paste_of_three_lines_in_the_chat_tab_sends_one_message() {
     tty.shows(|rows| rows[21] == "> one↵two↵three").await;
     tty.press("\r").await;
     let rows = tty
-        .shows(|rows| rows.iter().any(|r| r.ends_with("<brett@thelio> one")))
+        .shows(|rows| rows.iter().any(|r| r.ends_with("<brett> one")))
         .await;
     let at = rows
         .iter()
-        .position(|r| r.ends_with("<brett@thelio> one"))
+        .position(|r| r.ends_with("<brett> one"))
         .unwrap();
     assert_eq!(
         rows[at + 1..at + 3],

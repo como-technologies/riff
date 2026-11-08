@@ -3035,28 +3035,23 @@
 - **01M3NB5MY93KV9RKZGGSMZW00D** The people of a riff chat in the
   thread `chat` on the riff server. `riff chat` is a line client in
   the style of IRC. It shows the history and each new line with the
-  time and `USER@HOST`, and posts each line that the person types.
+  time and the sender, and posts each line that the person types.
   `--color` works as in `riff tail`. `/quit` or Ctrl-C exits. The
   chat has no private channels, no nick changes and no files.
 - **01M3NB5N0D99JB5CE6RB4VEYPF** A chat line wakes the lead of the
   sender, unless it names a lead: `@lead` wakes the lead of the sender,
-  and `@USER` wakes the lead of USER. The instructions of the lead
-  tell a lead to answer a chat line with a post to the thread `chat`.
+  and `@USER` wakes the lead of USER.
 - **01M3NJD39JVJHY5G71CD79JBY3** In a terminal, `riff chat` has a
   prompt line at the bottom. A new line prints above the prompt, and
   the typed text stays. After Enter, the typed line goes away, so the
   line shows once: as the chat line from the server. The start line
   comes before the history. With a pipe, `riff chat` has no prompt and
   no line editor.
-- **01M3NJD3BR0XAYNNFTEY0CG761** A chat line shows a person as
-  `<USER@HOST>`, a verified lead as `[USER's lead]`, and each other
-  session as `[USER ID]`, with the first 8 characters of its session
-  ID.
 - **01M3NJD37CNQX580YC24S7K6ES** `/me TEXT` in `riff chat` posts an
   action line: a plain message with the body `/me TEXT`, so the riff of
-  the release before reads it. `riff chat` and `riff tail` show it as
-  `* USER@HOST TEXT`, and `read` as `* USER@HOST TEXT` after the head.
-  `@lead` and `@USER` in an action wake as in a chat line.
+  the release before reads it. `read` shows it as `* USER@HOST TEXT`
+  after the head. `@lead` and `@USER` in an action wake as in a chat
+  line.
   `riff chat` sends no line that starts with an unknown command, and
   names its commands. A line that starts with `//` sends the line from
   its second `/`.
@@ -3086,9 +3081,7 @@
 
 - **01M5P207CN20TQTP017X6RTMWG** The selector field `person` is `true`
   for the terminals of a person (`riff chat`, `riff tail`, the phone),
-  which have no session ID, and `false` for each agent session. The lead
-  posts to its person only with `user`, `host` and `person` set to true:
-  the post wakes no daemon, worker or other agent session. The
+  which have no session ID, and `false` for each agent session. The
   instructions of the riff tools name this selector.
 - **01M5QVH7KDK3R2S4NDFB2V1XY9** A chat line with `@lead:REPO` wakes
   only the lead of the sender in the repository REPO, and `@USER:REPO`
@@ -3097,8 +3090,7 @@
   `riff chat` reads the leads from riff-server. When no lead or more
   than one lead matches, it sends nothing and names the leads that it
   found. `@lead`, `@USER` and a line with no name still wake each lead
-  of the user. A chat line shows a lead as `[USER's lead, REPO]`, with
-  the name of its repository.
+  of the user.
 - **01M5QVD3B1GT7STHBQS7NK4DR0** A session starts each thread that it
   joins at the newest message of the thread: the messages before its
   join are not unread, and `read` with `all` shows them. A session that
@@ -3185,6 +3177,26 @@
   nor a project wakes no session, and the post still goes. A project
   with no live lead of the sender wakes no session, and no free session
   in the place of the lead: the line waits in the log.
+- **01M6Y1FB5MZNZ971CJRBWZ2F9X** `riff chat`, the Chat tab of the TUI
+  and `riff tail` show the sender of a line by the name to type to reach
+  it: a person as `<USER>`, a verified lead as `<PROJECT>`, the name of
+  its project in the names of riff-server, and a line of the kind `riff`
+  or with the mark `[by riff]` as `<riff-bot>`. Each other session has
+  no name, and shows as `[USER ID]`, with the first 8 characters of its
+  session ID. An action shows as `* NAME TEXT`. They read the names when
+  they start. `riff chat` and the Chat tab show a line of riff with no
+  mark `[by riff]`. The host shows only in the detail of a line: after
+  the name in the head of `riff tail`, and in `read`. Supersedes
+  01M3NJD3BR0XAYNNFTEY0CG761 in full, and 01M3NB5MY93KV9RKZGGSMZW00D,
+  01M3NJD37CNQX580YC24S7K6ES, 01M5QVH7KDK3R2S4NDFB2V1XY9 and
+  01M6VG1P7BH32E5YAP0GJSNJJP in part.
+- **01M6Y1FB84QN0C70AJ5K1JCNMT** The rules of the lead tell the lead to
+  read each line of the chat at its next read, and to answer only a line
+  of its user that names its project: `@` and the name of its repository
+  after the slash, or `@OWNER/REPO`. The lead posts the answer to the
+  thread `chat` with the selector `name=USER`, and the answer starts
+  with `@USER`, the person who asked. Supersedes
+  01M3NB5N0D99JB5CE6RB4VEYPF and 01M5P207CN20TQTP017X6RTMWG in part.
 
 ## Security
 
@@ -7612,11 +7624,9 @@ that builds it merges.
   note line says so.
 - **01M6VG1P7BH32E5YAP0GJSNJJP** The Chat tab of the TUI shows the
   thread `chat` as `riff chat` does: the newest lines, a rule with the
-  day before the first line of each day, and a prompt. A person shows as
-  `<USER@HOST>`, a lead as `[USER's lead, REPO]`, and an action as `*
-  USER@HOST TEXT`. A long line wraps, and each more row starts under the
-  sender. The row under the header names the people who are online and
-  away. `riff chat` stays.
+  day before the first line of each day, and a prompt. A long line
+  wraps, and each more row starts under the sender. The row under the
+  header names the people who are online and away. `riff chat` stays.
 - **01M6VG1PA4PM47777ZT4PNGETF** The prompt of the Chat tab has the
   focus when you open the tab. In the prompt, each key that types a
   character types it, also `1` to `6`, `q`, `r` and `?`. There `Alt-1`

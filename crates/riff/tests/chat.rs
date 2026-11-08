@@ -132,7 +132,7 @@ fn lead_of(user: &str) -> SessionUri {
         .unwrap()
 }
 
-/// A chat line of a person: `HH:MM <USER@HOST> BODY`.
+/// A chat line of a name: `HH:MM <NAME> BODY`.
 fn is_line(line: &str, from: &str, body: &str) -> bool {
     is_shown(line, &format!("<{from}> {body}"))
 }
@@ -154,14 +154,14 @@ async fn a_line_of_one_person_shows_at_the_other() {
 
     mike.say("hello brett").await;
     let line = brett.shows("hello brett").await;
-    assert!(is_line(&line, "mike@thelio", "hello brett"), "{line:?}");
+    assert!(is_line(&line, "mike", "hello brett"), "{line:?}");
     let own = mike.shows("hello brett").await;
-    assert!(is_line(&own, "mike@thelio", "hello brett"), "{own:?}");
+    assert!(is_line(&own, "mike", "hello brett"), "{own:?}");
 
     // A later client shows the history first.
     let mut late = Client::start(&server, "bob", "wren", &[]).await;
     let line = late.shows("hello brett").await;
-    assert!(is_line(&line, "mike@thelio", "hello brett"), "{line:?}");
+    assert!(is_line(&line, "mike", "hello brett"), "{line:?}");
 
     mike.say("/quit").await;
     let status = in_time(WAIT, mike.child.wait()).await;
@@ -225,14 +225,11 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
         )
         .await
         .unwrap();
-    // The lead line looks different from a person line, also with no
+    // The line of the lead shows the name of its project, also with no
     // color.
     for client in [&mut mike, &mut brett] {
         let line = client.shows("yes, take #14").await;
-        assert!(
-            is_shown(&line, "[mike's lead, riff] yes, take #14"),
-            "{line:?}"
-        );
+        assert!(is_shown(&line, "<riff> yes, take #14"), "{line:?}");
     }
 
     // Neither line named brett: his lead stays asleep.
@@ -264,6 +261,58 @@ async fn named_leads(
         leads.push((lead, api));
     }
     leads
+}
+
+/// #1786 (01M6Y1FB5MZNZ971CJRBWZ2F9X): each line shows its sender by the
+/// name to type to reach it: a person as `<brett>`, a lead as the name of
+/// its project, `<riff>`, and riff itself as `<riff-bot>`. The host shows
+/// nowhere. On a clash, the project has the name `OWNER/REPO` from the
+/// names of riff-server, which the chat reads at its start.
+#[tokio::test]
+async fn each_line_shows_its_sender_by_the_name_to_type() {
+    let server = crate::common::start_signed().await;
+    let repos = ["como-technologies/riff", "como-technologies/strata"];
+    let leads = named_leads(&server, "mike", &repos).await;
+    // A session of brett in acme/strata: two projects have the name
+    // strata.
+    let other = lead_in("brett", "acme/strata");
+    let api = crate::common::api_of(&server, &other);
+    api.register(&other).await.unwrap();
+    let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+
+    brett.say("is #12 merged?").await;
+    let line = mike.shows("is #12 merged?").await;
+    assert!(is_line(&line, "brett", "is #12 merged?"), "{line:?}");
+    let chat = riff::chat::thread();
+    let answers = ["@brett yes, #12 is merged", "@brett strata is green"];
+    for ((lead, api), body) in leads.iter().zip(answers) {
+        let post = api.post(lead, Some(&chat), &[], body, Kind::Message);
+        post.await.unwrap();
+    }
+    let line = mike.shows("#12 is merged").await;
+    assert!(is_line(&line, "riff", answers[0]), "{line:?}");
+    let line = mike.shows("strata is green").await;
+    assert!(
+        is_line(&line, "como-technologies/strata", answers[1]),
+        "{line:?}"
+    );
+
+    let person: SessionUri = "riff://mike@thelio".parse().unwrap();
+    let waits = "the deploy waits for your approval";
+    riff::chat::post_by_riff(&server.api("mike", None), &person, &[], waits)
+        .await
+        .unwrap();
+    for client in [&mut mike, &mut brett] {
+        let line = client.shows(waits).await;
+        assert!(is_line(&line, "riff-bot", waits), "{line:?}");
+    }
+
+    // The line of mike shows at brett as <mike>.
+    mike.say("thanks").await;
+    let line = brett.shows("thanks").await;
+    assert!(is_line(&line, "mike", "thanks"), "{line:?}");
+    assert!(!line.contains("thelio"), "{line:?}");
 }
 
 #[tokio::test]
@@ -306,16 +355,13 @@ async fn at_lead_with_a_repository_wakes_only_the_lead_of_that_repository() {
     let none = tokio::time::timeout(quiet, strata_wakes.next()).await;
     assert!(none.is_err(), "the lead in strata woke: {none:?}");
 
-    // The line of a lead shows its repository.
+    // The line of a lead shows the name of its project.
     let (strata, strata_api) = &leads[1];
     let chat = riff::chat::thread();
     let post = strata_api.post(strata, Some(&chat), &[], "yes, #12 is done", Kind::Message);
     post.await.unwrap();
     let line = mike.shows("yes, #12 is done").await;
-    assert!(
-        is_shown(&line, "[mike's lead, strata] yes, #12 is done"),
-        "{line:?}"
-    );
+    assert!(is_shown(&line, "<strata> yes, #12 is done"), "{line:?}");
 
     // @lead alone, and a line with no name, wake each lead of the user.
     for line in ["@lead both of you", "and a line with no name"] {
@@ -374,7 +420,7 @@ async fn a_name_that_fits_no_lead_or_two_leads_sends_nothing_and_names_the_leads
     mike.say("@lead:acme/strata hello").await;
     let line = mike.shows("hello").await;
     assert!(
-        is_line(&line, "mike@thelio", "@lead:acme/strata hello"),
+        is_line(&line, "mike", "@lead:acme/strata hello"),
         "{line:?}"
     );
     let wake = in_time(WAIT, acme.next())
@@ -498,8 +544,9 @@ fn the_book_shows_how_to_chat() {
     assert!(part.contains("@lead"), "{part}");
     assert!(part.contains("riff chat --color never"), "{part}");
     assert!(part.contains(PROMPT.trim_end()), "{part}");
-    assert!(part.contains("<mike@thelio>"), "{part}");
-    assert!(part.contains("[brett's lead, riff]"), "{part}");
+    assert!(part.contains("<mike>"), "{part}");
+    assert!(part.contains("<riff>"), "{part}");
+    assert!(part.contains("<riff-bot>"), "{part}");
     let ask = part
         .find("\n### Ask a lead in the chat\n")
         .expect("the how-to to ask a lead has its own heading");
@@ -519,7 +566,7 @@ fn the_book_shows_how_to_chat() {
         .expect("the /me how-to has its own heading");
     let action = &part[action..];
     assert!(action.contains("```text\n/me waves\n```"), "{action}");
-    assert!(action.contains("* mike@thelio waves"), "{action}");
+    assert!(action.contains("* mike waves"), "{action}");
     assert!(action.contains("//"), "{action}");
     Isolated::shared()
         .assert_riff()
@@ -673,7 +720,7 @@ async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
     brett.say("/me waves").await;
     for client in [&mut mike, &mut brett] {
         let line = client.shows("waves").await;
-        assert!(is_shown(&line, "* brett@heron waves"), "{line:?}");
+        assert!(is_shown(&line, "* brett waves"), "{line:?}");
         assert!(!line.contains('\x1b'), "{line:?}");
     }
     let line = in_time(WAIT, async {
@@ -686,7 +733,7 @@ async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
     })
     .await
     .expect("riff tail shows the action in time");
-    assert_eq!(line.trim(), "* brett@heron waves");
+    assert_eq!(line.trim(), "* brett waves");
 
     // The read tool of a session shows it as plain text.
     let thread = riff::chat::thread();
@@ -742,7 +789,7 @@ async fn an_unknown_command_is_not_sent_and_a_double_slash_sends_a_slash() {
     assert_eq!(warned, riff::chat::unknown("foo"));
     mike.say("//foo bar").await;
     let line = mike.shows("foo bar").await;
-    assert!(is_line(&line, "mike@thelio", "/foo bar"), "{line:?}");
+    assert!(is_line(&line, "mike", "/foo bar"), "{line:?}");
 
     // The chat holds only the line with //.
     let api = crate::common::api_of(&server, &lead_of("mike"));
@@ -998,13 +1045,13 @@ async fn in_a_terminal_a_highlight_is_bold_rings_and_marks_the_title() {
     assert_eq!(mike.bold("look at #12"), Some(true));
     assert_eq!(mike.bold("a line for all"), Some(false));
     let span = Span::start();
-    while std::fs::read_to_string(&env).unwrap_or_default() != "brett@heron|chat" {
+    while std::fs::read_to_string(&env).unwrap_or_default() != "brett|chat" {
         assert!(span.within(WAIT), "the hook runs in time");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(
         std::fs::read_to_string(&stdin).unwrap(),
-        "<brett@heron> mike: look at #12\n"
+        "<brett> mike: look at #12\n"
     );
 
     brett.say("can @mike see #13?").await;
@@ -1063,10 +1110,10 @@ async fn in_a_terminal_a_highlight_shows_a_toast() {
     let server = crate::common::start_signed().await;
     let mut brett = Client::start(&server, "brett", "heron", &[]).await;
     let settings = "[chat]\ntoast = true\n";
-    let osc9: (&[(&str, &str)], &str) = (&[], "9;<brett@heron> mike: toast 0");
+    let osc9: (&[(&str, &str)], &str) = (&[], "9;<brett> mike: toast 0");
     let osc777: (&[(&str, &str)], &str) = (
         &[("VTE_VERSION", "7600")],
-        "777;notify;riff chat;<brett@heron> mike: toast 1",
+        "777;notify;riff chat;<brett> mike: toast 1",
     );
     for (n, (env, toast)) in [osc9, osc777].into_iter().enumerate() {
         let riff = Isolated::shared().tokio_riff();
@@ -1105,7 +1152,7 @@ async fn tail_runs_the_hook_of_a_highlight() {
     }
     assert_eq!(
         std::fs::read_to_string(&env).unwrap(),
-        "brett@heron|chat|<brett@heron> @mike the release is out"
+        "brett|chat|<brett> @mike the release is out"
     );
 }
 
@@ -1117,16 +1164,14 @@ async fn in_a_terminal_your_line_shows_once_and_the_prompt_comes_back() {
     mike.keys("hello all\r").await;
     let rows = mike
         .shows(|rows| {
-            rows.iter()
-                .any(|row| row.contains("<mike@thelio> hello all"))
+            rows.iter().any(|row| row.contains("<mike> hello all"))
                 && rows.last().is_some_and(|row| row == PROMPT.trim_end())
         })
         .await;
     let seen = rows.iter().filter(|row| row.contains("hello all")).count();
     assert_eq!(seen, 1, "{rows:#?}");
     assert!(
-        rows.iter()
-            .any(|row| is_line(row, "mike@thelio", "hello all")),
+        rows.iter().any(|row| is_line(row, "mike", "hello all")),
         "{rows:#?}"
     );
     // The start line comes first.
@@ -1151,7 +1196,7 @@ async fn in_a_terminal_a_new_line_prints_above_what_you_type() {
         .await;
     let n = rows.len();
     assert!(
-        is_line(&rows[n - 2], "brett@heron", "a line from brett"),
+        is_line(&rows[n - 2], "brett", "a line from brett"),
         "{rows:#?}"
     );
     assert_eq!(rows[n - 1], format!("{PROMPT}half a li"), "{rows:#?}");
@@ -1159,7 +1204,7 @@ async fn in_a_terminal_a_new_line_prints_above_what_you_type() {
     // The typed text is still there: Enter sends all of it.
     mike.keys("ne\r").await;
     let line = brett.shows("half a line").await;
-    assert!(is_line(&line, "mike@thelio", "half a line"), "{line:?}");
+    assert!(is_line(&line, "mike", "half a line"), "{line:?}");
 }
 
 /// A line that comes while the person types does not change the typed
@@ -1202,7 +1247,7 @@ async fn in_a_terminal_a_new_line_keeps_the_typed_text_and_the_cursor() {
         &typed[..typed.len() - 3],
         &typed[typed.len() - 3..]
     );
-    assert!(is_line(&line, "mike@thelio", &want), "{line:?}");
+    assert!(is_line(&line, "mike", &want), "{line:?}");
 }
 
 /// A server that names a build and holds each post for `wait`: the
@@ -1287,7 +1332,7 @@ async fn in_a_terminal_a_notice_of_riff_prints_above_what_you_type() {
 
     mike.keys("ne\r").await;
     let line = brett.shows("half a line").await;
-    assert!(is_line(&line, "mike@thelio", "half a line"), "{line:?}");
+    assert!(is_line(&line, "mike", "half a line"), "{line:?}");
 }
 
 /// Puts a copy of `from` at `to` as `cargo install` does: a new file
@@ -1351,7 +1396,7 @@ async fn a_chat_runs_the_new_binary_and_shows_the_next_line_once() {
     mike.keys("hello from the new riff\r").await;
     let line = brett.shows("hello from the new riff").await;
     assert!(
-        is_line(&line, "mike@thelio", "hello from the new riff"),
+        is_line(&line, "mike", "hello from the new riff"),
         "{line:?}"
     );
 }
@@ -1397,7 +1442,7 @@ async fn a_chat_runs_the_new_binary_and_keeps_what_you_type() {
 
     mike.keys("ne\r").await;
     let line = brett.shows("half a").await;
-    assert!(is_line(&line, "mike@thelio", "--half a \"line"), "{line:?}");
+    assert!(is_line(&line, "mike", "--half a \"line"), "{line:?}");
 }
 
 /// A TCP proxy in front of a riff server. It can cut each connection,
@@ -1802,7 +1847,7 @@ async fn chat_shows_each_line_of_a_break_once_in_order() {
         ]
     );
     assert_eq!(live.len(), 1, "{live:#?}");
-    assert!(live[0].ends_with("<mike@thelio> break-5 typed"), "{live:?}");
+    assert!(live[0].ends_with("<mike> break-5 typed"), "{live:?}");
 }
 
 /// A break with more new messages than the server keeps (200) shows one
