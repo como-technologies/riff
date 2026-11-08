@@ -126,7 +126,8 @@
 //! 01M6QBJA0J7PQ0J29HWM1KDVHJ). The look tells the person of the lead one
 //! time in riff chat, with the title and the link of the issue
 //! ([`AskWatch`], [`crate::text::wave_question`], 01M6QBJHV7PVV5893Q6RCPENJQ).
-//! The line goes to the terminals of the person, and wakes no agent session.
+//! The line names the person first (`@mike`, [`crate::wave::asked`]), so
+//! it wakes the terminals of the person, and no agent session.
 //! The daemon keeps the issues that it told in memory. An issue that loses
 //! the label goes out of that set, so the next time that the label goes on,
 //! the person gets a new line.
@@ -144,7 +145,7 @@
 //!     participant B as the daemon of thelio
 //!     participant S as riff-server
 //!     participant P as the person (riff chat)
-//!     A->>S: post to user=mike,person=true, key question-12-2026-11-05T20:11:03Z
+//!     A->>S: post "@mike A lead waits ..." to name=mike, key question-12-2026-11-05T20:11:03Z
 //!     S->>P: the line
 //!     B->>S: post, the same key
 //!     Note over S: it keeps this key: it drops the post

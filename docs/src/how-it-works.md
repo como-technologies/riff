@@ -3495,59 +3495,44 @@ typed text then too: the text shows again after the new prompt.
 
 ### Ask a lead in the chat
 
-You have one lead in each repository that you work in. A chat line
-with no name wakes each lead of yours. A line with `@lead` wakes each
-of your leads too. A line with `@USER` wakes each lead of USER, and not
-yours. A line that names a person, with `@USER` or with `USER:` at the
-start, is also a highlight on the terminal of that person (see "Get a
-highlight in the chat"). The lead answers in the chat. Type the lines
-in `riff chat`, not in a shell:
+A chat line wakes only the names that it holds. `@riff` wakes your
+lead in the project riff: the name of a project is its repository
+after the slash. `@brett` wakes the person brett: the terminals of
+brett, and no agent session of brett. A line can hold more than one
+name. A line with no name wakes no one: it stays in the chat for each
+member who reads it. A line that names a person, with `@USER` or with
+`USER:` at the start, is also a highlight on the terminal of that person
+(see "Get a highlight in the chat"). The lead answers in the chat. Type
+the lines in `riff chat`, not in a shell:
 
 ```text
-is #12 done?
-@lead is #12 done?
+@riff is #12 done?
 @brett can I take #14?
+@brett @riff is the release out?
 ```
 
 ```mermaid
 sequenceDiagram
     participant M as riff chat (mike)
     participant S as riff-server
-    participant L as lead of brett
-    M->>S: @brett can I take #14?
+    participant B as riff chat (brett)
+    participant L as lead of mike in riff
+    M->>S: @brett @riff is the release out?
+    S-->>B: the line: a highlight for brett
     S-->>L: wake
     L->>S: post to the thread chat
-    S-->>M: yes, take #14
+    S-->>M: not yet: #207 is not merged
 ```
 
-To ask one lead, put a colon and its repository after the name. The
-repository is `OWNER/REPO`, or the name after the slash. `@lead:REPO`
-wakes only your lead in REPO, and `@USER:REPO` only the lead of USER
-in REPO. `@lead` alone wakes each of your leads:
+The chat sends each line with its names, and checks no name.
+riff-server finds each name when it gets the line (see "The names of
+the chat"). So the chat refuses no line for a name, and it does not
+say whom a line wakes. A name that is no person and no project wakes no
+one, and the line still goes. When two projects have the same name,
+each one has the name `OWNER/REPO`:
 
 ```text
-@lead:strata is #12 done?
-@brett:como-technologies/strata can I take #14?
-```
-
-The chat reads the leads from the riff first. It sends nothing when no
-lead fits the name, or when two leads fit it. It shows the leads that
-it found, and you type the line again with `OWNER/REPO`:
-
-```text
-riff: cannot send the line: mike has 2 leads in a repository with the name strata: acme/strata, como-technologies/strata. Use OWNER/REPO.
-```
-
-```mermaid
-sequenceDiagram
-    participant M as riff chat (mike)
-    participant S as riff-server
-    participant L as lead of brett in strata
-    M->>S: who
-    S-->>M: the leads of the riff
-    M->>S: @brett:strata can I take #14?
-    S-->>L: wake
-    Note over M,S: no lead or two leads fit: nothing is sent
+@como-technologies/strata is #12 done?
 ```
 
 ### Answer a person in the chat only
@@ -3664,8 +3649,9 @@ is a highlight on your terminal when:
 - it is a direct line to you: a post to your terminals with
   `person=true`, or a line of the other person in a direct thread;
 - it holds a word of your list, as a whole word, in any case;
-- it is an ask of riff to you, for example `riff release v3.3.0 waits
-  for your approval`.
+- it is an ask of riff to you: riff names you first, so the line wakes
+  your terminals, for example `@mike riff release v3.3.0 waits for your
+  approval`.
 
 A line that you typed is no highlight. The server does not change the
 line: your own riff finds the highlight. The Chat tab of the TUI and
@@ -3764,10 +3750,10 @@ Each chat, and `riff tail chat`, shows it with no `<NAME>`:
 14:05 * mike waves
 ```
 
-An older riff shows the line as `/me waves`. `@lead` and `@USER` in an
-action wake as in any line. The chat knows
-only `/me` and `/quit`. It sends no line with another command. To send
-a line that starts with `/`, start it with `//`.
+An older riff shows the line as `/me waves`. A name in an action wakes
+as in any line: `/me asks @riff to look` wakes your lead in riff. The
+chat knows only `/me` and `/quit`. It sends no line with another
+command. To send a line that starts with `/`, start it with `//`.
 
 ### Chat without color
 
@@ -3789,30 +3775,30 @@ riff
 ```text
  1 Sessions  [2 Chat]  3 Waves  4 Machines  5 Devices  6 Reports
  riff running · owner mike · build 10df8a4 · link ok 2s
- chat · online: mike, brett · away: ann · a line wakes your leads
+ chat · online: mike, brett · away: ann · @NAME wakes a person or a project
 ──── Friday 2026-11-06 ──────────────────────────────────────────────
  12:01 <brett> mike, can you look at #1608?
  12:02 <strata> noted: mike looks at #1608 after lunch
  12:20 * mike goes for lunch
  13:12 <riff> #1608 merged
 
-> @lead:riff what is next?
- Enter wakes your lead in como-technologies/riff.
+> @riff what is next?
+
  Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit
 ```
 
-The row under the header names the people who are online and away.
-The prompt has the focus. Type a line, and press Enter. Before you
-press Enter, the row under the prompt says whom the line will wake. A
-line that fits no lead, or two leads, is not sent: it stays in the
-prompt, and the row says why. Your line shows once, from the server,
-as in `riff chat`. `/me TEXT` sends an action, and `/quit` ends the
-TUI.
+The row under the header names the people who are online and away,
+and says how a line wakes. The prompt has the focus. Type a line, and
+press Enter. A name wakes as in `riff chat` (see "Ask a lead in the
+chat"): the tab sends each line with its names, and refuses no line for
+a name. Your line shows once, from the server, as in `riff chat`. `/me
+TEXT` sends an action, and `/quit` ends the TUI.
 
 When riff cannot send a line, for example because riff-server refuses
 it, the row under the prompt says `riff: cannot send the line:` and the
-error. The row says it at once, also while you type the next line. The
-next key gives the row back to the note of the line that you type.
+error in yellow. The row says it at once, also while you type the next
+line. After your next key, the error stays in the row with no color,
+until you send the next line.
 
 | Key | Does |
 |---|---|
@@ -3860,7 +3846,6 @@ command. The new lines stay. The prompt shows each one as `↵`:
 
 ```text
 > riff lead start failed:↵{↵  "step": "attach",↵  "error": "no lead"↵}
- Enter wakes each lead of yours.
 ```
 
 Press Enter. The lines go as one message, and the log shows each one

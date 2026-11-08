@@ -1521,10 +1521,12 @@ pub trait World: Send + Sync {
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Tells the person of the lead of `wave` `body` in riff chat, as a line
-    /// of the kind `riff` to the terminals of the person: no session wakes
-    /// (#1605). The post has `key`: riff-server drops it when a kept message
-    /// of the person has the key, so the person hears it one time from the
-    /// look of each host. The error is a post that did not go out.
+    /// of the kind `riff` that names the person first ([`asked`]): it wakes
+    /// the terminals of the person, and no session (#1605,
+    /// 01M6Y1A5PTCVZ6GRJ0FXMART2T). The post has `key`: riff-server drops
+    /// it when a kept message of the person has the key, so the person
+    /// hears it one time from the look of each host. The error is a post
+    /// that did not go out.
     fn ask_person<'a>(
         &'a self,
         wave: &'a Wave,
@@ -2346,6 +2348,22 @@ pub struct Live {
     /// The token of the writes of the daemon on each repository
     /// (01M6XZJFE2ZTR5RE3AWM30R704).
     writes: gh_token::Writes,
+}
+
+/// The ask `body` of riff to the person `user` in riff chat: it names the
+/// person first, so the line wakes the terminals of the person
+/// (01M6Y1A5PTCVZ6GRJ0FXMART2T).
+///
+/// ```
+/// use riff::wave::asked;
+/// use riff_core::selector::Selector;
+///
+/// let line = asked("mike", "A lead waits for your answer in issue #12.");
+/// assert_eq!(line, "@mike A lead waits for your answer in issue #12.");
+/// assert_eq!(riff_client::chat::to(&line), [Selector::name("mike")]);
+/// ```
+pub fn asked(user: &str, body: &str) -> String {
+    format!("@{user} {body}")
 }
 
 /// Posts `body` of `kind` as the person of `wave`: to the session that
@@ -3850,12 +3868,9 @@ impl World for Live {
         Box::pin(async move {
             let person = identity::person(&wave.place(None)?, &wave.server)?;
             let api = Api::new(&wave.server).signed_in(None)?;
-            let to = riff_core::selector::Selector {
-                user: Some(person.who().user().to_owned()),
-                person: Some(true),
-                ..riff_core::selector::Selector::default()
-            };
-            crate::chat::post_by_riff_keyed(&api, &person, &[to], body, Some(key)).await
+            let body = asked(person.who().user(), body);
+            let to = riff_client::chat::to(&body);
+            crate::chat::post_by_riff_keyed(&api, &person, &to, &body, Some(key)).await
         })
     }
 

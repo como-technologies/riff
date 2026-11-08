@@ -1,27 +1,27 @@
 //! The Chat tab of the TUI (#1640): the thread `chat`, as `riff chat`
-//! shows it, with the log, the prompt and the wakes
-//! (01M3NB5MY93KV9RKZGGSMZW00D).
+//! shows it, with the log and the prompt (01M3NB5MY93KV9RKZGGSMZW00D).
 //!
 //! # Design
 //!
 //! ```text
 //!  1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports
 //!  riff running · owner mike · build 10df8a4 · link ok 2s
-//!  chat · online: mike, brett · away: ann · a line wakes your leads
+//!  chat · online: mike, brett · away: ann · @NAME wakes a person or a project
 //! ──── Friday 2026-11-06 ─────────────────────────────────────────────
 //!  09:14 <riff> good morning: 2 pull requests merged
 //!  09:15 <ann> morning
 //!  12:20 * mike goes for lunch
 //!  12:40 <riff-bot> @mike the deploy waits for your approval
 //!
-//! > @lead:riff what is next?
-//!  Enter wakes your lead in como-technologies/riff.
+//! > @riff what is next?
+//!
 //!  Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit
 //! ```
 //!
 //! - **The summary row** names the people who are online and away, from
-//!   the last look of `who` (01M6VG1P7BH32E5YAP0GJSNJJP). While the stream of the thread is down, it
-//!   says `reconnecting…`, or the fault in red.
+//!   the last look of `who` (01M6VG1P7BH32E5YAP0GJSNJJP), and says how a
+//!   line wakes. While the stream of the thread is down, it says
+//!   `reconnecting…`, or the fault in red.
 //! - **The log** ([`Chat`]) keeps the last [`KEEP`] lines of the thread.
 //!   A line shows as in `riff chat` ([`crate::chat::said`]), with the
 //!   sender by the name to type to reach it (01M6Y1FB5MZNZ971CJRBWZ2F9X):
@@ -45,22 +45,22 @@
 //!   line as one message. A paste or a typed character that makes the
 //!   line longer than [`POST_MAX`] stays out ([`too_long`],
 //!   01M6XSK4K2MDA2SK0A6KHN9HDT, 01M6XVCDEP1ZP9RS7DV795W79E).
-//! - **The note line** says whom the line will wake before you send it
-//!   ([`wake_note`]), with the rules of `riff chat`
-//!   (01M6VG1PCXHNVJP7TSP0J5G5K9). A post that fails, or a paste or a
-//!   key that makes the line too long, shows there at once, before that
-//!   note, until the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
+//! - **The note line** says what `Enter` does with a command, or why
+//!   the chat will not send it ([`prompt_note`]). It never says whom a
+//!   line wakes (01M6Y1A5PTCVZ6GRJ0FXMART2T). A post that fails, or a
+//!   paste or a key that makes the line too long, shows there at once,
+//!   until the next key (01M6VMACJGF4A0ZXC6YK13KNCH).
 //! - **News:** each new line of the thread while another tab shows
 //!   adds one to `Chat•N` in the strip (01M6VG1PFPMHRQ4F9XHJTYMSJY).
 //!
 //! The tab sends and follows as `riff chat` does, and as the person, not
 //! as a session ([`Person`]). `Enter` reads the line with
-//! [`crate::chat::typed`], checks its lead with
-//! [`riff_client::chat::resolve`] and the sessions of the last look, and
-//! gives [`Action::Post`] to the loop. [`Link`] posts each line in its
-//! order with [`crate::chat::posts`], the code of `riff chat`. It
-//! follows the thread from the start of the TUI, with
-//! [`crate::catch_up`]: a break of the stream loses no line.
+//! [`crate::chat::typed`], and gives [`Action::Post`] to the loop: it
+//! checks no name, and keeps no line for a name. [`Link`] posts each
+//! line in its order with [`crate::chat::posts`], the code of `riff
+//! chat`, with the names of the line. It follows the thread from the
+//! start of the TUI, with [`crate::catch_up`]: a break of the stream
+//! loses no line.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -71,11 +71,9 @@
 //!     L->>S: join chat, tail chat, read the history
 //!     S-->>L: the lines
 //!     L-->>T: Came::Seen, at each frame
-//!     P->>T: types "@lead:riff hi"
-//!     T-->>P: the note: Enter wakes your lead in como-technologies/riff
-//!     P->>T: Enter
+//!     P->>T: types "@riff hi", and Enter
 //!     T->>L: Action::Post
-//!     L->>S: who, then post to user=mike,repo=como-technologies/riff,lead=true
+//!     L->>S: post to name=riff
 //!     S-->>L: tail: the line
 //!     L-->>T: the line shows once
 //! ```
@@ -90,11 +88,9 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line as Row, Span};
 use riff_client::api::Api;
-use riff_client::chat::{resolve, wakes};
 use riff_client::link::STREAM_RETRY;
 use riff_client::threads::{ACTION, Line, Names};
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::selector::Selector;
 use riff_core::wire::ChatName;
 use tokio::sync::mpsc;
 
@@ -499,8 +495,6 @@ pub struct Window {
 /// scroll.
 #[derive(Debug, Clone, Default)]
 pub struct Chat {
-    /// The user of the person, who sends the lines.
-    user: Option<String>,
     /// The start of the TUI: an older line is no news.
     since_ms: u64,
     /// The last [`KEEP`] entries, the oldest first.
@@ -521,11 +515,10 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// The chat of `user`, from the time `since_ms` (milliseconds since
-    /// the epoch): a line from before is no news.
-    pub fn new(user: &str, since_ms: u64) -> Chat {
+    /// The chat from the time `since_ms` (milliseconds since the epoch):
+    /// a line from before is no news.
+    pub fn new(since_ms: u64) -> Chat {
         Chat {
-            user: Some(user.to_owned()),
             since_ms,
             ..Chat::default()
         }
@@ -715,10 +708,9 @@ impl State {
         &self.chat
     }
 
-    /// The Chat tab sends as `user`, and a line from before `since_ms`
-    /// is no news.
-    pub fn chat_as(&mut self, user: &str, since_ms: u64) {
-        self.chat = Chat::new(user, since_ms);
+    /// A line of the Chat tab from before `since_ms` is no news.
+    pub fn chat_since(&mut self, since_ms: u64) {
+        self.chat = Chat::new(since_ms);
     }
 
     /// Takes what [`Link`] gave. A new line while another tab shows adds
@@ -750,7 +742,7 @@ impl State {
     ///     Came::Seen(Entry::Line { line: Box::new(line), at })
     /// };
     /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
-    /// state.chat_as("mike", 5_000);
+    /// state.chat_since(5_000);
     /// // The history is no news, and a new line is.
     /// state.chat_came(came(1_000));
     /// assert_eq!(state.news_of(Tab::Chat), None);
@@ -792,13 +784,6 @@ impl State {
         }
     }
 
-    /// The sessions of the last look: `resolve` picks a lead from them.
-    fn leads(&self) -> Vec<SessionUri> {
-        self.last_look()
-            .map(|(look, _)| look.who.sessions.iter().map(|s| s.uri.clone()).collect())
-            .unwrap_or_default()
-    }
-
     /// The window of the terminal got the focus back
     /// (01M6XT6MCZ38XEN7ZHWTRF50Z5): the prompt of the Chat tab gets the
     /// focus, as when the person opens the tab. So an `Esc` that the
@@ -811,7 +796,7 @@ impl State {
     /// use riff_core::build::Build;
     ///
     /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
-    /// state.chat_as("mike", 0);
+    /// state.chat_since(0);
     /// state.on_key(Frame::Open(Tab::Chat));
     /// state.on_key(Frame::Chat(Key::Type('h')));
     /// state.on_key(Frame::Chat(Key::Log));
@@ -837,7 +822,7 @@ impl State {
     ///
     /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?);
     /// state.looked(Look::default(), 0);
-    /// state.chat_as("mike", 0);
+    /// state.chat_since(0);
     /// state.on_key(Frame::Open(Tab::Chat));
     /// assert_eq!(state.chat().focus(), Focus::Prompt);
     /// for c in "hi all".chars() {
@@ -855,15 +840,21 @@ impl State {
     ///     state.on_key(Frame::Chat(Key::Type(c)));
     /// }
     /// assert_eq!(state.on_key(Frame::Chat(Key::Send)), Some(Action::Quit));
-    /// // A line for a lead that the riff does not have is not sent: it
-    /// // stays, and the note line names the leads.
+    /// // Enter checks no name: a line with a name that no one has goes
+    /// // too, and riff-server resolves it.
     /// state.on_key(Frame::Chat(Key::Clear));
     /// for c in "@lead:strata hi".chars() {
     ///     state.on_key(Frame::Chat(Key::Type(c)));
     /// }
-    /// assert_eq!(state.on_key(Frame::Chat(Key::Send)), None);
-    /// assert_eq!(state.chat().prompt().text(), "@lead:strata hi");
-    /// assert_eq!(state.shown_note(), Some("mike has no lead."));
+    /// let sent = state.on_key(Frame::Chat(Key::Send));
+    /// assert_eq!(sent, Some(Action::Post("@lead:strata hi".into())));
+    /// // Also before the first look of the riff.
+    /// let mut fresh = State::new(Build::this(), "riff://mike@thelio".parse()?);
+    /// fresh.on_key(Frame::Open(Tab::Chat));
+    /// for c in "@riff hi".chars() {
+    ///     fresh.on_key(Frame::Chat(Key::Type(c)));
+    /// }
+    /// assert_eq!(fresh.on_key(Frame::Chat(Key::Send)), Some(Action::Post("@riff hi".into())));
     /// // Esc moves the focus to the log, and `i` gives it back.
     /// state.on_key(Frame::Chat(Key::Log));
     /// assert_eq!(state.chat().focus(), Focus::Log);
@@ -875,7 +866,7 @@ impl State {
     /// state.on_paste(&"x".repeat(POST_MAX));
     /// state.on_key(Frame::Chat(Key::Type('y')));
     /// assert_eq!(state.chat().prompt().text().len(), POST_MAX);
-    /// assert_eq!(state.shown_note(), Some(too_long().as_str()));
+    /// assert_eq!(state.chat().warning(), Some(too_long().as_str()));
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub(super) fn on_chat(&mut self, key: Key) -> Option<Action> {
@@ -920,16 +911,16 @@ impl State {
     }
 
     /// A paste or a typed key that makes the line longer than
-    /// [`POST_MAX`]: the note line says [`too_long`] until the next key.
+    /// [`POST_MAX`]: the note line says [`too_long`] until the next key,
+    /// and not after it: it is no result of an action.
     fn over_limit(&mut self) {
-        let note = too_long();
-        self.chat.warning = Some(note.clone());
-        self.note(note);
+        self.chat.warning = Some(too_long());
     }
 
     /// `Enter` in the prompt: the line to post, with the rules of
-    /// `riff chat` ([`crate::chat::typed`], 01M6VG1PCXHNVJP7TSP0J5G5K9). A line that the chat cannot
-    /// send stays in the prompt, and the note line says why.
+    /// `riff chat` ([`crate::chat::typed`], 01M6VG1PCXHNVJP7TSP0J5G5K9).
+    /// It checks no name (01M6Y1A5PTCVZ6GRJ0FXMART2T). A command that the
+    /// chat does not know stays in the prompt, and the note line says why.
     fn send(&mut self) -> Option<Action> {
         let text = self.chat.prompt.text().to_owned();
         let body = match typed(&text) {
@@ -942,11 +933,6 @@ impl State {
             Typed::Say(text) => text.to_owned(),
             Typed::Action(text) => format!("{ACTION}{text}"),
         };
-        let user = self.chat.user.clone()?;
-        if let Err(e) = resolve(wakes(&body, &user), &self.leads()) {
-            self.note(safe(&e));
-            return None;
-        }
         self.chat.prompt.take();
         self.chat.scroll = 0;
         self.note = None;
@@ -1001,88 +987,41 @@ pub fn too_long() -> String {
     )
 }
 
-/// The note for the line `text` that `user` types: whom `Enter` will
-/// wake, with the leads of `leads` (01M5QVH7KDK3R2S4NDFB2V1XY9). The
-/// bool is true for a line that the chat will not send: a command that
-/// it does not know, or a lead that it cannot pick. `None` for an empty
-/// line.
+/// The note for the line `text` in the prompt: what `Enter` does with a
+/// command, with true for a command that the chat will not send. `None`
+/// for each other line: the note never says whom a line wakes
+/// (01M6Y1A5PTCVZ6GRJ0FXMART2T).
 ///
 /// ```
-/// use riff::tui::chat::wake_note;
-/// use riff_core::name::SessionUri;
+/// use riff::tui::chat::prompt_note;
 ///
-/// let leads: Vec<SessionUri> = [
-///     "riff://mike@thelio/como-technologies/riff?session=m1&lead=true",
-///     "riff://brett@heron/como-technologies/strata?session=b1&lead=true",
-/// ].into_iter().map(|u| u.parse().unwrap()).collect();
-/// let note = |text: &str| wake_note(text, "mike", &leads);
-/// let wakes = |text: &str| Some((text.to_owned(), false));
-/// assert_eq!(note("hi"), wakes("Enter wakes each lead of yours."));
-/// assert_eq!(note("/me waves"), wakes("Enter wakes each lead of yours."));
-/// assert_eq!(note("@brett hi"), wakes("Enter wakes each lead of brett."));
 /// assert_eq!(
-///     note("@lead:riff what is next?"),
-///     wakes("Enter wakes your lead in como-technologies/riff.")
+///     prompt_note("/quit"),
+///     Some(("Enter ends the TUI. The sessions go on.".to_owned(), false))
 /// );
-/// assert_eq!(
-///     note("@brett:strata @lead ok?"),
-///     wakes("Enter wakes the lead of brett in como-technologies/strata and each lead of yours.")
-/// );
-/// assert_eq!(note("/quit"), wakes("Enter ends the TUI. The sessions go on."));
-/// assert_eq!(note("@ann:riff hi"), Some(("ann has no lead.".to_owned(), true)));
-/// assert!(note("/foo").unwrap().1);
-/// assert_eq!(note("  "), None);
+/// assert!(prompt_note("/foo").unwrap().1);
+/// for line in ["hi", "@riff is #12 done?", "@lead:strata hi", "/me waves", "  "] {
+///     assert_eq!(prompt_note(line), None, "{line}");
+/// }
 /// ```
-pub fn wake_note(text: &str, user: &str, leads: &[SessionUri]) -> Option<(String, bool)> {
-    let body = match typed(text) {
-        Typed::Nothing => return None,
-        Typed::Quit => return Some(("Enter ends the TUI. The sessions go on.".to_owned(), false)),
-        Typed::Unknown(name) => return Some((unknown(name), true)),
-        Typed::Say(text) | Typed::Action(text) => text,
-    };
-    Some(match resolve(wakes(body, user), leads) {
-        Ok(to) => (format!("Enter wakes {}.", whom(&to, user)), false),
-        Err(e) => (safe(&e), true),
-    })
-}
-
-/// The leads that `to` selects, in words, for the person `user`.
-fn whom(to: &[Selector], user: &str) -> String {
-    let parts: Vec<String> = to
-        .iter()
-        .map(|s| match (s.user.as_deref(), s.repo.as_deref()) {
-            (Some(u), None) if u == user => "each lead of yours".to_owned(),
-            (Some(u), None) => format!("each lead of {}", safe(u)),
-            (Some(u), Some(repo)) if u == user => format!("your lead in {}", safe(repo)),
-            (Some(u), Some(repo)) => format!("the lead of {} in {}", safe(u), safe(repo)),
-            (None, _) => safe(&s.to_string()),
-        })
-        .collect();
-    match parts.split_last() {
-        Some((last, [])) => last.clone(),
-        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-        None => String::new(),
+pub fn prompt_note(text: &str) -> Option<(String, bool)> {
+    match typed(text) {
+        Typed::Quit => Some(("Enter ends the TUI. The sessions go on.".to_owned(), false)),
+        Typed::Unknown(name) => Some((unknown(name), true)),
+        Typed::Nothing | Typed::Say(_) | Typed::Action(_) => None,
     }
 }
 
 /// The note of the Chat tab, with its style: a post that failed, or a
 /// paste or a key that made the line too long, after the last key, else
-/// whom the line in the prompt will wake, while the prompt holds a line
-/// (01M6VMACJGF4A0ZXC6YK13KNCH).
+/// the note of a command in the prompt ([`prompt_note`],
+/// 01M6VMACJGF4A0ZXC6YK13KNCH).
 pub(super) fn note(state: &State) -> Option<Row<'static>> {
     let chat = &state.chat;
     if let Some(warning) = &chat.warning {
         return Some(Row::styled(safe(warning), WARNING));
     }
-    let user = chat.user.as_deref()?;
-    let text = chat.prompt.text();
-    let names_repo = wakes(text, user).iter().any(|s| s.repo.is_some());
-    let leads = if names_repo {
-        state.leads()
-    } else {
-        Vec::new()
-    };
-    let (note, warning) = wake_note(text, user, &leads)?;
+    let (note, warning) = prompt_note(chat.prompt.text())?;
     Some(if warning {
         Row::styled(note, WARNING)
     } else {
@@ -1178,8 +1117,13 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
     });
 }
 
-/// The summary row: the people who are online and away, and the state
-/// of the stream while it is down. The narrow layout counts the people.
+/// The end of the summary row in the wide layout: how a line wakes
+/// (01M6Y1A5PTCVZ6GRJ0FXMART2T).
+pub const WAKES: &str = "@NAME wakes a person or a project";
+
+/// The summary row: the people who are online and away, the state of
+/// the stream while it is down, and [`WAKES`]. The narrow layout counts
+/// the people, and has no [`WAKES`].
 fn summary(state: &State, layout: Layout) -> Row<'static> {
     let wide = layout == Layout::Wide;
     let mut parts: Vec<Span<'static>> = vec![Span::raw("chat")];
@@ -1203,7 +1147,7 @@ fn summary(state: &State, layout: Layout) -> Row<'static> {
         }
     }
     if wide {
-        parts.push(Span::raw("a line wakes your leads"));
+        parts.push(Span::raw(WAKES));
     }
     let mut spans = Vec::new();
     for (i, part) in parts.into_iter().enumerate() {
@@ -1553,7 +1497,7 @@ mod tests {
         .unwrap();
         look.server = Some(build("10df8a4c0ffe"));
         state.looked(look, NOW - 2_000);
-        state.chat_as("mike", 0);
+        state.chat_since(0);
         for came in lines() {
             state.chat_came(came);
         }
@@ -1591,19 +1535,20 @@ mod tests {
 
     /// The mock-up of the Chat tab of #994 at 80 x 24: the summary
     /// row, the rule of the day, the lines as `riff chat` shows them, the
-    /// prompt with the cursor after the text, the note of the wake and
+    /// prompt with the cursor after the text, no note of a wake, and
     /// the keys of the prompt. Each sender shows by the name to type to
     /// reach it (#1786): a person as `<mike>`, a lead as `<riff>`, and
     /// riff itself as `<riff-bot>`.
     #[test]
     fn the_chat_tab_at_80_x_24_is_the_mock_up() {
         let mut state = mock_up();
-        type_in(&mut state, "@lead:riff what is next?");
+        type_in(&mut state, "@riff what is next?");
         let (rows, view) = drawn(&mut state, 80, 24);
         let mut want = vec![
             " 1 Sessions  [2 Chat]  3 Waves•  4 Machines  5 Devices  6 Reports".to_owned(),
             " riff running · owner mike · build 10df8a4 · link ok 2s".to_owned(),
-            " chat · online: mike, brett · away: ann · a line wakes your leads".to_owned(),
+            " chat · online: mike, brett · away: ann · @NAME wakes a person or a project"
+                .to_owned(),
             format!("──── Friday 2026-11-06 {}", "─".repeat(57)),
         ];
         want.extend(
@@ -1625,8 +1570,8 @@ mod tests {
                 " 13:12 <riff> #1608 merged",
                 "",
                 "",
-                "> @lead:riff what is next?",
-                " Enter wakes your lead in como-technologies/riff.",
+                "> @riff what is next?",
+                "",
                 " Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit",
             ]
             .map(str::to_owned),
@@ -1636,7 +1581,7 @@ mod tests {
         assert_eq!(
             view.cursor,
             Some(Position::new(
-                u16::try_from("> @lead:riff what is next?".len()).unwrap(),
+                u16::try_from("> @riff what is next?".len()).unwrap(),
                 21
             ))
         );
@@ -1673,7 +1618,7 @@ mod tests {
             "      the merge waits for CI",
             "13:12 <riff> #1608 merged",
             "> @brett hi",
-            "Enter wakes each lead of brett.",
+            "",
             "Enter send  Esc log  Ctrl-C quit",
         ];
         assert_eq!(rows, want);
@@ -1694,9 +1639,9 @@ mod tests {
             rows[23],
             " i type  ↑↓ PgUp PgDn scroll  1-6 tab  r read again  ? help  q quit"
         );
-        // The note says whom the line will wake, also while the log has
-        // the focus.
-        assert_eq!(rows[22], " Enter wakes each lead of yours.");
+        // The note line says nothing of whom the line wakes, also while
+        // the log has the focus.
+        assert_eq!(rows[22], "");
         let (narrow, _) = drawn(&mut state, 40, 24);
         assert_eq!(narrow[23], "i type  ↑↓ scroll  ? help  q quit");
         // A click on `i type` or on the prompt gives the focus back. The
@@ -1808,31 +1753,29 @@ mod tests {
     }
 
     /// A post that fails while the prompt holds a line shows at once in
-    /// the note line, before the note of the wake. The next key brings
-    /// back the note of the wake (01M6VMACJGF4A0ZXC6YK13KNCH).
+    /// the note line, as a warning. After the next key, it stays as the
+    /// result of the last action, with no style, also with an empty
+    /// prompt (01M6VMACJGF4A0ZXC6YK13KNCH).
     #[test]
     fn a_post_that_fails_while_the_prompt_holds_a_line_shows_until_the_next_key() {
         let mut state = mock_up();
-        type_in(&mut state, "@lead:riff what is next?");
+        type_in(&mut state, "@riff what is next?");
         let failed = "riff: cannot send the line: cannot reach riff-server";
         state.chat_came(Came::Unsent(failed.into()));
         let (rows, view) = drawn(&mut state, 80, 24);
-        assert_eq!(rows[21], "> @lead:riff what is next?");
+        assert_eq!(rows[21], "> @riff what is next?");
         assert_eq!(rows[22], format!(" {failed}"));
         let note = &view.rows.iter().find(|r| r.area.y == 22).unwrap().line;
         assert_eq!(note.style, WARNING);
-        // The next key brings back the note of the wake.
-        state.on_key(FrameKey::Chat(Key::End));
-        let (rows, _) = drawn(&mut state, 80, 24);
-        assert_eq!(
-            rows[22],
-            " Enter wakes your lead in como-technologies/riff."
-        );
-        // With an empty prompt, the failure is the result of the last
-        // action.
-        state.on_key(FrameKey::Chat(Key::Clear));
-        let (rows, _) = drawn(&mut state, 80, 24);
-        assert_eq!(rows[22], format!(" {failed}"));
+        // The next key ends the warning: the failure is the result of the
+        // last action.
+        for key in [Key::End, Key::Clear] {
+            state.on_key(FrameKey::Chat(key));
+            let (rows, view) = drawn(&mut state, 80, 24);
+            assert_eq!(rows[22], format!(" {failed}"), "{key:?}");
+            let note = &view.rows.iter().find(|r| r.area.y == 22).unwrap().line;
+            assert_ne!(note.style, WARNING, "{key:?}");
+        }
     }
 
     /// PgUp shows older rows and PgDn newer, in the window of the last
@@ -1919,7 +1862,7 @@ mod tests {
         let (rows, _) = drawn(&mut state, 80, 24);
         assert_eq!(
             rows[2],
-            " chat · (reconnecting…) · online: mike, brett · away: ann · a line wakes your leads"
+            " chat · (reconnecting…) · online: mike, brett · away: ann · @NAME wakes a person or a project"
                 .chars()
                 .take(80)
                 .collect::<String>()
@@ -1954,7 +1897,7 @@ mod tests {
         assert_eq!(state.chat().prompt().text(), "one\ntwo\nthree");
         let (rows, view) = drawn(&mut state, 80, 24);
         assert_eq!(rows[21], "> one↵two↵three");
-        assert_eq!(rows[22], " Enter wakes each lead of yours.");
+        assert_eq!(rows[22], "");
         assert_eq!(
             view.cursor,
             Some(Position::new(
@@ -1988,7 +1931,7 @@ mod tests {
 
     /// A paste that makes the line longer than [`POST_MAX`] stays out:
     /// the line keeps its text, the note line says the limit at once,
-    /// and Enter posts nothing. The next key gives the note line back.
+    /// and Enter posts nothing. The next key clears the note line.
     #[test]
     fn a_paste_over_the_limit_gives_the_note_and_posts_nothing() {
         let mut state = mock_up();
@@ -2000,8 +1943,8 @@ mod tests {
         let note = &view.rows.iter().find(|r| r.area.y == 22).unwrap().line;
         assert_eq!(note.style, WARNING);
         assert_eq!(state.on_key(FrameKey::Chat(Key::Send)), None);
-        // With a line in the prompt, the note comes before the note of
-        // the wake, and the line stays as it was.
+        // With a line in the prompt, the note shows too, and the line
+        // stays as it was.
         type_in(&mut state, "hi");
         state.on_paste(&"x".repeat(POST_MAX - 1));
         assert_eq!(state.chat().prompt().text(), "hi");
@@ -2009,7 +1952,7 @@ mod tests {
         assert_eq!(rows[22], format!(" {}", too_long()));
         state.on_key(FrameKey::Chat(Key::End));
         let (rows, _) = drawn(&mut state, 80, 24);
-        assert_eq!(rows[22], " Enter wakes each lead of yours.");
+        assert_eq!(rows[22], "");
         // A paste up to the limit goes in.
         state.on_paste(&"x".repeat(POST_MAX - 2));
         assert_eq!(state.chat().prompt().text().len(), POST_MAX);
@@ -2037,14 +1980,13 @@ mod tests {
         state.on_key(FrameKey::Chat(Key::Type('y')));
         assert_eq!(state.chat().prompt().text(), full);
         assert_eq!(state.chat().warning(), Some(too_long().as_str()));
-        // A Backspace at the end deletes a character, and the note of
-        // the wake comes back.
+        // A Backspace at the end deletes a character, and the note goes.
         state.on_key(FrameKey::Chat(Key::End));
         state.on_key(FrameKey::Chat(Key::Backspace));
         assert_eq!(state.chat().prompt().text().len(), POST_MAX - 1);
         assert_eq!(state.chat().warning(), None);
         let (rows, _) = drawn(&mut state, 80, 24);
-        assert_eq!(rows[22], " Enter wakes each lead of yours.");
+        assert_eq!(rows[22], "");
         // The limit counts bytes: a character of two bytes stays out,
         // and a character of one byte goes in.
         state.on_key(FrameKey::Chat(Key::Type('é')));

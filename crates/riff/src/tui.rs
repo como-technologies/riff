@@ -1842,7 +1842,7 @@ pub async fn run(
     let mut state = State::new(Build::this(), me.clone()).in_clone(here);
     let start = crate::run::now_ms();
     state.looked(first, start);
-    state.chat_as(person.me.who().user(), u64::try_from(start).unwrap_or(0));
+    state.chat_since(u64::try_from(start).unwrap_or(0));
     let mut terminal = enter(mouse)?;
     let shown = frames(&mut terminal, &mut state, api, me, person, reach, mouse).await;
     leave(mouse);

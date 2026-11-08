@@ -1,8 +1,9 @@
 //! `riff chat` over real HTTP (01M3NB5MY93KV9RKZGGSMZW00D,
-//! 01M3NB5N0D99JB5CE6RB4VEYPF): two people chat, a line with `@lead`
-//! wakes a lead, a line with no `@` wakes the lead of the sender, the answer of a
-//! lead shows in each client, and a person who is not a member cannot
-//! read or post the chat. `/me` sends an action line
+//! 01M6Y1A5PTCVZ6GRJ0FXMART2T): two people chat, a line posts with the
+//! names that it holds, `@riff` wakes the lead of the sender in riff, a
+//! line with no name wakes no one, no line is refused for a name, the
+//! answer of a lead shows in each client, and a person who is not a
+//! member cannot read or post the chat. `/me` sends an action line
 //! (01M3NJD37CNQX580YC24S7K6ES). In a pseudo-terminal, the chat has a
 //! prompt line, and your line shows once (01M3NJD39JVJHY5G71CD79JBY3).
 
@@ -168,8 +169,26 @@ async fn a_line_of_one_person_shows_at_the_other() {
     assert!(status.unwrap().unwrap().success());
 }
 
+/// The selectors of the chat line `body`, as riff-server keeps them, read
+/// as `me`.
+async fn to_of(api: &Api, me: &SessionUri, body: &str) -> Vec<String> {
+    let read = api.read(me, &riff::chat::thread(), true).await.unwrap();
+    let line = read
+        .iter()
+        .find(|c| c.message.body == body)
+        .unwrap_or_else(|| panic!("no chat line {body:?}"));
+    line.message.to.iter().map(ToString::to_string).collect()
+}
+
+/// True when no wake comes on `wakes` for a short time.
+async fn quiet<S: futures::Stream + Unpin>(wakes: &mut S) -> bool {
+    tokio::time::timeout(Duration::from_millis(500), wakes.next())
+        .await
+        .is_err()
+}
+
 #[tokio::test]
-async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
+async fn at_a_project_wakes_the_lead_of_the_sender_and_its_answer_shows_in_each_client() {
     let server = crate::common::start_signed().await;
     let (mike_lead, brett_lead) = (lead_of("mike"), lead_of("brett"));
     // The person of each user names its lead. A client of one process
@@ -187,8 +206,9 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
     let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
     let mut brett = Client::start(&server, "brett", "heron", &[]).await;
 
-    // @lead wakes the lead of the sender.
-    mike.say("@lead is #12 done?").await;
+    // @riff wakes the lead of the sender in riff, and not the lead of
+    // brett there.
+    mike.say("@riff is #12 done?").await;
     let wake = in_time(WAIT, mike_wakes.next())
         .await
         .expect("the lead of mike wakes")
@@ -197,18 +217,19 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
     assert_eq!(wake.thread, riff::chat::thread());
     assert_eq!(wake.from.who().user(), "mike");
 
-    // @USER wakes the lead of USER.
+    // @mike names the person mike: it wakes no lead.
     brett.say("@mike: can I take #14?").await;
-    let wake = in_time(WAIT, mike_wakes.next())
-        .await
-        .expect("the lead of mike wakes")
-        .unwrap()
-        .unwrap();
-    assert_eq!(wake.from.who().user(), "brett");
+    brett.shows("can I take #14?").await;
+    assert!(quiet(&mut mike_wakes).await, "the lead of mike woke");
 
-    // The lead reads the line, and answers in the chat.
+    // Each line posts with its names, and with no selector of riff.
+    let to = |body| to_of(&mike_api, &mike_lead, body);
+    assert_eq!(to("@riff is #12 done?").await, ["name=riff"]);
+    assert_eq!(to("@mike: can I take #14?").await, ["name=mike"]);
+
+    // The lead reads the lines, and answers in the chat.
     let read = session(&mike_lead)
-        .read(&mike_lead, &riff::chat::thread(), false)
+        .read(&mike_lead, &riff::chat::thread(), true)
         .await
         .unwrap();
     assert!(
@@ -232,9 +253,8 @@ async fn at_lead_wakes_a_lead_and_its_answer_shows_in_each_client() {
         assert!(is_shown(&line, "<riff> yes, take #14"), "{line:?}");
     }
 
-    // Neither line named brett: his lead stays asleep.
-    let none = tokio::time::timeout(Duration::from_millis(500), brett_wakes.next()).await;
-    assert!(none.is_err(), "the lead of brett woke: {none:?}");
+    // No line woke the lead of brett.
+    assert!(quiet(&mut brett_wakes).await, "the lead of brett woke");
 }
 
 /// The lead of `user` in the repository `repo`, on one host.
@@ -316,7 +336,7 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
 }
 
 #[tokio::test]
-async fn at_lead_with_a_repository_wakes_only_the_lead_of_that_repository() {
+async fn the_name_of_a_project_wakes_only_the_lead_in_that_project() {
     let server = crate::common::start_signed().await;
     let leads = named_leads(
         &server,
@@ -332,28 +352,25 @@ async fn at_lead_with_a_repository_wakes_only_the_lead_of_that_repository() {
         unreachable!()
     };
     let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
-    let quiet = Duration::from_millis(500);
 
-    // The name after the slash picks one lead.
-    mike.say("@lead:strata is #12 done?").await;
+    // The name after the slash names the project.
+    mike.say("@strata is #12 done?").await;
     let wake = in_time(WAIT, strata_wakes.next())
         .await
         .expect("the lead in strata wakes")
         .unwrap()
         .unwrap();
     assert_eq!(wake.from.who().user(), "mike");
-    let none = tokio::time::timeout(quiet, riff_wakes.next()).await;
-    assert!(none.is_err(), "the lead in riff woke: {none:?}");
+    assert!(quiet(&mut *riff_wakes).await, "the lead in riff woke");
 
-    // OWNER/REPO picks one lead, and so does @USER:REPO.
-    mike.say("@mike:como-technologies/riff, and you?").await;
+    // OWNER/REPO names the project too.
+    mike.say("@como-technologies/riff, and you?").await;
     in_time(WAIT, riff_wakes.next())
         .await
         .expect("the lead in riff wakes")
         .unwrap()
         .unwrap();
-    let none = tokio::time::timeout(quiet, strata_wakes.next()).await;
-    assert!(none.is_err(), "the lead in strata woke: {none:?}");
+    assert!(quiet(&mut *strata_wakes).await, "the lead in strata woke");
 
     // The line of a lead shows the name of its project.
     let (strata, strata_api) = &leads[1];
@@ -363,21 +380,19 @@ async fn at_lead_with_a_repository_wakes_only_the_lead_of_that_repository() {
     let line = mike.shows("yes, #12 is done").await;
     assert!(is_shown(&line, "<strata> yes, #12 is done"), "{line:?}");
 
-    // @lead alone, and a line with no name, wake each lead of the user.
-    for line in ["@lead both of you", "and a line with no name"] {
-        mike.say(line).await;
-        for wakes in [&mut *riff_wakes, &mut *strata_wakes] {
-            in_time(WAIT, wakes.next())
-                .await
-                .unwrap_or_else(|_| panic!("a lead did not wake for {line:?}"))
-                .unwrap()
-                .unwrap();
-        }
+    // A line with no name wakes no lead.
+    mike.say("and a line with no name").await;
+    mike.shows("and a line with no name").await;
+    for wakes in [&mut *riff_wakes, &mut *strata_wakes] {
+        assert!(
+            quiet(&mut *wakes).await,
+            "a lead woke for a line with no name"
+        );
     }
 }
 
 #[tokio::test]
-async fn a_name_that_fits_no_lead_or_two_leads_sends_nothing_and_names_the_leads() {
+async fn no_line_is_refused_for_a_name() {
     let server = crate::common::start_signed().await;
     let leads = named_leads(
         &server,
@@ -394,66 +409,53 @@ async fn a_name_that_fits_no_lead_or_two_leads_sends_nothing_and_names_the_leads
     };
     let mut mike = Client::start(&server, "mike", "thelio", &[]).await;
 
-    // Two leads fit the name: the chat names them.
-    mike.say("@lead:strata hello").await;
-    let warn = mike.warns("cannot send the line").await;
+    // Two projects have the name strata, so each one has the name
+    // OWNER/REPO. A name that no one has goes too, with its name, and
+    // wakes no one: the chat checks no name.
+    for (line, name) in [
+        ("@strata hello", "name=strata"),
+        ("@nobody hello", "name=nobody"),
+        ("@lead:riff hello", "name=lead"),
+    ] {
+        mike.say(line).await;
+        let shown = mike.shows(line).await;
+        assert!(is_line(&shown, "mike", line), "{shown:?}");
+        let (lead, api) = &leads[0];
+        assert_eq!(to_of(api, lead, line).await, [name], "{line}");
+    }
     assert!(
-        warn.contains("mike has 2 leads in a repository with the name strata"),
-        "{warn}"
+        quiet(&mut *como).await,
+        "the lead in como-technologies/strata woke"
     );
-    assert!(
-        warn.contains("acme/strata, como-technologies/strata"),
-        "{warn}"
-    );
+    assert!(quiet(&mut *acme).await, "the lead in acme/strata woke");
 
-    // No lead fits the name, or the user has no lead.
-    mike.say("@lead:riff hello").await;
-    let warn = mike.warns("cannot send the line").await;
-    assert!(warn.contains("mike has no lead in riff"), "{warn}");
-    assert!(warn.contains("acme/strata"), "{warn}");
-    mike.say("@brett:riff hello").await;
-    let warn = mike.warns("cannot send the line").await;
-    assert!(warn.contains("brett has no lead."), "{warn}");
-
-    // The chat sent none of these lines: the first line with "hello" is
-    // the one that names the repository in full.
-    mike.say("@lead:acme/strata hello").await;
-    let line = mike.shows("hello").await;
-    assert!(
-        is_line(&line, "mike", "@lead:acme/strata hello"),
-        "{line:?}"
-    );
+    // OWNER/REPO wakes the one lead.
+    mike.say("@acme/strata hello").await;
     let wake = in_time(WAIT, acme.next())
         .await
         .expect("the lead in acme/strata wakes")
         .unwrap()
         .unwrap();
     assert_eq!(wake.from.who().user(), "mike");
-    let none = tokio::time::timeout(Duration::from_millis(500), como.next()).await;
-    assert!(none.is_err(), "the other lead woke: {none:?}");
+    assert!(quiet(&mut *como).await, "the other lead woke");
 }
 
 #[tokio::test]
-async fn a_line_with_no_at_wakes_the_lead_of_the_sender() {
+async fn a_line_with_no_name_wakes_no_one() {
     let server = crate::common::start_signed().await;
     let lead = lead_of("brett");
-    let api = crate::common::api_of(&server, &lead_of("brett"));
+    let api = crate::common::api_of(&server, &lead);
     api.register(&lead).await.unwrap();
     crate::common::name_lead(&crate::common::api(&server, "brett", None), &lead).await;
     let api = crate::common::api_of(&server, &lead);
     let mut wakes = Box::pin(api.watch(&lead).await.unwrap());
     let mut brett = Client::start(&server, "brett", "heron", &[]).await;
 
-    brett
-        .say("is the running riff in the way of my release?")
-        .await;
+    let line = "is the running riff in the way of my release?";
+    brett.say(line).await;
     brett.shows("my release").await;
-    let wake = in_time(WAIT, wakes.next())
-        .await
-        .expect("the lead of brett wakes")
-        .unwrap()
-        .unwrap();
-    assert_eq!(wake.from.who().user(), "brett");
+    assert!(quiet(&mut wakes).await, "the lead of brett woke");
+    assert!(to_of(&api, &lead, line).await.is_empty());
 }
 
 #[tokio::test]
@@ -541,7 +543,7 @@ fn the_book_shows_how_to_chat() {
     let part = &page[start + 1..];
     let part = &part[..part[3..].find("\n## ").map_or(part.len(), |end| end + 3)];
     assert!(part.contains("```sh\nriff chat\n```"), "{part}");
-    assert!(part.contains("@lead"), "{part}");
+    assert!(part.contains("@riff"), "{part}");
     assert!(part.contains("riff chat --color never"), "{part}");
     assert!(part.contains(PROMPT.trim_end()), "{part}");
     assert!(part.contains("<mike>"), "{part}");
@@ -552,15 +554,12 @@ fn the_book_shows_how_to_chat() {
         .expect("the how-to to ask a lead has its own heading");
     let ask = &part[ask + 1..];
     let ask = &ask[..ask[3..].find("\n### ").map_or(ask.len(), |end| end + 3)];
-    assert!(
-        ask.contains("```text\n@lead:strata is #12 done?\n"),
-        "{ask}"
-    );
-    assert!(ask.contains("@USER:REPO"), "{ask}");
-    assert!(
-        ask.contains("`@lead` alone wakes each of your leads"),
-        "{ask}"
-    );
+    // 01M6Y1A5PTCVZ6GRJ0FXMART2T: a project and a person by name, and
+    // a line with no name.
+    assert!(ask.contains("```text\n@riff is #12 done?\n"), "{ask}");
+    assert!(ask.contains("\n@brett can I take #14?\n"), "{ask}");
+    assert!(ask.contains("A line with no name wakes no one"), "{ask}");
+    assert!(!ask.contains("@lead"), "{ask}");
     let action = part
         .find("\n### Send an action with /me\n")
         .expect("the /me how-to has its own heading");
@@ -762,14 +761,17 @@ async fn me_sends_an_action_line_that_shows_in_each_client_and_in_tail() {
 }
 
 #[tokio::test]
-async fn me_with_at_lead_wakes_the_lead_of_the_sender() {
+async fn me_with_the_name_of_a_project_wakes_the_lead_of_the_sender() {
     let server = crate::common::start_signed().await;
     let lead = lead_of("brett");
-    let api = crate::common::api_of(&server, &lead_of("brett"));
+    let api = crate::common::api_of(&server, &lead);
+    api.register(&lead).await.unwrap();
+    crate::common::name_lead(&crate::common::api(&server, "brett", None), &lead).await;
+    let api = crate::common::api_of(&server, &lead);
     let mut wakes = Box::pin(api.watch(&lead).await.unwrap());
     let mut brett = Client::start(&server, "brett", "heron", &[]).await;
 
-    brett.say("/me asks @lead to look").await;
+    brett.say("/me asks @riff to look").await;
     let wake = in_time(WAIT, wakes.next())
         .await
         .expect("the lead of brett wakes")
@@ -777,6 +779,10 @@ async fn me_with_at_lead_wakes_the_lead_of_the_sender() {
         .unwrap();
     assert_eq!(wake.thread, riff::chat::thread());
     assert_eq!(wake.kind, Kind::Message);
+    assert_eq!(
+        to_of(&api, &lead, "/me asks @riff to look").await,
+        ["name=riff"]
+    );
 }
 
 #[tokio::test]

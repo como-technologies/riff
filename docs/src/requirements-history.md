@@ -633,6 +633,22 @@ page [Requirements](requirements.md) holds the rules of today.
   `<USER@HOST>`, a verified lead as `[USER's lead]`, and each other
   session as `[USER ID]`, with the first 8 characters of its session
   ID.
+- **01M5P1V9SZP9EF475MK3G9WK5E** A chat line of a person that names no
+  one with @ wakes the lead of the sender, as @lead does. `riff chat`
+  and its help say what wakes whom. Superseded by
+  01M6Y1A5PTCVZ6GRJ0FXMART2T.
+- **01M3NB5N0D99JB5CE6RB4VEYPF** A chat line wakes the lead of the
+  sender, unless it names a lead: `@lead` wakes the lead of the sender,
+  and `@USER` wakes the lead of USER. Superseded by
+  01M6Y1A5PTCVZ6GRJ0FXMART2T.
+- **01M5QVH7KDK3R2S4NDFB2V1XY9** A chat line with `@lead:REPO` wakes
+  only the lead of the sender in the repository REPO, and `@USER:REPO`
+  only the lead of USER in REPO. REPO is `OWNER/REPO`, or the name after
+  the slash when one lead of that user has a repository with that name.
+  `riff chat` reads the leads from riff-server. When no lead or more
+  than one lead matches, it sends nothing and names the leads that it
+  found. `@lead`, `@USER` and a line with no name still wake each lead
+  of the user. Superseded by 01M6Y1A5PTCVZ6GRJ0FXMART2T.
 
 ## Security
 
@@ -2997,3 +3013,7 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   live view is the sessions tab of the TUI. The TUI design picks a
   plain alias of `riff top`, or none.
   Superseded by 01M6QEXNM0QCGH6RG4Q8M9VH4W.
+- **01M6VG1PJDWE523TR9X9WJ5VXG** The rules of whom a line of the chat
+  wakes, `wakes` and `resolve`, are in `riff-client`. `riff chat` and
+  the Chat tab of the TUI share them. Superseded by
+  01M6Y1A5PTCVZ6GRJ0FXMART2T.
