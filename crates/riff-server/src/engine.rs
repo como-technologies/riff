@@ -725,7 +725,7 @@ impl Engine {
         let me = match (command.me(), proof) {
             (Some(me), _) => me.clone(),
             (None, Some(proof)) => {
-                let place = riff_state::owner::server_uri().place().clone();
+                let place = riff_core::name::SessionUri::server().place().clone();
                 SessionUri::new(proof.who.clone(), place)
             }
             (None, None) => {

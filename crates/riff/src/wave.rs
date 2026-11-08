@@ -1521,12 +1521,12 @@ pub trait World: Send + Sync {
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Tells the person of the lead of `wave` `body` in riff chat, as a line
-    /// of the kind `riff` that names the person first ([`asked`]): it wakes
-    /// the terminals of the person, and no session (#1605,
-    /// 01M6Y1A5PTCVZ6GRJ0FXMART2T). The post has `key`: riff-server drops
-    /// it when a kept message of the person has the key, so the person
-    /// hears it one time from the look of each host. The error is a post
-    /// that did not go out.
+    /// of riff with the mark `[by riff]` (01M6Y4ZCTSTVM971BDC1F7GJPK) that
+    /// names the person first ([`asked`]): it wakes the terminals of the
+    /// person, and no session (#1605, 01M6Y1A5PTCVZ6GRJ0FXMART2T). The post
+    /// has `key`: riff-server drops it when a kept message of the person
+    /// has the key, so the person hears it one time from the look of each
+    /// host. The error is a post that did not go out.
     fn ask_person<'a>(
         &'a self,
         wave: &'a Wave,
@@ -1536,8 +1536,8 @@ pub trait World: Send + Sync {
 
     /// Writes `body` in riff chat as the person of the lead of `record`,
     /// and wakes no session: the lead cannot act on it
-    /// (01M5NJ87YEHHGJBANM7CRYV56Z). The line has the kind `riff`: it is
-    /// no word of the person (01M5TKMVB7CF0QNAWXEVGEQETJ).
+    /// (01M5NJ87YEHHGJBANM7CRYV56Z). The line has the mark `[by riff]`: it
+    /// is no word of the person (01M6Y4ZCTSTVM971BDC1F7GJPK).
     fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()>;
 
     /// Posts `body` as a message to the lead of `record`, as the person

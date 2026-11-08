@@ -542,9 +542,18 @@ impl Command for Leave {
     fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
 }
 
+/// The refusal of a post of the kind `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK):
+/// only riff-server itself posts that kind, with [`Announce`].
+pub const KIND_RIFF: &str =
+    "the kind riff is only for the lines of riff-server itself: post with the kind message";
+
 /// A post of a session. Its `at_ms` is the time of the message. The
 /// note has each selector that matched no session (R61). The reply
 /// names each session that the message woke.
+///
+/// A post of the kind `riff` is refused, from a person and from a
+/// session: a line of that kind shows as `<riff-bot>`, riff-server itself
+/// (01M6Y4ZCTSTVM971BDC1F7GJPK).
 ///
 /// The signature covers the lead mark of `me`. So the sender of a
 /// signed message has `lead=true` only when `me` has it, and a signed
@@ -576,6 +585,9 @@ impl Command for Post {
         // (01M3XSF90E9JYYTC13D9THY4WE).
         if !post.kind.is_post() {
             return Err("no such kind: use message, status or note".into());
+        }
+        if post.kind == Kind::Riff {
+            return Err(KIND_RIFF.into());
         }
         if let Some(later) = post.to.iter().find(|selector| selector.is_other()) {
             return Err(format!(
@@ -709,7 +721,8 @@ pub struct PostNote {
 /// sender is the URI of the server. The post has no signature. The
 /// server is not a session: it joins no thread, and does not show in
 /// `who`. With no thread, the post is a direct message. The reply has
-/// each session that the message woke.
+/// each session that the message woke. It keeps each kind, also the kind
+/// `riff` that a [`Post`] cannot have (01M6Y4ZCTSTVM971BDC1F7GJPK).
 #[derive(Clone, Debug)]
 pub struct Announce {
     pub thread: Option<ThreadName>,

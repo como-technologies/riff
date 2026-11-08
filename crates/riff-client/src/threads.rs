@@ -14,7 +14,7 @@
 //!   01M3NJD37CNQX580YC24S7K6ES) has [`Line::action`].
 //! - [`Names`]: the names of the chat from riff-server. A chat shows
 //!   each sender by the name to type to reach it: `<mike>`, `<riff>`,
-//!   and `<riff-bot>` for riff itself.
+//!   and `<riff-bot>` for riff-server itself.
 //! - [`Thread`]: the lines of one thread of a read, and the other member
 //!   of a direct thread, for its label.
 //! - [`direct_name`] and [`named`]: the name `dm:PEER` of a direct
@@ -93,13 +93,13 @@ pub struct To {
     pub all: bool,
 }
 
-/// The mark at the start of a line of riff that went to a riff-server
-/// with the kind `message`, because the server refused the kind `riff`
-/// (01M5TQ0DX4M2EJJGE7QA8DZVYS).
+/// The mark at the start of a line that riff writes as the person of the
+/// riff, with the kind `message` (01M6Y4ZCTSTVM971BDC1F7GJPK). A person
+/// can type it too, so a line with it shows its real sender.
 pub const BY_RIFF: &str = "[by riff] ";
 
-/// The name of riff itself in a chat: the sender of a line of the kind
-/// `riff`, or with the mark [`BY_RIFF`].
+/// The name of riff-server itself in a chat: the sender of each line of
+/// [`Line::by_server`].
 pub const RIFF_BOT: &str = "riff-bot";
 
 /// The sender of a line, as a chat shows it.
@@ -211,16 +211,48 @@ impl Line {
         action_text(&self.body)
     }
 
-    /// True for a line of riff itself: the kind `riff`, or the mark
-    /// [`BY_RIFF`] at the start of the body (01M5TKMVB7CF0QNAWXEVGEQETJ).
-    pub fn by_riff(&self) -> bool {
-        self.kind == Kind::Riff || self.body.starts_with(BY_RIFF)
+    /// True for a line of riff-server itself: the kind `riff` from the
+    /// sender [`SessionUri::server`] (01M6Y4ZCTSTVM971BDC1F7GJPK).
+    /// riff-server signs no line, so the sender proves it, not
+    /// [`Line::verified`]: no person signs in as the user of riff-server,
+    /// and riff-server refuses the kind `riff` in a post of a client. A
+    /// line with the mark [`BY_RIFF`] is no line of riff-server.
+    ///
+    /// ```
+    /// use riff_client::api::Checked;
+    /// use riff_client::threads::Line;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::{Kind, Message};
+    ///
+    /// let line = |from: SessionUri, kind, body: &str| {
+    ///     let message = Message {
+    ///         seq: 1,
+    ///         from,
+    ///         to: vec![],
+    ///         body: body.into(),
+    ///         at_ms: 0,
+    ///         kind,
+    ///         sig: None,
+    ///         payload: None,
+    ///     };
+    ///     Line::of(&Checked { message, verified: false }, &"chat".parse().unwrap())
+    /// };
+    /// let mike: SessionUri = "riff://mike@thelio".parse()?;
+    /// assert!(line(SessionUri::server(), Kind::Riff, "members: ann passed the owner role").by_server());
+    /// assert!(!line(SessionUri::server(), Kind::Message, "hi").by_server());
+    /// assert!(!line(mike.clone(), Kind::Riff, "hi").by_server());
+    /// assert!(!line(mike, Kind::Message, "[by riff] the deploy waits").by_server());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn by_server(&self) -> bool {
+        self.kind == Kind::Riff && self.from.is_server()
     }
 
     /// The sender of the line, by the name to type to reach it, with the
     /// names `names` of riff-server: a person as its user, a verified lead
-    /// as the name of its project, and a line of riff itself as
-    /// [`RIFF_BOT`]. Each other session has no name.
+    /// as the name of its project, and a line of riff-server itself
+    /// ([`Line::by_server`]) as [`RIFF_BOT`]. Each other session has no
+    /// name. A line with the mark [`BY_RIFF`] shows its real sender.
     ///
     /// ```
     /// use riff_client::api::Checked;
@@ -246,7 +278,9 @@ impl Line {
     /// let said = Kind::Message;
     /// assert_eq!(line("riff://mike@thelio", true, said).sender(&names), sender("mike", true));
     /// assert_eq!(line(lead, true, said).sender(&names), sender("riff", true));
-    /// assert_eq!(line("riff://mike@thelio", true, Kind::Riff).sender(&names), sender("riff-bot", true));
+    /// // Only a line of riff-server itself shows as riff-bot: it has no signature.
+    /// assert_eq!(line("riff://riff@server", false, Kind::Riff).sender(&names), sender("riff-bot", true));
+    /// assert_eq!(line("riff://mike@thelio", true, Kind::Riff).sender(&names), sender("mike", true));
     /// // A lead that the reader did not prove has no name, and a worker neither.
     /// assert_eq!(line(lead, false, said).sender(&names), sender("mike 4e54d4e5", false));
     /// let worker = "riff://mike@thelio/como-technologies/riff?session=0271342b-7454&claim=issue-6";
@@ -263,7 +297,7 @@ impl Line {
         let named = |name: String| Sender { name, named: true };
         let user = self.from.who().user();
         let id = match self.from.who().session() {
-            _ if self.by_riff() => return named(RIFF_BOT.to_owned()),
+            _ if self.by_server() => return named(RIFF_BOT.to_owned()),
             None => return named(user.to_owned()),
             Some(id) => id,
         };
@@ -514,6 +548,43 @@ mod tests {
         };
         assert_eq!(status.to, [claim]);
         assert_eq!(status.sender(&Names::default()).name, "ann b7d0");
+    }
+
+    /// Only a line of riff-server itself shows as riff-bot
+    /// (01M6Y4ZCTSTVM971BDC1F7GJPK). A line with the mark shows its real
+    /// sender, of each kind.
+    #[test]
+    fn only_a_line_of_riff_server_shows_as_riff_bot() {
+        let line = |from: &str, kind, body: &str| {
+            let message = Message {
+                seq: 1,
+                from: from.parse().unwrap(),
+                to: vec![],
+                body: body.into(),
+                at_ms: 0,
+                kind,
+                sig: None,
+                payload: None,
+            };
+            let checked = Checked {
+                message,
+                verified: true,
+            };
+            Line::of(&checked, &ThreadName::chat())
+        };
+        let names = Names::default();
+        let waits = format!("{BY_RIFF}@mike the deploy waits for your approval");
+        for kind in [Kind::Message, Kind::Riff] {
+            let marked = line("riff://mike@thelio", kind, &waits);
+            assert_eq!(marked.sender(&names).name, "mike", "{kind:?}");
+            let session = "riff://mike@thelio/o/r?session=0271342b-7454";
+            let marked = line(session, kind, &waits);
+            assert_eq!(marked.sender(&names).name, "mike 0271342b", "{kind:?}");
+        }
+        let server = SessionUri::server().to_string();
+        let passed = "members: ann passed the owner role to mike.";
+        let bot = line(&server, Kind::Riff, passed).sender(&names);
+        assert_eq!((bot.name.as_str(), bot.named), (RIFF_BOT, true));
     }
 
     #[test]

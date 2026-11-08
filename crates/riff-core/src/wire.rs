@@ -1485,11 +1485,12 @@ pub enum Kind {
     /// A note: it informs and wakes no session. A session sees it at its
     /// next `read` (01M3JPMQE6S7YM4HPEVGXWK7ET).
     Note,
-    /// A message that riff itself writes, as the person of the riff: the
-    /// watch of a deploy, the daemon, the lines of `riff release`. It
-    /// reads and wakes as a message. It never counts as the word of a
-    /// person ([`Kind::by_riff`]). A session has no use for it, so a
-    /// schema of a call does not list it.
+    /// A line of riff-server itself, for example the line in the chat
+    /// for a change of the owner role. riff-server refuses it in a post of
+    /// a client (01M6Y4ZCTSTVM971BDC1F7GJPK). It reads and wakes as a
+    /// message. It never counts as the word of a person
+    /// ([`Kind::by_riff`]). A session has no use for it, so a schema of a
+    /// call does not list it.
     #[schemars(skip)]
     Riff,
     /// A kind that this build does not know. A reader shows the post as
@@ -1520,7 +1521,7 @@ impl Kind {
         *self == Kind::Message
     }
 
-    /// True for the kind of a line that riff writes, not a person:
+    /// True for the kind of a line that riff-server writes, not a person:
     /// [`Kind::Riff`].
     ///
     /// ```

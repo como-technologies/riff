@@ -58,7 +58,7 @@ pub enum Why {
     Direct,
     /// The line holds this word of the list `chat.highlight`.
     Word(String),
-    /// A line that riff writes, with the kind `riff` or the mark
+    /// A line of riff, with the kind `riff` of riff-server or the mark
     /// [`BY_RIFF`], that names the person or goes to the terminals of the
     /// person: for example "riff release v4.8.0 waits for your approval".
     Ask,
@@ -726,7 +726,8 @@ mod tests {
             )
         };
         assert_eq!(ask(&[], Kind::Riff, waits), Some(Why::Ask));
-        // A riff-server of the release before has the mark.
+        // A line that riff writes as the person has the mark
+        // (01M6Y4ZCTSTVM971BDC1F7GJPK).
         let marked = format!("{BY_RIFF}{waits}");
         assert_eq!(ask(&[], Kind::Message, &marked), Some(Why::Ask));
         // The question of a lead goes to the terminals of the person.
@@ -911,13 +912,14 @@ mod tests {
         let shown = at_noon(&h, &brett("mike: look"));
         assert_eq!(shown.lit.marks, "\x1b]9;<brett> mike: look\x07");
         assert!(shown.hook);
-        // An ask of riff shows riff itself as the sender, with no mark.
+        // An ask of riff shows its real sender, the person, and the mark
+        // (01M6Y4ZCTSTVM971BDC1F7GJPK).
         let waits = format!("{BY_RIFF}@mike the deploy waits for your approval");
         let ask = line_in(&chat(), "riff://mike@pangolin", &[], Kind::Message, &waits);
         let shown = at_noon(&h, &ask);
         assert_eq!(
             shown.lit.marks,
-            "\x1b]9;<riff-bot> @mike the deploy waits for your approval\x07"
+            "\x1b]9;<mike> [by riff] @mike the deploy waits for your approval\x07"
         );
     }
 

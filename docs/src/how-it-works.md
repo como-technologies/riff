@@ -3422,17 +3422,23 @@ names of the chat"):
 |---|---|---|
 | a person | its user | `<mike>` |
 | a lead | the name of its project | `<riff>` |
-| riff itself | `riff-bot` | `<riff-bot>` |
+| riff-server itself | `riff-bot` | `<riff-bot>` |
 | another session, for example a worker | no name: the user and the start of its session ID | `[mike a6cf2205]` |
 
-riff itself writes a line of the kind `riff`, for example the ask to
-approve a deploy. The lead of each person in a project shows with the
-same name, and the name wakes your own lead there (see "Wake a person
-or a project by name"). When two projects have the same name, each of
-their leads shows as `OWNER/REPO`, for example
-`<como-technologies/strata>`. The chat reads the names when it starts.
-The host shows only in the detail of a line: in `riff tail chat`, and
-in `riff read --thread chat`. Start the chat:
+Only riff-server writes as `riff-bot`, for example the line that a
+person passed the owner role. riff-server refuses such a line from a
+person and from a session. A line that riff writes for you, for example
+the ask to approve a deploy, shows as you, with the mark `[by riff]` at
+its start. A line that a person types with the mark shows as that
+person too.
+
+The lead of each person in a project shows with the same name, and the
+name wakes your own lead there (see "Wake a person or a project by
+name"). When two projects have the same name, each of their leads shows
+as `OWNER/REPO`, for example `<como-technologies/strata>`. The chat
+reads the names when it starts. The host shows only in the detail of a
+line: in `riff tail chat`, and in `riff read --thread chat`. Start the
+chat:
 
 ```sh
 riff chat
@@ -3441,8 +3447,9 @@ riff chat
 ```text
 14:02 <brett> @riff is the release out?
 14:03 <riff> @brett not yet: #207 waits for CI.
-14:05 <riff-bot> @mike riff release waits for your approval
+14:05 <mike> [by riff] @mike riff release waits for your approval
 14:06 [mike a6cf2205] the checks of #207 passed
+14:07 <riff-bot> members: mike passed the owner role to brett@acme.io.
 ```
 
 To see the host and the session of each sender, follow the chat with

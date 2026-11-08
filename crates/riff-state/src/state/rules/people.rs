@@ -130,7 +130,7 @@ fn revoke(user: Option<&str>) -> wire::Revoke {
 }
 
 fn server() -> SessionUri {
-    crate::owner::server_uri()
+    riff_core::name::SessionUri::server()
 }
 
 impl Given {
@@ -164,7 +164,8 @@ impl Given {
 impl When {
     /// The command makes `changes`, and posts `lines` in the chat, in
     /// this order (01M6FYH5XZAZYJFPFQVAFQSSVT). Each line is from the
-    /// server, has no `to`, and wakes no session.
+    /// server, has the kind `riff`, has no `to`, and wakes no session
+    /// (01M6Y4ZCTSTVM971BDC1F7GJPK).
     fn then_chat(self, changes: &[Change], lines: &[&str]) {
         let Ok(made) = self.0 else {
             panic!("refused");
@@ -184,7 +185,7 @@ impl When {
         assert_eq!(bodies, lines);
         for line in posted {
             assert_eq!(line.message.from, server());
-            assert_eq!(line.message.kind, Kind::Message);
+            assert_eq!(line.message.kind, Kind::Riff);
             assert!(line.message.to.is_empty());
             assert!(line.woken.is_empty());
         }
@@ -789,7 +790,10 @@ fn a_take_on_a_riff_with_no_owner_posts_one_line_in_the_chat() {
         panic!("{changes:?}");
     };
     assert_eq!(chat.message.seq, 2);
-    assert_eq!(chat.message.from, server);
+    assert_eq!(
+        (&chat.message.from, chat.message.kind),
+        (&server, Kind::Riff)
+    );
     assert!(chat.message.to.is_empty() && chat.woken.is_empty());
     // A replay of the log has the line.
     let mut replayed = riff;

@@ -87,7 +87,7 @@ use riff_core::name::{ThreadName, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{ChatName, NameKind};
 
-use crate::owner::SERVER_USER;
+use riff_core::name::SERVER_USER;
 
 use super::view::View;
 

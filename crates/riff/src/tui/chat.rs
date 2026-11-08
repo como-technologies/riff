@@ -11,7 +11,7 @@
 //!  09:14 <riff> good morning: 2 pull requests merged
 //!  09:15 <ann> morning
 //!  12:20 * mike goes for lunch
-//!  12:40 <riff-bot> @mike the deploy waits for your approval
+//!  12:40 <riff-bot> members: ann passed the owner role to mike.
 //!
 //! > @riff what is next?
 //!
@@ -25,10 +25,12 @@
 //! - **The log** ([`Chat`]) keeps the last [`KEEP`] lines of the thread.
 //!   A line shows as in `riff chat` ([`crate::chat::said`]), with the
 //!   sender by the name to type to reach it (01M6Y1FB5MZNZ971CJRBWZ2F9X):
-//!   a person as `<USER>`, a lead as `<PROJECT>`, riff itself as
-//!   `<riff-bot>`, an action as `* NAME TEXT`. The names come from
-//!   riff-server at the start ([`Came::Names`]). A rule names each new
-//!   day. A long line wraps, and each more row starts under the sender.
+//!   a person as `<USER>`, a lead as `<PROJECT>`, riff-server itself as
+//!   `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK), an action as `* NAME
+//!   TEXT`. A line that riff writes as the person shows as the person,
+//!   with the mark `[by riff]`. The names come from riff-server at the
+//!   start ([`Came::Names`]). A rule names each new day. A long line
+//!   wraps, and each more row starts under the sender.
 //!   The newest lines show: `PgUp` shows older lines ([`Scroll`],
 //!   01M6VG1P7BH32E5YAP0GJSNJJP).
 //! - **The prompt** ([`Prompt`]) has the focus when you open the tab
@@ -1449,9 +1451,9 @@ mod tests {
             ),
             said_as(
                 "12:40",
-                "riff://mike@thelio",
+                "riff://riff@server",
                 Kind::Riff,
-                "@mike the deploy waits for your approval",
+                "members: ann passed the owner role to mike.",
             ),
             said(
                 "12:46",
@@ -1538,7 +1540,7 @@ mod tests {
     /// prompt with the cursor after the text, no note of a wake, and
     /// the keys of the prompt. Each sender shows by the name to type to
     /// reach it (#1786): a person as `<mike>`, a lead as `<riff>`, and
-    /// riff itself as `<riff-bot>`.
+    /// riff-server itself as `<riff-bot>`.
     #[test]
     fn the_chat_tab_at_80_x_24_is_the_mock_up() {
         let mut state = mock_up();
@@ -1562,7 +1564,7 @@ mod tests {
                 " 12:02 <strata> noted: mike looks at #1608 after lunch",
                 " 12:20 * mike goes for lunch",
                 " 12:31 <riff> blocked: 3a3f8d5d (#994) asks: which of two designs?",
-                " 12:40 <riff-bot> @mike the deploy waits for your approval",
+                " 12:40 <riff-bot> members: ann passed the owner role to mike.",
                 " 12:46 <riff> #994 still has no answer; I wait for mike",
                 " 13:05 <mike> back. @lead:riff the first design, with the tab for waves",
                 " 13:05 <riff> ok: #994 goes on with the first design",
@@ -1606,8 +1608,8 @@ mod tests {
             "12:20 * mike goes for lunch",
             "12:31 <riff> blocked: 3a3f8d5d (#994)",
             "      asks: which of two designs?",
-            "12:40 <riff-bot> @mike the deploy waits",
-            "      for your approval",
+            "12:40 <riff-bot> members: ann passed the",
+            "      owner role to mike.",
             "12:46 <riff> #994 still has no answer; I",
             "      wait for mike",
             "13:05 <mike> back. @lead:riff the first",
@@ -1622,6 +1624,33 @@ mod tests {
             "Enter send  Esc log  Ctrl-C quit",
         ];
         assert_eq!(rows, want);
+    }
+
+    /// Only a line of riff-server itself shows as `<riff-bot>`
+    /// (01M6Y4ZCTSTVM971BDC1F7GJPK). A line of mike with the mark
+    /// `[by riff]` shows as `<mike>`, with the mark, and so does a line of
+    /// mike with the kind `riff` in an old log.
+    #[test]
+    fn only_a_line_of_riff_server_shows_as_riff_bot() {
+        let mut state = mock_up();
+        let mike = "riff://mike@thelio";
+        let waits = "[by riff] @mike the deploy waits for your approval";
+        let passed = "members: ann passed the owner role to brett.";
+        for came in [
+            said("13:15", mike, waits),
+            said_as("13:16", mike, Kind::Riff, "a line of an old log"),
+            said_as("13:17", "riff://riff@server", Kind::Riff, passed),
+        ] {
+            state.chat_came(came);
+        }
+        let (rows, _) = drawn(&mut state, 80, 24);
+        for want in [
+            format!(" 13:15 <mike> {waits}"),
+            " 13:16 <mike> a line of an old log".to_owned(),
+            format!(" 13:17 <riff-bot> {passed}"),
+        ] {
+            assert!(rows.contains(&want), "{want}: {rows:#?}");
+        }
     }
 
     /// Esc moves the focus to the log: the prompt is dim with no cursor,

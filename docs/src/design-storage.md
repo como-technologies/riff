@@ -513,20 +513,10 @@ goes to the owner.
   way. So a rollback to N-1 works.
 - A rollback of riff-server past a release line is also a rollback of
   each machine: `riff update --tag`.
-- A machine that is newer than the server can stay. Then the server
-  refuses the kind `riff` of a line that riff writes in riff chat, so
-  riff posts the line again with the kind `message` and the mark `[by
-  riff] ` at the start of the body. No line of riff is lost.
-
-```mermaid
-sequenceDiagram
-    participant R as riff (newer)
-    participant S as riff-server (rolled back)
-    R->>S: post a line of riff, kind riff
-    S-->>R: refused: no such kind
-    R->>S: post again, kind message, body "[by riff] ..."
-    S-->>R: posted
-```
+- A machine that is newer than the server can stay. A line that riff
+  writes in riff chat has the kind `message` and the mark `[by riff] `
+  at the start of the body, so each server takes it. Only riff-server
+  itself posts the kind `riff`.
 
 ### Local development
 

@@ -68,7 +68,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use riff_core::name::{ThreadName, Who, check, sanitize};
+use riff_core::name::{SERVER_USER, SessionUri, ThreadName, Who, check, sanitize};
 use riff_core::record::{self, Change, Email, OwnerSet, PersonJoined, RiffMade, SigninsEnded};
 use riff_core::selector::Selector;
 use riff_core::wire::{
@@ -81,7 +81,6 @@ use serde::{Deserialize, Serialize};
 use super::command::{Caller, Code, Command, CommandKind, Done, Now, Refused, Role};
 use super::view::View;
 use crate::owner;
-use crate::owner::SERVER_USER;
 
 /// The refusal of an action of the owner on a riff with no owner
 /// (01M3Q63NNC6SC03BFCG80M7B4D).
@@ -518,7 +517,7 @@ impl View<'_> {
     /// the last record is [`View::chat`]. The records go in the chunk of
     /// the command that causes the note.
     fn news(&self, body: &str, tell: &[String], chat: bool, now: Now) -> Vec<Change> {
-        let server = owner::server_uri();
+        let server = SessionUri::server();
         let mut changes = Vec::new();
         for thread in self.repositories() {
             let to = vec![Selector {
@@ -547,10 +546,11 @@ impl View<'_> {
     /// The `posted` record of one line of the server in the chat
     /// (01M6FYH5XZAZYJFPFQVAFQSSVT), for a change that changes who the
     /// owner is. The line has no `to`: it wakes no session, and a person
-    /// sees it in `riff chat`.
+    /// sees it in `riff chat`. It has the kind `riff`, so the chat shows
+    /// it as `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK).
     fn chat(&self, body: &str, now: Now) -> Vec<Change> {
-        let server = owner::server_uri();
-        let line = server_message(Vec::new(), body.to_owned(), Kind::Message, now);
+        let server = SessionUri::server();
+        let line = server_message(Vec::new(), body.to_owned(), Kind::Riff, now);
         self.put(server.who(), ThreadName::chat(), line, None, now.at)
             .0
     }
@@ -593,7 +593,7 @@ fn owner_set(email: Option<&str>) -> Change {
 fn server_message(to: Vec<Selector>, body: String, kind: Kind, now: Now) -> Message {
     Message {
         seq: 0,
-        from: owner::server_uri(),
+        from: SessionUri::server(),
         to,
         body,
         at_ms: now.ms,

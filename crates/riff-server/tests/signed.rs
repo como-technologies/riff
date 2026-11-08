@@ -1,5 +1,6 @@
 //! Signed messages (R195-R201), over HTTP: the check at the server, the
-//! keys for the reader, and a message that changed in storage.
+//! keys for the reader, a message that changed in storage, and the kind
+//! `riff` that only riff-server itself posts.
 
 use crate::common;
 
@@ -8,9 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{Post, Posted, ReadReply, TokenReply};
+use riff_core::wire::{Invite, Kind, PassOwner, Post, Posted, ReadReply, TokenReply};
 use riff_server::Service;
 use riff_server::auth::Config;
+use riff_state::state::threads::KIND_RIFF;
 use riff_state::store::{Memory, Store};
 use serde::Serialize;
 use serde_json::Value;
@@ -20,6 +22,7 @@ const LEAD: &str = "riff://mike@pangolin/como-technologies/riff?session=lead";
 const BRETT: &str = "riff://brett@heron/como-technologies/riff?session=b";
 const MIKE: &str = "riff://mike@pangolin";
 const REPO: &str = "como-technologies/riff";
+const CHAT: &str = "chat";
 
 fn now_ms() -> u64 {
     let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -430,4 +433,47 @@ async fn a_tail_acts_only_as_the_caller_of_its_token() {
     };
     assert_eq!(tail(A).await.unwrap().status(), 403);
     assert_eq!(tail(BRETT).await.unwrap().status(), 200);
+}
+
+/// Only riff-server posts the kind `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK).
+/// A signed post with that kind is refused, of a member and of a session,
+/// also with the mark of a line of riff, and it adds no line. The line of
+/// riff-server itself in the chat, for a pass of the owner role, keeps
+/// the kind.
+#[tokio::test]
+async fn only_riff_server_itself_posts_the_kind_riff() {
+    let (service, base) = common::start(true, &[]).await;
+    // mike signs in first, so mike is the owner.
+    let person = Caller::new(&service, &base, MIKE).await;
+    let a = Caller::new(&service, &base, A).await;
+    let brett = Caller::new(&service, &base, BRETT).await;
+    let waits = "[by riff] @mike the deploy waits for your approval";
+    for caller in [&person, &a] {
+        let mut post = Post {
+            kind: Kind::Riff,
+            ..caller.unsigned(CHAT, waits)
+        };
+        post.sign(&caller.key, now_ms());
+        let reply = caller.call(&base, "post", &post).await;
+        assert_eq!(reply.status(), 400, "{}", caller.me);
+        let text = reply.text().await.unwrap();
+        assert!(text.contains(KIND_RIFF), "{text}");
+    }
+
+    let email = "brett@comotechnologies.io";
+    let invite = Invite {
+        email: email.into(),
+    };
+    assert_eq!(person.call(&base, "invite", &invite).await.status(), 200);
+    let pass = PassOwner {
+        email: email.into(),
+    };
+    assert_eq!(person.call(&base, "owner", &pass).await.status(), 200);
+    let reply = brett.read(&base, CHAT).await;
+    let [line] = reply.messages.as_slice() else {
+        panic!("only the line of riff-server: {reply:?}");
+    };
+    assert_eq!(line.from, SessionUri::server());
+    assert_eq!(line.kind, Kind::Riff);
+    assert!(line.body.contains("passed the owner role"), "{}", line.body);
 }

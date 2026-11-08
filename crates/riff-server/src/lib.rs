@@ -1214,8 +1214,9 @@ impl Server {
 
     /// Warns the owner that the next check can drop the owner
     /// (01M3Q546335NBTKG5BHQ27QC93): a note to each session of `user` in
-    /// the thread of each repository, and one line in the chat. The
-    /// log line names no email (01M3XA87CJHCGZX283ZQAFKARZ).
+    /// the thread of each repository, and one line in the chat, of the
+    /// kind `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK). The log line names no
+    /// email (01M3XA87CJHCGZX283ZQAFKARZ).
     async fn warn_owner(&self, user: Option<&str>) {
         let Some(email) = self.engine.read(|state| state.people().members().owner) else {
             return;
@@ -1233,7 +1234,7 @@ impl Server {
             }
         }
         let chat = ThreadName::chat();
-        posts.push(Server::news(Some(chat), Vec::new(), &news, Kind::Message));
+        posts.push(Server::news(Some(chat), Vec::new(), &news, Kind::Riff));
         self.announce_each(posts).await;
     }
 }
@@ -5075,11 +5076,11 @@ mod tests {
         let Change::Posted(posted) = &note.change else {
             panic!("a note: {note:?}");
         };
-        assert_eq!(posted.message.from, owner::server_uri());
+        assert_eq!(posted.message.from, riff_core::name::SessionUri::server());
         let Change::Posted(message) = &told.change else {
             panic!("a message: {told:?}");
         };
-        assert_eq!(message.message.from, owner::server_uri());
+        assert_eq!(message.message.from, riff_core::name::SessionUri::server());
         assert!(message.thread.is_direct());
         assert!(message.woken.contains(mike2().who()));
         for record in &of_release {

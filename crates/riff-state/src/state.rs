@@ -2481,7 +2481,7 @@ impl State {
 
     /// Posts a note or a message of the riff server itself
     /// (01M3N7K4BC1RPZKQ1XNDTBRPGF). `me` is the URI of the server, for
-    /// example [`crate::owner::server_uri`]. It is not a session: it does
+    /// example [`SessionUri::server`](riff_core::name::SessionUri::server). It is not a session: it does
     /// not arrive, and does not show in `who`. The post has no signature.
     /// A post with no thread is a direct message, as with
     /// [`State::post`].
@@ -2491,7 +2491,6 @@ impl State {
     /// use riff_core::name::SessionUri;
     /// use riff_core::selector::Selector;
     /// use riff_core::wire::Kind;
-    /// use riff_state::owner::server_uri;
     /// use riff_state::state::State;
     ///
     /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
@@ -2500,9 +2499,9 @@ impl State {
     /// state.register(&mike, now);
     ///
     /// let to = vec![Selector::session("a6cf")];
-    /// let delivery = state.announce(&server_uri(), None, to, "hello", Kind::Message, now, 0).unwrap();
+    /// let delivery = state.announce(&SessionUri::server(), None, to, "hello", Kind::Message, now, 0).unwrap();
     /// assert_eq!(&delivery.wakes[0].0, mike.who());
-    /// assert_eq!(delivery.tailed.message.from, server_uri());
+    /// assert_eq!(delivery.tailed.message.from, SessionUri::server());
     /// assert_eq!(state.who(now, 0, true).len(), 1, "the server is not a session");
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
@@ -3916,6 +3915,33 @@ mod tests {
         assert_eq!(state.missed(tests().who()).unwrap().kind, Kind::Message);
     }
 
+    /// Only riff-server posts the kind `riff`
+    /// (01M6Y4ZCTSTVM971BDC1F7GJPK): a post of a session or of a person
+    /// with it is refused and makes no record. An announce of the server
+    /// keeps it.
+    #[test]
+    fn only_an_announce_of_the_server_has_the_kind_riff() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let position = state.position();
+        let person: SessionUri = "riff://mike@pangolin".parse().unwrap();
+        for me in [api(), person] {
+            let post = Post {
+                kind: Kind::Riff,
+                ..Post::new(&me, Some(ThreadName::chat()), vec![], "[by riff] hi")
+            };
+            assert_eq!(state.post(post, now, 0).unwrap_err(), threads::KIND_RIFF);
+        }
+        assert_eq!(state.position(), position, "a refused post makes no record");
+        let server = SessionUri::server();
+        let chat = Some(ThreadName::chat());
+        let delivery = state
+            .announce(&server, chat, vec![], "hi", Kind::Riff, now, 0)
+            .unwrap();
+        assert_eq!(delivery.tailed.message.kind, Kind::Riff);
+        assert_eq!(delivery.tailed.message.from, server);
+    }
+
     /// A selector of a later build, from its JSON.
     fn later(json: &str) -> Selector {
         serde_json::from_str(json).unwrap()
@@ -3974,7 +4000,7 @@ mod tests {
     #[test]
     fn a_selector_of_a_later_build_wakes_nobody() {
         let now = Instant::now();
-        let server = crate::owner::server_uri();
+        let server = riff_core::name::SessionUri::server();
         for (json, known) in [
             (r#"{"user":"brett","wave":"17"}"#, "user=brett"),
             // A value that the build does not know, and each other form
@@ -4144,7 +4170,7 @@ mod tests {
             .tailed
             .thread;
         post(&mut state, &api(), "como-technologies/riff", &[], "one");
-        let server = crate::owner::server_uri();
+        let server = riff_core::name::SessionUri::server();
         let to = to(&["user=brett"]);
         let note = state.announce(
             &server,

@@ -403,7 +403,44 @@ impl SessionUri {
     pub fn default_thread(&self) -> Option<ThreadName> {
         self.place.default_thread()
     }
+
+    /// The URI that riff-server posts its own lines as: the USER
+    /// [`SERVER_USER`] on the host `server`, with no session
+    /// (01M3N7K4BC1RPZKQ1XNDTBRPGF).
+    ///
+    /// ```
+    /// use riff_core::name::SessionUri;
+    ///
+    /// assert_eq!(SessionUri::server().to_string(), "riff://riff@server");
+    /// ```
+    pub fn server() -> SessionUri {
+        format!("{SCHEME}{SERVER_USER}@server")
+            .parse()
+            .expect("the URI of the server is valid")
+    }
+
+    /// True for the URI of riff-server itself ([`SessionUri::server`]).
+    /// No person signs in as [`SERVER_USER`], so on a riff with sign-in
+    /// no client posts as it.
+    ///
+    /// ```
+    /// use riff_core::name::SessionUri;
+    ///
+    /// assert!(SessionUri::server().is_server());
+    /// let mike: SessionUri = "riff://mike@server".parse()?;
+    /// assert!(!mike.is_server());
+    /// let session: SessionUri = "riff://riff@server?session=a6cf".parse()?;
+    /// assert!(!session.is_server());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn is_server(&self) -> bool {
+        *self == SessionUri::server()
+    }
 }
+
+/// The USER of riff-server itself. riff-server posts its own lines as
+/// this USER, so no person signs in with it (01M3N7K4BC1RPZKQ1XNDTBRPGF).
+pub const SERVER_USER: &str = "riff";
 
 impl fmt::Display for SessionUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

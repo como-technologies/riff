@@ -203,7 +203,7 @@ fn posted(thread: &ThreadName, message: Message, woken: &[&SessionUri]) -> Chang
 /// freed its claims `items` in the repository, with the join of the
 /// holder to that thread (01M51JBEQRWWZKKP3GWW8QX96C).
 fn told_dropped(holder: &SessionUri, why: Dropped, items: &[&str]) -> [Change; 2] {
-    let server = crate::owner::server_uri();
+    let server = riff_core::name::SessionUri::server();
     let thread = ThreadName::direct(server.who(), holder.who());
     let freed: Vec<Freed> = items
         .iter()
@@ -487,7 +487,7 @@ impl Given {
     /// The caller that acts as `me`, with the role of an admin, as in a
     /// riff with no sign-in.
     fn caller(me: &SessionUri) -> Caller {
-        if me == &crate::owner::server_uri() {
+        if me == &riff_core::name::SessionUri::server() {
             Caller::server()
         } else {
             Caller::of(me).with_role(Role::Admin)
@@ -779,7 +779,7 @@ fn a_copy_of_a_signed_payload_is_refused() {
 
 #[test]
 fn the_server_announces_as_itself_and_joins_no_thread() {
-    let server = crate::owner::server_uri();
+    let server = riff_core::name::SessionUri::server();
     let announce = Announce {
         thread: Some(repo()),
         to: vec!["user=bob".parse().unwrap()],
@@ -925,7 +925,7 @@ fn the_lead_releases_the_claim_of_a_session_of_its_user() {
         kind: Kind::Note,
         at_ms: 0,
         ..message(
-            crate::owner::server_uri(),
+            riff_core::name::SessionUri::server(),
             1,
             &[],
             &format!(
@@ -962,7 +962,7 @@ fn a_lead_that_frees_its_own_claim_gets_no_message() {
         kind: Kind::Note,
         at_ms: 0,
         ..message(
-            crate::owner::server_uri(),
+            riff_core::name::SessionUri::server(),
             1,
             &[],
             "claims: the lead ann@heron:app (a1) released issue-7 for the session \
@@ -1032,7 +1032,7 @@ fn an_end_and_a_new_start_free_each_claim() {
 /// The direct message of the server to the old lead `old`: `lead` is
 /// the lead now (01M5NJAYMYF50B9WXH5RF9W737).
 fn told_not_lead(old: &SessionUri, lead: &SessionUri) -> [Change; 2] {
-    let server = crate::owner::server_uri();
+    let server = riff_core::name::SessionUri::server();
     let thread = ThreadName::direct(server.who(), old.who());
     let to = format!("session={}", old.who().session().unwrap());
     let message = Message {
@@ -1312,7 +1312,7 @@ fn a_session_with_no_sign_of_life_for_the_expiry_is_forgotten() {
     given(&three_with_direct_threads())
         .after(SESSION_EXPIRY)
         .live(&[carol()])
-        .when(&crate::owner::server_uri(), Forget)
+        .when(&riff_core::name::SessionUri::server(), Forget)
         .then(&[forgotten(&ann()), forgotten(&bob())]);
 }
 
@@ -1326,7 +1326,7 @@ fn a_forget_gives_one_released_record_for_each_claim_then_session_forgotten() {
     given(&records)
         .after(SESSION_EXPIRY)
         .live(&[carol()])
-        .when(&crate::owner::server_uri(), Forget)
+        .when(&riff_core::name::SessionUri::server(), Forget)
         .then(&[
             released(&ann(), "issue-7"),
             released(&ann(), "issue-8"),
@@ -1339,7 +1339,7 @@ fn a_forget_gives_one_released_record_for_each_claim_then_session_forgotten() {
 fn a_session_with_a_sign_of_life_in_the_expiry_is_not_forgotten() {
     given(&three_with_direct_threads())
         .after(SESSION_EXPIRY - Duration::from_secs(60))
-        .when(&crate::owner::server_uri(), Forget)
+        .when(&riff_core::name::SessionUri::server(), Forget)
         .then(&[]);
 }
 
@@ -1394,7 +1394,7 @@ fn a_forgotten_session_loses_its_claims_and_its_lead() {
 
 #[test]
 fn make_riff_pauses_only_a_riff_with_no_record() {
-    let server = crate::owner::server_uri();
+    let server = riff_core::name::SessionUri::server();
     given(&[])
         .when(&server, make_riff("r1"))
         .then(&[riff_made("r1"), riff_set(RiffState::Paused)]);
@@ -1408,7 +1408,7 @@ fn make_riff_pauses_only_a_riff_with_no_record() {
 /// (01M3XA87HE06Z6M32ZJPSYSYRZ).
 #[test]
 fn make_riff_keeps_the_id_that_the_riff_has() {
-    let server = crate::owner::server_uri();
+    let server = riff_core::name::SessionUri::server();
     given(&[riff_made("r1"), riff_set(RiffState::Paused)])
         .when(&server, make_riff("r2"))
         .then(&[]);
@@ -1422,7 +1422,7 @@ fn make_riff_keeps_the_id_that_the_riff_has() {
 /// 01M3Z8MRKTAN8CBAQB721JNZAK).
 #[test]
 fn import_writes_its_changes_only_in_a_log_with_no_record() {
-    let server = crate::owner::server_uri();
+    let server = riff_core::name::SessionUri::server();
     let changes = vec![riff_made("old"), riff_set(RiffState::Paused)];
     let import = || Import {
         changes: changes.clone(),

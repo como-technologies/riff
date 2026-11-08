@@ -1981,25 +1981,6 @@ async fn approve_refuses_each_agent_session_also_the_lead_with_the_word_of_the_o
     assert_eq!(machine.log(), before, "gh ran");
 }
 
-/// 01M5TKMVB7CF0QNAWXEVGEQETJ: `riff release cut` and `publish` write
-/// their chat line with the kind `riff`.
-#[tokio::test]
-async fn the_chat_lines_of_publish_have_the_kind_riff() {
-    let machine = lead_with_a_waiting_run().await;
-    machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-    let mike: riff_core::name::SessionUri =
-        "riff://mike@thelio/como-technologies/riff".parse().unwrap();
-    let read = crate::common::api_of(&machine.server, &mike)
-        .read(&mike, &riff_core::name::ThreadName::chat(), true)
-        .await
-        .unwrap();
-    let line = read
-        .iter()
-        .find(|c| c.message.body.contains("riff release v3.3.0 is published"))
-        .expect("the publish line");
-    assert_eq!(line.message.kind, riff_core::wire::Kind::Riff);
-}
-
 /// The messages of riff chat.
 async fn chat_of(server: &crate::common::Signed) -> Vec<riff_client::api::Checked> {
     let mike: riff_core::name::SessionUri =
@@ -2010,13 +1991,13 @@ async fn chat_of(server: &crate::common::Signed) -> Vec<riff_client::api::Checke
         .unwrap()
 }
 
-/// 01M5TQ0DX4M2EJJGE7QA8DZVYS: after a rollback of riff-server to the
-/// release before, the server refuses the kind `riff`. The lines of riff
-/// still post, with the kind `message` and the mark.
+/// 01M6Y4ZCTSTVM971BDC1F7GJPK: `riff release publish` and the watch of
+/// the deploy write their lines in riff chat as the person, with the kind
+/// `message` and the mark `[by riff] ` (01M5TKMVB7CF0QNAWXEVGEQETJ). Only
+/// riff-server itself posts the kind `riff`.
 #[tokio::test]
-async fn a_server_that_refuses_the_kind_riff_still_gets_the_lines_of_riff() {
-    let old = crate::common::start_signed_with(crate::common::refuse_kind_riff).await;
-    let machine = lead_with_a_waiting_run_on(old).await;
+async fn the_chat_lines_of_riff_go_as_the_person_with_the_mark() {
+    let machine = lead_with_a_waiting_run().await;
     machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
     let run = "https://github.com/como-technologies/riff/actions/runs/9";
     let waits = riff::cycle::waits_line("mike", "v3.3.0", run, false, &[]);
@@ -2024,7 +2005,6 @@ async fn a_server_that_refuses_the_kind_riff_still_gets_the_lines_of_riff() {
     let reminder = riff::cycle::waits_line("mike", "v3.3.0", run, true, &[]);
     machine.say_as_riff("mike", &reminder).await;
 
-    // The server holds each line as a message with the mark.
     let read = chat_of(&machine.server).await;
     for body in [
         "riff release v3.3.0 is published",
@@ -2040,6 +2020,7 @@ async fn a_server_that_refuses_the_kind_riff_still_gets_the_lines_of_riff() {
             line.message.body.starts_with(riff_client::threads::BY_RIFF),
             "{body}"
         );
+        assert_eq!(line.message.from.who().user(), "mike", "{body}");
     }
     assert!(read.iter().any(|c| c.message.body.ends_with(&waits)));
 }

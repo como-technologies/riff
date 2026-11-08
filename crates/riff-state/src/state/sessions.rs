@@ -137,7 +137,7 @@ impl Sessions {
     /// of the record. The server is not a session.
     pub(super) fn named(&mut self, record: &Record) {
         if let Some(uri) = named(&record.change)
-            && uri.who() != crate::owner::server_uri().who()
+            && uri.who() != riff_core::name::SessionUri::server().who()
         {
             let uri = SessionUri::new(uri.who().clone(), uri.place().clone());
             let at_ms = record.envelope.written_at_ms;
@@ -462,7 +462,6 @@ fn freed_by<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Vec<Freed> {
 /// use std::time::Instant;
 /// use riff_core::name::SessionUri;
 /// use riff_core::wire::{RiffState, StartReason};
-/// use riff_state::owner::server_uri;
 /// use riff_state::state::State;
 ///
 /// let mike: SessionUri = "riff://mike@pangolin/como-technologies/riff?session=a6cf".parse()?;
@@ -478,7 +477,7 @@ fn freed_by<'a>(changes: impl IntoIterator<Item = &'a Change>) -> Vec<Freed> {
 /// assert_eq!(freed[0].item, "issue-12");
 /// // The session has a wake: a watch that starts now gets it.
 /// let wake = state.missed(mike.who()).unwrap();
-/// assert_eq!(wake.from, server_uri());
+/// assert_eq!(wake.from, SessionUri::server());
 /// let messages = state.read(&mike, &wake.thread, false, now).unwrap();
 /// assert!(messages[0].body.contains("(/clear) freed your claim issue-12"), "{}", messages[0].body);
 ///

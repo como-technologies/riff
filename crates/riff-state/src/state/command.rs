@@ -158,7 +158,7 @@ impl Caller {
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn sign_in(user: &Who, email: &str) -> Caller {
-        let place = crate::owner::server_uri().place().clone();
+        let place = riff_core::name::SessionUri::server().place().clone();
         Caller {
             class: Class::SignIn,
             me: SessionUri::new(user.clone(), place),
@@ -172,7 +172,7 @@ impl Caller {
     pub fn server() -> Caller {
         Caller {
             class: Class::Server,
-            me: crate::owner::server_uri(),
+            me: riff_core::name::SessionUri::server(),
             worker: false,
             role: Role::Member,
             email: None,

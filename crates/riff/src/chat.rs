@@ -13,16 +13,19 @@
 //!
 //! A line shows its sender by the name to type to reach it ([`said`],
 //! 01M6Y1FB5MZNZ971CJRBWZ2F9X): a person as `<mike>`, a verified lead as
-//! the name of its project, `<riff>`, and riff itself as `<riff-bot>`.
-//! The chat reads the names of riff-server ([`Names`]) at its start: on a
-//! clash, a project has the name `OWNER/REPO`. A session with no name,
-//! for example a worker, shows as `[USER SESSION]`. The host shows only in
-//! the detail of a line: in `riff tail` and `riff read`.
+//! the name of its project, `<riff>`, and riff-server itself as
+//! `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK). The chat reads the names of
+//! riff-server ([`Names`]) at its start: on a clash, a project has the
+//! name `OWNER/REPO`. A session with no name, for example a worker, shows
+//! as `[USER SESSION]`. The host shows only in the detail of a line: in
+//! `riff tail` and `riff read`. A line that riff writes as the person
+//! ([`post_by_riff`]) shows as the person, with the mark `[by riff]`.
 //!
 //! ```text
 //! 14:02 <mike> is the release out?
 //! 14:03 <riff> @mike not yet: #12 waits for CI.
-//! 14:09 <riff-bot> the deploy waits for your approval
+//! 14:09 <mike> [by riff] @mike riff release v1.2.3 waits for your approval
+//! 14:12 <riff-bot> members: ann passed the owner role to mike.
 //! ```
 //!
 //! A line of riff itself prints above the prompt too, and the typed text
@@ -112,7 +115,7 @@ use crate::catch_up::{self, Seen, Start};
 use crate::highlight::{Highlights, Lit, Out, Title};
 use crate::style::{DIM, WARNING, styled};
 use crate::text::{lost_messages, safe};
-use riff_client::api::{Api, Refusal};
+use riff_client::api::Api;
 use riff_client::link::STREAM_RETRY;
 use riff_client::threads::{ACTION, BY_RIFF, Line, Names, Sender, action_text};
 
@@ -142,25 +145,22 @@ pub fn thread() -> ThreadName {
     ThreadName::chat()
 }
 
-/// Posts `body` in riff chat as `me`, as a line that riff writes: the
-/// kind of the post is `riff` (01M5TKMVB7CF0QNAWXEVGEQETJ). The watch of
-/// a deploy, the daemon and `riff release` post so, as the person of the
-/// riff. `to` is what [`riff_client::chat::to`] gave for `body`. A
-/// line of the kind `riff` is no word of the person.
-///
-/// A riff-server of the release before refuses the kind `riff`. After a
-/// rollback of the server to that release, the line goes again with the
-/// kind `message` and the mark [`BY_RIFF`] at the start of its body
-/// (01M5TQ0DX4M2EJJGE7QA8DZVYS). Any other refusal is an error.
+/// Posts `body` in riff chat as `me`, as a line that riff writes as the
+/// person of the riff: the watch of a deploy, the daemon and `riff
+/// release` post so (01M5TKMVB7CF0QNAWXEVGEQETJ). The line has the kind
+/// `message` and the mark [`BY_RIFF`] at the start of its body
+/// (01M6Y4ZCTSTVM971BDC1F7GJPK): only riff-server itself posts the kind
+/// `riff`. `to` is what [`riff_client::chat::to`] gave for `body`. The
+/// chat shows the line with its real sender, the person, and the mark.
 ///
 /// ```mermaid
 /// sequenceDiagram
-///     participant R as riff
-///     participant S as riff-server (the release before)
-///     R->>S: post, kind riff
-///     S-->>R: refused: no such kind
-///     R->>S: post, kind message, body "[by riff] ..."
-///     S-->>R: posted
+///     participant R as riff of mike
+///     participant S as riff-server
+///     participant C as riff chat
+///     R->>S: post as mike, kind message, body "[by riff] ..."
+///     S-->>C: the line
+///     Note over C: the sender mike, and the mark in the body
 /// ```
 pub async fn post_by_riff(api: &Api, me: &SessionUri, to: &[Selector], body: &str) -> Result<()> {
     post_by_riff_keyed(api, me, to, body, None).await
@@ -168,8 +168,7 @@ pub async fn post_by_riff(api: &Api, me: &SessionUri, to: &[Selector], body: &st
 
 /// [`post_by_riff`] with a key (01M5TKG2K1AYK1KE7C2AA2W9DS): riff-server
 /// drops the post when a kept message of the same user in the thread has
-/// the key. The line that goes again with the kind `message` has the key
-/// too.
+/// the key.
 pub async fn post_by_riff_keyed(
     api: &Api,
     me: &SessionUri,
@@ -177,48 +176,10 @@ pub async fn post_by_riff_keyed(
     body: &str,
     key: Option<&str>,
 ) -> Result<()> {
-    let thread = thread();
-    let sent = api
-        .post_keyed(me, Some(&thread), to, body, Kind::Riff, key)
-        .await;
-    match sent {
-        Err(e) if refuses_kind_riff(&e) => {
-            let marked = format!("{BY_RIFF}{body}");
-            api.post_keyed(me, Some(&thread), to, &marked, Kind::Message, key)
-                .await?;
-            Ok(())
-        }
-        sent => sent.map(drop),
-    }
-}
-
-/// True when `error` is the refusal of a riff-server that does not know
-/// the kind `riff`: a bad request with "no such kind". No other error is.
-///
-/// ```
-/// use riff::chat::refuses_kind_riff;
-/// use riff_client::api::Refusal;
-///
-/// let refusal = |status, text: &str| {
-///     anyhow::Error::new(Refusal {
-///         op: "post".into(),
-///         status,
-///         code: Some("bad_request".into()),
-///         text: text.into(),
-///     })
-/// };
-/// let bad = reqwest::StatusCode::BAD_REQUEST;
-/// let old = "no such kind: use message, status or note";
-/// assert!(refuses_kind_riff(&refusal(bad, old)));
-/// // Another bad request, another status and another error do not match.
-/// assert!(!refuses_kind_riff(&refusal(bad, "the thread is too long")));
-/// assert!(!refuses_kind_riff(&refusal(reqwest::StatusCode::FORBIDDEN, old)));
-/// assert!(!refuses_kind_riff(&anyhow::anyhow!(old)));
-/// ```
-pub fn refuses_kind_riff(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<Refusal>().is_some_and(|refusal| {
-        refusal.status == reqwest::StatusCode::BAD_REQUEST && refusal.text.contains("no such kind")
-    })
+    let marked = format!("{BY_RIFF}{body}");
+    api.post_keyed(me, Some(&thread()), to, &marked, Kind::Message, key)
+        .await?;
+    Ok(())
 }
 
 /// What a person typed in the chat.
@@ -382,16 +343,19 @@ pub struct Said {
     /// no name.
     pub after: &'static str,
     /// The body, or the text of an action, safe, with four spaces for a
-    /// tab. A line of riff itself has no mark [`BY_RIFF`] here.
+    /// tab. A line with the mark [`BY_RIFF`] keeps it.
     pub body: String,
 }
 
 /// The sender and the body of the chat line `m`, with the names `names`
 /// of riff-server. The sender shows by the name to type to reach it
 /// (01M6Y1FB5MZNZ971CJRBWZ2F9X): a person as `<USER>`, a verified lead
-/// as `<PROJECT>`, and riff itself as `<riff-bot>`. Each other session
-/// has no name, and shows as `[USER ID]`. An action is `* NAME TEXT`. It
-/// removes each escape sequence from the body and the sender.
+/// as `<PROJECT>`, and riff-server itself as `<riff-bot>`
+/// (01M6Y4ZCTSTVM971BDC1F7GJPK). Each other session has no name, and
+/// shows as `[USER ID]`. An action is `* NAME TEXT`. A line with the mark
+/// [`BY_RIFF`] shows its real sender and its whole body, as each other
+/// line does. It removes each escape sequence from the body and the
+/// sender.
 ///
 /// ```
 /// use riff_client::api::Checked;
@@ -417,11 +381,19 @@ pub struct Said {
 /// assert_eq!((waves.before, waves.name.as_str(), waves.after), ("* ", "mike", ""));
 /// assert_eq!(waves.body, "waves    bye");
 ///
-/// // riff itself, also with the mark of an old riff-server.
-/// let riff = Message { body: "[by riff] a release waits".into(), ..message.clone() };
-/// let bot = said(&riff);
+/// // A line with the mark shows its real sender, and the mark.
+/// let marked = Message { body: "[by riff] a release waits".into(), ..message.clone() };
+/// let mike = said(&marked);
+/// assert_eq!((mike.before, mike.name.as_str(), mike.after), ("<", "mike", ">"));
+/// assert_eq!(mike.body, "[by riff] a release waits");
+///
+/// // A line of riff-server itself shows as riff-bot.
+/// let server = riff_core::name::SessionUri::server();
+/// let passed = "members: ann passed the owner role to mike.";
+/// let line = Message { from: server, kind: Kind::Riff, body: passed.into(), ..message.clone() };
+/// let bot = said(&line);
 /// assert_eq!((bot.before, bot.name.as_str(), bot.after), ("<", "riff-bot", ">"));
-/// assert_eq!(bot.body, "a release waits");
+/// assert_eq!(bot.body, passed);
 ///
 /// // A worker has no name.
 /// let worker = "riff://mike@thelio/o/r?session=0271342b-7454&claim=issue-6".parse()?;
@@ -431,8 +403,7 @@ pub struct Said {
 /// ```
 pub fn said(m: &Line, names: &Names) -> Said {
     let Sender { name, named } = m.sender(names);
-    // A body with the mark is a line of riff itself (Line::by_riff).
-    let body = m.body.strip_prefix(BY_RIFF).unwrap_or(&m.body);
+    let body = m.body.as_str();
     let (before, after, body) = match (action_text(body), named) {
         (Some(text), _) => ("* ", "", text),
         (None, true) => ("<", ">", body),
