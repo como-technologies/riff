@@ -3909,7 +3909,9 @@ async fn tail(
 /// break, it shows each message of the break one time, or a line with
 /// the number of the lost messages (see [`riff::catch_up`]). A highlight
 /// for `me` is bold, and gets the marks of `[chat]` of the settings after
-/// it ([`riff::highlight`], 01M6XSHCZB0Y08XRJ3J16Q4RTF).
+/// it ([`riff::highlight`], 01M6XSHCZB0Y08XRJ3J16Q4RTF). It reads the
+/// names of the chat at its start: each message shows the name of its
+/// sender (01M6Y1FB5MZNZ971CJRBWZ2F9X).
 async fn tail_each(
     api: &Api,
     me: &SessionUri,
@@ -3920,6 +3922,7 @@ async fn tail_each(
     use riff::highlight::{Highlights, Out};
     let error = riff::style::ERROR;
     let highlights = Highlights::new(me, config, &format!("riff tail {thread}"), Out::stdout());
+    let names = riff_client::threads::Names::new(api.names(me).await.unwrap_or_default());
     anstream::eprintln!("riff: showing new messages in {thread}. Ctrl-C stops.");
     let shown = std::sync::Arc::new(std::sync::Mutex::new(Shown::new(Start::New)));
     let mut stream = Box::pin(follow_thread(api, me, thread, shown, STREAM_RETRY));
@@ -3944,10 +3947,10 @@ async fn tail_each(
             .and_then(|ms| chrono::Local.timestamp_millis_opt(ms).single())
             .unwrap_or_else(chrono::Local::now);
         let width = textwrap::termwidth();
-        let mut block = text::block(&line, &at, last_day, width);
-        let lit = highlights.line(&line, thread, true);
+        let mut block = text::block(&line, &names, &at, last_day, width);
+        let lit = highlights.line(&line, &names, thread, true);
         if lit.bold {
-            let own = text::block(&line, &at, Some(at.date_naive()), width);
+            let own = text::block(&line, &names, &at, Some(at.date_naive()), width);
             block = riff::highlight::bold(&block, &own);
         }
         last_day = Some(at.date_naive());

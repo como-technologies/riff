@@ -2036,7 +2036,10 @@ async fn a_server_that_refuses_the_kind_riff_still_gets_the_lines_of_riff() {
             .find(|c| c.message.body.contains(body))
             .unwrap_or_else(|| panic!("no line with {body}"));
         assert_eq!(line.message.kind, riff_core::wire::Kind::Message, "{body}");
-        assert!(line.message.body.starts_with(riff::chat::BY_RIFF), "{body}");
+        assert!(
+            line.message.body.starts_with(riff_client::threads::BY_RIFF),
+            "{body}"
+        );
     }
     assert!(read.iter().any(|c| c.message.body.ends_with(&waits)));
 }

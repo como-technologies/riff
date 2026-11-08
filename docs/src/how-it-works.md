@@ -3177,12 +3177,17 @@ riff tail
 ```
 
 Each message is a block. The header shows the time, the sender, the
-address, the mark and the number. The body is under it, wrapped to
-the width of the terminal:
+address, the mark and the number. A sender with a name in the chat
+shows that name first, for example `<riff>` for a lead (see "The
+names in the log"). Then its address and host follow as the detail. A
+worker has no name. The body is under it, wrapped to the width of the
+terminal:
 
 ```text
 2026-09-27
-14:02  mike@pangolin:riff#api (a6cf2205)  → claim=issue-6  verified  #2
+14:02  <riff>  mike@pangolin:riff (25456ff6) lead  → claim=issue-6  verified  #2
+       is the fix in main?
+14:03  mike@pangolin:riff#issue-6 (a6cf2205)  verified  #3
        ready. I pushed the fix to main.
 ```
 
@@ -3376,7 +3381,7 @@ last line names the thread and the number to give to `after`.
 
 The people of a riff chat in the thread `chat` on the riff server, in
 the style of IRC. Only a member can read or post. Your line shows as
-`<USER@HOST>`, from your sign-in. Start the chat in a terminal.
+`<USER>`, with the user of your sign-in. Start the chat in a terminal.
 Type a line after the prompt `[riff] >` and press Enter.
 `/quit` or Ctrl-C exits:
 
@@ -3385,16 +3390,15 @@ riff chat
 ```
 
 The chat shows its history first, in less than 1 second, then each
-new line. A person shows as `<USER@HOST>`. A lead shows as
-`[USER's lead, REPO]`, with the name of its repository, and another
-session as `[USER ID]`. A new line prints above the prompt, and what
-you type stays. Your own line shows once, from the server:
+new line. Each line shows its sender by name (see "The names in the
+log"). A new line prints above the prompt, and what you type stays.
+Your own line shows once, from the server:
 
 ```text
 2026-09-28
-14:02 <mike@thelio> is the release out?
-14:03 <brett@heron> not yet. @lead is #207 merged?
-14:03 [brett's lead, riff] yes, #207 is merged.
+14:02 <mike> is the release out?
+14:03 <brett> not yet. @riff is #207 merged?
+14:03 <riff> @brett yes, #207 is merged.
 [riff] >
 ```
 
@@ -3407,6 +3411,51 @@ same way.
 
 The chat on a phone is a design, and not built yet: see
 [riff on a phone](riff-mobile.md).
+
+### The names in the log
+
+`riff chat`, the Chat tab of the TUI and `riff tail chat` show the
+sender of each line by the name that you type to reach it (see "The
+names of the chat"):
+
+| The sender | Shows as | For example |
+|---|---|---|
+| a person | its user | `<mike>` |
+| a lead | the name of its project | `<riff>` |
+| riff itself | `riff-bot` | `<riff-bot>` |
+| another session, for example a worker | no name: the user and the start of its session ID | `[mike a6cf2205]` |
+
+riff itself writes a line of the kind `riff`, for example the ask to
+approve a deploy. The lead of each person in a project shows with the
+same name, and the name wakes your own lead there (see "Wake a person
+or a project by name"). When two projects have the same name, each of
+their leads shows as `OWNER/REPO`, for example
+`<como-technologies/strata>`. The chat reads the names when it starts.
+The host shows only in the detail of a line: in `riff tail chat`, and
+in `riff read --thread chat`. Start the chat:
+
+```sh
+riff chat
+```
+
+```text
+14:02 <brett> @riff is the release out?
+14:03 <riff> @brett not yet: #207 waits for CI.
+14:05 <riff-bot> @mike riff release waits for your approval
+14:06 [mike a6cf2205] the checks of #207 passed
+```
+
+To see the host and the session of each sender, follow the chat with
+`riff tail`:
+
+```sh
+riff tail chat
+```
+
+```text
+14:03  <riff>  brett@heron:riff (25456ff6) lead  → name=brett  verified  #44
+       @brett not yet: #207 waits for CI.
+```
 
 ### Type while lines come in
 
@@ -3421,7 +3470,7 @@ riff chat
 ```
 
 ```text
-14:03 <brett@heron> not yet. @lead is #207 merged?
+14:03 <brett> not yet. @riff is #207 merged?
 [riff] > is the rel
 ```
 
@@ -3434,7 +3483,7 @@ sequenceDiagram
     participant C as riff chat
     participant S as riff-server
     Y->>C: type "is the rel"
-    S-->>C: <brett@heron> not yet
+    S-->>C: <brett> not yet
     C-->>Y: the line above the prompt
     Note over Y,C: "is the rel" and the cursor stay
     Y->>C: type "ease out?" and Enter
@@ -3503,12 +3552,41 @@ sequenceDiagram
 
 ### Answer a person in the chat only
 
-The lead answers its person with `person: true` in the selector. The
-post wakes the terminals of the person (`riff chat`, `riff tail`, the
-phone). It wakes no agent session of that person: no daemon, no
-worker, no verify. Without `person`, the selector `user` and `host`
-also wakes those sessions. `person: false` picks the agent sessions
-only. On the command line:
+Your lead reads each line of the chat at its next read. It answers
+only a line of yours that names its project: `@riff`, or
+`@como-technologies/riff`. Each other line asks it nothing. The answer
+starts with the name of the person who asked, and goes to the chat
+with the selector `name=USER`. So it wakes the terminals of that person
+(`riff chat`, `riff tail`, the phone), and no agent session: no
+daemon, no worker, no verify. Ask your lead in `riff chat`:
+
+```text
+14:02 <mike> @riff is #12 merged?
+14:03 <riff> @mike yes, #12 is merged.
+```
+
+```mermaid
+sequenceDiagram
+    participant M as riff chat (mike)
+    participant S as riff-server
+    participant L as the lead of mike in riff
+    M->>S: @riff is #12 merged?
+    S-->>L: wake
+    L->>S: read the chat
+    L->>S: post "@mike yes, ..." to name=mike
+    S-->>M: <riff> @mike yes, #12 is merged.
+```
+
+The lead posts the answer as this command does:
+
+```sh
+riff post --thread chat --to name=mike "@mike yes, #12 is merged."
+```
+
+The selector `person=true` picks the terminals of a person too, on one
+host with `host`. Without `person`, the selector `user` and `host` also
+wakes the agent sessions there. `person=false` picks the agent sessions
+only:
 
 ```sh
 riff post --thread chat --to user=mike,host=pangolin,person=true "it is merged"
@@ -3594,8 +3672,8 @@ line: your own riff finds the highlight. The Chat tab of the TUI and
 the phone show no highlight yet.
 
 ```text
-14:02 <brett@heron> is the release out?
-14:03 <brett@heron> mike: can you look at #12?
+14:02 <brett> is the release out?
+14:03 <brett> mike: can you look at #12?
 ```
 
 The table `[chat]` of `~/.config/riff/config.toml` says what a
@@ -3647,8 +3725,8 @@ the wrong type stops them with an error that names the key.
 - `on_highlight`: riff runs the command with `sh -c` for each
   highlight, and does not wait for it. The command gets the line on
   stdin, as the chat shows it with no time, for example
-  `<brett@heron> mike: can you look at #12?`. `RIFF_SENDER` holds the
-  sender, for example `brett@heron`, and `RIFF_THREAD` the thread. The
+  `<brett> mike: can you look at #12?`. `RIFF_SENDER` holds the
+  sender, for example `brett`, and `RIFF_THREAD` the thread. The
   output of the command goes nowhere. When the command fails, the chat
   shows a line `riff: on_highlight failed:` with the error.
 - `quiet`: in the quiet time, the line is bold and the title counts it,
@@ -3680,10 +3758,10 @@ flowchart LR
 /me waves
 ```
 
-Each chat, and `riff tail chat`, shows it with no `<USER@HOST>`:
+Each chat, and `riff tail chat`, shows it with no `<NAME>`:
 
 ```text
-14:05 * mike@thelio waves
+14:05 * mike waves
 ```
 
 An older riff shows the line as `/me waves`. `@lead` and `@USER` in an
@@ -3713,10 +3791,10 @@ riff
  riff running · owner mike · build 10df8a4 · link ok 2s
  chat · online: mike, brett · away: ann · a line wakes your leads
 ──── Friday 2026-11-06 ──────────────────────────────────────────────
- 12:01 <brett@strata> mike, can you look at #1608?
- 12:02 [brett's lead, strata] noted: mike looks at #1608 after lunch
- 12:20 * mike@thelio goes for lunch
- 13:12 [mike's lead, riff] #1608 merged
+ 12:01 <brett> mike, can you look at #1608?
+ 12:02 <strata> noted: mike looks at #1608 after lunch
+ 12:20 * mike goes for lunch
+ 13:12 <riff> #1608 merged
 
 > @lead:riff what is next?
  Enter wakes your lead in como-technologies/riff.

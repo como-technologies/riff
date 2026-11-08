@@ -39,12 +39,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 use chrono::NaiveTime;
-use riff_client::threads::{Line, action_text};
+use riff_client::threads::{BY_RIFF, Line, Names, action_text};
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::Kind;
 use tokio::io::AsyncWriteExt;
 
-use crate::chat::{BY_RIFF, said};
+use crate::chat::said;
 use crate::text::safe;
 
 /// Why a line is a highlight for the person at the terminal.
@@ -371,16 +371,17 @@ impl Highlights {
         self.title.clone()
     }
 
-    /// What `line` of `thread` gets now. A line of the history at the
+    /// What `line` of `thread` gets now, with the names `names` of
+    /// riff-server for its sender. A line of the history at the
     /// start of `riff chat` is not `live`. For a new highlight, it starts
     /// the hook ([`run_hook`]): a hook that fails gives a line of riff
     /// ([`crate::chat::notice`]).
-    pub fn line(&self, line: &Line, thread: &ThreadName, live: bool) -> Lit {
-        let shown = self.line_at(line, thread, live, chrono::Local::now().time());
+    pub fn line(&self, line: &Line, names: &Names, thread: &ThreadName, live: bool) -> Lit {
+        let shown = self.line_at(line, names, thread, live, chrono::Local::now().time());
         let hook = self.config.hook.as_ref();
         if let Some(hook) = hook.filter(|_| shown.hook) {
-            let (hook, sender) = (hook.clone(), said(line).name);
-            let (text, thread) = (plain(line), thread.to_string());
+            let (hook, sender) = (hook.clone(), said(line, names).name);
+            let (text, thread) = (plain(line, names), thread.to_string());
             tokio::spawn(async move {
                 if let Err(e) = run_hook(&hook, &text, &sender, &thread).await {
                     crate::chat::notice(&safe(&format!("riff: on_highlight failed: {e:#}")));
@@ -392,7 +393,14 @@ impl Highlights {
 
     /// What `line` of `thread` gets at the local time `at`, and whether
     /// the hook runs.
-    fn line_at(&self, line: &Line, thread: &ThreadName, live: bool, at: NaiveTime) -> Shown {
+    fn line_at(
+        &self,
+        line: &Line,
+        names: &Names,
+        thread: &ThreadName,
+        live: bool,
+        at: NaiveTime,
+    ) -> Shown {
         if why(line, thread, &self.me, &self.config.words).is_none() {
             return Shown::default();
         }
@@ -405,7 +413,7 @@ impl Highlights {
             marks.push_str(&self.title.mark());
         }
         if actions.toast {
-            marks.push_str(&toast(&self.title.label, &plain(line), self.osc777));
+            marks.push_str(&toast(&self.title.label, &plain(line, names), self.osc777));
         }
         Shown {
             lit: Lit {
@@ -424,13 +432,14 @@ struct Shown {
     hook: bool,
 }
 
-/// The line as the chat shows it, with no time and no style: `<USER@HOST>
-/// TEXT`, `[NAME] TEXT` or `* NAME TEXT` ([`said`]). The hook gets it on
-/// stdin, and the toast shows it.
+/// The line as the chat shows it, with the names `names` of riff-server
+/// and with no time and no style: `<NAME> TEXT`, `[USER ID] TEXT` or `*
+/// NAME TEXT` ([`said`]). The hook gets it on stdin, and the toast shows
+/// it.
 ///
 /// ```
 /// use riff_client::api::Checked;
-/// use riff_client::threads::Line;
+/// use riff_client::threads::{Line, Names};
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let message = Message {
@@ -444,11 +453,11 @@ struct Shown {
 ///     payload: None,
 /// };
 /// let line = Line::of(&Checked { message, verified: true }, &"chat".parse()?);
-/// assert_eq!(riff::highlight::plain(&line), "<brett@heron> mike: look at #12");
+/// assert_eq!(riff::highlight::plain(&line, &Names::default()), "<brett> mike: look at #12");
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
-pub fn plain(line: &Line) -> String {
-    let said = said(line);
+pub fn plain(line: &Line, names: &Names) -> String {
+    let said = said(line, names);
     format!("{}{}{} {}", said.before, said.name, said.after, said.body)
 }
 
@@ -863,6 +872,12 @@ mod tests {
         Highlights::new(&me(), config, "riff chat", out)
     }
 
+    /// What `line` of the chat gets from `h` at noon, live, with no names
+    /// of riff-server.
+    fn at_noon(h: &Highlights, line: &Line) -> Shown {
+        h.line_at(line, &Names::default(), &chat(), true, at(12, 0))
+    }
+
     #[test]
     fn a_highlight_gets_the_bell_and_the_title_after_the_line() {
         let config = Config {
@@ -870,16 +885,16 @@ mod tests {
             ..Config::default()
         };
         let h = highlights(config, TTY);
-        let shown = h.line_at(&brett("mike: look"), &chat(), true, at(12, 0));
+        let shown = at_noon(&h, &brett("mike: look"));
         assert!(shown.lit.bold);
         assert_eq!(shown.lit.marks, "\x07\x1b]0;(1) riff chat\x07");
         assert!(!shown.hook);
-        let next = h.line_at(&brett("@mike and #13"), &chat(), true, at(12, 0));
+        let next = at_noon(&h, &brett("@mike and #13"));
         assert_eq!(next.lit.marks, "\x07\x1b]0;(2) riff chat\x07");
         // A key clears the number.
         assert_eq!(h.title().clear().as_deref(), Some("\x1b]0;riff chat\x07"));
         // Another line gets nothing.
-        let other = h.line_at(&brett("hello all"), &chat(), true, at(12, 0));
+        let other = at_noon(&h, &brett("hello all"));
         assert_eq!(other, Shown::default());
     }
 
@@ -893,9 +908,17 @@ mod tests {
         };
         let mut h = highlights(config, TTY);
         h.osc777 = false;
-        let shown = h.line_at(&brett("mike: look"), &chat(), true, at(12, 0));
-        assert_eq!(shown.lit.marks, "\x1b]9;<brett@heron> mike: look\x07");
+        let shown = at_noon(&h, &brett("mike: look"));
+        assert_eq!(shown.lit.marks, "\x1b]9;<brett> mike: look\x07");
         assert!(shown.hook);
+        // An ask of riff shows riff itself as the sender, with no mark.
+        let waits = format!("{BY_RIFF}@mike the deploy waits for your approval");
+        let ask = line_in(&chat(), "riff://mike@pangolin", &[], Kind::Message, &waits);
+        let shown = at_noon(&h, &ask);
+        assert_eq!(
+            shown.lit.marks,
+            "\x1b]9;<riff-bot> @mike the deploy waits for your approval\x07"
+        );
     }
 
     #[test]
@@ -918,15 +941,16 @@ mod tests {
             env.display()
         );
         let line = brett("mike: look at #12");
-        let said = said(&line);
-        run_hook(&hook, &plain(&line), &said.name, "chat")
+        let names = Names::default();
+        let said = said(&line, &names);
+        run_hook(&hook, &plain(&line, &names), &said.name, "chat")
             .await
             .unwrap();
         assert_eq!(
             std::fs::read_to_string(&stdin).unwrap(),
-            "<brett@heron> mike: look at #12\n"
+            "<brett> mike: look at #12\n"
         );
-        assert_eq!(std::fs::read_to_string(&env).unwrap(), "brett@heron|chat");
+        assert_eq!(std::fs::read_to_string(&env).unwrap(), "brett|chat");
     }
 
     #[tokio::test]

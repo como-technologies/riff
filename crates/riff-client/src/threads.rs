@@ -12,6 +12,9 @@
 //!   the whole thread, the mark `verified`, the lead mark of a verified
 //!   lead, the kind and the body. An action line (`/me TEXT`,
 //!   01M3NJD37CNQX580YC24S7K6ES) has [`Line::action`].
+//! - [`Names`]: the names of the chat from riff-server. A chat shows
+//!   each sender by the name to type to reach it: `<mike>`, `<riff>`,
+//!   and `<riff-bot>` for riff itself.
 //! - [`Thread`]: the lines of one thread of a read, and the other member
 //!   of a direct thread, for its label.
 //! - [`direct_name`] and [`named`]: the name `dm:PEER` of a direct
@@ -33,7 +36,7 @@
 //!
 //! ```
 //! use riff_client::api::Checked;
-//! use riff_client::threads::Line;
+//! use riff_client::threads::{Line, Names};
 //! use riff_core::wire::{Kind, Message};
 //!
 //! let thread = "o/r".parse()?;
@@ -52,13 +55,13 @@
 //! let to: Vec<(String, bool)> = line.to.iter().map(|t| (t.selector.to_string(), t.all)).collect();
 //! assert_eq!(to, [("repo=o/r".to_owned(), true), ("claim=issue-6".to_owned(), false)]);
 //! assert_eq!(line.action(), Some("waves"));
-//! assert_eq!(line.sender().name, "mike's lead, r");
+//! assert_eq!(line.sender(&Names::default()).name, "r");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 use riff_core::name::{NameError, Repo, SessionUri, ThreadName, Who};
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, ThreadInfo};
+use riff_core::wire::{ChatName, Kind, NameKind, ThreadInfo};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{Checked, Inbox};
@@ -90,16 +93,72 @@ pub struct To {
     pub all: bool,
 }
 
+/// The mark at the start of a line of riff that went to a riff-server
+/// with the kind `message`, because the server refused the kind `riff`
+/// (01M5TQ0DX4M2EJJGE7QA8DZVYS).
+pub const BY_RIFF: &str = "[by riff] ";
+
+/// The name of riff itself in a chat: the sender of a line of the kind
+/// `riff`, or with the mark [`BY_RIFF`].
+pub const RIFF_BOT: &str = "riff-bot";
+
 /// The sender of a line, as a chat shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sender {
-    /// A person is `USER@HOST`. A verified lead is `USER's lead, REPO`,
-    /// with the name of its repository (`USER's lead` outside git). Each
-    /// other session is `USER` and the first 8 characters of its session
-    /// ID. The text is as the sender gave it: the UI makes it safe.
+    /// The name to type to reach the sender: a person is its user
+    /// (`mike`), a verified lead the name of its project (`riff`, see
+    /// [`Names::project`]), and riff itself [`RIFF_BOT`]. Each other
+    /// session has no name: it is `USER` and the first 8 characters of
+    /// its session ID. The text is as the sender gave it: the UI makes it
+    /// safe.
     pub name: String,
-    /// True for a session, false for a person.
-    pub session: bool,
+    /// True when `name` is a name of the chat, false for a session with
+    /// no name.
+    pub named: bool,
+}
+
+/// The names of the chat, as riff-server gives them
+/// ([`crate::api::Api::names`], 01M6XZ27XV8RAC8B72DCM937ST). A chat
+/// shows a lead by the name of its project from them. The default has no
+/// name: then each project has the name after the slash.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Names(Vec<ChatName>);
+
+impl Names {
+    /// The names `names` of riff-server.
+    pub fn new(names: Vec<ChatName>) -> Names {
+        Names(names)
+    }
+
+    /// Each name, in the order of riff-server.
+    pub fn list(&self) -> &[ChatName] {
+        &self.0
+    }
+
+    /// The name of the project `owner/name` in the chat: `OWNER/REPO`
+    /// when riff-server names the project so, on a clash, else `name`,
+    /// the name after the slash.
+    ///
+    /// ```
+    /// use riff_client::threads::Names;
+    /// use riff_core::wire::{ChatName, NameKind};
+    ///
+    /// let project = |name: &str| ChatName { name: name.into(), kind: NameKind::Project, online: false };
+    /// let names = Names::new(vec![project("acme/strata"), project("como-technologies/strata"), project("riff")]);
+    /// assert_eq!(names.project("acme", "strata"), "acme/strata");
+    /// assert_eq!(names.project("como-technologies", "riff"), "riff");
+    /// // A project that riff-server did not name yet.
+    /// assert_eq!(names.project("como-technologies", "kadomony"), "kadomony");
+    /// assert_eq!(Names::default().project("acme", "strata"), "strata");
+    /// ```
+    pub fn project(&self, owner: &str, name: &str) -> String {
+        let full = format!("{owner}/{name}");
+        let clash = self
+            .0
+            .iter()
+            .any(|n| n.kind == NameKind::Project && n.name.eq_ignore_ascii_case(&full));
+        if clash { full } else { name.to_owned() }
+    }
 }
 
 /// One message of a thread (01M56Y8KHD61NXC57V7H546KWW).
@@ -152,53 +211,68 @@ impl Line {
         action_text(&self.body)
     }
 
-    /// The sender of the line.
+    /// True for a line of riff itself: the kind `riff`, or the mark
+    /// [`BY_RIFF`] at the start of the body (01M5TKMVB7CF0QNAWXEVGEQETJ).
+    pub fn by_riff(&self) -> bool {
+        self.kind == Kind::Riff || self.body.starts_with(BY_RIFF)
+    }
+
+    /// The sender of the line, by the name to type to reach it, with the
+    /// names `names` of riff-server: a person as its user, a verified lead
+    /// as the name of its project, and a line of riff itself as
+    /// [`RIFF_BOT`]. Each other session has no name.
     ///
     /// ```
     /// use riff_client::api::Checked;
-    /// use riff_client::threads::{Line, Sender};
-    /// use riff_core::wire::{Kind, Message};
+    /// use riff_client::threads::{Line, Names, Sender};
+    /// use riff_core::wire::{ChatName, Kind, Message, NameKind};
     ///
-    /// let line = |uri: &str, verified| {
+    /// let line = |uri: &str, verified, kind| {
     ///     let message = Message {
     ///         seq: 1,
     ///         from: uri.parse().unwrap(),
     ///         to: vec![],
     ///         body: "hi".into(),
     ///         at_ms: 0,
-    ///         kind: Kind::Message,
+    ///         kind,
     ///         sig: None,
     ///         payload: None,
     ///     };
     ///     Line::of(&Checked { message, verified }, &"chat".parse().unwrap())
     /// };
-    /// let sender = |name: &str, session| Sender { name: name.into(), session };
+    /// let names = Names::default();
+    /// let sender = |name: &str, named| Sender { name: name.into(), named };
     /// let lead = "riff://mike@thelio/como-technologies/riff?session=4e54d4e5-c891&lead=true";
-    /// assert_eq!(line("riff://mike@thelio", true).sender(), sender("mike@thelio", false));
-    /// assert_eq!(line(lead, true).sender(), sender("mike's lead, riff", true));
-    /// assert_eq!(line(lead, false).sender(), sender("mike 4e54d4e5", true));
-    /// // A lead outside git has no repository to show.
+    /// let said = Kind::Message;
+    /// assert_eq!(line("riff://mike@thelio", true, said).sender(&names), sender("mike", true));
+    /// assert_eq!(line(lead, true, said).sender(&names), sender("riff", true));
+    /// assert_eq!(line("riff://mike@thelio", true, Kind::Riff).sender(&names), sender("riff-bot", true));
+    /// // A lead that the reader did not prove has no name, and a worker neither.
+    /// assert_eq!(line(lead, false, said).sender(&names), sender("mike 4e54d4e5", false));
+    /// let worker = "riff://mike@thelio/como-technologies/riff?session=0271342b-7454&claim=issue-6";
+    /// assert_eq!(line(worker, true, said).sender(&names), sender("mike 0271342b", false));
+    /// // A lead outside git has no project.
     /// let nowhere = "riff://mike@thelio?session=4e54d4e5-c891&lead=true";
-    /// assert_eq!(line(nowhere, true).sender(), sender("mike's lead", true));
+    /// assert_eq!(line(nowhere, true, said).sender(&names), sender("mike 4e54d4e5", false));
+    /// // On a clash, the project has the name OWNER/REPO.
+    /// let clash = ChatName { name: "como-technologies/riff".into(), kind: NameKind::Project, online: true };
+    /// let names = Names::new(vec![clash]);
+    /// assert_eq!(line(lead, true, said).sender(&names), sender("como-technologies/riff", true));
     /// ```
-    pub fn sender(&self) -> Sender {
+    pub fn sender(&self, names: &Names) -> Sender {
+        let named = |name: String| Sender { name, named: true };
         let user = self.from.who().user();
-        let name = match self.from.who().session() {
-            None => {
-                return Sender {
-                    name: format!("{user}@{}", self.from.place().host()),
-                    session: false,
-                };
-            }
-            Some(_) if self.lead => match self.from.place().repo() {
-                Repo::Git { name, .. } => format!("{user}'s lead, {name}"),
-                Repo::None => format!("{user}'s lead"),
-            },
-            Some(id) => format!("{user} {}", id.chars().take(ID_CHARS).collect::<String>()),
+        let id = match self.from.who().session() {
+            _ if self.by_riff() => return named(RIFF_BOT.to_owned()),
+            None => return named(user.to_owned()),
+            Some(id) => id,
         };
+        if let (true, Repo::Git { owner, name }) = (self.lead, self.from.place().repo()) {
+            return named(names.project(owner, name));
+        }
         Sender {
-            name,
-            session: true,
+            name: format!("{user} {}", id.chars().take(ID_CHARS).collect::<String>()),
+            named: false,
         }
     }
 }
@@ -439,7 +513,7 @@ mod tests {
             all: false,
         };
         assert_eq!(status.to, [claim]);
-        assert_eq!(status.sender().name, "ann b7d0");
+        assert_eq!(status.sender(&Names::default()).name, "ann b7d0");
     }
 
     #[test]
@@ -447,7 +521,7 @@ mod tests {
         let me = "riff://brett@heron?session=c1".parse().unwrap();
         let thread = Thread::of(&inbox(false), &me);
         assert!(!thread.lines[0].lead);
-        assert_eq!(thread.lines[0].sender().name, "mike a6cf");
+        assert_eq!(thread.lines[0].sender(&Names::default()).name, "mike a6cf");
     }
 
     /// A full page of the chat and of the repository thread, then one
