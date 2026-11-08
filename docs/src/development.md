@@ -4658,6 +4658,20 @@ Milestone: Wave 3
 Co-authored-by: Ana <ana@example.com>
 ```
 
+A pull request with more than one commit also gets the line
+`---------` before the `Co-authored-by:` lines, after a blank line.
+That line does not end the block of trailers, so a commit with this
+end passes too:
+
+```text
+Issue: #77
+Milestone: Wave 3
+
+---------
+
+Co-authored-by: Ana <ana@example.com>
+```
+
 `riff pr open` writes this body and opens the pull request (see
 [Open a pull request](how-it-works.md#open-a-pull-request)).
 

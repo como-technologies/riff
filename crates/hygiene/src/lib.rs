@@ -35,9 +35,11 @@
 //!   message ([`trailers`]). Other trailers may stand in the block,
 //!   before or after them: `Signed-off-by:`, `Generated-by:`. At the
 //!   squash, GitHub adds a `Co-authored-by:` line for each co-author of
-//!   the commits, in a paragraph of its own. So `hygiene pr` checks the
-//!   message that the squash will make ([`PullRequest::squash_message`]),
-//!   not only the body.
+//!   the commits, in a paragraph of its own. With more than one commit,
+//!   it puts the line [`SQUASH_SEPARATOR`] before them, in a paragraph of
+//!   its own too, and that paragraph does not end the block. So
+//!   `hygiene pr` checks the message that the squash will make
+//!   ([`PullRequest::squash_message`]), not only the body.
 //! - The merge wraps each line of the body over 72 characters
 //!   ([`merge_wrap`]). The tail of a trailer line goes to a line with no
 //!   `Key:`, and that line ends the block of trailers. So `hygiene pr`
@@ -221,15 +223,23 @@ impl PullRequest {
     /// each line over [`MERGE_WIDTH`] wrapped as the merge wraps it
     /// ([`merge_wrap`]), then the lines of [`PullRequest::co_authors`] in a
     /// paragraph of their own. GitHub adds them after a blank line, also
-    /// when the body ends with trailers.
+    /// when the body ends with trailers. A pull request with more than one
+    /// commit gets the line [`SQUASH_SEPARATOR`] before them, in a
+    /// paragraph of its own.
     ///
     /// ```
     /// use hygiene::{Person, PullRequest};
     /// let glm = Person { name: "GLM".into(), email: "noreply@z.ai".into(), ..Person::default() };
-    /// let pr = PullRequest::new("T", "Text.\n\nIssue: #7\n", None).with_commit_by(glm);
+    /// let pr = PullRequest::new("T", "Text.\n\nIssue: #7\n", None).with_commit_by(glm.clone());
     /// assert_eq!(
     ///     pr.squash_message(),
     ///     "Text.\n\nIssue: #7\n\nCo-authored-by: GLM <noreply@z.ai>\n"
+    /// );
+    ///
+    /// // Two commits, as GitHub squashed them in the commit 9f466f4f:
+    /// assert_eq!(
+    ///     pr.with_commit_by(glm).squash_message(),
+    ///     "Text.\n\nIssue: #7\n\n---------\n\nCo-authored-by: GLM <noreply@z.ai>\n"
     /// );
     /// ```
     pub fn squash_message(&self) -> String {
@@ -247,6 +257,10 @@ impl PullRequest {
         let co_authors = self.co_authors();
         if !co_authors.is_empty() {
             message.truncate(message.trim_end().len());
+            if self.commits.len() > 1 {
+                message.push_str("\n\n");
+                message.push_str(SQUASH_SEPARATOR);
+            }
             message.push_str("\n\n");
             message.push_str(&co_authors.join("\n"));
             message.push('\n');
@@ -467,7 +481,9 @@ fn names_issue(word: &str) -> bool {
 /// only such lines. GitHub adds its `Co-authored-by:` lines after a blank
 /// line, so the block may have more than one paragraph. A paragraph with a
 /// line of another form ends the block, and a last paragraph of that form
-/// leaves no trailer at all.
+/// leaves no trailer at all. A paragraph of the one line
+/// [`SQUASH_SEPARATOR`] in the block does not end it
+/// (01M6Y5WW313W74AE6TC0C3KTS4).
 ///
 /// ```
 /// let body = "Closes #7\n\nText.\n\nIssue: #7\nMilestone: Wave 3\n";
@@ -482,10 +498,17 @@ fn names_issue(word: &str) -> bool {
 /// let keys: Vec<_> = hygiene::trailers(squash).into_iter().map(|(k, _)| k).collect();
 /// assert_eq!(keys, ["Issue", "Milestone", "Co-authored-by"]);
 ///
+/// // The squash of a pull request with two commits and a co-author:
+/// let squash = "Text.\n\nIssue: #7\n\n---------\n\nCo-authored-by: A <a@b.c>\n";
+/// let keys: Vec<_> = hygiene::trailers(squash).into_iter().map(|(k, _)| k).collect();
+/// assert_eq!(keys, ["Issue", "Co-authored-by"]);
+///
 /// // A paragraph of text after the trailers ends the block.
 /// assert!(hygiene::trailers("Issue: #7\n\nText.\n\nCo-authored-by: A <a@b.c>\n")
 ///     .iter()
 ///     .all(|(k, _)| k != "Issue"));
+/// // So does a last paragraph of the separator.
+/// assert!(hygiene::trailers("Issue: #7\n\n---------\n").is_empty());
 /// ```
 pub fn trailers(text: &str) -> Vec<(String, String)> {
     trailer_block(text)
@@ -511,6 +534,9 @@ fn trailer_block(text: &str) -> Vec<&str> {
     }
     let mut found = Vec::new();
     for paragraph in paragraphs.iter().rev() {
+        if !found.is_empty() && paragraph[..] == [SQUASH_SEPARATOR] {
+            continue;
+        }
         if !paragraph.iter().all(|line| trailer_line(line).is_some()) {
             break;
         }
@@ -518,6 +544,12 @@ fn trailer_block(text: &str) -> Vec<&str> {
     }
     found
 }
+
+/// The line that GitHub puts before its `Co-authored-by:` lines, in a
+/// paragraph of its own, at the squash of a pull request with more than
+/// one commit ([`PullRequest::squash_message`]). The paragraph does not
+/// end the block of trailers ([`trailers`]).
+pub const SQUASH_SEPARATOR: &str = "---------";
 
 /// The width of a line in the message of a squash commit: the merge
 /// wraps a longer line ([`merge_wrap`]).
@@ -1264,6 +1296,51 @@ mod tests {
         }
     }
 
+    /// The commit 9f466f4f in short: the squash of pull request #1776, of
+    /// two commits. GitHub put the line `---------` before its line
+    /// `Co-authored-by:` (01M6Y5WW313W74AE6TC0C3KTS4).
+    const COMMIT_1776: &str = "The terminal of an attach comes back whole (#1776)\n\n\
+        Closes #1767\n\nText.\n\n\
+        Issue: #1767\nMilestone: Wave 52\n\
+        Riff-Session: 1a69bbf5-4d2f-4a99-a0b5-f4cfd21c863c\n\
+        Co-authored-by: n8behavior <692218+n8behavior@users.noreply.github.com>\n\n\
+        ---------\n\n\
+        Co-authored-by: riff worker e0c36dab \
+        <354108017+riff-como-technologies[bot]@users.noreply.github.com>\n";
+
+    #[test]
+    fn the_commit_1776_with_the_separator_of_the_squash_passes() {
+        assert_eq!(check_commit(COMMIT_1776), []);
+        let keys: Vec<_> = trailers(COMMIT_1776).into_iter().map(|(k, _)| k).collect();
+        assert_eq!(
+            keys,
+            [
+                "Issue",
+                "Milestone",
+                "Riff-Session",
+                "Co-authored-by",
+                "Co-authored-by"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_separator_does_not_join_a_paragraph_of_text_to_the_block() {
+        for message in [
+            // Text between the trailers and the separator.
+            "T (#9)\n\nIssue: #7\nMilestone: Wave 3\n\nText.\n\n---------\n\nCo-authored-by: A <a@b.c>\n",
+            // The separator as the last paragraph.
+            "T (#9)\n\nIssue: #7\nMilestone: Wave 3\n\n---------\n",
+            // The separator in the paragraph of the trailers.
+            "T (#9)\n\nIssue: #7\nMilestone: Wave 3\n---------\n\nCo-authored-by: A <a@b.c>\n",
+            // Another line of dashes.
+            "T (#9)\n\nIssue: #7\nMilestone: Wave 3\n\n---\n\nCo-authored-by: A <a@b.c>\n",
+        ] {
+            let rules: Vec<_> = check_commit(message).iter().map(|e| e.rule).collect();
+            assert_eq!(rules, ["issue-trailer", "milestone-trailer"], "{message}");
+        }
+    }
+
     /// The body of the outside pull request #1348 in short, as its author wrote it:
     /// the trailer `Generated-by:` is on one line of 78 characters.
     const BODY_1348: &str = "Closes #692\n\n\
@@ -1424,6 +1501,30 @@ mod tests {
     }
 
     #[test]
+    fn the_squash_of_two_commits_with_a_co_author_has_the_separator_and_passes() {
+        let pr = pr(GOOD, Some("Wave 3"))
+            .with_commit_by(glm())
+            .with_commit_by(glm());
+        assert_eq!(
+            pr.squash_message(),
+            format!("{GOOD}\n---------\n\nCo-authored-by: GLM-5.3-Flash <noreply@z.ai>\n")
+        );
+        assert_eq!(check_pr(&pr, Some(&open(Some("Wave 3")))), []);
+        let commit = format!("Pause and resume the riff (#90)\n\n{}", pr.squash_message());
+        assert_eq!(check_commit(&commit), []);
+    }
+
+    #[test]
+    fn the_squash_of_two_commits_with_no_co_author_has_no_separator() {
+        let ana = person("Ana", "ana@example.com");
+        let pr = pr(GOOD, Some("Wave 3"))
+            .by(ana.clone())
+            .with_commit_by(ana.clone())
+            .with_commit_by(ana);
+        assert_eq!(pr.squash_message(), GOOD);
+    }
+
+    #[test]
     fn a_pull_request_with_a_body_that_ends_with_text_fails_also_with_a_co_author() {
         let body = format!("{GOOD}\nA last paragraph of text.\n");
         let pr = pr(&body, Some("Wave 3")).with_commit_by(glm());
@@ -1447,7 +1548,7 @@ mod tests {
         assert_eq!(pr.co_authors().len(), 1);
         assert_eq!(
             pr.squash_message(),
-            format!("{GOOD}\nCo-authored-by: GLM-5.3-Flash <noreply@z.ai>\n")
+            format!("{GOOD}\n---------\n\nCo-authored-by: GLM-5.3-Flash <noreply@z.ai>\n")
         );
     }
 

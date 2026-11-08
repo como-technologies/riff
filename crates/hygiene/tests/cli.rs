@@ -189,6 +189,24 @@ fn a_pull_request_with_a_co_author_passes() {
     );
 }
 
+/// 01M6Y5WW313W74AE6TC0C3KTS4: the squash of two commits with a
+/// co-author gets the line `---------` before the paragraph
+/// `Co-authored-by:`. The pull request still passes.
+#[test]
+fn a_pull_request_of_two_commits_with_a_co_author_passes() {
+    let mut pr = pr_json(GOOD, Some("Wave 3"));
+    pr["author"] = serde_json::json!({"id": "x", "is_bot": false, "login": "ana", "name": "Ana"});
+    let glm = serde_json::json!({"email": "noreply@z.ai", "id": "", "login": "", "name": "GLM-5.3-Flash"});
+    pr["commits"] = serde_json::json!([
+        {"oid": "a", "authors": [glm.clone()]},
+        {"oid": "b", "authors": [glm]},
+    ]);
+    let gh = fake_gh(&pr, &[issue_json(77, "OPEN", Some("Wave 3"))]);
+    let out = hygiene(&["pr", "90"], Some(gh.path()), None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "ok: pull request #90\n");
+}
+
 #[test]
 fn a_pull_request_with_a_co_author_and_a_last_paragraph_of_text_fails() {
     let body = format!("{GOOD}\nA last paragraph of text.\n");
@@ -336,6 +354,18 @@ fn a_squash_commit_with_a_co_author_after_the_trailers_passes() {
     let body = format!(
         "{GOOD}Generated-by: GLM-5.3-Flash\n\nCo-authored-by: GLM-5.3-Flash <noreply@z.ai>\n"
     );
+    let dir = repo(&format!("Pause and resume the riff (#90)\n\n{body}"));
+    let out = hygiene(&["commit"], None, Some(dir.path()));
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "ok: commit HEAD\n");
+}
+
+/// 01M6Y5WW313W74AE6TC0C3KTS4: the squash of a pull request with two
+/// commits puts the line `---------` before the paragraph
+/// `Co-authored-by:`, as in the commit 9f466f4f. The commit passes.
+#[test]
+fn a_squash_commit_with_the_separator_before_the_co_author_passes() {
+    let body = format!("{GOOD}\n---------\n\nCo-authored-by: GLM-5.3-Flash <noreply@z.ai>\n");
     let dir = repo(&format!("Pause and resume the riff (#90)\n\n{body}"));
     let out = hygiene(&["commit"], None, Some(dir.path()));
     assert!(out.status.success(), "{}", text(&out.stderr));
