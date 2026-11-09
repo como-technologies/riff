@@ -447,12 +447,13 @@ mod tests {
     }
 
     /// 01M6YQDWT387EV7Y7XMT2G6YVM: a process whose binary a new file
-    /// replaced, as `riff update` does, runs a replaced binary.
+    /// replaced, as `riff update` does, runs a replaced binary. A child
+    /// `cp` writes each program, so that no child of another test holds
+    /// a write handle of it ([`isolated::copy_program`]).
     #[test]
     fn a_new_file_in_place_of_the_binary_of_a_process_replaces_it() {
         let dir = tempfile::tempdir().unwrap();
-        let program = dir.path().join("sleep");
-        std::fs::copy(sleep_program(), &program).unwrap();
+        let program = isolated::copy_program(sleep_program(), dir.path().join("sleep"));
         let sleep = Sleep::start(&program, dir.path());
         wait_for(|| process(sleep.pid()).is_some_and(|p| p.args.get(1).is_some_and(|a| a == "30")));
         let old = process(sleep.pid()).unwrap();
@@ -462,10 +463,7 @@ mod tests {
         // A new file, as `riff update` writes it. A file time has a
         // resolution of up to one second.
         std::thread::sleep(Duration::from_millis(1100));
-        let new = dir.path().join("new");
-        std::fs::write(&new, std::fs::read(sleep_program()).unwrap()).unwrap();
-        std::fs::set_permissions(&new, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        let new = isolated::copy_program(sleep_program(), dir.path().join("new"));
         std::fs::rename(&new, &program).unwrap();
         let now = process(sleep.pid()).unwrap();
         assert!(now.replaced, "{now:?}");
