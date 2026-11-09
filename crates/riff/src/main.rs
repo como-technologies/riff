@@ -959,17 +959,24 @@ enum GithubCommand {
         #[arg(long)]
         owner: String,
     },
-    /// Install the two GitHub Apps of the riff on an account
+    /// Install the GitHub Apps on an account, or add a repository
     ///
-    /// It opens the install page of each App with the account as the
-    /// target. The owner of the account clicks "Install" for each App.
-    /// riff waits at most 10 minutes for the two installs. Then it runs
-    /// riff github check, in a clone of a repository of the account. Only
-    /// the owner or an admin of the riff can.
+    /// It opens the install page of each App that is not installed on the
+    /// account. The owner of the account clicks "Install" for each App. In
+    /// a clone of a repository of the account, or with --repo, riff also
+    /// opens the page Configure of each install that does not have the
+    /// repository: add it under "Repository access". riff waits at most 10
+    /// minutes for the two installs, each with the repository. Then it
+    /// runs riff github check for the repository. Only the owner or an
+    /// admin of the riff can.
     Install {
         /// The organization or the personal account, for example
         /// n8behavior.
         owner: String,
+        /// The repository that each install must have. Default: the
+        /// repository of this folder.
+        #[arg(long, value_name = "OWNER/NAME")]
+        repo: Option<String>,
     },
     /// Check the token of each role for this repository
     ///
@@ -2616,13 +2623,18 @@ async fn github_command(command: &GithubCommand, server: &str) -> Result<()> {
         GithubCommand::Create { owner } => {
             let account = github::account(&gh, owner)?;
             let wait = Wait::default();
-            github::create(&api, &account, open, wait, repo.as_deref(), &mut out).await?
+            let web = github::WEB;
+            github::create(&api, &account, web, open, wait, repo.as_deref(), &mut out).await?
         }
-        GithubCommand::Install { owner } => {
+        GithubCommand::Install { owner, repo: named } => {
+            let repo = match named {
+                Some(named) => Some(github::named_repo(owner, named)?),
+                None => repo.as_deref(),
+            };
             let account = github::account(&gh, owner)?;
             let wait = Wait::default();
             let web = github::WEB;
-            github::install(&api, &account, web, open, wait, repo.as_deref(), &mut out).await?
+            github::install(&api, &account, web, open, wait, repo, &mut out).await?
         }
         GithubCommand::Check => {
             let repo = repo.context(text::GITHUB_CHECK_NO_REPO)?;

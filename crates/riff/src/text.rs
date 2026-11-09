@@ -5507,12 +5507,62 @@ pub fn github_no_apps(owner: &str) -> String {
     )
 }
 
-/// The error of the wait after 10 minutes with no two installs.
-pub fn github_wait_ended(owner: &str) -> String {
+/// The error of the wait after 10 minutes with no two installs, each
+/// with the repository `repo` when the wait has one.
+///
+/// ```
+/// let text = riff::text::github_wait_ended("acme", Some("acme/b"));
+/// assert!(text.contains("not both installed on acme/b"), "{text}");
+/// assert!(text.ends_with("next: riff github install acme --repo acme/b"), "{text}");
+/// let text = riff::text::github_wait_ended("acme", None);
+/// assert!(text.ends_with("on acme. next: riff github install acme"), "{text}");
+/// ```
+pub fn github_wait_ended(owner: &str, repo: Option<&str>) -> String {
+    let (on, flag) = match repo {
+        Some(repo) => (repo, format!(" --repo {repo}")),
+        None => (owner, String::new()),
+    };
     format!(
-        "riff: after 10 minutes, the two GitHub Apps are not both installed on {owner}. \
-         next: riff github install {owner}"
+        "riff: after 10 minutes, the two GitHub Apps are not both installed on {on}. \
+         next: riff github install {owner}{flag}"
     )
+}
+
+/// The refusal of `riff github install OWNER --repo REPO` with a `REPO`
+/// that is no repository of OWNER (01M6Z7DMYAW52X62TN1DEX9NCG).
+pub fn github_repo_elsewhere(owner: &str, repo: &str) -> String {
+    format!(
+        "riff: {repo} is no repository of {owner}. riff github install changed nothing. \
+         next: riff github install {owner} --repo {owner}/NAME"
+    )
+}
+
+/// The lines when the install of the App `slug` does not have the
+/// repository `repo`, before the browser opens its page Configure `url`
+/// (01M6Z7DMYAW52X62TN1DEX9NCG).
+///
+/// ```
+/// let url = "https://github.com/organizations/acme/settings/installations/1010";
+/// assert_eq!(
+///     riff::text::github_repo_missing("riff-acme", "acme/b", url),
+///     "riff-acme: the install does not have acme/b. Your browser opens the page Configure of \
+///      the install. When it does not, open this URL:\n  \
+///      https://github.com/organizations/acme/settings/installations/1010\n\
+///      Under \"Repository access\", add acme/b, and click \"Save\"."
+/// );
+/// ```
+pub fn github_repo_missing(slug: &str, repo: &str, url: &str) -> String {
+    format!(
+        "{slug}: the install does not have {repo}. Your browser opens the page Configure of \
+         the install. When it does not, open this URL:\n  {url}\n\
+         Under \"Repository access\", add {repo}, and click \"Save\"."
+    )
+}
+
+/// The line when the install of the App `slug` has the repository
+/// `repo`.
+pub fn github_repo_added(slug: &str, repo: &str) -> String {
+    format!("{slug}: the install has {repo}.")
 }
 
 /// The line when riff-server has the keys of a new App.

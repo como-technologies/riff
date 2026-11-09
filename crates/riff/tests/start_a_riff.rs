@@ -237,6 +237,37 @@ fn the_book_has_the_how_tos_of_the_github_apps() {
     each_is_real(&commands);
 }
 
+/// 01M6Z7R4R56ANXBQN0XJZXNFXW: "Add another repository to the riff" has
+/// the step that adds the repository to the installs of the Apps, with a
+/// copyable `sh` block of each real command, and the words of GitHub.
+#[test]
+fn the_book_adds_a_repository_to_the_installs_of_the_apps() {
+    let add = part(PAGE, HOW_TO);
+    let step = add
+        .split("\n### Add the repository to the installs of the Apps\n")
+        .nth(1)
+        .expect("the step is in the how-to");
+    let step = step.split("\n### ").next().unwrap();
+    let commands = book::commands_in(step);
+    assert_eq!(
+        commands,
+        [
+            "riff github install OWNER",
+            "riff github install OWNER --repo OWNER/NAME"
+        ]
+    );
+    each_is_real(&commands);
+    let words = step.split_whitespace().collect::<Vec<_>>().join(" ");
+    for name in [
+        "**Only select repositories**",
+        "**Configure**",
+        "**Repository access**",
+        "**Save**",
+    ] {
+        assert!(words.contains(name), "{name}: {step}");
+    }
+}
+
 /// 01M5QVF5C3CYJPMQ9CXNZJ8E93: "Start a Riff" has the how-to "Add another
 /// repository to the riff", with a copyable `sh` block for each step.
 #[test]

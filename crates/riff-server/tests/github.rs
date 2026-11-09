@@ -489,6 +489,9 @@ async fn a_member_who_is_not_the_owner_or_an_admin_is_refused() {
     );
     let (status, text) = call(&url, &member, "/v1/github/apps", json!({ "owner": OWNER })).await;
     assert_eq!(status, 403, "{text}");
+    // 01M6Z7DMYAW52X62TN1DEX9NCG: nor with a repository.
+    let (status, text) = call(&url, &member, "/v1/github/apps", json!({ "repo": REPO })).await;
+    assert_eq!(status, 403, "{text}");
     let (status, text) = call(&url, &member, "/v1/github/check", json!({ "repo": REPO })).await;
     assert_eq!(status, 200, "{text}");
     // A call with no token gets 401.
@@ -655,6 +658,54 @@ async fn the_apps_say_whether_each_is_installed() {
         installed(&text),
         [("riff-acme".into(), None), ("riff-acme-lead".into(), None)]
     );
+}
+
+/// 01M6Z7DMYAW52X62TN1DEX9NCG: `POST /v1/github/apps` with a repository
+/// gives the ID of the install of each App on the account, and whether
+/// the install has the repository. A repository that is no `OWNER/NAME`
+/// gets 400.
+#[tokio::test]
+async fn the_apps_say_whether_each_install_has_the_repository() {
+    let fake = FakeGitHub::start().await;
+    let (service, url) = serve(&fake, At::Memory, STATE_LIFE).await;
+    let owner = person(&service, "ada@example.com").await;
+    make_apps(&url, &owner).await;
+    /// The install and whether it has `repo`, of each App.
+    async fn has(url: &str, owner: &Person, repo: &str) -> Vec<(Option<u64>, Option<bool>)> {
+        let body = json!({ "owner": OWNER, "repo": repo });
+        let (status, text) = call(url, owner, "/v1/github/apps", body).await;
+        assert_eq!(status, 200, "{text}");
+        let apps: GitHubAppsReply = serde_json::from_str(&text).unwrap();
+        apps.apps
+            .iter()
+            .map(|a| (a.installation, a.has_repo))
+            .collect()
+    }
+    assert_eq!(
+        has(&url, &owner, "acme/b").await,
+        [(None, Some(false)), (None, Some(false))]
+    );
+    // Both Apps are installed on acme with only acme/app.
+    fake.seen().installed = true;
+    assert_eq!(
+        has(&url, &owner, "acme/b").await,
+        [(Some(1010), Some(false)), (Some(2020), Some(false))]
+    );
+    fake.seen().added.insert(101, vec!["acme/b".into()]);
+    assert_eq!(
+        has(&url, &owner, "acme/b").await,
+        [(Some(1010), Some(true)), (Some(2020), Some(false))]
+    );
+    assert_eq!(
+        has(&url, &owner, REPO).await,
+        [(Some(1010), Some(true)), (Some(2020), Some(true))]
+    );
+    let (_, text) = call(&url, &owner, "/v1/github/apps", json!({ "owner": OWNER })).await;
+    let apps: GitHubAppsReply = serde_json::from_str(&text).unwrap();
+    assert!(apps.apps.iter().all(|a| a.has_repo.is_none()), "{text}");
+    let body = json!({ "owner": OWNER, "repo": "no repo" });
+    let (status, _) = call(&url, &owner, "/v1/github/apps", body).await;
+    assert_eq!(status, 400);
 }
 
 /// 01M6WG52QHC8E24RJ33ZPVHZSJ: riff-server takes each delivery of the

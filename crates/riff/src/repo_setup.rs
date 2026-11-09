@@ -1055,7 +1055,7 @@ pub struct TagRules {
 /// (01M6WZ40YED6THKVJ2JQRXFK4N). `Ok(None)` when the riff has no lead
 /// App: a riff with no sign-in has none. `Err` says why riff cannot ask.
 pub async fn lead_app(api: &Api) -> Result<Option<LeadApp>, String> {
-    let apps = match api.github_apps(None).await {
+    let apps = match api.github_apps(None, None).await {
         Ok(apps) => apps,
         // A riff with no sign-in has no lead App.
         Err(_) if matches!(api.has_sign_in().await, Ok(false)) => return Ok(None),

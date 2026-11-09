@@ -51,6 +51,9 @@ pub fn app_of(code: &str) -> Option<(u64, &'static str, u64)> {
 pub struct Seen {
     /// True: both Apps are installed on [`OWNER`], with [`REPO`].
     pub installed: bool,
+    /// The repositories that the person added to the install of each
+    /// App, by the App ID, beyond [`REPO`].
+    pub added: BTreeMap<u64, Vec<String>>,
     /// True: the swap of the lead App installs both Apps, as the clicks
     /// of the person do.
     pub install_on_swap: bool,
@@ -169,10 +172,24 @@ async fn installation(
     let Some(id) = app_id(&headers) else {
         return bad_credentials();
     };
-    if !seen.lock().unwrap().installed || format!("{owner}/{repo}") != REPO {
+    let repo = format!("{owner}/{repo}");
+    let has = {
+        let seen = seen.lock().unwrap();
+        let added = seen
+            .added
+            .get(&id)
+            .is_some_and(|added| added.contains(&repo));
+        seen.installed && (repo == REPO || added)
+    };
+    if !has {
         return (StatusCode::NOT_FOUND, Json(json!({"message": "Not Found"}))).into_response();
     }
-    Json(json!({ "id": id * 10, "account": { "login": OWNER } })).into_response()
+    Json(json!({ "id": installation_of(id), "account": { "login": OWNER } })).into_response()
+}
+
+/// The ID of the install of the App `id` on [`OWNER`].
+pub fn installation_of(id: u64) -> u64 {
+    id * 10
 }
 
 async fn installations(State(seen): State<Shared>, headers: HeaderMap) -> Response {
@@ -182,7 +199,7 @@ async fn installations(State(seen): State<Shared>, headers: HeaderMap) -> Respon
     if !seen.lock().unwrap().installed {
         return Json(json!([])).into_response();
     }
-    Json(json!([{ "id": id * 10, "account": { "login": OWNER } }])).into_response()
+    Json(json!([{ "id": installation_of(id), "account": { "login": OWNER } }])).into_response()
 }
 
 async fn token(
@@ -194,7 +211,7 @@ async fn token(
     let Some(id) = app_id(&headers) else {
         return bad_credentials();
     };
-    if installation != id * 10 {
+    if installation != installation_of(id) {
         return (StatusCode::NOT_FOUND, Json(json!({"message": "Not Found"}))).into_response();
     }
     let mut seen = seen.lock().unwrap();

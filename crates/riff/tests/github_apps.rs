@@ -48,8 +48,13 @@ fn keys_dir() -> tempfile::TempDir {
 
 /// A clone of [`REPO`] on GitHub, with no commit.
 fn clone() -> tempfile::TempDir {
+    clone_of(REPO)
+}
+
+/// A clone of `repo` on GitHub, with no commit.
+fn clone_of(repo: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    let origin = format!("https://github.com/{REPO}.git");
+    let origin = format!("https://github.com/{repo}.git");
     for args in [&["init", "-q"][..], &["remote", "add", "origin", &origin]] {
         let status = Command::new("git")
             .args(args)
@@ -68,6 +73,9 @@ fn account() -> Account {
         kind: "Organization".into(),
     }
 }
+
+/// The site of GitHub in a test.
+const WEB: &str = "https://github.example";
 
 /// A short wait, for a fake that answers at once.
 const WAIT: Wait = Wait {
@@ -147,6 +155,44 @@ async fn riff_github_check_fails_with_no_installation() {
     assert!(
         stdout.ends_with("riff github check: 3 roles failed. riff-server revoked each token.\n")
     );
+}
+
+/// 01M6Z7DMYAW52X62TN1DEX9NCG: with both Apps installed on acme with only
+/// acme/app, `riff github check` in a clone of acme/b names each App
+/// whose install does not have acme/b, with the fix.
+#[tokio::test]
+async fn riff_github_check_names_the_fix_for_a_repository_that_no_install_has() {
+    let fake = FakeGitHub::start().await;
+    fake.seen().installed = true;
+    let keys = keys_dir();
+    let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
+    let env = Isolated::new();
+    common::sign_in(&server, &env.riff_home(), "bob");
+    let repo = clone_of("acme/b");
+    let out = env
+        .tokio_riff()
+        .args(["github", "check"])
+        .current_dir(repo.path())
+        .env("RIFF_SERVER", &*server)
+        // A plain terminal: the test can run under Claude Code.
+        .env_remove("CLAUDECODE")
+        .output()
+        .await
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    for line in [
+        "  worker    riff-acme[bot]       fail: riff-acme is not installed on acme/b: \
+         riff github install acme",
+        "  lead      riff-acme-lead[bot]  fail: riff-acme-lead is not installed on acme/b: \
+         riff github install acme",
+    ] {
+        assert!(
+            stdout.lines().any(|l| l == line),
+            "{line:?} not in:\n{stdout}"
+        );
+    }
+    assert!(fake.seen().tokens.is_empty());
 }
 
 /// 01M6WG537B67VWVENY3821RV33: each command refuses in an agent session
@@ -242,6 +288,7 @@ async fn create_makes_the_apps_waits_for_the_installs_and_checks() {
     let passed = riff::github::create(
         &api,
         &account(),
+        WEB,
         move |url| {
             seen.lock().unwrap().push(url.to_owned());
             open(url);
@@ -255,6 +302,7 @@ async fn create_makes_the_apps_waits_for_the_installs_and_checks() {
     let out = String::from_utf8(out).unwrap();
     assert!(passed, "{out}");
     let opened = opened.lock().unwrap().clone();
+    // Each install has acme/app: no page Configure.
     assert_eq!(opened.len(), 1);
     assert!(
         opened[0].starts_with(&format!("{server}/github/start?state=")),
@@ -267,6 +315,8 @@ async fn create_makes_the_apps_waits_for_the_installs_and_checks() {
         "riff-acme-lead: made. Its bot is riff-acme-lead[bot].",
         "riff-acme: installed on acme.",
         "riff-acme-lead: installed on acme.",
+        "riff-acme: the install has acme/app.",
+        "riff-acme-lead: the install has acme/app.",
         "riff github check acme/app:",
         "riff github check: each role has its rights and no more. riff-server revoked each token.",
     ] {
@@ -291,7 +341,7 @@ async fn create_again_waits_for_the_new_apps() {
     let api = server.api("brett", None);
     let open = browser(server.to_string(), Duration::from_millis(300));
     let mut out = Vec::new();
-    let passed = riff::github::create(&api, &account(), open, WAIT, Some(REPO), &mut out)
+    let passed = riff::github::create(&api, &account(), WEB, open, WAIT, Some(REPO), &mut out)
         .await
         .unwrap();
     let out = String::from_utf8(out).unwrap();
@@ -370,6 +420,125 @@ async fn install_opens_the_install_page_of_each_app() {
         format!("{error:#}").contains("only the owner or an admin"),
         "{error:#}"
     );
+}
+
+/// 01M6Z7DMYAW52X62TN1DEX9NCG: both Apps are installed on acme with only
+/// acme/app. `riff github install acme --repo acme/b` opens the page
+/// Configure of each install, and ends after acme/b is in both: then it
+/// checks acme/b.
+#[tokio::test]
+async fn install_opens_the_page_configure_of_each_install_without_the_repository() {
+    let fake = FakeGitHub::start().await;
+    fake.seen().installed = true;
+    let keys = keys_dir();
+    let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
+    let api = server.api("brett", None);
+    let opened = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = opened.clone();
+    let fake_seen = fake.seen.clone();
+    let mut out = Vec::new();
+    let passed = riff::github::install(
+        &api,
+        &account(),
+        WEB,
+        move |url| {
+            seen.lock().unwrap().push(url.to_owned());
+            // The owner of the account adds acme/b to the install of the
+            // page: to the install of the lead App 300 ms later.
+            let installation: u64 = url.rsplit('/').next().unwrap().parse().unwrap();
+            let app = [101, 202]
+                .into_iter()
+                .find(|id| fake_github::installation_of(*id) == installation)
+                .unwrap();
+            let delay = Duration::from_millis(if app == 202 { 300 } else { 0 });
+            let fake_seen = fake_seen.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                let mut seen = fake_seen.lock().unwrap();
+                seen.added.entry(app).or_default().push("acme/b".into());
+            });
+        },
+        WAIT,
+        Some("acme/b"),
+        &mut out,
+    )
+    .await
+    .unwrap();
+    let out = String::from_utf8(out).unwrap();
+    assert!(passed, "{out}");
+    assert_eq!(
+        *opened.lock().unwrap(),
+        [
+            "https://github.example/organizations/acme/settings/installations/1010",
+            "https://github.example/organizations/acme/settings/installations/2020",
+        ]
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    let at = |line: &str| {
+        lines
+            .iter()
+            .position(|l| *l == line)
+            .unwrap_or_else(|| panic!("{line:?} not in:\n{out}"))
+    };
+    let order = [
+        at("riff-acme: installed on acme."),
+        at(
+            "riff-acme: the install does not have acme/b. Your browser opens the page Configure \
+            of the install. When it does not, open this URL:",
+        ),
+        at(
+            "riff-acme-lead: the install does not have acme/b. Your browser opens the page \
+            Configure of the install. When it does not, open this URL:",
+        ),
+        at("riff-acme: the install has acme/b."),
+        at("riff-acme-lead: the install has acme/b."),
+        at("riff github check acme/b:"),
+        at(
+            "riff github check: each role has its rights and no more. riff-server revoked each token.",
+        ),
+    ];
+    assert!(order.is_sorted(), "{order:?}:\n{out}");
+    assert!(
+        out.contains("Under \"Repository access\", add acme/b, and click \"Save\".\n"),
+        "{out}"
+    );
+    let seen = fake.seen();
+    let repos: Vec<&serde_json::Value> = seen
+        .asked
+        .iter()
+        .map(|(_, body)| &body["repositories"])
+        .collect();
+    assert_eq!(repos, [&serde_json::json!(["b"]); 3]);
+}
+
+/// 01M6Z7DMYAW52X62TN1DEX9NCG: `riff github install OWNER --repo REPO`
+/// refuses a repository of another account, before each call.
+#[tokio::test]
+async fn install_refuses_a_repository_of_another_account() {
+    let fake = FakeGitHub::start().await;
+    let server = serve(&fake, At::Memory).await;
+    let env = Isolated::new();
+    common::sign_in(&server, &env.riff_home(), "brett");
+    let out = env
+        .tokio_riff()
+        .args(["github", "install", OWNER, "--repo", "other/app"])
+        .env("RIFF_SERVER", &*server)
+        // A plain terminal: the test can run under Claude Code.
+        .env_remove("CLAUDECODE")
+        .output()
+        .await
+        .unwrap();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains(
+            "riff: other/app is no repository of acme. riff github install changed nothing. \
+             next: riff github install acme --repo acme/NAME"
+        ),
+        "{stderr}"
+    );
+    let calls = server.calls();
+    assert!(calls.lock().unwrap().is_empty(), "{calls:?}");
 }
 
 /// `riff github install` on a riff with no Apps names `riff github
