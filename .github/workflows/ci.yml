@@ -184,6 +184,8 @@ jobs:
     name: macOS
     if: github.event_name != 'schedule' && github.ref_type != 'tag'
     runs-on: macos-latest
+    # A test that hangs on macOS stops the job, not the Gate for hours.
+    timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: 0
     steps:

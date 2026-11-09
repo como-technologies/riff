@@ -68,6 +68,7 @@ zbus-secret-service-keyring-store.workspace = true
 # 01M6YQDWT387EV7Y7XMT2G6YVM: the reads of the OS on macOS, in
 # `platform::macos`.
 [target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
 libproc.workspace = true
 sysctl.workspace = true
 

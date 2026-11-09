@@ -68,11 +68,11 @@ case "$*" in
     printf ']' ;;
   'api repos/{owner}/{repo}/contents/.github/workflows/riff-guard.yml?ref='*)
     flag guard || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
-    printf '{"sha":"9a4d000","content":"%s"}' "$(base64 < "$dir/guard" | tr -d '\n' | fold -w 60 | sed 's/$/\\n/' | paste -sd '' -)" ;;
+    printf '{"sha":"9a4d000","content":"%s"}' "$(base64 < "$dir/guard" | tr -d '\n' | fold -w 60 | sed 's/$/\\n/' | tr -d '\n')" ;;
   'api repos/{owner}/{repo}/contents/riff.toml?ref='*)
     grep -qx riff.toml "$dir/files" || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
     if flag config; then
-      printf '{"sha":"c0f1111","content":"%s"}' "$(base64 < "$dir/config" | tr -d '\n' | fold -w 60 | sed 's/$/\\n/' | paste -sd '' -)"
+      printf '{"sha":"c0f1111","content":"%s"}' "$(base64 < "$dir/config" | tr -d '\n' | fold -w 60 | sed 's/$/\\n/' | tr -d '\n')"
     else printf '{"sha":"c0f1111","content":""}'; fi ;;
   'api repos/{owner}/{repo}/pulls?state=all&base=main&per_page=5')
     if flag prior_pulls; then cat "$dir/prior_pulls"; else printf '[]'; fi ;;

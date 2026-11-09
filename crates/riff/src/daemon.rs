@@ -6211,6 +6211,9 @@ mod tests {
             .with_keep_end(keep_end)
             .with_relay(static_riff(dir))
             .with_gcloud(crate::cloud::Gcloud::at(dir.with_file_name("gcloud")))
+            // The free memory of the host that runs the test does not count:
+            // a Mac of the CI has less than the floor.
+            .with_memory(Arc::new(|| None))
             .with_own_replaced(Arc::new(move || {
                 replaced.load(std::sync::atomic::Ordering::SeqCst)
             }));

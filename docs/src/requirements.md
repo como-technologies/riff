@@ -4651,7 +4651,9 @@ of this part when they merge.
   its tests. The tests of the module run on Linux and on macOS.
 - **01M6YS350HYR87VEVRDVA0SARX** On macOS, the module `platform` reads a
   process with `proc_pidinfo`, `proc_pidpath` and `sysctl`
-  `KERN_PROCARGS2`. A process runs a replaced binary, the `replaced` of
+  `KERN_PROCARGS2`. It reads `KERN_PROCARGS2` into a buffer of
+  `kern.argmax` bytes with `sysctl` of `libc`: the one `unsafe` block of
+  `riff`. A process runs a replaced binary, the `replaced` of
   01M514C11BPE93PJT4221PYVHS, when the file at the path of its binary
   changed after the start of the process, or is gone. The available
   memory is the free, the speculative, the purgeable and the file-backed

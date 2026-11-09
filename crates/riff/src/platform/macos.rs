@@ -161,21 +161,33 @@ pub(super) fn running_binary() -> PathBuf {
         .unwrap_or_default()
 }
 
-/// `KERN_PROCARGS2` of `<sys/sysctl.h>`: the count of the arguments, the
-/// path of the binary, the arguments and the environment of a process.
-const KERN_PROCARGS2: i32 = 49;
-
-/// `CTL_KERN` of `<sys/sysctl.h>`.
-const CTL_KERN: i32 = 1;
-
-/// The raw `KERN_PROCARGS2` of the process `pid`, or `None` when riff
-/// cannot read it, for example for a process of another user.
+/// The raw `KERN_PROCARGS2` of the process `pid`: the count of the
+/// arguments, the path of the binary, the arguments and the environment.
+/// `None` when riff cannot read it, for example for a process of another
+/// user. As `ps` does, riff reads it into a buffer of `kern.argmax`
+/// bytes: with the exact size of the data, macOS gives the bytes at the
+/// wrong place.
 fn procargs(pid: u32) -> Option<Vec<u8>> {
-    let ctl = Ctl::Oid(vec![CTL_KERN, KERN_PROCARGS2, raw(pid)?]);
-    match ctl.value().ok()? {
-        CtlValue::Node(bytes) | CtlValue::Struct(bytes) => Some(bytes),
-        _ => None,
-    }
+    let mut name = [libc::CTL_KERN, libc::KERN_PROCARGS2, raw(pid)?];
+    let mut size = usize::try_from(number("kern.argmax")?).ok()?;
+    let mut buffer = vec![0u8; size];
+    // SAFETY: `name` holds 3 numbers, and `buffer` has room for `size`
+    // bytes. The kernel writes at most `size` bytes, and sets `size` to
+    // the count that it wrote.
+    let read = unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            3,
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    (read == 0).then(|| {
+        buffer.truncate(size);
+        buffer
+    })
 }
 
 /// The parts of `KERN_PROCARGS2`.
