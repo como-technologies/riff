@@ -8,8 +8,10 @@
 //! makes a running session from it, and stops it
 //! (01M4ZBGK3A977KZW50AZFR95E9). The sessions run on Linux only
 //! (01M6YPB5B42FZP7GCDAVTN4PWY). Their runtime is rootless podman,
-//! [`crate::podman::Podman`], behind `cfg(target_os = "linux")`. A pod
-//! backend can take the same spec later.
+//! [`crate::podman::Podman`], behind `cfg(target_os = "linux")`. On
+//! macOS, the daemon runs on [`NoSessions`], which starts none
+//! (01M6Z49R87D50VD4RS0BP641MM). [`here`] gives the runtime of this OS. A
+//! pod backend can take the same spec later.
 //!
 //! The code that drives a session takes its runtime as a parameter: the
 //! daemon ([`crate::daemon::Daemon`]). So its tests take [`Fake`], a
@@ -401,6 +403,119 @@ pub trait Runtime: Send + Sync {
 
 /// The host that [`Runtime::reaches`] looks up: the API of `claude`.
 pub const REACH_HOST: &str = "api.anthropic.com";
+
+/// The runtime of the sessions on this OS: rootless podman on Linux.
+#[cfg(target_os = "linux")]
+pub fn here() -> crate::podman::Podman {
+    crate::podman::Podman
+}
+
+/// The runtime of the sessions on this OS: on macOS, [`NoSessions`]
+/// (01M6Z49R87D50VD4RS0BP641MM).
+#[cfg(not(target_os = "linux"))]
+pub fn here() -> NoSessions {
+    NoSessions
+}
+
+/// The runtime of the daemon on macOS: it starts no session yet
+/// (01M6Z49R87D50VD4RS0BP641MM). It finds no session that runs, so the
+/// daemon takes up none. Each other step fails with
+/// [`crate::text::SESSIONS_ON_A_MAC`].
+///
+/// ```
+/// use riff::runtime::{NoSessions, Runtime, SessionSpec};
+///
+/// let spec = SessionSpec {
+///     name: "riff-issue-12-1a2b3c4d".into(),
+///     image: "ghcr.io/o/i@sha256:0".into(),
+///     home: "/Users/mike".into(),
+///     workdir: "/data/clone".into(),
+///     binds: vec![],
+///     env: vec![],
+///     memory: "8g".into(),
+///     cpus: 4,
+///     command: vec!["claude".into()],
+/// };
+/// tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+///     assert!(!NoSessions.running(&spec.name).await?);
+///     let e = NoSessions.start(&spec, &[]).await.err().unwrap();
+///     assert_eq!(e.to_string(), riff::text::SESSIONS_ON_A_MAC);
+///     assert!(e.to_string().contains("#1649"));
+///     assert!(NoSessions.has_image(&spec.image).await.is_err());
+///     assert!(NoSessions.pull(&spec.image).await.is_err());
+///     Ok::<(), anyhow::Error>(())
+/// })?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoSessions;
+
+/// The error of each step of [`NoSessions`].
+fn no_session<T>() -> Result<T> {
+    bail!("{}", crate::text::SESSIONS_ON_A_MAC)
+}
+
+impl Runtime for NoSessions {
+    async fn has_image(&self, _image: &str) -> Result<bool> {
+        no_session()
+    }
+
+    async fn pull(&self, _image: &str) -> Result<()> {
+        no_session()
+    }
+
+    async fn output(&self, _image: &str, _command: &[&str]) -> Result<String> {
+        no_session()
+    }
+
+    async fn start(&self, _spec: &SessionSpec, _values: &[(String, String)]) -> Result<Running> {
+        no_session()
+    }
+
+    async fn stop(&self, _name: &str) -> Result<()> {
+        no_session()
+    }
+
+    async fn running(&self, _name: &str) -> Result<bool> {
+        Ok(false)
+    }
+
+    async fn attach(&self, _name: &str) -> Result<Exit> {
+        no_session()
+    }
+
+    async fn redraw(&self, _name: &str) -> Result<()> {
+        no_session()
+    }
+
+    async fn start_terminal(
+        &self,
+        _spec: &SessionSpec,
+        _values: &[(String, String)],
+    ) -> Result<End> {
+        no_session()
+    }
+
+    async fn exec(&self, _name: &str, _command: &[String]) -> Result<Exit> {
+        no_session()
+    }
+
+    async fn links(&self, _name: &str, _path: &Path) -> Result<u64> {
+        no_session()
+    }
+
+    async fn reaches(&self, _name: &str) -> Result<bool> {
+        no_session()
+    }
+
+    async fn digest(&self, _name: &str) -> Result<String> {
+        no_session()
+    }
+
+    async fn processes(&self, _name: &str) -> Result<Vec<Proc>> {
+        no_session()
+    }
+}
 
 /// The reset of the modes that a command in a session can leave on in
 /// the terminal of the person (01M6XVBRQMBMK68K8GCDRZ5GJ5): the mouse

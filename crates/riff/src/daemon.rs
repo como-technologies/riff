@@ -776,7 +776,6 @@ pub fn stale(unit: Option<&crate::service::Unit>, own: &Path, replaced: bool) ->
 /// daemon of a `RIFF_HOME` or a `RIFF_DATA` is never the daemon of the
 /// unit ([`crate::run::machine_data`]). While an update of riff runs
 /// ([`update_waits`]), it waits (01M58AW9YR84SKSYBYBJ6V7TNJ).
-#[cfg(target_os = "linux")]
 fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
     if !crate::run::machine_data() || crate::local::dir().is_some_and(|dir| update_waits(&dir)) {
         return false;
@@ -5851,6 +5850,12 @@ pub async fn ps(dir: &Path) -> Result<crate::ps::Ps> {
     }
 }
 
+/// The line of the state `state` of the unit of `manager`, with the way
+/// to start it and to see its log (01M6Z4A521PMRBK1R1E7NNADCQ).
+fn unit_state(manager: &impl crate::service::ServiceManager, state: &str) -> String {
+    text::daemon_unit_state(&manager.unit_name(), state, &manager.log_command())
+}
+
 /// `riff ps` on the host: prints the tree of the processes in `width`
 /// columns, and gives the exit code. When no daemon answers, it says so,
 /// shows the state of the unit with the way to start it, and gives 1.
@@ -5867,7 +5872,7 @@ pub async fn show_ps(
         Err(e) => {
             eprintln!("{e:#}");
             match manager.state() {
-                Ok(state) => eprintln!("{}", text::daemon_unit_state(&state)),
+                Ok(state) => eprintln!("{}", unit_state(manager, &state)),
                 Err(e) => eprintln!("{e:#}"),
             }
             1
@@ -5965,70 +5970,64 @@ pub async fn follow_events(
 
 /// `riff daemon`: runs the daemon of this machine until a SIGTERM or a
 /// SIGINT. It takes up each session that runs ([`Daemon::recover`]).
-/// The stop stops no session (01M4ZDTVH57VE77YT20G65A4BQ).
+/// The stop stops no session (01M4ZDTVH57VE77YT20G65A4BQ). Its runtime
+/// is the runtime of this OS ([`crate::runtime::here`]): on macOS, it
+/// starts no session (01M6Z49R87D50VD4RS0BP641MM).
 pub async fn serve_here() -> Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
     // Its working folder can be the work tree of another repository
     // (01M58AW5SBG3ZP7149ZY66VTYW).
     crate::auto_update::no_place();
-    #[cfg(target_os = "linux")]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let dir = dir()?;
-        let listener = listen(&dir).await?;
-        let mut term = signal(SignalKind::terminate())?;
-        let mut int = signal(SignalKind::interrupt())?;
-        let daemon = Daemon::new(crate::podman::Podman, dir.clone())?.with_again(again_here());
-        let daemon = Arc::new(daemon);
-        let status = daemon.status().await;
-        println!(
-            "{}",
-            text::daemon_listens(&socket(&dir), status.pid, &status.build)
-        );
-        daemon.parts_start();
-        daemon.recover().await;
-        daemon.run_waves();
-        daemon.serve_repos();
-        daemon.sweep_every();
-        daemon.stale_every();
-        daemon.leads_again_every();
-        daemon.watch_every(crate::watches::every());
-        // The steps of an update of this release: the rules of Claude
-        // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
-        let steps = dir.clone();
+    let dir = dir()?;
+    let listener = listen(&dir).await?;
+    let mut term = signal(SignalKind::terminate())?;
+    let mut int = signal(SignalKind::interrupt())?;
+    let daemon = Daemon::new(crate::runtime::here(), dir.clone())?.with_again(again_here());
+    let daemon = Arc::new(daemon);
+    let status = daemon.status().await;
+    println!(
+        "{}",
+        text::daemon_listens(&socket(&dir), status.pid, &status.build)
+    );
+    daemon.parts_start();
+    daemon.recover().await;
+    daemon.run_waves();
+    daemon.serve_repos();
+    daemon.sweep_every();
+    daemon.stale_every();
+    daemon.leads_again_every();
+    daemon.watch_every(crate::watches::every());
+    // The steps of an update of this release: the rules of Claude
+    // Code, the unit, the images (01M51QFPJAABDP1V7WFY8NQR60).
+    let steps = dir.clone();
+    tokio::spawn(async move {
+        crate::update_steps::at_start(&crate::runtime::here(), &steps).await;
+    });
+    // A new riff on disk (01M517BTP6BAGTRBYWPX9GPVE0).
+    if let Ok(manager) = crate::platform::service_manager() {
+        let daemon = daemon.clone();
         tokio::spawn(async move {
-            crate::update_steps::at_start(&crate::podman::Podman, &steps).await;
+            let old = || old_here(&manager);
+            let restart = || crate::service::ServiceManager::try_restart(&manager);
+            daemon.restart_when_old(old, restart).await;
         });
-        // A new riff on disk (01M517BTP6BAGTRBYWPX9GPVE0).
-        if let Ok(manager) = crate::platform::service_manager() {
-            let daemon = daemon.clone();
-            tokio::spawn(async move {
-                let old = || old_here(&manager);
-                let restart = || crate::service::ServiceManager::try_restart(&manager);
-                daemon.restart_when_old(old, restart).await;
-            });
+    }
+    let stop = async move {
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
         }
-        let stop = async move {
-            tokio::select! {
-                _ = term.recv() => {}
-                _ = int.recv() => {}
-            }
-        };
-        daemon.clone().serve(listener, stop).await?;
-        let _ = std::fs::remove_file(socket(&dir));
-        println!("{}", text::DAEMON_STOPS);
-        Ok(())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        bail!("{}", text::DAEMON_LINUX_ONLY)
-    }
+    };
+    daemon.clone().serve(listener, stop).await?;
+    let _ = std::fs::remove_file(socket(&dir));
+    println!("{}", text::DAEMON_STOPS);
+    Ok(())
 }
 
 /// The new start of the daemon of this machine on a new riff, for
-/// `riff daemon restart` ([`remote::Again`]): systemd, as
-/// [`Daemon::restart_when_old`] does. With no systemd, it never runs an
-/// old riff.
-#[cfg(target_os = "linux")]
+/// `riff daemon restart` ([`remote::Again`]): the service manager, as
+/// [`Daemon::restart_when_old`] does. With no service manager, for
+/// example with no home, it never runs an old riff.
 fn again_here() -> remote::Again {
     match crate::platform::service_manager() {
         Ok(manager) => {
@@ -6039,10 +6038,13 @@ fn again_here() -> remote::Again {
                 restart: Box::new(move || crate::service::ServiceManager::try_restart(&*manager)),
             }
         }
-        Err(_) => remote::Again {
-            old: Box::new(|| false),
-            restart: Box::new(|| bail!("{}", text::DAEMON_LINUX_ONLY)),
-        },
+        Err(e) => {
+            let why = format!("{e:#}");
+            remote::Again {
+                old: Box::new(|| false),
+                restart: Box::new(move || bail!("{why}")),
+            }
+        }
     }
 }
 
@@ -6068,7 +6070,7 @@ pub async fn show_status(dir: &Path, manager: &impl crate::service::ServiceManag
         Err(e) => {
             println!("{e:#}");
             match manager.state() {
-                Ok(state) => println!("{}", text::daemon_unit_state(&state)),
+                Ok(state) => println!("{}", unit_state(manager, &state)),
                 Err(e) => println!("{e:#}"),
             }
             1
@@ -6098,7 +6100,15 @@ pub async fn install(
         }
         if start.elapsed() >= wait {
             let state = manager.state().unwrap_or_else(|e| format!("{e:#}"));
-            bail!("{}", text::daemon_no_answer(&state, &socket(dir)));
+            bail!(
+                "{}",
+                text::daemon_no_answer(
+                    &manager.unit_name(),
+                    &state,
+                    &socket(dir),
+                    &manager.log_command()
+                )
+            );
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

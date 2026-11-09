@@ -1,14 +1,14 @@
 //! The reads of the OS on macOS (01M6YQDWT387EV7Y7XMT2G6YVM,
 //! 01M6YS350HYR87VEVRDVA0SARX): `libproc` for the processes and `sysctl`
-//! for the machine. macOS has no service manager of the daemon yet: the
-//! daemon needs Linux (01M6YPB5B42FZP7GCDAVTN4PWY). See
+//! for the machine. The service manager of the daemon is launchd
+//! ([`super::launchd`], 01M6Z49H6CHSPV0FJZWY2MYHEM). See
 //! [`crate::platform`].
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use libproc::bsd_info::BSDInfo;
 use libproc::file_info::{ListFDs, PIDFDInfo, PIDFDInfoFlavor, ProcFDType, pidfdinfo};
 use libproc::proc_pid::{PIDInfo, PidInfoFlavor, listpidinfo, pidinfo, pidpath};
@@ -17,52 +17,12 @@ use riff_client::machines::{BASE_MHZ, Machine};
 use sysctl::{Ctl, CtlValue, Sysctl};
 
 use super::{Cgroups, Memory, Process};
-use crate::service::{ServiceManager, Unit};
 
-/// The service manager of the daemon on macOS: none yet. A value of it
-/// cannot exist, so no step of it runs.
-#[derive(Debug)]
-pub enum Manager {}
-
-impl Manager {
-    /// The path of the unit file.
-    pub fn unit_path(&self) -> PathBuf {
-        match *self {}
-    }
-}
-
-impl ServiceManager for Manager {
-    fn install(&self, _unit: &Unit) -> Result<PathBuf> {
-        match *self {}
-    }
-
-    fn uninstall(&self) -> Result<Option<PathBuf>> {
-        match *self {}
-    }
-
-    fn state(&self) -> Result<String> {
-        match *self {}
-    }
-
-    fn installed(&self) -> Result<Option<Unit>> {
-        match *self {}
-    }
-
-    fn rewrite(&self, _unit: &Unit) -> Result<PathBuf> {
-        match *self {}
-    }
-
-    fn try_restart(&self) -> Result<()> {
-        match *self {}
-    }
-
-    fn main_pid(&self) -> Result<Option<u32>> {
-        match *self {}
-    }
-}
+/// The service manager of the daemon on macOS: launchd.
+pub type Manager = super::launchd::Launchd;
 
 pub(super) fn service_manager() -> Result<Manager> {
-    bail!("{}", crate::text::DAEMON_LINUX_ONLY)
+    super::launchd::Launchd::here()
 }
 
 /// The ID of the process in the form of `libproc`.
@@ -317,8 +277,8 @@ pub(super) fn open_files(pid: u32) -> Vec<PathBuf> {
         .collect()
 }
 
-pub(super) fn socket_path(_folder: &File, dir: &Path, name: &str) -> PathBuf {
-    dir.join(name)
+pub(super) fn socket_path(_folder: &File, dir: &Path, name: &str) -> std::io::Result<PathBuf> {
+    super::socket_fits(dir.join(name), super::SOCKET_MOST)
 }
 
 /// The number in the `sysctl` `name`, or `None` when this Mac has none.

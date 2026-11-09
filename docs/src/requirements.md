@@ -4639,8 +4639,9 @@ of this part when they merge.
 - **01M4Z60B7E6X53NBJ01R95RYGE** riff is one binary: the CLI, a daemon,
   the MCP shim and the relay. It runs on the machine of each person.
   Cloud workers are future work. riff-server stays a second binary.
-- **01M4Z60B7FCREZDCTVR73WWRY1** The daemon of riff is a systemd user
-  unit. It owns the sessions. riff-server stays the server of the riff.
+- **01M4Z60B7FCREZDCTVR73WWRY1** On Linux, the daemon of riff is a
+  systemd user unit. It owns the sessions. riff-server stays the server
+  of the riff.
 - **01M4Z60B7GTV4HHF9R3TMZRS7J** Each platform part is a trait, and its
   Linux implementation is behind `cfg(target_os = "linux")`: `Runtime`
   (the start, the stop, the attach and the events of a session) and
@@ -4671,8 +4672,8 @@ of this part when they merge.
   Apple silicon. riff does not support a Mac with Intel. On macOS, the
   commands that talk to riff-server and to GitHub run, for example `riff
   chat`, `riff who`, `riff top`, `riff wave list` and the release
-  commands. The daemon, the sessions and `riff init` need Linux: on
-  macOS, each of them stops with an error that says so. Supersedes
+  commands. The sessions and `riff init` need Linux: on macOS, each of
+  them stops with an error that says so. Supersedes
   01M4Z60B7GTV4HHF9R3TMZRS7J in part.
 - **01M6YQDWT387EV7Y7XMT2G6YVM** Each read of the OS that differs
   between Linux and macOS is in the module `platform` of `riff`: a
@@ -4681,10 +4682,10 @@ of this part when they merge.
   the user; the memory, the load and the CPU of the machine; the cgroups
   of podman; the path of a socket in a long folder; and the service
   manager of the daemon. On Linux, it reads `/proc` and `/sys`, and runs
-  `systemctl`. On macOS, it reads `libproc` and `sysctl`, and has no
-  service manager. No other module of `riff` reads `/proc` or `/sys`, or
-  runs `systemctl`. A test checks each file of `crates/riff/src` up to
-  its tests. The tests of the module run on Linux and on macOS.
+  `systemctl`. On macOS, it reads `libproc` and `sysctl`. No other
+  module of `riff` reads `/proc` or `/sys`, or runs `systemctl`. A test
+  checks each file of `crates/riff/src` up to its tests. The tests of
+  the module run on Linux and on macOS.
 - **01M6YS350HYR87VEVRDVA0SARX** On macOS, the module `platform` reads a
   process with `proc_pidinfo`, `proc_pidpath` and `sysctl`
   `KERN_PROCARGS2`. It reads `KERN_PROCARGS2` into a buffer of
@@ -4695,6 +4696,35 @@ of this part when they merge.
   memory is the free, the speculative, the purgeable and the file-backed
   pages. The CPU speed is `hw.cpufrequency_max`, and `BASE_MHZ` on a Mac
   with Apple silicon, which has none.
+- **01M6Z49H6CHSPV0FJZWY2MYHEM** On macOS, the service manager of the
+  daemon is launchd. The daemon is the agent
+  `io.github.como-technologies.riff` of the person, in the domain
+  `gui/UID`. Its plist is
+  `~/Library/LaunchAgents/io.github.como-technologies.riff.plist`. On
+  macOS, the module `platform` runs `launchctl`. Supersedes
+  01M4Z60B7FCREZDCTVR73WWRY1 and 01M6YQDWT387EV7Y7XMT2G6YVM in part.
+- **01M6Z49R87D50VD4RS0BP641MM** On macOS, the daemon runs, and starts
+  no session yet. Its runtime of the sessions finds no session that
+  runs, and fails each other step with an error that says that the
+  sessions on a Mac come with #1649. So each start of a session fails
+  with that error. `riff daemon install`, `riff daemon uninstall`, `riff
+  daemon restart` and `riff daemon status` run on macOS. Supersedes
+  01M6YPB5B42FZP7GCDAVTN4PWY in part.
+- **01M6Z49RAPM0SRYHY7AE3S6XY8** On macOS, riff keeps its files in the
+  folders that it uses on Linux, under the home: the data in
+  `~/.local/share/riff`, the local files and the marks in
+  `~/.local/state/riff`, the caches in `~/.cache/riff` and the settings
+  in `~/.config/riff`. The XDG variables move them as on Linux. macOS
+  sets no `XDG_RUNTIME_DIR`. The plist of the daemon is in
+  `~/Library/LaunchAgents`, and the log of the daemon is
+  `~/Library/Logs/riff/daemon.log`.
+- **01M6Z49RD4F6EX4K9FF2Z0CET9** On macOS, the path of a Unix socket has
+  at most 103 bytes: the address has room for 104 bytes, with a NUL at
+  the end. riff binds and connects at the plain path. For a longer path,
+  riff binds and connects nothing, and its error names the path, its
+  bytes and the limit. The control socket in the default folder,
+  `~/.local/share/riff/daemon/riff.sock`, fits for a home of up to 68
+  bytes.
 
 ### Ship
 
@@ -5042,8 +5072,8 @@ of this part when they merge.
 - **01M4ZDTVH57VE77YT20G65A4BQ** `riff daemon` runs the daemon in the
   foreground. The systemd user unit runs the same command. At a SIGTERM
   or a SIGINT, the daemon stops, and stops no session.
-- **01M4ZDTVK74596M0ZA46N51NKV** `riff daemon install` writes the unit
-  `riff.service` in the folder of the user units of systemd
+- **01M4ZDTVK74596M0ZA46N51NKV** On Linux, `riff daemon install` writes
+  the unit `riff.service` in the folder of the user units of systemd
   (`XDG_CONFIG_HOME/systemd/user`, else `~/.config/systemd/user`). The
   unit runs `riff daemon` with the absolute path of this riff. It gets
   the `PATH` of the shell that installs it, and `XDG_DATA_HOME` when it
@@ -5052,7 +5082,7 @@ of this part when they merge.
   unit file and the link of its `enable` are the only files of riff in
   the home outside its own folders. With `RIFF_HOME` set, riff installs
   nothing.
-- **01M501M0T0JBWGMMHCT7HT95T9** `riff daemon uninstall` runs
+- **01M501M0T0JBWGMMHCT7HT95T9** On Linux, `riff daemon uninstall` runs
   `systemctl --user disable --now riff.service`, deletes the unit file
   `riff.service`, and runs `systemctl --user daemon-reload`. It deletes
   only a unit file whose first line riff wrote. It keeps the folder of
@@ -5062,7 +5092,7 @@ of this part when they merge.
 - **01M4ZDTVNBKDM64043GGWQEV4S** `riff daemon status` shows the process
   ID, the build and the age of the daemon, its folder, and each session
   that it owns. When no daemon answers, it shows the state of the unit
-  `riff.service`, and exits with 1.
+  `riff.service` on Linux, and exits with 1.
 - **01M4ZDTVQEHD87WD5TSN93XFSS** The folder of the daemon is `daemon` in
   the data folder of riff, with mode 0700. It holds the control socket
   `riff.sock`, and a folder `sessions/NAME` for the socket of each
@@ -5112,12 +5142,12 @@ of this part when they merge.
 - **01M517BTDRKDXD3X84P6AEAF7P** `riff update` reads the unit
   `riff.service` that riff wrote. When its `ExecStart` runs another
   riff than the `riff` on `PATH`, riff writes the unit again with that
-  riff and the same variables, and runs `systemctl --user
+  riff and the same variables, and on Linux runs `systemctl --user
   daemon-reload`. With no unit file, or with `RIFF_HOME` set, it
   changes nothing. A failed step fails no update.
 - **01M517BTJ9EV4ZGPYRB6HXJJC9** The daemon runs an old riff when its
-  binary was replaced, or when its unit names another riff. Then
-  `riff update` runs `systemctl --user --no-block try-restart
+  binary was replaced, or when its unit names another riff. Then, on
+  Linux, `riff update` runs `systemctl --user --no-block try-restart
   riff.service` only when the daemon owns no session, no start waits
   for room, and no job of a wave runs. Else it says that the daemon
   starts again after its last session. A daemon that does not answer
@@ -5125,8 +5155,9 @@ of this part when they merge.
 - **01M517BTP6BAGTRBYWPX9GPVE0** The daemon that the unit runs looks
   for an old riff at the end of each session and of each job, and each
   minute. When it runs an old riff and owns no session, no start
-  waits and no job runs, it asks systemd one time to start the unit
-  again. A failed ask is one line in its log.
+  waits and no job runs, it asks one time for a new start: on Linux, it
+  asks systemd to start the unit again. A failed ask is one line in its
+  log.
 - **01M53NEE2AVNHA8RD8N40FPH03** The new start of the unit stops the
   `systemctl` child of the daemon that asks for it. When that child
   ends by a signal with no text on stderr, the new start runs: the
@@ -5208,8 +5239,8 @@ of this part when they merge.
 - **01M579Z9SAN24QGN1VV5C7EHM9** `riff daemon restart` starts the
   daemon again on the new riff on disk only when it runs an old riff
   and no session, no start waits and no job of a wave runs. Else it
-  says why not. It asks systemd 5 seconds after the reply. `riff
-  daemon status` shows the new pid and build.
+  says why not. It asks for the new start 5 seconds after the reply.
+  `riff daemon status` shows the new pid and build.
 - **01M579Z9VRD12FRK6DSYVKDHQB** `riff daemon end NAME` ends one
   session of the daemon: the daemon frees its item on riff-server at
   once, ends its session there, then stops its container. It refuses
@@ -5440,6 +5471,46 @@ of this part when they merge.
   repository in the block of the host, for example `leaving
   como-technologies/riff: 3 sessions go on to their end`, and then `left
   como-technologies/riff`.
+- **01M6Z4A4X2V5H4EE3A9RJ5RA6W** On macOS, `riff daemon install` writes
+  the plist of the agent. It runs `riff daemon` with the absolute path
+  of this riff, with the variables of the unit of systemd: `PATH`, and
+  `XDG_DATA_HOME` and `CLAUDE_CONFIG_DIR` when they are set. It has
+  `RunAtLoad`, and `KeepAlive` with `SuccessfulExit` false: launchd
+  starts the daemon again after an exit that is not 0. The stdout and
+  the stderr of the daemon go to its log. The second line of the plist
+  is a comment that riff wrote. Then riff unloads the agent with
+  `launchctl bootout gui/UID/LABEL` when it is loaded, runs `launchctl
+  enable gui/UID/LABEL`, and loads the plist with `launchctl bootstrap
+  gui/UID PLIST`. It tries the bootstrap up to 10 times, 0.5 seconds
+  apart. Then it waits up to 10 seconds for the daemon to answer. The
+  plist and the log are the only files of riff in the home outside its
+  own folders. Supersedes 01M4ZDTVK74596M0ZA46N51NKV in part.
+- **01M6Z4A4ZHF2ZBBZ1RC1ZHVSEH** On macOS, `riff daemon uninstall`
+  unloads the agent with `launchctl bootout gui/UID/LABEL` when it is
+  loaded, and deletes the plist. It deletes only a plist whose second
+  line riff wrote. It keeps the log and the folder of the daemon. With
+  no plist, it says that no daemon is installed, and exits with 0.
+  Supersedes 01M501M0T0JBWGMMHCT7HT95T9 in part.
+- **01M6Z4A521PMRBK1R1E7NNADCQ** On macOS, riff reads the state of the
+  agent from `launchctl print gui/UID/LABEL`, in the words of systemd:
+  `active` while the daemon runs, `activating` while launchd starts it,
+  `failed` after a last exit that is not 0, and `inactive` else. An
+  agent that is not loaded is `inactive`. The process of the daemon is
+  the `pid` of that output. When no daemon answers, `riff daemon status`
+  and `riff ps` show the state of the agent and the command that shows
+  its log, `tail -f ~/Library/Logs/riff/daemon.log`. Supersedes
+  01M4ZDTVNBKDM64043GGWQEV4S in part.
+- **01M6Z4A54HKQQHNNXDABMMSFH8** On macOS, launchd reads the plist only
+  when it loads the agent. So a new start of the daemon, also for `riff
+  update` and `riff daemon restart`, unloads and loads the agent:
+  `launchctl bootout gui/UID/LABEL`, then `launchctl bootstrap gui/UID
+  PLIST`, up to 10 times 0.5 seconds apart. A process group of its own
+  runs them, so the stop of the daemon does not end them, and riff does
+  not wait for them. With an agent that is not loaded, a new start does
+  nothing. A new write of the plist, for example by `riff update`, only
+  writes the file. Supersedes 01M517BTDRKDXD3X84P6AEAF7P,
+  01M517BTJ9EV4ZGPYRB6HXJJC9, 01M517BTP6BAGTRBYWPX9GPVE0 and
+  01M579Z9SAN24QGN1VV5C7EHM9 in part.
 
 ### riff relay
 

@@ -42,6 +42,7 @@ mod github_apps;
 mod guard;
 mod help;
 mod identity;
+mod launchd;
 mod lead_book;
 mod lead_clone;
 mod lead_container;
