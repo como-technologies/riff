@@ -649,11 +649,35 @@ of `OWNER`:
 riff github install OWNER
 ```
 
-Your browser opens the install page of each App. The owner of the
-account clicks **Install** for each App, on the repositories of the
-riff. riff waits at most 10 minutes for the two installs. Then it
-checks the token of each role for the repository of the folder, as
-`riff github check` does.
+Your browser opens the install page of each App that is not on the
+account. The owner of the account clicks **Install** for each App, on
+the repositories of the riff. riff waits at most 10 minutes for the two
+installs. Then it checks the token of each role for the repository of
+the folder, as `riff github check` does.
+
+### Add the repository to the installs of the Apps
+
+The owner of an account can install the Apps with **Only select
+repositories**. Then each new repository of the riff on that account
+must be in both installs. `riff github check` in a clone of a
+repository that an install does not have fails, and names the fix. The
+owner or an admin of the riff runs the fix in a plain terminal, in a
+clone of the repository. Put the account in place of `OWNER`:
+
+```sh
+riff github install OWNER
+```
+
+For each App whose install does not have the repository, your browser
+opens the page **Configure** of the install. Under **Repository
+access**, add the repository, and click **Save**. riff waits at most 10
+minutes until both installs have it. Then it checks the token of each
+role for the repository, as `riff github check` does. Outside a clone,
+name the repository:
+
+```sh
+riff github install OWNER --repo OWNER/NAME
+```
 
 ### Run the checks in the container of the lead
 

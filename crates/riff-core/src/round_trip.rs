@@ -880,6 +880,7 @@ mod tests {
         });
         c.trip(&GitHubApps {
             owner: Some(text("acme")),
+            repo: Some(text("acme/app")),
         });
         c.trip(&GitHubAppsReply {
             apps: vec![GitHubAppFacts {
@@ -889,6 +890,8 @@ mod tests {
                 bot: text("riff-acme[bot]"),
                 bot_id: Some(1101),
                 installed: Some(true),
+                installation: Some(1010),
+                has_repo: Some(false),
             }],
         });
         c.trip(&GitHubCheck {

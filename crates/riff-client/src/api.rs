@@ -2087,12 +2087,18 @@ impl Api {
         self.call(create).await
     }
 
-    /// The GitHub Apps of the riff, and whether each is installed on
-    /// `owner`. Only the owner and the admins can.
-    pub async fn github_apps(&self, owner: Option<&str>) -> Result<GitHubAppsReply> {
+    /// The GitHub Apps of the riff, whether each is installed on `owner`,
+    /// and whether its install has `repo`. Only the owner and the admins
+    /// can ask with either.
+    pub async fn github_apps(
+        &self,
+        owner: Option<&str>,
+        repo: Option<&str>,
+    ) -> Result<GitHubAppsReply> {
         self.need_sign_in().await?;
         let owner = owner.map(str::to_owned);
-        self.call(&GitHubApps { owner }).await
+        let repo = repo.map(str::to_owned);
+        self.call(&GitHubApps { owner, repo }).await
     }
 
     /// The check of the token of each role for the repository `repo`,

@@ -208,7 +208,7 @@ pub fn workflow(bot: &str) -> String {
 /// session App: a riff with no sign-in has none. `Err` says why riff
 /// cannot ask.
 pub async fn session_bot(api: &Api) -> Result<Option<String>, String> {
-    let apps = match api.github_apps(None).await {
+    let apps = match api.github_apps(None, None).await {
         Ok(apps) => apps,
         // A riff with no sign-in has no session App.
         Err(_) if matches!(api.has_sign_in().await, Ok(false)) => return Ok(None),

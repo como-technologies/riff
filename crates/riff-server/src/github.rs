@@ -52,6 +52,11 @@
 //!   repository, asks for a token with the rights of the role, compares
 //!   the rights that GitHub gave, and revokes the token at once. The
 //!   reply holds no token.
+//! - `riff github install` asks for the Apps with the account and the
+//!   repository (01M6Z7DMYAW52X62TN1DEX9NCG). riff-server gives the ID
+//!   of the install of each App on the account, for its page Configure,
+//!   and whether the install has the repository: GitHub gives the
+//!   installation of the repository to the App only then.
 //!
 //! The pages of the browser and the webhook need no riff token: the
 //! state, and the signature of GitHub, are their proof. The three calls
@@ -647,10 +652,11 @@ impl Client {
         Ok(Some(installation.id))
     }
 
-    /// True when `app` is installed on the account `owner`.
-    async fn installed_on(&self, app: &AppKeys, owner: &str) -> Result<bool, GitHubError> {
+    /// The installation of `app` on the account `owner`, or `None`.
+    async fn installed_on(&self, app: &AppKeys, owner: &str) -> Result<Option<u64>, GitHubError> {
         #[derive(Deserialize)]
         struct Installation {
+            id: u64,
             account: Account,
         }
         let what = format!("the installations of {}", app.slug);
@@ -663,17 +669,17 @@ impl Client {
                 .json()
                 .await
                 .map_err(|e| GitHubError(format!("{what}: {e}")))?;
-            if installations
+            if let Some(found) = installations
                 .iter()
-                .any(|i| i.account.login.eq_ignore_ascii_case(owner))
+                .find(|i| i.account.login.eq_ignore_ascii_case(owner))
             {
-                return Ok(true);
+                return Ok(Some(found.id));
             }
             if installations.len() < 100 {
                 break;
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// A token of the installation `installation` for the one repository
@@ -1332,33 +1338,50 @@ pub(crate) async fn created(
     html(StatusCode::OK, s.github.install_page(&apps, &pending))
 }
 
-/// `POST /v1/github/apps`: each App of the riff, and whether it is
-/// installed on the account of the query. Each person asks with no
-/// account, for example `riff init` for the bot of the guard. Only the
-/// owner or an admin asks with an account (01M6WPV8473EBABR1ZMEPZMTQQ).
+/// `POST /v1/github/apps`: each App of the riff, whether it is installed
+/// on the account of the query, with the ID of the install, and whether
+/// it is installed on the repository of the query. Each person asks with
+/// neither, for example `riff init` for the bot of the guard. Only the
+/// owner or an admin asks with an account or a repository
+/// (01M6WPV8473EBABR1ZMEPZMTQQ, 01M6Z7DMYAW52X62TN1DEX9NCG).
 pub(crate) async fn apps(
     AxumState(s): AxumState<crate::Shared>,
     Extension(signed_in): Extension<SignedIn>,
     Json(r): Json<GitHubApps>,
 ) -> crate::Reply<GitHubAppsReply> {
-    if r.owner.is_some() {
+    if r.owner.is_some() || r.repo.is_some() {
         need_admin(&s, &signed_in, "riff github install")?;
+    }
+    if let Some(repo) = r.repo.as_deref().filter(|repo| !valid_repo(repo)) {
+        let why = format!("{repo:?} is no repository OWNER/NAME of GitHub");
+        return Err((StatusCode::BAD_REQUEST, why));
     }
     let apps = apps_of(&s)
         .await
         .map_err(|e| keys_failed(e, &s.config.public_url))?;
+    let gateway = |e: GitHubError| (StatusCode::BAD_GATEWAY, e.0);
     let mut reply = GitHubAppsReply::default();
     for app in GitHubApp::ALL {
         let Some(keys) = apps.of(app) else {
             continue;
         };
-        let installed = match &r.owner {
-            Some(owner) => Some(
+        let installation = match &r.owner {
+            Some(owner) => s
+                .github
+                .client
+                .installed_on(keys, owner)
+                .await
+                .map_err(gateway)?,
+            None => None,
+        };
+        let has_repo = match &r.repo {
+            Some(repo) => Some(
                 s.github
                     .client
-                    .installed_on(keys, owner)
+                    .installation(keys, repo)
                     .await
-                    .map_err(|e| (StatusCode::BAD_GATEWAY, e.0))?,
+                    .map_err(gateway)?
+                    .is_some(),
             ),
             None => None,
         };
@@ -1368,7 +1391,9 @@ pub(crate) async fn apps(
             slug: keys.slug.clone(),
             bot: keys.bot(),
             bot_id: keys.bot_id,
-            installed,
+            installed: r.owner.as_ref().map(|_| installation.is_some()),
+            installation,
+            has_repo,
         });
     }
     Ok(Json(reply))

@@ -3510,6 +3510,23 @@
   (01M6WG52MWZB1SVQMMH6BKJSJ5), and it refuses and revokes a token with
   other rights. Its log line names the person, the repository and the
   end, never the token.
+- **01M6Z7DMYAW52X62TN1DEX9NCG** `riff github install OWNER`, in a clone
+  of a repository of OWNER or with `--repo OWNER/NAME`, asks riff-server
+  whether the install of each App on OWNER has the repository. It
+  refuses a `--repo` of another account. Only the owner or an admin of
+  the riff asks riff-server with a repository. For each App that is
+  installed without it, riff opens the page Configure of the install,
+  and says to add the repository under "Repository access". riff waits
+  at most 10 minutes until both installs have the repository. Then it
+  runs `riff github check` for the repository. `riff github create` ends
+  with the same steps in a clone. `riff github check` names each App
+  whose install does not have the repository, with the fix `riff github
+  install OWNER`.
+- **01M6Z7R4R56ANXBQN0XJZXNFXW** The how-to "Add another repository to
+  the riff" of "Start a Riff" has the step "Add the repository to the
+  installs of the Apps", with a copyable `sh` block for `riff github
+  install OWNER` and one for `riff github install OWNER --repo
+  OWNER/NAME`.
 
 ## Sign-in and tokens
 

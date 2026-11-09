@@ -237,7 +237,9 @@ Your browser opens the start page of the riff. On GitHub, click
 **Create GitHub App** for each App, then **Install** for each App, on
 the repositories of the riff. riff waits at most 10 minutes for the
 two installs. Then, in a clone of a repository of the account, it
-checks the token of each role.
+checks the token of each role. When an install does not have the
+repository of the clone, riff opens its page **Configure**: see
+[Add the repository to the installs of the Apps](start-a-riff.md#add-the-repository-to-the-installs-of-the-apps).
 
 ```mermaid
 sequenceDiagram

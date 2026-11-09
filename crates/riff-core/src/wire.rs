@@ -3020,14 +3020,15 @@ pub struct GitHubStarted {
     pub makes: Vec<GitHubApp>,
 }
 
-/// `POST /v1/github/apps`: the Apps of the riff, and whether each is
-/// installed on `owner`. Each person can ask with no `owner`. Only the
-/// owner and the admins can ask with one (01M6WPV8473EBABR1ZMEPZMTQQ).
+/// `POST /v1/github/apps`: the Apps of the riff, whether each is
+/// installed on `owner`, and whether its install has `repo`. Each person
+/// can ask with neither. Only the owner and the admins can ask with one
+/// (01M6WPV8473EBABR1ZMEPZMTQQ, 01M6Z7DMYAW52X62TN1DEX9NCG).
 ///
 /// ```
 /// use riff_core::wire::{Call, GitHubApps};
 ///
-/// let apps = GitHubApps { owner: Some("acme".into()) };
+/// let apps = GitHubApps { owner: Some("acme".into()), repo: None };
 /// assert_eq!(serde_json::to_string(&apps).unwrap(), r#"{"owner":"acme"}"#);
 /// assert_eq!(GitHubApps::PATH, "/v1/github/apps");
 /// ```
@@ -3035,6 +3036,9 @@ pub struct GitHubStarted {
 pub struct GitHubApps {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// A repository `OWNER/NAME`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
 }
 
 /// The reply to [`GitHubApps`]: each App that the riff has, in the
@@ -3049,6 +3053,7 @@ pub struct GitHubApps {
 /// assert_eq!(reply.apps[0].app, GitHubApp::Session);
 /// assert_eq!(reply.apps[0].installed, Some(true));
 /// assert_eq!(reply.apps[0].bot_id, None);
+/// assert_eq!((reply.apps[0].installation, reply.apps[0].has_repo), (None, None));
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GitHubAppsReply {
@@ -3072,6 +3077,14 @@ pub struct GitHubAppFacts {
     /// `None` for a query with no account.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed: Option<bool>,
+    /// The ID of the install on the account of the query, when the App
+    /// is installed there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation: Option<u64>,
+    /// True when the App is installed on the repository of the query,
+    /// `None` for a query with no repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_repo: Option<bool>,
 }
 
 /// `POST /v1/github/check`: `riff github check` for one repository
