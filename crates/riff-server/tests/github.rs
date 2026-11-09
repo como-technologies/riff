@@ -189,8 +189,26 @@ fn table(role: GitHubRole) -> BTreeMap<String, String> {
             ("statuses", "write"),
             ("checks", "read"),
             ("actions", "write"),
+            ("security_events", "write"),
+            ("secret_scanning_alerts", "write"),
+            ("vulnerability_alerts", "read"),
         ]),
     }
+}
+
+/// The rights of the lead on the alerts (01M6ZEJ4NEZGQFV3Q4BER5AW3S).
+const ALERTS: [&str; 3] = [
+    "security_events",
+    "secret_scanning_alerts",
+    "vulnerability_alerts",
+];
+
+/// The rights of the lead with no right on the alerts: the rights of a
+/// lead App that riff made before them (01M6ZHWVPD7MN6GH6GS0GVETHA).
+fn no_alerts() -> BTreeMap<String, String> {
+    let mut lead = table(GitHubRole::Lead);
+    lead.retain(|name, _| !ALERTS.contains(&name.as_str()));
+    lead
 }
 
 /// The rights that no App asks for.
@@ -203,9 +221,10 @@ const NEVER: [&str; 6] = [
     "packages",
 ];
 
-/// 01M6WG52MWZB1SVQMMH6BKJSJ5, 01M6WG52QHC8E24RJ33ZPVHZSJ: the manifest
-/// of each App has only the rights of its roles, and the one of the
-/// session App has the webhook and the events of the riff.
+/// 01M6WG52MWZB1SVQMMH6BKJSJ5, 01M6WG52QHC8E24RJ33ZPVHZSJ,
+/// 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the manifest of each App has only the
+/// rights of its roles, and the one of the session App has the webhook
+/// and the events of the riff.
 #[tokio::test]
 async fn each_manifest_has_only_the_rights_of_its_roles() {
     let fake = FakeGitHub::start().await;
@@ -251,6 +270,13 @@ async fn each_manifest_has_only_the_rights_of_its_roles() {
     );
     assert_eq!(lead["name"], "riff-acme-lead");
     assert_eq!(lead["default_permissions"], json!(table(GitHubRole::Lead)));
+    // 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the lead reads the alerts, and
+    // dismisses a false positive. No worker and no verifier does.
+    for name in ALERTS {
+        assert!(lead["default_permissions"].get(name).is_some(), "{lead}");
+        let asked = session["default_permissions"].get(name);
+        assert!(asked.is_none(), "{name}: {session}");
+    }
     assert!(lead.get("hook_attributes").is_none(), "{lead}");
     assert!(lead.get("default_events").is_none(), "{lead}");
 
@@ -1012,6 +1038,13 @@ async fn each_role_gets_a_token_of_its_own_repository_with_its_rights_and_no_mor
         assert!(reply.problem.is_none(), "{id}: {text}");
         assert!(reply.token.as_deref().unwrap().starts_with("ghs_"));
         assert_eq!(reply.rights, table(reply.role), "{id}");
+        // 01M6ZEJ4NEZGQFV3Q4BER5AW3S: only the token of the lead App has
+        // the rights on the alerts.
+        let alerts = ALERTS
+            .iter()
+            .filter(|name| reply.rights.contains_key(**name));
+        let want = if reply.role == GitHubRole::Lead { 3 } else { 0 };
+        assert_eq!(alerts.count(), want, "{id}: {text}");
         got.push((reply.role, reply.bot.unwrap(), reply.bot_id));
     }
     let worker = (GitHubRole::Worker, "riff-acme[bot]".to_owned(), Some(1101));
@@ -1272,6 +1305,139 @@ async fn a_token_of_the_daemon_has_a_log_line_with_no_token_and_the_rights_of_th
         assert!(!log.contains(token.as_str()), "a token in: {log}");
         assert!(!text.contains(token.as_str()), "a token in: {text}");
     }
+}
+
+/// The lines of `log` with the severity `WARNING`.
+fn warnings(log: &str) -> Vec<Value> {
+    log.lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["severity"] == "WARNING")
+        .collect()
+}
+
+/// 01M6ZHWVPD7MN6GH6GS0GVETHA: the install of the lead App lacks the
+/// rights on the alerts, as an install of a lead App that riff made
+/// before them. GitHub refuses each token that asks for them. riff-server
+/// asks again with the rights of the lead with no right on the alerts:
+/// the lead and the daemon still get a token, and each token logs one
+/// warning with the fix. A refusal of another right gives no token, as
+/// before.
+#[tokio::test]
+async fn a_lead_app_with_no_rights_on_the_alerts_still_gives_the_lead_a_token() {
+    // The log of this thread misses lines while other tests run.
+    if !isolated::rerun_alone(
+        module_path!(),
+        "a_lead_app_with_no_rights_on_the_alerts_still_gives_the_lead_a_token",
+    ) {
+        return;
+    }
+    let lines = Lines::default();
+    let writer = lines.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .event_format(riff_server::logline::JsonLines)
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _log = tracing::subscriber::set_default(subscriber);
+    let log = || String::from_utf8(lines.0.lock().unwrap().clone()).unwrap();
+
+    let s = sessions().await;
+    s.fake.seen().lacks = ALERTS.map(str::to_owned).to_vec();
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "l1" })).await;
+    assert_eq!(status, 200, "{text}");
+    let reply: SessionToken = serde_json::from_str(&text).unwrap();
+    assert_eq!(reply.role, GitHubRole::Lead);
+    assert!(reply.token.as_deref().unwrap().starts_with("ghs_"));
+    assert!(reply.problem.is_none(), "{text}");
+    assert_eq!(reply.rights, no_alerts());
+    let body = |rights| json!({ "repositories": ["app"], "permissions": rights });
+    let first = (202, body(table(GitHubRole::Lead)));
+    let again = (202, body(no_alerts()));
+    assert_eq!(s.fake.seen().asked, [first.clone(), again.clone()]);
+    let warned = warnings(&log());
+    assert_eq!(warned.len(), 1, "{}", log());
+    assert_eq!(warned[0]["repo"], REPO, "{}", warned[0]);
+    assert_eq!(warned[0]["app"], "riff-acme-lead", "{}", warned[0]);
+    let message = warned[0]["message"].as_str().unwrap();
+    for words in [
+        "GitHub refused a token of riff-acme-lead with the rights on the alerts \
+         (security_events, secret_scanning_alerts, vulnerability_alerts): ",
+        "The permissions requested are not granted to this installation. riff-server",
+        "riff-server asked again with no right on the alerts.",
+        "Fix: on GitHub, give riff-acme-lead these rights, and accept them on each install.",
+        "See \"Accept the new rights of the lead App\" in the book",
+    ] {
+        assert!(message.contains(words), "{words}: {message}");
+    }
+
+    // The daemon writes as the lead App too.
+    let (status, text) = daemon_token_of(&s, &s.ada, REPO).await;
+    assert_eq!(status, 200, "{text}");
+    let reply: SessionToken = serde_json::from_str(&text).unwrap();
+    assert!(reply.token.is_some() && reply.problem.is_none(), "{text}");
+    assert_eq!(reply.rights, no_alerts());
+    assert_eq!(s.fake.seen().asked[2..], [first, again]);
+    assert_eq!(warnings(&log()).len(), 2, "{}", log());
+    assert!(s.fake.seen().revoked.is_empty());
+
+    // A worker asks for no right on the alerts, so GitHub gives its token.
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "w1" })).await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(warnings(&log()).len(), 2, "{}", log());
+
+    // An install that lacks another right gives no token: riff-server
+    // asks again only for the lead, and the second ask fails too.
+    s.fake.seen().lacks = vec!["contents".to_owned()];
+    let asked = s.fake.seen().asked.len();
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "w1" })).await;
+    assert_eq!(status, 502, "{text}");
+    assert!(text.contains("GitHub replied 422"), "{text}");
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "l1" })).await;
+    assert_eq!(status, 502, "{text}");
+    assert_eq!(s.fake.seen().asked.len(), asked + 3);
+    let log = log();
+    let fallbacks = warnings(&log)
+        .into_iter()
+        .filter(|line| line["message"].as_str().unwrap().contains("asked again"))
+        .count();
+    assert_eq!(fallbacks, 2, "{log}");
+    for token in s.fake.seen().tokens.iter() {
+        assert!(!log.contains(token.as_str()), "a token in: {log}");
+    }
+}
+
+/// 01M6ZHWVPD7MN6GH6GS0GVETHA: when the install of the lead App lacks
+/// the rights on the alerts, the check of the lead gives the rights of
+/// the lead with no right on the alerts, and names each missing right.
+/// riff-server revokes each token.
+#[tokio::test]
+async fn the_check_names_each_right_on_the_alerts_that_the_lead_app_lacks() {
+    let s = sessions().await;
+    s.fake.seen().lacks = ALERTS.map(str::to_owned).to_vec();
+    let (status, text) = call(&s.url, &s.ada, "/v1/github/check", json!({ "repo": REPO })).await;
+    assert_eq!(status, 200, "{text}");
+    let checked: GitHubChecked = serde_json::from_str(&text).unwrap();
+    let lead = &checked.roles[2];
+    assert_eq!(lead.role, GitHubRole::Lead);
+    assert!(!lead.passed());
+    assert!(lead.problem.is_none(), "{lead:?}");
+    assert_eq!(lead.rights, no_alerts());
+    assert_eq!(
+        lead.missing,
+        [
+            "secret_scanning_alerts: write",
+            "security_events: write",
+            "vulnerability_alerts: read"
+        ]
+    );
+    assert!(lead.extra.is_empty(), "{lead:?}");
+    assert!(
+        checked.roles[..2].iter().all(|role| role.passed()),
+        "{text}"
+    );
+    let seen = s.fake.seen();
+    assert_eq!(seen.asked.len(), 4);
+    assert_eq!(seen.revoked, seen.tokens);
 }
 
 /// 01M6YC3SYATQW7GZZV3APFG85B: a secret that riff-server cannot read pauses the whole

@@ -313,14 +313,52 @@ riff github check
 | `checks` | read | read | read |
 | `actions` | write | read | write |
 | `workflows` | write | none | none |
+| `security_events` | none | none | write |
+| `secret_scanning_alerts` | none | none | write |
+| `vulnerability_alerts` | none | none | read |
 
 No role gets `administration`, `deployments`, `environments`,
 `secrets`, `variables` or `packages`. To add a repository of another
 account, see
 [Add another repository to the riff](start-a-riff.md#add-another-repository-to-the-riff).
+For why the lead has the rights on the alerts, see
+[Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role).
 
 To make the Apps again, first delete both Apps in the settings of the
 account on GitHub. Then run `riff github create` again.
+
+### Accept the new rights of the lead App
+
+The lead App asks for three rights on the alerts:
+`security_events: write`, `secret_scanning_alerts: write` and
+`vulnerability_alerts: read`. GitHub gives a right to an install only
+when the owner of the account accepts it. On a new App, **Install**
+accepts each right of the App. A lead App that you made before has none
+of them. The deploy needs no step of yours first: until each install
+has the rights, riff-server gives the lead a token with its other
+rights, and logs one warning. Then the lead works as before, with no
+access to the alerts. To give the rights:
+
+1. On GitHub, open the settings of the lead App: **Settings** of the
+   account, **Developer settings**, **GitHub Apps**,
+   `riff-OWNER-lead`, **Edit**, **Permissions & events**.
+2. Under **Repository permissions**, set **Code scanning alerts** to
+   **Read and write**, **Secret scanning alerts** to **Read and
+   write**, and **Dependabot alerts** to **Read-only**. Click **Save
+   changes**.
+3. GitHub asks the owner of each install to accept the new rights. On
+   each account with an install of `riff-OWNER-lead`, open
+   **Settings**, **GitHub Apps**, **Configure** of `riff-OWNER-lead`,
+   then **Review request**. Click **Accept new permissions**.
+
+Then check the tokens of each role in a clone of each repository of the
+riff. The row `lead` must have `secret_scanning_alerts: write`,
+`security_events: write` and `vulnerability_alerts: read`. Before the
+accept, the row names each missing right with the fix:
+
+```sh
+riff github check
+```
 
 ## Invite a person
 

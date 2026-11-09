@@ -118,8 +118,66 @@ async fn riff_github_check_prints_the_bot_and_the_rights_of_each_role() {
          verifier  riff-acme[bot]       actions: read, checks: read, contents: read, issues: read, \
          metadata: read, pull_requests: read, statuses: read\n  \
          lead      riff-acme-lead[bot]  actions: write, checks: read, contents: write, issues: write, \
-         metadata: read, pull_requests: write, statuses: write\n\
+         metadata: read, pull_requests: write, secret_scanning_alerts: write, security_events: write, \
+         statuses: write, vulnerability_alerts: read\n\
          riff github check: each role has its rights and no more. riff-server revoked each token.\n"
+    );
+    let seen = fake.seen();
+    assert_eq!(seen.tokens.len(), 3);
+    assert_eq!(seen.revoked, seen.tokens);
+}
+
+/// 01M6ZHWVPD7MN6GH6GS0GVETHA: the install of the lead App lacks the
+/// rights on the alerts, as an install of a lead App that riff made
+/// before them. `riff github check` prints the rights of the token of
+/// the lead, names each missing right with the fix, and exits with
+/// status 1.
+#[tokio::test]
+async fn riff_github_check_names_each_right_that_the_lead_misses_with_the_fix() {
+    let fake = FakeGitHub::start().await;
+    {
+        let mut seen = fake.seen();
+        seen.installed = true;
+        seen.lacks = [
+            "security_events",
+            "secret_scanning_alerts",
+            "vulnerability_alerts",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+    }
+    let keys = keys_dir();
+    let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
+    let env = Isolated::new();
+    common::sign_in(&server, &env.riff_home(), "bob");
+    let repo = clone();
+    let out = env
+        .tokio_riff()
+        .args(["github", "check"])
+        .current_dir(repo.path())
+        .env("RIFF_SERVER", &*server)
+        // A plain terminal: the test can run under Claude Code.
+        .env_remove("CLAUDECODE")
+        .output()
+        .await
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    let lead = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("lead "))
+        .unwrap_or_else(|| panic!("no line of the lead in:\n{stdout}"));
+    assert_eq!(
+        lead,
+        "  lead      riff-acme-lead[bot]  actions: write, checks: read, contents: write, \
+         issues: write, metadata: read, pull_requests: write, statuses: write; fail: it misses \
+         secret_scanning_alerts: write, security_events: write, vulnerability_alerts: read. \
+         The fix: give riff-acme-lead each right on GitHub, then accept the new rights on each \
+         install. See \"Accept the new rights of the lead App\" in the book"
+    );
+    assert!(
+        stdout.ends_with("riff github check: 1 role failed. riff-server revoked each token.\n"),
+        "{stdout}"
     );
     let seen = fake.seen();
     assert_eq!(seen.tokens.len(), 3);
@@ -787,8 +845,33 @@ fn the_book_says_who_acts_on_github_for_each_role() {
     }
     assert!(who.contains("No session gets your token."), "{who}");
     let commands = crate::book::commands_in(who);
-    assert_eq!(commands, ["riff whoami", "riff daemon status"]);
-    crate::book::each_is_real(&commands);
+    let (gh, riff): (Vec<_>, Vec<_>) = commands.into_iter().partition(|c| c.starts_with("gh "));
+    assert_eq!(riff, ["riff whoami", "riff daemon status"]);
+    crate::book::each_is_real(&riff);
+    // 01M6ZEJ4NEZGQFV3Q4BER5AW3S, 01M6ZHWVPD7MN6GH6GS0GVETHA: the rights
+    // of the lead App on the alerts, why, the dismissed alerts, and the
+    // token of a lead App with no rights on the alerts.
+    assert_eq!(gh.len(), 1, "{gh:?}");
+    assert!(
+        gh[0].starts_with("gh api 'repos/OWNER/NAME/code-scanning/alerts?state=dismissed' --jq "),
+        "{gh:?}"
+    );
+    let text = who.split_whitespace().collect::<Vec<_>>().join(" ");
+    for words in [
+        "Only the lead App has the rights on the alerts of a repository: \
+         `security_events: write` for the code scanning alerts, for example of CodeQL, \
+         `secret_scanning_alerts: write` for the secret scanning alerts, and \
+         `vulnerability_alerts: read` for the Dependabot alerts.",
+        "dismisses a code scanning or a secret scanning alert that is a false positive.",
+        "So a failed CodeQL check of a pull request does not wait for a person.",
+        "The lead dismisses an alert only after a review, and writes the reason on the alert.",
+        "riff-server asks again with the other rights of the lead, and logs one warning with \
+         the fix.",
+        "`riff github check` names each missing right.",
+        "(start-a-team-riff.md#accept-the-new-rights-of-the-lead-app)",
+    ] {
+        assert!(text.contains(words), "{words}: {who}");
+    }
     // The lines of `riff daemon status` are the lines of riff.
     let acts = riff::daemon::gh_token::ActsAs::NoToken {
         why: "riff-acme-lead is not installed on acme/app: riff github install acme".into(),

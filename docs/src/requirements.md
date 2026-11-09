@@ -3446,10 +3446,8 @@
   worker gets `metadata`, `checks` and `statuses` read, and `contents`,
   `pull_requests`, `issues`, `actions` and `workflows` write. A verifier
   gets read only, of `metadata`, `contents`, `pull_requests`, `issues`,
-  `statuses`, `checks` and `actions`. The lead gets the rights of a
-  worker, with `statuses` write and no `workflows`. No role gets
-  `administration`, `deployments`, `environments`, `secrets`,
-  `variables` or `packages`.
+  `statuses`, `checks` and `actions`. No role gets `administration`,
+  `deployments`, `environments`, `secrets`, `variables` or `packages`.
 - **01M6WG52QHC8E24RJ33ZPVHZSJ** The manifest of each App asks for the
   highest right of its roles and no more. The manifest of the session
   App also asks for `merge_queues` read, and sets the webhook
@@ -3555,6 +3553,21 @@
   installs of the Apps", with a copyable `sh` block for `riff github
   install OWNER` and one for `riff github install OWNER --repo
   OWNER/NAME`.
+- **01M6ZEJ4NEZGQFV3Q4BER5AW3S** The lead gets the rights of a worker,
+  with `statuses` write and no `workflows`, and the rights on the
+  alerts: `security_events` write, `secret_scanning_alerts` write and
+  `vulnerability_alerts` read. So the lead reads the code scanning, the
+  secret scanning and the Dependabot alerts of its repository, and
+  dismisses a false positive. Supersedes 01M6WG52MWZB1SVQMMH6BKJSJ5 in
+  part.
+- **01M6ZHWVPD7MN6GH6GS0GVETHA** When GitHub refuses a token of the lead
+  App that asks for the rights on the alerts
+  (01M6ZEJ4NEZGQFV3Q4BER5AW3S), riff-server asks again with the rights
+  of the lead with no right on the alerts, and logs one warning with the
+  fix. The lead and the daemon get that token, so the deploy of
+  riff-server needs no step of the owner first. `riff github check`
+  names each right that a role misses, with the fix: give the right to
+  the App on GitHub, and accept it on each install.
 
 ## Sign-in and tokens
 

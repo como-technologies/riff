@@ -57,6 +57,13 @@
 //!   of the install of each App on the account, for its page Configure,
 //!   and whether the install has the repository: GitHub gives the
 //!   installation of the repository to the App only then.
+//! - A token of the lead asks for the rights on the alerts
+//!   ([`ALERT_RIGHTS`], 01M6ZEJ4NEZGQFV3Q4BER5AW3S). GitHub refuses a
+//!   token that asks for a right that the install lacks, as on an install
+//!   of a lead App that riff made before them. Then riff-server asks
+//!   again with the [`fallback_rights`] of the lead, and logs one warning
+//!   with the fix (01M6ZHWVPD7MN6GH6GS0GVETHA). The check of the lead then
+//!   names each missing right.
 //!
 //! The pages of the browser and the webhook need no riff token: the
 //! state, and the signature of GitHub, are their proof. The three calls
@@ -149,7 +156,8 @@ impl Default for Settings {
     }
 }
 
-/// The rights of the token of `role` (01M6WG52MWZB1SVQMMH6BKJSJ5).
+/// The rights of the token of `role` (01M6WG52MWZB1SVQMMH6BKJSJ5,
+/// 01M6ZEJ4NEZGQFV3Q4BER5AW3S).
 ///
 /// ```
 /// use riff_core::wire::GitHubRole;
@@ -162,8 +170,12 @@ impl Default for Settings {
 /// let verifier = rights(GitHubRole::Verifier);
 /// assert!(verifier.values().all(|level| level == "read"));
 /// assert!(!verifier.contains_key("workflows"));
+/// assert!(!worker.contains_key("security_events"));
 /// let lead = rights(GitHubRole::Lead);
 /// assert_eq!(lead["statuses"], "write");
+/// assert_eq!(lead["security_events"], "write");
+/// assert_eq!(lead["secret_scanning_alerts"], "write");
+/// assert_eq!(lead["vulnerability_alerts"], "read");
 /// assert!(!lead.contains_key("workflows"));
 /// ```
 pub fn rights(role: GitHubRole) -> Rights {
@@ -191,8 +203,16 @@ pub fn rights(role: GitHubRole) -> Rights {
             &[],
         ),
         GitHubRole::Lead => (
-            &["metadata", "checks"],
-            &["contents", "pull_requests", "issues", "statuses", "actions"],
+            &["metadata", "checks", "vulnerability_alerts"],
+            &[
+                "contents",
+                "pull_requests",
+                "issues",
+                "statuses",
+                "actions",
+                "security_events",
+                "secret_scanning_alerts",
+            ],
         ),
     };
     let level = |names: &[&str], level: &str| {
@@ -207,6 +227,38 @@ pub fn rights(role: GitHubRole) -> Rights {
         .collect()
 }
 
+/// The rights of the lead on the alerts of its repository
+/// (01M6ZEJ4NEZGQFV3Q4BER5AW3S): code scanning, secret scanning and
+/// Dependabot. A lead App that riff made before them has none of them.
+pub const ALERT_RIGHTS: [&str; 3] = [
+    "security_events",
+    "secret_scanning_alerts",
+    "vulnerability_alerts",
+];
+
+/// The rights that riff-server asks for again when GitHub refuses a
+/// token of `role` (01M6ZHWVPD7MN6GH6GS0GVETHA): the rights of the role
+/// with no [`ALERT_RIGHTS`]. `None` for a role with no right on the
+/// alerts.
+///
+/// ```
+/// use riff_core::wire::GitHubRole;
+/// use riff_server::github::{ALERT_RIGHTS, fallback_rights, rights};
+///
+/// let fallback = fallback_rights(GitHubRole::Lead).unwrap();
+/// assert_eq!(fallback["statuses"], "write");
+/// assert!(ALERT_RIGHTS.iter().all(|name| !fallback.contains_key(*name)));
+/// assert_eq!(fallback.len() + ALERT_RIGHTS.len(), rights(GitHubRole::Lead).len());
+/// assert_eq!(fallback_rights(GitHubRole::Worker), None);
+/// assert_eq!(fallback_rights(GitHubRole::Verifier), None);
+/// ```
+pub fn fallback_rights(role: GitHubRole) -> Option<Rights> {
+    let mut rights = rights(role);
+    let before = rights.len();
+    rights.retain(|name, _| !ALERT_RIGHTS.contains(&name.as_str()));
+    (rights.len() < before).then_some(rights)
+}
+
 /// The rights that the App `app` asks for: the highest level of each
 /// right of its roles, and for the session App the reads of its
 /// [`EVENTS`] (01M6WG52QHC8E24RJ33ZPVHZSJ).
@@ -218,7 +270,12 @@ pub fn rights(role: GitHubRole) -> Rights {
 /// let session = app_rights(GitHubApp::Session);
 /// assert_eq!(session["contents"], "write");
 /// assert_eq!(session["merge_queues"], "read");
-/// assert!(!app_rights(GitHubApp::Lead).contains_key("merge_queues"));
+/// assert!(!session.contains_key("security_events"));
+/// let lead = app_rights(GitHubApp::Lead);
+/// assert_eq!(lead["security_events"], "write");
+/// assert_eq!(lead["secret_scanning_alerts"], "write");
+/// assert_eq!(lead["vulnerability_alerts"], "read");
+/// assert!(!lead.contains_key("merge_queues"));
 /// ```
 pub fn app_rights(app: GitHubApp) -> Rights {
     let mut highest = Rights::new();
@@ -488,11 +545,31 @@ impl States {
 /// A call to GitHub that failed. The text names the call and the reply
 /// of GitHub, never a key or a token.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GitHubError(pub String);
+pub struct GitHubError {
+    pub text: String,
+    /// The status of the reply of GitHub, when GitHub replied.
+    pub status: Option<StatusCode>,
+}
+
+impl GitHubError {
+    /// An error with no reply of GitHub.
+    pub fn new(text: String) -> Self {
+        GitHubError { text, status: None }
+    }
+
+    /// True when GitHub refused the call: a 403 or a 422. GitHub
+    /// refuses a token that asks for a right that the install lacks.
+    pub fn refused(&self) -> bool {
+        matches!(
+            self.status,
+            Some(StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY)
+        )
+    }
+}
 
 impl std::fmt::Display for GitHubError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.text)
     }
 }
 
@@ -521,6 +598,10 @@ struct Granted {
     permissions: Rights,
     #[serde(default)]
     expires_at: Option<String>,
+    /// The rights that riff-server asked for: the rights of the role, or
+    /// its [`fallback_rights`].
+    #[serde(skip)]
+    asked: Rights,
 }
 
 /// Why riff-server has no token of a role for a repository.
@@ -575,7 +656,7 @@ impl Client {
         let reply = request
             .send()
             .await
-            .map_err(|e| GitHubError(format!("{what}: {e}")))?;
+            .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
         checked(what, reply).await
     }
 
@@ -589,7 +670,7 @@ impl Client {
         let converted: Converted = reply
             .json()
             .await
-            .map_err(|e| GitHubError(format!("{what}: {e}")))?;
+            .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
         Ok(AppKeys::new(
             converted.id,
             &converted.slug,
@@ -613,7 +694,7 @@ impl Client {
         let user: User = reply
             .json()
             .await
-            .map_err(|e| GitHubError(format!("{what}: {e}")))?;
+            .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
         Ok(user.id)
     }
 
@@ -640,7 +721,7 @@ impl Client {
             .as_app(app, reqwest::Method::GET, &path)?
             .send()
             .await
-            .map_err(|e| GitHubError(format!("{what}: {e}")))?;
+            .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
         if reply.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -648,7 +729,7 @@ impl Client {
             .await?
             .json()
             .await
-            .map_err(|e| GitHubError(format!("{what}: {e}")))?;
+            .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
         Ok(Some(installation.id))
     }
 
@@ -668,7 +749,7 @@ impl Client {
             let installations: Vec<Installation> = reply
                 .json()
                 .await
-                .map_err(|e| GitHubError(format!("{what}: {e}")))?;
+                .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
             if let Some(found) = installations
                 .iter()
                 .find(|i| i.account.login.eq_ignore_ascii_case(owner))
@@ -695,11 +776,14 @@ impl Client {
         let path = format!("/app/installations/{installation}/access_tokens");
         let body = serde_json::json!({ "repositories": [name], "permissions": rights });
         let request = self.as_app(app, reqwest::Method::POST, &path)?.json(&body);
-        self.send(&what, request)
+        let mut granted: Granted = self
+            .send(&what, request)
             .await?
             .json()
             .await
-            .map_err(|e| GitHubError(format!("{what}: {e}")))
+            .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
+        granted.asked = rights.clone();
+        Ok(granted)
     }
 
     /// Revokes `token` at once.
@@ -726,10 +810,10 @@ async fn checked(what: &str, reply: reqwest::Response) -> Result<reqwest::Respon
         .ok()
         .and_then(|v| v["message"].as_str().map(str::to_owned))
         .unwrap_or(text);
-    Err(GitHubError(format!(
-        "{what}: GitHub replied {status}: {}",
-        message.trim()
-    )))
+    Err(GitHubError {
+        text: format!("{what}: GitHub replied {status}: {}", message.trim()),
+        status: Some(status),
+    })
 }
 
 /// A new JWT of the App `app`, signed with its key: good for
@@ -745,9 +829,9 @@ fn jwt(app: &AppKeys) -> Result<String, GitHubError> {
     };
     // The error of a key names no part of the key.
     let key = EncodingKey::from_rsa_pem(app.key.as_bytes())
-        .map_err(|e| GitHubError(format!("the key of {} does not read: {e}", app.slug)))?;
+        .map_err(|e| GitHubError::new(format!("the key of {} does not read: {e}", app.slug)))?;
     jsonwebtoken::encode(&Header::new(Algorithm::RS256), &claims, &key)
-        .map_err(|e| GitHubError(format!("the JWT of {}: {e}", app.slug)))
+        .map_err(|e| GitHubError::new(format!("the JWT of {}: {e}", app.slug)))
 }
 
 /// The GitHub part of a riff-server: the keys of the Apps, the states of
@@ -855,7 +939,7 @@ impl GitHub {
     /// Swaps `code` for the keys of `pending.app`, reads the user ID of
     /// its bot, and keeps them.
     async fn swap(&self, code: &str, pending: &Pending) -> Result<AppKeys, String> {
-        let mut keys = self.client.convert(code).await.map_err(|e| e.0)?;
+        let mut keys = self.client.convert(code).await.map_err(|e| e.text)?;
         match self.client.bot_id(&keys.slug).await {
             Ok(id) => keys.bot_id = Some(id),
             Err(e) => tracing::warn!("no user ID of the bot of {}: {e}", keys.slug),
@@ -873,11 +957,12 @@ impl GitHub {
         Ok(keys)
     }
 
-    /// `granted` when GitHub gave it the rights of `role` and no more
-    /// (01M6WPMEEWX09DHJZF18BKBPYW). Else the token goes back to GitHub at
+    /// `granted` when GitHub gave it the rights that riff-server asked
+    /// for and no more (01M6WPMEEWX09DHJZF18BKBPYW): the rights of `role`,
+    /// or its [`fallback_rights`]. Else the token goes back to GitHub at
     /// once, and the error says why.
     async fn of_role(&self, role: GitHubRole, granted: Granted) -> Result<Granted, String> {
-        let (missing, extra) = differ(&rights(role), &granted.permissions);
+        let (missing, extra) = differ(&granted.asked, &granted.permissions);
         if missing.is_empty() && extra.is_empty() {
             return Ok(granted);
         }
@@ -894,7 +979,10 @@ impl GitHub {
 
     /// A token of the App of `role` for the one repository `repo`, with
     /// the rights of the role: the App, its installation on the
-    /// repository, and the token.
+    /// repository, and the token. When GitHub refuses the rights on the
+    /// alerts, riff-server asks again with the [`fallback_rights`] of the
+    /// role, and logs one warning with the fix
+    /// (01M6ZHWVPD7MN6GH6GS0GVETHA).
     async fn grant<'a>(
         &self,
         apps: &'a Apps,
@@ -917,13 +1005,35 @@ impl GitHub {
                     keys.slug
                 )));
             }
-            Err(e) => return Err(NoGrant::Failed(e.0)),
+            Err(e) => return Err(NoGrant::Failed(e.text)),
         };
-        let granted = self
+        let first = match self
             .client
             .token(keys, installation, name, &rights(role))
             .await
-            .map_err(|e| NoGrant::Failed(e.0))?;
+        {
+            Ok(granted) => return Ok((keys, granted)),
+            Err(e) => e,
+        };
+        let Some(fallback) = fallback_rights(role).filter(|_| first.refused()) else {
+            return Err(NoGrant::Failed(first.text));
+        };
+        let granted = self
+            .client
+            .token(keys, installation, name, &fallback)
+            .await
+            .map_err(|e| NoGrant::Failed(e.text))?;
+        let slug = &keys.slug;
+        tracing::warn!(
+            repo,
+            app = %slug,
+            "GitHub refused a token of {slug} with the rights on the alerts ({}): {}. \
+             riff-server asked again with no right on the alerts. Fix: on GitHub, give {slug} \
+             these rights, and accept them on each install. See \"Accept the new rights of \
+             the lead App\" in the book",
+            ALERT_RIGHTS.join(", "),
+            first.text.trim_end_matches('.')
+        );
         Ok((keys, granted))
     }
 
@@ -1359,7 +1469,7 @@ pub(crate) async fn apps(
     let apps = apps_of(&s)
         .await
         .map_err(|e| keys_failed(e, &s.config.public_url))?;
-    let gateway = |e: GitHubError| (StatusCode::BAD_GATEWAY, e.0);
+    let gateway = |e: GitHubError| (StatusCode::BAD_GATEWAY, e.text);
     let mut reply = GitHubAppsReply::default();
     for app in GitHubApp::ALL {
         let Some(keys) = apps.of(app) else {
@@ -1683,4 +1793,67 @@ pub(crate) async fn check(
 /// (01M6WG52QHC8E24RJ33ZPVHZSJ).
 pub(crate) async fn hook() -> StatusCode {
     StatusCode::ACCEPTED
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The rights on the alerts of the lead, with their levels.
+    const ALERTS: [(&str, &str); 3] = [
+        ("security_events", "write"),
+        ("secret_scanning_alerts", "write"),
+        ("vulnerability_alerts", "read"),
+    ];
+
+    /// 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the lead reads the code scanning, the
+    /// secret scanning and the Dependabot alerts, and dismisses a false
+    /// positive. No other role does, and the session App asks for none
+    /// of the rights.
+    #[test]
+    fn only_the_lead_gets_the_rights_on_the_alerts() {
+        assert_eq!(ALERTS.map(|(name, _)| name), ALERT_RIGHTS);
+        for role in GitHubRole::ALL {
+            for (name, level) in ALERTS {
+                let got = rights(role).get(name).cloned();
+                let want = (role == GitHubRole::Lead).then(|| level.to_owned());
+                assert_eq!(got, want, "{role}: {name}");
+            }
+        }
+        let lead = manifest(GitHubApp::Lead, "acme", "https://riff.example.com");
+        let session = manifest(GitHubApp::Session, "acme", "https://riff.example.com");
+        for (name, level) in ALERTS {
+            assert_eq!(lead["default_permissions"][name], level, "{name}");
+            assert!(session["default_permissions"].get(name).is_none(), "{name}");
+        }
+    }
+
+    /// 01M6ZHWVPD7MN6GH6GS0GVETHA: the fallback of the lead keeps each
+    /// other right of the lead, and only the lead has one.
+    #[test]
+    fn the_fallback_of_the_lead_is_its_rights_with_no_alerts() {
+        let mut want = rights(GitHubRole::Lead);
+        for (name, _) in ALERTS {
+            want.remove(name);
+        }
+        assert_eq!(fallback_rights(GitHubRole::Lead), Some(want));
+        assert_eq!(fallback_rights(GitHubRole::Worker), None);
+        assert_eq!(fallback_rights(GitHubRole::Verifier), None);
+    }
+
+    /// 01M6ZHWVPD7MN6GH6GS0GVETHA: only a 403 or a 422 of GitHub is a
+    /// refusal: no reply, a 404 and a 500 are not.
+    #[test]
+    fn a_refusal_is_a_403_or_a_422() {
+        let error = |status| GitHubError {
+            text: "a token of riff-acme-lead".into(),
+            status,
+        };
+        assert!(error(Some(StatusCode::UNPROCESSABLE_ENTITY)).refused());
+        assert!(error(Some(StatusCode::FORBIDDEN)).refused());
+        assert!(!error(Some(StatusCode::NOT_FOUND)).refused());
+        assert!(!error(Some(StatusCode::INTERNAL_SERVER_ERROR)).refused());
+        assert!(!error(None).refused());
+        assert!(!GitHubError::new("no reply".into()).refused());
+    }
 }
