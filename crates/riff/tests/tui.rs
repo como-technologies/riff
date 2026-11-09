@@ -1104,6 +1104,55 @@ async fn a_paste_of_three_lines_in_the_chat_tab_sends_one_message() {
     }
 }
 
+/// 01M6Z8AHEHCPR1A3Z3CEAN59AR: while the log of the Chat tab is
+/// scrolled up, a new line stays under the window, and the row over the
+/// prompt says `1 new line below: End`. `End` in the empty prompt shows
+/// the line, and the row goes.
+#[tokio::test]
+async fn a_new_line_under_the_window_of_the_chat_tab_gives_a_row_and_end_shows_it() {
+    use riff_core::name::SessionUri;
+    use riff_core::wire::Kind;
+
+    let server = crate::common::start_signed().await;
+    let chat = riff::chat::thread();
+    // 20 lines of mike before the TUI starts: more rows than the log has.
+    let mike: SessionUri = "riff://mike@heron".parse().unwrap();
+    let mike_api = server.api("mike", None);
+    mike_api.join(&mike, &chat).await.unwrap();
+    for n in 0..20 {
+        mike_api
+            .post(&mike, Some(&chat), &[], &format!("line {n}"), Kind::Message)
+            .await
+            .unwrap();
+    }
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("2").await;
+    tty.shows(|rows| rows[20].ends_with("<mike> line 19") && rows[21] == ">")
+        .await;
+    // PgUp: the log shows older lines.
+    tty.press("\x1b[5~").await;
+    tty.shows(|rows| rows[20].ends_with("<mike> line 16")).await;
+
+    mike_api
+        .post(&mike, Some(&chat), &[], "a new line", Kind::Message)
+        .await
+        .unwrap();
+    let rows = tty.shows(|rows| rows[20] == " 1 new line below: End").await;
+    assert!(rows[19].ends_with("<mike> line 16"), "{rows:#?}");
+    assert!(!rows.iter().any(|r| r.ends_with("a new line")), "{rows:#?}");
+
+    // End shows the line, and the row goes.
+    tty.press("\x1b[F").await;
+    let rows = tty
+        .shows(|rows| rows[20].ends_with("<mike> a new line"))
+        .await;
+    assert!(rows[19].ends_with("<mike> line 19"), "{rows:#?}");
+    assert!(!rows.iter().any(|r| r.contains("below")), "{rows:#?}");
+    tty.press("\x03").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// The Chat tab keeps the line when the window of the terminal loses the
 /// focus and gets it back (#1762, 01M6XT6MCZ38XEN7ZHWTRF50Z5). The TUI
 /// asks the terminal for focus events. After `Esc`, the loss of the

@@ -33,6 +33,18 @@
 //!   each more row starts under the sender. The newest lines show: `PgUp`
 //!   shows older lines ([`Scroll`],
 //!   01M6VG1P7BH32E5YAP0GJSNJJP).
+//! - **The row of the new lines** ([`new_below`],
+//!   01M6Z8AHEHCPR1A3Z3CEAN59AR): a line that comes while the log is not
+//!   at the bottom stays under the window, and the last row of the log
+//!   counts those lines, until a scroll shows each of them.
+//!   `End` shows the newest line: in the log, and in the prompt at the
+//!   end of the line. A click on the row and a send show it too.
+//!
+//!   ```text
+//!    12:40 <riff-bot> members: ann passed the owner role to mike.
+//!    2 new lines below: End
+//!   > @riff what is next?
+//!   ```
 //! - **The prompt** ([`Prompt`]) has the focus when you open the tab
 //!   ([`Focus`]). There each key types, also the digits, `q` and `?`.
 //!   `Alt-1` to `Alt-6`, `Tab` and `Ctrl-C` keep their work. `Esc` moves
@@ -66,11 +78,13 @@
 //!   the start of a word shows the names of the chat that fit the letters
 //!   after it. Its rows take the last rows of the log over the prompt,
 //!   under the text of the line, and the first name, the pick, is in
-//!   reverse video. `Tab` or `Enter` picks it ([`Key::Pick`]), and `Esc`
-//!   closes the list ([`Key::Close`]): [`key_of`] gives these keys only
-//!   while the list shows ([`Chat::list`]). [`Link`] reads the names at
-//!   its start and each [`READ_EVERY`], and gives them as
-//!   [`Came::Names`].
+//!   reverse video. They take no row of the newest line of the log, and
+//!   leave the log one row at least: in a short tab the list shows fewer
+//!   names, and the pick at least (01M6Z8AHH9FW3A3132YF8XH7R9). `Tab` or
+//!   `Enter` picks it ([`Key::Pick`]), and `Esc` closes the list
+//!   ([`Key::Close`]): [`key_of`] gives these keys only while the list
+//!   shows ([`Chat::list`]). [`Link`] reads the names at its start and
+//!   each [`READ_EVERY`], and gives them as [`Came::Names`].
 //!
 //!   ```text
 //!    13:12 <riff> #1608 merged
@@ -162,6 +176,9 @@ const ERROR: Style = Style::new().fg(Color::Red);
 /// names.
 const PICKED: Style = Style::new().add_modifier(Modifier::REVERSED);
 
+/// The style of the row of the new lines under the window of the log.
+const NEW: Style = Style::new().add_modifier(Modifier::BOLD);
+
 /// Where the keys of the Chat tab go.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Focus {
@@ -187,7 +204,8 @@ pub enum Key {
     Right,
     /// Move the cursor to the start of the line.
     Home,
-    /// Move the cursor to the end of the line.
+    /// Move the cursor to the end of the line. At the end of the line,
+    /// show the newest line of the log, as [`Scroll::Newest`] does.
     End,
     /// Delete the text before the cursor: `Ctrl-U`.
     Clear,
@@ -227,7 +245,8 @@ pub enum Scroll {
     PageDown,
     /// The oldest line: `g` or `Home` in the log.
     Oldest,
-    /// The newest line: `G` or `End` in the log.
+    /// The newest line: `G` or `End` in the log, and a click on the row
+    /// of the new lines.
     Newest,
 }
 
@@ -754,6 +773,10 @@ pub struct Chat {
     focus: Focus,
     /// The rows of the log under the window: 0 shows the newest line.
     scroll: usize,
+    /// The newest entries that came while the log was not at the
+    /// bottom, and that no scroll showed since: the new lines of
+    /// [`below`].
+    new: usize,
     /// The window of the last draw.
     pub(super) window: Window,
     /// Why the stream of the thread is down, while it is.
@@ -828,17 +851,20 @@ impl Chat {
     }
 
     /// Adds `entry` to the end of the log. While the person looks at
-    /// older lines, the window stays on them.
+    /// older lines, the window stays on them, and the entry is a new line
+    /// under it ([`below`]).
     fn add(&mut self, entry: Entry) {
         self.entries.push_back(entry);
         if self.scroll > 0 {
             let last = self.entries.len() - 1;
             let columns = self.window.columns;
             self.scroll += rows_of(self, last, columns, columns).len();
+            self.new += 1;
         }
         if self.entries.len() > KEEP {
             self.entries.pop_front();
         }
+        self.new = self.new.min(self.entries.len());
     }
 
     /// The rows of the whole log in the window of the last draw.
@@ -849,7 +875,8 @@ impl Chat {
             .sum()
     }
 
-    /// Scrolls the log by `scroll`, in the window of the last draw.
+    /// Scrolls the log by `scroll`, in the window of the last draw. A new
+    /// line that the window shows is no longer new.
     fn scroll_by(&mut self, scroll: Scroll) {
         let rows = usize::from(self.window.rows);
         let page = rows.saturating_sub(1).max(1);
@@ -863,6 +890,7 @@ impl Chat {
             Scroll::Newest => 0,
         }
         .min(most);
+        self.new = below(self, self.window.columns, self.window.rows);
     }
 }
 
@@ -1177,6 +1205,12 @@ impl State {
                 self.chat.scroll_by(scroll);
                 None
             }
+            // `End` at the end of the line shows the newest line, as `End`
+            // in the log does: the row of the new lines says `End`.
+            Key::End if self.chat.prompt.at() == self.chat.prompt.text().len() => {
+                self.chat.scroll_by(Scroll::Newest);
+                None
+            }
             Key::Pick => {
                 self.pick();
                 None
@@ -1253,6 +1287,7 @@ impl State {
         };
         self.chat.prompt.take();
         self.chat.scroll = 0;
+        self.chat.new = 0;
         self.note = None;
         Some(Action::Post(body))
     }
@@ -1400,7 +1435,10 @@ pub const HELP: [(&str, &str); 11] = [
     ("Esc", "leave the prompt: the keys of the tab work"),
     ("i", "go back to the prompt"),
     ("↑ ↓", "a row, a sent line on an empty line, or scroll"),
-    ("Home, End", "the start or the end of the line"),
+    (
+        "Home, End",
+        "the start or the end of the line; End again: the newest line",
+    ),
     ("PgUp, PgDn", "older or newer lines"),
     ("g, G", "the oldest or the newest line, in the log"),
     ("Alt-1 to 6", "open a tab, also from the prompt"),
@@ -1421,12 +1459,13 @@ const UNDER: &str = "  ";
 pub const LINE_ROWS: usize = 5;
 
 /// Places the body of the Chat tab in `area` on `view`: the summary
-/// row, the log, the prompt, the places that a click hits, the cursor
-/// and the window of the log and of the line. The prompt grows up from
-/// the row over the note line, one row for each row of the line, and
-/// the log has the rows over it. The log is no place that a click hits:
-/// a click there keeps the focus in the prompt
-/// (01M6XT6MCZ38XEN7ZHWTRF50Z5).
+/// row, the log, the row of the new lines, the prompt, the places that a
+/// click hits, the cursor and the window of the log and of the line. The
+/// prompt grows up from the row over the note line, one row for each row
+/// of the line, and the log has the rows over it. The log is no place
+/// that a click hits: a click there keeps the focus in the prompt
+/// (01M6XT6MCZ38XEN7ZHWTRF50Z5). A click on the row of the new lines
+/// shows the newest line, as `End` does.
 pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) {
     let chat = &state.chat;
     let margin = u16::from(layout == Layout::Wide);
@@ -1445,11 +1484,30 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
     let prompt = area.height - 2 - high;
 
     let top = 3;
-    // The list of the names takes the last rows of the log.
+    let room = prompt - top;
+    // The list of the names takes the last rows of the log. It leaves
+    // the log the rows of its newest line, and one row at least: then it
+    // shows fewer names, and the pick at least
+    // (01M6Z8AHH9FW3A3132YF8XH7R9).
     let list = chat.list();
     let listed = list.as_ref().map(list_rows).unwrap_or_default();
-    let over = u16::try_from(listed.len()).map_or(0, |n| n.min(prompt - top));
-    let rows = prompt - top - over;
+    let newest = chat
+        .entries
+        .len()
+        .checked_sub(1)
+        .map_or(0, |last| rows_of(chat, last, columns, area.width).len());
+    let keep = u16::try_from(newest)
+        .unwrap_or(u16::MAX)
+        .clamp(1, room.saturating_sub(1).max(1));
+    let over = u16::try_from(listed.len()).map_or(0, |n| n.min(room.saturating_sub(keep)));
+    let mut rows = room - over;
+    // The row of the new lines takes the last row of the log
+    // (01M6Z8AHEHCPR1A3Z3CEAN59AR).
+    let mut new = below(chat, columns, rows);
+    if new > 0 {
+        rows = rows.saturating_sub(1);
+        new = below(chat, columns, rows);
+    }
     for (y, (line, rule)) in (top..).zip(window(chat, columns, area.width, rows)) {
         let place = if rule {
             Rect::new(area.x, area.y + y, area.width, 1)
@@ -1457,6 +1515,17 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
             text_row(y)
         };
         view.rows.push(Placed { area: place, line });
+    }
+    if new > 0 {
+        let place = text_row(top + rows);
+        view.rows.push(Placed {
+            area: place,
+            line: Row::styled(new_below(new), NEW),
+        });
+        view.hits.push(Hit {
+            area: place,
+            key: FrameKey::Chat(Key::Scroll(Scroll::Newest)),
+        });
     }
     view.chat = Some(Window {
         columns,
@@ -1570,6 +1639,45 @@ fn window(chat: &Chat, columns: u16, full: u16, rows: u16) -> Vec<(Row<'static>,
     let end = got.len() - scroll;
     let start = end.saturating_sub(rows);
     got.range(start..end).cloned().collect()
+}
+
+/// The new lines of `chat` under its window of `rows` rows, with
+/// `columns` for a row: the lines that came while the log was not at
+/// the bottom ([`Chat::add`]), and whose last row does not show. The
+/// window is the one of [`window`].
+fn below(chat: &Chat, columns: u16, rows: u16) -> usize {
+    let rows = usize::from(rows);
+    let want = chat.scroll.saturating_add(rows);
+    // The rows under the last row of each entry, the newest first.
+    let mut under = Vec::new();
+    let mut got = 0;
+    for i in (0..chat.entries.len()).rev() {
+        if got >= want {
+            break;
+        }
+        under.push(got);
+        got += rows_of(chat, i, columns, columns).len();
+    }
+    let scroll = chat.scroll.min(got.saturating_sub(rows));
+    under
+        .into_iter()
+        .take(chat.new)
+        .filter(|&under| under < scroll)
+        .count()
+}
+
+/// The row over the prompt while `n` new lines are under the window of
+/// the log (01M6Z8AHEHCPR1A3Z3CEAN59AR).
+///
+/// ```
+/// use riff::tui::chat::new_below;
+///
+/// assert_eq!(new_below(1), "1 new line below: End");
+/// assert_eq!(new_below(3), "3 new lines below: End");
+/// ```
+pub fn new_below(n: usize) -> String {
+    let lines = if n == 1 { "line" } else { "lines" };
+    format!("{n} new {lines} below: End")
 }
 
 /// The rows of the entry `i` of the log of `chat`: a rule of `full`
@@ -2258,13 +2366,16 @@ mod tests {
         assert_eq!(state.chat().scrolled(), 30);
         assert_eq!(top[3], "──── Friday 2026-11-06 ─────────────────");
         assert_eq!(top[4], "09:14 <riff> good morning: 2 pull");
-        // A new line: the window stays.
+        // A new line: the window stays on its rows, and the row of the
+        // new lines takes its last row.
         state.chat_came(said("14:30", "riff://brett@strata", "a new line"));
         let (kept, _) = drawn(&mut state, 40, 24);
-        assert_eq!(kept, top);
-        // PgDn shows newer rows, and End the newest line.
+        assert_eq!(kept[3..20], top[4..21]);
+        assert_eq!(kept[20], "1 new line below: End");
+        // PgDn shows newer rows, a page of 16: the window has 17 rows
+        // now. End shows the newest line.
         state.on_key(FrameKey::Chat(Key::Scroll(Scroll::PageDown)));
-        assert_eq!(state.chat().scrolled(), 14);
+        assert_eq!(state.chat().scrolled(), 15);
         state.on_key(FrameKey::Chat(Key::Scroll(Scroll::Newest)));
         let (rows, _) = drawn(&mut state, 40, 24);
         assert_eq!(rows[20], "14:30 <brett> a new line");
@@ -2274,6 +2385,175 @@ mod tests {
         type_in(&mut state, "ok");
         state.on_key(FrameKey::Chat(Key::Send));
         assert_eq!(state.chat().scrolled(), 0);
+    }
+
+    /// The mock-up and 20 more lines of brett: 36 rows at 80 x 24, and
+    /// 18 show.
+    fn long_log() -> State {
+        let mut state = mock_up();
+        for n in 0..20 {
+            state.chat_came(said(
+                &format!("14:{n:02}"),
+                "riff://brett@strata",
+                &format!("line {n}"),
+            ));
+        }
+        state
+    }
+
+    /// While the log is scrolled up, a new line stays under the window,
+    /// and the row over the prompt says so (01M6Z8AHEHCPR1A3Z3CEAN59AR).
+    /// `End` in the prompt, at the end of the line, shows the line, and
+    /// the row goes.
+    #[test]
+    fn scrolled_up_a_new_line_gives_the_row_of_the_new_lines_and_end_shows_it() {
+        let mut state = long_log();
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[20], " 14:19 <brett> line 19");
+        state.on_key(FrameKey::Chat(Key::Scroll(Scroll::PageUp)));
+        let (up, _) = drawn(&mut state, 80, 24);
+        assert_eq!(up[20], rows[3]);
+        // No new line yet: no row of the new lines.
+        assert!(!up.iter().any(|row| row.contains("below")), "{up:#?}");
+
+        state.chat_came(said("14:30", MIKE_LEAD, "#1833 merged"));
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[3..20], up[4..21]);
+        assert_eq!(rows[20], " 1 new line below: End");
+        assert_eq!(rows[21], ">");
+        assert!(!rows.contains(&" 14:30 <riff> #1833 merged".to_owned()));
+        let row = view.rows.iter().find(|r| r.area.y == 20).unwrap();
+        assert_eq!(row.line.style, NEW);
+
+        // End shows the line, and the row goes.
+        state.on_key(FrameKey::Chat(Key::End));
+        assert_eq!(state.chat().scrolled(), 0);
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(
+            rows[19..22],
+            [" 14:19 <brett> line 19", " 14:30 <riff> #1833 merged", ">"]
+        );
+        assert!(!rows.iter().any(|row| row.contains("below")), "{rows:#?}");
+    }
+
+    /// The row counts the new lines that no scroll showed yet: a scroll
+    /// that shows one counts it no more, also after a scroll up again.
+    /// In a typed line, `End` goes to the end of the line first. A click
+    /// on the row shows the newest line, and so does a send
+    /// (01M6Z8AHEHCPR1A3Z3CEAN59AR).
+    #[test]
+    fn the_row_of_the_new_lines_counts_the_lines_that_no_scroll_showed() {
+        let mut state = long_log();
+        drawn(&mut state, 80, 24);
+        state.on_key(FrameKey::Chat(Key::Scroll(Scroll::PageUp)));
+        drawn(&mut state, 80, 24);
+        for n in 0..3 {
+            state.chat_came(said(&format!("14:3{n}"), MIKE_LEAD, &format!("new {n}")));
+        }
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[20], " 3 new lines below: End");
+        // Two rows down: the line `new 0` shows.
+        state.on_key(FrameKey::Chat(Key::Scroll(Scroll::PageDown)));
+        state.on_key(FrameKey::Chat(Key::Scroll(Scroll::Down(2))));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(state.chat().scrolled(), 2);
+        assert_eq!(
+            rows[19..21],
+            [" 14:30 <riff> new 0", " 2 new lines below: End"]
+        );
+        // Up again: `new 0` is no new line now.
+        state.on_key(FrameKey::Chat(Key::Scroll(Scroll::Up(5))));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[20], " 2 new lines below: End");
+
+        // In a typed line, the first End goes to the end of the line.
+        type_in(&mut state, "ok");
+        state.on_key(FrameKey::Chat(Key::Home));
+        state.on_key(FrameKey::Chat(Key::End));
+        assert_eq!(state.chat().prompt().cursor(), 2);
+        assert_eq!(state.chat().scrolled(), 7);
+
+        // A click on the row shows the newest line.
+        let (_, view) = drawn(&mut state, 80, 24);
+        assert_eq!(
+            view.hit(10, 20),
+            Some(FrameKey::Chat(Key::Scroll(Scroll::Newest)))
+        );
+        state.on_click(&view, 10, 20, false);
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[20], " 14:32 <riff> new 2");
+        assert_eq!(view.hit(10, 20), None);
+
+        // A send shows the newest line, and no row of the new lines.
+        state.on_key(FrameKey::Chat(Key::Scroll(Scroll::PageUp)));
+        drawn(&mut state, 80, 24);
+        state.chat_came(said("14:40", MIKE_LEAD, "new 3"));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[20], " 1 new line below: End");
+        state.on_key(FrameKey::Chat(Key::Send));
+        let (rows, _) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[20], " 14:40 <riff> new 3");
+    }
+
+    /// Seven names of people, `ann0` to `ann6`: the list of `@` has five
+    /// of them, and a row of the two more.
+    fn seven_names() -> Came {
+        Came::Names(
+            (0..7)
+                .map(|n| ChatName {
+                    name: format!("ann{n}"),
+                    kind: NameKind::Person,
+                    online: true,
+                })
+                .collect(),
+        )
+    }
+
+    /// A new line of 4 rows comes while the prompt has 5 rows and the
+    /// list of the names shows: the whole line is in sight, and the list
+    /// shows fewer names. In a short tab, the list shows only the pick
+    /// (01M6Z8AHH9FW3A3132YF8XH7R9).
+    #[test]
+    fn a_new_line_stays_in_sight_while_the_prompt_has_5_rows_and_the_list_shows() {
+        let mut state = mock_up();
+        state.chat_came(seven_names());
+        type_in(
+            &mut state,
+            &format!("{}@", "the plan of wave 53 ".repeat(20)),
+        );
+        // The list has 6 rows over the prompt of 5 rows.
+        let (before, _) = drawn(&mut state, 80, 19);
+        assert_eq!(before[5], " 13:12 <riff> #1608 merged");
+        assert_eq!(before[6], "  ann0  person   online");
+        assert_eq!(before[11], "  and 2 more: type more letters");
+        assert_eq!(before[16], "  the plan of wave 53 @");
+        assert_eq!(before[18], " Tab pick  Esc close  Ctrl-C quit");
+
+        let plan = "the plan of wave 54: ".repeat(12);
+        state.chat_came(said("13:20", MIKE_LEAD, &format!("{plan}end of the plan")));
+        let (rows, view) = drawn(&mut state, 80, 19);
+        assert!(
+            rows[3].starts_with(" 13:20 <riff> the plan of wave 54:"),
+            "{rows:#?}"
+        );
+        assert!(rows[6].ends_with("end of the plan"), "{rows:#?}");
+        assert_eq!(rows[7], "  ann0  person   online");
+        assert_eq!(rows[11], "  ann4  person   online");
+        assert_eq!(rows[12..17], before[12..17]);
+        let pick = view.rows.iter().find(|r| r.area.y == 7).unwrap();
+        assert_eq!(pick.line.spans[0].style, PICKED);
+
+        // In a tab of 12 rows, the prompt has 2 rows, and the list keeps
+        // the pick only.
+        let (rows, _) = drawn(&mut state, 80, 12);
+        assert!(
+            rows[3].starts_with(" 13:20 <riff> the plan of wave 54:"),
+            "{rows:#?}"
+        );
+        assert!(rows[6].ends_with("end of the plan"), "{rows:#?}");
+        assert_eq!(rows[7], "  ann0  person   online");
+        assert_eq!(rows[9], "  the plan of wave 53 @");
+        assert_eq!(rows[10], " Tab or Enter picks ann0. Esc closes the list.");
     }
 
     /// A line in a new day gets a rule, a body of more lines starts each

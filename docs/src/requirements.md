@@ -8301,6 +8301,17 @@ that builds it merges.
   column of the pull request is PR #P after #N, where N is the number of
   the pull request before it. The waits come from the facts of the riff
   daemons.
+- **01M6Z8AHEHCPR1A3Z3CEAN59AR** When a line comes while the log of the
+  Chat tab is not at the bottom, the line stays under the window, and a
+  row over the prompt says `1 new line below: End`, or `N new lines
+  below: End`. The row shows until a scroll shows each of those lines.
+  `End` in the log, `End` at the end of the line, a click on the row and
+  a send show the newest line.
+- **01M6Z8AHH9FW3A3132YF8XH7R9** While the prompt or the list of the
+  names takes rows, the newest line of the log of the Chat tab stays in
+  sight. The list takes no row of the newest line, and the log keeps one
+  row at least. When the rows are few, the list shows fewer names, and
+  the first name at least.
 
 ## The notes of the lead
 
