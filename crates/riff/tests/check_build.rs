@@ -11,7 +11,7 @@ use isolated::Isolated;
 /// `just static` writes its folder and its words to `just.log` beside
 /// it, and makes the riff of the build.
 const FAKE_JUST: &str = r#"#!/bin/sh
-echo "$PWD $*" >> "$(dirname "$0")/just.log"
+echo "$(pwd -P) $*" >> "$(dirname "$0")/just.log"
 mkdir -p target/static/release
 git rev-parse HEAD > target/static/release/riff
 "#;
@@ -93,7 +93,9 @@ fn riff_build_clones_fetches_and_builds_the_default_branch() {
     assert_eq!(git(&check, &["rev-parse", "HEAD"]), first);
     assert_eq!(std::fs::read_to_string(&riff).unwrap().trim(), first);
     let log = std::fs::read_to_string(fake.path().join("just.log")).unwrap();
-    assert_eq!(log, format!("{} static\n", check.display()));
+    // The real path: on macOS, `/var` is a link to `/private/var`.
+    let real = std::fs::canonicalize(&check).unwrap();
+    assert_eq!(log, format!("{} static\n", real.display()));
 
     // A new commit on main: the next build fetches it, and builds it.
     let second = commit(&here, "two");

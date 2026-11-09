@@ -761,6 +761,8 @@ async fn the_update_of_a_daemon_that_serves_no_repository_says_why_it_tells_no_l
 /// the lead of the dotfiles nothing (#1105, 01M58AW5SBG3ZP7149ZY66VTYW).
 /// No other process calls the riff while the update runs: each call
 /// could start the update with its own place.
+/// The daemon needs Linux.
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_daemon_in_a_dotfiles_home_tells_the_lead_of_the_served_repository() {
     let machine = Machine::new(0).await;

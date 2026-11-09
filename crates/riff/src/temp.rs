@@ -490,9 +490,14 @@ mod tests {
             .stdin(std::process::Stdio::null())
             .spawn()
             .unwrap();
+        // The OS shows real paths: on macOS, `/var` is a link to `/private/var`.
+        let real = std::fs::canonicalize(&w1).unwrap();
         let mut child_held = false;
         for _ in 0..100 {
-            if users().iter().any(|u| u.pid == child.id() && u.holds(&w1)) {
+            if users()
+                .iter()
+                .any(|u| u.pid == child.id() && u.holds(&real))
+            {
                 child_held = true;
                 break;
             }

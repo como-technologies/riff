@@ -29,6 +29,8 @@ fn riff_usage_into_a_closed_pipe_ends_quietly() {
 /// `riff daemon status` with no daemon prints the state of the unit. Into
 /// the closed pipe, it ends at its first line with the exit 0, and
 /// prints no panic.
+/// The daemon needs Linux.
+#[cfg(target_os = "linux")]
 #[test]
 fn riff_daemon_status_into_a_closed_pipe_ends_quietly() {
     let env = Isolated::new();
@@ -43,6 +45,8 @@ fn riff_daemon_status_into_a_closed_pipe_ends_quietly() {
 /// A panic that is not a closed pipe still shows: the hook passes it on.
 /// `riff usage` with a stdout that is full is such a case: `/dev/full`
 /// fails each write with ENOSPC.
+/// macOS has no `/dev/full`.
+#[cfg(target_os = "linux")]
 #[test]
 fn another_error_of_a_print_still_panics() {
     let env = Isolated::new();

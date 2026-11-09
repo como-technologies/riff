@@ -3,6 +3,10 @@
 //! A file that sets the keyring store of the process is a binary of
 //! its own: `back_in.rs`, `join_a_riff.rs`, `keyring_store.rs`. So is
 //! `isolation.rs`: it listens on the port of the riff of the machine.
+//!
+//! A module whose tests need the daemon, `riff init` or a session runs on
+//! Linux only: the daemon needs Linux (01M6YPB5B42FZP7GCDAVTN4PWY,
+//! 01M6YPB5GTHFQG8HGM57DVBGBN).
 
 mod book;
 mod common;
@@ -22,8 +26,11 @@ mod closed_pipe;
 mod cloud;
 mod compile_cache;
 mod conduct;
+#[cfg(target_os = "linux")]
 mod daemon;
+#[cfg(target_os = "linux")]
 mod daemon_hosts;
+#[cfg(target_os = "linux")]
 mod first_run;
 mod forge_text;
 mod gh_callers;
@@ -63,6 +70,7 @@ mod owner;
 mod package_sources;
 mod pause;
 mod pr;
+#[cfg(target_os = "linux")]
 mod ps;
 mod pull_limit;
 mod questions;
@@ -70,6 +78,7 @@ mod read_length;
 mod release;
 mod release_cycle;
 mod restart;
+#[cfg(target_os = "linux")]
 mod run;
 mod save;
 mod secrets;
