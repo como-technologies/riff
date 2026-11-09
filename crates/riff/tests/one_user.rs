@@ -3,6 +3,7 @@
 //! session ID under a new user.
 
 use crate::common;
+#[cfg(target_os = "linux")]
 use isolated::Isolated;
 
 use keyring_core::{Entry, Error, mock};

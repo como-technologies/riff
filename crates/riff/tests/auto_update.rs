@@ -352,6 +352,7 @@ async fn a_failed_update_keeps_the_old_riff_and_tells_the_lead_once() {
 
 /// Puts the riff under test at `bin/riff`: a build of this release that
 /// links the libc of the machine, as `cargo install` gives.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 fn install_cargo_build(env: &Isolated, bin: &Path) -> PathBuf {
     std::fs::create_dir_all(bin).unwrap();
     let riff = bin.join("riff");
@@ -760,6 +761,8 @@ async fn the_update_of_a_daemon_that_serves_no_repository_says_why_it_tells_no_l
 /// the lead of the dotfiles nothing (#1105, 01M58AW5SBG3ZP7149ZY66VTYW).
 /// No other process calls the riff while the update runs: each call
 /// could start the update with its own place.
+/// The daemon needs Linux.
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_daemon_in_a_dotfiles_home_tells_the_lead_of_the_served_repository() {
     let machine = Machine::new(0).await;

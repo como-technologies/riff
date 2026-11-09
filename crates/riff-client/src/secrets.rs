@@ -924,7 +924,7 @@ mod tests {
             "call secrets::mock_store: {setters:?}"
         );
         assert_eq!(
-            texts("riff/src/platform.rs"),
+            texts("riff/src/platform/mod.rs"),
             [os],
             "call secrets::mock_store: {setters:?}"
         );

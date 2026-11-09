@@ -64,7 +64,7 @@
 //!
 //! A path of a socket can be longer than the address of a Unix socket
 //! takes (108 bytes). On Linux, riff binds and connects through a
-//! descriptor of the folder: `/proc/self/fd/N/riff.sock`.
+//! descriptor of the folder ([`crate::platform::Socket`]).
 //!
 //! # The daemon and riff-server
 //!
@@ -776,6 +776,7 @@ pub fn stale(unit: Option<&crate::service::Unit>, own: &Path, replaced: bool) ->
 /// daemon of a `RIFF_HOME` or a `RIFF_DATA` is never the daemon of the
 /// unit ([`crate::run::machine_data`]). While an update of riff runs
 /// ([`update_waits`]), it waits (01M58AW9YR84SKSYBYBJ6V7TNJ).
+#[cfg(target_os = "linux")]
 fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
     if !crate::run::machine_data() || crate::local::dir().is_some_and(|dir| update_waits(&dir)) {
         return false;
@@ -784,7 +785,7 @@ fn old_here(manager: &impl crate::service::ServiceManager) -> bool {
         return false;
     };
     let unit = manager.installed().ok().flatten();
-    let replaced = crate::binary::replaced(Path::new("/proc/self/exe"));
+    let replaced = crate::platform::own_replaced();
     (stale(unit.as_ref(), &own, replaced) || crate::update_steps::unit_written())
         && manager.main_pid().ok().flatten() == Some(std::process::id())
 }
@@ -854,8 +855,8 @@ pub async fn after_update(
     let Ok(status) = status(dir).await else {
         return Ok(lines);
     };
-    let exe = std::fs::read_link(format!("/proc/{}/exe", status.pid))
-        .map(crate::binary::on_disk)
+    let exe = crate::platform::process(status.pid)
+        .and_then(|process| process.exe)
         .unwrap_or(old.exe);
     if !stale(Some(&unit), &exe, crate::binary::runs_replaced(status.pid)) {
         return Ok(lines);
@@ -882,23 +883,11 @@ fn private_dir(dir: &Path) -> Result<()> {
 }
 
 /// Runs `with` on a path of the socket `name` in the folder `dir` that
-/// fits in the address of a Unix socket. On Linux, it is a path through
-/// a descriptor of the folder: `/proc/self/fd/N/NAME`.
+/// fits in the address of a Unix socket ([`crate::platform::Socket`]).
 fn short_path<T>(dir: &Path, name: &str, with: impl FnOnce(&Path) -> T) -> Result<T> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsRawFd;
-        let folder =
-            std::fs::File::open(dir).with_context(|| format!("cannot open {}", dir.display()))?;
-        let path = PathBuf::from(format!("/proc/self/fd/{}/{name}", folder.as_raw_fd()));
-        let out = with(&path);
-        drop(folder);
-        Ok(out)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        Ok(with(&dir.join(name)))
-    }
+    let socket = crate::platform::Socket::in_folder(dir, name)
+        .with_context(|| format!("cannot open {}", dir.display()))?;
+    Ok(with(socket.path()))
 }
 
 /// Binds the socket `name` in the folder `dir`, with mode 0600.
@@ -910,21 +899,11 @@ fn bind_in(dir: &Path, name: &str) -> Result<UnixListener> {
     Ok(listener)
 }
 
-/// Connects to the socket `name` in the folder `dir`.
+/// Connects to the socket `name` in the folder `dir`
+/// ([`crate::platform::Socket`]).
 pub(crate) async fn connect_in(dir: &Path, name: &str) -> std::io::Result<UnixStream> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsRawFd;
-        let folder = std::fs::File::open(dir)?;
-        let path = format!("/proc/self/fd/{}/{name}", folder.as_raw_fd());
-        let stream = UnixStream::connect(path).await;
-        drop(folder);
-        stream
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        UnixStream::connect(dir.join(name)).await
-    }
+    let socket = crate::platform::Socket::in_folder(dir, name)?;
+    UnixStream::connect(socket.path()).await
 }
 
 /// The first line of each connection: the version of the protocol, and
@@ -1838,9 +1817,25 @@ pub fn now_ms() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-/// `path` with each link resolved, when it exists.
+/// `path` with each link resolved: the real path of the nearest folder of
+/// it that exists, then the rest of `path`. On macOS, `/var` is a link to
+/// `/private/var`, so a path in `/var` that does not exist yet still
+/// names a place in the real folder.
 fn resolved(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+    let mut rest = Vec::new();
+    let mut at = path;
+    loop {
+        if let Ok(real) = std::fs::canonicalize(at) {
+            return rest.iter().rev().fold(real, |real, part| real.join(part));
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_owned());
+                at = parent;
+            }
+            _ => return path.to_owned(),
+        }
+    }
 }
 
 /// What the daemon keeps on disk of a live session, in `live/NAME.json`
@@ -2590,7 +2585,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             own_gh: Mutex::default(),
             lookout: Arc::new(crate::watches::Here),
             again_now: Arc::default(),
-            own_replaced: Arc::new(|| crate::binary::replaced(Path::new("/proc/self/exe"))),
+            own_replaced: Arc::new(crate::platform::own_replaced),
             auto: Arc::new(|| {
                 crate::settings::path()
                     .and_then(|path| crate::settings::update_auto(&path))
@@ -3600,28 +3595,35 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The riff processes of this host and of each session container, for
-    /// `riff ps` (#1610, [`crate::ps`]). The daemon reads `/proc`, asks the
+    /// `riff ps` (#1610, [`crate::ps`]). The daemon reads the processes of
+    /// the host ([`crate::platform::processes`]), asks the
     /// runtime for the processes of each container, and puts on each
     /// process the calls of `gh` that it made in the last hour. A container
     /// whose processes the runtime cannot give shows why.
     pub async fn ps(&self) -> crate::ps::Ps {
-        self.ps_at(Path::new("/proc")).await
+        self.ps_of(crate::platform::processes).await
     }
 
-    /// [`Daemon::ps`] with the processes of the host in `proc`, a folder
-    /// with the layout of `/proc`.
-    pub async fn ps_at(&self, proc: &Path) -> crate::ps::Ps {
-        self.ps_within(proc, PROCESSES_WAIT).await
+    /// [`Daemon::ps`] with the processes of the host from `processes`.
+    pub async fn ps_of(
+        &self,
+        processes: impl FnOnce() -> Vec<crate::platform::Process> + Send + 'static,
+    ) -> crate::ps::Ps {
+        self.ps_within(processes, PROCESSES_WAIT).await
     }
 
-    /// [`Daemon::ps_at`] that waits for the processes of one container at
+    /// [`Daemon::ps_of`] that waits for the processes of one container at
     /// most `wait`.
-    async fn ps_within(&self, proc: &Path, wait: Duration) -> crate::ps::Ps {
+    async fn ps_within(
+        &self,
+        processes: impl FnOnce() -> Vec<crate::platform::Process> + Send + 'static,
+        wait: Duration,
+    ) -> crate::ps::Ps {
         let now = now_ms();
         let daemon = std::process::id();
-        let (root, dir) = (proc.to_owned(), self.dir.clone());
+        let dir = self.dir.clone();
         let (mut host, calls) = tokio::task::spawn_blocking(move || {
-            let host = crate::ps::read_host(&root, daemon);
+            let host = crate::ps::host(&processes(), daemon);
             let mut calls = ghcalls::Calls::global().recent(now);
             calls.extend(ghcalls::Tally::in_folder(&dir).read(now));
             (host, calls)
@@ -5721,7 +5723,7 @@ pub fn starts(state: &str) -> bool {
 fn unit_starts() -> bool {
     use crate::service::ServiceManager;
     crate::run::machine_data()
-        && crate::service::Systemd::here()
+        && crate::platform::service_manager()
             .and_then(|unit| unit.state())
             .is_ok_and(|state| starts(&state))
 }
@@ -5997,7 +5999,7 @@ pub async fn serve_here() -> Result<()> {
             crate::update_steps::at_start(&crate::podman::Podman, &steps).await;
         });
         // A new riff on disk (01M517BTP6BAGTRBYWPX9GPVE0).
-        if let Ok(manager) = crate::service::Systemd::here() {
+        if let Ok(manager) = crate::platform::service_manager() {
             let daemon = daemon.clone();
             tokio::spawn(async move {
                 let old = || old_here(&manager);
@@ -6028,7 +6030,7 @@ pub async fn serve_here() -> Result<()> {
 /// old riff.
 #[cfg(target_os = "linux")]
 fn again_here() -> remote::Again {
-    match crate::service::Systemd::here() {
+    match crate::platform::service_manager() {
         Ok(manager) => {
             let manager = Arc::new(manager);
             let old = manager.clone();
@@ -6209,6 +6211,9 @@ mod tests {
             .with_keep_end(keep_end)
             .with_relay(static_riff(dir))
             .with_gcloud(crate::cloud::Gcloud::at(dir.with_file_name("gcloud")))
+            // The free memory of the host that runs the test does not count:
+            // a Mac of the CI has less than the floor.
+            .with_memory(Arc::new(|| None))
             .with_own_replaced(Arc::new(move || {
                 replaced.load(std::sync::atomic::Ordering::SeqCst)
             }));
@@ -7459,6 +7464,20 @@ mod tests {
             ));
         }
         assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+    }
+
+    /// A path through a link, also one that does not exist yet, resolves to
+    /// the real folder, as `/var` on macOS does.
+    #[test]
+    fn a_path_through_a_link_resolves_to_the_real_folder() {
+        let root = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(root.path()).unwrap().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(resolved(&link), real);
+        assert_eq!(resolved(&link.join("not/yet")), real.join("not/yet"));
+        assert_eq!(resolved(Path::new("not-there")), Path::new("not-there"));
     }
 
     /// 01M510NW8YEVMQKD6RWJPW38N3: the daemon starts no container with a
@@ -12360,7 +12379,7 @@ mod tests {
     /// its session, and a process on the host writes the tally.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_daemon_answers_riff_ps_with_the_processes_and_their_calls() {
-        use crate::ps::{Kind, Proc, fake_process};
+        use crate::ps::{Kind, Proc};
         let proc = |pid, ppid, secs, args: &str| Proc {
             pid,
             ppid,
@@ -12421,19 +12440,22 @@ mod tests {
         ghcalls::Tally::in_folder(&here.dir).record_all(now, vec![host_call]);
 
         // The host: the daemon, and `watch` with its `riff wave list`.
-        let root = tempfile::tempdir().unwrap();
         let me = std::process::id();
-        fake_process(root.path(), (me, 1), "riff", "riff daemon", 10_000);
-        fake_process(
-            root.path(),
-            (3001, 900),
-            "watch",
-            "watch -n 5 riff wave list",
-            50_000,
-        );
-        fake_process(root.path(), (3002, 3001), "riff", "riff wave list", 99_000);
-        fake_process(root.path(), (900, 1), "bash", "bash", 20_000);
-        let ps = here.daemon.ps_at(root.path()).await;
+        let process = |(pid, ppid), name: &str, args: &str, secs| crate::platform::Process {
+            pid,
+            ppid,
+            secs,
+            name: name.into(),
+            args: args.split(' ').map(String::from).collect(),
+            ..crate::platform::Process::default()
+        };
+        let all = vec![
+            process((me, 1), "riff", "riff daemon", 900),
+            process((3001, 900), "watch", "watch -n 5 riff wave list", 500),
+            process((3002, 3001), "riff", "riff wave list", 10),
+            process((900, 1), "bash", "bash", 800),
+        ];
+        let ps = here.daemon.ps_of(move || all).await;
 
         assert_eq!(ps.daemon, me);
         // In the order of the PIDs. `bash` is no riff process and has no riff
@@ -12503,10 +12525,9 @@ mod tests {
         let (_b, _) = here
             .started(here.start("riff-issue-13-2b3c4d5e", "issue-13"))
             .await;
-        let root = tempfile::tempdir().unwrap();
         let ps = here
             .daemon
-            .ps_within(root.path(), Duration::from_millis(50))
+            .ps_within(Vec::new, Duration::from_millis(50))
             .await;
         assert_eq!(ps.containers.len(), 2);
         assert_eq!(

@@ -65,6 +65,13 @@ keyring.workspace = true
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dev-dependencies]
 zbus-secret-service-keyring-store.workspace = true
 
+# 01M6YQDWT387EV7Y7XMT2G6YVM: the reads of the OS on macOS, in
+# `platform::macos`.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+libproc.workspace = true
+sysctl.workspace = true
+
 [[test]]
 name = "all"
 path = "tests/all.rs"

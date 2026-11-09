@@ -3199,7 +3199,6 @@ pub fn report(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
     use hygiene::{Issue, Rules};
@@ -3607,9 +3606,16 @@ mod tests {
         assert_eq!(error.to_string(), text::gh_no_answer("pr view 12", limit));
         assert!(start.elapsed() < isolated::HANG);
         let sleep = std::fs::read_to_string(&pid).unwrap();
-        let stat = PathBuf::from(format!("/proc/{}/stat", sleep.trim()));
-        // A stopped process stays a zombie until its parent reaps it.
-        let gone = || std::fs::read_to_string(&stat).map_or(true, |s| s.contains(") Z "));
+        // A stopped process stays a zombie until its parent reaps it: its
+        // state in `ps` starts with `Z`, on Linux and on macOS.
+        let gone = || {
+            let out = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", sleep.trim()])
+                .output()
+                .unwrap();
+            let state = String::from_utf8_lossy(&out.stdout);
+            state.trim().is_empty() || state.trim().starts_with('Z')
+        };
         while !gone() {
             assert!(start.elapsed() < isolated::HANG, "sleep {sleep} runs on");
             std::thread::sleep(Duration::from_millis(20));

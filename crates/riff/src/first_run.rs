@@ -507,7 +507,6 @@ impl Facts {
             _ => None,
         };
         let etc = dir_of(ETC_VAR, "/etc");
-        let cgroup = dir_of(CGROUP_VAR, "/sys/fs/cgroup");
         let uid = nix::unistd::getuid();
         let user = nix::unistd::User::from_uid(uid)
             .ok()
@@ -516,6 +515,7 @@ impl Facts {
             .or_else(|| std::env::var("USER").ok().filter(|u| !u.is_empty()))
             .unwrap_or_else(|| uid.to_string());
         let uid = uid.as_raw();
+        let cgroups = crate::platform::cgroups(uid);
         let read = |path: PathBuf| std::fs::read_to_string(path).ok();
         let init_dirs: Vec<PathBuf> = match std::env::var_os(INIT_VAR).filter(|v| !v.is_empty()) {
             Some(dir) => vec![PathBuf::from(dir)],
@@ -528,8 +528,8 @@ impl Facts {
             uid,
             subuid: read(etc.join("subuid")),
             subgid: read(etc.join("subgid")),
-            cgroup: read(cgroup.join("cgroup.controllers")),
-            user_cgroup: read(user_cgroup(&cgroup, uid)),
+            cgroup: cgroups.root,
+            user_cgroup: cgroups.user,
             image: crate::session_image::of_folder(dir)
                 .map(|image| image.to_string())
                 .map_err(|e| format!("{e:#}")),
@@ -557,23 +557,6 @@ fn riff_binary() -> Result<String, String> {
         Err(_) if crate::release::takes_dynamic() => Ok(text::init_riff_taken(&path)),
         Err(why) => Err(text::init_riff_not_static(&path, &why)),
     }
-}
-
-/// The `cgroup.controllers` of `user@UID.service` in the root `root` of
-/// cgroup v2.
-///
-/// ```
-/// use std::path::Path;
-///
-/// assert_eq!(
-///     riff::first_run::user_cgroup(Path::new("/sys/fs/cgroup"), 1000),
-///     Path::new("/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/cgroup.controllers")
-/// );
-/// ```
-pub fn user_cgroup(root: &Path, uid: u32) -> PathBuf {
-    root.join(format!(
-        "user.slice/user-{uid}.slice/user@{uid}.service/cgroup.controllers"
-    ))
 }
 
 /// The IDs that the text `text` of `/etc/subuid` or `/etc/subgid` gives
@@ -1193,7 +1176,7 @@ pub async fn init(mode: Mode, image: Option<session_image::Image>, server: &str)
         if let Some(repo) = origin {
             facts.apps = apps_of(server, &repo).await;
         }
-        let manager = crate::service::Systemd::here()?;
+        let manager = crate::platform::service_manager()?;
         let unit = Unit::of_this()?;
         let question = |question: Question| {
             let terminal = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();

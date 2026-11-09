@@ -18,9 +18,10 @@
 //!
 //! The gate ([`gate`]). The daemon changes the machine only when
 //! `update.auto` is on and its own binary is a release: the SHA-256 of
-//! `/proc/self/exe` is the line of `riff-TARGET` in `SHA256SUMS` of the
-//! GitHub release of its version ([`release::is_release`]). Each step
-//! that changes the machine trusts only GitHub
+//! the binary that runs ([`crate::platform::running_binary`]) is the line
+//! of `riff-TARGET` in `SHA256SUMS` of the GitHub release of its version
+//! ([`release::is_release`]). Each step that changes the machine trusts
+//! only GitHub
 //! (01M51QFPMSG81YRDDGQQ1WJDSQ): with `RIFF_RELEASES` set, the gate stays
 //! shut, and its line says why ([`sums_source`]). So a
 //! session cannot build a branch, name its own `SHA256SUMS`, and get the
@@ -68,7 +69,7 @@
 //! );
 //! ```
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
@@ -169,18 +170,24 @@ pub async fn gate(auto: bool, release: &Release<'_>) -> Result<Gate> {
 
 /// The trusted place of the release files of this process
 /// ([`sums_source`]): the GitHub releases, or why riff trusts
-/// no place. And the release tag of its version.
-fn source_here() -> (Result<Source, String>, String) {
+/// no place. And the release tag of its version, and a path of the
+/// binary that runs, also after a new riff replaced its file
+/// ([`crate::platform::running_binary`]).
+fn source_here() -> (Result<Source, String>, String, PathBuf) {
     let source = sums_source(std::env::var(release::RELEASES).ok().as_deref());
-    (source, lifecycle::release_tag(env!("CARGO_PKG_VERSION")))
+    let tag = lifecycle::release_tag(env!("CARGO_PKG_VERSION"));
+    (source, tag, crate::platform::running_binary())
 }
 
-/// The binary of this process with `source` and `tag` of
+/// The binary `binary` of this process with `source` and `tag` of
 /// [`source_here`].
-fn release_here<'a>(source: &'a Result<Source, String>, tag: &'a str) -> Release<'a> {
+fn release_here<'a>(
+    source: &'a Result<Source, String>,
+    tag: &'a str,
+    binary: &'a Path,
+) -> Release<'a> {
     Release {
-        // The binary that runs, also after a new riff replaced its file.
-        binary: Path::new("/proc/self/exe"),
+        binary,
         tag,
         source,
         target: release::TARGET,
@@ -189,8 +196,8 @@ fn release_here<'a>(source: &'a Result<Source, String>, tag: &'a str) -> Release
 
 /// The gate of this machine and process.
 pub async fn gate_here() -> Gate {
-    let (source, tag) = source_here();
-    gate(auto_here(), &release_here(&source, &tag))
+    let (source, tag, binary) = source_here();
+    gate(auto_here(), &release_here(&source, &tag, &binary))
         .await
         .unwrap_or_else(|e| Gate::NotRelease(format!("{e:#}")))
 }
@@ -468,8 +475,8 @@ pub fn unit_written() -> bool {
 /// The service manager of the unit of the daemon of this machine. None
 /// with `RIFF_HOME` or `RIFF_DATA`: that daemon is never the daemon of
 /// the unit ([`crate::run::machine_data`]).
-fn manager_here() -> Option<crate::service::Systemd> {
-    crate::service::Systemd::here()
+fn manager_here() -> Option<crate::platform::Manager> {
+    crate::platform::service_manager()
         .ok()
         .filter(|_| crate::run::machine_data())
 }
@@ -532,8 +539,8 @@ pub async fn at_start(runtime: &impl Runtime, daemon: &Path) {
 pub async fn check(runtime: &impl Runtime, daemon: &Path, here: &Path) -> i32 {
     let gate = gate_here().await;
     println!("{}", text::steps_check_gate(&gate));
-    let (source, tag) = source_here();
-    let release = is_release(&release_here(&source, &tag))
+    let (source, tag, binary) = source_here();
+    let release = is_release(&release_here(&source, &tag, &binary))
         .await
         .unwrap_or_else(|e| Err(format!("{e:#}")));
     let binary = Step {

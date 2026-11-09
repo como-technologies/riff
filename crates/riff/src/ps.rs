@@ -14,25 +14,25 @@
 //! flowchart LR
 //!     P["riff ps on the host"] -- "Ask::Ps, control socket" --> D["riff daemon"]
 //!     L["riff ps in the lead container"] -- "ServerCall::Ps, socket of the session" --> D
-//!     D -- "/proc" --> H["riff processes outside a container,<br/>and their parents up to the first process that is not riff"]
+//!     D -- "platform::processes" --> H["riff processes outside a container,<br/>and their parents up to the first process that is not riff"]
 //!     D -- "Runtime::processes: podman top" --> C["the processes of each session container"]
 //!     D -- "the tally of gh calls, by PID" --> G["the GitHub calls of each process"]
 //! ```
 //!
 //! | Part | Source | Shows |
 //! |---|---|---|
-//! | the daemon | `/proc` of the host | its PID, run time and command line |
+//! | the daemon | [`crate::platform::processes`] | its PID, run time and command line |
 //! | a session container | [`Runtime::processes`](crate::runtime::Runtime::processes) | its name, its [`Kind`], its session ID and each process in it |
-//! | a riff command outside a container | `/proc` of the host | the process and its parents up to the first process that is not riff |
+//! | a riff command outside a container | [`crate::platform::processes`] | the process and its parents up to the first process that is not riff |
 //!
 //! A process outside a container is a riff process when the program of its
-//! command, or the file of its binary, is `riff` or `riff-server`. A
-//! process of a container shows in `/proc` too, with the PID of the host
-//! and in its cgroup `libpod-ID.scope`. The daemon leaves it to the
-//! container part, which shows the PID that the process has in its
-//! container: the PID that its `riff` sends with its calls of `gh`
-//! ([`crate::ghcalls::Call::pid`]). The daemon reads only the processes
-//! of its own user, and only a lead in a container may ask.
+//! command, or the file of its binary, is `riff` or `riff-server`. On
+//! Linux, a process of a container shows on the host too, with the PID
+//! of the host ([`crate::platform::Process::in_container`]). The daemon
+//! leaves it to the container part, which shows the PID that the process
+//! has in its container: the PID that its `riff` sends with its calls of
+//! `gh` ([`crate::ghcalls::Call::pid`]). The daemon reads only the
+//! processes of its own user, and only a lead in a container may ask.
 //!
 //! Each process that made calls of `gh` in the last hour shows the count
 //! and the GraphQL points ([`count_calls`]). A call counts for a process
@@ -46,18 +46,12 @@
 //!     S --> V["riff, the TUI"]
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
-use std::os::unix::fs::MetadataExt;
-use std::path::Path;
-
-use serde::{Deserialize, Serialize};
 
 use crate::ghcalls::Call;
-
-/// The ticks of the clock in one second: the unit of the start time in
-/// `/proc/PID/stat`. It is 100 on each Linux that riff supports.
-const TICKS: u64 = 100;
+use crate::platform::Process;
 
 /// The slack, in milliseconds, between the run time of a process and the
 /// time of its first call: a run time has a resolution of one second.
@@ -163,176 +157,93 @@ pub struct Ps {
     pub containers: Vec<Container>,
 }
 
-/// One process as `/proc` shows it.
-#[derive(Debug, Clone)]
-struct Raw {
-    pid: u32,
-    ppid: u32,
-    secs: u64,
-    args: Vec<String>,
-    comm: String,
-    exe: Option<String>,
+/// True when the program of `process` is riff: the first word of its
+/// command, the file of its binary, or its name.
+fn is_riff(process: &Process) -> bool {
+    let base = |path: &str| path.rsplit('/').next().unwrap_or_default().to_owned();
+    let first = process.args.first().map(|arg| base(arg));
+    let exe = process
+        .exe
+        .as_ref()
+        .and_then(|exe| exe.file_name())
+        .map(|name| name.to_string_lossy().into_owned());
+    [first, exe, Some(process.name.clone())]
+        .into_iter()
+        .flatten()
+        .any(|name| PROGRAMS.contains(&name.as_str()))
 }
 
-impl Raw {
-    /// True when the program of the process is riff.
-    fn is_riff(&self) -> bool {
-        let base = |path: &str| path.rsplit('/').next().unwrap_or_default().to_owned();
-        let first = self.args.first().map(|arg| base(arg));
-        let exe = self
-            .exe
-            .as_deref()
-            .map(|exe| base(exe.strip_suffix(" (deleted)").unwrap_or(exe)));
-        [first, exe, Some(self.comm.clone())]
-            .into_iter()
-            .flatten()
-            .any(|name| PROGRAMS.contains(&name.as_str()))
-    }
-
-    fn proc(&self) -> Proc {
-        let args = if self.args.is_empty() {
-            format!("[{}]", self.comm)
-        } else {
-            self.args.join(" ")
-        };
-        Proc {
-            pid: self.pid,
-            ppid: self.ppid,
-            secs: self.secs,
-            args: crate::text::safe(&args).replace(['\n', '\t'], " "),
-            calls: 0,
-            points: 0,
-        }
+/// The line of `process` for `riff ps`.
+fn proc_of(process: &Process) -> Proc {
+    let args = if process.args.is_empty() {
+        format!("[{}]", process.name)
+    } else {
+        process.args.join(" ")
+    };
+    Proc {
+        pid: process.pid,
+        ppid: process.ppid,
+        secs: process.secs,
+        args: crate::text::safe(&args).replace(['\n', '\t'], " "),
+        calls: 0,
+        points: 0,
     }
 }
 
-/// The riff processes outside a container in `root` (`/proc`), with the
-/// parents of each up to the first process that is not riff, and the
-/// daemon `daemon`. A process of another user is not read, and a process
-/// in a container is left to [`Runtime::processes`](crate::runtime::Runtime::processes).
+/// The riff processes of `all`, the processes of the host
+/// ([`crate::platform::processes`]), with the parents of each up to the
+/// first process that is not riff, and the daemon `daemon`. A process
+/// in a container is left to
+/// [`Runtime::processes`](crate::runtime::Runtime::processes).
 ///
 /// ```
-/// use riff::ps::read_host;
+/// use riff::platform::Process;
+/// use riff::ps::host;
 ///
-/// // A folder with the layout of /proc: the daemon, a shell and a riff top.
-/// let root = tempfile::tempdir()?;
-/// let write = |pid: u32, ppid: u32, comm: &str, args: &str, start: u64| -> std::io::Result<()> {
-///     let dir = root.path().join(pid.to_string());
-///     std::fs::create_dir_all(&dir)?;
-///     let mut stat = format!("{pid} ({comm}) S {ppid}");
-///     for _ in 0..15 { stat.push_str(" 0"); }
-///     stat.push_str(&format!(" 20 0 {start} 0"));
-///     std::fs::write(dir.join("stat"), stat)?;
-///     std::fs::write(dir.join("cmdline"), args.replace(' ', "\0") + "\0")?;
-///     Ok(())
+/// let process = |pid, ppid, secs, name: &str, args: &str| Process {
+///     pid,
+///     ppid,
+///     secs,
+///     name: name.into(),
+///     args: args.split(' ').map(String::from).collect(),
+///     ..Process::default()
 /// };
-/// std::fs::write(root.path().join("uptime"), "1000.00 900.00\n")?;
-/// write(10, 1, "riff", "/usr/bin/riff daemon", 10_000)?;
-/// write(20, 1, "bash", "bash", 50_000)?;
-/// write(21, 20, "riff", "riff top", 90_000)?;
-/// write(30, 1, "vim", "vim notes", 50_000)?;
-/// let procs = read_host(root.path(), 10);
+/// let all = [
+///     process(10, 1, 900, "riff", "/usr/bin/riff daemon"),
+///     process(20, 1, 500, "bash", "bash"),
+///     process(21, 20, 100, "riff", "riff top"),
+///     process(30, 1, 500, "vim", "vim notes"),
+///     Process { in_container: true, ..process(40, 1, 50, "riff", "/opt/riff/riff relay") },
+/// ];
+/// let procs = host(&all, 10);
 /// let ids: Vec<(u32, u64, &str)> = procs.iter().map(|p| (p.pid, p.secs, p.args.as_str())).collect();
 /// // vim is no riff process and has no riff child.
 /// assert_eq!(ids, [(10, 900, "/usr/bin/riff daemon"), (20, 500, "bash"), (21, 100, "riff top")]);
-/// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn read_host(root: &Path, daemon: u32) -> Vec<Proc> {
-    let uptime = std::fs::read_to_string(root.join("uptime"))
-        .ok()
-        .and_then(|text| text.split_whitespace().next()?.parse::<f64>().ok())
-        .unwrap_or(0.0);
-    let Ok(mine) = std::fs::metadata(root.join(daemon.to_string())) else {
-        return Vec::new();
-    };
-    let own_ns = std::fs::read_link(root.join(daemon.to_string()).join("ns/pid")).ok();
-    let mut all = BTreeMap::new();
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
-    for entry in entries.flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|n| n.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        let dir = entry.path();
-        if std::fs::metadata(&dir).is_ok_and(|meta| meta.uid() != mine.uid()) {
-            continue;
-        }
-        if in_container(&dir, own_ns.as_deref()) {
-            continue;
-        }
-        if let Some(raw) = read_raw(&dir, pid, uptime) {
-            all.insert(pid, raw);
-        }
-    }
-    keep(&all, daemon)
-}
-
-/// True when the process in `dir` runs in a container of podman: its
-/// cgroup is a `libpod-ID.scope` but not the scope of conmon, or its PID
-/// namespace is not `own`.
-fn in_container(dir: &Path, own: Option<&Path>) -> bool {
-    let cgroup = std::fs::read_to_string(dir.join("cgroup")).unwrap_or_default();
-    let scoped = cgroup
-        .split(['/', '\n'])
-        .any(|part| part.starts_with("libpod-") && !part.starts_with("libpod-conmon-"));
-    let other = match (std::fs::read_link(dir.join("ns/pid")), own) {
-        (Ok(ns), Some(own)) => ns != own,
-        _ => false,
-    };
-    scoped || other
-}
-
-/// The process in `dir`, or `None` when it ended or cannot be read.
-fn read_raw(dir: &Path, pid: u32, uptime: f64) -> Option<Raw> {
-    let stat = std::fs::read_to_string(dir.join("stat")).ok()?;
-    // The name of the program is in parentheses and can hold any
-    // character, also a parenthesis: the last one ends it.
-    let (head, tail) = stat.rsplit_once(')')?;
-    let comm = head.split_once('(')?.1.to_owned();
-    let fields: Vec<&str> = tail.split_whitespace().collect();
-    let ppid = fields.get(1)?.parse().ok()?;
-    let start: u64 = fields.get(19)?.parse().ok()?;
-    let up_ticks = (uptime * TICKS as f64) as u64;
-    let secs = up_ticks.saturating_sub(start) / TICKS;
-    let cmdline = std::fs::read(dir.join("cmdline")).unwrap_or_default();
-    let args = cmdline
-        .split(|byte| *byte == 0)
-        .filter(|arg| !arg.is_empty())
-        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+pub fn host(all: &[Process], daemon: u32) -> Vec<Proc> {
+    let all: BTreeMap<u32, &Process> = all
+        .iter()
+        .filter(|process| !process.in_container)
+        .map(|process| (process.pid, process))
         .collect();
-    let exe = std::fs::read_link(dir.join("exe"))
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned());
-    Some(Raw {
-        pid,
-        ppid,
-        secs,
-        args,
-        comm,
-        exe,
-    })
+    keep(&all, daemon)
 }
 
 /// The riff processes of `all` and the parents of each, up to and with the
 /// first process that is not riff. The daemon `daemon` is the end of a
 /// chain too: it is riff.
-fn keep(all: &BTreeMap<u32, Raw>, daemon: u32) -> Vec<Proc> {
+fn keep(all: &BTreeMap<u32, &Process>, daemon: u32) -> Vec<Proc> {
     let mut kept: BTreeSet<u32> = BTreeSet::new();
-    for raw in all.values().filter(|raw| raw.is_riff()) {
-        kept.insert(raw.pid);
-        if raw.pid == daemon {
+    for process in all.values().filter(|process| is_riff(process)) {
+        kept.insert(process.pid);
+        if process.pid == daemon {
             continue;
         }
-        let mut parent = raw.ppid;
+        let mut parent = process.ppid;
         // A process that is kept already ends the chain: also a loop of
-        // parents, which a changing /proc can show.
+        // parents, which a changing list of processes can show.
         while let Some(up) = all.get(&parent) {
-            if !kept.insert(up.pid) || up.pid == daemon || !up.is_riff() {
+            if !kept.insert(up.pid) || up.pid == daemon || !is_riff(up) {
                 break;
             }
             parent = up.ppid;
@@ -340,7 +251,7 @@ fn keep(all: &BTreeMap<u32, Raw>, daemon: u32) -> Vec<Proc> {
     }
     kept.iter()
         .filter_map(|pid| all.get(pid))
-        .map(Raw::proc)
+        .map(|process| proc_of(process))
         .collect()
 }
 
@@ -638,38 +549,17 @@ fn cut(line: &str, width: usize, suffix: &str) -> String {
     format!("{head}…{suffix}")
 }
 
-/// Writes the process `pid` in a folder `root` with the layout of
-/// `/proc`, for a test: its parent, the name of its program, its command
-/// line and its start in ticks since the boot. `root/uptime` says 1,000
-/// seconds.
-#[cfg(test)]
-pub(crate) fn fake_process(
-    root: &Path,
-    (pid, ppid): (u32, u32),
-    comm: &str,
-    args: &str,
-    start: u64,
-) {
-    let dir = root.join(pid.to_string());
-    std::fs::create_dir_all(&dir).unwrap();
-    // The 17 fields between the parent and the start time.
-    let stat = format!("{pid} ({comm}) S {ppid}{} 20 0 {start} 0", " 0".repeat(15));
-    std::fs::write(dir.join("stat"), stat).unwrap();
-    std::fs::write(dir.join("cmdline"), args.replace(' ', "\0") + "\0").unwrap();
-    std::fs::write(root.join("uptime"), "1000.00 900.00\n").unwrap();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn raw(pid: u32, ppid: u32, args: &str) -> Raw {
-        Raw {
+    fn raw(pid: u32, ppid: u32, args: &str) -> Process {
+        Process {
             pid,
             ppid,
             secs: 1,
             args: args.split(' ').map(str::to_owned).collect(),
-            comm: args
+            name: args
                 .split(' ')
                 .next()
                 .unwrap()
@@ -677,12 +567,8 @@ mod tests {
                 .next()
                 .unwrap()
                 .into(),
-            exe: None,
+            ..Process::default()
         }
-    }
-
-    fn all(list: Vec<Raw>) -> BTreeMap<u32, Raw> {
-        list.into_iter().map(|raw| (raw.pid, raw)).collect()
     }
 
     /// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): a riff command shows with its
@@ -690,7 +576,7 @@ mod tests {
     /// it.
     #[test]
     fn a_riff_command_shows_with_its_parents_up_to_the_first_that_is_not_riff() {
-        let procs = all(vec![
+        let procs = [
             raw(1, 0, "systemd"),
             raw(100, 1, "tmux"),
             raw(200, 100, "bash"),
@@ -698,48 +584,50 @@ mod tests {
             raw(400, 300, "riff wave list"),
             raw(500, 400, "riff pr wait"),
             raw(600, 200, "vim x"),
-        ]);
-        let kept: Vec<u32> = keep(&procs, 9).iter().map(|p| p.pid).collect();
+        ];
+        let kept: Vec<u32> = host(&procs, 9).iter().map(|p| p.pid).collect();
         // `riff pr wait` has a riff parent, so the chain goes on to `watch`.
         assert_eq!(kept, [300, 400, 500]);
     }
 
     /// The program is riff by its name, by the file of its binary, also one
-    /// that a new `riff update` replaced, and by its `comm`.
+    /// that a new `riff update` replaced, and by its name.
     #[test]
     fn a_process_is_riff_by_its_command_its_binary_or_its_name() {
         let mut one = raw(1, 0, "/home/m/.local/bin/riff top");
-        assert!(one.is_riff());
+        assert!(is_riff(&one));
         one.args = vec!["tmux".into()];
-        one.comm = "tmux".into();
-        assert!(!one.is_riff());
-        one.exe = Some("/home/m/.local/bin/riff (deleted)".into());
-        assert!(one.is_riff());
+        one.name = "tmux".into();
+        assert!(!is_riff(&one));
+        one.exe = Some("/home/m/.local/bin/riff".into());
+        one.replaced = true;
+        assert!(is_riff(&one));
         one.exe = Some("/usr/bin/riffraff".into());
-        assert!(!one.is_riff());
+        assert!(!is_riff(&one));
         let server = raw(2, 0, "riff-server --listen x");
-        assert!(server.is_riff());
+        assert!(is_riff(&server));
         // A program that only names riff in its arguments is not riff.
-        assert!(!raw(3, 0, "grep riff x").is_riff());
+        assert!(!is_riff(&raw(3, 0, "grep riff x")));
     }
 
     /// The daemon ends a chain: its parent is not shown.
     #[test]
     fn the_chain_ends_at_the_daemon() {
-        let procs = all(vec![
+        let procs = [
             raw(1, 0, "systemd"),
             raw(10, 1, "riff daemon"),
             raw(11, 10, "riff pr wait"),
-        ]);
-        let kept: Vec<u32> = keep(&procs, 10).iter().map(|p| p.pid).collect();
+        ];
+        let kept: Vec<u32> = host(&procs, 10).iter().map(|p| p.pid).collect();
         assert_eq!(kept, [10, 11]);
     }
 
-    /// A loop in the parents, which a changing /proc can show, ends.
+    /// A loop in the parents, which a changing list of processes can show,
+    /// ends.
     #[test]
     fn a_loop_of_parents_ends() {
-        let procs = all(vec![raw(1, 2, "riff a"), raw(2, 1, "riff b")]);
-        assert_eq!(keep(&procs, 9).len(), 2);
+        let procs = [raw(1, 2, "riff a"), raw(2, 1, "riff b")];
+        assert_eq!(host(&procs, 9).len(), 2);
     }
 
     #[test]
@@ -781,70 +669,6 @@ mod tests {
         assert_eq!(procs[0].calls, 0);
         count_calls(&mut procs, "riff-a", &calls, 100_000);
         assert_eq!((procs[0].calls, procs[0].points), (1, 3));
-    }
-
-    /// 01M6QBXNMEBANX439DF7J1PQ3S (#1610): a process in a container shows
-    /// in the `/proc` of the host. `riff ps` leaves it to the part of the
-    /// container: it shows the daemon and a command outside a container
-    /// only. The scope of conmon is not a container.
-    #[test]
-    fn a_process_in_a_container_is_not_a_command_outside_it() {
-        let root = tempfile::tempdir().unwrap();
-        let cgroup = |pid: u32, path: &str| {
-            std::fs::write(root.path().join(pid.to_string()).join("cgroup"), path).unwrap();
-        };
-        fake_process(root.path(), (10, 1), "riff", "riff daemon", 10_000);
-        fake_process(
-            root.path(),
-            (50, 40),
-            "riff",
-            "/opt/riff/riff relay -- claude",
-            20_000,
-        );
-        cgroup(
-            50,
-            "0::/user.slice/user@1000.service/user.slice/libpod-abc123.scope/container\n",
-        );
-        fake_process(
-            root.path(),
-            (40, 1),
-            "conmon",
-            "conmon --api-version 1",
-            20_000,
-        );
-        cgroup(
-            40,
-            "0::/user.slice/user@1000.service/user.slice/libpod-conmon-abc123.scope\n",
-        );
-        fake_process(root.path(), (60, 1), "riff", "riff top", 30_000);
-        cgroup(
-            60,
-            "0::/user.slice/user@1000.service/app.slice/tmux.scope\n",
-        );
-        // Another PID namespace than the daemon: a container too.
-        fake_process(root.path(), (70, 1), "riff", "riff relay", 30_000);
-        let ns = |pid: u32, id: u32| {
-            let dir = root.path().join(pid.to_string()).join("ns");
-            std::fs::create_dir_all(&dir).unwrap();
-            std::os::unix::fs::symlink(format!("pid:[{id}]"), dir.join("pid")).unwrap();
-        };
-        ns(10, 1);
-        ns(60, 1);
-        ns(70, 2);
-        let pids: Vec<u32> = read_host(root.path(), 10).iter().map(|p| p.pid).collect();
-        // conmon (40) is the parent of the relay in the container, but the
-        // chain of a riff process in a container is not read at all.
-        assert_eq!(pids, [10, 60]);
-    }
-
-    /// The daemon that `/proc` does not show gives no process: `riff ps`
-    /// says so.
-    #[test]
-    fn a_folder_without_the_daemon_gives_no_process() {
-        let root = tempfile::tempdir().unwrap();
-        fake_process(root.path(), (60, 1), "riff", "riff top", 30_000);
-        assert!(read_host(root.path(), 10).is_empty());
-        assert!(read_host(&root.path().join("no-folder"), 10).is_empty());
     }
 
     /// A container whose list the runtime cannot give shows why. A

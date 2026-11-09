@@ -2682,13 +2682,13 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
     let dir = riff::daemon::dir()?;
     match command {
         DaemonCommand::Install => {
-            let manager = riff::service::Systemd::here()?;
+            let manager = riff::platform::service_manager()?;
             let unit = riff::service::Unit::of_this()?;
             let wait = Duration::from_secs(10);
             riff::daemon::install(&manager, &unit, &dir, wait).await
         }
         DaemonCommand::Uninstall => {
-            let manager = riff::service::Systemd::here()?;
+            let manager = riff::platform::service_manager()?;
             println!(
                 "{}",
                 riff::daemon::uninstall(&manager, &manager.unit_path())?
@@ -2699,7 +2699,7 @@ async fn daemon_command(command: Option<&DaemonCommand>, server: Option<&str>) -
             if let Ok(socket) = riff::session_relay::socket_here() {
                 return status_in_container(&socket).await;
             }
-            let manager = riff::service::Systemd::here()?;
+            let manager = riff::platform::service_manager()?;
             let code = riff::daemon::show_status(&dir, &manager).await;
             if code != 0 {
                 std::process::exit(code);
@@ -2787,7 +2787,7 @@ async fn ps_command() -> Result<()> {
             }
         };
     }
-    let manager = riff::service::Systemd::here()?;
+    let manager = riff::platform::service_manager()?;
     let code = riff::daemon::show_ps(&riff::daemon::dir()?, &manager, width).await;
     if code != 0 {
         std::process::exit(code);

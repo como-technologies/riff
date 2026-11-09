@@ -2255,6 +2255,8 @@ mod tests {
         assert_eq!(error, text::run_no_milestone(12));
     }
 
+    // podman runs the sessions on Linux only.
+    #[cfg(target_os = "linux")]
     #[test]
     fn with_a_token_podman_gets_the_name_of_the_variable_and_no_sign_in_file() {
         let token = "sk-ant-oat01-secret1";
@@ -2288,6 +2290,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn with_no_token_podman_binds_the_sign_in_file_and_gets_no_token_variable() {
         let args: Vec<String> = crate::podman::run_args(&spec(&facts()))

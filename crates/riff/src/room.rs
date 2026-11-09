@@ -8,7 +8,7 @@
 //! So the daemon keeps one limit for the whole host ([`Limit`]): the
 //! number of live sessions, and a floor of free memory. A host has room
 //! when fewer sessions than the limit live, and the free memory
-//! (`MemAvailable` of `/proc/meminfo`) is at or above the floor.
+//! ([`crate::platform::Memory::available`]) is at or above the floor.
 //!
 //! Each start of a session takes a [`Slot`] first ([`Room::admit`]). The
 //! starts wait in order: the first that asks is the first that starts. A
@@ -421,26 +421,10 @@ pub fn set(dir: &Path, change: Change) -> Result<Limit> {
     Ok(limit)
 }
 
-/// The free memory of the text of `/proc/meminfo`, in bytes:
-/// `MemAvailable`.
-///
-/// ```
-/// let text = "MemTotal:       32768000 kB\nMemFree:  1000 kB\nMemAvailable:   16384000 kB\n";
-/// assert_eq!(riff::room::mem_available(text), Some(16_384_000 * 1024));
-/// assert_eq!(riff::room::mem_available("MemTotal: 1 kB\n"), None);
-/// ```
-pub fn mem_available(meminfo: &str) -> Option<u64> {
-    meminfo.lines().find_map(|line| {
-        let kb = line.strip_prefix("MemAvailable:")?;
-        let kb: u64 = kb.trim().strip_suffix("kB")?.trim().parse().ok()?;
-        kb.checked_mul(1024)
-    })
-}
-
 /// The free memory of this host, in bytes, or `None` when the host does
-/// not say.
+/// not say: [`Memory::available`](crate::platform::Memory::available).
 pub fn free_memory() -> Option<u64> {
-    mem_available(&std::fs::read_to_string("/proc/meminfo").ok()?)
+    crate::platform::memory().map(|memory| memory.available)
 }
 
 /// The source of the free memory: [`free_memory`], or a fake in a test.
@@ -658,8 +642,6 @@ mod tests {
 
     #[test]
     fn the_free_memory_of_this_host_is_a_number() {
-        if cfg!(target_os = "linux") {
-            assert!(free_memory().is_some_and(|free| free > 0));
-        }
+        assert!(free_memory().is_some_and(|free| free > 0));
     }
 }

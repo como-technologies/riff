@@ -449,6 +449,8 @@ async fn each_person_gets_the_lead_app() {
 /// repository with the release cycle and no ruleset `releases` names the
 /// lead App of the riff in the fix, and changes nothing. With no
 /// `[release]` in `riff.toml`, it has no such check.
+/// `riff init` needs Linux.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn riff_init_check_names_the_ruleset_releases_with_the_lead_app() {
     let fake = FakeGitHub::start().await;
@@ -500,6 +502,8 @@ async fn riff_init_check_names_the_ruleset_releases_with_the_lead_app() {
 /// repository with no guard, in a riff with the session App, names the
 /// guard of its bot with the fix, and changes nothing. bob is no admin
 /// of the riff.
+/// `riff init` needs Linux.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn riff_init_check_names_a_repository_with_no_guard() {
     let fake = FakeGitHub::start().await;
@@ -546,6 +550,8 @@ async fn riff_init_check_names_a_repository_with_no_guard() {
 /// repository with no installation of the Apps fails a check, and names
 /// `riff github install OWNER`. With the Apps on the repository, the
 /// check passes.
+/// `riff init` needs Linux.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn riff_init_check_names_the_install_of_the_apps() {
     let fake = FakeGitHub::start().await;

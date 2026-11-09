@@ -49,11 +49,21 @@ pub fn here(dir: &Path) -> Option<Disk> {
     }
     let stat = nix::sys::statvfs::statvfs(dir).ok()?;
     let block = stat.fragment_size();
-    let gb = |blocks: u64| blocks.saturating_mul(block) / 1024 / 1024 / 1024;
     Some(Disk {
-        free_gb: gb(stat.blocks_available()),
-        total_gb: gb(stat.blocks()),
+        free_gb: gb(stat.blocks_available(), block),
+        total_gb: gb(stat.blocks(), block),
     })
+}
+
+/// The GB in `blocks` blocks of `block` bytes. A count of blocks is a
+/// `u64` on Linux, and a `u32` on macOS.
+///
+/// ```
+/// assert_eq!(riff::disk::gb(3u32, 1 << 30), 3);
+/// assert_eq!(riff::disk::gb(u64::MAX, 2), u64::MAX >> 30);
+/// ```
+pub fn gb(blocks: impl Into<u64>, block: u64) -> u64 {
+    blocks.into().saturating_mul(block) / 1024 / 1024 / 1024
 }
 
 #[cfg(test)]

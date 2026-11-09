@@ -54,6 +54,11 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 rustyline = { version = "18.0.1", default-features = false, features = ["custom-bindings"] }
 ratatui = "0.30.2"
 
+# ── macOS ──
+libc = "0.2.191"
+libproc = "0.15.0"
+sysctl = "0.7.1"
+
 # ── Testing ──
 assert_cmd = "2.2"
 tempfile = "3"

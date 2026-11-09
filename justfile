@@ -159,6 +159,14 @@ test-archived PART:
     tar -xf target/test-archive/tests.tar
     {{test_env}} "${CARGO_TARGET_DIR:-target}/debug/hygiene" test-part {{PART}} --archive target/test-archive
 
+# The job macOS of the Gate runs this on a Mac with Apple silicon
+# (01M6YPB5DZ9M3VEJ7V7P7EF797). A test that needs Linux has
+# cfg(target_os = "linux") (01M6YPB5GTHFQG8HGM57DVBGBN).
+# Lint and test riff, riff-client and riff-core on a Mac
+test-macos:
+    cargo clippy -p riff-core -p riff-client -p riff --all-targets -- -D warnings
+    {{just_executable()}} cargo-test -p riff-core -p riff-client -p riff --no-fail-fast
+
 # cargo test ARGS for test and check, in the environment of the tests.
 # 01M49NP2907J4SH4S6MAY09VXE: .cargo/config.toml sets the TMPDIR.
 # 01M511FGMFF17G2G8RV6ST9070: first each binary of the workspace, so a test

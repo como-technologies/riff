@@ -3,15 +3,20 @@
 //! (01M3WNN7VQJKN5MJH7JN50VF4D, 01M513W2K3HNRWPQTQNBQPT8MZ,
 //! 01M513W2NSE303E6XAM18BW7T6, 01M513W2RERJES76ZXKKHCV0DP,
 //! 01M515Z3Y7GSFNTJGXJD727MQK, 01M6QQ1NXY0CXMZEEEP413W4PK,
-//! 01M6QQ1P5YCT0JX90X5FCKM4W1). The tests read
-//! `.github/workflows/ci.yml`, the justfile and `deploy/session-test.sh`.
+//! 01M6QQ1P5YCT0JX90X5FCKM4W1, 01M6YPB5DZ9M3VEJ7V7P7EF797). The tests
+//! read `.github/workflows/ci.yml`, the justfile and
+//! `deploy/session-test.sh`.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// The parts of the Gate: the jobs that the job `gate` needs.
-const PARTS: [&str; 2] = ["build", "test"];
+const PARTS: [&str; 3] = ["build", "test", "macos"];
+
+/// The parts of the Gate that run the checks of `just ci-full`. The job
+/// `macos` runs `just test-macos` (01M6YPB5DZ9M3VEJ7V7P7EF797).
+const CHECKS: [&str; 2] = ["build", "test"];
 
 fn top() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -98,7 +103,7 @@ fn recipes(job: &str) -> Vec<String> {
 #[test]
 fn the_parts_of_the_gate_run_each_check_of_ci_full() {
     let mut each = Vec::new();
-    for part in PARTS {
+    for part in CHECKS {
         let found = recipes(&job(part));
         assert!(!found.is_empty(), "the job {part} runs no recipe");
         each.extend(found);
@@ -127,6 +132,41 @@ fn the_gate_needs_each_part_and_runs_on_the_same_events() {
         "github.event_name != 'schedule'"
     );
     assert_eq!(field(&job("test"), "needs"), "[build]");
+    assert_eq!(field(&job("macos"), "if"), when);
+}
+
+/// 01M6YPB5DZ9M3VEJ7V7P7EF797: the job macOS lints and tests riff,
+/// riff-client and riff-core on a Mac with Apple silicon, and takes no
+/// artifact of Build.
+#[test]
+fn the_job_macos_tests_three_crates_on_a_mac_with_apple_silicon() {
+    let macos = job("macos");
+    assert_eq!(field(&macos, "name"), "macOS");
+    assert_eq!(field(&macos, "runs-on"), "macos-latest");
+    assert!(!macos.contains("\n    needs:"), "{macos}");
+    assert!(!macos.contains("download-artifact"), "{macos}");
+    // The check of the runner is the first command of the job.
+    let check = "run: test \"$(uname -sm)\" = \"Darwin arm64\"\n";
+    assert_eq!(macos.find("run: "), macos.find(check), "{macos}");
+    assert_eq!(recipes(&macos), ["test-macos"]);
+
+    let justfile = std::fs::read_to_string(top().join("justfile")).unwrap();
+    let body: Vec<&str> = justfile
+        .split_once("\ntest-macos:\n")
+        .unwrap()
+        .1
+        .lines()
+        .take_while(|line| line.starts_with("    "))
+        .map(str::trim)
+        .collect();
+    let crates = "-p riff-core -p riff-client -p riff";
+    assert_eq!(
+        body,
+        [
+            format!("cargo clippy {crates} --all-targets -- -D warnings"),
+            format!("{{{{just_executable()}}}} cargo-test {crates} --no-fail-fast"),
+        ]
+    );
 }
 
 #[test]
@@ -160,19 +200,23 @@ fn the_tests_run_in_parts_that_together_hold_each_test() {
     }
 }
 
+/// 01M513W2RERJES76ZXKKHCV0DP: each job but macOS runs on the runner of
+/// `RIFF_RUNNER`.
 #[test]
-fn each_job_of_ci_runs_on_the_runner_of_riff_runner() {
+fn each_job_of_ci_but_macos_runs_on_the_runner_of_riff_runner() {
     let text = workflow();
     let lines: Vec<&str> = text
         .lines()
         .filter(|line| line.trim_start().starts_with("runs-on:"))
+        .map(str::trim)
         .collect();
     assert!(lines.len() > PARTS.len(), "{lines:?}");
-    for line in lines {
-        assert_eq!(
-            line.trim(),
-            "runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}"
-        );
+    let (mac, others): (Vec<&str>, Vec<&str>) = lines
+        .into_iter()
+        .partition(|line| *line == "runs-on: macos-latest");
+    assert_eq!(mac.len(), 1, "{mac:?}");
+    for line in others {
+        assert_eq!(line, "runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}");
     }
 }
 
