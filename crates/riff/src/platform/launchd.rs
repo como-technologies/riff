@@ -804,16 +804,17 @@ exit 0
              launchctl bootstrap gui/501 {}\n",
             launchd.unit_path().display()
         );
+        // The fake logs the bootstrap before it loads the agent: wait for
+        // both.
         let span = isolated::Span::start();
-        while here.log() != want {
+        while here.log() != want || !here.loaded() {
             assert!(
                 span.within(Duration::from_secs(10)),
-                "{}\nis not\n{want}",
+                "{}\nis not\n{want}, or the agent is not loaded",
                 here.log()
             );
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(here.loaded());
     }
 
     #[test]
