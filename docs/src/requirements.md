@@ -1061,6 +1061,34 @@
   with the token of the person. `riff daemon status` names the
   repository of the lead and the reason, and `riff whoami` in the lead
   shows `no token`. This supersedes 01M6WPMWSMQABE97YCMS5Z3M1P in part.
+- **01M6Z87A04EXTT1FFJSJ1EM6TB** No session gets the token of the person
+  on GitHub. riff keeps no `gh auth token` for a session, and the
+  daemon refuses to start a container whose env names `GH_TOKEN` or
+  `GITHUB_TOKEN`. When riff-server gives no token of an App, because
+  the riff has no App of the role or no sign-in, the App is not on the
+  repository, the `gh` of the person cannot push there, or riff-server
+  is older, no container of a worker or of a verify starts. The wave
+  then counts no start, tells the lead the reason one time, and starts
+  no item of the repository for 10 minutes. The lead starts with no
+  token on GitHub: no `GH_TOKEN`, and no `hosts.yml` in the folder `gh`
+  of the session. `riff whoami` in the lead shows `no token` and the
+  reason. The daemon keeps the `gh` of the person for its own calls on
+  the host (01M6XZJFE2ZTR5RE3AWM30R704). This supersedes
+  01M6WPMWSMQABE97YCMS5Z3M1P in full, and 01M6WPMWYSW98MQYQCCJ54ZX04 and
+  01M6WZ2C8JXEA888XYMRXTS17V in part.
+- **01M6Z87JTXW0Y99X08VHA2SSSR** Each state with no token of an App that
+  a lead cannot repair gives the person the fix and a prompt for
+  `claude` on the host. The reason names the fix, for example `riff
+  github install OWNER`. The daemon adds a prompt to paste into a
+  `claude` session that the person starts on the host, in a clone of the
+  repository: it asks `claude` to read the lines `GitHub:` of `riff
+  daemon status`, and to give the commands for a terminal of the person,
+  because riff refuses them in a session. `riff daemon status` names the
+  repository, the reason and the prompt. `riff lead start` prints them,
+  and the first prompt of the lead ends with them. The wave tells the
+  lead the same text. `riff init --check` fails a check with the same
+  fix. While riff-server cannot read the keys of the Apps, its own
+  reason and prompt stay (01M6YC3SYATQW7GZZV3APFG85B).
 
 ## Pause
 
@@ -4904,11 +4932,11 @@ of this part when they merge.
   in full, and 01M56Q4AQ86V99RC8CA1KGCMSZ in part.
 - **01M5SMW2B4GMJ3V6BCX1KGC1ZY** riff refuses a `riff.toml` whose
   `[session.env]` names a variable that riff sets itself (`HOME`,
-  `USER`, `LOGNAME`, `GH_TOKEN`, `CLAUDE_CONFIG_DIR`,
-  `CLAUDE_CODE_OAUTH_TOKEN`, or a name that starts with `GIT_CONFIG_` or
-  `RIFF_`), or whose `[session.volumes]` names a volume that podman
-  could read as a path, or gives a path that is not absolute. The error
-  names the key and the file.
+  `USER`, `LOGNAME`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, or
+  a name that starts with `GIT_CONFIG_` or `RIFF_`), or whose
+  `[session.volumes]` names a volume that podman could read as a path,
+  or gives a path that is not absolute. The error names the key and the
+  file. Superseded in part by 01M6ZBCB2JAQFC0EWNA91666ZA.
 - **01M5SMW2DQ8G919EJ4P0GXF9Y3** The `riff.toml` of this repository sets
   the build cache of its sessions: the volumes `riff-cargo` at
   `$HOME/.cargo` and `riff-sccache` at `$HOME/.cache/sccache`, and the
@@ -5054,6 +5082,12 @@ of this part when they merge.
   no notarization. The linker signs each binary for macOS ad hoc. A file
   that `riff update` or `curl` downloads has no quarantine, so macOS
   runs it. The book installs riff on a Mac with `curl`.
+- **01M6ZBCB2JAQFC0EWNA91666ZA** riff refuses a `riff.toml` whose
+  `[session.env]` names `GH_TOKEN` or `GITHUB_TOKEN`: no session gets a
+  token of GitHub in a variable (01M6Z87A04EXTT1FFJSJ1EM6TB). The error
+  names the key, the file, and the folder of `GH_CONFIG_DIR` where the
+  session finds its token. This supersedes 01M5SMW2B4GMJ3V6BCX1KGC1ZY in
+  part.
 
 ### Sessions
 
@@ -6987,6 +7021,16 @@ of this part when they merge.
   verify decide the merge. Supersedes 01M5R580VCRCHJM8FY7NT485R1 in
   part: the part that sends a session to the `CLAUDE.md` of the
   repository.
+- **01M6Z87JY83V3KR72E2AG8V8KG** `riff run ITEM --no-github` runs a
+  session that needs no GitHub. The daemon asks riff-server for no
+  token, starts the container with the folder `gh` of the session with
+  no `hosts.yml` and with no `GH_TOKEN`, and renews nothing. The start
+  text has the body of the issue, and tells the session to commit and to
+  push nothing. At the end, `riff run` does its steps as for each
+  session. With no pull request of the branch, it names the clone and
+  the command to push the branch, and exits with 0 when `claude` ended
+  with 0. `riff whoami` in the session shows `none`. In the container of
+  the lead, `riff run` takes no `--no-github`.
 
 ### How the relay drives claude
 
@@ -7113,22 +7157,13 @@ of this part when they merge.
   container gets a bind of `~/.config/gh` of the host. This supersedes
   01M4Z60B89BHXQVJ2MGRRQ2CKJ in full, and 01M4Z60B7QDWEFQ96H448RE9N2 in
   part.
-- **01M6WPMWSMQABE97YCMS5Z3M1P** The session keeps the token of the
-  person when riff-server gives no token of an App because the riff has
-  no App of the role or no sign-in, the App is not on the repository, or
-  the `gh` of the person cannot push there. The daemon then reads `gh
-  auth token` on the host, and gives it in `GH_TOKEN` with the name only
-  on the command line of podman (`-e GH_TOKEN`). `riff daemon status`
-  names each such repository with the fix, for example `riff github
-  install OWNER`, and `riff init --check` fails a check with the same
-  fix.
 - **01M6WPMWW7T0Y8SY3522GS4YF0** The lead in a container gets the token
   of the lead App at `riff lead start`, and the daemon renews it for the
   life of the lead. Each `riff` command of a person in a terminal keeps
   the token of the person.
 - **01M6WPMWYSW98MQYQCCJ54ZX04** `riff whoami` in a container shows how
   the session acts on GitHub: the bot, the role, the rights and the end
-  of its token, or that it has the token of the person and why.
+  of its token. Superseded in part by 01M6Z87A04EXTT1FFJSJ1EM6TB.
 - **01M6WPMX18BECQPTQNSTZMBN16** The daemon and the relay take each
   token of a GitHub App out of each event and each line: `ghs_` and the
   letters, digits and `_` after it.
@@ -7137,9 +7172,8 @@ of this part when they merge.
   address of the bot of the App, `BOTID+LOGIN@users.noreply.github.com`,
   with `GIT_CONFIG_*` at the start of the container. BOTID is the user
   ID of the bot that riff-server gives with the token; with none, the
-  address is `LOGIN@users.noreply.github.com`. A session with the token
-  of the person keeps the git identity of `~/.gitconfig`. Superseded in
-  part by 01M6Y6B8VBM3TKC3YHZKSA4PFZ.
+  address is `LOGIN@users.noreply.github.com`. Superseded in part by
+  01M6Y6B8VBM3TKC3YHZKSA4PFZ and 01M6Z87A04EXTT1FFJSJ1EM6TB.
 - **01M6Y6B8VBM3TKC3YHZKSA4PFZ** Each commit of a session with a token
   of a GitHub App has the bot of the App as its author and its
   committer: `user.name` is the login of the bot, for example
@@ -7147,6 +7181,11 @@ of this part when they merge.
   container. The trailer `Riff-Session: ID` of each commit names the
   session, and `git log --grep 'Riff-Session: ID'` finds its commits.
   This supersedes 01M6WZ2C8JXEA888XYMRXTS17V in part.
+- **01M6ZAEH3B92HKV0YTM2WTF1T2** The daemon and the relay take each
+  token of GitHub out of each event and each line: `ghs_`, `gho_`,
+  `ghp_`, `ghu_`, `ghr_` or `github_pat_`, and the letters, digits and
+  `_` after it. riff reads no token of the person for a session
+  (01M6Z87A04EXTT1FFJSJ1EM6TB), so the form of the token hides it.
 
 ### The security of riff's own code
 
@@ -7720,6 +7759,13 @@ of this part when they merge.
   has it in, as `claude-opus-5-5` has `opus`. With no `model` in
   `[session]`, the model of the tree is `opus`. A `riff run` with no
   such line fails the step too.
+- **01M6Z87SDSYDTFHMPKGNX74SMC** The real-session test runs `riff run
+  issue-N --image IMAGE --no-github` (01M6Z87JY83V3KR72E2AG8V8KG): its
+  session has no token on GitHub, and never the token of the person.
+  After the home check, the test pushes the branch from the clone of the
+  session with the git of the person on the host, and opens the pull
+  request with `gh pr create`. Then it finds the pull request, checks
+  its change and waits for the Gate, as before.
 
 ## The UIs
 

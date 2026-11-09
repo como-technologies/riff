@@ -1062,9 +1062,11 @@ command line of podman: put no secret in `riff.toml`.
 riff refuses a `riff.toml` that it cannot keep:
 
 - A variable that riff sets itself: `HOME`, `USER`, `LOGNAME`,
-  `GH_TOKEN`, `GH_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
-  `CLAUDE_CODE_OAUTH_TOKEN`, and each name that starts with
-  `GIT_CONFIG_` or `RIFF_`.
+  `GH_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, and
+  each name that starts with `GIT_CONFIG_` or `RIFF_`.
+- `GH_TOKEN` and `GITHUB_TOKEN`: no session gets a token of GitHub in a
+  variable. Each session gets the token of a GitHub App of the riff in
+  the folder of `GH_CONFIG_DIR`.
 - `ANTHROPIC_MODEL`: see
   [Set the model of the sessions](#set-the-model-of-the-sessions).
 - A volume name that podman could read as a path. A name starts with a
@@ -1462,7 +1464,9 @@ in the data folder of riff.
 `riff run ITEM` does one work item in a rootless podman container. It
 claims the item, wakes the lead and releases the item. The riff
 daemon runs the container. The container does the work: `claude -p` in a
-clone of its own, with your sign-in of git, `gh` and `claude`.
+clone of its own, with your sign-in of `claude`. For git and `gh`, the
+session gets a token of a GitHub App of the riff, never your token: see
+[Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role).
 
 ```mermaid
 flowchart LR
@@ -1603,6 +1607,39 @@ with `--image`:
 riff run issue-12 --image localhost/riff-session:test
 ```
 
+### Run an item with no GitHub
+
+A session gets a token of a GitHub App of the riff, never your token.
+A riff with no sign-in, for example the riff of the real-session test,
+gives no such token. Then run an item that needs no GitHub with
+`--no-github`:
+
+```sh
+riff run issue-12 --no-github
+```
+
+The daemon asks riff-server for no token. The container gets no
+`GH_TOKEN` and no `hosts.yml`, so `gh`, `git fetch` and `git push` do
+not work there. The start text holds the body of the issue. The
+session commits on its branch, and pushes nothing. `riff whoami` in
+the session shows `github   none`. At the end, `riff run` does its
+steps as for each session. With no pull request, it names the clone
+and the command that pushes the branch. Push it from the host, with
+your git:
+
+```sh
+git -C ~/.local/share/riff/sessions/issue-12-ID8/clone push origin worktree-issue-12
+```
+
+```mermaid
+flowchart LR
+    R["riff run issue-12 --no-github"] --> D["the daemon: no token, no GH_TOKEN"]
+    D --> C["the session commits on worktree-issue-12"]
+    C --> P["you, on the host: git push"]
+```
+
+In the container of the lead, `riff run` takes no `--no-github`.
+
 ### Run an item from the container of the lead
 
 The lead runs `riff run` in its container too. The container has no
@@ -1658,7 +1695,10 @@ steps:
    each event: the text, each tool call, each tool that failed, each
    call that the rules refused, the push, the end of the turn, and the
    background tasks that `claude` waits for after it. The session
-   pushes the branch and opens the pull request.
+   pushes the branch and opens the pull request. The session acts on
+   GitHub with a token of the session App. With no such token, no
+   container starts, and riff says the fix: see
+   [Repair riff with claude on the host](how-it-works.md#repair-riff-with-claude-on-the-host).
 4. It finds the pull request of the branch, and sends a verify request
    to your lead. It sends none when the issue has the label
    `no-verify`, or when a lead holds `verify-ITEM`, and it says why
@@ -1909,9 +1949,10 @@ another host, add `--host thelio`.
   `gh` of the session with no write, and `GH_CONFIG_DIR`. git gets it
   from `gh auth git-credential`. See
   [Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role).
-- Where the Apps are not on the repository, your token of `gh` in
-  `GH_TOKEN`. riff gives podman only the name of the variable, so the
-  token is in no command line.
+- Never your token of `gh`: no `GH_TOKEN`. With no token of an App, no
+  worker and no verify starts, and the lead starts with no token on
+  GitHub. See
+  [Repair riff with claude on the host](how-it-works.md#repair-riff-with-claude-on-the-host).
 - With the token of an App, the author of each commit: `user.name` and
   `user.email` of the bot in `GIT_CONFIG_*`. They win over your
   `~/.gitconfig`. See
@@ -1981,8 +2022,8 @@ of its role as its author and its committer, for example
 bot, for example
 `1101+riff-como-technologies[bot]@users.noreply.github.com`. So GitHub
 links the commit to the App. The trailer `Riff-Session:` of each commit
-names the session. Where the Apps are not on the repository, a session
-acts with your token, and its commits keep your git identity.
+names the session. A session of `riff run --no-github` has no bot: its
+commits keep your git identity of `~/.gitconfig`.
 
 The squash merge makes one commit on `main`. The body of a session ends
 with two trailers: `Riff-Session:` with the session ID, and
@@ -4312,8 +4353,8 @@ flowchart LR
     T -- "riff daemon, RIFF_DATA" --> D["the riff daemon of the test"]
     T -- "riff run, RIFF_DATA" --> D
     M["the riff daemon of your machine:<br/>it runs on, the test does not talk to it"]
-    D -- "podman run" --> C["container: claude -p"]
-    C -- "push, pull request" --> G
+    D -- "podman run" --> C["container: claude -p<br/>no GitHub: it commits"]
+    T -- "push the branch, open the<br/>pull request: your git and gh" --> G
     T -- "check the pull request<br/>and the Gate" --> G
     T -- "check" --> H[("your home")]
 ```
@@ -4340,19 +4381,25 @@ The test does these steps. The messages name them:
 5. Start the daemon: the test starts `riff daemon` of your clone,
    beside the daemon of your machine, and waits until it answers. See
    [When a riff daemon runs already](#when-a-riff-daemon-runs-already).
-6. Run the item: `riff run` does the issue. You see each event of the
-   session. Its line `start: model ...` must name the model of
-   `riff.toml`, for example `claude-opus-5-5` for `opus`. Else the step
-   fails.
+6. Run the item: `riff run --no-github` does the issue. The session
+   gets no token on GitHub, and never yours: the riff-server of the
+   test has no GitHub Apps. It commits on its branch, and pushes
+   nothing. You see each event of the session. Its line
+   `start: model ...` must name the model of `riff.toml`, for example
+   `claude-opus-5-5` for `opus`. Else the step fails. See
+   [Run an item with no GitHub](#run-an-item-with-no-github).
 7. Check the home: the test lists your home again. A new file fails
    the test, outside the paths that the test leaves out (see
    [When another program writes in your home](#when-another-program-writes-in-your-home)).
    A change to a file that riff must not write also fails it. See
    [What the home check compares](#what-the-home-check-compares).
-8. Find the pull request: the branch of the session has an open pull
+8. Push the branch: the test pushes the branch from the clone of the
+   session with your git on the host, and opens the pull request with
+   your `gh`. The step fails when the session made no commit.
+9. Find the pull request: the branch of the session has an open pull
    request.
-9. Check the change: the pull request adds the line to the book.
-10. Wait for the Gate: the job `Gate` of the pull request starts. It
+10. Check the change: the pull request adds the line to the book.
+11. Wait for the Gate: the job `Gate` of the pull request starts. It
     starts when each part of the Gate ended (see
     [How the Gate runs](#how-the-gate-runs)).
 

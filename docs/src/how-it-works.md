@@ -197,7 +197,7 @@ hold each decision of the design.
 | The CPU | Each container gets `--cpus`, 8 by default. riff sets no build jobs: a tool reads the CPUs of its container. `riff daemon limit --cpus N` sets it for the host. The daemon keeps one limit for the host: the number of live sessions, at most 3 by default. | A build of one session makes the builds of the others slower, up to its limit. |
 | The memory | Each container gets `--memory`, 8 GB by default. `riff daemon limit --memory GB` sets it for the host. A session past its limit loses its own processes, not those of another session. The daemon starts no new session while the free memory is below a floor, 8 GB by default. | It takes memory, up to its limit, that a new session needs. |
 | The network | Each session reaches the internet, as a plain `claude` does. No proxy and no filter. | It uses the same connection and reaches each service that your machine reaches. |
-| The sign-in of `gh` | The session acts on GitHub as a bot of a GitHub App of the riff, with a token for its one repository and the rights of its role: see [Who acts on GitHub for each role](#who-acts-on-github-for-each-role). The container gets no token of yours. Where the Apps are not on the repository, the daemon gives the container your token in `GH_TOKEN`, as before: podman gets only the name of the variable, so the value is in no command line. The image has `gh` at `/usr/bin/gh`. The daemon binds the binary of riff at `/usr/local/bin/gh`: it counts each call for `riff daemon status` (see [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)), and runs the real `gh`. An image with its own `gh` at `/usr/local/bin/gh` gets no bind: its `gh` runs as it is, with no count. No secret goes into a log line, a message or a file of a clone. | A worker can change an issue or a comment of another session: the right `issues: write` has no smaller part. The guard puts the change back: see [Add to an issue](#add-to-an-issue). Where the Apps are not, a session can do on GitHub each thing that you can do. |
+| The sign-in of `gh` | The session acts on GitHub as a bot of a GitHub App of the riff, with a token for its one repository and the rights of its role: see [Who acts on GitHub for each role](#who-acts-on-github-for-each-role). The container never gets your token. Where the Apps are not on the repository, no worker and no verify starts, and the lead starts with no token on GitHub: see [Repair riff with claude on the host](#repair-riff-with-claude-on-the-host). The image has `gh` at `/usr/bin/gh`. The daemon binds the binary of riff at `/usr/local/bin/gh`: it counts each call for `riff daemon status` (see [See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit)), and runs the real `gh`. An image with its own `gh` at `/usr/local/bin/gh` gets no bind: its `gh` runs as it is, with no count. No secret goes into a log line, a message or a file of a clone. | A worker can change an issue or a comment of another session: the right `issues: write` has no smaller part. The guard puts the change back: see [Add to an issue](#add-to-an-issue). |
 | The sign-in of `claude` | Each session has its own Claude folder in a folder of riff. riff trusts the clone of the session there, as you trust the main clone. The daemon gives the session the long-lived token of `riff claude-token`, kept in the OS keyring, in `CLAUDE_CODE_OAUTH_TOKEN`. With no token, riff binds your `~/.claude/.credentials.json` with no write, and starts no session while its access token has less than 60 minutes left. riff never changes your own Claude config. | It uses the limits of your plan that another session needs. |
 | The daemon and the riff tools | Each relay talks to the daemon through its own Unix socket, in a folder that only that session sees. The socket tells the daemon which session asks. The daemon serves the riff tools of the session on riff-server, as its worker session. A session gets only the riff tools that talk: `whoami`, `who`, `threads`, `read`, `post`, `tell`, `status` and `blocked`. No riff tool of a session acts on a folder of your machine or on a claim. The owner and admin steps need a person at the CLI. No riff tool does them. | It can send messages to other sessions through the riff tools. |
 
@@ -6243,8 +6243,8 @@ gh run list --workflow riff-guard.yml
 #### Who acts on GitHub for each role
 
 Each session in a container acts on GitHub with a token of a GitHub App
-of the riff, not with your token. GitHub shows the bot of the App, and
-refuses each step that the rights of the role do not give. See
+of the riff. No session gets your token. GitHub shows the bot of the
+App, and refuses each step that the rights of the role do not give. See
 [Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff).
 
 | Who | Acts on GitHub as | What GitHub lets it do |
@@ -6252,7 +6252,8 @@ refuses each step that the rights of the role do not give. See
 | A worker | `riff-OWNER[bot]`, the session App | Push a branch, open a pull request, comment, run a workflow again, and change `.github/workflows`. It cannot set `riff/verify` or push a tag `v*`. |
 | A verifier | `riff-OWNER[bot]`, the session App | Read only. The daemon reports the verify on the pull request. |
 | The lead in a container | `riff-OWNER-lead[bot]`, the lead App | The steps of a worker, set `riff/verify`, and push a tag `v*` (see [Who tags and who approves a release](#who-tags-and-who-approves-a-release)). It cannot change `.github/workflows`, and it cannot approve a deploy. |
-| The daemon on the host, for its writes | `riff-OWNER-lead[bot]`, the lead App | The comment of the tokens of a claim, the comment `Merged in #PR`, the result of a verify with `riff/verify`, the issue of a broken main, and the delete of an old branch `riff-kept`. Its reads, its pushes with git and the real-session test have your token. |
+| The daemon on the host, for its writes | `riff-OWNER-lead[bot]`, the lead App | The comment of the tokens of a claim, the comment `Merged in #PR`, the result of a verify with `riff/verify`, the issue of a broken main, and the delete of an old branch `riff-kept`. The daemon is no session: its reads and its pushes with git keep your token. |
+| A session of `riff run --no-github` | Nobody: it has no token | Nothing on GitHub. Its person pushes its branch: see [Run an item with no GitHub](development.md#run-an-item-with-no-github). |
 | You in a terminal, a plain `claude` | You | Each step that you can do. |
 
 riff-server takes the role from its own facts: the lead, a session
@@ -6308,23 +6309,83 @@ github   riff-como-technologies[bot], a worker, until 2026-11-08T13:00:00Z
 rights   actions: write, checks: read, contents: write, issues: write, metadata: read, pull_requests: write, statuses: read, workflows: write
 ```
 
-When the Apps are not on the repository, the sessions there act with
-your token, and the daemon writes with your token, as before. The row
-`github` then says why. `riff daemon status` on the host says it too,
-and names how the daemon writes on each repository:
+No session gets your token, also where the Apps are not on the
+repository. There no worker and no verify starts, and the lead starts
+with no token on GitHub: its riff tools work, so it tells you the fix.
+The row `github` of `riff whoami` in the lead then says `no token` and
+why. `riff daemon status` on the host names each such repository with
+the fix, and how the daemon writes on each repository. The daemon
+itself is no session: on the host, it keeps your `gh` for its reads,
+its pushes and its writes where the lead App is not.
 
 ```sh
 riff daemon status
 ```
 
 ```text
-GitHub: the sessions of acme/app act with the token of the person: riff-acme is not installed on acme/app: riff github install acme.
+GitHub: no worker and no verify of acme/app starts: riff-acme is not installed on acme/app: riff github install acme. When the lead cannot do the fix, start claude on the host, in a clone of acme/app, and paste this prompt: "..."
+GitHub: the lead of acme/app has no token on GitHub: riff-acme-lead is not installed on acme/app: riff github install acme. When the lead cannot do the fix, ...
 GitHub: the daemon writes on acme/app with the token of the person: riff-acme-lead is not installed on acme/app: riff github install acme.
 GitHub: the daemon writes on acme/web as riff-acme-lead[bot].
 ```
 
-Do the fix, for example
-[Install the GitHub Apps of riff on the account](start-a-riff.md#install-the-github-apps-of-riff-on-the-account).
+Do the fix: see
+[Repair riff with claude on the host](#repair-riff-with-claude-on-the-host).
 `riff init --check` names the same fix. The daemon asks riff-server
-again 10 minutes after an answer with no token. So its writes show the
-bot at the latest 10 minutes after the fix.
+again 10 minutes after an answer with no token. So at the latest 10
+minutes after the fix, its writes show the bot, the wave starts its
+items again, and the lead gets its token.
+
+#### Repair riff with claude on the host
+
+When riff-server gives a session no token of a GitHub App, riff names
+the reason, its fix, and a prompt for `claude` on the host:
+
+- in the lines `GitHub:` of `riff daemon status` on the host;
+- in the output of `riff lead start`, before the lead starts;
+- at the end of the first prompt of the lead: the lead tells you the
+  fix and the prompt first;
+- in a message of the wave to the lead, when a worker or a verify did
+  not start. The wave counts no start, and tries again 10 minutes
+  later.
+
+```mermaid
+flowchart LR
+    S["riff-server: no token of an App, and why"] --> D["riff daemon status<br/>riff lead start<br/>the first prompt of the lead<br/>the message of the wave"]
+    D --> F{"can the lead do the fix?"}
+    F -- "no: riff refuses the fix in a session" --> C["you: claude on the host,<br/>with the prompt"]
+    C --> T["the commands for your terminal"]
+```
+
+Each fix is a step of a person in a terminal: riff refuses `riff github
+install` and `riff github check` in a session. The reason names its
+fix:
+
+| Reason | The fix |
+|---|---|
+| `riff-OWNER is not installed on OWNER/REPO` | `riff github install OWNER` |
+| `the riff has no session App`, or no lead App | `riff github create --owner OWNER`, by the owner or an admin |
+| `the gh of the person cannot push to OWNER/REPO` | `gh auth login`, with an account that can push there |
+| `riff-server is older` | an admin runs `riff cloud deploy NAME` |
+| `this riff has no sign-in` | a riff with sign-in and the Apps (see [Start a Team Riff](start-a-team-riff.md)), or `riff run ITEM --no-github` |
+
+For example, install the Apps of riff on the account `acme`, then check
+them in a clone of `acme/app`:
+
+```sh
+riff github install acme
+riff github check
+```
+
+When the lead cannot help, start `claude` on the host, in a clone of
+the repository, with your own sign-in. Give it the prompt of the line,
+for example:
+
+```sh
+claude "riff gives the sessions of acme/app no token of a GitHub App: riff-acme is not installed on acme/app: riff github install acme. Help me repair it in this clone. Run riff daemon status, and read its lines that start with GitHub:. Then give me the commands for my terminal, because riff refuses them in a session."
+```
+
+`claude` reads the lines of `riff daemon status` with you, and gives
+you the commands for your terminal. When riff-server cannot read the
+keys of the Apps, its own line has the fix and the prompt: see
+[When riff-server cannot read the keys of the Apps](#when-riff-server-cannot-read-the-keys-of-the-apps).

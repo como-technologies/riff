@@ -25,10 +25,11 @@
 //!     T->>G: the label no-verify on the issue
 //!     T->>S: hold verify-issue-N
 //!     T->>D: riff daemon with RIFF_DATA, in a process group of its own
-//!     T->>R: riff run issue-N --image IMAGE, with RIFF_DATA
-//!     R->>D: run the session in a container
-//!     R->>G: the session pushes, and opens the pull request
+//!     T->>R: riff run issue-N --image IMAGE --no-github, with RIFF_DATA
+//!     R->>D: run the session in a container, with no GitHub
+//!     Note over D: the session commits, and pushes nothing
 //!     T->>T: list the home again: no new path, no changed file
+//!     T->>G: push the branch of the session, open the pull request (the git and the gh of the person)
 //!     T->>G: the pull request adds the line, and its Gate starts
 //!     T->>D: SIGTERM
 //!     T->>G: close the pull request and the issue, delete the branch, cancel its runs
@@ -45,11 +46,12 @@
 //! | 3. make the scratch item | `gh issue create` prints the URL of an issue |
 //! | 4. keep its verify from the workers | the issue has the label [`NO_VERIFY`]; a failed hold is a warning |
 //! | 5. start the daemon | no daemon of the test answers before, and `riff daemon` of the tree answers in [`DAEMON_WAIT`] (see below) |
-//! | 6. run the item | `riff run issue-N --image IMAGE` ends with 0, and its line `start: model ...` names the model of step 1 ([`check_model`], 01M6VAQWQ1D95TPKYE360KC3QR) |
+//! | 6. run the item | `riff run issue-N --image IMAGE --no-github` ends with 0, and its line `start: model ...` names the model of step 1 ([`check_model`], 01M6VAQWQ1D95TPKYE360KC3QR) |
 //! | 7. check the home | the home has no new path and no changed file that riff must not write (see below) |
-//! | 8. find the pull request | the branch `worktree-issue-N` has an open pull request |
-//! | 9. check the change | its diff adds the line of the item to [`BOOK_FILE`] |
-//! | 10. wait for the Gate | the head commit has a check run [`GATE`] in [`GATE_WAIT`] |
+//! | 8. push the branch | the session made a commit on `worktree-issue-N`, and `git push` and `gh pr create` on the host pass (see below) |
+//! | 9. find the pull request | the branch `worktree-issue-N` has an open pull request |
+//! | 10. check the change | its diff adds the line of the item to [`BOOK_FILE`] |
+//! | 11. wait for the Gate | the head commit has a check run [`GATE`] in [`GATE_WAIT`] |
 //!
 //! Then the test cleans up, also after a failed step, and also after
 //! Ctrl-C or SIGTERM ([`watch_signals`]). A child of a step that ends
@@ -88,6 +90,26 @@
 //!     L[the label no-verify] --> O[the rollout and the wave offer no verify]
 //!     L --> R[riff run sends no verify request]
 //!     H[the hold of verify-issue-N] --> C[a claim of a worker fails]
+//! ```
+//!
+//! # A session with no GitHub
+//!
+//! No session gets the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
+//! The riff-server of the test has no sign-in and no GitHub Apps, so it
+//! gives its session no token of an App. So step 6 runs `riff run
+//! --no-github` (01M6Z87SDSYDTFHMPKGNX74SMC): the start text holds the
+//! issue, and the session commits on its branch and pushes nothing. Its
+//! container gets no `GH_TOKEN` and no `hosts.yml`. Step 8 then pushes the
+//! branch from the clone of the session, with the git of the person on
+//! the host, and opens the pull request with `gh pr create`
+//! ([`pull_body`]). The test is a program of the person on the host, not
+//! a session: its own steps keep the `gh` of the person.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     R["riff run issue-N --no-github"] --> S["the session: no GitHub<br/>it commits on worktree-issue-N"]
+//!     S --> P["step 8, on the host:<br/>git push, gh pr create"]
+//!     P --> G["steps 9 to 11: the pull request, its change, the Gate"]
 //! ```
 //!
 //! # The riff-server
@@ -348,6 +370,7 @@ pub enum Step {
     Daemon,
     Run,
     Home,
+    Push,
     Pull,
     Change,
     Gate,
@@ -355,7 +378,7 @@ pub enum Step {
 
 impl Step {
     /// Each step, in order.
-    pub const ALL: [Step; 10] = [
+    pub const ALL: [Step; 11] = [
         Step::Host,
         Step::List,
         Step::Item,
@@ -363,6 +386,7 @@ impl Step {
         Step::Daemon,
         Step::Run,
         Step::Home,
+        Step::Push,
         Step::Pull,
         Step::Change,
         Step::Gate,
@@ -378,6 +402,7 @@ impl Step {
             Step::Daemon => "start the daemon",
             Step::Run => "run the item",
             Step::Home => "check the home",
+            Step::Push => "push the branch",
             Step::Pull => "find the pull request",
             Step::Change => "check the change",
             Step::Gate => "wait for the Gate",
@@ -411,7 +436,7 @@ impl Step {
 /// };
 /// assert_eq!(
 ///     failure.to_string(),
-///     "step 6 of 10, run the item: riff run issue-12 ended with exit status: 1"
+///     "step 6 of 11, run the item: riff run issue-12 ended with exit status: 1"
 /// );
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1713,6 +1738,9 @@ fn steps(options: &Options, stop: &AtomicBool, made: &mut Made) -> Result<String
         run_item(&riff, &item, &image, &model, stop)
     })?;
     step(Step::Home, stop, || check_home(&home, &before, &env, issue))?;
+    step(Step::Push, stop, || {
+        push_branch(&env.sessions(), issue, stamp, stop)
+    })?;
     let pull = step(Step::Pull, stop, || find_pull(issue, stop))?;
     step(Step::Change, stop, || check_change(&pull, &line, stop))?;
     let gate = step(Step::Gate, stop, || {
@@ -2133,7 +2161,9 @@ fn stop_daemon(daemon: &mut Child, stop: &AtomicBool) -> Result<String, String> 
     })
 }
 
-/// Step 6: `riff run ITEM --image IMAGE`. The person sees its output.
+/// Step 6: `riff run ITEM --image IMAGE --no-github`: the session has no
+/// GitHub, and never the token of the person (01M6Z87SDSYDTFHMPKGNX74SMC).
+/// The person sees its output.
 /// When it ends by SIGINT or SIGTERM, it sets `stop` ([`child_signal`]).
 /// Its line `start: model ...` names `model`, the model of `riff.toml`
 /// ([`check_model`], 01M6VAQWQ1D95TPKYE360KC3QR).
@@ -2145,7 +2175,7 @@ fn run_item(
     stop: &AtomicBool,
 ) -> Result<(), String> {
     let mut child = riff
-        .command(&["run", item, "--image", image])
+        .command(&["run", item, "--image", image, "--no-github"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()
@@ -2283,6 +2313,71 @@ fn check_home(home: &Home, before: &Listing, env: &Env, issue: u64) -> Result<()
     }
 }
 
+/// The body of the pull request that the test opens for the branch of
+/// the item `issue` (01M6Z87SDSYDTFHMPKGNX74SMC): its link line, one line
+/// that says who pushed it, and its trailers.
+///
+/// ```
+/// let body = real_session::pull_body(801);
+/// assert!(body.starts_with("Closes #801\n\n"), "{body}");
+/// assert!(body.contains("pushed its branch with the git of the person on the host"), "{body}");
+/// assert!(body.ends_with("\n\nIssue: #801\nMilestone: Backlog\n"), "{body}");
+/// ```
+pub fn pull_body(issue: u64) -> String {
+    format!(
+        "Closes #{issue}\n\nThe session of the real-session test had no GitHub. The test pushed \
+         its branch with the git of the person on the host, and opened this pull request.\n\n\
+         Issue: #{issue}\nMilestone: {MILESTONE}\n"
+    )
+}
+
+/// Step 8: the session had no GitHub, so it committed and pushed nothing
+/// (01M6Z87SDSYDTFHMPKGNX74SMC). The test pushes the branch of the item
+/// from the clone of the session in `sessions`, with the git of the
+/// person on the host, and opens its pull request with `gh pr create`.
+/// The step fails when the session made no commit on the branch.
+fn push_branch(sessions: &Path, issue: u64, stamp: u64, stop: &AtomicBool) -> Result<(), String> {
+    let branch = branch(issue);
+    let folders = session_folders(sessions, issue);
+    let [(_, folder)] = folders.as_slice() else {
+        return Err(format!(
+            "{} has {} folders of issue-{issue}, not one",
+            sessions.display(),
+            folders.len()
+        ));
+    };
+    let clone = folder.join("clone");
+    let at = clone.to_string_lossy();
+    let range = format!("origin/HEAD..{branch}");
+    let commits = output("git", &["-C", &at, "log", "--format=%h", &range], stop)?;
+    if commits.is_empty() {
+        return Err(format!("the session made no commit on {branch} in {at}"));
+    }
+    output("git", &["-C", &at, "push", "-q", "origin", &branch], stop)?;
+    let title = format!("Real-session test {stamp}");
+    let url = output(
+        "gh",
+        &[
+            "pr",
+            "create",
+            "--head",
+            &branch,
+            "--title",
+            &title,
+            "--milestone",
+            MILESTONE,
+            "--body",
+            &pull_body(issue),
+        ],
+        stop,
+    )?;
+    println!(
+        "  pushed {} commit(s) of {branch}, and opened {url}",
+        commits.lines().count()
+    );
+    Ok(())
+}
+
 /// The open pull request of `branch`, when it has one.
 fn pull_of(branch: &str, stop: &AtomicBool) -> Option<Pull> {
     let text = output(
@@ -2302,7 +2397,7 @@ fn pull_of(branch: &str, stop: &AtomicBool) -> Option<Pull> {
         .filter(|pull| pull.state == "OPEN")
 }
 
-/// Step 8: the open pull request of the branch of the item.
+/// Step 9: the open pull request of the branch of the item.
 fn find_pull(issue: u64, stop: &AtomicBool) -> Result<Pull, String> {
     let branch = branch(issue);
     let pull = pull_of(&branch, stop)
@@ -2317,7 +2412,7 @@ fn find_pull(issue: u64, stop: &AtomicBool) -> Result<Pull, String> {
     Ok(pull)
 }
 
-/// Step 9: the diff of the pull request adds the line to [`BOOK_FILE`].
+/// Step 10: the diff of the pull request adds the line to [`BOOK_FILE`].
 fn check_change(pull: &Pull, line: &str, stop: &AtomicBool) -> Result<(), String> {
     let number = pull.number.to_string();
     let diff = output("gh", &["pr", "diff", &number, "--color", "never"], stop)?;
@@ -2333,7 +2428,7 @@ fn check_change(pull: &Pull, line: &str, stop: &AtomicBool) -> Result<(), String
     }
 }
 
-/// Step 10: waits until the head commit has a check run [`GATE`]. It
+/// Step 11: waits until the head commit has a check run [`GATE`]. It
 /// gives the status of the run.
 fn wait_for_gate(pull: &Pull, wait: Duration, stop: &AtomicBool) -> Result<String, String> {
     let commit = &pull.head_ref_oid;

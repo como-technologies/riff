@@ -1645,16 +1645,16 @@ pub trait World: Send + Sync {
 
     /// The token on GitHub of the session `me` of the riff-server
     /// `server`, asked as the person (01M6WPMEEWX09DHJZF18BKBPYW,
-    /// [`crate::daemon::gh_token`]): a token of a GitHub App, or the token
-    /// of the person and why (01M6WPMWSMQABE97YCMS5Z3M1P). An error is a
-    /// fault: the daemon starts no container with it. The default gives
-    /// the token of the person: a riff with no App.
+    /// [`crate::daemon::gh_token`]): a token of a GitHub App, or no token
+    /// and why, never the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
+    /// An error is a fault: the daemon starts no container with it. The
+    /// default gives no token: a riff with no App.
     fn github_token<'a>(
         &'a self,
         _server: &'a str,
         _me: &'a SessionUri,
     ) -> BoxFuture<'a, Result<gh_token::Grant>> {
-        Box::pin(async { Ok(gh_token::Grant::person(text::GH_TOKEN_NONE)) })
+        Box::pin(async { Ok(gh_token::Grant::none(text::GH_TOKEN_NONE)) })
     }
 
     /// Revokes the token `token` of a session of the repository `repo` on
@@ -1672,15 +1672,16 @@ pub trait World: Send + Sync {
 
     /// A token of the lead App of the riff-server `server` for the writes
     /// of the daemon on `repo`, asked as the person
-    /// (01M6XZJFGNVG6B7DF5VQ3H1DNX): or the token of the person and why.
-    /// An error is a fault: the daemon writes with the token of the person
-    /// then. The default gives the token of the person.
+    /// (01M6XZJFGNVG6B7DF5VQ3H1DNX), or no token and why: then the daemon
+    /// writes with the token of the person. An error is a fault: the daemon
+    /// writes with the token of the person then. The default gives no
+    /// token.
     fn daemon_token<'a>(
         &'a self,
         _server: &'a str,
         _repo: &'a str,
     ) -> BoxFuture<'a, Result<gh_token::Grant>> {
-        Box::pin(async { Ok(gh_token::Grant::person(text::GH_TOKEN_NONE)) })
+        Box::pin(async { Ok(gh_token::Grant::none(text::GH_TOKEN_NONE)) })
     }
 }
 
@@ -1965,8 +1966,14 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     && daemon
                         .failed_pull(&wave.repo)
                         .is_some_and(|pull| pull.waits);
+                // A worker got no token of a GitHub App: the wave waits,
+                // and no start counts (01M6Z87A04EXTT1FFJSJ1EM6TB).
+                let no_token = fault.is_none()
+                    && next.is_some()
+                    && daemon.no_start_waits(&wave.repo).is_some();
                 say(match (&next, &fault) {
                     _ if look.paused => text::WAVE_PAUSED.into(),
+                    (Some(_), None) if no_token => text::WAVE_NO_TOKEN.into(),
                     (Some(_), Some(fault)) => text::wave_host_word(&fault.wave_text()),
                     (Some(work), None) => text::wave_started(&work.item()),
                     (None, _) => text::WAVE_NO_WORK.into(),
@@ -1978,7 +1985,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     !running(&daemon, &wave, &taken).is_empty(),
                 );
                 last = Some(look);
-                next.filter(|_| fault.is_none() && !pulling)
+                next.filter(|_| fault.is_none() && !pulling && !no_token)
             }
             Err(e) => {
                 say(text::wave_no_look(&format!("{e:#}")));
@@ -2116,13 +2123,24 @@ pub(crate) async fn job<R: Runtime + 'static>(
     let held = daemon.in_job(&item);
     let no_start = match start_job(&daemon, &wave, &work, slot, asked).await {
         Ok(Some((record, ended))) => {
+            // A worker or a verify that got no token of a GitHub App did not
+            // start: no start counts, and the lead hears why one time
+            // (01M6Z87A04EXTT1FFJSJ1EM6TB).
+            let no_token = match &record.github {
+                Some(gh_token::ActsAs::NoToken { why }) if !record.terminal => Some(why.clone()),
+                _ => None,
+            };
             // A verify with a PASS or FAIL on the pull request is no failed
             // start (#1651). The item is still taken: no start comes
             // between the end and the take back.
-            if finish(daemon.clone(), record, ended, held).await.reported {
+            if finish(daemon.clone(), record, ended, held).await.reported || no_token.is_some() {
                 take_back(&starts, &work);
             }
-            None
+            if let Some(why) = daemon.no_start_untold(&wave.repo).filter(|_| !asked) {
+                let body = text::wave_no_token(&wave.repo, &why);
+                daemon.world().tell(&wave, &body, None).await;
+            }
+            no_token
         }
         Ok(None) => {
             println!("{}", text::wave_not_claimed(&wave.repo, &item));
@@ -2956,6 +2974,7 @@ impl Live {
             server: wave.server.clone(),
             me: me.clone(),
             terminal: false,
+            no_github: false,
         })
     }
 }
@@ -4032,33 +4051,51 @@ impl Live {
     /// A token of a GitHub App from the riff-server `server`, asked as the
     /// person: for the session `session`, or for the writes of the daemon
     /// on `repo` with none (01M6WPMEEWX09DHJZF18BKBPYW,
-    /// 01M6XZJFGNVG6B7DF5VQ3H1DNX). The token of the person, and why, when
-    /// riff-server has no sign-in or gives none, and when the `gh` of the
-    /// person cannot push to `repo`.
+    /// 01M6XZJFGNVG6B7DF5VQ3H1DNX). No token, and why, when riff-server
+    /// has no sign-in or gives none, and when the `gh` of the person cannot
+    /// push to `repo` (01M6Z87A04EXTT1FFJSJ1EM6TB). For a session, the why
+    /// ends with the prompt for `claude` on the host
+    /// (01M6Z87JTXW0Y99X08VHA2SSSR), but while riff-server cannot read the
+    /// keys of the Apps: its why has its own prompt
+    /// (01M6YC3T0TXANJH6YMTJZR1HCR).
     async fn grant(
         &self,
         server: &str,
         repo: &str,
         session: Option<&str>,
     ) -> Result<gh_token::Grant> {
+        let none = |why: &str| {
+            let grant = gh_token::Grant::none(why);
+            match session {
+                Some(_) => grant.repaired(repo),
+                None => grant,
+            }
+        };
         let api = Api::new(server).signed_in(None)?;
         if !api.sends_token() {
-            return Ok(gh_token::Grant::person(text::GH_NO_SIGN_IN));
+            return Ok(none(text::GH_NO_SIGN_IN));
         }
         // No more rights than the person (01M6WPMNXN1BSBEH74TG5DDRTF).
         let gh = self.gh(repo).as_ref().clone().by("token");
         let checked = repo.to_owned();
         if !blocking(move || gh_token::can_push(&gh, &checked)).await? {
-            return Ok(gh_token::Grant::person(&text::gh_no_push(repo)));
+            return Ok(none(&text::gh_no_push(repo)));
         }
         let reply = match session {
             Some(session) => api.github_token(session).await,
             None => api.github_daemon_token(repo).await,
         };
         match reply {
-            Ok(Some(reply)) => Ok(gh_token::Grant::of(reply)),
-            Ok(None) => Ok(gh_token::Grant::person(text::GH_NO_SIGN_IN)),
-            Err(e) if is_not_found(&e) => Ok(gh_token::Grant::person(text::GH_OLD_SERVER)),
+            Ok(Some(reply)) if reply.no_github => Ok(gh_token::Grant::of(reply)),
+            Ok(Some(reply)) => {
+                let grant = gh_token::Grant::of(reply);
+                Ok(match session {
+                    Some(_) => grant.repaired(repo),
+                    None => grant,
+                })
+            }
+            Ok(None) => Ok(none(text::GH_NO_SIGN_IN)),
+            Err(e) if is_not_found(&e) => Ok(none(text::GH_OLD_SERVER)),
             Err(e) => Err(e),
         }
     }
@@ -4201,6 +4238,9 @@ mod tests {
         post_fails: usize,
         /// Each line to the person in riff chat: the body, and the key.
         asked: Vec<(String, String)>,
+        /// Why riff-server gives a session no token of a GitHub App. With
+        /// none, each session gets a token of an App.
+        no_app: Option<String>,
         /// The full check of a pull request is what the fake `gh` tells
         /// ([`FAKE_GH`]), as for the real look. Else each is done.
         checked: bool,
@@ -4467,7 +4507,7 @@ mod tests {
                         target: clone,
                         write: true,
                     }],
-                    env: vec![Env::Host("GH_TOKEN".into())],
+                    env: vec![Env::Host(crate::claude_token::VAR.into())],
                     memory: "8g".into(),
                     cpus: 4,
                     command: vec!["claude".into()],
@@ -4479,11 +4519,15 @@ mod tests {
                     folder,
                     spec,
                     start: "Do it.".into(),
-                    values: vec![("GH_TOKEN".into(), "gho_secret1".into())],
-                    secrets: vec!["gho_secret1".into()],
+                    values: vec![(
+                        crate::claude_token::VAR.into(),
+                        "sk-ant-oat01-secret1".into(),
+                    )],
+                    secrets: vec!["sk-ant-oat01-secret1".into()],
                     server: "http://127.0.0.1:1".into(),
                     me,
                     terminal: false,
+                    no_github: false,
                 }))
             })
         }
@@ -4670,6 +4714,37 @@ mod tests {
 
         fn refuse<'a>(&'a self, _: &'a Record, _: &'a Wake) -> BoxFuture<'a, ()> {
             Box::pin(async {})
+        }
+
+        /// A token of the session App for one hour, or no token and the
+        /// why of [`Forge::no_app`].
+        fn github_token<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a SessionUri,
+        ) -> BoxFuture<'a, Result<gh_token::Grant>> {
+            let no_app = lock(&self.forge).no_app.clone();
+            Box::pin(async move {
+                Ok(match no_app {
+                    Some(why) => gh_token::Grant::none(&why),
+                    None => app_token(),
+                })
+            })
+        }
+    }
+
+    /// A token of the session App of `o/r` that ends in one hour.
+    fn app_token() -> gh_token::Grant {
+        let ends = crate::daemon::sweep::date_text(gh_token::now_secs() + 3600);
+        gh_token::Grant {
+            token: Some(zeroize::Zeroizing::new("ghs_wave".to_owned())),
+            acts: gh_token::ActsAs::Bot {
+                bot: "riff-o[bot]".into(),
+                role: riff_core::wire::GitHubRole::Worker,
+                rights: [("contents".to_owned(), "write".to_owned())].into(),
+                ends,
+            },
+            bot_id: Some(1101),
         }
     }
 
@@ -5718,6 +5793,49 @@ mod tests {
             "{:?}",
             forge.told_keys
         );
+    }
+
+    /// 01M6Z87A04EXTT1FFJSJ1EM6TB, 01M6Z87JTXW0Y99X08VHA2SSSR: riff-server
+    /// gives a worker no token of a GitHub App. No container starts, no
+    /// start counts, the lead hears why one time, and the wave starts no
+    /// item for [`gh_token::NONE_AGAIN`]. Then it starts the items, when a
+    /// worker gets a token.
+    #[tokio::test]
+    async fn a_worker_with_no_token_of_an_app_spends_no_start_and_the_lead_hears_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1, 2], 3, free).await;
+        let why = text::gh_repair(
+            "o/r",
+            "riff-o is not installed on o/r: riff github install o",
+        );
+        here.forge().no_app = Some(why.clone());
+        // The fake makes a pull request at the end of each build: not here.
+        here.forge().no_pull = true;
+        here.run();
+        here.until(0, |h| h.daemon.waves_shown()[0].word == text::WAVE_NO_TOKEN)
+            .await;
+        here.idle(0).await;
+        // The jobs that started before the first answer end too: one
+        // for each item at most. Then no new claim while the wave waits.
+        let claims = here.forge().starts.len();
+        assert!((1..=2).contains(&claims), "{:?}", here.forge().starts);
+        here.idle(0).await;
+        {
+            let forge = here.forge();
+            assert_eq!(forge.starts.len(), claims, "{forge:?}");
+            assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+            assert_eq!(forge.told, [text::wave_no_token("o/r", &why)]);
+            assert_eq!(forge.told_keys, [None]);
+        }
+        assert_eq!(here.daemon.status().await.no_starts.len(), 1);
+        // The wait ends, and a worker gets a token: the wave starts the
+        // items, and the lead hears nothing more.
+        here.forge().no_app = None;
+        here.daemon.age_no_start("o/r", gh_token::NONE_AGAIN);
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.until(3, |h| h.running("issue-2").is_some()).await;
+        assert_eq!(here.forge().told.len(), 1, "{:?}", here.forge().told);
+        assert!(here.daemon.status().await.no_starts.is_empty());
     }
 
     /// 01M57A7A1W2K9440WZA1QZ3M9T: the sign-in of `claude` on the host

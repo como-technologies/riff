@@ -527,8 +527,8 @@ struct Granted {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum NoGrant {
     /// The riff has no App of the role, or the App is not on the
-    /// repository: the text names the fix. A session then keeps the
-    /// token of the person (01M6WPMWSMQABE97YCMS5Z3M1P).
+    /// repository: the text names the fix. A session then gets no token,
+    /// never the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
     Missing(String),
     /// A call to GitHub failed.
     Failed(String),
@@ -1455,7 +1455,8 @@ pub fn role_of(uri: &SessionUri) -> GitHubRole {
 /// signed in as the person: the daemon. riff-server takes the role and
 /// the repository from its own facts. A riff with no App of the role, or
 /// an App that is not on the repository, gives no token and says why:
-/// the session keeps the token of the person. While the place of the keys
+/// the daemon then starts no worker and no verify, and the lead with no
+/// token (01M6Z87A04EXTT1FFJSJ1EM6TB). While the place of the keys
 /// refuses their read, the lead gets no token, the reason and
 /// `no_github`: it starts, and works, with no token on GitHub at all. A
 /// worker and a verifier get a 503, so no container starts for them
@@ -1538,7 +1539,7 @@ pub(crate) async fn token(
                 person,
                 repo,
                 role = %role,
-                "no token of an App for the session, which keeps the token of its person: {why}"
+                "no token of an App for the session: {why}"
             );
             reply.problem = Some(why);
             return Ok(Json(reply));

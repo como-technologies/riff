@@ -655,9 +655,13 @@ enum Command {
     /// request of the branch, releases ITEM, and keeps the clone until
     /// the merge. Ctrl-C stops the container.
     ///
+    /// The session acts on GitHub with a token of a GitHub App of the
+    /// riff, never with your token. With no such token, it does not
+    /// start, and riff says the fix.
+    ///
     /// In the container of the lead, it asks the daemon on the socket of the
     /// session to run ITEM as a job of the wave, and answers at once. There
-    /// it takes no --image.
+    /// it takes no --image and no --no-github.
     Run {
         /// The work item: an issue, for example issue-12.
         item: String,
@@ -666,6 +670,11 @@ enum Command {
         /// of origin pins.
         #[arg(long)]
         image: Option<String>,
+        /// Run a session with no GitHub: no token, no push and no pull
+        /// request. The start text holds the issue, the session commits on
+        /// its branch, and riff run names the command that pushes it.
+        #[arg(long)]
+        no_github: bool,
     },
     /// Plan the waves of this repository
     ///
@@ -2155,9 +2164,20 @@ async fn cli() -> Result<()> {
     // In a container, the control socket of the daemon is not there: the
     // daemon runs the item as a job of the wave, through the socket of the
     // session (#1338). Only the lead may.
-    if let (Command::Run { item, image }, Reach::Daemon(_)) = (&command, &reach) {
+    if let (
+        Command::Run {
+            item,
+            image,
+            no_github,
+        },
+        Reach::Daemon(_),
+    ) = (&command, &reach)
+    {
         if image.is_some() {
             anyhow::bail!("{}", text::RUN_IMAGE_ON_HOST);
+        }
+        if *no_github {
+            anyhow::bail!("{}", text::RUN_NO_GITHUB_ON_HOST);
         }
         println!("{}", reach.run(item).await?);
         return Ok(());
@@ -2166,9 +2186,14 @@ async fn cli() -> Result<()> {
     riff::auto_update::remember(&here);
     // `riff run` is a session of its own, not the session that runs it
     // (01M4Z81APKC14AVNJWCGRQKNVW).
-    if let Command::Run { item, image } = &command {
+    if let Command::Run {
+        item,
+        image,
+        no_github,
+    } = &command
+    {
         let server = api.base().to_owned();
-        let code = riff::run::run(api, &here, &server, item, image.as_deref()).await?;
+        let code = riff::run::run(api, &here, &server, item, image.as_deref(), *no_github).await?;
         std::process::exit(code);
     }
     if let Command::Lead {

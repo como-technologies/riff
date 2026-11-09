@@ -279,12 +279,18 @@ pub(crate) fn state_facts(
 /// let plain = anstream::adapter::strip_str(&out).to_string();
 /// assert!(plain.contains("github   riff-acme[bot], a worker, until 2026-11-08T13:00:00Z\n"), "{plain}");
 /// assert!(plain.contains("rights   contents: write, metadata: read\n"), "{plain}");
-/// let person = ActsAs::Person { why: "riff-acme is not installed on acme/app: riff github install acme".into() };
-/// let out = riff::view::whoami(&me, Ok(RiffState::Running.into()), Some(&person));
+/// // With no token of an App, never the token of the person
+/// // (01M6Z87A04EXTT1FFJSJ1EM6TB).
+/// let none = ActsAs::NoToken { why: "riff-acme-lead is not installed on acme/app: riff github install acme".into() };
+/// let out = riff::view::whoami(&me, Ok(RiffState::Running.into()), Some(&none));
 /// let plain = anstream::adapter::strip_str(&out).to_string();
 /// assert!(plain.contains(
-///     "github   the token of the person: riff-acme is not installed on acme/app: riff github install acme\n"
+///     "github   no token: riff-acme-lead is not installed on acme/app: riff github install acme\n"
 /// ), "{plain}");
+/// // A session of riff run --no-github (01M6Z87JY83V3KR72E2AG8V8KG).
+/// let out = riff::view::whoami(&me, Ok(RiffState::Running.into()), Some(&ActsAs::NoGitHub));
+/// let plain = anstream::adapter::strip_str(&out).to_string();
+/// assert!(plain.contains(&format!("github   none: {}\n", riff::text::GH_RUN_NO_GITHUB)), "{plain}");
 /// let none = ActsAs::NoToken { why: "riff-server cannot read the keys of the GitHub Apps".into() };
 /// let out = riff::view::whoami(&me, Ok(RiffState::Paused.into()), Some(&none));
 /// let plain = anstream::adapter::strip_str(&out).to_string();
@@ -356,10 +362,9 @@ pub fn whoami(
                 .collect();
             rows.push(("rights", safe(&rights.join(", "))));
         }
-        Some(ActsAs::Person { why }) => rows.push((
-            "github",
-            styled(WARNING, &safe(&format!("the token of the person: {why}"))),
-        )),
+        Some(ActsAs::NoGitHub) => {
+            rows.push(("github", safe(&format!("none: {}", text::GH_RUN_NO_GITHUB))))
+        }
         Some(ActsAs::NoToken { why }) => {
             rows.push(("github", styled(ERROR, &safe(&format!("no token: {why}")))))
         }

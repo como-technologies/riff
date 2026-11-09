@@ -680,7 +680,8 @@ Each session acts on GitHub as a bot of the two GitHub Apps of the
 riff. See
 [Make the GitHub Apps of riff](start-a-team-riff.md#make-the-github-apps-of-riff).
 A repository of another account, for example `n8behavior`, needs both
-Apps on that account. The owner or an admin of the riff runs this in a
+Apps on that account. Without them, no worker starts there: no session
+gets your token. The owner or an admin of the riff runs this in a
 plain terminal, in a clone of the repository. Put the account in place
 of `OWNER`:
 

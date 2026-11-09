@@ -204,8 +204,9 @@ pub fn spec_again(facts: &Facts, repo: &str, start: &str) -> SessionSpec {
 
 /// Adds [`text::lead_no_github`] with `why` to the end of the first
 /// prompt of the lead of `spec`, the last word of its command: a lead
-/// that starts with no token on GitHub tells its person the fix first
-/// (01M6YC3T0TXANJH6YMTJZR1HCR).
+/// that starts with no token on GitHub tells its person the fix and the
+/// prompt for `claude` on the host first (01M6YC3T0TXANJH6YMTJZR1HCR,
+/// 01M6Z87JTXW0Y99X08VHA2SSSR).
 ///
 /// ```
 /// use riff::runtime::SessionSpec;
@@ -272,7 +273,7 @@ fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Sess
 /// let status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![live],
 ///     limit: None, waiting: vec![], waves: vec![], parts: vec![], leaving: vec![], jobs: 0, test: None, mcp: vec![],
-///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), person_tokens: vec![], no_tokens: vec![], writes: vec![],
+///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), no_starts: vec![], no_tokens: vec![], writes: vec![],
 /// };
 /// assert!(riff::lead::runs(&status, "riff-lead-o-r"));
 /// assert!(!riff::lead::runs(&status, "riff-lead-o-other"));
@@ -291,7 +292,7 @@ pub fn runs(status: &Status, name: &str) -> bool {
 /// let mut status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![],
 ///     limit: None, waiting: vec![], waves: vec![], parts: vec![], leaving: vec![], jobs: 0, test: None, mcp: vec![],
-///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), person_tokens: vec![], no_tokens: vec![], writes: vec![],
+///     claude_token: Default::default(), watches: vec![], lost: vec![], github: Default::default(), no_starts: vec![], no_tokens: vec![], writes: vec![],
 /// };
 /// assert!(!riff::lead::gives_workers(&status, "o/r"));
 /// let part = |repo: &str, workers, lead| RepoParts { repo: repo.into(), parts: Parts { workers, lead } };
@@ -887,6 +888,7 @@ impl Parts<'_> {
             server: self.server.to_owned(),
             me: self.me.clone(),
             terminal: true,
+            no_github: false,
         }
     }
 }
@@ -1497,8 +1499,7 @@ mod tests {
             setup: Default::default(),
         };
         let spec = spec(&facts, "como-technologies/riff", "start");
-        let values = [("GH_TOKEN".to_owned(), "gho_x".to_owned())];
-        (fake.start_terminal(&spec, &values).await.unwrap(), file)
+        (fake.start_terminal(&spec, &[]).await.unwrap(), file)
     }
 
     /// 01M5NJ87YEHHGJBANM7CRYV56Z

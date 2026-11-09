@@ -952,7 +952,10 @@ mod tests {
         let (_dir, main, _origin) = test_clone(&bad);
         let error = format!("{:#}", merged_config(&main, |_| {}).unwrap_err());
         assert!(error.starts_with("riff.toml of origin/main: "), "{error}");
-        assert!(error.contains("riff sets GH_TOKEN itself"), "{error}");
+        assert!(
+            error.contains("[session.env] GH_TOKEN: no session gets a token of GitHub"),
+            "{error}"
+        );
         // `merged` has the same rule.
         assert!(merged(&main, |_| {}).is_err());
     }

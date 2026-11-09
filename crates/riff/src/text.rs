@@ -6423,6 +6423,86 @@ pub fn run_start(
     )
 }
 
+/// The start text of a session of `riff run --no-github`
+/// (01M6Z87JY83V3KR72E2AG8V8KG): the session has no GitHub. So the text
+/// holds the body `body` of the issue, and the session commits on the
+/// branch and pushes nothing.
+///
+/// ```
+/// let body = "Add a line.\n\nDone when:\n- the line is there.\n";
+/// let text = riff::text::run_start_no_github("o/r", 12, "worktree-issue-12", "1a2b", body, false);
+/// assert!(text.contains("You have no GitHub: gh, git fetch and git push do not work"));
+/// assert!(text.contains("--trailer \"Riff-Session: 1a2b\""));
+/// assert!(text.contains("Do not push, and open no pull request"));
+/// assert!(text.ends_with(&format!("The issue #12, as riff read it on the host:\n\n{body}")));
+/// assert!(!text.contains("gh issue view") && !text.contains("git push -u") && !text.contains("gh pr create"));
+/// assert!(text.contains("Leave no background task at the end of your work"));
+/// let again = riff::text::run_start_no_github("o/r", 12, "worktree-issue-12", "1a2b", body, true);
+/// assert!(again.contains("earlier session"));
+/// ```
+pub fn run_start_no_github(
+    repo: &str,
+    issue: u64,
+    branch: &str,
+    session: &str,
+    body: &str,
+    earlier: bool,
+) -> String {
+    let earlier = if earlier {
+        "\nThe branch has the work of an earlier session. Go on from it. Do not start again.\n"
+    } else {
+        ""
+    };
+    format!(
+        "You are a worker of riff. You run in a container, in your own clone of {repo}, on the \
+         branch {branch}. You have no GitHub: gh, git fetch and git push do not work, and the \
+         work needs none. Do the work item issue-{issue}, then stop. riff does the claim and the \
+         release for you. Your riff tools only talk: whoami, who, threads, read, post, tell, \
+         status and blocked.\n{earlier}\n\
+         1. Read the issue at the end of this text. Find its \"Done when\" line or heading: a \
+         line \"Done when:\", or a heading \"## Done when\". When it is missing, or you cannot \
+         test it, stop and say why.\n\
+         2. {READ_RULES}, and obey them.\n\
+         3. Do the work on the branch {branch}. Give each commit this trailer:\n   \
+         git commit --trailer \"Riff-Session: {session}\"\n\
+         4. Before the last commit, {RUN_CHECKS}. Run each check in the foreground, and wait \
+         for its end.\n\
+         5. Commit the work on the branch before the end of your work, even when the work is \
+         not done. Do not push, and open no pull request: your person pushes the branch from \
+         the host.\n\
+         6. Stop each background task that you started, for example a Monitor or a command \
+         in the background. Never end a turn while a background task runs: a session does not \
+         continue after its result. Leave no background task at the end of your work.\n\
+         7. Reply with the last commit of the branch in one line.\n\n\
+         Do not print the environment or a token.\n\n\
+         The issue #{issue}, as riff read it on the host:\n\n{body}"
+    )
+}
+
+/// The end of a session of `riff run --no-github`
+/// (01M6Z87JY83V3KR72E2AG8V8KG) with no pull request: it pushed nothing,
+/// and the person pushes the branch `branch` of the clone `clone`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::run_pushed_nothing("/s/issue-12/clone".as_ref(), "worktree-issue-12"),
+///     "The session had no GitHub, so it pushed nothing. Push its branch from the host:\n  \
+///      git -C /s/issue-12/clone push origin worktree-issue-12"
+/// );
+/// ```
+pub fn run_pushed_nothing(clone: &Path, branch: &str) -> String {
+    format!(
+        "The session had no GitHub, so it pushed nothing. Push its branch from the host:\n  git -C \
+         {} push origin {branch}",
+        clone.display()
+    )
+}
+
+/// `riff run --no-github` in a container (01M6Z87JY83V3KR72E2AG8V8KG):
+/// there the daemon runs the item as a job of the wave.
+pub const RUN_NO_GITHUB_ON_HOST: &str = "riff run --no-github works only on the host. In a \
+     container, the daemon runs the item as a job of the wave.";
+
 /// `riff run` stops its container.
 pub fn run_stopping(name: &str) -> String {
     format!("riff run stops the container {name}.")
@@ -6632,29 +6712,64 @@ pub fn daemon_session_starts(name: &str, item: &str, session: &str) -> String {
     format!("The session {session} starts: {item} in the container {name}.")
 }
 
-/// Why a session keeps the token of the person when riff-server gave no
-/// token and named no problem (01M6WPMWSMQABE97YCMS5Z3M1P).
-pub const GH_TOKEN_NONE: &str = "riff-server gave no token of a GitHub App";
+/// Why a session has no token on GitHub when riff-server gave no token
+/// and named no problem (01M6Z87A04EXTT1FFJSJ1EM6TB).
+pub const GH_TOKEN_NONE: &str =
+    "riff-server gave no token of a GitHub App and no reason: run riff github check";
 
-/// Why a session keeps the token of the person on a riff with no
-/// sign-in: riff-server knows no person to give a token to.
-pub const GH_NO_SIGN_IN: &str = "this riff has no sign-in, so it gives no token of a GitHub App";
+/// Why a session has no token on GitHub on a riff with no sign-in:
+/// riff-server knows no person to give a token to.
+pub const GH_NO_SIGN_IN: &str = "this riff has no sign-in, so it gives no token of a GitHub App: \
+     use a riff with sign-in and the GitHub Apps (see Start a Team Riff), or riff run ITEM \
+     --no-github";
 
-/// Why a session keeps the token of the person on a riff-server of an
-/// older build, which has no call for the token of a session.
-pub const GH_OLD_SERVER: &str = "riff-server is older and gives no token of a GitHub App";
+/// Why a session has no token on GitHub on a riff-server of an older
+/// build, which has no call for the token of a session.
+pub const GH_OLD_SERVER: &str =
+    "riff-server is older and gives no token of a GitHub App: an admin runs riff cloud deploy NAME";
 
-/// Why a session keeps the token of the person when the `gh` of the
-/// person cannot push to `repo` (01M6WPMNXN1BSBEH74TG5DDRTF).
+/// Why a session has no token on GitHub when the `gh` of the person
+/// cannot push to `repo` (01M6WPMNXN1BSBEH74TG5DDRTF).
 ///
 /// ```
 /// assert_eq!(
 ///     riff::text::gh_no_push("acme/app"),
-///     "the gh of the person cannot push to acme/app"
+///     "the gh of the person cannot push to acme/app: run gh auth login with an account that \
+///      can push there"
 /// );
 /// ```
 pub fn gh_no_push(repo: &str) -> String {
-    format!("the gh of the person cannot push to {repo}")
+    format!(
+        "the gh of the person cannot push to {repo}: run gh auth login with an account that can \
+         push there"
+    )
+}
+
+/// The reason `why` of a session of `repo` with no token of an App,
+/// with its fix, and the prompt for `claude` on the host after it
+/// (01M6Z87JTXW0Y99X08VHA2SSSR): the person starts `claude` in a clone of
+/// `repo`, and `claude` gives the commands for the terminal of the
+/// person.
+///
+/// ```
+/// let why = "riff-acme is not installed on acme/app: riff github install acme";
+/// let text = riff::text::gh_repair("acme/app", why);
+/// assert!(text.starts_with(&format!("{why}. When the lead cannot do the fix, start claude")), "{text}");
+/// assert!(text.contains("in a clone of acme/app, and paste this prompt: \""), "{text}");
+/// assert!(text.contains("Run riff daemon status"), "{text}");
+/// assert!(text.ends_with("because riff refuses them in a session.\""), "{text}");
+/// // A reason that ends with a period gets no second one.
+/// assert_eq!(riff::text::gh_repair("acme/app", &format!("{why}.")), text);
+/// ```
+pub fn gh_repair(repo: &str, why: &str) -> String {
+    let why = why.trim().trim_end_matches('.');
+    format!(
+        "{why}. When the lead cannot do the fix, start claude on the host, in a clone of {repo}, \
+         and paste this prompt: \"riff gives the sessions of {repo} no token of a GitHub App: \
+         {why}. Help me repair it in this clone. Run riff daemon status, and read its lines that \
+         start with GitHub:. Then give me the commands for my terminal, because riff refuses them \
+         in a session.\""
+    )
 }
 
 /// The line of the daemon for the token of a session: the bot, the role
@@ -6678,10 +6793,39 @@ pub fn daemon_gh_token(name: &str, bot: &str, role: GitHubRole, ends: &str) -> S
     )
 }
 
-/// The line of the daemon for a session that keeps the token of the
-/// person, and why (01M6WPMWSMQABE97YCMS5Z3M1P).
-pub fn daemon_gh_person(name: &str, why: &str) -> String {
-    format!("The container {name} acts on GitHub with the token of the person: {why}.")
+/// Why the container `name` of a worker or a verify does not start: it
+/// got no token of an App, for the reason `why`
+/// (01M6Z87A04EXTT1FFJSJ1EM6TB).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_gh_no_start("riff-issue-12-1a2b3c4d", "riff-acme is not installed"),
+///     "The container riff-issue-12-1a2b3c4d does not start: it gets no token of a GitHub App, \
+///      and no session gets the token of the person: riff-acme is not installed"
+/// );
+/// ```
+pub fn daemon_gh_no_start(name: &str, why: &str) -> String {
+    format!(
+        "The container {name} does not start: it gets no token of a GitHub App, and no session \
+         gets the token of the person: {why}"
+    )
+}
+
+/// Why the container `name` does not start: its env names the variable
+/// `var` of a token of `gh` (01M6Z87A04EXTT1FFJSJ1EM6TB).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_person_token("riff-issue-12-1a2b3c4d", "GH_TOKEN"),
+///     "The container riff-issue-12-1a2b3c4d does not start: its env names GH_TOKEN, and no \
+///      session gets the token of the person."
+/// );
+/// ```
+pub fn daemon_person_token(name: &str, var: &str) -> String {
+    format!(
+        "The container {name} does not start: its env names {var}, and no session gets the token \
+         of the person."
+    )
 }
 
 /// The line of the daemon when it cannot get a new token for a session:
@@ -6699,24 +6843,29 @@ pub fn daemon_gh_revoke_failed(name: &str, error: &str) -> String {
     format!("riff daemon: {name}: {error}. The token ends by itself within the hour.")
 }
 
-/// The line of `riff daemon status` for a repository whose sessions
-/// act on GitHub with the token of the person, and why: the fix of the
-/// reason is the command (01M6WPMWSMQABE97YCMS5Z3M1P).
+/// The line of `riff daemon status` for a repository where no worker and
+/// no verify starts: they get no token of a GitHub App, for the reason
+/// `why` with its fix and the prompt for `claude` on the host
+/// (01M6Z87A04EXTT1FFJSJ1EM6TB, 01M6Z87JTXW0Y99X08VHA2SSSR).
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::daemon_gh_status("acme/app", "riff-acme is not installed on acme/app: riff github install acme"),
-///     "GitHub: the sessions of acme/app act with the token of the person: \
-///      riff-acme is not installed on acme/app: riff github install acme."
+///     riff::text::daemon_no_start_status("acme/app", "riff-acme is not installed on acme/app: riff github install acme"),
+///     "GitHub: no worker and no verify of acme/app starts: \
+///      riff-acme is not installed on acme/app: riff github install acme"
 /// );
 /// ```
-pub fn daemon_gh_status(repo: &str, why: &str) -> String {
-    format!("GitHub: the sessions of {repo} act with the token of the person: {why}.")
+pub fn daemon_no_start_status(repo: &str, why: &str) -> String {
+    format!("GitHub: no worker and no verify of {repo} starts: {why}")
 }
 
 /// Why a session has no token on GitHub when riff-server says so and
 /// names no problem (01M6YC3T0TXANJH6YMTJZR1HCR).
 pub const GH_NONE: &str = "riff-server gives no token on GitHub";
+
+/// Why a session of `riff run --no-github` has no GitHub
+/// (01M6Z87JY83V3KR72E2AG8V8KG).
+pub const GH_RUN_NO_GITHUB: &str = "riff run --no-github: the session needs no GitHub";
 
 /// The line of the daemon for a session with no token on GitHub at all,
 /// also not the token of the person (01M6YC3T0TXANJH6YMTJZR1HCR).
@@ -6734,7 +6883,8 @@ pub fn daemon_gh_none(name: &str, why: &str) -> String {
 
 /// The line of `riff daemon status` for a repository whose lead has no
 /// token on GitHub, and why: the fix and the prompt for `claude` on the
-/// host (01M6YC3T0TXANJH6YMTJZR1HCR).
+/// host (01M6YC3T0TXANJH6YMTJZR1HCR, 01M6Z87JTXW0Y99X08VHA2SSSR). `riff
+/// lead start` prints it too.
 ///
 /// ```
 /// assert_eq!(
@@ -6747,19 +6897,19 @@ pub fn daemon_gh_none_status(repo: &str, why: &str) -> String {
 }
 
 /// The end of the first prompt of a lead that starts with no token on
-/// GitHub (01M6YC3T0TXANJH6YMTJZR1HCR): its first wake gives the person the fix and
-/// the prompt for `claude` on the host.
+/// GitHub (01M6YC3T0TXANJH6YMTJZR1HCR, 01M6Z87JTXW0Y99X08VHA2SSSR): its
+/// first wake gives the person the fix and the prompt for `claude` on the
+/// host.
 ///
 /// ```
-/// let text = riff::text::lead_no_github("riff-server cannot read the keys. The fix: X");
+/// let text = riff::text::lead_no_github("riff-acme-lead is not installed. The fix: X");
 /// assert!(text.starts_with("You have no token on GitHub"), "{text}");
-/// assert!(text.ends_with("riff-server cannot read the keys. The fix: X"), "{text}");
+/// assert!(text.ends_with("riff-acme-lead is not installed. The fix: X"), "{text}");
 /// ```
 pub fn lead_no_github(why: &str) -> String {
     format!(
         "You have no token on GitHub: gh, git fetch and git push do not work, and the riff tools \
-         work. The riff is paused. First tell your person the fix and the prompt in this text, \
-         word for word: {why}"
+         work. First tell your person the fix and the prompt in this text, word for word: {why}"
     )
 }
 
@@ -6784,7 +6934,8 @@ pub fn gh_daemon_token_failed(error: &str) -> String {
 
 /// The line of `riff daemon status` for how the daemon writes on `repo`
 /// (01M6XZJFE2ZTR5RE3AWM30R704): as the bot of the lead App, or with the
-/// token of the person and why.
+/// token of the person and why. The daemon on the host is no session: it
+/// keeps the `gh` of the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
 ///
 /// ```
 /// use riff::daemon::gh_token::ActsAs;
@@ -6802,7 +6953,7 @@ pub fn gh_daemon_token_failed(error: &str) -> String {
 /// );
 /// let why = "riff-acme-lead is not installed on acme/app: riff github install acme";
 /// assert_eq!(
-///     riff::text::daemon_writes("acme/app", &ActsAs::Person { why: why.into() }),
+///     riff::text::daemon_writes("acme/app", &ActsAs::NoToken { why: why.into() }),
 ///     "GitHub: the daemon writes on acme/app with the token of the person: \
 ///      riff-acme-lead is not installed on acme/app: riff github install acme."
 /// );
@@ -6812,8 +6963,8 @@ pub fn daemon_writes(repo: &str, acts: &crate::daemon::gh_token::ActsAs) -> Stri
         crate::daemon::gh_token::ActsAs::Bot { bot, .. } => {
             format!("GitHub: the daemon writes on {repo} as {bot}.")
         }
-        crate::daemon::gh_token::ActsAs::Person { why }
-        | crate::daemon::gh_token::ActsAs::NoToken { why } => {
+        acts => {
+            let why = crate::daemon::gh_token::why_none(acts);
             format!("GitHub: the daemon writes on {repo} with the token of the person: {why}.")
         }
     }
@@ -7897,7 +8048,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     watches: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
-///     person_tokens: vec![],
+///     no_starts: vec![],
 ///     no_tokens: vec![],
 ///     writes: vec![],
 /// };
@@ -7966,16 +8117,16 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// let line = riff::text::lead_lost_network("o/r", "riff-lead-o-r");
 /// assert!(text.contains(&format!("{line}\n")), "{text}");
 /// assert!(text.find(&line) < text.find("Sessions:\n"), "{text}");
-/// // A repository whose sessions act on GitHub with the token of the
-/// // person, with the fix (01M6WPMWSMQABE97YCMS5Z3M1P).
-/// status.person_tokens.push(riff::daemon::PersonToken {
+/// // A repository where no worker and no verify starts, with the fix
+/// // (01M6Z87A04EXTT1FFJSJ1EM6TB).
+/// status.no_starts.push(riff::daemon::NoTokenShown {
 ///     repo: "acme/app".into(),
 ///     why: "riff-acme is not installed on acme/app: riff github install acme".into(),
 /// });
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.contains(
-///     "GitHub: the sessions of acme/app act with the token of the person: \
-///      riff-acme is not installed on acme/app: riff github install acme.\n"
+///     "GitHub: no worker and no verify of acme/app starts: \
+///      riff-acme is not installed on acme/app: riff github install acme\n"
 /// ), "{text}");
 /// // How the daemon writes on a repository (01M6XZJFE2ZTR5RE3AWM30R704).
 /// status.writes.push(riff::daemon::WritesShown {
@@ -8015,8 +8166,8 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     for lost in &status.lost {
         let _ = writeln!(out, "{}", lead_lost_network(&lost.repo, &lost.name));
     }
-    for person in &status.person_tokens {
-        let _ = writeln!(out, "{}", daemon_gh_status(&person.repo, &person.why));
+    for none in &status.no_starts {
+        let _ = writeln!(out, "{}", daemon_no_start_status(&none.repo, &none.why));
     }
     for none in &status.no_tokens {
         let _ = writeln!(out, "{}", daemon_gh_none_status(&none.repo, &none.why));
@@ -8487,7 +8638,7 @@ pub const INIT_FIX_RIFF: &str = "run riff update. It installs the static riff an
      the release, so riff relay starts in each session image";
 
 /// The name of the check of the GitHub Apps of riff on the repository
-/// (01M6WPMWSMQABE97YCMS5Z3M1P).
+/// (01M6Z87JTXW0Y99X08VHA2SSSR).
 pub const INIT_APPS: &str = "the GitHub Apps of riff";
 
 /// The GitHub Apps of riff are on the repository `repo`.
@@ -9344,7 +9495,7 @@ pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: 
 ///     watches: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
-///     person_tokens: vec![],
+///     no_starts: vec![],
 ///     no_tokens: vec![],
 ///     writes: vec![],
 /// };
@@ -10297,6 +10448,30 @@ pub fn wave_sign_in_ends(minutes: i64) -> String {
 /// ```
 pub fn wave_host_word(why: &str) -> String {
     format!("waits for this machine: {why}")
+}
+
+/// The word of a wave that starts no item: riff-server gives its workers
+/// no token of a GitHub App (01M6Z87A04EXTT1FFJSJ1EM6TB).
+pub const WAVE_NO_TOKEN: &str =
+    "waits: no token of a GitHub App for its sessions. See riff daemon status";
+
+/// The message to the lead when a worker or a verify of the wave of
+/// `repo` got no token of a GitHub App, for the reason `why` with its fix
+/// and the prompt for `claude` on the host (01M6Z87A04EXTT1FFJSJ1EM6TB,
+/// 01M6Z87JTXW0Y99X08VHA2SSSR).
+///
+/// ```
+/// let text = riff::text::wave_no_token("o/r", "riff-acme is not installed on o/r: riff github install o");
+/// assert!(text.starts_with("The wave of o/r starts no worker and no verify:"), "{text}");
+/// assert!(text.contains("No start counts. The wave tries again in 10 minutes."), "{text}");
+/// assert!(text.ends_with("Tell your person: riff-acme is not installed on o/r: riff github install o"), "{text}");
+/// ```
+pub fn wave_no_token(repo: &str, why: &str) -> String {
+    format!(
+        "The wave of {repo} starts no worker and no verify: riff-server gives them no token of a \
+         GitHub App, and no session gets the token of the person. No start counts. The wave tries \
+         again in 10 minutes. Tell your person: {why}"
+    )
 }
 
 /// The message to the lead when the wave of `repo` starts to wait for a
