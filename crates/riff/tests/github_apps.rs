@@ -5,7 +5,7 @@
 
 use crate::common;
 #[path = "../../riff-server/tests/fake_github.rs"]
-mod fake_github;
+pub(crate) mod fake_github;
 
 use fake_github::{FakeGitHub, LEAD_CODE, OWNER, REPO, SESSION_CODE, both_apps};
 
@@ -18,7 +18,7 @@ use riff_server::github::Settings;
 use riff_server::keys::{At, FILE};
 
 /// A riff with sign-in whose GitHub is `fake`, with the keys at `keys`.
-async fn serve(fake: &FakeGitHub, keys: At) -> common::Signed {
+pub(crate) async fn serve(fake: &FakeGitHub, keys: At) -> common::Signed {
     let (listener, url) = common::listen().await;
     let github = Settings {
         api: fake.url.clone(),
@@ -39,7 +39,7 @@ async fn serve(fake: &FakeGitHub, keys: At) -> common::Signed {
 }
 
 /// A folder with both Apps in the file of the keys.
-fn keys_dir() -> tempfile::TempDir {
+pub(crate) fn keys_dir() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let apps = serde_json::to_vec(&both_apps()).unwrap();
     std::fs::write(dir.path().join(FILE), apps).unwrap();
@@ -715,7 +715,7 @@ async fn riff_init_check_names_a_repository_with_no_guard() {
     assert!(!calls.contains(" -X "), "{calls}");
 }
 
-/// 01M6WPMWSMQABE97YCMS5Z3M1P: `riff init --check` in a clone of a
+/// 01M6Z87JTXW0Y99X08VHA2SSSR: `riff init --check` in a clone of a
 /// repository with no installation of the Apps fails a check, and names
 /// `riff github install OWNER`. With the Apps on the repository, the
 /// check passes.
@@ -757,9 +757,10 @@ async fn riff_init_check_names_the_install_of_the_apps() {
     );
 }
 
-/// 01M6WPMWYSW98MQYQCCJ54ZX04: "The auto mode settings of a session" in
-/// "How It Works" says who acts on GitHub for each role, with a copyable
-/// `sh` block of `riff whoami`.
+/// 01M6WPMWYSW98MQYQCCJ54ZX04, 01M6Z87A04EXTT1FFJSJ1EM6TB: "The auto mode
+/// settings of a session" in "How It Works" says who acts on GitHub for
+/// each role, and that no session gets the token of the person, with a
+/// copyable `sh` block of `riff whoami`.
 #[test]
 fn the_book_says_who_acts_on_github_for_each_role() {
     let page = crate::book::page("how-it-works.md");
@@ -779,15 +780,17 @@ fn the_book_says_who_acts_on_github_for_each_role() {
         "| The lead in a container | `riff-OWNER-lead[bot]`",
         // 01M6XZJFE2ZTR5RE3AWM30R704: the daemon writes as the lead App.
         "| The daemon on the host, for its writes | `riff-OWNER-lead[bot]`",
+        "| A session of `riff run --no-github` | Nobody: it has no token |",
         "| You in a terminal, a plain `claude` | You |",
     ] {
         assert!(who.contains(row), "{row}: {who}");
     }
+    assert!(who.contains("No session gets your token."), "{who}");
     let commands = crate::book::commands_in(who);
     assert_eq!(commands, ["riff whoami", "riff daemon status"]);
     crate::book::each_is_real(&commands);
     // The lines of `riff daemon status` are the lines of riff.
-    let acts = riff::daemon::gh_token::ActsAs::Person {
+    let acts = riff::daemon::gh_token::ActsAs::NoToken {
         why: "riff-acme-lead is not installed on acme/app: riff github install acme".into(),
     };
     let line = riff::text::daemon_writes("acme/app", &acts);
@@ -841,6 +844,45 @@ fn the_book_has_the_how_to_when_riff_server_cannot_read_the_keys() {
         how_to.contains(&format!("\n{prompt}\n")),
         "{prompt}: {how_to}"
     );
+}
+
+/// 01M6Z87JTXW0Y99X08VHA2SSSR: "How It Works" has the how-to "Repair riff
+/// with claude on the host", with a copyable `sh` block of the fix and
+/// one of `claude` with the prompt, as riff writes it.
+#[test]
+fn the_book_has_the_how_to_repair_riff_with_claude_on_the_host() {
+    let page = crate::book::page("how-it-works.md");
+    let how_to = page
+        .split("\n#### Repair riff with claude on the host\n")
+        .nth(1)
+        .expect("the how-to is in How It Works");
+    let how_to = how_to.split("\n### ").next().unwrap();
+    let how_to = how_to.split("\n#### ").next().unwrap();
+    let commands = crate::book::commands_in(how_to);
+    let why = "riff-acme is not installed on acme/app: riff github install acme";
+    let fix = riff::text::gh_repair("acme/app", why);
+    let prompt = fix
+        .split("paste this prompt: \"")
+        .nth(1)
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("the reason has the prompt");
+    assert_eq!(
+        commands,
+        [
+            "riff github install acme".to_owned(),
+            "riff github check".to_owned(),
+            format!("claude \"{prompt}\""),
+        ]
+    );
+    crate::book::each_is_real(&commands[..2]);
+    // The lines of `riff daemon status` name the fix and the prompt.
+    for line in [
+        riff::text::daemon_no_start_status("acme/app", &fix),
+        riff::text::daemon_gh_none_status("acme/app", &fix),
+    ] {
+        assert!(line.contains("riff github install acme"), "{line}");
+        assert!(line.ends_with(&format!("\"{prompt}\"")), "{line}");
+    }
 }
 
 /// 01M6WWG3S60XYGTNBQH7S3F6D1: the token of a verifier reads only, so a

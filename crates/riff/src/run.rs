@@ -25,7 +25,8 @@
 //!     H->>D: the image: pull it when it is not here
 //!     H->>S: start a worker session, claim ITEM
 //!     H->>H: git clone --reference MAIN, the branch worktree-ITEM
-//!     H->>D: start SPEC, with the value of GH_TOKEN beside it
+//!     H->>D: start SPEC, with no token of the person
+//!     D->>S: the token of the session on GitHub: no token of an App, no start
 //!     D->>C: start riff relay, with the socket of the session
 //!     D->>C: the start text, one stream-json line on the socket
 //!     C-->>D: the events, one line each, with their numbers
@@ -56,6 +57,29 @@
 //! sends a verify request to the lead, releases the item and ends the
 //! session. A SIGINT or a SIGTERM asks the daemon to stop the container
 //! first (01M4Z81B1913NF6HBZ5G38B3Q9).
+//!
+//! # A session with no GitHub
+//!
+//! No session gets the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB):
+//! with no token of an App, the daemon starts no container. `riff run
+//! ITEM --no-github` runs an item that needs no GitHub
+//! (01M6Z87JY83V3KR72E2AG8V8KG), for example the item of the
+//! real-session test. The daemon asks for no token, and the container
+//! has no `hosts.yml` in the folder `gh` of the session
+//! ([`crate::daemon::gh_token::ActsAs::NoGitHub`]). The start text holds
+//! the body of the issue ([`Frame::issue`],
+//! [`text::run_start_no_github`]): the session commits, and pushes
+//! nothing. At the end, `riff run` does its steps as for each session.
+//! With no pull request of the branch, it names the command that pushes
+//! the branch from the host, and exits with 0 when `claude` ended with
+//! 0.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     R["riff run ITEM --no-github"] --> D["the daemon: no token, no GH_TOKEN"]
+//!     D --> C["the session commits on its branch"]
+//!     C --> P["the person on the host:<br/>git -C CLONE push origin BRANCH"]
+//! ```
 //!
 //! riff sends no verify request when the issue has the label
 //! [`rollout::NO_VERIFY`], or when a lead holds `verify-ITEM`. It shows
@@ -176,9 +200,9 @@
 //! | The clone | with write, at the same path, the working folder | 01M4Z60B7PTJMB37578K8FV22Q |
 //! | The objects of the main clone | no write, at the same path | 01M4Z60B7PQ07HRJBXS1TA73PX |
 //! | `~/.gitconfig` | no write, when it exists. No `~/.config/gh` | 01M4Z60B7QDWEFQ96H448RE9N2, 01M6WPMP035A93SM6SAJGS6MTC |
-//! | The sign-in of `gh` | `-e GH_TOKEN`: the name only. The daemon puts the folder of the token of the session in its place, when riff-server gives one ([`crate::daemon::gh_token`]) | 01M6WPMWSMQABE97YCMS5Z3M1P, 01M6WPMNXN1BSBEH74TG5DDRTF |
+//! | The sign-in of `gh` | no `GH_TOKEN`, never the token of the person: the daemon adds the folder of the token of the session and `GH_CONFIG_DIR` ([`crate::daemon::gh_token`]) | 01M6Z87A04EXTT1FFJSJ1EM6TB, 01M6WPMNXN1BSBEH74TG5DDRTF |
 //! | No signature | `commit.gpgsign=false` by `GIT_CONFIG_*` ([`git_config`]) | 01M4Z60B89G8YNVMTEPGX7FQCV |
-//! | The author of a commit | `user.name` the login of the bot and `user.email` its noreply address, by `GIT_CONFIG_*`: the daemon adds them with the token of an App ([`crate::daemon::gh_token::give_author`]). With the token of the person, the identity of `~/.gitconfig` | 01M6Y6B8VBM3TKC3YHZKSA4PFZ, 01M6WZ2C8JXEA888XYMRXTS17V |
+//! | The author of a commit | `user.name` the login of the bot and `user.email` its noreply address, by `GIT_CONFIG_*`: the daemon adds them with the token of an App ([`crate::daemon::gh_token::give_author`]). With no token, the identity of `~/.gitconfig` | 01M6Y6B8VBM3TKC3YHZKSA4PFZ, 01M6WZ2C8JXEA888XYMRXTS17V |
 //! | The token of git | the credential helper `!gh auth git-credential` of `https://github.com` by `GIT_CONFIG_*`, after an empty one: no helper of `~/.gitconfig` | 01M6WPMNXN1BSBEH74TG5DDRTF |
 //! | The Claude folder | with write | 01M4Z60B86N999JRN7Z1G52PG4 |
 //! | The sign-in of `claude` | `-e CLAUDE_CODE_OAUTH_TOKEN`: the name only, when a token is set ([`crate::claude_token`]); else the sign-in file of the host with no write | 01M58B7H2HMYT6VTY0B8T2G0KW, 01M4Z60B869HWDTZMSYPVYACD8 |
@@ -292,9 +316,9 @@ pub enum ClaudeSignIn {
 /// // The objects of the main clone: at the same path, with no write.
 /// let objects = spec.binds.iter().find(|b| b.target == facts.objects).unwrap();
 /// assert_eq!((&objects.source, objects.write), (&Source::Path(facts.objects.clone()), false));
-/// // The token of gh goes by its name only: the daemon puts the token
-/// // of the session in its place, when riff-server gives one.
-/// assert!(spec.env.contains(&Env::Host("GH_TOKEN".into())));
+/// // No token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB): the daemon adds
+/// // the folder of the token of the session.
+/// assert!(riff::daemon::gh_token::check_env(&spec).is_ok());
 /// // No bind of the config of gh of the host (01M6WPMP035A93SM6SAJGS6MTC).
 /// assert!(!spec.binds.iter().any(|b| b.target.ends_with(".config/gh")));
 /// // git gets its token from gh (01M6WPMNXN1BSBEH74TG5DDRTF).
@@ -360,7 +384,6 @@ pub fn spec(facts: &Facts) -> SessionSpec {
         value("HOME", &shown(home)),
         value("USER", &facts.user),
         value("LOGNAME", &facts.user),
-        Env::Host("GH_TOKEN".into()),
     ];
     git_config(&mut env, "commit.gpgsign", "false");
     // git asks gh for the token of the session: an empty helper first
@@ -974,21 +997,28 @@ pub fn sign_in(file: &str, now_ms: i64) -> Result<SignIn> {
 }
 
 /// Takes each secret out of a text (01M4Z60B8KDXD190RWC7D184Q3), and
-/// each token of a GitHub App: `ghs_` and the letters, digits and `_`
-/// after it (01M6WPMX18BECQPTQNSTZMBN16). The daemon renews the token
-/// of a session after the start of its relay, so no list holds it.
+/// each token of GitHub: one of [`TOKEN_STARTS`] and the letters, digits
+/// and `_` after it (01M6WPMX18BECQPTQNSTZMBN16,
+/// 01M6ZAEH3B92HKV0YTM2WTF1T2). The daemon renews the token of a session
+/// after the start of its relay, so no list holds it. riff reads no token
+/// of the person for a session (01M6Z87A04EXTT1FFJSJ1EM6TB), so no list
+/// holds that one either.
 ///
 /// ```
 /// use riff::run::Scrub;
 ///
-/// let scrub = Scrub::new(["gho_secret1".to_owned(), "".to_owned()]);
-/// assert_eq!(scrub.clean("token gho_secret1 here"), "token [secret] here");
+/// let scrub = Scrub::new(["sk-ant-oat01-secret1".to_owned(), "".to_owned()]);
+/// assert_eq!(scrub.clean("token sk-ant-oat01-secret1 here"), "token [secret] here");
 /// assert_eq!(scrub.clean("no token"), "no token");
 /// assert_eq!(
 ///     Scrub::default().clean("oauth_token: ghs_16C7e42F292c6912E7710c838347Ae178B4a, end"),
 ///     "oauth_token: [secret], end"
 /// );
 /// assert_eq!(Scrub::default().clean("ghs_ alone, and ghs_a1"), "ghs_ alone, and [secret]");
+/// assert_eq!(
+///     Scrub::default().clean("gho_a1 ghp_b2 ghu_c3 ghr_d4 github_pat_11AB_cd"),
+///     "[secret] [secret] [secret] [secret] [secret]"
+/// );
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct Scrub {
@@ -1012,27 +1042,31 @@ impl Scrub {
                 out = Cow::Owned(out.replace(secret.as_str(), HIDDEN));
             }
         }
-        if out.contains(APP_TOKEN) {
-            out = Cow::Owned(app_tokens_out(&out));
+        for start in TOKEN_STARTS {
+            if out.contains(start) {
+                out = Cow::Owned(tokens_out(&out, start));
+            }
         }
         out
     }
 }
 
-/// The start of a token of a GitHub App.
-const APP_TOKEN: &str = "ghs_";
+/// The starts of the tokens of GitHub: of a GitHub App, of OAuth, of a
+/// person, of a user to server, of a refresh, and a fine-grained one.
+pub const TOKEN_STARTS: [&str; 6] = ["ghs_", "gho_", "ghp_", "ghu_", "ghr_", "github_pat_"];
 
-/// `text` with each token of a GitHub App replaced by [`HIDDEN`].
-fn app_tokens_out(text: &str) -> String {
+/// `text` with each token of GitHub that starts with `start` replaced
+/// by [`HIDDEN`].
+fn tokens_out(text: &str, start: &str) -> String {
     let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    while let Some(at) = rest.find(APP_TOKEN) {
-        let after = &rest[at + APP_TOKEN.len()..];
+    while let Some(at) = rest.find(start) {
+        let after = &rest[at + start.len()..];
         let len = after.find(|c: char| !part(c)).unwrap_or(after.len());
         out.push_str(&rest[..at]);
         if len == 0 {
-            out.push_str(APP_TOKEN);
+            out.push_str(start);
         } else {
             out.push_str(HIDDEN);
         }
@@ -1221,32 +1255,30 @@ struct Checked {
     host: Host,
 }
 
-/// The facts of the host that each session needs: the sign-in of `gh`,
-/// the home and the user of the person, and the sign-in of `claude`
-/// (01M4Z81B3A324KKE8M8Z71TM4M).
+/// The facts of the host that each session needs: the home and the user
+/// of the person, and the sign-in of `claude` (01M4Z81B3A324KKE8M8Z71TM4M).
+/// riff checks the sign-in of `gh` too, for the steps on the host, and
+/// keeps no token of it: no session gets the token of the person
+/// (01M6Z87A04EXTT1FFJSJ1EM6TB).
 pub(crate) struct Host {
-    pub(crate) gh_token: String,
     pub(crate) home: PathBuf,
     pub(crate) user: String,
     pub(crate) claude: Claude,
 }
 
 impl Host {
-    /// The values of the variables of the host in the spec: `GH_TOKEN`,
-    /// and the token of `claude` when it is set.
+    /// The values of the variables of the host in the spec: the token of
+    /// `claude` when it is set.
     pub(crate) fn values(&self) -> Vec<(String, String)> {
-        let mut values = vec![("GH_TOKEN".to_owned(), self.gh_token.clone())];
-        if let Claude::Token(token) = &self.claude {
-            values.push((crate::claude_token::VAR.to_owned(), token.clone()));
+        match &self.claude {
+            Claude::Token(token) => vec![(crate::claude_token::VAR.to_owned(), token.clone())],
+            Claude::File { .. } => Vec::new(),
         }
-        values
     }
 
     /// The secrets that no event shows.
     pub(crate) fn secrets(&self) -> Vec<String> {
-        std::iter::once(self.gh_token.clone())
-            .chain(self.claude.secrets())
-            .collect()
+        self.claude.secrets()
     }
 }
 
@@ -1428,7 +1460,10 @@ pub fn credentials_in(home: &Path) -> PathBuf {
 /// a [`HostFault`] that says the fix.
 pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
     let missing = HostFault::Missing;
-    let gh_token = output("gh", main, &["auth", "token"])
+    // The sign-in of `gh` for the steps on the host. riff keeps no token
+    // of it (01M6Z87A04EXTT1FFJSJ1EM6TB).
+    output("gh", main, &["auth", "token"])
+        .map(|token| drop(zeroize::Zeroizing::new(token)))
         .map_err(|e| missing(format!("{}: {e:#}", text::RUN_NO_GH)))?;
     let home = std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
@@ -1440,12 +1475,7 @@ pub(crate) fn host_facts(main: &Path) -> Result<Host, HostFault> {
         .ok_or_else(|| missing("set USER".into()))?;
     let dir = daemon::dir().map_err(|e| missing(format!("{e:#}")))?;
     let claude = claude_of(&dir, &credentials_in(&home), now_ms())?;
-    Ok(Host {
-        gh_token,
-        home,
-        user,
-        claude,
-    })
+    Ok(Host { home, user, claude })
 }
 
 /// The trailers of the pull request of the session `session` in its
@@ -1477,7 +1507,8 @@ pub fn made_by(gh: &pr::Gh, session: &str) -> pr::MadeBy {
 }
 
 /// What the start text of a build takes from its issue: the milestone,
-/// and the link line of the frame of the body of the pull request.
+/// the link line of the frame of the body of the pull request, and the
+/// body of the issue for a session with no GitHub.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     /// The milestone of the issue.
@@ -1486,6 +1517,9 @@ pub struct Frame {
     /// when", else `Closes #N` ([`pr::Link::of`],
     /// 01M6WW5WSSRMTBP882FQP3TS2Q).
     pub link: pr::Link,
+    /// The body of the issue: the start text of `riff run --no-github`
+    /// holds it (01M6Z87JY83V3KR72E2AG8V8KG).
+    pub issue: String,
 }
 
 impl Frame {
@@ -1496,10 +1530,10 @@ impl Frame {
     }
 }
 
-/// The milestone and the link line of the issue `issue`, with `gh`. An
-/// issue with no milestone, or with one that `text::forge` changes, is
-/// refused: the milestone goes into the start text and into a command
-/// of the session, as in `riff pr open`.
+/// The milestone, the link line and the body of the issue `issue`, with
+/// `gh`. An issue with no milestone, or with one that `text::forge`
+/// changes, is refused: the milestone goes into the start text and into
+/// a command of the session, as in `riff pr open`.
 pub(crate) fn frame(gh: &pr::Gh, issue: u64) -> Result<Frame> {
     let found = pr::view_issue(gh, issue)?;
     let milestone = found
@@ -1513,6 +1547,7 @@ pub(crate) fn frame(gh: &pr::Gh, issue: u64) -> Result<Frame> {
     Ok(Frame {
         milestone,
         link: pr::Link::of(issue, &found.body, false),
+        issue: found.body,
     })
 }
 
@@ -1971,23 +2006,26 @@ pub(crate) struct Pull {
 
 /// `riff run ITEM`: one work item in one container, from the claim to
 /// the pull request. With no `image`, it takes the image that the main
-/// clone pins. It gives the exit code of the command. On Linux, it runs
-/// [`run_with`] with the daemon of this machine ([`daemon::dir`]). On a
-/// host that is not Linux, it starts nothing (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
+/// clone pins. With `no_github`, the session has no GitHub, and pushes
+/// nothing (01M6Z87JY83V3KR72E2AG8V8KG). It gives the exit code of the
+/// command. On Linux, it runs [`run_with`] with the daemon of this
+/// machine ([`daemon::dir`]). On a host that is not Linux, it starts
+/// nothing (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
 pub async fn run(
     api: Api,
     here: &Place,
     server: &str,
     item: &str,
     image: Option<&str>,
+    no_github: bool,
 ) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
-        run_with(&daemon::dir()?, api, here, server, item, image).await
+        run_with(&daemon::dir()?, api, here, server, item, image, no_github).await
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (api, here, server, item, image);
+        let _ = (api, here, server, item, image, no_github);
         bail!("{}", text::RUN_LINUX_ONLY)
     }
 }
@@ -2000,6 +2038,7 @@ pub async fn run_with(
     server: &str,
     item: &str,
     image: Option<&str>,
+    no_github: bool,
 ) -> Result<i32> {
     let issue = issue_of(item)?;
     let dir = identity::working_dir()?;
@@ -2056,7 +2095,7 @@ pub async fn run_with(
         &session,
         item,
         issue,
-        (image, &merged.setup),
+        (image, &merged.setup, no_github),
         &mut steps,
     )
     .await;
@@ -2088,7 +2127,7 @@ async fn work(
     session: &str,
     item: &str,
     issue: u64,
-    (image, setup): (&str, &Setup),
+    (image, setup, no_github): (&str, &Setup, bool),
     steps: &mut EndSteps,
 ) -> Result<i32> {
     let folder = sessions_dir()?.join(format!("{item}-{}", short(session)));
@@ -2130,20 +2169,27 @@ async fn work(
         "{}",
         text::run_started(item, session, &clone, image, &spec.name)
     );
-    let frame = checked.frame.body()?;
-    let frame = pr::with_session(&frame, &made_by(&pr::Gh::here("run"), session))?;
-    // The clone has the `origin/HEAD` of the forge: its branch is the default branch.
-    let base = crate::permissions::Project::of(&clone).branch;
-    let start = text::run_start(
-        &repo,
-        &base,
-        issue,
-        &branch,
-        session,
-        &frame,
-        &checked.frame.milestone,
-        earlier,
-    );
+    let start = if no_github {
+        // The session has no GitHub: the start text holds the issue
+        // (01M6Z87JY83V3KR72E2AG8V8KG).
+        let body = &checked.frame.issue;
+        text::run_start_no_github(&repo, issue, &branch, session, body, earlier)
+    } else {
+        let frame = checked.frame.body()?;
+        let frame = pr::with_session(&frame, &made_by(&pr::Gh::here("run"), session))?;
+        // The clone has the `origin/HEAD` of the forge: its branch is the default branch.
+        let base = crate::permissions::Project::of(&clone).branch;
+        text::run_start(
+            &repo,
+            &base,
+            issue,
+            &branch,
+            session,
+            &frame,
+            &checked.frame.milestone,
+            earlier,
+        )
+    };
     let secrets = checked.host.secrets();
     let values = checked.host.values();
     // The handlers come first: a signal before them ends riff with no
@@ -2162,6 +2208,7 @@ async fn work(
             server: server.to_owned(),
             me: me.clone(),
             terminal: false,
+            no_github,
         },
         signals,
     )
@@ -2204,11 +2251,14 @@ async fn work(
                 eprintln!("riff: {e:#}");
             }
         }
+        // A session with no GitHub pushed nothing: the person pushes the
+        // branch (01M6Z87JY83V3KR72E2AG8V8KG).
+        None if no_github => println!("{}", text::run_pushed_nothing(&clone, &branch)),
         None => println!("{}", text::run_no_pull(&branch)),
     }
     println!("{}", text::run_kept(&clone));
     Ok(i32::from(
-        !(ended.code == Some(0) && !ended.failed && pull.is_some()),
+        !(ended.code == Some(0) && !ended.failed && (pull.is_some() || no_github)),
     ))
 }
 
@@ -2266,7 +2316,6 @@ mod tests {
         };
         let spec = spec(&facts);
         let host = Host {
-            gh_token: "gho_secret1".into(),
             home: facts.home.clone(),
             user: facts.user.clone(),
             claude: Claude::Token(token.into()),
@@ -2537,7 +2586,6 @@ mod tests {
                 "HOME=/home/mike",
                 "USER=mike",
                 "LOGNAME=mike",
-                "GH_TOKEN",
                 "GIT_CONFIG_COUNT=3",
                 "GIT_CONFIG_KEY_0=commit.gpgsign",
                 "GIT_CONFIG_VALUE_0=false",
@@ -2553,9 +2601,10 @@ mod tests {
             "claude --model opus -p --input-format stream-json --output-format stream-json \
              --verbose --session-id 1a2b3c4d-0000-4000-8000-000000000000 --permission-mode auto"
         );
-        // The token of gh is the one value of the host.
-        let token = [("GH_TOKEN".to_owned(), "gho_x".to_owned())];
-        assert!(spec.check_values(&token).is_ok());
+        // No token of the person, and no value of the host with no token
+        // of claude (01M6Z87A04EXTT1FFJSJ1EM6TB).
+        assert!(crate::daemon::gh_token::check_env(&spec).is_ok());
+        assert!(spec.check_values(&[]).is_ok());
     }
 
     /// 01M5SMW28KT5D5HPRH7KAZ8TVC: a `riff.toml` with no `env` and no

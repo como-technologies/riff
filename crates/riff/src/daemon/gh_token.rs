@@ -1,5 +1,5 @@
 //! The token of each session on GitHub (01M6WPMNXN1BSBEH74TG5DDRTF,
-//! 01M6WPMP035A93SM6SAJGS6MTC, 01M6WPMWSMQABE97YCMS5Z3M1P).
+//! 01M6WPMP035A93SM6SAJGS6MTC, 01M6Z87A04EXTT1FFJSJ1EM6TB).
 //!
 //! # Design
 //!
@@ -53,12 +53,37 @@
 //! author: the login of the bot and its noreply address ([`author`],
 //! [`give_author`], 01M6Y6B8VBM3TKC3YHZKSA4PFZ).
 //!
-//! A session keeps the token of the person, in `GH_TOKEN` as before, when
-//! riff-server gives no token of an App ([`ActsAs::Person`]): the riff
-//! has no App of the role or no sign-in, the App is not on the
-//! repository, or the `gh` of the person cannot push there. `riff daemon
-//! status` names the repository with the fix, for example `riff github
-//! install OWNER`.
+//! # No token of the person
+//!
+//! No session gets the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
+//! riff keeps no `gh auth token` for a session, and the daemon
+//! refuses to start a container whose env names one of [`TOKEN_VARS`]
+//! ([`check_env`]): that check is the last step before each start. When
+//! riff-server gives no token of an App ([`ActsAs::NoToken`]), because
+//! the riff has no App of the role or no sign-in, the App is not on the
+//! repository, the `gh` of the person cannot push there, or riff-server
+//! is older:
+//!
+//! - no container of a worker or of a verify starts, and the wave says
+//!   why ([`crate::wave`]);
+//! - the lead starts with no token on GitHub: the folder of its token
+//!   has no [`HOSTS`] ([`write_none`]), and its riff tools work, so it
+//!   tells the person the fix.
+//!
+//! The reason names the fix, for example `riff github install OWNER`,
+//! and a prompt for `claude` on the host ([`crate::text::gh_repair`],
+//! 01M6Z87JTXW0Y99X08VHA2SSSR). A session of `riff run --no-github`
+//! needs no GitHub ([`ActsAs::NoGitHub`], 01M6Z87JY83V3KR72E2AG8V8KG):
+//! the daemon asks riff-server for nothing.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     A["the answer of riff-server"] --> T{"a token of an App?"}
+//!     T -- yes --> B["FOLDER/gh/hosts.yml: the session acts as the bot"]
+//!     T -- no --> R{"the lead?"}
+//!     R -- yes --> L["the lead starts with no token on GitHub<br/>its first prompt ends with the fix and the prompt"]
+//!     R -- "no: a worker or a verify" --> N["no container starts<br/>the wave tells the lead why"]
+//! ```
 //!
 //! # The writes of the daemon
 //!
@@ -84,7 +109,7 @@
 //!
 //! The daemon asks only for a repository where the `gh` of the person can
 //! push, as for a session. After an answer with no token, it asks again
-//! after [`PERSON_AGAIN`], and after a fault after [`RETRY`]. `riff daemon
+//! after [`NONE_AGAIN`], and after a fault after [`RETRY`]. `riff daemon
 //! status` names each repository with the bot of its writes, or with the
 //! token of the person and why ([`Writes::shown`]).
 
@@ -94,7 +119,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use riff_core::wire::{GitHubRole, Rights, SessionToken};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -114,8 +139,9 @@ pub const CONFIG: &str = "config.yml";
 /// The variable that names the folder of the config of `gh`.
 pub const CONFIG_VAR: &str = "GH_CONFIG_DIR";
 
-/// The variable of the token of the person.
-pub const TOKEN_VAR: &str = "GH_TOKEN";
+/// The variables where `gh` reads a token. No container gets one
+/// (01M6Z87A04EXTT1FFJSJ1EM6TB).
+pub const TOKEN_VARS: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
 
 /// The daemon asks for a new token this long before the end of the old
 /// one (01M6WPMNXN1BSBEH74TG5DDRTF).
@@ -125,14 +151,17 @@ pub const RENEW_BEFORE: Duration = Duration::from_secs(10 * 60);
 /// token whose end does not read.
 pub const RETRY: Duration = Duration::from_secs(60);
 
-/// The wait before the daemon asks again for the token of its writes on
-/// a repository, after an answer with the token of the person
-/// (01M6XZJFE2ZTR5RE3AWM30R704).
-pub const PERSON_AGAIN: Duration = Duration::from_secs(10 * 60);
+/// The wait before the daemon asks again after an answer with no token
+/// of an App: for its writes on a repository (01M6XZJFE2ZTR5RE3AWM30R704),
+/// and for a lead with no token (01M6YC3T0TXANJH6YMTJZR1HCR). The wave
+/// starts no item of a repository for this long after a worker got no
+/// token (01M6Z87A04EXTT1FFJSJ1EM6TB).
+pub const NONE_AGAIN: Duration = Duration::from_secs(10 * 60);
 
 /// How a session acts on GitHub. It holds no token, so the record of the
 /// session keeps it, and `riff whoami` shows it
-/// (01M6WPMWYSW98MQYQCCJ54ZX04).
+/// (01M6WPMWYSW98MQYQCCJ54ZX04). No session acts with the token of the
+/// person (01M6Z87A04EXTT1FFJSJ1EM6TB).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "as", rename_all = "snake_case")]
 pub enum ActsAs {
@@ -148,42 +177,42 @@ pub enum ActsAs {
         /// `2026-11-08T13:00:00Z`.
         ends: String,
     },
-    /// With the token of the person.
-    Person {
-        /// Why, with the fix when there is one.
-        why: String,
-    },
-    /// With no token on GitHub at all, also not the token of the person:
-    /// riff-server cannot read the keys of the GitHub Apps, and the riff
-    /// is paused (01M6YC3T0TXANJH6YMTJZR1HCR). Only a lead starts so.
+    /// With no token on GitHub at all: riff-server gave no token of an
+    /// App (01M6Z87A04EXTT1FFJSJ1EM6TB), or cannot read the keys of the
+    /// GitHub Apps (01M6YC3T0TXANJH6YMTJZR1HCR). Only a lead starts so.
     NoToken {
-        /// Why, with the fix and the prompt for `claude` on the host.
+        /// Why, with the fix and the prompt for `claude` on the host
+        /// (01M6Z87JTXW0Y99X08VHA2SSSR).
         why: String,
     },
+    /// With no GitHub: a session of `riff run --no-github`, which needs
+    /// none (01M6Z87JY83V3KR72E2AG8V8KG). The daemon asks for no token.
+    NoGitHub,
 }
 
 /// Why a session acts with no token of an App: the why of
-/// [`ActsAs::Person`] and of [`ActsAs::NoToken`], else
-/// [`crate::text::GH_TOKEN_NONE`].
+/// [`ActsAs::NoToken`], [`crate::text::GH_RUN_NO_GITHUB`] for
+/// [`ActsAs::NoGitHub`], else [`crate::text::GH_TOKEN_NONE`].
 ///
 /// ```
-/// use riff::daemon::gh_token::{ActsAs, why_person};
+/// use riff::daemon::gh_token::{ActsAs, why_none};
 ///
-/// assert_eq!(why_person(&ActsAs::Person { why: "no App".into() }), "no App");
-/// assert_eq!(why_person(&ActsAs::NoToken { why: "no keys".into() }), "no keys");
+/// assert_eq!(why_none(&ActsAs::NoToken { why: "no keys".into() }), "no keys");
+/// assert_eq!(why_none(&ActsAs::NoGitHub), riff::text::GH_RUN_NO_GITHUB);
 /// ```
-pub fn why_person(acts: &ActsAs) -> String {
+pub fn why_none(acts: &ActsAs) -> String {
     match acts {
-        ActsAs::Person { why } | ActsAs::NoToken { why } => why.clone(),
+        ActsAs::NoToken { why } => why.clone(),
+        ActsAs::NoGitHub => crate::text::GH_RUN_NO_GITHUB.to_owned(),
         ActsAs::Bot { .. } => crate::text::GH_TOKEN_NONE.to_owned(),
     }
 }
 
-/// A token of a session, or the token of the person. It has no `Debug`:
-/// no log shows the token.
+/// A token of a session, or no token and why. It has no `Debug`: no log
+/// shows the token.
 #[derive(Clone)]
 pub struct Grant {
-    /// The token of the App. `None` for the token of the person.
+    /// The token of the App. `None` with no token.
     pub token: Option<Zeroizing<String>>,
     /// How the session acts with it.
     pub acts: ActsAs,
@@ -193,18 +222,7 @@ pub struct Grant {
 }
 
 impl Grant {
-    /// The token of the person, with why.
-    pub fn person(why: &str) -> Grant {
-        Grant {
-            token: None,
-            acts: ActsAs::Person {
-                why: why.to_owned(),
-            },
-            bot_id: None,
-        }
-    }
-
-    /// No token on GitHub at all, with why (01M6YC3T0TXANJH6YMTJZR1HCR).
+    /// No token on GitHub at all, with why (01M6Z87A04EXTT1FFJSJ1EM6TB).
     pub fn none(why: &str) -> Grant {
         Grant {
             token: None,
@@ -215,9 +233,21 @@ impl Grant {
         }
     }
 
-    /// The grant of the reply `reply` of riff-server: its token, or the
-    /// token of the person with the problem of the reply, or with
-    /// `no_github` no token at all (01M6YC3T0TXANJH6YMTJZR1HCR).
+    /// The grant of a session of `riff run --no-github`: no GitHub
+    /// (01M6Z87JY83V3KR72E2AG8V8KG).
+    pub fn no_github() -> Grant {
+        Grant {
+            token: None,
+            acts: ActsAs::NoGitHub,
+            bot_id: None,
+        }
+    }
+
+    /// The grant of the reply `reply` of riff-server: its token, or no
+    /// token with the problem of the reply (01M6Z87A04EXTT1FFJSJ1EM6TB).
+    /// With `no_github`, riff-server cannot read the keys of the Apps
+    /// (01M6YC3T0TXANJH6YMTJZR1HCR): its problem has the fix and the
+    /// prompt already.
     ///
     /// ```
     /// use riff::daemon::gh_token::{ActsAs, Grant};
@@ -243,7 +273,7 @@ impl Grant {
     /// let missing = SessionToken { token: None, problem: Some(why.into()), ..reply.clone() };
     /// let grant = Grant::of(missing);
     /// assert!(grant.token.is_none());
-    /// assert_eq!(grant.acts, ActsAs::Person { why: why.into() });
+    /// assert_eq!(grant.acts, ActsAs::NoToken { why: why.into() });
     ///
     /// let why = "riff-server cannot read the keys of the GitHub Apps";
     /// let paused = SessionToken { token: None, problem: Some(why.into()), no_github: true, ..reply };
@@ -252,12 +282,6 @@ impl Grant {
     /// assert_eq!(grant.acts, ActsAs::NoToken { why: why.into() });
     /// ```
     pub fn of(reply: SessionToken) -> Grant {
-        if reply.no_github {
-            let why = reply
-                .problem
-                .unwrap_or_else(|| crate::text::GH_NONE.to_owned());
-            return Grant::none(&why);
-        }
         match (reply.token, reply.problem) {
             (Some(token), _) => Grant {
                 token: Some(Zeroizing::new(token)),
@@ -269,9 +293,34 @@ impl Grant {
                 },
                 bot_id: reply.bot_id,
             },
-            (None, problem) => {
-                Grant::person(&problem.unwrap_or_else(|| crate::text::GH_TOKEN_NONE.to_owned()))
-            }
+            (None, Some(problem)) => Grant::none(&problem),
+            (None, None) if reply.no_github => Grant::none(crate::text::GH_NONE),
+            (None, None) => Grant::none(crate::text::GH_TOKEN_NONE),
+        }
+    }
+
+    /// The same grant, whose why with no token ends with the prompt for
+    /// `claude` on the host for the repository `repo`
+    /// ([`crate::text::gh_repair`], 01M6Z87JTXW0Y99X08VHA2SSSR). A token
+    /// stays as it is.
+    ///
+    /// ```
+    /// use riff::daemon::gh_token::{ActsAs, Grant};
+    ///
+    /// let why = "riff-acme is not installed on acme/app: riff github install acme";
+    /// let grant = Grant::none(why).repaired("acme/app");
+    /// assert_eq!(grant.acts, ActsAs::NoToken { why: riff::text::gh_repair("acme/app", why) });
+    /// ```
+    #[must_use]
+    pub fn repaired(self, repo: &str) -> Grant {
+        match self.acts {
+            ActsAs::NoToken { why } => Grant {
+                acts: ActsAs::NoToken {
+                    why: crate::text::gh_repair(repo, &why),
+                },
+                ..self
+            },
+            _ => self,
         }
     }
 }
@@ -326,11 +375,12 @@ pub fn dir(folder: &Path) -> PathBuf {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn write(folder: &Path, bot: &str, token: &str) -> Result<PathBuf> {
-    write_hosts(folder, &Zeroizing::new(hosts_yml(bot, token)))
+    write_hosts(folder, Some(&Zeroizing::new(hosts_yml(bot, token))))
 }
 
 /// Writes the folder of the token of the session `folder` with no token
-/// (01M6YC3T0TXANJH6YMTJZR1HCR): `gh` there signs in to nothing, and git gets no
+/// (01M6YC3T0TXANJH6YMTJZR1HCR, 01M6Z87A04EXTT1FFJSJ1EM6TB): [`CONFIG`]
+/// and no [`HOSTS`]. `gh` there signs in to nothing, and git gets no
 /// password. The folder stays, so a bind of it shows a later token of
 /// [`write()`]. It gives the folder.
 ///
@@ -341,22 +391,34 @@ pub fn write(folder: &Path, bot: &str, token: &str) -> Result<PathBuf> {
 /// write(folder.path(), "riff-acme-lead[bot]", "ghs_one")?;
 /// let dir = write_none(folder.path())?;
 /// assert!(dir.is_dir());
+/// assert!(dir.join("config.yml").is_file());
+/// assert!(!dir.join("hosts.yml").exists());
 /// assert!(read_token(folder.path()).is_none());
-/// assert!(!std::fs::read_to_string(dir.join("hosts.yml"))?.contains("ghs_one"));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn write_none(folder: &Path) -> Result<PathBuf> {
-    write_hosts(folder, "")
+    write_hosts(folder, None)
 }
 
 /// Writes [`CONFIG`], and [`HOSTS`] with the text `hosts`, in the folder
-/// of the token of the session `folder`. See [`write()`].
-fn write_hosts(folder: &Path, hosts: &str) -> Result<PathBuf> {
+/// of the token of the session `folder`. See [`write()`]. With no
+/// `hosts`, it removes [`HOSTS`].
+fn write_hosts(folder: &Path, hosts: Option<&str>) -> Result<PathBuf> {
     let dir = dir(folder);
     std::fs::create_dir_all(&dir).with_context(|| format!("cannot make {}", dir.display()))?;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
         .with_context(|| format!("cannot set the mode of {}", dir.display()))?;
-    for (name, text) in [(CONFIG, CONFIG_YML), (HOSTS, hosts)] {
+    let mut files = vec![(CONFIG, CONFIG_YML)];
+    match hosts {
+        Some(hosts) => files.push((HOSTS, hosts)),
+        None => match std::fs::remove_file(dir.join(HOSTS)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                bail!("cannot remove {}: {e}", dir.join(HOSTS).display())
+            }
+            _ => {}
+        },
+    }
+    for (name, text) in files {
         let path = dir.join(name);
         let new = dir.join(format!("{name}.new"));
         let _ = std::fs::remove_file(&new);
@@ -390,9 +452,8 @@ pub fn remove(folder: &Path) {
 }
 
 /// Gives the container of `spec` the folder of the token `dir`: the bind
-/// with no write at the same path, and [`CONFIG_VAR`]. The container gets
-/// no [`TOKEN_VAR`]: its value goes out of `values` too. The token of the
-/// person stays a secret of the scrub.
+/// with no write at the same path, and [`CONFIG_VAR`] in place of each
+/// one of `spec` and `values`.
 ///
 /// ```
 /// use riff::daemon::gh_token::give;
@@ -404,15 +465,15 @@ pub fn remove(folder: &Path) {
 ///     home: "/home/mike".into(),
 ///     workdir: "/w".into(),
 ///     binds: vec![],
-///     env: vec![Env::Host("GH_TOKEN".into()), Env::Value("USER".into(), "mike".into())],
+///     env: vec![Env::Host("GH_CONFIG_DIR".into()), Env::Value("USER".into(), "mike".into())],
 ///     memory: String::new(),
 ///     cpus: 0,
 ///     command: vec![],
 /// };
-/// let mut values = vec![("GH_TOKEN".to_owned(), "gho_person".to_owned())];
+/// let mut values = vec![("GH_CONFIG_DIR".to_owned(), "/home/mike/.config/gh".to_owned())];
 /// give(&mut spec, &mut values, std::path::Path::new("/s/issue-12/gh"));
 /// assert!(values.is_empty());
-/// assert!(!spec.env.contains(&Env::Host("GH_TOKEN".into())));
+/// assert!(!spec.env.contains(&Env::Host("GH_CONFIG_DIR".into())));
 /// assert!(spec.env.contains(&Env::Value("GH_CONFIG_DIR".into(), "/s/issue-12/gh".into())));
 /// assert!(spec.binds.contains(&Bind {
 ///     source: Source::Path("/s/issue-12/gh".into()),
@@ -422,10 +483,9 @@ pub fn remove(folder: &Path) {
 /// assert!(spec.check_values(&values).is_ok());
 /// ```
 pub fn give(spec: &mut SessionSpec, values: &mut Vec<(String, String)>, dir: &Path) {
-    let ours = |name: &str| name == TOKEN_VAR || name == CONFIG_VAR;
     spec.env
-        .retain(|e| !matches!(e, Env::Host(name) | Env::Value(name, _) if ours(name)));
-    values.retain(|(name, _)| !ours(name));
+        .retain(|e| !matches!(e, Env::Host(name) | Env::Value(name, _) if name == CONFIG_VAR));
+    values.retain(|(name, _)| name != CONFIG_VAR);
     spec.env.push(Env::Value(
         CONFIG_VAR.into(),
         dir.to_string_lossy().into_owned(),
@@ -435,6 +495,42 @@ pub fn give(spec: &mut SessionSpec, values: &mut Vec<(String, String)>, dir: &Pa
         target: dir.to_owned(),
         write: false,
     });
+}
+
+/// Refuses the spec `spec` of a container whose env names one of
+/// [`TOKEN_VARS`]: no container gets the token of the person
+/// (01M6Z87A04EXTT1FFJSJ1EM6TB). The daemon checks each spec with it as
+/// the last step before the start of its container.
+///
+/// ```
+/// use riff::daemon::gh_token::check_env;
+/// use riff::runtime::{Env, SessionSpec};
+///
+/// let spec = |env: Vec<Env>| SessionSpec {
+///     name: "riff-issue-12-1a2b3c4d".into(),
+///     image: "img".into(),
+///     home: "/home/mike".into(),
+///     workdir: "/w".into(),
+///     binds: vec![],
+///     env,
+///     memory: String::new(),
+///     cpus: 0,
+///     command: vec![],
+/// };
+/// assert!(check_env(&spec(vec![Env::Value("GH_CONFIG_DIR".into(), "/s/gh".into())])).is_ok());
+/// let error = check_env(&spec(vec![Env::Host("GH_TOKEN".into())])).unwrap_err();
+/// assert_eq!(error.to_string(), riff::text::daemon_person_token("riff-issue-12-1a2b3c4d", "GH_TOKEN"));
+/// let value = Env::Value("GITHUB_TOKEN".into(), "gho_x".into());
+/// assert!(check_env(&spec(vec![value])).is_err());
+/// ```
+pub fn check_env(spec: &SessionSpec) -> Result<()> {
+    for env in &spec.env {
+        let (Env::Host(name) | Env::Value(name, _)) = env;
+        if TOKEN_VARS.contains(&name.as_str()) {
+            bail!("{}", crate::text::daemon_person_token(&spec.name, name));
+        }
+    }
+    Ok(())
 }
 
 /// The author and the committer of each commit of a session with the
@@ -572,7 +668,7 @@ impl Writes {
     /// with the token of the lead App of the riff-server `server`, and its
     /// reads keep their token ([`crate::pr::Gh::writing_as`]). The daemon
     /// asks `world` for a token when it has none with [`RENEW_BEFORE`] or
-    /// more left, and after [`PERSON_AGAIN`] or [`RETRY`] when it had
+    /// more left, and after [`NONE_AGAIN`] or [`RETRY`] when it had
     /// none. With no `server`, it asks the riff-server of the last ask for
     /// `repo`. With no token, `gh` stays as it is: the token of the person.
     pub async fn gh(
@@ -605,18 +701,18 @@ impl Writes {
             .filter(|server| !server.is_empty());
         let now = now_secs();
         let (grant, again) = match &server {
-            None => (Grant::person(crate::text::GH_NO_SERVER), now),
+            None => (Grant::none(crate::text::GH_NO_SERVER), now),
             Some(server) => match world.daemon_token(server, repo).await {
                 Ok(grant) => {
                     let wait = match &grant.acts {
                         ActsAs::Bot { ends, .. } => renew_in(ends, now),
-                        ActsAs::Person { .. } | ActsAs::NoToken { .. } => PERSON_AGAIN,
+                        ActsAs::NoToken { .. } | ActsAs::NoGitHub => NONE_AGAIN,
                     };
                     (grant, now.saturating_add(secs(wait)))
                 }
                 Err(e) => {
                     let why = crate::text::gh_daemon_token_failed(&format!("{e:#}"));
-                    (Grant::person(&why), now.saturating_add(secs(RETRY)))
+                    (Grant::none(&why), now.saturating_add(secs(RETRY)))
                 }
             },
         };

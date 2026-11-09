@@ -1078,9 +1078,9 @@ async fn a_token_is_only_for_a_session_of_the_person_who_asks() {
     assert_eq!(reply.status(), 401);
 }
 
-/// 01M6WPMWSMQABE97YCMS5Z3M1P: a repository with no installation of the
-/// App gives no token, and the reply names the fix: the session keeps
-/// the token of the person. So does a riff with no App.
+/// 01M6Z87A04EXTT1FFJSJ1EM6TB: a repository with no installation of the
+/// App gives no token, and the reply names the fix: the session gets no
+/// token, never the token of the person. So does a riff with no App.
 #[tokio::test]
 async fn a_repository_with_no_installation_gives_the_fix_and_no_token() {
     let s = sessions().await;

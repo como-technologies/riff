@@ -19,9 +19,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use isolated::Isolated;
+use riff_server::keys::At;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
+use crate::github_apps::fake_github::FakeGitHub;
 
 const GH_TOKEN: &str = "gho_FAKEtoken0123456789";
 const ACCESS: &str = "sk-ant-oat01-FAKEaccess";
@@ -84,7 +87,7 @@ case "$*" in
   'api repos/como-technologies/riff --jq .permissions.push') echo true ;;
   'issue view 12 --json number,state,milestone,body')
     while [ -f "$dir/milestone-hold" ]; do sleep 0.05; done
-    echo '{"number":12,"state":"OPEN","milestone":{"title":"Wave 27"}}' ;;
+    printf '%s\n' '{"number":12,"state":"OPEN","milestone":{"title":"Wave 27"},"body":"Add a line.\n\nDone when: x."}' ;;
   'issue view 12 --json number,labels')
     if [ -f "$dir/no-verify" ]; then echo '{"number":12,"labels":[{"name":"no-verify"}]}'
     else echo '{"number":12,"labels":[]}'; fi ;;
@@ -401,9 +404,39 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> String {
     text(&out.stdout).trim().to_owned()
 }
 
-/// A real riff-server of this build, that needs a sign-in.
-async fn server() -> Arc<crate::common::Signed> {
-    Arc::new(crate::common::start_signed().await)
+/// A real riff-server of this build that needs a sign-in, with the two
+/// GitHub Apps of the riff on a fake GitHub that has them on
+/// `como-technologies/riff`. So each session gets a token of an App: no
+/// session gets the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
+async fn server() -> Arc<Served> {
+    let github = FakeGitHub::start().await;
+    {
+        let mut seen = github.seen();
+        seen.installed = true;
+        // The Apps are on the repository of the tests too.
+        for app in [101, 202] {
+            seen.added
+                .insert(app, vec!["como-technologies/riff".into()]);
+        }
+        seen.hour = true;
+    }
+    let keys = crate::github_apps::keys_dir();
+    let signed = crate::github_apps::serve(&github, At::Dir(keys.path().to_owned())).await;
+    Arc::new(Served {
+        signed,
+        github,
+        _keys: keys,
+    })
+}
+
+/// A riff-server of [`server`], with its fake GitHub and the folder of
+/// the keys of its Apps.
+struct Served {
+    /// The server: it fails the test at a call with no token.
+    signed: crate::common::Signed,
+    /// The fake GitHub of the Apps.
+    github: FakeGitHub,
+    _keys: tempfile::TempDir,
 }
 
 /// Each path in `dir`, below it, with the size of each file.
@@ -435,8 +468,8 @@ struct Machine {
     _origin: tempfile::TempDir,
     main: PathBuf,
     server: String,
-    /// The signed server of `server`: it fails the test at a call with no token.
-    _signed: Option<Arc<crate::common::Signed>>,
+    /// The signed server of `server`, with its Apps.
+    _signed: Option<Arc<Served>>,
     daemon: Option<std::process::Child>,
     /// The quiet limit of the daemon, when the test sets one.
     quiet: Option<Duration>,
@@ -485,14 +518,14 @@ impl Machine {
 
     /// A machine whose daemon has the quiet limit `quiet`, with the
     /// riff-server `server`.
-    async fn with_server(quiet: Option<Duration>, signed: Arc<crate::common::Signed>) -> Machine {
-        Machine::build(quiet, signed.to_string(), Some(signed)).await
+    async fn with_server(quiet: Option<Duration>, signed: Arc<Served>) -> Machine {
+        Machine::build(quiet, signed.signed.to_string(), Some(signed)).await
     }
 
     async fn build(
         quiet: Option<Duration>,
         server: String,
-        signed: Option<Arc<crate::common::Signed>>,
+        signed: Option<Arc<Served>>,
     ) -> Machine {
         let env = Isolated::new();
         let bin = tempfile::tempdir().unwrap();
@@ -890,6 +923,9 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         objects.display().to_string(),
     );
     let claude = folder.join("claude").display().to_string();
+    // The folder of the token of the session: no token of the person
+    // (01M6Z87A04EXTT1FFJSJ1EM6TB).
+    let gh = folder.join("gh").display().to_string();
     let name = format!("riff-issue-12-{short}");
     let socket = machine.socket_dir(&name).display().to_string();
     let riff = machine.env.riff_path().display().to_string();
@@ -923,6 +959,8 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "-v",
         &format!("riff-sccache:{h}/.cache/sccache"),
         "-v",
+        &format!("{gh}:{gh}:ro"),
+        "-v",
         &format!("{socket}:/run/riff"),
         "-v",
         &format!("{riff}:/opt/riff/riff:ro"),
@@ -936,9 +974,7 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "-e",
         "LOGNAME=mike",
         "-e",
-        "GH_TOKEN",
-        "-e",
-        "GIT_CONFIG_COUNT=3",
+        "GIT_CONFIG_COUNT=5",
         "-e",
         "GIT_CONFIG_KEY_0=commit.gpgsign",
         "-e",
@@ -965,6 +1001,16 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         "SCCACHE_IGNORE_SERVER_IO_ERROR=1",
         "-e",
         "SCCACHE_CACHE_SIZE=40G",
+        "-e",
+        &format!("GH_CONFIG_DIR={gh}"),
+        "-e",
+        "GIT_CONFIG_KEY_3=user.name",
+        "-e",
+        "GIT_CONFIG_VALUE_3=riff-acme[bot]",
+        "-e",
+        "GIT_CONFIG_KEY_4=user.email",
+        "-e",
+        "GIT_CONFIG_VALUE_4=1101+riff-acme[bot]@users.noreply.github.com",
         "-e",
         "RIFF_SOCKET=/run/riff/riff.sock",
         "-e",
@@ -1014,9 +1060,23 @@ async fn riff_run_gives_the_container_each_bind_and_value_and_writes_nothing_in_
         }}})
     );
 
-    // The token of gh: in the environment of podman, in no argument.
-    assert_eq!(machine.read("run.token"), GH_TOKEN);
+    // No token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB): podman gets no
+    // GH_TOKEN, and the session gets a token of the session App of
+    // riff-server, for its one repository, with the rights of a worker.
+    assert_eq!(machine.read("run.token"), "");
     assert!(!args.iter().any(|a| a.contains(GH_TOKEN)));
+    let (app, asked) = {
+        let github = machine._signed.as_ref().unwrap().github.seen();
+        assert!(!github.tokens.is_empty(), "no token of an App");
+        github.asked[0].clone()
+    };
+    assert_eq!(app, 101);
+    assert_eq!(
+        asked["repositories"],
+        serde_json::json!(["riff"]),
+        "{asked}"
+    );
+    assert_eq!(asked["permissions"]["contents"], "write", "{asked}");
     // The daemon runs podman with no INVOCATION_ID of systemd, so
     // conmon is not in the cgroup of the daemon.
     assert_eq!(machine.read("run.invocation"), "");
@@ -1373,6 +1433,59 @@ async fn riff_run_sends_no_verify_request_for_an_issue_with_the_label_no_verify(
     );
     let thread = machine.ok(Some("lead1"), &["read", "--all"]).await;
     assert!(!thread.contains("verify request: issue-12"), "{thread}");
+    machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
+}
+
+/// 01M6Z87JY83V3KR72E2AG8V8KG: `riff run ITEM --no-github` runs a session
+/// that needs no GitHub. The daemon asks riff-server for no token, and
+/// the container gets no `GH_TOKEN` and no `hosts.yml`. The start text
+/// holds the body of the issue, and tells the session to push nothing.
+/// With no pull request, `riff run` names the command that pushes the
+/// branch, and exits with 0.
+#[tokio::test]
+async fn riff_run_with_no_github_asks_for_no_token_and_names_the_push() {
+    let machine = Machine::new().await;
+    machine.lead().await;
+    std::fs::write(machine.bin.path().join("no-pr"), "").unwrap();
+
+    let out = machine
+        .run(None, &["run", "issue-12", "--image", IMAGE, "--no-github"])
+        .await;
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    let clone = machine.folder("issue-12").join("clone");
+    let push = riff::text::run_pushed_nothing(&clone, "worktree-issue-12");
+    assert!(stdout.contains(&push), "{stdout}");
+    assert!(
+        machine
+            ._signed
+            .as_ref()
+            .unwrap()
+            .github
+            .seen()
+            .tokens
+            .is_empty()
+    );
+    let args = machine.read("run.args");
+    assert!(!args.lines().any(|a| a == "GH_TOKEN"), "{args}");
+    let gh = machine.folder("issue-12").join("gh");
+    assert!(
+        args.lines()
+            .any(|a| a == format!("GH_CONFIG_DIR={}", gh.display())),
+        "{args}"
+    );
+    assert!(!gh.join("hosts.yml").exists());
+    assert_eq!(machine.read("run.token"), "");
+    let start: Value = serde_json::from_str(machine.read("run.stdin").trim()).unwrap();
+    let start = start["message"]["content"][0]["text"].as_str().unwrap();
+    for part in [
+        "You have no GitHub",
+        "Do not push, and open no pull request",
+        "The issue #12, as riff read it on the host:\n\nAdd a line.\n\nDone when: x.",
+    ] {
+        assert!(start.contains(part), "{part}\nnot in\n{start}");
+    }
+    assert!(!start.contains("gh pr create"), "{start}");
     machine.ok(Some("lead1"), &["claim", "issue-12"]).await;
 }
 
@@ -2171,9 +2284,10 @@ async fn riff_run_sends_the_verify_request_and_the_release_when_the_server_answe
     let hold = machine.bin.path().join("hold");
     std::fs::write(&hold, "").unwrap();
     // A short budget of 1 s, and a try of 300 ms: a short call fails
-    // while the server is away.
+    // while the server is away. A riff with no sign-in gives no token of
+    // an App: the session needs no GitHub (01M6Z87JY83V3KR72E2AG8V8KG).
     let child = machine
-        .command(None, &["run", "issue-12", "--image", IMAGE])
+        .command(None, &["run", "issue-12", "--image", IMAGE, "--no-github"])
         .env("RIFF_SERVER", &proxy.url)
         .env(riff_client::link::BUDGET_VAR, "1000")
         .env(riff_client::link::TRY_VAR, "300")
@@ -2226,8 +2340,10 @@ async fn a_signal_in_the_end_steps(
     let proxy = Proxy::new(&machine.server).await;
     let hold = machine.bin.path().join("hold");
     std::fs::write(&hold, "").unwrap();
+    // A riff with no sign-in gives no token of an App: the session needs
+    // no GitHub (01M6Z87JY83V3KR72E2AG8V8KG).
     let child = machine
-        .command(None, &["run", "issue-12", "--image", IMAGE])
+        .command(None, &["run", "issue-12", "--image", IMAGE, "--no-github"])
         .env("RIFF_SERVER", &proxy.url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2319,7 +2435,8 @@ async fn a_sigterm_stops_the_wait_of_the_release() {
         "{took:?}\n{stdout}\n{stderr}"
     );
     assert_eq!(out.status.code(), Some(1), "{stdout}\n{stderr}");
-    assert!(stdout.contains("No open pull request"), "{stdout}");
+    // The session had no GitHub (01M6Z87JY83V3KR72E2AG8V8KG).
+    assert!(stdout.contains("so it pushed nothing"), "{stdout}");
     let not_sent = run_not_sent("issue-12", &[RUN_RELEASE, RUN_END]);
     assert!(stdout.contains(&not_sent), "{stdout}");
     still_held(&machine).await;

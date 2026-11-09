@@ -11,8 +11,10 @@
 //! `TERM riff daemon` to the log, and removes the file. With no
 //! `RIFF_DATA`, it fails: the daemon of the machine is not the daemon of
 //! the test. The fake `riff run` fails when no daemon of the test runs,
-//! makes its session folder in `RIFF_DATA`, and says that the session
-//! started on `claude-opus-5-5`. The clone of the test has a `riff.toml`
+//! makes its session folder in `RIFF_DATA` with a clone of the bare
+//! repository `origin.git` of the control folder, commits on the branch of
+//! the item there, and says that the session started on
+//! `claude-opus-5-5`. The clone of the test has a `riff.toml`
 //! with no `model`. A file in the control folder changes what a fake
 //! does:
 //!
@@ -25,6 +27,7 @@
 //! | `machine-daemon` | `riff daemon status` with no `RIFF_DATA` answers: the daemon of the machine runs |
 //! | `daemon-fails` | `riff daemon` ends with 1 at once |
 //! | `run-fails` | `riff run` ends with 1 |
+//! | `no-commit` | `riff run` makes no commit on the branch of the item |
 //! | `run-waits` | `riff run` waits for a signal |
 //! | `run-signaled` | `riff run` ends by SIGTERM, and the test gets no signal |
 //! | `no-start` | `riff run` prints no line `start: model ...` |
@@ -87,6 +90,7 @@ case "$1 $2" in
 'pr diff')
   echo "+++ b/docs/src/introduction.md"
   grep '^Real-session test ' "$c/body" | sed 's/^/+/' ;;
+'pr create') echo "https://github.com/o/r/pull/900" ;;
 'pr close') touch "$c/closed" ;;
 'run list') echo '[{"databaseId":5,"status":"in_progress"},{"databaseId":6,"status":"completed"}]' ;;
 'run cancel') exit 0 ;;
@@ -146,8 +150,23 @@ run)
     echo "riff: no riff daemon of the test answers" >&2; exit 1
   fi
   d="$RIFF_DATA/sessions/$2-ID8"
-  mkdir -p "$d/clone" "$d/claude"
+  mkdir -p "$d/claude"
+  # The clone of the session, of the bare origin of the control folder,
+  # on the branch of the item. The session commits, and pushes nothing.
+  o="$c/origin.git"
+  if [ ! -d "$o" ]; then
+    git init -q --bare -b main "$o"
+    git clone -q "$o" "$c/seed" 2>/dev/null
+    git -C "$c/seed" -c user.name=S -c user.email=s@example.com commit -q --allow-empty -m seed
+    git -C "$c/seed" push -q origin HEAD:main
+  fi
+  git clone -q "$o" "$d/clone"
+  git -C "$d/clone" checkout -q -b "worktree-$2"
   echo work > "$d/clone/f"
+  if [ ! -f "$c/no-commit" ]; then
+    git -C "$d/clone" add f
+    git -C "$d/clone" -c user.name=W -c user.email=w@example.com commit -q -m work
+  fi
   if [ -f "$c/sonnet" ]; then model=claude-sonnet-5-5; else model=claude-opus-5-5; fi
   if [ ! -f "$c/no-start" ]; then echo "start: model $model, permission mode auto"; fi
   if [ -f "$c/stray" ]; then
@@ -437,10 +456,10 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
         "{stdout}"
     );
     for step in [
-        "step 1 of 10: check the host",
-        "step 5 of 10: start the daemon",
-        "step 6 of 10: run the item",
-        "step 10 of 10: wait for the Gate",
+        "step 1 of 11: check the host",
+        "step 5 of 11: start the daemon",
+        "step 6 of 11: run the item",
+        "step 11 of 11: wait for the Gate",
     ] {
         assert!(stdout.contains(step), "{step}\n{stdout}");
     }
@@ -458,7 +477,8 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
         "riff plan hold verify-issue-801 the real-session test makes and closes this item",
         "riff daemon status",
         "riff daemon",
-        "riff run issue-801 --image ghcr.io/o/riff-session@sha256:00ff",
+        "riff run issue-801 --image ghcr.io/o/riff-session@sha256:00ff --no-github",
+        "gh pr create --head worktree-issue-801 --title Real-session test ",
         "gh pr view worktree-issue-801 --json number,url,headRefOid,state",
         "gh pr diff 900 --color never",
         "gh api repos/{owner}/{repo}/commits/0123abcd/check-runs?check_name=Gate",
@@ -484,6 +504,67 @@ fn a_pass_runs_each_step_in_order_and_cleans_up() {
     assert_clean(&fake);
 }
 
+/// 01M6Z87SDSYDTFHMPKGNX74SMC: the session of the test has no GitHub,
+/// never the token of the person: `riff run --no-github`. Step 8 pushes
+/// the branch of the item from the clone of the session with the git of
+/// the person on the host, and opens its pull request with `gh pr
+/// create`.
+#[test]
+fn the_session_has_no_github_and_the_test_pushes_its_branch() {
+    let fake = Fake::new();
+    let out = fake.run(&[]);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(stdout.contains("step 8 of 11: push the branch"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "  pushed 1 commit(s) of worktree-issue-801, and opened https://github.com/o/r/pull/900"
+        ),
+        "{stdout}"
+    );
+    let log = fake.log();
+    let run = log.iter().find(|l| l.starts_with("riff run ")).unwrap();
+    assert!(run.ends_with(" --no-github"), "{run}");
+    let create = log.iter().find(|l| l.starts_with("gh pr create ")).unwrap();
+    // The log has one line for each line of the call: the body starts
+    // with its link line ([`real_session::pull_body`]).
+    assert!(
+        create.ends_with("--milestone Backlog --body Closes #801"),
+        "{create}"
+    );
+    // The bare origin has the commit of the session on the branch.
+    let origin = fake.ctl.join("origin.git");
+    let pushed = Command::new("git")
+        .args(["log", "--format=%s", "worktree-issue-801"])
+        .current_dir(&origin)
+        .output()
+        .unwrap();
+    assert_eq!(text(&pushed.stdout).lines().next(), Some("work"));
+    assert_clean(&fake);
+}
+
+/// A session that made no commit fails step 8: the test pushes nothing,
+/// opens no pull request, and cleans up.
+#[test]
+fn a_session_with_no_commit_fails_step_8_and_opens_no_pull_request() {
+    let fake = Fake::new();
+    fake.set("no-commit");
+    fake.set("no-pull");
+    let out = fake.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains(
+            "real-session: FAIL at step 8 of 11, push the branch: the session made no commit on \
+             worktree-issue-801 in "
+        ),
+        "{stderr}"
+    );
+    let log = fake.log();
+    assert!(find(&log, "gh pr create").is_none(), "{log:#?}");
+    assert_clean(&fake);
+}
+
 /// A control folder with `ID8` in its name stays as it is.
 #[test]
 fn a_control_folder_with_id8_in_its_name_is_not_changed() {
@@ -505,7 +586,7 @@ fn a_worker_that_cannot_hold_keeps_the_verify_with_the_label() {
     let stdout = text(&out.stdout);
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     assert!(
-        stdout.contains("step 4 of 10: keep its verify from the workers"),
+        stdout.contains("step 4 of 11: keep its verify from the workers"),
         "{stdout}"
     );
     assert!(
@@ -538,7 +619,7 @@ fn no_label_fails_step_4_and_runs_no_item() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "real-session: FAIL at step 4 of 10, keep its verify from the workers: gh issue edit \
+            "real-session: FAIL at step 4 of 11, keep its verify from the workers: gh issue edit \
              801 --add-label no-verify ended with exit status: 1: could not add the label"
         ),
         "{stderr}"
@@ -562,7 +643,7 @@ fn a_failed_step_names_the_step_stops_the_test_and_cleans_up() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "real-session: FAIL at step 6 of 10, run the item: riff run issue-801 ended with \
+            "real-session: FAIL at step 6 of 11, run the item: riff run issue-801 ended with \
              exit status: 1"
         ),
         "{stderr}"
@@ -608,7 +689,7 @@ fn a_session_on_another_model_than_the_riff_toml_fails_step_6() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "real-session: FAIL at step 6 of 10, run the item: the session started on \
+            "real-session: FAIL at step 6 of 11, run the item: the session started on \
              claude-sonnet-5-5, and riff.toml names opus"
         ),
         "{stderr}"
@@ -624,7 +705,7 @@ fn a_session_on_another_model_than_the_riff_toml_fails_step_6() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "real-session: FAIL at step 6 of 10, run the item: riff run printed no line start: \
+            "real-session: FAIL at step 6 of 11, run the item: riff run printed no line start: \
              model, so the test does not know the model of the session"
         ),
         "{stderr}"
@@ -655,7 +736,7 @@ fn a_clone_with_no_riff_toml_fails_step_1() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     assert!(
-        stderr.contains("real-session: FAIL at step 1 of 10, check the host: cannot read "),
+        stderr.contains("real-session: FAIL at step 1 of 11, check the host: cannot read "),
         "{stderr}"
     );
     assert!(stderr.contains("riff.toml: "), "{stderr}");
@@ -671,7 +752,7 @@ fn a_new_path_in_the_home_fails_the_check_of_the_home() {
     let stderr = text(&out.stderr);
     let home = fake.env.home();
     let shown = format!(
-        "real-session: FAIL at step 7 of 10, check the home: the home has 2 new paths outside \
+        "real-session: FAIL at step 7 of 11, check the home: the home has 2 new paths outside \
          the folders of riff:\n  {}\n  {}\n",
         home.join(".claude/projects/-x-issue-801-1a2b3c4d-clone")
             .display(),
@@ -705,7 +786,7 @@ fn a_change_to_the_gitconfig_fails_the_check_of_the_home() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     let shown = format!(
-        "real-session: FAIL at step 7 of 10, check the home: the home has 1 changed file \
+        "real-session: FAIL at step 7 of 11, check the home: the home has 1 changed file \
          outside the folders of riff:\n  {} (changed)\nWhen another program wrote a path, \
          leave out the path or its folder with --skip PATH, and run the test again.\n",
         fake.env.home().join(".gitconfig").display()
@@ -740,7 +821,7 @@ fn the_snap_apps_the_locks_of_claude_and_gvfs_metadata_do_not_count_and_another_
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     let shown = format!(
-        "real-session: FAIL at step 7 of 10, check the home: the home has 1 new path outside \
+        "real-session: FAIL at step 7 of 11, check the home: the home has 1 new path outside \
          the folders of riff:\n  {}\nWhen another program",
         fake.env.home().join(".config/tool").display()
     );
@@ -783,7 +864,7 @@ fn the_worktrees_of_other_sessions_do_not_count_and_the_rest_of_their_clone_does
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     let shown = format!(
-        "real-session: FAIL at step 7 of 10, check the home: the home has 1 new path outside \
+        "real-session: FAIL at step 7 of 11, check the home: the home has 1 new path outside \
          the folders of riff:\n  {}\nWhen another program",
         clone.join("notes.md").display()
     );
@@ -798,7 +879,7 @@ fn the_worktrees_of_other_sessions_do_not_count_and_the_rest_of_their_clone_does
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     let shown = format!(
-        "real-session: FAIL at step 7 of 10, check the home: the home has 1 new path outside \
+        "real-session: FAIL at step 7 of 11, check the home: the home has 1 new path outside \
          the folders of riff:\n  {}\nWhen another program",
         clone.join(".git/hooks/pre-commit").display()
     );
@@ -838,7 +919,7 @@ fn a_new_branch_section_does_not_count_and_a_new_hooks_path_does() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     let shown = format!(
-        "real-session: FAIL at step 7 of 10, check the home: the home has 2 changed files \
+        "real-session: FAIL at step 7 of 11, check the home: the home has 2 changed files \
          outside the folders of riff:\n  {} (changed: core.hookspath)\n  {} (changed: \
          core.hookspath)\nWhen another program",
         clone.join(".git/config").display(),
@@ -854,7 +935,7 @@ fn a_new_branch_section_does_not_count_and_a_new_hooks_path_does() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     let shown = format!(
-        "real-session: FAIL at step 7 of 10, check the home: the home has 1 changed file \
+        "real-session: FAIL at step 7 of 11, check the home: the home has 1 changed file \
          outside the folders of riff:\n  {} (changed)\nWhen another program",
         clone.join(".git/hooks/pre-push").display()
     );
@@ -887,7 +968,7 @@ fn no_pull_request_fails_the_test() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "FAIL at step 8 of 10, find the pull request: the branch worktree-issue-801 has no \
+            "FAIL at step 9 of 11, find the pull request: the branch worktree-issue-801 has no \
              open pull request"
         ),
         "{stderr}"
@@ -904,7 +985,7 @@ fn a_gate_that_does_not_start_fails_the_test() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "FAIL at step 10 of 10, wait for the Gate: the Gate did not start on 0123abc in 0 s"
+            "FAIL at step 11 of 11, wait for the Gate: the Gate did not start on 0123abc in 0 s"
         ),
         "{stderr}"
     );
@@ -954,7 +1035,7 @@ fn a_daemon_of_the_test_that_runs_already_fails_the_step_and_the_test_does_not_s
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "FAIL at step 5 of 10, start the daemon: a riff daemon of the test runs already:"
+            "FAIL at step 5 of 11, start the daemon: a riff daemon of the test runs already:"
         ),
         "{stderr}"
     );
@@ -1012,7 +1093,7 @@ fn a_server_that_ends_before_it_listens_fails_step_1() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "FAIL at step 1 of 10, check the host: riff-server ended with exit status: 1"
+            "FAIL at step 1 of 11, check the host: riff-server ended with exit status: 1"
         ),
         "{stderr}"
     );
@@ -1031,7 +1112,7 @@ fn a_failed_resume_of_the_riff_of_the_test_fails_step_1() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = text(&out.stderr);
     assert!(
-        stderr.contains("FAIL at step 1 of 10, check the host: ")
+        stderr.contains("FAIL at step 1 of 11, check the host: ")
             && stderr.contains(
                 "resume --riff ended with exit status: 1: riff: the fake riff is still paused"
             ),
@@ -1051,7 +1132,7 @@ fn a_daemon_that_ends_before_it_answers_fails_the_step() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "FAIL at step 5 of 10, start the daemon: riff daemon ended with exit status: 1 \
+            "FAIL at step 5 of 11, start the daemon: riff daemon ended with exit status: 1 \
              before it answered: see its message above"
         ),
         "{stderr}"
@@ -1078,7 +1159,7 @@ fn a_failed_check_of_the_host_makes_no_item() {
     let stderr = text(&out.stderr);
     assert!(
         stderr.contains(
-            "FAIL at step 1 of 10, check the host: podman does not run rootless: podman info \
+            "FAIL at step 1 of 11, check the host: podman does not run rootless: podman info \
              says \"false\""
         ),
         "{stderr}"
@@ -1122,7 +1203,7 @@ fn a_signal_stops_the_test_and_it_cleans_up() {
     );
     let stderr = text(&out.stderr);
     assert!(
-        stderr.contains("FAIL at step 6 of 10, run the item: a signal stopped the test"),
+        stderr.contains("FAIL at step 6 of 11, run the item: a signal stopped the test"),
         "{stderr}"
     );
     let log = fake.log();
@@ -1140,7 +1221,7 @@ fn a_child_that_ends_by_a_signal_counts_as_a_signal() {
     assert_eq!(out.status.code(), Some(130), "{}", text(&out.stdout));
     let stderr = text(&out.stderr);
     assert!(
-        stderr.contains("FAIL at step 6 of 10, run the item: a signal stopped the test"),
+        stderr.contains("FAIL at step 6 of 11, run the item: a signal stopped the test"),
         "{stderr}"
     );
     let log = fake.log();

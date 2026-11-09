@@ -2945,6 +2945,15 @@ Backlog (01M53NGWN190T2MYB1EZAD36VB).
   host, and gives it to the container in `GH_TOKEN`. riff gives podman
   only the name of the variable (`-e GH_TOKEN`), so the value is in no
   command line. Superseded by 01M6WPMP035A93SM6SAJGS6MTC.
+- **01M6WPMWSMQABE97YCMS5Z3M1P** The session keeps the token of the
+  person when riff-server gives no token of an App because the riff has
+  no App of the role or no sign-in, the App is not on the repository, or
+  the `gh` of the person cannot push there. The daemon then reads `gh
+  auth token` on the host, and gives it in `GH_TOKEN` with the name only
+  on the command line of podman (`-e GH_TOKEN`). `riff daemon status`
+  names each such repository with the fix, for example `riff github
+  install OWNER`, and `riff init --check` fails a check with the same
+  fix. Superseded by 01M6Z87A04EXTT1FFJSJ1EM6TB.
 
 ### The security of riff's own code
 

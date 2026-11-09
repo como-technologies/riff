@@ -80,12 +80,14 @@
 //!
 //! Before the start of each container, the daemon asks riff-server for
 //! the token of the session on GitHub, as the person, and gives the
-//! container a folder with the token in place of `GH_TOKEN`
-//! ([`gh_token`], 01M6WPMNXN1BSBEH74TG5DDRTF). It renews the token 10
-//! minutes before its end, and revokes it at the end of the session. A
-//! new daemon takes up the token of a session that runs. `riff daemon status` names each repository whose sessions
-//! keep the token of the person, with the fix
-//! (01M6WPMWSMQABE97YCMS5Z3M1P).
+//! container a folder with the token ([`gh_token`],
+//! 01M6WPMNXN1BSBEH74TG5DDRTF). It renews the token 10 minutes before its
+//! end, and revokes it at the end of the session. A new daemon takes up
+//! the token of a session that runs. No container gets the token of the
+//! person (01M6Z87A04EXTT1FFJSJ1EM6TB): with no token of an App, no
+//! worker and no verify starts, and the lead starts with no token on
+//! GitHub. `riff daemon status` names each such repository, with the fix
+//! and a prompt for `claude` on the host (01M6Z87JTXW0Y99X08VHA2SSSR).
 //!
 //! # The relay
 //!
@@ -1033,6 +1035,11 @@ pub struct Start {
     /// in the command of the spec.
     #[serde(default)]
     pub terminal: bool,
+    /// True for a session that needs no GitHub, of `riff run
+    /// --no-github`: the daemon asks for no token
+    /// (01M6Z87JY83V3KR72E2AG8V8KG).
+    #[serde(default)]
+    pub no_github: bool,
 }
 
 /// A line of `riff` after [`Ask::Start`], [`Ask::Follow`] or
@@ -1510,17 +1517,18 @@ pub struct Status {
     /// left (#1549). An old daemon gives none.
     #[serde(default)]
     pub github: crate::ghcalls::Shown,
-    /// The repositories whose last session acts on GitHub with the token
-    /// of the person, and why, with the fix (01M6WPMWSMQABE97YCMS5Z3M1P).
-    /// An old daemon gives none.
+    /// The repositories where no worker and no verify starts: the last one
+    /// got no token of a GitHub App. Each has the reason, the fix and the
+    /// prompt for `claude` on the host (01M6Z87A04EXTT1FFJSJ1EM6TB,
+    /// 01M6Z87JTXW0Y99X08VHA2SSSR). An old daemon gives none.
     #[serde(default)]
-    pub person_tokens: Vec<PersonToken>,
-    /// The repositories whose lead has no token on GitHub at all, and why:
-    /// riff-server cannot read the keys of the GitHub Apps, with the fix and
-    /// the prompt for `claude` on the host (01M6YC3T0TXANJH6YMTJZR1HCR). An old daemon
-    /// gives none.
+    pub no_starts: Vec<NoTokenShown>,
+    /// The repositories whose lead has no token on GitHub at all, and why,
+    /// with the fix and the prompt for `claude` on the host
+    /// (01M6YC3T0TXANJH6YMTJZR1HCR, 01M6Z87JTXW0Y99X08VHA2SSSR). An old
+    /// daemon gives none.
     #[serde(default)]
-    pub no_tokens: Vec<PersonToken>,
+    pub no_tokens: Vec<NoTokenShown>,
     /// How the daemon writes on GitHub in each repository: as the bot of
     /// the lead App, or with the token of the person and why
     /// (01M6XZJFE2ZTR5RE3AWM30R704). An old daemon gives none.
@@ -1528,15 +1536,27 @@ pub struct Status {
     pub writes: Vec<WritesShown>,
 }
 
-/// A repository whose sessions act on GitHub with the token of the
-/// person ([`Status::person_tokens`]).
+/// A repository whose sessions get no token of a GitHub App
+/// ([`Status::no_starts`], [`Status::no_tokens`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PersonToken {
+pub struct NoTokenShown {
     /// The repository, `OWNER/NAME`.
     pub repo: String,
     /// Why, for example `riff-acme is not installed on acme/app: riff
-    /// github install acme`.
+    /// github install acme`, and the prompt for `claude` on the host.
     pub why: String,
+}
+
+/// The last worker or verify of a repository that got no token of a
+/// GitHub App (01M6Z87A04EXTT1FFJSJ1EM6TB): the daemon keeps it until one
+/// gets a token.
+struct NoStart {
+    /// Why, with the fix and the prompt for `claude` on the host.
+    why: String,
+    /// When.
+    at: std::time::Instant,
+    /// True when the lead heard of this why.
+    told: bool,
 }
 
 /// How the daemon writes on GitHub in one repository
@@ -2460,10 +2480,10 @@ pub struct Daemon<R> {
     /// of a deploy that passed waits for the new riff of the daemon
     /// (01M6WBX2G1PX11D89HNBAZ6MCM).
     auto: Arc<dyn Fn() -> bool + Send + Sync>,
-    /// The repositories whose last session acts on GitHub with the token
-    /// of the person, and why ([`gh_token`], 01M6WPMWSMQABE97YCMS5Z3M1P):
-    /// `riff daemon status` names them.
-    person_tokens: Mutex<BTreeMap<String, String>>,
+    /// The repositories whose last worker or verify got no token of a
+    /// GitHub App, and why ([`gh_token`], 01M6Z87A04EXTT1FFJSJ1EM6TB):
+    /// `riff daemon status` names them, and the wave waits.
+    no_starts: Mutex<BTreeMap<String, NoStart>>,
     /// The repositories whose lead has no token on GitHub at all, and why
     /// (01M6YC3T0TXANJH6YMTJZR1HCR): `riff daemon status` names them.
     no_tokens: Mutex<BTreeMap<String, String>>,
@@ -2595,7 +2615,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                     .and_then(|path| crate::settings::update_auto(&path))
                     .unwrap_or(false)
             }),
-            person_tokens: Mutex::default(),
+            no_starts: Mutex::default(),
             no_tokens: Mutex::default(),
         })
     }
@@ -3287,25 +3307,37 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// Gives the session `owned` its token on GitHub before the start of
     /// its container ([`gh_token`], 01M6WPMNXN1BSBEH74TG5DDRTF): the daemon
     /// asks riff-server as the person, writes the token in the folder of
-    /// the session, gives the container that folder in place of
-    /// `GH_TOKEN` in `spec` and `values`, gives each commit the bot as its
-    /// author ([`gh_token::author`], 01M6Y6B8VBM3TKC3YHZKSA4PFZ), and
-    /// renews the token until the end. A session with no token of an App
-    /// keeps `GH_TOKEN`, the token of the person
-    /// (01M6WPMWSMQABE97YCMS5Z3M1P), and the git identity of
-    /// `~/.gitconfig`. A lead that riff-server gives no token at all
-    /// (01M6YC3T0TXANJH6YMTJZR1HCR) starts with the folder of the token with no token
-    /// in it, with no `GH_TOKEN`, and with the fix at the end of its first
-    /// prompt; the daemon asks again every [`gh_token::PERSON_AGAIN`]. It
+    /// the session, gives the container that folder in `spec` and
+    /// `values`, gives each commit the bot as its author
+    /// ([`gh_token::author`], 01M6Y6B8VBM3TKC3YHZKSA4PFZ), and renews the
+    /// token until the end. No session gets the token of the person
+    /// (01M6Z87A04EXTT1FFJSJ1EM6TB). With no token of an App:
+    ///
+    /// - a worker or a verify gets nothing: the daemon keeps why for the
+    ///   repository ([`Daemon::no_start_waits`]), and [`Daemon::launch`]
+    ///   starts no container;
+    /// - the lead starts with the folder of the token with no token in
+    ///   it, and with the fix at the end of its first prompt. The daemon
+    ///   says the fix to `riff lead start` (01M6Z87JTXW0Y99X08VHA2SSSR),
+    ///   and asks again every [`gh_token::NONE_AGAIN`]
+    ///   (01M6YC3T0TXANJH6YMTJZR1HCR).
+    ///
+    /// With `no_github`, the session of `riff run --no-github` asks for
+    /// nothing, and starts with no token (01M6Z87JY83V3KR72E2AG8V8KG). It
     /// gives how the session acts on GitHub. An error starts no container.
     async fn give_github(
         self: &Arc<Self>,
         owned: &Arc<Owned>,
         spec: &mut SessionSpec,
         values: &mut Vec<(String, String)>,
+        no_github: bool,
     ) -> Result<gh_token::ActsAs> {
         let record = owned.lock().record.clone();
-        let grant = self.world.github_token(&record.server, &record.me).await?;
+        let grant = if no_github {
+            gh_token::Grant::no_github()
+        } else {
+            self.world.github_token(&record.server, &record.me).await?
+        };
         let repo = record.me.place().repo_text();
         let line = match (&grant.token, &grant.acts) {
             (
@@ -3319,25 +3351,34 @@ impl<R: Runtime + 'static> Daemon<R> {
                 // The bot is the author of each commit (01M6Y6B8VBM3TKC3YHZKSA4PFZ).
                 let (name, email) = gh_token::author(bot, grant.bot_id);
                 gh_token::give_author(spec, &name, &email);
-                self.person_tokens_lock().remove(&repo);
-                self.no_tokens_lock().remove(&repo);
+                if record.terminal {
+                    self.no_tokens_lock().remove(&repo);
+                } else {
+                    self.no_starts_lock().remove(&repo);
+                }
                 text::daemon_gh_token(&owned.name, bot, *role, ends)
+            }
+            (None, gh_token::ActsAs::Bot { .. }) => bail!("{}", text::GH_TOKEN_NONE),
+            (_, gh_token::ActsAs::NoToken { why }) if !record.terminal => {
+                self.no_start(&repo, why);
+                println!(
+                    "riff daemon: {}",
+                    text::daemon_gh_no_start(&owned.name, why)
+                );
+                return Ok(grant.acts);
             }
             (_, gh_token::ActsAs::NoToken { why }) => {
                 let dir = gh_token::write_none(&record.folder)?;
                 gh_token::give(spec, values, &dir);
-                if record.terminal {
-                    crate::lead::tell_no_github(spec, why);
-                }
-                self.person_tokens_lock().remove(&repo);
+                crate::lead::tell_no_github(spec, why);
+                Owned::say_line(&mut owned.lock(), text::daemon_gh_none_status(&repo, why));
                 self.no_tokens_lock().insert(repo, why.clone());
                 text::daemon_gh_none(&owned.name, why)
             }
-            _ => {
-                let why = gh_token::why_person(&grant.acts);
-                self.person_tokens_lock().insert(repo.clone(), why.clone());
-                self.no_tokens_lock().remove(&repo);
-                text::daemon_gh_person(&owned.name, &why)
+            (_, gh_token::ActsAs::NoGitHub) => {
+                let dir = gh_token::write_none(&record.folder)?;
+                gh_token::give(spec, values, &dir);
+                text::daemon_gh_none(&owned.name, text::GH_RUN_NO_GITHUB)
             }
         };
         println!("{line}");
@@ -3353,10 +3394,59 @@ impl<R: Runtime + 'static> Daemon<R> {
         Ok(grant.acts)
     }
 
-    /// The repositories whose sessions act on GitHub with the token of the
-    /// person.
-    fn person_tokens_lock(&self) -> MutexGuard<'_, BTreeMap<String, String>> {
-        self.person_tokens
+    /// Keeps why the last worker or verify of `repo` got no token of a
+    /// GitHub App (01M6Z87A04EXTT1FFJSJ1EM6TB). A new why is one that the
+    /// lead has not heard.
+    fn no_start(&self, repo: &str, why: &str) {
+        let mut no_starts = self.no_starts_lock();
+        let told = no_starts
+            .get(repo)
+            .is_some_and(|old| old.told && old.why == why);
+        no_starts.insert(
+            repo.to_owned(),
+            NoStart {
+                why: why.to_owned(),
+                at: std::time::Instant::now(),
+                told,
+            },
+        );
+    }
+
+    /// Why the workers of `repo` get no token of a GitHub App, while the
+    /// wave waits: for [`gh_token::NONE_AGAIN`] after the last one that
+    /// got none. Then the wave starts one item again
+    /// (01M6Z87A04EXTT1FFJSJ1EM6TB).
+    pub(crate) fn no_start_waits(&self, repo: &str) -> Option<String> {
+        let no_starts = self.no_starts_lock();
+        let no_start = no_starts.get(repo)?;
+        (no_start.at.elapsed() < gh_token::NONE_AGAIN).then(|| no_start.why.clone())
+    }
+
+    /// Why the workers of `repo` get no token of a GitHub App, when the
+    /// lead has not heard it yet: then the lead has heard it.
+    pub(crate) fn no_start_untold(&self, repo: &str) -> Option<String> {
+        let mut no_starts = self.no_starts_lock();
+        let no_start = no_starts.get_mut(repo).filter(|n| !n.told)?;
+        no_start.told = true;
+        Some(no_start.why.clone())
+    }
+
+    /// Makes the last worker of `repo` with no token of an App `by` older,
+    /// for a test of the wait of the wave.
+    #[cfg(test)]
+    pub(crate) fn age_no_start(&self, repo: &str, by: Duration) {
+        if let Some(no_start) = self.no_starts_lock().get_mut(repo) {
+            no_start.at = no_start
+                .at
+                .checked_sub(by)
+                .expect("the clock runs long enough");
+        }
+    }
+
+    /// The repositories where no worker and no verify starts, for want of
+    /// a token of a GitHub App.
+    fn no_starts_lock(&self) -> MutexGuard<'_, BTreeMap<String, NoStart>> {
+        self.no_starts
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
@@ -3373,14 +3463,16 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// session (01M6WPMNXN1BSBEH74TG5DDRTF). A fault keeps the token, and
     /// asks again after [`gh_token::RETRY`]. Two renewals are at least
     /// [`gh_token::RETRY`] apart. A session with no token at all asks
-    /// again every [`gh_token::PERSON_AGAIN`] (01M6YC3T0TXANJH6YMTJZR1HCR).
+    /// again every [`gh_token::NONE_AGAIN`] (01M6YC3T0TXANJH6YMTJZR1HCR).
+    /// A session of `riff run --no-github` renews nothing
+    /// (01M6Z87JY83V3KR72E2AG8V8KG).
     fn renew_github(self: &Arc<Self>, owned: &Arc<Owned>) {
         let first = match &owned.lock().record.github {
             Some(gh_token::ActsAs::Bot { ends, .. }) => {
                 gh_token::renew_in(ends, gh_token::now_secs())
             }
-            Some(gh_token::ActsAs::NoToken { .. }) => gh_token::PERSON_AGAIN,
-            _ => return,
+            Some(gh_token::ActsAs::NoToken { .. }) => gh_token::NONE_AGAIN,
+            Some(gh_token::ActsAs::NoGitHub) | None => return,
         };
         let (daemon, session) = (self.clone(), owned.clone());
         let task = tokio::spawn(async move {
@@ -3412,9 +3504,11 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// it in the folder of the session in place of the old one, which
     /// ends by itself. It gives the wait until the next ask, or `None`
     /// after the end of the session: then it revokes the new token. An
-    /// answer with no token at all (01M6YC3T0TXANJH6YMTJZR1HCR) takes the token out of
-    /// the folder and revokes it: the session then has no token on GitHub,
-    /// and the daemon asks again after [`gh_token::PERSON_AGAIN`].
+    /// answer with no token (01M6YC3T0TXANJH6YMTJZR1HCR,
+    /// 01M6Z87A04EXTT1FFJSJ1EM6TB) takes the token out of the folder and
+    /// revokes it: the session then has no token on GitHub, never the
+    /// token of the person, and the daemon asks again after
+    /// [`gh_token::NONE_AGAIN`].
     async fn renew_once(&self, owned: &Owned) -> Result<Option<Duration>> {
         let record = owned.lock().record.clone();
         let grant = self.world.github_token(&record.server, &record.me).await?;
@@ -3433,9 +3527,13 @@ impl<R: Runtime + 'static> Daemon<R> {
                 self.revoke_github(&owned.name, &record, old);
             }
             let repo = record.me.place().repo_text();
-            self.no_tokens_lock().insert(repo, why.clone());
+            if record.terminal {
+                self.no_tokens_lock().insert(repo, why.clone());
+            } else {
+                self.no_start(&repo, why);
+            }
             println!("riff daemon: {}", text::daemon_gh_none(&owned.name, why));
-            return Ok(Some(gh_token::PERSON_AGAIN));
+            return Ok(Some(gh_token::NONE_AGAIN));
         }
         let (
             Some(token),
@@ -3444,7 +3542,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             },
         ) = (&grant.token, &grant.acts)
         else {
-            bail!("{}", gh_token::why_person(&grant.acts));
+            bail!("{}", gh_token::why_none(&grant.acts));
         };
         gh_token::write(&record.folder, bot, token)?;
         // The end of the session takes the token from the state after it
@@ -3463,7 +3561,12 @@ impl<R: Runtime + 'static> Daemon<R> {
             self.revoke_github(&owned.name, &record, token.clone());
             return Ok(None);
         }
-        self.no_tokens_lock().remove(&record.me.place().repo_text());
+        let repo = record.me.place().repo_text();
+        if record.terminal {
+            self.no_tokens_lock().remove(&repo);
+        } else {
+            self.no_starts_lock().remove(&repo);
+        }
         println!("{}", text::daemon_gh_token(&owned.name, bot, *role, ends));
         Ok(Some(gh_token::renew_in(ends, gh_token::now_secs())))
     }
@@ -3572,20 +3675,18 @@ impl<R: Runtime + 'static> Daemon<R> {
                 shown.own_gh = self.own_gh_images();
                 shown
             },
-            person_tokens: self
-                .person_tokens
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
+            no_starts: self
+                .no_starts_lock()
                 .iter()
-                .map(|(repo, why)| PersonToken {
+                .map(|(repo, no_start)| NoTokenShown {
                     repo: repo.clone(),
-                    why: why.clone(),
+                    why: no_start.why.clone(),
                 })
                 .collect(),
             no_tokens: self
                 .no_tokens_lock()
                 .iter()
-                .map(|(repo, why)| PersonToken {
+                .map(|(repo, why)| NoTokenShown {
                     repo: repo.clone(),
                     why: why.clone(),
                 })
@@ -4484,6 +4585,14 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
+    /// Ends the session `owned` whose container did not start, and says
+    /// why, `error`, on `out`.
+    fn start_failed(&self, owned: &Arc<Owned>, out: &Out, error: String) {
+        self.close(owned, START_FAILED);
+        println!("{}", text::daemon_session_failed(&owned.name));
+        out.say(Say::Failed { error });
+    }
+
     /// Starts the session of `start` in the room of `slot`, with the job
     /// `job` of a wave, says its events on `out`, and waits for its end.
     /// A [`Then::Stop`] on `from` stops it. It gives the record of the
@@ -4511,6 +4620,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             server,
             me,
             terminal,
+            no_github,
         } = start;
         let limit = self.room.limit();
         limit.caps(&mut spec);
@@ -4567,16 +4677,27 @@ impl<R: Runtime + 'static> Daemon<R> {
         drop(slot);
         owned.lock().followers.push(out.clone());
         // The token of the session on GitHub (01M6WPMNXN1BSBEH74TG5DDRTF).
-        match self.give_github(&owned, &mut spec, &mut values).await {
-            Ok(acts) => record.github = Some(acts),
-            Err(e) => {
-                self.close(&owned, START_FAILED);
-                println!("{}", text::daemon_session_failed(&name));
-                out.say(Say::Failed {
-                    error: format!("{e:#}"),
-                });
-                return record;
+        // No worker and no verify starts with no token of an App: no
+        // session gets the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
+        let refused = match self
+            .give_github(&owned, &mut spec, &mut values, no_github)
+            .await
+        {
+            Ok(acts) => {
+                let refused = match &acts {
+                    gh_token::ActsAs::NoToken { why } if !terminal => {
+                        Some(text::daemon_gh_no_start(&name, why))
+                    }
+                    _ => None,
+                };
+                record.github = Some(acts);
+                refused
             }
+            Err(e) => Some(format!("{e:#}")),
+        };
+        if let Some(error) = refused {
+            self.start_failed(&owned, out, error);
+            return record;
         }
         spec.binds.push(Bind {
             source: Source::Path(owned.socket.clone()),
@@ -4618,6 +4739,12 @@ impl<R: Runtime + 'static> Daemon<R> {
         let mut command: Vec<String> = relay.iter().map(|a| (*a).to_owned()).collect();
         command.append(&mut spec.command);
         spec.command = command;
+        // The last step before the start: no container gets the token of
+        // the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
+        if let Err(e) = gh_token::check_env(&spec) {
+            self.start_failed(&owned, out, format!("{e:#}"));
+            return record;
+        }
         println!("{}", text::daemon_session_starts(&name, &item, &session));
         out.say(Say::Started {
             name: name.clone(),
@@ -4627,11 +4754,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             let end = match self.runtime.start_terminal(&spec, &values).await {
                 Ok(end) => end,
                 Err(e) => {
-                    self.close(&owned, START_FAILED);
-                    println!("{}", text::daemon_session_failed(&name));
-                    out.say(Say::Failed {
-                        error: format!("{e:#}"),
-                    });
+                    self.start_failed(&owned, out, format!("{e:#}"));
                     return record;
                 }
             };
@@ -4649,11 +4772,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let running = match self.runtime.start(&spec, &values).await {
             Ok(running) => running,
             Err(e) => {
-                self.close(&owned, START_FAILED);
-                println!("{}", text::daemon_session_failed(&name));
-                out.say(Say::Failed {
-                    error: format!("{e:#}"),
-                });
+                self.start_failed(&owned, out, format!("{e:#}"));
                 return record;
             }
         };
@@ -5583,14 +5702,12 @@ impl<R: Runtime + 'static> Daemon<R> {
                         self.renew_github(&owned);
                     }
                     let repo = record.me.place().repo_text();
-                    match &record.github {
-                        Some(gh_token::ActsAs::Person { why }) => {
-                            self.person_tokens_lock().insert(repo, why.clone());
-                        }
-                        Some(gh_token::ActsAs::NoToken { why }) => {
+                    if let Some(gh_token::ActsAs::NoToken { why }) = &record.github {
+                        if record.terminal {
                             self.no_tokens_lock().insert(repo, why.clone());
+                        } else {
+                            self.no_start(&repo, why);
                         }
-                        _ => {}
                     }
                     let looked = record.clone();
                     // The lead keeps its session on riff-server alive.
@@ -6170,7 +6287,7 @@ mod tests {
                 target: clone.to_owned(),
                 write: true,
             }],
-            env: vec![Env::Host("GH_TOKEN".into())],
+            env: vec![Env::Host(crate::claude_token::VAR.into())],
             memory: "8g".into(),
             cpus: 4,
             command: vec!["claude".into()],
@@ -6370,12 +6487,26 @@ mod tests {
         pub(super) async fn started(&self, start: Start) -> (Client, String) {
             let mut client = Client::connect(&self.dir).await.unwrap();
             client.ask(Ask::Start(Box::new(start))).await.unwrap();
-            match client.next().await.unwrap() {
-                Some(Say::Started { name, socket }) => {
-                    assert_eq!(socket, session_dir(&self.dir, &name));
-                    (client, name)
+            loop {
+                match client.next().await.unwrap() {
+                    // A lead with no token on GitHub hears the fix first
+                    // (01M6Z87JTXW0Y99X08VHA2SSSR).
+                    Some(Say::Line { .. }) => {}
+                    Some(Say::Started { name, socket }) => {
+                        assert_eq!(socket, session_dir(&self.dir, &name));
+                        return (client, name);
+                    }
+                    other => panic!("{other:?}"),
                 }
-                other => panic!("{other:?}"),
+            }
+        }
+
+        /// [`Here::start`], for a session that asks riff-server for its
+        /// token on GitHub ([`World::github_token`]).
+        pub(super) fn start_asking(&self, name: &str, item: &str) -> Start {
+            Start {
+                no_github: false,
+                ..self.start(name, item)
             }
         }
 
@@ -6397,11 +6528,14 @@ mod tests {
             folder,
             spec: spec(name, &clone),
             start: "Do it.".into(),
-            values: vec![("GH_TOKEN".into(), "gho_secret1".into())],
+            // A secret of the host, for example the token of claude.
+            values: vec![(crate::claude_token::VAR.into(), "gho_secret1".into())],
             secrets: vec!["gho_secret1".into()],
             server: "http://127.0.0.1:1".into(),
             me: me(name),
             terminal: false,
+            // No ask for a token: the tests of the token set it false.
+            no_github: true,
         }
     }
 
@@ -6747,10 +6881,13 @@ mod tests {
             target: RELAY_BIN.into(),
             write: false,
         }));
-        // The token goes to the runtime beside the spec.
+        // A secret of the host goes to the runtime beside the spec.
         assert_eq!(
             here.fake.values(&name),
-            [("GH_TOKEN".to_owned(), "gho_secret1".to_owned())]
+            [(
+                crate::claude_token::VAR.to_owned(),
+                "gho_secret1".to_owned()
+            )]
         );
         // The daemon owns the session no more: its socket and its record
         // are gone, and the input of the container closed.
@@ -7875,6 +8012,7 @@ mod tests {
                 server: "http://127.0.0.1:1".into(),
                 me: me(name),
                 terminal: false,
+                no_github: true,
             };
             let record = Record {
                 live: Live {
@@ -8139,11 +8277,12 @@ mod tests {
             folder: root.join("f"),
             spec: spec("n", &root.join("clone")),
             start: "Do it.".into(),
-            values: vec![("GH_TOKEN".into(), "v".into())],
+            values: vec![(crate::claude_token::VAR.into(), "v".into())],
             secrets: vec!["v".into()],
             server: "http://127.0.0.1:1".into(),
             me: me("n"),
             terminal: false,
+            no_github: true,
         };
         let line = serde_json::to_string(&Hello {
             protocol: PROTOCOL,
@@ -8154,7 +8293,11 @@ mod tests {
             panic!("{line}")
         };
         assert_eq!(back.spec, spec("n", &root.join("clone")));
-        assert_eq!(back.values, [("GH_TOKEN".to_owned(), "v".to_owned())]);
+        assert_eq!(
+            back.values,
+            [(crate::claude_token::VAR.to_owned(), "v".to_owned())]
+        );
+        assert!(back.no_github);
         assert_eq!(back.me, me("n"));
         let ended = Say::Ended(Ended {
             code: None,
@@ -8446,7 +8589,7 @@ mod tests {
             _: &'a SessionUri,
         ) -> crate::wave::BoxFuture<'a, Result<gh_token::Grant>> {
             let Some(give) = self.github.clone() else {
-                return Box::pin(async { Ok(gh_token::Grant::person(text::GH_TOKEN_NONE)) });
+                return Box::pin(async { Ok(gh_token::Grant::none(text::GH_TOKEN_NONE)) });
             };
             let n = self.asks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(async move { give(n) })
@@ -8587,7 +8730,7 @@ mod tests {
             _: &'a str,
         ) -> crate::wave::BoxFuture<'a, Result<gh_token::Grant>> {
             let Some(give) = self.daemon.clone() else {
-                return Box::pin(async { Ok(gh_token::Grant::person(text::GH_TOKEN_NONE)) });
+                return Box::pin(async { Ok(gh_token::Grant::none(text::GH_TOKEN_NONE)) });
             };
             let n = self
                 .daemon_asks
@@ -8706,6 +8849,7 @@ mod tests {
                     server: record.server.clone(),
                     me: record.me.clone(),
                     terminal: true,
+                    no_github: true,
                 })
             })
         }
@@ -9005,6 +9149,17 @@ mod tests {
     /// in the folder of the daemon. Its container started long ago. It
     /// gives its record.
     async fn started_lead(here: &Here) -> Record {
+        started_lead_with(here, here.start(LEAD, "lead")).await
+    }
+
+    /// [`started_lead`], for a lead that asks riff-server for its token on
+    /// GitHub.
+    async fn started_lead_asking(here: &Here) -> Record {
+        started_lead_with(here, here.start_asking(LEAD, "lead")).await
+    }
+
+    /// [`started_lead`] with the start `start`.
+    async fn started_lead_with(here: &Here, mut start: Start) -> Record {
         let wave = Wave {
             repo: "como-technologies/riff".into(),
             main: here.root.path().to_owned(),
@@ -9012,7 +9167,6 @@ mod tests {
             host: "thelio".into(),
         };
         crate::wave::write_waves(&here.dir, &BTreeMap::from([(wave.repo.clone(), wave)])).unwrap();
-        let mut start = here.start(LEAD, "lead");
         start.terminal = true;
         let (mut client, _) = here.started(start).await;
         assert_eq!(client.next().await.unwrap(), Some(Say::Done));
@@ -10245,7 +10399,7 @@ mod tests {
             .with_meter(marks.path(), gh)
             .with_daemon_token(move |_| match app {
                 true => Ok(lead()),
-                false => Ok(gh_token::Grant::person(why)),
+                false => Ok(gh_token::Grant::none(why)),
             });
             let server = Arc::new(server);
             let name = "riff-issue-12-1a2b3c4d";
@@ -12685,7 +12839,7 @@ mod tests {
         let world: Arc<dyn World> = server.clone();
         let here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
-        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let start = here.start_asking("riff-issue-12-1a2b3c4d", "issue-12");
         let folder = start.folder.clone();
         let (mut client, name) = here.started(start).await;
         until(|| here.fake.spec(&name).is_some()).await;
@@ -12810,59 +12964,255 @@ mod tests {
         assert_eq!(asked, "api user\n");
     }
 
-    /// 01M6WPMWSMQABE97YCMS5Z3M1P: a repository with no installation of
-    /// the App keeps the token of the person in `GH_TOKEN`, and `riff
-    /// daemon status` names `riff github install OWNER`.
+    /// The why of riff-server for a repository with no installation of the
+    /// Apps, with the prompt for `claude` on the host, in the tests.
+    fn no_app() -> String {
+        text::gh_repair(
+            "como-technologies/riff",
+            "riff-como-technologies is not installed on como-technologies/riff: riff github \
+             install como-technologies",
+        )
+    }
+
+    /// 01M6Z87A04EXTT1FFJSJ1EM6TB, 01M6Z87JTXW0Y99X08VHA2SSSR: with no token
+    /// of an App, no worker and no verify starts, and the reason shows with
+    /// the fix and the prompt for `claude` on the host. The lead starts with
+    /// no `GH_TOKEN` and no `FOLDER/gh/hosts.yml`, and hears the fix: `riff
+    /// lead start` prints it, and its first prompt ends with it. `riff
+    /// daemon status` names both.
     #[tokio::test]
-    async fn a_repository_with_no_installation_keeps_the_token_of_the_person() {
-        let why = "riff-como-technologies is not installed on como-technologies/riff: \
-                   riff github install como-technologies";
+    async fn with_no_token_of_an_app_no_worker_starts_and_the_lead_starts_with_no_token() {
+        let why = no_app();
+        let given = why.clone();
         let server = Arc::new(Server::with_github(move |_| {
-            Ok(gh_token::Grant::person(why))
+            Ok(gh_token::Grant::none(&given))
+        }));
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let repo = "como-technologies/riff";
+        for (name, item) in [
+            ("riff-issue-12-1a2b3c4d", "issue-12"),
+            ("riff-verify-issue-12-5e6f7a8b", "verify-issue-12"),
+        ] {
+            let start = here.start_asking(name, item);
+            let folder = start.folder.clone();
+            let mut client = Client::connect(&here.dir).await.unwrap();
+            client.ask(Ask::Start(Box::new(start))).await.unwrap();
+            let (_, end) = to_the_end(&mut client).await;
+            let Some(Say::Failed { error }) = end else {
+                panic!("{end:?}");
+            };
+            assert_eq!(error, text::daemon_gh_no_start(name, &why));
+            assert!(
+                error.contains("riff github install como-technologies"),
+                "{error}"
+            );
+            assert!(error.contains("paste this prompt"), "{error}");
+            assert!(here.fake.spec(name).is_none(), "{name}");
+            assert!(!gh_token::dir(&folder).exists(), "{name}");
+        }
+        assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+        // The wave waits, and tells the lead one time.
+        assert_eq!(
+            here.daemon.no_start_waits(repo).as_deref(),
+            Some(why.as_str())
+        );
+        assert_eq!(
+            here.daemon.no_start_untold(repo).as_deref(),
+            Some(why.as_str())
+        );
+        assert_eq!(here.daemon.no_start_untold(repo), None);
+
+        // The lead starts with no token on GitHub. `riff lead start` hears
+        // the fix first.
+        let mut start = here.start_asking(LEAD, "lead");
+        start.terminal = true;
+        let folder = start.folder.clone();
+        let mut client = Client::connect(&here.dir).await.unwrap();
+        client.ask(Ask::Start(Box::new(start))).await.unwrap();
+        let line = text::daemon_gh_none_status(repo, &why);
+        assert_eq!(client.next().await.unwrap(), Some(Say::Line { text: line }));
+        assert!(matches!(
+            client.next().await.unwrap(),
+            Some(Say::Started { .. })
+        ));
+        assert_eq!(client.next().await.unwrap(), Some(Say::Done));
+        let spec = here.fake.spec(LEAD).unwrap();
+        assert!(gh_token::check_env(&spec).is_ok(), "{:?}", spec.env);
+        let values = here.fake.values(LEAD);
+        assert!(
+            values
+                .iter()
+                .all(|(n, _)| !gh_token::TOKEN_VARS.contains(&n.as_str())),
+            "{values:?}"
+        );
+        let dir = gh_token::dir(&folder);
+        let config = Env::Value("GH_CONFIG_DIR".into(), dir.to_string_lossy().into_owned());
+        assert!(spec.env.contains(&config), "{:?}", spec.env);
+        assert!(dir.join(gh_token::CONFIG).is_file());
+        assert!(!dir.join(gh_token::HOSTS).exists());
+        let first = spec.command.last().unwrap();
+        assert!(first.ends_with(&text::lead_no_github(&why)), "{first}");
+        // `riff whoami` in the lead shows `no token` and why.
+        let socket = session_dir(&here.dir, LEAD).join(SOCKET);
+        let reply = crate::session_relay::ask_server(&socket, &ServerCall::Whoami)
+            .await
+            .unwrap();
+        let facts: crate::reach::WhoamiFacts = serde_json::from_value(reply).unwrap();
+        assert_eq!(
+            facts.github,
+            Some(gh_token::ActsAs::NoToken { why: why.clone() })
+        );
+
+        let status = here.daemon.status().await;
+        let shown = |why: &str| NoTokenShown {
+            repo: repo.into(),
+            why: why.into(),
+        };
+        assert_eq!(status.no_starts, [shown(&why)]);
+        assert_eq!(status.no_tokens, [shown(&why)]);
+        let text = text::daemon_status(&status, now_ms());
+        for line in [
+            text::daemon_no_start_status(repo, &why),
+            text::daemon_gh_none_status(repo, &why),
+        ] {
+            assert!(text.contains(&format!("{line}\n")), "{line}\n{text}");
+        }
+    }
+
+    /// 01M6Z87A04EXTT1FFJSJ1EM6TB: no code path of the daemon gives a
+    /// container the token of the person. For each answer of riff-server
+    /// and each role, and for a session of `riff run --no-github`, the env
+    /// of each container names no variable of a token of `gh`, and no value
+    /// is the token of the person. A start whose spec names one starts no
+    /// container: the check of the env is the last step before each start.
+    #[tokio::test]
+    async fn no_code_path_of_the_daemon_gives_a_container_the_token_of_the_person() {
+        // An answer of riff-server to the ask for the token of a session.
+        type Answer = fn() -> Result<gh_token::Grant>;
+        const PERSON: &str = "gho_person0token";
+        let answers: [(&str, Answer); 3] = [
+            ("a token of an App", || {
+                Ok(app_token("ghs_app", Duration::from_secs(3600)))
+            }),
+            ("no App", || Ok(gh_token::Grant::none(&no_app()))),
+            ("the pause of the keys", || {
+                Ok(gh_token::Grant::none(NO_KEYS))
+            }),
+        ];
+        for (answer, give) in answers {
+            let server = Arc::new(Server::with_github(move |_| give()));
+            let world: Arc<dyn World> = server.clone();
+            let here =
+                Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+            let worker = here.start_asking("riff-issue-12-1a2b3c4d", "issue-12");
+            let verify = here.start_asking("riff-verify-issue-12-5e6f7a8b", "verify-issue-12");
+            let mut lead = here.start_asking(LEAD, "lead");
+            lead.terminal = true;
+            let offline = here.start("riff-issue-13-9c8d7e6f", "issue-13");
+            for start in [worker, verify, lead, offline] {
+                let name = start.spec.name.clone();
+                let mut client = Client::connect(&here.dir).await.unwrap();
+                client.ask(Ask::Start(Box::new(start))).await.unwrap();
+                let started = loop {
+                    match client.next().await.unwrap() {
+                        Some(Say::Started { .. }) => break true,
+                        Some(Say::Failed { .. }) | None => break false,
+                        Some(_) => {}
+                    }
+                };
+                if !started {
+                    assert!(here.fake.spec(&name).is_none(), "{answer}: {name}");
+                    continue;
+                }
+                until(|| here.fake.spec(&name).is_some()).await;
+                let spec = here.fake.spec(&name).unwrap();
+                assert!(
+                    gh_token::check_env(&spec).is_ok(),
+                    "{answer}: {name}: {:?}",
+                    spec.env
+                );
+                for (var, value) in here.fake.values(&name) {
+                    assert!(
+                        !gh_token::TOKEN_VARS.contains(&var.as_str()),
+                        "{answer}: {name}: {var}"
+                    );
+                    assert_ne!(value, PERSON, "{answer}: {name}: {var}");
+                }
+            }
+        }
+
+        // A spec that names a variable of a token of `gh` starts no
+        // container, from each source of a value.
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let named = [
+            (Env::Host("GH_TOKEN".into()), Some(("GH_TOKEN", PERSON))),
+            (Env::Value("GITHUB_TOKEN".into(), PERSON.into()), None),
+        ];
+        for (n, (env, value)) in named.into_iter().enumerate() {
+            let name = format!("riff-issue-1{n}-0a0b0c0d");
+            let mut start = here.start(&name, "issue-12");
+            start.spec.env.push(env.clone());
+            start
+                .values
+                .extend(value.map(|(var, value)| (var.to_owned(), value.to_owned())));
+            let mut client = Client::connect(&here.dir).await.unwrap();
+            client.ask(Ask::Start(Box::new(start))).await.unwrap();
+            let (_, end) = to_the_end(&mut client).await;
+            let Some(Say::Failed { error }) = end else {
+                panic!("{env:?}: {end:?}");
+            };
+            let (Env::Host(var) | Env::Value(var, _)) = &env;
+            assert_eq!(error, text::daemon_person_token(&name, var));
+            assert!(!error.contains(PERSON), "{error}");
+            assert!(here.fake.spec(&name).is_none(), "{env:?}");
+        }
+        assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
+    }
+
+    /// 01M6Z87JY83V3KR72E2AG8V8KG: a session of `riff run --no-github` asks
+    /// riff-server for no token. It starts with the folder of its token
+    /// with no `hosts.yml`, no `GH_TOKEN`, and no renew. `riff whoami`
+    /// shows `none`.
+    #[tokio::test]
+    async fn a_session_of_riff_run_no_github_asks_for_no_token() {
+        let server = Arc::new(Server::with_github(|_| {
+            Ok(app_token("ghs_unused", Duration::from_secs(3600)))
         }));
         let world: Arc<dyn World> = server.clone();
         let here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
         let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        assert!(start.no_github);
         let folder = start.folder.clone();
-        let (mut client, name) = here.started(start).await;
+        let (_client, name) = here.started(start).await;
         until(|| here.fake.spec(&name).is_some()).await;
+        assert_eq!(server.asks(), 0);
         let spec = here.fake.spec(&name).unwrap();
-        assert!(spec.env.contains(&Env::Host("GH_TOKEN".into())));
-        assert!(
-            !spec
-                .env
-                .iter()
-                .any(|e| matches!(e, Env::Value(n, _) if n == "GH_CONFIG_DIR"))
-        );
-        assert_eq!(
-            here.fake.values(&name),
-            [("GH_TOKEN".to_owned(), "gho_secret1".to_owned())]
-        );
-        assert!(!gh_token::dir(&folder).exists());
-        // The git identity of `~/.gitconfig` stays (01M6WZ2C8JXEA888XYMRXTS17V).
+        assert!(gh_token::check_env(&spec).is_ok(), "{:?}", spec.env);
+        let dir = gh_token::dir(&folder);
+        let config = Env::Value("GH_CONFIG_DIR".into(), dir.to_string_lossy().into_owned());
+        assert!(spec.env.contains(&config), "{:?}", spec.env);
+        assert!(!dir.join(gh_token::HOSTS).exists());
+        // No author of a bot: the git identity of `~/.gitconfig`.
         assert_eq!(git_setting(&spec.env, "user.name"), None);
-        assert_eq!(git_setting(&spec.env, "user.email"), None);
-
-        let status = status(&here.dir).await.unwrap();
-        assert_eq!(
-            status.person_tokens,
-            [PersonToken {
-                repo: "como-technologies/riff".into(),
-                why: why.into(),
-            }]
-        );
-        let text = text::daemon_status(&status, now_ms());
+        let owned = here.daemon.lock().get(&name).cloned().unwrap();
         assert!(
-            text.contains("riff github install como-technologies"),
-            "{text}"
+            owned
+                .renewal
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_none()
         );
-
-        let socket = session_dir(&here.dir, &name);
-        let (mut relay, _) = Relay::connect(&socket, 1, false).await;
-        relay.exit(1, 0).await;
-        let _ = to_the_end(&mut client).await;
-        assert!(server.revoked().is_empty());
+        let socket = session_dir(&here.dir, &name).join(SOCKET);
+        let reply = crate::session_relay::ask_server(&socket, &ServerCall::Whoami)
+            .await
+            .unwrap();
+        let facts: crate::reach::WhoamiFacts = serde_json::from_value(reply).unwrap();
+        assert_eq!(facts.github, Some(gh_token::ActsAs::NoGitHub));
+        let status = here.daemon.status().await;
+        assert!(status.no_starts.is_empty() && status.no_tokens.is_empty());
     }
 
     /// 01M6WPMNXN1BSBEH74TG5DDRTF: when riff-server cannot give the token
@@ -12876,7 +13226,7 @@ mod tests {
         let world: Arc<dyn World> = server.clone();
         let here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
-        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let start = here.start_asking("riff-issue-12-1a2b3c4d", "issue-12");
         let mut client = Client::connect(&here.dir).await.unwrap();
         client.ask(Ask::Start(Box::new(start))).await.unwrap();
         let (_, end) = to_the_end(&mut client).await;
@@ -12900,7 +13250,7 @@ mod tests {
         let world: Arc<dyn World> = server.clone();
         let mut here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
-        let start = here.start("riff-issue-12-1a2b3c4d", "issue-12");
+        let start = here.start_asking("riff-issue-12-1a2b3c4d", "issue-12");
         let folder = start.folder.clone();
         let (client, name) = here.started(start).await;
         until(|| here.fake.spec(&name).is_some()).await;
@@ -12943,7 +13293,7 @@ mod tests {
         let world: Arc<dyn World> = server.clone();
         let here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
-        let record = started_lead(&here).await;
+        let record = started_lead_asking(&here).await;
         let dir = gh_token::dir(&record.folder);
         let spec = here.fake.spec(LEAD).unwrap();
         let config = Env::Value("GH_CONFIG_DIR".into(), dir.to_string_lossy().into_owned());
@@ -12977,7 +13327,7 @@ mod tests {
         let world: Arc<dyn World> = server.clone();
         let here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
-        let record = started_lead(&here).await;
+        let record = started_lead_asking(&here).await;
         let spec = here.fake.spec(LEAD).unwrap();
         let named = |e: &Env| matches!(e, Env::Host(n) | Env::Value(n, _) if n == "GH_TOKEN");
         assert!(!spec.env.iter().any(named), "{:?}", spec.env);
@@ -12986,6 +13336,7 @@ mod tests {
         let config = Env::Value("GH_CONFIG_DIR".into(), dir.to_string_lossy().into_owned());
         assert!(spec.env.contains(&config), "{:?}", spec.env);
         assert!(gh_token::read_token(&record.folder).is_none());
+        assert!(!dir.join(gh_token::HOSTS).exists());
         let start = spec.command.last().unwrap();
         assert!(start.ends_with(&text::lead_no_github(NO_KEYS)), "{start}");
         assert_eq!(
@@ -12996,14 +13347,10 @@ mod tests {
         );
 
         let status = here.daemon.status().await;
-        assert!(
-            status.person_tokens.is_empty(),
-            "{:?}",
-            status.person_tokens
-        );
+        assert!(status.no_starts.is_empty(), "{:?}", status.no_starts);
         assert_eq!(
             status.no_tokens,
-            [PersonToken {
+            [NoTokenShown {
                 repo: "como-technologies/riff".into(),
                 why: NO_KEYS.into(),
             }]
@@ -13035,7 +13382,7 @@ mod tests {
         let world: Arc<dyn World> = server.clone();
         let here =
             Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
-        let record = started_lead(&here).await;
+        let record = started_lead_asking(&here).await;
         assert!(gh_token::read_token(&record.folder).is_some());
         for _ in 0..1000 {
             if gh_token::read_token(&record.folder).is_none() {
@@ -13088,7 +13435,7 @@ mod tests {
             ("riff-issue-12-1a2b3c4d", "issue-12"),
             ("riff-verify-issue-12-5e6f7a8b", "verify-issue-12"),
         ] {
-            let start = here.start(name, item);
+            let start = here.start_asking(name, item);
             let mut client = Client::connect(&here.dir).await.unwrap();
             client.ask(Ask::Start(Box::new(start))).await.unwrap();
             let (_, end) = to_the_end(&mut client).await;

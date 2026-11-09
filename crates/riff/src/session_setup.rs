@@ -44,7 +44,7 @@
 //!     T["riff.toml on origin/HEAD:<br/>model, [session.env], [session.volumes]"] -- "session_image::merged_config" --> S["Setup"]
 //!     S -- "run::spec: $HOME becomes the home" --> P["the env and the binds of the SessionSpec"]
 //!     S -- "Setup::claude" --> M["claude --model MODEL"]
-//!     R["what riff needs itself:<br/>HOME, USER, GH_TOKEN, the clone, ..."] --> P
+//!     R["what riff needs itself:<br/>HOME, USER, GH_CONFIG_DIR, the clone, ..."] --> P
 //!     P --> C["podman run -e NAME=VALUE -v VOLUME:PATH"]
 //!     M --> C
 //! ```
@@ -81,7 +81,6 @@ const RESERVED: &[&str] = &[
     "HOME",
     "USER",
     "LOGNAME",
-    "GH_TOKEN",
     crate::daemon::gh_token::CONFIG_VAR,
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_OAUTH_TOKEN",
@@ -322,6 +321,14 @@ fn check_variable(name: &str, value: &str, place: &str) -> Result<()> {
             "{place}: [session.env] {name} is not the name of a variable: use letters, digits and _"
         );
     }
+    // No session gets a token of GitHub in a variable (01M6ZBCB2JAQFC0EWNA91666ZA).
+    if crate::daemon::gh_token::TOKEN_VARS.contains(&name) {
+        bail!(
+            "{place}: [session.env] {name}: no session gets a token of GitHub in a variable: \
+             riff gives each session the token of a GitHub App in the folder of {}",
+            crate::daemon::gh_token::CONFIG_VAR
+        );
+    }
     if RESERVED.contains(&name) || RESERVED_STARTS.iter().any(|start| name.starts_with(start)) {
         if name == MODEL_VARIABLE {
             bail!(
@@ -438,7 +445,6 @@ mod tests {
             "HOME",
             "USER",
             "LOGNAME",
-            "GH_TOKEN",
             "GH_CONFIG_DIR",
             "CLAUDE_CONFIG_DIR",
             "CLAUDE_CODE_OAUTH_TOKEN",
@@ -453,6 +459,21 @@ mod tests {
         }
         // A name that only looks like one is fine.
         assert!(setup("[session.env]\nHOMEBREW = \"x\"\nGIT_DIR = \"x\"\n").is_ok());
+    }
+
+    /// 01M6ZBCB2JAQFC0EWNA91666ZA: no session gets a token of GitHub in a
+    /// variable of `riff.toml`.
+    #[test]
+    fn a_variable_of_a_token_of_github_is_refused() {
+        for name in ["GH_TOKEN", "GITHUB_TOKEN"] {
+            refused(
+                &format!("[session.env]\n{name} = \"ghp_x\"\n"),
+                &format!(
+                    "[session.env] {name}: no session gets a token of GitHub in a variable: riff \
+                     gives each session the token of a GitHub App in the folder of GH_CONFIG_DIR"
+                ),
+            );
+        }
     }
 
     /// 01M5SMW2B4GMJ3V6BCX1KGC1ZY: a bad name, value or table.

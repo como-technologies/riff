@@ -67,6 +67,9 @@ pub struct Seen {
     pub revoked: Vec<String>,
     /// The rights that the fake gives in place of the asked ones.
     pub give: Option<BTreeMap<String, String>>,
+    /// True: each token ends one hour after now, as on GitHub. Else it
+    /// ends at a time of the tests.
+    pub hour: bool,
 }
 
 /// A fake GitHub on a free port.
@@ -215,6 +218,12 @@ async fn token(
         return (StatusCode::NOT_FOUND, Json(json!({"message": "Not Found"}))).into_response();
     }
     let mut seen = seen.lock().unwrap();
+    let ends = match seen.hour {
+        true => (chrono::Utc::now() + chrono::Duration::hours(1))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string(),
+        false => "2026-11-08T13:00:00Z".to_owned(),
+    };
     let token = format!("ghs_token_of_the_test_{}", seen.tokens.len());
     let permissions = match &seen.give {
         Some(give) => json!(give),
@@ -226,7 +235,7 @@ async fn token(
         StatusCode::CREATED,
         Json(json!({
             "token": token,
-            "expires_at": "2026-11-08T13:00:00Z",
+            "expires_at": ends,
             "permissions": permissions,
             "repository_selection": "selected",
         })),

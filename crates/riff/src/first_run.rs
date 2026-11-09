@@ -294,7 +294,7 @@ pub struct Facts {
     /// (01M5SMJMR5KS1Z1Z7CEPH9JVBB).
     pub container: bool,
     /// What riff-server says of the GitHub Apps of riff on the
-    /// repository ([`apps_of`], 01M6WPMWSMQABE97YCMS5Z3M1P). `None` when
+    /// repository ([`apps_of`], 01M6Z87JTXW0Y99X08VHA2SSSR). `None` when
     /// riff did not ask: no repository on GitHub, no sign-in, or no
     /// answer.
     pub apps: Option<Apps>,
@@ -312,9 +312,9 @@ pub struct Apps {
     pub missing: Vec<String>,
 }
 
-/// The check of the GitHub Apps of riff on a repository: a session there
-/// keeps the token of the person while an App is not on it
-/// (01M6WPMWSMQABE97YCMS5Z3M1P).
+/// The check of the GitHub Apps of riff on a repository: no worker and
+/// no verify starts there while an App is not on it, and the check names
+/// the same fix (01M6Z87A04EXTT1FFJSJ1EM6TB, 01M6Z87JTXW0Y99X08VHA2SSSR).
 ///
 /// ```
 /// use riff::first_run::{Apps, apps_check};
@@ -1147,7 +1147,7 @@ pub fn pull(clone: &Path, branch: &str) -> Result<(), String> {
 /// the session App, for the check of the guard
 /// (01M6WPV86SW4AAVA2NCBQNYXK3), for the lead App, for the check of the
 /// ruleset `releases` (01M6WZ40YED6THKVJ2JQRXFK4N), and for the GitHub
-/// Apps of riff on the repository (01M6WPMWSMQABE97YCMS5Z3M1P).
+/// Apps of riff on the repository (01M6Z87JTXW0Y99X08VHA2SSSR).
 pub async fn init(mode: Mode, image: Option<session_image::Image>, server: &str) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
