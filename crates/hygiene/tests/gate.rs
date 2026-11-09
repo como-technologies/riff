@@ -200,21 +200,32 @@ fn the_tests_run_in_parts_that_together_hold_each_test() {
     }
 }
 
-/// 01M513W2RERJES76ZXKKHCV0DP: each job but macOS runs on the runner of
-/// `RIFF_RUNNER`.
+/// 01M513W2RERJES76ZXKKHCV0DP, 01M6Z8FKZRJZ4NY60PQAH9SMHV: each job but
+/// macOS, macOS riff and Linux riff of a Mac runs on the runner of
+/// `RIFF_RUNNER`. macOS and macOS riff run on a Mac, Linux riff of a Mac
+/// on Linux for arm64.
 #[test]
-fn each_job_of_ci_but_macos_runs_on_the_runner_of_riff_runner() {
+fn each_job_of_ci_but_the_jobs_of_a_mac_runs_on_the_runner_of_riff_runner() {
+    let own = [
+        ("macos", "macos-latest"),
+        ("macos_riff", "macos-latest"),
+        ("mac_session_riff", "ubuntu-24.04-arm"),
+    ];
+    for (name, runner) in own {
+        assert_eq!(field(&job(name), "runs-on"), runner, "{name}");
+    }
     let text = workflow();
     let lines: Vec<&str> = text
         .lines()
         .filter(|line| line.trim_start().starts_with("runs-on:"))
         .map(str::trim)
         .collect();
-    assert!(lines.len() > PARTS.len(), "{lines:?}");
-    let (mac, others): (Vec<&str>, Vec<&str>) = lines
-        .into_iter()
-        .partition(|line| *line == "runs-on: macos-latest");
-    assert_eq!(mac.len(), 1, "{mac:?}");
+    assert!(lines.len() > PARTS.len() + own.len(), "{lines:?}");
+    let (mine, others): (Vec<&str>, Vec<&str>) = lines.into_iter().partition(|line| {
+        own.iter()
+            .any(|(_, runner)| *line == format!("runs-on: {runner}"))
+    });
+    assert_eq!(mine.len(), own.len(), "{mine:?}");
     for line in others {
         assert_eq!(line, "runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}");
     }

@@ -5,15 +5,17 @@
 //! pull request and each push (01M6QQ1NXY0CXMZEEEP413W4PK), the job
 //! "Static riff" runs the check (01M4ZPJ06QYVA23N9SQ45T8WQC), and the job
 //! "Static riff release" adds the files that `riff update` downloads to
-//! the release of a tag (01M4ZPJ091W3NYV1V0FJS9K6MS). The scripts run a
-//! fake container engine that logs its arguments.
+//! the release of a tag (01M4ZPJ091W3NYV1V0FJS9K6MS). The jobs of a Mac
+//! add the files of a Mac, and change no job of Linux
+//! (01M6Z8F7B3HVVNGQMX8GP1Z7Q1, 01M6Z8FKZRJZ4NY60PQAH9SMHV). The scripts
+//! run a fake container engine that logs its arguments.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use isolated::Isolated;
-use riff::release::{BINARIES, SUMS, asset};
+use riff::release::{BINARIES, MAC, MAC_SESSION, SUMS, asset, sums};
 
 /// The root of this repository.
 fn top() -> PathBuf {
@@ -299,7 +301,7 @@ fn the_static_build_keeps_the_crates_where_riff_static_cargo_says() {
 /// them to the release of the tag. Only that job writes the repository.
 #[test]
 fn a_release_tag_gets_the_files_that_riff_update_downloads() {
-    let target = riff::release::TARGET.unwrap_or("x86_64-unknown-linux-musl");
+    let target = riff::release::LINUX;
     let job = ci_job("static");
     let mut binaries = BINARIES;
     binaries.sort();
@@ -330,5 +332,157 @@ fn a_release_tag_gets_the_files_that_riff_update_downloads() {
             publish.contains(part),
             "{part} is not in the job static_release:\n{publish}"
         );
+    }
+}
+
+/// 01M6Z8F7B3HVVNGQMX8GP1Z7Q1, 01M6Z8FKZRJZ4NY60PQAH9SMHV: for a tag, the
+/// job macOS riff builds `riff` and `riff-server` on a Mac with Apple
+/// silicon, the job Linux riff of a Mac builds the static Linux riff on
+/// arm64, and the job macOS riff release adds the files that `riff
+/// update` on a Mac downloads to the release, with their own file of
+/// sums, the sums last. A build of a release uses no cache.
+#[test]
+fn a_release_tag_gets_the_files_that_riff_update_on_a_mac_downloads() {
+    let mac = ci_job("macos_riff");
+    let copy = format!("cp \"target/release/$name\" \"dist/$name-{MAC}\"");
+    for part in [
+        "name: macOS riff\n",
+        "if: github.ref_type == 'tag'\n",
+        "runs-on: macos-latest\n",
+        "continue-on-error: true\n",
+        "run: test \"$(uname -sm)\" = \"Darwin arm64\"\n",
+        "run: cargo build --locked --profile release -p riff -p riff-server\n",
+        "target/release/riff --version\n",
+        "for name in riff riff-server; do",
+        &copy,
+        "name: macos-riff\n",
+    ] {
+        assert!(
+            mac.contains(part),
+            "{part} is not in the job macos_riff:\n{mac}"
+        );
+    }
+    for cache in ["actions/cache", "rust-cache"] {
+        assert!(!mac.contains(cache), "{mac}");
+    }
+
+    let linux = ci_job("mac_session_riff");
+    let copy = format!(
+        "cp target/static/release/riff dist/{}\n",
+        asset("riff", MAC_SESSION)
+    );
+    for part in [
+        "name: Linux riff of a Mac\n",
+        "if: github.ref_type == 'tag'\n",
+        "runs-on: ubuntu-24.04-arm\n",
+        "continue-on-error: true\n",
+        "run: test \"$(uname -sm)\" = \"Linux aarch64\"\n",
+        "run: deploy/static/build.sh release\n",
+        "if readelf -lW \"$file\" | grep -q 'Requesting program interpreter'; then",
+        "\"$file\" --version\n",
+        &copy,
+        "name: mac-session-riff\n",
+    ] {
+        assert!(
+            linux.contains(part),
+            "{part} is not in the job mac_session_riff:\n{linux}"
+        );
+    }
+    for cache in ["actions/cache", "rust-cache", "RIFF_STATIC_CARGO"] {
+        assert!(!linux.contains(cache), "{linux}");
+    }
+
+    let publish = ci_job("macos_release");
+    let mut assets: Vec<String> = riff::release::files(MAC)
+        .into_iter()
+        .map(|file| file.asset)
+        .collect();
+    assets.sort();
+    let line = format!("sha256sum -- {} > {}\n", assets.join(" "), sums(MAC));
+    for part in [
+        "name: macOS riff release\n",
+        "needs: [macos_riff, mac_session_riff]\n",
+        "if: github.ref_type == 'tag'\n",
+        "continue-on-error: true\n",
+        "contents: write\n",
+        "name: macos-riff\n",
+        "name: mac-session-riff\n",
+        &line,
+        "gh release view \"$TAG\"",
+        "for _ in $(seq 120); do",
+        "sleep 30",
+    ] {
+        assert!(
+            publish.contains(part),
+            "{part} is not in the job macos_release:\n{publish}"
+        );
+    }
+    // Each file of a Mac is a riff-* file, and its sums go after it.
+    assert!(assets.iter().all(|a| a.starts_with("riff-")), "{assets:?}");
+    let files = publish
+        .find("gh release upload \"$TAG\" dist/riff-* --clobber")
+        .unwrap_or_else(|| panic!("no upload of the files:\n{publish}"));
+    let sums_up = format!("gh release upload \"$TAG\" dist/{} --clobber", sums(MAC));
+    let sums_at = publish
+        .find(&sums_up)
+        .unwrap_or_else(|| panic!("no upload of the sums:\n{publish}"));
+    assert!(files < sums_at, "{publish}");
+}
+
+/// 01M6Z8F7B3HVVNGQMX8GP1Z7Q1, 01M6Z8FKZRJZ4NY60PQAH9SMHV: Linux stays
+/// the same. The jobs of Linux name no file and no job of a Mac. The
+/// files of Linux and `SHA256SUMS` keep their names. Only macOS riff
+/// release needs a job of a Mac, and each job of a Mac has
+/// `continue-on-error`. So a failed build for the Mac stops no file, no
+/// run and no deploy of Linux.
+#[test]
+fn the_release_of_a_mac_changes_no_job_of_linux() {
+    let mac_jobs = ["macos_riff", "mac_session_riff", "macos_release"];
+    for name in [
+        "build",
+        "static",
+        "static_release",
+        "release",
+        "deploy",
+        "gate",
+    ] {
+        let job = ci_job(name);
+        for mac in [MAC, MAC_SESSION, "SHA256SUMS-"].iter().chain(&mac_jobs) {
+            assert!(!job.contains(mac), "{mac} is in the job {name}:\n{job}");
+        }
+    }
+    let job = ci_job("static");
+    for part in [
+        "cp \"target/static/release/$name\" \"dist/$name-x86_64-unknown-linux-musl\"\n",
+        "sha256sum -- riff-x86_64-unknown-linux-musl riff-server-x86_64-unknown-linux-musl \
+         > SHA256SUMS\n",
+    ] {
+        assert!(
+            job.contains(part),
+            "{part} is not in the job static:\n{job}"
+        );
+    }
+    assert!(ci_job("static_release").contains("needs: [static]\n"));
+    let deploy = ci_job("deploy");
+    for part in [
+        "needs: [gate, release, static_release]\n",
+        "--pattern '*-x86_64-unknown-linux-musl' --pattern SHA256SUMS\n",
+    ] {
+        assert!(
+            deploy.contains(part),
+            "{part} is not in the job deploy:\n{deploy}"
+        );
+    }
+    let workflow = read(".github/workflows/ci.yml");
+    let needs: Vec<&str> = workflow
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("needs:"))
+        .filter(|line| mac_jobs.iter().any(|mac| line.contains(mac)))
+        .collect();
+    assert_eq!(needs, ["needs: [macos_riff, mac_session_riff]"]);
+    for name in mac_jobs {
+        let job = ci_job(name);
+        assert!(job.contains("\n    continue-on-error: true\n"), "{job}");
     }
 }

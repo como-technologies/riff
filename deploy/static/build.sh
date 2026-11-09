@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Builds the static riff and riff-server of this tree for
-# x86_64-unknown-linux-musl (01M4ZPJ04D9MJHNPAV0WN1KCES). The build runs
-# in the image rust:CHANNEL-alpine, where CHANNEL is the channel of
+# Builds the static riff and riff-server of this tree for the musl target
+# of the CPU of the machine (01M4ZPJ04D9MJHNPAV0WN1KCES):
+# x86_64-unknown-linux-musl on x86-64, and aarch64-unknown-linux-musl on
+# arm64, for the sessions of a Mac (01M6Z8FKZRJZ4NY60PQAH9SMHV). The build
+# runs in the image rust:CHANNEL-alpine, where CHANNEL is the channel of
 # rust-toolchain.toml. On Alpine, Rust links musl into the binary, so the
 # binary needs no shared library and runs in each session image.
 #

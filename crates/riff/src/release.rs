@@ -78,6 +78,31 @@
 //! assert_eq!(sum_of(&sums, "riff-x86_64-unknown-linux-musl"), Some("ab".repeat(32)));
 //! assert!(check(b"#!/bin/sh\n", 62).is_err());
 //! ```
+//!
+//! # A Mac
+//!
+//! A release also has the files of a Mac with Apple silicon, [`MAC`]
+//! (01M6Z8F7B3HVVNGQMX8GP1Z7Q1): `riff` and `riff-server` for macOS, and
+//! the static Linux riff of [`MAC_SESSION`]. The daemon on a Mac binds
+//! that Linux riff into each session, in place of its own binary
+//! ([`session_riff`]). Their sums are in a file of their own,
+//! [`sums`] of [`MAC`], and other jobs of the CI make them. So the files
+//! of Linux, and the jobs that make them, stay as they were, also when
+//! the build for the Mac fails. `riff update` on a Mac checks that
+//! `riff` and `riff-server` are Mach-O executables for Apple silicon
+//! ([`check_mac`]), and that the Linux riff is static ([`files`]).
+//! riff has no Developer ID of Apple and no notarization
+//! (01M6Z8FM8B8D9NZT6ZYPPWD6TC): the linker signs each binary ad hoc,
+//! and a file of `riff update` or of `curl` has no quarantine, so macOS
+//! runs it.
+//!
+//! ```mermaid
+//! flowchart LR
+//!     L["CI jobs of Linux"] --> S["SHA256SUMS<br/>riff-x86_64-unknown-linux-musl<br/>riff-server-x86_64-unknown-linux-musl"]
+//!     M["CI jobs of the Mac"] --> T["SHA256SUMS-aarch64-apple-darwin<br/>riff-aarch64-apple-darwin<br/>riff-server-aarch64-apple-darwin<br/>riff-aarch64-unknown-linux-musl"]
+//!     S --> U["riff update on Linux"]
+//!     T --> V["riff update on a Mac"]
+//! ```
 
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -104,13 +129,148 @@ pub const RELEASES: &str = "RIFF_RELEASES";
 /// marks "Latest", in the form of the API of GitHub: `RELEASES/latest`.
 pub const LATEST: &str = "latest";
 
-/// The target of the static binaries for this machine. `None` when the
+/// The target of the release files of Linux on x86-64.
+pub const LINUX: &str = "x86_64-unknown-linux-musl";
+
+/// The target of the release files of a Mac with Apple silicon
+/// (01M6Z8F7B3HVVNGQMX8GP1Z7Q1).
+pub const MAC: &str = "aarch64-apple-darwin";
+
+/// The target of the Linux riff that the daemon on a Mac binds into each
+/// session: the Linux of a VM on Apple silicon
+/// (01M6Z8FM5F0Y7BQYNF8XS1B0T2).
+pub const MAC_SESSION: &str = "aarch64-unknown-linux-musl";
+
+/// The target of the release files for this machine. `None` when the
 /// releases have none for it.
 pub const TARGET: Option<&str> = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-    Some("x86_64-unknown-linux-musl")
+    Some(LINUX)
+} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    Some(MAC)
 } else {
     None
 };
+
+/// The file of the SHA-256 sums of the release files of `target`: [`SUMS`]
+/// for [`LINUX`], else `SHA256SUMS-TARGET`. Each CI job that names the
+/// files of a target writes its own.
+///
+/// ```
+/// use riff::release::{LINUX, MAC, sums};
+///
+/// assert_eq!(sums(LINUX), "SHA256SUMS");
+/// assert_eq!(sums(MAC), "SHA256SUMS-aarch64-apple-darwin");
+/// ```
+pub fn sums(target: &str) -> String {
+    if target == LINUX {
+        SUMS.to_owned()
+    } else {
+        format!("{SUMS}-{target}")
+    }
+}
+
+/// What a release file must be, for [`check_kind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A static ELF of this ELF machine ([`check`]).
+    Static(u16),
+    /// A Mach-O executable for Apple silicon ([`check_mac`]).
+    Mac,
+}
+
+/// A release file that `riff update` installs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct File {
+    /// Its name in the release ([`asset`]).
+    pub asset: String,
+    /// Its name in the bin folder of cargo.
+    pub name: String,
+    /// What it must be.
+    pub kind: Kind,
+}
+
+/// The release files that `riff update` installs on a machine of
+/// `target`, in the order of their install: `riff` last, so that a
+/// failed rename keeps the old `riff`. On a Mac, the Linux riff of the
+/// sessions keeps its name of the release ([`session_riff`]).
+///
+/// ```
+/// use riff::release::{files, Kind, LINUX, MAC};
+///
+/// let names = |target| files(target).into_iter().map(|f| (f.asset, f.name)).collect::<Vec<_>>();
+/// assert_eq!(names(LINUX), [
+///     ("riff-server-x86_64-unknown-linux-musl".to_owned(), "riff-server".to_owned()),
+///     ("riff-x86_64-unknown-linux-musl".to_owned(), "riff".to_owned()),
+/// ]);
+/// assert!(files(LINUX).iter().all(|f| f.kind == Kind::Static(62)));
+/// assert_eq!(names(MAC), [
+///     ("riff-server-aarch64-apple-darwin".to_owned(), "riff-server".to_owned()),
+///     ("riff-aarch64-unknown-linux-musl".to_owned(), "riff-aarch64-unknown-linux-musl".to_owned()),
+///     ("riff-aarch64-apple-darwin".to_owned(), "riff".to_owned()),
+/// ]);
+/// let kinds: Vec<Kind> = files(MAC).into_iter().map(|f| f.kind).collect();
+/// assert_eq!(kinds, [Kind::Mac, Kind::Static(183), Kind::Mac]);
+/// ```
+pub fn files(target: &str) -> Vec<File> {
+    let kind = if target == MAC {
+        Kind::Mac
+    } else {
+        Kind::Static(elf_machine(target))
+    };
+    let mut files: Vec<File> = BINARIES
+        .iter()
+        .map(|binary| File {
+            asset: asset(binary, target),
+            name: (*binary).to_owned(),
+            kind,
+        })
+        .collect();
+    if target == MAC {
+        let linux = asset("riff", MAC_SESSION);
+        let at = files.len() - 1;
+        files.insert(
+            at,
+            File {
+                asset: linux.clone(),
+                name: linux,
+                kind: Kind::Static(elf_machine(MAC_SESSION)),
+            },
+        );
+    }
+    files
+}
+
+/// The ELF machine of the code of `target`.
+fn elf_machine(target: &str) -> u16 {
+    if target.starts_with("aarch64") {
+        EM_AARCH64
+    } else {
+        EM_X86_64
+    }
+}
+
+/// The riff that the daemon of the riff `me` binds into each session
+/// (01M6Z8FM5F0Y7BQYNF8XS1B0T2): `me` on Linux. On a Mac, `me` is a
+/// Mach-O file, so it is the Linux riff of [`MAC_SESSION`] beside `me`.
+///
+/// ```
+/// use std::path::Path;
+/// use riff::release::session_riff;
+///
+/// let me = Path::new("/h/.cargo/bin/riff");
+/// if cfg!(target_os = "macos") {
+///     assert_eq!(session_riff(me), Path::new("/h/.cargo/bin/riff-aarch64-unknown-linux-musl"));
+/// } else {
+///     assert_eq!(session_riff(me), me);
+/// }
+/// ```
+pub fn session_riff(me: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        me.with_file_name(asset("riff", MAC_SESSION))
+    } else {
+        me.to_owned()
+    }
+}
 
 /// The variable that lets `riff init` and the daemon take a riff that
 /// is not static, with the value `1` (01M510NWEFSN0NWQH8KQ6FA7DC). Only
@@ -126,12 +286,18 @@ pub fn takes_dynamic() -> bool {
 /// The ELF machine of x86-64.
 pub const EM_X86_64: u16 = 62;
 
+/// The ELF machine of arm64.
+pub const EM_AARCH64: u16 = 183;
+
 /// The ELF machine of this CPU, for [`check`].
 pub const MACHINE: u16 = if cfg!(target_arch = "aarch64") {
-    183
+    EM_AARCH64
 } else {
     EM_X86_64
 };
+
+/// The Mach-O CPU type of Apple silicon, `CPU_TYPE_ARM64`.
+pub const CPU_ARM64: u32 = 0x0100_000c;
 
 /// The longest wait for the first byte of a server, and between two
 /// reads of a file.
@@ -308,6 +474,56 @@ fn static_elf(elf: Elf, machine: u16) -> Result<(), String> {
     }
 }
 
+/// Checks that `bytes` is a 64-bit Mach-O executable for Apple silicon
+/// (01M6Z8FM2NRD0BSPW63603NN4Y). The error says why not.
+///
+/// ```
+/// use riff::release::{CPU_ARM64, check_mac};
+///
+/// let mut bytes = vec![0u8; 32];
+/// bytes[..4].copy_from_slice(&0xfeed_facf_u32.to_le_bytes());
+/// bytes[4..8].copy_from_slice(&CPU_ARM64.to_le_bytes());
+/// bytes[12..16].copy_from_slice(&2u32.to_le_bytes());
+/// assert_eq!(check_mac(&bytes), Ok(()));
+/// assert_eq!(check_mac(b"\x7fELF").unwrap_err(), "it is not a 64-bit Mach-O file");
+/// bytes[4..8].copy_from_slice(&0x0100_0007_u32.to_le_bytes());
+/// assert_eq!(
+///     check_mac(&bytes).unwrap_err(),
+///     "its code is for the Mach-O CPU 0x1000007, not 0x100000c"
+/// );
+/// ```
+pub fn check_mac(bytes: &[u8]) -> Result<(), String> {
+    const MH_MAGIC_64: u32 = 0xfeed_facf;
+    const MH_EXECUTE: u32 = 2;
+    let u32_at = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+    };
+    if u32_at(0) != Some(MH_MAGIC_64) {
+        return Err("it is not a 64-bit Mach-O file".into());
+    }
+    let short = || "its Mach-O header is too short".to_owned();
+    let cpu = u32_at(4).ok_or_else(short)?;
+    if cpu != CPU_ARM64 {
+        return Err(format!(
+            "its code is for the Mach-O CPU {cpu:#x}, not {CPU_ARM64:#x}"
+        ));
+    }
+    let kind = u32_at(12).ok_or_else(short)?;
+    if kind != MH_EXECUTE {
+        return Err(format!("its Mach-O type {kind} is not an executable"));
+    }
+    Ok(())
+}
+
+/// Checks that `bytes` is a file of the [`Kind`] `kind`: [`check`] or
+/// [`check_mac`].
+pub fn check_kind(bytes: &[u8], kind: Kind) -> Result<(), String> {
+    match kind {
+        Kind::Static(machine) => check(bytes, machine),
+        Kind::Mac => check_mac(bytes),
+    }
+}
+
 /// [`check`] of the file at `path`, for the ELF machine of this CPU
 /// ([`MACHINE`]). The error says why it is not a static binary.
 ///
@@ -326,6 +542,11 @@ fn static_elf(elf: Elf, machine: u16) -> Result<(), String> {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn check_file(path: &Path) -> Result<(), String> {
+    check_file_of(path, MACHINE)
+}
+
+/// [`check`] of the file at `path`, for the ELF machine `machine`.
+fn check_file_of(path: &Path, machine: u16) -> Result<(), String> {
     use std::io::Read;
     let cannot = |e: std::io::Error| format!("riff cannot read {}: {e}", path.display());
     // The headers are at the start of the file: riff reads the whole
@@ -338,7 +559,7 @@ pub fn check_file(path: &Path) -> Result<(), String> {
         Err(_) if head.len() as u64 == HEAD => elf(&std::fs::read(path).map_err(cannot)?)?,
         read => read?,
     };
-    static_elf(elf, MACHINE)
+    static_elf(elf, machine)
 }
 
 /// True when the riff of this process must be static, and is not
@@ -346,7 +567,9 @@ pub fn check_file(path: &Path) -> Result<(), String> {
 /// `bin` of cargo, and the `riff` or the `riff-server` there is not
 /// static. A binary that is not there needs nothing. A riff that runs
 /// from another folder, for example the build of a clone, needs
-/// nothing.
+/// nothing. On a Mac, `riff` and `riff-server` are Mach-O files: only
+/// the Linux riff of the sessions beside them must be static, and be
+/// there ([`session_riff`], 01M6Z8FM5F0Y7BQYNF8XS1B0T2).
 ///
 /// ```
 /// use riff::release::needs_static;
@@ -360,10 +583,18 @@ pub fn check_file(path: &Path) -> Result<(), String> {
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn needs_static(me: &Path, bin: &Path) -> bool {
+    needs_static_on(me, bin, cfg!(target_os = "macos"))
+}
+
+/// [`needs_static`] on a Mac when `mac`, else on Linux.
+fn needs_static_on(me: &Path, bin: &Path, mac: bool) -> bool {
     let riff = std::fs::canonicalize(bin.join("riff"));
     let me = std::fs::canonicalize(me);
     if !matches!((riff, me), (Ok(riff), Ok(me)) if riff == me) {
         return false;
+    }
+    if mac {
+        return check_file_of(&bin.join(asset("riff", MAC_SESSION)), EM_AARCH64).is_err();
     }
     BINARIES
         .iter()
@@ -505,59 +736,90 @@ impl Source {
 /// What [`install`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Installed {
-    /// It put the static binaries of the release in this folder.
+    /// It put the release files of this machine in this folder.
     Static(PathBuf),
-    /// The release has no static binaries for this machine. It changed
-    /// nothing.
+    /// The release has no files for this machine. It changed nothing.
     None,
 }
 
-/// Installs the static `riff` and `riff-server` of the release `tag` in
-/// the bin folder of cargo (01M4ZPJ0BAQZ6AN06FGXS5D4FP). It gives
-/// [`Installed::None`] when the machine has no [`TARGET`], or the release
-/// has no [`SUMS`] or no line for this machine
-/// (01M4ZPJ0DJ9FTYNPTBBVJCTB37). An error when a file does not come, or
-/// fails a check: then it changes nothing.
+/// Installs the release files of `tag` for this machine in the bin
+/// folder of cargo (01M4ZPJ0BAQZ6AN06FGXS5D4FP,
+/// 01M6Z8FM2NRD0BSPW63603NN4Y): [`install_from`] the place of
+/// [`RELEASES`] for [`TARGET`]. It gives [`Installed::None`] when the
+/// machine has no [`TARGET`].
 pub async fn install(tag: &str) -> Result<Installed> {
     let Some(target) = TARGET else {
         return Ok(Installed::None);
     };
     let source = Source::of(std::env::var(RELEASES).ok().as_deref());
+    install_from(&source, tag, target, bin_dir(|name| std::env::var_os(name))).await
+}
+
+/// Installs the [`files`] of `target` of the release `tag` at `source` in
+/// `dir`, the bin folder of cargo. It gives [`Installed::None`] when the
+/// release has no [`sums`] of `target`, or no line for a file of it
+/// (01M4ZPJ0DJ9FTYNPTBBVJCTB37). An error when `dir` is `None`, or when a
+/// file does not come, or fails a check: then it changes nothing.
+///
+/// ```
+/// use riff::release::{Installed, LINUX, MAC, Source, install_from};
+///
+/// let releases = tempfile::tempdir()?;
+/// std::fs::create_dir(releases.path().join("v1.5.0"))?;
+/// // The release has the files of Linux only.
+/// std::fs::write(releases.path().join("v1.5.0/SHA256SUMS"), "")?;
+/// let source = Source::Folder(releases.path().into());
+/// let bin = tempfile::tempdir()?;
+/// let run = |target| {
+///     let install = install_from(&source, "v1.5.0", target, Some(bin.path().into()));
+///     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(install)
+/// };
+/// assert_eq!(run(MAC).unwrap(), Installed::None);
+/// // SHA256SUMS has no line for riff.
+/// assert_eq!(run(LINUX).unwrap(), Installed::None);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub async fn install_from(
+    source: &Source,
+    tag: &str,
+    target: &str,
+    dir: Option<PathBuf>,
+) -> Result<Installed> {
     let client = client()?;
-    let Some(sums) = source.get(&client, tag, SUMS).await? else {
+    let sums_name = sums(target);
+    let Some(sums) = source.get(&client, tag, &sums_name).await? else {
         return Ok(Installed::None);
     };
     let sums = String::from_utf8_lossy(&sums).into_owned();
     let mut wanted = Vec::new();
-    for binary in BINARIES {
-        let name = asset(binary, target);
-        let Some(sum) = sum_of(&sums, &name) else {
+    for file in files(target) {
+        let Some(sum) = sum_of(&sums, &file.asset) else {
             return Ok(Installed::None);
         };
-        wanted.push((binary, name, sum));
+        wanted.push((file, sum));
     }
-    let dir = bin_dir(|name| std::env::var_os(name))
-        .context("cannot find the bin folder of cargo: set HOME or CARGO_HOME")?;
+    let dir = dir.context("cannot find the bin folder of cargo: set HOME or CARGO_HOME")?;
     std::fs::create_dir_all(&dir).with_context(|| format!("cannot make {}", dir.display()))?;
     println!("{}", crate::text::downloads(tag, target, &dir));
     // Each file passes each check before riff writes one.
     let mut good = Vec::new();
-    for (binary, name, sum) in wanted {
+    for (file, sum) in wanted {
+        let name = &file.asset;
         let bytes = source
-            .get(&client, tag, &name)
+            .get(&client, tag, name)
             .await?
             .with_context(|| format!("the release {tag} has no {name}"))?;
         let got = sha256(&bytes);
         if got != sum {
-            bail!("the SHA-256 of {name} of {tag} is {got}, not {sum} of {SUMS}");
+            bail!("the SHA-256 of {name} of {tag} is {got}, not {sum} of {sums_name}");
         }
-        check(&bytes, MACHINE).map_err(|why| anyhow::anyhow!("{name} of {tag}: {why}"))?;
-        good.push((binary, bytes));
+        check_kind(&bytes, file.kind).map_err(|why| anyhow::anyhow!("{name} of {tag}: {why}"))?;
+        good.push((file.name, bytes));
     }
     let mut news = Vec::new();
-    for (binary, bytes) in good {
-        match write_new(&dir, binary, &bytes) {
-            Ok(new) => news.push((new, dir.join(binary))),
+    for (name, bytes) in good {
+        match write_new(&dir, &name, &bytes) {
+            Ok(new) => news.push((new, dir.join(name))),
             Err(e) => {
                 for (new, _) in &news {
                     let _ = std::fs::remove_file(new);
@@ -580,13 +842,14 @@ pub async fn install(tag: &str) -> Result<Installed> {
 
 /// Checks that `bytes` are the static `riff` of the release `tag` for
 /// `target` (01M51M3ZKWQYBBPD97R0G9QAX0): their SHA-256 is the line of
-/// [`asset`] `riff` in [`SUMS`] of the release at `source`. A check
-/// build or a dev build has the version of a release, but another
-/// SHA-256. `Err` says why the bytes are not the release: no `target`,
-/// no [`SUMS`], no line, another SHA-256, or a read that failed.
+/// [`asset`] `riff` in [`sums`] of `target` of the release at `source`.
+/// A check build or a dev build has the version of a release, but
+/// another SHA-256. `Err` says why the bytes are not the release: no
+/// `target`, no file of sums, no line, another SHA-256, or a read that
+/// failed.
 ///
 /// ```
-/// use riff::release::{Source, asset, is_release, sha256};
+/// use riff::release::{MAC, Source, asset, is_release, sha256};
 ///
 /// let dir = tempfile::tempdir()?;
 /// let target = "x86_64-unknown-linux-musl";
@@ -607,6 +870,12 @@ pub async fn install(tag: &str) -> Result<Installed> {
 /// let none = check(b"the riff", "v1.4.0", Some(target)).unwrap_err();
 /// assert_eq!(none, "the release v1.4.0 has no SHA256SUMS");
 /// assert!(check(b"the riff", "v1.5.0", None).is_err());
+/// // A Mac reads the sums of a Mac.
+/// let mac = check(b"the riff", "v1.5.0", Some(MAC)).unwrap_err();
+/// assert_eq!(mac, "the release v1.5.0 has no SHA256SUMS-aarch64-apple-darwin");
+/// let line = format!("{}  {}\n", sha256(b"the riff"), asset("riff", MAC));
+/// std::fs::write(dir.path().join("v1.5.0/SHA256SUMS-aarch64-apple-darwin"), line)?;
+/// assert_eq!(check(b"the riff", "v1.5.0", Some(MAC)), Ok(()));
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub async fn is_release(
@@ -616,18 +885,19 @@ pub async fn is_release(
     target: Option<&str>,
 ) -> Result<(), String> {
     let target = target.ok_or(crate::text::NOT_RELEASE_TARGET)?;
-    let read = |e: anyhow::Error| crate::text::not_release_read(tag, &format!("{e:#}"));
+    let sums_name = sums(target);
+    let read = |e: anyhow::Error| crate::text::not_release_read(tag, &sums_name, &format!("{e:#}"));
     let sums = source
-        .get(&client().map_err(read)?, tag, SUMS)
+        .get(&client().map_err(read)?, tag, &sums_name)
         .await
         .map_err(read)?
-        .ok_or_else(|| crate::text::not_release_no_sums(tag))?;
+        .ok_or_else(|| crate::text::not_release_no_sums(tag, &sums_name))?;
     let name = asset("riff", target);
     let sum = sum_of(&String::from_utf8_lossy(&sums), &name)
-        .ok_or_else(|| crate::text::not_release_no_line(tag, &name))?;
+        .ok_or_else(|| crate::text::not_release_no_line(tag, &sums_name, &name))?;
     let got = sha256(bytes);
     if got != sum {
-        return Err(crate::text::not_release_sum(&got, tag, &name));
+        return Err(crate::text::not_release_sum(&got, tag, &sums_name, &name));
     }
     Ok(())
 }
@@ -877,5 +1147,287 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".riff.new-")
         );
+    }
+
+    /// A Mach-O header of `cpu` and the type `kind`, then `text`.
+    fn fake_mac(cpu: u32, kind: u32, text: &str) -> Vec<u8> {
+        let mut bytes = vec![0u8; 32];
+        bytes[..4].copy_from_slice(&0xfeed_facf_u32.to_le_bytes());
+        bytes[4..8].copy_from_slice(&cpu.to_le_bytes());
+        bytes[12..16].copy_from_slice(&kind.to_le_bytes());
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    /// A static ELF of `machine`, then `text`.
+    fn fake_static(machine: u16, text: &str) -> Vec<u8> {
+        let mut bytes = fake_elf(machine, &[1], "");
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    /// Puts the release `tag` in `dir`: each file of `files` by its name
+    /// in the release, and the file of sums `sums` with a line for each.
+    fn put(dir: &Path, tag: &str, sums: &str, files: &[(String, Vec<u8>)]) {
+        let dir = dir.join(tag);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut lines = String::new();
+        for (name, bytes) in files {
+            std::fs::write(dir.join(name), bytes).unwrap();
+            lines += &format!("{}  {name}\n", sha256(bytes));
+        }
+        std::fs::write(dir.join(sums), lines).unwrap();
+    }
+
+    /// The files of a good release of a Mac: `riff`, `riff-server` and
+    /// the Linux riff of the sessions.
+    fn mac_files() -> Vec<(String, Vec<u8>)> {
+        vec![
+            (asset("riff", MAC), fake_mac(CPU_ARM64, 2, "the Mac riff")),
+            (
+                asset("riff-server", MAC),
+                fake_mac(CPU_ARM64, 2, "the Mac riff-server"),
+            ),
+            (
+                asset("riff", MAC_SESSION),
+                fake_static(EM_AARCH64, "the Linux riff of a Mac"),
+            ),
+        ]
+    }
+
+    /// The files of a good release of Linux.
+    fn linux_files() -> Vec<(String, Vec<u8>)> {
+        vec![
+            (asset("riff", LINUX), fake_static(EM_X86_64, "the riff")),
+            (
+                asset("riff-server", LINUX),
+                fake_static(EM_X86_64, "the riff-server"),
+            ),
+        ]
+    }
+
+    /// The names of the files in `dir`, in order.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// 01M6Z8F7B3HVVNGQMX8GP1Z7Q1, 01M6Z8FM2NRD0BSPW63603NN4Y: on a Mac,
+    /// `riff update` takes the files of a Mac from their own file of
+    /// sums, and installs the Linux riff of the sessions beside `riff`.
+    #[tokio::test]
+    async fn a_mac_installs_the_files_of_a_mac_and_the_linux_riff_of_its_sessions() {
+        let releases = tempfile::tempdir().unwrap();
+        put(releases.path(), "v1.5.0", SUMS, &linux_files());
+        put(releases.path(), "v1.5.0", &sums(MAC), &mac_files());
+        let bin = tempfile::tempdir().unwrap();
+        std::fs::write(bin.path().join("riff"), "the old riff").unwrap();
+        let source = Source::Folder(releases.path().into());
+
+        let done = install_from(&source, "v1.5.0", MAC, Some(bin.path().into()))
+            .await
+            .unwrap();
+        assert_eq!(done, Installed::Static(bin.path().into()));
+        assert_eq!(
+            names(bin.path()),
+            ["riff", "riff-aarch64-unknown-linux-musl", "riff-server"],
+            "no new file stays"
+        );
+        for (name, bytes) in [
+            ("riff", fake_mac(CPU_ARM64, 2, "the Mac riff")),
+            ("riff-server", fake_mac(CPU_ARM64, 2, "the Mac riff-server")),
+            (
+                "riff-aarch64-unknown-linux-musl",
+                fake_static(EM_AARCH64, "the Linux riff of a Mac"),
+            ),
+        ] {
+            assert_eq!(
+                std::fs::read(bin.path().join(name)).unwrap(),
+                bytes,
+                "{name}"
+            );
+            let path = bin.path().join(name);
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o755, "{name}");
+        }
+        // The Linux riff of the sessions is the riff that the daemon on a
+        // Mac binds, and it passes the check of the daemon.
+        let riff = bin.path().join("riff");
+        assert!(!needs_static_on(&riff, bin.path(), true));
+        assert_eq!(
+            check_file_of(&bin.path().join(asset("riff", MAC_SESSION)), EM_AARCH64),
+            Ok(())
+        );
+    }
+
+    /// 01M6Z8F7B3HVVNGQMX8GP1Z7Q1: Linux stays the same. Also beside the
+    /// files of a Mac, `riff update` on Linux reads `SHA256SUMS`, and
+    /// takes `riff-x86_64-unknown-linux-musl` and
+    /// `riff-server-x86_64-unknown-linux-musl` as before.
+    #[tokio::test]
+    async fn linux_takes_the_same_files_as_before_beside_the_files_of_a_mac() {
+        assert_eq!(sums(LINUX), "SHA256SUMS");
+        let releases = tempfile::tempdir().unwrap();
+        put(releases.path(), "v1.5.0", SUMS, &linux_files());
+        put(releases.path(), "v1.5.0", &sums(MAC), &mac_files());
+        let bin = tempfile::tempdir().unwrap();
+        let source = Source::Folder(releases.path().into());
+
+        let done = install_from(&source, "v1.5.0", LINUX, Some(bin.path().into()))
+            .await
+            .unwrap();
+        assert_eq!(done, Installed::Static(bin.path().into()));
+        assert_eq!(names(bin.path()), ["riff", "riff-server"]);
+        assert_eq!(
+            std::fs::read(bin.path().join("riff")).unwrap(),
+            fake_static(EM_X86_64, "the riff")
+        );
+        assert_eq!(
+            std::fs::read(bin.path().join("riff-server")).unwrap(),
+            fake_static(EM_X86_64, "the riff-server")
+        );
+
+        // With the files of a Mac only, Linux has no files.
+        let mac_only = tempfile::tempdir().unwrap();
+        put(mac_only.path(), "v1.5.0", &sums(MAC), &mac_files());
+        let source = Source::Folder(mac_only.path().into());
+        let other = tempfile::tempdir().unwrap();
+        let done = install_from(&source, "v1.5.0", LINUX, Some(other.path().into()))
+            .await
+            .unwrap();
+        assert_eq!(done, Installed::None);
+        assert!(names(other.path()).is_empty());
+    }
+
+    /// 01M6Z8FM2NRD0BSPW63603NN4Y: a file of a Mac that fails a check:
+    /// `riff update` installs nothing, and names the reason. With no line
+    /// for a file of a Mac, it installs nothing, and cargo builds.
+    #[tokio::test]
+    async fn a_mac_installs_nothing_when_a_file_fails_a_check() {
+        let linux_riff = asset("riff", MAC_SESSION);
+        let mac_riff = asset("riff", MAC);
+        let cases: [(&str, Vec<u8>, String); 4] = [
+            (
+                "riff-aarch64-apple-darwin",
+                fake_static(EM_AARCH64, "an ELF"),
+                format!("{mac_riff} of v1.5.0: it is not a 64-bit Mach-O file"),
+            ),
+            (
+                "riff-aarch64-apple-darwin",
+                fake_mac(0x0100_0007, 2, "a riff of a Mac with Intel"),
+                format!(
+                    "{mac_riff} of v1.5.0: its code is for the Mach-O CPU 0x1000007, \
+                     not 0x100000c"
+                ),
+            ),
+            (
+                "riff-aarch64-unknown-linux-musl",
+                fake_elf(EM_AARCH64, &[3, 1], "/lib/ld-linux-aarch64.so.1"),
+                format!(
+                    "{linux_riff} of v1.5.0: it needs the shared libraries of \
+                     /lib/ld-linux-aarch64.so.1: it is not static"
+                ),
+            ),
+            (
+                "riff-aarch64-unknown-linux-musl",
+                fake_static(EM_X86_64, "a Linux riff of x86-64"),
+                format!("{linux_riff} of v1.5.0: its code is for the ELF machine 62, not 183"),
+            ),
+        ];
+        for (bad, bytes, reason) in cases {
+            let releases = tempfile::tempdir().unwrap();
+            let mut files = mac_files();
+            for (name, old) in &mut files {
+                if name == bad {
+                    *old = bytes.clone();
+                }
+            }
+            put(releases.path(), "v1.5.0", &sums(MAC), &files);
+            let bin = tempfile::tempdir().unwrap();
+            std::fs::write(bin.path().join("riff"), "the old riff").unwrap();
+            let source = Source::Folder(releases.path().into());
+            let error = install_from(&source, "v1.5.0", MAC, Some(bin.path().into()))
+                .await
+                .unwrap_err();
+            assert_eq!(format!("{error:#}"), reason);
+            assert_eq!(names(bin.path()), ["riff"], "{reason}");
+            assert_eq!(
+                std::fs::read(bin.path().join("riff")).unwrap(),
+                b"the old riff"
+            );
+        }
+
+        // A file of sums of a Mac with no line for the Linux riff.
+        let releases = tempfile::tempdir().unwrap();
+        let mut files = mac_files();
+        files.retain(|(name, _)| *name != linux_riff);
+        put(releases.path(), "v1.5.0", &sums(MAC), &files);
+        let source = Source::Folder(releases.path().into());
+        let bin = tempfile::tempdir().unwrap();
+        let done = install_from(&source, "v1.5.0", MAC, Some(bin.path().into()))
+            .await
+            .unwrap();
+        assert_eq!(done, Installed::None);
+        assert!(names(bin.path()).is_empty());
+    }
+
+    /// 01M6Z8FM5F0Y7BQYNF8XS1B0T2: on a Mac, the riff of the bin folder
+    /// needs the fix when the Linux riff of the sessions is missing or is
+    /// not static. Its `riff` and `riff-server` are Mach-O files.
+    #[test]
+    fn a_mac_needs_the_static_linux_riff_of_its_sessions() {
+        let bin = tempfile::tempdir().unwrap();
+        let riff = bin.path().join("riff");
+        std::fs::write(&riff, fake_mac(CPU_ARM64, 2, "riff")).unwrap();
+        let server = bin.path().join("riff-server");
+        std::fs::write(&server, fake_mac(CPU_ARM64, 2, "riff-server")).unwrap();
+        assert!(needs_static_on(&riff, bin.path(), true), "no Linux riff");
+        let linux = bin.path().join(asset("riff", MAC_SESSION));
+        std::fs::write(&linux, fake_elf(EM_AARCH64, &[3, 1], "/lib/ld.so")).unwrap();
+        assert!(needs_static_on(&riff, bin.path(), true), "not static");
+        std::fs::write(&linux, fake_static(EM_AARCH64, "")).unwrap();
+        assert!(!needs_static_on(&riff, bin.path(), true));
+        // On Linux, a Mach-O riff is not static.
+        assert!(needs_static_on(&riff, bin.path(), false));
+        // A riff of another folder needs nothing.
+        let other = tempfile::tempdir().unwrap();
+        std::fs::remove_file(&linux).unwrap();
+        assert!(!needs_static_on(
+            &other.path().join("riff"),
+            bin.path(),
+            true
+        ));
+    }
+
+    #[test]
+    fn a_mach_o_file_of_another_type_or_a_short_one_fails() {
+        assert_eq!(
+            check_mac(&fake_mac(CPU_ARM64, 6, "")).unwrap_err(),
+            "its Mach-O type 6 is not an executable"
+        );
+        let good = fake_mac(CPU_ARM64, 2, "");
+        assert_eq!(
+            check_mac(&good[..10]).unwrap_err(),
+            "its Mach-O header is too short"
+        );
+        for cut in 0..good.len() {
+            let _ = check_mac(&good[..cut]);
+        }
+        assert_eq!(check_kind(&good, Kind::Mac), Ok(()));
+        assert!(check_kind(&good, Kind::Static(EM_AARCH64)).is_err());
+    }
+
+    /// The test binary on a Mac is a Mach-O file for Apple silicon, as
+    /// the riff of a release of a Mac is.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn this_test_binary_on_a_mac_passes_the_check_of_a_mac() {
+        assert_eq!(TARGET, Some(MAC));
+        let me = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+        assert_eq!(check_mac(&me), Ok(()));
     }
 }

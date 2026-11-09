@@ -614,7 +614,8 @@ older libc.
 | Where riff comes from | What it is |
 |---|---|
 | `riff update` on Linux x86-64 | The static `riff` and `riff-server` of the GitHub release. riff checks the SHA-256 of each file against `SHA256SUMS` of the release, and that each one is static. Then it puts them in the bin folder of cargo (`~/.cargo/bin`). |
-| `riff update` on another machine, or for a release with no static binaries | A build with `cargo install --git` of the release tag, as before. |
+| `riff update` on a Mac with Apple silicon | The files of a Mac of the GitHub release: `riff` and `riff-server` for macOS, and the static Linux riff of the sessions. See [Update riff on a Mac](#update-riff-on-a-mac). |
+| `riff update` on another machine, or for a release with no files for the machine | A build with `cargo install --git` of the release tag, as before. |
 | `cargo install`, `just install` | A build that links the libc of your machine. It is not static: `riff init` fails its check of the riff binary, and the riff daemon starts no session with it. Run `riff update` to get the static riff. |
 | `just static` | The static `riff` and `riff-server` of your clone, in `target/static`. |
 
@@ -638,6 +639,70 @@ the same tree, so its jobs take those binaries, check them and add
 them to the release. They build nothing (see
 [Build once for each tree](#build-once-for-each-tree) and
 [Make a release](#make-a-release)).
+
+### The files of a Mac
+
+A release also has the files of a Mac with Apple silicon. riff has no
+files for a Mac with Intel.
+
+| File | What it is |
+|---|---|
+| `riff-aarch64-apple-darwin` | `riff` for macOS. |
+| `riff-server-aarch64-apple-darwin` | `riff-server` for macOS. |
+| `riff-aarch64-unknown-linux-musl` | The static Linux riff that the riff daemon on a Mac binds at `/opt/riff/riff` in each session: a binary of macOS does not run on Linux. |
+| `SHA256SUMS-aarch64-apple-darwin` | The SHA-256 of each file above. |
+
+For a release tag, three jobs of CI make them. `macOS riff` builds
+`riff` and `riff-server` of the profile `release` on a Mac with Apple
+silicon, with no cache. `Linux riff of a Mac` runs
+`deploy/static/build.sh release` on Linux for arm64, and checks that
+the riff is static. `macOS riff release` waits for the release, as
+`Static riff release` does, and adds the files to it, the sums last.
+
+These jobs have `continue-on-error`, and no job of Linux needs them.
+So a failed build for the Mac does not stop the files of Linux, the
+run of the tag or the deploy. `SHA256SUMS` and each file of Linux stay
+as they were. A Mac then finds no files of a Mac in the release, and
+`riff update` builds riff with `cargo`.
+
+```mermaid
+flowchart LR
+    T["tag vX.Y.Z"] --> M["macOS riff<br/>on macos-latest"]
+    T --> A["Linux riff of a Mac<br/>on ubuntu-24.04-arm"]
+    M --> P["macOS riff release"]
+    A --> P
+    P -- "riff-aarch64-apple-darwin, riff-server-…,<br/>riff-aarch64-unknown-linux-musl,<br/>then SHA256SUMS-aarch64-apple-darwin" --> R["GitHub release vX.Y.Z"]
+    T --> L["the jobs of Linux"]
+    L -- "riff-x86_64-unknown-linux-musl,<br/>riff-server-…, SHA256SUMS" --> R
+```
+
+riff has no Developer ID of Apple and no notarization. The linker signs
+each binary ad hoc. A file that `riff update` or `curl` downloads has
+no quarantine, so macOS runs it. A browser puts the quarantine on a
+file, and macOS then refuses it.
+
+### Update riff on a Mac
+
+On a Mac with Apple silicon, `riff update` downloads the files of a
+Mac of the release. It checks the SHA-256 of each file against
+`SHA256SUMS-aarch64-apple-darwin`, that `riff` and `riff-server` are
+binaries of macOS for Apple silicon, and that the Linux riff is
+static. Only then does it put `riff`, `riff-server` and
+`riff-aarch64-unknown-linux-musl` in `~/.cargo/bin`. When the release
+has no files of a Mac, `cargo` builds `riff` and `riff-server`, with no
+Linux riff. For the first install, see
+[Install riff on a Mac](start-a-riff.md#install-riff-on-a-mac).
+
+```sh
+riff update
+```
+
+To see that the Linux riff of the sessions is in place, run this. It
+names `ARM aarch64` and `static`:
+
+```sh
+file ~/.cargo/bin/riff-aarch64-unknown-linux-musl
+```
 
 ### Build the static riff
 
@@ -7197,6 +7262,8 @@ has the same tree. The job `Static riff` checks them. Then the job
 [How riff is built and installed](#how-riff-is-built-and-installed),
 and
 [See which job builds each binary of a release](#see-which-job-builds-each-binary-of-a-release)).
+The jobs of a Mac add the files of a Mac to the release, and stop
+nothing of Linux (see [The files of a Mac](#the-files-of-a-mac)).
 When both jobs pass, the job `Deploy` waits for the approval of the
 environment `production`. See
 [Deploy the shared server at the end of a wave](#deploy-the-shared-server-at-the-end-of-a-wave).
@@ -7228,8 +7295,10 @@ paused: run `riff release approve v3.3.0` again, or `riff resume
 
 ### See which job builds each binary of a release
 
-A release compiles its code two times, both in the job `Build` of the
-release pull request. Each other job takes the result:
+For Linux on x86-64, a release compiles its code two times, both in
+the job `Build` of the release pull request. Each other job of Linux
+takes the result. The jobs of a Mac build the files of a Mac for the
+tag:
 
 | Binary | Built by | Taken by |
 |---|---|---|
@@ -7237,6 +7306,8 @@ release pull request. Each other job takes the result:
 | The static `riff` and `riff-server`, profile `release`, no cache | `Build` of the release pull request, which has the label `release` | `Static riff` of the tag checks them. `Static riff release` puts them on the release. |
 | The image of `riff-server` | `deploy/cloud/image.sh` in the job `Deploy`, with no compile | The shared riff |
 | The `riff` that deploys | The release: the file `riff-x86_64-unknown-linux-musl` | The job `Deploy` |
+| `riff` and `riff-server` of a Mac, profile `release`, no cache | `macOS riff` of the tag | `macOS riff release` puts them on the release. |
+| The static Linux riff of a Mac | `Linux riff of a Mac` of the tag | `macOS riff release` puts it on the release. |
 
 When the tag has another tree than the release pull request, for
 example because a merge came between them, `Build` of the tag builds
@@ -7258,7 +7329,7 @@ TAG=v3.3.0
 . deploy/cloud/shared.env
 IMAGE="$CLOUD_REGION-docker.pkg.dev/$CLOUD_PROJECT/$CLOUD_REPOSITORY/riff-server:$TAG"
 gcloud auth configure-docker "$CLOUD_REGION-docker.pkg.dev" --quiet
-gh release download "$TAG" --pattern 'riff-server-*' --pattern SHA256SUMS
+gh release download "$TAG" --pattern riff-server-x86_64-unknown-linux-musl --pattern SHA256SUMS
 id=$(docker create "$IMAGE")
 docker cp "$id:/riff-server" riff-server-in-image
 docker rm "$id"

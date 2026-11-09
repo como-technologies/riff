@@ -4228,9 +4228,10 @@
   fails. The N parts together run each test. The Gate runs the same
   split from the archive of `Build`, and runs the doc tests in `Build`
   (01M6QQ1P5YCT0JX90X5FCKM4W1).
-- **01M513W2RERJES76ZXKKHCV0DP** Each job of the CI workflow but `macOS`
-  runs on the runner that the repository variable `RIFF_RUNNER` names.
-  With no `RIFF_RUNNER`, the runner is `ubuntu-latest`.
+- **01M513W2RERJES76ZXKKHCV0DP** Each job of the CI workflow but
+  `macOS`, `macOS riff` and `Linux riff of a Mac` runs on the runner
+  that the repository variable `RIFF_RUNNER` names. With no
+  `RIFF_RUNNER`, the runner is `ubuntu-latest`.
 - **01M4A4T67MPF0BCNX7AFZRDA8J** The dev and test profiles of the
   workspace keep only the line tables for the code of the workspace,
   and no debug info for the dependencies. A backtrace still names the
@@ -4312,14 +4313,15 @@
   server end when the server ends. A later server at the same URL, for
   example on a port that the OS gave again, gets no old sign-in of an
   earlier test. A machine at an open riff-server holds no sign-in.
-- **01M6QQ1NXY0CXMZEEEP413W4PK** For Linux, CI compiles the code of a
-  tree two times: one test build and one release build. Both run in the
-  job `Build`. The test build makes the test binaries of the workspace
-  in the session image. The release build makes the static `riff` and
-  `riff-server`. The job `Build` also runs `fmt-check`, `lint`, `doc`,
-  `book`, `reqs`, `wrap`, `versions` and the doc tests on the build
-  folder of the test build. Each other job of the CI workflow but
-  `macOS` compiles no crate of the workspace.
+- **01M6QQ1NXY0CXMZEEEP413W4PK** For Linux on x86-64, CI compiles the
+  code of a tree two times: one test build and one release build. Both
+  run in the job `Build`. The test build makes the test binaries of the
+  workspace in the session image. The release build makes the static
+  `riff` and `riff-server`. The job `Build` also runs `fmt-check`,
+  `lint`, `doc`, `book`, `reqs`, `wrap`, `versions` and the doc tests on
+  the build folder of the test build. Each other job of the CI workflow
+  but `macOS`, `macOS riff` and `Linux riff of a Mac` compiles no crate
+  of the workspace.
 - **01M6QQ1P0GH9AGCDA5N8EMEFGF** `Build` keeps its binaries as artifacts
   that the git tree of the commit names, `git rev-parse HEAD^{tree}`.
   The artifact `tests-TREE` holds the test binaries and the archive
@@ -4732,13 +4734,15 @@ of this part when they merge.
 
 ### Ship
 
-- **01M4Z60B7H67YSP22NMGT3DM7X** riff ships as one static binary, from a
-  GitHub release or with `cargo install`. riff has no image of its own.
+- **01M4Z60B7H67YSP22NMGT3DM7X** On Linux, riff ships as one static
+  binary, from a GitHub release or with `cargo install`. riff has no
+  image of its own.
 - **01M4ZPJ04D9MJHNPAV0WN1KCES** The static `riff` and `riff-server` are
-  built for `x86_64-unknown-linux-musl` in the image
+  built for the musl target of the CPU of the machine, in the image
   `rust:CHANNEL-alpine`, where CHANNEL is the channel of
-  `rust-toolchain.toml`. `just static` builds them with podman, else
-  docker, into `target/static`. The ELF of each has no interpreter.
+  `rust-toolchain.toml`: `x86_64-unknown-linux-musl` on x86-64. `just
+  static` builds them with podman, else docker, into `target/static`.
+  The ELF of each has no interpreter.
 - **01M4ZPJ06QYVA23N9SQ45T8WQC** The CI job `Build` builds the static
   binaries of each pull request and each push
   (01M6QQ1NXY0CXMZEEEP413W4PK). The CI job "Static riff" fails when an
@@ -4791,14 +4795,14 @@ of this part when they merge.
 - **01M4ZPJ0DJ9FTYNPTBBVJCTB37** When the release has no `SHA256SUMS`,
   or no line for the binaries of this machine, `riff update` builds the
   release with `cargo install`, and says so.
-- **01M510NWBNC20GXFRMHPW12TW9** With `update.auto = true`, when the
-  `riff` of the bin folder of cargo gets a reply from a `riff-server` of
-  its own build, and that `riff` or the `riff-server` beside it is not
-  static, it starts `riff update --tag vX.Y.Z` of its own release in the
-  background. So `riff update` puts the static files of the release in
-  place. This fix gets one try for each release, apart from the try of
-  the update to that release. A riff that runs from another folder
-  starts no fix.
+- **01M510NWBNC20GXFRMHPW12TW9** On Linux, with `update.auto = true`,
+  when the `riff` of the bin folder of cargo gets a reply from a
+  `riff-server` of its own build, and that `riff` or the `riff-server`
+  beside it is not static, it starts `riff update --tag vX.Y.Z` of its
+  own release in the background. So `riff update` puts the static files
+  of the release in place. This fix gets one try for each release, apart
+  from the try of the update to that release. A riff that runs from
+  another folder starts no fix.
 - **01M4ZPJ0FXTC78Z8GG2QA65167** `just real-session` runs the static
   riff of the tree, so its daemon can run `riff relay` in the session
   image.
@@ -4846,9 +4850,10 @@ of this part when they merge.
 - **01M4Z7SPE5Q02RQWW5VZBEK2G3** The packages `riff-session`,
   `riff-base` and `riff-rust` on ghcr.io are public, as the repository
   is. So podman pulls each image with no sign-in.
-- **01M4Z60B7KEV0H161RBZ1SDRY2** riff binds its own binary into each
-  session with no write, and runs it as the entrypoint: `riff relay`. So
-  the riff code in a session is always the riff code of the host.
+- **01M4Z60B7KEV0H161RBZ1SDRY2** riff binds a riff binary into each
+  session with no write, and runs it as the entrypoint: `riff relay`. On
+  Linux, it is its own binary, so the riff code in a session is always
+  the riff code of the host.
 - **01M4Z60B7K13MSYM8ZY20WN6NV** The first run of `riff` checks for
   podman, installs the user unit of the daemon and pulls the image of
   the repository.
@@ -4988,6 +4993,50 @@ of this part when they merge.
 - **01M6WPMX3RXXPX2AZKTPM18BXP** riff refuses a `riff.toml` whose
   `[session.env]` names `GH_CONFIG_DIR`, as for the other variables that
   riff sets (01M5SMW2B4GMJ3V6BCX1KGC1ZY).
+- **01M6Z8F7B3HVVNGQMX8GP1Z7Q1** A release has the files of a Mac with
+  Apple silicon: `riff-aarch64-apple-darwin` and
+  `riff-server-aarch64-apple-darwin` for macOS, and
+  `riff-aarch64-unknown-linux-musl`, the static Linux riff of the
+  sessions of a Mac. Their SHA-256 sums are in
+  `SHA256SUMS-aarch64-apple-darwin`. A release has no file for a Mac
+  with Intel. `SHA256SUMS` and each file of Linux keep their names and
+  their content. Supersedes 01M4Z60B7H67YSP22NMGT3DM7X in part.
+- **01M6Z8FKZRJZ4NY60PQAH9SMHV** For a release tag, the CI job `macOS
+  riff` builds `riff` and `riff-server` of the profile `release` on the
+  runner `macos-latest`, with no cache. The job `Linux riff of a Mac`
+  runs `deploy/static/build.sh release` on the runner
+  `ubuntu-24.04-arm`: the static riff for `aarch64-unknown-linux-musl`.
+  It fails when the ELF of that riff has an interpreter, or when `riff
+  --version` does not run on the runner. Then the job `macOS riff
+  release` writes `SHA256SUMS-aarch64-apple-darwin`, waits up to 60
+  minutes for the release, and adds the files to it, the sums last.
+  These three jobs have `continue-on-error`, and no other job needs
+  them. So a failed build for the Mac does not stop the files, the run
+  of the tag or the deploy of Linux. Supersedes
+  01M513W2RERJES76ZXKKHCV0DP, 01M6QQ1NXY0CXMZEEEP413W4PK and
+  01M4ZPJ04D9MJHNPAV0WN1KCES in part.
+- **01M6Z8FM2NRD0BSPW63603NN4Y** On a Mac with Apple silicon, `riff
+  update` downloads the files of a Mac from the GitHub release of the
+  tag. It checks the SHA-256 of each file against
+  `SHA256SUMS-aarch64-apple-darwin`, that `riff` and `riff-server` are
+  Mach-O executables for Apple silicon, and that the Linux riff is a
+  static ELF for arm64. Then it installs them as
+  01M4ZPJ0BAQZ6AN06FGXS5D4FP says: `riff`, `riff-server` and
+  `riff-aarch64-unknown-linux-musl` in the bin folder of cargo. When the
+  release has no `SHA256SUMS-aarch64-apple-darwin`, or no line for a
+  file of a Mac, `riff update` builds the release with `cargo install`,
+  and says so.
+- **01M6Z8FM5F0Y7BQYNF8XS1B0T2** On a Mac, the daemon binds the file
+  `riff-aarch64-unknown-linux-musl` beside its own binary at
+  `/opt/riff/riff` in each session, in place of its own binary: a Mach-O
+  file does not run on Linux. The check of 01M510NW8YEVMQKD6RWJPW38N3
+  reads that file. On a Mac, the fix of 01M510NWBNC20GXFRMHPW12TW9
+  starts when that file is missing or is not static. Supersedes
+  01M4Z60B7KEV0H161RBZ1SDRY2 and 01M510NWBNC20GXFRMHPW12TW9 in part.
+- **01M6Z8FM8B8D9NZT6ZYPPWD6TC** riff has no Developer ID of Apple and
+  no notarization. The linker signs each binary for macOS ad hoc. A file
+  that `riff update` or `curl` downloads has no quarantine, so macOS
+  runs it. The book installs riff on a Mac with `curl`.
 
 ### Sessions
 

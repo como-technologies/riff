@@ -786,8 +786,9 @@ flowchart TD
 | 3. The checks of the machine: podman, the init of podman, `/etc/subuid`, `/etc/subgid`, cgroup v2 | the check of `riff init` passes | never changes them: the fix needs you, for example with `sudo` |
 
 - Only a release does a step: a `riff` whose SHA-256 is in
-  `SHA256SUMS` of the GitHub release of its version. A check build or
-  a dev build changes nothing. With `RIFF_RELEASES` set, the daemon
+  `SHA256SUMS` of the GitHub release of its version, or on a Mac in
+  `SHA256SUMS-aarch64-apple-darwin`. A check build or a dev build
+  changes nothing. With `RIFF_RELEASES` set, the daemon
   changes nothing.
 - The daemon logs one line for its gate and one line for each step.
   See them with `journalctl --user -u riff.service`.

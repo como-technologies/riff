@@ -958,3 +958,93 @@ async fn update_builds_with_cargo_when_the_release_has_no_static_riff() {
         }
     }
 }
+
+/// 01M6Z8FM2NRD0BSPW63603NN4Y: on a Mac with Apple silicon, `riff
+/// update` puts the files of a Mac of the release in the bin folder of
+/// cargo, from a web server or from a folder: `riff` and `riff-server`
+/// for macOS, and the Linux riff of the sessions. cargo does not run.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[tokio::test]
+async fn update_on_a_mac_downloads_the_files_of_a_mac() {
+    use riff::release::{CPU_ARM64, EM_AARCH64, MAC, MAC_SESSION, asset, sha256, sums};
+    // A Mach-O executable for Apple silicon, then `text`.
+    let mac = |text: &str| {
+        let mut bytes = vec![0u8; 32];
+        bytes[..4].copy_from_slice(&0xfeed_facf_u32.to_le_bytes());
+        bytes[4..8].copy_from_slice(&CPU_ARM64.to_le_bytes());
+        bytes[12..16].copy_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    };
+    // A static ELF of arm64 with no program header, then `text`.
+    let linux = |text: &str| {
+        let mut bytes = vec![0u8; 64];
+        bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        bytes[16..18].copy_from_slice(&2u16.to_le_bytes());
+        bytes[18..20].copy_from_slice(&EM_AARCH64.to_le_bytes());
+        bytes[32..40].copy_from_slice(&64u64.to_le_bytes());
+        bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    };
+    let files = [
+        ("riff", asset("riff", MAC), mac("the new riff")),
+        (
+            "riff-server",
+            asset("riff-server", MAC),
+            mac("the new riff-server"),
+        ),
+        (
+            "riff-aarch64-unknown-linux-musl",
+            asset("riff", MAC_SESSION),
+            linux("the Linux riff"),
+        ),
+    ];
+    let releases = tempfile::tempdir().unwrap();
+    let tag = releases.path().join("v0.9.0");
+    std::fs::create_dir_all(&tag).unwrap();
+    let mut lines = String::new();
+    for (_, name, bytes) in &files {
+        std::fs::write(tag.join(name), bytes).unwrap();
+        lines += &format!("{}  {name}\n", sha256(bytes));
+    }
+    std::fs::write(tag.join(sums(MAC)), lines).unwrap();
+    let web = release_server(releases.path()).await;
+    for place in [web.as_str(), releases.path().to_str().unwrap()] {
+        let bin = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("riff"), "the old riff").unwrap();
+        let mut cmd = update(bin.path(), 0, "http://127.0.0.1:9");
+        cmd.args(["--tag", "v0.9.0"])
+            .env("RIFF_RELEASES", place)
+            .env("CARGO_INSTALL_ROOT", root.path());
+
+        let out = run(cmd).await;
+        assert!(out.status.success(), "{place}: {}", text(&out.stderr));
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["riff", "riff-aarch64-unknown-linux-musl", "riff-server"],
+            "{place}"
+        );
+        for (name, _, bytes) in &files {
+            assert_eq!(&std::fs::read(dir.join(name)).unwrap(), bytes, "{name}");
+        }
+        assert_eq!(log(bin.path(), "cargo"), "", "{place}");
+        let stdout = text(&out.stdout);
+        assert!(
+            stdout.contains(&format!(
+                "riff downloads riff, riff-server and the Linux riff of the sessions of v0.9.0 \
+                 (aarch64-apple-darwin) into {}.\n",
+                dir.display()
+            )),
+            "{stdout}"
+        );
+    }
+}
