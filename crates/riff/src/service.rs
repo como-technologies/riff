@@ -2,12 +2,13 @@
 //! installs and removes the user unit of the daemon, and shows its
 //! state. On Linux, it is systemd
 //! ([`Systemd`](crate::platform::systemd::Systemd)), through
-//! [`crate::platform::service_manager`] (01M6YQDWT387EV7Y7XMT2G6YVM). macOS
-//! has none: the daemon needs Linux.
+//! [`crate::platform::service_manager`] (01M6YQDWT387EV7Y7XMT2G6YVM). On
+//! macOS, it is launchd ([`Launchd`](crate::platform::launchd::Launchd),
+//! 01M6Z49H6CHSPV0FJZWY2MYHEM): the steps of its agent are there.
 //!
 //! # Design
 //!
-//! `riff daemon install` writes the unit [`UNIT`] in the folder of the
+//! On Linux, `riff daemon install` writes the unit [`UNIT`] in the folder of the
 //! user units of systemd: `XDG_CONFIG_HOME/systemd/user`, else
 //! `HOME/.config/systemd/user` (01M4ZDTVK74596M0ZA46N51NKV). Then it
 //! runs these steps:
@@ -268,6 +269,31 @@ pub trait ServiceManager {
     /// The process ID of the daemon that the unit runs, or `None` when
     /// it runs none.
     fn main_pid(&self) -> Result<Option<u32>>;
+
+    /// The text of the unit file that the manager writes for `unit`. The
+    /// default is the unit of systemd, [`Unit::text`].
+    fn text(&self, unit: &Unit) -> Result<String> {
+        unit.text()
+    }
+
+    /// The unit in `text`, the text of a unit file that
+    /// [`ServiceManager::text`] wrote, or `None`. The default is the unit
+    /// of systemd, [`Unit::parse`].
+    fn unit_in(&self, text: &str) -> Option<Unit> {
+        Unit::parse(text)
+    }
+
+    /// The name of the unit for a person. The default is the unit of
+    /// systemd, [`UNIT`].
+    fn unit_name(&self) -> String {
+        UNIT.to_owned()
+    }
+
+    /// The command that shows the log of the daemon. The default is the
+    /// journal of systemd.
+    fn log_command(&self) -> String {
+        "journalctl --user -u riff".to_owned()
+    }
 }
 
 #[cfg(test)]

@@ -259,8 +259,11 @@ pub(super) fn open_files(pid: u32) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-pub(super) fn socket_path(folder: &File, _dir: &Path, name: &str) -> PathBuf {
-    PathBuf::from(format!("{PROC}/self/fd/{}/{name}", folder.as_raw_fd()))
+pub(super) fn socket_path(folder: &File, _dir: &Path, name: &str) -> std::io::Result<PathBuf> {
+    Ok(PathBuf::from(format!(
+        "{PROC}/self/fd/{}/{name}",
+        folder.as_raw_fd()
+    )))
 }
 
 pub(super) fn memory() -> Option<Memory> {

@@ -71,8 +71,8 @@ flowchart LR
     D -- "verify, waves" --> G
 ```
 
-- The daemon is a systemd user unit. It owns the sessions of the
-  machine.
+- The daemon is a systemd user unit, and a launchd agent on a Mac. It
+  owns the sessions of the machine. A Mac runs no session yet.
 - Each work item is one session in one rootless podman container. A
   verify is an item too. The session starts, does its item and ends.
 - The rollout runs the wave of the daemon. The lead asks the daemon

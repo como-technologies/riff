@@ -704,8 +704,9 @@ enum Command {
     ///
     /// The riff daemon owns the containers of riff run on this machine.
     /// With no subcommand, it runs the daemon in this terminal, as the
-    /// systemd user unit riff.service does, until Ctrl-C or SIGTERM. A
-    /// stop of the daemon stops no container.
+    /// systemd user unit riff.service does on Linux and the launchd agent
+    /// io.github.como-technologies.riff on a Mac, until Ctrl-C or SIGTERM.
+    /// A stop of the daemon stops no container. A Mac runs no session yet.
     Daemon {
         #[command(subcommand)]
         command: Option<DaemonCommand>,
@@ -1337,20 +1338,23 @@ enum WaveCommand {
 
 #[derive(Subcommand)]
 enum DaemonCommand {
-    /// Install and start the systemd user unit of the riff daemon
+    /// Install and start the unit of the riff daemon
     ///
-    /// It writes riff.service in ~/.config/systemd/user, with the path
-    /// of this riff and the PATH of this shell. It enables the unit and
-    /// starts it again, so a new riff takes effect. It waits until the
-    /// daemon answers. With RIFF_HOME or RIFF_DATA set, it installs
-    /// nothing.
+    /// On Linux, it writes riff.service in ~/.config/systemd/user, with
+    /// the path of this riff and the PATH of this shell. It enables the
+    /// unit and starts it again, so a new riff takes effect. On a Mac, it
+    /// writes the launchd agent io.github.como-technologies.riff in
+    /// ~/Library/LaunchAgents, and loads it again with launchctl. It
+    /// waits until the daemon answers. With RIFF_HOME or RIFF_DATA set,
+    /// it installs nothing.
     Install,
-    /// Stop the riff daemon, and remove its systemd user unit
+    /// Stop the riff daemon, and remove its unit
     ///
-    /// It disables and stops riff.service, deletes the unit file that
-    /// riff daemon install wrote, and reloads systemd. Each container
-    /// runs on, and the folder of the daemon stays. With RIFF_HOME or
-    /// RIFF_DATA set, it removes nothing.
+    /// On Linux, it disables and stops riff.service, deletes the unit
+    /// file that riff daemon install wrote, and reloads systemd. On a
+    /// Mac, it unloads the launchd agent, and deletes its plist. Each
+    /// container runs on, and the folder of the daemon stays. With
+    /// RIFF_HOME or RIFF_DATA set, it removes nothing.
     Uninstall,
     /// Show the riff daemon and its sessions
     ///
@@ -1359,7 +1363,7 @@ enum DaemonCommand {
     /// and each wave. Last it shows the calls of gh of the last hour,
     /// with their GraphQL points, and the points that GitHub says are
     /// left. It exits with 1 when no daemon answers, and shows the state
-    /// of the unit riff.service.
+    /// of the unit: riff.service on Linux, the launchd agent on a Mac.
     Status {
         /// Ask the riff daemon of HOST, through riff-server. riff waits
         /// for its reply. Only you in a terminal and your lead in this

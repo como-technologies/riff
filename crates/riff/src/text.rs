@@ -5938,7 +5938,8 @@ pub fn no_program(program: &str) -> String {
 }
 
 /// `riff run` on a host that is not Linux (01M4ZBGK7SFEXE1AGH6Z0YQHJP).
-pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff starts no session on this OS.";
+pub const RUN_LINUX_ONLY: &str = "riff run needs Linux: riff starts no session on this OS. The \
+     sessions on a Mac come with #1649.";
 
 /// The daemon pulls the image of the session, for `riff run` or
 /// `riff init`.
@@ -6522,9 +6523,28 @@ pub fn daemon_silent(limit: std::time::Duration) -> String {
     format!("The riff daemon gave no answer in {} s.", limit.as_secs())
 }
 
-/// `riff daemon`, and each command that needs the daemon, on a host that
-/// is not Linux (01M6YPB5B42FZP7GCDAVTN4PWY).
-pub const DAEMON_LINUX_ONLY: &str = "riff daemon needs Linux: riff has no daemon on this OS.";
+/// Each step of a session of the daemon on macOS
+/// ([`crate::runtime::NoSessions`], 01M6Z49R87D50VD4RS0BP641MM).
+pub const SESSIONS_ON_A_MAC: &str =
+    "riff starts no session on macOS yet: the sessions on a Mac come with #1649.";
+
+/// A path of a Unix socket with `bytes` bytes, more than macOS takes: at
+/// most `most` bytes (01M6Z49RD4F6EX4K9FF2Z0CET9).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::socket_too_long(std::path::Path::new("/a/riff.sock"), 120, 103),
+///     "The path of the socket /a/riff.sock has 120 bytes, and macOS takes at most 103. Use a \
+///      shorter folder."
+/// );
+/// ```
+pub fn socket_too_long(path: &Path, bytes: usize, most: usize) -> String {
+    format!(
+        "The path of the socket {} has {bytes} bytes, and macOS takes at most {most}. Use a \
+         shorter folder.",
+        path.display()
+    )
+}
 
 /// A second daemon on the control socket of a daemon that runs.
 pub fn daemon_runs_already(pid: u32, socket: &Path) -> String {
@@ -8017,13 +8037,19 @@ pub fn daemon_runs(status: &crate::daemon::Status) -> String {
     )
 }
 
-/// The state of the unit of the daemon, when no daemon answers.
-pub fn daemon_unit_state(state: &str) -> String {
-    format!(
-        "The unit {} is {state}. Start it: riff daemon install. See its log: journalctl --user \
-         -u riff",
-        crate::service::UNIT
-    )
+/// The state `state` of the unit `unit` of the daemon, when no daemon
+/// answers, with the command `log` that shows its log
+/// (01M6Z4A521PMRBK1R1E7NNADCQ).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_unit_state("riff.service", "inactive", "journalctl --user -u riff"),
+///     "The unit riff.service is inactive. Start it: riff daemon install. See its log: \
+///      journalctl --user -u riff"
+/// );
+/// ```
+pub fn daemon_unit_state(unit: &str, state: &str, log: &str) -> String {
+    format!("The unit {unit} is {state}. Start it: riff daemon install. See its log: {log}")
 }
 
 /// `riff daemon install` or `riff init` with `RIFF_HOME` or `RIFF_DATA`
@@ -8168,13 +8194,46 @@ pub fn unit_unreadable(path: &Path) -> String {
     )
 }
 
-/// The unit runs, but no daemon answers.
-pub fn daemon_no_answer(state: &str, socket: &Path) -> String {
+/// The unit `unit` runs, but no daemon answers on `socket`. `log` is the
+/// command that shows its log.
+pub fn daemon_no_answer(unit: &str, state: &str, socket: &Path, log: &str) -> String {
     format!(
-        "The unit {} is {state}, but no riff daemon answers on {}. See its log: journalctl \
-         --user -u riff",
-        crate::service::UNIT,
+        "The unit {unit} is {state}, but no riff daemon answers on {}. See its log: {log}",
         socket.display()
+    )
+}
+
+/// riff wrote the plist `path` of the agent of the daemon, but finds no
+/// `ProgramArguments` of `riff daemon` in it now.
+///
+/// ```
+/// let line = riff::text::agent_unreadable(std::path::Path::new("/h/a.plist"));
+/// assert!(line.starts_with("riff cannot read the agent /h/a.plist: "), "{line}");
+/// ```
+pub fn agent_unreadable(path: &Path) -> String {
+    format!(
+        "riff cannot read the agent {}: it has no ProgramArguments of riff daemon. Install it \
+         again: riff daemon install",
+        path.display()
+    )
+}
+
+/// A plist at `path` of the agent `target` that riff did not write
+/// (01M6Z4A4ZHF2ZBBZ1RC1ZHVSEH).
+///
+/// ```
+/// let line = riff::text::agent_not_of_riff(std::path::Path::new("/h/a.plist"), "gui/501/a");
+/// assert_eq!(
+///     line,
+///     "riff did not write the agent /h/a.plist, so riff keeps it. Remove it yourself: \
+///      launchctl bootout gui/501/a"
+/// );
+/// ```
+pub fn agent_not_of_riff(path: &Path, target: &str) -> String {
+    format!(
+        "riff did not write the agent {}, so riff keeps it. Remove it yourself: launchctl \
+         bootout {target}",
+        path.display()
     )
 }
 

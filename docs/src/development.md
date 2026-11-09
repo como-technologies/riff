@@ -393,8 +393,10 @@ just test-macos
 ```
 
 It needs no podman and no session image. A test that needs Linux, for
-example a test of podman, of systemd or of the daemon, does not run on
-macOS. On macOS, riff has no daemon and starts no session.
+example a test of podman, of systemd or of the daemon with its
+sessions, does not run on macOS. On macOS, the daemon runs under
+launchd, and starts no session yet. A fake `launchctl` stands in for
+launchd in the tests.
 
 ### Choose the runner of CI
 
@@ -1066,9 +1068,12 @@ riff usage 12
 
 ## Start the riff daemon
 
-The riff daemon owns the containers of `riff run` on your machine.
-The systemd user unit `riff.service` runs it. `riff run` asks the
-daemon to run each session. See
+The riff daemon owns the containers of `riff run` on your machine. On
+Linux, the systemd user unit `riff.service` runs it. On a Mac, the
+launchd agent `io.github.como-technologies.riff` runs it, and it starts
+no session yet (see
+[Install the daemon on a Mac](#install-the-daemon-on-a-mac)). `riff run`
+asks the daemon to run each session. See
 [Sessions in containers](how-it-works.md#sessions-in-containers) for
 the picture.
 
@@ -1123,6 +1128,51 @@ and starts it. The unit gets the `PATH` of your shell, so the daemon
 finds the same `podman`. After each update of riff, run the command
 again: it starts the daemon again with the new riff.
 
+#### Install the daemon on a Mac
+
+On a Mac with Apple silicon, launchd runs the daemon. Run these
+commands in Terminal, as the person who is signed in to the Mac:
+
+```sh
+riff daemon install
+riff daemon status
+tail -f ~/Library/Logs/riff/daemon.log
+```
+
+`riff daemon install` writes the agent
+`~/Library/LaunchAgents/io.github.como-technologies.riff.plist`. Then
+it loads the agent in the domain `gui/UID` of your login with
+`launchctl bootstrap`, and launchd starts the daemon. launchd starts
+it again at each login, and after a failure. The agent gets the
+`PATH` of your shell. The daemon writes its log to
+`~/Library/Logs/riff/daemon.log`.
+
+```mermaid
+flowchart LR
+    I["riff daemon install"] -- "writes" --> P["the plist in<br/>~/Library/LaunchAgents"]
+    I -- "launchctl bootstrap gui/UID" --> L["launchd"]
+    L -- "RunAtLoad, and at each login" --> D["riff daemon"]
+    D -- "stdout and stderr" --> G["~/Library/Logs/riff/daemon.log"]
+    D -. "a start of a session" .-> N["an error: no session on a Mac yet"]
+```
+
+riff keeps its files in the same folders as on Linux: the daemon is in
+`~/.local/share/riff/daemon`. The path of a socket on macOS has at most
+103 bytes. When a folder is too long for a socket, the daemon stops,
+and its error names the path and the limit.
+
+The daemon on a Mac starts no session yet. Each start of a session
+fails, and says that the sessions on a Mac come with
+[#1649](https://github.com/como-technologies/riff/issues/1649).
+`riff daemon install`, `riff daemon status`, `riff daemon restart` and
+`riff daemon uninstall` work.
+
+To see the agent as launchd has it:
+
+```sh
+launchctl print gui/$(id -u)/io.github.como-technologies.riff
+```
+
 ### See the daemon
 
 ```sh
@@ -1133,10 +1183,18 @@ It shows the process ID, the build and the sessions of the daemon.
 Just after a start or a restart, the daemon does not listen yet: while
 systemd says that the unit is active, riff tries again for 5 s. When
 no daemon answers, it shows the state of the unit, and exits with 1.
-To see the log of the daemon:
+On a Mac, the state comes from `launchctl print`, in the same words:
+`active`, `activating`, `failed` or `inactive`. To see the log of the
+daemon on Linux:
 
 ```sh
 journalctl --user -u riff -f
+```
+
+On a Mac:
+
+```sh
+tail -f ~/Library/Logs/riff/daemon.log
 ```
 
 ### See the riff processes of this host
@@ -1205,6 +1263,18 @@ and exits with 1. Start the daemon with `riff daemon install`.
 systemctl --user restart riff
 systemctl --user stop riff
 ```
+
+On a Mac, the first command starts the daemon again, and the second
+stops it until `riff daemon install` or your next login:
+
+```sh
+launchctl kickstart -k gui/$(id -u)/io.github.como-technologies.riff
+launchctl bootout gui/$(id -u)/io.github.como-technologies.riff
+```
+
+launchd reads the plist only when it loads the agent. So a new start
+for a new riff, for example by `riff daemon restart`, unloads and loads
+the agent: `launchctl bootout`, then `launchctl bootstrap`.
 
 A stop or a restart of the daemon stops no container. conmon, the
 monitor of podman, holds each container. While the daemon is away,
@@ -1287,6 +1357,10 @@ runs on: conmon holds it. The folder of the daemon,
 `~/.local/share/riff/daemon`, stays. When no unit is
 installed, the command says so. To use the daemon again, run
 `riff daemon install`.
+
+On a Mac, the command unloads the agent with `launchctl bootout`, and
+deletes its plist in `~/Library/LaunchAgents`. The log of the daemon
+stays.
 
 ### Run the daemon in a terminal
 

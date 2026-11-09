@@ -20,7 +20,7 @@ flowchart LR
 
 riff runs on Linux. On a Mac with Apple silicon, the commands that
 talk to the riff run too, for example `riff login`, `riff chat` and
-`riff who`. A Mac runs no session.
+`riff who`. A Mac runs the riff daemon, but no session yet.
 
 ## You need
 

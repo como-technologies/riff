@@ -39,14 +39,14 @@
 //! | [`memory`] | `/proc/meminfo` | `sysctl` `hw.memsize`, `hw.pagesize` and `vm.page_*_count` |
 //! | [`machine`]: the CPU speed, the memory and the load | cpufreq in `/sys`, `/proc/cpuinfo`, `/proc/meminfo` and `/proc/loadavg` | `sysctl` `hw.cpufrequency_max`, [`memory`] and `vm.loadavg` |
 //! | [`cgroups`]: the cgroup controllers that podman needs | `/sys/fs/cgroup` | none |
-//! | [`Socket`]: the path of a socket in a long folder | `/proc/self/fd/N/NAME` | the plain path |
-//! | [`service_manager`]: the manager of the daemon | systemd, `systemctl --user` | none: the daemon needs Linux |
+//! | [`Socket`]: the path of a socket in a long folder | `/proc/self/fd/N/NAME` | the plain path, of at most [`SOCKET_MOST`] bytes (01M6Z49RD4F6EX4K9FF2Z0CET9) |
+//! | [`service_manager`]: the manager of the daemon | systemd, `systemctl --user` | launchd, `launchctl` ([`launchd`], 01M6Z49H6CHSPV0FJZWY2MYHEM) |
 //!
 //! ```mermaid
 //! flowchart LR
 //!     C["riff chat, riff top, the TUI, the daemon"] --> P["platform"]
 //!     P -- Linux --> L["/proc, /sys, systemctl"]
-//!     P -- macOS --> M["libproc, sysctl"]
+//!     P -- macOS --> M["libproc, sysctl, launchctl"]
 //! ```
 //!
 //! ```
@@ -83,8 +83,10 @@ pub mod macos;
 #[cfg(target_os = "macos")]
 use macos as os;
 
+pub mod launchd;
+
 /// The service manager of the daemon on this OS: [`systemd::Systemd`]
-/// on Linux. macOS has none: a value of it cannot exist.
+/// on Linux, [`launchd::Launchd`] on macOS.
 pub use os::Manager;
 
 /// The platform of `riff`.
@@ -296,10 +298,44 @@ pub fn cgroups(uid: u32) -> Cgroups {
     os::cgroups(uid)
 }
 
+/// The most bytes of the path of a Unix socket on macOS: its address has
+/// room for 104 bytes, with a NUL at the end (01M6Z49RD4F6EX4K9FF2Z0CET9).
+/// On Linux, a path through a descriptor of the folder is short.
+pub const SOCKET_MOST: usize = 103;
+
+/// `path` when it has at most `most` bytes. Else an error that names the
+/// path, its bytes and the limit (01M6Z49RD4F6EX4K9FF2Z0CET9).
+///
+/// ```
+/// use riff::platform::{SOCKET_MOST, socket_fits};
+/// use std::path::PathBuf;
+///
+/// let home = "/Users/mike";
+/// let socket = PathBuf::from(format!("{home}/.local/share/riff/daemon/riff.sock"));
+/// assert_eq!(socket_fits(socket.clone(), SOCKET_MOST)?, socket);
+/// let long = PathBuf::from(format!("/{}/riff.sock", "d".repeat(93)));
+/// assert_eq!(long.as_os_str().len(), 104);
+/// let e = socket_fits(long, SOCKET_MOST).unwrap_err();
+/// assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput);
+/// assert!(e.to_string().contains(" has 104 bytes, and macOS takes at most 103."), "{e}");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn socket_fits(path: PathBuf, most: usize) -> io::Result<PathBuf> {
+    let bytes = path.as_os_str().len();
+    if bytes > most {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            crate::text::socket_too_long(&path, bytes, most),
+        ));
+    }
+    Ok(path)
+}
+
 /// A path of the socket `name` in the folder `dir` that fits in the
 /// address of a Unix socket. On Linux, it is a path through a descriptor
 /// of the folder, `/proc/self/fd/N/NAME`, and the folder stays open as
-/// long as this value lives. On macOS, it is `dir/name`.
+/// long as this value lives. On macOS, it is `dir/name`, of at most
+/// [`SOCKET_MOST`] bytes ([`socket_fits`]).
 ///
 /// ```
 /// use std::os::unix::net::{UnixListener, UnixStream};
@@ -322,10 +358,10 @@ pub struct Socket {
 
 impl Socket {
     /// The path of the socket `name` in the folder `dir`. An error when
-    /// riff cannot open the folder.
+    /// riff cannot open the folder, or the path does not fit.
     pub fn in_folder(dir: &Path, name: &str) -> io::Result<Socket> {
         let folder = std::fs::File::open(dir)?;
-        let path = os::socket_path(&folder, dir, name);
+        let path = os::socket_path(&folder, dir, name)?;
         Ok(Socket {
             path,
             _folder: folder,
@@ -339,8 +375,8 @@ impl Socket {
 }
 
 /// The service manager of the daemon on this machine
-/// (01M4Z60B7GTV4HHF9R3TMZRS7J): systemd on Linux. On macOS, an error
-/// that says that the daemon needs Linux (01M6YPB5B42FZP7GCDAVTN4PWY).
+/// (01M4Z60B7GTV4HHF9R3TMZRS7J): systemd on Linux, launchd on macOS
+/// (01M6Z49H6CHSPV0FJZWY2MYHEM). An error with no home.
 pub fn service_manager() -> anyhow::Result<Manager> {
     os::service_manager()
 }
@@ -483,18 +519,54 @@ mod tests {
         assert!(m.load >= 0.0, "{m:?}");
     }
 
-    /// 01M6YQDWT387EV7Y7XMT2G6YVM: macOS has no cgroups and no service
-    /// manager of the daemon.
+    /// 01M6YQDWT387EV7Y7XMT2G6YVM, 01M6Z49H6CHSPV0FJZWY2MYHEM: macOS has
+    /// no cgroups, and its service manager is launchd, with the agents of
+    /// the person.
     #[test]
     fn the_cgroups_and_the_service_manager_are_of_the_os() {
+        use crate::service::ServiceManager;
         let uid = nix::unistd::getuid().as_raw();
+        let manager = service_manager().unwrap();
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
         if cfg!(target_os = "macos") {
             assert_eq!(cgroups(uid), Cgroups::default());
-            let error = service_manager().err().unwrap();
-            assert_eq!(error.to_string(), crate::text::DAEMON_LINUX_ONLY);
+            assert_eq!(manager.unit_name(), launchd::LABEL);
+            assert_eq!(
+                manager.unit_path(),
+                home.join("Library/LaunchAgents")
+                    .join(format!("{}.plist", launchd::LABEL))
+            );
         } else {
-            assert!(service_manager().is_ok());
+            assert_eq!(manager.unit_name(), crate::service::UNIT);
+            assert!(manager.unit_path().ends_with("systemd/user/riff.service"));
         }
+    }
+
+    /// 01M6Z49RD4F6EX4K9FF2Z0CET9: on macOS, the path of a socket in a long
+    /// folder fails with the limit, and a short path binds. On Linux, a
+    /// path through the descriptor of the folder binds in a long folder.
+    #[test]
+    fn a_socket_in_a_long_folder_binds_on_linux_and_fails_on_macos() {
+        use std::os::unix::net::UnixListener;
+        let root = tempfile::tempdir().unwrap();
+        let long = root.path().join("d".repeat(120));
+        std::fs::create_dir(&long).unwrap();
+        let socket = Socket::in_folder(&long, "riff.sock");
+        if cfg!(target_os = "macos") {
+            let e = socket.unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+            assert!(
+                e.to_string().contains(", and macOS takes at most 103."),
+                "{e}"
+            );
+            assert!(!long.join("riff.sock").exists());
+        } else {
+            let _listener = UnixListener::bind(socket.unwrap().path()).unwrap();
+            assert!(long.join("riff.sock").exists());
+        }
+        let short = Socket::in_folder(root.path(), "a.sock").unwrap();
+        let _listener = UnixListener::bind(short.path()).unwrap();
+        assert!(root.path().join("a.sock").exists());
     }
 
     /// The words that read `/proc` or `/sys`, or run `systemctl`.

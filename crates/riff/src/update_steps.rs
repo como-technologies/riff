@@ -13,7 +13,7 @@
 //!
 //! | Step | In step when | Else the daemon |
 //! |---|---|---|
-//! | the unit of the daemon | the unit file is the text that this riff writes for its `ExecStart` and its variables ([`Unit::text`]) | writes it again, and starts again on it when it is idle (01M51QFPQ68JHS08TWXNNWZ0D7) |
+//! | the unit of the daemon | the unit file is the text that this riff writes for its program and its variables ([`ServiceManager::text`]) | writes it again, and starts again on it when it is idle (01M51QFPQ68JHS08TWXNNWZ0D7) |
 //! | the session image of each wave | podman has the merged pin of the main clone of the wave: the image that `riff.toml` on the default branch of `origin` pins ([`session_image::merged`]) | pulls it (01M51QFPSMDDMFPZXAEYWZYJPV) |
 //!
 //! The gate ([`gate`]). The daemon changes the machine only when
@@ -78,7 +78,7 @@ use riff_core::build::Build;
 use crate::first_run::{self, Check};
 use crate::release::{self, Source};
 use crate::runtime::Runtime;
-use crate::service::{ServiceManager, Unit};
+use crate::service::ServiceManager;
 use crate::{lifecycle, local, session_image, settings, text};
 
 /// A riff binary, and the place of its release files.
@@ -286,9 +286,10 @@ pub fn sums_source(releases: Option<&str>) -> Result<Source, String> {
 
 /// The step of the unit of the daemon of `manager`
 /// (01M51QFPQ68JHS08TWXNNWZ0D7). It is in step when the unit file is the
-/// text that this riff writes for the `ExecStart` and the variables of
-/// the file ([`Unit::text`]). With `change`, it writes that text and
-/// reloads the manager ([`ServiceManager::rewrite`]).
+/// text that this riff writes for the program and the variables of the
+/// file ([`ServiceManager::text`]): a unit of systemd, or a plist of
+/// launchd. With `change`, it writes that text and reloads the manager
+/// ([`ServiceManager::rewrite`]).
 pub fn unit(manager: &impl ServiceManager, change: bool) -> Step {
     let behind = |found: &str| State::Behind {
         found: found.to_owned(),
@@ -297,9 +298,9 @@ pub fn unit(manager: &impl ServiceManager, change: bool) -> Step {
     let state = match manager.installed_text() {
         Ok(None) => behind(text::STEP_NO_UNIT),
         Err(e) => State::Failed(format!("{e:#}")),
-        Ok(Some(old)) => match Unit::parse(&old) {
+        Ok(Some(old)) => match manager.unit_in(&old) {
             None => State::Failed(text::STEP_UNIT_UNREADABLE.to_owned()),
-            Some(unit) => match unit.text() {
+            Some(unit) => match manager.text(&unit) {
                 Err(e) => State::Failed(format!("{e:#}")),
                 Ok(new) if new == old => State::InStep(text::step_unit_there(&unit.exe)),
                 Ok(_) if !change => behind(text::STEP_UNIT_OLD),
@@ -578,6 +579,7 @@ mod tests {
 
     use super::*;
     use crate::runtime::Fake;
+    use crate::service::Unit;
 
     const TARGET: &str = "x86_64-unknown-linux-musl";
 
