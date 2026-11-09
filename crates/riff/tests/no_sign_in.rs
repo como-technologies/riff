@@ -121,6 +121,9 @@ async fn a_person_whose_token_needs_a_refresh_is_told_to_run_riff_logout() {
     assert_says_logout(&error, &url, true);
 }
 
+/// macOS drops a connection to a port that a socket holds and does not
+/// listen on, so the test has a refused port on Linux only.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_riff_that_cannot_be_reached_keeps_the_first_error() {
     common::mock_keyring();

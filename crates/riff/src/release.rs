@@ -206,10 +206,15 @@ pub struct Elf {
 ///
 /// ```
 /// let me = std::fs::read(std::env::current_exe()?)?;
-/// let elf = riff::release::elf(&me).unwrap();
-/// assert_eq!(elf.machine, riff::release::MACHINE);
-/// if cfg!(target_env = "gnu") {
-///     assert!(elf.interpreter.unwrap().contains("ld-linux"));
+/// // A binary is an ELF file on Linux only.
+/// if cfg!(target_os = "linux") {
+///     let elf = riff::release::elf(&me).unwrap();
+///     assert_eq!(elf.machine, riff::release::MACHINE);
+///     if cfg!(target_env = "gnu") {
+///         assert!(elf.interpreter.unwrap().contains("ld-linux"));
+///     }
+/// } else {
+///     assert_eq!(riff::release::elf(&me).unwrap_err(), "it is not an ELF file");
 /// }
 /// assert!(riff::release::elf(b"\x7fELF").is_err());
 /// # Ok::<(), std::io::Error>(())

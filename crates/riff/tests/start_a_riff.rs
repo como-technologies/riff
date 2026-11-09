@@ -569,6 +569,9 @@ fn the_ruleset_releases_of_the_how_to_is_the_ruleset_of_the_step() {
 /// `riff-base` and of `riff-rust` in the Dockerfiles of this repository,
 /// and each Dockerfile of the how-to builds `FROM` one of them
 /// (01M5SNT57ANM99NQS5SNB8XPWV).
+/// The how-to runs on the Linux host of the riff: its `sed -i` is the
+/// `sed` of GNU.
+#[cfg(target_os = "linux")]
 #[test]
 fn the_riff_toml_of_the_how_to_is_a_file_that_riff_reads() {
     let how_to = part(PAGE, HOW_TO);

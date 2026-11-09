@@ -11,7 +11,7 @@
 use isolated::Isolated;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::common;
 use riff_core::name::SessionUri;
@@ -88,6 +88,7 @@ fn asked(dir: &Path) -> Vec<String> {
 }
 
 /// A fake `xdg-open` in `dir`: it writes its argument in the file `opened`.
+#[cfg(target_os = "linux")]
 fn browser(dir: &Path) {
     let opened = dir.join("opened");
     let script = format!("#!/bin/sh\nprintf '%s' \"$1\" > {}\n", opened.display());
@@ -345,6 +346,9 @@ async fn riff_questions_exits_with_1_when_gh_cannot_read_any_repository() {
 /// lists nothing. The test shows the address that reaches the browser:
 /// the repository of a session of the person, the repository with the
 /// notes of a lead and no session, and none of another person.
+/// On macOS, riff opens the browser with `/usr/bin/open`, which no
+/// fake on `PATH` replaces.
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_questions_web_opens_one_search_over_the_repositories() {
     let server = server_with_notes(&["o/notes"]).await;
@@ -363,8 +367,8 @@ async fn riff_questions_web_opens_one_search_over_the_repositories() {
     assert_eq!(stderr, format!("riff: opening {url} in your browser.\n"));
     // The browser starts detached: wait for its file.
     let opened = bin.path().join("opened");
-    let until = Instant::now() + Duration::from_secs(10);
-    while !opened.exists() && Instant::now() < until {
+    let until = std::time::Instant::now() + Duration::from_secs(10);
+    while !opened.exists() && std::time::Instant::now() < until {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(std::fs::read_to_string(opened).unwrap(), url);
