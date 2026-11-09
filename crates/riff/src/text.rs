@@ -5596,7 +5596,8 @@ pub fn github_check_elsewhere(owner: &str) -> String {
 
 /// The output of `riff github check` for `repo`: one line for each role,
 /// with its bot and its rights, then the result
-/// (01M6WG534PPE2JW8JQFRJDEK86).
+/// (01M6WG534PPE2JW8JQFRJDEK86). A role that misses a right gets the fix
+/// (01M6ZHWVPD7MN6GH6GS0GVETHA).
 ///
 /// ```
 /// use riff_core::wire::{GitHubChecked, GitHubRole, RoleChecked};
@@ -5625,6 +5626,24 @@ pub fn github_check_elsewhere(owner: &str) -> String {
 ///      \x20 lead    riff-acme-lead[bot]  fail: riff-acme-lead is not installed on acme/app: riff github install acme\n\
 ///      riff github check: 1 role failed. riff-server revoked each token.\n"
 /// );
+///
+/// let lead = RoleChecked {
+///     role: GitHubRole::Lead,
+///     bot: Some("riff-acme-lead[bot]".into()),
+///     rights: [("statuses".to_owned(), "write".to_owned())].into(),
+///     missing: vec!["security_events: write".into()],
+///     extra: vec![],
+///     problem: None,
+/// };
+/// let text = riff::text::github_checked("acme/app", &GitHubChecked { roles: vec![lead] });
+/// assert_eq!(
+///     text,
+///     "riff github check acme/app:\n\
+///      \x20 lead  riff-acme-lead[bot]  statuses: write; fail: it misses security_events: write. \
+///      The fix: give riff-acme-lead each right on GitHub, then accept the new rights on each \
+///      install. See \"Accept the new rights of the lead App\" in the book\n\
+///      riff github check: 1 role failed. riff-server revoked each token.\n"
+/// );
 /// ```
 pub fn github_checked(repo: &str, checked: &riff_core::wire::GitHubChecked) -> String {
     let rows: Vec<(String, String, String)> = checked
@@ -5644,7 +5663,14 @@ pub fn github_checked(repo: &str, checked: &riff_core::wire::GitHubChecked) -> S
             } else {
                 let mut parts = vec![rights];
                 if !role.missing.is_empty() {
-                    parts.push(format!("fail: it misses {}", role.missing.join(", ")));
+                    let bot = role.bot.as_deref().unwrap_or("the App");
+                    parts.push(format!(
+                        "fail: it misses {}. The fix: give {} each right on GitHub, then accept \
+                         the new rights on each install. See \"Accept the new rights of the lead \
+                         App\" in the book",
+                        role.missing.join(", "),
+                        bot.strip_suffix("[bot]").unwrap_or(bot)
+                    ));
                 }
                 if !role.extra.is_empty() {
                     parts.push(format!("fail: it has more: {}", role.extra.join(", ")));

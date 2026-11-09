@@ -216,27 +216,38 @@ fn the_book_has_the_how_tos_of_the_github_apps() {
     for heading in [
         "\n### Make the secret before the deploy\n",
         "\n### Check the tokens of each role\n",
-        "\n### Accept the new right of the lead App\n",
+        "\n### Accept the new rights of the lead App\n",
     ] {
         assert!(make.contains(heading), "{heading}: {make}");
     }
-    // 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the table has the right of the lead on
-    // the code scanning alerts, and the owner accepts it on each install
-    // before the deploy.
-    assert!(
-        make.contains("| `security_events` | none | none | write |"),
-        "{make}"
-    );
+    // 01M6ZEJ4NEZGQFV3Q4BER5AW3S, 01M6ZHWVPD7MN6GH6GS0GVETHA: the table
+    // has the rights of the lead on the alerts, and the owner accepts
+    // them on each install. The deploy needs no step first.
+    for row in [
+        "| `security_events` | none | none | write |",
+        "| `secret_scanning_alerts` | none | none | write |",
+        "| `vulnerability_alerts` | none | none | read |",
+    ] {
+        assert!(make.contains(row), "{row}: {make}");
+    }
     let text = make.split_whitespace().collect::<Vec<_>>().join(" ");
     for words in [
-        "set **Code scanning alerts** to **Read and write**",
-        "GitHub asks the owner of each install to accept the new right.",
+        "set **Code scanning alerts** to **Read and write**, **Secret scanning alerts** to \
+         **Read and write**, and **Dependabot alerts** to **Read-only**.",
+        "GitHub asks the owner of each install to accept the new rights.",
         "Click **Accept new permissions**.",
-        "before the deploy of a riff-server that asks for it",
-        "The row `lead` must have `security_events: write`",
+        "The deploy needs no step of yours first:",
+        "riff-server gives the lead a token with its other rights, and logs one warning.",
+        "The row `lead` must have `secret_scanning_alerts: write`, `security_events: write` \
+         and `vulnerability_alerts: read`.",
+        "the row names each missing right with the fix",
     ] {
         assert!(text.contains(words), "{words}: {make}");
     }
+    assert!(
+        !text.contains("before the deploy of a riff-server"),
+        "{make}"
+    );
     assert!(
         make.contains("(how-it-works.md#when-riff-server-cannot-read-the-keys-of-the-apps)"),
         "{make}"

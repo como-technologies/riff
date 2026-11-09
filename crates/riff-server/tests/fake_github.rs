@@ -65,6 +65,9 @@ pub struct Seen {
     pub tokens: Vec<String>,
     /// Each token that riff-server revoked.
     pub revoked: Vec<String>,
+    /// The rights that the install lacks: GitHub refuses each token
+    /// that asks for one of them with a 422.
+    pub lacks: Vec<String>,
     /// The rights that the fake gives in place of the asked ones.
     pub give: Option<BTreeMap<String, String>>,
     /// True: each token ends one hour after now, as on GitHub. Else it
@@ -218,6 +221,16 @@ async fn token(
         return (StatusCode::NOT_FOUND, Json(json!({"message": "Not Found"}))).into_response();
     }
     let mut seen = seen.lock().unwrap();
+    let asks = |name: &String| body["permissions"].get(name).is_some();
+    if seen.lacks.iter().any(asks) {
+        seen.asked.push((id, body));
+        let message = "The permissions requested are not granted to this installation.";
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "message": message })),
+        )
+            .into_response();
+    }
     let ends = match seen.hour {
         true => (chrono::Utc::now() + chrono::Duration::hours(1))
             .format("%Y-%m-%dT%H:%M:%SZ")
