@@ -519,6 +519,164 @@ async fn skip_needs_a_reason() {
     );
 }
 
+/// The alerts of GitHub, one JSON object for each, as `gh api --paginate
+/// PATH --jq .[]` prints them.
+const SECURITY_OPEN: &str = r#"{"number":4,"state":"open","rule":{"id":"rust/cleartext-logging","security_severity_level":"high","tags":["security"]},"most_recent_instance":{"location":{"path":"crates/riff/src/login.rs","start_line":88}},"html_url":"https://github.com/como-technologies/riff/security/code-scanning/4","dismissed_comment":null}"#;
+const QUALITY_OPEN: &str = r#"{"number":5,"state":"open","rule":{"id":"rust/unused-variable","security_severity_level":null,"tags":["maintainability"]},"most_recent_instance":{"location":{"path":"crates/riff/src/top.rs","start_line":12}},"html_url":"https://github.com/como-technologies/riff/security/code-scanning/5"}"#;
+const SECRET_OPEN: &str = r#"{"number":2,"state":"open","resolution":null,"secret_type":"github_personal_access_token","secret_type_display_name":"GitHub Personal Access Token","html_url":"https://github.com/como-technologies/riff/security/secret-scanning/2","first_location_detected":{"path":"docs/src/x.md","start_line":3}}"#;
+const DEPENDABOT_OPEN: &str = r#"{"number":7,"state":"open","dependency":{"package":{"ecosystem":"rust","name":"tokio"},"manifest_path":"Cargo.lock","scope":"runtime"},"security_advisory":{"ghsa_id":"GHSA-rr8g-9fpq-6wmg","severity":"medium"},"html_url":"https://github.com/como-technologies/riff/security/dependabot/7"}"#;
+const CODE_DISMISSED: &str = r#"{"number":6,"state":"dismissed","rule":{"id":"rust/hard-coded-cryptographic-value","tags":["security"]},"most_recent_instance":{"location":{"path":"crates/riff/src/home.rs","start_line":40}},"html_url":"https://github.com/como-technologies/riff/security/code-scanning/6","dismissed_reason":"false positive","dismissed_comment":"The value is a test key, not a secret."}"#;
+const SECRET_RESOLVED: &str = r#"{"number":3,"state":"resolved","resolution":"used_in_tests","resolution_comment":"A fake token of a test.","secret_type":"github_personal_access_token","secret_type_display_name":"GitHub Personal Access Token","html_url":"https://github.com/como-technologies/riff/security/secret-scanning/3"}"#;
+const DEPENDABOT_DISMISSED: &str = r#"{"number":8,"state":"dismissed","dependency":{"package":{"ecosystem":"rust","name":"time"},"manifest_path":"Cargo.lock"},"security_advisory":{"ghsa_id":"GHSA-wcg3-cvx6-7396"},"html_url":"https://github.com/como-technologies/riff/security/dependabot/8","dismissed_reason":"not_used","dismissed_comment":"riff does not call the function of the advisory."}"#;
+
+/// The cases of the fake `gh` for the reads of the alerts: the open and
+/// the dismissed code scanning alerts, the secret scanning alerts, and the
+/// Dependabot alerts. A read with no case gives no alert.
+fn alert_cases(
+    code_open: &[&str],
+    code_dismissed: &[&str],
+    secret: &[&str],
+    dependabot: &[&str],
+) -> String {
+    [
+        ("code-scanning/alerts?state=open&", code_open),
+        ("code-scanning/alerts?state=dismissed&", code_dismissed),
+        ("secret-scanning/alerts?", secret),
+        ("dependabot/alerts?", dependabot),
+    ]
+    .iter()
+    .filter(|(_, items)| !items.is_empty())
+    .map(|(path, items)| {
+        let lines: String = items.iter().map(|i| format!(" '{i}'")).collect();
+        format!("*'{path}'*) printf '%s\\n'{lines} ;;")
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+/// The cut made no release issue, no branch and no pull request.
+fn cut_nothing(machine: &Machine) {
+    let log = machine.log();
+    assert!(!log.contains("issue create"), "{log}");
+    assert!(!log.contains("pr create"), "{log}");
+    assert!(!git(&machine.origin(), &["branch"]).contains("release-v"));
+}
+
+/// 01M6ZM68Y1QCTA2M8DHYRMKBPN: an open alert of each kind, of code
+/// scanning (security and quality), secret scanning and Dependabot,
+/// stops the cut before the release issue. The refusal lists each one
+/// with its kind, its rule, its file and line, and its link.
+#[tokio::test]
+async fn cut_refuses_an_open_alert_of_each_kind_and_lists_it() {
+    let machine = Machine::new().await;
+    machine.fake_gh(&alert_cases(
+        &[SECURITY_OPEN, QUALITY_OPEN],
+        &[],
+        &[SECRET_OPEN],
+        &[DEPENDABOT_OPEN],
+    ));
+    let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
+    assert!(!out.status.success());
+    let err = text(&out.stderr);
+    for line in [
+        "riff release cut: 4 alerts of the repository have no review. An alert has a review when \
+         it is fixed, or dismissed with a comment that gives the reason:\n",
+        "\n- code scanning (security) #4 rust/cleartext-logging, crates/riff/src/login.rs:88, \
+         open: https://github.com/como-technologies/riff/security/code-scanning/4\n",
+        "\n- code scanning (quality) #5 rust/unused-variable, crates/riff/src/top.rs:12, open: \
+         https://github.com/como-technologies/riff/security/code-scanning/5\n",
+        "\n- secret scanning #2 GitHub Personal Access Token, docs/src/x.md:3, open: \
+         https://github.com/como-technologies/riff/security/secret-scanning/2\n",
+        "\n- Dependabot #7 GHSA-rr8g-9fpq-6wmg in tokio, Cargo.lock, open: \
+         https://github.com/como-technologies/riff/security/dependabot/7\n",
+        "\nnext: fix each alert in the code, or dismiss it on GitHub with the reason in the \
+         comment, then riff release cut 3.3.0",
+    ] {
+        assert!(err.contains(line), "{line} in {err}");
+    }
+    let log = machine.log();
+    for read in [
+        "gh api --paginate repos/{owner}/{repo}/code-scanning/alerts?state=open&per_page=100 --jq .[]",
+        "gh api --paginate repos/{owner}/{repo}/code-scanning/alerts?state=dismissed&per_page=100 --jq .[]",
+        "gh api --paginate repos/{owner}/{repo}/secret-scanning/alerts?per_page=100&hide_secret=true --jq .[]",
+        "gh api --paginate repos/{owner}/{repo}/dependabot/alerts?state=open,dismissed,auto_dismissed&per_page=100 --jq .[]",
+    ] {
+        assert!(log.contains(read), "{read} in {log}");
+    }
+    cut_nothing(&machine);
+}
+
+/// 01M6ZM68Y1QCTA2M8DHYRMKBPN: alerts that are dismissed with a comment
+/// let the cut go on. One dismissed alert with no comment stops it.
+#[tokio::test]
+async fn cut_goes_on_with_a_reason_on_each_dismiss_and_refuses_a_dismiss_with_none() {
+    let machine = Machine::new().await;
+    let no_reason = CODE_DISMISSED
+        .replace("\"number\":6", "\"number\":9")
+        .replace("code-scanning/6", "code-scanning/9")
+        .replace("\"The value is a test key, not a secret.\"", "null");
+    machine.fake_gh(&alert_cases(
+        &[],
+        &[CODE_DISMISSED, &no_reason],
+        &[SECRET_RESOLVED],
+        &[DEPENDABOT_DISMISSED],
+    ));
+    let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
+    assert!(!out.status.success());
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("riff release cut: 1 alert of the repository has no review."),
+        "{err}"
+    );
+    assert!(
+        err.contains(
+            "\n- code scanning (security) #9 rust/hard-coded-cryptographic-value, \
+             crates/riff/src/home.rs:40, dismissed with no reason: \
+             https://github.com/como-technologies/riff/security/code-scanning/9\n"
+        ),
+        "{err}"
+    );
+    for reviewed in ["#6", "#3", "#8"] {
+        assert!(!err.contains(reviewed), "{reviewed} in {err}");
+    }
+    cut_nothing(&machine);
+
+    machine.fake_gh(&alert_cases(
+        &[],
+        &[CODE_DISMISSED],
+        &[SECRET_RESOLVED],
+        &[DEPENDABOT_DISMISSED],
+    ));
+    let out = machine.ok(&[], &["release", "cut", "3.3.0"]).await;
+    assert!(out.contains("The release pull request #1140"), "{out}");
+    assert!(machine.log().contains("gh pr create"), "{}", machine.log());
+}
+
+/// 01M6ZM68Y1QCTA2M8DHYRMKBPN: a read of the alerts that fails, for
+/// example with the token of a worker, stops the cut. The refusal names
+/// the read and the fix.
+#[tokio::test]
+async fn cut_refuses_when_it_cannot_read_the_alerts() {
+    let machine = Machine::new().await;
+    machine.fake_gh(
+        "*'secret-scanning/alerts?'*) echo 'gh: Resource not accessible by integration (HTTP 403)' >&2; exit 1 ;;",
+    );
+    let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
+    assert!(!out.status.success());
+    let err = text(&out.stderr);
+    for part in [
+        "riff release cut: the read of the secret scanning alerts failed: gh: Resource not \
+         accessible by integration (HTTP 403). riff cuts no release while it cannot check the \
+         alerts of the repository.",
+        "the lead or a person cuts the release",
+        "riff github check",
+        "next: fix it, then riff release cut 3.3.0",
+    ] {
+        assert!(err.contains(part), "{part} in {err}");
+    }
+    cut_nothing(&machine);
+}
+
 #[tokio::test]
 async fn status_shows_the_versions_and_a_run_that_waits() {
     let machine = Machine::new().await;

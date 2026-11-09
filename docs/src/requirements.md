@@ -7235,10 +7235,10 @@ of this part when they merge.
 ### The release commands
 
 - **01M58B0HZYMAK1B2AJMWKHCXG0** `riff release cut X.Y.Z` makes the
-  release pull request from `origin/main`. A lead or a worker runs it.
-  It sets X.Y.Z in `Cargo.toml`, in the `plugin.json` of the plugin
-  and in `Cargo.lock`, runs `deploy/release-check.sh`, and pushes the
-  branch `release-vX.Y.Z`. The pull request "Release vX.Y.Z" has the
+  release pull request from `origin/main`. It sets X.Y.Z in
+  `Cargo.toml`, in the `plugin.json` of the plugin and in `Cargo.lock`,
+  runs `deploy/release-check.sh`, and pushes the branch
+  `release-vX.Y.Z`. The pull request "Release vX.Y.Z" has the
   label `release`, the current wave, auto-merge on, and a body with the
   level line, the list "Waves in this release", and the items of each
   wave since the last release tag. It says `Refs #N` and `Part of #N`
@@ -7360,6 +7360,17 @@ of this part when they merge.
   token of the lead App. When GitHub refuses the push, the refusal names
   the ruleset `releases`, the admin role and the lead App. Supersedes
   01M58B0JABCET719T3HFB19NDW in part.
+- **01M6ZM68Y1QCTA2M8DHYRMKBPN** `riff release cut` refuses, before it
+  makes the release issue, while an alert of the repository has no
+  review. It reads the code scanning alerts, of security and of quality,
+  the secret scanning alerts and the Dependabot alerts. An alert has a
+  review when it is fixed, or dismissed with a comment that gives the
+  reason. The refusal lists each open alert and each dismissed alert
+  with no comment: its kind, its rule, its file and line, and its link.
+  The cut also refuses when it cannot read the alerts of a kind, and
+  names the read that failed. No flag skips the check. The session App
+  of a worker has no right on the alerts, so the lead or a person cuts
+  the release. Supersedes 01M58B0HZYMAK1B2AJMWKHCXG0 in part.
 
 ### The release cycle
 

@@ -6496,7 +6496,9 @@ release gate of `riff wave end`.
 flowchart TD
     A[Last open item of the wave closes] -- "wakes the lead: Wave N is complete" --> B{Change that a person sees since the last tag?}
     B -- no --> Z[riff wave end N --no-release TEXT: the reason in the wave]
-    B -- yes --> C[riff release cut X.Y.Z: release pull request]
+    B -- yes --> Q{An open alert, or a dismissed alert with no reason?}
+    Q -- "yes: riff release cut refuses and lists each alert" --> Q1[Fix it in the code, or dismiss it with the reason] --> Q
+    Q -- no --> C[riff release cut X.Y.Z: release pull request]
     C -- "wakes the lead: the Gate passed, or failed with its jobs" --> D{Verify by another session}
     D -- FAIL --> D1[Fix on the release branch] --> D
     D -- PASS --> V[riff release verify N]
@@ -6517,7 +6519,7 @@ flowchart TD
     R2 -- "wakes the lead: the deploy passed, and your container runs vX.Y.Z" --> J{riff release check vX.Y.Z}
     J -- PASS --> K[riff resumes. Release issue closes. riff wave end N. Next wave starts]
     J -- FAIL --> L{Lead: fix forward or roll back}
-    L -- fix forward --> L1[Issue, patch release X.Y.Z+1: the same cycle] --> C
+    L -- fix forward --> L1[Issue, patch release X.Y.Z+1: the same cycle] --> Q
     L -- roll back --> M{{"HUMAN GATE 2: riff release approve vPREV of riff release rollback vPREV"}}
     M --> N[Old release deployed. riff release check vPREV. riff resumes. Issue with the facts]
 ```
@@ -6526,6 +6528,7 @@ The gates:
 
 | Gate | Who | Command | With no answer |
 |---|---|---|---|
+| Alerts | the lead or a person: fix each alert, or dismiss it with the reason (see [Cut the release pull request](#cut-the-release-pull-request)) | `riff release cut X.Y.Z` checks them | `cut` refuses |
 | Verify | a session that did not write the change | the verify of riff | the release pull request waits |
 | Real session | a session that wrote none of the items, on a host | `just real-session` sets the commit status `riff/real-session` | `publish` refuses |
 | HUMAN GATE 1: deploy | the owner or an admin, in a terminal. No session, also not the lead: a message in riff chat approves nothing | `riff release approve vX.Y.Z` | the release waits; the riff is not paused; the next `cut` refuses |
@@ -7082,7 +7085,8 @@ Pick the version with
 
 #### Cut the release pull request
 
-A lead or a worker cuts the release:
+The lead or a person cuts the release. A worker cannot read the alerts
+of the repository, so its cut refuses:
 
 ```sh
 riff release cut 3.3.0
@@ -7112,6 +7116,40 @@ riff refuses a version that is not newer than the last release. It
 refuses while a deploy waits for the approval of `production`. It
 also refuses while the version on `origin/main` has no published
 release: publish that release first.
+
+Before it makes the release issue, riff checks the alerts of the
+repository: code scanning, of security and of quality, secret
+scanning, and Dependabot. It refuses while an alert of the repository
+has no review: an alert that is open, or a dismissed alert with no
+comment that gives the reason. It lists each one: the kind, the rule,
+the file and line, and the link. No flag skips this check. riff also
+refuses when it cannot read the alerts of a kind, for example with the
+token of a worker, or when a scan is off.
+
+```text
+riff release cut: 2 alerts of the repository have no review. An alert has a review when it is fixed, or dismissed with a comment that gives the reason:
+- code scanning (security) #4 rust/cleartext-logging, crates/riff/src/login.rs:88, open: https://github.com/OWNER/NAME/security/code-scanning/4
+- Dependabot #7 GHSA-rr8g-9fpq-6wmg in tokio, Cargo.lock, dismissed with no reason: https://github.com/OWNER/NAME/security/dependabot/7
+next: fix each alert in the code, or dismiss it on GitHub with the reason in the comment, then riff release cut 3.3.0
+```
+
+To fix the refusal, review each alert of the list:
+
+1. Fix the alert in the code, in a pull request, as each other change.
+   GitHub closes the alert when the scan of `main` no longer finds it.
+2. Or open the link of the alert, dismiss it, and write the reason in
+   the comment. For a secret scanning alert, close it. Revoke a real
+   secret first. A dismissed alert with no comment stops the cut. The
+   lead can dismiss a code scanning alert and a secret scanning alert.
+   Only a person dismisses a Dependabot alert: the lead can only read
+   it (see
+   [Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role)).
+
+Then cut the release again:
+
+```sh
+riff release cut 3.3.0
+```
 
 riff also writes a line in riff chat to the owner. It says that the
 release is cut, and that riff tells the owner when the deploy waits for

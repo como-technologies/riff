@@ -1062,7 +1062,11 @@ enum ReleaseCommand {
     /// last release. It says Part of #N for the release issue. It
     /// refuses a version that is not newer than the last release, while
     /// the version on origin/main has no published release, and while a
-    /// deploy waits for the approval of production.
+    /// deploy waits for the approval of production. It also refuses while
+    /// an alert of the repository has no review: an open alert of code
+    /// scanning, secret scanning or Dependabot, or a dismissed alert with
+    /// no comment. It lists each one. No flag skips this check. A worker
+    /// cannot read the alerts: the lead or a person cuts the release.
     Cut {
         /// The new version, for example 3.3.0.
         version: String,

@@ -15,7 +15,7 @@
 //!
 //! | Command | Who | What |
 //! |---|---|---|
-//! | `riff release cut X.Y.Z` | a lead or a worker; `--skip` only a person | the release pull request from `origin/main` ([`cut`], 01M58B0HZYMAK1B2AJMWKHCXG0) |
+//! | `riff release cut X.Y.Z` | the lead or a person: a worker cannot read the alerts; `--skip` only a person | the release pull request from `origin/main`, when each alert of the repository has a review ([`cut`], [`crate::alerts`], 01M58B0HZYMAK1B2AJMWKHCXG0) |
 //! | `riff release verify N` | each session; no model | the status `riff/verify` of a release pull request, after the checks of its label, diff, body and Gate ([`verify`], 01M5ND0ZNFFAPT1AWD3DP1Y77N) |
 //! | `riff release publish vX.Y.Z` | the owner or an admin of the riff, or its lead; the ruleset `releases` lets the admin role and the lead App push the tag | the tag on the tested commit, the GitHub release, the chat line to the owner ([`publish`], 01M58B0JABCET719T3HFB19NDW, 01M6WZ40VYDBBTJBTQEBY2984P) |
 //! | `riff release test vX.Y.Z --host HOST` | the lead or a person; not a worker | the real-session test on the daemon of a host ([`test_target`], [`crate::daemon::release_test`], 01M5924C8BTT6CW05Q0YZJ1GCY) |
@@ -54,7 +54,8 @@
 //! replaces.
 //!
 //! `cut` refuses a version that is not newer than the last release,
-//! while a deploy waits for a person, and while the version on
+//! while a deploy waits for a person, while an alert of the repository
+//! has no review ([`crate::alerts`]), and while the version on
 //! `origin/main` has no published release. Only `--skip VERSION
 //! --reason TEXT` of a person lets it go on: the reason goes into the
 //! body of the pull request, and from there into the notes of the
@@ -123,6 +124,7 @@ use riff_core::build::Semver;
 use riff_core::wire::PersonRole;
 use serde::Deserialize;
 
+use crate::alerts::{self, Alert};
 use crate::hold::{Hold, Step};
 use crate::pr::{self, Gh};
 use crate::text;
@@ -612,6 +614,9 @@ pub trait Forge {
     /// True when the repository has the table `[release]` in its riff
     /// config ([`crate::release_config`]): its waves end with a release.
     fn has_release(&self) -> bool;
+    /// The open and the dismissed alerts of the repository, of each kind
+    /// ([`crate::alerts::read`]).
+    fn alerts(&self) -> Result<Vec<Alert>>;
 }
 
 /// The state of a release in the cycle (01M58KMKTE2XC35CNJBFKZWAXF).
@@ -1078,7 +1083,11 @@ pub fn summary(
 }
 
 /// Makes the release pull request of `new` from `origin/main`
-/// (01M58B0HZYMAK1B2AJMWKHCXG0, 01M58B0J4VQ61ER69Q09JYP7CG).
+/// (01M58B0HZYMAK1B2AJMWKHCXG0, 01M58B0J4VQ61ER69Q09JYP7CG). It refuses,
+/// before the release issue, while an alert of the repository has no
+/// review, and when it cannot read the alerts ([`crate::alerts`],
+/// 01M6ZM68Y1QCTA2M8DHYRMKBPN). A limit of GitHub fails with the error of
+/// the limit.
 pub fn cut(forge: &dyn Forge, new: Semver, skip: Option<&Skip>, why: Option<&str>) -> Result<Cut> {
     let releases = forge.releases()?;
     let Some(last) = last(&releases) else {
@@ -1127,6 +1136,15 @@ pub fn cut(forge: &dyn Forge, new: Semver, skip: Option<&Skip>, why: Option<&str
             run.tag,
             run.tag
         );
+    }
+    let all = match forge.alerts() {
+        Ok(all) => all,
+        Err(e) if crate::ghcalls::is_limit_error(&e) => return Err(e),
+        Err(e) => bail!("{}", alerts::unreadable(new, &format!("{e:#}"))),
+    };
+    let left = alerts::unreviewed(&all);
+    if !left.is_empty() {
+        bail!("{}", alerts::refusal(new, &left));
     }
     let wave = forge.current_wave()?;
     let title = title(new);
@@ -3325,6 +3343,10 @@ impl Forge for GitHub {
     fn has_release(&self) -> bool {
         crate::release_config::of_folder(&self.dir).unwrap_or(false)
     }
+
+    fn alerts(&self) -> Result<Vec<Alert>> {
+        crate::alerts::read(&self.gh)
+    }
 }
 
 #[cfg(test)]
@@ -3367,6 +3389,10 @@ pub(crate) mod tests {
         pub(crate) has_release: bool,
         /// True when the comment on an issue fails.
         pub(crate) comment_fails: bool,
+        /// The open and the dismissed alerts of the repository.
+        pub(crate) alerts: Vec<Alert>,
+        /// The error of the read of the alerts, when it fails.
+        pub(crate) alerts_fail: Option<&'static str>,
     }
 
     impl Fake {
@@ -3561,6 +3587,12 @@ pub(crate) mod tests {
         fn has_release(&self) -> bool {
             self.has_release
         }
+        fn alerts(&self) -> Result<Vec<Alert>> {
+            match self.alerts_fail {
+                Some(why) => Err(anyhow!("{why}")),
+                None => Ok(self.alerts.clone()),
+            }
+        }
     }
 
     fn v(text: &str) -> Semver {
@@ -3696,6 +3728,102 @@ pub(crate) mod tests {
             "{error}"
         );
         assert!(forge.log().is_empty());
+    }
+
+    fn alert(kind: alerts::Kind, number: u64, state: alerts::State) -> Alert {
+        Alert {
+            kind,
+            number,
+            rule: format!("rule-{number}"),
+            path: Some("src/a.rs".into()),
+            line: Some(number),
+            url: format!("https://github.com/o/r/security/{number}"),
+            state,
+        }
+    }
+
+    fn dismissed(comment: &str) -> alerts::State {
+        alerts::State::Dismissed {
+            comment: comment.into(),
+        }
+    }
+
+    /// 01M6ZM68Y1QCTA2M8DHYRMKBPN: an open alert of each kind, and a
+    /// dismissed alert with no comment, stop the cut before the release
+    /// issue. The refusal lists each one, and not the one with a reason.
+    #[test]
+    fn cut_refuses_while_an_alert_has_no_review_and_writes_nothing() {
+        use alerts::{Kind, State};
+        let mut forge = Fake::new();
+        forge.alerts = vec![
+            alert(Kind::Security, 1, State::Open),
+            alert(Kind::Quality, 2, State::Open),
+            alert(Kind::Secret, 3, State::Open),
+            alert(Kind::Dependabot, 4, State::Open),
+            alert(Kind::Quality, 5, dismissed("A test fixture.")),
+            alert(Kind::Secret, 6, dismissed("  ")),
+        ];
+        let error = cut(&forge, v("3.3.0"), None, None).unwrap_err().to_string();
+        assert!(
+            error.starts_with("riff release cut: 5 alerts of the repository have no review."),
+            "{error}"
+        );
+        for line in [
+            "\n- code scanning (security) #1 rule-1, src/a.rs:1, open: https://github.com/o/r/security/1\n",
+            "\n- code scanning (quality) #2 rule-2, src/a.rs:2, open: ",
+            "\n- secret scanning #3 rule-3, src/a.rs:3, open: ",
+            "\n- Dependabot #4 rule-4, src/a.rs:4, open: ",
+            "\n- secret scanning #6 rule-6, src/a.rs:6, dismissed with no reason: ",
+            "\nnext: fix each alert in the code, or dismiss it on GitHub with the reason in the \
+             comment, then riff release cut 3.3.0",
+        ] {
+            assert!(error.contains(line), "{line} in {error}");
+        }
+        assert!(!error.contains("#5"), "{error}");
+        assert!(forge.log().is_empty(), "{:?}", forge.log());
+    }
+
+    /// 01M6ZM68Y1QCTA2M8DHYRMKBPN: dismissed alerts with a reason let the
+    /// cut go on.
+    #[test]
+    fn cut_goes_on_when_each_alert_is_dismissed_with_a_reason() {
+        use alerts::Kind;
+        let mut forge = Fake::new();
+        forge.alerts = vec![
+            alert(Kind::Security, 1, dismissed("The name misleads the scan.")),
+            alert(Kind::Dependabot, 2, dismissed("Only the tests use it.")),
+        ];
+        let cut = cut(&forge, v("3.3.0"), None, None).unwrap();
+        assert_eq!(cut.number, 1140);
+    }
+
+    /// 01M6ZM68Y1QCTA2M8DHYRMKBPN: a read of the alerts that fails stops
+    /// the cut with the read and the fix. A limit of GitHub stays the
+    /// error of the limit.
+    #[test]
+    fn cut_refuses_when_it_cannot_read_the_alerts() {
+        let mut forge = Fake::new();
+        forge.alerts_fail = Some(
+            "the read of the code scanning alerts failed: gh: Resource not accessible by \
+             integration (HTTP 403)",
+        );
+        let error = cut(&forge, v("3.3.0"), None, None).unwrap_err().to_string();
+        assert!(
+            error.starts_with(
+                "riff release cut: the read of the code scanning alerts failed: gh: Resource not \
+                 accessible by integration (HTTP 403). riff cuts no release while it cannot check"
+            ),
+            "{error}"
+        );
+        assert!(
+            error.ends_with("next: fix it, then riff release cut 3.3.0"),
+            "{error}"
+        );
+        assert!(forge.log().is_empty());
+        let limit = "gh: API rate limit exceeded for user ID 1. (HTTP 403)";
+        forge.alerts_fail = Some(limit);
+        let error = cut(&forge, v("3.3.0"), None, None).unwrap_err().to_string();
+        assert_eq!(error, limit);
     }
 
     #[test]
