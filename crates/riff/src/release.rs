@@ -1040,25 +1040,32 @@ pub(crate) fn fake_riff(path: &Path, interp: Option<&str>) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// The rule of Linux, also on a Mac.
     #[test]
     fn a_riff_needs_the_static_files_only_when_it_runs_from_the_bin_folder() {
         let bin = tempfile::tempdir().unwrap();
         let riff = fake_riff(&bin.path().join("riff"), None);
-        assert!(!needs_static(&riff, bin.path()), "a static riff");
+        assert!(!needs_static_on(&riff, bin.path(), false), "a static riff");
         let server = bin.path().join("riff-server");
         fake_riff(&server, Some("/lib64/ld-linux-x86-64.so.2"));
-        assert!(needs_static(&riff, bin.path()), "riff-server is not static");
+        assert!(
+            needs_static_on(&riff, bin.path(), false),
+            "riff-server is not static"
+        );
         fake_riff(&server, None);
         fake_riff(&riff, Some("/lib64/ld-linux-x86-64.so.2"));
-        assert!(needs_static(&riff, bin.path()), "riff is not static");
+        assert!(
+            needs_static_on(&riff, bin.path(), false),
+            "riff is not static"
+        );
         // A link to the riff of the folder is that riff.
         let other = tempfile::tempdir().unwrap();
         let link = other.path().join("riff");
         std::os::unix::fs::symlink(&riff, &link).unwrap();
-        assert!(needs_static(&link, bin.path()));
+        assert!(needs_static_on(&link, bin.path(), false));
         // A riff of another folder.
         let copy = isolated::copy_program(&riff, other.path().join("copy"));
-        assert!(!needs_static(&copy, bin.path()));
+        assert!(!needs_static_on(&copy, bin.path(), false));
     }
 
     #[test]
