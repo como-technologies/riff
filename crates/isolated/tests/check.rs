@@ -40,20 +40,79 @@ fn the_check_fails_a_test_file_that_runs_the_binary_without_the_helper() {
     );
 }
 
-/// 01M517P9J77TZX28QYBR9SH6WW.
+/// 01M6Z48B94NWNCV9SGQBCT2EM5: the integration tests, the unit tests
+/// and the doc tests.
 #[test]
-fn no_test_file_writes_a_program_in_the_test_process() {
+fn no_test_writes_a_program_in_the_test_process() {
     let found = program_writers(repo());
     assert!(
         found.is_empty(),
-        "these lines write a program in the test process; use isolated::write_program: \
-         {found:#?}"
+        "these lines write a program in the test process; use isolated::write_program \
+         or isolated::copy_program: {found:#?}"
+    );
+}
+
+/// The check fails a unit test of a crate that writes a mode 755 file or
+/// copies a program with `std::fs::copy`, and a doc test that writes a
+/// script. It passes the same code outside the tests
+/// (01M6Z48B94NWNCV9SGQBCT2EM5).
+#[test]
+fn the_check_fails_a_unit_test_and_a_doc_test_that_write_a_program() {
+    let root = tempfile::tempdir().unwrap();
+    let src = root.path().join("crates/scratch/src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("lib.rs"),
+        "/// ```\n\
+         /// std::fs::write(&gh, \"#!/bin/sh\\n\")?;\n\
+         /// ```\n\
+         pub fn update(new: &Path, dir: &Path) {\n\
+         \x20   std::fs::copy(new, dir.join(\"riff\")).unwrap();\n\
+         \x20   std::fs::set_permissions(dir, Permissions::from_mode(0o755)).unwrap();\n\
+         }\n\
+         \n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+         \x20   #[test]\n\
+         \x20   fn a_mode() {\n\
+         \x20       let text = \"}\";\n\
+         \x20       std::fs::write(&p, text).unwrap();\n\
+         \x20       std::fs::set_permissions(&p, Permissions::from_mode(0o755)).unwrap();\n\
+         \x20   }\n\
+         \n\
+         \x20   #[test]\n\
+         \x20   fn a_copy() {\n\
+         \x20       let program = dir.path().join(\"sleep\");\n\
+         \x20       std::fs::copy(sleep_program(), &program).unwrap();\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         pub fn after(dir: &Path) {\n\
+         \x20   std::fs::copy(dir.join(\"a\"), dir.join(\"b\")).unwrap();\n\
+         }\n\
+         #[cfg(test)]\n\
+         mod more;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("more.rs"),
+        "std::fs::copy(&riff, dir.join(\"riff\")).unwrap();\n",
+    )
+    .unwrap();
+    assert_eq!(
+        program_writers(root.path()),
+        [
+            "crates/scratch/src/lib.rs:2",
+            "crates/scratch/src/lib.rs:15",
+            "crates/scratch/src/lib.rs:21",
+            "crates/scratch/src/more.rs:1",
+        ]
     );
 }
 
 /// The check fails a write over a program that the helper made, and a
 /// write of a script, also when the write sets no mode
-/// (01M517P9J77TZX28QYBR9SH6WW).
+/// (01M6Z48B94NWNCV9SGQBCT2EM5).
 #[test]
 fn the_check_fails_a_new_text_of_a_program_and_a_script_with_no_mode() {
     let root = tempfile::tempdir().unwrap();

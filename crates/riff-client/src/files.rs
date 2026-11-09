@@ -23,7 +23,7 @@ use std::path::Path;
 /// let dir = run.path().join("riff");
 /// riff_client::files::make_dir(&dir)?;
 /// assert_eq!(std::fs::metadata(&dir)?.permissions().mode() & 0o777, 0o700);
-/// std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))?;
+/// std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o750))?;
 /// riff_client::files::make_dir(&dir)?;
 /// assert_eq!(std::fs::metadata(&dir)?.permissions().mode() & 0o777, 0o700);
 /// # Ok::<(), std::io::Error>(())

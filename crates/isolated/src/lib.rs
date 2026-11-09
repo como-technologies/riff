@@ -64,9 +64,9 @@
 //! writes it, so its run cannot fail with `ETXTBSY`. See [`program`].
 //!
 //! [`offenders`] finds each test file that names a binary of riff
-//! without the helper, and [`program_writers`] each test file that
-//! writes a program in the test process. A test of this crate fails on
-//! each one.
+//! without the helper, and [`program_writers`] each test that writes a
+//! program in the test process: also a unit test or a doc test in a
+//! file of `src` (see [`in_src`]). A test of this crate fails on each one.
 //!
 //! # Example
 //!
@@ -84,11 +84,14 @@ use std::sync::LazyLock;
 
 use tempfile::TempDir;
 
+pub mod in_src;
 pub mod program;
 pub mod time;
 
+pub use in_src::{test_code, test_modules, unit_tests};
 pub use program::{
-    copy_program, file_name, program_writers, program_writes, write_program, writes_a_program,
+    copy_program, file_name, names_a_program, program_writers, program_writes, write_program,
+    writes_a_program,
 };
 pub use time::{
     HANG, Late, PRESSURE_DIR, PRESSURE_LIMIT, Pressure, RESOURCES, Span, in_time, stall,
@@ -597,29 +600,59 @@ pub fn offenders(root: &Path) -> Vec<String> {
 /// gives for the text of the file, as `PATH:LINE`. `lines` gives the
 /// numbers of the lines from 1. The helper crate itself does not count.
 fn test_lines(root: &Path, lines: impl Fn(&str) -> Vec<usize>) -> Vec<String> {
+    found_lines(root, crate_files(root, "tests"), lines)
+}
+
+/// Each line of a test under `root/crates/*` that `lines` gives, as
+/// [`test_lines`] does: each file under `tests`, and the test code of
+/// each file under `src` (see [`unit_tests`]).
+fn each_test_lines(root: &Path, lines: impl Fn(&str) -> Vec<usize>) -> Vec<String> {
+    let mut files = crate_files(root, "tests");
+    files.extend(unit_tests(crate_files(root, "src")));
+    found_lines(root, files, lines)
+}
+
+/// Each Rust file under the dir `dir` of each crate of `root`, with its
+/// text. The helper crate itself does not count.
+fn crate_files(root: &Path, dir: &str) -> Vec<(PathBuf, String)> {
     let mut files = Vec::new();
     let Ok(crates) = std::fs::read_dir(root.join("crates")) else {
         return Vec::new();
     };
     for krate in crates.flatten() {
         if krate.file_name() != env!("CARGO_PKG_NAME") {
-            rust_files(&krate.path().join("tests"), &mut files);
+            rust_files(&krate.path().join(dir), &mut files);
         }
     }
     files.sort();
+    files
+        .into_iter()
+        .filter_map(|file| {
+            let text = std::fs::read_to_string(&file).ok()?;
+            Some((file, text))
+        })
+        .collect()
+}
+
+/// Each line that `lines` gives for the text of each of `files`, as
+/// `PATH:LINE` with `PATH` from `root`, in order. A file can come more
+/// than one time, with other texts.
+fn found_lines(
+    root: &Path,
+    files: Vec<(PathBuf, String)>,
+    lines: impl Fn(&str) -> Vec<usize>,
+) -> Vec<String> {
     let mut found = Vec::new();
-    for file in files {
-        let Ok(text) = std::fs::read_to_string(&file) else {
-            continue;
-        };
-        let name = file
-            .strip_prefix(root)
-            .unwrap_or(&file)
-            .display()
-            .to_string();
-        found.extend(lines(&text).into_iter().map(|n| format!("{name}:{n}")));
+    for (file, text) in files {
+        let name = file.strip_prefix(root).unwrap_or(&file).to_owned();
+        found.extend(lines(&text).into_iter().map(|n| (name.clone(), n)));
     }
+    found.sort();
+    found.dedup();
     found
+        .into_iter()
+        .map(|(name, n)| format!("{}:{n}", name.display()))
+        .collect()
 }
 
 /// The roots that [`outside_git`] tries, in order: the temp dir of the

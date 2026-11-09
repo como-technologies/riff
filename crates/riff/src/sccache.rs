@@ -305,13 +305,12 @@ pub fn find() -> Option<PathBuf> {
 /// use std::os::unix::fs::PermissionsExt;
 ///
 /// let (a, b) = (tempfile::tempdir()?, tempfile::tempdir()?);
-/// let bin = b.path().join("sccache");
-/// std::fs::write(&bin, "#!/bin/sh\n")?;
+/// let bin = isolated::write_program(b.path().join("sccache"), "#!/bin/sh\n");
 /// let path = std::env::join_paths([a.path(), b.path()])?;
-/// assert_eq!(riff::sccache::find_in(Some(&path), None), None, "it cannot run");
-/// std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))?;
 /// assert_eq!(riff::sccache::find_in(Some(&path), None), Some(bin.clone()));
-/// assert_eq!(riff::sccache::find_in(None, Some(b.path())), Some(bin));
+/// assert_eq!(riff::sccache::find_in(None, Some(b.path())), Some(bin.clone()));
+/// std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o644))?;
+/// assert_eq!(riff::sccache::find_in(Some(&path), None), None, "it cannot run");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn find_in(path: Option<&OsStr>, extra: Option<&Path>) -> Option<PathBuf> {

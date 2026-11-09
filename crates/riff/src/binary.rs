@@ -327,13 +327,12 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
 /// use riff::binary::on_path_in;
 ///
 /// let dir = tempfile::tempdir()?;
-/// let riff = dir.path().join("riff");
-/// std::fs::write(&riff, "")?;
+/// let riff = isolated::write_program(dir.path().join("riff"), "");
 /// let path = format!("relative:/no/such/folder:{}", dir.path().display());
-/// assert_eq!(on_path_in("riff", Some(path.clone().into())), None);
-/// std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o755))?;
-/// assert_eq!(on_path_in("riff", Some(path.into())), Some(riff));
+/// assert_eq!(on_path_in("riff", Some(path.clone().into())), Some(riff.clone()));
 /// assert_eq!(on_path_in("riff", None), None);
+/// std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o644))?;
+/// assert_eq!(on_path_in("riff", Some(path.into())), None);
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn on_path_in(name: &str, path: Option<OsString>) -> Option<PathBuf> {

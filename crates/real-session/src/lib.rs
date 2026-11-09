@@ -2558,13 +2558,9 @@ mod tests {
 
     #[test]
     fn a_riff_run_that_ends_by_a_signal_stops_the_test() {
-        use std::os::unix::fs::PermissionsExt;
-
         let _lock = SPAWN.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
-        let riff = dir.path().join("riff");
-        std::fs::write(&riff, "#!/bin/sh\nkill -TERM $$\n").unwrap();
-        std::fs::set_permissions(&riff, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let riff = isolated::write_program(dir.path().join("riff"), "#!/bin/sh\nkill -TERM $$\n");
         let riff = Riff {
             bin: riff,
             data: dir.path().join("data"),

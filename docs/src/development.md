@@ -483,21 +483,28 @@ A test that runs a fake program, for example a fake `gh` or `podman`,
 writes it with `isolated::write_program`. A child process writes the
 file. So no child of another test thread holds the file open to
 write, and the run cannot fail with `ETXTBSY` ("Text file busy"). To
-copy a program, use `isolated::copy_program`. To give a program a new
-text, write it again with `isolated::write_program`:
+copy a program, use `isolated::copy_program`, not `std::fs::copy`. To
+give a program a new text, write it again with
+`isolated::write_program`:
 
 ```rust,ignore
 let gh = isolated::write_program(bin.join("gh"), "#!/bin/sh\necho '[]'\n");
 isolated::write_program(&gh, "#!/bin/sh\necho '[{\"number\": 40}]'\n");
+let sleep = isolated::copy_program("/bin/sleep", bin.join("sleep"));
 ```
 
-A test of the crate `isolated` reads each integration test. It fails
-on each line that writes a program in the test process: a mode 755, a
-text that starts with `#!`, or a write to a program that the file made
-with the helper. Run it by its name:
+The rule holds for each test: an integration test, a unit test and a
+doc test. A test of the crate `isolated` reads each file under
+`crates/*/tests`, and each `#[cfg(test)]` item and each doc test of a
+file under `crates/*/src`. It fails on each line that writes a program
+in the test process: a mode 755, a text that starts with `#!`, a write
+to a program that the test made with the helper, or a `std::fs::copy`
+from or to a file of a program. A file of a program has no extension,
+or the extension `sh`. The error names the file and the line. Run it
+by its name:
 
 ```sh
-cargo test -p isolated --test check no_test_file_writes_a_program_in_the_test_process
+cargo test -p isolated --test check no_test_writes_a_program_in_the_test_process
 ```
 
 ### Time a step in a test

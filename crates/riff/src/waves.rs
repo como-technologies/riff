@@ -709,7 +709,7 @@ mod tests {
     /// fd of it. A child that another test thread starts gets a copy of
     /// each open file until it runs its program. With a copy of a write
     /// fd, the run of the fake fails with `ETXTBSY`
-    /// (01M513N34NJ2G3TK3EH91M10FJ).
+    /// (01M517P9J77TZX28QYBR9SH6WW).
     fn fake_gh(dir: &Path) -> Gh {
         fake_gh_with(dir, OPEN)
     }
