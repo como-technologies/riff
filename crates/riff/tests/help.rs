@@ -499,4 +499,13 @@ fn the_help_of_wave_end_names_the_release_table_of_riff_toml() {
     // The help of the cut still says that the cut runs the script.
     let cut = words(&riff(&["release", "cut", "--help"]));
     assert!(cut.contains("runs deploy/release-check.sh"), "{cut}");
+    // 01M6ZM68Y1QCTA2M8DHYRMKBPN: the help and the how-to of the cut say
+    // that it checks the alerts.
+    let alerts = "while an alert of the repository has no review";
+    assert!(cut.contains(alerts), "{cut}");
+    let how_to = words(&under(
+        "development.md",
+        "#### Cut the release pull request",
+    ));
+    assert!(how_to.contains(alerts), "{how_to}");
 }

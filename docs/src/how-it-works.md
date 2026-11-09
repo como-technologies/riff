@@ -6268,6 +6268,9 @@ alerts, and `vulnerability_alerts: read` for the Dependabot alerts.
 With them, the lead reads each alert of its repository, and dismisses
 a code scanning or a secret scanning alert that is a false positive.
 So a failed CodeQL check of a pull request does not wait for a person.
+`riff release cut` reads the alerts too, and cuts no release while an
+alert has no review (see
+[Cut the release pull request](development.md#cut-the-release-pull-request)).
 Without the rights, GitHub answers 403 "Resource not accessible by
 integration". The lead dismisses an alert only after a review, and
 writes the reason on the alert. When a name misleads the scan, the

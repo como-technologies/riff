@@ -1653,6 +1653,15 @@ async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_mad
         who.contains("parts local/riff lead, local/third workers"),
         "{who}"
     );
+    // The leave goes to the session of the daemon for the repository: the
+    // daemon starts it after the join.
+    let lead = session(&third, "mike", "a", "l3");
+    r.api(&lead).register(&lead).await.unwrap();
+    until("the daemon of b in who of the repository", || async {
+        let who = r.api(&lead).who(&lead, false).await.ok()?;
+        remote::find(&who, "mike", repo, "b").map(str::to_owned)
+    })
+    .await;
 
     // The leave takes the part workers, and the host has no other part.
     let out = r.a.run(&third, &["leave", "--host", "b"], None).await;
@@ -1669,8 +1678,6 @@ async fn leave_with_host_stops_serving_and_removes_the_clone_that_the_daemon_mad
     assert!(riff::wave::read_waves(&r.b.dir()).unwrap().is_empty());
     assert!(riff::daemon::parts::of(&r.b.dir(), repo).none());
     // Its session on riff-server ends.
-    let lead = session(&third, "mike", "a", "l3");
-    r.api(&lead).register(&lead).await.unwrap();
     until(
         "the daemon of b ends its session for the repository",
         || async {
