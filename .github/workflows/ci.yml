@@ -43,8 +43,9 @@ permissions:
 jobs:
   # For Linux, CI compiles the code of a tree two times, both in the job
   # Build: the test build and the release build
-  # (01M6QQ1NXY0CXMZEEEP413W4PK). Each other job but macOS takes the
-  # binaries of Build from its artifacts. The artifacts have the git tree
+  # (01M6QQ1NXY0CXMZEEEP413W4PK). Each other job but macOS and the jobs
+  # of the release of a Mac takes the binaries of Build from its
+  # artifacts. The artifacts have the git tree
   # of the commit in their name, so a push to main, a merge group and a
   # tag take the binaries that the pull request with the same tree made
   # (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM).
@@ -54,8 +55,9 @@ jobs:
   # (01M3WNN7VQJKN5MJH7JN50VF4D). The job macOS runs the lint and the
   # tests of riff, riff-client and riff-core on a Mac
   # (01M6YPB5DZ9M3VEJ7V7P7EF797). The last job, Gate, needs each of them.
-  # Each job but macOS runs on the runner of the repository variable
-  # RIFF_RUNNER, with the default ubuntu-latest (01M513W2RERJES76ZXKKHCV0DP).
+  # Each job but macOS, macOS riff and Linux riff of a Mac runs on the
+  # runner of the repository variable RIFF_RUNNER, with the default
+  # ubuntu-latest (01M513W2RERJES76ZXKKHCV0DP).
   build:
     # The plan finds the artifacts of the tree. A step builds only what is
     # missing: the checks and the test build run in the session image, as
@@ -305,7 +307,8 @@ jobs:
     # For a release tag, the static binaries and SHA256SUMS go to the
     # GitHub release of the tag (01M4ZPJ091W3NYV1V0FJS9K6MS). The admin
     # publishes the release after the push of the tag, so the job waits up
-    # to 60 minutes for it. Only this job writes the repository.
+    # to 60 minutes for it. Only this job and macOS riff release write the
+    # repository.
     name: Static riff release
     needs: [static]
     if: github.ref_type == 'tag'
@@ -335,6 +338,152 @@ jobs:
 
       - name: Add the files to the release
         run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  macos_riff:
+    # The riff and riff-server of a release tag for a Mac with Apple
+    # silicon, aarch64-apple-darwin (01M6Z8F7B3HVVNGQMX8GP1Z7Q1): a build
+    # of the profile release with no cache, on a macOS runner of GitHub
+    # (01M6Z8FKZRJZ4NY60PQAH9SMHV). The jobs of the Mac have
+    # continue-on-error, and no job of Linux needs them. So a failed build
+    # for the Mac stops neither the files, nor the run, nor the deploy of
+    # Linux.
+    name: macOS riff
+    if: github.ref_type == 'tag'
+    runs-on: macos-latest
+    continue-on-error: true
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      # The build reads the time of the last commit that changed the code.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check that the runner is a Mac with Apple silicon
+        run: test "$(uname -sm)" = "Darwin arm64"
+
+      # rust-toolchain.toml pins the toolchain; rustup reads it.
+      - run: rustup show
+
+      - name: Build the riff of a Mac
+        run: cargo build --locked --profile release -p riff -p riff-server
+
+      - name: Check the riff of a Mac
+        run: |
+          target/release/riff --version
+          target/release/riff-server --version
+
+      - name: Name the files of the release
+        run: |
+          mkdir dist
+          for name in riff riff-server; do
+            cp "target/release/$name" "dist/$name-aarch64-apple-darwin"
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-riff
+          path: dist/
+          if-no-files-found: error
+
+  mac_session_riff:
+    # The Linux riff that the daemon on a Mac binds into each session
+    # (01M6Z8FM5F0Y7BQYNF8XS1B0T2): the static riff of a release tag for
+    # aarch64-unknown-linux-musl, the Linux of a VM on Apple silicon.
+    # deploy/static/build.sh builds for the CPU of the runner, so the job
+    # runs on an arm64 runner of GitHub (01M6Z8FKZRJZ4NY60PQAH9SMHV). The
+    # session image is for amd64 only, so riff --version runs on the
+    # runner.
+    name: Linux riff of a Mac
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04-arm
+    continue-on-error: true
+    timeout-minutes: 60
+    env:
+      RIFF_ENGINE: docker
+      CARGO_INCREMENTAL: 0
+    steps:
+      # build-id.sh reads the time of the last commit that changed the code.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check that the runner is Linux on arm64
+        run: test "$(uname -sm)" = "Linux aarch64"
+
+      - name: Build the static riff
+        run: deploy/static/build.sh release
+
+      - name: Check the static riff
+        run: |
+          file=target/static/release/riff
+          if readelf -lW "$file" | grep -q 'Requesting program interpreter'; then
+            echo "::error::$file needs shared libraries: it is not static."
+            exit 1
+          fi
+          "$file" --version
+
+      - name: Name the file of the release
+        run: |
+          mkdir dist
+          cp target/static/release/riff dist/riff-aarch64-unknown-linux-musl
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-session-riff
+          path: dist/
+          if-no-files-found: error
+
+  macos_release:
+    # For a release tag, the files of a Mac go to the GitHub release of
+    # the tag, with SHA256SUMS-aarch64-apple-darwin
+    # (01M6Z8F7B3HVVNGQMX8GP1Z7Q1, 01M6Z8FKZRJZ4NY60PQAH9SMHV). The job
+    # waits up to 60 minutes for the release, as Static riff release does.
+    # The sums go last, so a Mac finds them only when each file is there.
+    name: macOS riff release
+    needs: [macos_riff, mac_session_riff]
+    if: github.ref_type == 'tag'
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
+    continue-on-error: true
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-riff
+          path: dist
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: mac-session-riff
+          path: dist
+
+      - name: Write the sums of a Mac
+        run: |
+          cd dist
+          sha256sum -- riff-aarch64-apple-darwin riff-aarch64-unknown-linux-musl riff-server-aarch64-apple-darwin > SHA256SUMS-aarch64-apple-darwin
+          cat SHA256SUMS-aarch64-apple-darwin
+
+      - name: Wait for the release
+        run: |
+          for _ in $(seq 120); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null; then
+              exit 0
+            fi
+            echo "The release $TAG is not there yet. Publish it: gh release create $TAG"
+            sleep 30
+          done
+          echo "::error::The release $TAG is not there after 60 minutes. Publish it, then run this job again."
+          exit 1
+
+      - name: Add the files of a Mac to the release
+        run: |
+          gh release upload "$TAG" dist/riff-* --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" dist/SHA256SUMS-aarch64-apple-darwin --clobber --repo "$GITHUB_REPOSITORY"
 
   release:
     # A pushed tag v* fails when its version is not the version of the

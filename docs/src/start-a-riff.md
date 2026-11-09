@@ -39,6 +39,10 @@ flowchart TD
    cargo install --locked --git https://github.com/como-technologies/riff riff riff-server
    ```
 
+   On a Mac with Apple silicon, you can install riff with `curl` in
+   place of this step: see
+   [Install riff on a Mac](#install-riff-on-a-mac).
+
 2. Start the riff of this machine in a terminal of its own. Keep that
    terminal open: the riff stops when you close it or press Ctrl-C:
 
@@ -194,9 +198,11 @@ For the rules of your sessions, see
 
 Update riff on your machine. It installs `riff` and `riff-server` of
 a release. On Linux x86-64, it
-downloads the static binaries of the release from GitHub. On another
-machine, or for a release with no static binaries, `cargo` builds them
-(see
+downloads the static binaries of the release from GitHub. On a Mac
+with Apple silicon, it downloads the files of a Mac (see
+[Update riff on a Mac](development.md#update-riff-on-a-mac)). On
+another machine, or for a release with no files for your machine,
+`cargo` builds them (see
 [How riff is built and installed](development.md#how-riff-is-built-and-installed)):
 
 ```sh
@@ -230,6 +236,39 @@ images. It tells you each step that needs you. See
 [Each step of an update](how-it-works.md#each-step-of-an-update), and
 [See each step of an update](how-it-works.md#see-each-step-of-an-update)
 for `riff update --check`.
+
+## Install riff on a Mac
+
+On a Mac with Apple silicon, riff runs the commands that talk to a
+riff, for example `riff chat`, `riff who` and `riff top`. The sessions
+do not run on a Mac yet. riff has no files for a Mac with Intel.
+
+Download the files of a Mac of the Latest release with `curl`, check
+them, and put them in `~/.cargo/bin`. riff has no Developer ID of
+Apple, so do not download them with a browser: macOS refuses a file of
+a browser (see [The files of a Mac](development.md#the-files-of-a-mac)):
+
+```sh
+cd "$(mktemp -d)"
+base=https://github.com/como-technologies/riff/releases/latest/download
+for file in riff-aarch64-apple-darwin riff-server-aarch64-apple-darwin riff-aarch64-unknown-linux-musl SHA256SUMS-aarch64-apple-darwin; do curl -fsSLO "$base/$file"; done
+shasum -a 256 -c SHA256SUMS-aarch64-apple-darwin
+mkdir -p ~/.cargo/bin
+install -m 755 riff-aarch64-apple-darwin ~/.cargo/bin/riff
+install -m 755 riff-server-aarch64-apple-darwin ~/.cargo/bin/riff-server
+install -m 755 riff-aarch64-unknown-linux-musl ~/.cargo/bin/
+```
+
+When `curl` fails, the Latest release has no files of a Mac. Then
+install riff with `cargo`, as in step 1 of
+[Just this machine](#just-this-machine).
+
+When your shell finds no `riff`, add `~/.cargo/bin` to the `PATH` of
+zsh, then open a new terminal:
+
+```sh
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zprofile
+```
 
 ## Approve a release
 

@@ -92,6 +92,8 @@
 //! The daemon binds its own binary at [`RELAY_BIN`] in each container,
 //! with no write, and runs `RELAY_BIN relay -- COMMAND`: `riff relay` is
 //! the entrypoint (01M4Z60B7KEV0H161RBZ1SDRY2, 01M4ZHSZZDH0C01A5EVD0KFY14).
+//! On a Mac, its own binary is a Mach-O file, so it binds the Linux riff
+//! beside it ([`crate::release::session_riff`], 01M6Z8FM5F0Y7BQYNF8XS1B0T2).
 //! The relay gives `claude` each input, and sends the daemon each event
 //! ([`crate::session_relay`]).
 //!
@@ -2378,7 +2380,8 @@ pub struct Daemon<R> {
     runtime: R,
     dir: PathBuf,
     since_ms: i64,
-    /// The binary that the daemon binds into each session.
+    /// The binary that the daemon binds into each session
+    /// ([`crate::release::session_riff`]).
     relay_bin: PathBuf,
     /// True when [`crate::release::DYNAMIC`] lets the daemon bind a
     /// binary that is not static: a test.
@@ -2556,7 +2559,9 @@ impl<R: Runtime + 'static> Daemon<R> {
             runtime,
             dir,
             since_ms: now_ms(),
-            relay_bin: own_binary().unwrap_or_else(|_| PathBuf::from("riff")),
+            relay_bin: own_binary()
+                .map(|me| crate::release::session_riff(&me))
+                .unwrap_or_else(|_| PathBuf::from("riff")),
             any_relay: crate::release::takes_dynamic(),
             quiet: quiet_limit(),
             grace: quiet_limit().min(EXIT_GRACE),
@@ -7526,11 +7531,14 @@ mod tests {
         assert_eq!(name, "riff-issue-1-aaaaaaaa");
 
         // A daemon binds its own binary: the test binary, which is not
-        // static with glibc.
+        // static with glibc. On a Mac, it binds the Linux riff beside it.
         let root = tempfile::tempdir().unwrap();
         riff_client::secrets::mock_store();
         let own = Daemon::new(Fake::default(), dir_in(root.path())).unwrap();
-        assert_eq!(own.relay_bin, own_binary().unwrap());
+        assert_eq!(
+            own.relay_bin,
+            crate::release::session_riff(&own_binary().unwrap())
+        );
         if cfg!(target_env = "gnu") && !crate::release::takes_dynamic() {
             let error = own.check_relay().unwrap_err().to_string();
             assert!(error.contains("Run riff update"), "{error}");

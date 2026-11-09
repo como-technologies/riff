@@ -4637,8 +4637,9 @@ pub fn latest_instead(server: &str, tag: &str) -> String {
     )
 }
 
-/// The line of `riff update` before it downloads the static binaries of
-/// the release `tag` for `target` into `dir` (01M4ZPJ0BAQZ6AN06FGXS5D4FP).
+/// The line of `riff update` before it downloads the release files of
+/// the release `tag` for `target` into `dir` (01M4ZPJ0BAQZ6AN06FGXS5D4FP,
+/// 01M6Z8FM2NRD0BSPW63603NN4Y).
 ///
 /// ```
 /// let line = riff::text::downloads("v1.4.0", "x86_64-unknown-linux-musl", "/h/.cargo/bin".as_ref());
@@ -4647,10 +4648,21 @@ pub fn latest_instead(server: &str, tag: &str) -> String {
 ///     "riff downloads the static riff and riff-server of v1.4.0 \
 ///      (x86_64-unknown-linux-musl) into /h/.cargo/bin."
 /// );
+/// let line = riff::text::downloads("v1.4.0", "aarch64-apple-darwin", "/h/.cargo/bin".as_ref());
+/// assert_eq!(
+///     line,
+///     "riff downloads riff, riff-server and the Linux riff of the sessions of v1.4.0 \
+///      (aarch64-apple-darwin) into /h/.cargo/bin."
+/// );
 /// ```
 pub fn downloads(tag: &str, target: &str, dir: &std::path::Path) -> String {
+    let files = if target == crate::release::MAC {
+        "riff, riff-server and the Linux riff of the sessions"
+    } else {
+        "the static riff and riff-server"
+    };
     format!(
-        "riff downloads the static riff and riff-server of {tag} ({target}) into {}.",
+        "riff downloads {files} of {tag} ({target}) into {}.",
         dir.display()
     )
 }
@@ -4673,55 +4685,54 @@ pub fn cargo_builds(tag: &str) -> String {
 /// this machine (01M51M3ZKWQYBBPD97R0G9QAX0).
 pub const NOT_RELEASE_TARGET: &str = "the releases have no static riff for this machine";
 
-/// Why a riff is not a release: the release `tag` has no `SHA256SUMS`
-/// (01M51M3ZKWQYBBPD97R0G9QAX0).
-///
-/// ```
-/// assert_eq!(riff::text::not_release_no_sums("v1.5.0"), "the release v1.5.0 has no SHA256SUMS");
-/// ```
-pub fn not_release_no_sums(tag: &str) -> String {
-    format!("the release {tag} has no {}", crate::release::SUMS)
-}
-
-/// Why a riff is not a release: `SHA256SUMS` of `tag` has no line for
-/// `name` (01M51M3ZKWQYBBPD97R0G9QAX0).
+/// Why a riff is not a release: the release `tag` has no file of sums
+/// `sums` (01M51M3ZKWQYBBPD97R0G9QAX0).
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::not_release_no_line("v1.5.0", "riff-x"),
+///     riff::text::not_release_no_sums("v1.5.0", "SHA256SUMS"),
+///     "the release v1.5.0 has no SHA256SUMS"
+/// );
+/// ```
+pub fn not_release_no_sums(tag: &str, sums: &str) -> String {
+    format!("the release {tag} has no {sums}")
+}
+
+/// Why a riff is not a release: the file of sums `sums` of `tag` has no
+/// line for `name` (01M51M3ZKWQYBBPD97R0G9QAX0).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::not_release_no_line("v1.5.0", "SHA256SUMS", "riff-x"),
 ///     "SHA256SUMS of v1.5.0 has no line for riff-x"
 /// );
 /// ```
-pub fn not_release_no_line(tag: &str, name: &str) -> String {
-    format!("{} of {tag} has no line for {name}", crate::release::SUMS)
+pub fn not_release_no_line(tag: &str, sums: &str, name: &str) -> String {
+    format!("{sums} of {tag} has no line for {name}")
 }
 
 /// Why a riff is not a release: its SHA-256 `got` is not the SHA-256 of
-/// `name` in `SHA256SUMS` of `tag`. It is a check build or a dev build
-/// (01M51M3ZKWQYBBPD97R0G9QAX0).
+/// `name` in the file of sums `sums` of `tag`. It is a check build or a
+/// dev build (01M51M3ZKWQYBBPD97R0G9QAX0).
 ///
 /// ```
 /// assert_eq!(
-///     riff::text::not_release_sum("ab12", "v1.5.0", "riff-x"),
+///     riff::text::not_release_sum("ab12", "v1.5.0", "SHA256SUMS", "riff-x"),
 ///     "its SHA-256 ab12 is not the one of riff-x in SHA256SUMS of v1.5.0: it is a check build \
 ///      or a dev build"
 /// );
 /// ```
-pub fn not_release_sum(got: &str, tag: &str, name: &str) -> String {
+pub fn not_release_sum(got: &str, tag: &str, sums: &str, name: &str) -> String {
     format!(
-        "its SHA-256 {got} is not the one of {name} in {} of {tag}: it is a check build or a \
-         dev build",
-        crate::release::SUMS
+        "its SHA-256 {got} is not the one of {name} in {sums} of {tag}: it is a check build or a \
+         dev build"
     )
 }
 
-/// Why a riff is not a release: riff cannot read `SHA256SUMS` of `tag`
-/// (01M51M3ZKWQYBBPD97R0G9QAX0).
-pub fn not_release_read(tag: &str, error: &str) -> String {
-    format!(
-        "riff cannot read {} of {tag}: {error}",
-        crate::release::SUMS
-    )
+/// Why a riff is not a release: riff cannot read the file of sums `sums`
+/// of `tag` (01M51M3ZKWQYBBPD97R0G9QAX0).
+pub fn not_release_read(tag: &str, sums: &str, error: &str) -> String {
+    format!("riff cannot read {sums} of {tag}: {error}")
 }
 
 /// Why a riff is not a release for the steps of an update: the variable

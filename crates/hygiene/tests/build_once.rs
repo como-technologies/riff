@@ -563,18 +563,22 @@ fn steps(job: &str) -> Vec<String> {
 }
 
 /// 01M6QQ1NXY0CXMZEEEP413W4PK: the job Build is the only job of CI that
-/// compiles the code for Linux. A job of a deploy, a check or a release
-/// runs no cargo, no rustup, no cache of a build and no build of an
-/// image from the source. The job macOS compiles for macOS
-/// (01M6YPB5DZ9M3VEJ7V7P7EF797).
+/// compiles the code for Linux on x86-64. A job of a deploy, a check or a
+/// release runs no cargo, no rustup, no cache of a build and no build of
+/// an image from the source. The jobs macOS and macOS riff compile for
+/// macOS (01M6YPB5DZ9M3VEJ7V7P7EF797), and the job Linux riff of a Mac
+/// compiles the Linux riff of the sessions of a Mac
+/// (01M6Z8FKZRJZ4NY60PQAH9SMHV).
 #[test]
 fn only_the_job_build_compiles_for_linux() {
     let names = job_names();
-    assert!(names.contains(&"build".to_owned()), "{names:?}");
-    assert!(names.contains(&"macos".to_owned()), "{names:?}");
+    let compile = ["build", "macos", "macos_riff", "mac_session_riff"];
+    for name in compile {
+        assert!(names.contains(&name.to_owned()), "{name}: {names:?}");
+    }
     for name in names {
         // The audit reads Cargo.lock with cargo-audit, and compiles nothing.
-        if name == "build" || name == "audit" || name == "macos" {
+        if compile.contains(&name.as_str()) || name == "audit" {
             continue;
         }
         let job = job(&name);

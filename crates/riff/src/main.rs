@@ -489,8 +489,10 @@ enum Command {
     ///
     /// It installs riff and riff-server of a release. On Linux x86-64 it downloads
     /// the static binaries of the GitHub release, checks them, and puts
-    /// them in the bin folder of cargo. On another machine, or for a
-    /// release with no static binaries, cargo builds them. It installs
+    /// them in the bin folder of cargo. On a Mac with Apple silicon it
+    /// does the same with the files of a Mac, and also puts there the
+    /// Linux riff of the sessions. On another machine, or for a release
+    /// with no files for the machine, cargo builds them. It installs
     /// the release that the riff runs, or the release that GitHub marks
     /// Latest when riff uses the riff of this machine or cannot read the
     /// build of the riff.
