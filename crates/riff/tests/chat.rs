@@ -725,18 +725,21 @@ async fn connected(api: &Api, tailed: &mut Lines<BufReader<ChildStdout>>) {
     const PROBE: &str = "is the tail there";
     let (lead, chat) = (lead_of("mike"), riff::chat::thread());
     let span = Span::start();
-    loop {
-        api.post(&lead, Some(&chat), &[], PROBE, Kind::Message)
+    // The tail is there when it shows the last probe: then it saw each
+    // probe, and no probe comes in a later break of a test.
+    for n in 1.. {
+        let probe = format!("{PROBE} {n}.");
+        api.post(&lead, Some(&chat), &[], &probe, Kind::Message)
             .await
             .unwrap();
-        match tokio::time::timeout(Duration::from_millis(500), tailed.next_line()).await {
-            Ok(line) => {
-                if line.unwrap().expect("riff tail runs").contains(PROBE) {
-                    return;
-                }
+        while let Ok(line) =
+            tokio::time::timeout(Duration::from_millis(500), tailed.next_line()).await
+        {
+            if line.unwrap().expect("riff tail runs").contains(&probe) {
+                return;
             }
-            Err(_) => assert!(span.within(WAIT), "riff tail connects in time"),
         }
+        assert!(span.within(WAIT), "riff tail connects in time");
     }
 }
 
