@@ -313,14 +313,46 @@ riff github check
 | `checks` | read | read | read |
 | `actions` | write | read | write |
 | `workflows` | write | none | none |
+| `security_events` | none | none | write |
 
 No role gets `administration`, `deployments`, `environments`,
 `secrets`, `variables` or `packages`. To add a repository of another
 account, see
 [Add another repository to the riff](start-a-riff.md#add-another-repository-to-the-riff).
+For why the lead has `security_events: write`, see
+[Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role).
 
 To make the Apps again, first delete both Apps in the settings of the
 account on GitHub. Then run `riff github create` again.
+
+### Accept the new right of the lead App
+
+The lead App asks for `security_events: write`. GitHub gives a right
+to an install only when the owner of the account accepts it. On a new
+App, **Install** accepts each right of the App. A lead App that you
+made before has no `security_events`. riff-server asks for each token
+of the lead with this right, so GitHub refuses each one: the lead
+starts with no token on GitHub, and the daemon writes with your token.
+So give the right to the lead App before the deploy of a riff-server
+that asks for it:
+
+1. On GitHub, open the settings of the lead App: **Settings** of the
+   account, **Developer settings**, **GitHub Apps**,
+   `riff-OWNER-lead`, **Edit**, **Permissions & events**.
+2. Under **Repository permissions**, set **Code scanning alerts** to
+   **Read and write**. Click **Save changes**.
+3. GitHub asks the owner of each install to accept the new right. On
+   each account with an install of `riff-OWNER-lead`, open
+   **Settings**, **GitHub Apps**, **Configure** of `riff-OWNER-lead`,
+   then **Review request**. Click **Accept new permissions**.
+
+After the deploy, check the tokens of each role in a clone of each
+repository of the riff. The row `lead` must have
+`security_events: write`:
+
+```sh
+riff github check
+```
 
 ## Invite a person
 

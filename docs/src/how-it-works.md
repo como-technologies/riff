@@ -6251,7 +6251,7 @@ App, and refuses each step that the rights of the role do not give. See
 |---|---|---|
 | A worker | `riff-OWNER[bot]`, the session App | Push a branch, open a pull request, comment, run a workflow again, and change `.github/workflows`. It cannot set `riff/verify` or push a tag `v*`. |
 | A verifier | `riff-OWNER[bot]`, the session App | Read only. The daemon reports the verify on the pull request. |
-| The lead in a container | `riff-OWNER-lead[bot]`, the lead App | The steps of a worker, set `riff/verify`, and push a tag `v*` (see [Who tags and who approves a release](#who-tags-and-who-approves-a-release)). It cannot change `.github/workflows`, and it cannot approve a deploy. |
+| The lead in a container | `riff-OWNER-lead[bot]`, the lead App | The steps of a worker, set `riff/verify`, push a tag `v*` (see [Who tags and who approves a release](#who-tags-and-who-approves-a-release)), and read and dismiss a code scanning alert. It cannot change `.github/workflows`, and it cannot approve a deploy. |
 | The daemon on the host, for its writes | `riff-OWNER-lead[bot]`, the lead App | The comment of the tokens of a claim, the comment `Merged in #PR`, the result of a verify with `riff/verify`, the issue of a broken main, and the delete of an old branch `riff-kept`. The daemon is no session: its reads and its pushes with git keep your token. |
 | A session of `riff run --no-github` | Nobody: it has no token | Nothing on GitHub. Its person pushes its branch: see [Run an item with no GitHub](development.md#run-an-item-with-no-github). |
 | You in a terminal, a plain `claude` | You | Each step that you can do. |
@@ -6260,6 +6260,23 @@ riff-server takes the role from its own facts: the lead, a session
 with a claim `verify-ITEM`, else a worker. The token is good for one
 hour and for the one repository of the session. The daemon asks for it
 only when your `gh` can push to that repository.
+
+Only the lead App has `security_events: write`. With it, the lead
+reads the code scanning alerts of its repository, for example of
+CodeQL, and dismisses an alert that is a false positive. So a failed
+CodeQL check of a pull request does not wait for a person. Without the
+right, GitHub answers 403 "Resource not accessible by integration". The
+lead dismisses an alert only after a review, and writes the reason on
+the alert. When a name misleads the scan, the lead renames it in place
+of a dismiss. To see each dismissed alert, who dismissed it and why,
+put the repository in place of `OWNER/NAME`:
+
+```sh
+gh api 'repos/OWNER/NAME/code-scanning/alerts?state=dismissed' --jq '.[] | [.number, .dismissed_by.login, .dismissed_reason, .dismissed_comment] | @tsv'
+```
+
+A lead App that you made before needs the new right: see
+[Accept the new right of the lead App](start-a-team-riff.md#accept-the-new-right-of-the-lead-app).
 
 The daemon gets the token of its own writes in the same way, from the
 lead App, for one repository. It keeps the token until 10 minutes

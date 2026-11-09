@@ -149,7 +149,8 @@ impl Default for Settings {
     }
 }
 
-/// The rights of the token of `role` (01M6WG52MWZB1SVQMMH6BKJSJ5).
+/// The rights of the token of `role` (01M6WG52MWZB1SVQMMH6BKJSJ5,
+/// 01M6ZEJ4NEZGQFV3Q4BER5AW3S).
 ///
 /// ```
 /// use riff_core::wire::GitHubRole;
@@ -162,8 +163,10 @@ impl Default for Settings {
 /// let verifier = rights(GitHubRole::Verifier);
 /// assert!(verifier.values().all(|level| level == "read"));
 /// assert!(!verifier.contains_key("workflows"));
+/// assert!(!worker.contains_key("security_events"));
 /// let lead = rights(GitHubRole::Lead);
 /// assert_eq!(lead["statuses"], "write");
+/// assert_eq!(lead["security_events"], "write");
 /// assert!(!lead.contains_key("workflows"));
 /// ```
 pub fn rights(role: GitHubRole) -> Rights {
@@ -192,7 +195,14 @@ pub fn rights(role: GitHubRole) -> Rights {
         ),
         GitHubRole::Lead => (
             &["metadata", "checks"],
-            &["contents", "pull_requests", "issues", "statuses", "actions"],
+            &[
+                "contents",
+                "pull_requests",
+                "issues",
+                "statuses",
+                "actions",
+                "security_events",
+            ],
         ),
     };
     let level = |names: &[&str], level: &str| {
@@ -218,7 +228,10 @@ pub fn rights(role: GitHubRole) -> Rights {
 /// let session = app_rights(GitHubApp::Session);
 /// assert_eq!(session["contents"], "write");
 /// assert_eq!(session["merge_queues"], "read");
-/// assert!(!app_rights(GitHubApp::Lead).contains_key("merge_queues"));
+/// assert!(!session.contains_key("security_events"));
+/// let lead = app_rights(GitHubApp::Lead);
+/// assert_eq!(lead["security_events"], "write");
+/// assert!(!lead.contains_key("merge_queues"));
 /// ```
 pub fn app_rights(app: GitHubApp) -> Rights {
     let mut highest = Rights::new();
@@ -1683,4 +1696,28 @@ pub(crate) async fn check(
 /// (01M6WG52QHC8E24RJ33ZPVHZSJ).
 pub(crate) async fn hook() -> StatusCode {
     StatusCode::ACCEPTED
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the lead reads the code scanning
+    /// alerts and dismisses one. No other role does.
+    #[test]
+    fn only_the_lead_gets_security_events_write() {
+        for role in GitHubRole::ALL {
+            let level = rights(role).get("security_events").cloned();
+            let want = (role == GitHubRole::Lead).then(|| "write".to_owned());
+            assert_eq!(level, want, "{role}");
+        }
+        let lead = manifest(GitHubApp::Lead, "acme", "https://riff.example.com");
+        assert_eq!(lead["default_permissions"]["security_events"], "write");
+        let session = manifest(GitHubApp::Session, "acme", "https://riff.example.com");
+        assert!(
+            session["default_permissions"]
+                .get("security_events")
+                .is_none()
+        );
+    }
 }

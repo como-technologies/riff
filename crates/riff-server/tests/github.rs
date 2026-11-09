@@ -189,6 +189,7 @@ fn table(role: GitHubRole) -> BTreeMap<String, String> {
             ("statuses", "write"),
             ("checks", "read"),
             ("actions", "write"),
+            ("security_events", "write"),
         ]),
     }
 }
@@ -203,9 +204,10 @@ const NEVER: [&str; 6] = [
     "packages",
 ];
 
-/// 01M6WG52MWZB1SVQMMH6BKJSJ5, 01M6WG52QHC8E24RJ33ZPVHZSJ: the manifest
-/// of each App has only the rights of its roles, and the one of the
-/// session App has the webhook and the events of the riff.
+/// 01M6WG52MWZB1SVQMMH6BKJSJ5, 01M6WG52QHC8E24RJ33ZPVHZSJ,
+/// 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the manifest of each App has only the
+/// rights of its roles, and the one of the session App has the webhook
+/// and the events of the riff.
 #[tokio::test]
 async fn each_manifest_has_only_the_rights_of_its_roles() {
     let fake = FakeGitHub::start().await;
@@ -251,6 +253,15 @@ async fn each_manifest_has_only_the_rights_of_its_roles() {
     );
     assert_eq!(lead["name"], "riff-acme-lead");
     assert_eq!(lead["default_permissions"], json!(table(GitHubRole::Lead)));
+    // 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the lead reads the code scanning
+    // alerts, and dismisses one. No worker and no verifier does.
+    assert_eq!(lead["default_permissions"]["security_events"], "write");
+    assert!(
+        session["default_permissions"]
+            .get("security_events")
+            .is_none(),
+        "{session}"
+    );
     assert!(lead.get("hook_attributes").is_none(), "{lead}");
     assert!(lead.get("default_events").is_none(), "{lead}");
 

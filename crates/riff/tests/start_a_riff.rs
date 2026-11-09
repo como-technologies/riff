@@ -146,6 +146,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud create shared",
             "riff cloud status shared",
             "riff github check",
+            "riff github check",
             "riff invite EMAIL",
             "riff members",
             "riff tail",
@@ -208,14 +209,33 @@ fn the_book_has_the_how_tos_of_the_github_apps() {
             "git pull",
             "riff cloud create shared",
             "riff cloud status shared",
+            "riff github check",
             "riff github check"
         ]
     );
     for heading in [
         "\n### Make the secret before the deploy\n",
         "\n### Check the tokens of each role\n",
+        "\n### Accept the new right of the lead App\n",
     ] {
         assert!(make.contains(heading), "{heading}: {make}");
+    }
+    // 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the table has the right of the lead on
+    // the code scanning alerts, and the owner accepts it on each install
+    // before the deploy.
+    assert!(
+        make.contains("| `security_events` | none | none | write |"),
+        "{make}"
+    );
+    let text = make.split_whitespace().collect::<Vec<_>>().join(" ");
+    for words in [
+        "set **Code scanning alerts** to **Read and write**",
+        "GitHub asks the owner of each install to accept the new right.",
+        "Click **Accept new permissions**.",
+        "before the deploy of a riff-server that asks for it",
+        "The row `lead` must have `security_events: write`",
+    ] {
+        assert!(text.contains(words), "{words}: {make}");
     }
     assert!(
         make.contains("(how-it-works.md#when-riff-server-cannot-read-the-keys-of-the-apps)"),

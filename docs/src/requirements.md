@@ -3446,10 +3446,8 @@
   worker gets `metadata`, `checks` and `statuses` read, and `contents`,
   `pull_requests`, `issues`, `actions` and `workflows` write. A verifier
   gets read only, of `metadata`, `contents`, `pull_requests`, `issues`,
-  `statuses`, `checks` and `actions`. The lead gets the rights of a
-  worker, with `statuses` write and no `workflows`. No role gets
-  `administration`, `deployments`, `environments`, `secrets`,
-  `variables` or `packages`.
+  `statuses`, `checks` and `actions`. No role gets `administration`,
+  `deployments`, `environments`, `secrets`, `variables` or `packages`.
 - **01M6WG52QHC8E24RJ33ZPVHZSJ** The manifest of each App asks for the
   highest right of its roles and no more. The manifest of the session
   App also asks for `merge_queues` read, and sets the webhook
@@ -3555,6 +3553,10 @@
   installs of the Apps", with a copyable `sh` block for `riff github
   install OWNER` and one for `riff github install OWNER --repo
   OWNER/NAME`.
+- **01M6ZEJ4NEZGQFV3Q4BER5AW3S** The lead gets the rights of a worker,
+  with `statuses` write, `security_events` write and no `workflows`. So
+  the lead reads the code scanning alerts of its repository, and
+  dismisses an alert. Supersedes 01M6WG52MWZB1SVQMMH6BKJSJ5 in part.
 
 ## Sign-in and tokens
 

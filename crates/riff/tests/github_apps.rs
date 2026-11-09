@@ -118,7 +118,7 @@ async fn riff_github_check_prints_the_bot_and_the_rights_of_each_role() {
          verifier  riff-acme[bot]       actions: read, checks: read, contents: read, issues: read, \
          metadata: read, pull_requests: read, statuses: read\n  \
          lead      riff-acme-lead[bot]  actions: write, checks: read, contents: write, issues: write, \
-         metadata: read, pull_requests: write, statuses: write\n\
+         metadata: read, pull_requests: write, security_events: write, statuses: write\n\
          riff github check: each role has its rights and no more. riff-server revoked each token.\n"
     );
     let seen = fake.seen();
@@ -787,8 +787,26 @@ fn the_book_says_who_acts_on_github_for_each_role() {
     }
     assert!(who.contains("No session gets your token."), "{who}");
     let commands = crate::book::commands_in(who);
-    assert_eq!(commands, ["riff whoami", "riff daemon status"]);
-    crate::book::each_is_real(&commands);
+    let (gh, riff): (Vec<_>, Vec<_>) = commands.into_iter().partition(|c| c.starts_with("gh "));
+    assert_eq!(riff, ["riff whoami", "riff daemon status"]);
+    crate::book::each_is_real(&riff);
+    // 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the right of the lead App on the code
+    // scanning alerts, why, and the dismissed alerts.
+    assert_eq!(gh.len(), 1, "{gh:?}");
+    assert!(
+        gh[0].starts_with("gh api 'repos/OWNER/NAME/code-scanning/alerts?state=dismissed' --jq "),
+        "{gh:?}"
+    );
+    let text = who.split_whitespace().collect::<Vec<_>>().join(" ");
+    for words in [
+        "Only the lead App has `security_events: write`.",
+        "dismisses an alert that is a false positive.",
+        "So a failed CodeQL check of a pull request does not wait for a person.",
+        "The lead dismisses an alert only after a review, and writes the reason on the alert.",
+        "(start-a-team-riff.md#accept-the-new-right-of-the-lead-app)",
+    ] {
+        assert!(text.contains(words), "{words}: {who}");
+    }
     // The lines of `riff daemon status` are the lines of riff.
     let acts = riff::daemon::gh_token::ActsAs::NoToken {
         why: "riff-acme-lead is not installed on acme/app: riff github install acme".into(),
