@@ -3951,7 +3951,7 @@ until you send the next line.
 | `i`, `Enter` | Go back to the prompt. |
 | `↑`, `↓` | Move the cursor one row in a long line. On the first row, `↑` goes to the start of the line, and on the last row, `↓` goes to the end. `↑` brings back a line that you sent only on an empty line: see "Send a line again". Out of the prompt: scroll one row. |
 | `←`, `→` | Move the cursor one character, also over the end of a row. |
-| `Home`, `End` | Go to the start or the end of the line. Out of the prompt: show the oldest or the newest line. |
+| `Home`, `End` | Go to the start or the end of the line. At the end of the line, `End` shows the newest line. Out of the prompt: show the oldest or the newest line. |
 | `PgUp`, `PgDn` | Show older or newer lines. |
 | `g`, `G` | Out of the prompt: show the oldest or the newest line. |
 | `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. While the list of the names shows, `Tab` picks a name. |
@@ -3990,7 +3990,8 @@ stays: use it in a pipe, or in a split of tmux next to a lead.
 
 A long line wraps at the width of the tab, after a space when it can.
 The prompt grows up by one row for each row of the line, and the log
-above it has as many rows less:
+above it has as many rows less. The newest line of the log stays in
+sight:
 
 ```text
  13:12 <riff> #1608 merged
@@ -4003,6 +4004,45 @@ The prompt has at most 5 rows, and in a short terminal at most a third
 of the rows of the tab. A longer line scrolls by rows, so that the row
 of the cursor shows. Move through the rows with `↑`, `↓`, `←`, `→`,
 `Home` and `End`: see the table of keys above.
+
+#### See the new lines under the log
+
+While you read older lines, a new line does not move the log. The line
+stays under the log, and the row over the prompt counts the new lines
+that you did not see. Start the TUI, press `2`, press `PgUp`, and wait
+for a line:
+
+```sh
+riff
+```
+
+```text
+ 12:40 <riff-bot> members: ann passed the owner role to mike.
+ 12:46 <riff> #994 still has no answer; I wait for mike
+ 2 new lines below: End
+>
+ Enter send  Esc log  PgUp older  Alt-1..6 tab  Ctrl-C quit
+```
+
+The row shows while the log is not at the bottom and a new line is
+under it. A scroll that shows a new line takes it out of the count.
+Press `End` to show the newest line. In the prompt, the first `End`
+goes to the end of the line, and the next `End` shows the newest line.
+A click on the row and a send show the newest line too. Then the row
+goes.
+
+```mermaid
+stateDiagram-v2
+    Bottom: the newest line shows
+    Older: older lines show
+    Below: N new lines below
+    [*] --> Bottom
+    Bottom --> Older: PgUp, or the wheel
+    Older --> Below: a new line comes
+    Below --> Older: a scroll shows each new line
+    Below --> Bottom: End, a click on the row, or a send
+    Older --> Bottom: End, PgDn to the newest line, or a send
+```
 
 #### Pick a name in the Chat tab
 
@@ -4022,8 +4062,10 @@ riff
  Tab pick  Esc close  Ctrl-C quit
 ```
 
-The list takes the last rows of the log, over the prompt. The first
-name is in reverse video: `Tab` or `Enter` puts it in the line. `Esc`
+The list takes the last rows of the log, over the prompt, but no row of
+the newest line. In a short terminal, the list shows fewer names, and
+the first name at least. The first name is in reverse video: `Tab` or
+`Enter` puts it in the line. `Esc`
 closes the list, and the prompt keeps the focus. A second `Esc` leaves
 the prompt. With no list, `Tab` opens the next tab, and `Enter` sends
 the line.
