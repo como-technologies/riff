@@ -164,7 +164,6 @@ fn real() -> PathBuf {
 ///
 /// ```
 /// use std::ffi::OsString;
-/// use std::os::unix::fs::PermissionsExt;
 /// use std::path::Path;
 /// use riff::gh_wrapper::real_in;
 ///
@@ -172,10 +171,7 @@ fn real() -> PathBuf {
 /// let write = |name: &str| -> std::io::Result<std::path::PathBuf> {
 ///     let folder = dir.path().join(name);
 ///     std::fs::create_dir_all(&folder)?;
-///     let gh = folder.join("gh");
-///     std::fs::write(&gh, "#!/bin/sh\n")?;
-///     std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755))?;
-///     Ok(gh)
+///     Ok(isolated::write_program(folder.join("gh"), "#!/bin/sh\n"))
 /// };
 /// let (wrapper, other) = (write("local")?, write("opt")?);
 /// let path = std::env::join_paths([dir.path().join("local"), dir.path().join("opt")])?;

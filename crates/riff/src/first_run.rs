@@ -460,11 +460,10 @@ fn dir_of(var: &str, default: &str) -> PathBuf {
 /// let (a, b) = (tempfile::tempdir()?, tempfile::tempdir()?);
 /// let dirs = [a.path().to_owned(), b.path().to_owned()];
 /// assert_eq!(riff::first_run::find_init(&dirs), None);
-/// let init = b.path().join("catatonit");
-/// std::fs::write(&init, "")?;
+/// let init = isolated::write_program(b.path().join("catatonit"), "");
+/// assert_eq!(riff::first_run::find_init(&dirs), Some(init.clone()));
+/// std::fs::set_permissions(&init, std::fs::Permissions::from_mode(0o644))?;
 /// assert_eq!(riff::first_run::find_init(&dirs), None, "it does not run");
-/// std::fs::set_permissions(&init, std::fs::Permissions::from_mode(0o755))?;
-/// assert_eq!(riff::first_run::find_init(&dirs), Some(init));
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn find_init(dirs: &[PathBuf]) -> Option<PathBuf> {

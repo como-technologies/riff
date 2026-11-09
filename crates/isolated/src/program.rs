@@ -26,8 +26,13 @@
 //!     T->>T: run the program: no write handle is open
 //! ```
 //!
-//! [`program_writers`] finds each test file that writes a program in
-//! the test process. A test of this crate fails on each one.
+//! The rule holds for each test: an integration test, a unit test and
+//! a doc test (01M6Z48B94NWNCV9SGQBCT2EM5). Merged doc tests also run
+//! as threads of one process. [`program_writers`] finds each line of a
+//! test that writes a program in the test process: in each file under
+//! `crates/*/tests`, and in the test code of each file under
+//! `crates/*/src` (see [`in_src`](crate::in_src)). A test of this crate
+//! fails on each one.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -99,9 +104,11 @@ pub fn copy_program(from: impl AsRef<Path>, to: impl AsRef<Path>) -> PathBuf {
     to.to_owned()
 }
 
-/// Each line of a test file under `root/crates/*/tests` that writes a
-/// program in the test process, as `PATH:LINE` (see
-/// [`program_writes`]). The helper crate itself does not count.
+/// Each line of a test under `root/crates/*` that writes a program in
+/// the test process, as `PATH:LINE` (see [`program_writes`]): a line of
+/// a file under `tests`, or of the test code of a file under `src` (see
+/// [`unit_tests`](crate::unit_tests)). The helper crate itself does not
+/// count.
 ///
 /// ```
 /// let root = tempfile::tempdir()?;
@@ -113,11 +120,24 @@ pub fn copy_program(from: impl AsRef<Path>, to: impl AsRef<Path>) -> PathBuf {
 ///     "std::fs::write(&gh, FAKE_GH).unwrap();\n\
 ///      std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();\n",
 /// )?;
-/// assert_eq!(isolated::program_writers(root.path()), ["crates/riff/tests/bad.rs:2"]);
+/// let src = root.path().join("crates/riff/src");
+/// std::fs::create_dir_all(&src)?;
+/// std::fs::write(
+///     src.join("lib.rs"),
+///     "fn update() { std::fs::copy(&new, dir.join(\"riff\")); }\n\
+///      #[cfg(test)]\n\
+///      mod tests {\n\
+///      \x20   fn a() { std::fs::copy(sleep(), dir.join(\"sleep\")).unwrap(); }\n\
+///      }\n",
+/// )?;
+/// assert_eq!(
+///     isolated::program_writers(root.path()),
+///     ["crates/riff/src/lib.rs:4", "crates/riff/tests/bad.rs:2"]
+/// );
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn program_writers(root: &Path) -> Vec<String> {
-    crate::test_lines(root, program_writes)
+    crate::each_test_lines(root, program_writes)
 }
 
 /// The lines of the test file `text` that write a program in the test
@@ -130,7 +150,10 @@ pub fn program_writers(root: &Path) -> Vec<String> {
 ///   program has the mode 755 already, so the write needs no
 ///   `set_permissions`. The name is the last `join("NAME")` of the
 ///   path, or of the `let` of a path that is a variable (see
-///   [`file_name`]).
+///   [`file_name`]);
+/// - a call of `fs::copy` from or to a file with such a name, or with
+///   the name of a program ([`names_a_program`]). The copy keeps the
+///   mode of the program.
 ///
 /// ```
 /// use isolated::program_writes;
@@ -164,6 +187,14 @@ pub fn program_writers(root: &Path) -> Vec<String> {
 /// let mode = "fs::write(&p, text)?;\n\
 ///             fs::set_permissions(&p, fs::Permissions::from_mode(0o755))?;\n";
 /// assert_eq!(program_writes(mode), [2]);
+///
+/// let copies = "std::fs::copy(sleep_program(), dir.join(\"sleep\")).unwrap();\n\
+///               let copy = other.join(\"copy\");\n\
+///               std::fs::copy(&riff, &copy).unwrap();\n\
+///               std::fs::copy(\n    top.join(\"deploy/build-id.sh\"),\n    to,\n)\n.unwrap();\n\
+///               fs::copy(settings.join(&file), dir.join(&file)).unwrap();\n\
+///               fs::copy(top.join(\"shared.env\"), dir.join(\"shared.env\")).unwrap();\n";
+/// assert_eq!(program_writes(copies), [1, 3, 4]);
 /// ```
 pub fn program_writes(text: &str) -> Vec<usize> {
     let made = |call, index| {
@@ -185,6 +216,16 @@ pub fn program_writes(text: &str) -> Vec<usize> {
             .and_then(|path| file_name(text, at, path))
             .is_some_and(|file| programs.contains(&file));
         if script || program {
+            lines.push(text[..at].matches('\n').count() + 1);
+        }
+    }
+    for (at, rest) in calls(text, "fs::copy(") {
+        let program = [arg(rest, 0), arg(rest, 1)]
+            .into_iter()
+            .flatten()
+            .filter_map(|path| file_name(text, at, path))
+            .any(|file| programs.contains(&file) || names_a_program(file));
+        if program {
             lines.push(text[..at].matches('\n').count() + 1);
         }
     }
@@ -269,7 +310,8 @@ fn joined(expr: &str) -> Option<&str> {
     expr[start..].split('"').next()
 }
 
-/// True when a line of a test makes a file that it wrote a program.
+/// True when a line of a test makes a file that it wrote a program: it
+/// sets the mode 755.
 ///
 /// ```
 /// use isolated::writes_a_program;
@@ -277,6 +319,9 @@ fn joined(expr: &str) -> Option<&str> {
 ///     "std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();"
 /// ));
 /// assert!(writes_a_program("fs::set_permissions(&p, fs::Permissions::from_mode(0o755))?;"));
+/// assert!(writes_a_program("    std::fs::Permissions::from_mode(0o755),"));
+/// assert!(writes_a_program("perms.set_mode(0o755);"));
+/// assert!(writes_a_program("    .mode(0o755)"));
 /// assert!(!writes_a_program("isolated::write_program(&gh, FAKE_GH);"));
 /// assert!(!writes_a_program(
 ///     "std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();"
@@ -284,5 +329,25 @@ fn joined(expr: &str) -> Option<&str> {
 /// assert!(!writes_a_program("assert_eq!(mode & 0o777, 0o755);"));
 /// ```
 pub fn writes_a_program(line: &str) -> bool {
-    line.contains("set_permissions") && line.contains("0o755")
+    line.contains("0o755")
+        && ["set_permissions", "from_mode(", "set_mode(", ".mode("]
+            .iter()
+            .any(|call| line.contains(call))
+}
+
+/// True when the file name `name` is the name of a program: it has no
+/// extension, or the extension `sh`.
+///
+/// ```
+/// use isolated::names_a_program;
+/// assert!(names_a_program("sleep"));
+/// assert!(names_a_program("riff-server"));
+/// assert!(names_a_program("deploy/build-id.sh"));
+/// assert!(!names_a_program("shared.env"));
+/// assert!(!names_a_program("deploy/cloud/riff.toml"));
+/// ```
+pub fn names_a_program(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_none_or(|extension| extension == "sh")
 }

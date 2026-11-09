@@ -8823,16 +8823,13 @@ mod tests {
     /// call in `gcloud.log` beside it, then prints one line of the log,
     /// or fails as `gcloud` does when its sign-in ended with `ended`.
     fn fake_gcloud(dir: &Path, ended: bool) {
-        use std::os::unix::fs::PermissionsExt;
         let body = if ended {
             "echo 'ERROR: (gcloud.logging.read) Reauthentication failed. Please run: gcloud auth login' >&2\nexit 1\n"
         } else {
             "echo '2026-10-22T10:00:00Z riff-00001'\n"
         };
-        let path = dir.with_file_name("gcloud");
         let script = format!("#!/bin/sh\necho \"$*\" >> \"$(dirname \"$0\")/gcloud.log\"\n{body}");
-        std::fs::write(&path, script).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        isolated::write_program(dir.with_file_name("gcloud"), script);
     }
 
     /// #1247: the lead in a container reads the Cloud Run log through

@@ -315,8 +315,7 @@ fn static_elf(elf: Elf, machine: u16) -> Result<(), String> {
 /// use riff::release::check_file;
 ///
 /// let dir = tempfile::tempdir()?;
-/// let script = dir.path().join("riff");
-/// std::fs::write(&script, "#!/bin/sh\n")?;
+/// let script = isolated::write_program(dir.path().join("riff"), "#!/bin/sh\n");
 /// assert_eq!(check_file(&script).unwrap_err(), "it is not an ELF file");
 /// let none = check_file(&dir.path().join("none")).unwrap_err();
 /// assert!(none.starts_with("riff cannot read "), "{none}");
@@ -353,8 +352,7 @@ pub fn check_file(path: &Path) -> Result<(), String> {
 /// use riff::release::needs_static;
 ///
 /// let bin = tempfile::tempdir()?;
-/// let riff = bin.path().join("riff");
-/// std::fs::write(&riff, "#!/bin/sh\n")?;
+/// let riff = isolated::write_program(bin.path().join("riff"), "#!/bin/sh\n");
 /// assert!(needs_static(&riff, bin.path()));
 /// let other = tempfile::tempdir()?;
 /// assert!(!needs_static(&other.path().join("riff"), bin.path()));
@@ -789,8 +787,7 @@ mod tests {
         std::os::unix::fs::symlink(&riff, &link).unwrap();
         assert!(needs_static(&link, bin.path()));
         // A riff of another folder.
-        let copy = other.path().join("copy");
-        std::fs::copy(&riff, &copy).unwrap();
+        let copy = isolated::copy_program(&riff, other.path().join("copy"));
         assert!(!needs_static(&copy, bin.path()));
     }
 

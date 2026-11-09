@@ -1239,19 +1239,12 @@
   a hang: each check of a `Span` fails after 60 s. Each test that
   checks a time with a limit under 60 s uses a `Span` or
   `isolated::in_time`.
-- **01M513N34NJ2G3TK3EH91M10FJ** A unit test of `riff` that runs a fake
-  program has a child process write the file. A doc test that drops a
-  lock, and then checks that the lock is free, is a `standalone_crate`.
-  A unit test of that kind waits for the end of the lock.
-- **01M517P9J77TZX28QYBR9SH6WW** Each integration test (a file under
-  `crates/*/tests`) writes a program, and each new text of a program,
-  with `isolated::write_program`. It copies a program with
-  `isolated::copy_program`. A child process writes the file, so the
-  test process never holds a write handle of it. A test of the crate
-  `isolated` fails on each line of such a file that writes a program in
-  the test process: a mode 755, a text that starts with `#!`, or a
-  write to the file of a program that the test file made with the
-  helper.
+- **01M513N34NJ2G3TK3EH91M10FJ** A doc test that drops a lock, and then
+  checks that the lock is free, is a `standalone_crate`. A unit test of
+  that kind waits for the end of the lock.
+- **01M517P9J77TZX28QYBR9SH6WW** A child process writes the file of
+  `isolated::write_program` and of `isolated::copy_program`, so the
+  test process never holds a write handle of it.
 - **01M517P9MTBWPN0FQRMXEJ9JG5** The unit tests of `riff` set the mock
   keyring store in one place: `secrets::mock_store`, one time for the
   process. A unit test fails on each other line of code of `riff` that
@@ -1319,6 +1312,17 @@
   start, as the command of a page of the book does, starts the server
   again on a new port until the log of the server says that it listens
   there.
+- **01M6Z48B94NWNCV9SGQBCT2EM5** Each test writes a program, and each
+  new text of a program, with `isolated::write_program`, and copies a
+  program with `isolated::copy_program`: each file under
+  `crates/*/tests`, and each `#[cfg(test)]` item and each doc test of a
+  file under `crates/*/src`. A test of the crate `isolated` fails on
+  each line of a test that writes a program in the test process: a mode
+  755, a text that starts with `#!`, a write to the file of a program
+  that the test made with the helper, or a `fs::copy` from or to a file
+  of a program. The file of a program has no extension, or the extension
+  `sh`. Supersedes 01M517P9J77TZX28QYBR9SH6WW and
+  01M513N34NJ2G3TK3EH91M10FJ in part.
 
 ## Saved state
 

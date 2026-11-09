@@ -240,11 +240,10 @@ fn the_id_of_the_build_is_the_same_for_each_commit_of_the_same_code() {
     let repo = tempfile::tempdir().unwrap();
     let dir = repo.path();
     std::fs::create_dir_all(dir.join("deploy")).unwrap();
-    std::fs::copy(
+    isolated::copy_program(
         root.join("deploy/build-id.sh"),
         dir.join("deploy/build-id.sh"),
-    )
-    .unwrap();
+    );
     std::fs::create_dir_all(dir.join("crates")).unwrap();
     let write = |path: &str, text: &str| std::fs::write(dir.join(path), text).unwrap();
     let id = |at: &str| -> String {

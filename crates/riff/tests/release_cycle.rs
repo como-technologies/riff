@@ -91,11 +91,10 @@ impl Machine {
         );
         write("Cargo.lock", LOCK);
         write("riff.toml", config);
-        std::fs::copy(
+        isolated::copy_program(
             top().join("deploy/release-check.sh"),
             clone.join("deploy/release-check.sh"),
-        )
-        .unwrap();
+        );
         git(&clone, &["add", "-A"]);
         git(&clone, &["commit", "-q", "-m", "Release v3.2.0"]);
         git(&clone, &["tag", "-a", "v3.2.0", "-m", "Release v3.2.0"]);
