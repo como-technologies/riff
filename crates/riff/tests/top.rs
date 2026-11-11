@@ -1374,18 +1374,22 @@ async fn top_makes_only_read_calls() {
         "{calls:?}"
     );
     // The holds of the boards are a read too (01M58ATZ1F42DWNNB24C2HJPEY).
-    // The sign-in and the token swap read and write no state.
+    // So is the stream of the wakes of the GitHub App, which the live
+    // `riff top` follows (01M74N357CC7DN6B8QX8GDR0ZM). The sign-in and the
+    // token swap read and write no state.
     let reads = [
         "/v1/riff",
         "/v1/who",
         "/v1/plan/show",
         "/v1/tail",
+        "/v1/github/watch",
         "/v1/sign-in",
         "/v1/token",
     ];
     for call in &calls {
         assert!(reads.contains(&call.as_str()), "{call} in {calls:?}");
     }
+    assert!(calls.iter().any(|c| c == "/v1/github/watch"), "{calls:?}");
 }
 
 /// Each `riff top` command in the `sh` blocks of How It Works is real.

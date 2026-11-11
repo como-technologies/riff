@@ -2341,14 +2341,19 @@ one wave with 8 sessions uses at most 1,500.
   serves them all. The loop of the wave reads the forge itself. When
   nothing changed, it asks GitHub first and reads nothing (see
   [Know how an idle wave reads GitHub](#know-how-an-idle-wave-reads-github)).
+- With the events of the GitHub App, the loop of the wave reads only
+  the issue or the pull request that a wake names, and reads in full
+  each 30 minutes: the safety look (see
+  [How riff learns of a change on GitHub](how-it-works.md#how-riff-learns-of-a-change-on-github)).
 - The watch of the wave looks each 5 minutes while it is the only
   watch. A watch of a release, or a new watch, makes it look each
   minute.
 - A wave with no work, no session and no change since its last look
-  looks each 5 minutes. It looks each minute again when something
-  changes. A session that ends, a job that ends, a new `riff join` in
-  your clone and a change of the plan on riff-server make it look at
-  once (see
+  looks each 5 minutes, or each 30 minutes with the events of the GitHub
+  App. It looks each minute again when something changes. A session
+  that ends, a job that ends, a new `riff join` in your clone, a change
+  of the plan on riff-server and a wake of GitHub make it look at once
+  (see
   [Which host takes a free item](how-it-works.md#which-host-takes-a-free-item)).
 - The default branch and its rules are read one time in 10 minutes. The
   message of a commit is read one time.
@@ -2358,6 +2363,7 @@ one wave with 8 sessions uses at most 1,500.
 ```mermaid
 flowchart LR
     W["the loop of the wave<br/>each minute, each 5 minutes when idle"] -- "reads" --> R["one reply of GitHub:<br/>issues, pull requests, queue"]
+    E["a wake of GitHub"] -- "gh pr view N" --> R
     L["the look at the pull requests and main"] -- "takes it" --> R
     S["the sweep of the folders"] -- "takes it" --> R
     W --> C["the count of the calls"]
@@ -2365,6 +2371,27 @@ flowchart LR
     S --> C
     C --> D["riff daemon status"]
 ```
+
+To see the events of the GitHub App and the dropped events:
+
+```sh
+riff daemon status
+```
+
+The daemon prints one line for each repository with a wake: the age of
+the last wake, the time of the safety look, and the count of the
+dropped events of the last day, with the last one:
+
+```text
+GitHub events of o/r: the last wake 2m ago, the safety look each 30 minutes, 3 dropped events in the last day, the last of pull request #41, check_run, 14m ago.
+```
+
+A dropped event is a change that the safety look found, and that no
+event of GitHub told. The log of the daemon names each one. A few
+dropped events in a day are normal. Many of them tell you to look at the
+webhook of the App with `riff github events`. A repository with no wake
+for a day shows `no wake for 1d`: its wave reads GitHub as with no
+events, with the two cheap reads before each full read.
 
 The daemon is not the only caller. The token of your account also pays
 for `riff top`, `riff pr wait`, `riff verify`, `riff run`, `riff init`,
@@ -2522,6 +2549,10 @@ last, and one names the pull request that changed last. Each read sends
 the `ETag` of its last answer. When GitHub answers `304 Not Modified` to
 both, the look reads nothing else. It uses the facts of its last full
 read, and it costs no GraphQL point.
+
+With the events of the GitHub App, the look makes no cheap read: a wake
+names what changed, and the look reads only that (see
+[How riff learns of a change on GitHub](how-it-works.md#how-riff-learns-of-a-change-on-github)).
 
 ```mermaid
 flowchart TD

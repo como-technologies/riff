@@ -97,15 +97,22 @@
 //! ([`forge::open_issues_each`], 01M74CX9KVGQG4Y7ATT6268NMY). The three
 //! tabs share the `ETag` of each read ([`forge::Kept`]).
 //!
+//! The TUI follows the wakes of the GitHub App of the repository of the
+//! folder (`GET /v1/github/watch`, 01M74N357CC7DN6B8QX8GDR0ZM). A wake of
+//! an issue or a pull request makes the next read of the forge, of the
+//! titles and of the list of `#` come at once, at most one each
+//! [`crate::hooks::SHOW_GAP`] ([`crate::hooks::Shows`]). So a change on
+//! GitHub shows within seconds. A wake of a check waits for the next read.
+//!
 //! | What | Source | When |
 //! |---|---|---|
 //! | The sessions, the state of the riff | riff-server: `riff`, `who` | each 3 s, each 15 s when idle, and after a message of the thread |
 //! | The holds of the boards | riff-server: `plan show` | at each look while the Waves tab shows |
 //! | The build of the riff on disk | the riff file of this process: `--version` | at each look, once for each new file |
 //! | The container sessions of this machine | the socket of the daemon: `status` | each second while the Sessions tab is open |
-//! | The titles of the issues | `gh api`: the conditional read of the open issues | each 60 s while the Sessions tab is open |
-//! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | each 60 s while the Waves tab shows, and at once on `r` |
-//! | The open issues of the list of `#` | `gh api`: the conditional read of the open issues | each 60 s while the Chat tab shows |
+//! | The titles of the issues | `gh api`: the conditional read of the open issues | each 60 s while the Sessions tab is open, and soon after a wake of GitHub |
+//! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | each 60 s while the Waves tab shows, at once on `r`, and soon after a wake of GitHub |
+//! | The open issues of the list of `#` | `gh api`: the conditional read of the open issues | each 60 s while the Chat tab shows, and soon after a wake of GitHub |
 //! | The usage of a wave | `gh`: the milestones, the issues and their comments | when the Usage report shows with no read yet, and on `r` |
 //! | The audit of a wave | riff-server: the log; `gh`: the forge | on `Enter` and `r` in the Audit report |
 //! | The events of a session | the socket of the daemon, or riff-server for another host | while the Session log shows |
@@ -2088,10 +2095,40 @@ async fn frames(
             }
         })
     });
+    // A wake of the GitHub App of the repository of the folder reads the
+    // forge again soon (#1656).
+    let (woke, mut wakes) = tokio::sync::mpsc::channel::<riff_core::wire::GitHubWake>(16);
+    let github = me.default_thread().map(|thread| {
+        let (api, me) = (api.clone(), me.clone());
+        tokio::spawn(async move {
+            let stream = riff_client::api::follow(
+                || api.github_watch(&me, &thread, None),
+                riff_client::link::STREAM_RETRY,
+            );
+            let mut stream = Box::pin(stream);
+            while let Some(item) = stream.next().await {
+                if let Ok(wake) = item
+                    && woke.send(wake).await.is_err()
+                {
+                    return;
+                }
+            }
+        })
+    });
+    let mut shows = crate::hooks::Shows::default();
     let mut last_click: Option<(Key, Instant)> = None;
     let shown = loop {
         for came in link.came() {
             state.chat_came(came);
+        }
+        while let Ok(wake) = wakes.try_recv() {
+            shows.wake(&wake);
+        }
+        if shows.due(std::time::Instant::now()) {
+            shows.read(std::time::Instant::now());
+            tasks.forge_again = true;
+            tasks.read_at = None;
+            tasks.opened_at = None;
         }
         if tasks.forge.as_ref().is_some_and(Reading::is_finished)
             && let Some(done) = tasks.forge.take()
@@ -2351,6 +2388,9 @@ async fn frames(
     };
     if let Some(follower) = follower {
         follower.abort();
+    }
+    if let Some(github) = github {
+        github.abort();
     }
     tasks.abort();
     shown

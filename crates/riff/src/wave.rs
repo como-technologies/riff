@@ -28,7 +28,7 @@
 //!     S --> L["look: the pause, the claims, the holds,<br/>the free work of gh, the full check of each waiting pull request"]
 //!     L --> P{"pick"}
 //!     P -- "an item, and a fact of the host fails" --> W
-//!     P -- "no work" --> W["give the room back; wait for an end,<br/>a change of the plan, LOOK_EVERY, or IDLE_LOOK_EVERY"] --> A
+//!     P -- "no work" --> W["give the room back; wait for an end, a change of the plan,<br/>a wake of GitHub, LOOK_EVERY, IDLE_LOOK_EVERY or the safety look"] --> A
 //!     P -- "an item" --> J["a job: the wait before the claim, claim, clone, start,<br/>wait for the end, the steps after the end, release"]
 //!     J -.-> A
 //! ```
@@ -52,13 +52,24 @@
 //! read of its issues and its pull requests in each wait. A `304` renews
 //! those reads.
 //!
+//! The loop also follows the wakes of the GitHub App of its repository
+//! ([`World::github_wakes`], [`crate::hooks`], #1656). A wake wakes the
+//! wave, at most one look each [`hooks::WAKE_GAP`]. While the events are
+//! on ([`hooks::Told::on`]), the look reads only what the wakes named, and
+//! no conditional read ([`look_told`]). The safety look reads in full each
+//! [`hooks::SAFETY_LOOK_EVERY`], and an idle wave waits as long. It finds
+//! each change that no wake told: a dropped event. The look of the daemon
+//! takes the replies of the loop for as long.
+//!
 //! ```mermaid
 //! flowchart TD
 //!     L["a look"] --> Q{"no work, no session,<br/>the same facts as the last look?"}
-//!     Q -- yes --> I["wait IDLE_LOOK_EVERY"]
+//!     Q -- "yes, the events of GitHub are on" --> E["wait SAFETY_LOOK_EVERY"]
+//!     Q -- "yes, with no events" --> I["wait IDLE_LOOK_EVERY"]
 //!     Q -- no --> N["wait LOOK_EVERY"]
+//!     E -- "a session or a job ends,<br/>a change of the plan, a wake of GitHub" --> L
 //!     I -- "a session or a job ends,<br/>a change of the plan" --> L
-//!     N -- "a session or a job ends,<br/>a change of the plan" --> L
+//!     N -- "a session or a job ends,<br/>a change of the plan, a wake of GitHub" --> L
 //! ```
 //!
 //! # The hosts of a wave
@@ -634,7 +645,9 @@ pub const LOOK_EVERY: Duration = Duration::from_secs(60);
 /// How often an idle wave looks (#1549, [`crate::ghcalls`]): no session of
 /// the wave runs, no work is free, and the look saw the same facts as the
 /// look before ([`look_wait`]). A session that ends, a job that ends and a
-/// change of the plan on riff-server wake the wave at once.
+/// change of the plan on riff-server wake the wave at once. While the
+/// events of GitHub are on, an idle wave waits for its safety look
+/// ([`hooks::SAFETY_LOOK_EVERY`], #1656).
 pub const IDLE_LOOK_EVERY: Duration =
     Duration::from_secs(LOOK_EVERY.as_secs() * crate::watches::IDLE_FACTOR as u64);
 
@@ -5558,11 +5571,11 @@ mod tests {
         all
     }
 
-    /// #1656: the daemon opens the stream of the wakes of its repository,
-    /// and gets the wake of a merged pull request. After a restart it opens
-    /// the stream with `after=ID`, the ID of its last wake from its folder,
-    /// and gets the wakes that it missed while it was away, and not the
-    /// wakes before.
+    /// 01M74N2SDHCYTY4M6RD1BDAFWZ: the daemon opens the stream of the wakes
+    /// of its repository, and gets the wake of a merged pull request. After
+    /// a restart it opens the stream with `after=ID`, the ID of its last
+    /// wake from its folder, and gets the wakes that it missed while it was
+    /// away, and not the wakes before.
     #[tokio::test]
     async fn the_daemon_gets_the_wakes_of_its_repository_and_after_a_restart_the_missed_ones() {
         let secret = "whsec-of-the-test";
@@ -5738,12 +5751,12 @@ esac
             .collect()
     }
 
-    /// #1656: a wave with a fake forge. The event of a merged pull request
-    /// makes the look read that pull request only, with `gh pr view`, and no
-    /// list, and the wave goes on: the merge with `Refs #1` gets its comment
-    /// `Merged in`. Then an issue comes into the wave with no event: the
-    /// safety look finds it, the wave starts it, and the change is a
-    /// dropped event.
+    /// 01M74N34Q330SHBWWTQDPG0W0B, 01M74N350YF6KSXGFNCZTDC8QY: a wave with a
+    /// fake forge. The event of a merged pull request makes the look read
+    /// that pull request only, with `gh pr view`, and no list, and the wave
+    /// goes on: the merge with `Refs #1` gets its comment `Merged in`. Then
+    /// an issue comes into the wave with no event: the safety look finds
+    /// it, the wave starts it, and the change is a dropped event.
     #[tokio::test]
     async fn a_merge_reads_that_pull_request_only_and_the_safety_look_finds_a_dropped_event() {
         let bin = tempfile::tempdir().unwrap();
@@ -5809,10 +5822,10 @@ esac
         );
     }
 
-    /// #1656: `riff daemon status` shows the line of the events of each
-    /// repository with a wake: the age of the last wake, the time of the
-    /// safety look, and the dropped events of the last day with the last
-    /// one.
+    /// 01M74N3544C338R6BV06DQ1DH0: `riff daemon status` shows the line of
+    /// the events of each repository with a wake: the age of the last wake,
+    /// the time of the safety look, and the dropped events of the last day
+    /// with the last one.
     #[tokio::test]
     async fn the_status_of_the_daemon_shows_the_dropped_events() {
         let here = Here::new(&[], 1, Arc::new(AtomicU64::new(64))).await;

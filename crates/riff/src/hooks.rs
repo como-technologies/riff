@@ -25,35 +25,43 @@
 //!     Note over W: each 30 minutes: the safety look, a full read
 //! ```
 //!
-//! - **The ID of the last wake.** The daemon keeps it for each repository
-//!   in [`WAKES_FILE`] in its folder. The stream opens with `after=ID`, so
-//!   a daemon that was away, or a stream that broke, gets the wakes of the
-//!   queue of riff-server. The first stream of a repository has no
-//!   `after`: the first look of the wave reads in full.
-//! - **Events on.** The events of a repository are on while its last wake
-//!   is less than [`EVENTS_FOR`] old ([`Told::on`]): the ID of a wake is
-//!   the time of riff-server. A riff with no App, or with no webhook, sends
-//!   no wake, so its waves look as before ([`crate::changes`]).
-//! - **The reads of a wake** ([`Told::facts`]). While the events are on,
-//!   a look reads only what the wakes since the last look named, and
-//!   patches the kept reply of the list ([`crate::pr::Gh::keep`]): a pull
-//!   request with `gh pr view N`, an issue with `gh issue view N`. A wake
-//!   with no number (a status, a check of a commit with no pull request),
-//!   two pull requests or more, and a merge while another pull request is
-//!   open read the list of the open pull requests: a merge changes the
-//!   mergeable state of the others, and GitHub sends no event for it. Then
-//!   the look takes the kept replies as new
-//!   ([`crate::rollout::renew_open`]), so the look of the daemon and the
-//!   sweep take them too.
-//! - **The safety look.** A full read comes each [`SAFETY_LOOK_EVERY`],
-//!   and an idle wave waits as long ([`crate::wave::look_wait`]). A read
-//!   of a wake that fails makes the look read in full.
-//! - **A dropped event.** The safety look compares the kept replies with
-//!   its full read ([`changes`]). Each change that no wake named waits
-//!   [`GRACE`] for its wake: the window of riff-server and the way to the
-//!   daemon. Then it is a dropped event ([`Dropped`]): the daemon logs the
-//!   repository, the item and the kind, and `riff daemon status` counts the
-//!   dropped events of the last [`DROPPED_FOR`] ([`Shown`]).
+//! - **The ID of the last wake** (01M74N2SDHCYTY4M6RD1BDAFWZ). The daemon
+//!   keeps it for each repository in [`WAKES_FILE`] in its folder. The
+//!   stream opens with `after=ID`, so a daemon that was away, or a stream
+//!   that broke, gets the wakes of the queue of riff-server. The first
+//!   stream of a repository has no `after`: the first look of the wave
+//!   reads in full.
+//! - **Events on** (01M74N34Q330SHBWWTQDPG0W0B). The events of a
+//!   repository are on while its last wake is less than [`EVENTS_FOR`] old
+//!   ([`Told::on`]): the ID of a wake is the time of riff-server. A riff
+//!   with no App, or with no webhook, sends no wake, so its waves look as
+//!   before ([`crate::changes`]).
+//! - **The reads of a wake** ([`Told::facts`], 01M74N34Q330SHBWWTQDPG0W0B,
+//!   01M74N34TD0ZKRNB5ASHQ90TP6). While the events are on, a look reads
+//!   only what the wakes since the last look named, and patches the kept
+//!   reply of the list ([`crate::pr::Gh::keep`]): a pull request with `gh
+//!   pr view N`, an issue with `gh issue view N`. A wake with no number (a
+//!   status, a check of a commit with no pull request), two pull requests
+//!   or more, and a merge while another pull request is open read the list
+//!   of the open pull requests: a merge changes the mergeable state of the
+//!   others, and GitHub sends no event for it. Then the look takes the
+//!   kept replies as new ([`crate::rollout::renew_open`]), so the look of
+//!   the daemon and the sweep take them too.
+//! - **The safety look** (01M74N34XQRMKDFJ7KA8G80TDE). A full read comes
+//!   each [`SAFETY_LOOK_EVERY`], and an idle wave waits as long
+//!   ([`crate::wave::look_wait`]). A read of a wake that fails makes the
+//!   look read in full.
+//! - **A dropped event** (01M74N350YF6KSXGFNCZTDC8QY,
+//!   01M74N3544C338R6BV06DQ1DH0). The safety look compares the kept
+//!   replies with its full read ([`changes`]). Each change that no wake
+//!   named waits [`GRACE`] for its wake: the window of riff-server and the
+//!   way to the daemon. Then it is a dropped event ([`Dropped`]): the
+//!   daemon logs the repository, the item and the kind, and `riff daemon
+//!   status` counts the dropped events of the last [`DROPPED_FOR`]
+//!   ([`Shown`]).
+//! - **`riff top` and the TUI** (01M74N357CC7DN6B8QX8GDR0ZM) follow the
+//!   same stream for the repository of their folder, and read GitHub again
+//!   soon after a wake of an issue or a pull request ([`Shows`]).
 //!
 //! ```mermaid
 //! flowchart TD
@@ -104,6 +112,10 @@ pub const WAKE_GAP: Duration = Duration::from_secs(30);
 /// How long `riff daemon status` counts a dropped event.
 pub const DROPPED_FOR: Duration = Duration::from_secs(24 * 60 * 60);
 
+/// The shortest time between two reads of GitHub of `riff top` or of the
+/// TUI that wakes start ([`Shows`]).
+pub const SHOW_GAP: Duration = Duration::from_secs(5);
+
 /// The file of the ID of the last wake of each repository, in the folder
 /// of the daemon.
 pub const WAKES_FILE: &str = "github-wakes.json";
@@ -115,16 +127,13 @@ const KEPT_FOR: Duration = Duration::from_secs(60 * 60);
 /// the replies that it just made new.
 const KEPT_AGE: Duration = Duration::from_secs(60);
 
-/// The keys of an issue whose change an `issues` event tells.
-const ISSUE_KEYS: [&str; 4] = ["title", "body", "milestone", "labels"];
-
-/// The keys of a pull request whose change a `pull_request` event tells.
-const PULL_KEYS: [&str; 6] = [
+/// The keys of a pull request whose change a `pull_request` event tells. A
+/// review is a `pull_request_review` event: the App takes none.
+const PULL_KEYS: [&str; 5] = [
     "headRefName",
     "headRefOid",
     "isDraft",
     "autoMergeRequest",
-    "reviewDecision",
     "body",
 ];
 
@@ -507,6 +516,76 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// True for a wake that `riff top` and the TUI show at once: a change of
+/// an issue or of a pull request (`issues`, `issue_comment`,
+/// `pull_request`). A wake of a check waits for their next read: CI sends
+/// many of them.
+///
+/// ```
+/// use riff_core::wire::{GitHubEvent, GitHubWake};
+///
+/// let wake = |kinds: Vec<GitHubEvent>| GitHubWake { id: 1, repo: "o/r".parse().unwrap(), kinds, number: Some(41), events: 1 };
+/// assert!(riff::hooks::shows(&wake(vec![GitHubEvent::CheckRun, GitHubEvent::PullRequest])));
+/// assert!(!riff::hooks::shows(&wake(vec![GitHubEvent::CheckRun, GitHubEvent::Status])));
+/// ```
+pub fn shows(wake: &GitHubWake) -> bool {
+    wake.kinds.iter().any(|kind| {
+        matches!(
+            kind,
+            GitHubEvent::Issues | GitHubEvent::IssueComment | GitHubEvent::PullRequest
+        )
+    })
+}
+
+/// The reads of GitHub of `riff top` and of the TUI that the wakes of the
+/// GitHub App start (#1656): a wake that [`shows`] makes the next read come
+/// at once, at most one each [`SHOW_GAP`].
+///
+/// ```
+/// use std::time::{Duration, Instant};
+/// use riff::hooks::{SHOW_GAP, Shows};
+/// use riff_core::wire::{GitHubEvent, GitHubWake};
+///
+/// let wake = GitHubWake { id: 1, repo: "o/r".parse().unwrap(), kinds: vec![GitHubEvent::PullRequest], number: Some(41), events: 1 };
+/// let now = Instant::now();
+/// let mut shows = Shows::default();
+/// assert!(!shows.due(now), "no wake");
+/// shows.wake(&wake);
+/// assert!(shows.due(now));
+/// shows.read(now);
+/// assert!(!shows.due(now), "the read took the wake");
+/// // A new wake right after the read waits for the gap.
+/// shows.wake(&wake);
+/// assert!(!shows.due(now + Duration::from_secs(1)));
+/// assert!(shows.due(now + SHOW_GAP));
+/// ```
+#[derive(Debug, Default)]
+pub struct Shows {
+    woken: bool,
+    read: Option<std::time::Instant>,
+}
+
+impl Shows {
+    /// Takes the wake `wake`.
+    pub fn wake(&mut self, wake: &GitHubWake) {
+        self.woken |= shows(wake);
+    }
+
+    /// True when a wake asks for a read at `now`.
+    pub fn due(&self, now: std::time::Instant) -> bool {
+        self.woken
+            && self
+                .read
+                .is_none_or(|at| now.saturating_duration_since(at) >= SHOW_GAP)
+    }
+
+    /// A read of GitHub starts at `now`: it shows each wake before it.
+    pub fn read(&mut self, now: std::time::Instant) {
+        self.woken = false;
+        self.read = Some(now);
+    }
+}
+
 /// Follows the wakes of the GitHub App of `thread` on riff-server as `me`
 /// into `told` (#1656). Each connection asks for the wakes after the ID
 /// of the last one ([`Told::last`]), so a daemon that was away gets the
@@ -769,22 +848,29 @@ impl Lists {
 }
 
 /// Each change from `before` to `after` that an event of the session App
-/// tells, with that kind (#1656): an issue that came or went, or whose
-/// title, body, milestone or labels changed (`issues`), or whose comments
-/// changed (`issue_comment`); a pull request that came, went or merged,
-/// or whose branch, head, draft, auto-merge, review or body changed
-/// (`pull_request`); a check run (`check_run`) or a status (`status`) of
-/// its head. The mergeable state of a pull request, and a milestone, are
-/// no change: GitHub sends the App no event for them.
+/// tells, with that kind (01M74N350YF6KSXGFNCZTDC8QY): an issue that came
+/// or went, or whose title, body, milestone or labels changed (`issues`),
+/// or whose comments changed (`issue_comment`); a pull request that came,
+/// went or merged, or whose branch, head, draft, auto-merge or body
+/// changed (`pull_request`); the result of a check run (`check_run`) or
+/// of a status (`status`) of its head.
+///
+/// GitHub sends the App no event for the rest, so it is no change: the
+/// mergeable state, a review, a check run that starts, and a rename of a
+/// milestone or a label (the look takes them by their ID).
 ///
 /// ```
 /// use riff::hooks::{Change, Lists, changes};
 /// use riff_core::wire::GitHubEvent;
 ///
-/// let issue = |n: u64, label: &str| serde_json::json!({ "number": n, "title": "t", "labels": [{ "name": label }], "comments": [] });
+/// let issue = |n: u64, label: &str| serde_json::json!({
+///     "number": n, "title": "t", "comments": [],
+///     "labels": [{ "id": format!("L-{label}"), "name": label }],
+///     "milestone": { "number": 60, "title": "Wave 54" },
+/// });
 /// let pull = |n: u64, conclusion: &str| serde_json::json!({
-///     "number": n, "headRefOid": "c1", "mergeable": "MERGEABLE",
-///     "statusCheckRollup": [{ "name": "Gate", "conclusion": conclusion }],
+///     "number": n, "headRefOid": "c1", "mergeable": "MERGEABLE", "reviewDecision": "",
+///     "statusCheckRollup": [{ "name": "Gate", "status": "QUEUED", "conclusion": conclusion }],
 /// });
 /// let before = Lists { issues: vec![issue(12, "a"), issue(13, "a")], pulls: vec![pull(41, "")], merged: vec![] };
 /// let mut after = before.clone();
@@ -798,10 +884,14 @@ impl Lists {
 ///     change(14, false, GitHubEvent::Issues),
 ///     change(41, true, GitHubEvent::CheckRun),
 /// ]);
-/// // The mergeable state is no change.
-/// let mut conflict = before.clone();
-/// conflict.pulls[0]["mergeable"] = "CONFLICTING".into();
-/// assert!(changes(&before, &conflict).is_empty());
+/// // GitHub sends no event for these: no change.
+/// let mut quiet = before.clone();
+/// quiet.pulls[0]["mergeable"] = "CONFLICTING".into();
+/// quiet.pulls[0]["reviewDecision"] = "APPROVED".into();
+/// quiet.pulls[0]["statusCheckRollup"][0]["status"] = "IN_PROGRESS".into();
+/// quiet.issues[0]["milestone"]["title"] = "Wave 54: Webhooks".into();
+/// quiet.issues[0]["labels"][0]["name"] = "renamed".into();
+/// assert!(changes(&before, &quiet).is_empty());
 /// ```
 pub fn changes(before: &Lists, after: &Lists) -> Vec<Change> {
     let mut found = BTreeSet::new();
@@ -815,7 +905,7 @@ pub fn changes(before: &Lists, after: &Lists) -> Vec<Change> {
         let kinds = match (old.get(n), new.get(n)) {
             (Some(a), Some(b)) => {
                 let mut kinds = Vec::new();
-                if ISSUE_KEYS.iter().any(|k| a[k] != b[k]) {
+                if told_of_issue(a) != told_of_issue(b) {
                     kinds.push(GitHubEvent::Issues);
                 }
                 if a["comments"] != b["comments"] {
@@ -839,8 +929,8 @@ pub fn changes(before: &Lists, after: &Lists) -> Vec<Change> {
                 if PULL_KEYS.iter().any(|k| a[k] != b[k]) {
                     kinds.push(GitHubEvent::PullRequest);
                 }
-                let (runs_a, statuses_a) = rollup(a);
-                let (runs_b, statuses_b) = rollup(b);
+                let (runs_a, statuses_a) = results(a);
+                let (runs_b, statuses_b) = results(b);
                 if runs_a != runs_b {
                     kinds.push(GitHubEvent::CheckRun);
                 }
@@ -871,14 +961,47 @@ pub fn changes(before: &Lists, after: &Lists) -> Vec<Change> {
     found.into_iter().collect()
 }
 
-/// The check runs and the statuses of the head of the pull request `pull`.
-fn rollup(pull: &Value) -> (Vec<&Value>, Vec<&Value>) {
-    pull["statusCheckRollup"]
+/// What an `issues` event tells of the issue `issue`: its title and its
+/// body, its milestone by its number, and its labels by their ID. A rename
+/// of a milestone or a label changes no issue on GitHub.
+fn told_of_issue(issue: &Value) -> [Value; 4] {
+    let milestone = &issue["milestone"];
+    let milestone = milestone
+        .get("number")
+        .cloned()
+        .unwrap_or_else(|| milestone.clone());
+    let labels: Vec<Value> = issue["labels"]
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default()
         .iter()
-        .partition(|check| check.get("context").is_none())
+        .map(|label| label.get("id").cloned().unwrap_or_else(|| label.clone()))
+        .collect();
+    [
+        issue["title"].clone(),
+        issue["body"].clone(),
+        milestone,
+        Value::Array(labels),
+    ]
+}
+
+/// The results of the check runs and of the statuses of the head of the
+/// pull request `pull`, as their events tell them: the name and the
+/// conclusion of a check run, the context and the state of a status.
+fn results(pull: &Value) -> (BTreeSet<String>, BTreeSet<String>) {
+    let mut runs = BTreeSet::new();
+    let mut statuses = BTreeSet::new();
+    let checks = pull["statusCheckRollup"].as_array().map(Vec::as_slice);
+    for check in checks.unwrap_or_default() {
+        match check.get("context") {
+            Some(context) => statuses.insert(format!("{context} {}", check["state"])),
+            None => runs.insert(format!(
+                "{} {} {}",
+                check["workflowName"], check["name"], check["conclusion"]
+            )),
+        };
+    }
+    (runs, statuses)
 }
 
 #[cfg(test)]

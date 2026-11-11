@@ -44,6 +44,10 @@
 //! ([`crate::pr::Gh::read`]). A `304` renews them
 //! ([`crate::rollout::renew_open`]), so they go on to take them while the
 //! wave is idle.
+//!
+//! While the events of the GitHub App of the repository are on, the look
+//! makes no conditional read: it reads what the wakes name, and reads in
+//! full at its safety look ([`crate::hooks`], #1656).
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, PoisonError};

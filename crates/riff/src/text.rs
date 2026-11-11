@@ -6020,8 +6020,9 @@ fn github_item(change: &crate::hooks::Change) -> String {
     }
 }
 
-/// The log line of a dropped event (#1656): a change that the safety look
-/// of the wave found, and that no wake of the GitHub App told.
+/// The log line of a dropped event (01M74N350YF6KSXGFNCZTDC8QY): a change
+/// that the safety look of the wave found, and that no wake of the GitHub
+/// App told.
 ///
 /// ```
 /// use riff::hooks::{Change, Dropped};
@@ -6077,9 +6078,9 @@ pub fn github_no_patch(error: &str) -> String {
 }
 
 /// The line of `riff daemon status` for the events of one repository at
-/// `now_ms` (#1656): the age of the last wake, and the dropped events of
-/// the last day. A repository with no wake for a day reads GitHub as
-/// with no events.
+/// `now_ms` (01M74N3544C338R6BV06DQ1DH0): the age of the last wake, and the
+/// dropped events of the last day. A repository with no wake for a day
+/// reads GitHub as with no events.
 ///
 /// ```
 /// use riff::hooks::{Change, Dropped, Shown};
