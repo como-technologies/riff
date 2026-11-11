@@ -2818,6 +2818,26 @@ a verify out of the order, hold it (see
 [Keep the verify of an item from the
 workers](#keep-the-verify-of-an-item-from-the-workers)).
 
+#### See the waits on the host of the wave
+
+On the host whose daemon runs the wave, the status of the daemon shows
+the same waits:
+
+```sh
+riff daemon status
+```
+
+In the part `Waves:`, under the line of each wave, one line names each
+pull request that others wait for, and the issues that wait for it. The
+line does not say which of them waits for a verify and which for a
+rebase. `riff wave list` says it:
+
+```text
+Waves:
+  como-technologies/strata  no free work now
+    waits for #728: #724
+```
+
 ### Open a pull request
 
 Push the branch first. Then open its pull request:

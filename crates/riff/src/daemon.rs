@@ -113,7 +113,10 @@
 //! first line of each connection on the control socket is a [`Hello`]:
 //! the version [`PROTOCOL`] and one [`Ask`]. The daemon refuses another
 //! version, and says to start it again with this riff. The daemon
-//! answers with [`Say`] lines.
+//! answers with [`Say`] lines. [`Say`] is a tagged enum, so serde reads a
+//! map in a line through buffered content: a map with number keys, for
+//! example [`WaveShown::waits`], reads its keys with
+//! [`riff_core::number_keys`] (01M74BVSFDAE67FA1PRYK7E2PN).
 //!
 //! | Ask | The daemon says |
 //! |---|---|
@@ -1816,8 +1819,14 @@ pub struct WaveShown {
     pub word: String,
     /// The verifies and the rebases that wait for another pull request
     /// with a file in common, by issue, with the number of that pull
-    /// request ([`crate::wave::order`], #1710, #1801).
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    /// request ([`crate::wave::order`], #1710, #1801). The keys are text
+    /// on the wire: [`Say`] reads them through a tagged enum
+    /// ([`riff_core::number_keys`], #1855).
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        with = "riff_core::number_keys"
+    )]
     pub waits: BTreeMap<u64, u64>,
 }
 
@@ -6157,7 +6166,10 @@ fn say_lines(out: &Out, done: Result<Vec<String>>) {
     }
 }
 
-/// The state of the daemon in the folder `dir`.
+/// The state of the daemon in the folder `dir`. `riff daemon status`,
+/// `riff lead start`, and the loop of the daemon that sets its status and
+/// sends its facts ([`remote::serve`]) read it here. So a line that riff
+/// cannot read stops each of them (01M74BVSFDAE67FA1PRYK7E2PN).
 pub async fn status(dir: &Path) -> Result<Status> {
     let mut client = Client::connect(dir).await?;
     client.ask(Ask::Status).await?;
@@ -6166,6 +6178,34 @@ pub async fn status(dir: &Path) -> Result<Status> {
         Some(Say::Failed { error }) => bail!("{error}"),
         _ => bail!("{}", text::DAEMON_GONE),
     }
+}
+
+/// The status line of a daemon whose wave waits (#1855): the verify of
+/// item 724 waits for the pull request #728. The lead of
+/// `como-technologies/riff` runs on the host.
+#[cfg(test)]
+pub(crate) const A_WAIT: &str = concat!(
+    r#"{"say":"status","pid":4242,"build":"b","since_ms":0,"dir":"/d","#,
+    r#""sessions":[{"name":"riff-lead-como-technologies-riff","session":"l1","#,
+    r#""item":"lead","image":"img","since_ms":0,"phase":"terminal","lead":true}],"#,
+    r#""waves":[{"repo":"como-technologies/strata","word":"no free work now","#,
+    r#""waits":{"724":728}}]}"#,
+);
+
+/// A daemon in the folder `dir` that answers one connection with the
+/// line `line` after the hello, for a test of a reader of the daemon.
+#[cfg(test)]
+pub(crate) async fn says_once(dir: &Path, line: &'static str) -> JoinHandle<()> {
+    let listener = listen(dir).await.unwrap();
+    tokio::spawn(async move {
+        let (conn, _) = listener.accept().await.unwrap();
+        let (read, mut write) = conn.into_split();
+        let _hello = BufReader::new(read).lines().next_line().await;
+        write
+            .write_all(format!("{line}\n").as_bytes())
+            .await
+            .unwrap();
+    })
 }
 
 /// The longest wait of the look of the rollout for the status of the
@@ -14076,5 +14116,190 @@ mod tests {
         }
         assert!(here.fake.calls().is_empty(), "{:?}", here.fake.calls());
         assert!(status(&here.dir).await.unwrap().sessions.is_empty());
+    }
+
+    /// 01M74BVSFDAE67FA1PRYK7E2PN, 01M74BVZ8V7YQJM8QPZ2KEKS0T, #1855: the
+    /// status line of a daemon whose wave waits reads as a wave in which
+    /// item 724 waits for the pull request #728. `riff daemon status`
+    /// shows the wait.
+    #[tokio::test]
+    async fn a_status_line_with_a_wait_reads_as_a_wave_in_which_the_item_waits() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = dir_in(root.path());
+        let said = says_once(&dir, A_WAIT).await;
+        let read = status(&dir).await.unwrap();
+        said.await.unwrap();
+        assert_eq!(read.waves.len(), 1);
+        assert_eq!(read.waves[0].waits, BTreeMap::from([(724, 728)]));
+        let text = text::daemon_status(&read, 0);
+        assert!(
+            text.contains(
+                "Waves:\n  como-technologies/strata  no free work now\n    waits for #728: #724\n"
+            ),
+            "{text}"
+        );
+    }
+
+    /// 01M74BVSFDAE67FA1PRYK7E2PN, #1855: the daemon gives the waits of its
+    /// wave in its status, with no wait, one wait and several. riff reads
+    /// the status through the socket, as `riff daemon status`, `riff lead
+    /// start` and the status loop of the daemon read it, and the facts of
+    /// the daemon keep the waits.
+    #[tokio::test]
+    async fn each_status_of_a_wave_with_waits_reads_again_through_the_socket() {
+        let here = Here::new(Fake::default()).await;
+        a_wave_that_waits(&here.daemon, &here.dir).await;
+        for waits in [
+            vec![],
+            vec![(724, 728)],
+            vec![(724, 728), (725, 728), (730, 731)],
+        ] {
+            let waits: BTreeMap<u64, u64> = waits.into_iter().collect();
+            *here.daemon.waves_lock()["o/r"].waits.lock().unwrap() = waits.clone();
+            let read = status(&here.dir).await.unwrap();
+            assert_eq!(read.waves, here.daemon.waves_shown());
+            assert_eq!(read.waves[0].waits, waits);
+            let line = facts::of_status(&read).line();
+            let facts = riff_client::daemons::Facts::parse(&line).unwrap();
+            assert_eq!(facts.waves[0].waits, waits, "{line}");
+        }
+        let read = status(&here.dir).await.unwrap();
+        let text = text::daemon_status(&read, now_ms());
+        let wave = format!(
+            "  o/r  {}\n    waits for #728: #724 #725\n    waits for #731: #730\n",
+            read.waves[0].word
+        );
+        assert!(text.contains(&wave), "{text}");
+    }
+
+    /// 01M74BVSFDAE67FA1PRYK7E2PN, #1855: a status with each field set,
+    /// with no wait, with one wait, and with several waits in several
+    /// waves. The writer of a connection of the daemon writes it, and
+    /// the reader of `riff` ([`Client::next`]) reads the same status.
+    #[tokio::test]
+    async fn each_status_that_the_daemon_writes_reads_again_in_riff() {
+        let wave = |repo: &str, waits: &[(u64, u64)]| WaveShown {
+            repo: repo.into(),
+            word: "no free work now".into(),
+            waits: waits.iter().copied().collect(),
+        };
+        let full = |waves: Vec<WaveShown>| Status {
+            pid: 4242,
+            build: "b".into(),
+            since_ms: 1,
+            dir: "/d".into(),
+            sessions: vec![Live {
+                name: "riff-issue-724-1a2b3c4d".into(),
+                session: "1a2b3c4d".into(),
+                item: "issue-724".into(),
+                image: "img".into(),
+                digest: "0123456789ab".into(),
+                since_ms: 2,
+                phase: Phase::Works,
+                last: "> Bash: just check".into(),
+                lead: false,
+            }],
+            limit: Some(Limit::default()),
+            waiting: vec!["riff-issue-725-2b3c4d5e".into()],
+            waves,
+            parts: vec![riff_client::daemons::RepoParts {
+                repo: "o/r".into(),
+                parts: riff_client::daemons::Parts {
+                    workers: true,
+                    lead: true,
+                },
+            }],
+            leaving: vec![riff_client::daemons::Leaving {
+                repo: "o/s".into(),
+                sessions: vec!["riff-issue-7-3c4d5e6f".into()],
+            }],
+            jobs: 1,
+            test: Some(riff_client::daemons::Test {
+                tag: "v1.0.0".into(),
+                commit: "90e36bfd".into(),
+                secs: 3,
+            }),
+            mcp: vec!["riff".into()],
+            claude_token: riff_client::daemons::Token::Set,
+            watches: vec![WatchShown {
+                repo: "o/r".into(),
+                what: "the deploy of v1.0.0".into(),
+                since_ms: 4,
+                release: Some(riff_client::daemons::Release {
+                    repo: "o/r".into(),
+                    tag: "v1.0.0".into(),
+                    step: riff_client::daemons::ReleaseStep::Waits,
+                }),
+            }],
+            lost: vec![LostShown {
+                repo: "o/r".into(),
+                name: "riff-lead-o-r".into(),
+            }],
+            github: ghcalls::Shown {
+                rows: vec![ghcalls::Row {
+                    caller: "wave".into(),
+                    kind: "pr list".into(),
+                    calls: 2,
+                    points: 4,
+                }],
+                left: Some(ghcalls::Left {
+                    remaining: 4000,
+                    reset_at: "2026-11-11T12:00:00Z".into(),
+                    read_ms: 5,
+                    limit: 5000,
+                }),
+                waits: vec![ghcalls::Wait::until(ghcalls::Resource::Graphql, 6)],
+                other: Some(ghcalls::Other {
+                    points: 7,
+                    used: 8,
+                    counted: 1,
+                    since_ms: 9,
+                    read_ms: 10,
+                }),
+                own_gh: vec!["img".into()],
+            },
+            no_starts: vec![NoTokenShown {
+                repo: "o/t".into(),
+                why: "no App".into(),
+            }],
+            no_tokens: vec![NoTokenShown {
+                repo: "o/u".into(),
+                why: "no App".into(),
+            }],
+            writes: vec![WritesShown {
+                repo: "o/r".into(),
+                acts: gh_token::ActsAs::NoGitHub,
+            }],
+            sends: vec![facts::Sent {
+                repo: "o/r".into(),
+                ok_ms: Some(11),
+                failed: Some(facts::Failed {
+                    since_ms: 12,
+                    cause: "machine failed".into(),
+                    count: 3,
+                }),
+            }],
+        };
+        for waves in [
+            vec![wave("o/r", &[])],
+            vec![wave("o/r", &[(724, 728)])],
+            vec![
+                wave("o/r", &[(724, 728), (725, 728), (730, 731)]),
+                wave("o/s", &[(12, 14)]),
+            ],
+        ] {
+            let said = Say::Status(Box::new(full(waves)));
+            let (ours, theirs) = UnixStream::pair().unwrap();
+            let (out, task) = writer(theirs.into_split().1);
+            out.say(said.clone());
+            drop(out);
+            task.await.unwrap();
+            let (read, write) = ours.into_split();
+            let mut client = Client {
+                lines: BufReader::new(read).lines(),
+                write,
+            };
+            assert_eq!(client.next().await.unwrap(), Some(said));
+        }
     }
 }

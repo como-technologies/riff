@@ -8290,6 +8290,12 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 /// assert!(text.contains("Wait for room:\n  the wave of o/r\n"));
 /// assert!(text.contains("Waves:\n  o/r  starts issue-12\n"));
 /// assert!(text.contains("claude token: set.\n"), "{text}");
+/// // The verifies and the rebases that wait for another pull request
+/// // (#1855).
+/// status.waves[0].waits = [(724, 728), (725, 728)].into();
+/// let text = riff::text::daemon_status(&status, 300_000);
+/// assert!(text.contains("Waves:\n  o/r  starts issue-12\n    waits for #728: #724 #725\n"), "{text}");
+/// status.waves[0].waits.clear();
 /// // A watch of an async operation (01M5RGCW5NCKQYA61RM63914TX).
 /// status.watches.push(riff::daemon::WatchShown {
 ///     repo: "o/r".into(),
@@ -8429,6 +8435,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
         out.push_str("Waves:\n");
         for wave in &status.waves {
             let _ = writeln!(out, "  {}  {}", wave.repo, wave.word);
+            for line in daemon_wave_waits(&wave.waits) {
+                let _ = writeln!(out, "    {line}");
+            }
         }
     }
     if !status.watches.is_empty() {
@@ -8445,6 +8454,30 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
     }
     out.push_str(&github_use(&status.github, now_ms));
     out
+}
+
+/// The verifies and the rebases of a wave that wait for another pull
+/// request, from `waits` ([`crate::daemon::WaveShown::waits`]): one line
+/// for each pull request that they wait for, `waits for #N: #A #B`, in
+/// the order of N (01M74BVZ8V7YQJM8QPZ2KEKS0T).
+///
+/// ```
+/// let waits = [(724, 728), (731, 733), (725, 728)].into();
+/// assert_eq!(
+///     riff::text::daemon_wave_waits(&waits),
+///     ["waits for #728: #724 #725", "waits for #733: #731"]
+/// );
+/// assert!(riff::text::daemon_wave_waits(&Default::default()).is_empty());
+/// ```
+pub fn daemon_wave_waits(waits: &std::collections::BTreeMap<u64, u64>) -> Vec<String> {
+    let mut by_pull: std::collections::BTreeMap<u64, Vec<String>> = Default::default();
+    for (issue, pull) in waits {
+        by_pull.entry(*pull).or_default().push(format!("#{issue}"));
+    }
+    by_pull
+        .into_iter()
+        .map(|(pull, issues)| format!("waits for #{pull}: {}", issues.join(" ")))
+        .collect()
 }
 
 /// One line: the daemon answers.
