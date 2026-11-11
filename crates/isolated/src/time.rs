@@ -103,7 +103,10 @@ impl Span {
     }
 
     /// Starts a span that reads the pressure files in `dir`, for a test
-    /// of the helper.
+    /// of the helper. A test that needs a high share writes a stall of
+    /// [`HANG`] or more: it covers the wall time of each span that is
+    /// not a hang. Then a slow step does not lower the share, and the
+    /// result is the same on a slow machine.
     pub fn with_pressure_dir(dir: impl AsRef<Path>) -> Span {
         let dir = dir.as_ref().to_owned();
         Span {
@@ -124,15 +127,19 @@ impl Span {
     /// process and of each child process that it waited for.
     ///
     /// ```standalone_crate
+    /// use std::time::Duration;
+    ///
+    /// // A step that computes adds CPU time, also when other processes
+    /// // use the CPUs: the loop ends.
     /// let span = isolated::Span::start();
     /// let mut n = 0u64;
-    /// while span.wall() < std::time::Duration::from_millis(50) {
+    /// while span.cpu() < Duration::from_millis(10) {
+    ///     assert!(span.wall() < isolated::HANG, "no CPU time in {:?}", span.wall());
     ///     n = std::hint::black_box(n + 1);
     /// }
-    /// assert!(span.cpu() > std::time::Duration::from_millis(10));
     ///
     /// let idle = isolated::Span::start();
-    /// std::thread::sleep(std::time::Duration::from_millis(50));
+    /// std::thread::sleep(Duration::from_millis(50));
     /// assert!(idle.cpu() < idle.wall());
     /// ```
     pub fn cpu(&self) -> Duration {
@@ -151,9 +158,9 @@ impl Span {
     /// std::fs::write(dir.path().join("io"), line(1_000_000))?;
     /// let span = isolated::Span::with_pressure_dir(dir.path());
     /// std::thread::sleep(std::time::Duration::from_millis(100));
-    /// // A task waited for IO for 1 s, more than the wall time. No task
-    /// // waited for a CPU.
-    /// std::fs::write(dir.path().join("io"), line(2_000_000))?;
+    /// // A task waited for IO for 60 s, more than the wall time of a slow
+    /// // machine. No task waited for a CPU.
+    /// std::fs::write(dir.path().join("io"), line(61_000_000))?;
     /// let pressure = span.pressure().unwrap();
     /// assert_eq!((pressure.resource, pressure.share), ("IO", 1.0));
     /// assert_eq!(pressure.to_string(), "IO pressure 100 %");
@@ -199,7 +206,7 @@ impl Span {
     /// let file = dir.path().join("cpu");
     /// std::fs::write(&file, "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")?;
     /// let span = isolated::Span::with_pressure_dir(dir.path());
-    /// assert!(span.within(Duration::from_secs(1)));
+    /// assert!(span.within(isolated::HANG));
     /// std::thread::sleep(Duration::from_millis(20));
     /// // No load: the limit holds.
     /// assert!(!span.within(Duration::from_millis(10)));
@@ -351,9 +358,26 @@ mod tests {
         let span = Span::with_pressure_dir(dir.path());
         std::thread::sleep(Duration::from_millis(50));
         std::fs::write(dir.path().join("cpu"), line(1_000)).unwrap();
-        std::fs::write(dir.path().join("memory"), line(10_000_000)).unwrap();
+        std::fs::write(dir.path().join("memory"), line(HANG.as_micros() as u64)).unwrap();
         let pressure = span.pressure().unwrap();
         assert_eq!((pressure.resource, pressure.share), ("memory", 1.0));
+    }
+
+    #[test]
+    fn only_a_stall_longer_than_the_wall_time_gives_the_same_result_on_a_slow_runner() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("cpu");
+        std::fs::write(&file, line(0)).unwrap();
+        let mut span = Span::with_pressure_dir(dir.path());
+        // The steps of the test took 30 s on a slow runner.
+        span.wall = Instant::now() - Duration::from_secs(30);
+        // 20 ms of stall in 30 s is a low share.
+        std::fs::write(&file, line(20_000)).unwrap();
+        assert!(!span.within(Duration::from_millis(10)));
+        // A stall of HANG covers each wall time under HANG.
+        std::fs::write(&file, line(HANG.as_micros() as u64)).unwrap();
+        assert_eq!(span.pressure().unwrap().share, 1.0);
+        assert!(span.within(Duration::from_millis(10)));
     }
 
     #[test]
