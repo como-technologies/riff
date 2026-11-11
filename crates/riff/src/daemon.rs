@@ -1153,7 +1153,9 @@ pub enum SessionAsk {
 /// `riff release check`, the run of an item by the lead, and the events
 /// of a session for the lead (#1338, 01M5QVX8D3JE51FAYRWXMAYFAY,
 /// 01M5QW31TFA1W2GWPGRS2Y65GP, 01M5QVX8FFG2FPWZEW61A985CF,
-/// 01M5SMP2FFEHJPZBJVGAWBXNNP).
+/// 01M5SMP2FFEHJPZBJVGAWBXNNP). Also the calls of `riff post`, `riff
+/// read`, `riff verify` and each other command of a session
+/// ([`crate::reach::COMMANDS`], #1733).
 ///
 /// ```
 /// use riff::daemon::ServerCall;
@@ -1338,6 +1340,90 @@ pub enum ServerCall {
         /// The operation.
         op: crate::watches::Op,
     },
+    /// Post `body` to the thread `thread`, as `riff post` does on a host
+    /// (#1733). Only the sessions that `to` selects wake. Each session
+    /// may, as with its riff tool `post`. The answer is the line for the
+    /// person.
+    Post {
+        /// The thread.
+        thread: riff_core::name::ThreadName,
+        /// The sessions to wake.
+        to: Vec<riff_core::selector::Selector>,
+        /// The message.
+        body: String,
+        /// The kind of the post.
+        kind: riff_core::wire::Kind,
+    },
+    /// Set the status of the session, as `riff status` does (#1733). Each
+    /// session may. The answer is the line for the person.
+    SetStatus {
+        /// The step, in the words of the session.
+        step: String,
+    },
+    /// Say that the session cannot go on, as `riff blocked` does (#1733).
+    /// Each session may. The answer is the line for the person.
+    Blocked {
+        /// Why the session cannot go on.
+        reason: String,
+    },
+    /// Start, end or fail a long step of the session, as `riff step`
+    /// does (#1733). Each session may. The answer is the line for the
+    /// person.
+    Step {
+        /// The change of the step.
+        change: riff_core::wire::StepChange,
+    },
+    /// Send `body` to the session `session`, as `riff tell` does
+    /// (#1733). Each session may. The answer is the line for the person.
+    Tell {
+        /// The session: its ID, the start of it, its URI, or `lead`.
+        session: String,
+        /// The message.
+        body: String,
+    },
+    /// The unread messages of the session, as `riff read` does (#1733):
+    /// the session joins the thread of its repository first. Each
+    /// session may. The answer is the text of the messages.
+    Read {
+        /// Only this thread, as `riff read --thread` names it.
+        thread: Option<String>,
+        /// The full history, not only the unread messages.
+        all: bool,
+    },
+    /// The fact of the pull request `number` of the issue `issue`, as
+    /// `riff pr open`, `riff pr wait` and `riff verify` tell it (#1733,
+    /// 01M41FZP2C4Z4J6WKRXZ5B31EH). Only the lead may. The answer is
+    /// `null`.
+    Fact {
+        /// The issue of the item.
+        issue: u64,
+        /// The pull request.
+        number: u64,
+        /// The state of the pull request.
+        state: riff_core::wire::PullState,
+    },
+    /// Pause or resume the repository of the session, the repository
+    /// `repo`, or with `riff` the whole riff, as `riff pause` and `riff
+    /// resume` do (#1733). Only the lead may, as with its riff tools
+    /// `pause` and `resume`. The answer is the line for the person.
+    Pause {
+        /// The whole riff.
+        riff: bool,
+        /// Another repository.
+        repo: Option<riff_core::name::ThreadName>,
+        /// Paused or running.
+        state: riff_core::wire::RiffState,
+    },
+    /// The time and the body of each post of the thread `denials`, oldest
+    /// first, as `riff denials` reads them ([`crate::denied`], #1733).
+    /// Only the lead may.
+    Denials,
+    /// The GitHub Apps of the riff, as the person reads them, for the
+    /// checks of the guard and of the lead App of `riff init` in a
+    /// container (#1733). Each session may: the answer holds no key and
+    /// no secret. The answer is a [`riff_core::wire::GitHubAppsReply`],
+    /// or `null` for a riff with no sign-in.
+    Apps,
 }
 
 /// Makes the call `call` of the session of `record` on its riff-server,
@@ -1445,6 +1531,73 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
         ServerCall::PlanFree { thread, item } => {
             let reply = signed()?.free(&record.me, thread, item).await?;
             Value::String(text::freed(reply, thread, item))
+        }
+        ServerCall::Post {
+            thread,
+            to,
+            body,
+            kind,
+        } => {
+            let posted = signed()?
+                .post(&record.me, Some(thread), to, body, *kind)
+                .await?;
+            Value::String(text::posted(&posted))
+        }
+        ServerCall::SetStatus { step } => {
+            let status = riff_core::wire::Status { step: step.clone() };
+            signed()?.status(&record.me, &status).await?;
+            Value::String(text::status_set(&status))
+        }
+        ServerCall::Blocked { reason } => {
+            let told = signed()?.blocked(&record.me, reason).await?;
+            Value::String(text::blocked_set(reason, told))
+        }
+        ServerCall::Step { change } => {
+            let told = signed()?.step(&record.me, change.clone()).await?;
+            Value::String(text::step_set(change, told))
+        }
+        ServerCall::Tell { session, body } => {
+            let posted = signed()?.tell(&record.me, session, body).await?;
+            Value::String(text::posted(&posted))
+        }
+        ServerCall::Read { thread, all } => {
+            let (api, repo) = (signed()?, record.me.default_thread());
+            let text = crate::reach::read(&api, &record.me, repo.as_ref(), thread.as_deref(), *all);
+            Value::String(text.await?)
+        }
+        ServerCall::Fact {
+            issue,
+            number,
+            state,
+        } => {
+            if !record.terminal {
+                bail!(text::DAEMON_FACT_ONLY_LEAD);
+            }
+            crate::look::tell_fact(&signed()?, &record.me, *issue, *number, *state).await;
+            Value::Null
+        }
+        ServerCall::Pause { riff, repo, state } => {
+            if !record.terminal {
+                bail!(text::DAEMON_PAUSE_ONLY_LEAD);
+            }
+            let scope = PauseScope::of(*riff, repo.clone());
+            let place = record.me.place();
+            Value::String(crate::reach::pause(&signed()?, &record.me, place, scope, *state).await?)
+        }
+        ServerCall::Denials => {
+            if !record.terminal {
+                bail!(text::DAEMON_DENIALS_ONLY_LEAD);
+            }
+            serde_json::to_value(crate::denied::bodies(&signed()?, &record.me).await?)?
+        }
+        ServerCall::Apps => {
+            let person = api.clone().signed_in(None)?;
+            match person.github_apps(None, None).await {
+                Ok(apps) => serde_json::to_value(apps)?,
+                // A riff with no sign-in has no App.
+                Err(_) if matches!(person.has_sign_in().await, Ok(false)) => Value::Null,
+                Err(e) => return Err(e),
+            }
         }
         ServerCall::CloudLog { .. } => bail!("the daemon reads the log itself"),
         ServerCall::Person => bail!("the daemon reads the person itself"),

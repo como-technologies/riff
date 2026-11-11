@@ -1055,20 +1055,25 @@ pub struct TagRules {
 /// (01M6WZ40YED6THKVJ2JQRXFK4N). `Ok(None)` when the riff has no lead
 /// App: a riff with no sign-in has none. `Err` says why riff cannot ask.
 pub async fn lead_app(api: &Api) -> Result<Option<LeadApp>, String> {
-    let apps = match api.github_apps(None, None).await {
-        Ok(apps) => apps,
+    match api.github_apps(None, None).await {
+        Ok(apps) => Ok(lead_app_of(&apps)),
         // A riff with no sign-in has no lead App.
-        Err(_) if matches!(api.has_sign_in().await, Ok(false)) => return Ok(None),
-        Err(e) => return Err(text::lead_unasked(api.base(), &format!("{e:#}"))),
-    };
-    Ok(apps
-        .apps
-        .into_iter()
+        Err(_) if matches!(api.has_sign_in().await, Ok(false)) => Ok(None),
+        Err(e) => Err(text::lead_unasked(api.base(), &format!("{e:#}"))),
+    }
+}
+
+/// The lead App of `apps`, the reply of riff-server to the read of its
+/// GitHub Apps ([`lead_app`]). `riff init` in a container gets the reply
+/// through the riff daemon (#1733).
+pub fn lead_app_of(apps: &riff_core::wire::GitHubAppsReply) -> Option<LeadApp> {
+    apps.apps
+        .iter()
         .find(|app| app.app == GitHubApp::Lead)
         .map(|app| LeadApp {
             id: app.id,
-            slug: app.slug,
-        }))
+            slug: app.slug.clone(),
+        })
 }
 
 /// The ruleset [`RELEASES`] of the repository of `gh`, with one call of

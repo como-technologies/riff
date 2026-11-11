@@ -222,7 +222,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use ratatui::style::Color;
-use riff_client::api::{self, Api, PauseScope};
+use riff_client::api::{self, Api};
 use riff_client::sessions::{Phase, Sessions};
 use riff_client::waves::Issues;
 use riff_core::build::Build;
@@ -736,15 +736,21 @@ impl Effect {
                     .plan_free(&thread(repo)?, &format!("issue-{item}"))
                     .await
             }
+            // A step of a person: a container has no sign-in of one (#1733).
+            Effect::Answered { .. } if matches!(reach, Reach::Daemon(_)) => {
+                anyhow::bail!(text::needs_the_host("riff questions --answered"))
+            }
             Effect::Answered { repo, item } => {
                 crate::questions::answered(gh, api, me, &thread(repo)?, *item).await
             }
             Effect::Pause { repo, state } => {
-                let scope = match repo {
-                    Some(repo) => PauseScope::Repository(thread(repo)?),
-                    None => PauseScope::Riff,
+                let (riff, repo) = match repo {
+                    Some(repo) => (false, Some(thread(repo)?)),
+                    None => (true, None),
                 };
-                crate::reach::pause(api, me, me.place(), scope, *state).await
+                reach
+                    .pause_as(api, me, me.place(), riff, repo, *state)
+                    .await
             }
         }
     }
@@ -830,16 +836,18 @@ impl Default for Look {
 /// command, as in `riff top`. Then it asks the riff daemon of this host
 /// for its status ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK), and
 /// reads the build of the riff file of this process
-/// ([`crate::binary::OnDisk::this`], 01M748V7Y8DQPCQJ9D2Q7HKB76).
-pub async fn look(api: &Api, me: &SessionUri, boards: &[String]) -> Result<Look> {
-    let (pauses, who, call) = crate::top::look(api, me).await?;
+/// ([`crate::binary::OnDisk::this`], 01M748V7Y8DQPCQJ9D2Q7HKB76). In a
+/// container, each call goes through `reach`, the socket of the session
+/// (#1733).
+pub async fn look(api: &Api, me: &SessionUri, reach: &Reach, boards: &[String]) -> Result<Look> {
+    let (pauses, who, call) = reach.look(api, me).await?;
     let mut holds = BTreeMap::new();
     for repo in boards {
         let Ok(thread) = repo.parse::<ThreadName>() else {
             continue;
         };
-        if let Ok(plan) = api.plan_show(me, &thread).await {
-            holds.insert(repo.clone(), plan.holds);
+        if let Ok(held) = reach.holds_as(api, me, &thread).await {
+            holds.insert(repo.clone(), held);
         }
     }
     Ok(Look {
@@ -1877,7 +1885,7 @@ pub async fn run(
 ) -> Result<()> {
     // The first look runs before the TUI takes the terminal: its error
     // prints as in the CLI (01M6VAZKAH6B53YKR8W4YKNSH6).
-    let first = look(api, me, &[]).await?;
+    let first = look(api, me, reach, &[]).await?;
     let here = here.default_thread().map(|t| t.to_string());
     let mut state = State::new(Build::this(), me.clone()).in_clone(here);
     let start = crate::run::now_ms();
@@ -2038,11 +2046,18 @@ async fn frames(
         follow: None,
     };
     let mut good_at = chrono::Local::now();
-    let mut link = chat::Link::start(person);
+    // A container has no sign-in of a person for the Chat tab, and no
+    // stream of a thread: each look goes through the socket (#1733).
+    let container = matches!(reach, Reach::Daemon(_));
+    let mut link = if container {
+        chat::Link::off(text::TUI_CHAT_IN_CONTAINER)
+    } else {
+        chat::Link::start(person)
+    };
     // A message of the thread of the repository of the folder starts a
     // look, as in `riff top`.
     let (told, mut messages) = tokio::sync::mpsc::channel::<()>(1);
-    let follower = me.default_thread().map(|thread| {
+    let follower = me.default_thread().filter(|_| !container).map(|thread| {
         let (api, me) = (api.clone(), me.clone());
         tokio::spawn(async move {
             let stream = riff_client::api::follow(
@@ -2125,8 +2140,11 @@ async fn frames(
         }
         if tasks.looking.is_none() && Instant::now() >= tasks.next {
             let (api, me, boards) = (api.clone(), me.clone(), state.boards());
+            let reach = reach.clone();
             tasks.started = Instant::now();
-            tasks.looking = Some(tokio::spawn(async move { look(&api, &me, &boards).await }));
+            tasks.looking = Some(tokio::spawn(async move {
+                look(&api, &me, &reach, &boards).await
+            }));
         }
         if tasks
             .asking
@@ -2139,8 +2157,15 @@ async fn frames(
         }
         let sessions = state.tab() == Tab::Sessions;
         if sessions && tasks.asking.is_none() && Instant::now() >= tasks.next_ask {
-            let dir = dir.clone();
+            let (dir, reach) = (dir.clone(), reach.clone());
             tasks.asking = Some(tokio::spawn(async move {
+                // In a container, the daemon on the socket of the session
+                // answers (#1733).
+                if let Reach::Daemon(socket) = &reach {
+                    return Reach::daemon_status(socket)
+                        .await
+                        .map_err(|e| format!("{e:#}"));
+                }
                 let Some(dir) = dir else {
                     return Err(text::NO_DAEMON_HERE.to_owned());
                 };

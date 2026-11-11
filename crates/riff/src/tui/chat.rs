@@ -938,6 +938,28 @@ impl Link {
         }
     }
 
+    /// A link with no call, for a TUI with no sign-in of a person, as in
+    /// a container session (#1733): the tab shows `why` as its fault, and
+    /// each line that the person sends comes back unsent with `why`.
+    pub fn off(why: &str) -> Link {
+        let (tx, came) = mpsc::unbounded_channel();
+        let _ = tx.send(Came::Fault(safe(why)));
+        let (send, mut typed) = mpsc::unbounded_channel::<String>();
+        let unsent = safe(&format!("riff: cannot send the line: {why}"));
+        let posts = tokio::spawn(async move {
+            while typed.recv().await.is_some() {
+                let _ = tx.send(Came::Unsent(unsent.clone()));
+            }
+        });
+        Link {
+            came,
+            send,
+            posts,
+            follow: tokio::spawn(async {}),
+            names: tokio::spawn(async {}),
+        }
+    }
+
     /// What came since the last call.
     pub fn came(&mut self) -> Vec<Came> {
         let mut came = Vec::new();
