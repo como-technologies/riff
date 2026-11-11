@@ -768,6 +768,73 @@ fn a_release_pull_request_with_a_failed_check_is_a_notice_and_no_build() {
     );
 }
 
+/// The failed check `knurl adapter` of GitHub Actions that the ruleset of
+/// `main` does not require, with its link.
+fn knurl() -> OtherCheck {
+    OtherCheck {
+        name: "knurl adapter".into(),
+        app: Some("github.com".into()),
+        link: Some("https://github.com/o/r/actions/runs/9/job/1".into()),
+    }
+}
+
+/// 01M74MGTCR650HNX4E1THAAG69: a release hears of its failed required
+/// checks only, at any state of its verify. A failed check that no rule
+/// requires (`knurl adapter`) gets its own notice only while the verify
+/// waits or passed: the release whose verify failed gets none for it.
+#[test]
+fn a_release_hears_of_a_check_that_no_rule_requires_only_while_its_verify_waits_or_passed() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(
+        dir.path(),
+        &[
+            // The issue 5 has the label `release`, and its verify failed.
+            pull_on(
+                "release-v0.8.0",
+                5,
+                "eeee555",
+                &[
+                    verify("FAILURE"),
+                    run("Gate", "SUCCESS"),
+                    run("Hygiene", "FAILURE"),
+                    run("knurl adapter", "FAILURE"),
+                ],
+                "MERGEABLE",
+                true,
+            ),
+            // A branch `release-…` that waits for its verify.
+            pull_on(
+                "release-v0.9.0",
+                6,
+                "ffff666",
+                &[run("Gate", "SUCCESS"), run("knurl adapter", "FAILURE")],
+                "MERGEABLE",
+                true,
+            ),
+        ],
+    );
+    let look = looks(&gh);
+    assert!(look.fixes.failed.is_empty(), "no session builds a release");
+    let notice = |pull, branch: &str, commit: &str, stuck| Notice {
+        pull,
+        branch: branch.into(),
+        commit: commit.into(),
+        stuck,
+    };
+    assert_eq!(
+        look.fixes.notices,
+        [
+            notice(
+                45,
+                "release-v0.8.0",
+                "eeee555",
+                Stuck::Checks(vec!["Hygiene".into()])
+            ),
+            notice(46, "release-v0.9.0", "ffff666", Stuck::Optional(knurl())),
+        ]
+    );
+}
+
 /// `riff top` and `riff wave list` show the item of a stuck pull request
 /// in the group `stuck`, with the reason, while no session claims it.
 #[test]
@@ -973,6 +1040,68 @@ fn a_verified_pull_request_that_needs_a_review_is_a_notice_with_the_step_of_a_pe
             .groups(false)
             .contains(&"stuck: #1 #2 (review)".to_owned())
     );
+}
+
+/// 01M74MGTCR650HNX4E1THAAG69: GitHub blocks the merge of a verified pull
+/// request, and says no decision. A failed check that no rule requires
+/// (`knurl adapter`) does not explain the block: the lead hears of the
+/// review and of the check. A failed required check (`Hygiene`) explains
+/// it: a session fixes the check, and the lead hears of no review.
+#[test]
+fn a_failed_check_that_no_rule_requires_does_not_explain_a_blocked_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let gate = || run("Gate", "SUCCESS");
+    let gh = forge(
+        dir.path(),
+        &[
+            pull_held(
+                2,
+                "bbbb222",
+                &[verify("SUCCESS"), gate(), run("knurl adapter", "FAILURE")],
+                "",
+                "BLOCKED",
+            ),
+            pull_held(
+                3,
+                "cccc333",
+                &[verify("SUCCESS"), gate(), run("Hygiene", "FAILURE")],
+                "",
+                "BLOCKED",
+            ),
+        ],
+    );
+    // No run of Actions waits.
+    runs(dir.path(), r#"{"total_count":0,"workflow_runs":[]}"#);
+    let look = looks(&gh);
+    let notice = |stuck| Notice {
+        pull: 42,
+        branch: "worktree-issue-2".into(),
+        commit: "bbbb222".into(),
+        stuck,
+    };
+    assert_eq!(
+        look.fixes.notices,
+        [
+            notice(Stuck::Review(Review::Blocked)),
+            notice(Stuck::Optional(knurl()))
+        ]
+    );
+    assert_eq!(
+        look.fixes.failed[&3],
+        Failed {
+            pull: 43,
+            commit: "cccc333".into(),
+            checks: vec!["Hygiene".into()]
+        }
+    );
+    // The look read the runs of the commit that GitHub blocks with no
+    // failed required check and no check that goes, and of no other.
+    assert_eq!(read_runs(dir.path()), ["bbbb222"]);
+
+    // `riff top` shows the review of 2, and the checks of 3.
+    let issues = riff::top::issues_from_gh(&gh, REPO).unwrap();
+    assert_eq!(issues.stuck[&2], "review");
+    assert_eq!(issues.stuck[&3], "checks");
 }
 
 /// #1433: the run of a pull request from a fork waits in `action_required`

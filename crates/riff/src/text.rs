@@ -11685,7 +11685,7 @@ pub fn wave_checks_start(
 /// verify and no merge (01M749P62T24VDPX20D40KRJEK). A review comes with
 /// the step of a person, and a run that waits for approval one time for
 /// each run, with the command (01M6FZ141Y0J8G2AYX0G5HY1CX,
-/// 01M6FZ144M0BTEDWNB9V4MGWDD).
+/// 01M74MGTCR650HNX4E1THAAG69, 01M6FZ144M0BTEDWNB9V4MGWDD).
 ///
 /// ```
 /// use riff::rollout::{OtherCheck, Review, Run, Stuck};
@@ -11754,7 +11754,7 @@ pub fn wave_checks_start(
 ///      waits for you. A person other than the author approves it: gh pr review 40 --approve"
 /// );
 /// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Review(Review::Blocked));
-/// assert!(text.contains("but no check failed or goes, and GitHub blocks the merge."));
+/// assert!(text.contains("but no required check failed, no check goes, and GitHub blocks the merge."));
 /// assert!(text.contains("an author with no GitHub account"));
 /// assert!(text.contains("See the merge box: gh pr view 40 --web."));
 /// assert!(text.ends_with("A person other than the author approves it: gh pr review 40 --approve"));
@@ -11841,8 +11841,9 @@ pub fn wave_stuck(
              review {number} --approve"
         ),
         Stuck::Review(Review::Blocked) => format!(
-            "PR #{number}, branch {branch}, passed its verify at commit {commit}, but no check \
-             failed or goes, and GitHub blocks the merge. A review is the likely cause: a commit \
+            "PR #{number}, branch {branch}, passed its verify at commit {commit}, but no required \
+             check failed, no check goes, and GitHub blocks the merge. A review is the likely \
+             cause: a commit \
              can have an author with no GitHub account, and the rule of the branch then asks one \
              approving review of a person. No session approves a pull request, so it waits for \
              you. See the merge box: gh pr view {number} --web. A person other than the author \
