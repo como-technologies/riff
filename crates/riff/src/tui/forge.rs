@@ -12,7 +12,7 @@
 //! | What | Call | Cost |
 //! |---|---|---|
 //! | The open issues, their titles, waves and labels | a conditional REST read of each page of `repos/R/issues?state=open` ([`open_path`]) | A `304` costs no point. A new page costs one REST call |
-//! | The pull requests that wait or are stuck | `gh pr list` with the checks ([`crate::rollout::pulls`]), only when the list of issues has an open pull request | About 2 GraphQL points |
+//! | The pull requests that wait or are stuck | `gh pr list` with the checks ([`crate::rollout::pulls`]), only when the list of issues has an open pull request, and the ruleset of `main` when a head has a failed check ([`crate::rollout::Pull::required`]) | About 2 GraphQL points. The ruleset is two REST calls, one time in 10 minutes |
 //! | The items that closed in the current wave | a conditional REST read of `repos/R/issues?state=closed&milestone=N` ([`closed_path`]) | A `304` costs no point |
 //! | The full check of `main` | the check runs of each required check ([`crate::look::read_main`]), and the jobs of a run that goes or failed | A few REST calls |
 //!

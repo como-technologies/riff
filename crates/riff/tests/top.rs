@@ -732,11 +732,14 @@ async fn an_item_whose_pull_request_cannot_merge_by_itself_is_in_stuck() {
     let on = r#"{"mergeMethod": "SQUASH"}"#;
     let passed = r#"{"context": "riff/verify", "state": "SUCCESS"}"#;
     let gate = r#"{"__typename": "CheckRun", "name": "Gate", "conclusion": "FAILURE"}"#;
+    // The ruleset of `main` requires the Gate: its failure holds the merge.
+    let rules = r#"[{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "Gate"}]}}]"#;
     script(
         bin.path(),
         "gh",
         &format!(
-            "case \"$1\" in\n  pr) echo '[{}, {}, {}]' ;;\n  *) echo '[{}, {}, {}, {}]' ;;\nesac",
+            "case \"$*\" in\n  'api repos/como-technologies/riff') echo '{{\"default_branch\": \"main\"}}' ;;\n  \
+             *rules/branches*) echo '{rules}' ;;\n  pr*) echo '[{}, {}, {}]' ;;\n  *) echo '[{}, {}, {}, {}]' ;;\nesac",
             pull(40, 12, on, passed),
             pull(41, 13, on, &format!("{passed}, {gate}")),
             pull(42, 14, "null", passed),

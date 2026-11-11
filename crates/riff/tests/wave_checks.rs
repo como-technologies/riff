@@ -10,7 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use riff::pr::Gh;
-use riff::wave::{self, Failed, Work};
+use riff::rollout::{OtherCheck, Stuck};
+use riff::wave::{self, Failed, Notice, Work};
 
 const REPO: &str = "o/r";
 
@@ -201,16 +202,7 @@ const RULES_GATE: &str = r#"[
 /// The pull request 45 of issue 5 at `eeee555` with the check run
 /// `Hygiene` in its rollup, with `conclusion`.
 fn pull_with_hygiene(dir: &Path, conclusion: &str) {
-    let run = format!(
-        r#"{{"__typename":"CheckRun","name":"Hygiene","conclusion":"{conclusion}","workflowName":"Hygiene","detailsUrl":"https://github.com/o/r/actions/runs/9/job/1"}}"#
-    );
-    std::fs::write(
-        dir.join("pulls"),
-        format!(
-            r#"[{{"number":45,"headRefName":"worktree-issue-5","headRefOid":"eeee555","isDraft":false,"statusCheckRollup":[{run}],"mergeable":"MERGEABLE","autoMergeRequest":{{"enabledAt":"2026-10-24T08:00:00Z","mergeMethod":"SQUASH"}},"body":"Closes #5\n\nIssue: #5\nMilestone: Wave 1\n"}}]"#
-        ),
-    )
-    .unwrap();
+    pull_with_runs(dir, &[("Hygiene", conclusion)]);
 }
 
 /// #1575, PR #1573 at its commit cfed717: `Hygiene` failed, and the job
@@ -343,4 +335,124 @@ fn the_book_holds_a_pull_request_with_a_hold_of_its_verify() {
         .find("\n#### Turn on auto-merge for a pull request\n")
         .expect("the how-to");
     assert!(page[start..].contains("\nA pass turns auto-merge on."));
+}
+
+/// The pull request 45 of issue 5 at `eeee555` with the check runs `runs`
+/// of GitHub Actions in its rollup: each a name and a conclusion.
+fn pull_with_runs(dir: &Path, runs: &[(&str, &str)]) {
+    let runs: Vec<String> = runs
+        .iter()
+        .map(|(name, conclusion)| {
+            format!(
+                r#"{{"__typename":"CheckRun","name":"{name}","conclusion":"{conclusion}","workflowName":"CI","detailsUrl":"https://github.com/o/r/actions/runs/9/job/1"}}"#
+            )
+        })
+        .collect();
+    std::fs::write(
+        dir.join("pulls"),
+        format!(
+            r#"[{{"number":45,"headRefName":"worktree-issue-5","headRefOid":"eeee555","isDraft":false,"statusCheckRollup":[{}],"mergeable":"MERGEABLE","autoMergeRequest":{{"enabledAt":"2026-10-24T08:00:00Z","mergeMethod":"SQUASH"}},"body":"Closes #5\n\nIssue: #5\nMilestone: Wave 1\n"}}]"#,
+            runs.join(",")
+        ),
+    )
+    .unwrap();
+}
+
+/// 01M749P62T24VDPX20D40KRJEK, strata PR #774: the new workflow `knurl
+/// adapter` failed on the head, and the ruleset of `main` does not require
+/// it. Each of the four required checks passed. The look reads the
+/// ruleset, and the wave starts the verify of the head, not a fix: the
+/// lead gets one notice for the run. A failed required check still gets
+/// the fix and no verify.
+#[test]
+fn a_failed_run_that_the_ruleset_does_not_require_holds_no_verify() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(dir.path());
+    let none = BTreeSet::new();
+    let starts = BTreeMap::new();
+    let knurl = Notice {
+        pull: 45,
+        branch: "worktree-issue-5".into(),
+        commit: "eeee555".into(),
+        stuck: Stuck::Optional(OtherCheck {
+            name: "knurl adapter".into(),
+            app: Some("github.com".into()),
+            link: Some("https://github.com/o/r/actions/runs/9/job/1".into()),
+        }),
+    };
+
+    pull_with_runs(
+        dir.path(),
+        &[("checks / docs", "SUCCESS"), ("knurl adapter", "FAILURE")],
+    );
+    let optional = look(&gh).unwrap();
+    assert_eq!(optional.free, ["verify-issue-5"]);
+    assert!(optional.fixes.failed.is_empty());
+    assert!(optional.pulls[&5].gate_done);
+    assert_eq!(
+        wave::pick(&optional, &none, &starts),
+        Some(Work::Verify {
+            issue: 5,
+            pull: 45,
+            commit: "eeee555".into(),
+        })
+    );
+    assert_eq!(optional.fixes.notices, std::slice::from_ref(&knurl));
+    assert_eq!(
+        optional.fixes.notices[0].key(),
+        "#45@eeee555:optional check:knurl adapter"
+    );
+    assert!(
+        calls(dir.path())
+            .iter()
+            .any(|c| c.contains("/rules/branches/main")),
+        "the look reads the ruleset"
+    );
+    // `riff top` reads the same pull requests, and shows no stuck one.
+    let pulls = riff::rollout::pulls(&gh, REPO).unwrap();
+    assert_eq!(pulls[0].stuck(false), None);
+
+    // A required check failed too: the fix of it, no verify, and the same
+    // notice.
+    std::fs::write(dir.path().join("docs"), docs("completed", r#""failure""#)).unwrap();
+    pull_with_runs(
+        dir.path(),
+        &[("checks / docs", "FAILURE"), ("knurl adapter", "FAILURE")],
+    );
+    let required = look(&gh).unwrap();
+    assert_eq!(required.free, ["issue-5"]);
+    assert!(required.pulls.is_empty(), "{:?}", required.pulls);
+    assert_eq!(
+        wave::pick(&required, &none, &starts),
+        Some(Work::Checks {
+            issue: 5,
+            pull: 45,
+            commit: "eeee555".into(),
+            checks: vec!["checks / docs".into()],
+        })
+    );
+    assert_eq!(required.fixes.notices, [knurl]);
+
+    // The message names the run and its link, and says that the verify
+    // goes on. "See a failed check that no rule requires" in the book shows
+    // it.
+    let example = Stuck::Optional(OtherCheck {
+        name: "knurl adapter".into(),
+        app: Some("github.com".into()),
+        link: Some("https://github.com/como-technologies/riff/actions/runs/9/job/1".into()),
+    });
+    let message = riff::text::wave_stuck(
+        REPO,
+        40,
+        "worktree-issue-12",
+        "main",
+        "1a2b3c4d5e",
+        &example,
+    );
+    assert!(
+        message.contains("so the verify and the merge go on"),
+        "{message}"
+    );
+    let book = crate::book::page("development.md");
+    assert!(book.contains(&format!("\n{message}\n")), "{message}");
 }

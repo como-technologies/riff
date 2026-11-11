@@ -11117,12 +11117,16 @@ pub fn wave_checks_start(
 /// The message to the lead about a pull request that cannot merge, and
 /// that no session fixes (#279): `reason` is why. `repo` is
 /// `OWNER/REPO`, for the approval of a run. `base` is the default
-/// branch of the repository, for a conflict (01M5QYBWPAJ219BE8QKVKG1TWW).
+/// branch of the repository, for a conflict (01M5QYBWPAJ219BE8QKVKG1TWW)
+/// and for a failed check that its ruleset does not require.
 /// Each pull request, head and reason comes one time. A failed check
 /// that is no run of GitHub Actions comes one time for each check, with
-/// its app and its link (#1427). A review comes with the step of a
-/// person, and a run that waits for approval one time for each run,
-/// with the command (01M6FZ141Y0J8G2AYX0G5HY1CX, 01M6FZ144M0BTEDWNB9V4MGWDD).
+/// its app and its link (#1427). A failed check that the ruleset does not
+/// require comes one time for each check, with its link: it holds no
+/// verify and no merge (01M749P62T24VDPX20D40KRJEK). A review comes with
+/// the step of a person, and a run that waits for approval one time for
+/// each run, with the command (01M6FZ141Y0J8G2AYX0G5HY1CX,
+/// 01M6FZ144M0BTEDWNB9V4MGWDD).
 ///
 /// ```
 /// use riff::rollout::{OtherCheck, Review, Run, Stuck};
@@ -11154,6 +11158,22 @@ pub fn wave_checks_start(
 /// let bare = OtherCheck { name: "ci/x".into(), app: None, link: None };
 /// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Other(bare));
 /// assert!(text.contains("the check ci/x of an unknown app failed."));
+/// assert!(text.ends_with("It has no link: see gh pr checks 40"));
+/// let knurl = OtherCheck {
+///     name: "knurl adapter".into(),
+///     app: Some("github.com".into()),
+///     link: Some("https://github.com/o/r/actions/runs/9/job/1".into()),
+/// };
+/// assert_eq!(
+///     riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Optional(knurl)),
+///     "PR #40, branch worktree-issue-12, has the failed check knurl adapter at commit 1a2b3c4. \
+///      The ruleset of main does not require it, so the verify and the merge go on, and no \
+///      session fixes it. Fix the cause with a push to worktree-issue-12, or run the check \
+///      again. Link: https://github.com/o/r/actions/runs/9/job/1"
+/// );
+/// let bare = OtherCheck { name: "knurl adapter".into(), app: None, link: None };
+/// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "master", "1a2b3c4d5e", &Stuck::Optional(bare));
+/// assert!(text.contains("The ruleset of master does not require it"), "{text}");
 /// assert!(text.ends_with("It has no link: see gh pr checks 40"));
 /// let text = riff::text::wave_stuck("o/r", 40, "worktree-issue-12", "main", "1a2b3c4d5e", &Stuck::Dequeued("CI_FAILURE".into()));
 /// assert_eq!(
@@ -11233,6 +11253,19 @@ pub fn wave_stuck(
                  {name} of {app} failed. It is not a run of GitHub Actions, so no session \
                  fixes it, and it waits for you. Fix the cause with a push to {branch}, or run \
                  the check again in its app. {link}"
+            )
+        }
+        Stuck::Optional(check) => {
+            let name = safe(&check.name);
+            let link = match &check.link {
+                Some(link) => format!("Link: {}", safe(link)),
+                None => format!("It has no link: see gh pr checks {number}"),
+            };
+            format!(
+                "PR #{number}, branch {branch}, has the failed check {name} at commit {commit}. \
+                 The ruleset of {base} does not require it, so the verify and the merge go on, \
+                 and no session fixes it. Fix the cause with a push to {branch}, or run the \
+                 check again. {link}"
             )
         }
         Stuck::Dequeued(reason) => format!(
