@@ -63,6 +63,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use riff_core::build::Build;
 use riff_core::name::Place;
 
 use crate::identity;
@@ -375,6 +376,120 @@ pub fn on_disk(path: PathBuf) -> PathBuf {
 /// [`on_disk`] for the binary of this process.
 pub fn this_on_disk() -> std::io::Result<PathBuf> {
     std::env::current_exe().map(on_disk)
+}
+
+/// The longest time of `riff --version` for [`OnDisk::build`].
+pub const VERSION_TIME: Duration = Duration::from_secs(5);
+
+/// The build of the riff file at a path, for a process that tells the
+/// person of a new riff on disk: the TUI (01M748V7Y8DQPCQJ9D2Q7HKB76).
+/// It runs the file with `--version` once for each new file, so a look
+/// of the TUI runs it only after an update. A clone reads the same file
+/// and shares what it read.
+///
+/// ```
+/// use riff::binary::OnDisk;
+/// use riff_core::build::Build;
+///
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("riff");
+/// let count = dir.path().join("count");
+/// let riff = |build: &str, at: &std::path::Path| {
+///     let text = format!("#!/bin/sh\necho run >> '{}'\necho riff {build}\n", count.display());
+///     isolated::write_program(at, text);
+/// };
+/// let old: Build = "0.1.0 10df8a4c0ffe 2026-11-06T12:00:00Z".parse().unwrap();
+/// riff(&old.to_string(), &path);
+/// let disk = OnDisk::at(&path);
+/// assert_eq!(disk.build().await, Some(old.clone()));
+/// assert_eq!(disk.clone().build().await, Some(old));
+/// // The same file runs once.
+/// assert_eq!(std::fs::read_to_string(&count)?.lines().count(), 1);
+/// // A new file in its place, as `riff update` does.
+/// let new: Build = "0.2.0 3f2a91c00000 2026-11-10T12:00:00Z".parse().unwrap();
+/// riff(&new.to_string(), &dir.path().join("new"));
+/// std::fs::rename(dir.path().join("new"), &path)?;
+/// assert_eq!(disk.build().await, Some(new));
+/// assert_eq!(std::fs::read_to_string(&count)?.lines().count(), 2);
+/// // A file that prints no build, and no file, give no build.
+/// riff("next", &dir.path().join("new"));
+/// std::fs::rename(dir.path().join("new"), &path)?;
+/// assert_eq!(disk.build().await, None);
+/// std::fs::remove_file(&path)?;
+/// assert_eq!(disk.build().await, None);
+/// # Ok::<(), std::io::Error>(())
+/// # })?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct OnDisk {
+    path: Option<PathBuf>,
+    /// The last file that ran, and its build.
+    read: std::sync::Arc<std::sync::Mutex<Read>>,
+}
+
+/// The last file that ran for an [`OnDisk`], and its build.
+type Read = Option<(Stamp, Option<Build>)>;
+
+impl OnDisk {
+    /// The riff file at the path of this process ([`this_on_disk`]),
+    /// with one read for the whole process.
+    pub fn this() -> OnDisk {
+        static THIS: std::sync::OnceLock<OnDisk> = std::sync::OnceLock::new();
+        THIS.get_or_init(|| OnDisk {
+            path: this_on_disk().ok(),
+            ..OnDisk::default()
+        })
+        .clone()
+    }
+
+    /// The riff file at `path`.
+    pub fn at(path: &Path) -> OnDisk {
+        OnDisk {
+            path: Some(path.to_owned()),
+            ..OnDisk::default()
+        }
+    }
+
+    /// The build of the file now: the build that `PATH --version`
+    /// prints, `riff VERSION ID TIME`. It runs a file once: the same
+    /// file gives the build of its last run. `None` with no file, and for
+    /// a file that fails, prints no build, or runs longer than
+    /// [`VERSION_TIME`].
+    pub async fn build(&self) -> Option<Build> {
+        let path = self.path.as_ref()?;
+        let now = stamp(path)?;
+        if let Some((seen, build)) = &*self.lock()
+            && *seen == now
+        {
+            return build.clone();
+        }
+        let build = version_of(path).await;
+        *self.lock() = Some((now, build.clone()));
+        build
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Read> {
+        self.read
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// The build that `path --version` prints, in [`VERSION_TIME`].
+async fn version_of(path: &Path) -> Option<Build> {
+    let run = tokio::process::Command::new(path)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let out = tokio::time::timeout(VERSION_TIME, run).await.ok()?.ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    crate::lifecycle::version_build(&String::from_utf8_lossy(&out.stdout))
 }
 
 /// `args` with [`identity::PLACE_ARG`] and `place` first. It drops the

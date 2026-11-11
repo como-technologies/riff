@@ -20,7 +20,11 @@
 //!   ([`News`]) after its name. The news of a tab goes when you open it.
 //! - The header ([`view::compute_view`], 01M6VAZK4RQSZ0MG2DHWQC598Q)
 //!   shows the state of the whole riff, the owner, the build of this
-//!   riff, and the link with the age of the last good look.
+//!   riff, and the link with the age of the last good look. A TUI keeps
+//!   its build until it starts again. When an update put another build
+//!   in the riff file of this process, a row under the header names it,
+//!   and the step: `press q, then start riff again`
+//!   ([`State::installed`], 01M748V7Y8DQPCQJ9D2Q7HKB76).
 //! - The note line shows the first note that it has: a question or the
 //!   filter that the person types in the Sessions tab, the fault of the
 //!   link, in the Chat tab a post that failed and the note of the
@@ -70,7 +74,9 @@
 //! most one each [`THREAD_LOOK_EVERY`], as in `riff top`. A look runs in
 //! a task of its own, so a slow look holds up no key. A look also asks
 //! the riff daemon of this host for its status on its socket
-//! ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK).
+//! ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK), and reads the build
+//! of the riff file of this process ([`crate::binary::OnDisk`],
+//! 01M748V7Y8DQPCQJ9D2Q7HKB76).
 //!
 //! While the Sessions tab is open (01M6VGHCDTDJ69B7C02B5K61PW), the TUI
 //! asks the riff daemon of this machine for its status each
@@ -93,6 +99,7 @@
 //! |---|---|---|
 //! | The sessions, the state of the riff | riff-server: `riff`, `who` | each 3 s, each 15 s when idle, and after a message of the thread |
 //! | The holds of the boards | riff-server: `plan show` | at each look while the Waves tab shows |
+//! | The build of the riff on disk | the riff file of this process: `--version` | at each look, once for each new file |
 //! | The container sessions of this machine | the socket of the daemon: `status` | each second while the Sessions tab is open |
 //! | The titles of the issues | `gh api`: the conditional read of the open issues | each 60 s while the Sessions tab is open |
 //! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | each 60 s while the Waves tab shows, and at once on `r` |
@@ -789,6 +796,10 @@ pub struct Look {
     /// tab shows (01M6VFGK79JGRF919BM8SJ6E08). A read that fails keeps
     /// the last holds of its repository ([`State::looked`]).
     pub holds: BTreeMap<String, BTreeMap<String, HoldInfo>>,
+    /// The build of the riff file at the path of this process
+    /// ([`crate::binary::OnDisk`], 01M748V7Y8DQPCQJ9D2Q7HKB76). `None`
+    /// when the file gives no build.
+    pub installed: Option<Build>,
 }
 
 /// The look of a riff that runs, with no sign-in and no session.
@@ -807,6 +818,7 @@ impl Default for Look {
             reconnects: 0,
             here: None,
             holds: BTreeMap::new(),
+            installed: None,
         }
     }
 }
@@ -816,7 +828,9 @@ impl Default for Look {
 /// `plan show` for each repository of `boards`
 /// (01M6VFGK79JGRF919BM8SJ6E08). Each call has the budget of a short
 /// command, as in `riff top`. Then it asks the riff daemon of this host
-/// for its status ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK).
+/// for its status ([`machines::here`], 01M6VFD09QN71SWMPP8YXCRAEK), and
+/// reads the build of the riff file of this process
+/// ([`crate::binary::OnDisk::this`], 01M748V7Y8DQPCQJ9D2Q7HKB76).
 pub async fn look(api: &Api, me: &SessionUri, boards: &[String]) -> Result<Look> {
     let (pauses, who, call) = crate::top::look(api, me).await?;
     let mut holds = BTreeMap::new();
@@ -836,6 +850,7 @@ pub async fn look(api: &Api, me: &SessionUri, boards: &[String]) -> Result<Look>
         reconnects: api.link().swaps(),
         here: Some(machines::here(me).await),
         holds,
+        installed: crate::binary::OnDisk::this().build().await,
     })
 }
 
@@ -1193,6 +1208,31 @@ impl State {
     /// The build of this riff.
     pub fn build(&self) -> &Build {
         &self.build
+    }
+
+    /// The build of the riff file of this process at the last good look,
+    /// when it is another build than this riff
+    /// (01M748V7Y8DQPCQJ9D2Q7HKB76).
+    ///
+    /// ```
+    /// use riff::tui::{Look, State};
+    ///
+    /// let old = "0.1.0 10df8a4c0ffe 2026-11-06T12:00:00Z".parse().unwrap();
+    /// let mut state = State::new(old, "riff://mike@thelio".parse().unwrap());
+    /// assert_eq!(state.installed(), None);
+    /// let look = |installed: &str| Look { installed: installed.parse().ok(), ..Look::default() };
+    /// state.looked(look("0.1.0 10df8a4c0ffe 2026-11-06T12:00:00Z"), 1_000);
+    /// assert_eq!(state.installed(), None);
+    /// state.looked(look("0.2.0 3f2a91c00000 2026-11-10T12:00:00Z"), 2_000);
+    /// assert_eq!(state.installed().unwrap().id, "3f2a91c00000");
+    /// state.looked(look("no build"), 3_000);
+    /// assert_eq!(state.installed(), None);
+    /// ```
+    pub fn installed(&self) -> Option<&Build> {
+        let (look, _) = self.look.as_ref()?;
+        look.installed
+            .as_ref()
+            .filter(|installed| !installed.matches(&self.build))
     }
 
     /// The session of the TUI.

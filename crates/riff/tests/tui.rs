@@ -8,7 +8,7 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use isolated::{Isolated, Span, in_time};
+use isolated::{Isolate, Isolated, Span, in_time};
 use tokio::process::Child;
 
 /// The bound of each wait. It is generous: it only ends a test that
@@ -64,6 +64,20 @@ echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
         signed: bool,
         vars: &[(&str, String)],
     ) -> Tty {
+        let riff = Isolated::shared().riff_path();
+        Self::start_program(&riff, dir, url, user, host, signed, vars)
+    }
+
+    /// [`Tty::start_in`] with the riff file `riff`.
+    fn start_program(
+        riff: &std::path::Path,
+        dir: tempfile::TempDir,
+        url: &str,
+        user: &str,
+        host: &str,
+        signed: bool,
+        vars: &[(&str, String)],
+    ) -> Tty {
         let size = nix::pty::Winsize {
             ws_row: Self::ROWS,
             ws_col: Self::COLUMNS,
@@ -75,8 +89,9 @@ echo '[{"number": 12, "title": "Show the wave", "milestone": null}]'
             crate::common::sign_in(url, dir.path(), user);
         }
         let slave = std::fs::File::from(pty.slave);
-        let mut command = Isolated::shared().tokio_riff();
+        let mut command = tokio::process::Command::new(riff);
         command
+            .isolate(Isolated::shared())
             .current_dir(dir.path())
             .env("RIFF_SERVER", url)
             .env("RIFF_USER", user)
@@ -263,6 +278,55 @@ async fn riff_with_no_command_in_a_terminal_shows_the_six_tabs_and_the_frame() {
         !rows.iter().any(|row| row.contains("Sessions")),
         "{rows:#?}"
     );
+}
+
+/// 01M748V7Y8DQPCQJ9D2Q7HKB76: a TUI keeps its build. With its own build
+/// in its riff file, no row comes under the header. After a newer riff
+/// came in the place of that file, as `riff update` puts it, the next
+/// look puts a row under the header that names the new build and the
+/// step. The body of the tab starts under the row.
+#[tokio::test]
+async fn a_newer_riff_on_disk_gets_a_row_under_the_header_that_names_it_and_the_step() {
+    use riff_core::build::{Build, Semver};
+
+    let server = crate::common::start_signed().await;
+    let bin = tempfile::tempdir().unwrap();
+    let riff = bin.path().join("riff");
+    let built = Isolated::shared().riff_path();
+    if std::fs::hard_link(&built, &riff).is_err() {
+        isolated::copy_program(&built, &riff);
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut tty = Tty::start_program(&riff, dir, &server, "brett", "thelio", true, &[]);
+    let rows = tty
+        .shows(|rows| rows[0].starts_with("[1 Sessions]") && !rows[22].is_empty())
+        .await;
+    assert!(rows[2].starts_with(" 0 sessions"), "{rows:#?}");
+
+    let this = Build::this();
+    let line = this.semver().unwrap();
+    let newer = Build {
+        version: Semver {
+            patch: line.patch + 1,
+            ..line
+        }
+        .to_string(),
+        id: "3f2a91c00000".into(),
+        time: this.time.clone(),
+    };
+    let new = bin.path().join("new");
+    isolated::write_program(&new, format!("#!/bin/sh\necho riff {newer}\n"));
+    std::fs::rename(&new, &riff).unwrap();
+    let want = format!(
+        " riff {} 3f2a91c is installed: press q, then start riff again",
+        newer.version
+    );
+    let rows = tty.shows(|rows| rows[2] == want).await;
+    assert!(rows[3].starts_with(" 0 sessions"), "{rows:#?}");
+    assert_ne!(tty.color_at(2), vt100::Color::Default);
+
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
 }
 
 /// 01M6VFCPK2PSDTHHE5TSY3XP5N, 01M6VFD09QN71SWMPP8YXCRAEK,

@@ -20,8 +20,11 @@
 //!
 //! While a release is open, the line of its state comes under the header in
 //! each layout, on up to [`RELEASE_ROWS`] rows ([`crate::view::release`],
-//! 01M6XTS1GCW7PTWSMM1HKQTHSN). The tab draws its body under it, and the note
-//! line and the key line stay at the bottom.
+//! 01M6XTS1GCW7PTWSMM1HKQTHSN). When the riff file of this process has
+//! another build than this riff, the line of the new riff comes first
+//! ([`text::installed_riff`], 01M748V7Y8DQPCQJ9D2Q7HKB76). The tab draws
+//! its body under them, and the note line and the key line stay at the
+//! bottom.
 //!
 //! ```text
 //! ‹ 1/6 Sessions ›
@@ -305,13 +308,14 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
         area: row(1),
         line: header(state, layout, now_ms),
     });
-    let release = release_rows(state, area.width - margin);
-    let shift = u16::try_from(release.len()).unwrap_or(0);
-    for (line, y) in release.into_iter().zip(2..) {
+    let mut under = installed_rows(state, area.width - margin);
+    under.extend(release_rows(state, area.width - margin));
+    let shift = u16::try_from(under.len()).unwrap_or(0);
+    for (line, y) in under.into_iter().zip(2..) {
         view.rows.push(Placed { area: row(y), line });
     }
-    // Each tab draws in a frame that starts under the rows of the release:
-    // the note line and the key line stay at the bottom.
+    // Each tab draws in a frame that starts under the rows under the
+    // header: the note line and the key line stay at the bottom.
     let full = area;
     let area = Rect::new(area.x, area.y + shift, area.width, area.height - shift);
     let row = |y: u16| Rect::new(area.x + margin, area.y + y, area.width - margin, 1);
@@ -392,8 +396,20 @@ pub fn compute_view(state: &State, area: Rect, now_ms: i64) -> View {
 }
 
 /// The most rows of the line of the release under the header
-/// (01M6XTS1GCW7PTWSMM1HKQTHSN).
+/// (01M6XTS1GCW7PTWSMM1HKQTHSN), and of the line of a new riff on disk
+/// (01M748V7Y8DQPCQJ9D2Q7HKB76).
 pub const RELEASE_ROWS: usize = 2;
+
+/// The rows of the line of a new riff on disk under the header
+/// (01M748V7Y8DQPCQJ9D2Q7HKB76): [`text::installed_riff`] of
+/// [`State::installed`], wrapped to `columns`, at most [`RELEASE_ROWS`].
+/// None when the riff file of this process has the build of this riff.
+fn installed_rows(state: &State, columns: u16) -> Vec<Line<'static>> {
+    let Some(build) = state.installed() else {
+        return Vec::new();
+    };
+    warning_rows(&text::installed_riff(build), columns)
+}
 
 /// The rows of the line of the open release under the header
 /// (01M6XTS1GCW7PTWSMM1HKQTHSN): the line of [`crate::view::release`] from
@@ -407,9 +423,15 @@ fn release_rows(state: &State, columns: u16) -> Vec<Line<'static>> {
     let Some(line) = crate::view::release(&look.pauses, &look.who.sessions) else {
         return Vec::new();
     };
+    warning_rows(&line, columns)
+}
+
+/// `line` in the color of a word that needs a look, wrapped to `columns`
+/// between two words, on at most [`RELEASE_ROWS`] rows.
+fn warning_rows(line: &str, columns: u16) -> Vec<Line<'static>> {
     let options = textwrap::Options::new(usize::from(columns.max(1)))
         .word_splitter(textwrap::WordSplitter::NoHyphenation);
-    textwrap::wrap(&line, options)
+    textwrap::wrap(line, options)
         .into_iter()
         .take(RELEASE_ROWS)
         .map(|part| Line::styled(part.into_owned(), WARNING))
@@ -514,8 +536,9 @@ fn strip_narrow(state: &State, area: Rect) -> (Line<'static>, Vec<Hit>) {
 /// The header (01M6VAZK4RQSZ0MG2DHWQC598Q): the state of the whole
 /// riff, the owner, the build of this riff and of riff-server when it
 /// is another, and the link. The narrow layout has only the state of
-/// the riff and the link. The line of an open release comes under it
-/// ([`release_rows`]).
+/// the riff and the link. The line of a new riff on disk
+/// ([`installed_rows`]) and the line of an open release ([`release_rows`])
+/// come under it.
 fn header(state: &State, layout: Layout, now_ms: i64) -> Line<'static> {
     let wide = layout == Layout::Wide;
     let mut parts: Vec<Vec<Span<'static>>> = Vec::new();
@@ -1046,6 +1069,64 @@ mod tests {
                 "paused"
             ]
         );
+    }
+
+    /// 01M748V7Y8DQPCQJ9D2Q7HKB76: when the riff file of the TUI has a
+    /// newer build, a row under the header names the new build and the
+    /// step. With the same build, the row does not show.
+    #[test]
+    fn a_newer_riff_on_disk_gets_a_row_under_the_header_that_names_it_and_the_step() {
+        use riff_client::daemons::ReleaseStep;
+        let newer: Build = "0.2.0 3f2a91c00000 2026-11-10T12:00:00Z".parse().unwrap();
+        let with = |mut state: State, installed: &Build| {
+            let mut look = state.last_look().unwrap().0.clone();
+            look.installed = Some(installed.clone());
+            state.looked(look, NOW - 2_000);
+            state.on_key(Key::Open(Tab::Devices));
+            state.note("Read again 2s ago.");
+            state
+        };
+        let line = format!(
+            "riff {} 3f2a91c is installed: press q, then start riff again",
+            newer.version
+        );
+        let state = with(mock_up(), &newer);
+        let mut want = vec![
+            " 1 Sessions  2 Chat•2  3 Waves•  4 Machines  [5 Devices]  6 Reports".to_owned(),
+            " riff running · owner mike · build 10df8a4 · link ok 2s".to_owned(),
+            format!(" {line}"),
+            " The Devices tab is not built yet.".to_owned(),
+        ];
+        want.resize(22, String::new());
+        want.extend([
+            " Read again 2s ago.".to_owned(),
+            " 1-6 tab  r read again  ? help  q quit".to_owned(),
+        ]);
+        assert_eq!(drawn(&state, 80, 24), want);
+        // The row is in the color of a word that needs a look.
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        render(&compute_view(&state, area, NOW), &mut buffer);
+        assert_eq!(buffer[(1, 2)].fg, Color::Yellow);
+        // The narrow layout wraps the row at its width.
+        let rows = drawn(&state, 40, 24);
+        let (first, rest) = line.split_at(line.find(" q,").unwrap());
+        assert_eq!(rows[2..4], [first, rest.trim_start()], "{rows:#?}");
+        // With an open release, the row of the new riff comes first.
+        let state = with(with_release(Some(ReleaseStep::Waits), false), &newer);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[2], format!(" {line}"));
+        assert_eq!(
+            rows[3],
+            " v3.3.0: the deploy waits for a person (riff release approve v3.3.0)"
+        );
+        assert_eq!(rows[4], " The Devices tab is not built yet.");
+        // The same build: no row. The frame is the mock-up.
+        let state = with(mock_up(), state.build());
+        assert_eq!(state.installed(), None);
+        let rows = drawn(&state, 80, 24);
+        assert_eq!(rows[2], " The Devices tab is not built yet.");
+        assert!(!rows.join("\n").contains("installed"), "{rows:#?}");
     }
 
     /// 01M6VAZKDEQ6951KGPGAMF1SNJ: `?` shows the keys of the tab in a
