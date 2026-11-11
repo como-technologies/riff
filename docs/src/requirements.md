@@ -5648,6 +5648,11 @@ of this part when they merge.
   line moves it to `daemon.log.1` and starts a new file. On macOS,
   launchd writes the log of the daemon to a file, and the daemon writes
   no file of its own.
+- **01M74C23RM3VA63DX65BY64ET6** Only the daemon that holds its socket
+  writes `daemon.log`: a second `riff daemon` that refuses to start
+  writes its error to its own stderr only. At its stop, the daemon puts
+  its stdout and its stderr of before back, and waits up to 2 seconds
+  for its last lines to reach `daemon.log`.
 
 ### riff relay
 

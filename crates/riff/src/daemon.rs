@@ -6115,20 +6115,33 @@ pub async fn follow_events(
 /// is the runtime of this OS ([`crate::runtime::here`]): on macOS, it
 /// starts no session (01M6Z49R87D50VD4RS0BP641MM).
 pub async fn serve_here() -> Result<()> {
-    use tokio::signal::unix::{SignalKind, signal};
     // Its working folder can be the work tree of another repository
     // (01M58AW5SBG3ZP7149ZY66VTYW).
     crate::auto_update::no_place();
     let dir = dir()?;
-    // A log file of its own, with a size cap, where the journal can
-    // rotate (#1858).
-    if crate::platform::service_manager()
-        .is_ok_and(|m| crate::service::ServiceManager::keeps_log(&m))
-        && let Err(e) = log::tee(&dir)
-    {
-        eprintln!("riff daemon: {e:#}");
-    }
     let listener = listen(&dir).await?;
+    // A log file of its own, with a size cap, where the journal can
+    // rotate (#1858). Only the daemon that holds the socket writes it.
+    let tee = if crate::platform::service_manager()
+        .is_ok_and(|m| crate::service::ServiceManager::keeps_log(&m))
+    {
+        log::tee(&dir)
+            .inspect_err(|e| eprintln!("riff daemon: {e:#}"))
+            .ok()
+    } else {
+        None
+    };
+    let served = serve_on(dir, listener).await;
+    if let Some(tee) = tee {
+        tee.end();
+    }
+    served
+}
+
+/// The body of [`serve_here`]: the daemon in the folder `dir`, on
+/// `listener`, until a SIGTERM or a SIGINT.
+async fn serve_on(dir: PathBuf, listener: UnixListener) -> Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
     let mut term = signal(SignalKind::terminate())?;
     let mut int = signal(SignalKind::interrupt())?;
     let daemon = Daemon::new(crate::runtime::here(), dir.clone())?.with_again(again_here());

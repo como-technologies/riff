@@ -540,6 +540,19 @@ async fn a_second_daemon_does_not_start_while_one_answers() {
     // A stop of the daemon says that it stopped no session.
     let said = std::fs::read_to_string(&log).unwrap();
     assert!(said.contains("It stopped no session"), "{said}");
+    // #1858, 01M74C23RM3VA63DX65BY64ET6: the log file of the first daemon
+    // has its last line, and no line of the second daemon.
+    if cfg!(target_os = "linux") {
+        let own = here
+            .env
+            .riff_home()
+            .join("daemon")
+            .join(riff::daemon::log::FILE);
+        let own = std::fs::read_to_string(own).unwrap();
+        assert!(!own.contains("runs already"), "{own}");
+        let last = own.lines().last().unwrap_or_default();
+        assert!(last.ends_with(riff::text::DAEMON_STOPS), "{own}");
+    }
 }
 
 /// 01M53YP97S9BDMFBN0X5G444MY: a daemon of a `RIFF_DATA` runs beside the

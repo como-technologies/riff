@@ -17,6 +17,14 @@
 //! starts write into the same pipes. launchd writes the log of the daemon
 //! on a Mac to a file already: there, the daemon puts no pipe in place.
 //!
+//! Only the daemon that holds the socket puts the pipes in place
+//! (01M74C23RM3VA63DX65BY64ET6): a second `riff daemon` gives its
+//! refusal on its own stderr, and writes nothing to the log of the first.
+//! At its stop, the daemon puts its old stdout and stderr back
+//! ([`Tee::end`]), and waits up to [`DRAIN`] for the threads to copy the
+//! last lines in the pipes. So its last line is not lost when the process
+//! ends, and an error after it goes in full to the old stderr.
+//!
 //! ```mermaid
 //! flowchart LR
 //!     D["riff daemon: its lines, the lines of its children"] --> P["the pipes of stdout and stderr"]
@@ -27,9 +35,10 @@
 
 use std::fs::File;
 use std::io::{Read, Write};
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
@@ -41,6 +50,11 @@ pub const OLD: &str = "daemon.log.1";
 
 /// The size of the log file at which the next line starts a new file.
 pub const CAP: u64 = 10 * 1024 * 1024;
+
+/// The longest time that [`Tee::end`] waits for the threads to copy the
+/// last lines in the pipes. A child of the daemon that still runs keeps
+/// a pipe open: its thread does not end.
+pub const DRAIN: Duration = Duration::from_secs(2);
 
 /// A log file with a size cap. Each line starts with its time. When the
 /// file has its cap or more, the next line moves it to the older file
@@ -145,37 +159,83 @@ fn now() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// Puts a file in place of the stdout or of the stderr of this process.
+type Dup2 = fn(BorrowedFd<'_>) -> nix::Result<()>;
+
+/// The pipes that [`tee`] put in place of the stdout and of the stderr
+/// of this process. [`Tee::end`] puts the old ones back.
+#[must_use = "Tee::end puts the old stdout and stderr back"]
+pub struct Tee {
+    pipes: Vec<Pipe>,
+}
+
+/// One pipe of a [`Tee`].
+struct Pipe {
+    /// Puts a file in place of the stdout or of the stderr.
+    dup2: Dup2,
+    /// Where the stdout or the stderr went before the pipe.
+    before: OwnedFd,
+    /// Gets no value: it ends when the thread of the pipe ends.
+    done: mpsc::Receiver<()>,
+}
+
+impl Tee {
+    /// Puts the old stdout and stderr back: a line after this goes only
+    /// where it went before the pipes. Waits up to [`DRAIN`] for the
+    /// threads to copy the lines that are still in the pipes.
+    pub fn end(self) {
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        for pipe in &self.pipes {
+            let _ = (pipe.dup2)(pipe.before.as_fd());
+        }
+        let until = Instant::now() + DRAIN;
+        for pipe in &self.pipes {
+            let left = until.saturating_duration_since(Instant::now());
+            let _ = pipe.done.recv_timeout(left);
+        }
+    }
+}
+
 /// Puts a pipe in place of the stdout and of the stderr of this process.
 /// A thread of each pipe writes each byte to where it went before, and
 /// each line to the log [`FILE`] in the folder `dir`, with its time.
-pub fn tee(dir: &Path) -> Result<()> {
+pub fn tee(dir: &Path) -> Result<Tee> {
     std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     let log = Arc::new(Mutex::new(Capped::new(dir.join(FILE), CAP)));
     // The lines that wait in the buffers go out before the pipes.
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
-    let out = std::io::stdout();
-    pipe_in_place(out.as_fd(), |w| nix::unistd::dup2_stdout(w), log.clone())?;
-    let err = std::io::stderr();
-    pipe_in_place(err.as_fd(), |w| nix::unistd::dup2_stderr(w), log)?;
-    Ok(())
+    let stdout: Dup2 = |fd| nix::unistd::dup2_stdout(fd);
+    let stderr: Dup2 = |fd| nix::unistd::dup2_stderr(fd);
+    let out = pipe_in_place(std::io::stdout().as_fd(), stdout, log.clone())?;
+    let mut tee = Tee { pipes: vec![out] };
+    match pipe_in_place(std::io::stderr().as_fd(), stderr, log) {
+        Ok(err) => tee.pipes.push(err),
+        Err(e) => {
+            tee.end();
+            return Err(e);
+        }
+    }
+    Ok(tee)
 }
 
 /// Puts a new pipe in place of `fd` with `dup2`, and starts the thread
 /// that copies it to where `fd` went before, and to `log`.
-fn pipe_in_place(
-    fd: std::os::fd::BorrowedFd<'_>,
-    dup2: impl FnOnce(&std::io::PipeWriter) -> nix::Result<()>,
-    log: Arc<Mutex<Capped>>,
-) -> Result<()> {
-    let before = fd
-        .try_clone_to_owned()
-        .context("cannot copy the stdout or the stderr of the daemon")?;
+fn pipe_in_place(fd: BorrowedFd<'_>, dup2: Dup2, log: Arc<Mutex<Capped>>) -> Result<Pipe> {
+    let copy = || {
+        fd.try_clone_to_owned()
+            .context("cannot copy the stdout or the stderr of the daemon")
+    };
+    let (before, to) = (copy()?, copy()?);
     let (mut reader, writer) = std::io::pipe().context("cannot make a pipe for the log")?;
-    dup2(&writer).context("cannot put the pipe of the log in place")?;
+    dup2(writer.as_fd()).context("cannot put the pipe of the log in place")?;
     drop(writer);
+    let (ended, done) = mpsc::channel::<()>();
     std::thread::spawn(move || {
-        let mut before = File::from(before);
+        // The end of the thread drops it: `done` ends.
+        let _ended = ended;
+        let mut to = File::from(to);
         let mut buf = [0u8; 8192];
         loop {
             let n = match reader.read(&mut buf) {
@@ -184,13 +244,13 @@ fn pipe_in_place(
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => return,
             };
-            let _ = before.write_all(&buf[..n]);
+            let _ = to.write_all(&buf[..n]);
             log.lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .write(&buf[..n], &now());
         }
     });
-    Ok(())
+    Ok(Pipe { dup2, before, done })
 }
 
 #[cfg(test)]
