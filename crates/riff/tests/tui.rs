@@ -15,6 +15,10 @@ use tokio::process::Child;
 /// hangs.
 const WAIT: Duration = Duration::from_secs(30);
 
+/// The keys line of the Machines tab, in row 23.
+const MACHINES_KEYS: &str =
+    " ↑↓ select  Enter sessions of the host  l limit  r read again  ? help  q quit";
+
 /// A running `riff` in a pseudo-terminal of 80 x 24, its screen, and
 /// each byte that it wrote.
 struct Tty {
@@ -383,8 +387,18 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
     let mut tty = Tty::start(&server, "brett", "thelio", true);
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     tty.press("4").await;
+    // riff writes a frame in parts, from row 0 to row 23. The keys line
+    // in row 23 and the time of the call in the link row tell that the
+    // whole frame of the Machines tab is on the screen (#1936).
     let rows = tty
-        .shows(|rows| rows[0].contains("[4 Machines]") && rows[2] == " 1 host")
+        .shows(|rows| {
+            rows[0].contains("[4 Machines]")
+                && rows[2] == " 1 host"
+                && rows[23] == MACHINES_KEYS
+                && rows
+                    .iter()
+                    .any(|row| row.starts_with(" link ok: ") && row.contains(" ms · "))
+        })
         .await;
     assert_eq!(
         rows[3],
@@ -415,17 +429,8 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
         "{rows:#?}"
     );
     assert!(
-        rows.iter()
-            .any(|row| row.starts_with(" link ok: ") && row.contains(" ms · ")),
-        "{rows:#?}"
-    );
-    assert!(
         rows.contains(&" GitHub: no riff daemon here counts the points".to_owned()),
         "{rows:#?}"
-    );
-    assert_eq!(
-        rows[23],
-        " ↑↓ select  Enter sessions of the host  l limit  r read again  ? help  q quit"
     );
 
     // `l`, the digits, Enter, then `y`: the limit of this host.
@@ -453,13 +458,17 @@ async fn the_machines_tab_shows_the_hosts_and_sets_the_limit() {
     // Enter: the Sessions tab, with the filter of the host. The
     // summary line starts with it, and the note line says so.
     tty.press("\r").await;
-    let rows = tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
-    assert_eq!(rows[22], " The sessions of thelio: Esc shows all.");
+    let rows = tty
+        .shows(|rows| {
+            rows[0].starts_with("[1 Sessions]")
+                && rows[22] == " The sessions of thelio: Esc shows all."
+                && rows[23].contains("  Esc clear the filter  ")
+        })
+        .await;
     assert!(
         rows[2].starts_with(" filter host:thelio · ") && rows[2].ends_with(" by repo"),
         "{rows:#?}"
     );
-    assert!(rows[23].contains("  Esc clear the filter  "), "{rows:#?}");
     // Esc clears the filter and the note.
     tty.press("\x1b").await;
     tty.shows(|rows| !rows[2].starts_with(" filter") && !rows[22].contains("Esc shows all"))
@@ -904,21 +913,28 @@ async fn the_machines_tab_filters_the_hosts() {
     let mut tty = Tty::start(&server, "brett", "thelio", true);
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     tty.press("4").await;
-    let rows = tty
-        .shows(|rows| rows[0].contains("[4 Machines]") && rows[2] == " 2 hosts")
-        .await;
-    assert!(rows[4].starts_with(" >   pangolin "), "{rows:#?}");
-    assert!(rows[5].starts_with("     thelio "), "{rows:#?}");
+    // riff writes a frame in parts, from row 0 to row 23: each wait
+    // names the last row that it reads (#1936).
+    tty.shows(|rows| {
+        rows[0].contains("[4 Machines]")
+            && rows[2] == " 2 hosts"
+            && rows[4].starts_with(" >   pangolin ")
+            && rows[5].starts_with("     thelio ")
+    })
+    .await;
 
     // `/`, then a word: only pangolin shows.
     tty.press("/").await;
     tty.press("pang").await;
     let rows = tty
-        .shows(|rows| rows[2] == " 1 of 2 hosts · /pang" && rows[22] == " /pang█")
+        .shows(|rows| {
+            rows[2] == " 1 of 2 hosts · /pang"
+                && rows[22] == " /pang█"
+                && rows[23] == " Enter keep the filter  Esc clear it"
+        })
         .await;
     assert!(rows[4].starts_with(" >   pangolin "), "{rows:#?}");
     assert_eq!(rows[5], "");
-    assert_eq!(rows[23], " Enter keep the filter  Esc clear it");
     // `q` is a letter too, and Backspace takes it away.
     tty.press("q").await;
     tty.shows(|rows| rows[2] == " 0 of 2 hosts · /pangq").await;
@@ -933,9 +949,12 @@ async fn the_machines_tab_filters_the_hosts() {
 
     // Esc shows each host again.
     tty.press("\x1b").await;
-    let rows = tty.shows(|rows| rows[2] == " 2 hosts").await;
-    assert!(rows[4].starts_with(" >   pangolin "), "{rows:#?}");
-    assert!(rows[5].starts_with("     thelio "), "{rows:#?}");
+    tty.shows(|rows| {
+        rows[2] == " 2 hosts"
+            && rows[4].starts_with(" >   pangolin ")
+            && rows[5].starts_with("     thelio ")
+    })
+    .await;
     tty.press("q").await;
     assert_eq!(tty.exits().await, Some(0));
 }
