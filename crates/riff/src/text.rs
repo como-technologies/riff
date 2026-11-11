@@ -5682,6 +5682,34 @@ pub fn proof_opens(action: &str, url: &str) -> String {
     )
 }
 
+/// The note of the TUI while it waits for a proof of presence: one line
+/// with the URL of the page (01M75WKC8RCPHQW3NADHRA31SG).
+///
+/// ```
+/// let note = riff::text::proof_note("end the session x on the host y", "http://localhost:7878/proof#T");
+/// assert_eq!(
+///     note,
+///     "riff asks for a proof of presence to end the session x on the host y: http://localhost:7878/proof#T"
+/// );
+/// ```
+pub fn proof_note(action: &str, url: &str) -> String {
+    format!("riff asks for a proof of presence to {action}: {url}")
+}
+
+/// The refusal of an action of the list in an agent session and in a
+/// container while the policy is `required` (01M75WKSJTB28ZQV8ADPBQ86WE).
+///
+/// ```
+/// let text = riff::text::proof_in_session("stop the lead of o/r on the host thelio");
+/// assert!(text.starts_with("riff: stop the lead of o/r on the host thelio needs a proof"), "{text}");
+/// ```
+pub fn proof_in_session(action: &str) -> String {
+    format!(
+        "riff: {action} needs a proof of presence, and a session never gives one. riff changed \
+         nothing. next: your person runs the command in a terminal"
+    )
+}
+
 /// The error of a proof that riff-server refused, with its reason.
 ///
 /// ```

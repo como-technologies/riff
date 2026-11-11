@@ -149,8 +149,11 @@ enum Step {
 /// // One use.
 /// proofs.spend(&ticket, Some("c1"));
 /// assert!(proofs.resolve(&ticket, "mike", None, now).is_err());
-/// // A second try of the same call gets it again.
+/// // A second try of the same call gets it again, in the life of the
+/// // proof.
 /// assert_eq!(proofs.resolve(&ticket, "mike", Some("c1"), now)?, Action::PauseRiff);
+/// let after = now + LIFE + Duration::from_secs(1);
+/// assert!(proofs.resolve(&ticket, "mike", Some("c1"), after).is_err());
 ///
 /// // A proof is old after its life.
 /// let old = proofs.start(&start, Action::ResumeRiff, now);
@@ -289,7 +292,11 @@ impl Proofs {
     pub fn state(&self, ticket: &str, user: &str, now: Instant) -> Option<ProofState> {
         let proof = self.proofs.get(ticket).filter(|proof| proof.user == user)?;
         Some(match &proof.step {
-            Step::Waiting if self.old(proof, now) => ProofState::Failed { reason: OLD.into() },
+            // A check that stopped, for example with a page that closed,
+            // ends with the life of the proof too.
+            Step::Waiting | Step::Checking if self.old(proof, now) => {
+                ProofState::Failed { reason: OLD.into() }
+            }
             Step::Waiting | Step::Checking => ProofState::Waiting,
             Step::Proved { name } => ProofState::Proved { name: name.clone() },
             Step::Used { .. } => ProofState::Failed {
@@ -315,6 +322,9 @@ impl Proofs {
         let Some(proof) = self.proofs.get(ticket).filter(|proof| proof.user == user) else {
             return Err(UNKNOWN.into());
         };
+        if self.old(proof, now) {
+            return Err(OLD.into());
+        }
         match &proof.step {
             Step::Used { call: used } if used.is_some() && used.as_deref() == call => {}
             Step::Used { .. } => return Err(USED.into()),
@@ -324,7 +334,6 @@ impl Proofs {
             Step::Failed { reason } => {
                 return Err(format!("riff-server refused this proof: {reason}"));
             }
-            Step::Proved { .. } if self.old(proof, now) => return Err(OLD.into()),
             Step::Proved { .. } => {}
         }
         Ok(proof.action.clone())
@@ -520,11 +529,22 @@ pub(crate) async fn reply(
         action: taken.action.clone(),
         counter: asserted.counter,
     };
-    match s.engine.prove(&taken.start, prove).await {
+    // The command and the mark of the proof run in a task of their own:
+    // a page that closes drops this call, and the proof still ends.
+    let (server, start, name) = (s.clone(), taken.start.clone(), asserted.name.clone());
+    let marked = ticket.clone();
+    let written = tokio::spawn(async move {
+        let done = server.engine.prove(&start, prove).await;
+        if done.is_ok() {
+            server.engine.proofs(|proofs| proofs.proved(&marked, &name));
+        }
+        done
+    })
+    .await
+    .unwrap_or(Err(Failed::Stopped));
+    match written {
         Ok(()) => {
             tracing::info!(%user, action = %text, name = %asserted.name, "a proof of presence: riff checked the proof");
-            s.engine
-                .proofs(|proofs| proofs.proved(&ticket, &asserted.name));
             Ok(Json(ProofReplied {
                 text: format!(
                     "riff checked your proof with the key {}. Go back to your terminal.",

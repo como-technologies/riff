@@ -1,8 +1,10 @@
-//! A proof of presence from `riff` (01M75WKC8RCPHQW3NADHRA31SG, 01M75WKSADNAW4RNFAXD48D7DF, 01M75WKSFX84BHHGFX8VJ37DC6,
-//! 01M75WKSJTB28ZQV8ADPBQ86WE, 01M75WKSNREGG95CK40W2A5JPQ, 01M75WKT1A7K8RTNB4NVTXB41V, 01M75WKSYCMMJFGAM3W4ASGN85): the help, the proof
-//! in the page of a fake browser with a fake authenticator, the second
-//! try of an action with its proof, and the end of a session on another
-//! host through a fake daemon.
+//! A proof of presence from `riff` (01M75WKC8RCPHQW3NADHRA31SG,
+//! 01M75WKSADNAW4RNFAXD48D7DF, 01M75WKSFX84BHHGFX8VJ37DC6,
+//! 01M75WKSJTB28ZQV8ADPBQ86WE, 01M75WKSNREGG95CK40W2A5JPQ,
+//! 01M75WKT1A7K8RTNB4NVTXB41V, 01M75WKSYCMMJFGAM3W4ASGN85): the help, the
+//! proof in the page of a fake browser with a fake authenticator, the
+//! second try of an action with its proof, and the end of a session on
+//! another host through a fake daemon.
 
 use crate::book;
 use crate::common;
@@ -155,6 +157,7 @@ fn browser(server: &str, key: Arc<Authenticator>, shape: Proof) -> Browser {
         }),
         wait: WAIT,
         session: false,
+        short: false,
     };
     Browser {
         asker,
@@ -170,6 +173,7 @@ fn session_asker() -> Asker {
         open: Box::new(|url| panic!("a session opens no page: {url}")),
         wait: WAIT,
         session: true,
+        short: false,
     }
 }
 
@@ -292,6 +296,11 @@ async fn a_step_on_this_host_asks_riff_server_first() {
     };
     proof::gate(&api, &end, &good.asker).await.unwrap();
     assert!(good.opened.lock().unwrap().is_empty());
+    // With off, a session goes on to a step that waits first.
+    let me: SessionUri = "riff://brett@thelio/o/r".parse().unwrap();
+    proof::refuse_in_session(&api, &me, &end, &session_asker())
+        .await
+        .unwrap();
 
     let required = Action::Policy {
         proof: Policy::Required,
@@ -305,6 +314,18 @@ async fn a_step_on_this_host_asks_riff_server_first() {
     assert_eq!(good.opened.lock().unwrap().len(), 2);
     let refused = proof::gate(&api, &end, &session_asker()).await.unwrap_err();
     assert!(proof::needs_proof(&refused), "{refused:#}");
+    // With required, a session learns it before a step that waits; a
+    // person goes on.
+    let refused = proof::refuse_in_session(&api, &me, &end, &session_asker())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        format!("{refused:#}"),
+        riff::text::proof_in_session(&end.text())
+    );
+    proof::refuse_in_session(&api, &me, &end, &good.asker)
+        .await
+        .unwrap();
 
     // No riff-server: a warning, and the step goes on.
     let nowhere = Api::new("http://127.0.0.1:9");

@@ -556,7 +556,8 @@ async fn the_key_of_the_waves_tab_does_the_same_as_answered() {
         item: 12,
     };
 
-    let line = effect.run(&api, &me, &reach, &gh).await.unwrap();
+    let asker = riff::proof::Asker::quiet();
+    let line = effect.run(&api, &me, &reach, &gh, &asker).await.unwrap();
     assert!(
         line.starts_with("Removed the label question of #12 of como-technologies/riff."),
         "{line}"

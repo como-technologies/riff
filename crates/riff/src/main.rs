@@ -3191,18 +3191,18 @@ fn remote_request(command: &DaemonCommand) -> Option<(&str, riff::daemon::remote
 }
 
 /// The check of riff-server before a step that can lose work on this
-/// host (01M75WKSNREGG95CK40W2A5JPQ), as the person of this process or its agent
-/// session. `action` makes the action from the name of this host. A
-/// machine with no sign-in asks with no token: a riff with no sign-in
-/// asks for no proof.
+/// host (01M75WKSNREGG95CK40W2A5JPQ), as the person of this process or
+/// its agent session. `action` makes the action from the name of this
+/// host. A machine with no sign-in asks nothing: it gives no proof, and
+/// a riff with no sign-in has no policy.
 async fn gate_here(server: Option<&str>, action: impl FnOnce(&str) -> Action) -> Result<()> {
     let (server, _) = server_of(server)?;
     let here = identity::place(&identity::working_dir()?)?;
     let action = action(here.host());
     let session = identity::session_id();
-    let api = Api::new(&server)
-        .signed_in(session.as_deref())
-        .unwrap_or_else(|_| Api::new(&server));
+    let Ok(api) = Api::new(&server).signed_in(session.as_deref()) else {
+        return Ok(());
+    };
     proof::gate(&api, &action, &Asker::terminal()).await
 }
 
@@ -4413,20 +4413,19 @@ async fn lead_stop_command(
         (Some(host), Reach::Daemon(_)) => ask_daemon(host, &request, here, reach).await?,
         (_, Reach::Direct(_)) => {
             let (api, me) = daemon_asker(here, server)?;
-            // The proof comes first: the stop waits for the notes of the
-            // lead (01M75WKSJTB28ZQV8ADPBQ86WE, 01M75WKSNREGG95CK40W2A5JPQ).
+            // The stop waits for the notes of the lead: a session learns
+            // first that it cannot stop the lead with the policy required,
+            // and on this host the check comes first
+            // (01M75WKSJTB28ZQV8ADPBQ86WE, 01M75WKSNREGG95CK40W2A5JPQ).
             let action = Action::LeadStop {
                 host: named.to_owned(),
                 repo: here.repo_text(),
             };
             let asker = Asker::terminal();
-            let api = match host {
-                Some(_) => proof::ready(&api, &me, &action, &asker).await?,
-                None => {
-                    proof::gate(&api, &action, &asker).await?;
-                    api
-                }
-            };
+            match host {
+                Some(_) => proof::refuse_in_session(&api, &me, &action, &asker).await?,
+                None => proof::gate(&api, &action, &asker).await?,
+            }
             let wait = riff::lead::HANDOVER_WAIT;
             if let Err(e) = riff::lead::stop_notes(&api, &me, named, wait).await {
                 eprintln!("{e:#}");
@@ -4435,7 +4434,10 @@ async fn lead_stop_command(
             match host {
                 Some(host) => {
                     let wait = riff::daemon::remote::REPLY_WAIT;
-                    match riff::daemon::remote::ask(&api, &me, host, &request, wait).await {
+                    let asked = riff::daemon::remote::ask_with_proof(
+                        &api, &me, host, &request, wait, &asker,
+                    );
+                    match asked.await {
                         Ok(reply) => println!("{reply}"),
                         Err(e) => {
                             eprintln!("{e:#}");

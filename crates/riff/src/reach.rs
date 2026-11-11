@@ -597,13 +597,21 @@ impl Reach {
         }
     }
 
-    /// Resumes the whole riff, and gives the line for the person.
+    /// Resumes the whole riff, and gives the line for the person. With
+    /// the policy `required`, a person gives a proof first, and a session
+    /// gets the refusal (01M75WKSD5A66RHQMMM5CMKWJB).
     pub async fn resume_riff(&self) -> Result<String> {
         match self {
             Reach::Direct(server) => {
                 let (api, me) = signed(server)?;
                 let state = RiffState::Running;
-                let (reply, posted) = api.set_pause(&me, &PauseScope::Riff, state).await?;
+                let action = riff_core::proof::Action::ResumeRiff;
+                let asker = crate::proof::Asker::terminal();
+                let (reply, posted) = crate::proof::act(&api, &action, &asker, |api| {
+                    let me = me.clone();
+                    async move { api.set_pause(&me, &PauseScope::Riff, state).await }
+                })
+                .await?;
                 Ok(text::riff_set(None, state, &reply, &posted))
             }
             Reach::Daemon(socket) => ask(socket, &ServerCall::ResumeRiff).await,

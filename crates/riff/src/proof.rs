@@ -46,6 +46,10 @@ use riff_core::wire::ProofState;
 use crate::device::Wait;
 use crate::text;
 
+/// How long the check of a step of this host waits for riff-server
+/// ([`gate`]).
+pub const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// How `riff` asks for a proof: where it shows the lines with the URL
 /// of the page, how it opens the page, and how long it waits.
 pub struct Asker {
@@ -55,6 +59,9 @@ pub struct Asker {
     /// True in an agent session and in a container: no proof comes from
     /// there, so riff asks for none.
     pub session: bool,
+    /// True for a screen with one line for it, as the note line of the
+    /// TUI: the URL of the page comes on one short line.
+    pub short: bool,
 }
 
 impl Asker {
@@ -68,14 +75,28 @@ impl Asker {
             }),
             wait: Wait::default(),
             session: crate::cycle::in_agent() || crate::cycle::in_container(),
+            short: false,
         }
     }
 
-    /// The asker of the TUI: it shows nothing on its screen, and opens
-    /// the page in the browser. The page names the action.
+    /// The asker of the TUI: each line goes to `notes`, the note line of
+    /// the TUI, and the page opens in the browser.
+    pub fn notes(notes: tokio::sync::mpsc::UnboundedSender<String>) -> Asker {
+        Asker {
+            show: Box::new(move |line| {
+                let _ = notes.send(line.to_owned());
+            }),
+            short: true,
+            ..Asker::terminal()
+        }
+    }
+
+    /// An asker that shows nothing and opens nothing: for a step that
+    /// asks for no proof, as the pause of a repository.
     pub fn quiet() -> Asker {
         Asker {
             show: Box::new(|_| {}),
+            open: Box::new(|_| {}),
             ..Asker::terminal()
         }
     }
@@ -117,7 +138,10 @@ pub struct Proved {
 pub async fn prove(api: &Api, action: &Action, asker: &Asker) -> Result<Proved> {
     let text = action.text();
     let started = api.proof_start(action).await?;
-    (asker.show)(&text::proof_opens(&text, &started.url));
+    match asker.short {
+        true => (asker.show)(&text::proof_note(&text, &started.url)),
+        false => (asker.show)(&text::proof_opens(&text, &started.url)),
+    }
     (asker.open)(&started.url);
     let span = tokio::time::Instant::now();
     loop {
@@ -160,6 +184,9 @@ where
 /// refusal of riff-server. When riff cannot reach riff-server, it shows
 /// a warning with `asker`, and the step goes on.
 pub async fn gate(api: &Api, action: &Action, asker: &Asker) -> Result<()> {
+    // One short try: a step of this host does not wait for a riff-server
+    // that does not answer.
+    let api = &api.one_try(GATE_WAIT);
     let used = act(api, action, asker, |api| {
         let action = action.clone();
         async move { api.use_proof(&action).await }
@@ -187,19 +214,26 @@ fn is_refusal(error: &anyhow::Error) -> bool {
         .is_some_and(|refusal| refusal.code.is_some())
 }
 
-/// The client with a proof of `action` when the policy of the riff is
-/// `required`, else `api` (01M75WKSJTB28ZQV8ADPBQ86WE): for a step that waits a long
-/// time before its call, so that the person gives the proof first. In an
-/// agent session and in a container, and when riff cannot read the
-/// policy, it is `api`: riff-server refuses the call then.
-pub async fn ready(api: &Api, me: &SessionUri, action: &Action, asker: &Asker) -> Result<Api> {
+/// The refusal of `action` in an agent session and in a container when
+/// the policy of the riff is `required` (01M75WKSJTB28ZQV8ADPBQ86WE): for
+/// a step that waits a long time before its call, so that a session
+/// learns at once that riff-server will refuse it. When riff cannot read
+/// the policy, it refuses nothing: riff-server refuses the call then.
+pub async fn refuse_in_session(
+    api: &Api,
+    me: &SessionUri,
+    action: &Action,
+    asker: &Asker,
+) -> Result<()> {
+    if !asker.session {
+        return Ok(());
+    }
     let required = api
         .pauses(me)
         .await
         .is_ok_and(|pauses| pauses.proof == Policy::Required);
-    if !required || asker.session {
-        return Ok(api.clone());
+    if required {
+        bail!(text::proof_in_session(&action.text()));
     }
-    let proved = prove(api, action, asker).await?;
-    Ok(api.with_proof(&proved.ticket))
+    Ok(())
 }

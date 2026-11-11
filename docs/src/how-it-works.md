@@ -1356,10 +1356,12 @@ sequenceDiagram
   the daemon of that host gets it, and refuses it with no proof.
 - For a step that `riff-server` does not do itself, for example the
   end of a session on this host or an answer on GitHub, `riff` asks
-  `riff-server` first. When `riff` cannot reach `riff-server`, it warns,
-  and the step goes on.
+  `riff-server` first, and waits at most 5 seconds. When `riff` cannot
+  reach `riff-server`, it warns, and the step goes on.
 - When the browser does not open, open the URL that `riff` prints. In
-  the TUI, the page opens with no URL on the screen.
+  the TUI, the note line shows the URL.
+- `riff lead stop --host` asks for the proof after it waits for the
+  notes of the lead.
 
 ### Add an authenticator
 

@@ -3911,12 +3911,14 @@
   request of each post to a session. With required, it refuses a step
   that can lose work with no proof, before the daemon gets it. The
   action names the host of the daemon. riff lead stop --host asks for
-  the proof before the wait for the notes of the lead.
+  the proof after the wait for the notes of the lead. In an agent
+  session with required, it refuses before that wait.
 - **01M75WKSNREGG95CK40W2A5JPQ** riff asks riff-server through POST
   /v1/proof/use before a step that riff-server does not do itself: a
   step of the daemon of this host, a take-over, and an answer on GitHub.
-  riff stops on a refusal. When riff cannot reach riff-server, it warns,
-  and the step goes on.
+  riff stops on a refusal. riff asks one time, and waits at most 5
+  seconds. When riff cannot reach riff-server, it warns, and the step
+  goes on. A machine with no sign-in asks nothing.
 - **01M75WKSRP6P4GGJPWTVRMDW85** riff release approve sends POST
   /v1/release/approve before the approval on GitHub. It pauses the whole
   riff, as the pause of the approval did, and it needs an admin. With

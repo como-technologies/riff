@@ -271,8 +271,9 @@ impl Command for Prove {
             return Err(Refused::new(
                 Code::BadProof,
                 format!(
-                    "the counter of the key {} did not grow: riff takes no copy of a key. Remove \
-                     the key with riff device remove {}, and add it again",
+                    "the counter of the key {} did not grow: the signature is older than the \
+                     last proof of the key, or a copy of the key gave it. Give the proof again. \
+                     When it fails again, remove the key with riff device remove {}",
                     self.name, self.name
                 ),
             ));

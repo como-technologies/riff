@@ -954,11 +954,10 @@ impl Engine {
                 }
             }
             called = key;
-            // The proof of the call (01M75WKSFX84BHHGFX8VJ37DC6): the engine takes it
-            // here, under the lock, and uses it only when the command
-            // passes with it.
-            // A call that is no action of the list takes no proof: its
-            // ticket does not matter.
+            // The proof of the call (01M75WKSFX84BHHGFX8VJ37DC6): the
+            // engine takes it here, under the lock, and uses it only when
+            // the command passes with it. A call that is no action of the
+            // list takes no proof: its ticket does not matter.
             let ticket = ticket.filter(|_| core.state.proof_of(&caller, &command, now).is_some());
             match Engine::proved(&core, &caller, ticket.as_deref(), call.as_deref(), now) {
                 Err(refused) => Check {
