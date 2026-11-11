@@ -14588,6 +14588,21 @@ mod tests {
                     count: 3,
                 }),
             }],
+            events: vec![crate::hooks::Shown {
+                repo: "o/r".into(),
+                last_ms: 13,
+                on: true,
+                dropped: 1,
+                last_dropped: Some(crate::hooks::Dropped {
+                    repo: "o/r".into(),
+                    change: crate::hooks::Change {
+                        number: 724,
+                        pull: false,
+                        kind: riff_core::wire::GitHubEvent::Issues,
+                    },
+                    at_ms: 14,
+                }),
+            }],
         };
         for waves in [
             vec![wave("o/r", &[])],
