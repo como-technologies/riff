@@ -4,7 +4,7 @@
 //! `gh`, and the wave starts the verify of a pull request when each of
 //! them is done on its head. The repository has no check run `Gate`. A
 //! head with a failed check gets the fix of the check, not a verify
-//! (#1575).
+//! (#1575). A held verify does not start when the checks passed (#1816).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -269,4 +269,78 @@ fn a_failed_check_next_to_a_check_with_no_run_gets_its_fix_and_no_verify() {
     assert!(!waiting.pulls[&5].gate_done);
     assert_eq!(wave::pick(&waiting, &none, &starts), None);
     assert!(waiting.fixes.failed.is_empty());
+}
+
+/// #1816, 01M4ZV3B6M7PZRJ39XTXBZP3ZH: a held `verify-issue-5` starts no
+/// verify of pull request 45, whose four required checks passed. A free
+/// of the hold starts the verify at the next look. Auto-merge off holds
+/// nothing: with no hold, the verify of a pull request with auto-merge
+/// off starts too, and its pass turns auto-merge on
+/// (01M748RKC7BYP8FC6W2E20SQA7).
+#[test]
+fn a_held_verify_starts_no_verify_of_a_pull_request_whose_checks_passed_and_a_free_starts_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(dir.path());
+    let none = BTreeSet::new();
+    let starts = BTreeMap::new();
+    let verify = Work::Verify {
+        issue: 5,
+        pull: 45,
+        commit: "eeee555".into(),
+    };
+    assert!(look(&gh).unwrap().pulls[&5].gate_done, "the checks passed");
+
+    // The lead holds the verify: it is no free work, and nothing starts.
+    let held: BTreeSet<String> = ["verify-issue-5".to_owned()].into();
+    let on_hold = wave::look_on(&gh, REPO, BTreeSet::new(), held).unwrap();
+    assert!(on_hold.free.is_empty(), "{:?}", on_hold.free);
+    assert_eq!(wave::pick(&on_hold, &none, &starts), None);
+
+    // The lead frees the hold: the next look starts the verify.
+    let freed = look(&gh).unwrap();
+    assert_eq!(freed.free, ["verify-issue-5"]);
+    assert_eq!(wave::pick(&freed, &none, &starts), Some(verify.clone()));
+
+    // Auto-merge off, and no hold: the verify starts.
+    let pulls = std::fs::read_to_string(dir.path().join("pulls")).unwrap();
+    let off = pulls.replace(
+        r#""autoMergeRequest":{"enabledAt":"2026-10-24T08:00:00Z","mergeMethod":"SQUASH"}"#,
+        r#""autoMergeRequest":null"#,
+    );
+    assert_ne!(off, pulls);
+    std::fs::write(dir.path().join("pulls"), off).unwrap();
+    assert_eq!(
+        wave::pick(&look(&gh).unwrap(), &none, &starts),
+        Some(verify)
+    );
+}
+
+/// #1816: the book has the how-to of a hold of a pull request for a check
+/// on a host, with its commands, and says that a pass turns auto-merge on.
+#[test]
+fn the_book_holds_a_pull_request_with_a_hold_of_its_verify() {
+    let page = crate::book::page("development.md");
+    let start = page
+        .find("\n### Hold a pull request for a check on a host\n")
+        .expect("the how-to");
+    let how_to = &page[start..];
+    let how_to = &how_to[..how_to[1..].find("\n### ").unwrap() + 1];
+    let commands = crate::book::commands_in(how_to);
+    for command in [
+        "riff plan hold verify-issue-12 waits for the test on thelio",
+        "riff plan free verify-issue-12",
+    ] {
+        assert!(commands.contains(&command.to_owned()), "{commands:?}");
+    }
+    assert!(how_to.contains("Auto-merge off does not hold a pull request."));
+    let riff: Vec<String> = commands
+        .into_iter()
+        .filter(|c| c.starts_with("riff "))
+        .collect();
+    crate::book::each_is_real(&riff);
+
+    let start = page
+        .find("\n#### Turn on auto-merge for a pull request\n")
+        .expect("the how-to");
+    assert!(page[start..].contains("\nA pass turns auto-merge on."));
 }

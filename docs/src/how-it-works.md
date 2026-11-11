@@ -3085,7 +3085,9 @@ from the last paragraph. With no message, GitHub adds a last paragraph
 of its own, `Co-authored-by:` with the bot, and the line of the person
 does not count. The message names the tested head commit: a new push
 needs a new pass, and that pass gives the message again. The verify of
-the wave gives it in the same way.
+the wave gives it in the same way. The call turns auto-merge on, also
+when it was off (see
+[Turn on auto-merge for a pull request](development.md#turn-on-auto-merge-for-a-pull-request)).
 
 To see the message of the auto-merge of pull request 40:
 

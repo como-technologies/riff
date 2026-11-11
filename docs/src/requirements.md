@@ -913,19 +913,21 @@
 - **01M6Y4XHQADF27SHMMMV8RQ7Q1** When `gh` ends before it reads all of
   the text that riff gives it on stdin, the call gives the exit status
   and the stderr of `gh`, and not a broken pipe.
-- **01M6Y95BMYDXFDYG3DKE2KG2PP** `riff verify pass N` gives the squash
+- **01M6Y95BMYDXFDYG3DKE2KG2PP** An auto-merge that has the squash
+  message of `riff verify pass N` already gets no call. When an
+  auto-merge that was on has another message after the call, riff turns
+  auto-merge off with `gh pr merge N --disable-auto`, and on again with
+  the message. When a call fails, `riff verify pass` makes no comment,
+  no status and no post. `riff verify fail` gives no message. Superseded
+  in part by 01M748RKC7BYP8FC6W2E20SQA7.
+- **01M748RKC7BYP8FC6W2E20SQA7** `riff verify pass N` gives the squash
   message to the auto-merge of pull request N before it makes its
   comment and sets the status `riff/verify`: `gh pr merge N --auto
   --squash --match-head-commit COMMIT --subject SUBJECT --body-file -`,
   with the tested head commit. The subject is `TITLE (#N)`. The body is
   the body of the pull request, with its trailers as one last paragraph.
-  So GitHub adds no paragraph of its own, and the `Co-authored-by:` line
-  of the person counts. An auto-merge that has this message already gets
-  no call. When an auto-merge that was on has another message after the
-  call, riff turns auto-merge off with `gh pr merge N --disable-auto`,
-  and on again with the message. When a call fails, `riff verify pass`
-  makes no comment, no status and no post. `riff verify fail` gives no
-  message.
+  A pass turns auto-merge on, also for a pull request whose auto-merge a
+  person turned off. Supersedes 01M6Y95BMYDXFDYG3DKE2KG2PP in part.
 
 ## Tokens on GitHub
 
