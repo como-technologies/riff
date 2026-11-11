@@ -17,7 +17,9 @@
 //!   and still runs sessions ([`of_status`], [`left`],
 //!   01M6WJYQJ58MHQF1XPXXZW2ET6), and the release of each watch of a
 //!   deploy or of a check, at its step ([`crate::watches::Watch::release`],
-//!   01M6XTS7RGXB30MFM6DZ7PVZ75);
+//!   01M6XTS7RGXB30MFM6DZ7PVZ75), and the current wave of each watch of a
+//!   wave whose release waits for its cut
+//!   ([`crate::watches::Seen::complete`], 01M75N6YNHQQHGS0VGKTKSNJTR);
 //! - from the host: the load, the free memory, the disk of the session
 //!   folders, the version of podman, the merged pin of each wave
 //!   with whether podman has it ([`look`], [`pins`],
@@ -151,6 +153,7 @@ pub fn every() -> Duration {
 ///          "release": {"repo": "o/r", "tag": "v4.1.1", "step": "waits"}},
 ///         {"repo": "o/r", "what": "the release pull request #9", "since_ms": 0},
 ///     ],
+///     "complete": [{"repo": "o/q", "wave": 41, "waits": "main_failed"}],
 /// }))?;
 /// let facts = of_status(&status);
 /// assert_eq!((facts.build.as_str(), facts.limit, facts.floor_gb), ("3.1.0", 4, 8));
@@ -172,6 +175,9 @@ pub fn every() -> Duration {
 /// // (01M6XTS7RGXB30MFM6DZ7PVZ75).
 /// assert_eq!(facts.releases.len(), 1);
 /// assert_eq!(facts.releases[0].step, riff_client::daemons::ReleaseStep::Waits);
+/// // The complete wave of each watch of a wave (01M75N6YNHQQHGS0VGKTKSNJTR).
+/// assert_eq!(facts.complete[0].wave, 41);
+/// assert_eq!(facts.complete[0].waits, Some(riff_client::daemons::CutWaits::MainFailed));
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 pub fn of_status(status: &Status) -> Facts {
@@ -216,6 +222,7 @@ pub fn of_status(status: &Status) -> Facts {
             .iter()
             .filter_map(|w| w.release.clone())
             .collect(),
+        complete: status.complete.clone(),
         ..Facts::default()
     }
 }

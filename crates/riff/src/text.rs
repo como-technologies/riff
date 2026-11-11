@@ -2563,6 +2563,45 @@ pub fn release_line(release: &riff_client::daemons::Release, paused: bool) -> Op
     Some(format!("{tag}: {state}"))
 }
 
+/// The line of a wave with no open item whose release waits for its cut, in
+/// the place of the line of the open release ([`release_line`],
+/// 01M75N6YNHQQHGS0VGKTKSNJTR), with why the cut waits when the watch of the
+/// wave knows it. The repository comes from the facts of a host: the line
+/// has it [`safe`].
+///
+/// ```
+/// use riff_client::daemons::{Complete, CutWaits};
+/// use riff::text::complete_line;
+///
+/// let line = |waits| complete_line(&Complete { repo: "o/r".into(), wave: 41, waits });
+/// assert_eq!(line(None), "Wave 41 is complete: the release waits for its cut");
+/// assert_eq!(
+///     line(Some(CutWaits::MainRuns)),
+///     "Wave 41 is complete: the release waits for its cut; the full check of main runs"
+/// );
+/// assert_eq!(
+///     line(Some(CutWaits::MainFailed)),
+///     "Wave 41 is complete: the release waits for its cut; the full check of main failed"
+/// );
+/// assert_eq!(
+///     line(Some(CutWaits::Lead)),
+///     "Wave 41 is complete: the release waits for its cut by the lead of o/r"
+/// );
+/// ```
+pub fn complete_line(complete: &riff_client::daemons::Complete) -> String {
+    use riff_client::daemons::CutWaits;
+    let why = match complete.waits {
+        None => String::new(),
+        Some(CutWaits::MainRuns) => "; the full check of main runs".to_owned(),
+        Some(CutWaits::MainFailed) => "; the full check of main failed".to_owned(),
+        Some(CutWaits::Lead) => format!(" by the lead of {}", safe(&complete.repo)),
+    };
+    format!(
+        "Wave {} is complete: the release waits for its cut{why}",
+        complete.wave
+    )
+}
+
 /// The note to each other lead for the step `step` of the release `tag`
 /// (01M5SNV75DRFHR26BT2M8243VV). `by` names who runs the step, for
 /// example "the lead of como-technologies/riff". The note ends with what
@@ -8567,6 +8606,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     mcp: vec![],
 ///     claude_token: riff_client::daemons::Token::NotSet,
 ///     watches: vec![],
+///     complete: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     no_starts: vec![],
@@ -10141,6 +10181,7 @@ pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: 
 ///     mcp: vec![],
 ///     claude_token: Default::default(),
 ///     watches: vec![],
+///     complete: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     no_starts: vec![],

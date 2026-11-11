@@ -20,7 +20,10 @@
 //!
 //! While a release is open, the line of its state comes under the header in
 //! each layout, on up to [`RELEASE_ROWS`] rows ([`crate::view::release`],
-//! 01M6XTS1GCW7PTWSMM1HKQTHSN). When the riff file of this process has
+//! 01M6XTS1GCW7PTWSMM1HKQTHSN). With no open release, the line of a
+//! current wave with no open item says that its release waits for its cut,
+//! and why when riff knows it (01M75N6YNHQQHGS0VGKTKSNJTR). When the riff
+//! file of this process has
 //! another build than this riff, the line of the new riff comes first
 //! ([`text::installed_riff`], 01M748V7Y8DQPCQJ9D2Q7HKB76). The tab draws
 //! its body under them, and the note line and the key line stay at the
@@ -412,10 +415,11 @@ fn installed_rows(state: &State, columns: u16) -> Vec<Line<'static>> {
 }
 
 /// The rows of the line of the open release under the header
-/// (01M6XTS1GCW7PTWSMM1HKQTHSN): the line of [`crate::view::release`] from
-/// the last look, wrapped to `columns`, at most [`RELEASE_ROWS`]. A row
-/// breaks between two words, so the name of a repository stays whole. None
-/// with no look, and with no open release.
+/// (01M6XTS1GCW7PTWSMM1HKQTHSN), or of a complete wave whose release waits
+/// for its cut (01M75N6YNHQQHGS0VGKTKSNJTR): the line of
+/// [`crate::view::release`] from the last look, wrapped to `columns`, at
+/// most [`RELEASE_ROWS`]. A row breaks between two words, so the name of a
+/// repository stays whole. None with no look, and with neither.
 fn release_rows(state: &State, columns: u16) -> Vec<Line<'static>> {
     let Some((look, _)) = state.last_look() else {
         return Vec::new();
@@ -959,8 +963,6 @@ mod tests {
     /// no watch.
     fn with_release(step: Option<riff_client::daemons::ReleaseStep>, paused: bool) -> State {
         use riff_client::daemons::{Facts, Release};
-        let mut state = mock_up();
-        let mut look = state.last_look().unwrap().0.clone();
         let facts = Facts {
             releases: step
                 .map(|step| Release {
@@ -972,6 +974,14 @@ mod tests {
                 .collect(),
             ..Facts::default()
         };
+        with_facts(&facts, paused)
+    }
+
+    /// The mock-up after a look that found the riff `paused` or not, and
+    /// the daemon of thelio with `facts`.
+    fn with_facts(facts: &riff_client::daemons::Facts, paused: bool) -> State {
+        let mut state = mock_up();
+        let mut look = state.last_look().unwrap().0.clone();
         let mut daemon: riff_core::wire::SessionInfo = serde_json::from_value(serde_json::json!({
             "uri": "riff://mike@thelio/como-technologies/riff?session=d1", "live": true,
         }))
@@ -1068,6 +1078,86 @@ mod tests {
                 "v3.3.0: the deploy runs; the riff is",
                 "paused"
             ]
+        );
+    }
+
+    /// 01M75N6YNHQQHGS0VGKTKSNJTR: with no open release, the rows under the
+    /// header say that the current wave is complete and that its release
+    /// waits for its cut, and why. An open release with a line comes in its
+    /// place. When the cut opens the release, the facts have no complete
+    /// wave, and the rows go.
+    #[test]
+    fn the_header_says_that_a_complete_wave_waits_for_its_cut_at_80_x_24() {
+        use riff_client::daemons::{Complete, CutWaits, Facts, Release, ReleaseStep};
+        let complete = |waits| Complete {
+            repo: "como-technologies/riff".into(),
+            wave: 41,
+            waits,
+        };
+        let rows = |facts: &Facts| {
+            let mut state = with_facts(facts, false);
+            state.on_key(Key::Open(Tab::Devices));
+            drawn(&state, 80, 24)
+        };
+        let facts = |waits| Facts {
+            complete: vec![complete(waits)],
+            ..Facts::default()
+        };
+        let cases: [(Option<CutWaits>, &[&str]); 4] = [
+            (
+                None,
+                &[" Wave 41 is complete: the release waits for its cut"],
+            ),
+            (
+                Some(CutWaits::MainFailed),
+                &[
+                    " Wave 41 is complete: the release waits for its cut; the full check of main",
+                    " failed",
+                ],
+            ),
+            (
+                Some(CutWaits::MainRuns),
+                &[
+                    " Wave 41 is complete: the release waits for its cut; the full check of main runs",
+                ],
+            ),
+            (
+                Some(CutWaits::Lead),
+                &[
+                    " Wave 41 is complete: the release waits for its cut by the lead of",
+                    " como-technologies/riff",
+                ],
+            ),
+        ];
+        for (waits, lines) in cases {
+            let drawn = rows(&facts(waits));
+            assert_eq!(drawn[2..2 + lines.len()], *lines, "{waits:?}");
+            assert_eq!(
+                drawn[2 + lines.len()],
+                " The Devices tab is not built yet.",
+                "{waits:?}"
+            );
+        }
+        // An open release with a line comes first.
+        let both = Facts {
+            releases: vec![Release {
+                repo: "como-technologies/riff".into(),
+                tag: "v3.3.0".into(),
+                step: ReleaseStep::Waits,
+            }],
+            ..facts(Some(CutWaits::Lead))
+        };
+        assert_eq!(
+            rows(&both)[2..4],
+            [
+                " v3.3.0: the deploy waits for a person (riff release approve v3.3.0)",
+                " The Devices tab is not built yet.",
+            ]
+        );
+        // The cut made the release issue: no complete wave, no row.
+        assert_eq!(
+            rows(&Facts::default())[2],
+            " The Devices tab is not built yet."
         );
     }
 

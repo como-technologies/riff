@@ -746,8 +746,23 @@ riff     paused
 release  v3.3.0: the deploy runs; the riff is paused
 ```
 
+Before the cut, the same line tells you when the release is ready. When
+each item of the current wave is closed, the line says that the wave is
+complete and that the release waits for its cut. It also says why the
+cut waits, when riff knows it. For example, after the full check of
+`main` failed:
+
+```text
+riff     running
+release  Wave 41 is complete: the release waits for its cut; the full check of main failed
+```
+
+When the full check of `main` passes, the line names the lead that cuts
+the release. The line goes when the cut opens the release.
+
 The line comes from the watches of the riff daemons and from the pause
-of the riff. With no open release, there is no line. See
+of the riff. With no open release and no complete wave, there is no
+line. See
 [See who acts next on the release](development.md#see-who-acts-next-on-the-release)
 for the line of each step.
 

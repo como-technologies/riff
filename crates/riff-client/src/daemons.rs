@@ -31,7 +31,9 @@
 //! the Machines tab shows them. They carry the [`Release`] of each watch of a
 //! deploy or of a check that the daemon follows (01M6XTS7RGXB30MFM6DZ7PVZ75):
 //! `riff who` and the header of the TUI make the line of the open release
-//! from the facts of each host ([`release`]).
+//! from the facts of each host ([`release`]). With no open release, they
+//! make the line of a wave with no open item whose release waits for its
+//! cut ([`Complete`], [`complete`], 01M75N6YNHQQHGS0VGKTKSNJTR).
 //!
 //! A line has at most [`MACHINE_CHARS`] characters. The last step of
 //! each session has at most [`LAST_CHARS`]. When the line is still too
@@ -403,6 +405,80 @@ pub fn release(hosts: &[Host]) -> Option<Release> {
     found.cloned()
 }
 
+/// Why the cut of the release of a complete wave waits
+/// (01M75N6YNHQQHGS0VGKTKSNJTR): the full check of the head of `main`, as the
+/// watch of the wave read it last.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CutWaits {
+    /// The full check of `main` runs.
+    MainRuns,
+    /// The full check of `main` failed.
+    MainFailed,
+    /// The full check of `main` passed: the lead cuts the release next.
+    Lead,
+}
+
+/// The current wave of a repository with a release cycle, when it has no
+/// open item and no release issue: its release waits for its cut
+/// (01M75N6YNHQQHGS0VGKTKSNJTR). The watch of the wave of the daemon saw it
+/// at its last look.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Complete {
+    /// The repository, as `OWNER/REPO`.
+    pub repo: String,
+    /// The number of the wave.
+    pub wave: u64,
+    /// Why the cut waits, when the watch knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waits: Option<CutWaits>,
+}
+
+/// The complete wave of the riff in the facts of `hosts`
+/// (01M75N6YNHQQHGS0VGKTKSNJTR). Of more repositories, the first by name
+/// wins. Of one repository, the higher wave wins, and of one wave, the first
+/// host that knows why the cut waits. `None` when no watch of a host sees a
+/// complete wave.
+///
+/// ```
+/// use riff_client::daemons::{Complete, CutWaits, Facts, Host, complete};
+///
+/// let host = |name: &str, complete: Vec<Complete>| Host {
+///     user: "mike".into(),
+///     host: name.into(),
+///     age_secs: 5,
+///     facts: Facts { complete, ..Facts::default() },
+/// };
+/// let of = |repo: &str, wave, waits| Complete { repo: repo.into(), wave, waits };
+/// assert_eq!(complete(&[host("a", vec![])]), None);
+/// let hosts = [
+///     host("a", vec![of("o/r", 41, None)]),
+///     host("b", vec![of("o/r", 41, Some(CutWaits::MainFailed))]),
+/// ];
+/// assert_eq!(complete(&hosts), Some(of("o/r", 41, Some(CutWaits::MainFailed))));
+/// let hosts = [
+///     host("a", vec![of("o/r", 42, None)]),
+///     host("b", vec![of("o/r", 41, Some(CutWaits::Lead)), of("o/q", 7, None)]),
+/// ];
+/// assert_eq!(complete(&hosts), Some(of("o/q", 7, None)));
+/// assert_eq!(complete(&hosts[..1]), Some(of("o/r", 42, None)));
+/// ```
+pub fn complete(hosts: &[Host]) -> Option<Complete> {
+    let mut found: Option<&Complete> = None;
+    for complete in hosts.iter().flat_map(|h| &h.facts.complete) {
+        let better = match found {
+            None => true,
+            Some(old) if old.repo != complete.repo => complete.repo < old.repo,
+            Some(old) if old.wave != complete.wave => complete.wave > old.wave,
+            Some(old) => old.waits.is_none() && complete.waits.is_some(),
+        };
+        if better {
+            found = Some(complete);
+        }
+    }
+    found.cloned()
+}
+
 /// True when the tag `a` names a newer release than the tag `b`. A tag
 /// with no version `vX.Y.Z` counts by its text.
 fn newer(a: &str, b: &str) -> bool {
@@ -518,6 +594,13 @@ pub struct Facts {
     /// an older build sends none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub releases: Vec<Release>,
+    /// The current wave of each watch of a wave of the daemon that has no
+    /// open item, and whose release waits for its cut
+    /// (01M75N6YNHQQHGS0VGKTKSNJTR): `riff who` and the TUI make the line
+    /// of the wave from them ([`complete`]). A daemon of an older build
+    /// sends none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub complete: Vec<Complete>,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -758,8 +841,14 @@ mod tests {
                 tag: "v4.1.1".into(),
                 step: ReleaseStep::CheckFailed,
             }],
+            complete: vec![Complete {
+                repo: "o/q".into(),
+                wave: 41,
+                waits: Some(CutWaits::MainFailed),
+            }],
         };
         assert!(facts.line().contains(r#""step":"check_failed""#));
+        assert!(facts.line().contains(r#""waits":"main_failed""#));
         assert_eq!(Facts::parse(&facts.line()), Some(facts.clone()));
         assert!(!facts.line().contains('\n'));
     }

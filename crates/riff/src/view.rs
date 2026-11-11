@@ -546,7 +546,10 @@ pub fn who(
 /// same in the row `release` of `riff who` and in the header of the TUI: the
 /// release that the watches of the hosts in `sessions` follow
 /// ([`riff_client::daemons::release`]), with the pause of the whole riff in
-/// `pauses` ([`text::release_line`]). `None` with no open release.
+/// `pauses` ([`text::release_line`]). With no line of an open release, the
+/// line of a wave with no open item whose release waits for its cut
+/// ([`riff_client::daemons::complete`], [`text::complete_line`],
+/// 01M75N6YNHQQHGS0VGKTKSNJTR). `None` with neither.
 ///
 /// ```
 /// use riff_client::daemons::{Facts, Release, ReleaseStep};
@@ -572,6 +575,27 @@ pub fn who(
 /// );
 /// assert_eq!(riff::view::release(&running, &[daemon(ReleaseStep::Passed)]), None);
 ///
+/// // A wave with no open item, whose release waits for its cut: its line,
+/// // while no open release has a line.
+/// use riff_client::daemons::{Complete, CutWaits};
+/// let mut done: SessionInfo = serde_json::from_value(serde_json::json!({
+///     "uri": "riff://mike@pangolin/o/r?session=d2", "live": true,
+/// }))
+/// .unwrap();
+/// let facts = Facts {
+///     complete: vec![Complete { repo: "o/r".into(), wave: 41, waits: Some(CutWaits::MainFailed) }],
+///     ..Facts::default()
+/// };
+/// done.machine = Some(MachineInfo { numbers: facts.line(), age_secs: 12 });
+/// assert_eq!(
+///     riff::view::release(&running, &[done.clone()]).unwrap(),
+///     "Wave 41 is complete: the release waits for its cut; the full check of main failed"
+/// );
+/// assert_eq!(
+///     riff::view::release(&running, &[done, daemon(ReleaseStep::Waits)]).unwrap(),
+///     "v3.3.0: the deploy waits for a person (riff release approve v3.3.0)"
+/// );
+///
 /// // `riff who` shows the line in the row `release`, under the state of the riff.
 /// let owner = riff_core::wire::RiffOwner::NoSignIn;
 /// let me = "riff://mike@thelio/o/r".parse()?;
@@ -586,8 +610,10 @@ pub fn who(
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn release(pauses: &RiffReply, sessions: &[SessionInfo]) -> Option<String> {
-    let release = riff_client::daemons::release(&riff_client::daemons::hosts(sessions))?;
-    text::release_line(&release, pauses.riff.is_some())
+    let hosts = riff_client::daemons::hosts(sessions);
+    riff_client::daemons::release(&hosts)
+        .and_then(|release| text::release_line(&release, pauses.riff.is_some()))
+        .or_else(|| riff_client::daemons::complete(&hosts).map(|c| text::complete_line(&c)))
 }
 
 /// The part `Hosts` of `riff who`: the facts of the daemon of each host

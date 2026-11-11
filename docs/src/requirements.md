@@ -8721,8 +8721,7 @@ that builds it merges.
   back`. After a resume, a failed check gives `vX.Y.Z: the check failed:
   the lead of OWNER/REPO fixes forward or rolls back`, and a passed
   deploy or a failed deploy gives no line. The line comes from the facts
-  of the hosts in `who` and from the pause of the riff. With no open
-  release, there is no line.
+  of the hosts in `who` and from the pause of the riff.
 - **01M6XZ2TCBVN69GTJYV9X8GBW5** In the Waves tab, `a` on an item with
   the label `question` asks `y` or `n` in the note line, and calls the
   code of `riff questions --answered`. The label comes from the last
@@ -8806,6 +8805,18 @@ that builds it merges.
   names does (01M6Y1ES82XHFGANKZS7AF3CP2, 01M6Z8AHH9FW3A3132YF8XH7R9):
   over the prompt, the first issue in reverse video, and each row cut to
   the width of the tab. The help popup of the Chat tab has the key `#`.
+- **01M75N6YNHQQHGS0VGKTKSNJTR** With no open release that has a line,
+  the TUI and `riff who` show in the same place the line `Wave N is
+  complete: the release waits for its cut` while the current wave of a
+  repository with the table `[release]` has no open item and no release
+  issue. The line says why the cut waits when the watch of the wave
+  knows it: `; the full check of main runs`, `; the full check of main
+  failed`, or ` by the lead of OWNER/REPO` after a passed full check. At
+  each look, the watch of the wave of each daemon gives this state to
+  the facts of its host. The line goes when the cut makes the release
+  issue of the wave. With no open release and no such wave, there is no
+  line. This supersedes 01M6XTS1GCW7PTWSMM1HKQTHSN in part: the line
+  with no open release.
 
 ## The notes of the lead
 

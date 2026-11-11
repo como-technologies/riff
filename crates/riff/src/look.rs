@@ -686,10 +686,9 @@ impl MainGate {
         })
     }
 
-    /// True when the full check failed: a check ended with `failure` or
-    /// `timed_out`. A cancelled check says nothing about the code.
+    /// True when the full check failed ([`Gate::broken`]).
     pub fn broken(&self) -> bool {
-        matches!(&self.gate, Gate::Ended(c) if c == "failure" || c == "timed_out")
+        self.gate.broken()
     }
 }
 
