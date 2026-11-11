@@ -1337,6 +1337,40 @@ async fn the_daemon_of_each_person_gets_a_token_of_the_lead_app_for_one_reposito
     assert_eq!(s.fake.seen().asked.len(), 2);
 }
 
+/// 01M74H872NW356DN924N6V81XE: a repository `acme/.` or `acme/..` gets
+/// 400 from each call of GitHub, with no request to GitHub, and
+/// `acme/.github` is a repository.
+#[tokio::test]
+async fn a_repository_of_dots_only_is_refused() {
+    let s = sessions().await;
+    for id in [101, 202] {
+        s.fake.seen().added.insert(id, vec!["acme/.github".into()]);
+    }
+    for repo in ["acme/.", "acme/.."] {
+        for (path, body) in [
+            ("/v1/github/apps", json!({ "owner": OWNER, "repo": repo })),
+            ("/v1/github/check", json!({ "repo": repo })),
+            ("/v1/github/daemon", json!({ "repo": repo })),
+        ] {
+            let (status, text) = call(&s.url, &s.ada, path, body).await;
+            assert_eq!(status, 400, "{path} {repo}: {text}");
+            assert!(text.contains("is no repository OWNER/NAME"), "{text}");
+        }
+    }
+    assert!(s.fake.seen().asked.is_empty());
+
+    let body = json!({ "owner": OWNER, "repo": "acme/.github" });
+    let (status, text) = call(&s.url, &s.ada, "/v1/github/apps", body).await;
+    assert_eq!(status, 200, "{text}");
+    let apps: GitHubAppsReply = serde_json::from_str(&text).unwrap();
+    assert!(apps.apps.iter().all(|a| a.has_repo == Some(true)), "{text}");
+    let (status, text) = daemon_token_of(&s, &s.ada, "acme/.github").await;
+    assert_eq!(status, 200, "{text}");
+    let reply: SessionToken = serde_json::from_str(&text).unwrap();
+    assert_eq!(reply.repo, "acme/.github");
+    assert!(reply.token.is_some(), "{text}");
+}
+
 /// 01M6XZJFGNVG6B7DF5VQ3H1DNX: a token of the daemon with other rights
 /// than the lead has goes back to GitHub at once, and the reply is an
 /// error with no token. Its log line names the person, the repository

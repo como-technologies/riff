@@ -1625,18 +1625,25 @@ pub(crate) async fn apps(
     Ok(Json(reply))
 }
 
-/// True when `repo` can be a repository `OWNER/NAME` of GitHub.
+/// True when `repo` can be a repository `OWNER/NAME` of GitHub
+/// (01M74H872NW356DN924N6V81XE): OWNER is a [`valid_owner`], and NAME
+/// has only letters, digits, `-`, `_` and `.`, and is neither `.` nor
+/// `..`.
 ///
 /// ```
 /// use riff_server::github::valid_repo;
 ///
 /// assert!(valid_repo("como-technologies/riff") && valid_repo("acme/app.rs"));
+/// assert!(valid_repo("acme/a.b") && valid_repo("acme/.github"));
 /// assert!(!valid_repo("acme") && !valid_repo("acme/") && !valid_repo("acme/a/b"));
+/// assert!(!valid_repo("acme/.") && !valid_repo("acme/.."));
 /// ```
 pub fn valid_repo(repo: &str) -> bool {
     repo.split_once('/').is_some_and(|(owner, name)| {
         valid_owner(owner)
             && !name.is_empty()
+            && name != "."
+            && name != ".."
             && name
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
@@ -1973,5 +1980,18 @@ mod tests {
         assert!(!error(Some(StatusCode::INTERNAL_SERVER_ERROR)).refused());
         assert!(!error(None).refused());
         assert!(!GitHubError::new("no reply".into()).refused());
+    }
+
+    /// 01M74H872NW356DN924N6V81XE: a name of dots only is no repository,
+    /// and a name with a dot and another sign is one.
+    #[test]
+    fn a_name_of_dots_only_is_no_repository() {
+        for name in [".", ".."] {
+            assert!(!valid_repo(&format!("acme/{name}")), "{name}");
+        }
+        for name in [".a", "a.", "a..b", "-", "_"] {
+            assert!(valid_repo(&format!("acme/{name}")), "{name}");
+        }
+        assert!(!valid_repo("-acme/app") && !valid_repo("acme/a b"));
     }
 }

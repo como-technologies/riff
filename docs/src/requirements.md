@@ -3687,6 +3687,10 @@
   the lead App" of "Start a Team Riff" has one copyable `sh` block,
   `riff github install OWNER`. No how-to of the book lists the steps on
   GitHub that set the rights of an App or accept them.
+- **01M74H872NW356DN924N6V81XE** riff-server takes a repository
+  `OWNER/NAME` of GitHub only when OWNER is a login of GitHub, and NAME
+  has only letters, digits, `-`, `_` and `.` and is neither `.` nor
+  `..`. It refuses each other repository with the status 400.
 
 ## Sign-in and tokens
 
