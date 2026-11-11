@@ -38,9 +38,15 @@ Why:
   `broken_main.rs` and `first_run.rs`. `first_run.rs` came later, and it
   says why in a comment too: `crates/riff/tests/first_run.rs:791-793`
   ("a riff-server with no sign-in: it has no session App") and :799.
-- Each other `riff_server::router()` call of a test has a comment that
-  says why: `states.rs:31`, `restart.rs:19`, `chat.rs:29`, `run.rs:505`
-  and `top_fault.rs:56`, in `crates/riff/tests`.
+- Five other `riff_server::router()` calls of a test have a comment
+  that says why: `states.rs:31`, `restart.rs:19`, `chat.rs:29`,
+  `run.rs:505` and `top_fault.rs:56`, in `crates/riff/tests`.
+- One call has no comment: `behind_a_front_end`
+  (`crates/riff/tests/chat.rs:1799-1804`). Its test goes through the
+  `Proxy` (chat.rs:1833), so the reason of chat.rs:29 holds for it too,
+  but no comment says so. The "Done when:" line names only
+  `broken_main.rs`, so the close holds. The missing comment is one line
+  in a later change of `chat.rs`, with no issue of its own.
 - "Use a riff-server with a sign-in" (`docs/src/development.md:464`)
   names no exception. The "Docs:" part of the issue accepts that.
 - #1153 is closed.
@@ -67,8 +73,10 @@ Why:
   with `text::daemon_facts`. Its first line has the build, the sessions
   against the limit and the floor, and no effort
   (`crates/riff/src/text.rs:7575-7592`).
-- No pull request did it: `gh pr list --search effort` finds #1333 and
-  #1695 only, and neither changes the host lines.
+- No pull request did it: `gh pr list --search effort --state all`
+  finds #325, #641, #1333, #1343 and #1695. None changes the host
+  lines. #325 and #641 came before the issue, and #1343 is the release
+  v4.1.0.
 - "Set the effort of the sessions" exists
   (`docs/src/development.md:3773`), as the issue names it.
 
@@ -146,7 +154,7 @@ Why:
   (`crates/riff/src/watches.rs:1401-1412`). A failed Gate gives "run
   the failed jobs again, then riff release verify N" (:1393-1395).
   "Verify the release pull request" (`docs/src/development.md:7223`)
-  and "Cut the release pull request" (:7212-7216) name the command.
+  and "Cut the release pull request" (:7213-7217) name the command.
 - The two lines of the issue still have the old words. `riff release
   cut` prints "next: wait for the verify and the merge of pull request
   #N" (`crates/riff/src/main.rs:3515-3518`). `cycle::next` gives the
@@ -215,11 +223,13 @@ Why:
   state `Failed` with `checks_failed` (:803-805). Then `cycle::next`
   gives "fix forward with riff release cut X.Y.Z, or roll back with
   riff release rollback vPREV" (:887-890).
-- A part is done. A check that cannot run does not decide: the stage
-  counts only the marks "passed" and "failed" (comment at
-  `crates/riff/src/cycle.rs:774-775`), so the next step stays `riff
-  release check vX.Y.Z`. The Cloud Run log that riff cannot read names
-  `gcloud auth login` (#1283).
+- Two parts of the case were there before the issue. A check that
+  cannot run does not decide: the stage counts only the marks "passed"
+  and "failed" (comment at `crates/riff/src/cycle.rs:774-775`, PR
+  #1160, merged 2026-10-19), so the next step stays `riff release check
+  vX.Y.Z`. The Cloud Run log that riff cannot read names `gcloud auth
+  login` (PR #1283, merged 2026-10-23). The issue came on 2026-10-24.
+  So only the failed check of a host is open.
 - A new check fails with the step of an admin: "riff-server reads the
   keys of the GitHub Apps" (`crates/riff/src/cycle.rs:1782-1789`,
   `crates/riff/src/text.rs:1804-1810`).
@@ -364,15 +374,24 @@ Verdict: rewrite
 Why:
 
 - It is still valid: `riff run` takes ITEM, `--image` and
-  `--no-github`, and no `--host` (`crates/riff/src/main.rs:667-682`).
-- The list of commands with `--host` is old. `riff wave run` and `riff
-  wave stop` are gone: `riff join` and `riff leave` replaced them (PR
-  #1680). `riff view` is gone (PR #1701,
-  `docs/src/riff-uis.md:120`). The commands that ask the daemon of
-  HOST today: `riff join`, `riff leave`, `riff build`, `riff lead stop`
-  and seven `riff daemon` subcommands (the fields `host` at
-  `crates/riff/src/main.rs:375`, :392, :589, :1397 to :1537 and :1681).
+  `--no-github`, and no `--host` (`crates/riff/src/main.rs:667-680`).
+- The list of commands with `--host` in the issue is old. `riff wave
+  run` and `riff wave stop` are gone: `riff join` and `riff leave`
+  replaced them (PR #1680). `riff view` is gone (PR #1701,
+  `docs/src/riff-uis.md:120`). `riff release test`, `riff daemon
+  status`, `riff daemon sweep` and `riff build` of the list still
+  take `--host`.
+- 13 commands ask the daemon of HOST today.
   01M579Z9MPS86MX7890T6HV18S names nine of them.
+  - 12 with `--host HOST`: `riff join`, `riff leave`, `riff build`,
+    `riff lead stop`, `riff release test` and seven `riff daemon`
+    subcommands (the fields `host` at `crates/riff/src/main.rs:375`,
+    :392, :589, :1198, :1397 to :1537 and :1681). On `riff release
+    test`, `--host` is a flag that the command needs (`host: String`,
+    main.rs:1196-1198, `Request::ReleaseTest` at
+    `crates/riff/src/daemon/remote.rs:497-505`).
+  - `riff lead move HOST`, with HOST as an argument (main.rs:1697-1700,
+    `Request::LeadMove` at remote.rs:509-511).
 - A part exists. In the lead container, `riff run ITEM` asks the
   daemon on the socket of the session to run the item as a job of the
   wave (PR #1378, 01M5QVX8FFG2FPWZEW61A985CF,
@@ -392,16 +411,17 @@ Asked by Mike (riff chat, 2026-10-24).
 ## Facts
 
 - `riff run` takes ITEM, `--image` and `--no-github`, and no `--host`
-  (crates/riff/src/main.rs:667-682). The daemon of this machine runs
+  (crates/riff/src/main.rs:667-680). The daemon of this machine runs
   the item.
 - In the lead container, `riff run ITEM` asks the daemon on the socket
   of the session to run the item as a job of the wave
   (01M5QVX8FFG2FPWZEW61A985CF, crates/riff/src/reach.rs:427).
-- `riff join`, `riff leave`, `riff build`, `riff lead stop` and seven
-  `riff daemon` subcommands take `--host HOST`
-  (crates/riff/src/main.rs:375-1681, 01M579Z9MPS86MX7890T6HV18S). The
-  request to the daemon of a host has no run
-  (crates/riff/src/daemon/remote.rs:445-515).
+- `riff join`, `riff leave`, `riff build`, `riff lead stop`, `riff
+  release test` and seven `riff daemon` subcommands take `--host HOST`
+  (crates/riff/src/main.rs:375-1681, 01M579Z9MPS86MX7890T6HV18S).
+  `riff lead move HOST` takes HOST as an argument (main.rs:1697-1700).
+  Each of them asks the daemon of HOST. The request to the daemon of a
+  host has no run (crates/riff/src/daemon/remote.rs:445-515).
 - Only the person and the lead may ask the daemon of a host
   (01M579Z9PZZCVWQKG7V8WZ5KRB).
 
@@ -452,8 +472,12 @@ Why:
   a file" (`docs/src/how-it-works.md:249-250`).
 - `crates/riff/src/main.rs` still has 12 fields `host: Option<String>`.
   `riff top --host` filters (main.rs:211-213). The 11 others ask the
-  daemon of HOST. `riff view`, `riff wave run` and `riff wave stop` are
-  gone (PR #1680, PR #1701).
+  daemon of HOST. The issue also leaves out two fields `host: String`,
+  and they ask the daemon of HOST too: `riff release test --host`, a
+  flag that the command needs (main.rs:1196-1198), and `riff lead move
+  HOST`, an argument (main.rs:1697-1700). So 13 commands ask the daemon
+  of HOST. `riff view`, `riff wave run` and `riff wave stop` are gone
+  (PR #1680, PR #1701).
 - There is no `riff config` command. #1338 is closed. #1000 is open.
 - Mike said "be careful about command sprawl" (#1658).
 
@@ -468,9 +492,11 @@ Questions for mike:
 - Q3: `riff config` in place of `riff server`, or both? Proposal:
   neither. `riff server` names `config.toml` as a source, as `riff
   update --auto` does with `(file)`.
-- Q4: Is `--host` a global flag? Proposal: yes, for the 11 commands
-  that ask the daemon of HOST and for `riff run` (#1357). Each other
-  command refuses it with an error.
+- Q4: Is `--host` a global flag? Proposal: yes, for the 13 commands
+  that ask the daemon of HOST and for `riff run` (#1357). `riff release
+  test` refuses to run with no `--host`, as it does today. `riff lead
+  move --host HOST` takes the place of `riff lead move HOST`. Each
+  other command refuses `--host` with an error.
 - Q5: The filter `riff top --host` then needs another name. Proposal:
   `riff top --on HOST`.
 - Q6: Does #1357 wait for this design? Proposal: no. #1357 adds
@@ -496,7 +522,7 @@ Why:
   (`crates/real-session/src/lib.rs:146-158`), so its container is in
   no count of the daemon of the host.
 - `Status::busy` counts the test as one, but only for the restart on a
-  new riff (`crates/riff/src/daemon.rs:1610`,
+  new riff (`crates/riff/src/daemon.rs:1610`, the check at :3816,
   01M5QVBTXE8YRY44A1C1VP71QS).
 - PR #1375 left it out on purpose: "the containers of the test still
   do not count in the limit of the host".
@@ -509,8 +535,10 @@ New title: The limit of a host counts a real-session test that runs
 ## Facts
 
 - The daemon starts a session only when the live sessions and the
-  waiting starts are fewer than the limit, and the free memory is over
-  the floor (crates/riff/src/room.rs:353-367).
+  starts that took a slot are fewer than the limit, and the free memory
+  is over the floor (crates/riff/src/room.rs:353-367, :538-539). A
+  start keeps its slot until the daemon owns the session
+  (room.rs:449-450).
 - The live sessions are the sessions that this daemon owns
   (crates/riff/src/daemon.rs:2926-2933).
 - `riff release test --host` runs the test in the daemon
@@ -519,7 +547,8 @@ New title: The limit of a host counts a real-session test that runs
   session. The limit of the host does not count it. Only the floor of
   free memory sees it.
 - `Status::busy` counts the test as one for the restart on a new riff
-  (crates/riff/src/daemon.rs:1610, 01M5QVBTXE8YRY44A1C1VP71QS).
+  (crates/riff/src/daemon.rs:1610, the check at :3816,
+  01M5QVBTXE8YRY44A1C1VP71QS).
 
 ## What
 
@@ -556,10 +585,14 @@ Why:
   (`crates/riff/src/look.rs:1329`). It sends no full list of item facts
   and makes no `look_blocks` call. Only `once` makes them
   (`crates/riff/src/look.rs:1547`, :1553).
-- The default fix of the issue does not fit. `look_blocks` takes only
-  the lead: "only the lead looks at the blocks of its sessions"
-  (`crates/riff-state/src/state.rs:1906-1909`). The daemon posts as the
-  person, not as the lead.
+- The default fix of the issue needs a caller that may look.
+  `look_blocks` takes only the lead: "only the lead looks at the blocks
+  of its sessions" (`crates/riff-state/src/state.rs:1906-1909`). The
+  look of the daemon posts as the person. But the daemon signs the
+  calls of each session that it runs as that session, the lead too
+  (`server_call`, `crates/riff/src/daemon.rs:1343-1348`). So the
+  daemon that runs the lead can call `look_blocks` as the lead, with no
+  change of riff-server.
 - So a block gets only its first wake. There is no second wake after
   `lead.wake`, and no notification. `settings::lead_wake` and
   `settings::lead_notify` have no caller outside
@@ -571,20 +604,32 @@ Why:
 Questions for mike:
 
 - Q1: Who looks at the blocks: the second wake, the "unanswered" state
-  and the notification? Proposal: riff-server lets the person look at
-  the blocks of the sessions of its user, and `look_wave` makes that
-  call at each look, with `lead.wake` and `lead.notify` of the host.
+  and the notification? There are two ways:
+  - A: the daemon that runs the lead calls `look_blocks` as the lead,
+    as `server_call` signs each call of a session. riff-server does not
+    change. With no lead, no one looks, and there is no lead to wake.
+  - B: riff-server lets the person look at the blocks of the sessions
+    of its user, and `look_wave` makes the call as the person on each
+    host of the wave.
+
+  Proposal: A, at each look of `look_wave` on the host of the lead,
+  with `lead.wake` and `lead.notify` of that host. It is the default
+  fix of the issue, and it needs no change of riff-server.
 - Q2: Does the daemon send the full list of item facts? Proposal: yes.
   `look_wave` reads the issues and the pull requests already, and it
   sends `item_facts` with `all: true` as the person.
 - Q3: Is the release look done? Proposal: yes, by #1437. This issue
   does nothing for it.
 - Q4: Does `look::once` go? Proposal: yes, after Q1 and Q2. Its tests
-  move to `look_wave`. The words that name a look of the `riff mcp` of
-  the lead change: `docs/src/how-it-works.md:5128`,
-  `docs/src/design-plan.md:36` and :44, and the requirements
-  01M41FZP2C4Z4J6WKRXZ5B31EH, 01M41FZQ545HQ9Q75CSKX8HF8H and
-  01M41FZQKZKW131Z8822G31T5G.
+  move to `look_wave`. The words that name "the look of the lead" or a
+  look of the `riff mcp` of the lead change:
+  - `docs/src/how-it-works.md:4863`, :4874 and :5128;
+  - `docs/src/design-plan.md:36`, :44, :73, :102, :419 and :429;
+  - the requirements 01M41FZP2C4Z4J6WKRXZ5B31EH,
+    01M41FZQ545HQ9Q75CSKX8HF8H, 01M41FZQKZKW131Z8822G31T5G,
+    01M49Q30XMVRFX42YTM1PHX0RZ, 01M49Q316RXNATJP587DWGDNCD,
+    01M51BF5S2YKB8JG10DF6YVT42, 01M54510SFK1Z9VPFYBYYSV10F,
+    01M5R0J131464KZX180BW2AK98 and 01M6QBP23SQJV3FJB8SWDQWT1Z.
 
 After the answers, the lead rewrites the issue as "The daemon look
 sends the facts of the items and looks at the blocks; look::once
@@ -730,9 +775,9 @@ Why:
 - The fault is still there. The daemon binds the riff at its own path
   into each session (`own_binary`, `crates/riff/src/daemon.rs:738-749`,
   01M4Z60B800BH5BHX0H9JVDG6A). It starts again on a new riff only at
-  `busy() == 0` (`crates/riff/src/daemon.rs:1610`). The wave admits new
-  starts with no check of a replaced riff: `wave.rs` has no
-  "replaced".
+  `busy() == 0` (`crates/riff/src/daemon.rs:3816`, `Status::busy` at
+  :1610). The wave admits new starts with no check of a replaced riff:
+  `wave.rs` has no "replaced".
 - A part is done. PR #1718 added two rules:
   - the daemon on a replaced riff starts no lead again (`leads_again`,
     `crates/riff/src/daemon.rs:3001-3003`, 01M6WBX2FT7Y9FV9VGGPDBKAHM);
@@ -758,7 +803,7 @@ New title: After an update, a busy old daemon starts no new work, and a call tha
   (crates/riff/src/daemon.rs:738-749). After `riff update`, the path
   holds the new riff (01M4Z60B800BH5BHX0H9JVDG6A).
 - A daemon on a replaced riff starts again only at `busy() == 0`
-  (daemon.rs:1610). Until then, its waves start new sessions, which
+  (daemon.rs:3816). Until then, its waves start new sessions, which
   run the new riff under the old daemon. Only a lead waits
   (daemon.rs:3001-3003, 01M6WBX2FT7Y9FV9VGGPDBKAHM).
 - A new riff sends calls that an old daemon cannot read. The daemon
