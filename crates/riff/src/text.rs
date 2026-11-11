@@ -15,7 +15,7 @@ use riff_core::name::{SessionUri, ThreadName};
 
 use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_client::api::{Claimed, Inbox, Told};
-use riff_client::threads::{Line, Names, Thread};
+use riff_client::threads::{Line, Names, RIFF_BOT, Thread};
 use riff_core::wire::{
     AdminSet, FreeReply, GitHubRole, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied,
     OwnerPassed, PauseInfo, Posted, ReleaseReply, Removed, Revoked, RiffOwner, RiffReply,
@@ -2980,11 +2980,14 @@ pub fn released_for(thread: &ThreadName, item: &str, holder: &str) -> String {
 /// session of the repository of the thread shows `to all`. A status
 /// request says so. The line says whether the reader verified the
 /// sender (R199). The sender of a message that is not verified never
-/// shows as the lead (R200).
+/// shows as the lead (R200). A line of riff-server itself
+/// ([`Line::by_server`]) shows as `riff-bot (riff-server)`, with no mark
+/// (01M75N2T0E0TV9ZF1ED90Y3PGC).
 ///
 /// ```
 /// use riff_client::api::Checked;
 /// use riff_client::threads::Line;
+/// use riff_core::name::SessionUri;
 /// use riff_core::wire::{Kind, Message};
 ///
 /// let thread = "como-technologies/riff".parse()?;
@@ -3027,6 +3030,21 @@ pub fn released_for(thread: &ThreadName, item: &str, holder: &str) -> String {
 /// // (01M3XSF90E9JYYTC13D9THY4WE).
 /// m.message.kind = Kind::Other;
 /// assert!(line(&m).ends_with("(not verified): done: issue-6 merged"));
+/// // A line of riff-server itself has no signature, and shows no mark.
+/// m.message.from = SessionUri::server();
+/// m.message.to = vec!["name=mike".parse()?];
+/// m.message.kind = Kind::Riff;
+/// m.message.body = "@mike riff release v3.3.0 waits for your approval".into();
+/// assert_eq!(
+///     line(&m),
+///     "[2] riff-bot (riff-server) to name=mike: @mike riff release v3.3.0 waits for your approval"
+/// );
+/// // Another kind from the address of riff-server shows its mark.
+/// m.message.kind = Kind::Message;
+/// assert_eq!(
+///     line(&m),
+///     "[2] riff@server to name=mike (not verified): @mike riff release v3.3.0 waits for your approval"
+/// );
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn message(line: &Line) -> String {
@@ -3043,13 +3061,17 @@ pub fn message(line: &Line) -> String {
     } else {
         format!(" to {}", to.join(" or "))
     };
-    let mark = if line.verified {
-        "verified"
+    let head = if line.by_server() {
+        format!("[{}] {RIFF_BOT} (riff-server){to}", line.seq)
     } else {
-        "not verified"
+        let mark = if line.verified {
+            "verified"
+        } else {
+            "not verified"
+        };
+        let lead = if line.lead { " lead=true" } else { "" };
+        format!("[{}] {}{lead}{to} ({mark})", line.seq, name(&line.from))
     };
-    let lead = if line.lead { " lead=true" } else { "" };
-    let head = format!("[{}] {}{lead}{to} ({mark})", line.seq, name(&line.from));
     match (line.kind, line.body.is_empty()) {
         (Kind::Message | Kind::Riff | Kind::Other, _) => match action(&line.from, &line.body) {
             Some(action) => format!("{head}: {action}"),
@@ -4101,7 +4123,8 @@ pub fn lost_messages(n: u64) -> String {
 ///   one ([`Line::sender`] with `names`, 01M6Y1FB5MZNZ971CJRBWZ2F9X), the
 ///   address of the sender ([`name`], [`style::session`](crate::style::session)),
 ///   `lead` for a verified lead, the receivers, the mark `verified` or
-///   `not verified` (R199), and the number.
+///   `not verified` (R199), and the number. A line of riff-server itself
+///   ([`Line::by_server`]) has no mark (01M75N2T0E0TV9ZF1ED90Y3PGC).
 /// - The body is under the header, with an indent. An action is `* NAME
 ///   TEXT`. It wraps to `width` and keeps its own line breaks. Each name
 ///   and the body are [`safe`].
@@ -4187,12 +4210,15 @@ where
             styled(MUTED, &format!("→ {}", to.join(" or ")))
         );
     }
-    let mark = if m.verified {
-        styled(DIM, "verified")
-    } else {
-        styled(WARNING, "not verified")
-    };
-    let _ = write!(out, "  {mark}  {}", styled(DIM, &format!("#{}", m.seq)));
+    if !m.by_server() {
+        let mark = if m.verified {
+            styled(DIM, "verified")
+        } else {
+            styled(WARNING, "not verified")
+        };
+        let _ = write!(out, "  {mark}");
+    }
+    let _ = write!(out, "  {}", styled(DIM, &format!("#{}", m.seq)));
     let body = match (m.kind, m.body.is_empty()) {
         (Kind::Message | Kind::Riff | Kind::Other, _) => {
             let action = m.action().map(|text| format!("* {} {text}", sender.name));
@@ -14015,7 +14041,8 @@ mod tests {
 
     /// #1786: a sender with a name shows it in its style, and the
     /// address after it is the dim detail. Only a line of riff-server
-    /// itself shows `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK).
+    /// itself shows `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK). It has no
+    /// signature, and shows no mark (01M75N2T0E0TV9ZF1ED90Y3PGC).
     #[test]
     fn the_block_shows_the_name_of_the_sender_and_the_address_as_the_detail() {
         let message = riff_core::wire::Message {
@@ -14030,7 +14057,7 @@ mod tests {
         };
         let c = Checked {
             message,
-            verified: true,
+            verified: false,
         };
         let line = Line::of(&c, &"chat".parse().unwrap());
         let at = chrono::DateTime::from_timestamp_millis(0).unwrap();
@@ -14047,7 +14074,22 @@ mod tests {
         let plain = anstream::adapter::strip_str(&text).to_string();
         assert_eq!(
             plain,
-            "00:00  <riff-bot>  riff@server  verified  #4\n       members: ann passed the owner role to mike."
+            "00:00  <riff-bot>  riff@server  #4\n       members: ann passed the owner role to mike."
+        );
+        // Another kind from the address of riff-server shows its mark.
+        let said = Checked {
+            message: riff_core::wire::Message {
+                kind: Kind::Message,
+                ..c.message.clone()
+            },
+            verified: false,
+        };
+        let line = Line::of(&said, &"chat".parse().unwrap());
+        let text = block(&line, &Names::default(), &at, Some(at.date_naive()), 80);
+        let plain = anstream::adapter::strip_str(&text).to_string();
+        assert!(
+            plain.starts_with("00:00  <riff>  riff@server  not verified  #4"),
+            "{plain}"
         );
         // The same line from mike shows as mike.
         let from = "riff://mike@thelio".parse().unwrap();
