@@ -2708,8 +2708,8 @@ async fn cli() -> Result<()> {
 /// The words of `command` when it needs the host
 /// ([`riff::reach::Way::Host`], 01M74A8CXVRD352VRJ9FH54HJ1): the sign-in
 /// of a person, a claim, or a program of the host. In a container session
-/// it refuses at once. `riff github`, `riff leave` and `riff lead stop`
-/// with no `--host` refuse there with words of their own.
+/// it refuses at once. `riff github`, `riff device`, `riff leave` and
+/// `riff lead stop` with no `--host` refuse there with words of their own.
 fn needs_the_host(command: &Command) -> Option<&'static str> {
     Some(match command {
         Command::Login => "riff login",
@@ -4649,7 +4649,7 @@ mod tests {
         use clap::Parser;
         use riff::reach::Way;
         // These refuse in a container with words of their own.
-        let own: [&[&str]; 3] = [&["github"], &["leave"], &["lead", "stop"]];
+        let own: [&[&str]; 4] = [&["github"], &["device"], &["leave"], &["lead", "stop"]];
         for row in riff::reach::COMMANDS {
             let words = std::iter::once("riff").chain(row.args.iter().copied());
             let command = Cli::try_parse_from(words).unwrap().command.unwrap();

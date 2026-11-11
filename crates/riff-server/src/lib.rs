@@ -72,6 +72,13 @@
 //!   member again. `POST /v1/owner` lets the owner pass the owner
 //!   role. `POST /v1/owner/take` lets an admin ask for it, and `POST
 //!   /v1/owner/deny` lets the owner keep it.
+//! - The devices of a person (01M75NGT9Z0NSZTG97TBAMP7RS) are state of
+//!   the log too: the keys, each a FIDO2 / WebAuthn authenticator.
+//!   `POST /v1/devices`, `/v1/device/remove`, `/v1/device/key` and
+//!   `/v1/device/key/wait` need a person token. The page of the add in
+//!   the browser, `GET /device/key`, and its two calls need no token:
+//!   the ticket of the add is their proof. See [`devices`], and
+//!   [`webauthn`] for the check of the reply of the authenticator.
 //! - `POST /v1/log` gives the records of one repository to the owner
 //!   and the admins, for `riff audit` (01M3ZWRC11R5M9V1KTF05P240W). It
 //!   reads the log from the store, and a post has only its mark

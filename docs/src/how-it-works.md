@@ -6465,9 +6465,9 @@ riff claim issue-12
 riff: riff claim does not run in a container session. It needs the host: the sign-in of a person, the claims of the riff daemon, or a program of the host. Run it in a terminal on the host. The commands of a session work here, for example riff read and riff post: the riff daemon of the host makes their calls.
 ```
 
-`riff github`, `riff leave` and `riff lead stop` with no `--host`
-refuse in the container with words of their own: each names the step
-on the host.
+`riff github`, `riff device`, `riff leave` and `riff lead stop` with
+no `--host` refuse in the container with words of their own: each
+names the step on the host.
 
 ### Watch the riff on another machine
 
