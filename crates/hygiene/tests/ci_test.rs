@@ -1,10 +1,14 @@
 //! `just ci-test NAME`: a verifier runs a test of the commit from the
 //! test binaries that CI built, and compiles nothing
-//! (01M75NDQY6BHZBV9PF735E3FGY). The tests run the recipe in a clone of
-//! one commit with the real `justfile`, `deploy/ci-test.sh` and
-//! `deploy/artifact-run.sh`. A fake `gh` holds a fake CI: the artifact
-//! `tests-TREE` with a manifest, and a tar of the `hygiene` of this build
-//! and a fake test binary. A fake `cargo` logs each call and fails.
+//! (01M75NDQY6BHZBV9PF735E3FGY, 01M75T9RGR89MAC6S78K42QN7Q). The tests
+//! run the recipe in a clone of one commit with the real `justfile`,
+//! `deploy/ci-test.sh` and `deploy/artifact-run.sh`. A fake `gh` holds a
+//! fake CI: the newest run at a commit and the tree that it built, and
+//! the artifact `tests-TREE` of a push to `main` with a manifest, and a
+//! tar of the `hygiene` of this build and a fake test binary. The fake
+//! prints what the `--jq` filter of the real `gh` prints: the filter is
+//! checked by a read of the live API, not here. A fake `cargo` logs each
+//! call and fails.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -18,10 +22,18 @@ fn top() -> PathBuf {
 /// The names that the fake test binary lists.
 const LIST: &str = "one::named_test: test\\none::other: test\\ntwo::x: test\\n";
 
+/// The tree of the merge of a pull request with `main`, which the run
+/// of CI of the pull request built.
+const MERGE: &str = "75fe042498ecc9c701b2b7f30982a9abeaf5173c";
+
 /// A clone of one commit, the fake CI and its fake tools in one folder:
 ///
 /// - `clone`: the clone, with the scripts and the `justfile`;
-/// - `bin`: the fake `gh` and `cargo`, which log to `bin/calls`;
+/// - `bin`: the fake `gh` and `cargo`, which log to `bin/calls`. The fake
+///   `gh` prints the newest run at the commit SHA from `bin/run-SHA`, the
+///   tree that the run RUN built from `bin/tree-RUN`, and the run that
+///   holds the artifact NAME from `bin/art-NAME`. With `bin/fail-runs`,
+///   it fails to list the runs;
 /// - `art`: the files of the artifact, `manifest.json` and `tests.tar`;
 /// - `ci/riff`: the path that the archive names.
 ///
@@ -69,12 +81,22 @@ impl Fake {
                    name=${{2#*name=}}; name=${{name%%&*}}\n\
                    [ -f \"$dir/art-$name\" ] && cat \"$dir/art-$name\"\n\
                    exit 0 ;;\n\
+                 'api repos/o/r/actions/workflows/ci.yml/runs?head_sha='*)\n\
+                   [ -f \"$dir/fail-runs\" ] && {{ echo 'gh: boom' >&2; exit 1; }}\n\
+                   sha=${{2#*head_sha=}}; sha=${{sha%%&*}}\n\
+                   [ -f \"$dir/run-$sha\" ] && cat \"$dir/run-$sha\"\n\
+                   exit 0 ;;\n\
+                 'api repos/o/r/actions/runs/'*'/artifacts?'*)\n\
+                   run=${{2#repos/o/r/actions/runs/}}; run=${{run%%/*}}\n\
+                   [ -f \"$dir/tree-$run\" ] && cat \"$dir/tree-$run\"\n\
+                   exit 0 ;;\n\
                  'run download')\n\
                    while [ $# -gt 0 ]; do [ \"$1\" = --dir ] && d=$2; shift; done\n\
                    mkdir -p \"$d\" && cp '{art}/manifest.json' '{art}/tests.tar' \"$d/\"; exit 0 ;;\n\
-                 esac\n\
+                 {runs}esac\n\
                  echo \"no such call: $*\" >&2; exit 1\n",
                 art = fake.path("art").display(),
+                runs = crate::artifact_run::RUNS_OF_MAIN,
             ),
         );
         isolated::write_program(
@@ -156,10 +178,48 @@ impl Fake {
         self.git(&["rev-parse", "HEAD^{tree}"])
     }
 
+    fn head(&self) -> String {
+        self.git(&["rev-parse", "HEAD"])
+    }
+
     /// The fake CI holds the artifact of the tree of HEAD, from run 77.
     fn keep_artifact(&self) {
-        let name = format!("art-tests-{}", self.tree());
-        std::fs::write(self.path("bin").join(name), "77\n").unwrap();
+        self.keep(&self.tree(), "77");
+    }
+
+    /// The fake CI holds the artifact `tests-TREE` of `tree`, from `run`.
+    fn keep(&self, tree: &str, run: &str) {
+        let name = format!("art-tests-{tree}");
+        std::fs::write(self.path("bin").join(name), format!("{run}\n")).unwrap();
+    }
+
+    /// The run `run` of the fake CI built `tree`.
+    fn built(&self, run: &str, tree: &str) {
+        let name = format!("tree-{run}");
+        std::fs::write(self.path("bin").join(name), format!("{tree}\n")).unwrap();
+    }
+
+    /// The newest run of the fake CI at the commit of HEAD is `run`, and
+    /// it built `tree`.
+    fn run_at_head(&self, run: &str, tree: &str) {
+        let name = format!("run-{}", self.head());
+        std::fs::write(self.path("bin").join(name), format!("{run}\n")).unwrap();
+        self.built(run, tree);
+    }
+
+    /// The call of `gh run download` for the artifact of `tree` in `run`.
+    fn download(&self, run: &str, tree: &str) -> String {
+        format!(
+            "gh run download {run} --name tests-{tree} --dir {}/target/ci-test/{tree}.part",
+            self.clone_dir().display()
+        )
+    }
+
+    fn downloads(&self) -> Vec<String> {
+        self.calls()
+            .into_iter()
+            .filter(|c| c.starts_with("gh run download"))
+            .collect()
     }
 
     /// Runs `just ci-test NAME` in the clone, with a value `LEAK` that
@@ -247,12 +307,7 @@ mod linux {
         );
         let calls = fake.calls();
         assert!(!calls.iter().any(|c| c.starts_with("cargo")), "{calls:?}");
-        let download = format!(
-            "gh run download 77 --name tests-{tree} --dir {}/target/ci-test/{tree}.part",
-            fake.clone_dir().display(),
-            tree = fake.tree()
-        );
-        assert!(calls.contains(&download), "{calls:?}");
+        assert_eq!(fake.downloads(), [fake.download("77", &fake.tree())]);
         // The checkout at the path of the archive is the commit of HEAD.
         let head = Command::new("git")
             .args(["rev-parse", "HEAD"])
@@ -280,12 +335,7 @@ mod linux {
             "{}",
             stderr(&out)
         );
-        let downloads = fake
-            .calls()
-            .into_iter()
-            .filter(|c| c.starts_with("gh run download"))
-            .count();
-        assert_eq!(downloads, 1);
+        assert_eq!(fake.downloads().len(), 1);
         assert_eq!(fake.runs()[1].last().unwrap(), "one::other");
     }
 
@@ -299,8 +349,8 @@ mod linux {
         assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
         assert!(
             stderr(&out).contains(&format!(
-                "ci-test: CI kept no test build of the tree {} of HEAD: no run has tests-{}. Say \
-                 so in your result, and build the test: just test named_test\n",
+                "ci-test: CI kept no test build of the tree {} of HEAD: no run that counts has \
+                 tests-{}. Say so in your result, and build the test: just test named_test\n",
                 fake.tree(),
                 fake.tree()
             )),
@@ -309,11 +359,154 @@ mod linux {
         );
         let calls = fake.calls();
         assert!(!calls.iter().any(|c| c.starts_with("cargo")), "{calls:?}");
-        assert!(
-            !calls.iter().any(|c| c.starts_with("gh run download")),
-            "{calls:?}"
-        );
+        assert!(fake.downloads().is_empty(), "{calls:?}");
         assert!(!fake.root().exists());
+        assert!(fake.runs().is_empty());
+    }
+
+    /// The done-when of #1966: in a clone of a pull request, the newest
+    /// CI run at HEAD built the merge of the pull request with `main`. The
+    /// recipe takes `tests-TREE` of that tree, also when CI holds a build
+    /// of the tree of HEAD, and runs the test with it in a worktree of
+    /// HEAD.
+    #[test]
+    fn a_run_at_head_that_built_the_merge_tree_gives_its_artifact() {
+        let fake = Fake::new();
+        fake.keep_artifact();
+        fake.run_at_head("88", MERGE);
+        fake.keep(MERGE, "88");
+        let out = fake.ci_test("named_test");
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        for line in [
+            format!("ci-test: the CI run 88 at HEAD built the tree {MERGE}.\n"),
+            format!("ci-test: took tests-{MERGE} of the CI run 88.\n"),
+            "just ci-test named_test runs 1 of 3 tests of the archive\n".to_owned(),
+        ] {
+            assert!(stderr(&out).contains(&line), "{}", stderr(&out));
+        }
+        assert_eq!(fake.downloads(), [fake.download("88", MERGE)]);
+        assert_eq!(fake.runs().len(), 1);
+        assert_eq!(fake.runs()[0].last().unwrap(), "one::named_test");
+
+        // The newest run of CI at the commit, on a branch of this
+        // repository, and the tree in the names of its artifacts.
+        let calls = fake.calls();
+        let runs = format!(
+            "gh api repos/o/r/actions/workflows/ci.yml/runs?head_sha={}&per_page=100 --jq ",
+            fake.head()
+        );
+        let runs = calls.iter().find(|c| c.starts_with(&runs)).unwrap();
+        for part in [
+            ".repository.id == .head_repository.id",
+            "sort_by(.created_at) | last | .id // empty",
+        ] {
+            assert!(runs.contains(part), "{part} is not in {runs}");
+        }
+        let trees = "gh api repos/o/r/actions/runs/88/artifacts?per_page=100 --jq ";
+        let trees = calls.iter().find(|c| c.starts_with(trees)).unwrap();
+        assert!(
+            trees.contains(r#"capture("^(tests|gate|static-[a-z]+)-(?<tree>[0-9a-f]+)$")"#),
+            "{trees}"
+        );
+        let head = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(fake.root())
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&head.stdout).trim(), fake.head());
+    }
+
+    /// A run at HEAD that built the tree of HEAD, for example the run of
+    /// a branch with each commit of `main`, gives the artifact of that
+    /// tree.
+    #[test]
+    fn a_run_at_head_that_built_the_tree_of_head_gives_that_artifact() {
+        let fake = Fake::new();
+        fake.run_at_head("88", &fake.tree());
+        fake.keep(&fake.tree(), "88");
+        let out = fake.ci_test("named_test");
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(fake.downloads(), [fake.download("88", &fake.tree())]);
+        assert_eq!(fake.runs().len(), 1);
+    }
+
+    /// The done-when of #1966: with no CI run at HEAD, the recipe takes
+    /// the tree of HEAD. The build of a merge tree by a run at another
+    /// commit does not count: with no build of the tree of HEAD, the
+    /// recipe exits with 3.
+    #[test]
+    fn with_no_run_at_head_the_recipe_takes_no_other_tree_and_exits_with_3() {
+        let fake = Fake::new();
+        fake.built("88", MERGE);
+        fake.keep(MERGE, "88");
+        let out = fake.ci_test("named_test");
+        assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+        assert!(
+            stderr(&out).contains(&format!(
+                "CI kept no test build of the tree {tree} of HEAD: no run that counts has \
+                 tests-{tree}.",
+                tree = fake.tree()
+            )),
+            "{}",
+            stderr(&out)
+        );
+        assert!(fake.downloads().is_empty());
+        assert!(fake.runs().is_empty());
+    }
+
+    /// A run at HEAD whose tree has no test build exits with 3. It takes
+    /// no build of the tree of HEAD: the verifier runs the build of the
+    /// Gate of the run, or builds the test.
+    #[test]
+    fn a_run_at_head_with_no_test_build_of_its_tree_exits_with_3() {
+        let fake = Fake::new();
+        fake.keep_artifact();
+        fake.run_at_head("88", MERGE);
+        let out = fake.ci_test("named_test");
+        assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+        assert!(
+            stderr(&out).contains(&format!(
+                "CI kept no test build of the tree {MERGE} of the CI run 88 at HEAD: no run that \
+                 counts has tests-{MERGE}. Say so in your result, and build the test: just test \
+                 named_test\n"
+            )),
+            "{}",
+            stderr(&out)
+        );
+        assert!(fake.downloads().is_empty());
+        assert!(fake.runs().is_empty());
+    }
+
+    /// When gh cannot list the runs at HEAD, the recipe exits with 3. A
+    /// tree that is not in hex fails with 2. Neither downloads.
+    #[test]
+    fn a_failed_list_of_the_runs_or_a_wrong_tree_downloads_nothing() {
+        let fake = Fake::new();
+        fake.keep_artifact();
+        std::fs::write(fake.path("bin/fail-runs"), "").unwrap();
+        let out = fake.ci_test("named_test");
+        assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+        assert!(
+            stderr(&out).contains(&format!(
+                "gh could not list the CI runs at the commit {} of HEAD.",
+                fake.head()
+            )),
+            "{}",
+            stderr(&out)
+        );
+
+        std::fs::remove_file(fake.path("bin/fail-runs")).unwrap();
+        fake.run_at_head("88", "../x");
+        let out = fake.ci_test("named_test");
+        assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+        assert!(
+            stderr(&out).contains(
+                "the CI run 88 names the tree \"../x\". ci-test takes only a tree in hex."
+            ),
+            "{}",
+            stderr(&out)
+        );
+        assert!(fake.downloads().is_empty());
         assert!(fake.runs().is_empty());
     }
 

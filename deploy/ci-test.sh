@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # Runs the tests whose name has NAME from the test binaries that CI built
-# for the tree of HEAD, and compiles nothing (01M75NDQY6BHZBV9PF735E3FGY).
-# A verifier runs a test of the commit with it: `just ci-test NAME`.
+# for HEAD, and compiles nothing (01M75NDQY6BHZBV9PF735E3FGY,
+# 01M75T9RGR89MAC6S78K42QN7Q). A verifier runs a test of the commit with
+# it: `just ci-test NAME`.
 #
 #   deploy/ci-test.sh NAME
 #
-# 1. deploy/artifact-run.sh finds the CI run that holds tests-TREE (TREE
-#    is `git rev-parse HEAD^{tree}`, as the job Build names it), and gh
-#    downloads it into target/ci-test/TREE of this clone.
+# 1. The newest CI run at the commit of HEAD names the tree that it built
+#    in its artifacts: tests-TREE, gate-TREE or static-PROFILE-TREE. A run
+#    of a pull request builds the merge of the pull request with main, so
+#    TREE is often not the tree of HEAD. When no run at the commit names a
+#    tree, TREE is the tree of HEAD, `git rev-parse HEAD^{tree}`.
+#    deploy/artifact-run.sh finds the CI run that counts and holds
+#    tests-TREE, and gh downloads it into target/ci-test/TREE of this
+#    clone.
 # 2. A test binary reads the files of the path that built it, and the
 #    manifest of the archive names that path: CI builds at
 #    /var/tmp/riff-ci/riff (01M75NDR15DNBFHDBNKA3CA1BE). A linked worktree
@@ -68,7 +74,41 @@ fi
 export GH_REPO
 
 COMMIT=$(git rev-parse HEAD)
-TREE=$(git rev-parse 'HEAD^{tree}')
+
+# The newest CI run at the commit of HEAD, or nothing. It counts only a
+# run on a branch of this repository, as artifact-run.sh does.
+newest_run() {
+    gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$COMMIT&per_page=100" \
+        --jq '[.workflow_runs[] | select(.repository.id == .head_repository.id)] | sort_by(.created_at) | last | .id // empty'
+}
+
+# The tree that the artifacts of the run $1 name, or nothing.
+built_tree() {
+    gh api "repos/$GH_REPO/actions/runs/$1/artifacts?per_page=100" \
+        --jq '[.artifacts[].name | capture("^(tests|gate|static-[a-z]+)-(?<tree>[0-9a-f]+)$") | .tree] | first // empty'
+}
+
+if ! built=$(newest_run); then
+    no_build "gh could not list the CI runs at the commit $COMMIT of HEAD"
+fi
+TREE=""
+if [ -n "$built" ] && ! TREE=$(built_tree "$built"); then
+    no_build "gh could not list the artifacts of the CI run $built"
+fi
+case "$TREE" in
+*[!0-9a-f]*)
+    say "the CI run $built names the tree \"$TREE\". ci-test takes only a tree in hex."
+    exit 2
+    ;;
+"")
+    TREE=$(git rev-parse 'HEAD^{tree}')
+    OF="the tree $TREE of HEAD"
+    ;;
+*)
+    OF="the tree $TREE of the CI run $built at HEAD"
+    say "the CI run $built at HEAD built the tree $TREE."
+    ;;
+esac
 ARTIFACT="tests-$TREE"
 CACHE="$(pwd -P)/target/ci-test"
 DIR="$CACHE/$TREE"
@@ -82,7 +122,7 @@ if [ ! -f "$DIR/manifest.json" ] || [ ! -f "$DIR/tests.tar" ]; then
         no_build "gh could not list the artifacts named $ARTIFACT"
     fi
     if [ -z "$run" ]; then
-        no_build "CI kept no test build of the tree $TREE of HEAD: no run has $ARTIFACT"
+        no_build "CI kept no test build of $OF: no run that counts has $ARTIFACT"
     fi
     rm -rf "$CACHE"
     mkdir -p "$CACHE"

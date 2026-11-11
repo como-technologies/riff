@@ -10,7 +10,9 @@
 #   files           the files at the root of main, one on a line
 #   milestones      the titles of the open milestones, one on a line
 #   static_rules    the JSON of the rules of main before the ruleset riff
-#   ruleset         the body of the ruleset riff, when it is made
+#   ruleset         the body of the ruleset riff (ID 77), when it is made;
+#                   the rules of main have its checks, and its merge queue
+#                   when it has the rule merge_queue
 #   prior_pulls     the JSON list of the pull requests of main, latest first
 #   checks_SHA      the JSON of the check runs of the commit SHA
 #   late            the number of answers that say "no check run yet" for
@@ -48,7 +50,11 @@ case "$*" in
   'api repos/{owner}/{repo}/rules/branches/main?per_page=100')
     if flag ruleset; then
       ctx=$(grep -o '"context":"[^"]*"' "$dir/ruleset" | sed 's/^"context"://; s/.*/{"context":&}/' | paste -sd, -)
-      printf '[{"type":"required_status_checks","parameters":{"required_status_checks":[%s]}}]' "$ctx"
+      printf '[{"type":"required_status_checks","ruleset_id":77,"parameters":{"required_status_checks":[%s]}}' "$ctx"
+      if grep -q '"type":"merge_queue"' "$dir/ruleset"; then
+        printf ',{"type":"merge_queue","ruleset_id":77,"parameters":{%s}}' "$(grep -o '"merge_method":"[A-Z]*"' "$dir/ruleset")"
+      fi
+      printf ']' ;
     elif flag static_rules; then cat "$dir/static_rules"
     else printf '[]'; fi ;;
   'api repos/{owner}/{repo}/milestones?state=open&per_page=100')
@@ -113,6 +119,7 @@ case "$*" in
     if flag ruleset; then printf '{"id":77,"name":"riff","target":"branch"}'; sep=','; fi
     if flag releases; then printf '%s{"id":78,"name":"releases","target":"tag"}' "$sep"; fi
     printf ']' ;;
+  'api repos/{owner}/{repo}/rulesets/77') cat "$dir/ruleset" ;;
   'api repos/{owner}/{repo}/rulesets/78')
     if flag not_admin; then sed 's/"bypass_actors":\[[^]]*\],//' "$dir/releases"; else cat "$dir/releases"; fi ;;
   'api -X POST repos/{owner}/{repo}/rulesets --include --input '*|'api -X PUT repos/{owner}/{repo}/rulesets/7'[78]' --include --input '*)

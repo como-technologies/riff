@@ -185,7 +185,8 @@ async fn report_one(
         Err(e) => {
             // The same end as a report that fails with no kept result.
             let _ = std::fs::remove_dir_all(folder);
-            let body = text::wave_no_report(item, *pull, &format!("{e:#}"));
+            // The read above found the pull request open.
+            let body = text::wave_no_report(item, *pull, &format!("{e:#}"), true);
             let to = [riff_core::selector::Selector::lead(
                 me.who().user(),
                 &wave.repo,

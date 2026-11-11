@@ -556,13 +556,6 @@
   `question`, next to `held` and `tracker`. A claim, a verify and a
   stuck pull request win over it, a tracker wins over it, and it wins
   over a hold. A pause hides no item of the group.
-- **01M6QBJHV7PVV5893Q6RCPENJQ** When the label `question` goes on an
-  issue, the look of the daemon tells the person of the lead one time in
-  riff chat. It posts one line for each issue and each time that the
-  label goes on. The post has a key from the issue and the time of the
-  label event, so the look of each host and a new start of the daemon
-  give the person the same line one time. When the label goes off, the
-  look forgets the issue.
 - **01M6QBJHZBDQ8BB1JPT003RXW7** `riff init` makes the label `question`
   with the first wave, when the repository has none. It never changes a
   label that is there.
@@ -727,6 +720,22 @@
   in "How It Works", and shows the line of the dropped events of riff
   daemon status in "See how the daemon uses the GitHub limit" in
   development.md, with a copyable sh block (#1656).
+- **01M75QTMB42NME9Z2Y0XC0AN97** riff posts no chat line for a question.
+  When the label `question` goes on an issue, the look of the daemon
+  sends riff-server no fact, and riff-server posts no line of riff-bot
+  for it. The Waves tab of the TUI and `riff questions` show each open
+  question. The call `bot` has no key (#1917). Supersedes
+  01M6QBJHV7PVV5893Q6RCPENJQ in full, and 01M74BPHQZHXFYYNXAJ1WFASQQ in
+  part.
+- **01M75WEDFKXGHMRFR73D1QDZCE** A merged pull request whose body has no
+  line `Refs #N` closes its issue: the trailer `Issue: #N`, else the
+  line `Closes #N`, else the branch names the issue. For one hour after
+  the merge, by its `mergedAt`, the free work counts the issue as
+  merged, also while a look still sees the issue open. So the wave
+  starts no build of it before the close of the issue reaches the look.
+  Such a merge gets no comment `Merged in #PR`. The newest merged pull
+  request of an issue decides. After the hour, an issue that a person
+  opened again is free work.
 
 ## Issue hygiene on GitHub
 
@@ -956,8 +965,7 @@
   pull request merges through the queue: GitHub builds a merge group of
   the default branch and the pull request, runs the required checks on
   it, and merges it when they pass. `deploy/merge-queue.sh on REPO
-  RULESET` adds the rule to a ruleset, and `off` removes it. The ruleset
-  that `riff init` makes has no merge queue.
+  RULESET` adds the rule to a ruleset, and `off` removes it.
 - **01M5TKPHH2627K9NDS4P1Y1N3T** CI runs the Gate and Hygiene on the
   event `merge_group`. A job of CI sets the status `riff/verify` on the
   merge group commit: success when the head commit of the pull request
@@ -1045,6 +1053,13 @@
   the body of the pull request, with its trailers as one last paragraph.
   A pass turns auto-merge on, also for a pull request whose auto-merge a
   person turned off. Supersedes 01M6Y95BMYDXFDYG3DKE2KG2PP in part.
+- **01M75NAPJVW8FJZTJEF416MR4J** `just github` puts the rule
+  `merge_queue` in the ruleset `main`, with the parameters of
+  `deploy/merge-queue.sh`: the squash method, up to 5 merge groups at
+  the same time, and 60 minutes for the checks of a group. The required
+  checks `Gate`, `Hygiene` and `riff/verify` of the ruleset run on each
+  merge group. A second run sets the same ruleset, so it changes
+  nothing.
 
 ## Tokens on GitHub
 
@@ -3490,18 +3505,16 @@
 - **01M74BPHQZHXFYYNXAJ1WFASQQ** riff-server posts each line that riff
   writes for a person in riff chat, with the kind `riff`: the lines of
   `riff release cut` and `riff release publish`, the line "waits for
-  your approval" of the watch of a deploy and its reminder, the line of
-  the label `question`, and the lines of the daemon about a lead. The
-  riff of the person sends only the fact in the call `bot`: the version
-  and the run of a release, the issue, or the step of the daemon.
-  riff-server writes the text from the fact and from what it holds: the
-  owner, the place of the caller and the holds of the version. No text
-  of a client goes into the line: the line of the label `question` has
-  the link of the issue and no title, and a line of the daemon names the
-  cause of a fault only for a clone with no main clone. Only a person
-  and the lead of the person make the call. Supersedes
-  01M6Y4ZCTSTVM971BDC1F7GJPK, 01M5TKMVB7CF0QNAWXEVGEQETJ,
-  01M6XSHMGM82QSABRWCYH595VH and 01M6QBJHV7PVV5893Q6RCPENJQ in part.
+  your approval" of the watch of a deploy and its reminder, and the
+  lines of the daemon about a lead. The riff of the person sends only
+  the fact in the call `bot`: the version and the run of a release, or
+  the step of the daemon. riff-server writes the text from the fact and
+  from what it holds: the owner, the place of the caller and the holds
+  of the version. No text of a client goes into the line: a line of the
+  daemon names the cause of a fault only for a clone with no main clone.
+  Only a person and the lead of the person make the call. Supersedes
+  01M6Y4ZCTSTVM971BDC1F7GJPK, 01M5TKMVB7CF0QNAWXEVGEQETJ and
+  01M6XSHMGM82QSABRWCYH595VH in part.
 - **01M74VFTFRSSWA6VPQS8SB0TBZ** riff-server writes a line of riff-bot
   about a release only for a tag `vX.Y.Z` with nothing after its
   version, and the line holds the version that riff-server parsed. A tag
@@ -4634,13 +4647,12 @@
   test build (01M6QQ1NXY0CXMZEEEP413W4PK), and `Tests I/N` runs part I
   of N of the tests (01M6QQ1P5YCT0JX90X5FCKM4W1). Together they run
   each check of `just ci-full`. The last job, `Gate`, needs each of
-  them. `Tests I/N` has the condition
-  `github.event_name != 'schedule' && github.ref_type != 'tag'`, and
-  `Build` has the condition `github.event_name != 'schedule'`: a tag
-  takes its release binaries from `Build` (01M6QQ1P8H32E2TQ0CYA87R02V).
-  `Gate` has `always()` and the same condition as `Tests I/N`. So
-  `Gate` runs also when one of them fails or is cancelled, and it
-  passes only when each of them passed. The ruleset needs only `Gate`.
+  them. `Build` has the condition `github.event_name != 'schedule'`: a
+  tag takes its release binaries from `Build`
+  (01M6QQ1P8H32E2TQ0CYA87R02V). `Gate` has `always()` and the condition
+  `github.event_name != 'schedule' && github.ref_type != 'tag'`. So
+  `Gate` runs also when one of them fails or is cancelled, and it fails
+  then. The ruleset needs only `Gate`.
 - **01M513W2NSE303E6XAM18BW7T6** `just test-part I/N` lists each test of
   the workspace, also each doc test, with `cargo test -- --list`. Of
   the tests that are not doc tests, it runs each test whose name has
@@ -4796,18 +4808,65 @@
   of its own, and no test of that binary starts a child process. So no
   child holds the listening socket of the server that the test stops.
 - **01M75NDQY6BHZBV9PF735E3FGY** `just ci-test NAME` runs the tests
-  whose name has NAME from the artifact `tests-TREE` of the tree of
-  `HEAD`, with `hygiene test-name NAME --archive`, and compiles nothing.
+  whose name has NAME from an artifact `tests-TREE`, with `hygiene
+  test-name NAME --archive`, and compiles nothing.
   It puts a linked worktree of `HEAD` at the path that the archive
   names, unpacks the archive there, and runs the tests there in the
   environment of the jobs `Tests I/N`: a clean environment with a new
   home, `CARGO_HOME` and `CARGO_TARGET_DIR` in `target/session`, and the
   values of the tests. A second run for the same tree takes the download
   and the worktree of the first. It removes a folder at that path only
-  when an earlier run made it. When CI kept no `tests-TREE` of the tree,
-  or its binaries cannot run on the machine, it says so, exits with 3,
+  when an earlier run made it. When CI kept no such `tests-TREE`, or its
+  binaries cannot run on the machine, it says so, exits with 3,
   and builds nothing. The `CLAUDE.md` of riff tells a verifier to run a
   test with it.
+- **01M75NAF4JQWQG3ZVGJM74XRBG** The job `Plan` of CI runs
+  `deploy/build-plan.sh` before each other job, and the jobs of the Gate
+  take its outputs. When the Gate of a run passed, and the tests ran in
+  that run, the job `Gate` keeps the artifact `gate-TREE`. The plan
+  looks for `gate-TREE` first, as it looks for the other artifacts of
+  the tree. When a run has it, the run builds no test binary, and the
+  jobs `Tests I/N` and `macOS` do not run: each has the condition
+  `github.event_name != 'schedule' && github.ref_type != 'tag' &&
+  needs.plan.outputs.run_tests == 'true'`. `macOS` needs only `Plan`, so
+  it starts beside `Build`. Then `Gate` passes when each part passed,
+  but the tests and `macOS`, which the plan skipped. A tree with no
+  `gate-TREE` runs each job. Supersedes 01M513W2K3HNRWPQTQNBQPT8MZ in
+  part.
+- **01M75NAF7VV5S7343P9Q7H7F60** A merge group with the tree of its pull
+  request takes the artifacts and `gate-TREE` of the run of the pull
+  request: it builds nothing and tests nothing. A merge group with a new
+  tree builds it and tests it once, and keeps its artifacts and
+  `gate-TREE` by the tree. The job `Verify of the merge group` sets
+  `riff/verify` on the merge group commit, as 01M5TKPHH2627K9NDS4P1Y1N3T
+  says.
+- **01M75NAFBH6M49GMSV8VG857EP** A push to `main` takes the artifacts
+  and `gate-TREE` of its tree, from the run of the merge group or of the
+  pull request with that tree. It builds nothing, it runs no part of the
+  tests and no job `macOS`, and `Gate` passes on that pass. `Static
+  riff` and `Stage` run as for each push to `main`.
+- **01M75T9RGR89MAC6S78K42QN7Q** `just ci-test NAME` takes the test
+  build of the newest run of CI at the commit of `HEAD` that ran on a
+  branch of this repository. The names of the artifacts of that run give
+  the tree that it built: `tests-TREE`, `gate-TREE` or
+  `static-PROFILE-TREE`. A run of a pull request builds the merge of the
+  pull request with `main`, so its tree can differ from the tree of
+  `HEAD`. When no run at the commit names a tree, it takes the tree of
+  `HEAD`. It downloads `tests-TREE` of that tree from the newest run
+  that holds it, and runs it in the worktree of `HEAD`. When gh cannot
+  list the runs, it exits with 3. Supersedes 01M75NDQY6BHZBV9PF735E3FGY
+  in part.
+- **01M75TT13241HC22M0KBJ6HW96** `deploy/artifact-run.sh` takes an
+  artifact of a tree, `gate-TREE`, `tests-TREE` or
+  `static-PROFILE-TREE`, only from a run of the workflow
+  `.github/workflows/ci.yml` on a branch of this repository whose job
+  that made the artifact passed: `Gate` for `gate-TREE`, `Build` for the
+  others. The run is a push to `main`, a merge group or the run that
+  asks, or the head commit of the run has the folders
+  `.github/workflows` and `deploy` and the `justfile` of `main`. So a
+  pull request that changes one of them makes no artifact that another
+  run takes, and its own run builds and tests. Of the runs that count,
+  the newest artifact wins.
 
 ## The phone app
 
@@ -6225,8 +6284,8 @@ of this part when they merge.
   the pull request, the status `riff/verify` of the commit, and the
   result to the holder of the item and to the lead. With no verdict, or
   when the report fails but for a limit of GitHub
-  (01M6H1N332TZ17CQQ8A5CQKG7B), the lead gets a message, and the pull
-  request waits for a new verify.
+  (01M6H1N332TZ17CQQ8A5CQKG7B), of an open pull request, the lead gets a
+  message, and the pull request waits for a new verify.
 - **01M4ZV3B6S1A64TYK8MTDNRCQ3** At each look, a wave removes the folder
   of each session of its repository that does not run, when the pull
   request of its branch merged. For a pull request with `Refs #N`, it
@@ -6684,6 +6743,18 @@ of this part when they merge.
   the repository name for it, and to build nothing. When CI kept no test
   build of the commit, the verifier says so in its result, and only then
   builds the test.
+- **01M75R717PH1NCQJ338ASVYT63** A head commit gets one verify that
+  passes. Before the claim of a verify, the wave reads the status
+  `riff/verify` of the head commit on GitHub. A success starts no
+  session, and the start does not count. The wave then starts no verify
+  of that head while its look still shows the head as waiting for a
+  verify, and neither does it for a head whose PASS the daemon put on
+  the pull request.
+- **01M75R71BCDCP882W75GSE52VT** A verify that ends with no PASS or
+  FAIL, or whose report fails but for a limit of GitHub, after its pull
+  request merged or closed, gives the lead a note, not a message. The
+  note says that the pull request is not open, so no verify waits.
+  Supersedes 01M4ZV3B6R4WSEJXYT7QPRWT6X in part.
 
 ### The lead, the view and the takeover
 
@@ -7208,6 +7279,16 @@ of this part when they merge.
   question and do no step of the repository, and one line says that a
   person does the steps in a terminal. Supersedes
   01M5SMJMR5KS1Z1Z7CEPH9JVBB in part.
+- **01M75NAPNH1SP8AC90NYFQP8SK** In a repository whose `riff.toml` on
+  the default branch has the table `[release]`, `riff init` checks that
+  the rules of the default branch have a merge queue with the squash
+  method. Else the check fails with the step `Step::Queue`, after the
+  step of the ruleset `riff`: it reads the ruleset that requires
+  `riff/verify`, and puts the rule `merge_queue` of `just github` in it,
+  in place of an old one. It changes no other rule. A second run finds
+  the queue and changes nothing. A repository with no `[release]` has no
+  such check, and the ruleset `riff` that `riff init` makes for it has
+  no merge queue. Supersedes 01M5TKPHDNHY75BHPD4XVBJRN9 in part.
 
 ### The permission rules
 
@@ -8971,10 +9052,32 @@ that builds it merges.
   knows it: `; the full check of main runs`, `; the full check of main
   failed`, or ` by the lead of OWNER/REPO` after a passed full check. At
   each look, the watch of the wave of each daemon gives this state to
-  the facts of its host. The line goes when the cut makes the release
-  issue of the wave. With no open release and no such wave, there is no
-  line. This supersedes 01M6XTS1GCW7PTWSMM1HKQTHSN in part: the line
+  the facts of its host. With no open release and no such wave, there is
+  no line. This supersedes 01M6XTS1GCW7PTWSMM1HKQTHSN in part: the line
   with no open release.
+- **01M75R6FPVZA3JA5C48PQ26A85** From the cut to the check, the line of
+  the open release in the TUI and in `riff who`
+  (01M6XTS1GCW7PTWSMM1HKQTHSN) shows the step of `riff release status`
+  and who acts next: `vX.Y.Z: the full check of the release pull request
+  runs`, `vX.Y.Z: the full check of the release pull request failed: the
+  lead of OWNER/REPO runs the failed jobs again`, `vX.Y.Z: the full
+  check of the release pull request passed; it waits for the verify of
+  the lead of OWNER/REPO`, `vX.Y.Z: the verify of the release pull
+  request passed; it merges`, `vX.Y.Z: the release pull request merged;
+  it waits for the real-session test of the lead of OWNER/REPO`,
+  `vX.Y.Z: the real-session test runs`, `vX.Y.Z: the real-session test
+  failed: the lead of OWNER/REPO files the bug in the wave`, `vX.Y.Z:
+  the real-session test passed; it waits for the publish of the lead of
+  OWNER/REPO`, and `vX.Y.Z: the CI run of the tag builds`. Then the
+  lines of the deploy and of the check follow. At each look, the watch
+  of the wave of each daemon reads the state of the newest release issue
+  of the current wave, as `riff release status` does, and gives the
+  release at its step to the facts of its host. Of one tag, the latest
+  step that a host saw wins. A checked release and a release after a
+  rollback have no line. When the cut makes the release issue of the
+  wave, the line of the release takes the place of the line of the
+  complete wave. This supersedes 01M75N6YNHQQHGS0VGKTKSNJTR in part: the
+  line after the cut.
 
 ## The notes of the lead
 

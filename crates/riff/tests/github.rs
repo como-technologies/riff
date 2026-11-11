@@ -223,8 +223,12 @@ fn just_github_sets_the_repository_and_makes_the_ruleset() {
         checks["required_status_checks"],
         serde_json::json!([{ "context": "Gate" }, { "context": "Hygiene" }, { "context": "riff/verify" }])
     );
+    // 01M75NAPJVW8FJZTJEF416MR4J: the merge queue of riff init.
+    assert_eq!(rule("merge_queue"), riff::repo_setup::merge_queue());
 }
 
+/// 01M75NAPJVW8FJZTJEF416MR4J: a second run sends the same ruleset `main`,
+/// so it changes nothing.
 #[test]
 fn just_github_again_updates_the_same_ruleset() {
     let (out, log) = setup(Some("7"));
@@ -241,7 +245,22 @@ fn just_github_again_updates_the_same_ruleset() {
         "{log}"
     );
     assert!(!log.contains("-X POST"), "{log}");
-    assert_eq!(ruleset(&log, "main")["name"], "main");
+    let (_, first) = setup(None);
+    assert_eq!(ruleset(&log, "main"), ruleset(&first, "main"));
+}
+
+/// 01M75NAPJVW8FJZTJEF416MR4J: `deploy/merge-queue.sh on` adds the same
+/// rule as `just github` and `riff init`.
+#[test]
+fn the_merge_queue_script_adds_the_rule_of_riff_init() {
+    let script = std::fs::read_to_string(repo().join("deploy/merge-queue.sh")).unwrap();
+    let rule = script
+        .lines()
+        .find_map(|line| line.strip_prefix("RULE='"))
+        .and_then(|rest| rest.strip_suffix('\''))
+        .unwrap_or_else(|| panic!("no RULE in deploy/merge-queue.sh:\n{script}"));
+    let rule: serde_json::Value = serde_json::from_str(rule).unwrap();
+    assert_eq!(rule, riff::repo_setup::merge_queue());
 }
 
 /// 01M6WZ40PZNBHW2BZHMQX80WJ8: only the repository admin role and the

@@ -622,7 +622,8 @@ enum Command {
     /// the body, the title or a comment of an issue. When riff.toml on the
     /// default branch has [release], it asks riff-server for the lead App,
     /// and checks that the ruleset releases on the tags v* lets the lead
-    /// App push a tag. It
+    /// App push a tag, and that the default branch merges through a merge
+    /// queue with the method squash. It
     /// reads no CLAUDE.md or AGENTS.md: that file is the choice of the
     /// repository. It names the open issues with no "Done when:" line and no
     /// "## Done when" heading in a note: the wave starts no session for
@@ -631,6 +632,7 @@ enum Command {
     /// makes riff.toml with a pull request that it merges, allows auto-merge
     /// and squash merges, makes the Backlog and Wave 1,
     /// and makes the ruleset riff. The same pull request adds the guard. It
+    /// puts the merge queue in the ruleset that requires riff/verify, and
     /// makes the ruleset releases too. It needs the rights of an admin of the
     /// repository, and a second run changes nothing. The riff.toml that it
     /// makes pins riff-base: claude, git and gh, with no language. --image

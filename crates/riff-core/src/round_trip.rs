@@ -589,7 +589,6 @@ mod tests {
                 run: 9,
                 reminder: true,
             },
-            BotFact::Question { issue: 12 },
             BotFact::LeadStarted,
             BotFact::LeadWaits,
             BotFact::LeadNoMain,
@@ -597,11 +596,7 @@ mod tests {
             BotFact::LeadStale,
             BotFact::LeadNoNetwork,
         ] {
-            c.trip(&BotPost {
-                me: me(),
-                fact,
-                key: Some(text("question-12")),
-            });
+            c.trip(&BotPost { me: me(), fact });
         }
         c.trip(&ItemFacts {
             me: me(),

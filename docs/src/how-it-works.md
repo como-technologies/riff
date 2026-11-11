@@ -496,8 +496,9 @@ the short hash of the code: `crates`, `Cargo.toml` and `Cargo.lock`. Two
 commits with the same code have the same id. A commit that changes only
 the book keeps the build.
 
-CI builds each tree one time, in the pull request. The commit on
-`main` and the release take that build. So the build of a release has
+CI builds and tests each tree one time, in the pull request, or in its
+merge group when `main` moved. The commit on `main` and the release
+take that build. So the build of a release has
 the id of the code, as on `main`. Its time is the time of the last
 commit of the pull request that changed the code, and not the time of
 the squash commit on `main`. Two builds with the same version and id
@@ -732,19 +733,38 @@ The list has the admin role, `RepositoryRole` 5, and the lead App, an
 
 #### See the state of an open release
 
-While a release deploys, and until the lead checks it, `riff who` and
-the header of the TUI have one line of the release: what runs, what it
-waits for, and who acts next. For example, after the approval of the
-deploy:
+From the cut to the check, `riff who` and the header of the TUI have
+one line of the release: its step in `riff release status`, what it
+waits for, and who acts next. For example, while the real-session test
+runs:
 
 ```sh
 riff who
 ```
 
 ```text
-riff     paused
-release  v3.3.0: the deploy runs; the riff is paused
+riff     running
+release  v3.3.0: the real-session test runs
 ```
+
+The row `release` shows these lines, one after the other, from the cut
+to the check:
+
+```text
+release  v3.3.0: the full check of the release pull request runs
+release  v3.3.0: the full check of the release pull request passed; it waits for the verify of the lead of como-technologies/riff
+release  v3.3.0: the verify of the release pull request passed; it merges
+release  v3.3.0: the release pull request merged; it waits for the real-session test of the lead of como-technologies/riff
+release  v3.3.0: the real-session test runs
+release  v3.3.0: the real-session test passed; it waits for the publish of the lead of como-technologies/riff
+release  v3.3.0: the CI run of the tag builds
+release  v3.3.0: the deploy waits for a person (riff release approve v3.3.0)
+release  v3.3.0: the deploy runs; the riff is paused
+release  v3.3.0: the deploy passed; it waits for the check of the lead of como-technologies/riff
+```
+
+After a passed check, the line goes. A failed step has a line too, with
+who acts next.
 
 Before the cut, the same line tells you when the release is ready. When
 each item of the current wave is closed, the line says that the wave is
@@ -758,13 +778,14 @@ release  Wave 41 is complete: the release waits for its cut; the full check of m
 ```
 
 When the full check of `main` passes, the line names the lead that cuts
-the release. The line goes when the cut opens the release.
+the release. When the cut opens the release, the line of the release
+takes its place.
 
 The line comes from the watches of the riff daemons and from the pause
 of the riff. With no open release and no complete wave, there is no
 line. See
 [See who acts next on the release](development.md#see-who-acts-next-on-the-release)
-for the line of each step.
+for the line of each step, also of a failed step.
 
 ### Install one release
 
@@ -2971,6 +2992,11 @@ request with a squash when the checks `Gate` and `Hygiene` pass and
 the head commit has a `riff/verify` success. A new commit has no
 status, so it needs a new verify.
 
+A head commit gets one verify that passes. Before the riff daemon
+starts a verify, it reads the status `riff/verify` of the head commit
+on GitHub. When the status is a success, it starts no verify: a verify
+passed already, for example on another host.
+
 ```mermaid
 sequenceDiagram
     participant A as author (issue-6)
@@ -3048,27 +3074,40 @@ shell loop.
 
 ### Run a test of the build of CI
 
-A verifier builds no test. CI built the test binaries of the commit
-one time, in the job `Build`, and keeps them as the artifact
-`tests-TREE`, where TREE is the git tree of the commit. In a repository
-with CI, the start text of a verify tells the verifier to run each
-test from that build, with the command that the rules of the
-repository name. The `CLAUDE.md` of riff names this command. NAME is
-the name of a test, or a part of the name, as for `cargo test NAME`:
+A verifier builds no test. CI built the test binaries one time, in the
+job `Build`, and keeps them as the artifact `tests-TREE`, where TREE is
+the git tree that the run built. In a repository with CI, the start
+text of a verify tells the verifier to run each test from that build,
+with the command that the rules of the repository name. The
+`CLAUDE.md` of riff names this command. NAME is the name of a test, or
+a part of the name, as for `cargo test NAME`:
 
 ```sh
 just ci-test NAME
 ```
 
+The verifier runs the build of the newest CI run at the commit of
+`HEAD`. For a pull request, CI builds the merge of the pull request
+with `main`, not the head commit. When `main` moved after the branch,
+the tree of that merge is not the tree of `HEAD`. So the command finds
+the tree in the names of the artifacts of the run. When no run at
+`HEAD` names a tree, for example for a commit that CI did not run, the
+command takes the build of the tree of `HEAD`.
+
 A test binary reads the files of the path where CI built it,
 `/var/tmp/riff-ci/riff`. So the command puts a worktree of `HEAD` at
 that path, unpacks the binaries there, and runs the tests there, as a
-job `Tests I/N` runs them. A second run for the same tree takes the
-download and the worktree of the first.
+job `Tests I/N` runs them. The files are the files of `HEAD`, and the
+binaries are the build of the run. A second run for the same tree
+takes the download and the worktree of the first.
 
 ```mermaid
 flowchart LR
-    V["just ci-test NAME"] --> A{"CI kept<br/>tests-TREE?"}
+    V["just ci-test NAME"] --> T{"the newest CI run<br/>at HEAD names<br/>a tree?"}
+    T -- "yes" --> M["TREE: the tree of the run,<br/>for a pull request the<br/>merge with main"]
+    T -- "no" --> H["TREE: the tree of HEAD"]
+    M --> A{"CI kept<br/>tests-TREE?"}
+    H --> A
     A -- "yes" --> W["a worktree of HEAD at<br/>/var/tmp/riff-ci/riff"]
     W --> R["the tests with NAME<br/>in their name, no build"]
     A -- "no" --> S["exit 3: the verifier says so<br/>in its result, then builds"]
@@ -3076,6 +3115,9 @@ flowchart LR
 
 When CI kept no test build of the tree, for example because the run
 failed before `Build` kept it, the command says so and exits with 3.
+The build of a pull request that changes a workflow, a script of
+`deploy` or the `justfile` does not count either (see
+[Build once for each tree](development.md#build-once-for-each-tree)).
 Then the verifier says so in its result, and builds the test:
 
 ```sh
@@ -3988,10 +4030,12 @@ a line of `riff-bot` too. These are the lines of `riff-bot`:
 - the line that a person passed the owner role,
 - the lines of `riff release cut` and `riff release publish`,
 - the ask while a deploy waits for your approval, and its reminder,
-- the ask when a lead adds the label `question` to an issue,
 - the lines of the riff daemon about your lead, for example "riff
   started the lead of mike in como-technologies/riff on thelio again on
   the new riff".
+
+A question of a lead gets no line in the chat (see
+[See all your open questions](development.md#see-all-your-open-questions)).
 
 Your riff tells riff-server only the fact, for example the version and
 the CI run of a deploy that waits. riff-server writes the text of the
@@ -4037,7 +4081,7 @@ riff tail chat
 14:03  <riff>  brett@heron:riff (25456ff6) lead  → name=brett  verified  #44
        @brett not yet: #207 waits for CI.
 14:05  <riff-bot>  riff@server  → name=mike  #45
-       @mike A lead waits for your answer in issue #12 of como-technologies/riff: ...
+       @mike riff release v3.3.0 waits for your approval: ...
 ```
 
 A line of `riff-bot` has no mark `verified` or `not verified`. Only
@@ -4059,7 +4103,7 @@ riff read --thread chat
 ```text
 chat
 [44] brett@heron:riff (25456ff6) lead=true to name=brett (verified): @brett not yet: #207 waits for CI.
-[45] riff-bot (riff-server) to name=mike: @mike A lead waits for your answer in issue #12 of como-technologies/riff: ...
+[45] riff-bot (riff-server) to name=mike: @mike riff release v3.3.0 waits for your approval: ...
 ```
 
 ### Type while lines come in
@@ -6696,8 +6740,8 @@ flowchart TD
   current wave (see [Waves](waves.md)). No session claims it, it is not
   merged, and each issue of its `Needs:` line is closed. An issue is
   merged when it has the comment `Merged in #`, or when its pull request
-  merged with `Refs #N` (see
-  [Leave the issue open for a check after the release](development.md#leave-the-issue-open-for-a-check-after-the-release)).
+  merged with `Refs #N`, or with `Closes #N` in the last hour (see
+  [What the wave does](development.md#what-the-wave-does)).
   A pull request counts for the issue that it names (see
   [See the item of a pull request](#see-the-item-of-a-pull-request)).
   An item counts one time: while its pull request waits for a verify

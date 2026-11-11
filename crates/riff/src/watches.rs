@@ -46,6 +46,35 @@
 //! the TUI say that the release waits for its cut ([`crate::view::release`]).
 //! The release issue that the cut makes in the wave ends it.
 //!
+//! From the cut to the check, the watch of the wave reads the release of the
+//! newest release issue of the wave, as `riff release status` does
+//! ([`Seen::release`], [`cycle::stage`], 01M75R6FPVZA3JA5C48PQ26A85). At the
+//! cut, it also reads the full check and the verify of the release pull
+//! request. A read costs about ten calls of `gh`, so it comes each
+//! [`read_every`] at most, and at once for a new release issue. Before the
+//! tag, the read needs the commits of `origin/main` for the real-session
+//! test: the look fetches `origin` first. The daemon gives the release at its
+//! step to the facts of its host. Of one tag, the latest step that a host saw
+//! wins ([`riff_client::daemons::release`]), so the watch of a deploy and the
+//! watch of a check, which look each minute, give the newer step.
+//!
+//! ```mermaid
+//! stateDiagram-v2
+//!     [*] --> PullRuns: riff release cut
+//!     PullRuns --> PullFailed: the full check failed
+//!     PullFailed --> PullRuns: the failed jobs run again
+//!     PullRuns --> Verify: the full check passed
+//!     Verify --> Merges: riff release verify
+//!     Merges --> Merged: the merge
+//!     Merged --> TestRuns: riff release test
+//!     TestRuns --> TestFailed
+//!     TestFailed --> TestRuns: the fix merges, the test runs again
+//!     TestRuns --> Tested
+//!     Tested --> Published: riff release publish
+//!     Published --> Waits: the job Deploy waits for production
+//!     Waits --> [*]: the steps of the deploy and of the check
+//! ```
+//!
 //! # The file
 //!
 //! The daemon keeps the watches in [`FILE`] of its folder
@@ -195,6 +224,11 @@
 //! | [`Op::Check`] after a pass | [`ReleaseStep::Passed`] |
 //! | [`Op::Check`] after a failure | [`ReleaseStep::DeployFailed`] |
 //! | [`Op::Check`], the last check failed | [`ReleaseStep::CheckFailed`] |
+//! | [`Op::Wave`], the state `cut` of the release | [`ReleaseStep::PullRuns`], [`ReleaseStep::PullFailed`], [`ReleaseStep::Verify`] or [`ReleaseStep::Merges`] |
+//! | [`Op::Wave`], the state `merged` | [`ReleaseStep::Merged`], [`ReleaseStep::TestRuns`] or [`ReleaseStep::TestFailed`] |
+//! | [`Op::Wave`], the states `tested` and `published` | [`ReleaseStep::Tested`], [`ReleaseStep::Published`] |
+//! | [`Op::Wave`], the states `waiting`, `deploying`, `deployed` and `failed` | the step of the same state of the watch of the deploy or of the check |
+//! | [`Op::Wave`], the states `checked` and `rolled back` | none |
 //!
 //! A new watch of a deploy ends each watch of a check of its repository
 //! ([`Watches::register`]): a retry, a rollback and the next release
@@ -214,7 +248,7 @@ use riff_core::build::Semver;
 use riff_core::wire::{BotFact, Kind};
 use serde::{Deserialize, Serialize};
 
-use crate::cycle::{self, DeployState, Forge, TestState};
+use crate::cycle::{self, DeployState, Forge, State, TestState};
 use crate::daemon::remote;
 use crate::hold::{self, Step};
 use crate::pr::Gate;
@@ -588,6 +622,63 @@ pub struct Seen {
     /// `main` (01M75N6YNHQQHGS0VGKTKSNJTR). The daemon gives it to the
     /// facts of its host.
     pub complete: Option<daemons::Complete>,
+    /// [`Op::Wave`]: the last read of the release of the newest release
+    /// issue of the current wave ([`ReleaseRead`],
+    /// 01M75R6FPVZA3JA5C48PQ26A85). The daemon gives its release to the
+    /// facts of its host.
+    pub release: Option<ReleaseRead>,
+}
+
+/// The last read of the release of the current wave by the watch of the
+/// wave (01M75R6FPVZA3JA5C48PQ26A85): the stage of the newest release issue
+/// of the wave, as `riff release status` reads it ([`cycle::stage`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleaseRead {
+    /// The title of the release issue, for example `Release v4.17.0`.
+    pub issue: String,
+    /// The time of the read, in milliseconds since the epoch.
+    pub at_ms: i64,
+    /// The release at its step, or `None`: a checked release, a release
+    /// after a rollback, and a title with no version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<daemons::Release>,
+}
+
+impl ReleaseRead {
+    /// True when the watch reads the release again at `now_ms`: a read
+    /// costs about ten calls of `gh`, so it comes each [`read_every`] at
+    /// most.
+    ///
+    /// ```
+    /// use riff::watches::{ReleaseRead, read_every};
+    ///
+    /// let read = ReleaseRead { issue: "Release v4.17.0".into(), at_ms: 0, release: None };
+    /// let every = read_every().as_millis() as i64;
+    /// assert!(!read.due(every - 1));
+    /// assert!(read.due(every));
+    /// ```
+    pub fn due(&self, now_ms: i64) -> bool {
+        let every = i64::try_from(read_every().as_millis()).unwrap_or(i64::MAX);
+        now_ms.saturating_sub(self.at_ms) >= every
+    }
+
+    /// True when the read at `now_ms` needs a fetch of `origin` first: the
+    /// stage of a release before its tag reads the commits of `origin/main`
+    /// for the real-session test ([`cycle::tested`]).
+    fn fetches(&self, now_ms: i64) -> bool {
+        self.due(now_ms)
+            && self
+                .release
+                .as_ref()
+                .is_some_and(|r| r.step < ReleaseStep::Published)
+    }
+}
+
+/// The time between two reads of the release of a wave by the watch of the
+/// wave (01M75R6FPVZA3JA5C48PQ26A85): [`IDLE_FACTOR`] times [`every`]. A
+/// new release issue in the wave gets its read at once.
+pub fn read_every() -> Duration {
+    Watches::wait(every(), true)
 }
 
 /// A watch in [`FILE`].
@@ -608,7 +699,8 @@ impl Watch {
     /// The release that the watch follows, at the step that it saw last
     /// (01M6XTS7RGXB30MFM6DZ7PVZ75), or `None`: a watch of no deploy and of
     /// no check, a watch of a deploy before the state moved, and a CI run
-    /// that builds.
+    /// that builds. The watch of a wave gives the release of its last read
+    /// ([`Seen::release`], 01M75R6FPVZA3JA5C48PQ26A85).
     ///
     /// ```
     /// use riff::cycle::DeployState;
@@ -631,9 +723,20 @@ impl Watch {
     /// assert_eq!(step(watch(check(true), failed)), Some(ReleaseStep::CheckFailed));
     /// assert_eq!(watch(check(true), Seen::default()).release().unwrap().repo, "o/r");
     /// assert_eq!(watch(Op::Wave, Seen::default()).release(), None);
+    ///
+    /// use riff::watches::ReleaseRead;
+    /// let release = riff_client::daemons::Release {
+    ///     repo: "o/r".into(),
+    ///     tag: "v3.3.0".into(),
+    ///     step: ReleaseStep::TestRuns,
+    /// };
+    /// let read = ReleaseRead { issue: "Release v3.3.0".into(), at_ms: 0, release: Some(release.clone()) };
+    /// let seen = Seen { release: Some(read), ..Seen::default() };
+    /// assert_eq!(watch(Op::Wave, seen).release(), Some(release));
     /// ```
     pub fn release(&self) -> Option<daemons::Release> {
         let (tag, step) = match &self.op {
+            Op::Wave => return self.seen.release.as_ref()?.release.clone(),
             Op::Deploy { tag, .. } if self.seen.moved => match self.seen.state? {
                 DeployState::Waiting => (tag, ReleaseStep::Waits),
                 DeployState::Running => (tag, ReleaseStep::Runs),
@@ -703,8 +806,9 @@ pub enum Post {
 pub trait Lookout: Send + Sync {
     /// The forge of the main clone of `wave`. It runs `gh` and `git`, so
     /// the caller calls it on a thread that may block. With `fetch`, it
-    /// fetches `origin` and its tags first: the watch of a wave needs
-    /// only `gh`, and the main clone of a person stays as it is.
+    /// fetches `origin` and its tags first: the watch of a wave needs only
+    /// `gh`, but for the read of a release before its tag
+    /// ([`ReleaseRead`]), and the main clone of a person stays as it is.
     fn forge(&self, wave: &Wave, fetch: bool) -> Result<Box<dyn Forge>>;
 
     /// Posts `body` as a message to the lead of the repository of
@@ -775,7 +879,7 @@ impl Lookout for Here {
         Box::pin(async move {
             let person = crate::identity::person(&wave.place(None)?, &wave.server)?;
             let api = riff_client::api::Api::new(&wave.server).signed_in(None)?;
-            api.bot(&person, fact, None).await
+            api.bot(&person, fact).await
         })
     }
 
@@ -1193,10 +1297,17 @@ fn read_all(
     now_ms: i64,
     riffs: &Riffs,
 ) -> Vec<(Watch, Result<Outcome>)> {
-    // The watch of a wave and the watch of a check need only `gh`.
-    let fetch = watches
-        .iter()
-        .any(|w| !matches!(w.op, Op::Wave | Op::Check { .. }));
+    // The watch of a wave and the watch of a check need only `gh`, but for
+    // the read of a release before its tag (01M75R6FPVZA3JA5C48PQ26A85).
+    let fetch = watches.iter().any(|w| match w.op {
+        Op::Wave => w
+            .seen
+            .release
+            .as_ref()
+            .is_some_and(|read| read.fetches(now_ms)),
+        Op::Check { .. } => false,
+        _ => true,
+    });
     let forge = match lookout.forge(wave, fetch) {
         Ok(forge) => forge,
         Err(e) => {
@@ -1280,7 +1391,7 @@ pub fn look(forge: &dyn Forge, watch: &mut Watch, now_ms: i64, riffs: &Riffs) ->
             };
             look_deploy(forge, &mut watch.seen, &deploy, stale)
         }
-        Op::Wave => look_wave(forge, &watch.repo, &mut watch.seen),
+        Op::Wave => look_wave(forge, &watch.repo, &mut watch.seen, now_ms),
         Op::Check {
             tag,
             comments,
@@ -1593,20 +1704,42 @@ fn look_check(
     Ok(Outcome::default())
 }
 
-/// One look of the watch of the current wave of `repo`. When the last open
-/// item of the wave closes, it tells the lead one time. While the wave of a
-/// repository with the table `[release]` has no open item and no release
-/// issue, the watch keeps it in [`Seen::complete`], with why the cut waits
-/// ([`cut_waits`], 01M75N6YNHQQHGS0VGKTKSNJTR). The release issue of the cut
-/// ends it.
-fn look_wave(forge: &dyn Forge, repo: &str, seen: &mut Seen) -> Result<Outcome> {
+/// One look of the watch of the current wave of `repo` at `now_ms`. When the
+/// last open item of the wave closes, it tells the lead one time. While the
+/// wave of a repository with the table `[release]` has no open item and no
+/// release issue, the watch keeps it in [`Seen::complete`], with why the cut
+/// waits ([`cut_waits`], 01M75N6YNHQQHGS0VGKTKSNJTR). The release issue of
+/// the cut ends it. From then on, the watch keeps the release of the newest
+/// release issue of the wave at its step in [`Seen::release`]
+/// ([`read_release`], 01M75R6FPVZA3JA5C48PQ26A85). It reads it again each
+/// [`read_every`], and at once for a new release issue. A read that fails
+/// keeps the last read.
+fn look_wave(forge: &dyn Forge, repo: &str, seen: &mut Seen, now_ms: i64) -> Result<Outcome> {
     let Some((title, open)) = forge.wave_open()? else {
         seen.complete = None;
+        seen.release = None;
         return Ok(Outcome::default());
     };
     let number = hygiene::wave_number(&title).unwrap_or_default();
     let release = forge.has_release();
-    seen.complete = match open == 0 && release && !forge.wave_released(&title)? {
+    let issue = match release {
+        true => forge.wave_release(&title)?,
+        false => None,
+    };
+    let cut = issue.is_some();
+    let kept = |read: &ReleaseRead, issue: &str| read.issue == issue && !read.due(now_ms);
+    seen.release = match issue {
+        None => None,
+        Some(issue) if seen.release.as_ref().is_some_and(|r| kept(r, &issue)) => {
+            seen.release.take()
+        }
+        Some(issue) => Some(ReleaseRead {
+            release: read_release(forge, repo, &issue)?,
+            issue,
+            at_ms: now_ms,
+        }),
+    };
+    seen.complete = match open == 0 && release && !cut {
         true => Some(daemons::Complete {
             repo: repo.to_owned(),
             wave: number,
@@ -1633,6 +1766,64 @@ fn look_wave(forge: &dyn Forge, repo: &str, seen: &mut Seen) -> Result<Outcome> 
         }],
         end: false,
         then: None,
+    })
+}
+
+/// The release of the release issue `issue` of the current wave of `repo` at
+/// its step, as `riff release status` reads it ([`cycle::stage`],
+/// 01M75R6FPVZA3JA5C48PQ26A85). At the cut, the full check and the verify of
+/// the release pull request give the step ([`pull_step`]). `None` for a
+/// title with no version, a release with no pull request and no tag, a
+/// checked release and a release after a rollback.
+fn read_release(forge: &dyn Forge, repo: &str, issue: &str) -> Result<Option<daemons::Release>> {
+    let Some(version) = issue
+        .strip_prefix("Release ")
+        .and_then(|tag| cycle::tag_version(tag).ok())
+    else {
+        return Ok(None);
+    };
+    let Some(stage) = cycle::stage(forge, version)? else {
+        return Ok(None);
+    };
+    let step = match stage.state {
+        State::Cut => match stage.pr {
+            Some(number) => pull_step(forge, number)?,
+            None => ReleaseStep::PullRuns,
+        },
+        State::Merged => match stage.test.map(|(_, state)| state) {
+            None => ReleaseStep::Merged,
+            Some(TestState::Running) => ReleaseStep::TestRuns,
+            Some(TestState::Failed) => ReleaseStep::TestFailed,
+            Some(TestState::Passed) => ReleaseStep::Tested,
+        },
+        State::Tested => ReleaseStep::Tested,
+        State::Published => ReleaseStep::Published,
+        State::Waiting => ReleaseStep::Waits,
+        State::Deploying => ReleaseStep::Runs,
+        State::Deployed => ReleaseStep::Passed,
+        State::Failed if stage.checks_failed => ReleaseStep::CheckFailed,
+        State::Failed => ReleaseStep::DeployFailed,
+        State::Checked | State::RolledBack => return Ok(None),
+    };
+    Ok(Some(daemons::Release {
+        repo: repo.to_owned(),
+        tag: cycle::tag(version),
+        step,
+    }))
+}
+
+/// The step of the open release pull request `number`
+/// (01M75R6FPVZA3JA5C48PQ26A85): its full check runs or failed, the lead
+/// verifies it next, or its verify passed and it merges. A full check that
+/// ended with no success failed, as for the watch of the pull request.
+fn pull_step(forge: &dyn Forge, number: u64) -> Result<ReleaseStep> {
+    let head = forge.candidate(number)?.head;
+    let checks = forge.full_check()?;
+    Ok(match forge.gate(&checks, &head)? {
+        Gate::Passed if forge.verify_passed(&head)? => ReleaseStep::Merges,
+        Gate::Passed => ReleaseStep::Verify,
+        Gate::Ended(_) => ReleaseStep::PullFailed,
+        Gate::Missing | Gate::Running => ReleaseStep::PullRuns,
     })
 }
 
@@ -2828,12 +3019,12 @@ mod tests {
         assert_eq!(complete(), Some(of(Some(CutWaits::Lead))));
 
         // The cut makes the release issue of the wave.
-        ground.forge(|f| f.wave_released = true);
+        ground.forge(|f| f.wave_release = Some("Release v3.3.0".into()));
         look(dir.path(), &ground, 6 * MINUTE).await;
         assert_eq!(complete(), None);
         // A new item of the wave.
         ground.forge(|f| {
-            f.wave_released = false;
+            f.wave_release = None;
             f.wave_open.as_mut().unwrap().1 = 1;
         });
         look(dir.path(), &ground, 7 * MINUTE).await;
@@ -2845,6 +3036,165 @@ mod tests {
         });
         look(dir.path(), &ground, 8 * MINUTE).await;
         assert_eq!(complete(), None);
+    }
+
+    /// The step of the release of the last read of the watch of the wave.
+    fn wave_step(dir: &Path) -> Option<ReleaseStep> {
+        let watches = Watches::new(dir).read().unwrap();
+        let wave = watches.iter().find(|w| w.op == Op::Wave).unwrap();
+        wave.release().map(|r| r.step)
+    }
+
+    /// A forge with the current wave 41 of a repository with the table
+    /// `[release]`, no open item, and the open release pull request #1140 of
+    /// v3.3.0 whose full check runs.
+    fn cut_forge() -> Fake {
+        Fake {
+            wave_open: Some(("Wave 41: only the current release".into(), 0)),
+            has_release: true,
+            wave_release: Some("Release v3.3.0".into()),
+            open_pr: Some((1140, "3.3.0")),
+            ..open_pull()
+        }
+    }
+
+    /// 01M75R6FPVZA3JA5C48PQ26A85: from the cut to the check, the watch of
+    /// the wave reads the release of the newest release issue of the wave at
+    /// each step, as `riff release status` does, and gives it to the facts of
+    /// its host. A checked release has no step.
+    #[tokio::test]
+    async fn the_watch_of_a_wave_reads_each_step_of_the_release_from_the_cut() {
+        let dir = daemon_dir();
+        let ground = Ground::new(cut_forge());
+        let every = i64::try_from(read_every().as_millis()).unwrap();
+        // A change of the forge, then the step of the next read.
+        type Step = (fn(&mut Fake), Option<ReleaseStep>);
+        let steps: [Step; 15] = [
+            (|_| {}, Some(ReleaseStep::PullRuns)),
+            (
+                |f| f.gate = Gate::Ended("failure".into()),
+                Some(ReleaseStep::PullFailed),
+            ),
+            (|f| f.gate = Gate::Passed, Some(ReleaseStep::Verify)),
+            (|f| f.verify = true, Some(ReleaseStep::Merges)),
+            (
+                |f| {
+                    f.open_pr = None;
+                    f.release_pr = Fake::ready("3.3.0").release_pr;
+                    f.since = vec!["m2", "m1"];
+                },
+                Some(ReleaseStep::Merged),
+            ),
+            (|f| f.running = vec!["m2"], Some(ReleaseStep::TestRuns)),
+            (
+                |f| {
+                    f.running = vec![];
+                    f.real = vec![("m2", false)];
+                },
+                Some(ReleaseStep::TestFailed),
+            ),
+            (|f| f.real = vec![("m2", true)], Some(ReleaseStep::Tested)),
+            (
+                |f| f.tags = vec!["v3.3.0".into()],
+                Some(ReleaseStep::Published),
+            ),
+            (
+                |f| f.deploy = deploy(DeployState::Waiting, &[]),
+                Some(ReleaseStep::Waits),
+            ),
+            (
+                |f| f.deploy = deploy(DeployState::Running, &[]),
+                Some(ReleaseStep::Runs),
+            ),
+            (
+                |f| f.deploy = deploy(DeployState::Passed, &[]),
+                Some(ReleaseStep::Passed),
+            ),
+            (
+                |f| f.issue = issue_with(true, &["failed"]),
+                Some(ReleaseStep::CheckFailed),
+            ),
+            (
+                |f| {
+                    f.issue = issue_with(true, &[]);
+                    f.deploy = deploy(DeployState::Failed, &["Deploy"]);
+                },
+                Some(ReleaseStep::DeployFailed),
+            ),
+            (|f| f.issue = issue_with(false, &[]), None),
+        ];
+        for (n, (change, step)) in (0..).zip(steps) {
+            ground.forge(change);
+            let now = MINUTE + n * every;
+            look(dir.path(), &ground, now).await;
+            assert_eq!(wave_step(dir.path()), step, "at {now}");
+        }
+        let watches = Watches::new(dir.path()).read().unwrap();
+        let read = watches[0].seen.release.as_ref().unwrap();
+        assert_eq!(read.issue, "Release v3.3.0");
+        // The wave has a release issue: it is not complete.
+        assert_eq!(watches[0].seen.complete, None);
+        assert!(ground.told().is_empty());
+    }
+
+    /// 01M75R6FPVZA3JA5C48PQ26A85: the watch of the wave reads the release
+    /// again only each `read_every`, and at once for a new release issue,
+    /// for example the cut of a fix forward. The read of a release before
+    /// its tag fetches the main clone first, and a read that fails keeps the
+    /// last read.
+    #[tokio::test]
+    async fn the_watch_of_a_wave_reads_the_release_each_few_minutes() {
+        let dir = daemon_dir();
+        let ground = Ground::new(cut_forge());
+        let every = i64::try_from(read_every().as_millis()).unwrap();
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(wave_step(dir.path()), Some(ReleaseStep::PullRuns));
+        // The first read of the cut needs only `gh`.
+        assert_eq!(*ground.fetches.lock().unwrap(), [false]);
+
+        ground.forge(|f| f.gate = Gate::Passed);
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert_eq!(
+            wave_step(dir.path()),
+            Some(ReleaseStep::PullRuns),
+            "no read yet"
+        );
+        look(dir.path(), &ground, MINUTE + every).await;
+        assert_eq!(wave_step(dir.path()), Some(ReleaseStep::Verify));
+        assert_eq!(*ground.fetches.lock().unwrap(), [false, false, true]);
+
+        // A fix forward: the cut of v3.3.1 makes a new release issue.
+        ground.forge(|f| {
+            f.wave_release = Some("Release v3.3.1".into());
+            f.open_pr = Some((1150, "3.3.1"));
+            f.gate = Gate::Running;
+        });
+        look(dir.path(), &ground, MINUTE + every + MINUTE).await;
+        let watches = Watches::new(dir.path()).read().unwrap();
+        let release = watches[0].release().unwrap();
+        assert_eq!(
+            (release.tag.as_str(), release.step),
+            ("v3.3.1", ReleaseStep::PullRuns)
+        );
+
+        // A read that fails keeps the last read.
+        *ground.fault.lock().unwrap() = Some("gh: HTTP 502".into());
+        look(dir.path(), &ground, 3 * every).await;
+        let watches = Watches::new(dir.path()).read().unwrap();
+        assert_eq!(watches[0].release().unwrap().tag, "v3.3.1");
+
+        // After the tag, the read needs no fetch.
+        *ground.fault.lock().unwrap() = None;
+        ground.forge(|f| {
+            f.open_pr = None;
+            f.release_pr = Fake::ready("3.3.1").release_pr;
+            f.tags = vec!["v3.3.1".into()];
+        });
+        look(dir.path(), &ground, 4 * every).await;
+        assert_eq!(wave_step(dir.path()), Some(ReleaseStep::Published));
+        ground.fetches.lock().unwrap().clear();
+        look(dir.path(), &ground, 5 * every).await;
+        assert_eq!(*ground.fetches.lock().unwrap(), [false]);
     }
 
     #[tokio::test]

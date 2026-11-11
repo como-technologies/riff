@@ -3,16 +3,16 @@
 //! (01M3WNN7VQJKN5MJH7JN50VF4D, 01M513W2K3HNRWPQTQNBQPT8MZ,
 //! 01M513W2NSE303E6XAM18BW7T6, 01M513W2RERJES76ZXKKHCV0DP,
 //! 01M515Z3Y7GSFNTJGXJD727MQK, 01M6QQ1NXY0CXMZEEEP413W4PK,
-//! 01M6QQ1P5YCT0JX90X5FCKM4W1, 01M6YPB5DZ9M3VEJ7V7P7EF797). The tests
-//! read `.github/workflows/ci.yml`, the justfile and
-//! `deploy/session-test.sh`.
+//! 01M6QQ1P5YCT0JX90X5FCKM4W1, 01M6YPB5DZ9M3VEJ7V7P7EF797,
+//! 01M75NAF4JQWQG3ZVGJM74XRBG). The tests read
+//! `.github/workflows/ci.yml`, the justfile and `deploy/session-test.sh`.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// The parts of the Gate: the jobs that the job `gate` needs.
-const PARTS: [&str; 3] = ["build", "test", "macos"];
+const PARTS: [&str; 4] = ["plan", "build", "test", "macos"];
 
 /// The parts of the Gate that run the checks of `just ci-full`. The job
 /// `macos` runs `just test-macos` (01M6YPB5DZ9M3VEJ7V7P7EF797).
@@ -124,26 +124,32 @@ fn the_gate_needs_each_part_and_runs_on_the_same_events() {
     // A skipped job counts as a pass of a required check, so the Gate
     // runs when a part fails.
     assert_eq!(field(&gate, "if"), format!("always() && {when}"));
-    assert_eq!(field(&job("test"), "if"), when);
-    // The job Build runs for a tag too: the tag takes the release binaries
-    // of its tree, or builds them (01M6QQ1P8H32E2TQ0CYA87R02V).
-    assert_eq!(
-        field(&job("build"), "if"),
-        "github.event_name != 'schedule'"
-    );
-    assert_eq!(field(&job("test"), "needs"), "[build]");
-    assert_eq!(field(&job("macos"), "if"), when);
+    // The tests and macOS run also only for a tree with no pass of its Gate
+    // (01M75NAF4JQWQG3ZVGJM74XRBG).
+    let tests = format!("{when} && needs.plan.outputs.run_tests == 'true'");
+    assert_eq!(field(&job("test"), "if"), tests);
+    // The jobs Plan and Build run for a tag too: the tag takes the release
+    // binaries of its tree, or builds them (01M6QQ1P8H32E2TQ0CYA87R02V).
+    for name in ["plan", "build"] {
+        assert_eq!(
+            field(&job(name), "if"),
+            "github.event_name != 'schedule'",
+            "{name}"
+        );
+    }
+    assert_eq!(field(&job("test"), "needs"), "[plan, build]");
+    assert_eq!(field(&job("macos"), "if"), tests);
 }
 
 /// 01M6YPB5DZ9M3VEJ7V7P7EF797: the job macOS lints and tests riff,
 /// riff-client and riff-core on a Mac with Apple silicon, and takes no
-/// artifact of Build.
+/// artifact of Build. It needs only the plan (01M75NAF4JQWQG3ZVGJM74XRBG).
 #[test]
 fn the_job_macos_tests_three_crates_on_a_mac_with_apple_silicon() {
     let macos = job("macos");
     assert_eq!(field(&macos, "name"), "macOS");
     assert_eq!(field(&macos, "runs-on"), "macos-latest");
-    assert!(!macos.contains("\n    needs:"), "{macos}");
+    assert_eq!(field(&macos, "needs"), "[plan]");
     assert!(!macos.contains("download-artifact"), "{macos}");
     // The check of the runner is the first command of the job.
     let check = "run: test \"$(uname -sm)\" = \"Darwin arm64\"\n";
@@ -231,17 +237,25 @@ fn each_job_of_ci_but_the_jobs_of_a_mac_runs_on_the_runner_of_riff_runner() {
     }
 }
 
-/// Runs the script of the step of the job `gate` with `RESULTS`, as
-/// GitHub runs it: bash with `-e`. It gives the exit code, and stdout
-/// and stderr.
+/// Runs the script of the step of the job `gate` with `RESULTS` and no
+/// pass of the tree, as GitHub runs it: bash with `-e`. It gives the exit
+/// code, and stdout and stderr.
 fn gate_step(results: &str) -> (Option<i32>, String) {
+    gate_step_after(results, "")
+}
+
+/// [`gate_step`] when the plan found the pass of the run `passed` on the
+/// tree: `PASSED_RUN`, empty for none.
+fn gate_step_after(results: &str, passed: &str) -> (Option<i32>, String) {
     let gate = job("gate");
     let script = gate
         .split_once("        run: |\n")
         .unwrap_or_else(|| panic!("no script:\n{gate}"))
         .1;
+    // The block ends at the first line with less indent: the next step.
     let script: String = script
         .lines()
+        .take_while(|line| line.is_empty() || line.starts_with("          "))
         .map(|line| line.strip_prefix("          ").unwrap_or(line))
         .map(|line| format!("{line}\n"))
         .collect();
@@ -249,6 +263,7 @@ fn gate_step(results: &str) -> (Option<i32>, String) {
         .args(["--noprofile", "--norc", "-e", "-o", "pipefail", "-c"])
         .arg(&script)
         .env("RESULTS", results)
+        .env("PASSED_RUN", passed)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -296,5 +311,43 @@ fn the_gate_fails_when_a_part_does_not_pass() {
                 "{text}"
             );
         }
+    }
+}
+
+/// 01M75NAF4JQWQG3ZVGJM74XRBG: when the plan found the pass of a run on
+/// the tree, the tests and macOS were skipped, and the Gate passes on
+/// that pass. Each other part still has to pass, and a part that ran and
+/// failed still fails the Gate.
+#[test]
+fn the_gate_passes_on_the_pass_of_the_tree_with_no_test() {
+    let gate = job("gate");
+    assert!(
+        gate.contains("PASSED_RUN: ${{ needs.plan.outputs.passed_run }}\n"),
+        "{gate}"
+    );
+    let skipped = "plan=success build=success test=skipped macos=skipped";
+    let (code, text) = gate_step_after(skipped, "77");
+    assert_eq!(code, Some(0), "{text}");
+    assert!(
+        text.contains(
+            "Run 77 passed the Gate on this tree, so the tests and macOS did not run again."
+        ),
+        "{text}"
+    );
+    // With no pass, a skipped part fails the Gate.
+    let (code, text) = gate_step(skipped);
+    assert_eq!(code, Some(1), "{text}");
+    assert!(
+        text.contains("::error::The part test of the Gate ended with skipped."),
+        "{text}"
+    );
+    for results in [
+        "plan=success build=skipped test=skipped macos=skipped",
+        "plan=success build=failure test=skipped macos=skipped",
+        "plan=success build=success test=failure macos=skipped",
+        "plan=success build=success test=skipped macos=cancelled",
+    ] {
+        let (code, text) = gate_step_after(results, "77");
+        assert_eq!(code, Some(1), "{results}: {text}");
     }
 }

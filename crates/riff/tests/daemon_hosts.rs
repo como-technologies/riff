@@ -2070,7 +2070,9 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
 /// A fake `gh` on the PATH for the watch of a wave: the open wave `Wave 41`
 /// with no open item, the release issues of the wave from the file
 /// `released`, the required check `Gate` of `main`, and its check runs from
-/// the file `main`.
+/// the file `main`. The open release pull requests come from the file
+/// `pulls`: #1140 has the head `abc`, with the check runs of the file `head`
+/// and no status.
 fn fake_wave(dir: &Path) -> Vec<(String, String)> {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -2080,14 +2082,21 @@ fn fake_wave(dir: &Path) -> Vec<(String, String)> {
          'api repos/{{owner}}/{{repo}}/milestones'*)\n\
            echo '[{{\"number\":41,\"title\":\"Wave 41\",\"open_issues\":0,\"closed_issues\":3}}]' ;;\n\
          'issue list --state all'*) cat {released} 2>/dev/null || echo '[]' ;;\n\
+         'pr list --state open'*) cat {pulls} 2>/dev/null || echo '[]' ;;\n\
+         'pr view 1140'*)\n\
+           echo '{{\"number\":1140,\"title\":\"Release v9.9.9\",\"state\":\"OPEN\",\"headRefOid\":\"abc\"}}' ;;\n\
          'api repos/{{owner}}/{{repo}}/rules/'*)\n\
            echo '[{{\"type\":\"required_status_checks\",\"parameters\":{{\"required_status_checks\":[{{\"context\":\"Gate\"}}]}}}}]' ;;\n\
          'api repos/{{owner}}/{{repo}}/commits/main/check-runs'*) cat {main} ;;\n\
+         'api repos/{{owner}}/{{repo}}/commits/abc/check-runs'*) cat {head} ;;\n\
+         'api repos/{{owner}}/{{repo}}/commits/abc/status') echo '{{\"statuses\":[]}}' ;;\n\
          'api repos/{{owner}}/{{repo}}') echo '{{\"default_branch\":\"main\"}}' ;;\n\
          *) echo '[]' ;;\n\
          esac\n",
         released = dir.join("released").display(),
         main = dir.join("main").display(),
+        pulls = dir.join("pulls").display(),
+        head = dir.join("head").display(),
     );
     isolated::write_program(bin.join("gh"), body);
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
@@ -2097,8 +2106,9 @@ fn fake_wave(dir: &Path) -> Vec<(String, String)> {
 /// 01M75N6YNHQQHGS0VGKTKSNJTR: `riff who` says that the current wave is
 /// complete and that its release waits for its cut, and why, with a real
 /// riff-server and a fake `gh`. The watch of the wave of the daemon gives the
-/// wave to the facts of its host. When the cut makes the release issue of
-/// the wave, the line goes.
+/// wave to the facts of its host. 01M75R6FPVZA3JA5C48PQ26A85: when the cut
+/// makes the release issue of the wave, the line of the release at its step
+/// takes its place.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_who_says_that_a_complete_wave_waits_for_its_cut() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2111,6 +2121,8 @@ async fn riff_who_says_that_a_complete_wave_waits_for_its_cut() {
     };
     set("main", &runs("completed", r#""failure""#));
     let r = riff_env(300, 300, &extra).await;
+    // The read of a release asks `origin` for its tag.
+    add_origin(&r.main, tmp.path());
     let repo = r.lead.place().repo_text();
     // The host a runs the wave of the repository: its daemon keeps the
     // watch of the wave.
@@ -2130,24 +2142,41 @@ async fn riff_who_says_that_a_complete_wave_waits_for_its_cut() {
             .find_map(|line| line.strip_prefix("release  "))
             .map(str::to_owned)
     };
-    let shows = |want: Option<&'static str>| async move {
+    let shows = |want: Option<String>| async move {
         let what = format!("riff who: {want:?}");
-        until(&what, || async {
-            (release().await.as_deref() == want).then_some(())
-        })
-        .await;
+        until(&what, || async { (release().await == want).then_some(()) }).await;
     };
 
     shows(Some(
-        "Wave 41 is complete: the release waits for its cut; the full check of main failed",
+        "Wave 41 is complete: the release waits for its cut; the full check of main failed".into(),
     ))
     .await;
     set("main", &runs("in_progress", "null"));
     shows(Some(
-        "Wave 41 is complete: the release waits for its cut; the full check of main runs",
+        "Wave 41 is complete: the release waits for its cut; the full check of main runs".into(),
     ))
     .await;
-    // The cut makes the release issue of the wave.
-    set("released", r#"[{"title":"Release v9.9.9"}]"#);
-    shows(None).await;
+    // The cut makes the release issue of the wave and the release pull
+    // request #1140, whose full check runs.
+    set("head", &runs("in_progress", "null"));
+    set(
+        "pulls",
+        r#"[{"number":1140,"title":"Release v9.9.9","headRefOid":"abc"}]"#,
+    );
+    set(
+        "released",
+        r#"[{"number":7,"title":"Release v9.9.9","state":"OPEN"}]"#,
+    );
+    shows(Some(
+        "v9.9.9: the full check of the release pull request runs".into(),
+    ))
+    .await;
+    // The full check passes: the lead verifies the pull request next.
+    set("head", &runs("completed", r#""success""#));
+    shows(Some(format!(
+        "v9.9.9: the full check of the release pull request passed; it waits for the verify of \
+         the lead of {}",
+        r.lead.place().repo_text()
+    )))
+    .await;
 }

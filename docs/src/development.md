@@ -131,16 +131,17 @@ test in the Gate.
 ## How the Gate runs
 
 The Gate on GitHub runs the checks of `just ci-full` as jobs. The job
-`Build` runs first. The jobs with the tests start when it ends. The job
-`macOS` starts at once, beside `Build`:
+`Plan` runs first, for some seconds. Then `Build` and `macOS` start.
+The jobs with the tests start when `Build` ends:
 
 | Job | Runs |
 |---|---|
+| `Plan` | Finds the artifacts of the tree that a run made already, and says what `Build` builds and if the tests run. It compiles nothing. See [Build once for each tree](#build-once-for-each-tree). |
 | `Build` | In the session image: `fmt-check`, `reqs`, `wrap`, `versions`, `book`, `lint`, `doc`, the test build and the doc tests. Then the static build, in `rust:CHANNEL-alpine`. |
 | `Tests 1/4` to `Tests 4/4` | Part 1 to part 4 of the tests, from the test binaries of `Build`, in the session image. They compile nothing. |
 | `Static riff` | Checks the static `riff` and `riff-server` of `Build`: no interpreter, and `riff --version` runs in the session image. |
 | `macOS` | On a Mac with Apple silicon, the runner `macos-latest` of GitHub: the lint and the tests of `riff`, `riff-client` and `riff-core`, compiled for macOS. It takes nothing from `Build`. |
-| `Gate` | Starts when `Build`, the tests and `macOS` ended. It passes only when each of them passed. |
+| `Gate` | Starts when `Plan`, `Build`, the tests and `macOS` ended. It passes only when each of them passed, or when the plan found a pass of the tree and skipped the tests and `macOS`. |
 
 The tests run in a container of the session image, as a session runs
 them (see
@@ -148,11 +149,12 @@ them (see
 
 ```mermaid
 flowchart LR
-    P["a push or a<br/>pull request"] --> B["Build: checks, test build,<br/>doc tests, static build"]
+    P["a push, a pull request<br/>or a merge group"] --> L["Plan: the artifacts<br/>of the tree"]
+    L --> B["Build: checks, test build,<br/>doc tests, static build"]
     B --> T["Tests 1/4 … 4/4<br/>no compile"]
     T --> G{"Gate: did each<br/>job pass?"}
     B --> G
-    P --> M["macOS: lint and tests<br/>on a Mac"]
+    L --> M["macOS: lint and tests<br/>on a Mac"]
     M --> G
     G -- yes --> S["Gate passes"]
     G -- no --> F["Gate fails"]
@@ -208,42 +210,53 @@ check, the tag and the deploy take the binaries of `Build`. The job
 `macOS` compiles `riff`, `riff-client` and `riff-core` for macOS (see
 [Run the tests of the job macOS on a Mac](#run-the-tests-of-the-job-macos-on-a-mac)).
 
-`Build` keeps its binaries as artifacts. The name of an artifact has
-the git tree of the commit, `git rev-parse HEAD^{tree}`. A commit of
-`main` and the pull request that made it have the same tree, so they
-have the same artifacts:
+`Build` keeps its binaries as artifacts, and `Gate` keeps its pass. The
+name of an artifact has the git tree of the commit,
+`git rev-parse HEAD^{tree}`. The merge queue of `main` tests the tree
+of each merge group, and that tree is the commit on `main`. So a commit
+of `main`, its merge group and often its pull request have the same
+tree, and the same artifacts:
 
 | Artifact | Holds |
 |---|---|
+| `gate-TREE` | The pass of the Gate of a run that ran the tests and `macOS` on the tree |
 | `tests-TREE` | The test binaries, and the manifest that names them |
 | `static-dev-TREE` | The static `riff` and `riff-server` of the profile `dev` |
 | `static-release-TREE` | The static `riff` and `riff-server` of the profile `release` |
 
-Before each build, `Build` asks for the artifacts of its tree. It
-builds only what is missing:
+The job `Plan` asks for the artifacts of the tree first. `Build` builds
+only what is missing. When `gate-TREE` is there, no test runs again:
 
 ```mermaid
 flowchart LR
-    B["Build (once for each tree)<br/>test binaries + static binaries<br/>+ clippy + rustdoc"] --> T1["Tests 1/4"]
-    B --> T2["Tests 2/4"]
-    B --> T3["Tests 3/4"]
-    B --> T4["Tests 4/4"]
-    B --> S["Static riff: the check"]
-    B -- "same tree" --> M["push to main: no build"]
-    B -- "same tree" --> R["tag: the release files"]
+    P["pull request: Build,<br/>tests and macOS once"] --> Q{"merge group:<br/>the same tree?"}
+    Q -- "yes: gate-TREE" --> N["no build, no test"]
+    Q -- "no: main moved" --> O["Build, tests and<br/>macOS once"]
+    N --> M["push to main:<br/>no build, no test"]
+    O --> M
+    M --> S["Static riff and Stage<br/>take the static binaries"]
+    M -- "same tree" --> R["tag: the release files"]
     R --> D["Deploy: image from the static riff-server,<br/>deploy with the static riff"]
-    B -- "same tree" --> X["real-session test: the static riff of the commit"]
+    M -- "same tree" --> X["real-session test: the static riff of the commit"]
 ```
 
 - A pull request builds both. A pull request with the label `release`
   builds the profile `release` with no cache, so each release binary
   comes from a clean build. Another pull request builds the profile
   `dev`, with a cache.
-- A push to `main`, and a merge group, find the artifacts of the pull
-  request with the same tree, and build nothing. The tests run again
-  with the test binaries of the pull request. With no such artifacts,
-  for example after a push by hand, the run builds as a pull request
-  does. When both profiles are there, it takes `release`.
+- A merge group with the tree of its pull request takes the artifacts
+  and `gate-TREE` of the pull request. It builds nothing, and runs no
+  test and no `macOS`. The `Gate` passes on the pass of the pull
+  request. When `main` moved, the merge group has a new tree: it builds
+  it and tests it once, and keeps its artifacts and `gate-TREE`.
+- A push to `main` takes the artifacts and `gate-TREE` of its merge
+  group. It builds nothing, and runs no test and no `macOS`. `Static
+  riff` and `Stage` run. With no such artifacts, for example after a
+  push by hand, the run builds and tests as a pull request does. When
+  both profiles are there, it takes `release`.
+- A tree with the artifacts of a run whose Gate failed has no
+  `gate-TREE`. The run takes the test binaries, and runs the tests
+  again.
 - A tag takes `static-release-TREE` of the release pull request. The
   job `Static riff` checks it, and the job `Static riff release` adds
   it to the release. With no such artifacts, `Build` builds the profile
@@ -253,8 +266,38 @@ flowchart LR
 - A person takes the same binaries for the real-session test: see
   [Take the static riff of CI](#take-the-static-riff-of-ci).
 
-An artifact of a run on a fork does not count. A run keeps its
-artifacts only after each step of `Build` passed.
+`Build` keeps its artifacts only after each of its steps passed. A run
+gives the artifacts of a tree to another run only when each of these is
+true:
+
+- It is a run of the workflow `.github/workflows/ci.yml` on a branch of
+  this repository. An artifact of a run on a fork does not count.
+- It is a push to `main`, a merge group or the run itself. Else the head
+  commit of the run has the folders `.github/workflows` and `deploy` and
+  the `justfile` of `main`. These files say what each job runs and how
+  it names the artifacts.
+- Its job that made the artifact passed: `Gate` for `gate-TREE`,
+  `Build` for the others.
+
+So a pull request that changes a workflow, a script of `deploy` or the
+`justfile` gives no artifact to another run. Its own run builds and
+tests, and its merge group builds and tests its tree again. A pull
+request whose branch has old copies of these files does the same until
+you rebase it on `main`. Of the runs that give an artifact, the newest
+artifact wins.
+
+```mermaid
+flowchart LR
+    A["a run with the<br/>artifact"] --> W{"ci.yml on a<br/>branch of this<br/>repository?"}
+    W -- no --> N["the artifact<br/>does not count"]
+    W -- yes --> E{"push to main,<br/>merge group<br/>or this run?"}
+    E -- no --> F{"workflows, deploy<br/>and justfile<br/>of main?"}
+    F -- no --> N
+    F -- yes --> J{"the job that made<br/>it passed?"}
+    E -- yes --> J
+    J -- no --> N
+    J -- yes --> C["the artifact counts"]
+```
 
 A binary that `Build` made for a pull request has the id of its code.
 The squash commit on `main` has the same tree, so it has the same id:
@@ -281,24 +324,26 @@ RIFF_BUILD_TIME=2026-11-06T07:00:05Z
 
 ### See what Build would build
 
-To see which artifacts exist for the tree of your commit, and what
-`Build` would build, run the plan of the job. You need `gh` signed in.
-`PROFILE` is `dev` or `release`:
+To see which artifacts exist for the tree of your commit, what `Build`
+would build, and if the tests would run, run the script of the job
+`Plan`. You need `gh` signed in. `PROFILE` is `dev` or `release`:
 
 ```sh
 GH_REPO=como-technologies/riff PROFILE=dev deploy/build-plan.sh
 ```
 
-The plan prints one line `name=value` for each of `tree`,
-`build_tests`, `tests_run`, `build_static`, `static_profile` and
-`static_run`. Its other lines say why. For a tree that a pull request
-built already:
+The plan prints one line `name=value` for each of `tree`, `run_tests`,
+`passed_run`, `build_tests`, `tests_run`, `build_static`,
+`static_profile` and `static_run`. Its other lines say why. For a tree
+whose pull request passed its Gate:
 
 ```text
 tree=3cb7dddbeb60394627c1d84282741051f80ee960
-build-plan: tests-3cb7dddb… is in run 42167961348: no test build.
+build-plan: gate-3cb7dddb… is in run 42167961348: the tree passed its Gate, so no test build and no test.
+run_tests=false
+passed_run=42167961348
 build_tests=false
-tests_run=42167961348
+tests_run=
 build-plan: static-dev-3cb7dddb… is in run 42167961348: no static build.
 build_static=false
 static_profile=dev
@@ -309,6 +354,20 @@ A tag builds the profile `release` and needs no test binary:
 
 ```sh
 GH_REPO=como-technologies/riff PROFILE=release TESTS=false deploy/build-plan.sh
+```
+
+### See which run gives an artifact
+
+To see the run whose artifact the plan takes, give the name of the
+artifact, for example `tests-TREE`. The script prints the run, or
+nothing. For each run whose artifact does not count, it says why:
+
+```sh
+GH_REPO=como-technologies/riff deploy/artifact-run.sh tests-TREE
+```
+
+```text
+artifact-run: tests-27c04e42… of the run 43065681019 does not count: its head commit eaa70cbf… does not have the .github/workflows, the deploy and the justfile of main.
 ```
 
 ### Keep the actions up to date
@@ -2714,7 +2773,10 @@ its verify passed. GitHub builds a merge group for it: `main` and the
 pull request. The Gate and Hygiene run on the merge group, and the job
 `Verify of the merge group` sets `riff/verify` on it from the passed
 verify of the head commit of the pull request. No new verify starts.
-GitHub squash-merges the group when the checks pass.
+GitHub squash-merges the group when the checks pass. When `main` did
+not move, the merge group has the tree of the pull request, and the
+Gate builds and tests nothing again: see
+[Build once for each tree](#build-once-for-each-tree).
 
 ```mermaid
 flowchart LR
@@ -2744,21 +2806,34 @@ it since, the wave acts one time for the head commit:
 
 ### Turn the merge queue on or off
 
-You need the rights of an admin of the repository. In your clone of
-`como-technologies/riff`, turn the queue on for the ruleset `main`:
+`riff init` turns the queue on in a repository with `[release]` in
+`riff.toml`, as this one. `just github` turns it on too: see
+[Set up the repository](#set-up-the-repository). You need the rights of
+an admin of the repository. In a plain terminal, not in a container, in
+your clone of `como-technologies/riff`:
 
 ```sh
-deploy/merge-queue.sh on como-technologies/riff
+riff init
 ```
 
-The script adds the rule `merge_queue` to the ruleset and changes no
-other rule. The queue merges with the method `squash`, builds up to 5
-merge groups at the same time, and waits 60 minutes for the checks of a
-group. It prints the file with the ruleset as it was. To turn the queue
-off:
+`riff init` puts the rule `merge_queue` in the ruleset that requires
+`riff/verify`, here `main`, and changes no other rule. A second run
+finds the queue and changes nothing. The queue merges with the method
+`squash`, builds up to 5 merge groups at the same time, and waits 60
+minutes for the checks of a group. The checks `Gate`, `Hygiene` and
+`riff/verify` of the ruleset run on each merge group.
+
+To turn the queue off for a time, run the script. It changes no other
+rule, and it prints the file with the ruleset as it was:
 
 ```sh
 deploy/merge-queue.sh off como-technologies/riff
+```
+
+To turn it on again:
+
+```sh
+deploy/merge-queue.sh on como-technologies/riff
 ```
 
 To use another ruleset than `main`, give its name last:
@@ -2772,7 +2847,8 @@ Turn the queue on only when the `main` of the repository has the event
 never start, and it removes each pull request after 60 minutes. The
 workflows of this repository have it: the Gate and Hygiene run on the
 merge group, and the job `Verify of the merge group` sets `riff/verify`
-on it. The ruleset that `riff init` makes has no merge queue.
+on it. So `riff init` puts no merge queue in a repository with no
+`[release]`.
 
 ### Add a host to the wave
 
@@ -2843,10 +2919,6 @@ each host:
 - "Wave N is complete";
 - a fault when riff cannot read the state of the forge (see
   [See the watches of the daemon](#see-the-watches-of-the-daemon)).
-
-The line in `riff chat` that tells you that the label `question` went on
-an issue comes one time too, and it goes to you, not to your lead (see
-[Ask the person a question](#ask-the-person-a-question)).
 
 A notice about one host comes from each host, because each host has its
 own fact:
@@ -3304,7 +3376,9 @@ ends with an open pull request leaves no record.
 
 A verify session can end with no PASS or FAIL. Your lead gets the
 message "ended with no PASS or FAIL", and the pull request waits for a
-new verify. The daemon leaves a record for it too, under the item
+new verify. When the pull request merged or closed before that end, your
+lead gets a note instead: the pull request is not open, so no verify
+waits. The daemon leaves a record for it too, under the item
 `verify-issue-N`. It shows the same facts as the record of a build, and
 the head commit that the session tested: see
 [See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head).
@@ -3317,7 +3391,7 @@ riff session why verify-issue-1203
 flowchart LR
     V["a verify session ends"] --> R{"a PASS or a FAIL<br/>in its result?"}
     R -- yes --> P["riff reports it on the pull request"]
-    R -- no --> N["a record in the thread ends,<br/>and a message to your lead"]
+    R -- no --> N["a record in the thread ends,<br/>and a message to your lead<br/>(a note when the pull request is not open)"]
     N --> W["riff session why verify-issue-N"]
 ```
 
@@ -3831,9 +3905,9 @@ From then on, riff waits for the answer:
   [See which wave runs, and where](#see-which-wave-runs-and-where)).
   The Waves tab of the TUI shows it in each wave (see
   [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)).
-- The look of the daemon tells the person one time in `riff chat`, with
-  the title and the link of the issue. It tells again only when the
-  label goes on again.
+- riff posts no line in `riff chat` for the question. The Waves tab and
+  `riff questions` show it (see
+  [See all your open questions](#see-all-your-open-questions)).
 
 The person answers in the body or in a comment, and can then mark the
 questions as answered (see
@@ -3852,7 +3926,7 @@ repository, when it is not there.
 ```mermaid
 flowchart LR
     L["the lead: the questions in the body,<br/>gh issue edit --add-label question"] --> G["the group question:<br/>no build"]
-    L --> C["one line in riff chat<br/>for the person"]
+    L --> C["the Waves tab and riff questions<br/>show the question"]
     P["the person answers<br/>in the body or in a comment"] --> R["the lead records the answer,<br/>gh issue edit --remove-label question"]
     G --> P
     R --> F["the wave takes the issue"]
@@ -3860,8 +3934,11 @@ flowchart LR
 
 ### See all your open questions
 
-To see each open question for you, in all your repositories, run this in
-any folder:
+riff posts no line in `riff chat` for a question. Two places show your
+open questions: the Waves tab of the TUI (see
+[See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)),
+and `riff questions`. To see each open question for you, in all your
+repositories, run this in any folder:
 
 ```sh
 riff questions
@@ -4233,7 +4310,16 @@ first free work:
    [Add a Done when line to an issue](#add-a-done-when-line-to-an-issue)).
 2. It starts nothing while the riff or the repository is paused. It
    never starts a held item, or an item that a session claims.
-3. It starts the verify of an item only when no session holds the
+3. It never starts a build of a merged item. A merged item has a pull
+   request that merged with `Refs #N` (see
+   [Leave the issue open for a check after the release](#leave-the-issue-open-for-a-check-after-the-release)),
+   or with `Closes #N` in the last hour. GitHub closes the issue of a
+   merge with `Closes #N`, but the close can come to the daemon after
+   the merge. In that time the wave still sees the issue open, with no
+   open pull request. So for one hour after the merge, the issue is
+   merged, and gets no comment `Merged in`. After that hour, an issue
+   that you open again is free work.
+4. It starts the verify of an item only when no session holds the
    item, and the full check of the head commit is done: each check that
    the ruleset of the default branch requires, but `riff/verify`, has a
    run that ended. A check with no run is not done. A repository with no
@@ -4241,17 +4327,17 @@ first free work:
    check on the head, it starts the fix of the check first (see
    [See why a verify waits](#see-why-a-verify-waits)). The verify is a
    new session: an author never verifies its own item.
-4. It starts the rebase of a pull request, or the fix of its failed
+5. It starts the rebase of a pull request, or the fix of its failed
    check, only when no verify of the same item runs. The verify tests
    the head that the fix replaces. The rebase or the fix starts after
    the verify ends.
-5. It starts one item at most 3 times in a run of the wave. A verify
+6. It starts one item at most 3 times in a run of the wave. A verify
    counts for each head commit of its pull request, and a verify with a
    PASS or FAIL does not count (see
    [See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head)).
    Then your lead gets a message, and the item waits for you (see
    [Start a spent item again](#start-a-spent-item-again)).
-6. It starts nothing while a fact of the machine fails: the sign-in of
+7. It starts nothing while a fact of the machine fails: the sign-in of
    `gh`, or the sign-in of `claude` with 60 minutes or more left. No
    start counts (see
    [When the sign-in of claude ends soon](#when-the-sign-in-of-claude-ends-soon)).
@@ -4696,7 +4782,7 @@ static `riff` and `riff-server` of the commit of `HEAD`, in this
 order:
 
 1. The artifact `static-release-TREE`, else `static-dev-TREE`, of a CI
-   run on a branch of this repository. `TREE` is the git tree of
+   run that gives the artifacts of a tree. `TREE` is the git tree of
    `HEAD` (see [Build once for each tree](#build-once-for-each-tree)).
 2. The files of the GitHub release of a tag `vX.Y.Z` on `HEAD`. The
    script checks their SHA-256 against `SHA256SUMS`.
@@ -5326,7 +5412,10 @@ It turns on auto-merge and squash merge only, and makes or updates
 two rulesets:
 
 - `main`: a change needs a pull request and the checks `Gate`,
-  `Hygiene` and `riff/verify`.
+  `Hygiene` and `riff/verify`. A merge queue with the method `squash`
+  merges each pull request: see
+  [Turn the merge queue on or off](#turn-the-merge-queue-on-or-off).
+  `riff init` sets the same queue.
 - `releases` on the tags `v*`: only the repository admin role and the
   lead App of the riff can create, move or delete a release tag. So the
   lead pushes the tag of a release from its container, and a worker
@@ -6905,7 +6994,7 @@ sequenceDiagram
 | The real-session test | `riff release test --host HOST` | the test passed, or failed |
 | The CI run of the tag | `riff release publish` | the job `Deploy` waits for a person (the owner gets the line in `riff chat`), or a job failed |
 | The job `Deploy` | `riff release approve`, `retry`, `rollback` | the job failed (the failed jobs), or it passed and your container runs the release (see [Wait for the new riff before the check](#wait-for-the-new-riff-before-the-check)) |
-| The wave | `riff join` | the last open item of the current wave closed |
+| The wave | `riff join` | the last open item of the current wave closed; from the cut to the check, it also gives the step of the release to `riff who` and the TUI |
 | The check of the lead | the watch of the job `Deploy`, at its end | never: it gives the step to `riff who` and the TUI (see [See who acts next on the release](#see-who-acts-next-on-the-release)) |
 
 The message ends with `next:` and the command of the next step. A
@@ -7008,6 +7097,15 @@ release  v3.3.0: the deploy runs; the riff is paused
 
 | Step | The line | Who acts next |
 |---|---|---|
+| The full check of the release pull request runs | `v3.3.0: the full check of the release pull request runs` | nobody: the check runs |
+| The full check of the release pull request failed | `v3.3.0: the full check of the release pull request failed: the lead of como-technologies/riff runs the failed jobs again` | the lead: the failed jobs again, then `riff release verify N` |
+| The full check of the release pull request passed | `v3.3.0: the full check of the release pull request passed; it waits for the verify of the lead of como-technologies/riff` | the lead: `riff release verify N` |
+| The verify passed | `v3.3.0: the verify of the release pull request passed; it merges` | nobody: GitHub merges it |
+| The release pull request merged | `v3.3.0: the release pull request merged; it waits for the real-session test of the lead of como-technologies/riff` | the lead: `riff release test v3.3.0 --host HOST` |
+| The real-session test runs | `v3.3.0: the real-session test runs` | nobody: the test runs |
+| The real-session test failed | `v3.3.0: the real-session test failed: the lead of como-technologies/riff files the bug in the wave` | the lead: the bug in the wave; the test runs again after its fix |
+| The real-session test passed | `v3.3.0: the real-session test passed; it waits for the publish of the lead of como-technologies/riff` | the lead: `riff release publish v3.3.0` |
+| The release is published | `v3.3.0: the CI run of the tag builds` | nobody: the jobs before `Deploy` run |
 | The job `Deploy` waits | `v3.3.0: the deploy waits for a person (riff release approve v3.3.0)` | a person in a terminal |
 | The deploy runs | `v3.3.0: the deploy runs; the riff is paused` | nobody: the job runs |
 | The deploy passed | `v3.3.0: the deploy passed; it waits for the check of the lead of como-technologies/riff` | the lead: `riff release check v3.3.0` |
@@ -7025,16 +7123,33 @@ a line comes first. The watch of the wave on each host that runs the
 wave reads the wave and the full check of `main` at each look. When riff
 cannot read the full check, the line is `Wave 41 is complete: the
 release waits for its cut`. The cut makes the release issue of the wave,
-and the line goes.
+and the line of the release takes its place.
 
 The line comes from the watches of the daemon of each host (see
 [See the watches of the daemon](#see-the-watches-of-the-daemon)) and
-from the pause of the riff. At the end of the job `Deploy`, the watch
-of the deploy leaves a watch of the check in its place. It reads the
-release issue each minute, posts nothing, and ends with a passed check,
-the check of a failed deploy, a rollback or a newer release. Only a
-comment after its start counts, so a check before a retry ends no
-watch. So the line can come up to a minute after a step.
+from the pause of the riff:
+
+```mermaid
+flowchart LR
+    W["the watch of the wave:<br/>riff release status, each 5 minutes"] -- "each step from the cut" --> F["the facts of the host"]
+    D["the watch of the deploy,<br/>then of the check: each minute"] -- "each step from the wait for the approve" --> F
+    F --> S[riff-server]
+    S --> R["riff who and the TUI:<br/>the latest step of the newest tag"]
+```
+
+From the cut, the watch of the wave reads the state of the newest
+release issue of the wave, as `riff release status` does. It reads it
+each 5 minutes, and at once after a cut. The watches of the deploy and
+of the check read their step each minute. Of one tag, the latest step
+that a host saw wins. So a step before the deploy can come up to 5
+minutes late.
+
+At the end of the job `Deploy`, the watch of the deploy leaves a watch
+of the check in its place. It reads the release issue each minute,
+posts nothing, and ends with a passed check, the check of a failed
+deploy, a rollback or a newer release. Only a comment after its start
+counts, so a check before a retry ends no watch. So a step of the
+deploy can come up to a minute late.
 
 #### Know what the other leads hear
 

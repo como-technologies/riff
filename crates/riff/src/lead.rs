@@ -257,7 +257,7 @@ fn spec_with(facts: &Facts, repo: &str, session_flag: &str, start: &str) -> Sess
 /// let status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![live],
 ///     limit: None, waiting: vec![], waves: vec![], parts: vec![], leaving: vec![], jobs: 0, test: None, mcp: vec![],
-///     claude_token: Default::default(), watches: vec![], complete: vec![], lost: vec![], github: Default::default(), no_starts: vec![], no_tokens: vec![], writes: vec![], sends: vec![], events: vec![],
+///     claude_token: Default::default(), watches: vec![], complete: vec![], releases: vec![], lost: vec![], github: Default::default(), no_starts: vec![], no_tokens: vec![], writes: vec![], sends: vec![], events: vec![],
 /// };
 /// assert!(riff::lead::runs(&status, "riff-lead-o-r"));
 /// assert!(!riff::lead::runs(&status, "riff-lead-o-other"));
@@ -276,7 +276,7 @@ pub fn runs(status: &Status, name: &str) -> bool {
 /// let mut status = Status {
 ///     pid: 1, build: "b".into(), since_ms: 0, dir: "/d".into(), sessions: vec![],
 ///     limit: None, waiting: vec![], waves: vec![], parts: vec![], leaving: vec![], jobs: 0, test: None, mcp: vec![],
-///     claude_token: Default::default(), watches: vec![], complete: vec![], lost: vec![], github: Default::default(), no_starts: vec![], no_tokens: vec![], writes: vec![], sends: vec![], events: vec![],
+///     claude_token: Default::default(), watches: vec![], complete: vec![], releases: vec![], lost: vec![], github: Default::default(), no_starts: vec![], no_tokens: vec![], writes: vec![], sends: vec![], events: vec![],
 /// };
 /// assert!(!riff::lead::gives_workers(&status, "o/r"));
 /// let part = |repo: &str, workers, lead| RepoParts { repo: repo.into(), parts: Parts { workers, lead } };

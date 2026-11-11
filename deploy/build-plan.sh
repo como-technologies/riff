@@ -1,38 +1,45 @@
 #!/usr/bin/env bash
-# Plans the build of the tree of HEAD for the job Build of CI
-# (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM): which
-# artifacts of the tree exist already, and which ones the job makes.
+# Plans the run of CI for the tree of HEAD. The job Plan runs it before
+# each other job (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM,
+# 01M75NAF4JQWQG3ZVGJM74XRBG): which artifacts of the tree exist already,
+# which ones the job Build makes, and if the tests run.
 #
 #   deploy/build-plan.sh [TREE]
 #
 # TREE is the git tree of HEAD, `git rev-parse HEAD^{tree}`, unless the
 # argument gives it. A tree names its artifacts, so a push to main, a
-# merge group or a tag finds the build that the pull request made:
+# merge group or a tag finds what the run of a pull request or of a merge
+# group with the same tree made:
 #
+#   gate-TREE             the pass of the Gate of a run that ran the tests
 #   tests-TREE            the test binaries and their manifest
 #   static-PROFILE-TREE   the static riff and riff-server, PROFILE dev or release
 #
 # The input is in the environment: PROFILE, dev or release, the profile
 # of the static build that the run wants (dev); TESTS, true or false, for
-# a run that needs the test binaries (true); GH_REPO, the repository
-# OWNER/REPO; GITHUB_RUN_ID, the run that makes what is missing. gh signs
-# in with GH_TOKEN, which needs the right to read actions.
+# a run that needs the tests (true); GH_REPO, the repository OWNER/REPO;
+# GITHUB_RUN_ID, the run that makes what is missing. gh signs in with
+# GH_TOKEN, which needs the right to read actions.
 #
 # The plan is lines `name=value`, in the file GITHUB_OUTPUT when it is
 # set, else on stdout:
 #
 #   tree           the tree
+#   run_tests      true when the tests and the job macOS run
+#   passed_run     the run that holds gate-TREE (empty when none does)
 #   build_tests    true when the job makes tests-TREE
-#   tests_run      the run that holds tests-TREE (empty when TESTS is false)
+#   tests_run      the run that holds tests-TREE (empty when no test runs)
 #   build_static   true when the job makes the static binaries
 #   static_profile the profile of the static binaries that the run takes
 #   static_run     the run that holds static-PROFILE-TREE
 #
-# A run of the profile release wants the release binaries of the tree. A
-# run of the profile dev takes the release binaries when they are there:
-# the release of a tree is the better build. gh finds only an artifact
-# that a run on a branch of this repository made, never one of a fork,
-# and one that did not expire. When gh fails, the plan builds.
+# A tree with gate-TREE passed its Gate in that run, so the run builds no
+# test binary and runs no test again. A run of the profile release wants
+# the release binaries of the tree. A run of the profile dev takes the
+# release binaries when they are there: the release of a tree is the
+# better build. The plan takes only an artifact that counts: see
+# deploy/artifact-run.sh (01M75TT13241HC22M0KBJ6HW96). When gh fails,
+# the plan takes the artifact as missing.
 set -euo pipefail
 HERE="$(dirname "$(readlink -f "$0")")"
 
@@ -64,7 +71,7 @@ fi
 find_run() {
     local run
     if ! run=$("$HERE/artifact-run.sh" "$1"); then
-        echo "build-plan: gh could not list the artifacts named $1. The job builds it." >&2
+        echo "build-plan: gh could not list the artifacts named $1. The run makes it." >&2
         return 0
     fi
     echo "$run"
@@ -80,10 +87,25 @@ emit() {
 
 emit tree "$TREE"
 
+# The pass of the Gate of the tree: then no test runs again.
+passed_run=""
+run_tests=false
+if [ "$TESTS" = true ]; then
+    passed_run=$(find_run "gate-$TREE")
+    if [ -z "$passed_run" ]; then
+        run_tests=true
+        echo "build-plan: no gate-$TREE: the tests and the job macOS run." >&2
+    else
+        echo "build-plan: gate-$TREE is in run $passed_run: the tree passed its Gate, so no test build and no test." >&2
+    fi
+fi
+emit run_tests "$run_tests"
+emit passed_run "$passed_run"
+
 # The test binaries.
 tests_run=""
 build_tests=false
-if [ "$TESTS" = true ]; then
+if [ "$run_tests" = true ]; then
     tests_run=$(find_run "tests-$TREE")
     if [ -z "$tests_run" ]; then
         build_tests=true

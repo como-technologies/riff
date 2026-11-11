@@ -1,10 +1,13 @@
 //! Build once for each tree (01M6QQ1NXY0CXMZEEEP413W4PK,
-//! 01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM): the plan of
-//! the job Build finds the artifacts that a run made for the same tree,
-//! and the jobs after it take them. The tests run `deploy/build-plan.sh`
-//! with a fake `gh`, and read the workflow. The fake prints what the
-//! `--jq` filter of the real `gh` prints: the filter is checked by a read
-//! of the live API, not here.
+//! 01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM), and test it
+//! once (01M75NAF4JQWQG3ZVGJM74XRBG, 01M75NAF7VV5S7343P9Q7H7F60,
+//! 01M75NAFBH6M49GMSV8VG857EP): the job Plan finds the artifacts and the
+//! pass of the Gate that a run made for the same tree, and the jobs after
+//! it take them. The tests run `deploy/build-plan.sh` with a fake `gh`,
+//! and read the workflow. The plan is the same for each event: a merge
+//! group and a push to `main` differ only in the artifacts that the forge
+//! holds. The fake prints what the `--jq` filter of the real `gh` prints:
+//! the filter is checked by a read of the live API, not here.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -16,19 +19,24 @@ fn top() -> PathBuf {
 
 /// A fake `gh` in `dir`. For `api repos/o/r/actions/artifacts?name=NAME
 /// ...` it prints the file `NAME` of `dir` when it is there, and nothing
-/// else. It fails when the file `fail` is there. It logs each call.
+/// else. Each run is a push to `main` that counts
+/// ([`RUNS_OF_MAIN`](crate::artifact_run::RUNS_OF_MAIN)). It fails when
+/// the file `fail` is there. It logs each call.
 fn gh(dir: &Path) {
     isolated::write_program(
         dir.join("gh"),
-        "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/calls\"\n\
-         if [ -f \"$dir/fail\" ]; then echo 'gh: boom' >&2; exit 1; fi\n\
-         case \"$1 $2\" in\n\
-         'api repos/o/r/actions/artifacts?name='*)\n\
-           name=${2#*name=}; name=${name%%&*}\n\
-           [ -f \"$dir/$name\" ] && cat \"$dir/$name\"\n\
-           exit 0 ;;\n\
-         esac\n\
-         echo \"no such call: $*\" >&2; exit 1\n",
+        [
+            "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/calls\"\n\
+             if [ -f \"$dir/fail\" ]; then echo 'gh: boom' >&2; exit 1; fi\n\
+             case \"$1 $2\" in\n\
+             'api repos/o/r/actions/artifacts?name='*)\n\
+               name=${2#*name=}; name=${name%%&*}\n\
+               [ -f \"$dir/$name\" ] && cat \"$dir/$name\"\n\
+               exit 0 ;;\n",
+            crate::artifact_run::RUNS_OF_MAIN,
+            "esac\necho \"no such call: $*\" >&2; exit 1\n",
+        ]
+        .concat(),
     );
 }
 
@@ -83,29 +91,124 @@ fn expect(plan: &BTreeMap<String, String>, want: &[(&str, &str)]) {
     assert_eq!(got, want);
 }
 
+/// The plan of a tree that no run built: this run, 900, builds and
+/// tests it.
+const BUILD_AND_TEST: [(&str, &str); 8] = [
+    ("tree", "T1"),
+    ("run_tests", "true"),
+    ("passed_run", ""),
+    ("build_tests", "true"),
+    ("tests_run", "900"),
+    ("build_static", "true"),
+    ("static_profile", "dev"),
+    ("static_run", "900"),
+];
+
+/// The plan of a tree whose Gate passed in the run `run`: no build and
+/// no test.
+fn nothing_from(run: &str) -> [(&'static str, String); 8] {
+    [
+        ("tree", "T1".into()),
+        ("run_tests", "false".into()),
+        ("passed_run", run.into()),
+        ("build_tests", "false".into()),
+        ("tests_run", String::new()),
+        ("build_static", "false".into()),
+        ("static_profile", "dev".into()),
+        ("static_run", run.into()),
+    ]
+}
+
+fn expect_owned(plan: &BTreeMap<String, String>, want: &[(&str, String)]) {
+    let want: Vec<(&str, &str)> = want.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    expect(plan, &want);
+}
+
+/// The artifacts that a run `run` keeps for the tree `T1` after its Gate
+/// passed: the test binaries, the static binaries and the pass.
+fn passed(run: &'static str) -> [(&'static str, &'static str); 3] {
+    [("gate-T1", run), ("tests-T1", run), ("static-dev-T1", run)]
+}
+
 #[test]
 fn a_tree_with_no_artifact_is_built_in_this_run() {
     let dir = forge(&[]);
     let (plan, out) = run_plan(dir.path(), "dev", "true");
     assert!(out.status.success(), "{}", stderr(&out));
-    expect(
-        &plan,
-        &[
-            ("tree", "T1"),
-            ("build_tests", "true"),
-            ("tests_run", "900"),
-            ("build_static", "true"),
-            ("static_profile", "dev"),
-            ("static_run", "900"),
-        ],
-    );
+    expect(&plan, &BUILD_AND_TEST);
 }
 
-/// The done-when of the issue: a push to main whose tree has the
-/// artifacts of a passed pull request head builds nothing, and takes
-/// both artifacts from the run of the pull request.
+/// 01M75NAF7VV5S7343P9Q7H7F60: a merge group whose tree is the tree of its
+/// pull request takes what the run of the pull request made: it builds
+/// nothing, and the tests and macOS do not run.
 #[test]
-fn a_push_to_main_with_the_tree_of_a_passed_pull_request_builds_nothing() {
+fn a_merge_group_with_the_tree_of_its_pull_request_builds_nothing_and_tests_nothing() {
+    let dir = forge(&passed("77"));
+    let (plan, out) = run_plan(dir.path(), "dev", "true");
+    assert!(out.status.success(), "{}", stderr(&out));
+    expect_owned(&plan, &nothing_from("77"));
+    assert!(
+        stderr(&out).contains(
+            "gate-T1 is in run 77: the tree passed its Gate, so no test build and no test."
+        ),
+        "{}",
+        stderr(&out)
+    );
+    assert!(stderr(&out).contains("no static build"), "{}", stderr(&out));
+    // No test runs, so the plan does not look for the test binaries.
+    let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+    assert!(!calls.contains("name=tests-"), "{calls}");
+}
+
+/// 01M75NAF7VV5S7343P9Q7H7F60, 01M75NAFBH6M49GMSV8VG857EP: a merge group
+/// with a new tree, after `main` moved, builds it and tests it in its own
+/// run. That run keeps its artifacts and its pass, so the push to `main`
+/// of the same tree builds nothing and tests nothing: the tree is built
+/// and tested once.
+#[test]
+fn a_merge_group_with_a_new_tree_builds_and_tests_it_once() {
+    // The pull request had another tree, before main moved.
+    let dir = forge(&[
+        ("gate-T0", "77"),
+        ("tests-T0", "77"),
+        ("static-dev-T0", "77"),
+    ]);
+    let (plan, out) = run_plan(dir.path(), "dev", "true");
+    assert!(out.status.success(), "{}", stderr(&out));
+    expect(&plan, &BUILD_AND_TEST);
+    assert!(
+        stderr(&out).contains("no gate-T1: the tests and the job macOS run."),
+        "{}",
+        stderr(&out)
+    );
+
+    // The merge group run, 900, passed its Gate and kept its artifacts.
+    for (name, run) in passed("900") {
+        std::fs::write(dir.path().join(name), format!("{run}\n")).unwrap();
+    }
+    let (plan, out) = run_plan(dir.path(), "dev", "true");
+    assert!(out.status.success(), "{}", stderr(&out));
+    expect_owned(&plan, &nothing_from("900"));
+}
+
+/// 01M75NAFBH6M49GMSV8VG857EP, #1181: a push to `main` with a tree that a
+/// run tested runs no test part and no job macOS, and builds nothing.
+#[test]
+fn a_push_to_main_with_a_tested_tree_runs_no_test() {
+    let dir = forge(&passed("78"));
+    let (plan, out) = run_plan(dir.path(), "dev", "true");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(plan["run_tests"], "false");
+    assert_eq!(plan["passed_run"], "78");
+    assert_eq!(plan["build_tests"], "false");
+    assert_eq!(plan["build_static"], "false");
+}
+
+/// 01M75NAF4JQWQG3ZVGJM74XRBG: a tree with the binaries of a run whose
+/// Gate did not pass has no `gate-TREE`: the run takes the binaries, and
+/// runs the tests again.
+#[test]
+fn a_tree_whose_gate_did_not_pass_runs_its_tests_again_and_builds_nothing() {
     let dir = forge(&[("tests-T1", "77"), ("static-dev-T1", "77")]);
     let (plan, out) = run_plan(dir.path(), "dev", "true");
     assert!(out.status.success(), "{}", stderr(&out));
@@ -113,6 +216,8 @@ fn a_push_to_main_with_the_tree_of_a_passed_pull_request_builds_nothing() {
         &plan,
         &[
             ("tree", "T1"),
+            ("run_tests", "true"),
+            ("passed_run", ""),
             ("build_tests", "false"),
             ("tests_run", "77"),
             ("build_static", "false"),
@@ -165,6 +270,8 @@ fn a_tag_takes_the_release_binaries_of_its_tree_or_builds_them() {
         &plan,
         &[
             ("tree", "T1"),
+            ("run_tests", "false"),
+            ("passed_run", ""),
             ("build_tests", "false"),
             ("tests_run", ""),
             ("build_static", "false"),
@@ -179,21 +286,27 @@ fn a_tag_takes_the_release_binaries_of_its_tree_or_builds_them() {
     assert_eq!(plan["static_run"], "900");
     let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
     assert!(!calls.contains("name=tests-"), "{calls}");
+    assert!(!calls.contains("name=gate-"), "{calls}");
 }
 
+/// A `gh` that fails gives no artifact: the run makes each of them, and
+/// runs the tests.
 #[test]
-fn a_failed_gh_builds_and_says_so() {
-    let dir = forge(&[("tests-T1", "77")]);
+fn a_failed_gh_builds_and_tests_and_says_so() {
+    let dir = forge(&passed("77"));
     std::fs::write(dir.path().join("fail"), "").unwrap();
     let (plan, out) = run_plan(dir.path(), "dev", "true");
     assert!(out.status.success(), "{}", stderr(&out));
-    assert_eq!(plan["build_tests"], "true");
-    assert_eq!(plan["build_static"], "true");
-    assert!(
-        stderr(&out).contains("gh could not list the artifacts named tests-T1. The job builds it."),
-        "{}",
-        stderr(&out)
-    );
+    expect(&plan, &BUILD_AND_TEST);
+    for name in ["gate-T1", "tests-T1", "static-dev-T1"] {
+        assert!(
+            stderr(&out).contains(&format!(
+                "gh could not list the artifacts named {name}. The run makes it."
+            )),
+            "{}",
+            stderr(&out)
+        );
+    }
 }
 
 #[test]
@@ -201,18 +314,35 @@ fn the_plan_asks_only_for_a_live_artifact_of_this_repository() {
     let dir = forge(&[]);
     run_plan(dir.path(), "dev", "true");
     let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
-    let call = calls.lines().next().unwrap();
-    assert!(
-        call.contains("repos/o/r/actions/artifacts?name=tests-T1&per_page=100"),
-        "{call}"
+    let names: Vec<&str> = calls
+        .lines()
+        .map(|call| {
+            call.split("name=")
+                .nth(1)
+                .unwrap()
+                .split('&')
+                .next()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        names,
+        ["gate-T1", "tests-T1", "static-release-T1", "static-dev-T1"]
     );
-    // A fork cannot give an artifact to a tag, and an expired one is gone.
-    for part in [
-        ".expired == false",
-        ".workflow_run.repository_id == .workflow_run.head_repository_id",
-        "sort_by(.created_at) | last",
-    ] {
-        assert!(call.contains(part), "{part} is not in {call}");
+    for call in calls.lines() {
+        assert!(
+            call.starts_with("api repos/o/r/actions/artifacts?name="),
+            "{call}"
+        );
+        assert!(call.contains("&per_page=100 "), "{call}");
+        // A fork cannot give an artifact to a tag, and an expired one is gone.
+        for part in [
+            ".expired == false",
+            ".workflow_run.repository_id == .workflow_run.head_repository_id",
+            "sort_by(.created_at) | reverse",
+        ] {
+            assert!(call.contains(part), "{part} is not in {call}");
+        }
     }
 }
 
@@ -312,14 +442,16 @@ impl Checkout {
         }
         isolated::write_program(
             bin.path().join("gh"),
-            "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/calls\"\n\
+            [
+                "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/calls\"\n\
              make() { printf '%s' \"$1\" > \"$2\"; }\n\
              case \"$1 $2\" in\n\
              'api repos/o/r/actions/artifacts?name='*)\n\
                name=${2#*name=}; name=${name%%&*}\n\
                [ -f \"$dir/art-$name\" ] && cat \"$dir/art-$name\"\n\
-               exit 0 ;;\n\
-             'run download')\n\
+               exit 0 ;;\n",
+                crate::artifact_run::RUNS_OF_MAIN,
+                "'run download')\n\
                [ -f \"$dir/fail-download\" ] && exit 1\n\
                while [ $# -gt 0 ]; do [ \"$1\" = --dir ] && d=$2; shift; done\n\
                make riff-bytes \"$d/riff\"; make server-bytes \"$d/riff-server\"; exit 0 ;;\n\
@@ -333,6 +465,8 @@ impl Checkout {
                exit 0 ;;\n\
              esac\n\
              echo \"no such call: $*\" >&2; exit 1\n",
+            ]
+            .concat(),
         );
         let git = |args: &[&str]| {
             let out = Command::new("git")
@@ -596,20 +730,108 @@ fn only_the_job_build_compiles_for_linux() {
     }
 }
 
-/// 01M6QQ1P37XW7N465MQGPHCXZM: each step of the job Build after the plan
-/// runs only when the plan says that its artifact is missing. So a run
-/// whose tree has both artifacts builds nothing.
+/// The value of the line `key: VALUE` of `job`, at the first level of
+/// the job.
+fn field(job: &str, key: &str) -> String {
+    let start = format!("\n    {key}: ");
+    let rest = job
+        .split_once(&start)
+        .unwrap_or_else(|| panic!("no {key}:\n{job}"))
+        .1;
+    rest.lines().next().unwrap().to_owned()
+}
+
+/// 01M75NAF4JQWQG3ZVGJM74XRBG: the job Plan runs the plan before each
+/// other job, and gives each line of the plan as an output. It runs on
+/// each event of Build, also the merge group, and builds nothing.
 #[test]
-fn each_build_step_runs_only_for_a_missing_artifact() {
-    let build_job = job("build");
-    let all = steps(&build_job);
+fn the_job_plan_runs_the_plan_and_gives_each_line_as_an_output() {
+    let plan = job("plan");
+    assert_eq!(field(&plan, "name"), "Plan");
+    assert_eq!(field(&plan, "if"), "github.event_name != 'schedule'");
+    assert!(!plan.contains("\n    needs:"), "{plan}");
+    let all = steps(&plan);
+    assert_eq!(all.len(), 2, "{all:?}");
     assert!(all[0].starts_with("uses: actions/checkout@"), "{}", all[0]);
     assert!(all[1].contains("id: plan\n"), "{}", all[1]);
     assert!(all[1].contains("run: deploy/build-plan.sh"), "{}", all[1]);
-    for step in &all[2..] {
+    // Each name that the plan writes is an output of the job.
+    let dir = forge(&[]);
+    let (lines, _) = run_plan(dir.path(), "dev", "true");
+    assert_eq!(lines.len(), 8, "{lines:?}");
+    for name in lines.keys() {
         assert!(
-            step.contains("if: steps.plan.outputs.build_tests == 'true'\n")
-                || step.contains("if: steps.plan.outputs.build_static == 'true'"),
+            plan.contains(&format!(
+                "\n      {name}: ${{{{ steps.plan.outputs.{name} }}}}\n"
+            )),
+            "{name} is no output of the job plan:\n{plan}"
+        );
+    }
+    assert!(plan.contains("GH_TOKEN: ${{ github.token }}\n"), "{plan}");
+    // Build, the tests, macOS, the Gate, the check of the static riff and
+    // the stage take the plan.
+    for name in ["build", "test", "macos", "gate", "static", "stage"] {
+        let needs = field(&job(name), "needs");
+        assert!(needs.contains("plan"), "{name}: {needs}");
+    }
+}
+
+/// 01M75NAF4JQWQG3ZVGJM74XRBG: the tests and macOS run only when the plan
+/// found no pass of the Gate on the tree. macOS needs only the plan, so it
+/// starts beside Build.
+#[test]
+fn the_tests_and_macos_run_only_for_a_tree_with_no_pass() {
+    let when = "github.event_name != 'schedule' && github.ref_type != 'tag' && \
+                needs.plan.outputs.run_tests == 'true'";
+    assert_eq!(field(&job("test"), "if"), when);
+    assert_eq!(field(&job("macos"), "if"), when);
+    assert_eq!(field(&job("macos"), "needs"), "[plan]");
+    assert_eq!(field(&job("test"), "needs"), "[plan, build]");
+}
+
+/// 01M75NAF4JQWQG3ZVGJM74XRBG, 01M75NAF7VV5S7343P9Q7H7F60: the Gate keeps
+/// its pass as `gate-TREE` when the tests ran in its run, after the step
+/// that checks each part. No event is left out, so a merge group keeps
+/// its pass for the push to `main`.
+#[test]
+fn the_gate_keeps_its_pass_as_gate_tree_when_the_tests_ran() {
+    let gate = job("gate");
+    let all = steps(&gate);
+    assert_eq!(all.len(), 3, "{all:?}");
+    assert!(all[0].starts_with("name: Each part passed\n"), "{}", all[0]);
+    let run = "if: needs.plan.outputs.run_tests == 'true'\n";
+    assert!(all[1].contains(run), "{}", all[1]);
+    assert!(all[1].contains("> target/gate/passed\n"), "{}", all[1]);
+    assert!(
+        all[2].starts_with("uses: actions/upload-artifact@"),
+        "{}",
+        all[2]
+    );
+    assert!(all[2].contains(run), "{}", all[2]);
+    assert!(
+        all[2].contains("name: gate-${{ needs.plan.outputs.tree }}\n"),
+        "{}",
+        all[2]
+    );
+    assert!(all[2].contains("path: target/gate/\n"), "{}", all[2]);
+    assert!(all[2].contains("if-no-files-found: error"), "{}", all[2]);
+    assert!(!gate.contains("event_name =="), "{gate}");
+    assert!(!job("build").contains("event_name =="), "{}", job("build"));
+}
+
+/// 01M6QQ1P37XW7N465MQGPHCXZM: each step of the job Build after the
+/// checkout runs only when the plan says that its artifact is missing. So
+/// a run whose tree has both artifacts builds nothing.
+#[test]
+fn each_build_step_runs_only_for_a_missing_artifact() {
+    let build_job = job("build");
+    assert_eq!(field(&build_job, "needs"), "[plan]");
+    let all = steps(&build_job);
+    assert!(all[0].starts_with("uses: actions/checkout@"), "{}", all[0]);
+    for step in &all[1..] {
+        assert!(
+            step.contains("if: needs.plan.outputs.build_tests == 'true'\n")
+                || step.contains("if: needs.plan.outputs.build_static == 'true'"),
             "a step runs with no plan:\n{step}"
         );
     }
@@ -632,10 +854,10 @@ fn each_build_step_runs_only_for_a_missing_artifact() {
 fn the_artifacts_have_the_tree_in_their_name_and_come_after_the_builds() {
     let build_job = job("build");
     let tests = build_job
-        .find("name: tests-${{ steps.plan.outputs.tree }}\n")
+        .find("name: tests-${{ needs.plan.outputs.tree }}\n")
         .unwrap_or_else(|| panic!("no tests artifact:\n{build_job}"));
     let static_ = build_job
-        .find("name: static-${{ steps.plan.outputs.static_profile }}-${{ steps.plan.outputs.tree }}\n")
+        .find("name: static-${{ needs.plan.outputs.static_profile }}-${{ needs.plan.outputs.tree }}\n")
         .unwrap_or_else(|| panic!("no static artifact:\n{build_job}"));
     for build in [
         "run: deploy/session-test.sh --build\n",
@@ -654,14 +876,14 @@ fn the_artifacts_have_the_tree_in_their_name_and_come_after_the_builds() {
     );
     // The names of the jobs that take them have the same form.
     for (name, artifact) in [
-        ("test", "tests-${{ needs.build.outputs.tree }}"),
+        ("test", "tests-${{ needs.plan.outputs.tree }}"),
         (
             "static",
-            "static-${{ needs.build.outputs.static_profile }}-${{ needs.build.outputs.tree }}",
+            "static-${{ needs.plan.outputs.static_profile }}-${{ needs.plan.outputs.tree }}",
         ),
         (
             "stage",
-            "static-${{ needs.build.outputs.static_profile }}-${{ needs.build.outputs.tree }}",
+            "static-${{ needs.plan.outputs.static_profile }}-${{ needs.plan.outputs.tree }}",
         ),
     ] {
         let taker = job(name);
@@ -687,8 +909,8 @@ fn the_artifacts_have_the_tree_in_their_name_and_come_after_the_builds() {
 /// riff release adds them to the release.
 #[test]
 fn a_tag_and_a_release_pull_request_build_the_release_profile() {
-    let build_job = job("build");
-    let profile = build_job
+    let plan_job = job("plan");
+    let profile = plan_job
         .lines()
         .find_map(|line| line.trim().strip_prefix("PROFILE: "))
         .unwrap();
@@ -698,7 +920,7 @@ fn a_tag_and_a_release_pull_request_build_the_release_profile() {
         "{profile}"
     );
     assert!(profile.ends_with("&& 'release' || 'dev' }}"), "{profile}");
-    assert!(build_job.contains("TESTS: ${{ github.ref_type != 'tag' }}\n"));
+    assert!(plan_job.contains("TESTS: ${{ github.ref_type != 'tag' }}\n"));
     let static_job = job("static");
     assert!(
         static_job.contains(

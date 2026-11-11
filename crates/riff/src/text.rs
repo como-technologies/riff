@@ -2499,11 +2499,12 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 }
 
 /// The line of the state of `release` in the header of the TUI and in `riff
-/// who` (01M6XTS1GCW7PTWSMM1HKQTHSN): what runs, what it waits for, and who
-/// acts next. `paused` is true while the whole riff is paused. `riff release
-/// check` resumes the riff after a passed check and after a failed deploy, so
-/// those steps have a line only while the riff is paused. The tag and the
-/// repository come from the facts of a host: the line has them [`safe`].
+/// who` (01M6XTS1GCW7PTWSMM1HKQTHSN, 01M75R6FPVZA3JA5C48PQ26A85): what runs,
+/// what it waits for, and who acts next, from the cut to the check. `paused`
+/// is true while the whole riff is paused. `riff release check` resumes the
+/// riff after a passed check and after a failed deploy, so those steps have
+/// a line only while the riff is paused. The tag and the repository come
+/// from the facts of a host: the line has them [`safe`].
 ///
 /// ```
 /// use riff_client::daemons::{Release, ReleaseStep};
@@ -2511,6 +2512,41 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 ///
 /// let at = |step| Release { repo: "o/r".into(), tag: "v3.3.0".into(), step };
 /// let line = |step, paused| release_line(&at(step), paused);
+/// // From the cut to the publish (01M75R6FPVZA3JA5C48PQ26A85).
+/// assert_eq!(
+///     line(ReleaseStep::PullRuns, false).unwrap(),
+///     "v3.3.0: the full check of the release pull request runs"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::PullFailed, false).unwrap(),
+///     "v3.3.0: the full check of the release pull request failed: the lead of o/r runs the \
+///      failed jobs again"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::Verify, false).unwrap(),
+///     "v3.3.0: the full check of the release pull request passed; it waits for the verify of \
+///      the lead of o/r"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::Merges, false).unwrap(),
+///     "v3.3.0: the verify of the release pull request passed; it merges"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::Merged, false).unwrap(),
+///     "v3.3.0: the release pull request merged; it waits for the real-session test of the lead \
+///      of o/r"
+/// );
+/// assert_eq!(line(ReleaseStep::TestRuns, false).unwrap(), "v3.3.0: the real-session test runs");
+/// assert_eq!(
+///     line(ReleaseStep::TestFailed, false).unwrap(),
+///     "v3.3.0: the real-session test failed: the lead of o/r files the bug in the wave"
+/// );
+/// assert_eq!(
+///     line(ReleaseStep::Tested, false).unwrap(),
+///     "v3.3.0: the real-session test passed; it waits for the publish of the lead of o/r"
+/// );
+/// assert_eq!(line(ReleaseStep::Published, false).unwrap(), "v3.3.0: the CI run of the tag builds");
+/// // From the wait for the approve to the check (01M6XTS1GCW7PTWSMM1HKQTHSN).
 /// assert_eq!(
 ///     line(ReleaseStep::Waits, false).unwrap(),
 ///     "v3.3.0: the deploy waits for a person (riff release approve v3.3.0)"
@@ -2540,7 +2576,30 @@ pub fn release_refused(command: &str, refusal: crate::cycle::Refusal) -> String 
 pub fn release_line(release: &riff_client::daemons::Release, paused: bool) -> Option<String> {
     use riff_client::daemons::ReleaseStep;
     let (tag, repo) = (safe(&release.tag), safe(&release.repo));
+    let pull = "the full check of the release pull request";
     let state = match (release.step, paused) {
+        (ReleaseStep::PullRuns, _) => format!("{pull} runs"),
+        (ReleaseStep::PullFailed, _) => {
+            format!("{pull} failed: the lead of {repo} runs the failed jobs again")
+        }
+        (ReleaseStep::Verify, _) => {
+            format!("{pull} passed; it waits for the verify of the lead of {repo}")
+        }
+        (ReleaseStep::Merges, _) => {
+            "the verify of the release pull request passed; it merges".to_owned()
+        }
+        (ReleaseStep::Merged, _) => format!(
+            "the release pull request merged; it waits for the real-session test of the lead of \
+             {repo}"
+        ),
+        (ReleaseStep::TestRuns, _) => "the real-session test runs".to_owned(),
+        (ReleaseStep::TestFailed, _) => {
+            format!("the real-session test failed: the lead of {repo} files the bug in the wave")
+        }
+        (ReleaseStep::Tested, _) => {
+            format!("the real-session test passed; it waits for the publish of the lead of {repo}")
+        }
+        (ReleaseStep::Published, _) => "the CI run of the tag builds".to_owned(),
         (ReleaseStep::Waits, _) => {
             format!("the deploy waits for a person (riff release approve {tag})")
         }
@@ -8917,6 +8976,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     claude_token: riff_client::daemons::Token::NotSet,
 ///     watches: vec![],
 ///     complete: vec![],
+///     releases: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     no_starts: vec![],
@@ -10157,6 +10217,84 @@ pub fn init_releases_done(slug: &str) -> String {
     format!("only the admin role and {slug} push a tag v*")
 }
 
+/// The name of the check of the merge queue of the default branch
+/// (01M75NAPNH1SP8AC90NYFQP8SK).
+pub const INIT_QUEUE: &str = "the merge queue";
+
+/// The default branch `branch` of `repo` merges through a merge queue.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_queue_on("o/r", "main"),
+///     "main of o/r merges through a merge queue with the method squash"
+/// );
+/// ```
+pub fn init_queue_on(repo: &str, branch: &str) -> String {
+    format!("{branch} of {repo} merges through a merge queue with the method squash")
+}
+
+/// The repository `repo` has the release cycle of riff, and no merge
+/// queue on its default branch `branch`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_queue_off("o/r", "main"),
+///     "o/r has the release cycle of riff and no merge queue on main, so a merge can put a tree \
+///      on main that no Gate tested"
+/// );
+/// ```
+pub fn init_queue_off(repo: &str, branch: &str) -> String {
+    format!(
+        "{repo} has the release cycle of riff and no merge queue on {branch}, so a merge can put \
+         a tree on {branch} that no Gate tested"
+    )
+}
+
+/// The fix of the merge queue of the default branch `branch`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_fix_queue("main"),
+///     "add a merge queue with the method squash to the ruleset of main. See \"Turn the merge \
+///      queue on or off\" in the book. Then run riff init again"
+/// );
+/// ```
+pub fn init_fix_queue(branch: &str) -> String {
+    format!(
+        "add a merge queue with the method squash to the ruleset of {branch}. See \"Turn the \
+         merge queue on or off\" in the book. Then run riff init again"
+    )
+}
+
+/// What the step of the merge queue did to the ruleset `name`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_queue_done("main"),
+///     "the ruleset main has the merge queue with the method squash"
+/// );
+/// ```
+pub fn init_queue_done(name: &str) -> String {
+    format!("the ruleset {name} has the merge queue with the method squash")
+}
+
+/// No ruleset of the default branch `branch` requires the check `verify`,
+/// so the step of the merge queue has no ruleset to change.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_queue_no_ruleset("main", "riff/verify"),
+///     "no ruleset of main requires the check riff/verify, so riff has no ruleset for the merge \
+///      queue. Make the ruleset first, then run riff init again"
+/// );
+/// ```
+pub fn init_queue_no_ruleset(branch: &str, verify: &str) -> String {
+    format!(
+        "no ruleset of {branch} requires the check {verify}, so riff has no ruleset for the merge \
+         queue. Make the ruleset first, then run riff init again"
+    )
+}
+
 /// riff cannot ask the riff-server at `server` for the lead App: `why`.
 ///
 /// ```
@@ -10492,6 +10630,7 @@ pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: 
 ///     claude_token: Default::default(),
 ///     watches: vec![],
 ///     complete: vec![],
+///     releases: vec![],
 ///     lost: vec![],
 ///     github: Default::default(),
 ///     no_starts: vec![],
@@ -11813,19 +11952,62 @@ pub fn wave_saved(item: &str, branch: &str, commit: &str, clone: &Path) -> Strin
     )
 }
 
-/// A verify of a wave ended with no verdict.
-pub fn wave_no_result(item: &str, pull: u64) -> String {
+/// A verify of a wave ended with no verdict. Only a pull request that is
+/// still `open` waits for a new verify (01M75R71BCDCP882W75GSE52VT).
+///
+/// ```
+/// let open = riff::text::wave_no_result("verify-issue-12", 40, true);
+/// assert!(open.ends_with("The pull request waits for a new verify."));
+/// let merged = riff::text::wave_no_result("verify-issue-12", 40, false);
+/// assert!(merged.ends_with("The pull request is not open, so no verify waits."));
+/// ```
+pub fn wave_no_result(item: &str, pull: u64, open: bool) -> String {
     format!(
         "{item}: the verify session of pull request #{pull} ended with no PASS or FAIL. riff \
-         reported nothing. The pull request waits for a new verify."
+         reported nothing. {}",
+        verify_waits(open)
     )
 }
 
-/// The report of a verify of a wave failed.
-pub fn wave_no_report(item: &str, pull: u64, error: &str) -> String {
+/// The report of a verify of a wave failed. Only a pull request that is
+/// still `open` waits for a new verify (01M75R71BCDCP882W75GSE52VT).
+///
+/// ```
+/// let text = riff::text::wave_no_report("verify-issue-12", 40, "HTTP 502", false);
+/// assert!(text.contains("pull request #40: HTTP 502."), "{text}");
+/// assert!(!text.contains("waits for a new verify"), "{text}");
+/// ```
+pub fn wave_no_report(item: &str, pull: u64, error: &str, open: bool) -> String {
     format!(
-        "{item}: riff could not report the verify of pull request #{pull}: {error}. The pull \
-         request waits for a new verify."
+        "{item}: riff could not report the verify of pull request #{pull}: {error}. {}",
+        verify_waits(open)
+    )
+}
+
+/// What waits after a verify that riff did not report: a new verify for an
+/// `open` pull request, and none for a merged or closed one.
+fn verify_waits(open: bool) -> &'static str {
+    match open {
+        true => "The pull request waits for a new verify.",
+        false => "The pull request is not open, so no verify waits.",
+    }
+}
+
+/// The head of a verify had the status `riff/verify` success at the read
+/// before the claim, and the look of the wave did not show it yet (#1960).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_verify_passed("o/r", "verify-issue-12", "1a2b3c4d5e"),
+///     "The wave of o/r: the head 1a2b3c4 of verify-issue-12 has a riff/verify success. riff \
+///      starts no verify of it, and the start does not count."
+/// );
+/// ```
+pub fn wave_verify_passed(repo: &str, item: &str, commit: &str) -> String {
+    let short: String = commit.chars().take(7).collect();
+    format!(
+        "The wave of {repo}: the head {short} of {item} has a riff/verify success. riff starts \
+         no verify of it, and the start does not count."
     )
 }
 

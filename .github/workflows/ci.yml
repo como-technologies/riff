@@ -48,55 +48,77 @@ jobs:
   # artifacts. The artifacts have the git tree
   # of the commit in their name, so a push to main, a merge group and a
   # tag take the binaries that the pull request with the same tree made
-  # (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM).
+  # (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM). The Gate
+  # keeps its pass as the artifact gate-TREE, so a merge group or a push
+  # to main with a tree that passed tests it no more
+  # (01M75NAF4JQWQG3ZVGJM74XRBG, 01M75NAF7VV5S7343P9Q7H7F60,
+  # 01M75NAFBH6M49GMSV8VG857EP).
   #
-  # The Gate runs its checks as jobs (01M513W2K3HNRWPQTQNBQPT8MZ): Build,
-  # and the tests in parts. Together they run each check of just ci-full
-  # (01M3WNN7VQJKN5MJH7JN50VF4D). The job macOS runs the lint and the
-  # tests of riff, riff-client and riff-core on a Mac
+  # The Gate runs its checks as jobs (01M513W2K3HNRWPQTQNBQPT8MZ): Plan,
+  # Build, and the tests in parts. Together they run each check of just
+  # ci-full (01M3WNN7VQJKN5MJH7JN50VF4D). The job macOS runs the lint and
+  # the tests of riff, riff-client and riff-core on a Mac
   # (01M6YPB5DZ9M3VEJ7V7P7EF797). The last job, Gate, needs each of them.
   # Each job but macOS, macOS riff and Linux riff of a Mac runs on the
   # runner of the repository variable RIFF_RUNNER, with the default
   # ubuntu-latest (01M513W2RERJES76ZXKKHCV0DP).
-  build:
-    # The plan finds the artifacts of the tree. A step builds only what is
-    # missing: the checks and the test build run in the session image, as
-    # the tests run (01M515Z3Y7GSFNTJGXJD727MQK), and the static build
-    # runs in rust:CHANNEL-alpine (01M4ZPJ04D9MJHNPAV0WN1KCES). A pull
-    # request with the label release and a tag build the profile release
-    # with no cache, so each release binary comes from a clean build
-    # (01M6QQ1P8H32E2TQ0CYA87R02V). A tag needs no test binary. The job
-    # keeps each artifact only after each step passed.
-    name: Build
+  plan:
+    # The plan of the run, before each other job
+    # (01M75NAF4JQWQG3ZVGJM74XRBG): the artifacts of the tree that a run
+    # made already, the ones that Build makes, and if the tests and macOS
+    # run. It compiles nothing. A pull request with the label release and
+    # a tag want the profile release (01M6QQ1P8H32E2TQ0CYA87R02V). A tag
+    # needs no test.
+    name: Plan
     if: github.event_name != 'schedule'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     outputs:
       tree: ${{ steps.plan.outputs.tree }}
+      run_tests: ${{ steps.plan.outputs.run_tests }}
+      passed_run: ${{ steps.plan.outputs.passed_run }}
+      build_tests: ${{ steps.plan.outputs.build_tests }}
       tests_run: ${{ steps.plan.outputs.tests_run }}
+      build_static: ${{ steps.plan.outputs.build_static }}
       static_profile: ${{ steps.plan.outputs.static_profile }}
       static_run: ${{ steps.plan.outputs.static_run }}
     env:
-      RIFF_ENGINE: docker
-      RIFF_STATIC_CARGO: ${{ github.workspace }}/target/static-cargo
-      CARGO_INCREMENTAL: 0
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       PROFILE: ${{ (github.ref_type == 'tag' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release'))) && 'release' || 'dev' }}
       TESTS: ${{ github.ref_type != 'tag' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Plan the run
+        id: plan
+        run: deploy/build-plan.sh
+
+  build:
+    # A step builds only what the plan finds missing: the checks and the
+    # test build run in the session image, as the tests run
+    # (01M515Z3Y7GSFNTJGXJD727MQK), and the static build runs in
+    # rust:CHANNEL-alpine (01M4ZPJ04D9MJHNPAV0WN1KCES). The profile
+    # release builds with no cache, so each release binary comes from a
+    # clean build (01M6QQ1P8H32E2TQ0CYA87R02V). The job keeps each
+    # artifact only after each step passed.
+    name: Build
+    needs: [plan]
+    if: github.event_name != 'schedule'
+    runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
+    env:
+      RIFF_ENGINE: docker
+      RIFF_STATIC_CARGO: ${{ github.workspace }}/target/static-cargo
+      CARGO_INCREMENTAL: 0
     steps:
       # build-id.sh reads the time of the last commit that changed the code.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Plan the build
-        id: plan
-        run: deploy/build-plan.sh
-
       # session-test.sh names the path of the build, so it is in the key
       # (01M75NDR415ES5GK69MX80PTBS).
       - name: Cache the test build
-        if: steps.plan.outputs.build_tests == 'true'
+        if: needs.plan.outputs.build_tests == 'true'
         uses: actions/cache@v6
         with:
           path: target/session
@@ -104,11 +126,11 @@ jobs:
           restore-keys: session-
 
       - name: Check the code and build the tests
-        if: steps.plan.outputs.build_tests == 'true'
+        if: needs.plan.outputs.build_tests == 'true'
         run: deploy/session-test.sh --build
 
       - name: Cache the static build
-        if: steps.plan.outputs.build_static == 'true' && steps.plan.outputs.static_profile != 'release'
+        if: needs.plan.outputs.build_static == 'true' && needs.plan.outputs.static_profile != 'release'
         uses: actions/cache@v6
         with:
           path: |
@@ -118,31 +140,31 @@ jobs:
           restore-keys: static-dev-
 
       - name: Build the static riff
-        if: steps.plan.outputs.build_static == 'true'
+        if: needs.plan.outputs.build_static == 'true'
         env:
-          STATIC_PROFILE: ${{ steps.plan.outputs.static_profile }}
+          STATIC_PROFILE: ${{ needs.plan.outputs.static_profile }}
         run: deploy/static/build.sh "$STATIC_PROFILE"
 
       # The container writes as root. The cache saves the files at the
       # end of the job as the runner user.
       - name: Give the files of the build to the runner user
-        if: steps.plan.outputs.build_static == 'true' && steps.plan.outputs.static_profile != 'release'
+        if: needs.plan.outputs.build_static == 'true' && needs.plan.outputs.static_profile != 'release'
         run: sudo chown -R "$(id -u):$(id -g)" target/static target/static-cargo
 
       - uses: actions/upload-artifact@v7
-        if: steps.plan.outputs.build_tests == 'true'
+        if: needs.plan.outputs.build_tests == 'true'
         with:
-          name: tests-${{ steps.plan.outputs.tree }}
+          name: tests-${{ needs.plan.outputs.tree }}
           path: target/test-archive/
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v7
-        if: steps.plan.outputs.build_static == 'true'
+        if: needs.plan.outputs.build_static == 'true'
         with:
-          name: static-${{ steps.plan.outputs.static_profile }}-${{ steps.plan.outputs.tree }}
+          name: static-${{ needs.plan.outputs.static_profile }}-${{ needs.plan.outputs.tree }}
           path: |
-            target/static/${{ steps.plan.outputs.static_profile == 'release' && 'release' || 'debug' }}/riff
-            target/static/${{ steps.plan.outputs.static_profile == 'release' && 'release' || 'debug' }}/riff-server
+            target/static/${{ needs.plan.outputs.static_profile == 'release' && 'release' || 'debug' }}/riff
+            target/static/${{ needs.plan.outputs.static_profile == 'release' && 'release' || 'debug' }}/riff-server
           if-no-files-found: error
 
   test:
@@ -152,10 +174,11 @@ jobs:
     # (01M6QQ1P5YCT0JX90X5FCKM4W1). It runs in a container of the session
     # image that riff.toml pins, as a session runs the tests: --init, the
     # user of the runner, a home of its own and the limits of a session
-    # (01M515Z3Y7GSFNTJGXJD727MQK, 01M51117NDKF11FNZ915TTQED4).
+    # (01M515Z3Y7GSFNTJGXJD727MQK, 01M51117NDKF11FNZ915TTQED4). A tree
+    # that passed its Gate runs no part again (01M75NAF4JQWQG3ZVGJM74XRBG).
     name: Tests ${{ matrix.part }}
-    needs: [build]
-    if: github.event_name != 'schedule' && github.ref_type != 'tag'
+    needs: [plan, build]
+    if: github.event_name != 'schedule' && github.ref_type != 'tag' && needs.plan.outputs.run_tests == 'true'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
@@ -172,8 +195,8 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: tests-${{ needs.build.outputs.tree }}
-          run-id: ${{ needs.build.outputs.tests_run }}
+          name: tests-${{ needs.plan.outputs.tree }}
+          run-id: ${{ needs.plan.outputs.tests_run }}
           github-token: ${{ github.token }}
           path: target/test-archive
 
@@ -183,10 +206,12 @@ jobs:
     # The lint and the tests of riff, riff-client and riff-core on macOS,
     # on a macOS runner of GitHub with Apple silicon
     # (01M6YPB5DZ9M3VEJ7V7P7EF797). It compiles them for macOS, with no
-    # session image and no artifact of Build. It runs for the same events
-    # as Tests I/N, and the Gate needs it.
+    # session image and no artifact of Build. It has the condition of
+    # Tests I/N, and the Gate needs it. It needs only the plan, so it
+    # starts beside Build (01M75NAF4JQWQG3ZVGJM74XRBG).
     name: macOS
-    if: github.event_name != 'schedule' && github.ref_type != 'tag'
+    needs: [plan]
+    if: github.event_name != 'schedule' && github.ref_type != 'tag' && needs.plan.outputs.run_tests == 'true'
     runs-on: macos-latest
     # A test that hangs on macOS stops the job, not the Gate for hours.
     timeout-minutes: 60
@@ -215,23 +240,54 @@ jobs:
 
   gate:
     # A skipped required check counts as a pass on GitHub. So the Gate
-    # runs also when a part fails or is cancelled, and fails then.
+    # runs also when a part fails or is cancelled, and fails then. When
+    # the plan found the pass of a run on the tree, PASSED_RUN, the tests
+    # and macOS were skipped, and the Gate passes on that pass. Else the
+    # Gate keeps its pass as gate-TREE (01M75NAF4JQWQG3ZVGJM74XRBG).
     name: Gate
-    needs: [build, test, macos]
+    needs: [plan, build, test, macos]
     if: always() && github.event_name != 'schedule' && github.ref_type != 'tag'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     steps:
       - name: Each part passed
         env:
-          RESULTS: build=${{ needs.build.result }} test=${{ needs.test.result }} macos=${{ needs.macos.result }}
+          RESULTS: plan=${{ needs.plan.result }} build=${{ needs.build.result }} test=${{ needs.test.result }} macos=${{ needs.macos.result }}
+          PASSED_RUN: ${{ needs.plan.outputs.passed_run }}
         run: |
           echo "The parts of the Gate: $RESULTS"
           for result in $RESULTS; do
-            if [ "${result#*=}" != success ]; then
-              echo "::error::The part ${result%%=*} of the Gate ended with ${result#*=}."
+            part=${result%%=*}
+            ended=${result#*=}
+            case "$part=$ended" in
+              test=skipped | macos=skipped)
+                if [ -n "$PASSED_RUN" ]; then
+                  continue
+                fi
+                ;;
+            esac
+            if [ "$ended" != success ]; then
+              echo "::error::The part $part of the Gate ended with $ended."
               exit 1
             fi
           done
+          if [ -n "$PASSED_RUN" ]; then
+            echo "Run $PASSED_RUN passed the Gate on this tree, so the tests and macOS did not run again."
+          fi
+
+      - name: Write the pass of the tree
+        if: needs.plan.outputs.run_tests == 'true'
+        env:
+          TREE: ${{ needs.plan.outputs.tree }}
+        run: |
+          mkdir -p target/gate
+          echo "Run $GITHUB_RUN_ID passed the Gate on the tree $TREE at the commit $GITHUB_SHA." > target/gate/passed
+
+      - uses: actions/upload-artifact@v7
+        if: needs.plan.outputs.run_tests == 'true'
+        with:
+          name: gate-${{ needs.plan.outputs.tree }}
+          path: target/gate/
+          if-no-files-found: error
 
   merge_verify:
     # The verify is a status of the head commit of a pull request, so the
@@ -264,21 +320,21 @@ jobs:
     # riff.toml. A tag takes the profile release of its tree, and keeps
     # the binaries for the job Static riff release.
     name: Static riff
-    needs: [build]
+    needs: [plan, build]
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     env:
       RIFF_ENGINE: docker
-      PROFILE: ${{ needs.build.outputs.static_profile }}
+      PROFILE: ${{ needs.plan.outputs.static_profile }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
         with:
-          name: static-${{ needs.build.outputs.static_profile }}-${{ needs.build.outputs.tree }}
-          run-id: ${{ needs.build.outputs.static_run }}
+          name: static-${{ needs.plan.outputs.static_profile }}-${{ needs.plan.outputs.tree }}
+          run-id: ${{ needs.plan.outputs.static_run }}
           github-token: ${{ github.token }}
-          path: target/static/${{ needs.build.outputs.static_profile == 'release' && 'release' || 'debug' }}
+          path: target/static/${{ needs.plan.outputs.static_profile == 'release' && 'release' || 'debug' }}
 
       # An artifact has no file mode.
       - name: Make the files run
@@ -592,10 +648,10 @@ jobs:
     # (01M496JTHN19BZ7YN94993R35X). It never deploys the shared riff
     # (01M3NJAZ8HSE87H0GZ8SNGWN31). One stage deploy runs at a time; a
     # newer run waits for it. The job compiles nothing
-    # (01M6QQ1PB372MQ7M527HVT323F): it takes the static binaries that the
-    # job Build made, or took, for the tree of the commit.
+    # (01M6QQ1PB372MQ7M527HVT323F): it takes the static binaries of the
+    # tree of the commit from the run that the plan names.
     name: Stage
-    needs: [gate, build]
+    needs: [gate, plan]
     if: >-
       vars.STAGE_DEPLOY == 'true' && github.event_name == 'push' &&
       github.ref == 'refs/heads/main' && needs.gate.result == 'success'
@@ -621,8 +677,8 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: static-${{ needs.build.outputs.static_profile }}-${{ needs.build.outputs.tree }}
-          run-id: ${{ needs.build.outputs.static_run }}
+          name: static-${{ needs.plan.outputs.static_profile }}-${{ needs.plan.outputs.tree }}
+          run-id: ${{ needs.plan.outputs.static_run }}
           github-token: ${{ github.token }}
           path: static
 

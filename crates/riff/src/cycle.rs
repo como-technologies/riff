@@ -611,9 +611,10 @@ pub trait Forge {
     /// no open wave. A release issue and a tracker are no item: they
     /// have no code of their own (01M5ND16V2SVN8A9K7W90VC6X9).
     fn wave_open(&self) -> Result<Option<(String, usize)>>;
-    /// True when the wave `title` has a release issue, open or closed: a
-    /// cut made it ([`cut`], 01M75N6YNHQQHGS0VGKTKSNJTR).
-    fn wave_released(&self, title: &str) -> Result<bool>;
+    /// The title of the newest release issue of the wave `title`, open or
+    /// closed, or `None`: a cut made it ([`cut`], 01M75N6YNHQQHGS0VGKTKSNJTR,
+    /// 01M75R6FPVZA3JA5C48PQ26A85).
+    fn wave_release(&self, title: &str) -> Result<Option<String>>;
     /// True when the repository has the table `[release]` in its riff
     /// config ([`crate::release_config`]): its waves end with a release.
     fn has_release(&self) -> bool;
@@ -3271,7 +3272,8 @@ impl Forge for GitHub {
         Ok(Some((wave.title, open)))
     }
 
-    fn wave_released(&self, title: &str) -> Result<bool> {
+    fn wave_release(&self, title: &str) -> Result<Option<String>> {
+        // `gh issue list` gives the newest issue first.
         let found: Vec<GhOpenIssue> = self.gh.json(&[
             "issue",
             "list",
@@ -3286,7 +3288,7 @@ impl Forge for GitHub {
             "--json",
             "title",
         ])?;
-        Ok(!found.is_empty())
+        Ok(found.into_iter().next().map(|i| text::forge(&i.title)))
     }
 
     fn has_release(&self) -> bool {
@@ -3334,8 +3336,8 @@ pub(crate) mod tests {
         pub(crate) failed: Vec<String>,
         /// The current wave and its open items.
         pub(crate) wave_open: Option<(String, usize)>,
-        /// True when the current wave has a release issue.
-        pub(crate) wave_released: bool,
+        /// The title of the newest release issue of the current wave.
+        pub(crate) wave_release: Option<String>,
         /// True when the repository has the table `[release]`.
         pub(crate) has_release: bool,
         /// True when the comment on an issue fails.
@@ -3535,8 +3537,8 @@ pub(crate) mod tests {
         fn wave_open(&self) -> Result<Option<(String, usize)>> {
             Ok(self.wave_open.clone())
         }
-        fn wave_released(&self, _title: &str) -> Result<bool> {
-            Ok(self.wave_released)
+        fn wave_release(&self, _title: &str) -> Result<Option<String>> {
+            Ok(self.wave_release.clone())
         }
         fn has_release(&self) -> bool {
             self.has_release

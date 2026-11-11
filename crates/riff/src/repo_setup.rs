@@ -5,8 +5,8 @@
 //! # Design
 //!
 //! `riff init` checks seven facts of the repository of the current
-//! folder, and an eighth in a repository with the release cycle of riff.
-//! Each fact that fails carries its fix for a person, and for seven of
+//! folder, and two more in a repository with the release cycle of riff.
+//! Each fact that fails carries its fix for a person, and for eight of
 //! them its [`Step`]: the code that does the fix. A person does
 //! the fix, for example from the how-to "Add another repository to the
 //! riff" in the book. Or `riff init` does the steps after one question,
@@ -45,6 +45,7 @@
 //! | the checks of a pull request | the required checks, and the check runs of the latest pull requests | a rule requires a check of the CI, or the ruleset that the step makes will require the checks that the pull requests ran, or the repository has no CI and [`VERIFY_CONTEXT`] is the only check (a note says so) | [`Step::Ruleset`] when no pull request ran a check yet and the default branch has no `riff.toml`: the pull request of [`Step::Config`] may run the first check. Else none |
 //! | the guard | the file [`guard::PATH`] on the default branch, and the bot of the session App from riff-server ([`Github::bot`]) | the file is the guard of that bot ([`guard::workflow`]), or the riff has no session App, or riff cannot ask riff-server and the file is there (01M6WPV86SW4AAVA2NCBQNYXK3) | [`Step::Config`] when riff knows the bot: the pull request adds the guard. Else none |
 //! | the ruleset `releases` | only with `[release]` in `riff.toml` of the default branch ([`crate::release_config`]): the ruleset [`RELEASES`] and its bypass actors ([`TagRules`]), and the lead App from riff-server ([`lead_app`]) | the ruleset has the lead App as a bypass actor, or the riff has no lead App, or GitHub does not show the bypass actors to the person (only an admin sees them), or riff cannot ask riff-server and the ruleset is there (01M6WZ40YED6THKVJ2JQRXFK4N) | [`Step::Releases`] when riff knows the lead App. Else none |
+//! | the merge queue | only with `[release]` in `riff.toml` of the default branch: the rules that apply to the default branch, from the same read as the ruleset | a rule `merge_queue` has the method `SQUASH` (01M75NAPNH1SP8AC90NYFQP8SK) | [`Step::Queue`] |
 //!
 //! The fix of the ruleset names the check [`VERIFY_CONTEXT`] and the checks
 //! of the CI.
@@ -66,7 +67,8 @@
 //!     B --> K["the milestone Backlog"]
 //!     K --> W["the milestone Wave 1"]
 //!     W --> R["the ruleset riff"]
-//!     R --> T["the ruleset releases"]
+//!     R --> Q["the merge queue"]
+//!     Q --> T["the ruleset releases"]
 //! ```
 //!
 //! - The merge settings come first: the pull request of `riff.toml` has
@@ -91,6 +93,11 @@
 //!   [`Waits::ci`] for them. A repository with no check run has no CI: the
 //!   ruleset requires [`VERIFY_CONTEXT`] only, and riff invents no check
 //!   for it (01M5SMNKDWBD1J6Y18ENQG87CK).
+//! - The merge queue comes after it, in a repository with the release
+//!   cycle of riff: riff puts the rule [`merge_queue`] in the ruleset
+//!   that requires [`VERIFY_CONTEXT`] ([`with_queue`],
+//!   01M75NAPNH1SP8AC90NYFQP8SK). So the CI builds and tests each commit
+//!   of the default branch once, in its merge group.
 //! - The ruleset `releases` of the tags `v*` comes after it, in a
 //!   repository with the release cycle of riff: the admin role and the
 //!   lead App bypass it, as `just github` makes it ([`releases`],
@@ -147,6 +154,7 @@
 //!     bot: Ok(None),
 //!     lead: Ok(None),
 //!     releases: None,
+//!     queue: None,
 //! };
 //! assert!(checks(&github).iter().all(|c| c.passed()));
 //!
@@ -223,6 +231,7 @@ pub const SETUP_TITLE: &str = "Set up riff";
 ///     bot: Ok(Some("riff-acme[bot]".into())),
 ///     lead: Ok(None),
 ///     releases: None,
+///     queue: None,
 /// };
 /// assert_eq!(
 ///     setup_body(&github),
@@ -443,6 +452,91 @@ pub fn releases(lead: u64) -> Value {
     })
 }
 
+/// The rule `merge_queue` that [`Step::Queue`] puts in the ruleset of the
+/// default branch, as `just github` and `deploy/merge-queue.sh` write it
+/// (01M75NAPJVW8FJZTJEF416MR4J, 01M75NAPNH1SP8AC90NYFQP8SK): the method
+/// squash, up to 5 merge groups at the same time, and 60 minutes for the
+/// checks of a group. The required checks of the ruleset run on each
+/// merge group.
+///
+/// ```
+/// let rule = riff::repo_setup::merge_queue();
+/// assert_eq!(rule["type"], "merge_queue");
+/// assert_eq!(rule["parameters"]["merge_method"], "SQUASH");
+/// assert_eq!(rule["parameters"]["check_response_timeout_minutes"], 60);
+/// ```
+pub fn merge_queue() -> Value {
+    json!({
+        "type": "merge_queue",
+        "parameters": {
+            "merge_method": "SQUASH",
+            "grouping_strategy": "ALLGREEN",
+            "max_entries_to_build": 5,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "check_response_timeout_minutes": 60
+        }
+    })
+}
+
+/// The body of the update of `ruleset`, as `gh api .../rulesets/ID` gives
+/// it, with the rule [`merge_queue`]: the fields of the ruleset that the
+/// update takes, each rule but an old `merge_queue`, and the rule last.
+/// So the update changes no other rule, and a second update sends the
+/// same body.
+///
+/// ```
+/// use riff::repo_setup::{merge_queue, with_queue};
+/// use serde_json::json;
+///
+/// let ruleset = json!({
+///     "id": 7,
+///     "name": "main",
+///     "target": "branch",
+///     "enforcement": "active",
+///     "rules": [
+///         { "type": "deletion" },
+///         { "type": "merge_queue", "parameters": { "merge_method": "MERGE" } }
+///     ]
+/// });
+/// let body = with_queue(&ruleset);
+/// assert_eq!(
+///     body,
+///     json!({
+///         "name": "main",
+///         "target": "branch",
+///         "enforcement": "active",
+///         "rules": [{ "type": "deletion" }, merge_queue()]
+///     })
+/// );
+/// assert_eq!(with_queue(&body), body);
+/// ```
+pub fn with_queue(ruleset: &Value) -> Value {
+    let mut body = serde_json::Map::new();
+    for key in [
+        "name",
+        "target",
+        "enforcement",
+        "conditions",
+        "bypass_actors",
+    ] {
+        if let Some(value) = ruleset.get(key) {
+            body.insert(key.to_owned(), value.clone());
+        }
+    }
+    let mut rules: Vec<Value> = ruleset["rules"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|rule| rule["type"] != "merge_queue")
+        .cloned()
+        .collect();
+    rules.push(merge_queue());
+    body.insert("rules".to_owned(), Value::Array(rules));
+    Value::Object(body)
+}
+
 /// The step that fixes a failed check of the repository on GitHub. The
 /// order of the variants is the order of the steps. Each step needs the
 /// rights of an admin of the repository, and it is safe to do again.
@@ -464,6 +558,7 @@ pub fn releases(lead: u64) -> Value {
 ///     bot: Ok(None),
 ///     lead: Ok(None),
 ///     releases: None,
+///     queue: None,
 /// };
 /// let steps: Vec<Step> = checks(&github).iter().filter_map(|c| c.step).collect();
 /// assert_eq!(steps, [Step::Merge, Step::Ruleset, Step::Backlog]);
@@ -489,6 +584,11 @@ pub enum Step {
     /// `gh api -X POST .../rulesets`, or `PUT` when a ruleset named `riff`
     /// is there.
     Ruleset,
+    /// Put the rule [`merge_queue`] in the ruleset that requires
+    /// [`VERIFY_CONTEXT`] on the default branch: `gh api -X PUT
+    /// .../rulesets/ID` with the body of [`with_queue`]
+    /// (01M75NAPNH1SP8AC90NYFQP8SK).
+    Queue,
     /// Make the ruleset [`releases`] of the tags `v*` with the lead App as
     /// a bypass actor: `POST`, or `PUT` when a ruleset named [`RELEASES`]
     /// is there (01M6WZ40YED6THKVJ2JQRXFK4N).
@@ -553,6 +653,7 @@ impl Step {
     ///     bot: Ok(None),
     ///     lead: Ok(None),
     ///     releases: None,
+    ///     queue: None,
     /// };
     /// assert_eq!(Step::Config.title(&github), "make riff.toml on main with a pull request");
     /// assert_eq!(Step::Wave.title(&github), "make the milestone Wave 1");
@@ -582,6 +683,10 @@ impl Step {
             Step::Backlog => format!("make the milestone {BACKLOG}"),
             Step::Wave => format!("make the milestone {FIRST_WAVE}"),
             Step::Ruleset => format!("make the ruleset riff on {}", github.default_branch),
+            Step::Queue => format!(
+                "add the merge queue to the ruleset of {}",
+                github.default_branch
+            ),
             Step::Releases => format!("make the ruleset {RELEASES} on the tags v*"),
         }
     }
@@ -666,6 +771,23 @@ impl Step {
                     }
                 }
                 Ok(format!("requires {}", required.join(" and ")))
+            }
+            Step::Queue => {
+                // The rules again: the step of the ruleset may have made it.
+                let branch = &github.default_branch;
+                let rules: Vec<Rule> = gh.json(&["api", &rules_path("{owner}/{repo}", branch)])?;
+                let id = rules
+                    .iter()
+                    .find(|r| r.required().iter().any(|c| c == VERIFY_CONTEXT))
+                    .and_then(|r| r.ruleset_id)
+                    .with_context(|| text::init_queue_no_ruleset(branch, VERIFY_CONTEXT))?;
+                let path = format!("repos/{{owner}}/{{repo}}/rulesets/{id}");
+                let ruleset: Value = gh.json(&["api", &path])?;
+                gh.send("PUT", &path, &with_queue(&ruleset))?;
+                github.queue = Some(true);
+                Ok(text::init_queue_done(
+                    ruleset["name"].as_str().unwrap_or(""),
+                ))
             }
             Step::Releases => {
                 let Ok(Some(lead)) = &github.lead else {
@@ -1028,6 +1150,11 @@ pub struct Github {
     /// ([`crate::release_config`]). `None` for a repository with no
     /// release cycle.
     pub releases: Option<TagRules>,
+    /// The merge queue of the default branch of a repository with the
+    /// release cycle of riff: `Some(true)` when a rule of the branch is a
+    /// merge queue with the method squash (01M75NAPNH1SP8AC90NYFQP8SK).
+    /// `None` for a repository with no release cycle.
+    pub queue: Option<bool>,
 }
 
 /// The lead App of the riff, as riff-server gives it ([`lead_app`]).
@@ -1125,6 +1252,7 @@ impl Github {
     ///     bot: Ok(Some("riff-acme[bot]".into())),
     ///     lead: Ok(None),
     ///     releases: None,
+    ///     queue: None,
     /// };
     /// let text = github.guard_to_write().unwrap();
     /// assert_eq!(text, riff::guard::workflow("riff-acme[bot]"));
@@ -1174,9 +1302,17 @@ struct Rule {
     kind: String,
     #[serde(default)]
     parameters: serde_json::Value,
+    /// The ruleset that holds the rule.
+    #[serde(default)]
+    ruleset_id: Option<u64>,
 }
 
 impl Rule {
+    /// The rule is a merge queue with the method squash.
+    fn squash_queue(&self) -> bool {
+        self.kind == "merge_queue" && self.parameters["merge_method"] == "SQUASH"
+    }
+
     /// The checks that the rule requires: none for another kind of
     /// rule.
     fn required(&self) -> Vec<String> {
@@ -1287,7 +1423,8 @@ fn files(gh: &Gh, branch: &str) -> anyhow::Result<Vec<String>> {
 /// branch has `riff.toml`, or says why it cannot. `bot` is the bot of the
 /// session App of the riff ([`guard::session_bot`]), and `lead` its lead
 /// App ([`lead_app`]). When `riff.toml` has `[release]`, it reads the
-/// ruleset [`RELEASES`] too.
+/// ruleset [`RELEASES`] too, and finds the merge queue in the rules of
+/// the default branch.
 pub fn read(
     gh: &Gh,
     bot: Result<Option<String>, String>,
@@ -1317,6 +1454,7 @@ pub fn read(
         true => Some(tag_rules(gh).map_err(why)?),
         false => None,
     };
+    let queue = cycle.then(|| rules.iter().any(Rule::squash_queue));
     let required: Vec<String> = rules.iter().flat_map(Rule::required).collect();
     let custom = required.iter().any(|c| c != VERIFY_CONTEXT);
     let ci = if custom {
@@ -1338,6 +1476,7 @@ pub fn read(
         bot,
         lead,
         releases,
+        queue,
     })
 }
 
@@ -1421,7 +1560,8 @@ pub fn checks_of(github: &Result<Github, String>) -> Vec<Check> {
 /// The checks on `github`, in order: `riff.toml`, the merge settings,
 /// the ruleset of the default branch, the milestone `Backlog`, the first
 /// wave, the checks of a pull request, the guard, and the ruleset
-/// `releases` in a repository with the release cycle.
+/// `releases` and the merge queue in a repository with the release
+/// cycle.
 pub fn checks(github: &Github) -> Vec<Check> {
     let repo = &github.repo;
     let branch = &github.default_branch;
@@ -1492,7 +1632,64 @@ pub fn checks(github: &Github) -> Vec<Check> {
         guard_check(github),
     ];
     checks.extend(releases_check(github));
+    checks.extend(queue_check(github));
     checks
+}
+
+/// The check of the merge queue of the default branch
+/// (01M75NAPNH1SP8AC90NYFQP8SK), in a repository with the release cycle of
+/// riff only: `None` else. It passes when a rule of the branch is a merge
+/// queue with the method squash. Else it fails with [`Step::Queue`].
+///
+/// ```
+/// use riff::repo_setup::{Github, Step, checks};
+///
+/// let mut github = Github {
+///     repo: "acme/app".into(),
+///     default_branch: "main".into(),
+///     auto_merge: true,
+///     squash_merge: true,
+///     required: vec!["Gate".into(), "riff/verify".into()],
+///     milestones: vec!["Backlog".into(), "Wave 1".into()],
+///     admin: true,
+///     files: vec!["riff.toml".into()],
+///     ci: vec![],
+///     guard: None,
+///     bot: Ok(None),
+///     lead: Ok(None),
+///     releases: None,
+///     queue: None,
+/// };
+/// // No release cycle: no check.
+/// assert_eq!(checks(&github).len(), 7);
+/// github.queue = Some(false);
+/// let check = checks(&github).pop().unwrap();
+/// assert_eq!(check.step, Some(Step::Queue));
+/// assert_eq!(
+///     check.line(),
+///     "fail  the merge queue: acme/app has the release cycle of riff and no merge queue on main, \
+///      so a merge can put a tree on main that no Gate tested. Fix: add a merge queue with the \
+///      method squash to the ruleset of main. See \"Turn the merge queue on or off\" in the \
+///      book. Then run riff init again"
+/// );
+/// assert_eq!(Step::Queue.title(&github), "add the merge queue to the ruleset of main");
+/// github.queue = Some(true);
+/// assert_eq!(
+///     checks(&github).pop().unwrap().line(),
+///     "pass  the merge queue: main of acme/app merges through a merge queue with the method squash"
+/// );
+/// ```
+fn queue_check(github: &Github) -> Option<Check> {
+    let (repo, branch) = (&github.repo, &github.default_branch);
+    Some(match github.queue? {
+        true => Check::pass(text::INIT_QUEUE, text::init_queue_on(repo, branch)),
+        false => Check::fail(
+            text::INIT_QUEUE,
+            text::init_queue_off(repo, branch),
+            text::init_fix_queue(branch),
+        )
+        .with_step(Step::Queue),
+    })
 }
 
 /// The check of the ruleset [`RELEASES`] (01M6WZ40YED6THKVJ2JQRXFK4N), in
@@ -1521,6 +1718,7 @@ pub fn checks(github: &Github) -> Vec<Check> {
 ///     bot: Ok(None),
 ///     lead: Ok(Some(LeadApp { id: 7, slug: "riff-acme-lead".into() })),
 ///     releases: None,
+///     queue: None,
 /// };
 /// // No release cycle: no check.
 /// assert_eq!(checks(&github).len(), 7);
@@ -1598,6 +1796,7 @@ fn releases_check(github: &Github) -> Option<Check> {
 ///     bot: Err("riff cannot ask riff-server".into()),
 ///     lead: Ok(None),
 ///     releases: None,
+///     queue: None,
 /// };
 /// let line = |github: &Github| checks(github).pop().unwrap().line();
 /// assert_eq!(
@@ -1696,6 +1895,7 @@ mod tests {
             bot: Ok(None),
             lead: Ok(None),
             releases: None,
+            queue: None,
         }
     }
 
@@ -1886,6 +2086,38 @@ mod tests {
                 Step::Ruleset
             ]
         );
+    }
+
+    /// 01M75NAPNH1SP8AC90NYFQP8SK: in a repository with the release cycle,
+    /// the step of the merge queue comes after the step of the ruleset,
+    /// which it needs, and before the ruleset of the tags.
+    #[test]
+    fn the_merge_queue_comes_after_the_ruleset_in_a_repository_with_the_release_cycle() {
+        let github = Github {
+            required: vec![],
+            lead: Ok(Some(LeadApp {
+                id: 7,
+                slug: "riff-acme-lead".into(),
+            })),
+            releases: Some(TagRules::default()),
+            queue: Some(false),
+            ..ready()
+        };
+        let all = steps_of(&checks(&github));
+        assert_eq!(all, [Step::Ruleset, Step::Queue, Step::Releases]);
+        let names: Vec<String> = checks(&github)
+            .iter()
+            .rev()
+            .take(2)
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, ["the merge queue", "the ruleset releases"]);
+        // With the queue, its check passes and has no step.
+        let github = Github {
+            queue: Some(true),
+            ..github
+        };
+        assert_eq!(steps_of(&checks(&github)), [Step::Ruleset, Step::Releases]);
     }
 
     /// The check of the CI passes when a rule requires a check of the CI,
@@ -2110,6 +2342,7 @@ mod tests {
                 bot: Ok(None),
                 lead: Ok(None),
                 releases: None,
+                queue: None,
             }
         );
         // The repository, the rules, the milestones, the files, the guard,
@@ -2853,8 +3086,8 @@ esac
         assert_eq!(ref_of("a b"), "a%20b");
     }
 
-    /// A repository that is set up for riff, with the release cycle: each
-    /// check but the ruleset `releases` passes.
+    /// A repository that is set up for riff, with the release cycle and a
+    /// merge queue: each check but the ruleset `releases` passes.
     fn with_the_release_cycle(extra: &[(&str, &str)]) -> Fake {
         let mut state = vec![
             ("files", "riff.toml\n"),
@@ -2863,11 +3096,94 @@ esac
             ("milestones", "Backlog\nWave 1\n"),
             (
                 "static_rules",
-                r#"[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"riff/verify"}]}}]"#,
+                r#"[{"type":"required_status_checks","ruleset_id":24,"parameters":{"required_status_checks":[{"context":"riff/verify"}]}},{"type":"merge_queue","ruleset_id":24,"parameters":{"merge_method":"SQUASH"}}]"#,
             ),
         ];
         state.extend_from_slice(extra);
         Fake::new(&state).with_lead()
+    }
+
+    /// The line of the check of the ruleset `releases`.
+    fn releases_line(github: &Github) -> String {
+        releases_check(github).expect("the release cycle").line()
+    }
+
+    /// 01M75NAPNH1SP8AC90NYFQP8SK: riff finds the merge queue in the rules
+    /// of the default branch, with no other call, only in a repository
+    /// with the release cycle. A queue of another method does not count.
+    #[test]
+    fn read_gets_the_merge_queue_only_with_the_release_cycle() {
+        let fake = with_the_release_cycle(&[]);
+        assert_eq!(fake.github().queue, Some(true));
+        let merge = r#"[{"type":"merge_queue","parameters":{"merge_method":"MERGE"}}]"#;
+        let fake = with_the_release_cycle(&[("static_rules", merge)]);
+        assert_eq!(fake.github().queue, Some(false));
+        let fake = Fake::new(&[("files", "riff.toml\n"), ("static_rules", merge)]);
+        assert_eq!(fake.github().queue, None);
+        assert!(!lines(&fake.github()).iter().any(|l| l.contains("queue")));
+    }
+
+    /// 01M75NAPNH1SP8AC90NYFQP8SK: in a repository with the release cycle
+    /// and no ruleset, the step of the ruleset makes `riff`, and the step
+    /// of the merge queue then puts the queue in it, in the same run. The
+    /// other rules of the ruleset stay. A second run changes nothing.
+    #[test]
+    fn the_merge_queue_goes_into_the_ruleset_that_the_same_run_made() {
+        let fake = Fake::new(&[
+            ("files", "riff.toml\n"),
+            ("config", "[release]\n"),
+            ("auto_merge", ""),
+            ("milestones", "Backlog\nWave 1\n"),
+        ]);
+        assert_eq!(fake.github().queue, Some(false));
+        let done = fake.set_up();
+        assert_eq!(
+            done,
+            [
+                (Step::Ruleset, Ok("requires riff/verify".into())),
+                (
+                    Step::Queue,
+                    Ok("the ruleset riff has the merge queue with the method squash".into())
+                ),
+            ]
+        );
+        let ruleset = fake.json("ruleset");
+        let mut want = ruleset_for(&[]);
+        want["rules"].as_array_mut().unwrap().push(merge_queue());
+        assert_eq!(ruleset, want);
+        assert!(fake.has_change("api -X PUT repos/{owner}/{repo}/rulesets/77"));
+        let again = fake.github();
+        assert_eq!(again.queue, Some(true));
+        assert!(
+            checks(&again).iter().all(Check::passed),
+            "{:#?}",
+            lines(&again)
+        );
+        let changes = fake.changes().len();
+        assert!(fake.set_up().is_empty());
+        assert_eq!(fake.changes().len(), changes);
+    }
+
+    /// 01M75NAPNH1SP8AC90NYFQP8SK: when no ruleset requires the verify, the
+    /// step of the merge queue changes nothing and says why.
+    #[test]
+    fn the_merge_queue_needs_a_ruleset_that_requires_the_verify() {
+        let fake = Fake::new(&[("files", "riff.toml\n"), ("config", "[release]\n")]);
+        let mut github = fake.github();
+        let done = setup(&fake.forge(), &[Step::Queue], &mut github);
+        assert_eq!(
+            done,
+            [(
+                Step::Queue,
+                Err(
+                    "no ruleset of main requires the check riff/verify, so riff has no ruleset \
+                     for the merge queue. Make the ruleset first, then run riff init again"
+                        .into()
+                )
+            )]
+        );
+        assert!(fake.changes().is_empty(), "{:?}", fake.changes());
+        assert_eq!(github.queue, Some(false));
     }
 
     /// 01M6WZ40YED6THKVJ2JQRXFK4N: riff reads the ruleset `releases` only
@@ -2928,7 +3244,7 @@ esac
             lines(&again)
         );
         assert_eq!(
-            lines(&again).pop().unwrap(),
+            releases_line(&again),
             "pass  the ruleset releases: the ruleset releases of acme/app lets riff-acme-lead push a tag v*"
         );
         let changes = fake.changes().len();
@@ -2953,7 +3269,7 @@ esac
             })
         );
         assert_eq!(
-            lines(&github).pop().unwrap(),
+            releases_line(&github),
             "fail  the ruleset releases: the ruleset releases of acme/app has no bypass of \
              riff-acme-lead, so riff release publish of the lead cannot push a tag v*. Fix: make \
              the ruleset releases on the tags v*, with the admin role and riff-acme-lead as bypass \
@@ -2969,7 +3285,7 @@ esac
             })
         );
         assert_eq!(
-            lines(&github).pop().unwrap(),
+            releases_line(&github),
             "pass  the ruleset releases: acme/app has the ruleset releases, and only an admin of \
              acme/app sees its bypass actors"
         );
@@ -2986,12 +3302,12 @@ esac
         let mut github = with_the_release_cycle(&[]).github();
         github.lead = Ok(None);
         assert_eq!(
-            lines(&github).pop().unwrap(),
+            releases_line(&github),
             "pass  the ruleset releases: the riff has no lead App, so the ruleset releases needs \
              no bypass of it"
         );
         github.lead = Err("riff cannot ask riff-server".into());
-        let check = checks(&github).pop().unwrap();
+        let check = releases_check(&github).unwrap();
         assert_eq!(check.step, None);
         assert_eq!(
             check.line(),
@@ -3004,7 +3320,7 @@ esac
             apps: None,
         });
         assert_eq!(
-            lines(&github).pop().unwrap(),
+            releases_line(&github),
             "pass  the ruleset releases: acme/app has the ruleset releases"
         );
     }
