@@ -139,7 +139,7 @@ The jobs with the tests start when `Build` ends:
 | `Plan` | Finds the artifacts of the tree that a run made already, and says what `Build` builds and if the tests run. It compiles nothing. See [Build once for each tree](#build-once-for-each-tree). |
 | `Build` | In the session image: `fmt-check`, `reqs`, `wrap`, `versions`, `book`, `lint`, `doc`, the test build and the doc tests. Then the static build, in `rust:CHANNEL-alpine`. |
 | `Tests 1/4` to `Tests 4/4` | Part 1 to part 4 of the tests, from the test binaries of `Build`, in the session image. They compile nothing. |
-| `Static riff` | Checks the static `riff` and `riff-server` of `Build`: no interpreter, and `riff --version` runs in the session image. |
+| `Static riff` | Checks the static `riff` and `riff-server` of `Build`: no interpreter, and `riff --version` runs in the session image. Then the release test runs them. See [Run the release test](#run-the-release-test). |
 | `macOS` | On a Mac with Apple silicon, the runner `macos-latest` of GitHub: the lint and the tests of `riff`, `riff-client` and `riff-core`, compiled for macOS. It takes nothing from `Build`. |
 | `Gate` | Starts when `Plan`, `Build`, the tests and `macOS` ended. It passes only when each of them passed, or when the plan found a pass of the tree and skipped the tests and `macOS`. |
 
@@ -197,25 +197,30 @@ pull of the image is the only failure (see
 
 ### Build once for each tree
 
-For Linux, CI compiles the code of a tree two times, and no more:
+For Linux, CI compiles the code of a tree only in the job `Build`:
 
 - the **test build**: the test binaries of the workspace, with
   `cfg(test)`. The tests cannot run on the release binary.
-- the **release build**: the static `riff` and `riff-server` that ship.
+- the **static build**: the static `riff` and `riff-server`. A pull
+  request and a merge group build the profile `dev`, with a cache. The
+  first push of the tree to `main` builds the profile `release`, with
+  no cache: the release build.
 
-Both builds run in the job `Build`. Clippy, rustdoc and the doc tests
-run there too, on the same build folder. No other job of CI but
-`macOS` compiles a crate of the workspace. A test part, the static
-check, the tag and the deploy take the binaries of `Build`. The job
-`macOS` compiles `riff`, `riff-client` and `riff-core` for macOS (see
+Clippy, rustdoc and the doc tests run in `Build` too, on the same build
+folder. No other job of CI compiles a crate of the workspace for Linux
+on x86-64. A test part, the static check, the tag and the deploy take
+the binaries of `Build`. The job `macOS` compiles `riff`, `riff-client`
+and `riff-core` for macOS (see
 [Run the tests of the job macOS on a Mac](#run-the-tests-of-the-job-macos-on-a-mac)).
+The jobs `macOS riff` and `Linux riff of a Mac` build the files of a
+Mac (see [The files of a Mac](#the-files-of-a-mac)).
 
-`Build` keeps its binaries as artifacts, and `Gate` keeps its pass. The
-name of an artifact has the git tree of the commit,
-`git rev-parse HEAD^{tree}`. The merge queue of `main` tests the tree
-of each merge group, and that tree is the commit on `main`. So a commit
-of `main`, its merge group and often its pull request have the same
-tree, and the same artifacts:
+`Build` and the jobs of a Mac keep their binaries as artifacts, and
+`Gate` keeps its pass. The name of an artifact has the git tree of the
+commit, `git rev-parse HEAD^{tree}`. The merge queue of `main` tests
+the tree of each merge group, and that tree is the commit on `main`. So
+a commit of `main`, its merge group and often its pull request have the
+same tree, and the same artifacts:
 
 | Artifact | Holds |
 |---|---|
@@ -223,50 +228,55 @@ tree, and the same artifacts:
 | `tests-TREE` | The test binaries, and the manifest that names them |
 | `static-dev-TREE` | The static `riff` and `riff-server` of the profile `dev` |
 | `static-release-TREE` | The static `riff` and `riff-server` of the profile `release` |
+| `macos-riff-TREE` | `riff` and `riff-server` of the profile `release` for a Mac with Apple silicon |
+| `mac-session-riff-TREE` | The static Linux riff of the sessions of a Mac |
 
-The job `Plan` asks for the artifacts of the tree first. `Build` builds
-only what is missing. When `gate-TREE` is there, no test runs again:
+The job `Plan` asks for the artifacts of the tree first. Each job
+builds only what is missing. When `gate-TREE` is there, no test runs
+again:
 
 ```mermaid
 flowchart LR
     P["pull request: Build,<br/>tests and macOS once"] --> Q{"merge group:<br/>the same tree?"}
     Q -- "yes: gate-TREE" --> N["no build, no test"]
     Q -- "no: main moved" --> O["Build, tests and<br/>macOS once"]
-    N --> M["push to main:<br/>no build, no test"]
+    N --> M["push to main: no test,<br/>the release build once"]
     O --> M
     M --> S["Static riff and Stage<br/>take the static binaries"]
-    M -- "same tree" --> R["tag: the release files"]
+    M -- "same tree" --> R["tag: the release files,<br/>no build"]
     R --> D["Deploy: image from the static riff-server,<br/>deploy with the static riff"]
     M -- "same tree" --> X["real-session test: the static riff of the commit"]
 ```
 
-- A pull request builds both. A pull request with the label `release`
-  builds the profile `release` with no cache, so each release binary
-  comes from a clean build. Another pull request builds the profile
-  `dev`, with a cache.
+- A pull request builds the test binaries and the profile `dev`, with
+  a cache. It builds no release binary, also with the label `release`.
 - A merge group with the tree of its pull request takes the artifacts
   and `gate-TREE` of the pull request. It builds nothing, and runs no
   test and no `macOS`. The `Gate` passes on the pass of the pull
   request. When `main` moved, the merge group has a new tree: it builds
-  it and tests it once, and keeps its artifacts and `gate-TREE`.
+  it and tests it once, as a pull request does, and keeps its artifacts
+  and `gate-TREE`.
 - A push to `main` takes the artifacts and `gate-TREE` of its merge
-  group. It builds nothing, and runs no test and no `macOS`. `Static
-  riff` and `Stage` run. With no such artifacts, for example after a
-  push by hand, the run builds and tests as a pull request does. When
-  both profiles are there, it takes `release`.
+  group. It runs no test and no `macOS`. It builds the release of its
+  tree once: see
+  [The release build of each commit of main](#the-release-build-of-each-commit-of-main).
+  `Static riff` and `Stage` run. With no `gate-TREE`, for example after
+  a push by hand, the run also builds and tests as a pull request does.
 - A tree with the artifacts of a run whose Gate failed has no
   `gate-TREE`. The run takes the test binaries, and runs the tests
   again.
-- A tag takes `static-release-TREE` of the release pull request. The
-  job `Static riff` checks it, and the job `Static riff release` adds
-  it to the release. With no such artifacts, `Build` builds the profile
-  `release` with no cache. A tag needs no test binary.
+- A tag takes `static-release-TREE`, `macos-riff-TREE` and
+  `mac-session-riff-TREE` of its tree, and compiles nothing. The job
+  `Static riff` checks the static binaries, and the jobs `Static riff
+  release` and `macOS riff release` add the files to the release. When
+  an artifact is not there, for example because it expired, the tag
+  builds it as a push to `main` does. A tag needs no test binary.
 - The jobs `Deploy` and `Stage` build no binary and no `riff`: see
   [Check that the image holds the release binary](#check-that-the-image-holds-the-release-binary).
 - A person takes the same binaries for the real-session test: see
   [Take the static riff of CI](#take-the-static-riff-of-ci).
 
-`Build` keeps its artifacts only after each of its steps passed. A run
+A job keeps its artifacts only after each of its steps passed. A run
 gives the artifacts of a tree to another run only when each of these is
 true:
 
@@ -277,7 +287,8 @@ true:
   the `justfile` of `main`. These files say what each job runs and how
   it names the artifacts.
 - Its job that made the artifact passed: `Gate` for `gate-TREE`,
-  `Build` for the others.
+  `macOS riff` for `macos-riff-TREE`, `Linux riff of a Mac` for
+  `mac-session-riff-TREE`, and `Build` for the others.
 
 So a pull request that changes a workflow, a script of `deploy` or the
 `justfile` gives no artifact to another run. Its own run builds and
@@ -304,6 +315,44 @@ The squash commit on `main` has the same tree, so it has the same id:
 the binary is the same build. Its time is the time of the last commit of
 the pull request that changed the code. Only the version decides which
 builds can talk (see [Builds](how-it-works.md#builds)).
+
+#### The release build of each commit of main
+
+Each commit of `main` gets one release build, and one release test of
+its binaries. The push to `main` runs three jobs of the build, each
+only when the plan finds no artifact of its name for the tree:
+
+| Job | Builds | Artifact |
+|---|---|---|
+| `Build` | The static `riff` and `riff-server` for Linux on x86-64, profile `release`, no cache | `static-release-TREE` |
+| `macOS riff` | `riff` and `riff-server` for macOS, profile `release`, no cache | `macos-riff-TREE` |
+| `Linux riff of a Mac` | The static `riff` for Linux on arm64 | `mac-session-riff-TREE` |
+
+So a second run of the same tree, for example a run again of the push,
+builds nothing. Then the job `Static riff` checks the static binaries,
+runs the release test on them, and sets the status `riff/release-test`
+of the commit (see [Run the release test](#run-the-release-test)). No
+test binary runs on the release binaries. At the end of the wave, the
+tag of a commit of `main` takes its three artifacts, and compiles
+nothing:
+
+```mermaid
+flowchart LR
+    Q["merge group: tests,<br/>profile dev"] --> M["push to main:<br/>a commit of main"]
+    M --> B["Build: static riff,<br/>profile release"]
+    M --> MR["macOS riff"]
+    M --> LR["Linux riff of a Mac"]
+    B --> S["Static riff: the check<br/>and the release test"]
+    S --> ST["status riff/release-test<br/>of the commit"]
+    B -- "static-release-TREE" --> T["tag of the commit:<br/>no build"]
+    MR -- "macos-riff-TREE" --> T
+    LR -- "mac-session-riff-TREE" --> T
+    T --> R["GitHub release vX.Y.Z"]
+```
+
+The jobs of a Mac have `continue-on-error`. When one of them fails, it
+keeps no artifact, and the next run of the tree builds it again, for
+example the tag.
 
 ### See the build id of a checkout
 
@@ -334,8 +383,9 @@ GH_REPO=como-technologies/riff PROFILE=dev deploy/build-plan.sh
 
 The plan prints one line `name=value` for each of `tree`, `run_tests`,
 `passed_run`, `build_tests`, `tests_run`, `build_static`,
-`static_profile` and `static_run`. Its other lines say why. For a tree
-whose pull request passed its Gate:
+`static_profile`, `static_run`, `build_macos_riff`, `macos_riff_run`,
+`build_mac_session_riff` and `mac_session_riff_run`. Its other lines
+say why. For a tree whose pull request passed its Gate:
 
 ```text
 tree=3cb7dddbeb60394627c1d84282741051f80ee960
@@ -348,9 +398,29 @@ build-plan: static-dev-3cb7dddb… is in run 42167961348: no static build.
 build_static=false
 static_profile=dev
 static_run=42167961348
+build_macos_riff=false
+macos_riff_run=
+build_mac_session_riff=false
+mac_session_riff_run=
 ```
 
-A tag builds the profile `release` and needs no test binary:
+A push to `main` wants the profile `release`, and the files of a Mac:
+
+```sh
+GH_REPO=como-technologies/riff PROFILE=release deploy/build-plan.sh
+```
+
+For a commit of `main` whose push made its release build, each
+`build_` line says `false`, and each `_run` line names the run of the
+push:
+
+```text
+build-plan: static-release-3cb7dddb… is in run 42170112233: no static build.
+build-plan: macos-riff-3cb7dddb… is in run 42170112233: no build of macos_riff.
+build-plan: mac-session-riff-3cb7dddb… is in run 42170112233: no build of mac_session_riff.
+```
+
+A tag wants the same, and needs no test binary:
 
 ```sh
 GH_REPO=como-technologies/riff PROFILE=release TESTS=false deploy/build-plan.sh
@@ -682,7 +752,7 @@ older libc.
 
 ```mermaid
 flowchart LR
-    P["pull request with the label release"] --> J["CI job Build<br/>in rust:CHANNEL-alpine,<br/>profile release, no cache"]
+    P["push to main"] --> J["CI job Build<br/>in rust:CHANNEL-alpine,<br/>profile release, no cache"]
     J -- "artifact static-release-TREE" --> K["CI job Static riff:<br/>check, name the files"]
     T["tag vX.Y.Z, same tree"] --> K
     K -- "riff-x86_64-unknown-linux-musl<br/>riff-server-…, SHA256SUMS" --> R["GitHub release vX.Y.Z"]
@@ -691,13 +761,13 @@ flowchart LR
 ```
 
 The CI job `Build` builds the static binaries of each pull request and
-each push, with the profile `dev`. It keeps a cache of the build and of
-the downloaded crates, so it compiles only the crates of riff again.
-The job `Static riff` checks them. For a pull request with the label
-`release`, `Build` builds the profile `release` with no cache, so each
-release binary comes from a clean build. The tag of that release has
-the same tree, so its jobs take those binaries, check them and add
-them to the release. They build nothing (see
+each merge group, with the profile `dev`. It keeps a cache of the build
+and of the downloaded crates, so it compiles only the crates of riff
+again. The job `Static riff` checks them. The push of each commit to
+`main` builds the profile `release` with no cache, so each release
+binary comes from a clean build. The tag of a commit of `main` has the
+same tree, so its jobs take those binaries, check them and add them to
+the release. They build nothing (see
 [Build once for each tree](#build-once-for-each-tree) and
 [Make a release](#make-a-release)).
 
@@ -713,12 +783,15 @@ files for a Mac with Intel.
 | `riff-aarch64-unknown-linux-musl` | The static Linux riff that the riff daemon on a Mac binds at `/opt/riff/riff` in each session: a binary of macOS does not run on Linux. |
 | `SHA256SUMS-aarch64-apple-darwin` | The SHA-256 of each file above. |
 
-For a release tag, three jobs of CI make them. `macOS riff` builds
-`riff` and `riff-server` of the profile `release` on a Mac with Apple
-silicon, with no cache. `Linux riff of a Mac` runs
+Three jobs of CI make them. For each commit of `main`, the push builds
+them once (see
+[The release build of each commit of main](#the-release-build-of-each-commit-of-main)).
+`macOS riff` builds `riff` and `riff-server` of the profile `release`
+on a Mac with Apple silicon, with no cache. `Linux riff of a Mac` runs
 `deploy/static/build.sh release` on Linux for arm64, and checks that
-the riff is static. `macOS riff release` waits for the release, as
-`Static riff release` does, and adds the files to it, the sums last.
+the riff is static. For a release tag, `macOS riff release` takes the
+files of the tree, waits for the release, as `Static riff release`
+does, and adds the files to it, the sums last.
 
 These jobs have `continue-on-error`, and no job of Linux needs them.
 So a failed build for the Mac does not stop the files of Linux, the
@@ -728,12 +801,12 @@ as they were. A Mac then finds no files of a Mac in the release, and
 
 ```mermaid
 flowchart LR
-    T["tag vX.Y.Z"] --> M["macOS riff<br/>on macos-latest"]
-    T --> A["Linux riff of a Mac<br/>on ubuntu-24.04-arm"]
-    M --> P["macOS riff release"]
-    A --> P
+    G["push to main"] --> M["macOS riff<br/>on macos-latest"]
+    G --> A["Linux riff of a Mac<br/>on ubuntu-24.04-arm"]
+    M -- "macos-riff-TREE" --> P["macOS riff release<br/>of the tag vX.Y.Z"]
+    A -- "mac-session-riff-TREE" --> P
     P -- "riff-aarch64-apple-darwin, riff-server-…,<br/>riff-aarch64-unknown-linux-musl,<br/>then SHA256SUMS-aarch64-apple-darwin" --> R["GitHub release vX.Y.Z"]
-    T --> L["the jobs of Linux"]
+    G --> L["the jobs of Linux"]
     L -- "riff-x86_64-unknown-linux-musl,<br/>riff-server-…, SHA256SUMS" --> R
 ```
 
@@ -783,6 +856,63 @@ with no optimization, so the build is faster. Its binaries are in
 
 ```sh
 just static dev
+```
+
+### Run the release test
+
+The release test is a smoke test of the static `riff` and
+`riff-server`. It runs the binaries as a person runs them, and runs no
+test binary. The job `Static riff` of CI runs it after the check. It
+fails at the first step that fails, and names it:
+
+1. `riff --version` and `riff-server --version` run, and name the same
+   build. A binary that does not start fails here.
+2. `riff-server` starts with no store and no sign-in, on a free port of
+   `127.0.0.1`, and serves within 30 seconds.
+3. `riff server` finds the same build there, and that it serves.
+4. `riff post` puts a message in the thread `smoke`, and `riff read`
+   shows it.
+5. `riff-server` stops on SIGTERM within 30 seconds, with the exit
+   code 0.
+
+Each binary runs with a new home and a clean environment, so the test
+reads no setting and no keyring of your machine. To run it on the
+binaries of `just static`:
+
+```sh
+deploy/static/smoke.sh release
+```
+
+For the binaries of `just static dev`:
+
+```sh
+deploy/static/smoke.sh dev
+```
+
+To run it on the binaries in another folder, name the folder in
+`RIFF_STATIC_DIR`, for example the binaries of `cargo build`:
+
+```sh
+RIFF_STATIC_DIR=target/debug deploy/static/smoke.sh dev
+```
+
+The last line says that the test passed:
+
+```text
+The release test of /home/you/riff/target/static/release passed.
+```
+
+### See the release test of a commit
+
+For each push to `main`, and for each tag, the job `Static riff` sets
+the status `riff/release-test` of the commit from the release test of
+its release binaries: `success` when the check and the release test
+passed, else `failure`. Its link is the run. No rule of `main` needs
+it. To see it for the newest commit of `main`:
+
+```sh
+gh api repos/como-technologies/riff/commits/main/status \
+  --jq '.statuses[] | select(.context == "riff/release-test") | "\(.state): \(.description) \(.target_url)"'
 ```
 
 ### Build riff for a check
@@ -7748,15 +7878,17 @@ riff build
 ```
 
 CI runs the job `Release check` for the tag. It fails when the tag is
-not the version of the crates. The job `Build` takes the static `riff`
-and `riff-server` that it built for the release pull request: the tag
-has the same tree. The job `Static riff` checks them. Then the job
-`Static riff release` adds them to the release, with `SHA256SUMS` (see
+not the version of the crates. The tag takes the static `riff` and
+`riff-server` that the push of its commit to `main` built: the tag has
+the same tree. The job `Static riff` checks them, and runs the release
+test on them. Then the job `Static riff release` adds them to the
+release, with `SHA256SUMS` (see
 [How riff is built and installed](#how-riff-is-built-and-installed),
 and
 [See which job builds each binary of a release](#see-which-job-builds-each-binary-of-a-release)).
-The jobs of a Mac add the files of a Mac to the release, and stop
-nothing of Linux (see [The files of a Mac](#the-files-of-a-mac)).
+The job `macOS riff release` takes the files of a Mac of the same
+push, adds them to the release, and stops nothing of Linux (see
+[The files of a Mac](#the-files-of-a-mac)).
 When both jobs pass, the job `Deploy` waits for the approval of the
 environment `production`. See
 [Deploy the shared server at the end of a wave](#deploy-the-shared-server-at-the-end-of-a-wave).
@@ -7788,24 +7920,24 @@ paused: run `riff release approve v3.3.0` again, or `riff resume
 
 ### See which job builds each binary of a release
 
-For Linux on x86-64, a release compiles its code two times, both in
-the job `Build` of the release pull request. Each other job of Linux
-takes the result. The jobs of a Mac build the files of a Mac for the
-tag:
+The tag of a release compiles nothing. Each binary of the release
+comes from the push of the commit of the tag to `main`, or from the
+pull request or the merge group of that tree (see
+[The release build of each commit of main](#the-release-build-of-each-commit-of-main)):
 
 | Binary | Built by | Taken by |
 |---|---|---|
-| The test binaries | `Build` of the release pull request | `Tests 1/4` to `Tests 4/4` |
-| The static `riff` and `riff-server`, profile `release`, no cache | `Build` of the release pull request, which has the label `release` | `Static riff` of the tag checks them. `Static riff release` puts them on the release. |
+| The test binaries | `Build` of the pull request or of the merge group | `Tests 1/4` to `Tests 4/4` |
+| The static `riff` and `riff-server`, profile `release`, no cache | `Build` of the push to `main` | `Static riff` of the push and of the tag checks them and runs the release test. `Static riff release` puts them on the release. |
 | The image of `riff-server` | `deploy/cloud/image.sh` in the job `Deploy`, with no compile | The shared riff |
 | The `riff` that deploys | The release: the file `riff-x86_64-unknown-linux-musl` | The job `Deploy` |
-| `riff` and `riff-server` of a Mac, profile `release`, no cache | `macOS riff` of the tag | `macOS riff release` puts them on the release. |
-| The static Linux riff of a Mac | `Linux riff of a Mac` of the tag | `macOS riff release` puts it on the release. |
+| `riff` and `riff-server` of a Mac, profile `release`, no cache | `macOS riff` of the push to `main` | `macOS riff release` puts them on the release. |
+| The static Linux riff of a Mac | `Linux riff of a Mac` of the push to `main` | `macOS riff release` puts it on the release. |
 
-When the tag has another tree than the release pull request, for
-example because a merge came between them, `Build` of the tag builds
-the profile `release` with no cache. The release is the same, only the
-job that builds it is another one.
+When an artifact of the tree is not there, for example because it
+expired or its job of a Mac failed, the tag builds it as the push
+does. The release is the same, only the job that builds it is another
+one.
 
 ### Check that the image holds the release binary
 

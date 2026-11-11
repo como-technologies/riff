@@ -4677,14 +4677,13 @@
   example on a port that the OS gave again, gets no old sign-in of an
   earlier test. A machine at an open riff-server holds no sign-in.
 - **01M6QQ1NXY0CXMZEEEP413W4PK** For Linux on x86-64, CI compiles the
-  code of a tree two times: one test build and one release build. Both
-  run in the job `Build`. The test build makes the test binaries of the
-  workspace in the session image. The release build makes the static
-  `riff` and `riff-server`. The job `Build` also runs `fmt-check`,
-  `lint`, `doc`, `book`, `reqs`, `wrap`, `versions` and the doc tests on
-  the build folder of the test build. Each other job of the CI workflow
-  but `macOS`, `macOS riff` and `Linux riff of a Mac` compiles no crate
-  of the workspace.
+  code of a tree only in the job `Build`. The test build makes the test
+  binaries of the workspace in the session image. The static build
+  makes the static `riff` and `riff-server`. The job `Build` also runs
+  `fmt-check`, `lint`, `doc`, `book`, `reqs`, `wrap`, `versions` and the
+  doc tests on the build folder of the test build. Each other job of the
+  CI workflow but `macOS`, `macOS riff` and `Linux riff of a Mac`
+  compiles no crate of the workspace.
 - **01M6QQ1P0GH9AGCDA5N8EMEFGF** `Build` keeps its binaries as artifacts
   that the git tree of the commit names, `git rev-parse HEAD^{tree}`.
   The artifact `tests-TREE` holds the test binaries and the archive
@@ -4698,9 +4697,9 @@
 - **01M6QQ1P37XW7N465MQGPHCXZM** A push to `main`, a merge group and a
   tag take the artifacts of their tree. When a passed `Build` made the
   artifacts of the same tree, for example for the head of a pull
-  request, `Build` compiles nothing. A tree with no artifact is built as
-  a pull request is built. When the artifacts of both profiles are
-  there, the plan takes the static binaries of the profile `release`.
+  request, `Build` does not make them again. When the artifacts of both
+  profiles are there, the plan takes the static binaries of the profile
+  `release`.
 - **01M6QQ1P5YCT0JX90X5FCKM4W1** The jobs `Tests I/N` take the artifact
   `tests-TREE`, unpack it and run part I of N in the session image with
   `hygiene test-part I/N --archive`. They compile nothing. The archive
@@ -4769,9 +4768,9 @@
   says.
 - **01M75NAFBH6M49GMSV8VG857EP** A push to `main` takes the artifacts
   and `gate-TREE` of its tree, from the run of the merge group or of the
-  pull request with that tree. It builds nothing, it runs no part of the
-  tests and no job `macOS`, and `Gate` passes on that pass. `Static
-  riff` and `Stage` run as for each push to `main`.
+  pull request with that tree. It builds no test binary, it runs no
+  part of the tests and no job `macOS`, and `Gate` passes on that pass.
+  `Static riff` and `Stage` run as for each push to `main`.
 - **01M75T9RGR89MAC6S78K42QN7Q** `just ci-test NAME` takes the test
   build of the newest run of CI at the commit of `HEAD` that ran on a
   branch of this repository. The names of the artifacts of that run give
@@ -4794,6 +4793,12 @@
   pull request that changes one of them makes no artifact that another
   run takes, and its own run builds and tests. Of the runs that count,
   the newest artifact wins.
+- **01M75Y0JGMPRZPNJA1EFM7EM7S** `deploy/artifact-run.sh` also takes
+  `macos-riff-TREE` and `mac-session-riff-TREE`, by the rules of
+  01M75TT13241HC22M0KBJ6HW96. The job that made the artifact is `macOS
+  riff` for `macos-riff-TREE` and `Linux riff of a Mac` for
+  `mac-session-riff-TREE`. So the plan of a push to `main` and of a tag
+  finds the files of a Mac that an earlier run of the tree made.
 
 ## The phone app
 
@@ -5195,8 +5200,8 @@ of this part when they merge.
   builds each binary of the workspace. So a test of one crate finds the
   binary of another crate, for example `riff-server` in a test of
   `riff`, also in a new clone with no `target/`.
-- **01M513W2V4G94R7F4D4Q3M2RA1** For a pull request and a push to a
-  branch, the CI job `Build` builds the profile `dev`, with a cache of
+- **01M513W2V4G94R7F4D4Q3M2RA1** For a pull request and a merge group,
+  the CI job `Build` builds the profile `dev`, with a cache of
   `target/static` and of the downloaded crates. The key of the cache is
   the hash of `rust-toolchain.toml` and `Cargo.lock`. A build of the
   profile `release` uses no cache (01M6QQ1P8H32E2TQ0CYA87R02V).
@@ -5373,13 +5378,12 @@ of this part when they merge.
   seconds apart, before the first `run`. After 3 failures it says that
   the pull of the image failed, names the image, and exits with 1. So
   one failed pull fails no test part of the Gate.
-- **01M6QQ1P8H32E2TQ0CYA87R02V** For a pull request with the label
-  `release`, the job `Build` builds the static binaries of the profile
-  `release` with no cache, so each release binary comes from a clean
-  build. A tag takes the artifact `static-release-TREE` of the same
-  tree, checks it with `deploy/static/check.sh` and adds it to the
-  release. A tag whose tree has no such artifact builds the profile
-  `release` with no cache.
+- **01M6QQ1P8H32E2TQ0CYA87R02V** The job `Build` builds the static
+  binaries of the profile `release` with no cache, so each release
+  binary comes from a clean build. A tag takes the artifact
+  `static-release-TREE` of the same tree, checks it with
+  `deploy/static/check.sh` and adds it to the release. A tag whose tree
+  has no such artifact builds the profile `release` with no cache.
 - **01M6QQ1PB372MQ7M527HVT323F** The jobs `Deploy` and `Stage` of the CI
   workflow compile nothing. The image of `riff-server` is a `FROM
   scratch` image with the CA certificates and the static `riff-server`
@@ -5424,14 +5428,14 @@ of this part when they merge.
   `SHA256SUMS-aarch64-apple-darwin`. A release has no file for a Mac
   with Intel. `SHA256SUMS` and each file of Linux keep their names and
   their content. Supersedes 01M4Z60B7H67YSP22NMGT3DM7X in part.
-- **01M6Z8FKZRJZ4NY60PQAH9SMHV** For a release tag, the CI job `macOS
-  riff` builds `riff` and `riff-server` of the profile `release` on the
-  runner `macos-latest`, with no cache. The job `Linux riff of a Mac`
-  runs `deploy/static/build.sh release` on the runner
-  `ubuntu-24.04-arm`: the static riff for `aarch64-unknown-linux-musl`.
-  It fails when the ELF of that riff has an interpreter, or when `riff
-  --version` does not run on the runner. Then the job `macOS riff
-  release` writes `SHA256SUMS-aarch64-apple-darwin`, waits up to 60
+- **01M6Z8FKZRJZ4NY60PQAH9SMHV** The CI job `macOS riff` builds `riff`
+  and `riff-server` of the profile `release` on the runner
+  `macos-latest`, with no cache. The job `Linux riff of a Mac` runs
+  `deploy/static/build.sh release` on the runner `ubuntu-24.04-arm`: the
+  static riff for `aarch64-unknown-linux-musl`. It fails when the ELF of
+  that riff has an interpreter, or when `riff --version` does not run on
+  the runner. For a release tag, the job `macOS riff release` writes
+  `SHA256SUMS-aarch64-apple-darwin`, waits up to 60
   minutes for the release, and adds the files to it, the sums last.
   These three jobs have `continue-on-error`, and no other job needs
   them. So a failed build for the Mac does not stop the files, the run
@@ -5473,6 +5477,44 @@ of this part when they merge.
   `target/session` of the job `Build` is the hash of `riff.toml`,
   `rust-toolchain.toml`, `Cargo.lock` and `deploy/session-test.sh`.
   Supersedes 01M515Z3Y7GSFNTJGXJD727MQK in part: the key of the cache.
+- **01M75TMWKT8E0YYEENWVX4B67A** Each push to `main` builds the release
+  binaries of its tree once. The job `Build` makes
+  `static-release-TREE`: the static `riff` and `riff-server` of the
+  profile `release`, with no cache. The job `macOS riff` makes
+  `macos-riff-TREE`, and the job `Linux riff of a Mac` makes
+  `mac-session-riff-TREE`. Each job builds only when the plan finds no
+  artifact of that name for the tree, so a second run of the same tree
+  builds nothing. The plan wants the profile `release` for each push, to
+  `main` or of a tag, and the profile `dev` for each other event. A pull
+  request and a merge group build no release binary: only the test
+  binaries and the static binaries of the profile `dev`. Supersedes
+  01M6QQ1NXY0CXMZEEEP413W4PK, 01M6QQ1P37XW7N465MQGPHCXZM,
+  01M6QQ1P8H32E2TQ0CYA87R02V, 01M513W2V4G94R7F4D4Q3M2RA1,
+  01M6Z8FKZRJZ4NY60PQAH9SMHV and 01M75NAFBH6M49GMSV8VG857EP in part.
+- **01M75TN3EC2T25FH0D09JESHZF** A tag takes `static-release-TREE`,
+  `macos-riff-TREE` and `mac-session-riff-TREE` of its tree from the
+  runs that made them, for example the run of the push to `main` of its
+  commit, and compiles nothing. A tag whose tree has no such artifact
+  builds it, as a push to `main` does. The job `macOS riff release`
+  takes the files of a Mac from the runs that the plan names.
+- **01M75TN3HCK6VBB2GRCJG1Y5B2** `deploy/static/smoke.sh PROFILE` is the
+  release test of a tree: a smoke test of the static `riff` and
+  `riff-server`, with no `cargo test`. `riff --version` and `riff-server
+  --version` name the same build. `riff-server` starts with no store and
+  no sign-in on a free port of `127.0.0.1`, and serves within 30
+  seconds. `riff server` finds the same build there, and that it serves.
+  `riff post` puts a message in the thread `smoke`, and `riff read`
+  shows it. `riff-server` stops on SIGTERM within 30 seconds, with the
+  exit code 0. Each binary runs with a clean environment and a new home.
+  At the first step that fails, the test names the step and exits with
+  the code 1. The job `Static riff` runs it after
+  `deploy/static/check.sh`, for each profile.
+- **01M75TN3M9JEVZQXEA2E8FTBKS** For a push, to `main` or of a tag, the
+  job `Static riff` sets the status `riff/release-test` of the commit
+  with `deploy/release-test-status.sh` when it checked the binaries of
+  the profile `release`: `success` when the check and the smoke test
+  passed, else `failure`. The target URL of the status is the run. No
+  ruleset requires the status.
 
 ### Sessions
 

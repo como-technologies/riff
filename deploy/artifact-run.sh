@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Prints the run that holds the newest artifact called NAME that counts,
 # or nothing when no run holds one (01M6QQ1P0GH9AGCDA5N8EMEFGF,
-# 01M75TT13241HC22M0KBJ6HW96). The build plan of CI,
-# `deploy/static/fetch.sh` and `deploy/ci-test.sh` use it to find the
-# binaries and the pass that a run made for a tree.
+# 01M75TT13241HC22M0KBJ6HW96, 01M75Y0JGMPRZPNJA1EFM7EM7S). The build plan
+# of CI, `deploy/static/fetch.sh` and `deploy/ci-test.sh` use it to find
+# the binaries and the pass that a run made for a tree.
 #
 #   deploy/artifact-run.sh NAME
 #
-# NAME is gate-TREE, tests-TREE or static-PROFILE-TREE. An artifact that
-# did not expire counts when each of these is true of its run:
+# NAME is gate-TREE, tests-TREE, static-PROFILE-TREE, macos-riff-TREE or
+# mac-session-riff-TREE. An artifact that did not expire counts when each
+# of these is true of its run:
 #
 # 1. It ran on a branch of this repository: a run on a fork has another
 #    head repository, and its artifact is never a build of this
@@ -19,8 +20,9 @@
 #    justfile of main. These files decide what the jobs run and how the
 #    artifacts are named. So a pull request that changes them makes no
 #    artifact that another run takes, and its own run builds and tests.
-# 4. Its job that made the artifact passed: Gate for gate-TREE, Build for
-#    the others.
+# 4. Its job that made the artifact passed: Gate for gate-TREE, macOS
+#    riff for macos-riff-TREE, Linux riff of a Mac for
+#    mac-session-riff-TREE, and Build for the others.
 #
 # Each run that holds the artifact and does not count is named on
 # stderr. GH_REPO is the repository OWNER/REPO, and gh signs in with
@@ -36,8 +38,10 @@ fi
 case "$NAME" in
 gate-?*) JOB=Gate ;;
 tests-?* | static-dev-?* | static-release-?*) JOB=Build ;;
+macos-riff-?*) JOB="macOS riff" ;;
+mac-session-riff-?*) JOB="Linux riff of a Mac" ;;
 *)
-    echo "artifact-run: $NAME is no artifact of a tree. Give gate-TREE, tests-TREE or static-PROFILE-TREE." >&2
+    echo "artifact-run: $NAME is no artifact of a tree. Give gate-TREE, tests-TREE, static-PROFILE-TREE, macos-riff-TREE or mac-session-riff-TREE." >&2
     exit 2
     ;;
 esac

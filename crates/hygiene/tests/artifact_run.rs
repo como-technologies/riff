@@ -1,11 +1,12 @@
 //! The runs that give the artifacts of a tree
-//! (01M75TT13241HC22M0KBJ6HW96): `deploy/artifact-run.sh` takes an
-//! artifact only from a run of `ci.yml` that is a push to `main`, a merge
-//! group or the run that asks, or whose head commit has the workflows,
-//! `deploy` and the `justfile` of `main`, and whose job that made the
-//! artifact passed. The tests run the script with a fake `gh`. The fake
-//! prints what the `--jq` filter of the real `gh` prints: the filters are
-//! checked by a read of the live API, not here.
+//! (01M75TT13241HC22M0KBJ6HW96, 01M75Y0JGMPRZPNJA1EFM7EM7S):
+//! `deploy/artifact-run.sh` takes an artifact only from a run of
+//! `ci.yml` that is a push to `main`, a merge group or the run that asks,
+//! or whose head commit has the workflows, `deploy` and the `justfile` of
+//! `main`, and whose job that made the artifact passed. The tests run the
+//! script with a fake `gh`. The fake prints what the `--jq` filter of the
+//! real `gh` prints: the filters are checked by a read of the live API,
+//! not here.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -19,7 +20,8 @@ fn top() -> PathBuf {
 /// of the workflow `ci.yml`, and each of its jobs passed. The fakes of the
 /// plan, of `fetch.sh` and of `ci-test` hold only such runs.
 pub const RUNS_OF_MAIN: &str = "'api repos/o/r/actions/runs/'*/jobs*)\n\
-     printf 'Build=success\\nGate=success\\n'; exit 0 ;;\n\
+     printf 'Build=success\\nGate=success\\nmacOS riff=success\\nLinux riff of a Mac=success\\n'; \
+     exit 0 ;;\n\
      'api repos/o/r/actions/runs/'*)\n\
      echo 'push main c0ffee .github/workflows/ci.yml'; exit 0 ;;\n";
 
@@ -243,12 +245,16 @@ fn the_plan_builds_and_tests_the_tree_of_a_pull_request_that_changes_a_script() 
     assert_eq!(
         plan("900"),
         "tree=T1\nrun_tests=true\npassed_run=\nbuild_tests=true\ntests_run=900\n\
-         build_static=true\nstatic_profile=dev\nstatic_run=900\n"
+         build_static=true\nstatic_profile=dev\nstatic_run=900\n\
+         build_macos_riff=false\nmacos_riff_run=\n\
+         build_mac_session_riff=false\nmac_session_riff_run=\n"
     );
     assert_eq!(
         plan("77"),
         "tree=T1\nrun_tests=false\npassed_run=77\nbuild_tests=false\ntests_run=\n\
-         build_static=false\nstatic_profile=dev\nstatic_run=77\n"
+         build_static=false\nstatic_profile=dev\nstatic_run=77\n\
+         build_macos_riff=false\nmacos_riff_run=\n\
+         build_mac_session_riff=false\nmac_session_riff_run=\n"
     );
 }
 
@@ -296,8 +302,9 @@ fn a_run_of_another_workflow_does_not_count() {
 }
 
 /// The job that made the artifact passed: `Gate` for `gate-TREE`,
-/// `Build` for the others. A job that runs has no conclusion yet. A job
-/// that failed and then passed in a new attempt counts.
+/// `Build` for `tests-TREE` and `static-PROFILE-TREE`. A job that runs
+/// has no conclusion yet. A job that failed and then passed in a new
+/// attempt counts.
 #[test]
 fn only_a_run_whose_job_that_made_the_artifact_passed_counts() {
     let forge = Forge::new();
@@ -331,6 +338,53 @@ fn only_a_run_whose_job_that_made_the_artifact_passed_counts() {
 
     forge.jobs("77", &[("Build", "failure"), ("Build", "success")]);
     takes(&forge.ask("tests-T1", None), "77");
+}
+
+/// The files of a Mac count by the job that made them: `macOS riff` for
+/// `macos-riff-TREE`, `Linux riff of a Mac` for `mac-session-riff-TREE`.
+/// A passed `Build` does not make them count.
+#[test]
+fn the_files_of_a_mac_count_by_the_job_that_made_them() {
+    let forge = Forge::new();
+    forge.artifact("macos-riff-T1", &["77"]);
+    forge.artifact("mac-session-riff-T1", &["77"]);
+    forge.run("77", "push", "main", "s77", ".github/workflows/ci.yml");
+
+    forge.jobs(
+        "77",
+        &[
+            ("Build", "success"),
+            ("macOS riff", "failure"),
+            ("Linux riff of a Mac", "success"),
+        ],
+    );
+    let out = forge.ask("macos-riff-T1", None);
+    takes(&out, "");
+    assert!(
+        stderr(&out).contains(
+            "macos-riff-T1 of the run 77 does not count: its job macOS riff did not pass.\n"
+        ),
+        "{}",
+        stderr(&out)
+    );
+    takes(&forge.ask("mac-session-riff-T1", None), "77");
+
+    forge.jobs(
+        "77",
+        &[
+            ("Build", "success"),
+            ("macOS riff", "success"),
+            ("Linux riff of a Mac", "cancelled"),
+        ],
+    );
+    takes(&forge.ask("macos-riff-T1", None), "77");
+    let out = forge.ask("mac-session-riff-T1", None);
+    takes(&out, "");
+    assert!(
+        stderr(&out).contains("its job Linux riff of a Mac did not pass."),
+        "{}",
+        stderr(&out)
+    );
 }
 
 /// Of the runs that hold the artifact, the newest that counts wins. The
@@ -444,15 +498,22 @@ fn the_script_reads_the_run_its_jobs_and_its_files() {
 #[test]
 fn a_wrong_name_and_no_repository_are_refused() {
     let forge = Forge::new();
-    for name in ["", "tree-T1", "gate-", "static-fast-T1"] {
+    for name in [
+        "",
+        "tree-T1",
+        "gate-",
+        "static-fast-T1",
+        "macos-riff-",
+        "mac-session-riff-",
+    ] {
         let out = forge.ask(name, None);
         assert_eq!(out.status.code(), Some(2), "{name}: {}", stderr(&out));
     }
     let out = forge.ask("static-fast-T1", None);
     assert!(
         stderr(&out).contains(
-            "artifact-run: static-fast-T1 is no artifact of a tree. Give gate-TREE, tests-TREE \
-             or static-PROFILE-TREE.\n"
+            "artifact-run: static-fast-T1 is no artifact of a tree. Give gate-TREE, tests-TREE, \
+             static-PROFILE-TREE, macos-riff-TREE or mac-session-riff-TREE.\n"
         ),
         "{}",
         stderr(&out)
