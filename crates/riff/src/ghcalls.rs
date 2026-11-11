@@ -135,8 +135,10 @@
 //!
 //! 1. A header `x-ratelimit-reset` in the answer of the failed call
 //!    ([`header_reset`]), as `gh api -i` and `GH_DEBUG=api` show it.
-//! 2. A secondary limit ([`is_secondary`]) has no reset: riff waits
-//!    [`SECONDARY_WAIT_MS`].
+//! 2. A secondary limit ([`is_secondary`]) that starts an outage has no
+//!    reset: riff waits [`SECONDARY_WAIT_MS`]. In an outage that goes on,
+//!    a secondary limit waits no new minute: the steps 3 and 4 give the
+//!    wait (#1872).
 //! 3. A counter that shows no points: the reply of `gh api rate_limit`
 //!    ([`counter_in`]), or for GraphQL a few reads of
 //!    `rateLimit { remaining resetAt }` ([`probe_in`]), as each read can
@@ -146,21 +148,36 @@
 //!    that it is a guess ([`Wait::guessed`]), and so does the message to
 //!    the lead.
 //!
-//! The key of the message to the lead names the outage, not the reset
-//! time: the resource and the hour of the counter ([`Wait::key`]).
+//! # The outage
+//!
+//! An outage of a resource lasts while its calls fail on the limit. A
+//! call that fails less than [`OUTAGE_GAP_MS`] after the end of the last
+//! wait of the resource is in the same outage ([`Calls::outage`]). Each
+//! wait of one outage keeps the reset of the first wait
+//! ([`Wait::outage_ms`]). The key of the message to the lead names the
+//! outage with it, not the reset time: the resource and the hour of that
+//! counter ([`Wait::key`]). So the lead hears of an outage one time, also
+//! when the reset moves one minute at each try (#1872).
 //!
 //! ```mermaid
 //! flowchart TD
 //!     C["a call of gh"] --> W{"a wait for its resource?"}
 //!     W -- yes --> R["fails at once: Limited, no call"]
 //!     W -- no --> G["gh"]
-//!     G -- "fails: rate limit" --> H{"a reset in its answer,<br/>or a secondary limit?"}
+//!     G -- "fails: rate limit" --> H{"a reset in its answer?"}
 //!     H -- yes --> K["Calls keeps the Wait"]
-//!     H -- no --> A{"a counter with no points:<br/>gh api rate_limit, rateLimit reads?"}
+//!     H -- no --> T{"a secondary limit<br/>that starts an outage?"}
+//!     T -- yes --> M["one minute"]
+//!     M --> K
+//!     T -- no --> A{"a counter with no points:<br/>gh api rate_limit, rateLimit reads?"}
 //!     A -- yes --> K
 //!     A -- no --> E["the end of the hour of the counter<br/>that riff saw: a guess"]
 //!     E --> K
-//!     K --> S["riff daemon status shows it"]
+//!     K --> O{"the last wait ended<br/>less than a minute ago?"}
+//!     O -- yes --> P["the same outage:<br/>the key of its first wait"]
+//!     O -- no --> N["a new outage:<br/>the key of this wait"]
+//!     P --> S["riff daemon status shows it,<br/>the wave tells the lead one time"]
+//!     N --> S
 //! ```
 
 use std::collections::{BTreeMap, VecDeque};
@@ -225,9 +242,15 @@ pub const RESET_SLACK_MS: i64 = 1_000;
 /// How long riff waits for a limit when it cannot read any counter.
 pub const UNREAD_WAIT_MS: i64 = 300_000;
 
-/// How long riff waits for a secondary limit of GitHub: GitHub refuses the
-/// calls for a short time, and has no reset for it.
+/// How long riff waits for a secondary limit of GitHub that starts an
+/// outage: GitHub refuses the calls for a short time, and has no reset
+/// for it.
 pub const SECONDARY_WAIT_MS: i64 = 60_000;
+
+/// A call that fails on a limit less than this long after the end of the
+/// last wait of its resource is in the same outage (#1872): the loops of
+/// the daemon call again a few seconds after the end of a wait.
+pub const OUTAGE_GAP_MS: i64 = 60_000;
 
 /// How many times riff reads `rateLimit` of GraphQL to find the counter
 /// that is out: each read can land on another counter (#1581).
@@ -352,15 +375,31 @@ pub struct Wait {
     /// is the end of the hour of a counter that it saw (#1581).
     #[serde(default)]
     pub guessed: bool,
+    /// The reset of the first wait of the outage, in milliseconds since
+    /// the epoch: each wait of one outage has the same ([`Calls::outage`],
+    /// #1872).
+    #[serde(default)]
+    pub outage_ms: i64,
 }
 
 impl Wait {
-    /// A wait for a reset that riff read.
+    /// A wait for a reset that riff read. It starts an outage, until
+    /// [`Calls::start_wait`] finds the outage that goes on.
     pub fn until(resource: Resource, reset_ms: i64) -> Self {
         Self {
             resource,
             reset_ms,
             guessed: false,
+            outage_ms: reset_ms,
+        }
+    }
+
+    /// A wait for `reset_ms`, the end of the hour of a counter that riff
+    /// saw, when it found no reset of the counter that is out (#1581).
+    pub fn guess(resource: Resource, reset_ms: i64) -> Self {
+        Self {
+            guessed: true,
+            ..Self::until(resource, reset_ms)
         }
     }
 
@@ -370,10 +409,11 @@ impl Wait {
     }
 
     /// The key of the post that tells the lead of this wait. It names the
-    /// outage: the resource and the hour of the counter. The counters of
-    /// one token and the waits of one outage give the same key, and each
-    /// host of one person reads the same hour, so the lead gets one
-    /// message (01M5TKG2K1AYK1KE7C2AA2W9DS, #1581).
+    /// outage: the resource and the hour of the counter of the first wait
+    /// of the outage ([`Wait::outage_ms`]). The counters of one token and
+    /// the waits of one outage give the same key, and each host of one
+    /// person reads the same hour, so the lead gets one message
+    /// (01M5TKG2K1AYK1KE7C2AA2W9DS, #1581, #1872).
     ///
     /// ```
     /// use riff::ghcalls::{Resource, Wait};
@@ -386,11 +426,14 @@ impl Wait {
     /// // The next hour is a new outage, and REST has its own.
     /// assert_ne!(Wait::until(Resource::Graphql, 1_793_721_635_000).key(), wait.key());
     /// assert_ne!(Wait::until(Resource::Rest, 1_793_718_035_000).key(), wait.key());
+    /// // A later wait of the same outage keeps the key of its first wait.
+    /// let later = Wait { reset_ms: 1_793_721_635_000, ..wait };
+    /// assert_eq!(later.key(), wait.key());
     /// ```
     pub fn key(&self) -> String {
         // Half an hour on: the resets of the counters of one token are
         // some minutes apart at the most, and they share the nearest hour.
-        let hour = chrono::DateTime::from_timestamp_millis(self.reset_ms + 1_800_000)
+        let hour = chrono::DateTime::from_timestamp_millis(self.outage_ms + 1_800_000)
             .map_or_else(String::new, |at| at.format("%Y%m%d%H").to_string());
         format!("github-limit-{}-{hour}", self.resource.key())
     }
@@ -839,7 +882,9 @@ impl Calls {
     /// Starts `wait` for the reset of its resource. It gives `true` when
     /// this starts the wait, and `false` when the resource waits already:
     /// a call that was on its way when the limit ran out fails later, and
-    /// it starts no second wait.
+    /// it starts no second wait. A wait in an outage that goes on
+    /// ([`Calls::outage`]) keeps the [`Wait::outage_ms`] of that outage,
+    /// and so its key (#1872).
     ///
     /// ```
     /// use riff::ghcalls::{Calls, Resource, Wait};
@@ -853,19 +898,57 @@ impl Calls {
     /// assert!(calls.waiting(Resource::Rest, 0).is_none());
     /// // The wait is over: a new limit starts a new wait.
     /// assert!(calls.start_wait(Wait::until(Resource::Graphql, 7_260_000), 3_700_000));
+    ///
+    /// // The first wait of an outage ends at 15:29:31 UTC. One second
+    /// // later a call fails again, and the reset is one minute later: the
+    /// // same outage, with the key of the first wait.
+    /// let calls = Calls::default();
+    /// let first = Wait::until(Resource::Graphql, 1_793_719_770_000);
+    /// assert!(calls.start_wait(first, 1_793_719_710_000));
+    /// let next = Wait::until(Resource::Graphql, 1_793_719_832_000);
+    /// assert!(calls.start_wait(next, 1_793_719_772_000));
+    /// let wait = calls.waiting(Resource::Graphql, 1_793_719_772_000).unwrap();
+    /// assert_eq!(wait.reset_ms, next.reset_ms);
+    /// assert_eq!(wait.key(), first.key());
+    /// assert_ne!(next.key(), first.key(), "the reset moved past the half hour");
     /// ```
     pub fn start_wait(&self, wait: Wait, now_ms: i64) -> bool {
         let mut inner = self.lock();
         if inner.waiting(wait.resource, now_ms).is_some() {
             return false;
         }
-        inner.waits.insert(wait.resource, wait);
+        let outage_ms = inner
+            .outage(wait.resource, now_ms)
+            .map_or(wait.outage_ms, |last| last.outage_ms);
+        inner
+            .waits
+            .insert(wait.resource, Wait { outage_ms, ..wait });
         true
     }
 
     /// The wait of `resource` at `now_ms`, when it has one.
     pub fn waiting(&self, resource: Resource, now_ms: i64) -> Option<Wait> {
         self.lock().waiting(resource, now_ms)
+    }
+
+    /// The last wait of `resource` while its outage goes on at `now_ms`:
+    /// the resource waits, or its wait ended less than [`OUTAGE_GAP_MS`]
+    /// ago (#1872).
+    ///
+    /// ```
+    /// use riff::ghcalls::{Calls, OUTAGE_GAP_MS, Resource, Wait};
+    ///
+    /// let calls = Calls::default();
+    /// assert!(calls.outage(Resource::Graphql, 0).is_none());
+    /// calls.start_wait(Wait::until(Resource::Graphql, 60_000), 0);
+    /// // The wait ends at 61 seconds.
+    /// assert!(calls.outage(Resource::Graphql, 30_000).is_some());
+    /// assert!(calls.outage(Resource::Graphql, 61_000 + OUTAGE_GAP_MS - 1).is_some());
+    /// assert!(calls.outage(Resource::Graphql, 61_000 + OUTAGE_GAP_MS).is_none());
+    /// assert!(calls.outage(Resource::Rest, 30_000).is_none());
+    /// ```
+    pub fn outage(&self, resource: Resource, now_ms: i64) -> Option<Wait> {
+        self.lock().outage(resource, now_ms)
     }
 
     /// The wait that ends last at `now_ms`, when a resource waits. The look
@@ -882,6 +965,11 @@ impl Inner {
     fn waiting(&self, resource: Resource, now_ms: i64) -> Option<Wait> {
         let wait = *self.waits.get(&resource)?;
         (wait.until_ms() > now_ms).then_some(wait)
+    }
+
+    fn outage(&self, resource: Resource, now_ms: i64) -> Option<Wait> {
+        let wait = *self.waits.get(&resource)?;
+        (now_ms - wait.until_ms() < OUTAGE_GAP_MS).then_some(wait)
     }
 
     fn waits(&self, now_ms: i64) -> Vec<Wait> {

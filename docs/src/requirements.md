@@ -6133,16 +6133,12 @@ of this part when they merge.
   GitHub comes from the call that failed, and not from any read, as
   GitHub keeps more than one counter for a token and a read can land on
   a counter that has points. The order is: the header x-ratelimit-reset
-  in the answer of the failed call; a secondary limit, which has no
-  reset, waits one minute; a counter that shows no points left, read
-  with gh api rate_limit and, for GraphQL, with some reads of rateLimit
-  { remaining resetAt }. When no read shows a counter that is out, the
-  wait ends at the latest reset that riff saw, the end of the hour of
-  that counter, and riff daemon status and the message to the lead say
-  that the time is a guess. The key of the post to the lead names the
-  outage, the resource and the hour of the counter, and not the reset
-  time: the lead hears of an outage one time, and a second failed call
-  in the same outage gives no message (#1581). Supersedes
+  in the answer of the failed call; a counter that shows no points left,
+  read with gh api rate_limit and, for GraphQL, with some reads of
+  rateLimit { remaining resetAt }. When no read shows a counter that is
+  out, the wait ends at the latest reset that riff saw, the end of the
+  hour of that counter, and riff daemon status and the message to the
+  lead say that the time is a guess (#1581). Supersedes
   01M6H1N2XYKK6QRCJS02RZJHKZ in part.
 - **01M6JEQEQ45YMNR1WTX2RRTQ5B** A check with no run is not done. The
   full check of a head commit is done when each of its checks has a run,
@@ -6301,6 +6297,18 @@ of this part when they merge.
   When a session of a wave for failed checks ends with the same head
   commit, only the required runs of Actions count as failed. Supersedes
   01M5SN0PY23JDWND8DGGAF9XMB and 01M6JEQEQ45YMNR1WTX2RRTQ5B in part.
+- **01M74BJ5Y03F5DGT44N8EENFBG** A call that fails on a limit of GitHub
+  less than one minute after the end of the last wait of its resource is
+  in the same outage. Each wait of one outage has the key of the first
+  wait: the resource and the hour of the counter of that wait, and not
+  the reset time. The lead hears of an outage one time, also when the
+  reset moves at each try. After the header x-ratelimit-reset of the
+  failed call, a secondary limit, which has no reset, waits one minute
+  when it starts an outage, and riff reads no counter. In an outage that
+  goes on, a secondary limit waits no new minute: the wait is the reset
+  of a counter that shows no points left, or the end of the hour of the
+  counter that riff saw, as a guess (#1872). Supersedes
+  01M6JEQ2HQBNYVRH75ZS8XQPBB in part.
 
 ### The lead, the view and the takeover
 
