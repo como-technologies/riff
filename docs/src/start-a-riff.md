@@ -102,7 +102,10 @@ riff
 
 The first row has the six tabs: Sessions, Chat, Waves, Machines,
 Devices and Reports. The second row shows the state of the riff, the
-owner, the build of your riff and the link to riff-server. The row
+owner, the build of your riff and the link to riff-server. After an
+update, a row under it tells you to start the TUI again: see
+[Start the TUI again after an update](#start-the-tui-again-after-an-update).
+The row
 before the last shows the result of your last action, or why riff
 cannot reach riff-server. The last row shows the keys.
 
@@ -236,6 +239,22 @@ images. It tells you each step that needs you. See
 [Each step of an update](how-it-works.md#each-step-of-an-update), and
 [See each step of an update](how-it-works.md#see-each-step-of-an-update)
 for `riff update --check`.
+
+### Start the TUI again after an update
+
+A TUI that runs keeps its build until it starts again. An update
+changes only the file of riff on disk. At each look, the TUI reads the
+build of that file. When it is another build, the row under the
+header says `riff VERSION ID is installed: press q, then start riff
+again`, with the version and the build ID of the new riff. Press `q` in
+the TUI, then start it again:
+
+```sh
+riff
+```
+
+The sessions go on while the TUI is not open. When the new TUI runs,
+the row does not show.
 
 ## Install riff on a Mac
 

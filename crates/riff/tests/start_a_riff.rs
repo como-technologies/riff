@@ -79,12 +79,37 @@ fn the_install_command_installs_riff_and_its_server_from_the_repository() {
     assert_eq!(words[git + 2..], [env!("CARGO_PKG_NAME"), "riff-server"]);
 }
 
-/// "Update riff" of "Start a Riff" is one command.
+/// "Update riff" of "Start a Riff" is one command, and the start of the
+/// TUI again after it (01M748V7Y8DQPCQJ9D2Q7HKB76).
 #[test]
 fn a_person_updates_riff_with_riff_update() {
     let update = commands_of_part(PAGE, "Update riff");
-    assert_eq!(update, ["riff update"]);
+    assert_eq!(update, ["riff update", "riff"]);
     each_is_real(&update);
+}
+
+/// "Update riff" of "Start a Riff" says that a TUI that runs keeps its
+/// build, with the words of the row of the TUI, and how to start it
+/// again (01M748V7Y8DQPCQJ9D2Q7HKB76).
+#[test]
+fn update_riff_says_to_start_the_tui_again() {
+    let part = part(PAGE, "Update riff");
+    let how = &part[part
+        .find("\n### Start the TUI again after an update\n")
+        .expect("the how-to")..];
+    let text = how.split_whitespace().collect::<Vec<_>>().join(" ");
+    let build = riff_core::build::Build {
+        version: "VERSION".into(),
+        id: "ID".into(),
+        time: String::new(),
+    };
+    for words in [
+        "A TUI that runs keeps its build until it starts again.".to_owned(),
+        format!("`{}`", riff::text::installed_riff(&build)),
+        "Press `q` in the TUI, then start it again: ```sh riff ```".to_owned(),
+    ] {
+        assert!(text.contains(&words), "{words}: {text}");
+    }
 }
 
 /// "Update riff" of "Start a Riff" says which release `riff update`

@@ -8431,6 +8431,14 @@ that builds it merges.
   sight. The list takes no row of the newest line, and the log keeps one
   row at least. When the rows are few, the list shows fewer names, and
   the first name at least.
+- **01M748V7Y8DQPCQJ9D2Q7HKB76** A TUI that runs keeps its build until
+  it starts again. At each look, the TUI reads the build of the riff
+  file at the path of its own binary: it runs that file with `--version`
+  once for each new file. When that build is another build than its own,
+  a row under the header says `riff VERSION ID is installed: press q,
+  then start riff again`, with the version and the build ID of the file.
+  With the same build, or with a file that gives no build, the row does
+  not show.
 
 ## The notes of the lead
 

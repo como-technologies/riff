@@ -334,7 +334,7 @@ fn loopback_host(host: &str) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
-/// The build in the `--version` line of `riff-server`.
+/// The build in the `--version` line of `riff-server` or of `riff`.
 ///
 /// ```
 /// use riff::lifecycle::version_build;

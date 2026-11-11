@@ -12569,6 +12569,28 @@ pub const NO_LEAD_HERE: &str = "No lead runs on this machine. Start it in a clon
 /// The tab shows the sessions of riff-server.
 pub const NO_DAEMON_HERE: &str = "No riff daemon here: the tab shows the sessions of riff-server.";
 
+/// The row under the header of the TUI when the riff file of its process
+/// has another build (01M748V7Y8DQPCQJ9D2Q7HKB76): the version and the
+/// first 7 characters of the build ID of the file, and the step. The
+/// build comes from the output of the file: the row has it [`safe`].
+///
+/// ```
+/// use riff_core::build::Build;
+///
+/// let build: Build = "0.2.0 3f2a91c00000 2026-11-10T12:00:00Z".parse().unwrap();
+/// assert_eq!(
+///     riff::text::installed_riff(&build),
+///     format!("riff {} 3f2a91c is installed: press q, then start riff again", build.version)
+/// );
+/// ```
+pub fn installed_riff(build: &riff_core::build::Build) -> String {
+    let id: String = build.id.chars().take(7).collect();
+    safe(&format!(
+        "riff {} {id} is installed: press q, then start riff again",
+        build.version
+    ))
+}
+
 /// The Sessions tab: `t` or `x` on a row that is no session.
 pub const PICK_A_SESSION: &str = "Select a session first: t and x act on one session.";
 
