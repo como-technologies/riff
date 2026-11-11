@@ -327,6 +327,42 @@ fn no_page_of_the_book_lists_the_steps_on_github_for_the_rights_of_an_app() {
     }
 }
 
+/// 01M74MB9C716796KFJMKRZKJ4D: "Accept the new rights of the lead App"
+/// says that each lead and each session gets the new rights at once after
+/// the accept, and that `riff github check` renews them for a lead App
+/// with no webhook. "New rights of a GitHub App" of "How It Works" shows
+/// how, with a diagram, and how to see each renew of the daemon.
+#[test]
+fn the_book_says_that_each_lead_and_session_gets_the_new_rights_at_once() {
+    let make = part("start-a-team-riff.md", "Make the GitHub Apps of riff");
+    let accept = make
+        .split("\n### Accept the new rights of the lead App\n")
+        .nth(1)
+        .expect("the how-to is in the part");
+    let accept = accept.split("\n### ").next().unwrap();
+    let words = accept.split_whitespace().collect::<Vec<_>>().join(" ");
+    for line in [
+        "Each lead and each session gets the new rights at once after the accept.",
+        "A lead App that riff made before it had a webhook sends riff-server no event. Then \
+         the check at the end of `riff github install` finds the new rights",
+        "(how-it-works.md#new-rights-of-a-github-app)",
+    ] {
+        assert!(words.contains(line), "{line}: {accept}");
+    }
+    let how = page("how-it-works.md");
+    let renew = how
+        .split("\n#### New rights of a GitHub App\n")
+        .nth(1)
+        .expect("the part is in How It Works");
+    let renew = renew.split("\n#### ").next().unwrap();
+    assert!(renew.contains("```mermaid"), "{renew}");
+    assert_eq!(
+        book::commands_in(renew),
+        ["journalctl --user -u riff | grep 'has new rights'"]
+    );
+    assert!(renew.contains("riff daemon: The install 2020 of a GitHub App has new rights."));
+}
+
 /// 01M6Z7R4R56ANXBQN0XJZXNFXW: "Add another repository to the riff" has
 /// the step that adds the repository to the installs of the Apps, with a
 /// copyable `sh` block of each real command, and the words of GitHub.

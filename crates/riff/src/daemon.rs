@@ -493,7 +493,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::build::Build;
-use riff_core::name::SessionUri;
+use riff_core::name::{Place, SessionUri};
 use riff_core::wire::{BotFact, Wake};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -2121,6 +2121,9 @@ struct Owned {
     /// The task that renews the token of the session on GitHub
     /// ([`Daemon::renew_github`]).
     renewal: Mutex<Option<JoinHandle<()>>>,
+    /// The install of the token of the session has new rights: the
+    /// renewal asks for a new token now ([`Daemon::renew_install`]).
+    renew_now: Notify,
 }
 
 /// The state of an [`Owned`] session.
@@ -2662,6 +2665,9 @@ pub struct Daemon<R> {
     /// The repositories whose lead has no token on GitHub at all, and why
     /// (01M6YC3T0TXANJH6YMTJZR1HCR): `riff daemon status` names them.
     no_tokens: Mutex<BTreeMap<String, String>>,
+    /// Each riff-server whose renews of the tokens on GitHub the daemon
+    /// follows ([`Daemon::follow_renews`], 01M74MB99RT6B9MKSBMSVD4JRG).
+    renews: Mutex<BTreeSet<String>>,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -2793,6 +2799,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             }),
             no_starts: Mutex::default(),
             no_tokens: Mutex::default(),
+            renews: Mutex::default(),
         })
     }
 
@@ -3658,20 +3665,30 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// [`gh_token::RETRY`] apart. A session with no token at all asks
     /// again every [`gh_token::NONE_AGAIN`] (01M6YC3T0TXANJH6YMTJZR1HCR).
     /// A session of `riff run --no-github` renews nothing
-    /// (01M6Z87JY83V3KR72E2AG8V8KG).
+    /// (01M6Z87JY83V3KR72E2AG8V8KG). A renew of the install of the token
+    /// asks at once ([`Daemon::renew_install`], 01M74MB99RT6B9MKSBMSVD4JRG): the daemon
+    /// follows the renews of the riff-server of the session.
     fn renew_github(self: &Arc<Self>, owned: &Arc<Owned>) {
-        let first = match &owned.lock().record.github {
-            Some(gh_token::ActsAs::Bot { ends, .. }) => {
-                gh_token::renew_in(ends, gh_token::now_secs())
-            }
-            Some(gh_token::ActsAs::NoToken { .. }) => gh_token::NONE_AGAIN,
-            Some(gh_token::ActsAs::NoGitHub) | None => return,
+        let (first, record) = {
+            let state = owned.lock();
+            let first = match &state.record.github {
+                Some(gh_token::ActsAs::Bot { ends, .. }) => {
+                    gh_token::renew_in(ends, gh_token::now_secs())
+                }
+                Some(gh_token::ActsAs::NoToken { .. }) => gh_token::NONE_AGAIN,
+                Some(gh_token::ActsAs::NoGitHub) | None => return,
+            };
+            (first, state.record.clone())
         };
+        self.follow_renews(&record.server, record.me.place());
         let (daemon, session) = (self.clone(), owned.clone());
         let task = tokio::spawn(async move {
             let mut wait = first;
             loop {
-                tokio::time::sleep(wait).await;
+                tokio::select! {
+                    () = tokio::time::sleep(wait) => {}
+                    () = session.renew_now.notified() => {}
+                }
                 wait = match daemon.renew_once(&session).await {
                     Ok(Some(next)) => next.max(gh_token::RETRY),
                     Ok(None) => return,
@@ -3691,6 +3708,75 @@ impl<R: Runtime + 'static> Daemon<R> {
         if let Some(old) = old {
             old.abort();
         }
+    }
+
+    /// Follows the renews of the tokens on GitHub of the riff-server
+    /// `server`, as the person at `place`, one time for each riff-server
+    /// (01M74MB99RT6B9MKSBMSVD4JRG, [`World::github_renews`]). Each renew goes to
+    /// [`Daemon::renew_install`]. The task ends with the daemon.
+    pub(crate) fn follow_renews(self: &Arc<Self>, server: &str, place: &Place) {
+        let new = self
+            .renews
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(server.to_owned());
+        if !new {
+            return;
+        }
+        let daemon = Arc::downgrade(self);
+        let (world, server, place) = (self.world.clone(), server.to_owned(), place.clone());
+        tokio::spawn(async move {
+            let (to, mut renews) = mpsc::unbounded_channel();
+            let follow = world.github_renews(&server, &place, to);
+            tokio::pin!(follow);
+            loop {
+                let renew = tokio::select! {
+                    () = &mut follow => return,
+                    renew = renews.recv() => match renew {
+                        Some(renew) => renew,
+                        None => return,
+                    },
+                };
+                let Some(daemon) = daemon.upgrade() else {
+                    return;
+                };
+                daemon.renew_install(&server, renew.installation);
+            }
+        });
+    }
+
+    /// The install `installation` of the riff-server `server` has new
+    /// rights (01M74MB99RT6B9MKSBMSVD4JRG): each session with a token of it asks for a new
+    /// token now, the lead too, and each write of the daemon with a token
+    /// of it asks for a new one. A session of another install keeps its
+    /// token.
+    pub(crate) fn renew_install(&self, server: &str, installation: u64) {
+        let owned: Vec<Arc<Owned>> = self.lock().values().cloned().collect();
+        let mut containers = Vec::new();
+        for owned in owned {
+            let of_install = {
+                let state = owned.lock();
+                let record = &state.record;
+                !state.ended
+                    && record.server == server
+                    && record
+                        .github
+                        .as_ref()
+                        .is_some_and(|acts| acts.of_install(installation))
+            };
+            if of_install {
+                owned.renew_now.notify_one();
+                containers.push(owned.name.clone());
+            }
+        }
+        let repos = match self.world.writes() {
+            Some(writes) => writes.forget(server, installation),
+            None => Vec::new(),
+        };
+        println!(
+            "riff daemon: {}",
+            text::daemon_gh_renew(installation, &containers, &repos)
+        );
     }
 
     /// Asks riff-server for a new token of the session `owned`, and writes
@@ -4697,6 +4783,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             closing: Notify::new(),
             door: Mutex::new(None),
             renewal: Mutex::new(None),
+            renew_now: Notify::new(),
         });
         {
             let mut live = self.lock();
@@ -8855,6 +8942,9 @@ mod tests {
         daemon_asks: std::sync::atomic::AtomicUsize,
         /// The tokens of the writes of the daemon ([`World::writes`]).
         writes: Option<gh_token::Writes>,
+        /// Each follow of the renews of [`World::github_renews`]: its
+        /// riff-server, and where the renews go.
+        renews: Mutex<Vec<(String, mpsc::UnboundedSender<riff_core::wire::GitHubRenew>)>>,
     }
 
     /// The answer of a fake riff-server to the ask `n` of a token.
@@ -8887,6 +8977,7 @@ mod tests {
                 role: riff_core::wire::GitHubRole::Worker,
                 rights: [("contents".to_owned(), "write".to_owned())].into(),
                 ends: sweep::date_text(end),
+                installation: Some(1010),
             },
             bot_id: Some(1101),
         }
@@ -8956,6 +9047,21 @@ mod tests {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone()
+        }
+
+        /// The riff-server of each follow of the renews.
+        fn follows(&self) -> Vec<String> {
+            let renews = self.renews.lock().unwrap_or_else(PoisonError::into_inner);
+            renews.iter().map(|(server, _)| server.clone()).collect()
+        }
+
+        /// Sends the renew of the install `installation` to each follow, as
+        /// riff-server does when the install has new rights.
+        fn renew(&self, installation: u64) {
+            let renews = self.renews.lock().unwrap_or_else(PoisonError::into_inner);
+            for (_, to) in renews.iter() {
+                let _ = to.send(riff_core::wire::GitHubRenew { installation });
+            }
         }
 
         /// The forge of `gh`.
@@ -9190,6 +9296,19 @@ mod tests {
                 .daemon_asks
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(async move { give(n) })
+        }
+
+        fn github_renews<'a>(
+            &'a self,
+            server: &'a str,
+            _: &'a Place,
+            to: mpsc::UnboundedSender<riff_core::wire::GitHubRenew>,
+        ) -> crate::wave::BoxFuture<'a, ()> {
+            self.renews
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push((server.to_owned(), to));
+            Box::pin(std::future::pending())
         }
 
         fn tell<'a>(
@@ -10879,6 +10998,7 @@ mod tests {
                     role: riff_core::wire::GitHubRole::Lead,
                     rights: [("issues".to_owned(), "write".to_owned())].into(),
                     ends,
+                    installation: Some(2020),
                 },
                 bot_id: Some(1202),
             }
@@ -14035,6 +14155,97 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// 01M74MB99RT6B9MKSBMSVD4JRG: the lead and the worker of issue-12 have a token of the
+    /// install 2020, and the worker of issue-13 a token of the install
+    /// 1010. The daemon follows the renews of its riff-server one time. A
+    /// renew of the install 2020 gives the lead and the worker of issue-12
+    /// a new token at once, in the same file, long before the end of the
+    /// old one. The worker of issue-13 keeps its token. The token of the
+    /// writes of the daemon of the install 2020 asks again at the next
+    /// write.
+    #[tokio::test]
+    async fn a_renew_of_an_install_gives_its_lead_and_its_sessions_a_new_token_at_once() {
+        let of_install = |token: &str, installation| {
+            let mut grant = app_token(token, Duration::from_secs(3600));
+            if let gh_token::ActsAs::Bot {
+                installation: id, ..
+            } = &mut grant.acts
+            {
+                *id = Some(installation);
+            }
+            grant
+        };
+        let server = Server::with_github(move |n| {
+            Ok(match n {
+                0 => of_install("ghs_lead_old", 2020),
+                1 => of_install("ghs_w12_old", 2020),
+                2 => of_install("ghs_w13_old", 1010),
+                n => of_install(&format!("ghs_new_{n}"), 2020),
+            })
+        })
+        .with_daemon_token(move |n| Ok(of_install(&format!("ghs_writes_{n}"), 2020)));
+        let server = Arc::new(server);
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let lead = started_lead_asking(&here).await;
+        let mut folders = vec![("lead", lead.folder.clone())];
+        let mut clients = Vec::new();
+        for (name, item) in [
+            ("riff-issue-12-1a2b3c4d", "issue-12"),
+            ("riff-issue-13-1a2b3c4d", "issue-13"),
+        ] {
+            let start = here.start_asking(name, item);
+            folders.push((item, start.folder.clone()));
+            let (client, name) = here.started(start).await;
+            until(|| here.fake.spec(&name).is_some()).await;
+            clients.push(client);
+        }
+        assert_eq!(server.asks(), 3);
+        let token_of = |item: &str| {
+            let (_, folder) = folders.iter().find(|(i, _)| *i == item).unwrap();
+            gh_token::read_token(folder).map(|token| token.to_string())
+        };
+        assert_eq!(token_of("lead").as_deref(), Some("ghs_lead_old"));
+        assert_eq!(token_of("issue-12").as_deref(), Some("ghs_w12_old"));
+        // One follow of the renews for the one riff-server of the sessions.
+        assert_eq!(server.follows(), ["http://127.0.0.1:1"]);
+        let repo = "como-technologies/riff";
+        let writes = || {
+            let gh = crate::pr::Gh::at("/nonexistent/gh");
+            gh_token::writer(&*server, Some("http://127.0.0.1:1"), repo, gh)
+        };
+        writes().await;
+        writes().await;
+        assert_eq!(server.daemon_asks(), 1, "the daemon keeps its token");
+
+        // A renew of an install that no token has changes nothing.
+        server.renew(4040);
+        server.renew(2020);
+        let renewed =
+            |item: &str| token_of(item).is_some_and(|token| token.starts_with("ghs_new_"));
+        until(|| renewed("lead") && renewed("issue-12")).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            server.asks(),
+            5,
+            "one new token for each session of the install"
+        );
+        assert_eq!(token_of("issue-13").as_deref(), Some("ghs_w13_old"));
+        assert!(
+            server.revoked().is_empty(),
+            "riff-server revokes the old tokens"
+        );
+        writes().await;
+        assert_eq!(server.daemon_asks(), 2, "the writes ask for a new token");
+        let owned = here.daemon.lock().get(LEAD).cloned().unwrap();
+        let acts = owned.lock().record.github.clone();
+        assert!(
+            acts.is_some_and(|acts| acts.of_install(2020)),
+            "the record keeps the install"
+        );
     }
 
     /// The why of riff-server when it cannot read the keys of the GitHub

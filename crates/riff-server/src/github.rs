@@ -38,7 +38,9 @@
 //!   no more ([`app_rights`]). The manifest of the session App also sets
 //!   the webhook [`HOOK_PATH`] with the [`EVENTS`]
 //!   (01M6WG52QHC8E24RJ33ZPVHZSJ). [`crate::hooks`] takes each delivery,
-//!   and wakes the daemons of its repository.
+//!   and wakes the daemons of its repository. The manifest of the lead
+//!   App sets the same webhook with no event (01M74MB1A1TV4WBZ07AFCEP5WG): GitHub
+//!   still sends it the event `installation`.
 //! - A state is good for [`STATE_LIFE`] and for one use ([`States`]).
 //!   The start page reads its state, and the swap uses it. Each state
 //!   names one App, so the state of the session App never makes the
@@ -74,6 +76,13 @@
 //!   with the fix `riff github install OWNER` (01M6ZHWVPD7MN6GH6GS0GVETHA,
 //!   01M74FVDGM0342M8TZQCCK5H4H). The check of the lead then names each
 //!   missing right.
+//! - riff-server keeps each token that it gives to a session or a
+//!   daemon, with its install ([`crate::renew`]). When an install has
+//!   new rights, `GitHub::renew` sends the renew to each daemon, and
+//!   revokes the older tokens of the install a little later. The event
+//!   `installation` of the webhook tells it, and so does a new token of
+//!   `riff github check` or of a session with other rights than an older
+//!   one (`GitHub::compare`).
 //!
 //! The pages of the browser and the webhook need no riff token: the
 //! state, and the signature of GitHub, are their proof. The three calls
@@ -101,6 +110,7 @@ use serde::{Deserialize, Serialize};
 use crate::auth::SignedIn;
 use crate::engine::Failed;
 use crate::keys::{AppKeys, Apps, At, Keys, KeysError};
+use crate::renew::Renews;
 
 /// The API of GitHub.
 pub const API: &str = "https://api.github.com";
@@ -156,6 +166,9 @@ pub struct Settings {
     /// The window of the debounce of the webhook:
     /// [`crate::hooks::DEBOUNCE`] but in a test.
     pub debounce: Duration,
+    /// The wait before the revoke of the older tokens of an install with
+    /// new rights: [`crate::renew::REVOKE_AFTER`] but in a test.
+    pub revoke_after: Duration,
 }
 
 impl Default for Settings {
@@ -166,6 +179,7 @@ impl Default for Settings {
             keys: At::Memory,
             state_life: STATE_LIFE,
             debounce: crate::hooks::DEBOUNCE,
+            revoke_after: crate::renew::REVOKE_AFTER,
         }
     }
 }
@@ -311,7 +325,9 @@ pub fn app_rights(app: GitHubApp) -> Rights {
 }
 
 /// The manifest of the App `app` on the account `owner`, for the riff at
-/// `public_url` (01M6WG52QHC8E24RJ33ZPVHZSJ).
+/// `public_url` (01M6WG52QHC8E24RJ33ZPVHZSJ). Each App has the webhook;
+/// only the session App asks for events. GitHub sends the event
+/// `installation` to each App with a webhook (01M74MB1A1TV4WBZ07AFCEP5WG).
 ///
 /// ```
 /// use riff_core::wire::GitHubApp;
@@ -325,7 +341,7 @@ pub fn app_rights(app: GitHubApp) -> Rights {
 /// assert_eq!(session["default_events"][0], "issues");
 /// let lead = manifest(GitHubApp::Lead, "acme", "https://riff.example.com");
 /// assert_eq!(lead["name"], "riff-acme-lead");
-/// assert!(lead.get("hook_attributes").is_none());
+/// assert_eq!(lead["hook_attributes"]["url"], "https://riff.example.com/hooks/github");
 /// assert!(lead.get("default_events").is_none());
 /// ```
 pub fn manifest(app: GitHubApp, owner: &str, public_url: &str) -> serde_json::Value {
@@ -339,12 +355,12 @@ pub fn manifest(app: GitHubApp, owner: &str, public_url: &str) -> serde_json::Va
         "redirect_url": format!("{public_url}{CREATED_PATH}"),
         "public": true,
         "default_permissions": app_rights(app),
-    });
-    if app == GitHubApp::Session {
-        manifest["hook_attributes"] = serde_json::json!({
+        "hook_attributes": {
             "url": format!("{public_url}{HOOK_PATH}"),
             "active": true,
-        });
+        },
+    });
+    if app == GitHubApp::Session {
         manifest["default_events"] = serde_json::json!(EVENTS);
     }
     manifest
@@ -683,6 +699,9 @@ struct Granted {
     /// its [`fallback_rights`].
     #[serde(skip)]
     asked: Rights,
+    /// The ID of the install that gave the token.
+    #[serde(skip)]
+    installation: u64,
 }
 
 /// Why riff-server has no token of a role for a repository.
@@ -713,6 +732,7 @@ struct Claims {
 }
 
 /// The calls of riff-server to GitHub.
+#[derive(Clone)]
 struct Client {
     http: reqwest::Client,
     api: String,
@@ -884,6 +904,7 @@ impl Client {
             .await
             .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
         granted.asked = rights.clone();
+        granted.installation = installation;
         Ok(granted)
     }
 
@@ -936,7 +957,8 @@ fn jwt(app: &AppKeys) -> Result<String, GitHubError> {
 }
 
 /// The GitHub part of a riff-server: the keys of the Apps, the states of
-/// `riff github create`, and the calls to GitHub.
+/// `riff github create`, the tokens that it gave, and the calls to
+/// GitHub.
 pub(crate) struct GitHub {
     settings: Settings,
     client: Client,
@@ -945,6 +967,9 @@ pub(crate) struct GitHub {
     /// The cause of the last read of the keys, when the place refused it
     /// (01M6YC3SYATQW7GZZV3APFG85B). `None` after a read that worked.
     fault: Mutex<Option<String>>,
+    /// The tokens of the sessions and of the daemons, and the stream of
+    /// the renews (#1906).
+    pub(crate) renews: Renews,
 }
 
 impl GitHub {
@@ -957,8 +982,44 @@ impl GitHub {
             keys: Keys::new(settings.keys.clone(), http),
             states: Mutex::new(States::new(settings.state_life)),
             fault: Mutex::new(None),
+            renews: Renews::default(),
             settings,
         }
+    }
+
+    /// Renews the install `installation`, whose rights changed for the
+    /// reason `why` (01M74MB92717A21MG97BF7SDP3, [`crate::renew`]): it takes out each token
+    /// of the install that riff-server gave, sends the renew to each
+    /// daemon, and revokes those tokens after
+    /// [`Settings::revoke_after`]. The log lines name the install and
+    /// the count, never a token.
+    pub(crate) fn renew(&self, installation: u64, why: &str) {
+        let old = self.renews.take(installation, Instant::now());
+        self.renews.send(installation);
+        let wait = self.settings.revoke_after;
+        tracing::info!(
+            installation,
+            tokens = old.len(),
+            "the install has new rights: {why}. Each daemon asks for a new token of its \
+             sessions of the install now, and riff-server revokes each older token of the \
+             install in {} seconds",
+            wait.as_secs()
+        );
+        if old.is_empty() {
+            return;
+        }
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            for token in old {
+                if let Err(e) = client.revoke(&token).await {
+                    tracing::warn!(
+                        installation,
+                        "an older token of an install with new rights: {e}"
+                    );
+                }
+            }
+        });
     }
 
     fn states(&self) -> std::sync::MutexGuard<'_, States> {
@@ -1113,7 +1174,10 @@ impl GitHub {
             .token(keys, installation, name, &rights(role))
             .await
         {
-            Ok(granted) => return Ok((keys, granted)),
+            Ok(granted) => {
+                self.compare(role, &granted);
+                return Ok((keys, granted));
+            }
             Err(e) => e,
         };
         let Some(fallback) = fallback_rights(role).filter(|_| first.refused()) else {
@@ -1134,7 +1198,27 @@ impl GitHub {
             ALERT_RIGHTS.join(", "),
             first.text.trim_end_matches('.')
         );
+        self.compare(role, &granted);
         Ok((keys, granted))
+    }
+
+    /// Renews the install of `granted` when a kept token of that install
+    /// and of `role` has other rights (01M74MB9786AE4YVEG10FNGDT5): the install has new
+    /// rights. Only a token with the rights that riff-server asked for
+    /// counts.
+    fn compare(&self, role: GitHubRole, granted: &Granted) {
+        let (missing, extra) = differ(&granted.asked, &granted.permissions);
+        let asked = missing.is_empty() && extra.is_empty();
+        let installation = granted.installation;
+        let now = Instant::now();
+        if asked
+            && self
+                .renews
+                .changed(installation, role, &granted.permissions, now)
+        {
+            let why = format!("a new token of the {role} has other rights than an older one");
+            self.renew(installation, &why);
+        }
     }
 
     /// The check of one role for the repository `repo`.
@@ -1746,6 +1830,7 @@ pub(crate) async fn token(
                 token: None,
                 rights: Rights::new(),
                 ends: None,
+                installation: None,
                 problem: Some(keys_fault_text(&e.text, &s.config.public_url)),
                 no_github: true,
             }));
@@ -1761,6 +1846,7 @@ pub(crate) async fn token(
         token: None,
         rights: Rights::new(),
         ends: None,
+        installation: None,
         problem: None,
         no_github: false,
     };
@@ -1794,13 +1880,35 @@ pub(crate) async fn token(
         person,
         repo,
         role = %role,
+        installation = granted.installation,
         ends = granted.expires_at.as_deref().unwrap_or("unknown"),
         "a token of a session on GitHub"
     );
+    Ok(Json(kept(&s, reply, role, granted)))
+}
+
+/// The reply `reply` with the token `granted` of `role`. riff-server
+/// keeps the token, with its install and its rights, up to its end
+/// (01M74MB92717A21MG97BF7SDP3, [`crate::renew`]).
+fn kept(
+    s: &crate::Server,
+    mut reply: SessionToken,
+    role: GitHubRole,
+    granted: Granted,
+) -> SessionToken {
+    let renews = &s.github.renews;
+    renews.keep(
+        granted.installation,
+        role,
+        &granted.permissions,
+        &granted.token,
+        Instant::now(),
+    );
+    reply.installation = Some(granted.installation);
     reply.rights = granted.permissions;
     reply.ends = granted.expires_at;
     reply.token = Some(granted.token);
-    Ok(Json(reply))
+    reply
 }
 
 /// `POST /v1/github/daemon`: a token of the lead App for the writes of the
@@ -1837,6 +1945,7 @@ pub(crate) async fn daemon_token(
         token: None,
         rights: Rights::new(),
         ends: None,
+        installation: None,
         problem: None,
         no_github: false,
     };
@@ -1879,13 +1988,11 @@ pub(crate) async fn daemon_token(
     tracing::info!(
         person,
         repo,
+        installation = granted.installation,
         ends = granted.expires_at.as_deref().unwrap_or("unknown"),
         "a token of the daemon on GitHub"
     );
-    reply.rights = granted.permissions;
-    reply.ends = granted.expires_at;
-    reply.token = Some(granted.token);
-    Ok(Json(reply))
+    Ok(Json(kept(&s, reply, role, granted)))
 }
 
 /// `POST /v1/github/check`: a token of each role for the repository,

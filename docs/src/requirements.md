@@ -3542,7 +3542,7 @@
   App also asks for `merge_queues` read, and sets the webhook
   `PUBLIC_URL/hooks/github` with the events `issues`, `issue_comment`,
   `pull_request`, `check_run`, `status`, `workflow_run` and
-  `merge_group`. The lead App has no webhook.
+  `merge_group`.
 - **01M6WG52T5PAD9NGQ597CP56K7** `riff github create --owner OWNER`
   makes the two Apps on OWNER, an organization or a personal account,
   with the manifest flow of GitHub. Only the owner or an admin of the
@@ -3699,6 +3699,34 @@
   check of another app" of the development page has a copyable `sh`
   block that lists the open alerts of a pull request, and one for the
   dismissal with `gh api -X PATCH`.
+- **01M74MB1A1TV4WBZ07AFCEP5WG** The manifest of the lead App sets the
+  webhook `PUBLIC_URL/hooks/github` too, with no event: GitHub sends the
+  event `installation` to each App with a webhook. riff-server takes a
+  delivery at POST /hooks/github with a good X-Hub-Signature-256 of the
+  webhook secret of either App. Supersedes 01M6WG52QHC8E24RJ33ZPVHZSJ in
+  part.
+- **01M74MB92717A21MG97BF7SDP3** riff-server keeps each token that it
+  gives to a session and to a daemon, with its install, its role and its
+  rights, in memory until its end. The reply of POST /v1/github/token
+  and of POST /v1/github/daemon names the install of the token. When an
+  install has new rights, riff-server sends the install on GET
+  /v1/github/renew to each stream, and revokes each token of the install
+  that it kept 60 seconds later. Its log line names the install and the
+  count of the tokens, never a token.
+- **01M74MB94Q4VPK724W7H0PZH9P** The event `installation` with the
+  action `new_permissions_accepted` of the webhook of an App tells
+  riff-server that the install of the event has new rights. It wakes no
+  repository.
+- **01M74MB9786AE4YVEG10FNGDT5** A new token of a role of an install,
+  with the rights that riff-server asked for, tells riff-server that the
+  install has new rights when a kept token of the same install and role
+  has other rights: the token of `riff github check`, of `riff github
+  install`, and of each session and each daemon. So an accept on a lead
+  App with no webhook renews the install at the next check.
+- **01M74MB9C716796KFJMKRZKJ4D** The how-to "Accept the new rights of
+  the lead App" of "Start a Team Riff" says that each lead and each
+  session gets the new rights at once after the accept, and that `riff
+  github check` renews them for a lead App with no webhook.
 
 ## Sign-in and tokens
 
@@ -7436,6 +7464,13 @@ of this part when they merge.
   `--mount type=tmpfs,destination=FOLDER,tmpfs-mode=0755,U=true`. A
   folder at the target of a bind, or in it, belongs to the bind and gets
   no tmpfs.
+- **01M74MB99RT6B9MKSBMSVD4JRG** The daemon follows GET /v1/github/renew
+  of each riff-server of its sessions and of its waves, as the person,
+  one stream for each riff-server. For the renew of an install, it asks
+  at once for a new token of each session with a token of that install,
+  the lead too, and writes it in the same file. Its next write on a
+  repository with a token of that install asks for a new token. A
+  session with a token of another install keeps its token.
 
 ### The security of riff's own code
 

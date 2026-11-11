@@ -53,6 +53,33 @@
 //! author: the login of the bot and its noreply address ([`author`],
 //! [`give_author`], 01M6Y6B8VBM3TKC3YHZKSA4PFZ).
 //!
+//! # New rights of an install
+//!
+//! A token keeps the rights that its install had when GitHub made it. So
+//! when the owner of an account accepts new rights of an App, riff-server
+//! sends the renew of the install on `GET /v1/github/renew`
+//! (`riff_server::renew`, #1906). The daemon follows that stream on each
+//! riff-server of its sessions and of its waves, as the person
+//! ([`crate::wave::World::github_renews`], 01M74MB99RT6B9MKSBMSVD4JRG). The reply of
+//! riff-server names the install of each token ([`ActsAs::Bot`]). For a
+//! renew, the daemon asks at once for a new token of each session of the
+//! install, the lead too, and writes it in the same file. It forgets its
+//! token of the writes of the install ([`Writes::forget`]): the next write
+//! asks for a new one. riff-server revokes the old tokens a minute later.
+//!
+//! ```mermaid
+//! sequenceDiagram
+//!     participant S as riff-server
+//!     participant D as riff daemon
+//!     participant C as the container of the lead
+//!     D->>S: GET /v1/github/renew (as the person)
+//!     S-->>D: renew: the install 2020
+//!     D->>S: POST /v1/github/token: the lead (a token of the install 2020)
+//!     S-->>D: a token with the new rights
+//!     D->>C: FOLDER/gh/hosts.yml: the new token
+//!     Note over D: a worker of the install 1010 keeps its token
+//! ```
+//!
 //! # No token of the person
 //!
 //! No session gets the token of the person (01M6Z87A04EXTT1FFJSJ1EM6TB).
@@ -176,6 +203,11 @@ pub enum ActsAs {
         /// The end of the token, as GitHub gives it:
         /// `2026-11-08T13:00:00Z`.
         ends: String,
+        /// The ID of the install of the App that gave the token: a renew
+        /// of that install asks for a new token at once (01M74MB99RT6B9MKSBMSVD4JRG).
+        /// `None` from an older riff-server.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        installation: Option<u64>,
     },
     /// With no token on GitHub at all: riff-server gave no token of an
     /// App (01M6Z87A04EXTT1FFJSJ1EM6TB), or cannot read the keys of the
@@ -188,6 +220,31 @@ pub enum ActsAs {
     /// With no GitHub: a session of `riff run --no-github`, which needs
     /// none (01M6Z87JY83V3KR72E2AG8V8KG). The daemon asks for no token.
     NoGitHub,
+}
+
+impl ActsAs {
+    /// True when the token is of the install `installation`: a renew of
+    /// that install asks for a new token (01M74MB99RT6B9MKSBMSVD4JRG).
+    ///
+    /// ```
+    /// use riff::daemon::gh_token::ActsAs;
+    /// use riff_core::wire::GitHubRole;
+    ///
+    /// let bot = |installation| ActsAs::Bot {
+    ///     bot: "riff-acme-lead[bot]".into(),
+    ///     role: GitHubRole::Lead,
+    ///     rights: Default::default(),
+    ///     ends: "2026-11-08T13:00:00Z".into(),
+    ///     installation,
+    /// };
+    /// assert!(bot(Some(2020)).of_install(2020));
+    /// assert!(!bot(Some(1010)).of_install(2020));
+    /// assert!(!bot(None).of_install(2020));
+    /// assert!(!ActsAs::NoGitHub.of_install(2020));
+    /// ```
+    pub fn of_install(&self, installation: u64) -> bool {
+        matches!(self, ActsAs::Bot { installation: Some(id), .. } if *id == installation)
+    }
 }
 
 /// Why a session acts with no token of an App: the why of
@@ -261,12 +318,13 @@ impl Grant {
     ///     token: Some("ghs_abcd".into()),
     ///     rights: [("contents".to_owned(), "read".to_owned())].into(),
     ///     ends: Some("2026-11-08T13:00:00Z".into()),
+    ///     installation: Some(1010),
     ///     problem: None,
     ///     no_github: false,
     /// };
     /// let grant = Grant::of(reply.clone());
     /// assert_eq!(grant.token.as_deref().map(String::as_str), Some("ghs_abcd"));
-    /// assert!(matches!(grant.acts, ActsAs::Bot { role: GitHubRole::Verifier, .. }));
+    /// assert!(matches!(grant.acts, ActsAs::Bot { role: GitHubRole::Verifier, installation: Some(1010), .. }));
     /// assert_eq!(grant.bot_id, Some(1101));
     ///
     /// let why = "riff-acme is not installed on acme/app: riff github install acme";
@@ -290,6 +348,7 @@ impl Grant {
                     role: reply.role,
                     rights: reply.rights,
                     ends: reply.ends.unwrap_or_default(),
+                    installation: reply.installation,
                 },
                 bot_id: reply.bot_id,
             },
@@ -750,6 +809,30 @@ impl Writes {
                 acts: kept.grant.acts.clone(),
             })
             .collect()
+    }
+
+    /// Forgets the token of each repository that the riff-server `server`
+    /// gave from the install `installation`, and gives each such
+    /// repository: the next write there asks for a new token
+    /// (01M74MB99RT6B9MKSBMSVD4JRG). `riff daemon status` still shows how the daemon wrote
+    /// last.
+    ///
+    /// ```
+    /// use riff::daemon::gh_token::Writes;
+    ///
+    /// let writes = Writes::default();
+    /// assert!(writes.forget("https://riff.example", 2020).is_empty());
+    /// ```
+    pub fn forget(&self, server: &str, installation: u64) -> Vec<String> {
+        let mut kept = self.lock();
+        let mut forgot = Vec::new();
+        for (repo, kept) in kept.iter_mut() {
+            if kept.server == server && kept.grant.acts.of_install(installation) {
+                kept.again = 0;
+                forgot.push(repo.clone());
+            }
+        }
+        forgot
     }
 
     fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Kept>> {

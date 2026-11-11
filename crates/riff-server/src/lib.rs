@@ -10,7 +10,8 @@
 //!        │                           └─▶ plans channel ──▶ GET /v1/plan/watch streams
 //!        ├──lock──▶ Tokens (Mutex)      see [`token`]: only the sign-ins
 //!        └─ POST /hooks/github ──▶ Hooks ──▶ wakes of GitHub ──▶ GET /v1/github/watch streams
-//!                    └─▶ plans channel: a new item of a wave, a merge    see [`hooks`]
+//!                    ├─▶ plans channel: a new item of a wave, a merge    see [`hooks`]
+//!                    └─▶ renews: new rights of an install ──▶ GET /v1/github/renew streams
 //! ```
 //!
 //! - One process holds all state in memory, behind one mutex. The
@@ -44,6 +45,9 @@
 //!   into the window of 5 seconds of its number, and then its wake goes to
 //!   the queue of [`hooks::Hooks`] and to each `GET /v1/github/watch`
 //!   stream of its thread (`github_watch`).
+//! - New rights of an install of an App (#1906) go to each `GET
+//!   /v1/github/renew` stream (`github_renew`): the daemons ask for new
+//!   tokens of the install. See [`renew`].
 //! - Each stream starts with the comment `: ready`, see [`opened`].
 //! - A watch stream then gives the wake from [`state::State::missed`],
 //!   if there is one. It subscribes to the wakes channel first, so no
@@ -243,6 +247,7 @@ pub mod lease;
 pub mod listen;
 pub mod logline;
 pub mod oidc;
+pub mod renew;
 pub mod token;
 pub mod tools;
 pub mod trace;
@@ -2005,7 +2010,8 @@ impl Service {
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread))
             .route("/v1/plan/watch", get(plan_watch))
-            .route("/v1/github/watch", get(github_watch));
+            .route("/v1/github/watch", get(github_watch))
+            .route("/v1/github/renew", get(github_renew));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
         // The settings of idle workers: the query, and the command
         // `set_idle` on a path of its own (01M3WRD9BSBKS9TN66H29TGTBV).
@@ -3427,6 +3433,31 @@ async fn github_watch(
     let stream = futures::stream::iter(queued)
         .chain(live)
         .filter_map(|wake| std::future::ready(Event::default().json_data(wake).ok().map(Ok)));
+    let stream = stream.take_until(s.stopping());
+    Ok(Sse::new(opened(stream)).keep_alive(KeepAlive::default()))
+}
+
+#[derive(Deserialize)]
+struct RenewQuery {
+    /// The caller: a person, or a session.
+    uri: SessionUri,
+}
+
+/// Streams each install of a GitHub App of the riff with new rights
+/// (#1906): the daemon of each person asks at once for a new token of
+/// each session and of each write of the install. The caller acts as its
+/// token, as for `plan/watch`, and the stream is no sign of life. See
+/// [`renew`].
+async fn github_renew(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Query(q): Query<RenewQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
+    let rx = s.github.renews.subscribe();
+    let caller = admit(&s, &proof, &q.uri)?;
+    s.engine.peek(&caller, |_| ())?;
+    let stream = until_lagged(rx)
+        .filter_map(|renew| std::future::ready(Event::default().json_data(renew).ok().map(Ok)));
     let stream = stream.take_until(s.stopping());
     Ok(Sse::new(opened(stream)).keep_alive(KeepAlive::default()))
 }

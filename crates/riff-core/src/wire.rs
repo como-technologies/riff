@@ -102,7 +102,7 @@
 //! | `GET /.well-known/oauth-protected-resource` | [`ResourceMetadata`] (RFC 9728) |
 //! | `GET /.well-known/oauth-authorization-server` | [`ServerMetadata`] (RFC 8414) |
 //!
-//! Four streams use server-sent events. Each event is one `data:` line
+//! Five streams use server-sent events. Each event is one `data:` line
 //! that holds JSON:
 //!
 //! | Stream | Query | Event |
@@ -111,6 +111,7 @@
 //! | `GET /v1/tail` | `thread=<thread name>` | [`Tailed`] |
 //! | `GET /v1/plan/watch` | `uri=<session URI>`, `thread=<thread name>` | [`PlanChanged`] |
 //! | `GET /v1/github/watch` | `uri=<session URI>`, `thread=<thread name>`, `after=<wake ID>` | [`GitHubWake`] |
+//! | `GET /v1/github/renew` | `uri=<session URI>` | [`GitHubRenew`] |
 //!
 //! `GET /v1/me` with the query `uri=<session URI>` gives [`MeReply`]:
 //! only the session of the caller (01M3T5GFVS8NMA992KHZN4VE17). The
@@ -2759,6 +2760,27 @@ pub struct GitHubWake {
     pub events: u32,
 }
 
+/// An event on `GET /v1/github/renew?uri=…`: the install `installation`
+/// of a GitHub App of the riff has new rights (#1906). The owner of its
+/// account accepted them, or a new token of the install has other rights
+/// than an older one. A token keeps the rights that it had when GitHub
+/// made it. So the daemon asks at once for a new token of each session
+/// and of each write with a token of the install. riff-server revokes
+/// each older token of the install a little later.
+///
+/// ```
+/// use riff_core::wire::GitHubRenew;
+///
+/// let renew: GitHubRenew = serde_json::from_str(r#"{"installation": 2020}"#)?;
+/// assert_eq!(renew, GitHubRenew { installation: 2020 });
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubRenew {
+    /// The ID of the install on GitHub.
+    pub installation: u64,
+}
+
 /// `POST /v1/github/events`: the last wakes of the GitHub App for one
 /// repository, for `riff github events` (#1655). Each person of the riff
 /// can.
@@ -3515,6 +3537,10 @@ pub struct SessionToken {
     /// `2026-11-08T13:00:00Z`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ends: Option<String>,
+    /// The ID of the install of the App that gave the token: a
+    /// [`GitHubRenew`] of that install asks for a new token at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation: Option<u64>,
     /// Why riff-server gave no token, with the fix: the riff has no App
     /// of the role, the App is not on the repository, or riff-server
     /// cannot read the keys of the Apps.
@@ -3537,6 +3563,7 @@ impl std::fmt::Debug for SessionToken {
             .field("token", &self.token.as_ref().map(|_| "[secret]"))
             .field("rights", &self.rights)
             .field("ends", &self.ends)
+            .field("installation", &self.installation)
             .field("problem", &self.problem)
             .field("no_github", &self.no_github)
             .finish()

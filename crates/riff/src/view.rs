@@ -274,6 +274,7 @@ pub(crate) fn state_facts(
 ///     role: GitHubRole::Worker,
 ///     rights: [("contents".to_owned(), "write".to_owned()), ("metadata".to_owned(), "read".to_owned())].into(),
 ///     ends: "2026-11-08T13:00:00Z".into(),
+///     installation: Some(1010),
 /// };
 /// let out = riff::view::whoami(&me, Ok(RiffState::Running.into()), Some(&bot));
 /// let plain = anstream::adapter::strip_str(&out).to_string();
@@ -350,6 +351,7 @@ pub fn whoami(
             role,
             rights,
             ends,
+            ..
         }) => {
             let role = match role {
                 riff_core::wire::GitHubRole::Lead => "the lead".to_owned(),

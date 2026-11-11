@@ -833,6 +833,7 @@ mod tests {
             number: Some(12),
             events: 20,
         });
+        c.trip(&GitHubRenew { installation: 2020 });
         c.trip(&TokenRequest {
             grant_type: text("refresh_token"),
             refresh_token: Some(text("r")),
@@ -987,6 +988,7 @@ mod tests {
             token: Some(text("ghs_x")),
             rights: [(text("contents"), text("write"))].into(),
             ends: Some(text("2026-11-08T13:00:00Z")),
+            installation: Some(1010),
             problem: Some(text("riff github install acme")),
             no_github: true,
         });
