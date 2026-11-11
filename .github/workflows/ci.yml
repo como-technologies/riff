@@ -46,8 +46,10 @@ jobs:
   # other job but macOS and the jobs of the build of a Mac takes the
   # binaries of Build from its artifacts. The artifacts have the git tree
   # of the commit in their name, so a push to main, a merge group and a
-  # tag take the binaries that the pull request with the same tree made
-  # (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM). The Gate
+  # tag take the binaries that a merge group or a push to main with the
+  # same tree made, and never those of a pull request
+  # (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM,
+  # 01M75YKD063DE6ZFA0H3K8BNZB). The Gate
   # keeps its pass as the artifact gate-TREE, so a merge group or a push
   # to main with a tree that passed tests it no more
   # (01M75NAF4JQWQG3ZVGJM74XRBG, 01M75NAF7VV5S7343P9Q7H7F60,

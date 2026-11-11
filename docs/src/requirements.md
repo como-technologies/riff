@@ -4769,10 +4769,9 @@
   each step of `Build` passed.
 - **01M6QQ1P37XW7N465MQGPHCXZM** A push to `main`, a merge group and a
   tag take the artifacts of their tree. When a passed `Build` made the
-  artifacts of the same tree, for example for the head of a pull
-  request, `Build` does not make them again. When the artifacts of both
-  profiles are there, the plan takes the static binaries of the profile
-  `release`.
+  artifacts of the same tree, `Build` does not make them again. When the
+  artifacts of both profiles are there, the plan takes the static
+  binaries of the profile `release`.
 - **01M6QQ1P5YCT0JX90X5FCKM4W1** The jobs `Tests I/N` take the artifact
   `tests-TREE`, unpack it and run part I of N in the session image with
   `hygiene test-part I/N --archive`. They compile nothing. The archive
@@ -4832,18 +4831,16 @@
   but the tests and `macOS`, which the plan skipped. A tree with no
   `gate-TREE` runs each job. Supersedes 01M513W2K3HNRWPQTQNBQPT8MZ in
   part.
-- **01M75NAF7VV5S7343P9Q7H7F60** A merge group with the tree of its pull
-  request takes the artifacts and `gate-TREE` of the run of the pull
-  request: it builds nothing and tests nothing. A merge group with a new
-  tree builds it and tests it once, and keeps its artifacts and
-  `gate-TREE` by the tree. The job `Verify of the merge group` sets
+- **01M75NAF7VV5S7343P9Q7H7F60** A merge group with a new tree builds it
+  and tests it once, and keeps its artifacts and `gate-TREE` by the
+  tree. The job `Verify of the merge group` sets
   `riff/verify` on the merge group commit, as 01M5TKPHH2627K9NDS4P1Y1N3T
   says.
 - **01M75NAFBH6M49GMSV8VG857EP** A push to `main` takes the artifacts
-  and `gate-TREE` of its tree, from the run of the merge group or of the
-  pull request with that tree. It builds no test binary, it runs no
-  part of the tests and no job `macOS`, and `Gate` passes on that pass.
-  `Static riff` and `Stage` run as for each push to `main`.
+  and `gate-TREE` of its tree, from the run of the merge group with that
+  tree. It builds no test binary, it runs no part of the tests and no
+  job `macOS`, and `Gate` passes on that pass. `Static riff` and `Stage`
+  run as for each push to `main`.
 - **01M75T9RGR89MAC6S78K42QN7Q** `just ci-test NAME` takes the test
   build of the newest run of CI at the commit of `HEAD` that ran on a
   branch of this repository. The names of the artifacts of that run give
@@ -4860,18 +4857,26 @@
   `static-PROFILE-TREE`, only from a run of the workflow
   `.github/workflows/ci.yml` on a branch of this repository whose job
   that made the artifact passed: `Gate` for `gate-TREE`, `Build` for the
-  others. The run is a push to `main`, a merge group or the run that
-  asks, or the head commit of the run has the folders
-  `.github/workflows` and `deploy` and the `justfile` of `main`. So a
-  pull request that changes one of them makes no artifact that another
-  run takes, and its own run builds and tests. Of the runs that count,
-  the newest artifact wins.
+  others. Of the runs that count, the newest artifact wins.
 - **01M75Y0JGMPRZPNJA1EFM7EM7S** `deploy/artifact-run.sh` also takes
   `macos-riff-TREE` and `mac-session-riff-TREE`, by the rules of
   01M75TT13241HC22M0KBJ6HW96. The job that made the artifact is `macOS
   riff` for `macos-riff-TREE` and `Linux riff of a Mac` for
   `mac-session-riff-TREE`. So the plan of a push to `main` and of a tag
   finds the files of a Mac that an earlier run of the tree made.
+- **01M75YKD063DE6ZFA0H3K8BNZB** `deploy/artifact-run.sh` takes an
+  artifact of a tree only from the run that asks, or from a run that the
+  run that asks trusts. `GITHUB_EVENT_NAME` names the event of the run
+  that asks. A run of CI that is not of a pull request, for example a
+  push to `main`, a merge group, a tag or a run by hand, trusts only a
+  run of a merge group or of a push to `main` whose commit has the tree
+  in the name of the artifact. A run of a pull request, and a call
+  outside CI with no `GITHUB_EVENT_NAME`, for example of `just ci-test`
+  or `just real-session`, trust a merge group, a push to `main`, and a
+  run whose head commit has the folders `.github/workflows` and `deploy`
+  and the `justfile` of `main`. Supersedes 01M75TT13241HC22M0KBJ6HW96,
+  01M6QQ1P37XW7N465MQGPHCXZM, 01M75NAF7VV5S7343P9Q7H7F60 and
+  01M75NAFBH6M49GMSV8VG857EP in part.
 
 ## The phone app
 
