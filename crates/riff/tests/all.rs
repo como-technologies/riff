@@ -41,6 +41,8 @@ mod github;
 mod github_apps;
 mod guard;
 mod help;
+#[cfg(target_os = "linux")]
+mod home_folders;
 mod identity;
 mod launchd;
 mod lead_book;

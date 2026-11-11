@@ -17,6 +17,7 @@
 //! | (each spec) | `--init`: the init of podman is PID 1, and reaps each orphan process (01M51117K3WXK35CE67KPRFMA8) |
 //! | `memory`, `cpus` | `--memory 8g`, `--cpus 4` |
 //! | `home` | `--mount type=tmpfs,destination=HOME,tmpfs-mode=0700,U=true` |
+//! | Each folder of [`SessionSpec::home_folders`] | `--mount type=tmpfs,destination=FOLDER,tmpfs-mode=0755,U=true`: a folder of the session user, not of root (01M748WY71EFVZR6SG5CCEQYE0) |
 //! | A [`Bind`] | `-v SOURCE:TARGET`, with `:ro` when it has no write |
 //! | An [`Env::Value`] | `-e NAME=VALUE` |
 //! | An [`Env::Host`] | `-e NAME`: podman takes the value from its own environment |
@@ -119,6 +120,10 @@ pub struct Podman;
 ///     "run --rm -i --sig-proxy=false --name riff-issue-12-1a2b3c4d --userns=keep-id \
 ///      --init --memory 8g --cpus 4 \
 ///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.cache,tmpfs-mode=0755,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local,tmpfs-mode=0755,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local/share,tmpfs-mode=0755,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local/state,tmpfs-mode=0755,U=true \
 ///      -v /data/clone:/data/clone -v riff-cargo:/home/mike/.cargo \
 ///      -v /home/mike/.gitconfig:/home/mike/.gitconfig:ro \
 ///      -e USER=mike -e GH_TOKEN -w /data/clone localhost/riff-session:latest claude -p"
@@ -160,6 +165,10 @@ pub fn run_args(spec: &SessionSpec) -> Result<Vec<OsString>> {
 ///     args.join(" "),
 ///     "run --rm -d -i -t --name riff-lead-o-r --userns=keep-id --init --memory 8g --cpus 4 \
 ///      --mount type=tmpfs,destination=/home/mike,tmpfs-mode=0700,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.cache,tmpfs-mode=0755,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local,tmpfs-mode=0755,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local/share,tmpfs-mode=0755,U=true \
+///      --mount type=tmpfs,destination=/home/mike/.local/state,tmpfs-mode=0755,U=true \
 ///      -w /data/clone img claude"
 /// );
 /// # Ok::<(), anyhow::Error>(())
@@ -220,6 +229,16 @@ fn args_of(spec: &SessionSpec, first: &[&str]) -> Result<Vec<OsString>> {
         )
         .into(),
     );
+    for folder in spec.home_folders() {
+        args.push("--mount".into());
+        args.push(
+            format!(
+                "type=tmpfs,destination={},tmpfs-mode=0755,U=true",
+                plain(&folder)?
+            )
+            .into(),
+        );
+    }
     for bind in &spec.binds {
         args.push("-v".into());
         args.push(volume(bind)?.into());
@@ -830,6 +849,67 @@ mod tests {
                 assert!(error.contains("comma or a colon"), "{error}");
             }
         }
+    }
+
+    #[test]
+    fn each_folder_above_a_bind_in_the_home_is_a_tmpfs_of_the_session_user() {
+        let h = "/home/mike";
+        let folder = format!("{h}/.local/share/riff/sessions/issue-12-1a2b3c4d");
+        let path = |target: String, write| Bind {
+            source: Source::Path(target.clone().into()),
+            target: target.into(),
+            write,
+        };
+        let spec = SessionSpec {
+            binds: vec![
+                path(format!("{folder}/clone"), true),
+                path(format!("{h}/src/o/r/.git/objects"), false),
+                path(format!("{h}/.gitconfig"), false),
+                path(format!("{h}/.claude"), true),
+                path(format!("{h}/.claude/.credentials.json"), false),
+                Bind {
+                    source: Source::Volume("riff-sccache".into()),
+                    target: format!("{h}/.cache/sccache").into(),
+                    write: true,
+                },
+                path(format!("{folder}/gh"), false),
+                path("/run/riff".into(), true),
+            ],
+            ..spec()
+        };
+        let args: Vec<String> = run_args(&spec)
+            .unwrap()
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect();
+        let tmpfs: Vec<&str> = args
+            .windows(2)
+            .filter(|w| w[0] == "--mount")
+            .map(|w| w[1].as_str())
+            .collect();
+        let mine = |f: &str| format!("type=tmpfs,destination={f},tmpfs-mode=0755,U=true");
+        let mut want = vec![format!("type=tmpfs,destination={h},tmpfs-mode=0700,U=true")];
+        want.extend(
+            [
+                ".cache",
+                ".local",
+                ".local/share",
+                ".local/share/riff",
+                ".local/share/riff/sessions",
+                ".local/share/riff/sessions/issue-12-1a2b3c4d",
+                ".local/state",
+                "src",
+                "src/o",
+                "src/o/r",
+                "src/o/r/.git",
+            ]
+            .map(|f| mine(&format!("{h}/{f}"))),
+        );
+        assert_eq!(tmpfs, want);
+        // The folders come before the binds.
+        let last = args.iter().rposition(|a| a == "--mount").unwrap();
+        let first = args.iter().position(|a| a == "-v").unwrap();
+        assert!(last < first, "{args:?}");
     }
 
     /// The program and the arguments of `command`, as words.
