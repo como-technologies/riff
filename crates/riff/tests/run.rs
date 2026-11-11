@@ -134,13 +134,18 @@ esac
 /// ended. The `run`
 /// with `-d` exits, so PID 1 becomes the parent of the relay. When PID 1
 /// does not reap orphans, the relay stays a zombie after its end (#791).
+/// When PID 1 reaps it, the process is dead (`X`) or gone in the look at
+/// its state: that counts as ended too (#1874).
 fn fake_podman(bin: &Path) {
     let body = r#"#!/bin/sh
 dir=$(dirname "$0")
-# True while the process $1 runs. A zombie has ended.
+# True while the process $1 runs. A zombie (Z), a dead process (X) and a
+# process that PID 1 reaped after the kill -0 have ended.
 alive() {
   kill -0 "$1" 2>/dev/null || return 1
-  [ "$(sed 's/^.*) \(.\).*/\1/' "/proc/$1/stat" 2>/dev/null)" != Z ]
+  case "$(sed -n 's/^.*) \(.\).*/\1/p' "/proc/$1/stat" 2>/dev/null)" in
+    '' | Z | X) return 1 ;;
+  esac
 }
 case "$1" in
   image) [ -f "$dir/no-image" ] && exit 1; exit 0 ;;
