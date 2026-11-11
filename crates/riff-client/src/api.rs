@@ -1209,8 +1209,8 @@ impl Api {
     /// Tells riff-server the fact `fact` of `me`, a person or the lead of
     /// the person: riff-server writes the line of riff-bot for it, and
     /// posts it in riff chat ([`BotPost`]). With `key`, riff-server drops
-    /// the line when a kept line of riff-bot for the same user has the key
-    /// (01M5TKG2K1AYK1KE7C2AA2W9DS).
+    /// the line when it told a line of riff-bot for the same user with the
+    /// key (01M5TKG2K1AYK1KE7C2AA2W9DS, 01M75N7H989QAPZD5NFRNVN4XY).
     pub async fn bot(&self, me: &SessionUri, fact: BotFact, key: Option<&str>) -> Result<()> {
         let post = BotPost {
             me: me.clone(),

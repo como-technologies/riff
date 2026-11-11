@@ -1661,9 +1661,10 @@ pub trait World: Send + Sync {
     /// `wave`: riff-server writes the line of riff-bot for it in riff chat,
     /// and the line names the person first. It wakes the terminals of the
     /// person, and no session (#1605, 01M6Y1A5PTCVZ6GRJ0FXMART2T). The call
-    /// has `key`: riff-server drops the line when a kept line of riff-bot
-    /// for the person has the key, so the person hears it one time from the
-    /// look of each host. The error is a call that did not go out.
+    /// has `key`: riff-server drops the line when it told a line of riff-bot
+    /// for the person with the key (01M75N7H989QAPZD5NFRNVN4XY), so the
+    /// person hears it one time from the look of each host, also after a
+    /// new start of the daemon. The error is a call that did not go out.
     fn ask_person<'a>(
         &'a self,
         wave: &'a Wave,
@@ -4692,6 +4693,9 @@ mod tests {
         /// ([`look_told`]), with the events of the wave (#1656). Else the
         /// look takes the forge in memory.
         reads: Mutex<Option<Arc<pr::Gh>>>,
+        /// The calls `bot` of [`World::ask_person`] go to a real riff-server:
+        /// the API and the person (#1950). Else they go nowhere.
+        bot: Mutex<Option<(Api, SessionUri)>>,
     }
 
     impl World for Fakes {
@@ -4949,12 +4953,18 @@ mod tests {
             key: &'a str,
         ) -> BoxFuture<'a, Result<()>> {
             Box::pin(async move {
-                let mut forge = lock(&self.forge);
-                if forge.post_fails > 0 {
-                    forge.post_fails -= 1;
-                    bail!("riff-server does not answer");
+                {
+                    let mut forge = lock(&self.forge);
+                    if forge.post_fails > 0 {
+                        forge.post_fails -= 1;
+                        bail!("riff-server does not answer");
+                    }
+                    forge.asked.push((fact.clone(), key.to_owned()));
                 }
-                forge.asked.push((fact, key.to_owned()));
+                let server = lock(&self.bot).clone();
+                if let Some((api, person)) = server {
+                    api.bot(&person, fact, Some(key)).await?;
+                }
                 Ok(())
             })
         }
@@ -5144,6 +5154,7 @@ mod tests {
                 plan: Mutex::new(None),
                 github: Mutex::new(None),
                 reads: Mutex::new(None),
+                bot: Mutex::new(None),
             });
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
@@ -9632,6 +9643,7 @@ esac
             plan: Mutex::new(None),
             github: Mutex::new(None),
             reads: Mutex::new(None),
+            bot: Mutex::new(None),
         };
         let none = BTreeSet::new();
         look_with(&gh.clone().by("wave"), "o/r", none.clone(), none, &[]).unwrap();
@@ -9675,6 +9687,7 @@ esac
                 plan: Mutex::new(None),
                 github: Mutex::new(None),
                 reads: Mutex::new(None),
+                bot: Mutex::new(None),
             };
             let wave = Wave {
                 repo: "o/r".into(),
@@ -9768,23 +9781,105 @@ esac
         );
     }
 
-    /// A read of the events that fails gives a key with no time. A post
-    /// that fails is the error of the look, and the next look posts the
-    /// line again.
+    /// 01M75N7H989QAPZD5NFRNVN4XY: a read of the events that fails tells
+    /// nothing, and the next look reads them again: a key with no time is
+    /// another key. A post that fails is the error of the look, and the
+    /// next look posts the line again. An issue with no event gives a key
+    /// with no time.
     #[tokio::test]
     async fn a_line_to_the_person_that_failed_comes_at_the_next_look() {
         let mut asking = Asking::new();
         asking.labels(&["question"]);
+        assert!(asking.look().await.is_err(), "the events do not read");
+        assert!(asking.asked().is_empty());
+        asking.events("2026-11-05T20:11:03Z\n");
         lock(&asking.world.forge).post_fails = 1;
         assert!(asking.look().await.is_err());
         assert!(asking.asked().is_empty());
         assert!(asking.look().await.unwrap());
+        let question = || BotFact::Question { issue: 12 };
+        let at = "question-12-2026-11-05T20:11:03Z".to_owned();
+        assert_eq!(asking.asked(), [(question(), at.clone())]);
+        assert!(!asking.look().await.unwrap());
+
+        // The label goes off, and on again with no event.
+        asking.labels(&[]);
+        assert!(!asking.look().await.unwrap());
+        asking.labels(&["question"]);
+        asking.events("");
+        assert!(asking.look().await.unwrap());
         assert_eq!(
             asking.asked(),
-            [(BotFact::Question { issue: 12 }, "question-12".to_owned())],
+            [(question(), at), (question(), "question-12".to_owned())],
             "no event: no time in the key"
         );
+    }
+
+    /// A riff-server with no sign-in that loads from `store`, and its API.
+    async fn serve_on(store: Arc<dyn riff_state::store::Store>) -> (riff_server::Service, Api) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let mut config = riff_server::auth::Config::new(&url);
+        config.lease.wait = Duration::from_millis(10);
+        let service = riff_server::Service::load(config, store).await.unwrap();
+        let router = service.router();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (service, Api::new(&url))
+    }
+
+    /// The lines of riff-bot in the chat that ask `person` about issue 12.
+    async fn asks(api: &Api, person: &SessionUri) -> usize {
+        let chat = api.read(person, &ThreadName::chat(), true).await.unwrap();
+        chat.iter()
+            .filter(|line| line.message.body.contains("answer in issue #12 "))
+            .count()
+    }
+
+    /// 01M75N7H989QAPZD5NFRNVN4XY (#1950): the daemon starts again with an
+    /// open question, and posts no line: riff-server keeps the key of each
+    /// line of riff-bot that it told. This holds also after more lines in the
+    /// chat than the chat keeps, and after a new start of riff-server. A
+    /// label that goes on again gives a new line.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_daemon_that_starts_again_with_open_questions_posts_no_line() {
+        let store: Arc<dyn riff_state::store::Store> =
+            Arc::new(riff_state::store::Memory::default());
+        let (service, api) = serve_on(store.clone()).await;
+        let person: SessionUri = "riff://mike@thelio/o/r".parse().unwrap();
+        let mut asking = Asking::new();
+        *lock(&asking.world.bot) = Some((api.clone(), person.clone()));
+        asking.labels(&["question"]);
+        asking.events("2026-11-05T20:11:03Z\n");
+        assert!(asking.look().await.unwrap());
+        assert_eq!(asks(&api, &person).await, 1);
+
+        // A new start of the daemon: a new watch asks again, with the same key.
+        asking.watch = look::Watch::default();
+        assert!(asking.look().await.unwrap());
+        assert_eq!(asking.asked().len(), 2, "the new watch asked again");
+        assert_eq!(asks(&api, &person).await, 1, "riff-server posted no line");
+
+        // More lines than the chat keeps, and a new start of riff-server and
+        // of the daemon.
+        for _ in 0..riff_state::state::KEEP_MESSAGES {
+            api.bot(&person, BotFact::LeadStarted, None).await.unwrap();
+        }
+        assert_eq!(asks(&api, &person).await, 0, "the chat keeps no more of it");
+        service.shutdown().await.unwrap();
+        let (_service, api) = serve_on(store).await;
+        *lock(&asking.world.bot) = Some((api.clone(), person.clone()));
+        asking.watch = look::Watch::default();
+        assert!(asking.look().await.unwrap());
+        assert_eq!(asking.asked().len(), 3);
+        assert_eq!(asks(&api, &person).await, 0, "riff-server posted no line");
+
+        // The label goes off, and on again: a new line.
+        asking.labels(&[]);
         assert!(!asking.look().await.unwrap());
+        asking.labels(&["question"]);
+        asking.events("2026-11-05T20:11:03Z\n2026-11-06T09:30:00Z\n");
+        assert!(asking.look().await.unwrap());
+        assert_eq!(asks(&api, &person).await, 1);
     }
 
     /// 01M6GYN97HH70E4C1FGM6HA2B0, 01M6GYN92N3Z99GPXTYHDDWF4R (#1549): a wave

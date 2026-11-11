@@ -42,7 +42,11 @@
 //! fact: `riff release cut` and `publish` also run in the container of
 //! the lead, and the daemon sends each other fact as the person. A call
 //! with a key goes once for each person (01M5TKG2K1AYK1KE7C2AA2W9DS): the
-//! look of each host of the person sends the same ask.
+//! look of each host of the person sends the same ask. riff-server keeps
+//! the key of the line after the chat keeps no more of it, also through a
+//! new start of riff-server (01M75N7H989QAPZD5NFRNVN4XY,
+//! [`riff_state::state::KEEP_TOLD`]). So a new start of the daemon tells
+//! the person no question again.
 
 use riff_core::hold::Hold;
 use riff_core::name::{SessionUri, lead_container};

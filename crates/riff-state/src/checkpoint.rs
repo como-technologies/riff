@@ -24,7 +24,8 @@
 //! - A [`Checkpoint`] holds the format, the build that wrote it, the time
 //!   of its write, and a [`Snapshot`]: the state that the log gives, the
 //!   last [`crate::state::KEEP_MESSAGES`] messages of each thread, the
-//!   read cursors, and the last call of each session.
+//!   keys of its last [`crate::state::KEEP_TOLD`] lines of riff-bot with a
+//!   key, the read cursors, and the last call of each session.
 //! - A write is "only when new", as a chunk.
 //!
 //! # The rules (01M3TBZBQDF0ES4KM54FJQF6Z8)

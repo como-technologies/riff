@@ -141,7 +141,15 @@
 //! for each new issue ([`question_at`]). The look of each host and a new
 //! start of the daemon make the same key for the same label, and
 //! `riff-server` drops the second post. A label that goes on again has a new
-//! time, so it has a new key.
+//! time, so it has a new key. When the read of the time fails, the look
+//! tells nothing, and reads it again at the next look: a key with no time
+//! is another key.
+//!
+//! riff-server keeps the key of each line of riff-bot with a key, also when
+//! the chat keeps no more of the line, and its checkpoint keeps the keys
+//! (01M75N7H989QAPZD5NFRNVN4XY, [`riff_state::state::KEEP_TOLD`]). So a new
+//! start of the daemon or of riff-server tells the person no question
+//! again, also after many lines in the chat.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -1274,22 +1282,23 @@ pub fn question_key(issue: u64, at: Option<&str>) -> String {
 }
 
 /// The time that the label `question` went on `issue` of `repo` the last
-/// time, from the events of the issue. `None` when the read fails or
-/// finds no event: the notice then has no time in its key.
-pub fn question_at(gh: &Gh, repo: &str, issue: u64) -> Option<String> {
+/// time, from the events of the issue. `None` when the read finds no
+/// event: the notice then has no time in its key. The error is a read that
+/// failed: the look tells nothing then, and reads again at the next look.
+/// So a new start of the daemon makes the same key
+/// (01M75N7H989QAPZD5NFRNVN4XY).
+pub fn question_at(gh: &Gh, repo: &str, issue: u64) -> Result<Option<String>> {
     let path = format!("repos/{repo}/issues/{issue}/events");
     let filter = format!(
         r#".[] | select(.event == "labeled" and .label.name == "{}") | .created_at"#,
         riff_client::waves::QUESTION
     );
-    let found = gh
-        .run(&["api", &path, "--paginate", "--jq", &filter], None)
-        .ok()?;
-    found
+    let found = gh.run(&["api", &path, "--paginate", "--jq", &filter], None)?;
+    Ok(found
         .lines()
         .map(str::trim)
         .rfind(|line| !line.is_empty())
-        .map(str::to_owned)
+        .map(str::to_owned))
 }
 
 /// What the look of the daemon keeps between two looks of one wave:
@@ -1351,15 +1360,20 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
         }
     }
     // The person hears once that the label `question` went on an issue
-    // (#1605). A post that fails stays for the next look.
+    // (#1605, 01M75N7H989QAPZD5NFRNVN4XY). A read of the time of the label
+    // and a post that fail stay for the next look.
     let asking: Vec<u64> = watch.asks.news(&issues).iter().map(|i| i.number).collect();
     for (at, number) in asking.iter().enumerate() {
         let (gh, repo, number) = (gh.clone(), wave.repo.clone(), *number);
-        let labeled = tokio::task::spawn_blocking(move || question_at(&gh, &repo, number)).await?;
-        let key = question_key(number, labeled.as_deref());
-        told = true;
         let fact = BotFact::Question { issue: number };
-        if let Err(e) = world.ask_person(wave, fact, &key).await {
+        let asked = async {
+            let labeled =
+                tokio::task::spawn_blocking(move || question_at(&gh, &repo, number)).await??;
+            let key = question_key(number, labeled.as_deref());
+            world.ask_person(wave, fact, &key).await
+        };
+        told = true;
+        if let Err(e) = asked.await {
             asking[at..]
                 .iter()
                 .for_each(|rest| watch.asks.untell(*rest));

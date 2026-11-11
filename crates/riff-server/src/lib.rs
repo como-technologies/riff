@@ -2645,7 +2645,9 @@ pub fn still_blocked(session: &SessionUri, reason: &str, after_secs: u64) -> Str
 /// place of the caller and the holds of the version. Only a person and
 /// the lead of the person may call it. A key that a kept line of
 /// riff-bot for the same user has drops the post
-/// (01M5TKG2K1AYK1KE7C2AA2W9DS).
+/// (01M5TKG2K1AYK1KE7C2AA2W9DS). So does the key of a line that the chat
+/// keeps no more, of the last [`riff_state::state::KEEP_TOLD`]
+/// (01M75N7H989QAPZD5NFRNVN4XY).
 async fn bot_post(
     AxumState(s): AxumState<Shared>,
     proof: Proof,

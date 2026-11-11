@@ -3810,9 +3810,9 @@ From then on, riff waits for the answer:
   [See which wave runs, and where](#see-which-wave-runs-and-where)).
   The Waves tab of the TUI shows it in each wave (see
   [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)).
-- The look of the daemon tells the person one time in `riff chat`, with
-  the title and the link of the issue. It tells again only when the
-  label goes on again.
+- riff tells the person one time in `riff chat`, with the link of the
+  issue (see
+  [See all your open questions](#see-all-your-open-questions)).
 
 The person answers in the body or in a comment, and can then mark the
 questions as answered (see
@@ -3838,6 +3838,31 @@ flowchart LR
 ```
 
 ### See all your open questions
+
+riff tells you each question one time. When a lead adds the label
+`question` to an issue, a line of `riff-bot` in `riff chat` names you,
+with the link of the issue:
+
+```text
+14:05 <riff-bot> @mike A lead waits for your answer in issue #1596 of como-technologies/riff: https://github.com/como-technologies/riff/issues/1596. The wave starts no build of the issue until the label question goes.
+```
+
+riff-server keeps the questions that it told you, also through its own
+new start. So a new start of the daemon, also on a new riff, a new start
+of riff-server, and the daemon of another host tell you no question
+again. riff tells a question again only when the label goes off and then
+on again.
+
+```mermaid
+sequenceDiagram
+    participant D as the daemon, after a new start
+    participant S as riff-server
+    participant P as you, in riff chat
+    D->>S: issue 1596 has the label question, labeled at 20:11
+    Note over S: it told this question: no line
+    D->>S: the label went off and on again, labeled at 09:30
+    S->>P: a new line of riff-bot for issue 1596
+```
 
 To see each open question for you, in all your repositories, run this in
 any folder:

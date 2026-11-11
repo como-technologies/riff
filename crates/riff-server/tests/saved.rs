@@ -107,6 +107,47 @@ async fn a_new_server_on_the_same_directory_has_the_same_state() {
     assert!(dir.path().join(chunk_name(1)).exists());
 }
 
+/// 01M75N7H989QAPZD5NFRNVN4XY (#1950): the ask of a question goes one
+/// time, also after more lines than the chat keeps, and after a restart.
+/// The same key of brett is the ask of brett.
+#[tokio::test]
+async fn an_ask_goes_one_time_also_after_the_chat_keeps_no_more_of_it_and_a_restart() {
+    let store: Arc<dyn Store> = Arc::new(Memory::default());
+    let (old, base) = common::start_on(store.clone()).await;
+    let (mike, brett) = (
+        "riff://mike@pangolin/como-technologies/riff",
+        "riff://brett@heron/como-technologies/riff",
+    );
+    let ask = |me: &str| {
+        let fact = json!({ "fact": "question", "issue": 12 });
+        json!({ "me": me, "fact": fact, "key": "question-12-2026-11-05T20:11:03Z" })
+    };
+    call(&base, "bot", ask(mike)).await;
+    let started = json!({ "me": mike, "fact": { "fact": "lead_started" } });
+    for _ in 0..riff_state::state::KEEP_MESSAGES {
+        call(&base, "bot", started.clone()).await;
+    }
+    call(&base, "bot", ask(mike)).await;
+    old.shutdown().await.unwrap();
+
+    let (_new, base) = common::start_on(store).await;
+    call(&base, "bot", ask(mike)).await;
+    call(&base, "bot", ask(brett)).await;
+    let last = 1 + riff_state::state::KEEP_MESSAGES as u64;
+    let read = json!({ "me": mike, "thread": "chat", "all": true, "after": last });
+    let read = call(&base, "read", read).await;
+    let bodies: Vec<&str> = read["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["body"].as_str().unwrap())
+        .collect();
+    let [line] = bodies.as_slice() else {
+        panic!("only the ask of brett: {bodies:?}");
+    };
+    assert!(line.starts_with("@brett A lead waits for your answer in issue #12"));
+}
+
 /// The lease times of a deploy in a test: the new instance waits long
 /// enough for the old one to read the new lease and to write its last
 /// checkpoint, also under load.

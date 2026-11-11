@@ -7,7 +7,7 @@
 //!
 //! | Data | Key | Type | Where it comes from |
 //! |---|---|---|---|
-//! | Threads | thread name | [`Riff`] | The log. Members, and the last [`KEEP_MESSAGES`] messages with a sequence number that starts at 1. |
+//! | Threads | thread name | [`Riff`] | The log. Members, the last [`KEEP_MESSAGES`] messages with a sequence number that starts at 1, and the keys of the last [`KEEP_TOLD`] lines of riff-bot with a key. |
 //! | Claims | thread and item | [`Riff`] | The log. The session that holds the item. |
 //! | Leads | user and repository thread | [`Riff`] | The log. The lead session of the user. |
 //! | Riff state | none: one for the server | [`Riff`] | The log. The pause of the riff and of each repository, and the settings of idle workers. |
@@ -109,7 +109,9 @@
 //!   all moves it to the last message that it returns, and never back
 //!   (01M6WBQQEGZKVV49QWCQGTE4CY).
 //! - A thread keeps its last [`KEEP_MESSAGES`] messages
-//!   (01M3TBZBT7MME9BG1RWX5SZAZ6).
+//!   (01M3TBZBT7MME9BG1RWX5SZAZ6), and the keys of its last
+//!   [`KEEP_TOLD`] lines of riff-bot with a key
+//!   (01M75N7H989QAPZD5NFRNVN4XY).
 //! - [`State::forget_expired`] forgets each session with no sign of life
 //!   for [`SESSION_EXPIRY`] (01M3TBZBZVH907QD359AB8TBSX): a
 //!   [`Change::SessionForgotten`] record drops the session, its read
@@ -326,6 +328,14 @@ pub const SESSION_EXPIRY: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 /// follows the rules for a change of a record
 /// (01M3T4111PFM0C6KPREWFS9EQQ, 01M3WNQQWA7XGK4Y9ET8HJZ8NN).
 pub const KEEP_MESSAGES: usize = 200;
+
+/// Memory and the checkpoint keep the keys of the last this many lines of
+/// riff-bot with a key of each thread, also when the thread keeps no more
+/// of the line (01M75N7H989QAPZD5NFRNVN4XY). So riff-server tells each
+/// question to the person one time.
+///
+/// The number is a constant of the format, as [`KEEP_MESSAGES`].
+pub const KEEP_TOLD: usize = 1000;
 
 /// `read` gives at most this many messages, and a cursor for the next
 /// page (01M3TBZBX140GJWCV5GZ73Q5Z5).
@@ -4248,7 +4258,7 @@ mod tests {
     fn full_checkpoint() -> serde_json::Value {
         let ann = serde_json::json!({"user": "mike", "session": "a1"});
         let message = serde_json::json!({
-            "seq": 1, "from": "riff://mike@pangolin/como-technologies/riff?session=a1#api",
+            "seq": 2, "from": "riff://mike@pangolin/como-technologies/riff?session=a1#api",
             "to": [{"user": "mike", "session": "b2", "host": "pangolin",
                     "repo": "como-technologies/riff", "worktree": "docs",
                     "claim": "issue-7", "lead": true, "person": false, "name": "riff"}],
@@ -4265,7 +4275,8 @@ mod tests {
                 "riff_pause": {"by": {"session": "mike/a1"}, "at_ms": T0},
                 "pauses": {"design": {"by": {"session": "mike/a1"}, "at_ms": T0}},
                 "threads": [{"thread": "como-technologies/riff", "members": [ann],
-                             "messages": [{"message": message, "woken": [ann], "key": "pull-40-1a2b3c4d-conflict"}]}],
+                             "messages": [{"message": message, "woken": [ann], "key": "pull-40-1a2b3c4d-conflict"}],
+                             "told": [{"user": "riff", "key": "mike/question-12", "seq": 1}]}],
                 "claims": [{"thread": "como-technologies/riff", "item": "issue-7", "holder": ann}],
                 "leads": [{"thread": "como-technologies/riff", "lead": ann}],
                 "sessions": [
@@ -4956,6 +4967,88 @@ mod tests {
         assert!(loaded.post(again.clone(), now, 3).is_ok());
         let mut restarted = State::load(Some(through_json(&loaded, now)), [], now, T0);
         assert!(restarted.post(again, now, 4).is_err(), "it is kept again");
+    }
+
+    /// The line of riff-bot of the server in the chat with `key`, the ask
+    /// of a question: true when it made a line.
+    fn ask(state: &mut State, key: &str, now: Instant) -> bool {
+        let server = SessionUri::server();
+        let announce = Announce {
+            thread: Some(ThreadName::chat()),
+            to: Vec::new(),
+            body: format!("@mike {key}"),
+            kind: Kind::Riff,
+            at_ms: 1,
+            key: Some(key.into()),
+        };
+        let caller = Caller::of(&server).with_class(Class::Server);
+        let (made, ()) = state.run(&caller, &announce, now).unwrap();
+        !made.is_empty()
+    }
+
+    /// `count` lines of riff-bot with no key in the chat.
+    fn lines(state: &mut State, count: usize, now: Instant) {
+        let server = SessionUri::server();
+        for n in 0..count {
+            let body = format!("line {n}");
+            let chat = Some(ThreadName::chat());
+            state
+                .announce(&server, chat, Vec::new(), &body, Kind::Riff, now, 2)
+                .unwrap();
+        }
+    }
+
+    /// 01M75N7H989QAPZD5NFRNVN4XY (#1950): the key of a line of riff-bot
+    /// stays after the chat keeps no more of the line, after a replay of
+    /// the log, and after a start from a checkpoint. A checkpoint of a
+    /// build before the rule has no told keys: its kept lines give them.
+    /// Only the keys of the last [`KEEP_TOLD`] lines stay.
+    #[test]
+    fn the_key_of_a_line_of_riff_bot_stays_after_the_chat_keeps_no_more_of_it() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let key = "mike/question-12-2026-11-05T20:11:03Z";
+        assert!(ask(&mut state, key, now));
+        lines(&mut state, KEEP_MESSAGES, now);
+        assert!(!ask(&mut state, key, now), "the chat keeps no more of it");
+        assert!(ask(
+            &mut state,
+            "brett/question-12-2026-11-05T20:11:03Z",
+            now
+        ));
+
+        let log = state.take_queue();
+        let mut replayed = State::replay(log, now, T0);
+        assert!(!ask(&mut replayed, key, now), "after a replay");
+        let mut loaded = State::load(Some(through_json(&replayed, now)), [], now, T0);
+        assert!(!ask(&mut loaded, key, now), "after a checkpoint");
+        assert!(loaded.same_log_state(&replayed));
+
+        // A checkpoint of a build before the rule: the chat keeps the line.
+        let mut before = setup(now);
+        assert!(ask(&mut before, key, now));
+        let mut saved = serde_json::to_value(before.snapshot(now, T0)).unwrap();
+        let threads = saved["threads"].as_array_mut().unwrap();
+        let told = threads
+            .iter_mut()
+            .filter_map(|thread| thread.as_object_mut().unwrap().remove("told"))
+            .count();
+        assert_eq!(told, 1, "only the chat has told keys");
+        let saved: Snapshot = serde_json::from_value(saved).unwrap();
+        let mut moved = State::load(Some(saved), [], now, T0);
+        lines(&mut moved, KEEP_MESSAGES, now);
+        assert!(!ask(&mut moved, key, now), "the kept line gave its key");
+
+        // The keys of the last KEEP_TOLD lines stay: the oldest goes.
+        for n in 0..KEEP_TOLD {
+            assert!(ask(&mut moved, &format!("mike/question-{n}"), now));
+        }
+        assert!(ask(&mut moved, key, now), "the key of the oldest line went");
+        assert!(!ask(
+            &mut moved,
+            &format!("mike/question-{}", KEEP_TOLD - 1),
+            now
+        ));
     }
 
     #[test]

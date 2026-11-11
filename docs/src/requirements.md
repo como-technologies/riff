@@ -727,6 +727,15 @@
   in "How It Works", and shows the line of the dropped events of riff
   daemon status in "See how the daemon uses the GitHub limit" in
   development.md, with a copyable sh block (#1656).
+- **01M75N7H989QAPZD5NFRNVN4XY** riff tells each question to the person
+  one time. riff-server keeps the key of each line of riff-bot with a
+  key, also when the thread keeps no more of the line: the keys of the
+  last 1000 of these lines of a thread. The checkpoint keeps these keys.
+  A checkpoint with none of them, from a build before this rule, gives
+  the keys of its kept lines of riff-bot. So a new start of the daemon
+  or of riff-server, and the look of another host, tell no question
+  again. When the look cannot read the time that the label went on, it
+  tells nothing, and the next look reads the time again.
 
 ## Issue hygiene on GitHub
 

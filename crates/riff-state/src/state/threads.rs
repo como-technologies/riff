@@ -6,7 +6,10 @@
 //! - Part of the riff: [`Threads`]. The members and the last
 //!   [`KEEP_MESSAGES`] messages of each thread, and the index of the
 //!   signed messages for the copy check (01M3JEJVXXEPPNGT3FY4ZSFCWZ), and
-//!   the index of the keys of the posts (01M5TKG2K1AYK1KE7C2AA2W9DS).
+//!   the index of the keys of the posts (01M5TKG2K1AYK1KE7C2AA2W9DS). Also
+//!   the keys of the last [`KEEP_TOLD`] lines of riff-bot with a key of
+//!   each thread, after the thread keeps no more of the line
+//!   (01M75N7H989QAPZD5NFRNVN4XY).
 //! - `apply`: `Threads::posted`, `Threads::joined` and
 //!   `Threads::left` for the records `posted`, `joined_thread` and
 //!   `left_thread`. `Threads::forgotten` for a `session_forgotten`
@@ -25,10 +28,10 @@ use riff_core::signed::payload_hash;
 use riff_core::wire::{self, Join, Kind, Leave, Message, Post, Wake};
 use serde::{Deserialize, Serialize};
 
-use super::KEEP_MESSAGES;
 use super::command::{Caller, Command, CommandKind, Done, Now, Refused};
 use super::sessions::Sessions;
 use super::view::View;
+use super::{KEEP_MESSAGES, KEEP_TOLD};
 
 /// The threads of the riff.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -40,6 +43,35 @@ pub struct Threads {
     /// The seq of each kept message that has a key, by thread, by user of the
     /// sender, and by key.
     pub(super) keys: BTreeMap<(ThreadName, String, String), u64>,
+    /// The keys of the last [`KEEP_TOLD`] lines of riff-bot with a key of
+    /// each thread: what riff told a person. A key stays after the thread
+    /// keeps no more of its line (01M75N7H989QAPZD5NFRNVN4XY).
+    pub(super) told: BTreeMap<ThreadName, Told>,
+}
+
+/// The keys of the lines of riff-bot with a key of one thread, by the user
+/// of the sender and the key, and by the seq of the line.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Told {
+    by_key: BTreeMap<(String, String), u64>,
+    by_seq: BTreeMap<u64, (String, String)>,
+}
+
+impl Told {
+    /// Keeps the key `key` of the line `seq` of `user`. The key of the
+    /// oldest line goes past [`KEEP_TOLD`].
+    fn keep(&mut self, user: &str, key: &str, seq: u64) {
+        let place = (user.to_owned(), key.to_owned());
+        if let Some(old) = self.by_key.insert(place.clone(), seq) {
+            self.by_seq.remove(&old);
+        }
+        self.by_seq.insert(seq, place);
+        while self.by_seq.len() > KEEP_TOLD {
+            if let Some((_, place)) = self.by_seq.pop_first() {
+                self.by_key.remove(&place);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -69,6 +101,15 @@ impl Stored {
         let user = self.message.from.who().user();
         Some((thread.clone(), user.to_owned(), key.clone()))
     }
+
+    /// The user of the sender and the key of a line of riff-bot with a key
+    /// (01M75N7H989QAPZD5NFRNVN4XY). Only riff-server posts the kind
+    /// `riff`.
+    fn told(&self) -> Option<(&str, &str)> {
+        let key = self.key.as_deref()?;
+        let line = self.message.kind == Kind::Riff;
+        line.then(|| (self.message.from.who().user(), key))
+    }
 }
 
 impl Threads {
@@ -93,6 +134,10 @@ impl Threads {
         if let Some(place) = stored.key_in(thread) {
             self.keys.insert(place, message.seq);
         }
+        if let Some((user, key)) = stored.told() {
+            let told = self.told.entry(thread.clone()).or_default();
+            told.keep(user, key, message.seq);
+        }
         let messages = &mut self.by_name.entry(thread.clone()).or_default().messages;
         messages.push_back(stored);
         while messages.len() > KEEP_MESSAGES {
@@ -116,6 +161,18 @@ impl Threads {
     pub(super) fn keyed(&self, thread: &ThreadName, user: &str, key: &str) -> Option<u64> {
         let place = (thread.clone(), user.to_owned(), key.to_owned());
         self.keys.get(&place).copied()
+    }
+
+    /// True when riff-server told a line of riff-bot of `thread` with
+    /// `key` as `user`: the thread keeps the line, or its key
+    /// (01M75N7H989QAPZD5NFRNVN4XY).
+    pub(super) fn told(&self, thread: &ThreadName, user: &str, key: &str) -> bool {
+        let place = (user.to_owned(), key.to_owned());
+        self.keyed(thread, user, key).is_some()
+            || self
+                .told
+                .get(thread)
+                .is_some_and(|told| told.by_key.contains_key(&place))
     }
 
     /// The session is a member of the thread. A new thread starts.
@@ -155,6 +212,7 @@ impl Threads {
         self.by_name.retain(|thread, _| !gone.contains(thread));
         self.copies.retain(|(thread, _), _| !gone.contains(thread));
         self.keys.retain(|(thread, _, _), _| !gone.contains(thread));
+        self.told.retain(|thread, _| !gone.contains(thread));
     }
 
     /// True when the riff has the thread.
@@ -183,16 +241,28 @@ impl Threads {
             by_name,
             copies: _,
             keys: _,
+            told,
         } = self;
         Saved {
             threads: by_name
                 .iter()
                 .map(|(name, thread)| {
                     let Thread { members, messages } = thread;
+                    let told = told.get(name).map(|told| {
+                        told.by_seq
+                            .iter()
+                            .map(|(seq, (user, key))| ToldKey {
+                                user: user.clone(),
+                                key: key.clone(),
+                                seq: *seq,
+                            })
+                            .collect()
+                    });
                     SavedThread {
                         thread: name.clone(),
                         members: members.iter().cloned().collect(),
                         messages: messages.iter().cloned().collect(),
+                        told: told.unwrap_or_default(),
                     }
                 })
                 .collect(),
@@ -215,6 +285,21 @@ struct SavedThread {
     members: Vec<Who>,
     #[serde(default)]
     messages: Vec<Stored>,
+    /// The keys of the last [`KEEP_TOLD`] lines of riff-bot with a key
+    /// (01M75N7H989QAPZD5NFRNVN4XY). A checkpoint of a build before them
+    /// has none: the kept lines give them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    told: Vec<ToldKey>,
+}
+
+/// The key of a line of riff-bot in a checkpoint: an entry of [`Told`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+struct ToldKey {
+    /// The user of the sender.
+    user: String,
+    key: String,
+    /// The seq of the line.
+    seq: u64,
 }
 
 impl Saved {
@@ -225,8 +310,13 @@ impl Saved {
             thread: name,
             members,
             messages,
+            told,
         } in saved
         {
+            let mut kept = Told::default();
+            for ToldKey { user, key, seq } in &told {
+                kept.keep(user, key, *seq);
+            }
             for m in &messages {
                 if let Some(payload) = &m.message.payload {
                     threads
@@ -236,6 +326,12 @@ impl Saved {
                 if let Some(place) = m.key_in(&name) {
                     threads.keys.insert(place, m.message.seq);
                 }
+                if let Some((user, key)) = m.told() {
+                    kept.keep(user, key, m.message.seq);
+                }
+            }
+            if !kept.by_seq.is_empty() {
+                threads.told.insert(name.clone(), kept);
             }
             let thread = Thread {
                 members: members.into_iter().collect(),
@@ -727,7 +823,10 @@ pub struct PostNote {
 /// An announce with a key that a kept message of the server has in the
 /// thread is dropped, as a [`Post`] with a key is
 /// (01M5TKG2K1AYK1KE7C2AA2W9DS): it makes no record, and wakes no
-/// session.
+/// session. So is an announce with the key of one of the last
+/// [`KEEP_TOLD`] lines of riff-bot with a key of the thread, also when
+/// the thread keeps no more of the line: riff-server tells each question
+/// to the person one time (01M75N7H989QAPZD5NFRNVN4XY).
 #[derive(Clone, Debug)]
 pub struct Announce {
     pub thread: Option<ThreadName>,
@@ -762,11 +861,7 @@ impl Command for Announce {
         let from = caller.who();
         let thread = view.thread_of(from, thread.as_ref(), to, now.at)?;
         if let Some(key) = key
-            && view
-                .riff
-                .threads()
-                .keyed(&thread, from.user(), key)
-                .is_some()
+            && view.riff.threads().told(&thread, from.user(), key)
         {
             return Ok((Vec::new(), ()));
         }

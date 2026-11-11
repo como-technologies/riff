@@ -7,7 +7,7 @@
 //! | Part | File | What it holds |
 //! |---|---|---|
 //! | [`Sessions`] | [`super::sessions`] | Each session that a record names. |
-//! | [`Threads`] | [`super::threads`] | The members and the kept messages of each thread. |
+//! | [`Threads`] | [`super::threads`] | The members and the kept messages of each thread, and the keys of its last lines of riff-bot with a key. |
 //! | [`Work`] | [`super::work`] | The claims and the leads. |
 //! | [`TheRiff`] | [`super::the_riff`] | The pauses, and the settings. |
 //! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, the owner, and the request for the owner role. |
@@ -40,6 +40,7 @@
 //! | `released` | It frees the claim only when the session of the record holds it. If not, the record changes nothing. `handle` refuses such a release, so only a fault or an old build writes this record. | Yes. |
 //! | `lead_set` | The session of the record replaces the old lead of its user in the thread. | Yes. |
 //! | `posted`, `session_forgotten` | They keep the index of the signed messages for the copy check, and the index of the keys of the posts: a `posted` record adds the hash of its payload and its key, and removes those of the message that goes at the limit. A `session_forgotten` record removes the hashes and the keys of each direct thread that goes. | Yes. |
+//! | `posted` | A line of riff-bot with a key, of the kind `riff`, adds its key to the told keys of its thread. The key stays after the thread keeps no more of the line. A thread keeps the keys of its last [`KEEP_TOLD`](super::KEEP_TOLD) such lines, so the oldest key goes (01M75N7H989QAPZD5NFRNVN4XY). The number is a constant of the format. | Yes. |
 //! | each record that names a session | It keeps the URI of the session and the time of the record. | Yes. |
 //! | `session_started` | It stores the worker mark. A record with the reason `process` or `clear` also stores its time, and ends MustClear. A record with the reason `other` changes nothing. | Yes. |
 //! | `released` | A record with `must_clear` sets the MustClear mark of its session. | Yes. |
