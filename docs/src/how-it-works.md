@@ -2922,27 +2922,40 @@ shell loop.
 
 ### Run a test of the build of CI
 
-A verifier builds no test. CI built the test binaries of the commit
-one time, in the job `Build`, and keeps them as the artifact
-`tests-TREE`, where TREE is the git tree of the commit. In a repository
-with CI, the start text of a verify tells the verifier to run each
-test from that build, with the command that the rules of the
-repository name. The `CLAUDE.md` of riff names this command. NAME is
-the name of a test, or a part of the name, as for `cargo test NAME`:
+A verifier builds no test. CI built the test binaries one time, in the
+job `Build`, and keeps them as the artifact `tests-TREE`, where TREE is
+the git tree that the run built. In a repository with CI, the start
+text of a verify tells the verifier to run each test from that build,
+with the command that the rules of the repository name. The
+`CLAUDE.md` of riff names this command. NAME is the name of a test, or
+a part of the name, as for `cargo test NAME`:
 
 ```sh
 just ci-test NAME
 ```
 
+The verifier runs the build of the newest CI run at the commit of
+`HEAD`. For a pull request, CI builds the merge of the pull request
+with `main`, not the head commit. When `main` moved after the branch,
+the tree of that merge is not the tree of `HEAD`. So the command finds
+the tree in the names of the artifacts of the run. When no run at
+`HEAD` names a tree, for example for a commit that CI did not run, the
+command takes the build of the tree of `HEAD`.
+
 A test binary reads the files of the path where CI built it,
 `/var/tmp/riff-ci/riff`. So the command puts a worktree of `HEAD` at
 that path, unpacks the binaries there, and runs the tests there, as a
-job `Tests I/N` runs them. A second run for the same tree takes the
-download and the worktree of the first.
+job `Tests I/N` runs them. The files are the files of `HEAD`, and the
+binaries are the build of the run. A second run for the same tree
+takes the download and the worktree of the first.
 
 ```mermaid
 flowchart LR
-    V["just ci-test NAME"] --> A{"CI kept<br/>tests-TREE?"}
+    V["just ci-test NAME"] --> T{"the newest CI run<br/>at HEAD names<br/>a tree?"}
+    T -- "yes" --> M["TREE: the tree of the run,<br/>for a pull request the<br/>merge with main"]
+    T -- "no" --> H["TREE: the tree of HEAD"]
+    M --> A{"CI kept<br/>tests-TREE?"}
+    H --> A
     A -- "yes" --> W["a worktree of HEAD at<br/>/var/tmp/riff-ci/riff"]
     W --> R["the tests with NAME<br/>in their name, no build"]
     A -- "no" --> S["exit 3: the verifier says so<br/>in its result, then builds"]

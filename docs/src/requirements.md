@@ -4728,16 +4728,16 @@
   of its own, and no test of that binary starts a child process. So no
   child holds the listening socket of the server that the test stops.
 - **01M75NDQY6BHZBV9PF735E3FGY** `just ci-test NAME` runs the tests
-  whose name has NAME from the artifact `tests-TREE` of the tree of
-  `HEAD`, with `hygiene test-name NAME --archive`, and compiles nothing.
+  whose name has NAME from an artifact `tests-TREE`, with `hygiene
+  test-name NAME --archive`, and compiles nothing.
   It puts a linked worktree of `HEAD` at the path that the archive
   names, unpacks the archive there, and runs the tests there in the
   environment of the jobs `Tests I/N`: a clean environment with a new
   home, `CARGO_HOME` and `CARGO_TARGET_DIR` in `target/session`, and the
   values of the tests. A second run for the same tree takes the download
   and the worktree of the first. It removes a folder at that path only
-  when an earlier run made it. When CI kept no `tests-TREE` of the tree,
-  or its binaries cannot run on the machine, it says so, exits with 3,
+  when an earlier run made it. When CI kept no such `tests-TREE`, or its
+  binaries cannot run on the machine, it says so, exits with 3,
   and builds nothing. The `CLAUDE.md` of riff tells a verifier to run a
   test with it.
 - **01M75NAF4JQWQG3ZVGJM74XRBG** The job `Plan` of CI runs
@@ -4765,6 +4765,17 @@
   pull request with that tree. It builds nothing, it runs no part of the
   tests and no job `macOS`, and `Gate` passes on that pass. `Static
   riff` and `Stage` run as for each push to `main`.
+- **01M75T9RGR89MAC6S78K42QN7Q** `just ci-test NAME` takes the test
+  build of the newest run of CI at the commit of `HEAD` that ran on a
+  branch of this repository. The names of the artifacts of that run give
+  the tree that it built: `tests-TREE`, `gate-TREE` or
+  `static-PROFILE-TREE`. A run of a pull request builds the merge of the
+  pull request with `main`, so its tree can differ from the tree of
+  `HEAD`. When no run at the commit names a tree, it takes the tree of
+  `HEAD`. It downloads `tests-TREE` of that tree from the newest run
+  that holds it, and runs it in the worktree of `HEAD`. When gh cannot
+  list the runs, it exits with 3. Supersedes 01M75NDQY6BHZBV9PF735E3FGY
+  in part.
 
 ## The phone app
 
