@@ -6610,8 +6610,8 @@ flowchart TD
   current wave (see [Waves](waves.md)). No session claims it, it is not
   merged, and each issue of its `Needs:` line is closed. An issue is
   merged when it has the comment `Merged in #`, or when its pull request
-  merged with `Refs #N` (see
-  [Leave the issue open for a check after the release](development.md#leave-the-issue-open-for-a-check-after-the-release)).
+  merged with `Refs #N`, or with `Closes #N` in the last hour (see
+  [What the wave does](development.md#what-the-wave-does)).
   A pull request counts for the issue that it names (see
   [See the item of a pull request](#see-the-item-of-a-pull-request)).
   An item counts one time: while its pull request waits for a verify
