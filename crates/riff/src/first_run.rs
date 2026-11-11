@@ -685,6 +685,7 @@ impl Check {
     ///     bot: Ok(None),
     ///     lead: Ok(None),
     ///     releases: None,
+    ///     queue: None,
     /// };
     /// let lines: Vec<String> = checks(&github)
     ///     .iter()
@@ -1418,6 +1419,7 @@ mod tests {
             bot: Ok(None),
             lead: Ok(None),
             releases: None,
+            queue: None,
         }
     }
 

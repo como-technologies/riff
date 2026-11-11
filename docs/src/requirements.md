@@ -956,8 +956,7 @@
   pull request merges through the queue: GitHub builds a merge group of
   the default branch and the pull request, runs the required checks on
   it, and merges it when they pass. `deploy/merge-queue.sh on REPO
-  RULESET` adds the rule to a ruleset, and `off` removes it. The ruleset
-  that `riff init` makes has no merge queue.
+  RULESET` adds the rule to a ruleset, and `off` removes it.
 - **01M5TKPHH2627K9NDS4P1Y1N3T** CI runs the Gate and Hygiene on the
   event `merge_group`. A job of CI sets the status `riff/verify` on the
   merge group commit: success when the head commit of the pull request
@@ -1045,6 +1044,13 @@
   the body of the pull request, with its trailers as one last paragraph.
   A pass turns auto-merge on, also for a pull request whose auto-merge a
   person turned off. Supersedes 01M6Y95BMYDXFDYG3DKE2KG2PP in part.
+- **01M75NAPJVW8FJZTJEF416MR4J** `just github` puts the rule
+  `merge_queue` in the ruleset `main`, with the parameters of
+  `deploy/merge-queue.sh`: the squash method, up to 5 merge groups at
+  the same time, and 60 minutes for the checks of a group. The required
+  checks `Gate`, `Hygiene` and `riff/verify` of the ruleset run on each
+  merge group. A second run sets the same ruleset, so it changes
+  nothing.
 
 ## Tokens on GitHub
 
@@ -4561,13 +4567,12 @@
   test build (01M6QQ1NXY0CXMZEEEP413W4PK), and `Tests I/N` runs part I
   of N of the tests (01M6QQ1P5YCT0JX90X5FCKM4W1). Together they run
   each check of `just ci-full`. The last job, `Gate`, needs each of
-  them. `Tests I/N` has the condition
-  `github.event_name != 'schedule' && github.ref_type != 'tag'`, and
-  `Build` has the condition `github.event_name != 'schedule'`: a tag
-  takes its release binaries from `Build` (01M6QQ1P8H32E2TQ0CYA87R02V).
-  `Gate` has `always()` and the same condition as `Tests I/N`. So
-  `Gate` runs also when one of them fails or is cancelled, and it
-  passes only when each of them passed. The ruleset needs only `Gate`.
+  them. `Build` has the condition `github.event_name != 'schedule'`: a
+  tag takes its release binaries from `Build`
+  (01M6QQ1P8H32E2TQ0CYA87R02V). `Gate` has `always()` and the condition
+  `github.event_name != 'schedule' && github.ref_type != 'tag'`. So
+  `Gate` runs also when one of them fails or is cancelled, and it fails
+  then. The ruleset needs only `Gate`.
 - **01M513W2NSE303E6XAM18BW7T6** `just test-part I/N` lists each test of
   the workspace, also each doc test, with `cargo test -- --list`. Of
   the tests that are not doc tests, it runs each test whose name has
@@ -4735,6 +4740,31 @@
   or its binaries cannot run on the machine, it says so, exits with 3,
   and builds nothing. The `CLAUDE.md` of riff tells a verifier to run a
   test with it.
+- **01M75NAF4JQWQG3ZVGJM74XRBG** The job `Plan` of CI runs
+  `deploy/build-plan.sh` before each other job, and the jobs of the Gate
+  take its outputs. When the Gate of a run passed, and the tests ran in
+  that run, the job `Gate` keeps the artifact `gate-TREE`. The plan
+  looks for `gate-TREE` first, as it looks for the other artifacts of
+  the tree. When a run has it, the run builds no test binary, and the
+  jobs `Tests I/N` and `macOS` do not run: each has the condition
+  `github.event_name != 'schedule' && github.ref_type != 'tag' &&
+  needs.plan.outputs.run_tests == 'true'`. `macOS` needs only `Plan`, so
+  it starts beside `Build`. Then `Gate` passes when each part passed,
+  but the tests and `macOS`, which the plan skipped. A tree with no
+  `gate-TREE` runs each job. Supersedes 01M513W2K3HNRWPQTQNBQPT8MZ in
+  part.
+- **01M75NAF7VV5S7343P9Q7H7F60** A merge group with the tree of its pull
+  request takes the artifacts and `gate-TREE` of the run of the pull
+  request: it builds nothing and tests nothing. A merge group with a new
+  tree builds it and tests it once, and keeps its artifacts and
+  `gate-TREE` by the tree. The job `Verify of the merge group` sets
+  `riff/verify` on the merge group commit, as 01M5TKPHH2627K9NDS4P1Y1N3T
+  says.
+- **01M75NAFBH6M49GMSV8VG857EP** A push to `main` takes the artifacts
+  and `gate-TREE` of its tree, from the run of the merge group or of the
+  pull request with that tree. It builds nothing, it runs no part of the
+  tests and no job `macOS`, and `Gate` passes on that pass. `Static
+  riff` and `Stage` run as for each push to `main`.
 
 ## The phone app
 
@@ -7135,6 +7165,16 @@ of this part when they merge.
   question and do no step of the repository, and one line says that a
   person does the steps in a terminal. Supersedes
   01M5SMJMR5KS1Z1Z7CEPH9JVBB in part.
+- **01M75NAPNH1SP8AC90NYFQP8SK** In a repository whose `riff.toml` on
+  the default branch has the table `[release]`, `riff init` checks that
+  the rules of the default branch have a merge queue with the squash
+  method. Else the check fails with the step `Step::Queue`, after the
+  step of the ruleset `riff`: it reads the ruleset that requires
+  `riff/verify`, and puts the rule `merge_queue` of `just github` in it,
+  in place of an old one. It changes no other rule. A second run finds
+  the queue and changes nothing. A repository with no `[release]` has no
+  such check, and the ruleset `riff` that `riff init` makes for it has
+  no merge queue. Supersedes 01M5TKPHDNHY75BHPD4XVBJRN9 in part.
 
 ### The permission rules
 

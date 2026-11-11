@@ -496,8 +496,9 @@ the short hash of the code: `crates`, `Cargo.toml` and `Cargo.lock`. Two
 commits with the same code have the same id. A commit that changes only
 the book keeps the build.
 
-CI builds each tree one time, in the pull request. The commit on
-`main` and the release take that build. So the build of a release has
+CI builds and tests each tree one time, in the pull request, or in its
+merge group when `main` moved. The commit on `main` and the release
+take that build. So the build of a release has
 the id of the code, as on `main`. Its time is the time of the last
 commit of the pull request that changed the code, and not the time of
 the squash commit on `main`. Two builds with the same version and id

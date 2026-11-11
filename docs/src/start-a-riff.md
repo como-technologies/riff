@@ -649,6 +649,7 @@ each step that is done already:
 | The Backlog | It makes the `Backlog`. |
 | The first wave | When the repository has no open wave, it makes `Wave 1`, and the label `question` when the repository has none. |
 | The ruleset | It makes the ruleset `riff` of the default branch: a pull request, squash merges only, and the checks that your CI runs on a pull request, and `riff/verify`. A repository with no CI gets `riff/verify` alone. |
+| The merge queue | In a repository with `[release]` in `riff.toml`, it puts the rule `merge_queue` in the ruleset that requires `riff/verify`: each pull request merges through a merge queue with the method squash. See [Turn the merge queue on or off](development.md#turn-the-merge-queue-on-or-off). |
 | The ruleset `releases` | In a repository with `[release]` in `riff.toml`, it makes the ruleset `releases` on the tags `v*`: only the admin role of the repository and the lead App of the riff push a release tag. See [Let the lead push the release tag](#let-the-lead-push-the-release-tag). |
 
 ```mermaid
@@ -879,6 +880,7 @@ flowchart LR
 | the checks of a pull request | [Use the checks that you have](#use-the-checks-that-you-have) |
 | the guard | [Add the guard](#add-the-guard) |
 | the ruleset `releases` | [Let the lead push the release tag](#let-the-lead-push-the-release-tag) |
+| the merge queue | [Turn the merge queue on or off](development.md#turn-the-merge-queue-on-or-off) |
 
 The checks of a pull request are your own work. Your repository may
 have a CI already: see
