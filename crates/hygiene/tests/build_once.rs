@@ -19,19 +19,24 @@ fn top() -> PathBuf {
 
 /// A fake `gh` in `dir`. For `api repos/o/r/actions/artifacts?name=NAME
 /// ...` it prints the file `NAME` of `dir` when it is there, and nothing
-/// else. It fails when the file `fail` is there. It logs each call.
+/// else. Each run is a push to `main` that counts
+/// ([`RUNS_OF_MAIN`](crate::artifact_run::RUNS_OF_MAIN)). It fails when
+/// the file `fail` is there. It logs each call.
 fn gh(dir: &Path) {
     isolated::write_program(
         dir.join("gh"),
-        "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/calls\"\n\
-         if [ -f \"$dir/fail\" ]; then echo 'gh: boom' >&2; exit 1; fi\n\
-         case \"$1 $2\" in\n\
-         'api repos/o/r/actions/artifacts?name='*)\n\
-           name=${2#*name=}; name=${name%%&*}\n\
-           [ -f \"$dir/$name\" ] && cat \"$dir/$name\"\n\
-           exit 0 ;;\n\
-         esac\n\
-         echo \"no such call: $*\" >&2; exit 1\n",
+        [
+            "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/calls\"\n\
+             if [ -f \"$dir/fail\" ]; then echo 'gh: boom' >&2; exit 1; fi\n\
+             case \"$1 $2\" in\n\
+             'api repos/o/r/actions/artifacts?name='*)\n\
+               name=${2#*name=}; name=${name%%&*}\n\
+               [ -f \"$dir/$name\" ] && cat \"$dir/$name\"\n\
+               exit 0 ;;\n",
+            crate::artifact_run::RUNS_OF_MAIN,
+            "esac\necho \"no such call: $*\" >&2; exit 1\n",
+        ]
+        .concat(),
     );
 }
 
@@ -334,7 +339,7 @@ fn the_plan_asks_only_for_a_live_artifact_of_this_repository() {
         for part in [
             ".expired == false",
             ".workflow_run.repository_id == .workflow_run.head_repository_id",
-            "sort_by(.created_at) | last",
+            "sort_by(.created_at) | reverse",
         ] {
             assert!(call.contains(part), "{part} is not in {call}");
         }
@@ -437,14 +442,16 @@ impl Checkout {
         }
         isolated::write_program(
             bin.path().join("gh"),
-            "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/calls\"\n\
+            [
+                "#!/bin/sh\ndir=$(dirname \"$0\")\necho \"$*\" >> \"$dir/calls\"\n\
              make() { printf '%s' \"$1\" > \"$2\"; }\n\
              case \"$1 $2\" in\n\
              'api repos/o/r/actions/artifacts?name='*)\n\
                name=${2#*name=}; name=${name%%&*}\n\
                [ -f \"$dir/art-$name\" ] && cat \"$dir/art-$name\"\n\
-               exit 0 ;;\n\
-             'run download')\n\
+               exit 0 ;;\n",
+                crate::artifact_run::RUNS_OF_MAIN,
+                "'run download')\n\
                [ -f \"$dir/fail-download\" ] && exit 1\n\
                while [ $# -gt 0 ]; do [ \"$1\" = --dir ] && d=$2; shift; done\n\
                make riff-bytes \"$d/riff\"; make server-bytes \"$d/riff-server\"; exit 0 ;;\n\
@@ -458,6 +465,8 @@ impl Checkout {
                exit 0 ;;\n\
              esac\n\
              echo \"no such call: $*\" >&2; exit 1\n",
+            ]
+            .concat(),
         );
         let git = |args: &[&str]| {
             let out = Command::new("git")

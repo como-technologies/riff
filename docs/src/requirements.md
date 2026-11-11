@@ -4774,6 +4774,17 @@
   that holds it, and runs it in the worktree of `HEAD`. When gh cannot
   list the runs, it exits with 3. Supersedes 01M75NDQY6BHZBV9PF735E3FGY
   in part.
+- **01M75TT13241HC22M0KBJ6HW96** `deploy/artifact-run.sh` takes an
+  artifact of a tree, `gate-TREE`, `tests-TREE` or
+  `static-PROFILE-TREE`, only from a run of the workflow
+  `.github/workflows/ci.yml` on a branch of this repository whose job
+  that made the artifact passed: `Gate` for `gate-TREE`, `Build` for the
+  others. The run is a push to `main`, a merge group or the run that
+  asks, or the head commit of the run has the folders
+  `.github/workflows` and `deploy` and the `justfile` of `main`. So a
+  pull request that changes one of them makes no artifact that another
+  run takes, and its own run builds and tests. Of the runs that count,
+  the newest artifact wins.
 
 ## The phone app
 

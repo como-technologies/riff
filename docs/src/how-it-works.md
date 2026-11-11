@@ -2988,6 +2988,9 @@ flowchart LR
 
 When CI kept no test build of the tree, for example because the run
 failed before `Build` kept it, the command says so and exits with 3.
+The build of a pull request that changes a workflow, a script of
+`deploy` or the `justfile` does not count either (see
+[Build once for each tree](development.md#build-once-for-each-tree)).
 Then the verifier says so in its result, and builds the test:
 
 ```sh
