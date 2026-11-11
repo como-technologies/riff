@@ -3052,6 +3052,55 @@ pull request:
 gh pr checks 40
 ```
 
+##### Review a CodeQL alert
+
+The check `CodeQL` of a pull request is no run of Actions. It is the
+code scanning of GitHub, and its link goes to `github.com`. It fails
+when the scan finds a new alert in the change. Then your lead gets the
+message above, with the app `github.com`. Only the lead and a person
+can read and dismiss an alert. A worker has no right on the alerts (see
+[Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role)).
+
+To see the open alerts of the pull request 40, put the repository in
+place of `OWNER/REPO`:
+
+```sh
+gh api 'repos/OWNER/REPO/code-scanning/alerts?pr=40&state=open' --jq '.[] | [.number, .rule.id, .most_recent_instance.location.path, .most_recent_instance.location.start_line, .html_url] | @tsv'
+```
+
+Open the link of each alert, and read the flow of the scan. Then do one
+of three things:
+
+```mermaid
+flowchart TD
+    A["an alert of CodeQL"] --> F{"is the flow real?"}
+    F -- yes --> X["fix the code:<br/>push to the branch"]
+    F -- no --> N{"does a wrong name<br/>mislead the scan?"}
+    N -- yes --> R["rename it:<br/>push to the branch"]
+    N -- no --> D["dismiss the alert<br/>with the reason"]
+```
+
+1. Fix it. Change the code so that the flow is gone, and push to the
+   branch. GitHub closes the alert when the scan no longer finds it.
+2. Rename it. A name can mislead the scan, for example a value with the
+   name `token` that holds no secret. Give the value its correct name,
+   and push to the branch. Do not rename a value that has its correct
+   name: dismiss the alert.
+3. Dismiss it. For a false positive, or for code that runs only in
+   tests, dismiss the alert. Give the reason of GitHub: `false
+   positive`, `used in tests` or `won't fix`. Write why in the comment,
+   in at most 280 characters. A dismissed alert with no comment stops
+   the cut of a release (see
+   [Cut the release pull request](#cut-the-release-pull-request)).
+
+To dismiss the alert 128 as a false positive:
+
+```sh
+gh api -X PATCH repos/OWNER/REPO/code-scanning/alerts/128 -f state=dismissed -f dismissed_reason="false positive" -f dismissed_comment="A session ID is a public random ID. riff who and each message show it. Nothing takes it as a credential."
+```
+
+The next scan does not find a dismissed alert again.
+
 #### See a failed check that no rule requires
 
 A check that the ruleset of `main` does not require blocks no merge.

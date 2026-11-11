@@ -486,6 +486,152 @@ fn a_failed_check_of_another_app_is_a_notice_with_its_link_and_no_build() {
     assert_eq!(issues.stuck[&2], "checks");
 }
 
+/// The words of the shell line `line`: a word in `"` or `'` keeps its
+/// spaces.
+fn shell_words(line: &str) -> Vec<String> {
+    let (mut words, mut word, mut quote, mut any) = (Vec::new(), String::new(), None, false);
+    for c in line.chars() {
+        match (quote, c) {
+            (None, '"' | '\'') => {
+                quote = Some(c);
+                any = true;
+            }
+            (Some(q), c) if c == q => quote = None,
+            (None, ' ') => {
+                if any {
+                    words.push(std::mem::take(&mut word));
+                }
+                any = false;
+            }
+            (_, c) => {
+                word.push(c);
+                any = true;
+            }
+        }
+    }
+    if any {
+        words.push(word);
+    }
+    words
+}
+
+/// 01M74HD9XRS2PM121JD2A6QRD6: "Review a CodeQL alert", under "Fix a
+/// failed check of another app" in the book, gives the three choices,
+/// lists the open alerts of a pull request, and dismisses one with a
+/// reason of GitHub and a comment. The alert of that dismiss has a review
+/// for the alert gate of `riff release cut`.
+#[test]
+fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
+    let book = crate::book::page("development.md");
+    let fix = book
+        .find("\n#### Fix a failed check of another app\n")
+        .expect("Fix a failed check of another app is in development.md");
+    let heading = "\n##### Review a CodeQL alert\n";
+    let start = book.find(heading).expect("the how-to is in development.md");
+    assert!(
+        fix < start && !book[fix + 1..start].contains("\n#### "),
+        "the how-to is under Fix a failed check of another app"
+    );
+    let rest = &book[start + heading.len()..];
+    let how_to = &rest[..rest.find("\n#### ").unwrap_or(rest.len())];
+    let text = how_to.split_whitespace().collect::<Vec<_>>().join(" ");
+    for words in [
+        "The check `CodeQL` of a pull request is no run of Actions.",
+        "with the app `github.com`",
+        "1. Fix it.",
+        "2. Rename it.",
+        "3. Dismiss it.",
+        "Give the reason of GitHub: `false positive`, `used in tests` or `won't fix`.",
+        "in at most 280 characters",
+        "(how-it-works.md#who-acts-on-github-for-each-role)",
+        "(#cut-the-release-pull-request)",
+    ] {
+        assert!(text.contains(words), "{words}: {how_to}");
+    }
+
+    // The list reads the fields that the gate reads of an alert.
+    let commands = crate::book::commands_in(how_to);
+    assert_eq!(commands.len(), 2, "{commands:?}");
+    assert!(
+        commands[0]
+            .starts_with("gh api 'repos/OWNER/REPO/code-scanning/alerts?pr=40&state=open' --jq "),
+        "{commands:?}"
+    );
+    for field in [
+        ".number",
+        ".rule.id",
+        ".most_recent_instance.location.path",
+        ".most_recent_instance.location.start_line",
+        ".html_url",
+    ] {
+        assert!(commands[0].contains(field), "{field}: {}", commands[0]);
+    }
+
+    // The dismiss gives the state, a reason of GitHub and a comment.
+    let words = shell_words(&commands[1]);
+    assert_eq!(
+        words[..5],
+        [
+            "gh",
+            "api",
+            "-X",
+            "PATCH",
+            "repos/OWNER/REPO/code-scanning/alerts/128"
+        ]
+    );
+    let fields: BTreeMap<&str, &str> = words[5..]
+        .chunks(2)
+        .map(|pair| {
+            assert_eq!(pair[0], "-f", "{words:?}");
+            pair[1].split_once('=').expect("a field is KEY=VALUE")
+        })
+        .collect();
+    assert_eq!(
+        fields.keys().copied().collect::<Vec<_>>(),
+        ["dismissed_comment", "dismissed_reason", "state"]
+    );
+    assert_eq!(fields["state"], "dismissed");
+    assert!(
+        ["false positive", "used in tests", "won't fix"].contains(&fields["dismissed_reason"]),
+        "{fields:?}"
+    );
+    let comment = fields["dismissed_comment"];
+    assert!(!comment.trim().is_empty(), "{fields:?}");
+    assert!(comment.chars().count() <= 280, "{comment}");
+
+    // GitHub keeps the reason and the comment on the alert: the gate of
+    // `riff release cut` counts it as reviewed.
+    let alert = serde_json::json!({
+        "number": 128,
+        "state": fields["state"],
+        "dismissed_reason": fields["dismissed_reason"],
+        "dismissed_comment": comment,
+        "rule": {"id": "rust/cleartext-logging", "security_severity_level": "high"},
+        "html_url": "https://github.com/OWNER/REPO/security/code-scanning/128",
+    });
+    let alerts = riff::alerts::code_scanning(&alert.to_string()).unwrap();
+    assert_eq!(
+        alerts[0].state,
+        riff::alerts::State::Dismissed {
+            comment: comment.into()
+        }
+    );
+    assert!(riff::alerts::unreviewed(&alerts).is_empty(), "{alerts:?}");
+
+    // "Who acts on GitHub for each role" points to the how-to.
+    let how = crate::book::page("how-it-works.md");
+    assert!(how.contains("(development.md#review-a-codeql-alert)"));
+}
+
+#[test]
+fn shell_words_keep_the_spaces_of_a_quoted_word() {
+    assert_eq!(
+        shell_words(r#"gh api  -f a="b c" 'd e'"#),
+        ["gh", "api", "-f", "a=b c", "d e"]
+    );
+    assert_eq!(shell_words(r#"x """#), ["x", ""]);
+}
+
 /// No session builds a release (the label `release`, or a branch
 /// `release-…`): a failed check of its pull request is a notice, at any
 /// state of its verify, also when the pull request names no issue.
