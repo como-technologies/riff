@@ -3221,6 +3221,7 @@ dependencies = [
  "clap",
  "futures",
  "getrandom 0.4.3",
+ "hmac",
  "isolated",
  "jsonwebtoken",
  "reqwest",

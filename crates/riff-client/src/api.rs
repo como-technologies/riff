@@ -116,15 +116,16 @@ use riff_core::wire::SetMachine;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, ChatName, Claim,
     ClaimReply, DenyOwner, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
-    GitHubChecked, GitHubCreate, GitHubDaemonToken, GitHubStarted, GitHubToken, Hold, HoldReply,
-    Invite, Invited, ItemFact, ItemFacts, Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery,
-    LogReply, MeReply, Members, MembersReply, Message, Names, NotesReply, NotesShow, OwnerAsked,
-    OwnerDenied, OwnerPassed, PassOwner, Pause, PlanChanged, PlanReply, PlanShow, Post, Posted,
-    REFUSED_HEADER, Read, Register, Release, ReleaseFor, ReleaseReply, Remove, Removed, Resume,
-    Revoke, Revoked, RiffBinary, RiffQuery, RiffReply, RiffState, ServerFacts, SessionInfo,
-    SessionToken, SetAdmin, SetBlocked, SetNotes, SetNotesReply, SetStatus, SetStep, SignInConfig,
-    Start, StartReason, Status, StepChange, Tailed, TakeOwner, ThreadInfo, Threads, TokenError,
-    TokenReply, TokenRequest, Unanswered, Wake, WhoReply, WhoRequest,
+    GitHubChecked, GitHubCreate, GitHubDaemonToken, GitHubEvents, GitHubEventsReply, GitHubStarted,
+    GitHubToken, GitHubWake, Hold, HoldReply, Invite, Invited, ItemFact, ItemFacts, Join, Keys,
+    Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members, MembersReply, Message,
+    Names, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
+    PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release,
+    ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery,
+    RiffReply, RiffState, ServerFacts, SessionInfo, SessionToken, SetAdmin, SetBlocked, SetNotes,
+    SetNotesReply, SetStatus, SetStep, SignInConfig, Start, StartReason, Status, StepChange,
+    Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake,
+    WhoReply, WhoRequest,
 };
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
@@ -1973,9 +1974,9 @@ impl Api {
     }
 
     /// Each change of the free work of the repository thread `thread`, on
-    /// one connection (#1729): a hold, a free, a release, a plan. `me` is
-    /// the caller. The open stream is no sign of life. [`follow`] connects
-    /// again.
+    /// one connection (#1729): a hold, a free, a release, a plan, a new item
+    /// of a wave or a merge on GitHub (#1655). `me` is the caller. The open
+    /// stream is no sign of life. [`follow`] connects again.
     pub async fn plan_watch(
         &self,
         me: &SessionUri,
@@ -1983,6 +1984,22 @@ impl Api {
     ) -> Result<impl Stream<Item = Result<PlanChanged>>> {
         let query = [("uri", me.to_string()), ("thread", thread.to_string())];
         self.events("plan/watch", &query).await
+    }
+
+    /// Each wake of the GitHub App of the repository thread `thread`, on
+    /// one connection (#1655): with `after`, first each wake of the queue
+    /// of riff-server after that ID, then each new wake. `me` is the
+    /// caller. The open stream is no sign of life. [`follow`] connects
+    /// again.
+    pub async fn github_watch(
+        &self,
+        me: &SessionUri,
+        thread: &ThreadName,
+        after: Option<u64>,
+    ) -> Result<impl Stream<Item = Result<GitHubWake>>> {
+        let mut query = vec![("uri", me.to_string()), ("thread", thread.to_string())];
+        query.extend(after.map(|id| ("after", id.to_string())));
+        self.events("github/watch", &query).await
     }
 
     /// Ends each sign-in of `user`, or of the caller when `user` is
@@ -2106,6 +2123,16 @@ impl Api {
     pub async fn github_check(&self, repo: &str) -> Result<GitHubChecked> {
         self.need_sign_in().await?;
         self.call(&GitHubCheck {
+            repo: repo.to_owned(),
+        })
+        .await
+    }
+
+    /// The last wakes of the GitHub App for the repository `repo`,
+    /// `OWNER/NAME`, and the counts of the deliveries (#1655).
+    pub async fn github_events(&self, repo: &str) -> Result<GitHubEventsReply> {
+        self.need_sign_in().await?;
+        self.call(&GitHubEvents {
             repo: repo.to_owned(),
         })
         .await

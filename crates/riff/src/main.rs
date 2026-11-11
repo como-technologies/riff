@@ -791,7 +791,7 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Make, install and check the GitHub Apps of the riff
+    /// Make, install and check the GitHub Apps, and show their events
     ///
     /// A riff has two GitHub Apps: the session App riff-OWNER for the
     /// workers and the verifiers, and the lead App riff-OWNER-lead for the
@@ -998,6 +998,15 @@ enum GithubCommand {
     /// prints one line for each role: the bot and the rights. It exits
     /// with status 1 when a role fails.
     Check,
+    /// Show the last events of the GitHub App for this repository
+    ///
+    /// GitHub sends each change of the repository to riff-server, and
+    /// riff-server wakes the daemons of the repository. riff prints the
+    /// last wakes of the repository of this folder, the oldest first: the
+    /// time, the issue or the pull request, the kinds of the events and
+    /// their count. Then it prints how many deliveries riff-server took,
+    /// dropped and refused since its start.
+    Events,
 }
 
 impl GithubCommand {
@@ -1007,6 +1016,7 @@ impl GithubCommand {
             Self::Create { .. } => "create",
             Self::Install { .. } => "install",
             Self::Check => "check",
+            Self::Events => "events",
         }
     }
 }
@@ -2633,7 +2643,7 @@ fn print_members_news(news: &Result<Vec<riff_core::wire::Posted>>) {
     }
 }
 
-/// `riff github create`, `install` and `check`
+/// `riff github create`, `install`, `check` and `events`
 /// (01M6WG52J7WTP079W1AYEQ4W08). Each refuses in an agent session and
 /// in a container, before each call (01M6WG537B67VWVENY3821RV33). It
 /// exits with status 1 when a role fails its check.
@@ -2674,6 +2684,11 @@ async fn github_command(command: &GithubCommand, server: &str) -> Result<()> {
         GithubCommand::Check => {
             let repo = repo.context(text::GITHUB_CHECK_NO_REPO)?;
             github::check(&api, &repo, &mut out).await?
+        }
+        GithubCommand::Events => {
+            let repo = repo.context(text::GITHUB_EVENTS_NO_REPO)?;
+            github::events(&api, &repo, &mut out).await?;
+            true
         }
     };
     if !passed {

@@ -79,10 +79,11 @@
 //! `admin` and `owner`. `owner` to a person who is not a member or an
 //! admin gets status 400. `remove` of the owner or of an admin gets status 400.
 //!
-//! Five calls make and check the GitHub Apps of the riff, and give the
-//! token of a session and of a daemon (01M6WG52J7WTP079W1AYEQ4W08,
-//! 01M6WPMEEWX09DHJZF18BKBPYW, 01M6XZJFGNVG6B7DF5VQ3H1DNX). Each needs an
-//! access token and a DPoP proof too:
+//! Six calls make and check the GitHub Apps of the riff, give the token
+//! of a session and of a daemon, and show the last wakes of the App
+//! (01M6WG52J7WTP079W1AYEQ4W08, 01M6WPMEEWX09DHJZF18BKBPYW,
+//! 01M6XZJFGNVG6B7DF5VQ3H1DNX, #1655). Each needs an access token and a
+//! DPoP proof too:
 //!
 //! | Path | Request | Reply | Who |
 //! |---|---|---|---|
@@ -91,6 +92,7 @@
 //! | `POST /v1/github/check` | [`GitHubCheck`] | [`GitHubChecked`] | each person |
 //! | `POST /v1/github/token` | [`GitHubToken`] | [`SessionToken`] | the person of the session, with no session token |
 //! | `POST /v1/github/daemon` | [`GitHubDaemonToken`] | [`SessionToken`] | each person, with no session token |
+//! | `POST /v1/github/events` | [`GitHubEvents`] | [`GitHubEventsReply`] | each person |
 //!
 //! Two metadata documents follow the MCP authorization spec (R22):
 //!
@@ -99,7 +101,7 @@
 //! | `GET /.well-known/oauth-protected-resource` | [`ResourceMetadata`] (RFC 9728) |
 //! | `GET /.well-known/oauth-authorization-server` | [`ServerMetadata`] (RFC 8414) |
 //!
-//! Three streams use server-sent events. Each event is one `data:` line
+//! Four streams use server-sent events. Each event is one `data:` line
 //! that holds JSON:
 //!
 //! | Stream | Query | Event |
@@ -107,6 +109,7 @@
 //! | `GET /v1/watch` | `uri=<session URI>` | [`Wake`] |
 //! | `GET /v1/tail` | `thread=<thread name>` | [`Tailed`] |
 //! | `GET /v1/plan/watch` | `uri=<session URI>`, `thread=<thread name>` | [`PlanChanged`] |
+//! | `GET /v1/github/watch` | `uri=<session URI>`, `thread=<thread name>`, `after=<wake ID>` | [`GitHubWake`] |
 //!
 //! `GET /v1/me` with the query `uri=<session URI>` gives [`MeReply`]:
 //! only the session of the caller (01M3T5GFVS8NMA992KHZN4VE17). The
@@ -263,6 +266,7 @@ calls! {
     GitHubCheck => "/v1/github/check", GitHubChecked;
     GitHubToken => "/v1/github/token", SessionToken;
     GitHubDaemonToken => "/v1/github/daemon", SessionToken;
+    GitHubEvents => "/v1/github/events", GitHubEventsReply;
 }
 
 /// `POST /v1/register`: a session says that it exists and where it
@@ -2533,23 +2537,190 @@ pub struct Wake {
     pub kind: Kind,
 }
 
-/// An event on `GET /v1/plan/watch?uri=…&thread=…`: a command changed the
-/// free work of the repository thread `thread` (#1729). It held an item,
-/// freed an item, released a claim, set the plan or ended it. The record
-/// at `position` is its last record in that thread. Each command gives
-/// one event for each thread.
+/// An event on `GET /v1/plan/watch?uri=…&thread=…`: the free work of the
+/// repository thread `thread` changed. A command held an item, freed an
+/// item, released a claim, set the plan or ended it (#1729): the record
+/// at `position` is its last record in that thread, and each command
+/// gives one event for each thread. Or an event of GitHub changed the
+/// plan (#1655): then `github` names it, and `position` is the position
+/// of the log when it came.
 ///
 /// ```
-/// use riff_core::wire::PlanChanged;
+/// use riff_core::wire::{GitHubChange, PlanChanged};
 ///
-/// let changed = PlanChanged { thread: "acme/app".parse()?, position: 7 };
+/// let changed = PlanChanged { thread: "acme/app".parse()?, position: 7, github: None };
 /// assert_eq!(serde_json::to_string(&changed)?, r#"{"thread":"acme/app","position":7}"#);
+/// let merged = PlanChanged {
+///     github: Some(GitHubChange::Merged { number: 41 }),
+///     ..changed
+/// };
+/// assert_eq!(
+///     serde_json::to_string(&merged)?,
+///     r#"{"thread":"acme/app","position":7,"github":{"merged":{"number":41}}}"#
+/// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PlanChanged {
     pub thread: ThreadName,
     pub position: u64,
+    /// The event of GitHub that changed the plan. `None` for a command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GitHubChange>,
+}
+
+/// An event of the GitHub App that changes the plan of a repository
+/// (#1655): riff-server sends it on `GET /v1/plan/watch` at once, with no
+/// wait of the debounce.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHubChange {
+    /// `issues` with the action `milestoned`: the issue `number` came
+    /// into the open wave `wave`, the title of its milestone.
+    NewItem { number: u64, wave: String },
+    /// `pull_request` with the action `closed`, and merged.
+    Merged { number: u64 },
+}
+
+/// A kind of event of the webhook of the session App (#1655): the
+/// header `X-GitHub-Event` of a delivery.
+///
+/// ```
+/// use riff_core::wire::GitHubEvent;
+///
+/// assert_eq!(GitHubEvent::parse("check_run"), Some(GitHubEvent::CheckRun));
+/// assert_eq!(GitHubEvent::CheckRun.name(), "check_run");
+/// assert_eq!(GitHubEvent::parse("ping"), None);
+/// assert!(GitHubEvent::ALL.iter().all(|kind| GitHubEvent::parse(kind.name()) == Some(*kind)));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHubEvent {
+    Issues,
+    IssueComment,
+    PullRequest,
+    CheckRun,
+    Status,
+    WorkflowRun,
+    MergeGroup,
+}
+
+impl GitHubEvent {
+    /// Each kind, in the order of the manifest of the session App.
+    pub const ALL: [GitHubEvent; 7] = [
+        GitHubEvent::Issues,
+        GitHubEvent::IssueComment,
+        GitHubEvent::PullRequest,
+        GitHubEvent::CheckRun,
+        GitHubEvent::Status,
+        GitHubEvent::WorkflowRun,
+        GitHubEvent::MergeGroup,
+    ];
+
+    /// The name of the kind on GitHub.
+    pub fn name(self) -> &'static str {
+        match self {
+            GitHubEvent::Issues => "issues",
+            GitHubEvent::IssueComment => "issue_comment",
+            GitHubEvent::PullRequest => "pull_request",
+            GitHubEvent::CheckRun => "check_run",
+            GitHubEvent::Status => "status",
+            GitHubEvent::WorkflowRun => "workflow_run",
+            GitHubEvent::MergeGroup => "merge_group",
+        }
+    }
+
+    /// The kind of the name `name`. `None` for each event that riff does
+    /// not use, for example `ping`.
+    pub fn parse(name: &str) -> Option<GitHubEvent> {
+        GitHubEvent::ALL
+            .into_iter()
+            .find(|kind| kind.name() == name)
+    }
+}
+
+impl std::fmt::Display for GitHubEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// An event on `GET /v1/github/watch?uri=…&thread=…&after=…`: a wake of
+/// the GitHub App for one issue or one pull request of the repository
+/// thread `repo` (#1655). riff-server takes each event of the same
+/// number in a window of 5 seconds into one wake. The wake names the
+/// number and the kinds, not the state: the daemon reads the state on
+/// GitHub, so the order of the events does not matter.
+///
+/// ```
+/// use riff_core::wire::{GitHubEvent, GitHubWake};
+///
+/// let wake: GitHubWake = serde_json::from_str(r#"{
+///     "id": 1762850000123, "repo": "acme/app", "kinds": ["check_run"],
+///     "number": 12, "events": 20
+/// }"#)?;
+/// assert_eq!(wake.kinds, [GitHubEvent::CheckRun]);
+/// assert_eq!((wake.number, wake.events), (Some(12), 20));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubWake {
+    /// The place of the wake in the queue of riff-server: each later wake
+    /// has a higher one. It is the time of riff-server when the wake went
+    /// out, in milliseconds since the Unix epoch, made unique.
+    pub id: u64,
+    /// The repository thread, `OWNER/NAME`.
+    pub repo: ThreadName,
+    /// Each kind of the events of the wake, in the order of their
+    /// first event.
+    pub kinds: Vec<GitHubEvent>,
+    /// The number of the issue or the pull request. `None` for the events
+    /// of a commit with no pull request, for example a `status`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number: Option<u64>,
+    /// How many deliveries of GitHub the wake took.
+    pub events: u32,
+}
+
+/// `POST /v1/github/events`: the last wakes of the GitHub App for one
+/// repository, for `riff github events` (#1655). Each person of the riff
+/// can.
+///
+/// ```
+/// use riff_core::wire::{Call, GitHubEvents};
+///
+/// let ask = GitHubEvents { repo: "acme/app".into() };
+/// assert_eq!(serde_json::to_string(&ask).unwrap(), r#"{"repo":"acme/app"}"#);
+/// assert_eq!(GitHubEvents::PATH, "/v1/github/events");
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubEvents {
+    /// The repository, `OWNER/NAME`.
+    pub repo: String,
+}
+
+/// The reply to [`GitHubEvents`]: the last wakes of the queue of the
+/// repository, the oldest first, and the counts of the deliveries since
+/// the start of this instance of riff-server.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GitHubEventsReply {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wakes: Vec<GitHubWake>,
+    /// The deliveries with a good signature that came for the first
+    /// time, of each repository.
+    #[serde(default)]
+    pub taken: u64,
+    /// The deliveries with a good signature that came again, of each
+    /// repository: riff-server dropped them.
+    #[serde(default)]
+    pub repeated: u64,
+    /// The deliveries with no signature or a bad one: riff-server
+    /// refused them with status 401.
+    #[serde(default)]
+    pub refused: u64,
+    /// The start of this instance, in milliseconds since the Unix epoch.
+    #[serde(default)]
+    pub since_ms: u64,
 }
 
 /// An event on `GET /v1/tail?thread=…`.

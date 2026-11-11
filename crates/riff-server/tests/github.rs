@@ -3,7 +3,7 @@
 //! 01M6WG52QHC8E24RJ33ZPVHZSJ, 01M6WG52T5PAD9NGQ597CP56K7,
 //! 01M6WG52WSWM8A9CN6X448AGAJ, 01M6WG534PPE2JW8JQFRJDEK86): the two
 //! manifests, the swap, the store of the keys, the states, the roles of
-//! the callers, the check and the webhook.
+//! the callers and the check. The webhook is in `hooks.rs`.
 
 use crate::common;
 use crate::fake_github::{
@@ -40,6 +40,7 @@ async fn serve(fake: &FakeGitHub, keys: At, life: Duration) -> (Service, String)
             web: fake.url.clone(),
             keys,
             state_life: life,
+            ..Settings::default()
         },
         ..Config::new(&url)
     };
@@ -732,22 +733,6 @@ async fn the_apps_say_whether_each_install_has_the_repository() {
     let body = json!({ "owner": OWNER, "repo": "no repo" });
     let (status, _) = call(&url, &owner, "/v1/github/apps", body).await;
     assert_eq!(status, 400);
-}
-
-/// 01M6WG52QHC8E24RJ33ZPVHZSJ: riff-server takes each delivery of the
-/// webhook with status 202, with no token and no build.
-#[tokio::test]
-async fn the_webhook_takes_each_delivery_with_202() {
-    let fake = FakeGitHub::start().await;
-    let (_service, url) = serve(&fake, At::Memory, STATE_LIFE).await;
-    let reply = reqwest::Client::new()
-        .post(format!("{url}/hooks/github"))
-        .header("x-github-event", "issues")
-        .json(&json!({ "action": "edited" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(reply.status(), 202);
 }
 
 /// 01M6WG52WSWM8A9CN6X448AGAJ: a riff-server with a bucket and no secret

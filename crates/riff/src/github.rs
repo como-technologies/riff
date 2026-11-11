@@ -8,6 +8,7 @@
 //! | `riff github create --owner OWNER` | Opens the start page of riff-server, which makes the session App `riff-OWNER` and the lead App `riff-OWNER-lead` on OWNER. Then the steps of `install` ([`create`]) |
 //! | `riff github install OWNER [--repo OWNER/NAME]` | Opens the install page of each App for OWNER, and the page Configure of each install without the repository. It waits for the two installs, each with the repository, and runs `check` ([`install`]) |
 //! | `riff github check` | Asks riff-server for a token of each role for the repository of this folder, and prints the bot and the rights of each role ([`check`]) |
+//! | `riff github events` | Asks riff-server for the last wakes of the GitHub App for the repository of this folder, and prints them with the counts of the deliveries ([`events`], #1655) |
 //!
 //! riff-server holds the keys of the Apps, and makes each token
 //! (`riff_server::github`). This side reads the account with the `gh`
@@ -410,4 +411,12 @@ pub async fn check(api: &Api, repo: &str, out: &mut impl Write) -> Result<bool> 
     let checked = api.github_check(repo).await?;
     write!(out, "{}", text::github_checked(repo, &checked))?;
     Ok(checked.roles.iter().all(|role| role.passed()))
+}
+
+/// `riff github events` for the repository `repo`: the last wakes of the
+/// GitHub App, and the counts of the deliveries (#1655).
+pub async fn events(api: &Api, repo: &str, out: &mut impl Write) -> Result<()> {
+    let reply = api.github_events(repo).await?;
+    write!(out, "{}", text::github_events(repo, &reply))?;
+    Ok(())
 }

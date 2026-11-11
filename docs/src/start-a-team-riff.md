@@ -284,7 +284,9 @@ When riff-server cannot read the secret, it pauses the whole riff: see
 [When riff-server cannot read the keys of the Apps](how-it-works.md#when-riff-server-cannot-read-the-keys-of-the-apps).
 
 The session App also has the webhook `URL/hooks/github` of the riff.
-riff-server takes each event of GitHub there, and drops it for now.
+riff-server takes each event of GitHub there, and wakes the riff daemon
+of each host of the repository: see
+[How riff learns of a change on GitHub](how-it-works.md#how-riff-learns-of-a-change-on-github).
 
 The lead App pushes the release tag of a repository with the release
 cycle. After you make the Apps, run `riff init` in that repository: it

@@ -610,6 +610,47 @@
   the lead, and asks it to record each answer in the body of the issue.
   An issue with no label `question` gets a note, and riff changes
   nothing.
+- **01M74A379EQQXW6G86WVFRC1V0** riff-server reads from each delivery of
+  the session App its repository and the number of each issue or pull
+  request that the event names: the issue of `issues` and
+  `issue_comment`, the pull request of `pull_request`, each pull request
+  of `check_run` and `workflow_run`, and the pull request of the branch
+  of `merge_group`. The events of a commit with no pull request, for
+  example `status`, have no number. riff-server drops each other kind of
+  event, and each event with no repository, with status 202.
+- **01M74A37CFS9QMB0PCW7J7XS3B** The first event of a number of a
+  repository opens a window of 5 seconds. Each event of the same number
+  in the window goes into one wake. At the end of the window,
+  riff-server sends the wake: the repository, the kinds of its events in
+  the order of their first event, the number, and the count of its
+  events. So 20 `check_run` events of one pull request in 5 seconds give
+  one wake.
+- **01M74A37FPGKYMHP0W588A88RJ** riff-server sends each wake on the
+  stream GET /v1/github/watch of the repository thread. The riff daemon
+  opens the stream, so a host needs no inbound port. riff-server keeps
+  the wakes of each repository in a queue in memory for one hour, at
+  most 1,000. A stream with `after=ID` first gives each wake of the
+  queue after that ID, the oldest first, then each new wake. A stream
+  with no `after` gives only the new wakes. A new instance of
+  riff-server starts with an empty queue.
+- **01M74A37JNKW1R2WRXAW520WJM** An `issues` event with the action
+  `milestoned` into an open milestone `Wave N`, and a `pull_request`
+  event with the action `closed` of a merged pull request, wake the wave
+  of each host of the repository at once. riff-server sends one event of
+  the plan on GET /v1/plan/watch of the repository thread
+  (01M6WJNV9KP5TN5SVBVT4JDN66), with no wait of the window. riff-server
+  takes each open wave as the current wave.
+- **01M74A37NMGDEHAD01SJ0DQT9B** `riff github events` prints the last 50
+  wakes of the repository of the folder, the oldest first: the time, the
+  number, the kinds and the count of events of each. Its last line
+  counts the deliveries since the start of riff-server: the ones that it
+  took, the repeats that it dropped, and the ones that it refused. It
+  refuses in an agent session and in a container, as `riff github check`
+  does (01M6WG537B67VWVENY3821RV33).
+- **01M74A37RFH2HY4YZDWAV07TQF** The book has "How riff learns of a
+  change on GitHub" in "How It Works", with a mermaid diagram, and the
+  how-to "See the last events" with a copyable `sh` block for `riff
+  github events`.
 
 ## Issue hygiene on GitHub
 
@@ -3453,8 +3494,7 @@
   App also asks for `merge_queues` read, and sets the webhook
   `PUBLIC_URL/hooks/github` with the events `issues`, `issue_comment`,
   `pull_request`, `check_run`, `status`, `workflow_run` and
-  `merge_group`. The lead App has no webhook. riff-server takes each
-  delivery with status 202, and drops it.
+  `merge_group`. The lead App has no webhook.
 - **01M6WG52T5PAD9NGQ597CP56K7** `riff github create --owner OWNER`
   makes the two Apps on OWNER, an organization or a personal account,
   with the manifest flow of GitHub. Only the owner or an admin of the
@@ -3568,6 +3608,16 @@
   riff-server needs no step of the owner first. `riff github check`
   names each right that a role misses, with the fix: give the right to
   the App on GitHub, and accept it on each install.
+- **01M74A2TT5N3BZPCT04XSHNDCV** riff-server takes a delivery of the
+  webhook of the session App at POST /hooks/github only with a good
+  X-Hub-Signature-256: the HMAC-SHA256 of the body with the webhook
+  secret of the App. A delivery with no signature or a bad one, and each
+  delivery to a riff with no webhook secret, gets status 401 and wakes
+  nobody. riff-server logs a warning of a refused delivery, at most one
+  each minute. Supersedes 01M6WG52QHC8E24RJ33ZPVHZSJ in part.
+- **01M74A2TWZBEJF4HCPXJSDQ2Y0** riff-server keeps the X-GitHub-Delivery
+  of each delivery with a good signature for one day, at most 100,000. A
+  delivery that comes again gets status 202 and wakes nobody.
 
 ## Sign-in and tokens
 

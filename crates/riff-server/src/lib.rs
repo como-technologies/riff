@@ -8,7 +8,9 @@
 //!        │             └─ the writer ──▶ wakes channel ──▶ GET /v1/watch streams
 //!        │                           ├─▶ tail channel  ──▶ GET /v1/tail streams
 //!        │                           └─▶ plans channel ──▶ GET /v1/plan/watch streams
-//!        └──lock──▶ Tokens (Mutex)      see [`token`]: only the sign-ins
+//!        ├──lock──▶ Tokens (Mutex)      see [`token`]: only the sign-ins
+//!        └─ POST /hooks/github ──▶ Hooks ──▶ wakes of GitHub ──▶ GET /v1/github/watch streams
+//!                    └─▶ plans channel: a new item of a wave, a merge    see [`hooks`]
 //! ```
 //!
 //! - One process holds all state in memory, behind one mutex. The
@@ -36,6 +38,12 @@
 //!   `GET /v1/plan/watch` stream gives each event of its thread
 //!   (`plan_watch`). The riff daemon of each host of a wave follows it,
 //!   so its wave looks at once.
+//! - A delivery of the webhook of the session App goes to [`hooks`]
+//!   (#1655). A new item of a wave and a merge go to the plans channel at
+//!   once ([`engine::Engine::plan_changed_on_github`]). Each event goes
+//!   into the window of 5 seconds of its number, and then its wake goes to
+//!   the queue of [`hooks::Hooks`] and to each `GET /v1/github/watch`
+//!   stream of its thread (`github_watch`).
 //! - Each stream starts with the comment `: ready`, see [`opened`].
 //! - A watch stream then gives the wake from [`state::State::missed`],
 //!   if there is one. It subscribes to the wakes channel first, so no
@@ -199,10 +207,12 @@
 //!   `POST /v1/github/token` gives the daemon the token of a session of
 //!   its person (01M6WPMEEWX09DHJZF18BKBPYW), and `POST /v1/github/daemon`
 //!   a token of the lead App for its own writes
-//!   (01M6XZJFGNVG6B7DF5VQ3H1DNX).
+//!   (01M6XZJFGNVG6B7DF5VQ3H1DNX). `POST /v1/github/events` gives the last
+//!   wakes of the GitHub App of a repository (01M74A37NMGDEHAD01SJ0DQT9B).
 //!   The pages `/github/start` and `/github/created` of the browser, and
 //!   the webhook `/hooks/github`, need no token and no build. See
-//!   [`github`]. The keys of the Apps are in no record: see [`keys`].
+//!   [`github`] and [`hooks`]. The keys of the Apps are in no record: see
+//!   [`keys`].
 //! - Each log line is JSON with a `severity` (see [`logline`]). The
 //!   tools of the log run with no server (see [`tools`]).
 //!
@@ -221,6 +231,7 @@ pub mod auth;
 pub mod engine;
 pub mod gcs;
 pub mod github;
+pub mod hooks;
 pub mod import;
 pub mod keys;
 pub mod lease;
@@ -253,13 +264,13 @@ use riff_core::selector::Selector;
 use riff_core::wire::{
     ACCESS_TOKEN_TYPE, Alive, AliveReply, BlockedLook, BlockedLookReply, Call, CheckpointFacts,
     Claim, DenyOwner, End, FactError, Free, GitHubApps, GitHubCheck, GitHubCreate,
-    GitHubDaemonToken, GitHubToken, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite, ItemFacts, Join,
-    Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply, NotesReply,
-    NotesShow, PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post, Pruned,
-    Read, ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume, Revoke,
-    RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked, SetIdle,
-    SetNotes, SetPlan, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner, Threads,
-    ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+    GitHubDaemonToken, GitHubEvents, GitHubToken, Hold, ID_TOKEN_TYPE, Idle, IdleQuery, Invite,
+    ItemFacts, Join, Keys, Kind, Lead, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
+    NotesReply, NotesShow, PassOwner, Pause, Person, PlanOff, PlanReply, PlanSeen, PlanShow, Post,
+    Pruned, Read, ReadReply, Register, Release, ReleaseFor, Remove, ResourceMetadata, Resume,
+    Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked,
+    SetIdle, SetNotes, SetPlan, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner,
+    Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use riff_core::wire::{Names, NamesReply, SetMachine};
 use riff_state::owner::{Check, Checks};
@@ -389,6 +400,9 @@ struct Server {
     /// The GitHub Apps of the riff: their keys, and the states of
     /// `riff github create` (01M6WG52J7WTP079W1AYEQ4W08).
     github: github::GitHub,
+    /// The webhook of the session App: the deliveries, the debounce and
+    /// the queue of the wakes (#1655).
+    hooks: hooks::Hooks,
 }
 
 /// The last checkpoint, and why the server writes none.
@@ -1515,6 +1529,7 @@ impl Service {
         }
         let save_every = config.save_every;
         let github = github::GitHub::new(config.github.clone(), http.clone());
+        let hooks = hooks::Hooks::new(config.github.debounce, now_ms());
         let service = Service(Arc::new(Server {
             config,
             engine,
@@ -1536,6 +1551,7 @@ impl Service {
             checkpoints: Mutex::new(checkpoints),
             facts: Mutex::new(facts),
             github,
+            hooks,
         }));
         service.write_log();
         service.keep_checkpoints();
@@ -1981,7 +1997,8 @@ impl Service {
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread))
-            .route("/v1/plan/watch", get(plan_watch));
+            .route("/v1/plan/watch", get(plan_watch))
+            .route("/v1/github/watch", get(github_watch));
         let guard = || middleware::from_fn_with_state(self.0.clone(), require_token);
         // The settings of idle workers: the query, and the command
         // `set_idle` on a path of its own (01M3WRD9BSBKS9TN66H29TGTBV).
@@ -2017,6 +2034,7 @@ impl Service {
             .route(GitHubCheck::PATH, post(github::check))
             .route(GitHubToken::PATH, post(github::token))
             .route(GitHubDaemonToken::PATH, post(github::daemon_token))
+            .route(GitHubEvents::PATH, post(hooks::events))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {
@@ -2036,7 +2054,7 @@ impl Service {
             // (01M6WG52T5PAD9NGQ597CP56K7).
             .route(github::START_PATH, get(github::start))
             .route(github::CREATED_PATH, get(github::created))
-            .route(github::HOOK_PATH, post(github::hook))
+            .route(github::HOOK_PATH, post(hooks::hook))
             .layer(middleware::from_fn_with_state(self.0.clone(), gate))
             // The facts answer also while the gate replies 503, and to a
             // `riff` of each version (01M3TJWJ12WEDCXW3W0529KRP2).
@@ -3302,6 +3320,49 @@ async fn plan_watch(
             .flatten();
         std::future::ready(event.map(Ok))
     });
+    let stream = stream.take_until(s.stopping());
+    Ok(Sse::new(opened(stream)).keep_alive(KeepAlive::default()))
+}
+
+#[derive(Deserialize)]
+struct GitHubWatchQuery {
+    /// The caller: a session, or a person.
+    uri: SessionUri,
+    /// The repository thread.
+    thread: ThreadName,
+    /// The ID of the last wake that the caller got.
+    #[serde(default)]
+    after: Option<u64>,
+}
+
+/// Streams each wake of the GitHub App of one repository thread (#1655):
+/// with `after`, first each wake of the queue after that ID, then each
+/// new wake. The caller acts as its token, as for `plan/watch`, and the
+/// stream is no sign of life. See [`hooks`].
+async fn github_watch(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Query(q): Query<GitHubWatchQuery>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
+    // The stream subscribes first, so no wake falls in the gap after the
+    // read of the queue.
+    let rx = s.hooks.subscribe();
+    let caller = admit(&s, &proof, &q.uri)?;
+    s.engine.peek(&caller, |_| ())?;
+    if !may_read(q.uri.who(), &q.thread) {
+        return Err(not_found(format!("no thread named {}", q.thread)));
+    }
+    let queued = match q.after {
+        Some(after) => s.hooks.queued(&q.thread, after, Instant::now()),
+        None => Vec::new(),
+    };
+    let last = queued.last().map_or(q.after.unwrap_or(0), |wake| wake.id);
+    let thread = q.thread;
+    let live = until_lagged(rx)
+        .filter(move |wake| std::future::ready(wake.repo == thread && wake.id > last));
+    let stream = futures::stream::iter(queued)
+        .chain(live)
+        .filter_map(|wake| std::future::ready(Event::default().json_data(wake).ok().map(Ok)));
     let stream = stream.take_until(s.stopping());
     Ok(Sse::new(opened(stream)).keep_alive(KeepAlive::default()))
 }

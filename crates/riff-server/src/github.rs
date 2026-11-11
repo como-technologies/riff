@@ -37,8 +37,8 @@
 //! - [`manifest`] asks for the highest right of the roles of the App and
 //!   no more ([`app_rights`]). The manifest of the session App also sets
 //!   the webhook [`HOOK_PATH`] with the [`EVENTS`]
-//!   (01M6WG52QHC8E24RJ33ZPVHZSJ). riff-server takes each delivery with
-//!   status 202, and drops it.
+//!   (01M6WG52QHC8E24RJ33ZPVHZSJ). [`crate::hooks`] takes each delivery,
+//!   and wakes the daemons of its repository.
 //! - A state is good for [`STATE_LIFE`] and for one use ([`States`]).
 //!   The start page reads its state, and the swap uses it. Each state
 //!   names one App, so the state of the session App never makes the
@@ -143,6 +143,9 @@ pub struct Settings {
     pub keys: At,
     /// How long a state is good: [`STATE_LIFE`] but in a test.
     pub state_life: Duration,
+    /// The window of the debounce of the webhook:
+    /// [`crate::hooks::DEBOUNCE`] but in a test.
+    pub debounce: Duration,
 }
 
 impl Default for Settings {
@@ -152,6 +155,7 @@ impl Default for Settings {
             web: WEB.to_owned(),
             keys: At::Memory,
             state_life: STATE_LIFE,
+            debounce: crate::hooks::DEBOUNCE,
         }
     }
 }
@@ -1788,13 +1792,6 @@ pub(crate) async fn check(
     Ok(Json(checked))
 }
 
-/// `POST /hooks/github`: each delivery of the webhook of the session
-/// App. riff-server takes it with status 202, and drops it
-/// (01M6WG52QHC8E24RJ33ZPVHZSJ).
-pub(crate) async fn hook() -> StatusCode {
-    StatusCode::ACCEPTED
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1826,6 +1823,15 @@ mod tests {
             assert_eq!(lead["default_permissions"][name], level, "{name}");
             assert!(session["default_permissions"].get(name).is_none(), "{name}");
         }
+    }
+
+    /// 01M6WG52QHC8E24RJ33ZPVHZSJ, 01M74A379EQQXW6G86WVFRC1V0: the manifest
+    /// of the session App asks for each kind of event that the webhook
+    /// reads, in the same order.
+    #[test]
+    fn the_manifest_asks_for_each_event_that_the_webhook_reads() {
+        use riff_core::wire::GitHubEvent;
+        assert_eq!(EVENTS, GitHubEvent::ALL.map(GitHubEvent::name));
     }
 
     /// 01M6ZHWVPD7MN6GH6GS0GVETHA: the fallback of the lead keeps each
