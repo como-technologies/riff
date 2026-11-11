@@ -555,9 +555,10 @@ fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
         assert!(text.contains(words), "{words}: {how_to}");
     }
 
-    // The list reads the fields that the gate reads of an alert.
+    // The list reads the fields that the gate reads of an alert. The
+    // second command runs the check of the fake secrets of the tests.
     let commands = crate::book::commands_in(how_to);
-    assert_eq!(commands.len(), 2, "{commands:?}");
+    assert_eq!(commands.len(), 3, "{commands:?}");
     assert!(
         commands[0]
             .starts_with("gh api 'repos/OWNER/REPO/code-scanning/alerts?pr=40&state=open' --jq "),
@@ -574,7 +575,7 @@ fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
     }
 
     // The dismiss gives the state, a reason of GitHub and a comment.
-    let words = shell_words(&commands[1]);
+    let words = shell_words(&commands[2]);
     assert_eq!(
         words[..5],
         [
@@ -627,6 +628,38 @@ fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
     // "Who acts on GitHub for each role" points to the how-to.
     let how = crate::book::page("how-it-works.md");
     assert!(how.contains("(development.md#review-a-codeql-alert)"));
+}
+
+/// 01M75NAP2HNM11ZH7RC5SP8KCJ: "Review a CodeQL alert" names the helper
+/// for a fake secret of a test, and the command that runs the check of
+/// the tests. The check is a test of the crate `isolated`.
+#[test]
+fn the_book_names_the_helper_for_a_fake_secret_of_a_test() {
+    let book = crate::book::page("development.md");
+    let heading = "\n##### Review a CodeQL alert\n";
+    let start = book.find(heading).expect("the how-to is in development.md");
+    let rest = &book[start + heading.len()..];
+    let how_to = &rest[..rest.find("\n#### ").unwrap_or(rest.len())];
+    let text = how_to.split_whitespace().collect::<Vec<_>>().join(" ");
+    for words in [
+        "Do not dismiss an alert on a fake secret of a test",
+        "A test takes each webhook secret and each key from the helper \
+         `isolated::fake_secret()`.",
+        "let secret = isolated::fake_secret();",
+        "A key that the test parses is the test key of a file of `testdata`.",
+    ] {
+        assert!(text.contains(words), "{words}: {how_to}");
+    }
+    let commands = crate::book::commands_in(how_to);
+    assert!(
+        commands.contains(&"cargo test -p isolated --test check".to_owned()),
+        "{commands:?}"
+    );
+    let check = include_str!("../../isolated/tests/check.rs");
+    assert!(
+        check.contains("fn no_test_has_a_string_literal_for_a_webhook_secret_or_a_key()"),
+        "the check is in crates/isolated/tests/check.rs"
+    );
 }
 
 /// The check run `CodeQL` of the code scanning of GitHub, with

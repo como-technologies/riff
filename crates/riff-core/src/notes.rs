@@ -106,8 +106,8 @@ mod tests {
 
     #[test]
     fn a_refusal_does_not_repeat_the_secret() {
-        let secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
-        let refused = check(&format!("token {secret}")).unwrap_err();
+        let token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+        let refused = check(&format!("token {token}")).unwrap_err();
         assert!(!refused.contains("ghp_"), "{refused}");
     }
 

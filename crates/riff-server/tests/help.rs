@@ -34,14 +34,15 @@ fn each_line_of_the_help_fits_in_80_columns() {
 
 #[test]
 fn the_help_shows_no_value_of_an_environment_variable() {
+    let secret = isolated::fake_secret();
     let help = help(
         &["--help"],
         &[
-            ("RIFF_OIDC_CLIENT_SECRET", "secret-value"),
+            ("RIFF_OIDC_CLIENT_SECRET", secret.as_str()),
             ("RIFF_BUCKET", "bucket-value"),
         ],
     );
     assert!(help.contains("RIFF_OIDC_CLIENT_SECRET]"), "{help}");
-    assert!(!help.contains("secret-value"), "{help}");
+    assert!(!help.contains(&secret), "{help}");
     assert!(!help.contains("bucket-value"), "{help}");
 }

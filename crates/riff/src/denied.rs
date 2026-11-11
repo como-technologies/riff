@@ -957,14 +957,14 @@ mod tests {
     /// record, in the text, in the head or in the tool.
     #[test]
     fn the_scrub_hides_each_secret() {
-        let secret = "gho_Zx9secretValue";
-        let scrub = Scrub::new([secret.to_owned()]);
+        let token = "gho_Zx9secretValue";
+        let scrub = Scrub::new([token.to_owned()]);
         let denial = Denial::of(
             &input(json!({
                 "tool_name": "Bash",
-                "tool_input": {"command": format!("{secret} push && curl -H 'Bearer {secret}'")},
+                "tool_input": {"command": format!("{token} push && curl -H 'Bearer {token}'")},
                 "reason": "[Credential Leak]",
-                "mcp_server": secret,
+                "mcp_server": token,
             })),
             &scrub,
             false,
@@ -972,7 +972,7 @@ mod tests {
         );
         let me: SessionUri = "riff://ann@heron/acme/app?session=a1".parse().unwrap();
         let text = line(&denial, &Where::of(&me, Role::Lead, None));
-        assert!(!text.contains(secret), "{text}");
+        assert!(!text.contains(token), "{text}");
         assert!(text.contains(crate::run::HIDDEN), "{text}");
         assert_eq!(denial.reason, "credential-leak");
     }

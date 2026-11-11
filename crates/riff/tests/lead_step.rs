@@ -237,8 +237,8 @@ async fn a_status_call_of_the_lead_replaces_the_automatic_step() {
 #[tokio::test]
 async fn who_shows_no_text_of_a_direct_message_of_the_lead() {
     let riff = Riff::start().await;
-    let secret = "the token of brett is in the log of the server";
-    let tell = serde_json::json!({ "session": "b2", "body": secret });
+    let text = "the token of brett is in the log of the server";
+    let tell = serde_json::json!({ "session": "b2", "body": text });
     call(&riff.lead, "tell", tell).await;
     let row = riff.row("a1").await;
     assert!(row.ends_with(" ago: told b2"), "{row}");
@@ -249,7 +249,7 @@ async fn who_shows_no_text_of_a_direct_message_of_the_lead() {
     let direct = ThreadName::direct(&who("a1"), &who("b2")).to_string();
     let post = serde_json::json!({
         "thread": direct,
-        "body": secret,
+        "body": text,
         "to": [{ "session": "b2" }]
     });
     refused(&riff.lead, "post", post).await;

@@ -63,10 +63,16 @@
 //! A test writes a fake program with [`write_program`]: a child process
 //! writes it, so its run cannot fail with `ETXTBSY`. See [`program`].
 //!
+//! A test takes each webhook secret and each key from [`fake_secret`]:
+//! a new value at each call, so the code scanning of GitHub finds no
+//! hard-coded key in a test. See [`secret`].
+//!
 //! [`offenders`] finds each test file that names a binary of riff
-//! without the helper, and [`program_writers`] each test that writes a
-//! program in the test process: also a unit test or a doc test in a
-//! file of `src` (see [`in_src`]). A test of this crate fails on each one.
+//! without the helper, [`program_writers`] each test that writes a
+//! program in the test process, and [`hard_coded_keys`] each test with a
+//! string literal for a webhook secret or a key: also a unit test or a
+//! doc test in a file of `src` (see [`in_src`]). A test of this crate
+//! fails on each one.
 //!
 //! # Example
 //!
@@ -86,12 +92,16 @@ use tempfile::TempDir;
 
 pub mod in_src;
 pub mod program;
+pub mod secret;
 pub mod time;
 
 pub use in_src::{test_code, test_modules, unit_tests};
 pub use program::{
     copy_program, file_name, names_a_program, program_writers, program_writes, write_program,
     writes_a_program,
+};
+pub use secret::{
+    Example, GITHUB_EXAMPLE, TAKERS, fake_secret, hard_coded_keys, hard_coded_lines, is_secret_name,
 };
 pub use time::{
     HANG, Late, PRESSURE_DIR, PRESSURE_LIMIT, Pressure, RESOURCES, Span, in_time, stall,

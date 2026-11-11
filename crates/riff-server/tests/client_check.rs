@@ -1,9 +1,10 @@
 //! At start, `riff-server` checks its OAuth client with the provider,
 //! and stops when the provider refuses it (R146). A fake provider
-//! knows one client, `riff-client` with the secret `right`.
+//! knows one client, `riff-client` with the secret [`right`].
 
 use isolated::Isolated;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use axum::extract::Form;
@@ -14,6 +15,13 @@ use riff_core::wire::Discovery;
 use riff_server::oidc::{self, CHECK_CODE, DEFAULT_DOMAIN, Provider, SignInError};
 use serde_json::{Value, json};
 
+/// The secret of the one client of the fake provider: one fake secret
+/// for the test process (01M75NAP2HNM11ZH7RC5SP8KCJ).
+fn right() -> &'static str {
+    static SECRET: LazyLock<String> = LazyLock::new(isolated::fake_secret);
+    &SECRET
+}
+
 /// The reply of the fake token endpoint, like Google's.
 async fn token(Form(form): Form<HashMap<String, String>>) -> (StatusCode, Json<Value>) {
     let field = |name: &str| form.get(name).map(String::as_str);
@@ -21,7 +29,7 @@ async fn token(Form(form): Form<HashMap<String, String>>) -> (StatusCode, Json<V
         let error = json!({"error": "invalid_client", "error_description": "The OAuth client was not found."});
         return (StatusCode::UNAUTHORIZED, Json(error));
     }
-    if field("client_secret") != Some("right") {
+    if field("client_secret") != Some(right()) {
         let error = json!({"error": "invalid_client", "error_description": "The provided client secret is invalid."});
         return (StatusCode::UNAUTHORIZED, Json(error));
     }
@@ -69,7 +77,7 @@ async fn check(provider: &Provider) -> Result<(), SignInError> {
 #[tokio::test]
 async fn the_provider_knows_the_client() {
     let issuer = fake_provider("/token").await;
-    check(&provider(&issuer, "riff-client", Some("right")))
+    check(&provider(&issuer, "riff-client", Some(right())))
         .await
         .unwrap();
 }
@@ -77,7 +85,11 @@ async fn the_provider_knows_the_client() {
 #[tokio::test]
 async fn the_provider_refuses_an_unknown_client_or_a_wrong_secret() {
     let issuer = fake_provider("/token").await;
-    for (id, secret) in [("other", Some("right")), ("riff-client", Some("wrong"))] {
+    let wrong = isolated::fake_secret();
+    for (id, secret) in [
+        ("other", Some(right())),
+        ("riff-client", Some(wrong.as_str())),
+    ] {
         let error = check(&provider(&issuer, id, secret)).await.unwrap_err();
         assert!(matches!(error, SignInError::Client(_)), "{error}");
         assert!(error.to_string().contains("invalid_client"), "{error}");
@@ -87,7 +99,7 @@ async fn the_provider_refuses_an_unknown_client_or_a_wrong_secret() {
 #[tokio::test]
 async fn a_busy_provider_does_not_refuse_the_client() {
     let issuer = fake_provider("/busy").await;
-    let error = check(&provider(&issuer, "riff-client", Some("right")))
+    let error = check(&provider(&issuer, "riff-client", Some(right())))
         .await
         .unwrap_err();
     assert!(matches!(error, SignInError::Provider(_)), "{error}");
@@ -96,9 +108,10 @@ async fn a_busy_provider_does_not_refuse_the_client() {
 #[tokio::test]
 async fn the_server_stops_when_the_provider_refuses_the_client() {
     let issuer = fake_provider("/token").await;
+    let wrong = isolated::fake_secret();
     let mut cmd = Isolated::shared().assert_riff_server();
     cmd.args(["--listen", "127.0.0.1:0", "--issuer", &issuer])
-        .args(["--client-id", "riff-client", "--client-secret", "wrong"])
+        .args(["--client-id", "riff-client", "--client-secret", &wrong])
         .env_remove("RIFF_OIDC_CLIENT_SECRET")
         .timeout(isolated::HANG);
     let out = tokio::task::spawn_blocking(move || cmd.output().unwrap())

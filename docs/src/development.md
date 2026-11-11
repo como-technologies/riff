@@ -3132,6 +3132,25 @@ flowchart TD
    the cut of a release (see
    [Cut the release pull request](#cut-the-release-pull-request)).
 
+Do not dismiss an alert on a fake secret of a test, for example on a
+webhook secret or a key: fix the test. A test takes each webhook secret
+and each key from the helper `isolated::fake_secret()`. It gives a new
+secret at each call, from random bytes of the OS, so the scan finds no
+hard-coded key. A key that the test parses is the test key of a file
+of `testdata`.
+
+```rust
+let secret = isolated::fake_secret();
+let header = riff_server::hooks::signature(&secret, &body);
+```
+
+A test of the crate `isolated` fails on each string literal for a
+webhook secret or a key in a test. To run it:
+
+```sh
+cargo test -p isolated --test check
+```
+
 To dismiss the alert 128 as a false positive:
 
 ```sh
