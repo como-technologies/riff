@@ -14270,6 +14270,15 @@ mod tests {
                 repo: "o/r".into(),
                 acts: gh_token::ActsAs::NoGitHub,
             }],
+            sends: vec![facts::Sent {
+                repo: "o/r".into(),
+                ok_ms: Some(11),
+                failed: Some(facts::Failed {
+                    since_ms: 12,
+                    cause: "machine failed".into(),
+                    count: 3,
+                }),
+            }],
         };
         for waves in [
             vec![wave("o/r", &[])],
