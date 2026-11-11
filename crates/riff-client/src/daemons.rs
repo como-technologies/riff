@@ -219,9 +219,9 @@ pub struct Wave {
     /// has no good merged pin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<Image>,
-    /// The verifies and the rebases that wait for another pull request with
-    /// a file in common, by issue, with the number of that pull request
-    /// (#1710, #1801). `riff wave list` and the Waves tab show them
+    /// The verifies and the rebases that wait for another pull request whose
+    /// head conflicts with theirs, by issue, with the number of that pull
+    /// request (#1710, #1801, #1895). `riff wave list` and the Waves tab show them
     /// ([`crate::waves::Board`]). The keys are text on the wire
     /// ([`riff_core::number_keys`]).
     #[serde(

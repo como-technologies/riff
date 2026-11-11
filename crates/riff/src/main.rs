@@ -1302,8 +1302,9 @@ enum WaveCommand {
     /// session does it. An item in question has the label question: a lead
     /// waits for the answer of a person, and the wave starts no build of it.
     /// An item in "verify waits for #N" changes a file of the pull request
-    /// #N: its verify waits until #N merges or its verify fails. When riff
-    /// cannot read riff-server, it shows only the waves and their numbers.
+    /// #N, and their heads conflict: its verify waits until #N merges or its
+    /// verify fails. When riff cannot read riff-server, it shows only the
+    /// waves and their numbers.
     ///
     /// riff keeps its read of GitHub for 60 seconds for each repository on
     /// this machine, and each run shares it. The list names the age of a

@@ -158,12 +158,15 @@ of its loop. The open items of each wave follow in the groups `free`,
 riff wave list
 ```
 
-A verify waits for another pull request `#N` when both change a file,
-and `#N` is before it: the verify of `#N` runs, or it passed and `#N`
-waits for its merge, or the verify request of `#N` came first. Then
-the verify is in the group `verify waits for #N`. It starts when `#N`
-merges or its verify fails. A session that holds the item of `#N`, for
-example to fix its checks, does not make the verify wait (see
+A verify waits for another pull request `#N` when the heads of the two
+conflict, and `#N` is before it: the verify of `#N` runs, or it passed
+and `#N` waits for its merge, or the verify request of `#N` came first.
+Then the verify is in the group `verify waits for #N`. It starts when
+`#N` merges or its verify fails. Two pull requests that change one file
+with no conflict do not wait for each other, for example two new
+requirements in two sections of `requirements.md`: their verifies run
+side by side. A session that holds the item of `#N`, for example to
+fix its checks, does not make the verify wait (see
 [The order of the verifies of a wave](how-it-works.md#the-order-of-the-verifies-of-a-wave)).
 
 ### Make a wave

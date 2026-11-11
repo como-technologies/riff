@@ -2812,9 +2812,9 @@ shell loop.
 
 ### The order of the verifies of a wave
 
-The wave orders the verifies of the pull requests that change the same
-files. The rebases follow the same order. The merge of one of them can
-give each of the others a conflict. A conflict costs a rebase session,
+The wave orders the verifies of the pull requests whose heads conflict.
+The rebases follow the same order. The merge of one of them can give
+each of the others a conflict. A conflict costs a rebase session,
 a new Gate run and a new verify, and a verify that passed before the
 conflict is lost. So the wave starts the verify or the rebase of one of
 them, and the others wait until it merges or its verify fails:
@@ -2828,8 +2828,15 @@ them, and the others wait until it merges or its verify fails:
   first. A pull request keeps its place while a session rebases it.
   While a session holds the item for other work, for example to fix
   its checks, its verify cannot start, and no verify waits for it.
-- A verify or a rebase that shares a file with a pull request before it
-  waits. One that shares no file starts beside the others.
+- A verify or a rebase waits for a pull request before it when the two
+  change a file in common and their heads conflict. One that conflicts
+  with no pull request before it starts beside the others.
+- Two pull requests that change one file often merge with no conflict,
+  for example two new requirements in two sections of
+  `requirements.md`. The riff daemon tests the merge of the two heads
+  with `git merge-tree` in its clone of the repository. It fetches each
+  head that the clone does not have. When the test cannot run, for
+  example after a failed fetch, the two wait for each other.
 - So after a merge, only the next pull request of the order gets its
   rebase. The others keep their conflict until their turn.
 - A pull request that cannot merge by itself for another reason does
@@ -2841,13 +2848,15 @@ flowchart TD
     A["verify requests: PR #41, then PR #42"] --> S["the verify of #41 starts"]
     S --> Q{"#42 changes a file that #41 changes?"}
     Q -- no --> B["the verify of #42 starts beside it"]
-    Q -- yes --> W["#42: verify waits for #41"]
+    Q -- yes --> M{"git merge-tree of the two heads"}
+    M -- "no conflict" --> B
+    M -- "a conflict, or no test" --> W["#42: verify waits for #41"]
     W --> E{"#41"}
     E -- "merges" --> R["#42: a rebase when it has a conflict,<br/>then its verify"]
     E -- "its verify fails, or it cannot merge" --> V["the verify of #42 starts"]
 ```
 
-Three pull requests change one file, in the order #41, #42, #43:
+Three pull requests whose heads conflict, in the order #41, #42, #43:
 
 ```mermaid
 flowchart TD
@@ -2860,8 +2869,8 @@ flowchart TD
 ```
 
 The wave reads the files of each pull request from GitHub: one REST
-call for each head commit. It reads them only while two pull requests
-or more are on their way to the merge.
+call for each head commit. It reads them, and tests the merges, only
+while two pull requests or more are on their way to the merge.
 
 To see the verifies and the rebases that wait, in your clone of the
 repository:

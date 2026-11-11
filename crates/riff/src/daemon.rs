@@ -1824,8 +1824,8 @@ pub struct WaveShown {
     /// What the wave did last, in a few words.
     pub word: String,
     /// The verifies and the rebases that wait for another pull request
-    /// with a file in common, by issue, with the number of that pull
-    /// request ([`crate::wave::order`], #1710, #1801). The keys are text
+    /// whose head conflicts with theirs, by issue, with the number of that
+    /// pull request ([`crate::wave::order`], #1710, #1801, #1895). The keys are text
     /// on the wire: [`Say`] reads them through a tagged enum
     /// ([`riff_core::number_keys`], #1855).
     #[serde(

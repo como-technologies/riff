@@ -2254,8 +2254,8 @@ wave starts a build session for its item. The session rebases the
 branch on `main`, resolves the conflict, runs `just check`, and pushes
 to the same pull request. Then a new Gate runs, and a new session
 verifies the new commit. The wave starts no verify of a commit with a
-conflict. Of the pull requests that change the same files, only the
-next of the order of the verifies gets its rebase (see
+conflict. Of the pull requests whose heads conflict, only the next of
+the order of the verifies gets its rebase (see
 [The order of the verifies of a wave](how-it-works.md#the-order-of-the-verifies-of-a-wave)).
 
 A verify waits until GitHub knows that the pull request has no

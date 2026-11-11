@@ -5,10 +5,13 @@
 //! Pull requests that change other files get their verifies side by side.
 //! The rebases go in the same order (#1801): of the pull requests with a
 //! conflict, only the next of the order gets a rebase. A session of the
-//! item of a pull request does not make it go first (#1894).
+//! item of a pull request does not make it go first (#1894). Pull requests
+//! that change one file, and whose heads merge with no conflict in a real
+//! git, get their verifies side by side (#1895).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use riff::pr::Gh;
 use riff::wave::{self, Work};
@@ -324,4 +327,136 @@ fn the_verifies_of_pull_requests_that_change_other_files_start_side_by_side() {
     assert_eq!(first, verify(1, one));
     let running: BTreeSet<String> = [first.item()].into();
     assert_eq!(wave::pick(&look, &running, &starts), Some(verify(2, two)));
+}
+
+/// Runs `git ARGS` in `dir` (with an identity and no signing), and gives
+/// its output.
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// The page of requirements with the sections A and B, and the lines `a`
+/// and `b` at the end of each.
+fn page(a: &str, b: &str) -> String {
+    format!("# Requirements\n\n## A\n\n- one\n{a}\n## B\n\n- two\n{b}")
+}
+
+/// The path of the page of requirements in a clone.
+const PAGE: &str = "docs/src/requirements.md";
+
+/// A bare `origin` in `dir` that a `file://` URL names, with [`page`] on
+/// `main`, and a main clone of it. For each `(a, b)` of `heads`, the head
+/// of the pull request `40 + N` of the issue N (from 1) adds `a` and `b`
+/// to the page. `origin` has each head only on `refs/pull/40+N/head`, as
+/// GitHub has it, so the main clone does not have it. It gives the main
+/// clone and the heads.
+fn origin(dir: &Path, heads: &[(&str, &str)]) -> (PathBuf, Vec<String>) {
+    let (bare, work) = (dir.join("origin.git"), dir.join("work"));
+    let url = format!("file://{}", bare.display());
+    git(dir, &["init", "-q", "--bare", "-b", "main", "origin.git"]);
+    std::fs::create_dir_all(work.join("docs/src")).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    std::fs::write(work.join(PAGE), page("", "")).unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-q", "-m", "base"]);
+    git(&work, &["remote", "add", "origin", &url]);
+    git(&work, &["push", "-q", "origin", "main"]);
+    let heads = heads
+        .iter()
+        .zip(41..)
+        .map(|((a, b), pull)| {
+            git(
+                &work,
+                &["switch", "-q", "-c", &format!("pr-{pull}"), "main"],
+            );
+            std::fs::write(work.join(PAGE), page(a, b)).unwrap();
+            git(&work, &["commit", "-q", "-am", &format!("pr {pull}")]);
+            let to = format!("HEAD:refs/pull/{pull}/head");
+            git(&work, &["push", "-q", "origin", &to]);
+            git(&work, &["rev-parse", "HEAD"])
+        })
+        .collect();
+    git(dir, &["clone", "-q", "--", &url, "main"]);
+    (dir.join("main"), heads)
+}
+
+/// True when the clone `dir` has the commit `commit`.
+fn has(dir: &Path, commit: &str) -> bool {
+    Command::new("git")
+        .args(["cat-file", "-e", &format!("{commit}^{{commit}}")])
+        .current_dir(dir)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+/// #1895, Wave 54: issues 1, 2 and 3 each add a requirement to
+/// `requirements.md`. 1 and 3 add theirs to the end of section A, and 2
+/// to the end of section B. So the heads of 1 and 2 merge with no
+/// conflict, and so do the heads of 2 and 3, but the heads of 1 and 3
+/// conflict. The merge test fetches the heads into the main clone. The
+/// verifies of 1 and 2 start side by side, and the verify of 3 waits for
+/// #41.
+#[test]
+fn pull_requests_that_change_one_file_with_no_conflict_verify_side_by_side() {
+    let dir = tempfile::tempdir().unwrap();
+    let (main, heads) = origin(
+        dir.path(),
+        &[("- three\n", ""), ("", "- four\n"), ("- five\n", "")],
+    );
+    let page: &[&str] = &[PAGE];
+    let pulls: Vec<String> = (1..).zip(&heads).map(|(n, h)| pull(n, h, None)).collect();
+    let gh = forge(dir.path(), &pulls, &[(41, page), (42, page), (43, page)]);
+    let bodies: Vec<String> = (1..).zip(&heads).map(|(n, h)| request(n, h)).collect();
+    let none = BTreeSet::new();
+    let starts = BTreeMap::new();
+
+    // With no merge test, the three are one group.
+    let mut first = look(&gh, &bodies);
+    assert_eq!(
+        wave::order(&first, &none, &starts),
+        BTreeMap::from([(2, 41), (3, 41)])
+    );
+    assert!(!has(&main, &heads[0]), "origin has the head on no branch");
+
+    riff::order::merges(&main, &mut first.lanes);
+    assert!(heads.iter().all(|head| has(&main, head)), "the fetch");
+    assert_eq!(first.lanes[&1].clean, BTreeSet::from([42]));
+    assert_eq!(first.lanes[&2].clean, BTreeSet::from([41, 43]));
+    assert_eq!(first.lanes[&3].clean, BTreeSet::from([42]));
+    assert_eq!(
+        wave::order(&first, &none, &starts),
+        BTreeMap::from([(3, 41)])
+    );
+    assert_eq!(
+        wave::pick(&first, &none, &starts),
+        Some(verify(1, &heads[0]))
+    );
+    let one: BTreeSet<String> = ["verify-issue-1".to_owned()].into();
+    assert_eq!(
+        wave::pick(&first, &one, &starts),
+        Some(verify(2, &heads[1]))
+    );
+    // The verifies of 1 and 2 run: 3 waits for #41.
+    let both: BTreeSet<String> = ["verify-issue-1".to_owned(), "verify-issue-2".to_owned()].into();
+    assert_eq!(
+        wave::order(&first, &both, &starts),
+        BTreeMap::from([(3, 41)])
+    );
+    assert_eq!(wave::pick(&first, &both, &starts), None);
+
+    // The clone keeps the heads: a second test needs no `origin`.
+    std::fs::remove_dir_all(dir.path().join("origin.git")).unwrap();
+    let mut again = look(&gh, &bodies);
+    riff::order::merges(&main, &mut again.lanes);
+    assert_eq!(again.lanes, first.lanes);
 }
