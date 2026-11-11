@@ -367,12 +367,11 @@
   verifies (01M6WCGNCC3HWS47158WTWNQ8B). A pull request with a conflict
   takes its place in the order. It gets its rebase only when no pull
   request before it shares a file with it, and the others keep their
-  conflict until their turn. A pull request goes first also while a
-  session holds its item, for example to rebase it. A pull request that
-  GitHub reads as UNKNOWN keeps its place. The wave reads the files only
-  while two pull requests or more are on their way to the merge and one
-  of them waits for a verify or for a rebase. Supersedes
-  01M6WCGNCC3HWS47158WTWNQ8B in part.
+  conflict until their turn. A pull request that GitHub reads as
+  UNKNOWN keeps its place. The wave reads the files only while two pull
+  requests or more are on their way to the merge and one of them waits
+  for a verify or for a rebase. Supersedes 01M6WCGNCC3HWS47158WTWNQ8B in
+  part.
 - **01M6YPYTKQKSJRS0A8WZQRCCFD** After the pull requests that go first,
   the verifies and the rebases go in the order of the first verify
   request of each item in the repository thread. A new head after a
@@ -387,6 +386,11 @@
   message of a conflict (01M49Q30XMVRFX42YTM1PHX0RZ) while the rebase of
   the pull request waits for its turn. The message comes when the turn
   comes.
+- **01M74EP20TDQEXW42MK0XE73QF** A session that holds the item of a pull
+  request does not make that pull request go first. While the session
+  runs, a pull request with a conflict keeps its place in the order, and
+  each other such pull request has no place in it: no verify and no
+  rebase waits for it. Supersedes 01M6YPYTGR2JEBDHGX4K1RDCAW in part.
 
 ## Waves on GitHub
 
