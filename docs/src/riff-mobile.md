@@ -3,8 +3,9 @@
 This page is the design of the phone app (#951): the riff chat on an
 Android phone. It is one child design of
 [the UIs of riff](riff-uis.md) (#982). The build items come after
-Mike signs off the design. Until then, `riff --help` does not show
-`riff device`, and no release has the app. The
+Mike signs off the design. No release has the app. `riff device` has
+only the kind `key` today: see
+[Add an authenticator](how-it-works.md#add-an-authenticator). The
 [requirements of the phone app](requirements.md#the-phone-app) hold
 each decision.
 
@@ -93,10 +94,11 @@ riff device add pixel
 - NAME is the name of the device, for example `pixel`, as the host name
   of a machine. It is not a Google ID. Your chat lines from the phone
   show as `USER@NAME`, and `riff device remove NAME` uses it.
-- `--kind` names the kind of device. The kind sets the scope of the
-  device when you add it. The first kind is `phone`, the default: a
-  phone acts only on the chat. Each child design of #982 adds its kind
-  and its scope, for example a browser or a desktop app.
+- The kind sets the scope of the device when you add it: a phone acts
+  only on the chat. The first kind of `riff device add` is the key of
+  [a proof of presence](how-it-works.md#a-proof-of-presence). Each
+  child design of #982 adds its kind and its scope, for example a
+  browser or a desktop app.
 - NAME is optional. With no NAME, the name is the kind, for example
   `phone`.
 

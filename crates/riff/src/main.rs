@@ -408,6 +408,18 @@ enum Command {
         #[arg(long, requires = "all")]
         user: Option<String>,
     },
+    /// Add, list and remove your authenticators
+    ///
+    /// A device of the kind key is a FIDO2 / WebAuthn authenticator: a
+    /// security key such as a YubiKey, a passkey on a phone, or the
+    /// authenticator of this computer, such as Touch ID or Windows Hello.
+    /// riff-server keeps the public key of each. Add two or more, so a
+    /// lost one locks you out of nothing. Run each subcommand in a plain
+    /// terminal: it refuses in an agent session and in a container.
+    Device {
+        #[command(subcommand)]
+        command: DeviceCommand,
+    },
     /// Let a person join this riff
     ///
     /// It adds the verified email of a person to the members of the riff
@@ -953,6 +965,38 @@ enum CloudCommand {
         /// type it.
         #[arg(long, value_name = "NAME")]
         confirm: Option<String>,
+    },
+}
+
+/// The subcommands of `riff device` (01M75NGT9Z0NSZTG97TBAMP7RS).
+#[derive(Subcommand)]
+enum DeviceCommand {
+    /// Add an authenticator with --key NAME
+    ///
+    /// It opens the page of the add of riff-server in your browser. Press
+    /// the button on the page. Then touch your security key, use the
+    /// fingerprint reader or the PIN of this computer, or scan the QR code
+    /// with your phone. riff waits at most 5 minutes, and says whether
+    /// riff-server added the key. NAME has 1 to 64 letters, digits, -, _
+    /// and ., and no other device of yours has it. You can have at most 10
+    /// keys.
+    Add {
+        /// Add a FIDO2 / WebAuthn authenticator with the name NAME, for
+        /// example yubikey.
+        #[arg(long, value_name = "NAME")]
+        key: String,
+    },
+    /// List your devices
+    ///
+    /// It shows the kind, the name, the time of the add and the time of
+    /// the last use of each device, in UTC.
+    List,
+    /// Remove one of your devices at once
+    ///
+    /// riff-server forgets the device NAME at once. A lost key goes so.
+    Remove {
+        /// The name of the device, as riff device list shows it.
+        name: String,
     },
 }
 
@@ -1989,6 +2033,9 @@ async fn cli() -> Result<()> {
     if let Command::Github { command } = &command {
         return github_command(command, &server).await;
     }
+    if let Command::Device { command } = &command {
+        return device_command(command, &server).await;
+    }
     if let Command::Release {
         cycle: Some(command),
         ..
@@ -2617,6 +2664,7 @@ async fn cli() -> Result<()> {
         | Command::Update { .. }
         | Command::Cloud { .. }
         | Command::Github { .. }
+        | Command::Device { .. }
         | Command::ClaudeToken
         | Command::Release { .. }
         | Command::Image { .. }
@@ -2660,8 +2708,8 @@ async fn cli() -> Result<()> {
 /// The words of `command` when it needs the host
 /// ([`riff::reach::Way::Host`], 01M74A8CXVRD352VRJ9FH54HJ1): the sign-in
 /// of a person, a claim, or a program of the host. In a container session
-/// it refuses at once. `riff github`, `riff leave` and `riff lead stop`
-/// with no `--host` refuse there with words of their own.
+/// it refuses at once. `riff github`, `riff device`, `riff leave` and
+/// `riff lead stop` with no `--host` refuse there with words of their own.
 fn needs_the_host(command: &Command) -> Option<&'static str> {
     Some(match command {
         Command::Login => "riff login",
@@ -2763,6 +2811,33 @@ async fn github_command(command: &GithubCommand, server: &str) -> Result<()> {
     };
     if !passed {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// `riff device add --key NAME`, `list` and `remove NAME`
+/// (01M75NGT9Z0NSZTG97TBAMP7RS). Each refuses in an agent session and in
+/// a container, before each call (01M75NH30PNATYN33MXZQMVBW8).
+async fn device_command(command: &DeviceCommand, server: &str) -> Result<()> {
+    if let Some(refused) = riff::device::refusal() {
+        eprintln!("{refused}");
+        std::process::exit(1);
+    }
+    let api = Api::new(server).signed_in(None)?;
+    match command {
+        DeviceCommand::Add { key } => {
+            let show = |lines: &str| eprintln!("{lines}");
+            let open = |url: &str| {
+                let _ = open::that_detached(url);
+            };
+            let wait = riff::device::Wait::default();
+            let name = riff::device::add_key(&api, key, show, open, wait).await?;
+            println!("{}", text::device_added(&name));
+        }
+        DeviceCommand::List => print!("{}", text::device_list(&api.devices().await?)),
+        DeviceCommand::Remove { name } => {
+            println!("{}", text::device_removed(&api.remove_device(name).await?));
+        }
     }
     Ok(())
 }
@@ -4574,7 +4649,7 @@ mod tests {
         use clap::Parser;
         use riff::reach::Way;
         // These refuse in a container with words of their own.
-        let own: [&[&str]; 3] = [&["github"], &["leave"], &["lead", "stop"]];
+        let own: [&[&str]; 4] = [&["github"], &["device"], &["leave"], &["lead", "stop"]];
         for row in riff::reach::COMMANDS {
             let words = std::iter::once("riff").chain(row.args.iter().copied());
             let command = Cli::try_parse_from(words).unwrap().command.unwrap();

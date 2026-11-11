@@ -908,6 +908,72 @@ mod tests {
             owner: text("ann@acme.io"),
             admin: text("bob@acme.io"),
         });
+        let device = DeviceInfo {
+            kind: DeviceKind::Key,
+            name: text("yubikey"),
+            added_ms: 5,
+            used_ms: 7,
+        };
+        c.trip(&Devices {});
+        c.trip(&DevicesReply {
+            devices: vec![device.clone()],
+        });
+        c.trip(&RemoveDevice {
+            name: text("yubikey"),
+        });
+        c.trip(&device);
+        c.trip(&KeyStart {
+            name: text("yubikey"),
+        });
+        c.trip(&KeyStarted {
+            url: text("https://riff.example/device/key#T"),
+            ticket: text("T"),
+        });
+        c.trip(&KeyWait { ticket: text("T") });
+        c.trip(&KeyState::Waiting);
+        c.trip(&KeyState::Added {
+            name: text("yubikey"),
+        });
+        c.trip(&KeyState::Failed {
+            reason: text("a bad signature"),
+        });
+        c.trip(&KeyTicket { ticket: text("T") });
+        c.trip(&KeyOptions {
+            rp: KeyParty {
+                id: text("riff.example"),
+                name: text("riff"),
+            },
+            user: KeyUser {
+                id: text("dXNlcg"),
+                name: text("ann"),
+                display_name: text("ann"),
+            },
+            challenge: text("c2VlZA"),
+            pub_key_cred_params: vec![KeyAlgorithm {
+                kind: text("public-key"),
+                alg: -7,
+            }],
+            timeout: 300_000,
+            exclude_credentials: vec![KeyCredential {
+                kind: text("public-key"),
+                id: text("Y3JlZA"),
+            }],
+            authenticator_selection: KeySelection {
+                resident_key: text("discouraged"),
+                user_verification: text("preferred"),
+            },
+            attestation: text("none"),
+            name: text("yubikey"),
+        });
+        c.trip(&KeyReply {
+            ticket: text("T"),
+            raw_id: text("Y3JlZA"),
+            client_data: text("e30"),
+            attestation: text("oA"),
+        });
+        c.trip(&KeyReplied {
+            text: text("riff added the key yubikey"),
+        });
         c.trip(&LogQuery { repo: thread() });
         c.trip(&Pruned {
             first: 1918,

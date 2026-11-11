@@ -17,6 +17,8 @@
 //! - [`selector`]: the address of a post.
 //! - [`wire`]: the requests, replies and events on the HTTP API.
 //! - [`dpop`]: device keys and the proofs that bind tokens to them.
+//! - [`device`]: the devices of a person: the check of a name, and a
+//!   fake authenticator for the tests.
 //! - [`signed`]: the signature that each message carries.
 //! - [`record`]: the records of the log of `riff-server`.
 //! - [`notes`]: the checks of the notes of the lead.
@@ -79,6 +81,7 @@
 //! ```
 
 pub mod build;
+pub mod device;
 pub mod dpop;
 pub mod hold;
 pub mod name;

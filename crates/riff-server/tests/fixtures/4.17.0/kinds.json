@@ -1,0 +1,10 @@
+{
+  "records": [
+    "key_added",
+    "device_removed"
+  ],
+  "commands": [
+    "add_key",
+    "remove_device"
+  ]
+}

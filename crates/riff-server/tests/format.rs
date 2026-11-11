@@ -47,6 +47,11 @@
 //! - `fixtures/3.4.0`: the notes of the lead. `log.jsonl` has three
 //!   `notes_set` records: two texts for one user, and one text for
 //!   another user in another repository. The last has no caller.
+//! - `fixtures/4.17.0`: the keys of a person (01M75NH2P3QHCYDKQH60KGSF97).
+//!   `log.jsonl` adds two keys of one person, one key of a second
+//!   person and one of a third, and removes the first key. The last
+//!   record has no caller. So `replayed.json` has the part `keys` of
+//!   three persons.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -68,8 +73,11 @@ const PLANS: &str = "1.3.0";
 /// The release of the fixtures of the notes of the lead.
 const NOTES: &str = "3.4.0";
 
+/// The release of the fixtures of the keys of a person.
+const KEYS: &str = "4.17.0";
+
 /// Each release with a directory of its own and a `kinds.json`.
-const RELEASES: [&str; 4] = ["1.0.0", HOLDS, PLANS, NOTES];
+const RELEASES: [&str; 5] = ["1.0.0", HOLDS, PLANS, NOTES, KEYS];
 
 fn bytes(name: &str) -> Vec<u8> {
     bytes_of("1.0.0", name)
@@ -189,7 +197,7 @@ fn the_list_of_the_release_has_no_riff_state_set() {
 #[test]
 fn the_fixture_log_has_a_record_of_each_kind() {
     let mut all = BTreeSet::new();
-    for release in [HOLDS, PLANS, NOTES] {
+    for release in [HOLDS, PLANS, NOTES, KEYS] {
         let log = records_of(release, "log.jsonl");
         let new: Kinds = serde_json::from_slice(&bytes_of(release, "kinds.json")).unwrap();
         let found = set(log.iter().map(|record| record.change.kind()));
@@ -525,6 +533,41 @@ fn the_log_of_the_notes_gives_its_checkpoint_at_each_position() {
     assert_eq!(full.plans().notes_before(&app, "ann").len(), 1);
     let lib = "acme/lib".parse().unwrap();
     assert_eq!(full.plans().notes(&lib, "bob").unwrap().by, None);
+
+    for at in 0..=records.len() {
+        let (before, after) = records.split_at(at);
+        let state = State::replay(before.to_vec(), now, 0);
+        let saved = checkpoint::decode(&written(&state, &expected)).unwrap();
+        let alone = State::load(Some(saved.state.clone()), [], now, 0);
+        assert!(alone.same_log_state(&state), "the checkpoint at {at}");
+        let loaded = State::load(Some(saved.state), after.to_vec(), now, 0);
+        assert!(loaded.same_log_state(&full), "a start from {at}");
+    }
+}
+
+/// The log of the keys: this build writes its bytes, a replay gives
+/// `replayed.json` with the keys of each person and their times, and a
+/// load of the checkpoint at each position gives the state of a replay
+/// (01M75NH2P3QHCYDKQH60KGSF97).
+#[test]
+fn the_log_of_the_keys_gives_its_checkpoint_at_each_position() {
+    let records = records_of(KEYS, "log.jsonl");
+    assert_eq!(log::encode(&records), bytes_of(KEYS, "log.jsonl"));
+    let expected = checkpoint::decode(&bytes_of(KEYS, "replayed.json")).unwrap();
+    assert_eq!(
+        checkpoint::encode(&expected),
+        bytes_of(KEYS, "replayed.json")
+    );
+
+    let now = Instant::now();
+    let full = State::replay(records.clone(), now, 0);
+    assert_eq!(written(&full, &expected), bytes_of(KEYS, "replayed.json"));
+    let ann = full.devices("ann").devices;
+    let names: Vec<&str> = ann.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, ["phone"]);
+    assert_eq!(ann[0].added_ms, 1_794_100_002_000);
+    assert_eq!(full.credentials("bob"), ["Y3JlZC1ib2ItMQ"]);
+    assert_eq!(full.devices("cy").devices.len(), 1);
 
     for at in 0..=records.len() {
         let (before, after) = records.split_at(at);

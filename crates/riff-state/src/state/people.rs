@@ -4,13 +4,17 @@
 //!   (R209), the members, the admins that the owner made, the owner, a
 //!   riff whose owner is gone, the request for the owner role, and the
 //!   position of the last end of the sign-ins of each USER
-//!   (01M3XA87A9GGFA89RQXWSKY0V6).
+//!   (01M3XA87A9GGFA89RQXWSKY0V6). The keys of each USER
+//!   (01M75NH2P3QHCYDKQH60KGSF97) are here too: the group
+//!   [`super::devices`] has their commands.
 //! - `apply`: one method of [`People`] for each of the kinds
 //!   `riff_made`, `person_joined`, `member_invited`, `member_removed`,
-//!   `admin_set`, `owner_set`, `owner_asked`, `owner_denied` and
-//!   `signins_ended`. Only they change the people: see [`super::riff`].
+//!   `admin_set`, `owner_set`, `owner_asked`, `owner_denied`,
+//!   `signins_ended`, `key_added` and `device_removed`. Only they change
+//!   the people: see [`super::riff`].
 //! - Checkpoint: `Saved`, the fields `riff_id`, `users`, `members`,
-//!   `admins`, `owner`, `no_owner`, `owner_asked` and `signins_ended`.
+//!   `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended` and
+//!   `keys`.
 //! - Commands: the wire types [`Invite`], [`Remove`], [`SetAdmin`],
 //!   [`PassOwner`], [`TakeOwner`], [`DenyOwner`] and [`Revoke`], the
 //!   command [`Admit`] of the token path, and the commands
@@ -69,7 +73,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use riff_core::name::{SERVER_USER, SessionUri, ThreadName, Who, check, sanitize};
-use riff_core::record::{self, Change, Email, OwnerSet, PersonJoined, RiffMade, SigninsEnded};
+use riff_core::record::{
+    self, Change, DeviceRemoved, Email, KeyAdded, OwnerSet, PersonJoined, RiffMade, SigninsEnded,
+};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     AdminSet, DenyOwner, Invite, Invited, Kind, MembersReply, Message, OwnerAsked, OwnerDenied,
@@ -79,6 +85,7 @@ use riff_core::wire::{
 use serde::{Deserialize, Serialize};
 
 use super::command::{Caller, Code, Command, CommandKind, Done, Now, Refused, Role};
+use super::devices::PersonKey;
 use super::view::View;
 use crate::owner;
 
@@ -145,6 +152,9 @@ pub struct People {
     /// record of each USER. A sign-in that started before it is ended
     /// (01M3XA87A9GGFA89RQXWSKY0V6).
     ended: BTreeMap<String, u64>,
+    /// The keys of each USER, by the name of the key
+    /// (01M75NH2P3QHCYDKQH60KGSF97).
+    keys: BTreeMap<String, BTreeMap<String, PersonKey>>,
 }
 
 impl People {
@@ -227,6 +237,70 @@ impl People {
         Ok(())
     }
 
+    /// The USER has the key of the record, from `at_ms`: the time of the
+    /// add and of its first use (01M75NH2P3QHCYDKQH60KGSF97). A name that
+    /// the USER has, or a credential that the riff knows, changes
+    /// nothing: `handle` refuses such an add.
+    pub(super) fn key_added(&mut self, added: &KeyAdded, at_ms: u64) -> Result<(), &'static str> {
+        let KeyAdded {
+            user,
+            name,
+            credential,
+            public_key,
+        } = added;
+        if self.device_of(user, name).is_some() {
+            return Err("the person has a device with the name");
+        }
+        if self.knows_credential(credential) {
+            return Err("a person has the credential");
+        }
+        let key = PersonKey {
+            credential: credential.clone(),
+            public_key: public_key.clone(),
+            added_ms: at_ms,
+            used_ms: at_ms,
+        };
+        self.keys
+            .entry(user.clone())
+            .or_default()
+            .insert(name.clone(), key);
+        Ok(())
+    }
+
+    /// The USER has no device with the name of the record any more.
+    pub(super) fn device_removed(&mut self, removed: &DeviceRemoved) -> Result<(), &'static str> {
+        let DeviceRemoved { user, name } = removed;
+        let Some(keys) = self.keys.get_mut(user) else {
+            return Err("the person has no device");
+        };
+        if keys.remove(name).is_none() {
+            return Err("the person has no device with the name");
+        }
+        if keys.is_empty() {
+            self.keys.remove(user);
+        }
+        Ok(())
+    }
+
+    /// The key `name` of `user`, when the person has one.
+    pub fn device_of(&self, user: &str, name: &str) -> Option<&PersonKey> {
+        self.keys.get(user)?.get(name)
+    }
+
+    /// Each key of `user`, by its name.
+    pub fn keys_of(&self, user: &str) -> impl Iterator<Item = (&String, &PersonKey)> {
+        self.keys.get(user).into_iter().flatten()
+    }
+
+    /// True when a person of the riff has a key with the credential ID
+    /// `credential`.
+    pub fn knows_credential(&self, credential: &str) -> bool {
+        self.keys
+            .values()
+            .flat_map(BTreeMap::values)
+            .any(|key| key.credential == credential)
+    }
+
     /// The ID of the riff, when it has one.
     pub fn riff_id(&self) -> Option<&str> {
         self.riff_id.as_deref()
@@ -294,6 +368,7 @@ impl People {
             no_owner,
             asked,
             ended,
+            keys,
         } = self.clone();
         Saved {
             riff_id,
@@ -304,6 +379,7 @@ impl People {
             no_owner,
             owner_asked: asked,
             signins_ended: ended,
+            keys,
         }
     }
 }
@@ -330,6 +406,9 @@ pub(super) struct Saved {
     owner_asked: Option<record::OwnerAsked>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     signins_ended: BTreeMap<String, u64>,
+    /// The keys of each USER, by name (01M75NH2P3QHCYDKQH60KGSF97).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    keys: BTreeMap<String, BTreeMap<String, PersonKey>>,
 }
 
 impl Saved {
@@ -343,6 +422,7 @@ impl Saved {
             no_owner,
             owner_asked,
             signins_ended,
+            keys,
         } = self;
         People {
             riff_id,
@@ -353,6 +433,7 @@ impl Saved {
             no_owner,
             asked: owner_asked,
             ended: signins_ended,
+            keys,
         }
     }
 }

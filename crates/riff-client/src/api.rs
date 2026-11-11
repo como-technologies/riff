@@ -127,6 +127,9 @@ use riff_core::wire::{
     WhoReply, WhoRequest,
 };
 use riff_core::wire::{BotFact, BotPost, SetMachine};
+use riff_core::wire::{
+    DeviceInfo, Devices, DevicesReply, KeyStart, KeyStarted, KeyState, KeyWait, RemoveDevice,
+};
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
@@ -2190,6 +2193,42 @@ impl Api {
             repo: repo.to_owned(),
         };
         Ok(Some(self.call(&ask).await?))
+    }
+
+    /// The devices of the person of this sign-in, sorted by name
+    /// (01M75NH3625QATGDT6DK652ZK6). Only a person token can ask
+    /// (01M75NH30PNATYN33MXZQMVBW8).
+    pub async fn devices(&self) -> Result<DevicesReply> {
+        self.need_sign_in().await?;
+        self.call(&Devices {}).await
+    }
+
+    /// Removes the device `name` of the person at once
+    /// (01M75NH3625QATGDT6DK652ZK6). Gives the device that went.
+    pub async fn remove_device(&self, name: &str) -> Result<DeviceInfo> {
+        self.need_sign_in().await?;
+        self.call(&RemoveDevice {
+            name: name.to_owned(),
+        })
+        .await
+    }
+
+    /// The start of the add of the key `name`: the URL of its page, and
+    /// its ticket (01M75NH2RSEJ3K618M17PCH3ZZ).
+    pub async fn key_start(&self, name: &str) -> Result<KeyStarted> {
+        self.need_sign_in().await?;
+        self.call(&KeyStart {
+            name: name.to_owned(),
+        })
+        .await
+    }
+
+    /// Where the add of the key with the ticket `ticket` is.
+    pub async fn key_wait(&self, ticket: &str) -> Result<KeyState> {
+        self.call(&KeyWait {
+            ticket: ticket.to_owned(),
+        })
+        .await
     }
 
     /// Fails with what to do when this device has no sign-in.

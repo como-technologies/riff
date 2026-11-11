@@ -5,8 +5,9 @@ decides the core library, the list of UIs and their order. Each UI has
 a child design of its own. The CLI is built, and the frame, the
 Sessions tab, the Chat tab, the Waves tab and the Machines tab of the
 TUI: see [The TUI](#the-tui). The other tabs of the TUI and the other
-UIs come with their build items (see [The order](#the-order)). Until
-then, `riff --help` does not show `riff device`. The
+UIs come with their build items (see [The order](#the-order)).
+`riff device` has only the kind `key` today: see
+[Add an authenticator](how-it-works.md#add-an-authenticator). The
 [requirements of the UIs](requirements.md#the-uis) hold each decision.
 
 | UI | How a person starts it | Toolkit | Child design |
@@ -269,8 +270,10 @@ itself, and picks one.
 ## The devices
 
 Each UI that signs in is a device of the person: a machine, a phone, a
-browser or a desktop app with a sign-in of its own. The phone design
-(#951) has the commands of the devices, and builds them first: see
+browser or a desktop app with a sign-in of its own. A key of
+[a proof of presence](how-it-works.md#a-proof-of-presence) is a device
+of the person too, and the first kind that `riff device` has. The phone
+design (#951) adds the phone: see
 [Pair a phone](riff-mobile.md#pair-a-phone).
 
 | Command | Does |

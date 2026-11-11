@@ -80,6 +80,23 @@
 //! `admin` and `owner`. `owner` to a person who is not a member or an
 //! admin gets status 400. `remove` of the owner or of an admin gets status 400.
 //!
+//! Four calls add, list and remove the devices of a person
+//! (01M75NGT9Z0NSZTG97TBAMP7RS). Each needs a person token and a DPoP
+//! proof: a session token gets status 403 (01M75NH30PNATYN33MXZQMVBW8).
+//! The page of the add in the browser makes two more calls, with no
+//! token: the ticket of the add is their proof
+//! (01M75NH2RSEJ3K618M17PCH3ZZ).
+//!
+//! | Path | Request | Reply | Who |
+//! |---|---|---|---|
+//! | `POST /v1/devices` | [`Devices`] | [`DevicesReply`] | a person |
+//! | `POST /v1/device/remove` | [`RemoveDevice`] | [`DeviceInfo`] | a person |
+//! | `POST /v1/device/key` | [`KeyStart`] | [`KeyStarted`] | a person |
+//! | `POST /v1/device/key/wait` | [`KeyWait`] | [`KeyState`] | the person of the add |
+//! | `GET /device/key` | the ticket in the fragment | the page of the add | the browser |
+//! | `POST /device/key/options` | [`KeyTicket`] | [`KeyOptions`] | the page of the add |
+//! | `POST /device/key/reply` | [`KeyReply`] | [`KeyReplied`] | the page of the add |
+//!
 //! Six calls make and check the GitHub Apps of the riff, give the token
 //! of a session and of a daemon, and show the last wakes of the App
 //! (01M6WG52J7WTP079W1AYEQ4W08, 01M6WPMEEWX09DHJZF18BKBPYW,
@@ -264,6 +281,12 @@ calls! {
     PassOwner => "/v1/owner", OwnerPassed;
     TakeOwner => "/v1/owner/take", OwnerAsked;
     DenyOwner => "/v1/owner/deny", OwnerDenied;
+    Devices => "/v1/devices", DevicesReply;
+    RemoveDevice => "/v1/device/remove", DeviceInfo;
+    KeyStart => "/v1/device/key", KeyStarted;
+    KeyWait => "/v1/device/key/wait", KeyState;
+    KeyTicket => "/device/key/options", KeyOptions;
+    KeyReply => "/device/key/reply", KeyReplied;
     GitHubCreate => "/v1/github/create", GitHubStarted;
     GitHubApps => "/v1/github/apps", GitHubAppsReply;
     GitHubCheck => "/v1/github/check", GitHubChecked;
@@ -3100,6 +3123,242 @@ pub struct OwnerDenied {
     pub owner: String,
     /// The email of the admin that asked.
     pub admin: String,
+}
+
+/// The kind of a device of a person (01M75NGT9Z0NSZTG97TBAMP7RS). See
+/// [`crate::device`].
+///
+/// ```
+/// use riff_core::wire::DeviceKind;
+///
+/// assert_eq!(serde_json::to_string(&DeviceKind::Key).unwrap(), r#""key""#);
+/// assert_eq!(DeviceKind::Key.to_string(), "key");
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceKind {
+    /// A FIDO2 / WebAuthn authenticator: a security key, a passkey on a
+    /// phone, or the authenticator of the laptop.
+    Key,
+}
+
+impl std::fmt::Display for DeviceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            DeviceKind::Key => "key",
+        })
+    }
+}
+
+/// One device of a person, as `riff device list` shows it
+/// (01M75NH3625QATGDT6DK652ZK6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DeviceInfo {
+    pub kind: DeviceKind,
+    pub name: String,
+    /// The time of the add, in milliseconds since the Unix epoch.
+    pub added_ms: u64,
+    /// The time of the last use, in milliseconds since the Unix epoch.
+    /// The add is a use.
+    pub used_ms: u64,
+}
+
+/// `POST /v1/devices`: the devices of the person of the token
+/// (01M75NH3625QATGDT6DK652ZK6). Only a person token can ask
+/// (01M75NH30PNATYN33MXZQMVBW8).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Devices {}
+
+/// The reply to [`Devices`]: each device, sorted by name.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DevicesReply {
+    pub devices: Vec<DeviceInfo>,
+}
+
+/// `POST /v1/device/remove`: removes the device `name` of the person of
+/// the token at once (01M75NH3625QATGDT6DK652ZK6). The reply is the
+/// device that went.
+///
+/// ```
+/// use riff_core::wire::{Call, RemoveDevice};
+///
+/// let remove = RemoveDevice { name: "yubikey".into() };
+/// assert_eq!(serde_json::to_string(&remove).unwrap(), r#"{"name":"yubikey"}"#);
+/// assert_eq!(RemoveDevice::PATH, "/v1/device/remove");
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RemoveDevice {
+    pub name: String,
+}
+
+/// `POST /v1/device/key`: the start of the add of a key with the name
+/// `name` (01M75NH2RSEJ3K618M17PCH3ZZ). riff-server keeps the add for 5
+/// minutes, and gives the URL of its page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyStart {
+    pub name: String,
+}
+
+/// The reply to [`KeyStart`].
+///
+/// ```
+/// use riff_core::wire::KeyStarted;
+///
+/// let started = KeyStarted {
+///     url: "https://riff.example.com/device/key#T".into(),
+///     ticket: "T".into(),
+/// };
+/// // The ticket is in the fragment: the browser never sends it in a
+/// // request line.
+/// assert!(started.url.ends_with("#T"));
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyStarted {
+    /// The page of the add, with the ticket in its fragment.
+    pub url: String,
+    /// The ticket of the add: `riff` waits for its end with [`KeyWait`].
+    pub ticket: String,
+}
+
+/// `POST /v1/device/key/wait`: where the add of the ticket is. Only the
+/// person who started it can ask.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyWait {
+    pub ticket: String,
+}
+
+/// The reply to [`KeyWait`].
+///
+/// ```
+/// use riff_core::wire::KeyState;
+///
+/// let added: KeyState = serde_json::from_str(r#"{"state":"added","name":"yubikey"}"#).unwrap();
+/// assert_eq!(added, KeyState::Added { name: "yubikey".into() });
+/// assert!(!added.waits());
+/// assert!(KeyState::Waiting.waits());
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum KeyState {
+    /// The page has not sent a reply yet.
+    Waiting,
+    /// riff-server added the key.
+    Added { name: String },
+    /// riff-server refused the reply, or the time of the add ended.
+    Failed { reason: String },
+}
+
+impl KeyState {
+    /// True while the add waits for the reply of the page.
+    pub fn waits(&self) -> bool {
+        matches!(self, KeyState::Waiting)
+    }
+}
+
+/// `POST /device/key/options`: the page of the add asks for the options
+/// of the new credential with the ticket of its fragment. It has no riff
+/// token: the ticket is its proof.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyTicket {
+    pub ticket: String,
+}
+
+/// The options of a new credential, as the page gives them to
+/// `navigator.credentials.create` (01M75NH2VF6HGZVY04GB358JG0): the
+/// JSON form of `PublicKeyCredentialCreationOptions` of WebAuthn, with
+/// each binary value in base64url with no padding. `name` is no field of
+/// WebAuthn: the page shows it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyOptions {
+    /// The relying party: riff-server.
+    pub rp: KeyParty,
+    pub user: KeyUser,
+    pub challenge: String,
+    /// The algorithms that riff-server takes, the first one first.
+    pub pub_key_cred_params: Vec<KeyAlgorithm>,
+    /// How long the browser waits for the authenticator, in
+    /// milliseconds.
+    pub timeout: u64,
+    /// The keys that the person has: an authenticator with one of them
+    /// makes no second one.
+    pub exclude_credentials: Vec<KeyCredential>,
+    pub authenticator_selection: KeySelection,
+    /// The attestation that riff-server asks for: `none`.
+    pub attestation: String,
+    /// The name of the new key.
+    pub name: String,
+}
+
+/// The relying party of [`KeyOptions`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyParty {
+    /// The relying party ID: the host of riff-server
+    /// (01M75NH2Y3H1CR10CGRWNGT8RG).
+    pub id: String,
+    pub name: String,
+}
+
+/// The person of [`KeyOptions`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyUser {
+    /// The user handle, in base64url: the same for each key of the
+    /// person.
+    pub id: String,
+    /// The USER of the person.
+    pub name: String,
+    pub display_name: String,
+}
+
+/// An algorithm of [`KeyOptions`], by its COSE number: -7 is ES256, -8
+/// is EdDSA and -257 is RS256.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyAlgorithm {
+    /// Always `public-key`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub alg: i64,
+}
+
+/// A credential of [`KeyOptions`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyCredential {
+    /// Always `public-key`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The credential ID, in base64url.
+    pub id: String,
+}
+
+/// The authenticator that [`KeyOptions`] asks for: each kind, a
+/// credential that the authenticator does not need to keep, and the
+/// check of the person when the authenticator can.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct KeySelection {
+    pub resident_key: String,
+    pub user_verification: String,
+}
+
+/// `POST /device/key/reply`: the reply of the authenticator, which the
+/// page of the add sends with the ticket of its fragment. Each binary
+/// value is in base64url with no padding.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyReply {
+    pub ticket: String,
+    /// The `rawId` of the credential.
+    pub raw_id: String,
+    /// The `clientDataJSON` of the reply.
+    pub client_data: String,
+    /// The `attestationObject` of the reply.
+    pub attestation: String,
+}
+
+/// The reply to [`KeyReply`]: the text that the page shows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct KeyReplied {
+    pub text: String,
 }
 
 /// `POST /v1/log`: the records of the log of one repository, for an
