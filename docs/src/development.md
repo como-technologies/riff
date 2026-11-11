@@ -266,8 +266,38 @@ flowchart LR
 - A person takes the same binaries for the real-session test: see
   [Take the static riff of CI](#take-the-static-riff-of-ci).
 
-An artifact of a run on a fork does not count. A run keeps its
-artifacts only after each step of `Build` passed.
+`Build` keeps its artifacts only after each of its steps passed. A run
+gives the artifacts of a tree to another run only when each of these is
+true:
+
+- It is a run of the workflow `.github/workflows/ci.yml` on a branch of
+  this repository. An artifact of a run on a fork does not count.
+- It is a push to `main`, a merge group or the run itself. Else the head
+  commit of the run has the folders `.github/workflows` and `deploy` and
+  the `justfile` of `main`. These files say what each job runs and how
+  it names the artifacts.
+- Its job that made the artifact passed: `Gate` for `gate-TREE`,
+  `Build` for the others.
+
+So a pull request that changes a workflow, a script of `deploy` or the
+`justfile` gives no artifact to another run. Its own run builds and
+tests, and its merge group builds and tests its tree again. A pull
+request whose branch has old copies of these files does the same until
+you rebase it on `main`. Of the runs that give an artifact, the newest
+artifact wins.
+
+```mermaid
+flowchart LR
+    A["a run with the<br/>artifact"] --> W{"ci.yml on a<br/>branch of this<br/>repository?"}
+    W -- no --> N["the artifact<br/>does not count"]
+    W -- yes --> E{"push to main,<br/>merge group<br/>or this run?"}
+    E -- no --> F{"workflows, deploy<br/>and justfile<br/>of main?"}
+    F -- no --> N
+    F -- yes --> J{"the job that made<br/>it passed?"}
+    E -- yes --> J
+    J -- no --> N
+    J -- yes --> C["the artifact counts"]
+```
 
 A binary that `Build` made for a pull request has the id of its code.
 The squash commit on `main` has the same tree, so it has the same id:
@@ -324,6 +354,20 @@ A tag builds the profile `release` and needs no test binary:
 
 ```sh
 GH_REPO=como-technologies/riff PROFILE=release TESTS=false deploy/build-plan.sh
+```
+
+### See which run gives an artifact
+
+To see the run whose artifact the plan takes, give the name of the
+artifact, for example `tests-TREE`. The script prints the run, or
+nothing. For each run whose artifact does not count, it says why:
+
+```sh
+GH_REPO=como-technologies/riff deploy/artifact-run.sh tests-TREE
+```
+
+```text
+artifact-run: tests-27c04e42… of the run 43065681019 does not count: its head commit eaa70cbf… does not have the .github/workflows, the deploy and the justfile of main.
 ```
 
 ### Keep the actions up to date
@@ -4729,7 +4773,7 @@ static `riff` and `riff-server` of the commit of `HEAD`, in this
 order:
 
 1. The artifact `static-release-TREE`, else `static-dev-TREE`, of a CI
-   run on a branch of this repository. `TREE` is the git tree of
+   run that gives the artifacts of a tree. `TREE` is the git tree of
    `HEAD` (see [Build once for each tree](#build-once-for-each-tree)).
 2. The files of the GitHub release of a tag `vX.Y.Z` on `HEAD`. The
    script checks their SHA-256 against `SHA256SUMS`.

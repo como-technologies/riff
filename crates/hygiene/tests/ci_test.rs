@@ -4,10 +4,11 @@
 //! run the recipe in a clone of one commit with the real `justfile`,
 //! `deploy/ci-test.sh` and `deploy/artifact-run.sh`. A fake `gh` holds a
 //! fake CI: the newest run at a commit and the tree that it built, and
-//! the artifact `tests-TREE` with a manifest, and a tar of the `hygiene`
-//! of this build and a fake test binary. The fake prints what the `--jq`
-//! filter of the real `gh` prints: the filter is checked by a read of the
-//! live API, not here. A fake `cargo` logs each call and fails.
+//! the artifact `tests-TREE` of a push to `main` with a manifest, and a
+//! tar of the `hygiene` of this build and a fake test binary. The fake
+//! prints what the `--jq` filter of the real `gh` prints: the filter is
+//! checked by a read of the live API, not here. A fake `cargo` logs each
+//! call and fails.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -92,9 +93,10 @@ impl Fake {
                  'run download')\n\
                    while [ $# -gt 0 ]; do [ \"$1\" = --dir ] && d=$2; shift; done\n\
                    mkdir -p \"$d\" && cp '{art}/manifest.json' '{art}/tests.tar' \"$d/\"; exit 0 ;;\n\
-                 esac\n\
+                 {runs}esac\n\
                  echo \"no such call: $*\" >&2; exit 1\n",
                 art = fake.path("art").display(),
+                runs = crate::artifact_run::RUNS_OF_MAIN,
             ),
         );
         isolated::write_program(
@@ -347,8 +349,8 @@ mod linux {
         assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
         assert!(
             stderr(&out).contains(&format!(
-                "ci-test: CI kept no test build of the tree {} of HEAD: no run has tests-{}. Say \
-                 so in your result, and build the test: just test named_test\n",
+                "ci-test: CI kept no test build of the tree {} of HEAD: no run that counts has \
+                 tests-{}. Say so in your result, and build the test: just test named_test\n",
                 fake.tree(),
                 fake.tree()
             )),
@@ -441,7 +443,8 @@ mod linux {
         assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
         assert!(
             stderr(&out).contains(&format!(
-                "CI kept no test build of the tree {tree} of HEAD: no run has tests-{tree}.",
+                "CI kept no test build of the tree {tree} of HEAD: no run that counts has \
+                 tests-{tree}.",
                 tree = fake.tree()
             )),
             "{}",
@@ -463,8 +466,9 @@ mod linux {
         assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
         assert!(
             stderr(&out).contains(&format!(
-                "CI kept no test build of the tree {MERGE} of the CI run 88 at HEAD: no run has \
-                 tests-{MERGE}. Say so in your result, and build the test: just test named_test\n"
+                "CI kept no test build of the tree {MERGE} of the CI run 88 at HEAD: no run that \
+                 counts has tests-{MERGE}. Say so in your result, and build the test: just test \
+                 named_test\n"
             )),
             "{}",
             stderr(&out)

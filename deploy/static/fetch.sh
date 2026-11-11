@@ -9,8 +9,8 @@
 # The first of these steps that finds the files wins:
 #
 # 1. The artifact static-release-TREE, else static-dev-TREE, of a run of
-#    CI on a branch of this repository (TREE is `git rev-parse
-#    HEAD^{tree}`, as the job Build names it).
+#    CI that counts, as deploy/artifact-run.sh says (TREE is `git
+#    rev-parse HEAD^{tree}`, as the job Build names it).
 # 2. The files of the GitHub release of a tag vX.Y.Z on HEAD.
 # 3. A build here: `deploy/static/build.sh dev`, then the check.
 #

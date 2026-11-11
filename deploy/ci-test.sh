@@ -11,8 +11,9 @@
 #    of a pull request builds the merge of the pull request with main, so
 #    TREE is often not the tree of HEAD. When no run at the commit names a
 #    tree, TREE is the tree of HEAD, `git rev-parse HEAD^{tree}`.
-#    deploy/artifact-run.sh finds the CI run that holds tests-TREE, and gh
-#    downloads it into target/ci-test/TREE of this clone.
+#    deploy/artifact-run.sh finds the CI run that counts and holds
+#    tests-TREE, and gh downloads it into target/ci-test/TREE of this
+#    clone.
 # 2. A test binary reads the files of the path that built it, and the
 #    manifest of the archive names that path: CI builds at
 #    /var/tmp/riff-ci/riff (01M75NDR15DNBFHDBNKA3CA1BE). A linked worktree
@@ -121,7 +122,7 @@ if [ ! -f "$DIR/manifest.json" ] || [ ! -f "$DIR/tests.tar" ]; then
         no_build "gh could not list the artifacts named $ARTIFACT"
     fi
     if [ -z "$run" ]; then
-        no_build "CI kept no test build of $OF: no run has $ARTIFACT"
+        no_build "CI kept no test build of $OF: no run that counts has $ARTIFACT"
     fi
     rm -rf "$CACHE"
     mkdir -p "$CACHE"

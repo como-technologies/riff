@@ -37,9 +37,9 @@
 # test binary and runs no test again. A run of the profile release wants
 # the release binaries of the tree. A run of the profile dev takes the
 # release binaries when they are there: the release of a tree is the
-# better build. gh finds only an artifact that a run on a branch of this
-# repository made, never one of a fork, and one that did not expire.
-# When gh fails, the plan takes the artifact as missing.
+# better build. The plan takes only an artifact that counts: see
+# deploy/artifact-run.sh (01M75TT13241HC22M0KBJ6HW96). When gh fails,
+# the plan takes the artifact as missing.
 set -euo pipefail
 HERE="$(dirname "$(readlink -f "$0")")"
 

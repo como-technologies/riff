@@ -2,6 +2,7 @@
 //! one binary, not one for each file. Each file is a module.
 
 mod archive;
+mod artifact_run;
 mod book;
 mod build_once;
 mod ci;
