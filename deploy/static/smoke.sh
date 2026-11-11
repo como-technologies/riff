@@ -18,6 +18,9 @@
 # wait (30). Each binary runs with a clean environment and a new home: no
 # setting of the machine counts, and no keyring is asked. At the first
 # step that fails, the test names the step and exits with the code 1.
+# The test needs only bash and the tools of a Mac, so the tests of riff
+# run it on a Mac too: a Mac has no timeout of GNU
+# (01M75YTFGK1SK5EP89V28FJH02).
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/../.."
 
@@ -58,13 +61,33 @@ mkdir "$TMP/home"
 LOG="$TMP/riff-server.log"
 
 # The clean environment of each binary: a new home, no RIFF_SERVER, no
-# D-Bus and so no keyring, and the user of the test.
+# D-Bus, a RIFF_HOME and so no keyring (also on a Mac), and the user of
+# the test.
 CLEAN=(env -i "PATH=$PATH" "HOME=$TMP/home" "TMPDIR=$TMP" "RIFF_USER=smoke"
-    "DBUS_SESSION_BUS_ADDRESS=unix:path=$TMP/no-bus" "NO_COLOR=1")
+    "RIFF_HOME=$TMP/home/riff" "DBUS_SESSION_BUS_ADDRESS=unix:path=$TMP/no-bus"
+    "NO_COLOR=1")
+
+# Runs ARGS, and stops them with SIGTERM after WAIT seconds. The watch
+# writes to no pipe of the caller, so a $(...) does not wait for it.
+in_time() {
+    "$@" &
+    local pid=$! code=0
+    (
+        for _ in $(seq $((WAIT * 10))); do
+            kill -0 "$pid" 2>/dev/null || exit 0
+            sleep 0.1
+        done
+        kill -TERM "$pid" 2>/dev/null
+    ) </dev/null >/dev/null 2>&1 &
+    local watch=$!
+    wait "$pid" || code=$?
+    wait "$watch" || true
+    return "$code"
+}
 
 # Runs riff with ARGS in the clean environment, in the folder of the test.
 run_riff() {
-    (cd "$TMP" && "${CLEAN[@]}" timeout "$WAIT" "$DIR/riff" "$@")
+    (cd "$TMP" && in_time "${CLEAN[@]}" "$DIR/riff" "$@")
 }
 
 # The last lines of the log of riff-server.
@@ -75,7 +98,7 @@ server_log() {
 # 1. The binaries start, and are of one build.
 riff_version=$(run_riff --version 2>&1) ||
     fail "riff does not start: riff --version failed: $riff_version"
-server_version=$("${CLEAN[@]}" timeout "$WAIT" "$DIR/riff-server" --version 2>&1) ||
+server_version=$(in_time "${CLEAN[@]}" "$DIR/riff-server" --version 2>&1) ||
     fail "riff-server does not start: riff-server --version failed: $server_version"
 case "$riff_version" in
 "riff "?*) build="${riff_version#riff }" ;;

@@ -890,7 +890,8 @@ deploy/static/smoke.sh dev
 ```
 
 To run it on the binaries in another folder, name the folder in
-`RIFF_STATIC_DIR`, for example the binaries of `cargo build`:
+`RIFF_STATIC_DIR`, for example the binaries of `cargo build`. The test
+needs only bash, so this also works on a Mac:
 
 ```sh
 RIFF_STATIC_DIR=target/debug deploy/static/smoke.sh dev

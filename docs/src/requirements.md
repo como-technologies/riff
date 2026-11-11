@@ -5515,6 +5515,10 @@ of this part when they merge.
   the profile `release`: `success` when the check and the smoke test
   passed, else `failure`. The target URL of the status is the run. No
   ruleset requires the status.
+- **01M75YTFGK1SK5EP89V28FJH02** `deploy/static/smoke.sh` needs only
+  bash and the tools of a Mac, with no `timeout` of GNU, so the tests of
+  `riff` run it on a Mac too. The test gives riff a new `RIFF_HOME`, so
+  riff opens no OS keyring, also on a Mac.
 
 ### Sessions
 

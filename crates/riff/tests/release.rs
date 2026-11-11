@@ -502,14 +502,26 @@ fn the_release_of_a_mac_changes_no_job_of_linux() {
 }
 
 // ── deploy/static/smoke.sh: the release test of a tree
-// (01M75TN3HCK6VBB2GRCJG1Y5B2).
+// (01M75TN3HCK6VBB2GRCJG1Y5B2, 01M75YTFGK1SK5EP89V28FJH02).
 
 /// Runs the release test on the binaries in `dir`, with `wait` seconds
-/// for each wait.
+/// for each wait. A `timeout` that fails is first in `PATH`, as a Mac
+/// has no `timeout`: so the test runs on a Mac too.
 fn smoke(dir: &Path, wait: &str) -> Output {
     let env = Isolated::new();
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(
+        bin.path().join("timeout"),
+        "#!/bin/sh\necho 'timeout: a Mac has no timeout' >&2\nexit 127\n",
+    );
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
     env.command(top().join("deploy/static/smoke.sh"))
         .arg("dev")
+        .env("PATH", path)
         .env("RIFF_STATIC_DIR", dir)
         .env("RIFF_SMOKE_WAIT", wait)
         .output()
@@ -606,6 +618,28 @@ fn the_release_test_fails_on_a_release_binary_that_does_not_start() {
     assert!(
         stderr.contains("riff-server: the store is broken"),
         "{stderr}"
+    );
+}
+
+/// A riff that does not answer stops after the wait, with no `timeout`
+/// of GNU: the test fails then, and does not hang.
+#[test]
+fn the_release_test_stops_a_riff_that_does_not_answer_after_the_wait() {
+    let dir = riff_and("#!/bin/sh\necho 'riff-server of no build'\n");
+    std::fs::remove_file(dir.path().join("riff")).unwrap();
+    isolated::write_program(dir.path().join("riff"), "#!/bin/sh\nexec sleep 60\n");
+    let span = isolated::Span::start();
+    let out = smoke(dir.path(), "1");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("smoke.sh: riff does not start: riff --version failed:"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(
+        span.within(std::time::Duration::from_secs(20)),
+        "the test took {:?}",
+        span.wall()
     );
 }
 
