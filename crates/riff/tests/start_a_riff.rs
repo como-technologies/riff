@@ -171,7 +171,7 @@ fn the_owner_of_a_team_riff_signs_in_then_invites() {
             "riff cloud create shared",
             "riff cloud status shared",
             "riff github check",
-            "riff github check",
+            "riff github install OWNER",
             "riff invite EMAIL",
             "riff members",
             "riff tail",
@@ -235,7 +235,7 @@ fn the_book_has_the_how_tos_of_the_github_apps() {
             "riff cloud create shared",
             "riff cloud status shared",
             "riff github check",
-            "riff github check"
+            "riff github install OWNER"
         ]
     );
     for heading in [
@@ -246,8 +246,8 @@ fn the_book_has_the_how_tos_of_the_github_apps() {
         assert!(make.contains(heading), "{heading}: {make}");
     }
     // 01M6ZEJ4NEZGQFV3Q4BER5AW3S, 01M6ZHWVPD7MN6GH6GS0GVETHA: the table
-    // has the rights of the lead on the alerts, and the owner accepts
-    // them on each install. The deploy needs no step first.
+    // has the rights of the lead on the alerts. The deploy needs no step
+    // first.
     for row in [
         "| `security_events` | none | none | write |",
         "| `secret_scanning_alerts` | none | none | write |",
@@ -255,17 +255,27 @@ fn the_book_has_the_how_tos_of_the_github_apps() {
     ] {
         assert!(make.contains(row), "{row}: {make}");
     }
+    // 01M74FVDMYDR8685BA1TFAS70R: the how-to of the new rights is one
+    // `sh` block of `riff github install OWNER`, and no list of steps.
+    let accept = make
+        .split("\n### Accept the new rights of the lead App\n")
+        .nth(1)
+        .unwrap();
+    assert_eq!(book::commands_in(accept), ["riff github install OWNER"]);
+    assert_eq!(accept.matches("```sh").count(), 1, "{accept}");
+    assert!(
+        !accept.lines().any(|line| line.starts_with("1. ")),
+        "{accept}"
+    );
     let text = make.split_whitespace().collect::<Vec<_>>().join(" ");
     for words in [
-        "set **Code scanning alerts** to **Read and write**, **Secret scanning alerts** to \
-         **Read and write**, and **Dependabot alerts** to **Read-only**.",
-        "GitHub asks the owner of each install to accept the new rights.",
-        "Click **Accept new permissions**.",
         "The deploy needs no step of yours first:",
         "riff-server gives the lead a token with its other rights, and logs one warning.",
-        "The row `lead` must have `secret_scanning_alerts: write`, `security_events: write` \
-         and `vulnerability_alerts: read`.",
-        "the row names each missing right with the fix",
+        "`riff github check` names each missing right with the fix.",
+        "GitHub has no API call that sets them.",
+        "your browser opens the page of its rights, and riff prints each right to set.",
+        "your browser opens its page **Configure**.",
+        "With nothing to do, it changes nothing and says so in one line.",
     ] {
         assert!(text.contains(words), "{words}: {make}");
     }
@@ -291,6 +301,30 @@ fn the_book_has_the_how_tos_of_the_github_apps() {
     let commands = book::commands_in(install);
     assert_eq!(commands, ["riff github install OWNER"]);
     each_is_real(&commands);
+}
+
+/// 01M74FVDMYDR8685BA1TFAS70R: no page of the book lists the steps on
+/// GitHub that set the rights of an App or accept them: `riff github
+/// install OWNER` opens each page.
+#[test]
+fn no_page_of_the_book_lists_the_steps_on_github_for_the_rights_of_an_app() {
+    for entry in fs::read_dir(book::dir()).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if !name.ends_with(".md") || name.starts_with("requirements") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap();
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        for words in [
+            "**Developer settings**",
+            "**Permissions & events**",
+            "**Review request**",
+            "**Accept new permissions**",
+        ] {
+            assert!(!text.contains(words), "{name} has {words}");
+        }
+    }
 }
 
 /// 01M6Z7R4R56ANXBQN0XJZXNFXW: "Add another repository to the riff" has

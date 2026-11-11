@@ -712,7 +712,9 @@ Your browser opens the install page of each App that is not on the
 account. The owner of the account clicks **Install** for each App, on
 the repositories of the riff. riff waits at most 10 minutes for the two
 installs. Then it checks the token of each role for the repository of
-the folder, as `riff github check` does.
+the folder, as `riff github check` does. The same command gives each
+App and each install the rights of riff: see
+[Accept the new rights of the lead App](start-a-team-riff.md#accept-the-new-rights-of-the-lead-app).
 
 ### Add the repository to the installs of the Apps
 

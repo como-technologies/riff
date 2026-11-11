@@ -57,13 +57,23 @@
 //!   of the install of each App on the account, for its page Configure,
 //!   and whether the install has the repository: GitHub gives the
 //!   installation of the repository to the App only then.
+//! - [`app_rights`] is the one list of the rights of each App
+//!   (01M74FVDCJT8P0670P46MWR1MJ): the manifest asks for it, and a query
+//!   with an account compares each App with it. riff-server reads the
+//!   rights of the App with `GET /app`, and the rights that the install
+//!   accepted with `GET /app/installations`. It gives each right that the
+//!   App must set ([`to_set`]), and each right that the install has not
+//!   accepted ([`to_accept`]). GitHub has no API call that sets the
+//!   rights of an App, or that accepts them for an install: a person does
+//!   both on GitHub, and `riff github install` opens each page.
 //! - A token of the lead asks for the rights on the alerts
 //!   ([`ALERT_RIGHTS`], 01M6ZEJ4NEZGQFV3Q4BER5AW3S). GitHub refuses a
 //!   token that asks for a right that the install lacks, as on an install
 //!   of a lead App that riff made before them. Then riff-server asks
 //!   again with the [`fallback_rights`] of the lead, and logs one warning
-//!   with the fix (01M6ZHWVPD7MN6GH6GS0GVETHA). The check of the lead then
-//!   names each missing right.
+//!   with the fix `riff github install OWNER` (01M6ZHWVPD7MN6GH6GS0GVETHA,
+//!   01M74FVDGM0342M8TZQCCK5H4H). The check of the lead then names each
+//!   missing right.
 //!
 //! The pages of the browser and the webhook need no riff token: the
 //! state, and the signature of GitHub, are their proof. The three calls
@@ -82,8 +92,8 @@ use riff_core::name::{Repo, SessionUri, ThreadName, Who};
 use riff_core::selector::Selector;
 use riff_core::wire::{
     GitHubApp, GitHubAppFacts, GitHubApps, GitHubAppsReply, GitHubCheck, GitHubChecked,
-    GitHubCreate, GitHubDaemonToken, GitHubRole, GitHubStarted, GitHubToken, Kind, Rights,
-    RoleChecked, SessionToken,
+    GitHubCreate, GitHubDaemonToken, GitHubOwner, GitHubRole, GitHubStarted, GitHubToken, Kind,
+    Rights, RoleChecked, SessionToken,
 };
 use riff_state::state::{Code, Refused, Role};
 use serde::{Deserialize, Serialize};
@@ -410,6 +420,61 @@ pub fn differ(need: &Rights, given: &Rights) -> (Vec<String>, Vec<String>) {
     (missing, extra)
 }
 
+/// The rights that an App with the rights `has` on GitHub must set to
+/// have the list `list` of riff (01M74FVDCJT8P0670P46MWR1MJ): each right
+/// of the list with another level, or none, and `none` for each right
+/// more.
+///
+/// ```
+/// use riff_core::wire::GitHubApp;
+/// use riff_server::github::{app_rights, to_set};
+///
+/// let list = app_rights(GitHubApp::Lead);
+/// assert!(to_set(&list, &list).is_empty());
+/// let mut has = list.clone();
+/// has.remove("vulnerability_alerts");
+/// has.insert("contents".into(), "read".into());
+/// has.insert("administration".into(), "write".into());
+/// let set = to_set(&list, &has);
+/// assert_eq!(set.len(), 3);
+/// assert_eq!(set["vulnerability_alerts"], "read");
+/// assert_eq!(set["contents"], "write");
+/// assert_eq!(set["administration"], "none");
+/// ```
+pub fn to_set(list: &Rights, has: &Rights) -> Rights {
+    let differs = list
+        .iter()
+        .filter(|(name, level)| has.get(*name) != Some(level))
+        .map(|(name, level)| (name.clone(), level.clone()));
+    let more = has
+        .keys()
+        .filter(|name| !list.contains_key(*name))
+        .map(|name| (name.clone(), "none".to_owned()));
+    differs.chain(more).collect()
+}
+
+/// The rights of the list `list` of riff that an install with the
+/// rights `accepted` has not accepted (01M74FVDCJT8P0670P46MWR1MJ): each
+/// right of the list with another level there, or none.
+///
+/// ```
+/// use riff_core::wire::GitHubApp;
+/// use riff_server::github::{app_rights, to_accept};
+///
+/// let list = app_rights(GitHubApp::Lead);
+/// assert!(to_accept(&list, &list).is_empty());
+/// let mut accepted = list.clone();
+/// accepted.remove("security_events");
+/// let accept = to_accept(&list, &accepted);
+/// assert_eq!(accept.into_iter().collect::<Vec<_>>(), [("security_events".into(), "write".into())]);
+/// ```
+pub fn to_accept(list: &Rights, accepted: &Rights) -> Rights {
+    list.iter()
+        .filter(|(name, level)| accepted.get(*name) != Some(level))
+        .map(|(name, level)| (name.clone(), level.clone()))
+        .collect()
+}
+
 /// True when `owner` can be the login of an account on GitHub: 1 to 39
 /// letters, digits and dashes, with no dash first.
 ///
@@ -592,6 +657,18 @@ struct Converted {
 #[derive(Deserialize)]
 struct Account {
     login: String,
+    /// `Organization` or `User`.
+    #[serde(rename = "type", default)]
+    kind: String,
+}
+
+/// The reply of GitHub to `GET /app`: the rights of the App and its
+/// account.
+#[derive(Deserialize)]
+struct OnGitHub {
+    #[serde(default)]
+    permissions: Rights,
+    owner: Account,
 }
 
 /// A token that GitHub gave, with its rights and its end.
@@ -737,12 +814,31 @@ impl Client {
         Ok(Some(installation.id))
     }
 
-    /// The installation of `app` on the account `owner`, or `None`.
-    async fn installed_on(&self, app: &AppKeys, owner: &str) -> Result<Option<u64>, GitHubError> {
+    /// The App `app` as GitHub has it: its rights and its account.
+    async fn app(&self, app: &AppKeys) -> Result<OnGitHub, GitHubError> {
+        let what = format!("the App {}", app.slug);
+        let reply = self
+            .send(&what, self.as_app(app, reqwest::Method::GET, "/app")?)
+            .await?;
+        reply
+            .json()
+            .await
+            .map_err(|e| GitHubError::new(format!("{what}: {e}")))
+    }
+
+    /// The installation of `app` on the account `owner`, with the rights
+    /// that it accepted, or `None`.
+    async fn installed_on(
+        &self,
+        app: &AppKeys,
+        owner: &str,
+    ) -> Result<Option<(u64, Rights)>, GitHubError> {
         #[derive(Deserialize)]
         struct Installation {
             id: u64,
             account: Account,
+            #[serde(default)]
+            permissions: Rights,
         }
         let what = format!("the installations of {}", app.slug);
         for page in 1.. {
@@ -754,13 +850,14 @@ impl Client {
                 .json()
                 .await
                 .map_err(|e| GitHubError::new(format!("{what}: {e}")))?;
+            let count = installations.len();
             if let Some(found) = installations
-                .iter()
+                .into_iter()
                 .find(|i| i.account.login.eq_ignore_ascii_case(owner))
             {
-                return Ok(Some(found.id));
+                return Ok(Some((found.id, found.permissions)));
             }
-            if installations.len() < 100 {
+            if count < 100 {
                 break;
             }
         }
@@ -1032,9 +1129,8 @@ impl GitHub {
             repo,
             app = %slug,
             "GitHub refused a token of {slug} with the rights on the alerts ({}): {}. \
-             riff-server asked again with no right on the alerts. Fix: on GitHub, give {slug} \
-             these rights, and accept them on each install. See \"Accept the new rights of \
-             the lead App\" in the book",
+             riff-server asked again with no right on the alerts. Fix: riff github install \
+             {owner}, in a plain terminal",
             ALERT_RIGHTS.join(", "),
             first.text.trim_end_matches('.')
         );
@@ -1457,7 +1553,10 @@ pub(crate) async fn created(
 /// it is installed on the repository of the query. Each person asks with
 /// neither, for example `riff init` for the bot of the guard. Only the
 /// owner or an admin asks with an account or a repository
-/// (01M6WPV8473EBABR1ZMEPZMTQQ, 01M6Z7DMYAW52X62TN1DEX9NCG).
+/// (01M6WPV8473EBABR1ZMEPZMTQQ, 01M6Z7DMYAW52X62TN1DEX9NCG). With an
+/// account, riff-server also reads the rights of each App and of its
+/// install there, and gives what differs from [`app_rights`]
+/// (01M74FVDCJT8P0670P46MWR1MJ).
 pub(crate) async fn apps(
     AxumState(s): AxumState<crate::Shared>,
     Extension(signed_in): Extension<SignedIn>,
@@ -1479,14 +1578,15 @@ pub(crate) async fn apps(
         let Some(keys) = apps.of(app) else {
             continue;
         };
-        let installation = match &r.owner {
-            Some(owner) => s
-                .github
-                .client
-                .installed_on(keys, owner)
-                .await
-                .map_err(gateway)?,
-            None => None,
+        let list = app_rights(app);
+        let (on_github, installation) = match &r.owner {
+            Some(owner) => {
+                let client = &s.github.client;
+                let on_github = client.app(keys).await.map_err(gateway)?;
+                let installation = client.installed_on(keys, owner).await.map_err(gateway)?;
+                (Some(on_github), installation)
+            }
+            None => (None, None),
         };
         let has_repo = match &r.repo {
             Some(repo) => Some(
@@ -1506,8 +1606,20 @@ pub(crate) async fn apps(
             bot: keys.bot(),
             bot_id: keys.bot_id,
             installed: r.owner.as_ref().map(|_| installation.is_some()),
-            installation,
+            installation: installation.as_ref().map(|(id, _)| *id),
             has_repo,
+            to_set: on_github
+                .as_ref()
+                .map(|app| to_set(&list, &app.permissions))
+                .unwrap_or_default(),
+            to_accept: installation
+                .as_ref()
+                .map(|(_, accepted)| to_accept(&list, accepted))
+                .unwrap_or_default(),
+            owner: on_github.map(|app| GitHubOwner {
+                organization: app.owner.kind == "Organization",
+                login: app.owner.login,
+            }),
         });
     }
     Ok(Json(reply))

@@ -6591,7 +6591,7 @@ GitHub refuses each token that asks for a right that the install
 lacks. Then riff-server asks again with the other rights of the lead,
 and logs one warning with the fix. So the lead and the daemon start as
 before, with no access to the alerts, and `riff github check` names
-each missing right. To give the rights, see
+each missing right. The fix is `riff github install OWNER`: see
 [Accept the new rights of the lead App](start-a-team-riff.md#accept-the-new-rights-of-the-lead-app).
 
 ```mermaid

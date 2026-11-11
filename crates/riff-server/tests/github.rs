@@ -19,7 +19,7 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use riff_core::dpop::Key;
 use riff_core::wire::{
-    GitHubApp, GitHubAppsReply, GitHubChecked, GitHubRole, GitHubStarted, SessionToken,
+    GitHubApp, GitHubAppsReply, GitHubChecked, GitHubOwner, GitHubRole, GitHubStarted, SessionToken,
 };
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -735,6 +735,101 @@ async fn the_apps_say_whether_each_install_has_the_repository() {
     assert_eq!(status, 400);
 }
 
+/// 01M74FVDCJT8P0670P46MWR1MJ: `POST /v1/github/apps` with an account
+/// compares the rights of each App and of its install with the one list
+/// of riff, the rights of the manifest. It gives each right that the App
+/// must set, `none` for a right more, each right that the install has
+/// not accepted, and the account of the App. With no account, it reads
+/// no right.
+#[tokio::test]
+async fn the_apps_say_which_rights_each_app_and_each_install_lacks() {
+    let fake = FakeGitHub::start().await;
+    let (service, url) = serve(&fake, At::Memory, STATE_LIFE).await;
+    let owner = person(&service, "ada@example.com").await;
+    let flow = make_apps(&url, &owner).await;
+    for (page, app) in flow.pages.iter().zip(GitHubApp::ALL) {
+        let (_, manifest) = form(page);
+        assert_eq!(
+            serde_json::to_value(riff_server::github::app_rights(app)).unwrap(),
+            manifest["default_permissions"],
+            "the list is the rights of the manifest"
+        );
+    }
+    /// The account, the rights to set and the rights to accept of each
+    /// App.
+    type Facts = Vec<(
+        Option<GitHubOwner>,
+        BTreeMap<String, String>,
+        BTreeMap<String, String>,
+    )>;
+    async fn facts(url: &str, owner: &Person, body: Value) -> Facts {
+        let (status, text) = call(url, owner, "/v1/github/apps", body).await;
+        assert_eq!(status, 200, "{text}");
+        let apps: GitHubAppsReply = serde_json::from_str(&text).unwrap();
+        apps.apps
+            .into_iter()
+            .map(|a| (a.owner, a.to_set, a.to_accept))
+            .collect()
+    }
+    let acme = Some(GitHubOwner {
+        login: OWNER.into(),
+        organization: true,
+    });
+    let none = BTreeMap::new;
+    let account = json!({ "owner": OWNER });
+    // Not installed: each App has the list, and no install accepts.
+    assert_eq!(
+        facts(&url, &owner, account.clone()).await,
+        [
+            (acme.clone(), none(), none()),
+            (acme.clone(), none(), none())
+        ]
+    );
+    {
+        let mut seen = fake.seen();
+        seen.installed = true;
+        seen.app_lacks = vec!["vulnerability_alerts".into()];
+        seen.app_more = vec![("administration".into(), "write".into())];
+        seen.lacks = vec!["security_events".into()];
+    }
+    let lead = facts(&url, &owner, account.clone()).await.remove(1);
+    assert_eq!(
+        lead,
+        (
+            acme.clone(),
+            rights(&[("administration", "none"), ("vulnerability_alerts", "read")]),
+            rights(&[
+                ("security_events", "write"),
+                ("vulnerability_alerts", "read")
+            ]),
+        )
+    );
+    fake.seen().save_rights();
+    let lead = facts(&url, &owner, account.clone()).await.remove(1);
+    assert_eq!(
+        lead,
+        (
+            acme.clone(),
+            none(),
+            rights(&[
+                ("security_events", "write"),
+                ("vulnerability_alerts", "read")
+            ]),
+        )
+    );
+    fake.seen().accept_rights();
+    assert_eq!(
+        facts(&url, &owner, account).await,
+        [(acme.clone(), none(), none()), (acme, none(), none())]
+    );
+    fake.seen().app_lacks = vec!["contents".into()];
+    assert_eq!(
+        facts(&url, &owner, json!({})).await,
+        [(None, none(), none()), (None, none(), none())],
+        "with no account, riff-server reads no right"
+    );
+}
+
 /// 01M6WG52WSWM8A9CN6X448AGAJ: a riff-server with a bucket and no secret
 /// has no place for the keys: it refuses `riff github create`.
 #[tokio::test]
@@ -1349,8 +1444,8 @@ async fn a_lead_app_with_no_rights_on_the_alerts_still_gives_the_lead_a_token() 
          (security_events, secret_scanning_alerts, vulnerability_alerts): ",
         "The permissions requested are not granted to this installation. riff-server",
         "riff-server asked again with no right on the alerts.",
-        "Fix: on GitHub, give riff-acme-lead these rights, and accept them on each install.",
-        "See \"Accept the new rights of the lead App\" in the book",
+        // 01M74FVDGM0342M8TZQCCK5H4H: the fix is one command.
+        "Fix: riff github install acme, in a plain terminal",
     ] {
         assert!(message.contains(words), "{words}: {message}");
     }

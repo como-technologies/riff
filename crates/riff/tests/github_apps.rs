@@ -112,11 +112,11 @@ async fn riff_github_check_prints_the_bot_and_the_rights_of_each_role() {
     assert_eq!(seen.revoked, seen.tokens);
 }
 
-/// 01M6ZHWVPD7MN6GH6GS0GVETHA: the install of the lead App lacks the
-/// rights on the alerts, as an install of a lead App that riff made
-/// before them. `riff github check` prints the rights of the token of
-/// the lead, names each missing right with the fix, and exits with
-/// status 1.
+/// 01M6ZHWVPD7MN6GH6GS0GVETHA, 01M74FVDGM0342M8TZQCCK5H4H: the install
+/// of the lead App lacks the rights on the alerts, as an install of a
+/// lead App that riff made before them. `riff github check` prints the
+/// rights of the token of the lead, names each missing right with the
+/// fix `riff github install OWNER`, and exits with status 1.
 #[tokio::test]
 async fn riff_github_check_names_each_right_that_the_lead_misses_with_the_fix() {
     let fake = FakeGitHub::start().await;
@@ -157,8 +157,7 @@ async fn riff_github_check_names_each_right_that_the_lead_misses_with_the_fix() 
         "  lead      riff-acme-lead[bot]  actions: write, checks: read, contents: write, \
          issues: write, metadata: read, pull_requests: write, statuses: write; fail: it misses \
          secret_scanning_alerts: write, security_events: write, vulnerability_alerts: read. \
-         The fix: give riff-acme-lead each right on GitHub, then accept the new rights on each \
-         install. See \"Accept the new rights of the lead App\" in the book"
+         The fix: riff github install acme"
     );
     assert!(
         stdout.ends_with("riff github check: 1 role failed. riff-server revoked each token.\n"),
@@ -644,6 +643,132 @@ async fn install_opens_the_page_configure_of_each_install_without_the_repository
         .map(|(_, body)| &body["repositories"])
         .collect();
     assert_eq!(repos, [&serde_json::json!(["b"]); 3]);
+}
+
+/// 01M74FVDCJT8P0670P46MWR1MJ, 01M74FVDGM0342M8TZQCCK5H4H: the lead App
+/// lacks `vulnerability_alerts` on GitHub, and its install has not
+/// accepted `security_events`. `riff github install acme` opens the page
+/// of the rights of the App one time, with one line for the right to
+/// set, and waits. Then it opens the page Configure of the install one
+/// time, waits for the accept, and ends with the check. A second run
+/// opens no page, says so in one line, and checks.
+#[tokio::test]
+async fn install_brings_each_app_and_install_to_the_rights_and_a_second_run_does_nothing() {
+    let fake = FakeGitHub::start().await;
+    {
+        let mut seen = fake.seen();
+        seen.installed = true;
+        seen.app_lacks = vec!["vulnerability_alerts".into()];
+        seen.lacks = vec!["security_events".into()];
+    }
+    let keys = keys_dir();
+    let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
+    let api = server.api("brett", None);
+    let opened = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = opened.clone();
+    let fake_seen = fake.seen.clone();
+    let mut out = Vec::new();
+    let passed = riff::github::install(
+        &api,
+        &account(),
+        WEB,
+        move |url| {
+            seen.lock().unwrap().push(url.to_owned());
+            // The person does each step on GitHub 200 ms later: riff asks
+            // riff-server many times in between.
+            let rights = url.ends_with("/permissions");
+            let fake_seen = fake_seen.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                let mut seen = fake_seen.lock().unwrap();
+                match rights {
+                    true => seen.save_rights(),
+                    false => seen.accept_rights(),
+                }
+            });
+        },
+        WAIT,
+        Some(REPO),
+        &mut out,
+    )
+    .await
+    .unwrap();
+    let out = String::from_utf8(out).unwrap();
+    assert!(passed, "{out}");
+    assert_eq!(
+        *opened.lock().unwrap(),
+        [
+            "https://github.example/organizations/acme/settings/apps/riff-acme-lead/permissions",
+            "https://github.example/organizations/acme/settings/installations/2020",
+        ],
+        "each page one time:\n{out}"
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    let at = |line: &str| {
+        lines
+            .iter()
+            .position(|l| *l == line)
+            .unwrap_or_else(|| panic!("{line:?} not in:\n{out}"))
+    };
+    let order = [
+        at(
+            "riff-acme-lead: the App does not have the rights of riff. Your browser opens the \
+             page of its rights. When it does not, open this URL:",
+        ),
+        at("Set each right, then click \"Save changes\":"),
+        at("  Dependabot alerts: Read-only (vulnerability_alerts: read)"),
+        at("riff-acme-lead: the App has the rights of riff."),
+        at(
+            "riff-acme-lead: the install on acme has not accepted the rights of riff: \
+             security_events: write, vulnerability_alerts: read. Your browser opens the page \
+             Configure of the install. When it does not, open this URL:",
+        ),
+        at("Click \"Review request\", then \"Accept new permissions\"."),
+        at("riff-acme-lead: the install on acme has the rights of riff."),
+        at("riff github check acme/app:"),
+        at(
+            "riff github check: each role has its rights and no more. riff-server revoked each token.",
+        ),
+    ];
+    assert!(order.is_sorted(), "{order:?}:\n{out}");
+    assert!(
+        !out.contains("riff-acme: the App"),
+        "the session App has the rights:\n{out}"
+    );
+    assert_eq!(fake.seen().tokens.len(), 3);
+
+    // A second run has nothing to do.
+    let opened = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = opened.clone();
+    let mut out = Vec::new();
+    let passed = riff::github::install(
+        &api,
+        &account(),
+        WEB,
+        move |url| seen.lock().unwrap().push(url.to_owned()),
+        WAIT,
+        Some(REPO),
+        &mut out,
+    )
+    .await
+    .unwrap();
+    let out = String::from_utf8(out).unwrap();
+    assert!(passed, "{out}");
+    assert!(opened.lock().unwrap().is_empty(), "{out}");
+    let (first, check) = out.split_once('\n').unwrap();
+    assert_eq!(
+        first,
+        "riff github install changed nothing: both Apps are installed on acme with the rights \
+         of riff, and each install has acme/app."
+    );
+    assert!(check.starts_with("riff github check acme/app:\n"), "{out}");
+    assert!(
+        check.ends_with(
+            "riff github check: each role has its rights and no more. riff-server revoked each \
+             token.\n"
+        ),
+        "{out}"
+    );
 }
 
 /// 01M6Z7DMYAW52X62TN1DEX9NCG: `riff github install OWNER --repo REPO`

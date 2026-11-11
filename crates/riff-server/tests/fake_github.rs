@@ -1,6 +1,6 @@
 //! A fake GitHub for the tests of the GitHub Apps of the riff: the swap
-//! of the code of a manifest, the bot users, the installations, the
-//! tokens and their revoke. It checks the JWT of each call of an App
+//! of the code of a manifest, the bot users, the rights of each App, the
+//! installations with their rights, the tokens and their revoke. It checks the JWT of each call of an App
 //! with the public key of the test key. The tests of `riff` include this
 //! file too.
 
@@ -68,11 +68,34 @@ pub struct Seen {
     /// The rights that the install lacks: GitHub refuses each token
     /// that asks for one of them with a 422.
     pub lacks: Vec<String>,
+    /// The rights of riff that each App lacks on GitHub. Its install
+    /// lacks them too, and GitHub refuses each token that asks for one
+    /// of them with a 422.
+    pub app_lacks: Vec<String>,
+    /// The rights that each App has on GitHub beyond the rights of riff.
+    pub app_more: Vec<(String, String)>,
     /// The rights that the fake gives in place of the asked ones.
     pub give: Option<BTreeMap<String, String>>,
     /// True: each token ends one hour after now, as on GitHub. Else it
     /// ends at a time of the tests.
     pub hour: bool,
+}
+
+impl Seen {
+    /// A manager of the App clicks "Save changes" on the page of its
+    /// rights, with the rights of riff: the App has them, with no right
+    /// more, and its install has not accepted the new ones yet.
+    pub fn save_rights(&mut self) {
+        let saved = std::mem::take(&mut self.app_lacks);
+        self.lacks.extend(saved);
+        self.app_more.clear();
+    }
+
+    /// The owner of the account clicks "Accept new permissions" on the
+    /// page Configure of the install.
+    pub fn accept_rights(&mut self) {
+        self.lacks.clear();
+    }
 }
 
 /// A fake GitHub on a free port.
@@ -89,6 +112,7 @@ impl FakeGitHub {
             .route("/app-manifests/{code}/conversions", post(convert))
             .route("/users/{login}", get(user))
             .route("/repos/{owner}/{repo}/installation", get(installation))
+            .route("/app", get(app))
             .route("/app/installations", get(installations))
             .route("/app/installations/{id}/access_tokens", post(token))
             .route("/installation/token", delete(revoke))
@@ -198,14 +222,59 @@ pub fn installation_of(id: u64) -> u64 {
     id * 10
 }
 
+/// The App of the App ID `id`: the IDs of the session App in the tests
+/// are odd, the IDs of the lead App even.
+pub fn app_of_id(id: u64) -> riff_core::wire::GitHubApp {
+    match id % 2 {
+        1 => riff_core::wire::GitHubApp::Session,
+        _ => riff_core::wire::GitHubApp::Lead,
+    }
+}
+
+/// The rights of the App `id` on GitHub: the rights of riff with no
+/// right of [`Seen::app_lacks`], and each right of [`Seen::app_more`].
+fn rights_of_app(seen: &Seen, id: u64) -> BTreeMap<String, String> {
+    let mut rights = riff_server::github::app_rights(app_of_id(id));
+    rights.retain(|name, _| !seen.app_lacks.contains(name));
+    rights.extend(seen.app_more.iter().cloned());
+    rights
+}
+
+/// The rights that the install of the App `id` accepted: the rights of
+/// the App with no right of [`Seen::lacks`].
+fn rights_of_install(seen: &Seen, id: u64) -> BTreeMap<String, String> {
+    let mut rights = rights_of_app(seen, id);
+    rights.retain(|name, _| !seen.lacks.contains(name));
+    rights
+}
+
+async fn app(State(seen): State<Shared>, headers: HeaderMap) -> Response {
+    let Some(id) = app_id(&headers) else {
+        return bad_credentials();
+    };
+    let seen = seen.lock().unwrap();
+    Json(json!({
+        "id": id,
+        "owner": { "login": OWNER, "type": "Organization" },
+        "permissions": rights_of_app(&seen, id),
+    }))
+    .into_response()
+}
+
 async fn installations(State(seen): State<Shared>, headers: HeaderMap) -> Response {
     let Some(id) = app_id(&headers) else {
         return bad_credentials();
     };
-    if !seen.lock().unwrap().installed {
+    let seen = seen.lock().unwrap();
+    if !seen.installed {
         return Json(json!([])).into_response();
     }
-    Json(json!([{ "id": installation_of(id), "account": { "login": OWNER } }])).into_response()
+    Json(json!([{
+        "id": installation_of(id),
+        "account": { "login": OWNER },
+        "permissions": rights_of_install(&seen, id),
+    }]))
+    .into_response()
 }
 
 async fn token(
@@ -222,7 +291,7 @@ async fn token(
     }
     let mut seen = seen.lock().unwrap();
     let asks = |name: &String| body["permissions"].get(name).is_some();
-    if seen.lacks.iter().any(asks) {
+    if seen.lacks.iter().chain(&seen.app_lacks).any(asks) {
         seen.asked.push((id, body));
         let message = "The permissions requested are not granted to this installation.";
         return (

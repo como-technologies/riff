@@ -5587,14 +5587,15 @@ pub fn github_no_apps(owner: &str) -> String {
 }
 
 /// The error of the wait after 10 minutes with no two installs, each
-/// with the repository `repo` when the wait has one.
+/// with the rights of riff, and with the repository `repo` when the wait
+/// has one.
 ///
 /// ```
 /// let text = riff::text::github_wait_ended("acme", Some("acme/b"));
-/// assert!(text.contains("not both installed on acme/b"), "{text}");
+/// assert!(text.contains("not both installed on acme/b with the rights of riff"), "{text}");
 /// assert!(text.ends_with("next: riff github install acme --repo acme/b"), "{text}");
 /// let text = riff::text::github_wait_ended("acme", None);
-/// assert!(text.ends_with("on acme. next: riff github install acme"), "{text}");
+/// assert!(text.ends_with("on acme with the rights of riff. next: riff github install acme"), "{text}");
 /// ```
 pub fn github_wait_ended(owner: &str, repo: Option<&str>) -> String {
     let (on, flag) = match repo {
@@ -5602,8 +5603,8 @@ pub fn github_wait_ended(owner: &str, repo: Option<&str>) -> String {
         None => (owner, String::new()),
     };
     format!(
-        "riff: after 10 minutes, the two GitHub Apps are not both installed on {on}. \
-         next: riff github install {owner}{flag}"
+        "riff: after 10 minutes, the two GitHub Apps are not both installed on {on} with the \
+         rights of riff. next: riff github install {owner}{flag}"
     )
 }
 
@@ -5654,6 +5655,149 @@ pub fn github_app_installed(slug: &str, owner: &str) -> String {
     format!("{slug}: installed on {owner}.")
 }
 
+/// One right on the page of GitHub: its words there, its level there,
+/// and the name and the level of riff (01M74FVDGM0342M8TZQCCK5H4H). The
+/// level `none` is "No access".
+///
+/// ```
+/// use riff::text::github_right;
+///
+/// assert_eq!(
+///     github_right("vulnerability_alerts", "read"),
+///     "Dependabot alerts: Read-only (vulnerability_alerts: read)"
+/// );
+/// assert_eq!(
+///     github_right("pull_requests", "write"),
+///     "Pull requests: Read and write (pull_requests: write)"
+/// );
+/// assert_eq!(
+///     github_right("administration", "none"),
+///     "Administration: No access (administration: none)"
+/// );
+/// ```
+pub fn github_right(name: &str, level: &str) -> String {
+    let words = match name {
+        "security_events" => "Code scanning alerts".to_owned(),
+        "statuses" => "Commit statuses".to_owned(),
+        "vulnerability_alerts" => "Dependabot alerts".to_owned(),
+        _ => {
+            let spaced = name.replace('_', " ");
+            let mut chars = spaced.chars();
+            chars
+                .next()
+                .map(|c| c.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        }
+    };
+    let shown = match level {
+        "read" => "Read-only",
+        "write" => "Read and write",
+        "none" => "No access",
+        other => other,
+    };
+    format!("{words}: {shown} ({name}: {level})")
+}
+
+/// The lines when the App `slug` does not have the rights of riff,
+/// before the browser opens the page of its rights `url`: one line for
+/// each right to set (01M74FVDGM0342M8TZQCCK5H4H).
+///
+/// ```
+/// let url = "https://github.com/organizations/acme/settings/apps/riff-acme-lead/permissions";
+/// let set = [("vulnerability_alerts".to_owned(), "read".to_owned())].into();
+/// assert_eq!(
+///     riff::text::github_rights_to_set("riff-acme-lead", url, &set),
+///     "riff-acme-lead: the App does not have the rights of riff. Your browser opens the page \
+///      of its rights. When it does not, open this URL:\n  \
+///      https://github.com/organizations/acme/settings/apps/riff-acme-lead/permissions\n\
+///      Set each right, then click \"Save changes\":\n  \
+///      Dependabot alerts: Read-only (vulnerability_alerts: read)"
+/// );
+/// ```
+pub fn github_rights_to_set(slug: &str, url: &str, set: &riff_core::wire::Rights) -> String {
+    let rights: String = set
+        .iter()
+        .map(|(name, level)| format!("\n  {}", github_right(name, level)))
+        .collect();
+    format!(
+        "{slug}: the App does not have the rights of riff. Your browser opens the page of its \
+         rights. When it does not, open this URL:\n  {url}\n\
+         Set each right, then click \"Save changes\":{rights}"
+    )
+}
+
+/// The line when the App `slug` has the rights of riff, after
+/// [`github_rights_to_set`].
+pub fn github_rights_set(slug: &str) -> String {
+    format!("{slug}: the App has the rights of riff.")
+}
+
+/// The lines when the install of the App `slug` on `owner` has not
+/// accepted the rights of riff `accept`, before the browser opens its
+/// page Configure `url` (01M74FVDGM0342M8TZQCCK5H4H).
+///
+/// ```
+/// let url = "https://github.com/organizations/acme/settings/installations/2020";
+/// let accept = [("security_events".to_owned(), "write".to_owned())].into();
+/// assert_eq!(
+///     riff::text::github_rights_to_accept("riff-acme-lead", "acme", url, &accept),
+///     "riff-acme-lead: the install on acme has not accepted the rights of riff: \
+///      security_events: write. Your browser opens the page Configure of the install. When it \
+///      does not, open this URL:\n  \
+///      https://github.com/organizations/acme/settings/installations/2020\n\
+///      Click \"Review request\", then \"Accept new permissions\"."
+/// );
+/// ```
+pub fn github_rights_to_accept(
+    slug: &str,
+    owner: &str,
+    url: &str,
+    accept: &riff_core::wire::Rights,
+) -> String {
+    let rights = accept
+        .iter()
+        .map(|(name, level)| format!("{name}: {level}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{slug}: the install on {owner} has not accepted the rights of riff: {rights}. Your \
+         browser opens the page Configure of the install. When it does not, open this URL:\n  \
+         {url}\n\
+         Click \"Review request\", then \"Accept new permissions\"."
+    )
+}
+
+/// The line when the install of the App `slug` on `owner` accepted the
+/// rights of riff, after [`github_rights_to_accept`].
+pub fn github_rights_accepted(slug: &str, owner: &str) -> String {
+    format!("{slug}: the install on {owner} has the rights of riff.")
+}
+
+/// The one line of `riff github install` with nothing to do
+/// (01M74FVDGM0342M8TZQCCK5H4H).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::github_install_nothing("acme", Some("acme/app")),
+///     "riff github install changed nothing: both Apps are installed on acme with the rights \
+///      of riff, and each install has acme/app."
+/// );
+/// assert_eq!(
+///     riff::text::github_install_nothing("acme", None),
+///     "riff github install changed nothing: both Apps are installed on acme with the rights \
+///      of riff."
+/// );
+/// ```
+pub fn github_install_nothing(owner: &str, repo: Option<&str>) -> String {
+    let has = repo
+        .map(|repo| format!(", and each install has {repo}"))
+        .unwrap_or_default();
+    format!(
+        "riff github install changed nothing: both Apps are installed on {owner} with the \
+         rights of riff{has}."
+    )
+}
+
 /// The line after the installs, in a folder of no repository of
 /// `owner`.
 pub fn github_check_elsewhere(owner: &str) -> String {
@@ -5665,7 +5809,8 @@ pub fn github_check_elsewhere(owner: &str) -> String {
 /// The output of `riff github check` for `repo`: one line for each role,
 /// with its bot and its rights, then the result
 /// (01M6WG534PPE2JW8JQFRJDEK86). A role that misses a right gets the fix
-/// (01M6ZHWVPD7MN6GH6GS0GVETHA).
+/// `riff github install OWNER` (01M6ZHWVPD7MN6GH6GS0GVETHA,
+/// 01M74FVDGM0342M8TZQCCK5H4H).
 ///
 /// ```
 /// use riff_core::wire::{GitHubChecked, GitHubRole, RoleChecked};
@@ -5708,12 +5853,12 @@ pub fn github_check_elsewhere(owner: &str) -> String {
 ///     text,
 ///     "riff github check acme/app:\n\
 ///      \x20 lead  riff-acme-lead[bot]  statuses: write; fail: it misses security_events: write. \
-///      The fix: give riff-acme-lead each right on GitHub, then accept the new rights on each \
-///      install. See \"Accept the new rights of the lead App\" in the book\n\
+///      The fix: riff github install acme\n\
 ///      riff github check: 1 role failed. riff-server revoked each token.\n"
 /// );
 /// ```
 pub fn github_checked(repo: &str, checked: &riff_core::wire::GitHubChecked) -> String {
+    let owner = repo.split_once('/').map_or(repo, |(owner, _)| owner);
     let rows: Vec<(String, String, String)> = checked
         .roles
         .iter()
@@ -5731,13 +5876,9 @@ pub fn github_checked(repo: &str, checked: &riff_core::wire::GitHubChecked) -> S
             } else {
                 let mut parts = vec![rights];
                 if !role.missing.is_empty() {
-                    let bot = role.bot.as_deref().unwrap_or("the App");
                     parts.push(format!(
-                        "fail: it misses {}. The fix: give {} each right on GitHub, then accept \
-                         the new rights on each install. See \"Accept the new rights of the lead \
-                         App\" in the book",
+                        "fail: it misses {}. The fix: riff github install {owner}",
                         role.missing.join(", "),
-                        bot.strip_suffix("[bot]").unwrap_or(bot)
                     ));
                 }
                 if !role.extra.is_empty() {
