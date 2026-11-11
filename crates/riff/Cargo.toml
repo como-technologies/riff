@@ -91,3 +91,7 @@ path = "tests/isolation.rs"
 [[test]]
 name = "keyring_store"
 path = "tests/keyring_store.rs"
+
+[[test]]
+name = "restart"
+path = "tests/restart.rs"
