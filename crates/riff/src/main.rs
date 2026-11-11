@@ -791,7 +791,7 @@ enum Command {
         #[command(subcommand)]
         command: CloudCommand,
     },
-    /// Make, install and check the GitHub Apps, and show their events
+    /// Make, install and check the GitHub Apps, and see events
     ///
     /// A riff has two GitHub Apps: the session App riff-OWNER for the
     /// workers and the verifiers, and the lead App riff-OWNER-lead for the
