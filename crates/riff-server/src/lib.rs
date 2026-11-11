@@ -237,6 +237,7 @@
 
 pub mod auth;
 pub mod bot;
+pub mod devices;
 pub mod engine;
 pub mod gcs;
 pub mod github;
@@ -251,6 +252,7 @@ pub mod renew;
 pub mod token;
 pub mod tools;
 pub mod trace;
+pub mod webauthn;
 
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -283,6 +285,7 @@ use riff_core::wire::{
     Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
 use riff_core::wire::{BotPost, Names, NamesReply, SetMachine};
+use riff_core::wire::{Devices, KeyReply, KeyStart, KeyTicket, KeyWait, RemoveDevice};
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
     Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
@@ -413,6 +416,9 @@ struct Server {
     /// The webhook of the session App: the deliveries, the debounce and
     /// the queue of the wakes (#1655).
     hooks: hooks::Hooks,
+    /// The adds of keys that wait for the page in the browser
+    /// (01M75NH2RSEJ3K618M17PCH3ZZ).
+    devices: Mutex<devices::Adds>,
 }
 
 /// The last checkpoint, and why the server writes none.
@@ -1563,6 +1569,7 @@ impl Service {
             facts: Mutex::new(facts),
             github,
             hooks,
+            devices: Mutex::new(devices::Adds::default()),
         }));
         service.write_log();
         service.keep_checkpoints();
@@ -2048,6 +2055,11 @@ impl Service {
             .route(GitHubToken::PATH, post(github::token))
             .route(GitHubDaemonToken::PATH, post(github::daemon_token))
             .route(GitHubEvents::PATH, post(hooks::events))
+            // The devices of a person (01M75NH30PNATYN33MXZQMVBW8).
+            .route(Devices::PATH, post(devices::list))
+            .route(RemoveDevice::PATH, post(command::<RemoveDevice>))
+            .route(KeyStart::PATH, post(devices::start))
+            .route(KeyWait::PATH, post(devices::wait))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {
@@ -2068,6 +2080,11 @@ impl Service {
             .route(github::START_PATH, get(github::start))
             .route(github::CREATED_PATH, get(github::created))
             .route(github::HOOK_PATH, post(hooks::hook))
+            // The page of the add of a key has no riff token: the ticket
+            // is its proof (01M75NH2RSEJ3K618M17PCH3ZZ).
+            .route(devices::PAGE_PATH, get(devices::page))
+            .route(KeyTicket::PATH, post(devices::options))
+            .route(KeyReply::PATH, post(devices::reply))
             .layer(middleware::from_fn_with_state(self.0.clone(), gate))
             // The facts answer also while the gate replies 503, and to a
             // `riff` of each version (01M3TJWJ12WEDCXW3W0529KRP2).

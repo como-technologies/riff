@@ -1,0 +1,7 @@
+{"format":1,"first":1}
+{"position":1,"written_at_ms":1794100000000,"by":"server","command":"make_riff","change":{"riff_made":{"riff_id":"7a2e3d4c-5b6f-4a70-9c8d-0e1f2a3b4c5d"}}}
+{"position":2,"written_at_ms":1794100001000,"by":{"person":"ann"},"command":"add_key","change":{"key_added":{"user":"ann","name":"yubikey","credential":"Y3JlZC1hbm4tMQ","public_key":"pQECAyYgASFYIA"}}}
+{"position":3,"written_at_ms":1794100002000,"by":{"person":"ann"},"command":"add_key","change":{"key_added":{"user":"ann","name":"phone","credential":"Y3JlZC1hbm4tMg","public_key":"pQECAyYgASFYIQ"}}}
+{"position":4,"written_at_ms":1794100003000,"by":{"person":"bob"},"command":"add_key","change":{"key_added":{"user":"bob","name":"yubikey","credential":"Y3JlZC1ib2ItMQ","public_key":"pAEDAzkBACBZAQA"}}}
+{"position":5,"written_at_ms":1794100004000,"by":{"person":"ann"},"command":"remove_device","change":{"device_removed":{"user":"ann","name":"yubikey"}}}
+{"position":6,"written_at_ms":1794100005000,"command":"add_key","change":{"key_added":{"user":"cy","name":"touch-id","credential":"Y3JlZC1jeS0x","public_key":"pAEBAycgBiFYIA"}}}

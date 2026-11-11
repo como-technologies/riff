@@ -41,6 +41,10 @@
 //! - The token path sends the command `admit` for the first step of a
 //!   sign-in ([`Engine::sign_in`], 01M3XA877YZQ649SWB5TN60V5P). Its
 //!   caller is the sign-in: the verified email of the provider.
+//! - The reply of the page of the add of a key sends the command
+//!   `add_key` ([`Engine::add_key`], 01M75NH2VF6HGZVY04GB358JG0). The
+//!   page has no token: its caller is the person of the token that
+//!   started the add.
 //! - The role of a caller comes from the people of the pending copy,
 //!   under the lock (01M3XA87F70CD3WH4STADSCW6S). A riff with no sign-in
 //!   refuses each command of the people, before `permits`, with the
@@ -181,12 +185,12 @@ use riff_core::record::{Change, Record};
 use riff_core::wire::{
     AliveReply, CALL_HEADER, Call, Claim, DenyOwner, End, Free, GitHubChange, Hold, Invite, Join,
     Keys, Lead, Leave, PassOwner, Pause, PlanChanged, PlanOff, Post, REFUSED_HEADER, REPEAT_HEADER,
-    Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin, SetIdle, SetNotes, SetPlan,
-    Start, Tailed, TakeOwner, Wake,
+    Register, Release, ReleaseFor, Remove, RemoveDevice, Resume, Revoke, SetAdmin, SetIdle,
+    SetNotes, SetPlan, Start, Tailed, TakeOwner, Wake,
 };
 use riff_state::log::Written;
 use riff_state::state::{
-    Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
+    AddKey, Admit, Admitted as SignedInAs, Announce, Arrive, Caller, Cause, Check, Code, Command,
     CommandKind, Delivery, Done, EndOwner, Forget, GrantOwner, Import, Imported, Key, MakeRiff,
     NameOwner, OwnerChange, Refused, Role, Signal, State,
 };
@@ -293,7 +297,14 @@ macro_rules! routed_by_token {
 }
 
 routed_by_token!(
-    Invite, Remove, SetAdmin, PassOwner, TakeOwner, DenyOwner, Revoke
+    Invite,
+    Remove,
+    SetAdmin,
+    PassOwner,
+    TakeOwner,
+    DenyOwner,
+    Revoke,
+    RemoveDevice
 );
 
 /// With sign-in, a post needs a valid signature from the key of its
@@ -1012,6 +1023,28 @@ impl Engine {
                 started: None,
             },
             command: admit,
+            call: None,
+        })
+        .await
+    }
+
+    /// The add of a key after the check of the reply of its
+    /// authenticator: the command `add_key` (01M75NH2VF6HGZVY04GB358JG0).
+    /// The page of the add has no token, so the caller is the person of
+    /// `proof`: the proof of the token that started the add. A sign-in
+    /// that ended since the start sends no command, as each call of its
+    /// token. Gives the new key.
+    pub async fn add_key(
+        &self,
+        proof: &SignedIn,
+        add: AddKey,
+    ) -> Result<riff_core::wire::DeviceInfo, Failed> {
+        let place = SessionUri::server().place().clone();
+        let me = SessionUri::new(proof.who.clone(), place);
+        let admitted = self.admit(Some(proof), &me)?;
+        self.dispatch(Authenticated {
+            admitted,
+            command: add,
             call: None,
         })
         .await

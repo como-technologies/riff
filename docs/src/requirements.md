@@ -3806,6 +3806,52 @@
   `not verified` on such a line. Each other message shows `verified` or
   `not verified`, also a message of another kind from
   `riff://riff@server`. Supersedes R199 in part.
+- **01M75NGT9Z0NSZTG97TBAMP7RS** A person adds, lists and removes their
+  FIDO2 / WebAuthn authenticators with `riff device`: `riff device add
+  --key NAME`, `riff device list` and `riff device remove NAME`. An
+  authenticator is a device of the kind `key`: a security key, a passkey
+  on a phone, or the authenticator of the laptop. A person can add two
+  or more, so a lost one locks nobody out. Supersedes
+  01M53XPZTG203SNM9MBKBERMB5 in part.
+- **01M75NH2P3QHCYDKQH60KGSF97** riff-server keeps the keys of each
+  person in the log. A record `key_added` holds the USER, the name, the
+  credential ID and the public key of a key. A record `device_removed`
+  holds the USER and the name of a device that the person removed. The
+  state keeps the time of the add and the time of the last use of each
+  key, also in a checkpoint. The add is a use.
+- **01M75NH2RSEJ3K618M17PCH3ZZ** `riff device add --key NAME` gets an
+  add from riff-server, opens the page of the add of riff-server in the
+  browser, as `riff login` does, and waits for its end. The page asks
+  the browser for a new credential, so each kind of authenticator works,
+  also a phone over a QR code. An add is good for 5 minutes and for one
+  reply. Its ticket is in the fragment of the URL of the page, so no
+  request line holds it.
+- **01M75NH2VF6HGZVY04GB358JG0** riff-server asks for no attestation,
+  and for the algorithms ES256, EdDSA and RS256. It checks each reply of
+  the page: the type `webauthn.create`, the challenge of the add, the
+  origin of riff-server, the hash of its relying party ID, the flag of
+  user presence, an algorithm that it asked for, and the credential ID.
+  It takes the attestation `none`, and the attestation `packed` with no
+  certificate: it checks the signature of that one with the new key. It
+  refuses each other attestation, a bad signature, a challenge that it
+  did not give, and a credential that a person of the riff has.
+- **01M75NH2Y3H1CR10CGRWNGT8RG** The relying party ID of riff-server is
+  the host of its public URL. A loopback address gives `localhost`, and
+  the page of the add is then on `localhost`, because a browser takes no
+  IP address as a relying party ID.
+- **01M75NH30PNATYN33MXZQMVBW8** Only a person token gets an add, lists
+  the devices of its person, and removes one. riff-server refuses a
+  session token with 403. A riff with no sign-in has no people, so it
+  has no devices. `riff device` refuses in an agent session and in a
+  container, before each call.
+- **01M75NH33CVGBVASSACBPXRR2G** The name of a device is 1 to 64
+  characters: ASCII letters, digits, `-`, `_` and `.`. riff-server
+  refuses a name that another device of the same person has. A person
+  has at most 10 keys.
+- **01M75NH3625QATGDT6DK652ZK6** `riff device list` shows each device of
+  the person: its kind, its name, the time of its add and the time of
+  its last use, in UTC. `riff device remove NAME` removes the device
+  NAME of the person at once.
 
 ## Sign-in and tokens
 
@@ -4693,13 +4739,11 @@ items are #962, #963, #977, #964 and #965.
   the parts of Android through JNI: the Keystore, Credential Manager,
   the camera and the notices.
 - **01M53XPZTG203SNM9MBKBERMB5** One command adds, lists and removes
-  each kind of device of a person:
-  `riff device add [NAME] [--kind KIND]`, `riff device list` and
-  `riff device remove NAME`. The kind
-  sets the scope of the device at add time. The first kind is `phone`,
-  the default. Each child design of #982 adds its kind and its scope.
-  A machine of `riff login` is a device of the kind `machine`, with
-  its host as its name and the scope of today.
+  each kind of device of a person: `riff device add`, `riff device
+  list` and `riff device remove NAME`. The kind sets the scope of the
+  device at add time. Each child design of #982 adds its kind and its
+  scope. A machine of `riff login` is a device of the kind `machine`,
+  with its host as its name and the scope of today.
 - **01M53NTR47XBDX6C6QN49RNP29** A person adds a phone from a machine
   with a live sign-in: `riff device add [NAME]`, in a terminal. NAME
   is the name of the device, as the host name of a machine, and not a

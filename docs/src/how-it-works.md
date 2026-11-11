@@ -1217,6 +1217,100 @@ watch says once that the sign-in ended, and tries again every 5 seconds.
 keeps on the machine that the sign-in ended. Until `riff login`, each
 `riff` command says so and sends no token request.
 
+## A proof of presence
+
+A session of yours acts as you: it uses your sign-in. So `riff-server`
+cannot tell you from a program of yours. A proof of presence can. It
+is a fresh check that only you can pass: a touch of your security key,
+a fingerprint, or a PIN. A session never gives a proof: your
+authenticator is a device of yours, never in a container.
+
+An authenticator is a FIDO2 / WebAuthn authenticator of yours:
+
+- a security key, for example a YubiKey;
+- a passkey on your phone: the phone signs over a QR code;
+- the authenticator of your computer: Touch ID, Windows Hello or a
+  fingerprint reader.
+
+Today `riff-server` keeps your authenticators, and no action asks for
+a proof yet. Add two or more, so that a lost one locks you out of
+nothing.
+
+```mermaid
+sequenceDiagram
+    participant P as you
+    participant R as riff device add
+    participant S as riff-server
+    participant B as your browser
+    participant A as your authenticator
+    R->>S: the start of the add of the key NAME
+    S-->>R: the page of the add, for 5 minutes and one reply
+    R->>B: open the page
+    B->>S: the options: a new challenge, and your keys
+    P->>B: press the button
+    B->>A: make a new credential for riff-server
+    P->>A: a touch, a fingerprint or a PIN
+    A-->>B: the new public key, signed
+    B->>S: the reply
+    S->>S: check the challenge, the origin, the touch and the signature
+    S->>S: keep the public key in the log
+    S-->>B: riff added the key NAME
+    R->>S: is the add done?
+    S-->>R: added
+```
+
+- The private key never leaves your authenticator. `riff-server`
+  keeps only the public key and the credential ID, in its log.
+- `riff-server` refuses a reply with a bad signature, a challenge that
+  it did not give, an origin of another site, or no touch. It refuses
+  an authenticator that has a key of the riff already.
+- The authenticator binds the key to the address of `riff-server`. A
+  riff on a loopback address, for example `127.0.0.1`, opens its page
+  on `localhost`: a browser takes no IP address for a key.
+- Only you, in a terminal, add, list and remove your authenticators.
+  `riff-server` refuses the token of a session, and `riff device`
+  refuses in an agent session and in a container.
+
+### Add an authenticator
+
+```sh
+riff device add --key yubikey
+```
+
+Your browser opens the page of the add. Press the button on the page.
+Then touch your security key, use the fingerprint reader or the PIN of
+your computer, or scan the QR code with your phone. When the browser
+does not open, open the URL that `riff` prints. `riff` waits at most 5
+minutes, then prints:
+
+```text
+riff: added the key yubikey. riff device list shows it.
+```
+
+The name has 1 to 64 letters, digits, `-`, `_` and `.`. Each of your
+devices has a name of its own. You can have at most 10 keys. When
+`riff-server` refuses the reply, `riff` prints why, and adds no key.
+
+### List your authenticators
+
+```sh
+riff device list
+```
+
+```text
+KIND  NAME     ADDED                 LAST USE
+key   phone    2026-11-11 09:12 UTC  2026-11-11 09:12 UTC
+key   yubikey  2026-11-11 09:10 UTC  2026-11-11 09:10 UTC
+```
+
+### Remove an authenticator
+
+```sh
+riff device remove yubikey
+```
+
+`riff-server` forgets the key at once. Remove a lost key so.
+
 ## A session URI
 
 ```text

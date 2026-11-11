@@ -260,6 +260,8 @@ pub fn show(record: &Record) -> String {
             n.thread,
             n.text.len()
         ),
+        Change::KeyAdded(k) => format!("key_added  {} of {}", k.name, k.user),
+        Change::DeviceRemoved(d) => format!("device_removed  {} of {}", d.name, d.user),
     };
     format!(
         "{}  {}  {facts}  ({})",
@@ -309,7 +311,9 @@ fn thread_of(record: &Record) -> Option<String> {
         | Change::OwnerSet(_)
         | Change::OwnerAsked(_)
         | Change::OwnerDenied(_)
-        | Change::SigninsEnded(_) => None,
+        | Change::SigninsEnded(_)
+        | Change::KeyAdded(_)
+        | Change::DeviceRemoved(_) => None,
     }
 }
 

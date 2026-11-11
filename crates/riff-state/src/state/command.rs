@@ -13,6 +13,7 @@
 //! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget), [`Import`](super::Import) |
 //! | plan | [`super::plan`] | [`Hold`](riff_core::wire::Hold), [`Free`](riff_core::wire::Free), [`SetPlan`](riff_core::wire::SetPlan), [`PlanOff`](riff_core::wire::PlanOff) |
 //! | notes | [`super::notes`] | [`SetNotes`](riff_core::wire::SetNotes) |
+//! | devices | [`super::devices`] | [`AddKey`](super::AddKey), [`RemoveDevice`](riff_core::wire::RemoveDevice) |
 //! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`PassOwner`](riff_core::wire::PassOwner), [`TakeOwner`](riff_core::wire::TakeOwner), [`DenyOwner`](riff_core::wire::DenyOwner), [`GrantOwner`](super::GrantOwner), [`EndOwner`](super::EndOwner), [`NameOwner`](super::NameOwner), [`Revoke`](riff_core::wire::Revoke) |
 //!
 //! # Who can send a command
@@ -373,6 +374,8 @@ command_kinds! {
     Plan = "plan",
     PlanOff = "plan_off",
     Notes = "notes",
+    AddKey = "add_key",
+    RemoveDevice = "remove_device",
 }
 
 impl CommandKind {
@@ -386,11 +389,13 @@ impl CommandKind {
     ///
     /// assert!(CommandKind::Invite.of_people() && CommandKind::Admit.of_people());
     /// assert!(!CommandKind::Claim.of_people() && !CommandKind::MakeRiff.of_people());
-    /// assert_eq!(CommandKind::ALL.iter().filter(|kind| kind.of_people()).count(), 11);
+    /// assert_eq!(CommandKind::ALL.iter().filter(|kind| kind.of_people()).count(), 13);
     /// ```
     pub fn of_people(self) -> bool {
         // Each kind has an arm: a new kind does not compile until a
-        // person decides (01M51JBTEM10W68K6F267BB79N).
+        // person decides (01M51JBTEM10W68K6F267BB79N). A device is a
+        // device of a person, so a riff with no sign-in has none
+        // (01M75NH30PNATYN33MXZQMVBW8).
         match self {
             CommandKind::Admit
             | CommandKind::Invite
@@ -402,7 +407,9 @@ impl CommandKind {
             | CommandKind::GrantOwner
             | CommandKind::EndOwner
             | CommandKind::NameOwner
-            | CommandKind::Revoke => true,
+            | CommandKind::Revoke
+            | CommandKind::AddKey
+            | CommandKind::RemoveDevice => true,
             CommandKind::Register
             | CommandKind::Start
             | CommandKind::End
@@ -471,7 +478,9 @@ impl CommandKind {
             | CommandKind::PassOwner
             | CommandKind::TakeOwner
             | CommandKind::DenyOwner
-            | CommandKind::Revoke => false,
+            | CommandKind::Revoke
+            | CommandKind::AddKey
+            | CommandKind::RemoveDevice => false,
             CommandKind::MakeRiff
             | CommandKind::Announce
             | CommandKind::Forget
@@ -705,6 +714,9 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         | CommandKind::TakeOwner
         | CommandKind::DenyOwner
         | CommandKind::Revoke => (&[Person], Can),
+        // An authenticator is a device of the person, never of a
+        // session (01M75NH30PNATYN33MXZQMVBW8).
+        CommandKind::AddKey | CommandKind::RemoveDevice => (&[Person], Can),
         CommandKind::Admit => (&[SignIn], Can),
         CommandKind::MakeRiff
         | CommandKind::Announce
@@ -924,6 +936,8 @@ mod tests {
         row(CommandKind::Plan,       PS, false, false, true),
         row(CommandKind::PlanOff,    PS, false, false, true),
         row(CommandKind::Notes,      PS, false, false, true),
+        row(CommandKind::AddKey,     P,  true,  true,  false),
+        row(CommandKind::RemoveDevice, P, true, true,  false),
     ];
 
     /// The row of `kind` in [`TABLE`].
@@ -1027,12 +1041,12 @@ mod tests {
         use riff_core::record::{Plan, PlanSet};
         use riff_core::wire::{
             Claim, DenyOwner, End, Free, Hold, Invite, Join, Kind, Lead, Leave, PassOwner, Pause,
-            PlanOff, Post, Register, Release, ReleaseFor, Remove, Resume, Revoke, SetAdmin,
-            SetIdle, SetNotes, SetPlan, Start, StartReason, TakeOwner,
+            PlanOff, Post, Register, Release, ReleaseFor, Remove, RemoveDevice, Resume, Revoke,
+            SetAdmin, SetIdle, SetNotes, SetPlan, Start, StartReason, TakeOwner,
         };
 
         use crate::state::{
-            Admit, Announce, EndOwner, Forget, GrantOwner, Import, MakeRiff, NameOwner,
+            AddKey, Admit, Announce, EndOwner, Forget, GrantOwner, Import, MakeRiff, NameOwner,
         };
 
         let of = Needs(caller);
@@ -1148,6 +1162,18 @@ mod tests {
             CommandKind::GrantOwner => of.of(GrantOwner, kind),
             CommandKind::EndOwner => of.of(EndOwner, kind),
             CommandKind::NameOwner => of.of(NameOwner { email }, kind),
+            CommandKind::AddKey => {
+                let add = AddKey {
+                    name: "yubikey".into(),
+                    credential: "Y3JlZA".into(),
+                    public_key: "pQ".into(),
+                };
+                of.of(add, kind)
+            }
+            CommandKind::RemoveDevice => {
+                let name = "yubikey".to_owned();
+                of.of(RemoveDevice { name }, kind)
+            }
             CommandKind::Revoke => {
                 let own = caller.who().user().to_uppercase();
                 return [None, Some(own), Some("bob".to_owned())]
@@ -1199,7 +1225,7 @@ mod tests {
             }
         }
         // Each kind has one case, and `revoke` has 3.
-        assert_eq!(tried, (33 + 2) * 4 * 2 * 3);
+        assert_eq!(tried, (35 + 2) * 4 * 2 * 3);
     }
 
     #[test]

@@ -12,6 +12,7 @@
 //! | `riff relay mcp`, `riff relay watch` | The tools and the wakes of a session in a container. See [`tools`], [`session_relay`]. |
 //! | `riff server`, `riff update` | Show the riffs, and update riff on this machine. See [`lifecycle`], [`release`] for the static binaries of a release, and [`auto_update`] for a machine that updates riff by itself. |
 //! | `riff login`, `riff logout` | Sign in to the server, or out. See [`login`]. |
+//! | `riff device add --key NAME`, `riff device list`, `riff device remove NAME` | Add, list and remove the FIDO2 / WebAuthn authenticators of the person. See [`device`]. |
 //! | `riff release cut`, `publish`, `status`, `approve`, `hold` | The release cycle: the release pull request, the tag, the GitHub release, the approval of the deploy, and the hold of a lead. See [`cycle`], [`hold`], and [`alerts`] for the alert gate of the cut. |
 //! | `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request on GitHub, with `gh`. See [`pr`]. |
 //! | `riff session why` | Shows why a session of a wave ended with no pull request. See [`ends`]. |
@@ -71,6 +72,7 @@ pub mod compile_cache;
 pub mod cycle;
 pub mod daemon;
 pub mod denied;
+pub mod device;
 pub mod disk;
 pub mod dropped;
 pub mod ends;

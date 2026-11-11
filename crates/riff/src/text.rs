@@ -17,9 +17,9 @@ use crate::style::{BOLD, DIM, ERROR, GOOD, MUTED, WARNING, styled};
 use riff_client::api::{Claimed, Inbox, Told};
 use riff_client::threads::{Line, Names, RIFF_BOT, Thread};
 use riff_core::wire::{
-    AdminSet, FreeReply, GitHubRole, HoldReply, Invited, Kind, LeadReply, OwnerAsked, OwnerDenied,
-    OwnerPassed, PauseInfo, Posted, ReleaseReply, Removed, Revoked, RiffOwner, RiffReply,
-    RiffState, SessionInfo, StepChange, ThreadInfo, Wake,
+    AdminSet, DeviceInfo, DevicesReply, FreeReply, GitHubRole, HoldReply, Invited, Kind, LeadReply,
+    OwnerAsked, OwnerDenied, OwnerPassed, PauseInfo, Posted, ReleaseReply, Removed, Revoked,
+    RiffOwner, RiffReply, RiffState, SessionInfo, StepChange, ThreadInfo, Wake,
 };
 
 /// Tells the reader how to act on a message (R10). The start hook and
@@ -5554,6 +5554,158 @@ pub fn cloud_client_written(path: &Path) -> String {
 /// The refusal of `riff cloud deploy` before `riff cloud signin`.
 pub fn cloud_no_client(name: &str) -> String {
     format!("The settings {name} have no client ID. Run: riff cloud signin {name}")
+}
+
+/// The refusal of `riff device` in an agent session or in a container
+/// (01M75NH30PNATYN33MXZQMVBW8).
+///
+/// ```
+/// let text = riff::text::device_refused(false);
+/// assert!(text.starts_with("riff: a session never runs riff device."), "{text}");
+/// assert!(riff::text::device_refused(true).starts_with("riff: a container never runs"));
+/// ```
+pub fn device_refused(container: bool) -> String {
+    let who = if container {
+        "a container"
+    } else {
+        "a session"
+    };
+    format!(
+        "riff: {who} never runs riff device. An authenticator is a device of your person, \
+         and riff device changed nothing. next: a person runs riff device in a plain terminal, \
+         outside Claude Code"
+    )
+}
+
+/// The lines of `riff device add --key NAME` before the browser opens the
+/// page of the add (01M75NH2RSEJ3K618M17PCH3ZZ).
+///
+/// ```
+/// let text = riff::text::device_add_opens("yubikey", "https://riff.example.com/device/key#T");
+/// assert!(text.contains("the key yubikey"), "{text}");
+/// assert!(text.contains("\n  https://riff.example.com/device/key#T\n"), "{text}");
+/// ```
+pub fn device_add_opens(name: &str, url: &str) -> String {
+    format!(
+        "riff device add makes the key {name}: your browser opens the page of the add. \
+         When it does not, open this URL:\n  {url}\n\
+         Press the button on the page, then touch your security key, use the fingerprint \
+         reader or the PIN of this computer, or scan the QR code with your phone.\n\
+         riff waits at most 5 minutes."
+    )
+}
+
+/// The line of a key that riff-server added.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::device_added("yubikey"),
+///     "riff: added the key yubikey. riff device list shows it."
+/// );
+/// ```
+pub fn device_added(name: &str) -> String {
+    format!("riff: added the key {name}. riff device list shows it.")
+}
+
+/// The error of an add that riff-server refused, with its reason.
+///
+/// ```
+/// let text = riff::text::device_add_failed("yubikey", "a bad signature");
+/// assert_eq!(text, "riff did not add the key yubikey: a bad signature");
+/// ```
+pub fn device_add_failed(name: &str, reason: &str) -> String {
+    format!("riff did not add the key {name}: {reason}")
+}
+
+/// The error of an add with no reply of the page in its time.
+pub fn device_add_no_reply(name: &str) -> String {
+    format!(
+        "riff did not add the key {name}: the page of the add sent no reply. \
+         next: riff device add --key {name}"
+    )
+}
+
+/// The table of `riff device list` (01M75NH3625QATGDT6DK652ZK6): the
+/// kind, the name, the time of the add and of the last use of each
+/// device, in UTC.
+///
+/// ```
+/// use riff_core::wire::{DeviceInfo, DeviceKind, DevicesReply};
+///
+/// let none = riff::text::device_list(&DevicesReply::default());
+/// assert!(none.contains("riff device add --key NAME"), "{none}");
+/// let reply = DevicesReply {
+///     devices: vec![DeviceInfo {
+///         kind: DeviceKind::Key,
+///         name: "yubikey".into(),
+///         added_ms: 1_793_718_035_000,
+///         used_ms: 1_793_718_095_000,
+///     }],
+/// };
+/// assert_eq!(
+///     riff::text::device_list(&reply),
+///     "KIND  NAME     ADDED                 LAST USE\n\
+///      key   yubikey  2026-11-03 15:00 UTC  2026-11-03 15:01 UTC\n"
+/// );
+/// ```
+pub fn device_list(reply: &DevicesReply) -> String {
+    if reply.devices.is_empty() {
+        return "You have no devices. Add an authenticator: riff device add --key NAME\n".into();
+    }
+    let when = |ms: u64| {
+        DateTime::from_timestamp_millis(i64::try_from(ms).unwrap_or(i64::MAX)).map_or_else(
+            || "an unknown time".to_owned(),
+            |at| at.format("%Y-%m-%d %H:%M UTC").to_string(),
+        )
+    };
+    let rows: Vec<[String; 4]> = reply
+        .devices
+        .iter()
+        .map(|device| {
+            [
+                device.kind.to_string(),
+                device.name.clone(),
+                when(device.added_ms),
+                when(device.used_ms),
+            ]
+        })
+        .collect();
+    let header = ["KIND", "NAME", "ADDED", "LAST USE"].map(str::to_owned);
+    let width = |column: usize| {
+        rows.iter()
+            .chain([&header])
+            .map(|row| row[column].chars().count())
+            .max()
+            .unwrap_or(0)
+    };
+    let widths = [width(0), width(1), width(2)];
+    let mut out = String::new();
+    for row in [&header].into_iter().chain(&rows) {
+        let _ = writeln!(
+            out,
+            "{:<w0$}  {:<w1$}  {:<w2$}  {}",
+            row[0],
+            row[1],
+            row[2],
+            row[3],
+            w0 = widths[0],
+            w1 = widths[1],
+            w2 = widths[2],
+        );
+    }
+    out
+}
+
+/// The line of a device that `riff device remove` removed.
+///
+/// ```
+/// use riff_core::wire::{DeviceInfo, DeviceKind};
+///
+/// let gone = DeviceInfo { kind: DeviceKind::Key, name: "yubikey".into(), added_ms: 0, used_ms: 0 };
+/// assert_eq!(riff::text::device_removed(&gone), "riff: removed the key yubikey.");
+/// ```
+pub fn device_removed(device: &DeviceInfo) -> String {
+    format!("riff: removed the {} {}.", device.kind, device.name)
 }
 
 /// The refusal of `riff github COMMAND` in an agent session or in a

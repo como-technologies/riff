@@ -33,6 +33,7 @@ mod container_commands;
 mod daemon;
 #[cfg(target_os = "linux")]
 mod daemon_hosts;
+mod device;
 #[cfg(target_os = "linux")]
 mod first_run;
 mod forge_text;

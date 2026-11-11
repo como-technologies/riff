@@ -11,7 +11,7 @@
 //! | `work::Saved` | `claims`, `leads` |
 //! | `sessions::Saved` | `sessions` |
 //! | `presence::Saved` | `cursors`, `statuses` (the status and the long step of each session) |
-//! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended` |
+//! | `people::Saved` | `riff_id`, `users`, `members`, `admins`, `owner`, `no_owner`, `owner_asked`, `signins_ended`, `keys` |
 //! | `plan::Saved` | `plans` |
 //! | `calls::Saved` | `calls` |
 //!

@@ -44,6 +44,7 @@ nix = { workspace = true, features = ["fs", "signal", "user"] }
 [dev-dependencies]
 assert_cmd.workspace = true
 riff-server = { path = "../riff-server" }
+riff-core = { workspace = true, features = ["test-support"] }
 isolated = { path = "../isolated" }
 axum.workspace = true
 jsonwebtoken = { workspace = true, features = ["use_pem"] }

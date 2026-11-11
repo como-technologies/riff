@@ -10,7 +10,7 @@
 //! | [`Threads`] | [`super::threads`] | The members and the kept messages of each thread. |
 //! | [`Work`] | [`super::work`] | The claims and the leads. |
 //! | [`TheRiff`] | [`super::the_riff`] | The pauses, and the settings. |
-//! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, the owner, and the request for the owner role. |
+//! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, the owner, the request for the owner role, and the keys of each USER. |
 //! | [`Plans`] | [`super::plan`] | The holds and the plan of each repository thread. |
 //!
 //! # Only `apply` changes the riff
@@ -52,6 +52,8 @@
 //! | `item_held` | It keeps the `by` and the time of the record with the hold: who held the item, and when (01M43GSGB9ZFHSG0Q83Y50FEGW). | Yes. |
 //! | `plan_set` | It keeps the position and the time of the record with the plan (01M4A4Z3QVRC57RE7M43ZRF4T2). | Yes. |
 //! | `notes_set` | It keeps the `by` and the time of the record with the text, and each old text (01M59258K3TYR09HC4AWHWZPEX). | Yes. |
+//! | `key_added` | It keeps the time of the record as the time of the add and of the last use of the key (01M75NH2P3QHCYDKQH60KGSF97). A name that the person has, or a credential that the riff knows, changes nothing: `handle` refuses such an add. | Yes. |
+//! | `device_removed` | A name that the person has no device with changes nothing. | Yes. |
 
 use riff_core::record::{Change, Record};
 
@@ -242,6 +244,8 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         Change::PlanSet(set) => riff.plans.set(set, record),
         Change::PlanEnded(ended) => riff.plans.ended(ended),
         Change::NotesSet(set) => riff.plans.notes_set(set, record),
+        Change::KeyAdded(added) => riff.people.key_added(added, record.envelope.written_at_ms),
+        Change::DeviceRemoved(removed) => riff.people.device_removed(removed),
     };
     if let Err(what) = taken {
         tracing::warn!(

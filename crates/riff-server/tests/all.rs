@@ -10,6 +10,7 @@ mod cli;
 mod client_check;
 mod cloud;
 mod cut;
+mod devices;
 mod direct;
 mod dpop;
 mod facts;

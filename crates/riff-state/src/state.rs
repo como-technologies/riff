@@ -273,6 +273,7 @@ pub type Blocked = (SessionUri, String);
 
 pub mod calls;
 pub mod command;
+pub mod devices;
 pub mod names;
 pub mod notes;
 pub mod people;
@@ -291,6 +292,7 @@ pub use command::{
     Caller, Cause, Class, Code, Command, CommandKind, Done, LEAD_BY_PERSON, Now, Refused, Role,
     permits,
 };
+pub use devices::{AddKey, PersonKey};
 pub use people::{Admit, Admitted, EndOwner, GrantOwner, NameOwner, OwnerChange, People};
 pub use plan::Plans;
 pub use presence::{Imported, ImportedSession, Presence, Signal};
@@ -1072,6 +1074,30 @@ impl State {
     /// signed in with it (R209).
     pub fn knows_person(&self, user: &str) -> bool {
         self.written.people().email_of(user).is_some()
+    }
+
+    /// The devices of `user` in the written copy, sorted by name
+    /// (01M75NH3625QATGDT6DK652ZK6).
+    pub fn devices(&self, user: &str) -> riff_core::wire::DevicesReply {
+        devices::devices(self.written.people(), user)
+    }
+
+    /// The credential ID of each key of `user` in the written copy: an
+    /// authenticator with one of them makes no second key
+    /// (01M75NH2VF6HGZVY04GB358JG0).
+    pub fn credentials(&self, user: &str) -> Vec<String> {
+        self.written
+            .people()
+            .keys_of(user)
+            .map(|(_, key)| key.credential.clone())
+            .collect()
+    }
+
+    /// Refuses the name `name` of a new key of `user` in the pending
+    /// copy, as `add_key` does: the check at the start of an add
+    /// (01M75NH33CVGBVASSACBPXRR2G).
+    pub fn refuse_key_name(&self, user: &str, name: &str) -> Result<(), Refused> {
+        devices::refuse_name(self.pending.people(), user, name)
     }
 
     /// The refusal of a command of `user` from a sign-in that started
@@ -4296,6 +4322,8 @@ mod tests {
                 "no_owner": true,
                 "owner_asked": {"email": "cy@acme.io", "due_ms": T0},
                 "signins_ended": {"bob": 1},
+                "keys": {"mike": {"yubikey": {
+                    "credential": "Y3JlZA", "public_key": "pQ", "added_ms": T0, "used_ms": T0}}},
                 "plans": {"como-technologies/riff": {
                     "notes": {"mike": [
                         {"text": "one", "by": {"person": "mike"}, "at_ms": T0},

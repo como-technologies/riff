@@ -132,7 +132,7 @@
 //! | The caller in `by` | `{"session":"USER/ID"}` | `other` ([`By`]) |
 //! | A session in `woken` ([`Who`]) | `posted` | The read checks no character. A field that the build does not know is skipped. |
 //! | The signature and the payload of a message | `sig`, `payload` | The read keeps the text, and checks nothing. A reader checks them: a text that does not check gives a message that is not verified. |
-//! | An item, an email, a user, the ID of a riff, a body, a command, the reason of a hold, the title of a wave | `item`, `email`, `user`, `riff_id`, `body`, `command`, `reason`, `title` | Free text. |
+//! | An item, an email, a user, the ID of a riff, a body, a command, the reason of a hold, the title of a wave, the name of a device, a credential ID, a public key | `item`, `email`, `user`, `riff_id`, `body`, `command`, `reason`, `title`, `name`, `credential`, `public_key` | Free text. `handle` of `add_key` checks the name, the credential and the key; the read does not. |
 //! | An item of a plan, a need, a done need | `items`, `needs`, `done` of `plan_set` | Free text: `handle` of `plan` checks the form `issue-N`, and the read does not. |
 //! | A time, a position, a seq, a count, the number of a wave | `written_at_ms`, `at_ms`, `due_ms`, `position`, `seq`, `after_secs`, `per_host`, `number` | The line does not read. A number is a whole number that is not negative, and its type never changes (the rule of a field). `per_host` is at most 65535. |
 //! | A mark | `worker`, `must_clear`, `admin` | The line does not read. A mark is `true` or `false`, and its type never changes. |
@@ -311,6 +311,12 @@ changes! {
     /// text replaces the old text, and the old text stays in the
     /// history (01M59258K3TYR09HC4AWHWZPEX).
     NotesSet(NotesSet) = "notes_set",
+    /// A person added a FIDO2 / WebAuthn authenticator: a device of the
+    /// kind `key` (01M75NH2P3QHCYDKQH60KGSF97).
+    KeyAdded(KeyAdded) = "key_added",
+    /// A person removed one of their devices
+    /// (01M75NH3625QATGDT6DK652ZK6).
+    DeviceRemoved(DeviceRemoved) = "device_removed",
 }
 // ANCHOR_END: record
 
@@ -476,7 +482,9 @@ impl Change {
             | Change::ItemFreed(_)
             | Change::PlanSet(_)
             | Change::PlanEnded(_)
-            | Change::NotesSet(_) => None,
+            | Change::NotesSet(_)
+            | Change::KeyAdded(_)
+            | Change::DeviceRemoved(_) => None,
         }
     }
 }
@@ -605,7 +613,9 @@ impl Record {
             | Change::OwnerSet(_)
             | Change::OwnerAsked(_)
             | Change::OwnerDenied(_)
-            | Change::SigninsEnded(_) => false,
+            | Change::SigninsEnded(_)
+            | Change::KeyAdded(_)
+            | Change::DeviceRemoved(_) => false,
         }
     }
 
@@ -1169,6 +1179,46 @@ pub struct SigninsEnded {
     pub user: String,
 }
 
+/// A FIDO2 / WebAuthn authenticator of a person: a key
+/// (01M75NH2P3QHCYDKQH60KGSF97). riff-server checked the reply of the
+/// authenticator before it wrote the record. The time of the record is
+/// the time of the add, and its first use.
+///
+/// ```
+/// use riff_core::record::{Change, KeyAdded};
+///
+/// let added = Change::KeyAdded(KeyAdded {
+///     user: "mike".into(),
+///     name: "yubikey".into(),
+///     credential: "Y3JlZA".into(),
+///     public_key: "pQECAyYgASFYIA".into(),
+/// });
+/// assert_eq!(
+///     serde_json::to_string(&added).unwrap(),
+///     r#"{"key_added":{"user":"mike","name":"yubikey","credential":"Y3JlZA","public_key":"pQECAyYgASFYIA"}}"#
+/// );
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct KeyAdded {
+    /// The USER of the person.
+    pub user: String,
+    /// The name of the key: no other device of the person has it.
+    pub name: String,
+    /// The credential ID, in base64url with no padding.
+    pub credential: String,
+    /// The public key of the credential: a COSE key in CBOR, in
+    /// base64url with no padding.
+    pub public_key: String,
+}
+
+/// A person removed the device `name` (01M75NH3625QATGDT6DK652ZK6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DeviceRemoved {
+    /// The USER of the person.
+    pub user: String,
+    pub name: String,
+}
+
 /// One line of the log, as this build reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
@@ -1335,6 +1385,16 @@ pub fn one_of_each() -> Vec<Change> {
             thread: thread(),
             user: "ann".into(),
             text: "Wave 36 runs. Mike decides the cut.".into(),
+        }),
+        Change::KeyAdded(KeyAdded {
+            user: "ann".into(),
+            name: "yubikey".into(),
+            credential: "Y3JlZA".into(),
+            public_key: "pQECAyYgASFYIA".into(),
+        }),
+        Change::DeviceRemoved(DeviceRemoved {
+            user: "ann".into(),
+            name: "yubikey".into(),
         }),
     ]
 }
