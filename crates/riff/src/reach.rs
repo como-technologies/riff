@@ -47,6 +47,35 @@
 //! the daemon on the socket, and `riff daemon events NAME --host HOST`
 //! asks the daemon of HOST through it ([`Reach::follow_events`],
 //! #1441).
+//!
+//! # Each command in a container
+//!
+//! Each riff command that asks riff-server takes the socket in a
+//! container (01M74A84SA5KCBVGVW7M9ETJ3A): also `riff top`, `riff read`,
+//! `riff post`, `riff status`, `riff blocked`, `riff step`, `riff tell`,
+//! `riff denials`, `riff pause`, `riff resume`, `riff pr open`, `riff pr
+//! wait`, `riff verify`, `riff init` and the TUI. Each such method of
+//! [`Reach`] takes the client and the URI of the session for the way
+//! straight, and gives the line for the person: [`Reach::post`],
+//! [`Reach::read`], [`Reach::look`] and the others. The table [`COMMANDS`]
+//! names the way of each subcommand ([`Way`]). A command of
+//! [`Way::Host`], for example `riff claim` or `riff login`, refuses in a
+//! container before each call (01M74A8CXVRD352VRJ9FH54HJ1).
+//!
+//! | Through the socket | Who may |
+//! |---|---|
+//! | post, tell, read, status, blocked, step | each session, as with its riff tools |
+//! | pause and resume, the fact of a pull request, the thread denials | the lead (01M74A8D1GV6TCPXV2XEPVA53A) |
+//! | the GitHub Apps of the riff, for `riff init` | each session: no key and no secret (01M74A8DC74TT2YGZPBBAENMWH) |
+//!
+//! ```mermaid
+//! flowchart LR
+//!     C["riff COMMAND in a container"] --> W{"its way"}
+//!     W -- Socket --> D["the riff daemon of the host:<br/>the call as the session"]
+//!     D --> S["riff-server"]
+//!     W -- Host --> R["refuses at once:<br/>run it on the host"]
+//!     W -- Local --> L["asks no riff-server"]
+//! ```
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -55,8 +84,8 @@ use anyhow::{Result, anyhow};
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{
-    HoldInfo, LogReply, MembersReply, Person, RiffOwner, RiffReply, RiffState, SessionInfo,
-    WhoReply,
+    HoldInfo, Kind, LogReply, MembersReply, Person, PullState, RiffOwner, RiffReply, RiffState,
+    SessionInfo, Status, StepChange, WhoReply,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -571,6 +600,491 @@ impl Reach {
             Reach::Daemon(socket) => ask(socket, &ServerCall::ResumeRiff).await,
         }
     }
+
+    /// True when `riff top` and the TUI go on after `error` of a look,
+    /// with the last good look (01M3Z8FXE2DY34ZP75WJE1S8HR). Straight, a
+    /// new try must be able to repair it ([`riff_client::api::passes`]).
+    /// Through the socket, each error passes: the riff daemon of the
+    /// host starts again after an update (01M74A8D8AMEM1A64XWXPC65J5).
+    ///
+    /// ```
+    /// use riff::reach::Reach;
+    ///
+    /// let refused = anyhow::anyhow!("the daemon went away");
+    /// assert!(Reach::Daemon("/run/riff/riff.sock".into()).passes(&refused));
+    /// assert!(!Reach::Direct("http://127.0.0.1:7878".into()).passes(&refused));
+    /// ```
+    pub fn passes(&self, error: &anyhow::Error) -> bool {
+        match self {
+            Reach::Direct(_) => riff_client::api::passes(error),
+            Reach::Daemon(_) => true,
+        }
+    }
+
+    /// One look of `riff top` and of the TUI: the state of the riff and
+    /// the reply to `who`, with the state of each session that the server
+    /// sent none for, and the time of the call `who`
+    /// (01M74A8D8AMEM1A64XWXPC65J5). Straight, it
+    /// asks with `api` as `me` ([`crate::top::look`]). Through the socket,
+    /// one call reads both.
+    pub async fn look(
+        &self,
+        api: &Api,
+        me: &SessionUri,
+    ) -> Result<(RiffReply, WhoReply, std::time::Duration)> {
+        match self {
+            Reach::Direct(_) => crate::top::look(api, me).await,
+            Reach::Daemon(_) => {
+                let start = std::time::Instant::now();
+                let WhoFacts { pauses, mut who } = self.who_facts(false).await?;
+                let call = start.elapsed();
+                crate::state::fill(&mut who.sessions, pauses.state);
+                Ok((pauses, who, call))
+            }
+        }
+    }
+
+    /// The holds of the thread `thread`, by their item, for `riff top` and
+    /// the TUI. Straight, it asks with `api` as `me`.
+    pub async fn holds_as(
+        &self,
+        api: &Api,
+        me: &SessionUri,
+        thread: &ThreadName,
+    ) -> Result<BTreeMap<String, HoldInfo>> {
+        match self {
+            Reach::Direct(_) => Ok(api.plan_show(me, thread).await?.holds),
+            Reach::Daemon(_) => self.holds(thread).await,
+        }
+    }
+
+    /// The live sessions of the riff, for `riff verify` and `riff pr
+    /// open`. Straight, it asks with `api` as `me`.
+    pub async fn sessions(&self, api: &Api, me: &SessionUri) -> Result<Vec<SessionInfo>> {
+        match self {
+            Reach::Direct(_) => api.who(me, false).await,
+            Reach::Daemon(_) => self.who(false).await,
+        }
+    }
+
+    /// `riff post`: posts `body` of the kind `kind` to `thread`, and wakes
+    /// the sessions that `to` selects. It gives the line for the person.
+    pub async fn post(
+        &self,
+        api: &Api,
+        me: &SessionUri,
+        thread: &ThreadName,
+        to: &[riff_core::selector::Selector],
+        body: &str,
+        kind: Kind,
+    ) -> Result<String> {
+        match self {
+            Reach::Direct(_) => Ok(text::posted(
+                &api.post(me, Some(thread), to, body, kind).await?,
+            )),
+            Reach::Daemon(socket) => {
+                let call = ServerCall::Post {
+                    thread: thread.clone(),
+                    to: to.to_vec(),
+                    body: body.to_owned(),
+                    kind,
+                };
+                ask(socket, &call).await
+            }
+        }
+    }
+
+    /// `riff status`: sets the status of the session to `step`, and gives
+    /// the line for the person.
+    pub async fn set_status(&self, api: &Api, me: &SessionUri, step: &str) -> Result<String> {
+        match self {
+            Reach::Direct(_) => {
+                let status = Status {
+                    step: step.to_owned(),
+                };
+                api.status(me, &status).await?;
+                Ok(text::status_set(&status))
+            }
+            Reach::Daemon(socket) => {
+                let call = ServerCall::SetStatus {
+                    step: step.to_owned(),
+                };
+                ask(socket, &call).await
+            }
+        }
+    }
+
+    /// `riff blocked`: says that the session cannot go on, and gives the
+    /// line for the person.
+    pub async fn blocked(&self, api: &Api, me: &SessionUri, reason: &str) -> Result<String> {
+        match self {
+            Reach::Direct(_) => Ok(text::blocked_set(reason, api.blocked(me, reason).await?)),
+            Reach::Daemon(socket) => {
+                let call = ServerCall::Blocked {
+                    reason: reason.to_owned(),
+                };
+                ask(socket, &call).await
+            }
+        }
+    }
+
+    /// `riff step`: starts, ends or fails a long step, and gives the line
+    /// for the person.
+    pub async fn step(&self, api: &Api, me: &SessionUri, change: StepChange) -> Result<String> {
+        match self {
+            Reach::Direct(_) => {
+                let told = api.step(me, change.clone()).await?;
+                Ok(text::step_set(&change, told))
+            }
+            Reach::Daemon(socket) => ask(socket, &ServerCall::Step { change }).await,
+        }
+    }
+
+    /// `riff tell`: sends `body` to the session `session`, and gives the
+    /// line for the person.
+    pub async fn tell(
+        &self,
+        api: &Api,
+        me: &SessionUri,
+        session: &str,
+        body: &str,
+    ) -> Result<String> {
+        match self {
+            Reach::Direct(_) => Ok(text::posted(&api.tell(me, session, body).await?)),
+            Reach::Daemon(socket) => {
+                let call = ServerCall::Tell {
+                    session: session.to_owned(),
+                    body: body.to_owned(),
+                };
+                ask(socket, &call).await
+            }
+        }
+    }
+
+    /// `riff read`: the text of the unread messages ([`read`]), after a
+    /// join of the thread `repo`. `thread` reads only that thread, `all`
+    /// the full history. Through the socket, the session joins the thread
+    /// of its own repository.
+    pub async fn read(
+        &self,
+        api: &Api,
+        me: &SessionUri,
+        repo: Option<&ThreadName>,
+        thread: Option<&str>,
+        all: bool,
+    ) -> Result<String> {
+        match self {
+            Reach::Direct(_) => read(api, me, repo, thread, all).await,
+            Reach::Daemon(socket) => {
+                let call = ServerCall::Read {
+                    thread: thread.map(str::to_owned),
+                    all,
+                };
+                ask(socket, &call).await
+            }
+        }
+    }
+
+    /// Tells the fact of the pull request `number` of the issue `issue`,
+    /// with no error ([`crate::look::tell_fact`]): `riff pr open`, `riff
+    /// verify` and `riff pr wait` tell it after their work, and their work
+    /// is done (01M41FZP2C4Z4J6WKRXZ5B31EH).
+    pub async fn fact(
+        &self,
+        api: &Api,
+        me: &SessionUri,
+        issue: u64,
+        number: u64,
+        state: PullState,
+    ) {
+        match self {
+            Reach::Direct(_) => crate::look::tell_fact(api, me, issue, number, state).await,
+            Reach::Daemon(socket) => {
+                let call = ServerCall::Fact {
+                    issue,
+                    number,
+                    state,
+                };
+                let _: Result<serde_json::Value> = ask(socket, &call).await;
+            }
+        }
+    }
+
+    /// `riff pause` and `riff resume`: pauses or resumes the repository of
+    /// `here`, the repository `repo`, or with `riff` the whole riff, and
+    /// gives the line for the person ([`pause`]).
+    pub async fn pause_as(
+        &self,
+        api: &Api,
+        me: &SessionUri,
+        here: &riff_core::name::Place,
+        riff: bool,
+        repo: Option<ThreadName>,
+        state: RiffState,
+    ) -> Result<String> {
+        match self {
+            Reach::Direct(_) => pause(api, me, here, PauseScope::of(riff, repo), state).await,
+            Reach::Daemon(socket) => ask(socket, &ServerCall::Pause { riff, repo, state }).await,
+        }
+    }
+
+    /// The GitHub Apps of the riff, through the socket of the session, for
+    /// `riff init` in a container. `None` for a riff with no sign-in. On a
+    /// host, `riff init` reads them straight with the sign-in of the
+    /// person ([`crate::guard::session_bot`]).
+    pub async fn apps(&self) -> Result<Option<riff_core::wire::GitHubAppsReply>> {
+        let Reach::Daemon(socket) = self else {
+            anyhow::bail!("this riff has no socket of a session");
+        };
+        ask(socket, &ServerCall::Apps).await
+    }
+
+    /// The records of the thread `denials` at or after `from_ms`, oldest
+    /// first, for `riff denials` ([`crate::denied::read`]).
+    pub async fn denials(
+        &self,
+        api: &Api,
+        me: &SessionUri,
+        from_ms: u64,
+    ) -> Result<Vec<crate::denied::Record>> {
+        match self {
+            Reach::Direct(_) => crate::denied::read(api, me, from_ms).await,
+            Reach::Daemon(socket) => {
+                let bodies: Vec<(u64, String)> = ask(socket, &ServerCall::Denials).await?;
+                Ok(crate::denied::records(
+                    bodies.iter().map(|(at_ms, body)| (*at_ms, body.as_str())),
+                    from_ms,
+                ))
+            }
+        }
+    }
+}
+
+/// The way of a riff command to riff-server in a container session:
+/// with `RIFF_SOCKET`, and with no `--server` and no `RIFF_SERVER`
+/// (#1733).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Way {
+    /// It asks riff-server through the socket of the session: the riff
+    /// daemon of the host makes each call for the session.
+    Socket,
+    /// It needs the host: the sign-in of a person, a claim, or a program
+    /// of the host. In a container it refuses at once, and asks nothing.
+    Host,
+    /// It asks no riff-server.
+    Local,
+}
+
+/// One riff command in a container session ([`COMMANDS`]).
+#[derive(Debug, Clone, Copy)]
+pub struct InContainer {
+    /// The words of the command after `riff`, with an example of each
+    /// argument.
+    pub args: &'static [&'static str],
+    /// Its way to riff-server in a container session.
+    pub way: Way,
+}
+
+const fn socket(args: &'static [&'static str]) -> InContainer {
+    InContainer {
+        args,
+        way: Way::Socket,
+    }
+}
+
+const fn host(args: &'static [&'static str]) -> InContainer {
+    InContainer {
+        args,
+        way: Way::Host,
+    }
+}
+
+const fn local(args: &'static [&'static str]) -> InContainer {
+    InContainer {
+        args,
+        way: Way::Local,
+    }
+}
+
+/// Each riff command, with its way to riff-server in a container
+/// session (01M74A84SA5KCBVGVW7M9ETJ3A). No command there asks
+/// `http://127.0.0.1:7878`, the riff-server of the machine: the container
+/// has none. The tests of `riff` check that each subcommand of the CLI
+/// has a row, and run each row with [`Way::Socket`] and [`Way::Host`] in
+/// a container session. A subcommand with a flag `--host` has a row for
+/// each way.
+///
+/// ```
+/// use riff::reach::{COMMANDS, Way};
+///
+/// let way = |args: &[&str]| COMMANDS.iter().find(|c| c.args == args).map(|c| c.way);
+/// assert_eq!(way(&["top", "--once"]), Some(Way::Socket));
+/// assert_eq!(way(&["read"]), Some(Way::Socket));
+/// assert_eq!(way(&["claim", "issue-12"]), Some(Way::Host));
+/// assert_eq!(way(&["usage"]), Some(Way::Local));
+/// ```
+pub const COMMANDS: &[InContainer] = &[
+    // The commands of a session.
+    socket(&["whoami"]),
+    socket(&["who"]),
+    socket(&["post", "hello"]),
+    socket(&["status", "writing the tests"]),
+    socket(&["blocked", "which design?"]),
+    socket(&["step", "start", "a live window"]),
+    socket(&["step", "done"]),
+    socket(&["step", "fail", "the window closed"]),
+    socket(&["tell", "lead", "done"]),
+    socket(&["read"]),
+    socket(&["top", "--once"]),
+    socket(&["denials"]),
+    socket(&["session", "why", "issue-12"]),
+    socket(&["members"]),
+    socket(&["questions"]),
+    socket(&["pr", "open", "--title", "Show the wave", "--issue", "12"]),
+    socket(&["pr", "wait", "40"]),
+    socket(&[
+        "verify",
+        "fail",
+        "40",
+        "--file",
+        "result.md",
+        "--commit",
+        "1a2b3c4d",
+    ]),
+    socket(&["ps"]),
+    socket(&["init", "--check"]),
+    // The commands of the lead.
+    socket(&["pause"]),
+    socket(&["resume"]),
+    socket(&["plan", "hold", "issue-12", "a reading at 19:40"]),
+    socket(&["plan", "free", "issue-12"]),
+    socket(&["run", "issue-12"]),
+    socket(&["audit", "--wave", "3"]),
+    socket(&["wave", "list"]),
+    socket(&["wave", "move", "14", "--to", "3"]),
+    socket(&["wave", "end", "3", "--move-open-to-backlog"]),
+    socket(&["join"]),
+    socket(&["join", "--host", "thelio"]),
+    socket(&["leave", "--host", "thelio"]),
+    socket(&["lead", "stop", "--host", "thelio"]),
+    socket(&["build", "--host", "thelio"]),
+    socket(&["release", "cut", "3.4.0"]),
+    socket(&["release", "verify", "40"]),
+    socket(&["release", "publish", "v3.4.0"]),
+    socket(&["release", "status"]),
+    socket(&["release", "approve", "v3.4.0"]),
+    socket(&["release", "hold", "v3.4.0", "a reading at 19:40"]),
+    socket(&["release", "check", "v3.4.0"]),
+    socket(&["release", "retry", "v3.4.0"]),
+    socket(&["release", "test", "v3.4.0", "--host", "thelio"]),
+    socket(&["release", "rollback", "v3.4.0"]),
+    socket(&["daemon", "status"]),
+    socket(&["daemon", "status", "--host", "thelio"]),
+    socket(&["daemon", "events", "riff-issue-12-1a2b3c4d"]),
+    socket(&[
+        "daemon",
+        "events",
+        "riff-issue-12-1a2b3c4d",
+        "--host",
+        "thelio",
+    ]),
+    socket(&["daemon", "limit", "--sessions", "4", "--host", "thelio"]),
+    socket(&["daemon", "cache", "--host", "thelio"]),
+    socket(&["daemon", "sweep", "--host", "thelio"]),
+    socket(&[
+        "daemon",
+        "end",
+        "riff-issue-12-1a2b3c4d",
+        "--host",
+        "thelio",
+    ]),
+    socket(&["daemon", "restart", "--host", "thelio"]),
+    // The relay of the session.
+    socket(&["relay", "--", "true"]),
+    socket(&["relay", "mcp"]),
+    socket(&["relay", "watch"]),
+    socket(&["relay", "denied"]),
+    socket(&["relay", "prompt"]),
+    socket(&["relay", "idle"]),
+    // The steps of a person, and the claims.
+    host(&["login"]),
+    host(&["logout"]),
+    host(&["invite", "ada@example.com"]),
+    host(&["remove", "ada@example.com"]),
+    host(&["admin", "add", "ada@example.com"]),
+    host(&["admin", "remove", "ada@example.com"]),
+    host(&["owner", "--take"]),
+    host(&["chat"]),
+    host(&["tail"]),
+    host(&["claim", "issue-12"]),
+    host(&["release", "issue-12"]),
+    host(&["lead", "--session", "c1d2"]),
+    host(&["lead", "start"]),
+    host(&["lead", "stop"]),
+    host(&["lead", "move", "thelio"]),
+    host(&["lead", "notes"]),
+    host(&["lead", "notes", "edit"]),
+    host(&["leave"]),
+    host(&["questions", "--answered", "12"]),
+    host(&["server"]),
+    host(&["update"]),
+    host(&["cloud", "create", "riff"]),
+    host(&["cloud", "signin", "riff"]),
+    host(&["cloud", "deploy", "riff"]),
+    host(&["cloud", "smoke", "riff"]),
+    host(&["cloud", "list"]),
+    host(&["cloud", "status", "riff"]),
+    host(&["cloud", "log", "riff"]),
+    host(&["cloud", "delete", "riff"]),
+    host(&["github", "create", "--owner", "acme"]),
+    host(&["github", "install", "acme"]),
+    host(&["github", "check"]),
+    host(&["github", "events"]),
+    // No riff-server.
+    local(&["usage"]),
+    local(&["setup", "--check"]),
+    local(&["image"]),
+    local(&["build"]),
+    local(&["wave", "make", "Wave 4"]),
+    local(&["wave", "rename", "3", "the new wave"]),
+    local(&["wave", "end", "3"]),
+    local(&["takeover", "riff-issue-12-1a2b3c4d"]),
+    local(&["claude-token"]),
+    local(&["daemon"]),
+    local(&["daemon", "install"]),
+    local(&["daemon", "uninstall"]),
+    local(&["daemon", "limit", "--sessions", "4"]),
+    local(&["daemon", "cache"]),
+    local(&["daemon", "sweep"]),
+    local(&["daemon", "end", "riff-issue-12-1a2b3c4d"]),
+    local(&["daemon", "restart"]),
+    local(&["daemon", "mcp"]),
+    local(&["daemon", "mcp", "add", "docs"]),
+    local(&["daemon", "mcp", "remove", "docs"]),
+];
+
+/// `riff read` as `me` at `api`: `me` joins the thread `repo` first, the
+/// thread of the repository of the folder, and gets the text of its
+/// unread messages. `thread` reads only that thread, `all` the full
+/// history. The riff daemon reads so for a session in a container, with
+/// the thread of the repository of the session ([`ServerCall::Read`],
+/// #1733).
+pub async fn read(
+    api: &Api,
+    me: &SessionUri,
+    repo: Option<&ThreadName>,
+    thread: Option<&str>,
+    all: bool,
+) -> Result<String> {
+    if let Some(repo) = repo {
+        api.join(me, repo).await?;
+    }
+    let thread = match thread {
+        Some(t) => Some(api.thread_to_read(me, t).await?),
+        None => None,
+    };
+    let inbox = api.inbox(me, thread.as_ref(), all).await?;
+    Ok(text::inbox(&inbox, me).trim_end().to_owned())
 }
 
 /// `riff pause` and `riff resume`: pauses or resumes `scope` as `me` at

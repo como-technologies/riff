@@ -13,13 +13,13 @@ use riff::{
     audit, binary, claude_settings, cloud, dropped, help, identity, lifecycle, local, login,
     permissions, pr, settings, text, usage, view,
 };
-use riff_client::api::{self, Api, DEFAULT_SERVER, PauseScope, follow};
+use riff_client::api::{self, Api, DEFAULT_SERVER, follow};
 use riff_client::link::STREAM_RETRY;
 use riff_client::sessions::Sessions;
 
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, PullState, RiffState, Status, StepChange};
+use riff_core::wire::{Kind, PullState, RiffState, StepChange};
 
 /// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
@@ -1877,8 +1877,9 @@ async fn cli() -> Result<()> {
             (false, true) => Mode::Yes,
             (false, false) => Mode::Ask,
         };
-        let (server, _) = server_of(cli.server.as_deref())?;
-        let code = riff::first_run::init(mode, image, &server).await?;
+        let (server, source) = server_of(cli.server.as_deref())?;
+        let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
+        let code = riff::first_run::init(mode, image, &reach).await?;
         if code != 0 {
             std::process::exit(code);
         }
@@ -1903,6 +1904,12 @@ async fn cli() -> Result<()> {
     // In a container, the socket of the session reaches riff-server
     // (01M5GVPNAKAPA596K9361HSAAV).
     let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
+    // In a container, a step of a person or a claim refuses before each
+    // call: the container has no riff-server of its own
+    // (01M74A8CXVRD352VRJ9FH54HJ1).
+    if let (Reach::Daemon(_), Some(words)) = (&reach, needs_the_host(&command)) {
+        anyhow::bail!(text::needs_the_host(words));
+    }
     if let Command::Server = command {
         let view = lifecycle::view(&server, DEFAULT_SERVER, source).await;
         anstream::println!("{}", text::server_view(&view));
@@ -1999,7 +2006,9 @@ async fn cli() -> Result<()> {
         if let (Ok(me), Ok(issue)) = (me, pr::issue_of(&pr::Gh::here("pr wait"), *number))
             && let Ok(api) = api.signed_in(me.who().session())
         {
-            riff::look::tell_fact(&api, &me, issue, *number, PullState::Merged).await;
+            reach
+                .fact(&api, &me, issue, *number, PullState::Merged)
+                .await;
         }
         // The merge is done: the total never fails the wait.
         match total_after_merge(*number) {
@@ -2318,14 +2327,18 @@ async fn cli() -> Result<()> {
                 view::who(&pauses, &who.owner, &who.sessions, &me, long)
             );
         }
+        // In a container, the daemon makes each call of a command of a
+        // session for it (01M74A84SA5KCBVGVW7M9ETJ3A).
         Command::Pause { riff, repo } => {
-            let scope = pause_scope(riff, repo)?;
-            let line = riff::reach::pause(&api, &me, &here, scope, RiffState::Paused).await?;
+            let repo = repo_of(repo)?;
+            let state = RiffState::Paused;
+            let line = reach.pause_as(&api, &me, &here, riff, repo, state).await?;
             println!("{line}");
         }
         Command::Resume { riff, repo } => {
-            let scope = pause_scope(riff, repo)?;
-            let line = riff::reach::pause(&api, &me, &here, scope, RiffState::Running).await?;
+            let repo = repo_of(repo)?;
+            let state = RiffState::Running;
+            let line = reach.pause_as(&api, &me, &here, riff, repo, state).await?;
             println!("{line}");
         }
         Command::Post {
@@ -2338,22 +2351,15 @@ async fn cli() -> Result<()> {
                 anyhow::bail!("give the message. Only a post with --kind status needs none.");
             }
             let thread = thread_or_default(thread, &here)?;
-            let posted = api
-                .post(&me, Some(&thread), &to, &body.join(" "), kind)
-                .await?;
-            println!("{}", text::posted(&posted));
+            let body = body.join(" ");
+            let line = reach.post(&api, &me, &thread, &to, &body, kind).await?;
+            println!("{line}");
         }
         Command::Status { step } => {
-            let status = Status {
-                step: step.join(" "),
-            };
-            api.status(&me, &status).await?;
-            println!("{}", text::status_set(&status));
+            println!("{}", reach.set_status(&api, &me, &step.join(" ")).await?);
         }
         Command::Blocked { reason } => {
-            let reason = reason.join(" ");
-            let told = api.blocked(&me, &reason).await?;
-            println!("{}", text::blocked_set(&reason, told));
+            println!("{}", reach.blocked(&api, &me, &reason.join(" ")).await?);
         }
         Command::Step { change } => {
             let change = match change {
@@ -2365,30 +2371,23 @@ async fn cli() -> Result<()> {
                     reason: reason.join(" "),
                 },
             };
-            let told = api.step(&me, change.clone()).await?;
-            println!("{}", text::step_set(&change, told));
+            println!("{}", reach.step(&api, &me, change).await?);
         }
         Command::Tell { session, body } => {
-            let posted = api.tell(&me, &session, &body.join(" ")).await?;
-            println!("{}", text::posted(&posted));
+            let line = reach.tell(&api, &me, &session, &body.join(" ")).await?;
+            println!("{line}");
         }
         Command::Read { thread, all } => {
-            if let Some(repo) = here.default_thread() {
-                api.join(&me, &repo).await?;
-            }
-            let thread = match thread {
-                Some(t) => Some(api.thread_to_read(&me, &t).await?),
-                None => None,
-            };
-            let inbox = api.inbox(&me, thread.as_ref(), all).await?;
-            println!("{}", text::inbox(&inbox, &me).trim_end());
+            let repo = here.default_thread();
+            let text = reach.read(&api, &me, repo.as_ref(), thread.as_deref(), all);
+            println!("{}", text.await?);
         }
         Command::Denials { since, format } => {
             let span = since.as_deref().map(riff::denied::since).transpose()?;
             let from_ms = span.map_or(0, |span| {
                 usage::now_ms().saturating_sub(span.as_millis() as u64)
             });
-            let records = riff::denied::read(&api, &me, from_ms).await?;
+            let records = reach.denials(&api, &me, from_ms).await?;
             match format {
                 DenialsFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&records)?);
@@ -2493,7 +2492,7 @@ async fn cli() -> Result<()> {
             let issue = match issue {
                 Some(n) => n,
                 None => {
-                    let sessions = api.who(&me, false).await?;
+                    let sessions = reach.sessions(&api, &me).await?;
                     let mine = sessions.iter().find(|s| s.uri.who() == me.who());
                     pr::claimed_issue(mine.map_or(&[][..], |s| s.uri.claims()))?
                 }
@@ -2528,7 +2527,7 @@ async fn cli() -> Result<()> {
                 made.as_ref(),
             )?;
             println!("{}", text::pr_opened(number, &url));
-            riff::look::tell_fact(&api, &me, issue, number, PullState::Asked).await;
+            reach.fact(&api, &me, issue, number, PullState::Asked).await;
         }
         Command::Verify {
             verdict,
@@ -2557,13 +2556,28 @@ async fn cli() -> Result<()> {
                 pr::Verdict::Pass => PullState::Passed,
                 pr::Verdict::Fail => PullState::Failed,
             };
-            riff::look::tell_fact(&api, &me, reported.issue, number, state).await;
-            let to = pr::result_to(reported.issue, &me, &thread, &api.who(&me, false).await?);
-            let body = text::verify_post(verdict, number, &reported, &result);
-            let posted = api
-                .post(&me, Some(&thread), &to, &body, Kind::Message)
-                .await?;
-            println!("{}", text::posted(&posted));
+            reach.fact(&api, &me, reported.issue, number, state).await;
+            let posted = async {
+                let sessions = reach.sessions(&api, &me).await?;
+                let to = pr::result_to(reported.issue, &me, &thread, &sessions);
+                let body = text::verify_post(verdict, number, &reported, &result);
+                reach
+                    .post(&api, &me, &thread, &to, &body, Kind::Message)
+                    .await
+            };
+            // The part on GitHub is done: the error says so
+            // (01M74A8D523KA6TEJVXT46YW74).
+            match posted.await {
+                Ok(line) => println!("{line}"),
+                Err(e) => {
+                    let error = format!("{e:#}");
+                    eprintln!(
+                        "{}",
+                        text::verify_not_posted(verdict, number, &reported, &error)
+                    );
+                    std::process::exit(1);
+                }
+            }
         }
         Command::Tail { thread } => {
             let config = settings::chat_here()?;
@@ -2582,7 +2596,7 @@ async fn cli() -> Result<()> {
                 repo,
                 by: by.into(),
             };
-            top(&api, &me, here.default_thread(), &show, once).await?;
+            top(&api, &me, &reach, here.default_thread(), &show, once).await?;
         }
         Command::Usage { .. }
         | Command::Setup { .. }
@@ -2629,6 +2643,46 @@ async fn cli() -> Result<()> {
         | Command::Wave { .. } => unreachable!("handled before the identity"),
     }
     Ok(())
+}
+
+/// The words of `command` when it needs the host
+/// ([`riff::reach::Way::Host`], 01M74A8CXVRD352VRJ9FH54HJ1): the sign-in
+/// of a person, a claim, or a program of the host. In a container session
+/// it refuses at once. `riff github`, `riff leave` and `riff lead stop`
+/// with no `--host` refuse there with words of their own.
+fn needs_the_host(command: &Command) -> Option<&'static str> {
+    Some(match command {
+        Command::Login => "riff login",
+        Command::Logout { .. } => "riff logout",
+        Command::Invite { .. } => "riff invite",
+        Command::Remove { .. } => "riff remove",
+        Command::Admin { .. } => "riff admin",
+        Command::Owner { .. } => "riff owner",
+        Command::Chat { .. } => "riff chat",
+        Command::Tail { .. } => "riff tail",
+        Command::Claim { .. } => "riff claim",
+        Command::Release { cycle: None, .. } => "riff release ITEM",
+        Command::Lead { command: None, .. } => "riff lead --session",
+        Command::Lead {
+            command: Some(LeadCommand::Start),
+            ..
+        } => "riff lead start",
+        Command::Lead {
+            command: Some(LeadCommand::Move { .. }),
+            ..
+        } => "riff lead move",
+        Command::Lead {
+            command: Some(LeadCommand::Notes { .. }),
+            ..
+        } => "riff lead notes",
+        Command::Questions {
+            answered: Some(_), ..
+        } => "riff questions --answered",
+        Command::Server => "riff server",
+        Command::Update { .. } => "riff update",
+        Command::Cloud { .. } => "riff cloud",
+        _ => return None,
+    })
 }
 
 /// The person on this host, with no session and no repository. It posts
@@ -3863,11 +3917,10 @@ fn total_after_merge(number: u64) -> Result<String> {
     )
 }
 
-/// The scope of `riff pause` and `riff resume` from the flags `--riff`
-/// and `--repo` (01M3XAHZBGSSJB3YX23K88W01K).
-fn pause_scope(riff: bool, repo: Option<String>) -> Result<PauseScope> {
-    let repo = repo.map(|repo| repo.parse::<ThreadName>()).transpose()?;
-    Ok(PauseScope::of(riff, repo))
+/// The repository of `riff pause --repo` and `riff resume --repo`
+/// (01M3XAHZBGSSJB3YX23K88W01K).
+fn repo_of(repo: Option<String>) -> Result<Option<ThreadName>> {
+    Ok(repo.map(|repo| repo.parse::<ThreadName>()).transpose()?)
 }
 
 fn thread_or_default(given: Option<String>, here: &Place) -> Result<ThreadName> {
@@ -4262,22 +4315,27 @@ async fn tui_command(server: Option<&str>, place: Option<&Place>) -> Result<()> 
 async fn top(
     api: &Api,
     me: &SessionUri,
+    reach: &Reach,
     thread: Option<ThreadName>,
     show: &riff_client::sessions::Show,
     once: bool,
 ) -> Result<()> {
     if once {
-        return draw_top(api, me, thread, show, once).await;
+        return draw_top(api, me, reach, thread, show, once).await;
     }
     tokio::select! {
-        drawn = draw_top(api, me, thread, show, once) => drawn,
+        drawn = draw_top(api, me, reach, thread, show, once) => drawn,
         () = binary::follow_update(me.place()) => Ok(()),
     }
 }
 
+/// The loop of [`top`]. In a container, each look goes through the
+/// socket of the session, and no stream of the thread starts a look: the
+/// table draws again each [`riff::top::REFRESH`] (01M74A8D8AMEM1A64XWXPC65J5).
 async fn draw_top(
     api: &Api,
     me: &SessionUri,
+    reach: &Reach,
     thread: Option<ThreadName>,
     show: &riff_client::sessions::Show,
     once: bool,
@@ -4308,6 +4366,7 @@ async fn draw_top(
     let mut holds = std::collections::BTreeMap::new();
     let mut messages = thread
         .as_ref()
+        .filter(|_| matches!(reach, Reach::Direct(_)))
         .map(|t| Box::pin(follow(|| api.tail(me, t), STREAM_RETRY)));
     let clear = !once && std::io::stdout().is_terminal();
     let repo = thread.as_ref().map(ToString::to_string);
@@ -4315,9 +4374,9 @@ async fn draw_top(
     let mut last = None;
     loop {
         let look = async {
-            let (pauses, mut who, _) = riff::top::look(api, me).await?;
-            // `riff top` asks no riff daemon: the model has no container
-            // session (01M53NGW6F5HP1DZ9QRGP50MGT, 01M56Y8KD05JH2J7AMK636WGT7).
+            let (pauses, mut who, _) = reach.look(api, me).await?;
+            // `riff top` gives the model no container session of a daemon
+            // (01M53NGW6F5HP1DZ9QRGP50MGT, 01M56Y8KD05JH2J7AMK636WGT7).
             let sessions = Sessions::new(std::mem::take(&mut who.sessions), Vec::new());
             anyhow::Ok((pauses, who, sessions))
         };
@@ -4331,7 +4390,7 @@ async fn draw_top(
                 last = Some((look, chrono::Local::now()));
                 None
             }
-            Err(e) if last.is_some() && api::passes(&e) => Some(e),
+            Err(e) if last.is_some() && reach.passes(&e) => Some(e),
             Err(e) => return Err(e),
         };
         // A fault with no good look ended the loop above.
@@ -4363,8 +4422,8 @@ async fn draw_top(
                 let Ok(thread) = repo.parse::<ThreadName>() else {
                     continue;
                 };
-                if let Ok(plan) = api.plan_show(me, &thread).await {
-                    holds.insert(repo.clone(), plan.holds);
+                if let Ok(held) = reach.holds_as(api, me, &thread).await {
+                    holds.insert(repo.clone(), held);
                 }
             }
         }
@@ -4421,6 +4480,74 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// The path of each subcommand of `cmd` under `above` that runs: a
+    /// command with no subcommand, or with a subcommand that it does not
+    /// need.
+    fn paths(cmd: &clap::Command, above: &[String], out: &mut Vec<Vec<String>>) {
+        for sub in cmd.get_subcommands().filter(|sub| sub.get_name() != "help") {
+            let mut path = above.to_vec();
+            path.push(sub.get_name().to_owned());
+            if !sub.has_subcommands() || !sub.is_subcommand_required_set() {
+                out.push(path.clone());
+            }
+            paths(sub, &path, out);
+        }
+    }
+
+    /// The path of the subcommand of the words `args`.
+    fn path_of(args: &[&str]) -> Vec<String> {
+        let words = std::iter::once("riff").chain(args.iter().copied());
+        let matches = Cli::command()
+            .try_get_matches_from(words)
+            .unwrap_or_else(|e| panic!("{args:?}: {e}"));
+        let mut path = Vec::new();
+        let mut at = &matches;
+        while let Some((name, sub)) = at.subcommand() {
+            path.push(name.to_owned());
+            at = sub;
+        }
+        path
+    }
+
+    /// 01M74A84SA5KCBVGVW7M9ETJ3A: each subcommand of the CLI has a row in
+    /// the table of the ways to riff-server in a container session, and
+    /// each row names a subcommand of the CLI with words that parse.
+    #[test]
+    fn each_subcommand_has_a_way_in_a_container() {
+        let mut all = Vec::new();
+        paths(&Cli::command(), &[], &mut all);
+        let rows: Vec<Vec<String>> = riff::reach::COMMANDS
+            .iter()
+            .map(|row| path_of(row.args))
+            .collect();
+        for path in &all {
+            assert!(rows.contains(path), "riff {} has no way", path.join(" "));
+        }
+        for row in &rows {
+            assert!(all.contains(row), "riff {} is no command", row.join(" "));
+        }
+    }
+
+    /// 01M74A8CXVRD352VRJ9FH54HJ1: in a container, a command of
+    /// [`riff::reach::Way::Host`] refuses at once with
+    /// [`super::needs_the_host`], or with words of its own. No other
+    /// command refuses so.
+    #[test]
+    fn a_command_of_the_host_refuses_in_a_container() {
+        use clap::Parser;
+        use riff::reach::Way;
+        // These refuse in a container with words of their own.
+        let own: [&[&str]; 3] = [&["github"], &["leave"], &["lead", "stop"]];
+        for row in riff::reach::COMMANDS {
+            let words = std::iter::once("riff").chain(row.args.iter().copied());
+            let command = Cli::try_parse_from(words).unwrap().command.unwrap();
+            let refuses = super::needs_the_host(&command).is_some();
+            let of_its_own = own.iter().any(|own| row.args.starts_with(own));
+            let wanted = row.way == Way::Host && !of_its_own;
+            assert_eq!(refuses, wanted, "riff {}", row.args.join(" "));
+        }
     }
 
     /// 01M6VAZ7WH3MFAYF4PAZW6EDVY: `riff` with no command parses, also

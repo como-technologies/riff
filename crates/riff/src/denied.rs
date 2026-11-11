@@ -824,6 +824,18 @@ fn time(at_ms: u64) -> String {
 /// first, as `me` reads them. A thread that the server does not know has
 /// none.
 pub async fn read(api: &Api, me: &SessionUri, from_ms: u64) -> Result<Vec<Record>> {
+    let bodies = bodies(api, me).await?;
+    Ok(records(
+        bodies.iter().map(|(at_ms, body)| (*at_ms, body.as_str())),
+        from_ms,
+    ))
+}
+
+/// The time and the body of each post of the thread [`THREAD`], oldest
+/// first, as `me` reads them. A thread that the server does not know has
+/// none. The riff daemon reads them for `riff denials` in a container
+/// ([`crate::reach::Reach::denials`]).
+pub async fn bodies(api: &Api, me: &SessionUri) -> Result<Vec<(u64, String)>> {
     let messages = match api.read(me, &thread(), true).await {
         Ok(messages) => messages,
         Err(e)
@@ -834,12 +846,10 @@ pub async fn read(api: &Api, me: &SessionUri, from_ms: u64) -> Result<Vec<Record
         }
         Err(e) => return Err(e),
     };
-    Ok(records(
-        messages
-            .iter()
-            .map(|m| (m.message.at_ms, m.message.body.as_str())),
-        from_ms,
-    ))
+    Ok(messages
+        .into_iter()
+        .map(|m| (m.message.at_ms, m.message.body))
+        .collect())
 }
 
 /// The records of `bodies` (the time and the body of each post, oldest

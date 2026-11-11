@@ -208,19 +208,21 @@ pub fn workflow(bot: &str) -> String {
 /// session App: a riff with no sign-in has none. `Err` says why riff
 /// cannot ask.
 pub async fn session_bot(api: &Api) -> Result<Option<String>, String> {
-    let apps = match api.github_apps(None, None).await {
-        Ok(apps) => apps,
+    match api.github_apps(None, None).await {
+        Ok(apps) => session_bot_of(&apps),
         // A riff with no sign-in has no session App.
-        Err(_) if matches!(api.has_sign_in().await, Ok(false)) => return Ok(None),
-        Err(e) => return Err(text::guard_unasked(api.base(), &format!("{e:#}"))),
-    };
-    match apps
-        .apps
-        .into_iter()
-        .find(|app| app.app == GitHubApp::Session)
-    {
+        Err(_) if matches!(api.has_sign_in().await, Ok(false)) => Ok(None),
+        Err(e) => Err(text::guard_unasked(api.base(), &format!("{e:#}"))),
+    }
+}
+
+/// The bot of the session App of `apps`, the reply of riff-server to
+/// the read of its GitHub Apps ([`session_bot`]). `riff init` in a
+/// container gets the reply through the riff daemon (#1733).
+pub fn session_bot_of(apps: &riff_core::wire::GitHubAppsReply) -> Result<Option<String>, String> {
+    match apps.apps.iter().find(|app| app.app == GitHubApp::Session) {
         None => Ok(None),
-        Some(app) if valid_bot(&app.bot) => Ok(Some(app.bot)),
+        Some(app) if valid_bot(&app.bot) => Ok(Some(app.bot.clone())),
         Some(app) => Err(text::guard_bad_bot(&app.bot)),
     }
 }

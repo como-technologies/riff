@@ -5142,6 +5142,61 @@ pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str)
     )
 }
 
+/// The line of `riff verify` when its part on GitHub is done and riff
+/// cannot post the result to the session of the issue
+/// (01M74A8D523KA6TEJVXT46YW74).
+///
+/// ```
+/// use riff::pr::{Reported, Verdict};
+///
+/// let done = Reported { issue: 12, commit: "1a2b3c4".into(), url: "https://c".into() };
+/// assert_eq!(
+///     riff::text::verify_not_posted(Verdict::Fail, 40, &done, "riff-server is away"),
+///     "riff verify: the FAIL comment and riff/verify failure of commit 1a2b3c4 are on pull \
+///      request #40. riff cannot post the result to the session of issue-12: riff-server is \
+///      away. Tell that session the result with riff post."
+/// );
+/// ```
+pub fn verify_not_posted(verdict: Verdict, number: u64, done: &Reported, error: &str) -> String {
+    format!(
+        "riff verify: the {} comment and riff/verify {} of commit {} are on pull request \
+         #{number}. riff cannot post the result to the session of issue-{}: {error}. Tell that \
+         session the result with riff post.",
+        verdict.word(),
+        verdict.state(),
+        done.commit,
+        done.issue,
+    )
+}
+
+/// The refusal of a riff command that needs the host, in a container
+/// session (01M74A8CXVRD352VRJ9FH54HJ1): `words` is the command, for
+/// example `riff claim`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::needs_the_host("riff claim"),
+///     "riff: riff claim does not run in a container session. It needs the host: the sign-in \
+///      of a person, the claims of the riff daemon, or a program of the host. Run it in a \
+///      terminal on the host. The commands of a session work here, for example riff read and \
+///      riff post: the riff daemon of the host makes their calls."
+/// );
+/// ```
+pub fn needs_the_host(words: &str) -> String {
+    format!(
+        "riff: {words} does not run in a container session. It needs the host: the sign-in of a \
+         person, the claims of the riff daemon, or a program of the host. Run it in a terminal on \
+         the host. The commands of a session work here, for example riff read and riff post: the \
+         riff daemon of the host makes their calls."
+    )
+}
+
+/// The Chat tab of the TUI in a container session
+/// (01M74A8D8AMEM1A64XWXPC65J5): the chat is for a person, and the
+/// container has no sign-in of a person.
+pub const TUI_CHAT_IN_CONTAINER: &str = "The chat is for a person, and this container has no \
+     sign-in of a person. Run riff chat in a terminal on the host.";
+
 /// The room for more workers when fewer than `limit` run
 /// (01M493Z063SSTAJS2KNDFBTEBJ). A person starts them with
 /// `riff workers start`.
@@ -7375,6 +7430,22 @@ pub const DAEMON_AUDIT_ONLY_LEAD: &str =
 pub const DAEMON_PS_ONLY_LEAD: &str =
     "Only the lead can read the processes of the host for riff ps through the riff daemon.";
 
+/// A session that is not the lead asks the daemon to tell the fact of a
+/// pull request, for `riff pr open`, `riff pr wait` and `riff verify`
+/// (01M74A8D1GV6TCPXV2XEPVA53A).
+pub const DAEMON_FACT_ONLY_LEAD: &str =
+    "Only the lead can tell the state of a pull request through the riff daemon.";
+
+/// A session that is not the lead asks the daemon to pause or resume,
+/// for `riff pause` and `riff resume` (01M74A8D1GV6TCPXV2XEPVA53A).
+pub const DAEMON_PAUSE_ONLY_LEAD: &str =
+    "Only the lead can pause or resume through the riff daemon.";
+
+/// A session that is not the lead asks the daemon for the records of the
+/// thread denials, for `riff denials` (01M74A8D1GV6TCPXV2XEPVA53A).
+pub const DAEMON_DENIALS_ONLY_LEAD: &str =
+    "Only the lead can read the thread denials through the riff daemon.";
+
 /// `riff ps` does not find the daemon among the processes: the daemon
 /// runs under another user, or `/proc` hides it (#1610).
 pub const PS_DAEMON_NOT_SEEN: &str = "The riff daemon answers, but riff cannot read its process.";
@@ -9172,6 +9243,10 @@ pub const INIT_FIX_GUARD_UNKNOWN: &str =
 pub fn guard_unasked(server: &str, why: &str) -> String {
     format!("riff cannot ask riff-server at {server} for the bot of the session App: {why}")
 }
+
+/// Where a session in a container asks riff-server, for
+/// [`guard_unasked`] and [`lead_unasked`] (#1733).
+pub const THE_SOCKET: &str = "the socket of the session";
 
 /// riff-server gave `bot` as the bot of the session App, and it is no
 /// login of the bot of a GitHub App ([`crate::guard::valid_bot`]).

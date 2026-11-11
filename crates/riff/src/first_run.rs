@@ -1148,31 +1148,56 @@ pub fn pull(clone: &Path, branch: &str) -> Result<(), String> {
 /// (01M6WPV86SW4AAVA2NCBQNYXK3), for the lead App, for the check of the
 /// ruleset `releases` (01M6WZ40YED6THKVJ2JQRXFK4N), and for the GitHub
 /// Apps of riff on the repository (01M6Z87JTXW0Y99X08VHA2SSSR).
-pub async fn init(mode: Mode, image: Option<session_image::Image>, server: &str) -> Result<i32> {
+pub async fn init(
+    mode: Mode,
+    image: Option<session_image::Image>,
+    reach: &crate::reach::Reach,
+) -> Result<i32> {
     #[cfg(target_os = "linux")]
     {
+        use crate::reach::Reach;
         use anyhow::Context;
         use std::io::IsTerminal;
         let here = std::env::current_dir().context("cannot read the current folder")?;
         let origin = crate::identity::github_origin(&here);
-        let (bot, lead) = match origin {
-            Some(_) => match riff_client::api::Api::new(server).signed_in(None) {
-                Ok(api) => (
-                    crate::guard::session_bot(&api).await,
-                    crate::repo_setup::lead_app(&api).await,
+        let (bot, lead) = match (&origin, reach) {
+            (Some(_), Reach::Direct(server)) => {
+                match riff_client::api::Api::new(server).signed_in(None) {
+                    Ok(api) => (
+                        crate::guard::session_bot(&api).await,
+                        crate::repo_setup::lead_app(&api).await,
+                    ),
+                    Err(e) => {
+                        let why = format!("{e:#}");
+                        (
+                            Err(text::guard_unasked(server, &why)),
+                            Err(text::lead_unasked(server, &why)),
+                        )
+                    }
+                }
+            }
+            // In a container, the riff daemon reads the Apps
+            // (01M74A8DC74TT2YGZPBBAENMWH).
+            (Some(_), Reach::Daemon(_)) => match reach.apps().await {
+                Ok(Some(apps)) => (
+                    crate::guard::session_bot_of(&apps),
+                    Ok(crate::repo_setup::lead_app_of(&apps)),
                 ),
+                Ok(None) => (Ok(None), Ok(None)),
                 Err(e) => {
-                    let why = format!("{e:#}");
+                    let (at, why) = (text::THE_SOCKET, format!("{e:#}"));
                     (
-                        Err(text::guard_unasked(server, &why)),
-                        Err(text::lead_unasked(server, &why)),
+                        Err(text::guard_unasked(at, &why)),
+                        Err(text::lead_unasked(at, &why)),
                     )
                 }
             },
-            None => (Ok(None), Ok(None)),
+            (None, _) => (Ok(None), Ok(None)),
         };
         let mut facts = Facts::here(&here, bot, lead);
-        if let Some(repo) = origin {
+        // A container has no sign-in of a person for the check of the
+        // tokens of the Apps.
+        if let (Some(repo), Reach::Direct(server)) = (origin, reach) {
             facts.apps = apps_of(server, &repo).await;
         }
         let manager = crate::platform::service_manager()?;
@@ -1197,7 +1222,7 @@ pub async fn init(mode: Mode, image: Option<session_image::Image>, server: &str)
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (mode, image, server);
+        let _ = (mode, image, reach);
         anyhow::bail!("{}", text::INIT_LINUX_ONLY)
     }
 }
