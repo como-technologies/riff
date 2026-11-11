@@ -4545,6 +4545,9 @@
   test of podman, of systemd, of the daemon or of `/proc`, has
   `cfg(target_os = "linux")`. Each other test of `riff`, `riff-client`
   and `riff-core` runs on Linux and on macOS.
+- **01M752WCFNXA7PEWM6X4FVDVYH** `restart.rs` of `riff` is a test binary
+  of its own, and no test of that binary starts a child process. So no
+  child holds the listening socket of the server that the test stops.
 
 ## The phone app
 

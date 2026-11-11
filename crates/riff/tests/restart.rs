@@ -3,6 +3,13 @@
 //! its load, so each connect in the gap is refused. A process that got a
 //! reply from the server before tries again. A process that got no reply
 //! fails at once.
+//!
+//! This file is a test binary of its own, and no test of it starts a
+//! child process (01M752WCFNXA7PEWM6X4FVDVYH). macOS has no
+//! `SOCK_CLOEXEC`: tokio opens a socket, and then marks it close-on-exec.
+//! A child that another test starts between the two steps gets a copy of
+//! the listening socket. The socket of the stopped server then still
+//! listens in that child, and a connect to its port does not fail.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -38,9 +45,14 @@ async fn serve(addr: SocketAddr) -> (oneshot::Sender<()>, JoinHandle<()>, Socket
 async fn a_process_that_got_a_reply_waits_through_a_restart() {
     let (stop, served, addr) = serve("127.0.0.1:0".parse().unwrap()).await;
     let shown = Arc::new(Mutex::new(Vec::new()));
-    let lines = Arc::clone(&shown);
-    let api = Api::new(&format!("http://{addr}"))
-        .waits_to(move |line| lines.lock().unwrap().push(line.to_owned()));
+    let (line, line_shown) = oneshot::channel::<()>();
+    let (lines, line) = (Arc::clone(&shown), Mutex::new(Some(line)));
+    let api = Api::new(&format!("http://{addr}")).waits_to(move |text| {
+        lines.lock().unwrap().push(text.to_owned());
+        if let Some(line) = line.lock().unwrap().take() {
+            let _ = line.send(());
+        }
+    });
     let me: SessionUri = ME.parse().unwrap();
     api.register(&me).await.unwrap();
     assert!(api.link().replied());
@@ -50,15 +62,19 @@ async fn a_process_that_got_a_reply_waits_through_a_restart() {
     served.await.unwrap();
     assert!(tokio::net::TcpStream::connect(addr).await.is_err());
 
-    // It starts again after 2 seconds, as after a load.
-    let gap = Duration::from_secs(2);
+    // It starts again 2 seconds after the wait line, as after a load. The
+    // waits of the call bring the line, and not the time of its tries. So
+    // the test waits for the line, not for a time
+    // (01M41A0M2XWCWTWGF7T9DR03W0).
+    let after = Duration::from_secs(2);
     let again = tokio::spawn(async move {
-        tokio::time::sleep(gap).await;
+        line_shown.await.unwrap();
+        tokio::time::sleep(after).await;
         serve(addr).await
     });
     let start = Instant::now();
     api.register(&me).await.expect("the call waits, then works");
-    assert!(start.elapsed() >= gap, "{:?}", start.elapsed());
+    assert!(start.elapsed() >= after, "{:?}", start.elapsed());
     let shown = shown.lock().unwrap().clone();
     assert_eq!(shown.len(), 1, "one wait line for the gap: {shown:?}");
     assert!(shown[0].contains(WAITING), "{shown:?}");
@@ -78,4 +94,16 @@ async fn a_process_that_got_no_reply_fails_at_once() {
         "{error:#}"
     );
     assert!(!api.link().replied());
+}
+
+/// No test of this binary starts a child process
+/// (01M752WCFNXA7PEWM6X4FVDVYH). This test is the last item of the
+/// file, and the code above it names no way to start one.
+#[test]
+fn no_test_of_this_binary_starts_a_child() {
+    let source = include_str!("restart.rs");
+    let (above, _) = source.split_once("/// No test of this binary").unwrap();
+    for word in ["Command", "Isolated", "process::", "rerun"] {
+        assert!(!above.contains(word), "restart.rs names {word}");
+    }
 }
