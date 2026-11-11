@@ -1039,6 +1039,7 @@ pub const COMMANDS: &[InContainer] = &[
     host(&["github", "create", "--owner", "acme"]),
     host(&["github", "install", "acme"]),
     host(&["github", "check"]),
+    host(&["github", "events"]),
     // No riff-server.
     local(&["usage"]),
     local(&["setup", "--check"]),
