@@ -1,5 +1,5 @@
-//! The group "devices": the commands [`AddKey`] and [`RemoveDevice`],
-//! and the devices of a person (01M75NGT9Z0NSZTG97TBAMP7RS). The storage
+//! The group "devices": the commands [`AddKey`], [`RemoveDevice`] and
+//! [`Prove`], and the devices of a person (01M75NGT9Z0NSZTG97TBAMP7RS). The storage
 //! is a part of [`People`]: the keys of each USER, in the part of the
 //! people of the checkpoint.
 //!
@@ -7,6 +7,7 @@
 //! |---|---|---|
 //! | `add_key` ([`AddKey`]) | riff-server, as the person of an add, after its check of the reply of the authenticator | `key_added` |
 //! | `remove_device` ([`RemoveDevice`]) | a person, for a device of their own | `device_removed` |
+//! | `prove` ([`Prove`]) | riff-server, as the person of a proof, after its check of the signature | `proved` |
 //!
 //! [`permits`](super::permits) takes only a person for each
 //! (01M75NH30PNATYN33MXZQMVBW8), and a riff with no sign-in refuses
@@ -14,7 +15,10 @@
 //! not allowed, a name of another device of the person, a credential
 //! that a person of the riff has, and a key over [`KEYS_MOST`]
 //! (01M75NH33CVGBVASSACBPXRR2G). `handle` of `remove_device` refuses a
-//! name that the person has no device with.
+//! name that the person has no device with. With the policy
+//! `required`, the removal needs a proof (PROOF_KEYS). `handle` of
+//! `prove` refuses a key that the person does not have, and a counter
+//! that did not grow (PROOF_CHECK).
 //!
 //! ```mermaid
 //! flowchart LR
@@ -27,7 +31,8 @@
 //! ```
 
 use riff_core::device::{KEYS_MOST, check_name};
-use riff_core::record::{Change, DeviceRemoved, KeyAdded};
+use riff_core::proof::Action;
+use riff_core::record::{Change, DeviceRemoved, KeyAdded, Proved};
 use riff_core::wire::{DeviceInfo, DeviceKind, DevicesReply, RemoveDevice};
 use serde::{Deserialize, Serialize};
 
@@ -44,8 +49,17 @@ pub struct PersonKey {
     pub public_key: String,
     /// The time of the add, in milliseconds since the Unix epoch.
     pub added_ms: u64,
-    /// The time of the last use. The add is a use.
+    /// The time of the last use. The add is a use, and so is each proof
+    /// (PROOF_LOG).
     pub used_ms: u64,
+    /// The counter of the last proof of the key: 0 for an authenticator
+    /// that counts nothing, and before the first proof (PROOF_CHECK).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub counter: u64,
+}
+
+fn is_zero(counter: &u64) -> bool {
+    *counter == 0
 }
 
 impl PersonKey {
@@ -167,6 +181,14 @@ impl Command for RemoveDevice {
     /// The device before its removal: the written copy has it no more.
     type Note = Option<DeviceInfo>;
 
+    /// With the policy `required`, the removal needs a proof of a key of
+    /// the person (PROOF_KEYS).
+    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        Some(Action::RemoveDevice {
+            name: self.name.clone(),
+        })
+    }
+
     fn handle(
         &self,
         caller: &Caller,
@@ -204,6 +226,67 @@ impl Command for RemoveDevice {
             used_ms: 0,
         })
     }
+}
+
+/// A proof of presence that riff-server checked: the key `name` of the
+/// caller signed the challenge of `action` (PROOF_CHECK, PROOF_LOG).
+/// riff-server sends it after its check of the signature, as the person
+/// of the start of the proof. No client can send it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prove {
+    /// The name of the key that signed.
+    pub name: String,
+    pub action: Action,
+    /// The counter of the authenticator in the signed data.
+    pub counter: u64,
+}
+
+/// The record `proved` of a proof. `handle` refuses a key that the
+/// person does not have, and a counter that did not grow: when the key
+/// or the proof counts, the counter of the proof is greater than the
+/// counter of the last proof (PROOF_CHECK). An authenticator that counts
+/// nothing gives 0 each time.
+impl Command for Prove {
+    const KIND: CommandKind = CommandKind::Prove;
+    type Reply = ();
+    type Note = ();
+
+    fn handle(
+        &self,
+        caller: &Caller,
+        view: &View<'_>,
+        _: Now,
+    ) -> Result<(Vec<Change>, ()), Refused> {
+        let user = caller.who().user();
+        let Some(key) = view.riff.people().device_of(user, &self.name) else {
+            return Err(Refused::new(
+                Code::BadProof,
+                format!(
+                    "you have no key with the name {}: riff device list shows each",
+                    self.name
+                ),
+            ));
+        };
+        if (key.counter > 0 || self.counter > 0) && self.counter <= key.counter {
+            return Err(Refused::new(
+                Code::BadProof,
+                format!(
+                    "the counter of the key {} did not grow: riff takes no copy of a key. Remove \
+                     the key with riff device remove {}, and add it again",
+                    self.name, self.name
+                ),
+            ));
+        }
+        let change = Change::Proved(Proved {
+            user: user.to_owned(),
+            name: self.name.clone(),
+            action: self.action.text(),
+            counter: self.counter,
+        });
+        Ok((vec![change], ()))
+    }
+
+    fn reply(&self, _: &Caller, _: &View<'_>, _: &Done, (): (), _: Now) {}
 }
 
 /// The devices of `user`, sorted by name: the reply of `POST

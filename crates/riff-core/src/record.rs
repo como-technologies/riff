@@ -115,6 +115,7 @@
 //! | [`Kind`](crate::wire::Kind) | the message of `posted` | `other` |
 //! | [`Selector`] | the `to` of the message of `posted` | `other`: a new field, a new value of a field, and each other form of JSON |
 //! | [`RiffState`] | `pause_set` | The line does not read. The set never grows: a pause is set or ended. A new sort of pause is a new [`Scope`]. |
+//! | [`Policy`](crate::proof::Policy) | `proof` of `policy_set` | The line does not read. The set never grows: a proof is asked or it is not. A new rule is a new field of `policy_set`. |
 //!
 //! # Each text with a grammar in a record
 //!
@@ -132,9 +133,9 @@
 //! | The caller in `by` | `{"session":"USER/ID"}` | `other` ([`By`]) |
 //! | A session in `woken` ([`Who`]) | `posted` | The read checks no character. A field that the build does not know is skipped. |
 //! | The signature and the payload of a message | `sig`, `payload` | The read keeps the text, and checks nothing. A reader checks them: a text that does not check gives a message that is not verified. |
-//! | An item, an email, a user, the ID of a riff, a body, a command, the reason of a hold, the title of a wave, the name of a device, a credential ID, a public key | `item`, `email`, `user`, `riff_id`, `body`, `command`, `reason`, `title`, `name`, `credential`, `public_key` | Free text. `handle` of `add_key` checks the name, the credential and the key; the read does not. |
+//! | An item, an email, a user, the ID of a riff, a body, a command, the reason of a hold, the title of a wave, the name of a device, a credential ID, a public key, the text of an action | `item`, `email`, `user`, `riff_id`, `body`, `command`, `reason`, `title`, `name`, `credential`, `public_key`, `action` | Free text. `handle` of `add_key` checks the name, the credential and the key; the read does not. |
 //! | An item of a plan, a need, a done need | `items`, `needs`, `done` of `plan_set` | Free text: `handle` of `plan` checks the form `issue-N`, and the read does not. |
-//! | A time, a position, a seq, a count, the number of a wave | `written_at_ms`, `at_ms`, `due_ms`, `position`, `seq`, `after_secs`, `per_host`, `number` | The line does not read. A number is a whole number that is not negative, and its type never changes (the rule of a field). `per_host` is at most 65535. |
+//! | A time, a position, a seq, a count, the number of a wave, the counter of an authenticator | `written_at_ms`, `at_ms`, `due_ms`, `position`, `seq`, `after_secs`, `per_host`, `number`, `counter` | The line does not read. A number is a whole number that is not negative, and its type never changes (the rule of a field). `per_host` is at most 65535. |
 //! | A mark | `worker`, `must_clear`, `admin` | The line does not read. A mark is `true` or `false`, and its type never changes. |
 //!
 //! The header of a chunk has the number of the format. A header of a
@@ -317,6 +318,12 @@ changes! {
     /// A person removed one of their devices
     /// (01M75NH3625QATGDT6DK652ZK6).
     DeviceRemoved(DeviceRemoved) = "device_removed",
+    /// An admin set the policy of the proof of presence of the riff
+    /// (PROOF_POLICY).
+    PolicySet(PolicySet) = "policy_set",
+    /// riff-server checked a proof of presence of a person for one
+    /// action (PROOF_LOG).
+    Proved(Proved) = "proved",
 }
 // ANCHOR_END: record
 
@@ -484,7 +491,9 @@ impl Change {
             | Change::PlanEnded(_)
             | Change::NotesSet(_)
             | Change::KeyAdded(_)
-            | Change::DeviceRemoved(_) => None,
+            | Change::DeviceRemoved(_)
+            | Change::PolicySet(_)
+            | Change::Proved(_) => None,
         }
     }
 }
@@ -615,7 +624,9 @@ impl Record {
             | Change::OwnerDenied(_)
             | Change::SigninsEnded(_)
             | Change::KeyAdded(_)
-            | Change::DeviceRemoved(_) => false,
+            | Change::DeviceRemoved(_)
+            | Change::PolicySet(_)
+            | Change::Proved(_) => false,
         }
     }
 
@@ -1219,6 +1230,52 @@ pub struct DeviceRemoved {
     pub name: String,
 }
 
+/// The policy of the proof of presence of the riff (PROOF_POLICY). An
+/// admin set it with a proof.
+///
+/// ```
+/// use riff_core::proof::Policy;
+/// use riff_core::record::{Change, PolicySet};
+///
+/// let set = Change::PolicySet(PolicySet { proof: Policy::Required });
+/// assert_eq!(serde_json::to_string(&set).unwrap(), r#"{"policy_set":{"proof":"required"}}"#);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PolicySet {
+    pub proof: crate::proof::Policy,
+}
+
+/// A proof of presence that riff-server checked (PROOF_LOG): the key
+/// `name` of the person `user` signed the challenge of the action. The
+/// time of the record is the last use of the key.
+///
+/// ```
+/// use riff_core::record::{Change, Proved};
+///
+/// let proved = Change::Proved(Proved {
+///     user: "mike".into(),
+///     name: "yubikey".into(),
+///     action: "pause the whole riff".into(),
+///     counter: 12,
+/// });
+/// assert_eq!(
+///     serde_json::to_string(&proved).unwrap(),
+///     r#"{"proved":{"user":"mike","name":"yubikey","action":"pause the whole riff","counter":12}}"#
+/// );
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Proved {
+    /// The USER of the person.
+    pub user: String,
+    /// The name of the key that signed.
+    pub name: String,
+    /// The text of the action ([`crate::proof::Action::text`]).
+    pub action: String,
+    /// The counter of the authenticator in the signed data: 0 for an
+    /// authenticator that counts nothing.
+    pub counter: u64,
+}
+
 /// One line of the log, as this build reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
@@ -1395,6 +1452,15 @@ pub fn one_of_each() -> Vec<Change> {
         Change::DeviceRemoved(DeviceRemoved {
             user: "ann".into(),
             name: "yubikey".into(),
+        }),
+        Change::PolicySet(PolicySet {
+            proof: crate::proof::Policy::Required,
+        }),
+        Change::Proved(Proved {
+            user: "ann".into(),
+            name: "phone".into(),
+            action: "pause the whole riff".into(),
+            counter: 3,
         }),
     ]
 }

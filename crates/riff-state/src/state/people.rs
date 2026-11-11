@@ -73,8 +73,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use riff_core::name::{SERVER_USER, SessionUri, ThreadName, Who, check, sanitize};
+use riff_core::proof::Action;
 use riff_core::record::{
-    self, Change, DeviceRemoved, Email, KeyAdded, OwnerSet, PersonJoined, RiffMade, SigninsEnded,
+    self, Change, DeviceRemoved, Email, KeyAdded, OwnerSet, PersonJoined, Proved, RiffMade,
+    SigninsEnded,
 };
 use riff_core::selector::Selector;
 use riff_core::wire::{
@@ -259,6 +261,7 @@ impl People {
             public_key: public_key.clone(),
             added_ms: at_ms,
             used_ms: at_ms,
+            counter: 0,
         };
         self.keys
             .entry(user.clone())
@@ -279,6 +282,22 @@ impl People {
         if keys.is_empty() {
             self.keys.remove(user);
         }
+        Ok(())
+    }
+
+    /// The key `name` of `user` signed a proof (PROOF_LOG): the time of
+    /// the record is its last use, and the counter of the proof is its
+    /// counter now. A key that the person does not have changes nothing.
+    pub(super) fn proved(&mut self, proved: &Proved, at_ms: u64) -> Result<(), &'static str> {
+        let Some(key) = self
+            .keys
+            .get_mut(&proved.user)
+            .and_then(|keys| keys.get_mut(&proved.name))
+        else {
+            return Err("the person has no key with the name");
+        };
+        key.used_ms = at_ms;
+        key.counter = proved.counter;
         Ok(())
     }
 
@@ -501,6 +520,7 @@ impl View<'_> {
             admins,
             members,
             allowed_domains: Vec::new(),
+            proof: riff_core::proof::Policy::Off,
         }
     }
 
@@ -792,6 +812,10 @@ impl Command for Invite {
         Role::Admin
     }
 
+    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        Some(Action::invite(&self.email))
+    }
+
     fn handle(
         &self,
         _caller: &Caller,
@@ -825,6 +849,10 @@ impl Command for Remove {
 
     fn needs(&self, _: &Caller) -> Role {
         Role::Admin
+    }
+
+    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        Some(Action::remove(&self.email))
     }
 
     fn handle(
@@ -875,6 +903,10 @@ impl Command for SetAdmin {
 
     fn needs(&self, _: &Caller) -> Role {
         Role::Owner
+    }
+
+    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        Some(Action::admin(&self.email, self.admin))
     }
 
     fn handle(
@@ -936,6 +968,10 @@ impl Command for PassOwner {
 
     fn needs(&self, _: &Caller) -> Role {
         Role::Owner
+    }
+
+    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        Some(Action::pass_owner(&self.email))
     }
 
     fn handle(
@@ -1001,6 +1037,10 @@ impl Command for TakeOwner {
 
     fn needs(&self, _: &Caller) -> Role {
         Role::Admin
+    }
+
+    fn proof(&self, _: &Caller, _: &View<'_>, _: Now) -> Option<Action> {
+        Some(Action::TakeOwner)
     }
 
     fn handle(

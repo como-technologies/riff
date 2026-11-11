@@ -9,7 +9,7 @@
 //! | [`Sessions`] | [`super::sessions`] | Each session that a record names. |
 //! | [`Threads`] | [`super::threads`] | The members and the kept messages of each thread. |
 //! | [`Work`] | [`super::work`] | The claims and the leads. |
-//! | [`TheRiff`] | [`super::the_riff`] | The pauses, and the settings. |
+//! | [`TheRiff`] | [`super::the_riff`] | The pauses, the settings, and the policy of the proof of presence. |
 //! | [`People`] | [`super::people`] | The riff ID, the email of each USER, the members, the admins, the owner, the request for the owner role, and the keys of each USER. |
 //! | [`Plans`] | [`super::plan`] | The holds and the plan of each repository thread. |
 //!
@@ -54,6 +54,8 @@
 //! | `notes_set` | It keeps the `by` and the time of the record with the text, and each old text (01M59258K3TYR09HC4AWHWZPEX). | Yes. |
 //! | `key_added` | It keeps the time of the record as the time of the add and of the last use of the key (01M75NH2P3QHCYDKQH60KGSF97). A name that the person has, or a credential that the riff knows, changes nothing: `handle` refuses such an add. | Yes. |
 //! | `device_removed` | A name that the person has no device with changes nothing. | Yes. |
+//! | `policy_set` | It keeps the policy of the proof of presence (PROOF_POLICY). | Yes. |
+//! | `proved` | It keeps the time of the record as the time of the last use of the key, and the counter of the proof (PROOF_LOG). A key that the person does not have changes nothing. | Yes. |
 
 use riff_core::record::{Change, Record};
 
@@ -246,6 +248,8 @@ pub fn apply(riff: &mut Riff, record: &Record) {
         Change::NotesSet(set) => riff.plans.notes_set(set, record),
         Change::KeyAdded(added) => riff.people.key_added(added, record.envelope.written_at_ms),
         Change::DeviceRemoved(removed) => riff.people.device_removed(removed),
+        Change::PolicySet(set) => riff.the_riff.policy_set(set),
+        Change::Proved(proved) => riff.people.proved(proved, record.envelope.written_at_ms),
     };
     if let Err(what) = taken {
         tracing::warn!(

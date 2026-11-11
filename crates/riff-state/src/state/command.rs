@@ -10,10 +10,10 @@
 //! | sessions | [`super::sessions`] | [`Register`](riff_core::wire::Register), [`Arrive`](super::Arrive), [`Start`](riff_core::wire::Start), [`End`](riff_core::wire::End) |
 //! | threads | [`super::threads`] | [`Join`](riff_core::wire::Join), [`Leave`](riff_core::wire::Leave), [`Post`](riff_core::wire::Post), [`Announce`](super::Announce) |
 //! | work | [`super::work`] | [`Claim`](riff_core::wire::Claim), [`Release`](riff_core::wire::Release), [`ReleaseFor`](riff_core::wire::ReleaseFor), [`Lead`](riff_core::wire::Lead) |
-//! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget), [`Import`](super::Import) |
+//! | the riff | [`super::the_riff`] | [`MakeRiff`](super::MakeRiff), [`Pause`](riff_core::wire::Pause), [`Resume`](riff_core::wire::Resume), [`SetIdle`](riff_core::wire::SetIdle), [`Forget`](super::Forget), [`Import`](super::Import), [`SetPolicy`](riff_core::wire::SetPolicy), [`Approve`](riff_core::wire::Approve) |
 //! | plan | [`super::plan`] | [`Hold`](riff_core::wire::Hold), [`Free`](riff_core::wire::Free), [`SetPlan`](riff_core::wire::SetPlan), [`PlanOff`](riff_core::wire::PlanOff) |
 //! | notes | [`super::notes`] | [`SetNotes`](riff_core::wire::SetNotes) |
-//! | devices | [`super::devices`] | [`AddKey`](super::AddKey), [`RemoveDevice`](riff_core::wire::RemoveDevice) |
+//! | devices | [`super::devices`] | [`AddKey`](super::AddKey), [`RemoveDevice`](riff_core::wire::RemoveDevice), [`Prove`](super::Prove) |
 //! | people | [`super::people`] | [`Admit`](super::Admit), [`Invite`](riff_core::wire::Invite), [`Remove`](riff_core::wire::Remove), [`SetAdmin`](riff_core::wire::SetAdmin), [`PassOwner`](riff_core::wire::PassOwner), [`TakeOwner`](riff_core::wire::TakeOwner), [`DenyOwner`](riff_core::wire::DenyOwner), [`GrantOwner`](super::GrantOwner), [`EndOwner`](super::EndOwner), [`NameOwner`](super::NameOwner), [`Revoke`](riff_core::wire::Revoke) |
 //!
 //! # Who can send a command
@@ -26,6 +26,7 @@ use std::fmt;
 use std::time::Instant;
 
 use riff_core::name::{SessionUri, Who};
+use riff_core::proof::Action;
 use riff_core::record::{By, Change, Record};
 
 use super::presence::Signal;
@@ -125,6 +126,10 @@ pub struct Caller {
     role: Role,
     /// The verified email of a sign-in.
     email: Option<String>,
+    /// The action of the proof of presence of the call: the engine
+    /// sets it from the header `riff-proof`, after its check of the
+    /// proof (PROOF_REFUSE).
+    proof: Option<Action>,
 }
 
 impl Caller {
@@ -141,6 +146,7 @@ impl Caller {
             worker: false,
             role: Role::Member,
             email: None,
+            proof: None,
         }
     }
 
@@ -166,6 +172,7 @@ impl Caller {
             worker: false,
             role: Role::Member,
             email: Some(email.to_owned()),
+            proof: None,
         }
     }
 
@@ -177,6 +184,7 @@ impl Caller {
             worker: false,
             role: Role::Member,
             email: None,
+            proof: None,
         }
     }
 
@@ -193,6 +201,20 @@ impl Caller {
     /// The same caller with this role.
     pub fn with_role(self, role: Role) -> Caller {
         Caller { role, ..self }
+    }
+
+    /// The same caller with a proof of presence of `action`. Only the
+    /// engine sets it, after its check of the proof of the call.
+    pub fn with_proof(self, action: Action) -> Caller {
+        Caller {
+            proof: Some(action),
+            ..self
+        }
+    }
+
+    /// The action of the proof of the call, when it has one.
+    pub fn proof(&self) -> Option<&Action> {
+        self.proof.as_ref()
     }
 
     pub fn class(&self) -> Class {
@@ -376,6 +398,9 @@ command_kinds! {
     Notes = "notes",
     AddKey = "add_key",
     RemoveDevice = "remove_device",
+    SetPolicy = "set_policy",
+    Prove = "prove",
+    Approve = "approve",
 }
 
 impl CommandKind {
@@ -389,14 +414,17 @@ impl CommandKind {
     ///
     /// assert!(CommandKind::Invite.of_people() && CommandKind::Admit.of_people());
     /// assert!(!CommandKind::Claim.of_people() && !CommandKind::MakeRiff.of_people());
-    /// assert_eq!(CommandKind::ALL.iter().filter(|kind| kind.of_people()).count(), 13);
+    /// assert_eq!(CommandKind::ALL.iter().filter(|kind| kind.of_people()).count(), 15);
     /// ```
     pub fn of_people(self) -> bool {
         // Each kind has an arm: a new kind does not compile until a
         // person decides (01M51JBTEM10W68K6F267BB79N). A device is a
         // device of a person, so a riff with no sign-in has none
-        // (01M75NH30PNATYN33MXZQMVBW8).
+        // (01M75NH30PNATYN33MXZQMVBW8), and it has no proof and no
+        // policy of the proof (PROOF_POLICY).
         match self {
+            CommandKind::SetPolicy | CommandKind::Prove => true,
+            CommandKind::Approve => false,
             CommandKind::Admit
             | CommandKind::Invite
             | CommandKind::Remove
@@ -452,6 +480,9 @@ impl CommandKind {
     /// ```
     pub fn registers_first(self) -> bool {
         match self {
+            // An approval pauses the whole riff, as a pause does.
+            CommandKind::Approve => true,
+            CommandKind::SetPolicy | CommandKind::Prove => false,
             CommandKind::Start
             | CommandKind::Join
             | CommandKind::Leave
@@ -517,6 +548,8 @@ impl fmt::Display for CommandKind {
 /// | `not_holder` | The caller does not hold the item. | 409 |
 /// | `other_user` | The session ID is known under another user. | 409 |
 /// | `bad_request` | The fields of the call do not agree. | 400 |
+/// | `needs_proof` | The action needs a proof of presence, and the call has none. | 403 |
+/// | `bad_proof` | The proof of the call is not a good proof of the person for the action. | 403 |
 ///
 /// `Failed::status` of the engine of riff-server gives the status
 /// (01M3X4Z69CFV23V4QZBE8RP1GJ).
@@ -546,11 +579,17 @@ pub enum Code {
     OtherUser,
     /// The fields of the call do not agree.
     BadRequest,
+    /// The action needs a proof of presence, and the call has none
+    /// (PROOF_REFUSE).
+    NeedsProof,
+    /// The proof of the call is for another action or person, used, old,
+    /// or not checked (PROOF_REFUSE).
+    BadProof,
 }
 
 impl Code {
     /// Each code of this release.
-    pub const ALL: [Code; 11] = [
+    pub const ALL: [Code; 13] = [
         Code::NotAllowed,
         Code::NoSignIn,
         Code::NotMember,
@@ -562,6 +601,8 @@ impl Code {
         Code::NotHolder,
         Code::OtherUser,
         Code::BadRequest,
+        Code::NeedsProof,
+        Code::BadProof,
     ];
 
     /// The name of the code.
@@ -578,6 +619,8 @@ impl Code {
             Code::NotHolder => "not_holder",
             Code::OtherUser => "other_user",
             Code::BadRequest => "bad_request",
+            Code::NeedsProof => riff_core::proof::NEEDS_PROOF,
+            Code::BadProof => riff_core::proof::BAD_PROOF,
         }
     }
 }
@@ -717,6 +760,9 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         // An authenticator is a device of the person, never of a
         // session (01M75NH30PNATYN33MXZQMVBW8).
         CommandKind::AddKey | CommandKind::RemoveDevice => (&[Person], Can),
+        // A session never gives a proof (PROOF_ASK). Only a person sets
+        // the policy and approves a deploy (01M6WZ40SFVZ6CRQ1H4Z27CWP4).
+        CommandKind::Prove | CommandKind::SetPolicy | CommandKind::Approve => (&[Person], Can),
         CommandKind::Admit => (&[SignIn], Can),
         CommandKind::MakeRiff
         | CommandKind::Announce
@@ -747,6 +793,8 @@ pub fn permits(kind: CommandKind, caller: &Caller, needs: Role) -> Result<(), Re
         let owner = |what: &str| format!("{user} is not the owner; only the owner {what}");
         let reason = match (kind, needs) {
             (CommandKind::SetIdle, _) => admin("can change the settings of idle workers"),
+            (CommandKind::SetPolicy, _) => admin("sets the policy of the proof of presence"),
+            (CommandKind::Approve, _) => admin("approves the deploy of a release"),
             (CommandKind::Pause | CommandKind::Resume, _) => format!(
                 "{user} is not an admin; only the owner or an admin can {kind} the whole riff \
                  or a repository by its name"
@@ -838,6 +886,15 @@ pub trait Command: Send + 'static {
     /// none. The state sets it at the check, only when the command is
     /// not refused (01M3WRD97EZJK3AABXECXEY133).
     fn signal(&self, _caller: &Caller) -> Option<Signal> {
+        None
+    }
+
+    /// The action of the command of `caller` that a proof of presence
+    /// covers, when it is one of the list (PROOF_ACTIONS). Most
+    /// commands have none. [`State::check`](super::State::check) runs
+    /// the rule of the proof ([`super::proof::check`]) after
+    /// [`permits`] and before `handle`.
+    fn proof(&self, _caller: &Caller, _view: &View<'_>, _now: Now) -> Option<Action> {
         None
     }
 }
@@ -938,6 +995,9 @@ mod tests {
         row(CommandKind::Notes,      PS, false, false, true),
         row(CommandKind::AddKey,     P,  true,  true,  false),
         row(CommandKind::RemoveDevice, P, true, true,  false),
+        row(CommandKind::SetPolicy,  P,  true,  true,  false),
+        row(CommandKind::Prove,      P,  true,  true,  false),
+        row(CommandKind::Approve,    P,  true,  false, true),
     ];
 
     /// The row of `kind` in [`TABLE`].
@@ -1018,7 +1078,10 @@ mod tests {
     fn each_command_of_the_people_needs_the_role_of_the_table() {
         let ann = caller(Class::Person);
         let expected = |kind| match kind {
-            CommandKind::Invite | CommandKind::Remove | CommandKind::TakeOwner => Role::Admin,
+            CommandKind::Invite
+            | CommandKind::Remove
+            | CommandKind::TakeOwner
+            | CommandKind::SetPolicy => Role::Admin,
             CommandKind::SetAdmin | CommandKind::PassOwner | CommandKind::DenyOwner => Role::Owner,
             _ => Role::Member,
         };
@@ -1174,6 +1237,29 @@ mod tests {
                 let name = "yubikey".to_owned();
                 of.of(RemoveDevice { name }, kind)
             }
+            CommandKind::SetPolicy => {
+                let proof = riff_core::proof::Policy::Required;
+                of.of(riff_core::wire::SetPolicy { proof }, kind)
+            }
+            CommandKind::Prove => {
+                let prove = crate::state::Prove {
+                    name: "yubikey".into(),
+                    action: Action::Test,
+                    counter: 1,
+                };
+                of.of(prove, kind)
+            }
+            CommandKind::Approve => {
+                let tag = "v1.2.0".to_owned();
+                of.of(
+                    riff_core::wire::Approve {
+                        me,
+                        repo: thread,
+                        tag,
+                    },
+                    kind,
+                )
+            }
             CommandKind::Revoke => {
                 let own = caller.who().user().to_uppercase();
                 return [None, Some(own), Some("bob".to_owned())]
@@ -1225,7 +1311,7 @@ mod tests {
             }
         }
         // Each kind has one case, and `revoke` has 3.
-        assert_eq!(tried, (35 + 2) * 4 * 2 * 3);
+        assert_eq!(tried, (38 + 2) * 4 * 2 * 3);
     }
 
     #[test]

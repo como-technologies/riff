@@ -256,6 +256,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use riff_core::name::{SessionUri, ThreadName, Who};
+use riff_core::proof::{Action, Policy};
 use riff_core::record::{Change, Envelope, Posted, Record};
 use riff_core::selector::Selector;
 use riff_core::wire::{
@@ -279,6 +280,7 @@ pub mod notes;
 pub mod people;
 pub mod plan;
 pub mod presence;
+pub mod proof;
 pub mod riff;
 pub mod sessions;
 pub mod snapshot;
@@ -292,7 +294,7 @@ pub use command::{
     Caller, Cause, Class, Code, Command, CommandKind, Done, LEAD_BY_PERSON, Now, Refused, Role,
     permits,
 };
-pub use devices::{AddKey, PersonKey};
+pub use devices::{AddKey, PersonKey, Prove};
 pub use people::{Admit, Admitted, EndOwner, GrantOwner, NameOwner, OwnerChange, People};
 pub use plan::Plans;
 pub use presence::{Imported, ImportedSession, Presence, Signal};
@@ -434,6 +436,9 @@ pub struct Check<N> {
     pub caller: Caller,
     /// The changes and the note of the command, or why it is refused.
     pub result: Result<(Vec<Change>, N), Refused>,
+    /// True when the command passed with the proof of its call: the
+    /// engine then uses the proof (PROOF_REFUSE).
+    pub proved: bool,
 }
 
 /// The sizes of the state, from [`State::counts`].
@@ -979,6 +984,7 @@ impl State {
                     registered,
                     caller,
                     result: Err(Refused::new(Code::OtherUser, reason)),
+                    proved: false,
                 };
             }
             let who = me.who();
@@ -997,8 +1003,13 @@ impl State {
             caller = caller.with_worker(self.pending.sessions().worker(who));
         }
         let needs = command.needs(&caller);
+        let mut proved = false;
         let result = permits(C::KIND, &caller, needs)
             .map_err(|refused| self.no_owner(needs, refused))
+            .and_then(|()| {
+                proved = self.check_proof(&caller, command, now)?;
+                Ok(())
+            })
             .and_then(|()| command.handle(&caller, &self.pending_view(), self.now(now)));
         if result.is_ok()
             && let Some(signal) = command.signal(&caller)
@@ -1008,8 +1019,46 @@ impl State {
         Check {
             registered,
             caller,
+            proved: proved && result.is_ok(),
             result,
         }
+    }
+
+    /// The rule of the proof of presence of a command of `caller`
+    /// ([`proof::check`], PROOF_REFUSE), on the pending copy: true when
+    /// the command uses the proof of the call.
+    fn check_proof<C: Command>(
+        &self,
+        caller: &Caller,
+        command: &C,
+        now: Instant,
+    ) -> Result<bool, Refused> {
+        let view = self.pending_view();
+        match command.proof(caller, &view, self.now(now)) {
+            Some(action) => proof::check(view.riff.the_riff().proof(), &action, caller.proof()),
+            None => Ok(false),
+        }
+    }
+
+    /// The rule of the proof of presence of a step that riff-server
+    /// does not do itself: a step of the daemon of a host, or on GitHub
+    /// (PROOF_GATE). It reads the policy of the pending copy, as a
+    /// command does.
+    pub fn check_step(&self, action: &Action, proved: Option<&Action>) -> Result<bool, Refused> {
+        proof::check(self.pending.the_riff().proof(), action, proved)
+    }
+
+    /// The policy of the proof of presence in the written copy
+    /// (PROOF_SHOW).
+    pub fn policy(&self) -> Policy {
+        self.written.the_riff().proof()
+    }
+
+    /// True when `user` has a key in the pending copy: the add of a
+    /// second key then needs a proof with the policy `required`
+    /// (PROOF_KEYS).
+    pub fn has_key(&self, user: &str) -> bool {
+        self.pending.people().keys_of(user).next().is_some()
     }
 
     /// The refusal of `permits` for a command that needs the owner, in
@@ -1258,6 +1307,7 @@ impl State {
             registered,
             caller,
             result,
+            proved: _,
         } = self.check(caller, command, now);
         self.queue.extend(registered.into_iter().flatten());
         let (changes, note) = result?;
@@ -2292,7 +2342,10 @@ impl State {
             Some(session) if me.who().session().is_some() => &session.place,
             _ => me.place(),
         };
-        self.pauses().reply(place.default_thread().as_ref(), false)
+        RiffReply {
+            proof: self.policy(),
+            ..self.pauses().reply(place.default_thread().as_ref(), false)
+        }
     }
 
     /// Pauses or resumes the repository of `me`
@@ -4289,6 +4342,7 @@ mod tests {
                 "riff": "paused",
                 "idle": {"per_host": 2, "after_secs": 300},
                 "riff_pause": {"by": {"session": "mike/a1"}, "at_ms": T0},
+                "proof": "required",
                 "pauses": {"design": {"by": {"session": "mike/a1"}, "at_ms": T0}},
                 "threads": [{"thread": "como-technologies/riff", "members": [ann],
                              "messages": [{"message": message, "woken": [ann], "key": "pull-40-1a2b3c4d-conflict"}]}],
@@ -4323,7 +4377,7 @@ mod tests {
                 "owner_asked": {"email": "cy@acme.io", "due_ms": T0},
                 "signins_ended": {"bob": 1},
                 "keys": {"mike": {"yubikey": {
-                    "credential": "Y3JlZA", "public_key": "pQ", "added_ms": T0, "used_ms": T0}}},
+                    "credential": "Y3JlZA", "public_key": "pQ", "added_ms": T0, "used_ms": T0, "counter": 4}}},
                 "plans": {"como-technologies/riff": {
                     "notes": {"mike": [
                         {"text": "one", "by": {"person": "mike"}, "at_ms": T0},
@@ -4354,7 +4408,7 @@ mod tests {
         covered.trip(&full);
         // The round trip of riff-core shows each variant of the types
         // of the log and the wire.
-        let of_the_log = ["Change:", "Kind:", "RiffState:"];
+        let of_the_log = ["Change:", "Kind:", "RiffState:", "Policy:"];
         let gaps: Vec<String> = covered
             .gaps()
             .into_iter()

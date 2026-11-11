@@ -6,7 +6,7 @@
 //!
 //! | Part | Fields |
 //! |---|---|
-//! | `the_riff::Saved` | `riff`, `idle` |
+//! | `the_riff::Saved` | `riff`, `idle`, `riff_pause`, `pauses`, `proof` |
 //! | `threads::Saved` | `threads` |
 //! | `work::Saved` | `claims`, `leads` |
 //! | `sessions::Saved` | `sessions` |
