@@ -203,8 +203,9 @@ impl Span {
     /// std::thread::sleep(Duration::from_millis(20));
     /// // No load: the limit holds.
     /// assert!(!span.within(Duration::from_millis(10)));
-    /// // Under load, the wait goes on until the hang limit.
-    /// std::fs::write(&file, "some avg10=90.00 avg60=0.00 avg300=0.00 total=20000\n")?;
+    /// // Under load, the wait goes on until the hang limit. A task waited
+    /// // for a CPU for 60 s, more than the wall time of a slow machine.
+    /// std::fs::write(&file, "some avg10=90.00 avg60=0.00 avg300=0.00 total=60000000\n")?;
     /// assert!(span.within(Duration::from_millis(10)));
     /// # Ok::<(), std::io::Error>(())
     /// ```
