@@ -1101,8 +1101,11 @@ async fn at_in_the_chat_tab_shows_the_names_and_tab_completes_one() {
     tty.press("2").await;
     tty.shows(|rows| rows[21] == ">").await;
     tty.press("@r").await;
+    // `@` shows the same note: wait for the prompt too.
     let rows = tty
-        .shows(|rows| rows[22] == " Tab or Enter picks riff. Esc closes the list.")
+        .shows(|rows| {
+            rows[21] == "> @r" && rows[22] == " Tab or Enter picks riff. Esc closes the list."
+        })
         .await;
     assert_eq!(
         rows[20..22],
@@ -1151,8 +1154,11 @@ async fn hash_in_the_chat_tab_shows_the_open_issues_and_tab_puts_one() {
     tty.press("2").await;
     tty.shows(|rows| rows[21] == ">").await;
     tty.press("is #186").await;
+    // `#18` shows the same rows and note: wait for the prompt too.
     let rows = tty
-        .shows(|rows| rows[22] == " Tab or Enter picks #1862. Esc closes the list.")
+        .shows(|rows| {
+            rows[21] == "> is #186" && rows[22] == " Tab or Enter picks #1862. Esc closes the list."
+        })
         .await;
     assert_eq!(
         rows[19..22],
