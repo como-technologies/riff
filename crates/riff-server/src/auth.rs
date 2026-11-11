@@ -118,6 +118,9 @@ pub struct Config {
     /// The API of GitHub, and where the server keeps the keys of the
     /// GitHub Apps of the riff (01M6WG52WSWM8A9CN6X448AGAJ).
     pub github: crate::github::Settings,
+    /// How long a proof of presence is good, from its start
+    /// ([`crate::proofs::LIFE`], PROOF_ASK). A test sets a shorter one.
+    pub proof_life: std::time::Duration,
 }
 
 impl Default for Config {
@@ -144,6 +147,7 @@ impl Config {
             save_every: crate::SAVE_EVERY,
             build: Build::this(),
             github: crate::github::Settings::default(),
+            proof_life: crate::proofs::LIFE,
         }
     }
 

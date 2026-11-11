@@ -1142,6 +1142,16 @@ impl State {
             .collect()
     }
 
+    /// Each key of `user` in the written copy, by name: the check of the
+    /// assertion of a proof finds the key that signed (PROOF_CHECK).
+    pub fn keys(&self, user: &str) -> Vec<(String, PersonKey)> {
+        self.written
+            .people()
+            .keys_of(user)
+            .map(|(name, key)| (name.clone(), key.clone()))
+            .collect()
+    }
+
     /// Refuses the name `name` of a new key of `user` in the pending
     /// copy, as `add_key` does: the check at the start of an add
     /// (01M75NH33CVGBVASSACBPXRR2G).

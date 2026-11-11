@@ -1,5 +1,6 @@
 //! The check of the reply of a FIDO2 / WebAuthn authenticator: the add
-//! of a key of a person (01M75NH2VF6HGZVY04GB358JG0).
+//! of a key of a person (01M75NH2VF6HGZVY04GB358JG0), and the assertion
+//! of a proof of presence ([`assert`], PROOF_CHECK).
 //!
 //! # Design
 //!
@@ -45,7 +46,9 @@ use ciborium::Value;
 use p256::ecdsa::signature::Verifier;
 use riff_core::wire::{
     KeyAlgorithm, KeyCredential, KeyOptions, KeyParty, KeyReply, KeySelection, KeyUser,
+    ProofOptions, ProofReply,
 };
+use riff_state::state::PersonKey;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -335,6 +338,154 @@ pub fn check(party: &Party, challenge: &[u8], reply: &KeyReply) -> Result<Checke
     })
 }
 
+/// A proof that [`assert`] took: the name of the key that signed, and
+/// the counter of the authenticator in the signed data.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Asserted {
+    pub name: String,
+    pub counter: u64,
+}
+
+/// Checks the assertion of a proof of presence with the challenge
+/// `challenge` on `party` (PROOF_CHECK): the type `webauthn.get`, the
+/// challenge, the origin of riff-server, the hash of the relying party
+/// ID, the flag of user presence, a credential of `keys`, and the
+/// signature of that key over the authenticator data and the hash of
+/// `clientDataJSON`. `keys` are the keys of the person, by name. The
+/// state checks the counter (`riff_state::state::Prove`).
+///
+/// ```mermaid
+/// flowchart TD
+///     R[the assertion of the page] --> C{clientDataJSON: type webauthn.get,<br/>the challenge of the proof, the origin of riff-server}
+///     C -->|no| X[refused, with the reason]
+///     C --> A{authenticator data: the hash of the party ID,<br/>user presence}
+///     A -->|no| X
+///     A --> K{the rawId is a credential<br/>of a key of the person}
+///     K -->|no| X
+///     K --> S{the signature checks with that key}
+///     S -->|no| X
+///     S --> G[the name of the key, and the counter]
+/// ```
+///
+/// ```
+/// use riff_core::device::fake::{Authenticator, Proof, proof_options};
+/// use riff_server::webauthn::{Party, assert};
+/// use riff_state::state::PersonKey;
+///
+/// let party = Party::of("https://riff.example.com");
+/// let key = Authenticator::new();
+/// let kept = PersonKey { credential: key.credential(), public_key: key.public_key(), added_ms: 0, used_ms: 0, counter: 0 };
+/// let keys = [("yubikey".to_owned(), kept)];
+/// // The challenge "c2VlZA" is the base64url of "seed".
+/// let options = proof_options(&party.id, "c2VlZA", &key);
+/// let good = key.assert("T", &options, &party.origin);
+/// let asserted = assert(&party, b"seed", &good, &keys).unwrap();
+/// assert_eq!((asserted.name.as_str(), asserted.counter), ("yubikey", 1));
+///
+/// let bad = key.assert_as("T", &options, &party.origin, Proof::BadSignature);
+/// assert!(assert(&party, b"seed", &bad, &keys).unwrap_err().0.contains("signature"));
+/// ```
+pub fn assert(
+    party: &Party,
+    challenge: &[u8],
+    reply: &ProofReply,
+    keys: &[(String, PersonKey)],
+) -> Result<Asserted, Refused> {
+    let decode = |what: &str, text: &str| {
+        B64.decode(text)
+            .map_err(|_| Refused(format!("the {what} of the proof is not base64url")))
+    };
+    let raw_id = decode("rawId", &reply.raw_id)?;
+    let client_json = decode("clientDataJSON", &reply.client_data)?;
+    let data = decode("authenticatorData", &reply.authenticator_data)?;
+    let signature = decode("signature", &reply.signature)?;
+
+    let client: ClientData = serde_json::from_slice(&client_json).map_err(|e| {
+        Refused(format!(
+            "the clientDataJSON of the proof does not read: {e}"
+        ))
+    })?;
+    if client.kind != "webauthn.get" {
+        return refused(format!(
+            "the proof has the type {:?}, not webauthn.get: it is no signature of a key",
+            client.kind
+        ));
+    }
+    if B64.decode(&client.challenge).ok().as_deref() != Some(challenge) {
+        return refused("the proof has a challenge that riff-server did not give for it");
+    }
+    if client.origin != party.origin || client.cross_origin {
+        return refused(format!(
+            "the proof comes from {}, not from the page of riff-server at {}",
+            client.origin, party.origin
+        ));
+    }
+    if data.len() < 37 {
+        return refused("the authenticator data of the proof is too short");
+    }
+    if data[..32] != Sha256::digest(party.id.as_bytes())[..] {
+        return refused(format!(
+            "the authenticator signed for another relying party, not for {}",
+            party.id
+        ));
+    }
+    if data[32] & PRESENT == 0 {
+        return refused("the authenticator saw no touch: the proof has no user presence");
+    }
+    let counter = u64::from(u32::from_be_bytes([data[33], data[34], data[35], data[36]]));
+    let credential = B64.encode(&raw_id);
+    let Some((name, key)) = keys.iter().find(|(_, key)| key.credential == credential) else {
+        return refused(
+            "the authenticator signed with a key that is not one of yours: riff device list \
+             shows your keys",
+        );
+    };
+    let cose = B64.decode(&key.public_key).map_err(|_| {
+        Refused(format!(
+            "riff cannot read the public key of your key {name}"
+        ))
+    })?;
+    let public_key = PublicKey::from_cose(&cose)?;
+    let mut signed = data.clone();
+    signed.extend_from_slice(&Sha256::digest(&client_json));
+    if !public_key.verify(&signed, &signature) {
+        return refused(format!(
+            "the signature of the proof does not check with your key {name}"
+        ));
+    }
+    Ok(Asserted {
+        name: name.clone(),
+        counter,
+    })
+}
+
+/// The options of the assertion of a proof (PROOF_ASK): the challenge,
+/// the relying party, the credential of each key of the person, and the
+/// text of the action for the page.
+pub fn proof_options(
+    party: &Party,
+    user: &str,
+    challenge: &[u8],
+    credentials: &[String],
+    action: &str,
+) -> ProofOptions {
+    ProofOptions {
+        challenge: B64.encode(challenge),
+        timeout: TIMEOUT_MS,
+        rp_id: party.id.clone(),
+        allow_credentials: credentials
+            .iter()
+            .map(|id| KeyCredential {
+                kind: "public-key".into(),
+                id: id.clone(),
+            })
+            .collect(),
+        user_verification: "preferred".into(),
+        action: action.to_owned(),
+        user: user.to_owned(),
+    }
+}
+
 /// The parts of the authenticator data of a new credential.
 struct Credential {
     /// The SHA-256 hash of the relying party ID.
@@ -514,7 +665,7 @@ fn integer(value: &Value) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use riff_core::device::fake::{Authenticator, Cbor, Shape};
+    use riff_core::device::fake::{self, Authenticator, Cbor, Proof, Shape};
 
     const RSA_KEY: &str = include_str!("../testdata/test-only-rsa-key.pem");
     const JWKS: &str = include_str!("../testdata/test-only-jwks.json");
@@ -712,6 +863,108 @@ mod tests {
         .encode();
         let reason = PublicKey::from_cose(&short_x).unwrap_err().0;
         assert!(reason.contains("P-256"), "{reason}");
+    }
+
+    /// The kept key of a fake authenticator, as the state has it.
+    fn kept(key: &Authenticator) -> Vec<(String, PersonKey)> {
+        let kept = PersonKey {
+            credential: key.credential(),
+            public_key: key.public_key(),
+            added_ms: 0,
+            used_ms: 0,
+            counter: 0,
+        };
+        vec![("yubikey".to_owned(), kept)]
+    }
+
+    #[test]
+    fn a_good_assertion_gives_the_key_and_the_counter() {
+        let key = Authenticator::new();
+        let options = fake::proof_options(&party().id, &B64.encode(b"seed"), &key);
+        for counter in 1..=2 {
+            let reply = key.assert("T", &options, &party().origin);
+            let asserted = assert(&party(), b"seed", &reply, &kept(&key)).unwrap();
+            assert_eq!(asserted.name, "yubikey");
+            assert_eq!(asserted.counter, counter);
+        }
+        let zero = Authenticator::not_counting();
+        let options = fake::proof_options(&party().id, &B64.encode(b"seed"), &zero);
+        let reply = zero.assert("T", &options, &party().origin);
+        assert_eq!(
+            assert(&party(), b"seed", &reply, &kept(&zero))
+                .unwrap()
+                .counter,
+            0
+        );
+    }
+
+    #[test]
+    fn each_bad_assertion_is_refused_with_its_reason() {
+        let key = Authenticator::new();
+        let options = fake::proof_options(&party().id, &B64.encode(b"seed"), &key);
+        for (shape, part) in [
+            (
+                Proof::BadSignature,
+                "the signature of the proof does not check",
+            ),
+            (
+                Proof::OtherChallenge,
+                "a challenge that riff-server did not give",
+            ),
+            (Proof::OtherOrigin, "comes from https://evil.example.com"),
+            (Proof::OtherParty, "another relying party"),
+            (Proof::NoPresence, "no user presence"),
+            (Proof::OtherType, "not webauthn.get"),
+        ] {
+            let reply = key.assert_as("T", &options, &party().origin, shape);
+            let reason = assert(&party(), b"seed", &reply, &kept(&key))
+                .unwrap_err()
+                .0;
+            assert!(reason.contains(part), "{shape:?}: {reason}");
+        }
+        // The challenge of another proof.
+        let reply = key.assert("T", &options, &party().origin);
+        let reason = assert(&party(), b"other", &reply, &kept(&key))
+            .unwrap_err()
+            .0;
+        assert!(reason.contains("did not give"), "{reason}");
+        // A key that is not one of the person.
+        let other = Authenticator::new();
+        let reason = assert(&party(), b"seed", &reply, &kept(&other))
+            .unwrap_err()
+            .0;
+        assert!(reason.contains("not one of yours"), "{reason}");
+        // Short data, and a value that is not base64url.
+        let short = ProofReply {
+            authenticator_data: B64.encode([0u8; 36]),
+            ..reply.clone()
+        };
+        let reason = assert(&party(), b"seed", &short, &kept(&key))
+            .unwrap_err()
+            .0;
+        assert!(reason.contains("too short"), "{reason}");
+        let bad = ProofReply {
+            signature: "*".into(),
+            ..reply
+        };
+        let reason = assert(&party(), b"seed", &bad, &kept(&key)).unwrap_err().0;
+        assert!(reason.contains("not base64url"), "{reason}");
+    }
+
+    #[test]
+    fn the_options_of_a_proof_name_each_key_and_the_action() {
+        let options = proof_options(
+            &party(),
+            "mike",
+            b"seed",
+            &["Y3JlZA".into()],
+            "pause the whole riff",
+        );
+        assert_eq!(options.rp_id, "riff.example.com");
+        assert_eq!(options.challenge, B64.encode(b"seed"));
+        assert_eq!(options.allow_credentials[0].id, "Y3JlZA");
+        assert_eq!(options.action, "pause the whole riff");
+        assert_eq!(options.timeout, TIMEOUT_MS);
     }
 
     #[test]

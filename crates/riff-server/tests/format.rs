@@ -47,11 +47,14 @@
 //! - `fixtures/3.4.0`: the notes of the lead. `log.jsonl` has three
 //!   `notes_set` records: two texts for one user, and one text for
 //!   another user in another repository. The last has no caller.
-//! - `fixtures/4.17.0`: the keys of a person (01M75NH2P3QHCYDKQH60KGSF97).
-//!   `log.jsonl` adds two keys of one person, one key of a second
-//!   person and one of a third, and removes the first key. The last
-//!   record has no caller. So `replayed.json` has the part `keys` of
-//!   three persons.
+//! - `fixtures/4.17.0`: the keys of a person (01M75NH2P3QHCYDKQH60KGSF97),
+//!   and the proof of presence (PROOF_POLICY, PROOF_LOG). `log.jsonl`
+//!   adds two keys of one person, one key of a second person and one of
+//!   a third, and removes the first key. The sixth record has no caller.
+//!   Then the policy is `required`, a key signs a proof, the riff
+//!   resumes, and an approval pauses it. So `replayed.json` has the part
+//!   `keys` of three persons, with a counter and a new last use, and the
+//!   policy.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -568,6 +571,10 @@ fn the_log_of_the_keys_gives_its_checkpoint_at_each_position() {
     assert_eq!(ann[0].added_ms, 1_794_100_002_000);
     assert_eq!(full.credentials("bob"), ["Y3JlZC1ib2ItMQ"]);
     assert_eq!(full.devices("cy").devices.len(), 1);
+    // The proof sets the last use of the key, and its counter.
+    assert_eq!(ann[0].used_ms, 1_794_100_007_000);
+    assert_eq!(full.keys("ann")[0].1.counter, 4);
+    assert_eq!(full.policy(), riff_core::proof::Policy::Required);
 
     for at in 0..=records.len() {
         let (before, after) = records.split_at(at);

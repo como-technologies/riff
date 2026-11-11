@@ -79,6 +79,14 @@
 //!   the browser, `GET /device/key`, and its two calls need no token:
 //!   the ticket of the add is their proof. See [`devices`], and
 //!   [`webauthn`] for the check of the reply of the authenticator.
+//! - A proof of presence (PROOF_ASK) is a fresh signature of a key of a
+//!   person for one action. `POST /v1/proof` and `/v1/proof/wait` need
+//!   a person token; the page of the proof and its two calls need no
+//!   token. The call of an action carries the ticket of its proof in the
+//!   header `riff-proof`, and the engine takes the proof in the check of
+//!   the command. `POST /v1/policy` sets the policy of the riff, and
+//!   `POST /v1/proof/use` checks a step that riff-server does not do
+//!   itself. See [`proofs`].
 //! - `POST /v1/log` gives the records of one repository to the owner
 //!   and the admins, for `riff audit` (01M3ZWRC11R5M9V1KTF05P240W). It
 //!   reads the log from the store, and a post has only its mark
@@ -255,6 +263,7 @@ pub mod lease;
 pub mod listen;
 pub mod logline;
 pub mod oidc;
+pub mod proofs;
 pub mod renew;
 pub mod token;
 pub mod tools;
@@ -290,6 +299,9 @@ use riff_core::wire::{
     Revoke, RiffOwner, RiffQuery, RiffReply, ServerFacts, ServerMetadata, SetAdmin, SetBlocked,
     SetIdle, SetNotes, SetPlan, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner,
     Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
+};
+use riff_core::wire::{
+    Approve, ProofReply, ProofStart, ProofTicket, ProofWait, SetPolicy, UseProof,
 };
 use riff_core::wire::{BotPost, Names, NamesReply, SetMachine};
 use riff_core::wire::{Devices, KeyReply, KeyStart, KeyTicket, KeyWait, RemoveDevice};
@@ -737,6 +749,7 @@ impl Server {
                 .as_ref()
                 .map(|p| p.allowed_domains.clone())
                 .unwrap_or_default(),
+            proof: self.engine.read(State::policy),
             ..self.engine.read(|state| state.people().members())
         }
     }
@@ -1545,6 +1558,7 @@ impl Service {
             trusted: config.trusted(),
         };
         let engine = Engine::new(state, sign_ins);
+        engine.set_proof_life(config.proof_life);
         if first && !import {
             engine.make_riff(token::random_token());
         }
@@ -1997,7 +2011,8 @@ impl Service {
             .route(Free::PATH, post(command::<Free>))
             .route(SetPlan::PATH, post(command::<SetPlan>))
             .route(PlanOff::PATH, post(command::<PlanOff>))
-            .route(SetNotes::PATH, post(command::<SetNotes>));
+            .route(SetNotes::PATH, post(command::<SetNotes>))
+            .route(Approve::PATH, post(command::<Approve>));
         // `set_idle` has a router of its own: in a riff with sign-in,
         // its route always has the token check.
         let set_idle = Router::new().route(SetIdle::PATH, post(command::<SetIdle>));
@@ -2020,6 +2035,8 @@ impl Service {
             .route(PlanSeen::PATH, post(plan_seen))
             .route(PlanShow::PATH, post(plan_show))
             .route(NotesShow::PATH, post(notes_show))
+            // A step that riff-server does not do itself (PROOF_GATE).
+            .route(UseProof::PATH, post(proofs::use_proof))
             .route("/v1/me", get(me))
             .route("/v1/watch", get(watch))
             .route("/v1/tail", get(tail_thread))
@@ -2067,6 +2084,11 @@ impl Service {
             .route(RemoveDevice::PATH, post(command::<RemoveDevice>))
             .route(KeyStart::PATH, post(devices::start))
             .route(KeyWait::PATH, post(devices::wait))
+            // A proof of presence, and the policy (PROOF_ASK,
+            // PROOF_POLICY).
+            .route(ProofStart::PATH, post(proofs::start))
+            .route(ProofWait::PATH, post(proofs::wait))
+            .route(SetPolicy::PATH, post(command::<SetPolicy>))
             .route_layer(guard());
         let mut facts = Router::new().route("/v1/server", get(server_facts));
         if self.0.config.require_sign_in {
@@ -2092,6 +2114,11 @@ impl Service {
             .route(devices::PAGE_PATH, get(devices::page))
             .route(KeyTicket::PATH, post(devices::options))
             .route(KeyReply::PATH, post(devices::reply))
+            // The page of a proof has no riff token: the ticket is its
+            // proof (PROOF_ASK).
+            .route(proofs::PAGE_PATH, get(proofs::page))
+            .route(ProofTicket::PATH, post(proofs::options))
+            .route(ProofReply::PATH, post(proofs::reply))
             .layer(middleware::from_fn_with_state(self.0.clone(), gate))
             // The facts answer also while the gate replies 503, and to a
             // `riff` of each version (01M3TJWJ12WEDCXW3W0529KRP2).

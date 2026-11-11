@@ -262,6 +262,8 @@ pub fn show(record: &Record) -> String {
         ),
         Change::KeyAdded(k) => format!("key_added  {} of {}", k.name, k.user),
         Change::DeviceRemoved(d) => format!("device_removed  {} of {}", d.name, d.user),
+        Change::PolicySet(set) => format!("policy_set  proof {}", set.proof),
+        Change::Proved(p) => format!("proved  {} with {} of {}", p.action, p.name, p.user),
     };
     format!(
         "{}  {}  {facts}  ({})",
@@ -313,7 +315,9 @@ fn thread_of(record: &Record) -> Option<String> {
         | Change::OwnerDenied(_)
         | Change::SigninsEnded(_)
         | Change::KeyAdded(_)
-        | Change::DeviceRemoved(_) => None,
+        | Change::DeviceRemoved(_)
+        | Change::PolicySet(_)
+        | Change::Proved(_) => None,
     }
 }
 

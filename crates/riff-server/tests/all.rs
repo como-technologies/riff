@@ -31,6 +31,7 @@ mod members;
 mod names;
 mod notes;
 mod plan;
+mod proofs;
 mod revoke;
 mod saved;
 mod session;
