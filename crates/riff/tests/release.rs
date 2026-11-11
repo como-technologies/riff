@@ -186,14 +186,24 @@ fn the_static_check_refuses_a_binary_with_an_interpreter() {
 /// release, each other run the profile dev. The check compiles nothing.
 #[test]
 fn ci_builds_and_checks_the_static_riff_of_each_pull_request() {
-    let build = ci_job("build");
+    let plan = ci_job("plan");
     for part in [
-        "name: Build\n",
-        "fetch-depth: 0\n",
+        "name: Plan\n",
         "PROFILE: ${{ (github.ref_type == 'tag' || (github.event_name == 'pull_request' && \
          contains(github.event.pull_request.labels.*.name, 'release'))) && 'release' || 'dev' }}\n",
         "TESTS: ${{ github.ref_type != 'tag' }}\n",
         "run: deploy/build-plan.sh\n",
+    ] {
+        assert!(
+            plan.contains(part),
+            "{part} is not in the job plan:\n{plan}"
+        );
+    }
+    let build = ci_job("build");
+    for part in [
+        "name: Build\n",
+        "needs: [plan]\n",
+        "fetch-depth: 0\n",
         "run: deploy/static/build.sh \"$STATIC_PROFILE\"\n",
     ] {
         assert!(
@@ -206,7 +216,7 @@ fn ci_builds_and_checks_the_static_riff_of_each_pull_request() {
     let job = ci_job("static");
     for part in [
         "name: Static riff\n",
-        "needs: [build]\n",
+        "needs: [plan, build]\n",
         "if: github.event_name == 'push' || github.event_name == 'pull_request'\n",
         "run: deploy/static/check.sh \"$PROFILE\"\n",
         "actions/download-artifact@",
@@ -233,8 +243,8 @@ fn the_static_build_of_ci_has_a_cache_and_a_release_build_uses_none() {
     let step = cache.1.split_once("\n\n").unwrap().0;
     assert!(
         step.contains(
-            "if: steps.plan.outputs.build_static == 'true' && \
-             steps.plan.outputs.static_profile != 'release'\n"
+            "if: needs.plan.outputs.build_static == 'true' && \
+             needs.plan.outputs.static_profile != 'release'\n"
         ),
         "the cache step runs for a release build:\n{step}"
     );
@@ -263,7 +273,7 @@ fn the_static_build_of_ci_has_a_cache_and_a_release_build_uses_none() {
             .rsplit_once("\n      - ")
             .unwrap()
             .1
-            .contains("steps.plan.outputs.static_profile != 'release'\n"),
+            .contains("needs.plan.outputs.static_profile != 'release'\n"),
         "{job}"
     );
 }

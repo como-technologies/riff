@@ -9883,6 +9883,84 @@ pub fn init_releases_done(slug: &str) -> String {
     format!("only the admin role and {slug} push a tag v*")
 }
 
+/// The name of the check of the merge queue of the default branch
+/// (01M75NAPNH1SP8AC90NYFQP8SK).
+pub const INIT_QUEUE: &str = "the merge queue";
+
+/// The default branch `branch` of `repo` merges through a merge queue.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_queue_on("o/r", "main"),
+///     "main of o/r merges through a merge queue with the method squash"
+/// );
+/// ```
+pub fn init_queue_on(repo: &str, branch: &str) -> String {
+    format!("{branch} of {repo} merges through a merge queue with the method squash")
+}
+
+/// The repository `repo` has the release cycle of riff, and no merge
+/// queue on its default branch `branch`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_queue_off("o/r", "main"),
+///     "o/r has the release cycle of riff and no merge queue on main, so a merge can put a tree \
+///      on main that no Gate tested"
+/// );
+/// ```
+pub fn init_queue_off(repo: &str, branch: &str) -> String {
+    format!(
+        "{repo} has the release cycle of riff and no merge queue on {branch}, so a merge can put \
+         a tree on {branch} that no Gate tested"
+    )
+}
+
+/// The fix of the merge queue of the default branch `branch`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_fix_queue("main"),
+///     "add a merge queue with the method squash to the ruleset of main. See \"Turn the merge \
+///      queue on or off\" in the book. Then run riff init again"
+/// );
+/// ```
+pub fn init_fix_queue(branch: &str) -> String {
+    format!(
+        "add a merge queue with the method squash to the ruleset of {branch}. See \"Turn the \
+         merge queue on or off\" in the book. Then run riff init again"
+    )
+}
+
+/// What the step of the merge queue did to the ruleset `name`.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_queue_done("main"),
+///     "the ruleset main has the merge queue with the method squash"
+/// );
+/// ```
+pub fn init_queue_done(name: &str) -> String {
+    format!("the ruleset {name} has the merge queue with the method squash")
+}
+
+/// No ruleset of the default branch `branch` requires the check `verify`,
+/// so the step of the merge queue has no ruleset to change.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::init_queue_no_ruleset("main", "riff/verify"),
+///     "no ruleset of main requires the check riff/verify, so riff has no ruleset for the merge \
+///      queue. Make the ruleset first, then run riff init again"
+/// );
+/// ```
+pub fn init_queue_no_ruleset(branch: &str, verify: &str) -> String {
+    format!(
+        "no ruleset of {branch} requires the check {verify}, so riff has no ruleset for the merge \
+         queue. Make the ruleset first, then run riff init again"
+    )
+}
+
 /// riff cannot ask the riff-server at `server` for the lead App: `why`.
 ///
 /// ```

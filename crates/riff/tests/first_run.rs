@@ -779,7 +779,7 @@ fn set_up(bin: &Path) {
             ("auto_merge", ""),
             (
                 "ruleset",
-                r#"{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]}"#,
+                r#"{"name":"riff","rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"riff/verify"}]}}]}"#,
             ),
             (pulls.0, &pulls.1),
             (checks.0, &checks.1),
@@ -993,6 +993,69 @@ async fn riff_init_yes_sets_up_a_new_repository_and_a_second_run_changes_nothing
     assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
     assert!(!stdout.contains("fail  "), "{stdout}");
     assert!(!stdout.contains("CLAUDE.md"), "{stdout}");
+    assert!(!stdout.contains("These steps change GitHub"), "{stdout}");
+    assert!(!stdout.contains("Do them?"), "{stdout}");
+    assert_eq!(machine.forge_changes(), changes);
+}
+
+/// 01M75NAPNH1SP8AC90NYFQP8SK: `riff init --yes` in a clone of a
+/// repository with the release cycle of riff and no merge queue puts the
+/// rule `merge_queue` in the ruleset that requires `riff/verify`, and
+/// keeps its other rules. It changes nothing else. A second run finds the
+/// queue, changes nothing and asks nothing.
+#[tokio::test]
+async fn riff_init_yes_sets_the_merge_queue_on_main_and_a_second_run_changes_nothing() {
+    let machine = Machine::new();
+    machine.add_origin().await;
+    set_up(&machine.bin);
+    std::fs::write(machine.bin.join("config"), "[release]\n").unwrap();
+    let out = machine.init(&machine.repo, &["--yes"]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    for line in [
+        "  step  the merge queue: acme/app has the release cycle of riff and no merge queue on \
+         main, so a merge can put a tree on main that no Gate tested. Step: add the merge queue \
+         to the ruleset of main",
+        "riff can set up acme/app for riff. These steps change GitHub:",
+        "  add the merge queue to the ruleset of main",
+        "  done  add the merge queue to the ruleset of main: the ruleset riff has the merge queue \
+         with the method squash",
+        "  pass  the merge queue: main of acme/app merges through a merge queue with the method \
+         squash",
+    ] {
+        assert!(
+            stdout.lines().any(|l| l == line),
+            "{line}\nnot in\n{stdout}"
+        );
+    }
+    let changes = machine.forge_changes();
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert!(
+        changes[0].starts_with("api -X PUT repos/{owner}/{repo}/rulesets/77 --include --input "),
+        "{changes:?}"
+    );
+    let ruleset: serde_json::Value = serde_json::from_str(&machine.read("ruleset")).unwrap();
+    assert_eq!(ruleset["name"], "riff");
+    let rules = ruleset["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 2, "{ruleset}");
+    assert_eq!(
+        rules[0]["parameters"]["required_status_checks"],
+        serde_json::json!([{ "context": "Gate" }, { "context": "riff/verify" }])
+    );
+    assert_eq!(rules[1], riff::repo_setup::merge_queue());
+
+    // A second run: the check passes, nothing changes, and nothing is asked.
+    let out = machine.init(&machine.repo, &[]).await;
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", text(&out.stderr));
+    assert!(
+        stdout.contains(
+            "\n  pass  the merge queue: main of acme/app merges through a merge queue with the \
+             method squash\n"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("fail  "), "{stdout}");
     assert!(!stdout.contains("These steps change GitHub"), "{stdout}");
     assert!(!stdout.contains("Do them?"), "{stdout}");
     assert_eq!(machine.forge_changes(), changes);

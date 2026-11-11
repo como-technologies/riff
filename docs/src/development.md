@@ -131,16 +131,17 @@ test in the Gate.
 ## How the Gate runs
 
 The Gate on GitHub runs the checks of `just ci-full` as jobs. The job
-`Build` runs first. The jobs with the tests start when it ends. The job
-`macOS` starts at once, beside `Build`:
+`Plan` runs first, for some seconds. Then `Build` and `macOS` start.
+The jobs with the tests start when `Build` ends:
 
 | Job | Runs |
 |---|---|
+| `Plan` | Finds the artifacts of the tree that a run made already, and says what `Build` builds and if the tests run. It compiles nothing. See [Build once for each tree](#build-once-for-each-tree). |
 | `Build` | In the session image: `fmt-check`, `reqs`, `wrap`, `versions`, `book`, `lint`, `doc`, the test build and the doc tests. Then the static build, in `rust:CHANNEL-alpine`. |
 | `Tests 1/4` to `Tests 4/4` | Part 1 to part 4 of the tests, from the test binaries of `Build`, in the session image. They compile nothing. |
 | `Static riff` | Checks the static `riff` and `riff-server` of `Build`: no interpreter, and `riff --version` runs in the session image. |
 | `macOS` | On a Mac with Apple silicon, the runner `macos-latest` of GitHub: the lint and the tests of `riff`, `riff-client` and `riff-core`, compiled for macOS. It takes nothing from `Build`. |
-| `Gate` | Starts when `Build`, the tests and `macOS` ended. It passes only when each of them passed. |
+| `Gate` | Starts when `Plan`, `Build`, the tests and `macOS` ended. It passes only when each of them passed, or when the plan found a pass of the tree and skipped the tests and `macOS`. |
 
 The tests run in a container of the session image, as a session runs
 them (see
@@ -148,11 +149,12 @@ them (see
 
 ```mermaid
 flowchart LR
-    P["a push or a<br/>pull request"] --> B["Build: checks, test build,<br/>doc tests, static build"]
+    P["a push, a pull request<br/>or a merge group"] --> L["Plan: the artifacts<br/>of the tree"]
+    L --> B["Build: checks, test build,<br/>doc tests, static build"]
     B --> T["Tests 1/4 … 4/4<br/>no compile"]
     T --> G{"Gate: did each<br/>job pass?"}
     B --> G
-    P --> M["macOS: lint and tests<br/>on a Mac"]
+    L --> M["macOS: lint and tests<br/>on a Mac"]
     M --> G
     G -- yes --> S["Gate passes"]
     G -- no --> F["Gate fails"]
@@ -208,42 +210,53 @@ check, the tag and the deploy take the binaries of `Build`. The job
 `macOS` compiles `riff`, `riff-client` and `riff-core` for macOS (see
 [Run the tests of the job macOS on a Mac](#run-the-tests-of-the-job-macos-on-a-mac)).
 
-`Build` keeps its binaries as artifacts. The name of an artifact has
-the git tree of the commit, `git rev-parse HEAD^{tree}`. A commit of
-`main` and the pull request that made it have the same tree, so they
-have the same artifacts:
+`Build` keeps its binaries as artifacts, and `Gate` keeps its pass. The
+name of an artifact has the git tree of the commit,
+`git rev-parse HEAD^{tree}`. The merge queue of `main` tests the tree
+of each merge group, and that tree is the commit on `main`. So a commit
+of `main`, its merge group and often its pull request have the same
+tree, and the same artifacts:
 
 | Artifact | Holds |
 |---|---|
+| `gate-TREE` | The pass of the Gate of a run that ran the tests and `macOS` on the tree |
 | `tests-TREE` | The test binaries, and the manifest that names them |
 | `static-dev-TREE` | The static `riff` and `riff-server` of the profile `dev` |
 | `static-release-TREE` | The static `riff` and `riff-server` of the profile `release` |
 
-Before each build, `Build` asks for the artifacts of its tree. It
-builds only what is missing:
+The job `Plan` asks for the artifacts of the tree first. `Build` builds
+only what is missing. When `gate-TREE` is there, no test runs again:
 
 ```mermaid
 flowchart LR
-    B["Build (once for each tree)<br/>test binaries + static binaries<br/>+ clippy + rustdoc"] --> T1["Tests 1/4"]
-    B --> T2["Tests 2/4"]
-    B --> T3["Tests 3/4"]
-    B --> T4["Tests 4/4"]
-    B --> S["Static riff: the check"]
-    B -- "same tree" --> M["push to main: no build"]
-    B -- "same tree" --> R["tag: the release files"]
+    P["pull request: Build,<br/>tests and macOS once"] --> Q{"merge group:<br/>the same tree?"}
+    Q -- "yes: gate-TREE" --> N["no build, no test"]
+    Q -- "no: main moved" --> O["Build, tests and<br/>macOS once"]
+    N --> M["push to main:<br/>no build, no test"]
+    O --> M
+    M --> S["Static riff and Stage<br/>take the static binaries"]
+    M -- "same tree" --> R["tag: the release files"]
     R --> D["Deploy: image from the static riff-server,<br/>deploy with the static riff"]
-    B -- "same tree" --> X["real-session test: the static riff of the commit"]
+    M -- "same tree" --> X["real-session test: the static riff of the commit"]
 ```
 
 - A pull request builds both. A pull request with the label `release`
   builds the profile `release` with no cache, so each release binary
   comes from a clean build. Another pull request builds the profile
   `dev`, with a cache.
-- A push to `main`, and a merge group, find the artifacts of the pull
-  request with the same tree, and build nothing. The tests run again
-  with the test binaries of the pull request. With no such artifacts,
-  for example after a push by hand, the run builds as a pull request
-  does. When both profiles are there, it takes `release`.
+- A merge group with the tree of its pull request takes the artifacts
+  and `gate-TREE` of the pull request. It builds nothing, and runs no
+  test and no `macOS`. The `Gate` passes on the pass of the pull
+  request. When `main` moved, the merge group has a new tree: it builds
+  it and tests it once, and keeps its artifacts and `gate-TREE`.
+- A push to `main` takes the artifacts and `gate-TREE` of its merge
+  group. It builds nothing, and runs no test and no `macOS`. `Static
+  riff` and `Stage` run. With no such artifacts, for example after a
+  push by hand, the run builds and tests as a pull request does. When
+  both profiles are there, it takes `release`.
+- A tree with the artifacts of a run whose Gate failed has no
+  `gate-TREE`. The run takes the test binaries, and runs the tests
+  again.
 - A tag takes `static-release-TREE` of the release pull request. The
   job `Static riff` checks it, and the job `Static riff release` adds
   it to the release. With no such artifacts, `Build` builds the profile
@@ -281,24 +294,26 @@ RIFF_BUILD_TIME=2026-11-06T07:00:05Z
 
 ### See what Build would build
 
-To see which artifacts exist for the tree of your commit, and what
-`Build` would build, run the plan of the job. You need `gh` signed in.
-`PROFILE` is `dev` or `release`:
+To see which artifacts exist for the tree of your commit, what `Build`
+would build, and if the tests would run, run the script of the job
+`Plan`. You need `gh` signed in. `PROFILE` is `dev` or `release`:
 
 ```sh
 GH_REPO=como-technologies/riff PROFILE=dev deploy/build-plan.sh
 ```
 
-The plan prints one line `name=value` for each of `tree`,
-`build_tests`, `tests_run`, `build_static`, `static_profile` and
-`static_run`. Its other lines say why. For a tree that a pull request
-built already:
+The plan prints one line `name=value` for each of `tree`, `run_tests`,
+`passed_run`, `build_tests`, `tests_run`, `build_static`,
+`static_profile` and `static_run`. Its other lines say why. For a tree
+whose pull request passed its Gate:
 
 ```text
 tree=3cb7dddbeb60394627c1d84282741051f80ee960
-build-plan: tests-3cb7dddb… is in run 42167961348: no test build.
+build-plan: gate-3cb7dddb… is in run 42167961348: the tree passed its Gate, so no test build and no test.
+run_tests=false
+passed_run=42167961348
 build_tests=false
-tests_run=42167961348
+tests_run=
 build-plan: static-dev-3cb7dddb… is in run 42167961348: no static build.
 build_static=false
 static_profile=dev
@@ -2714,7 +2729,10 @@ its verify passed. GitHub builds a merge group for it: `main` and the
 pull request. The Gate and Hygiene run on the merge group, and the job
 `Verify of the merge group` sets `riff/verify` on it from the passed
 verify of the head commit of the pull request. No new verify starts.
-GitHub squash-merges the group when the checks pass.
+GitHub squash-merges the group when the checks pass. When `main` did
+not move, the merge group has the tree of the pull request, and the
+Gate builds and tests nothing again: see
+[Build once for each tree](#build-once-for-each-tree).
 
 ```mermaid
 flowchart LR
@@ -2744,21 +2762,34 @@ it since, the wave acts one time for the head commit:
 
 ### Turn the merge queue on or off
 
-You need the rights of an admin of the repository. In your clone of
-`como-technologies/riff`, turn the queue on for the ruleset `main`:
+`riff init` turns the queue on in a repository with `[release]` in
+`riff.toml`, as this one. `just github` turns it on too: see
+[Set up the repository](#set-up-the-repository). You need the rights of
+an admin of the repository. In a plain terminal, not in a container, in
+your clone of `como-technologies/riff`:
 
 ```sh
-deploy/merge-queue.sh on como-technologies/riff
+riff init
 ```
 
-The script adds the rule `merge_queue` to the ruleset and changes no
-other rule. The queue merges with the method `squash`, builds up to 5
-merge groups at the same time, and waits 60 minutes for the checks of a
-group. It prints the file with the ruleset as it was. To turn the queue
-off:
+`riff init` puts the rule `merge_queue` in the ruleset that requires
+`riff/verify`, here `main`, and changes no other rule. A second run
+finds the queue and changes nothing. The queue merges with the method
+`squash`, builds up to 5 merge groups at the same time, and waits 60
+minutes for the checks of a group. The checks `Gate`, `Hygiene` and
+`riff/verify` of the ruleset run on each merge group.
+
+To turn the queue off for a time, run the script. It changes no other
+rule, and it prints the file with the ruleset as it was:
 
 ```sh
 deploy/merge-queue.sh off como-technologies/riff
+```
+
+To turn it on again:
+
+```sh
+deploy/merge-queue.sh on como-technologies/riff
 ```
 
 To use another ruleset than `main`, give its name last:
@@ -2772,7 +2803,8 @@ Turn the queue on only when the `main` of the repository has the event
 never start, and it removes each pull request after 60 minutes. The
 workflows of this repository have it: the Gate and Hygiene run on the
 merge group, and the job `Verify of the merge group` sets `riff/verify`
-on it. The ruleset that `riff init` makes has no merge queue.
+on it. So `riff init` puts no merge queue in a repository with no
+`[release]`.
 
 ### Add a host to the wave
 
@@ -5307,7 +5339,10 @@ It turns on auto-merge and squash merge only, and makes or updates
 two rulesets:
 
 - `main`: a change needs a pull request and the checks `Gate`,
-  `Hygiene` and `riff/verify`.
+  `Hygiene` and `riff/verify`. A merge queue with the method `squash`
+  merges each pull request: see
+  [Turn the merge queue on or off](#turn-the-merge-queue-on-or-off).
+  `riff init` sets the same queue.
 - `releases` on the tags `v*`: only the repository admin role and the
   lead App of the riff can create, move or delete a release tag. So the
   lead pushes the tag of a release from its container, and a worker

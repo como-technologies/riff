@@ -554,7 +554,7 @@ fn the_how_to_starts_with_riff_init_and_lists_what_it_sets_up() {
         .expect("the table");
     let table = table.split("\n\n").next().unwrap();
     let rows: Vec<&str> = table.lines().skip(2).collect();
-    assert_eq!(rows.len(), 6, "{rows:?}");
+    assert_eq!(rows.len(), 7, "{rows:?}");
     // The order of the table is the order of the steps in the code.
     let order = [
         "allows auto-merge and squash merge",
@@ -562,6 +562,7 @@ fn the_how_to_starts_with_riff_init_and_lists_what_it_sets_up() {
         "makes the `Backlog`",
         "makes `Wave 1`",
         "ruleset `riff`",
+        "rule `merge_queue`",
         "ruleset `releases`",
     ];
     for (row, word) in rows.iter().zip(order) {
@@ -576,6 +577,7 @@ fn the_how_to_starts_with_riff_init_and_lists_what_it_sets_up() {
         riff::repo_setup::Step::Backlog,
         riff::repo_setup::Step::Wave,
         riff::repo_setup::Step::Ruleset,
+        riff::repo_setup::Step::Queue,
         riff::repo_setup::Step::Releases,
     ];
     assert!(steps.windows(2).all(|pair| pair[0] < pair[1]));

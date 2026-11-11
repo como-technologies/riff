@@ -346,7 +346,7 @@ fn stage_push(git_ref: &'static str, gate: &'static str) -> Ctx {
 fn each_push_to_main_deploys_the_stage_and_runs_the_smoke_test() {
     let job = ci_job("stage");
     for part in [
-        "needs: [gate, build]",
+        "needs: [gate, plan]",
         "id-token: write",
         "group: stage",
         "COMMIT: ${{ github.sha }}",
@@ -741,7 +741,7 @@ fn the_deploy_and_the_stage_compile_nothing() {
     let stage = ci_job("stage");
     for part in [
         "actions/download-artifact@",
-        "name: static-${{ needs.build.outputs.static_profile }}-${{ needs.build.outputs.tree }}",
+        "name: static-${{ needs.plan.outputs.static_profile }}-${{ needs.plan.outputs.tree }}",
         "run: deploy/cloud/image.sh \"$IMAGE\" static/riff-server",
         "run: static/riff cloud deploy stage \"$COMMIT\"",
         "run: static/riff cloud smoke stage",
