@@ -1700,6 +1700,11 @@ pub struct Status {
     /// gives none.
     #[serde(default)]
     pub sends: Vec<facts::Sent>,
+    /// The events of the GitHub App of each repository with a wake: the
+    /// last wake, and the dropped events of the last day
+    /// ([`crate::hooks::Shown`], #1656). An old daemon gives none.
+    #[serde(default)]
+    pub events: Vec<crate::hooks::Shown>,
 }
 
 /// A repository whose sessions get no token of a GitHub App
@@ -2668,6 +2673,10 @@ pub struct Daemon<R> {
     /// Each riff-server whose renews of the tokens on GitHub the daemon
     /// follows ([`Daemon::follow_renews`], 01M74MB99RT6B9MKSBMSVD4JRG).
     renews: Mutex<BTreeSet<String>>,
+    /// The events of the GitHub App of each repository of a wave
+    /// ([`crate::hooks::Told`], #1656): the loop of the wave and its look
+    /// share them, and `riff daemon status` shows them.
+    told: Mutex<BTreeMap<String, Arc<crate::hooks::Told>>>,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -2800,6 +2809,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             no_starts: Mutex::default(),
             no_tokens: Mutex::default(),
             renews: Mutex::default(),
+            told: Mutex::default(),
         })
     }
 
@@ -3111,6 +3121,31 @@ impl<R: Runtime + 'static> Daemon<R> {
     /// riff-server ([`crate::wave::Live`]), or the world of a test.
     pub(crate) fn world(&self) -> Arc<dyn World> {
         self.world.clone()
+    }
+
+    /// The events of the GitHub App of `repo` ([`crate::hooks::Told`],
+    /// #1656). The first call reads the ID of the last wake from
+    /// [`crate::hooks::WAKES_FILE`] in the folder of the daemon: a new
+    /// start goes on after the last wake that it got.
+    pub fn told(&self, repo: &str) -> Arc<crate::hooks::Told> {
+        self.told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(repo.to_owned())
+            .or_insert_with(|| Arc::new(crate::hooks::Told::load(&self.dir, repo)))
+            .clone()
+    }
+
+    /// Takes `told` for the events of its repository, for a test: short
+    /// times of the safety look and of the grace.
+    #[cfg(test)]
+    pub(crate) fn set_told(&self, told: crate::hooks::Told) -> Arc<crate::hooks::Told> {
+        let told = Arc::new(told);
+        self.told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(told.repo().to_owned(), told.clone());
+        told
     }
 
     /// The number of sessions that the daemon owns, but the sessions
@@ -3976,6 +4011,11 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .map(gh_token::Writes::shown)
                 .unwrap_or_default(),
             sends: self.sends.shown(),
+            events: {
+                let now = now_ms();
+                let told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+                told.values().filter_map(|t| t.shown(now)).collect()
+            },
         }
     }
 
@@ -9170,6 +9210,7 @@ mod tests {
         fn look<'a>(
             &'a self,
             _: &'a Wave,
+            _: Arc<crate::hooks::Told>,
         ) -> crate::wave::BoxFuture<'a, Result<crate::wave::Look>> {
             Box::pin(async { bail!("no wave in this test") })
         }

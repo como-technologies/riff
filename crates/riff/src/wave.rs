@@ -619,7 +619,7 @@ use crate::run::{self, Facts};
 use crate::runtime::Runtime;
 use crate::session_setup::Setup;
 use crate::{
-    changes, ghcalls, identity, kept, look, order, pr, release_config, repo_setup, rollout,
+    changes, ghcalls, hooks, identity, kept, look, order, pr, release_config, repo_setup, rollout,
     session_image, text, usage,
 };
 use riff_client::api::{self, Api};
@@ -1505,8 +1505,10 @@ pub struct Pinned {
 
 /// The forge and the riff of the waves: [`Live`], or a fake in a test.
 pub trait World: Send + Sync {
-    /// The facts of the wave now.
-    fn look<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<Look>>;
+    /// The facts of the wave now. `told` holds what the wakes of the GitHub
+    /// App named since the last look ([`hooks::Told`], #1656): while they
+    /// come, the look reads only that.
+    fn look<'a>(&'a self, wave: &'a Wave, told: Arc<hooks::Told>) -> BoxFuture<'a, Result<Look>>;
 
     /// The session image of the repository of the wave, with its env and
     /// volumes: the merged pin of its main clone
@@ -1606,6 +1608,13 @@ pub trait World: Send + Sync {
     /// new item of a wave or a merge on GitHub (#1655). It never ends. The
     /// default tells nothing.
     fn plan_changes<'a>(&'a self, _wave: &'a Wave, _changed: &'a Notify) -> BoxFuture<'a, ()> {
+        Box::pin(std::future::pending())
+    }
+
+    /// Follows the wakes of the GitHub App of the repository of `wave` on
+    /// riff-server into `told` ([`hooks::follow`], #1656). It never ends.
+    /// The default follows none: the events stay off.
+    fn github_wakes<'a>(&'a self, _wave: &'a Wave, _told: &'a hooks::Told) -> BoxFuture<'a, ()> {
         Box::pin(std::future::pending())
     }
 
@@ -1778,33 +1787,49 @@ fn forge(repo: &str) -> pr::Gh {
 /// How long the wave waits after the look `look` (#1549). The wave is idle
 /// when the look has the same facts as the `last` look, the pick found no
 /// work (`picked` is false), and no session or job of the wave runs
-/// (`running` is false): it waits [`IDLE_LOOK_EVERY`]. Else it waits
-/// [`LOOK_EVERY`]. A paused wave calls no `gh`, and it starts at once on a
-/// resume, so it is never idle. An end of a session or of a job, and a
-/// change of the plan on riff-server ([`World::plan_changes`]), wake the
-/// wave in each case.
+/// (`running` is false): it waits [`IDLE_LOOK_EVERY`], or the time of the
+/// safety look ([`hooks::SAFETY_LOOK_EVERY`], #1656) while the events of
+/// GitHub are on (`events`). Else it waits [`LOOK_EVERY`]. A paused wave
+/// calls no `gh`, and it starts at once on a resume, so it is never idle.
+/// An end of a session or of a job, a change of the plan on riff-server
+/// ([`World::plan_changes`]) and a wake of the GitHub App
+/// ([`World::github_wakes`]) wake the wave in each case.
 ///
 /// ```
+/// use riff::hooks::SAFETY_LOOK_EVERY;
 /// use riff::wave::{IDLE_LOOK_EVERY, LOOK_EVERY, Look, look_wait};
 ///
 /// let look = Look { free: vec!["issue-12".into()], ..Look::default() };
 /// // The first look, and a look that changed, wait one minute.
-/// assert_eq!(look_wait(&look, None, false, false), LOOK_EVERY);
+/// assert_eq!(look_wait(&look, None, false, false, false), LOOK_EVERY);
 /// let other = Look { free: vec!["issue-13".into()], ..Look::default() };
-/// assert_eq!(look_wait(&other, Some(&look), false, false), LOOK_EVERY);
+/// assert_eq!(look_wait(&other, Some(&look), false, false, false), LOOK_EVERY);
 /// // Nothing changed, no work, nothing runs: five minutes.
-/// assert_eq!(look_wait(&look, Some(&look), false, false), IDLE_LOOK_EVERY);
+/// assert_eq!(look_wait(&look, Some(&look), false, false, false), IDLE_LOOK_EVERY);
+/// // With the events of GitHub: the safety look, each 30 minutes.
+/// assert_eq!(look_wait(&look, Some(&look), false, false, true), SAFETY_LOOK_EVERY);
+/// assert_eq!(look_wait(&look, None, false, false, true), LOOK_EVERY);
 /// // Work, or a session that runs, keeps the minute.
-/// assert_eq!(look_wait(&look, Some(&look), true, false), LOOK_EVERY);
-/// assert_eq!(look_wait(&look, Some(&look), false, true), LOOK_EVERY);
+/// assert_eq!(look_wait(&look, Some(&look), true, false, true), LOOK_EVERY);
+/// assert_eq!(look_wait(&look, Some(&look), false, true, false), LOOK_EVERY);
 /// // A paused wave looks each minute.
 /// let paused = Look { paused: true, ..Look::default() };
-/// assert_eq!(look_wait(&paused, Some(&paused), false, false), LOOK_EVERY);
+/// assert_eq!(look_wait(&paused, Some(&paused), false, false, true), LOOK_EVERY);
 /// ```
-pub fn look_wait(look: &Look, last: Option<&Look>, picked: bool, running: bool) -> Duration {
-    match !picked && !running && !look.paused && last == Some(look) {
-        true => IDLE_LOOK_EVERY,
-        false => LOOK_EVERY,
+pub fn look_wait(
+    look: &Look,
+    last: Option<&Look>,
+    picked: bool,
+    running: bool,
+    events: bool,
+) -> Duration {
+    match (
+        !picked && !running && !look.paused && last == Some(look),
+        events,
+    ) {
+        (true, true) => hooks::SAFETY_LOOK_EVERY,
+        (true, false) => IDLE_LOOK_EVERY,
+        (false, _) => LOOK_EVERY,
     }
 }
 
@@ -1940,6 +1965,15 @@ pub(crate) async fn run<R: Runtime + 'static>(
     if let Ok(place) = wave.place(None) {
         daemon.follow_renews(&wave.server, &place);
     }
+    // The wakes of the GitHub App: the look reads only what they name
+    // (#1656).
+    let events = daemon.told(&wave.repo);
+    let _wakes = {
+        let (world, wave, events) = (daemon.world(), wave.clone(), events.clone());
+        Abort(tokio::spawn(async move {
+            world.github_wakes(&wave, &events).await;
+        }))
+    };
     loop {
         let world = daemon.world();
         // While a limit of GitHub is out, the wave makes no look, no sweep
@@ -1966,10 +2000,14 @@ pub(crate) async fn run<R: Runtime + 'static>(
         for line in daemon.sweep_news(Some(&wave.repo)).await {
             println!("{line}");
         }
-        // This look sees each change of the plan before it.
+        // This look sees each change of the plan and each wake of GitHub
+        // before it.
         let _ = futures::FutureExt::now_or_never(plan.notified());
+        events.looks();
+        hooks::log_dropped(&events);
+        let looked = tokio::time::Instant::now();
         let mut wait = LOOK_EVERY;
-        let next = match world.look(&wave).await {
+        let next = match world.look(&wave, events.clone()).await {
             Ok(look) => {
                 say_merged(&*world, &wave, &look, &mut said).await;
                 let spent = spent(&look, &running(&daemon, &wave, &taken), &lock(&starts));
@@ -2049,6 +2087,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     last.as_ref(),
                     next.is_some(),
                     !running(&daemon, &wave, &taken).is_empty(),
+                    events.on(crate::daemon::now_ms()),
                 );
                 last = Some(look);
                 next.filter(|_| fault.is_none() && !pulling && !no_token)
@@ -2079,6 +2118,7 @@ pub(crate) async fn run<R: Runtime + 'static>(
                     () = tokio::time::sleep(wait) => {}
                     () = daemon.changed() => {}
                     () = plan.notified() => {}
+                    () = events.woken(looked) => {}
                 }
             }
         }
@@ -2128,7 +2168,14 @@ pub(crate) async fn watch<R: Runtime + 'static>(daemon: Arc<Daemon<R>>, wave: Wa
         } else {
             every
         };
-        watch.accepts = wait + every;
+        // While the events of GitHub are on, the loop of the wave keeps
+        // the replies new with the reads of the wakes, and reads in full at
+        // its safety look (#1656).
+        let told = daemon.told(&wave.repo);
+        watch.accepts = match told.on(crate::daemon::now_ms()) {
+            true => (wait + every).max(told.safety() + every),
+            false => wait + every,
+        };
         tokio::time::sleep(wait).await;
     }
 }
@@ -3502,16 +3549,54 @@ pub fn look_with(
     holds: BTreeSet<String>,
     bodies: &[&str],
 ) -> Result<Look> {
+    look_from(gh, repo, claims, holds, bodies, None)
+}
+
+/// [`look_with`] with the events of GitHub of the repository in `told`
+/// (#1656). While they are on ([`hooks::Told::on`]), the look reads only
+/// what the wakes since the last look named, and reads in full at the
+/// safety look ([`hooks::Told::facts`]). Else it asks GitHub first whether
+/// anything changed ([`crate::changes`]).
+pub fn look_told(
+    gh: &pr::Gh,
+    repo: &str,
+    claims: BTreeSet<String>,
+    holds: BTreeSet<String>,
+    bodies: &[&str],
+    told: &hooks::Told,
+) -> Result<Look> {
+    look_from(gh, repo, claims, holds, bodies, Some(told))
+}
+
+/// The look of [`look_with`] and [`look_told`].
+fn look_from(
+    gh: &pr::Gh,
+    repo: &str,
+    claims: BTreeSet<String>,
+    holds: BTreeSet<String>,
+    bodies: &[&str],
+    told: Option<&hooks::Told>,
+) -> Result<Look> {
     let asked = reasked(bodies);
-    // GitHub is asked first whether anything changed (#1566). A branch that
-    // does not read is the error of the look: the wave starts no work, and
-    // reads it again at the next look.
-    let changes::Facts { branch, mut open } = changes::facts(gh, repo, || {
+    // The wakes of GitHub name what changed (#1656). Else GitHub is asked
+    // first whether anything changed (#1566). A branch that does not read
+    // is the error of the look: the wave starts no work, and reads it
+    // again at the next look.
+    let read = |gh: &pr::Gh| {
         Ok(changes::Facts {
             branch: pr::default_branch(gh, repo)?,
             open: rollout::Open::of(gh, repo)?,
         })
-    })?;
+    };
+    let now = crate::daemon::now_ms();
+    let changes::Facts { branch, mut open } = match told {
+        Some(told) if told.on(now) => told.facts(gh, now, read)?,
+        Some(told) => {
+            told.off();
+            changes::facts(gh, repo, || read(gh))?
+        }
+        None => changes::facts(gh, repo, || read(gh))?,
+    };
     let claimed: HashSet<String> = claims.iter().cloned().collect();
     let held: HashSet<String> = holds.iter().cloned().collect();
     for pull in &mut open.pulls {
@@ -3668,7 +3753,7 @@ fn waiting(
 }
 
 impl World for Live {
-    fn look<'a>(&'a self, wave: &'a Wave) -> BoxFuture<'a, Result<Look>> {
+    fn look<'a>(&'a self, wave: &'a Wave, told: Arc<hooks::Told>) -> BoxFuture<'a, Result<Look>> {
         Box::pin(async move {
             let person = identity::person(&wave.place(None)?, &wave.server)?;
             let thread = wave.thread()?;
@@ -3700,7 +3785,7 @@ impl World for Live {
             let repo = wave.repo.clone();
             blocking(move || {
                 let bodies: Vec<&str> = bodies.iter().map(String::as_str).collect();
-                look_with(&forge(&repo), &repo, claims, holds, &bodies)
+                look_told(&forge(&repo), &repo, claims, holds, &bodies, &told)
             })
             .await
         })
@@ -4045,6 +4130,25 @@ impl World for Live {
                     "riff daemon: {}: {}",
                     wave.repo,
                     text::wave_no_plan(&format!("{e:#}"))
+                );
+            }
+            std::future::pending().await
+        })
+    }
+
+    fn github_wakes<'a>(&'a self, wave: &'a Wave, told: &'a hooks::Told) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let follow = async {
+                let person = identity::person(&wave.place(None)?, &wave.server)?;
+                let api = Api::new(&wave.server).signed_in(None)?;
+                hooks::follow(&api, &person, &wave.thread()?, told).await;
+                anyhow::Ok(())
+            };
+            if let Err(e) = follow.await {
+                eprintln!(
+                    "riff daemon: {}: {}",
+                    wave.repo,
+                    text::github_no_wakes(&format!("{e:#}"))
                 );
             }
             std::future::pending().await
@@ -4550,11 +4654,28 @@ mod tests {
         /// The stream of the changes of the plan on a real riff-server: the
         /// API, the caller and the thread. Else the plan never changes.
         plan: Mutex<Option<(Api, SessionUri, ThreadName)>>,
+        /// The stream of the wakes of the GitHub App on a real riff-server
+        /// (#1656): the API, the caller and the thread. Else no wake comes.
+        github: Mutex<Option<(Api, SessionUri, ThreadName)>>,
+        /// The look reads the forge from this `gh`, as the real look does
+        /// ([`look_told`]), with the events of the wave (#1656). Else the
+        /// look takes the forge in memory.
+        reads: Mutex<Option<Arc<pr::Gh>>>,
     }
 
     impl World for Fakes {
-        fn look<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<Look>> {
+        fn look<'a>(&'a self, _: &'a Wave, told: Arc<hooks::Told>) -> BoxFuture<'a, Result<Look>> {
             Box::pin(async move {
+                let reads = lock(&self.reads).clone();
+                if let Some(gh) = reads {
+                    let claims: BTreeSet<String> =
+                        lock(&self.forge).claims.keys().cloned().collect();
+                    let holds = lock(&self.forge).holds.clone();
+                    let look = blocking(move || look_told(&gh, "o/r", claims, holds, &[], &told));
+                    let look = look.await;
+                    lock(&self.forge).branch_reads += 1;
+                    return look;
+                }
                 let limit_gh = lock(&self.forge).limit_gh.clone();
                 if let Some(gh) = limit_gh {
                     blocking(move || gh.run(&["pr", "list"], None)).await?;
@@ -4832,6 +4953,16 @@ mod tests {
             })
         }
 
+        fn github_wakes<'a>(&'a self, _: &'a Wave, told: &'a hooks::Told) -> BoxFuture<'a, ()> {
+            let github = lock(&self.github).clone();
+            Box::pin(async move {
+                if let Some((api, me, thread)) = github {
+                    hooks::follow(&api, &me, &thread, told).await;
+                }
+                std::future::pending().await
+            })
+        }
+
         fn post<'a>(
             &'a self,
             _: &'a Wave,
@@ -4980,6 +5111,8 @@ mod tests {
                 forge,
                 gh: Arc::new(gh),
                 plan: Mutex::new(None),
+                github: Mutex::new(None),
+                reads: Mutex::new(None),
             });
             let memory: crate::room::Memory =
                 Arc::new(move || Some(free.load(Ordering::SeqCst) * GB));
@@ -5372,6 +5505,345 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(again, wake);
+    }
+
+    impl Here {
+        /// A new start of the daemon of this host, in the same folder and
+        /// with the same world: the old daemon stopped.
+        fn restart(&self) -> Arc<Daemon<Fake>> {
+            let memory: crate::room::Memory = Arc::new(|| Some(64 * GB));
+            let daemon = Daemon::new(self.fake.clone(), dir_in(self._root.path()))
+                .unwrap()
+                .with_memory(memory)
+                .with_world(self.world.clone());
+            Arc::new(daemon)
+        }
+    }
+
+    /// The wave of `o/r` in `daemon`, as [`Here::run`] runs it.
+    fn run_on(daemon: &Arc<Daemon<Fake>>) {
+        daemon
+            .run_wave(Wave {
+                repo: "o/r".into(),
+                main: "/src/r".into(),
+                server: "http://127.0.0.1:1".into(),
+                host: "thelio".into(),
+            })
+            .unwrap();
+    }
+
+    /// The payload of the event `pull_request` of GitHub for the merge of
+    /// the pull request `number` of `o/r`.
+    fn merge_event(number: u64) -> serde_json::Value {
+        serde_json::json!({
+            "action": "closed",
+            "repository": { "full_name": "o/r" },
+            "pull_request": { "number": number, "merged": true },
+        })
+    }
+
+    /// Waits until the wakes that `told` got since the last call name
+    /// each number of `numbers`, and gives what they named.
+    async fn named(told: &hooks::Told, numbers: &[u64]) -> hooks::Named {
+        let mut all = hooks::Named::new();
+        let got = async {
+            while !numbers.iter().all(|n| all.contains_key(&Some(*n))) {
+                all.extend(told.take());
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        isolated::in_time(LOOK_EVERY, got)
+            .await
+            .expect("the wakes came");
+        all
+    }
+
+    /// #1656: the daemon opens the stream of the wakes of its repository,
+    /// and gets the wake of a merged pull request. After a restart it opens
+    /// the stream with `after=ID`, the ID of its last wake from its folder,
+    /// and gets the wakes that it missed while it was away, and not the
+    /// wakes before.
+    #[tokio::test]
+    async fn the_daemon_gets_the_wakes_of_its_repository_and_after_a_restart_the_missed_ones() {
+        let secret = "whsec-of-the-test";
+        let (_service, server, _keys) = riff_with_a_webhook(secret).await;
+        let api = Api::new(&server);
+        let place = crate::identity::place_from_text("thelio/o/r").unwrap();
+        let who = riff_core::name::Who::new("mike", Some("lead1")).unwrap();
+        let lead = SessionUri::new(who, place);
+        api.start(&lead, StartReason::Process, false).await.unwrap();
+        let thread: ThreadName = "o/r".parse().unwrap();
+
+        let here = Here::new(&[], 2, Arc::new(AtomicU64::new(64))).await;
+        *lock(&here.world.github) = Some((api.clone(), lead.clone(), thread.clone()));
+        here.run();
+        let told = here.daemon.told("o/r");
+        // The stream of the first start has no `after`: a probe of a merge
+        // goes through it once it is open.
+        let mut probe = 0;
+        let opened = async {
+            while told.last().is_none() {
+                probe += 1;
+                let id = format!("probe-{probe}");
+                deliver(
+                    &server,
+                    secret,
+                    "pull_request",
+                    &id,
+                    &merge_event(900 + probe),
+                )
+                .await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        };
+        isolated::in_time(LOOK_EVERY, opened)
+            .await
+            .expect("the stream opened");
+
+        // A pull request merges: its wake comes to the daemon, and the ID
+        // goes to the folder of the daemon.
+        deliver(
+            &server,
+            secret,
+            "pull_request",
+            "merge-41",
+            &merge_event(41),
+        )
+        .await;
+        let got = named(&told, &[41]).await;
+        assert_eq!(got[&Some(41)], [riff_core::wire::GitHubEvent::PullRequest]);
+        let dir = here.daemon.status().await.dir;
+        assert_eq!(hooks::Told::load(&dir, "o/r").last(), told.last());
+
+        // The daemon stops. Two pull requests merge while it is away.
+        assert!(here.daemon.stop_wave("o/r").unwrap());
+        let last = told.last();
+        deliver(
+            &server,
+            secret,
+            "pull_request",
+            "merge-42",
+            &merge_event(42),
+        )
+        .await;
+        deliver(
+            &server,
+            secret,
+            "pull_request",
+            "merge-43",
+            &merge_event(43),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(told.last(), last, "no stream while it is away");
+
+        // A new start: the stream opens after the ID of the last wake.
+        let again = here.restart();
+        let told = again.told("o/r");
+        assert_eq!(told.last(), last);
+        run_on(&again);
+        let missed = named(&told, &[42, 43]).await;
+        assert!(!missed.contains_key(&Some(41)), "{missed:?}");
+        assert!(told.last() > last);
+        assert!(told.on(crate::daemon::now_ms()));
+        again.stop_wave("o/r").unwrap();
+    }
+
+    /// A fake `gh` for a look that reads the forge as the real look does
+    /// (#1656): the lists and the items come from the files of its folder,
+    /// and each call goes in `gh.log`.
+    const READ_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+printf '%s\n' "$*" >> "$dir/gh.log"
+show() { if [ -e "$dir/$1" ]; then cat "$dir/$1"; else echo '[]'; fi; }
+case "$1 $2" in
+  "api repos/o/r") echo main ;;
+  "api repos/o/r/milestones"*) echo '[{"title":"Wave 1"}]' ;;
+  "api repos/o/r/commits/"*) echo 'a commit' ;;
+  "api graphql") echo '{}' ;;
+  "pr list")
+    case "$*" in
+      *"--state merged"*) show merged ;;
+      *) show pulls ;;
+    esac ;;
+  "issue list") show issues ;;
+  "pr view") cat "$dir/pull-$3" ;;
+  "issue view") cat "$dir/issue-$3" ;;
+  *) exit 1 ;;
+esac
+"#;
+
+    /// The open issue `n` of `Wave 1`, as `gh issue list` gives it.
+    fn open_issue(n: u64) -> serde_json::Value {
+        serde_json::json!({
+            "number": n,
+            "title": format!("item {n}"),
+            "body": "Done when: it works.",
+            "comments": [],
+            "milestone": { "title": "Wave 1" },
+            "labels": [],
+        })
+    }
+
+    /// The pull request 41 of issue 1 with `Refs #1`: its verify passed,
+    /// and it waits for its merge.
+    fn pull_41() -> serde_json::Value {
+        serde_json::json!({
+            "number": 41,
+            "headRefName": "worktree-issue-1",
+            "headRefOid": "c1",
+            "isDraft": false,
+            "statusCheckRollup": [
+                { "__typename": "StatusContext", "context": "riff/verify", "state": "SUCCESS" },
+                { "__typename": "CheckRun", "name": "Gate", "status": "COMPLETED", "conclusion": "SUCCESS", "workflowName": "CI" },
+            ],
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "autoMergeRequest": { "enabledAt": "2026-11-11T10:00:00Z" },
+            "body": "Refs #1\n\nThe summary.\n\nIssue: #1\n",
+        })
+    }
+
+    /// A wave whose look reads the fake `gh` [`READ_GH`] in the folder
+    /// `bin`, with the events of GitHub on: the safety look waits an hour,
+    /// and a change waits no time for its wake.
+    async fn reading(bin: &Path) -> (Here, Arc<hooks::Told>) {
+        let here = Here::new(&[], 2, Arc::new(AtomicU64::new(64))).await;
+        let gh = pr::Gh::at(isolated::write_program(bin.join("gh"), READ_GH)).with_shared_reads();
+        *lock(&here.world.reads) = Some(Arc::new(gh));
+        let times = (Duration::from_secs(3600), Duration::ZERO, Duration::ZERO);
+        let told = hooks::Told::new("o/r").with_times(times.0, times.1, times.2);
+        let told = here.daemon.set_told(told);
+        let now = u64::try_from(crate::daemon::now_ms()).unwrap();
+        told.add(&riff_core::wire::GitHubWake {
+            id: now,
+            repo: "o/r".parse().unwrap(),
+            kinds: vec![riff_core::wire::GitHubEvent::Issues],
+            number: Some(1),
+            events: 1,
+        });
+        (here, told)
+    }
+
+    /// The reads of issues and pull requests in the log of [`READ_GH`] in
+    /// `bin` since the last call.
+    fn item_reads(bin: &Path) -> Vec<String> {
+        let log = bin.join("gh.log");
+        let calls = std::fs::read_to_string(&log).unwrap_or_default();
+        let _ = std::fs::remove_file(&log);
+        calls
+            .lines()
+            .filter(|c| c.starts_with("pr ") || c.starts_with("issue "))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// #1656: a wave with a fake forge. The event of a merged pull request
+    /// makes the look read that pull request only, with `gh pr view`, and no
+    /// list, and the wave goes on: the merge with `Refs #1` gets its comment
+    /// `Merged in`. Then an issue comes into the wave with no event: the
+    /// safety look finds it, the wave starts it, and the change is a
+    /// dropped event.
+    #[tokio::test]
+    async fn a_merge_reads_that_pull_request_only_and_the_safety_look_finds_a_dropped_event() {
+        let bin = tempfile::tempdir().unwrap();
+        let put = |name: &str, value: serde_json::Value| {
+            std::fs::write(bin.path().join(name), value.to_string()).unwrap();
+        };
+        put("issues", serde_json::json!([open_issue(1)]));
+        put("pulls", serde_json::json!([pull_41()]));
+        let (here, told) = reading(bin.path()).await;
+        here.run();
+        // The first look reads in full: it has no facts yet.
+        here.until(0, |h| h.forge().branch_reads >= 1).await;
+        let reads = item_reads(bin.path());
+        assert!(
+            reads.iter().any(|c| c.starts_with("issue list")),
+            "{reads:?}"
+        );
+        assert!(here.forge().merged_ins.is_empty());
+
+        // Pull request #41 merges, and GitHub sends its event.
+        let mut merged = pull_41();
+        merged["state"] = "MERGED".into();
+        merged["mergeCommit"] = serde_json::json!({ "oid": "m41" });
+        put("pull-41", merged.clone());
+        put("pulls", serde_json::json!([]));
+        put("merged", serde_json::json!([merged]));
+        told.add(&riff_core::wire::GitHubWake {
+            id: told.last().unwrap() + 1,
+            repo: "o/r".parse().unwrap(),
+            kinds: vec![riff_core::wire::GitHubEvent::PullRequest],
+            number: Some(41),
+            events: 3,
+        });
+        here.until(0, |h| !h.forge().merged_ins.is_empty()).await;
+        assert_eq!(here.forge().merged_ins, [(1, 41, "m41".to_owned())]);
+        let reads = item_reads(bin.path());
+        assert_eq!(reads.len(), 1, "{reads:?}");
+        assert!(
+            reads[0].starts_with("pr view 41 --repo o/r --json"),
+            "{reads:?}"
+        );
+
+        // Issue 2 comes into the wave, and its event is lost. The safety look
+        // reads in full, finds it, and the wave starts it.
+        put("issues", serde_json::json!([open_issue(2), open_issue(1)]));
+        told.expire();
+        here.until(1, |h| {
+            h.forge().starts.iter().any(|(item, _)| item == "issue-2")
+        })
+        .await;
+        let reads = item_reads(bin.path());
+        assert!(
+            reads.iter().any(|c| c.starts_with("issue list")),
+            "{reads:?}"
+        );
+        let shown = told.shown(crate::daemon::now_ms()).unwrap();
+        assert_eq!(shown.dropped, 1, "{shown:?}");
+        let change = shown.last_dropped.unwrap().change;
+        let issues = riff_core::wire::GitHubEvent::Issues;
+        assert_eq!(
+            (change.number, change.pull, change.kind),
+            (2, false, issues)
+        );
+    }
+
+    /// #1656: `riff daemon status` shows the line of the events of each
+    /// repository with a wake: the age of the last wake, the time of the
+    /// safety look, and the dropped events of the last day with the last
+    /// one.
+    #[tokio::test]
+    async fn the_status_of_the_daemon_shows_the_dropped_events() {
+        let here = Here::new(&[], 1, Arc::new(AtomicU64::new(64))).await;
+        let now = crate::daemon::now_ms();
+        let text = text::daemon_status(&here.daemon.status().await, now);
+        assert!(!text.contains("GitHub events"), "no wake yet: {text}");
+
+        let grace = Duration::from_secs(60);
+        let told =
+            hooks::Told::new("o/r").with_times(hooks::SAFETY_LOOK_EVERY, grace, Duration::ZERO);
+        let told = here.daemon.set_told(told);
+        told.add(&riff_core::wire::GitHubWake {
+            id: u64::try_from(now - 120_000).unwrap(),
+            repo: "o/r".parse().unwrap(),
+            kinds: vec![riff_core::wire::GitHubEvent::CheckRun],
+            number: Some(40),
+            events: 20,
+        });
+        let change = |number| hooks::Change {
+            number,
+            pull: true,
+            kind: riff_core::wire::GitHubEvent::CheckRun,
+        };
+        // A change waits for its wake for the grace: it is no dropped event
+        // yet.
+        told.found(vec![change(41)], now - 840_000);
+        told.found(vec![change(42)], now - 10_000);
+        let text = text::daemon_status(&here.daemon.status().await, now);
+        let line = "GitHub events of o/r: the last wake 2m ago, the safety look each 30 minutes, 1 \
+             dropped event in the last day, the last of pull request #41, check_run, 14m ago.\n";
+        assert!(text.contains(line), "{text}");
     }
 
     /// 01M53S7WDPQ2GWHJWJ6SZXZ5PN: after the end of a session, the daemon
@@ -9127,6 +9599,8 @@ esac
             forge: Arc::default(),
             gh: Arc::new(gh.clone().by("look")),
             plan: Mutex::new(None),
+            github: Mutex::new(None),
+            reads: Mutex::new(None),
         };
         let none = BTreeSet::new();
         look_with(&gh.clone().by("wave"), "o/r", none.clone(), none, &[]).unwrap();
@@ -9168,6 +9642,8 @@ esac
                 forge: Arc::default(),
                 gh: Arc::new(gh),
                 plan: Mutex::new(None),
+                github: Mutex::new(None),
+                reads: Mutex::new(None),
             };
             let wave = Wave {
                 repo: "o/r".into(),

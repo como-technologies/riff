@@ -2191,7 +2191,7 @@ pub fn queue_of(gh: &Gh, repo: &str) -> HashMap<u64, Queue> {
 
 /// The arguments of `gh` for the merge queue of `repo`, or `None` for a
 /// name that is not `OWNER/REPO`.
-fn queue_args(repo: &str) -> Option<[String; 8]> {
+pub(crate) fn queue_args(repo: &str) -> Option<[String; 8]> {
     let (owner, name) = repo.split_once('/')?;
     Some([
         "api".to_owned(),
@@ -2223,7 +2223,7 @@ pub fn renew_open(gh: &Gh, repo: &str) {
 /// of the wave, its watch and the sweep read them with these same
 /// arguments, so that the reply of one serves the others
 /// ([`Gh::read`], #1549).
-fn pull_args(repo: &str) -> [&str; 10] {
+pub(crate) fn pull_args(repo: &str) -> [&str; 10] {
     [
         "pr",
         "list",
@@ -2392,7 +2392,14 @@ pub fn merges_of(pulls: &[MergedPull]) -> HashMap<u64, Merge> {
 /// each to its issue: such an issue is merged at once, also before the
 /// comment `Merged in`.
 pub fn merges(gh: &Gh, repo: &str) -> Result<HashMap<u64, Merge>> {
-    let pulls: Vec<MergedPull> = gh.read_json(&[
+    let pulls: Vec<MergedPull> = gh.read_json(&merged_args(repo))?;
+    Ok(merges_of(&pulls))
+}
+
+/// The arguments of `gh` for the last 100 merged pull requests of `repo`
+/// ([`merges`]).
+pub(crate) fn merged_args(repo: &str) -> [&str; 10] {
+    [
         "pr",
         "list",
         "--repo",
@@ -2403,8 +2410,40 @@ pub fn merges(gh: &Gh, repo: &str) -> Result<HashMap<u64, Merge>> {
         "100",
         "--json",
         MERGED_FIELDS,
-    ])?;
-    Ok(merges_of(&pulls))
+    ]
+}
+
+/// The fields of `gh pr view N --json` for the read of one pull request
+/// that a wake of the GitHub App names ([`crate::hooks`], #1656): the
+/// fields of the list of the open pull requests ([`PULL_FIELDS`]), and of
+/// the merged ones ([`MERGED_FIELDS`]).
+///
+/// ```
+/// use riff::rollout::{MERGED_FIELDS, PULL_FIELDS, PULL_VIEW_FIELDS};
+///
+/// let view: Vec<&str> = PULL_VIEW_FIELDS.split(',').collect();
+/// assert!(PULL_FIELDS.split(',').all(|f| view.contains(&f)));
+/// assert!(MERGED_FIELDS.split(',').all(|f| view.contains(&f)));
+/// ```
+pub const PULL_VIEW_FIELDS: &str = "number,headRefName,headRefOid,isDraft,statusCheckRollup,\
+     mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,body,state,mergeCommit";
+
+/// The fields of `gh issue view N --json` for the read of one issue that a
+/// wake of the GitHub App names ([`crate::hooks`], #1656): the fields of
+/// the list ([`ISSUE_FIELDS`]), its state, and its URL, which tells a pull
+/// request.
+///
+/// ```
+/// use riff::rollout::{ISSUE_FIELDS, ISSUE_VIEW_FIELDS};
+///
+/// assert!(ISSUE_VIEW_FIELDS.starts_with(ISSUE_FIELDS));
+/// ```
+pub const ISSUE_VIEW_FIELDS: &str = "number,title,body,comments,milestone,labels,state,url";
+
+/// Makes the kept reply of the last merged pull requests of `repo` as new
+/// as now, as [`renew_open`] does for the open ones. It calls no `gh`.
+pub fn renew_merged(gh: &Gh, repo: &str) {
+    gh.renew(&merged_args(repo));
 }
 
 /// The `--json` fields of the open issues that the wave reads
@@ -2420,7 +2459,7 @@ pub fn issues(gh: &Gh, repo: &str) -> Result<Vec<Issue>> {
 }
 
 /// The arguments of `gh` for the open issues of `repo`.
-fn issue_args(repo: &str) -> [&str; 10] {
+pub(crate) fn issue_args(repo: &str) -> [&str; 10] {
     [
         "issue",
         "list",

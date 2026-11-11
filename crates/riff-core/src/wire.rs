@@ -2671,7 +2671,9 @@ pub enum GitHubChange {
 /// assert_eq!(GitHubEvent::parse("ping"), None);
 /// assert!(GitHubEvent::ALL.iter().all(|kind| GitHubEvent::parse(kind.name()) == Some(*kind)));
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GitHubEvent {
     Issues,
