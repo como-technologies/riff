@@ -123,6 +123,7 @@ fn post(second: u64, session: &str, to: &str, body: &str) -> Record {
         },
         woken: Default::default(),
         key: None,
+        more_keys: Vec::new(),
     };
     record(second, session, Change::Posted(Box::new(posted)))
 }

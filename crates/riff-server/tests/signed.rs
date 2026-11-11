@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{
-    BotFact, BotPost, Invite, Kind, PassOwner, Post, Posted, ReadReply, TokenReply,
+    Asked, BotFact, BotPost, Invite, Kind, PassOwner, Post, Posted, ReadReply, TokenReply,
 };
 use riff_server::Service;
 use riff_server::auth::Config;
@@ -497,11 +497,10 @@ async fn person_and_lead(service: &Service, base: &str) -> (Caller, Caller) {
 const MIKE_HERE: &str = "riff://mike@pangolin/como-technologies/riff";
 
 /// A call `bot` of `caller` with `fact`, and its status.
-async fn bot(caller: &Caller, base: &str, fact: BotFact, key: Option<&str>) -> u16 {
+async fn bot(caller: &Caller, base: &str, fact: BotFact) -> u16 {
     let post = BotPost {
         me: caller.me.clone(),
         fact,
-        key: key.map(str::to_owned),
     };
     caller.call(base, "bot", &post).await.status().as_u16()
 }
@@ -530,16 +529,12 @@ async fn riff_server_posts_the_line_of_riff_bot_for_a_fact() {
         run: 9,
         reminder: false,
     };
-    assert_eq!(bot(&person, &base, waits, None).await, 200);
-    assert_eq!(bot(&person, &base, BotFact::LeadStarted, None).await, 200);
+    assert_eq!(bot(&person, &base, waits).await, 200);
+    assert_eq!(bot(&person, &base, BotFact::LeadStarted).await, 200);
     let cut = BotFact::ReleaseCut {
         tag: "v3.3.0".into(),
     };
-    assert_eq!(
-        bot(&lead, &base, cut, None).await,
-        200,
-        "the lead tells a cut"
-    );
+    assert_eq!(bot(&lead, &base, cut).await, 200, "the lead tells a cut");
 
     let reply = person.read(&base, CHAT).await;
     let [waits, started, cut] = reply.messages.as_slice() else {
@@ -587,7 +582,7 @@ async fn a_client_that_sends_a_text_gets_no_line_of_riff_bot_with_it() {
     });
     assert_eq!(person.call(&base, "bot", &with_text).await.status(), 200);
     let cut = BotFact::ReleaseCut { tag: words.into() };
-    assert_eq!(bot(&person, &base, cut, None).await, 400);
+    assert_eq!(bot(&person, &base, cut).await, 400);
     let unknown = serde_json::json!({ "me": MIKE_HERE, "fact": { "fact": "say", "body": words } });
     assert_eq!(person.call(&base, "bot", &unknown).await.status(), 422);
     let worker = Caller::new(
@@ -596,7 +591,7 @@ async fn a_client_that_sends_a_text_gets_no_line_of_riff_bot_with_it() {
         "riff://mike@pangolin/como-technologies/riff?session=w",
     )
     .await;
-    assert_eq!(bot(&worker, &base, BotFact::LeadStarted, None).await, 403);
+    assert_eq!(bot(&worker, &base, BotFact::LeadStarted).await, 403);
     let mut post = Post {
         kind: Kind::Riff,
         ..person.unsigned(CHAT, words)
@@ -633,14 +628,14 @@ async fn a_tag_with_a_text_after_its_version_gets_no_line_of_riff_bot() {
             run: 9,
             reminder: false,
         };
-        assert_eq!(bot(&person, &base, waits, None).await, 400, "{tag}");
+        assert_eq!(bot(&person, &base, waits).await, 400, "{tag}");
         let cut = BotFact::ReleaseCut { tag: tag.clone() };
-        assert_eq!(bot(&person, &base, cut, None).await, 400, "{tag}");
+        assert_eq!(bot(&person, &base, cut).await, 400, "{tag}");
     }
     let cut = BotFact::ReleaseCut {
         tag: "v3.3.0".into(),
     };
-    assert_eq!(bot(&person, &base, cut, None).await, 200);
+    assert_eq!(bot(&person, &base, cut).await, 200);
 
     let reply = person.read(&base, CHAT).await;
     let [line] = reply.messages.as_slice() else {
@@ -655,24 +650,78 @@ async fn a_tag_with_a_text_after_its_version_gets_no_line_of_riff_bot() {
     assert!(!line.body.contains(words), "{}", line.body);
 }
 
-/// The ask of the label `question` goes once for each person with the
-/// same key (01M5TKG2K1AYK1KE7C2AA2W9DS): the look of each host of mike
-/// sends it. The same key of brett is the ask of brett.
+/// The facts of the label `question` on the issues `issues`, each with the
+/// key `question-N`, as the look of each host makes it.
+fn questions(issues: &[u64]) -> BotFact {
+    let asked = issues
+        .iter()
+        .map(|&issue| Asked {
+            issue,
+            key: format!("question-{issue}"),
+        })
+        .collect();
+    BotFact::Questions { asked }
+}
+
+/// The ask of the label `question` goes once for each person and each key
+/// (01M5TKG2K1AYK1KE7C2AA2W9DS): the look of each host of mike sends it.
+/// The same key of brett is the ask of brett.
 #[tokio::test]
 async fn an_ask_with_a_key_goes_once_for_each_person() {
     let (service, base) = common::start(true, &[]).await;
     let (person, _lead) = person_and_lead(&service, &base).await;
     let brett = Caller::new(&service, &base, "riff://brett@heron/como-technologies/riff").await;
-    let question = || BotFact::Question { issue: 12 };
     for caller in [&person, &person, &brett] {
-        assert_eq!(
-            bot(caller, &base, question(), Some("question-12")).await,
-            200
-        );
+        assert_eq!(bot(caller, &base, questions(&[12])).await, 200);
     }
     let reply = person.read(&base, CHAT).await;
     let bodies: Vec<&str> = reply.messages.iter().map(|m| m.body.as_str()).collect();
     assert_eq!(bodies.len(), 2, "{bodies:?}");
     assert!(bodies[0].starts_with("@mike A lead waits for your answer in issue #12"));
     assert!(bodies[1].starts_with("@brett A lead waits for your answer in issue #12"));
+}
+
+/// 01M75N6RE4XP0JZN61H4Q2CHZJ, 01M75N6S3ZG301WMHNTS808QY4: the look of one
+/// host tells #12, and the look of another host tells #12, #13 and #14
+/// later. The person gets one line for #12, then one line for #13 and #14.
+/// The same issues again give no line, and a new issue with told issues
+/// gives the line of the new issue only.
+#[tokio::test]
+async fn the_ask_of_more_issues_leaves_out_each_issue_that_the_person_heard_of() {
+    let (service, base) = common::start(true, &[]).await;
+    let (person, _lead) = person_and_lead(&service, &base).await;
+    let lines = || async { person.read(&base, CHAT).await.messages.len() };
+    assert_eq!(bot(&person, &base, questions(&[12])).await, 200);
+    assert_eq!(bot(&person, &base, questions(&[12, 13, 14])).await, 200);
+    let reply = person.read(&base, CHAT).await;
+    let bodies: Vec<&str> = reply.messages.iter().map(|m| m.body.as_str()).collect();
+    let [one, more] = bodies.as_slice() else {
+        panic!("the line of #12 and one line of #13 and #14: {bodies:?}");
+    };
+    assert!(one.starts_with("@mike A lead waits for your answer in issue #12 "));
+    assert_eq!(
+        *more,
+        "@mike A lead waits for your answer in 2 issues of como-technologies/riff: #13 and #14. \
+         The wave starts no build of an issue until its label question goes. To see all your \
+         open questions, run: riff questions"
+    );
+
+    for told in [&[12, 13, 14][..], &[14, 13], &[13]] {
+        assert_eq!(bot(&person, &base, questions(told)).await, 200);
+    }
+    assert_eq!(lines().await, 2, "no line for told issues");
+
+    assert_eq!(bot(&person, &base, questions(&[13, 15])).await, 200);
+    let reply = person.read(&base, CHAT).await;
+    let last = reply.messages.last().map(|m| m.body.as_str());
+    assert_eq!(
+        last,
+        Some(
+            "@mike A lead waits for your answer in issue #15 of como-technologies/riff: \
+             https://github.com/como-technologies/riff/issues/15. The wave starts no build of \
+             the issue until the label question goes."
+        )
+    );
+    assert_eq!(bot(&person, &base, questions(&[])).await, 200, "no issue");
+    assert_eq!(lines().await, 3);
 }

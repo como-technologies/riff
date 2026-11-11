@@ -405,6 +405,7 @@ impl Delivery {
             message,
             woken,
             key: _,
+            more_keys: _,
         } = posted;
         Delivery {
             wakes: woken
@@ -2522,7 +2523,7 @@ impl State {
             body: body.to_owned(),
             kind,
             at_ms,
-            key: None,
+            keys: Vec::new(),
         };
         let caller = Caller::of(me).with_class(Class::Server);
         let (made, ()) = self.run(&caller, &announce, now).map_err(|r| r.reason)?;
@@ -2631,6 +2632,32 @@ impl State {
             .get(thread)
             .map(|t| t.messages.iter().map(|s| s.message.clone()).collect())
             .unwrap_or_default()
+    }
+
+    /// True when a kept message of `thread` from the user `user` has the
+    /// key `key`, as the next post sees it (01M5TKG2K1AYK1KE7C2AA2W9DS):
+    /// riff-server leaves out of a line of riff-bot each issue that the
+    /// person heard of (01M75N6RE4XP0JZN61H4Q2CHZJ).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::Post;
+    /// use riff_state::state::State;
+    ///
+    /// let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// let thread = ann.default_thread().unwrap();
+    /// let post = Post { key: Some("pull-40".into()), ..Post::new(&ann, Some(thread.clone()), vec![], "one") };
+    /// state.post(post, now, 0).unwrap();
+    /// assert!(state.keyed(&thread, "ann", "pull-40"));
+    /// assert!(!state.keyed(&thread, "ann", "pull-41"));
+    /// assert!(!state.keyed(&thread, "bob", "pull-40"), "the key of another user");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn keyed(&self, thread: &ThreadName, user: &str, key: &str) -> bool {
+        self.pending.threads().keyed(thread, user, key).is_some()
     }
 
     /// Returns unread messages (or all of them) and marks them as read,
@@ -4265,7 +4292,8 @@ mod tests {
                 "riff_pause": {"by": {"session": "mike/a1"}, "at_ms": T0},
                 "pauses": {"design": {"by": {"session": "mike/a1"}, "at_ms": T0}},
                 "threads": [{"thread": "como-technologies/riff", "members": [ann],
-                             "messages": [{"message": message, "woken": [ann], "key": "pull-40-1a2b3c4d-conflict"}]}],
+                             "messages": [{"message": message, "woken": [ann], "key": "pull-40-1a2b3c4d-conflict",
+                                           "more_keys": ["pull-40-1a2b3c4d-stuck"]}]}],
                 "claims": [{"thread": "como-technologies/riff", "item": "issue-7", "holder": ann}],
                 "leads": [{"thread": "como-technologies/riff", "lead": ann}],
                 "sessions": [
@@ -4956,6 +4984,49 @@ mod tests {
         assert!(loaded.post(again.clone(), now, 3).is_ok());
         let mut restarted = State::load(Some(through_json(&loaded, now)), [], now, T0);
         assert!(restarted.post(again, now, 4).is_err(), "it is kept again");
+    }
+
+    /// 01M75N6S3ZG301WMHNTS808QY4: each key of an announce holds after a
+    /// replay of the log and after a start from a checkpoint, and each goes
+    /// with its message.
+    #[test]
+    fn each_key_of_an_announce_holds_after_a_checkpoint_and_goes_with_its_message() {
+        let now = Instant::now();
+        let mut state = setup(now);
+        let server = SessionUri::server();
+        let chat = ThreadName::chat();
+        let keys = ["mike/question-12", "mike/question-13"];
+        let announce = Announce {
+            thread: Some(chat.clone()),
+            to: Vec::new(),
+            body: "@mike Leads wait".into(),
+            kind: Kind::Riff,
+            at_ms: 1,
+            keys: keys.map(str::to_owned).to_vec(),
+        };
+        let caller = Caller::of(&server).with_class(Class::Server);
+        state.run(&caller, &announce, now).unwrap();
+        let log = state.take_queue();
+        let user = server.who().user();
+        let kept = |state: &State| keys.map(|key| state.keyed(&chat, user, key));
+
+        let replayed = State::replay(log, now, T0);
+        assert_eq!(kept(&replayed), [true, true]);
+        let mut loaded = State::load(Some(through_json(&replayed, now)), [], now, T0);
+        assert_eq!(kept(&loaded), [true, true]);
+
+        for n in 0..KEEP_MESSAGES {
+            let line = format!("m{n}");
+            let chat = Some(chat.clone());
+            loaded
+                .announce(&server, chat, vec![], &line, Kind::Riff, now, 2)
+                .unwrap();
+        }
+        assert_eq!(kept(&loaded), [false, false]);
+        let queue = loaded.take_queue();
+        loaded.written(&queue);
+        let restarted = State::load(Some(through_json(&loaded, now)), [], now, T0);
+        assert_eq!(kept(&restarted), [false, false]);
     }
 
     #[test]

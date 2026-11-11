@@ -196,6 +196,7 @@ fn posted(thread: &ThreadName, message: Message, woken: &[&SessionUri]) -> Chang
         message,
         woken: woken.iter().map(|u| u.who().clone()).collect(),
         key: None,
+        more_keys: Vec::new(),
     }))
 }
 
@@ -786,7 +787,7 @@ fn the_server_announces_as_itself_and_joins_no_thread() {
         body: "news".into(),
         kind: Kind::Note,
         at_ms: 5,
-        key: None,
+        keys: Vec::new(),
     };
     let expected = Message {
         kind: Kind::Note,
@@ -798,42 +799,68 @@ fn the_server_announces_as_itself_and_joins_no_thread() {
         .then(&[posted(&repo(), expected, &[])]);
 }
 
+/// An announce of the server in the chat, with `keys`.
+fn keyed_announce(keys: &[&str]) -> Announce {
+    Announce {
+        thread: Some(ThreadName::chat()),
+        to: Vec::new(),
+        body: "@mike a lead waits".into(),
+        kind: Kind::Riff,
+        at_ms: 5,
+        keys: keys.iter().map(|key| (*key).to_owned()).collect(),
+    }
+}
+
+/// The record of the announce of [`keyed_announce`] as the message `seq`,
+/// with `keys`.
+fn keyed_posted(seq: u64, keys: &[&str]) -> Change {
+    let server = riff_core::name::SessionUri::server();
+    let mut keys = keys.iter().map(|key| (*key).to_owned());
+    Change::Posted(Box::new(Posted {
+        thread: ThreadName::chat(),
+        message: Message {
+            kind: Kind::Riff,
+            ..message(server, seq, &[], "@mike a lead waits")
+        },
+        woken: Default::default(),
+        key: keys.next(),
+        more_keys: keys.collect(),
+    }))
+}
+
 /// 01M5TKG2K1AYK1KE7C2AA2W9DS: an announce with the key of a kept message
 /// of the server in the thread makes no record. Another key posts.
 #[test]
 fn an_announce_with_the_key_of_a_kept_message_makes_no_record() {
     let server = riff_core::name::SessionUri::server();
-    let chat = ThreadName::chat();
-    let announce = |key: &str| Announce {
-        thread: Some(chat.clone()),
-        to: Vec::new(),
-        body: "@mike a lead waits".into(),
-        kind: Kind::Riff,
-        at_ms: 5,
-        key: Some(key.into()),
-    };
-    let message = Message {
-        kind: Kind::Riff,
-        ..message(server.clone(), 1, &[], "@mike a lead waits")
-    };
-    let kept = Change::Posted(Box::new(Posted {
-        thread: chat.clone(),
-        message: message.clone(),
-        woken: Default::default(),
-        key: Some("mike/question-12".into()),
-    }));
+    let kept = keyed_posted(1, &["mike/question-12"]);
     given(std::slice::from_ref(&kept))
-        .when(&server, announce("mike/question-12"))
+        .when(&server, keyed_announce(&["mike/question-12"]))
         .then(&[]);
-    let again = Change::Posted(Box::new(Posted {
-        thread: chat.clone(),
-        message: Message { seq: 2, ..message },
-        woken: Default::default(),
-        key: Some("brett/question-12".into()),
-    }));
     given(&[kept])
-        .when(&server, announce("brett/question-12"))
-        .then(&[again]);
+        .when(&server, keyed_announce(&["brett/question-12"]))
+        .then(&[keyed_posted(2, &["brett/question-12"])]);
+}
+
+/// 01M75N6S3ZG301WMHNTS808QY4: the record of an announce keeps each of
+/// its keys. A later announce with any one of them makes no record, and
+/// an announce with none of them posts.
+#[test]
+fn an_announce_keeps_each_of_its_keys() {
+    let server = riff_core::name::SessionUri::server();
+    let keys = ["mike/question-12", "mike/question-13", "mike/question-14"];
+    let kept = keyed_posted(1, &keys);
+    given(&[])
+        .when(&server, keyed_announce(&keys))
+        .then(std::slice::from_ref(&kept));
+    for key in keys {
+        given(std::slice::from_ref(&kept))
+            .when(&server, keyed_announce(&["mike/question-15", key]))
+            .then(&[]);
+    }
+    given(&[kept])
+        .when(&server, keyed_announce(&["mike/question-15"]))
+        .then(&[keyed_posted(2, &["mike/question-15"])]);
 }
 
 #[test]

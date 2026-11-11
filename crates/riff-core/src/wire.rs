@@ -1203,11 +1203,12 @@ pub struct Unanswered {
 /// the text itself, from the fact, the place of `me` and what it holds
 /// (01M74BPHQZHXFYYNXAJ1WFASQQ).
 /// Only a person, and the lead of the person in its repository, may call
-/// it. A call with a `key` that a kept line of riff-bot for the same user
-/// has is dropped (01M5TKG2K1AYK1KE7C2AA2W9DS).
+/// it. Each issue of [`BotFact::Questions`] has a key: riff-server leaves
+/// out each issue whose key a kept line of riff-bot for the same user has
+/// (01M5TKG2K1AYK1KE7C2AA2W9DS, 01M75N6RE4XP0JZN61H4Q2CHZJ).
 ///
 /// ```
-/// use riff_core::wire::{BotFact, BotPost};
+/// use riff_core::wire::{Asked, BotFact, BotPost};
 ///
 /// let post: BotPost = serde_json::from_str(r#"{
 ///     "me": "riff://mike@thelio/como-technologies/riff",
@@ -1219,14 +1220,26 @@ pub struct Unanswered {
 ///     serde_json::to_string(&BotFact::LeadStarted)?,
 ///     r#"{"fact":"lead_started"}"#
 /// );
+/// let asked = vec![Asked { issue: 12, key: "question-12".into() }];
+/// assert_eq!(
+///     serde_json::to_string(&BotFact::Questions { asked })?,
+///     r#"{"fact":"questions","asked":[{"issue":12,"key":"question-12"}]}"#
+/// );
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BotPost {
     pub me: SessionUri,
     pub fact: BotFact,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
+}
+
+/// An issue of [`BotFact::Questions`], with the key of its ask: the look
+/// of each host makes the same key for the same label `question`
+/// (01M6QBJHV7PVV5893Q6RCPENJQ).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Asked {
+    pub issue: u64,
+    pub key: String,
 }
 
 /// A fact of [`BotPost`]: what riff saw for the person. The repository
@@ -1252,9 +1265,9 @@ pub enum BotFact {
         run: u64,
         reminder: bool,
     },
-    /// The issue `issue` got the label `question`: a lead waits for the
-    /// answer of the person.
-    Question { issue: u64 },
+    /// Each issue of `asked` got the label `question` since the last
+    /// look: a lead waits for the answer of the person.
+    Questions { asked: Vec<Asked> },
     /// The daemon started the lead again on the new riff.
     LeadStarted,
     /// The daemon cannot start the lead again on the new riff now. The

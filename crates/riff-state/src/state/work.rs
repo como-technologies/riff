@@ -238,7 +238,8 @@ impl View<'_> {
             payload: None,
         };
         let thread = ThreadName::direct(server.who(), who);
-        self.put(server.who(), thread, message, None, now.at).0
+        self.put(server.who(), thread, message, Vec::new(), now.at)
+            .0
     }
 
     /// One release for each claim of `who`.
@@ -505,7 +506,7 @@ impl Command for ReleaseFor {
             sig: None,
             payload: None,
         };
-        let (mut put, _) = view.put(server.who(), thread.clone(), note, None, now.at);
+        let (mut put, _) = view.put(server.who(), thread.clone(), note, Vec::new(), now.at);
         changes.append(&mut put);
         if holder != who {
             let freed = [Freed {

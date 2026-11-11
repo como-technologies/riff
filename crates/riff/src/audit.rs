@@ -1278,6 +1278,7 @@ mod tests {
             },
             woken: BTreeSet::new(),
             key: None,
+            more_keys: Vec::new(),
         };
         record(position, session, Change::Posted(Box::new(posted)))
     }

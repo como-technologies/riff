@@ -1472,7 +1472,7 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
             })?
         }
         ServerCall::Bot { fact } => {
-            signed()?.bot(&record.me, fact.clone(), None).await?;
+            signed()?.bot(&record.me, fact.clone()).await?;
             Value::Null
         }
         ServerCall::Host { host, request } => {
@@ -9365,7 +9365,6 @@ mod tests {
             &'a self,
             _: &'a Wave,
             _: BotFact,
-            _: &'a str,
         ) -> crate::wave::BoxFuture<'a, Result<()>> {
             Box::pin(async { Ok(()) })
         }
