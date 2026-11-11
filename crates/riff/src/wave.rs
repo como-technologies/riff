@@ -144,7 +144,7 @@
 //! | Notice | Key | The lead gets it |
 //! |---|---|---|
 //! | An issue with no `Done when:` line ([`text::wave_no_done_when`]) | [`no_done_when_key`] | one time |
-//! | A pull request that is stuck ([`text::wave_stuck`]) | [`Notice::post_key`] | one time |
+//! | A pull request that is stuck, or a failed check that no rule requires ([`text::wave_stuck`]) | [`Notice::post_key`] | one time |
 //! | "Wave N is complete" ([`crate::watches::wave_complete_key`]) | `wave-complete-N` | one time |
 //! | The GitHub limit is out ([`text::wave_limit_waits`]) | [`ghcalls::Wait::key`] | one time for each outage |
 //! | The host waits for a fact, the pull of the image failed, a job failed, an item is spent | none | from each host |
@@ -228,8 +228,10 @@
 //!   ([`repo_setup::full_check`], 01M5QYDHN27RC5SRHAB56PFKK0), has a run,
 //!   and each newest run is completed ([`pr::full_done`]). A check with no
 //!   run is not done, also when another check failed (#1575);
-//! - a verify of a head with a failed check: the fix of the checks comes
-//!   first (see "A pull request that cannot merge", #1575);
+//! - a verify of a head with a failed check that the ruleset of the
+//!   default branch requires: the fix of the checks comes first (see "A
+//!   pull request that cannot merge", #1575). A failed check that it does
+//!   not require holds no verify (01M749P62T24VDPX20D40KRJEK);
 //! - a verify or a rebase of a pull request that shares a file with a
 //!   pull request before it: one whose verify runs or passed, whose item
 //!   a session holds, or whose item had its verify request first
@@ -376,7 +378,9 @@
 //!
 //! ```mermaid
 //! flowchart TD
-//!     P["an open pull request,<br/>the verify passed or waits"] --> C{"a check of the head failed?<br/>(statusCheckRollup)"}
+//!     P["an open pull request,<br/>the verify passed or waits"] --> Q{"a check of the head failed<br/>that the ruleset does not require?"}
+//!     Q -- "yes" --> I["a message to the lead for each such check:<br/>the verify goes on"]
+//!     Q --> C{"a required check of the head failed?<br/>(statusCheckRollup)"}
 //!     C -- "yes, an item" --> R{"a run of<br/>GitHub Actions?"}
 //!     R -- "yes" --> B["a build: Work::Checks at the head commit,<br/>with the names of the checks"]
 //!     R -- "no, another app" --> O["a message to the lead:<br/>the check, its app and its link"]
@@ -397,9 +401,10 @@
 //!
 //! - **A failed check** (01M5QW2KVAS05Q72630RNW47G0).
 //!   [`rollout::Pull::verify`] reads only the status `riff/verify`. A
-//!   check of the rollup that failed ([`rollout::Check::failed`]), for
-//!   example the `Gate` or `Hygiene`, is no free work for a verify: the
-//!   verify of that head can only fail (#1575). The job `Gate` has no run
+//!   check of the rollup that failed ([`rollout::Check::failed`]) and that
+//!   the ruleset of the default branch requires, for example the `Gate` or
+//!   `Hygiene`, is no free work for a verify: the verify of that head can
+//!   only fail (#1575). The job `Gate` has no run
 //!   until the other jobs end, so `Hygiene` can fail while the `Gate` has
 //!   none. The fix starts before or after a verify, not while a verify
 //!   of the item runs.
@@ -410,11 +415,20 @@
 //!   to change no code and to run the failed jobs again one time
 //!   (01M6QPKG4MSK9AF70V6SZHSBKZ).
 //!   For a known flake it allows one run of the job again. The rollup
-//!   does not say which check a rule requires, so each failed check
-//!   counts, but only its newest run (#1540,
+//!   does not say which check a rule requires: the look reads the ruleset
+//!   when a head has a failed check ([`rollout::Pull::required`]). Only
+//!   the newest run of a check counts (#1540,
 //!   [`rollout::Pull::failed_checks`]): an old failed run does not count
 //!   when a newer run of the same check passed. A check that was
 //!   cancelled or skipped did not fail.
+//! - **A failed check that no rule requires**
+//!   (01M749P62T24VDPX20D40KRJEK). A check that the ruleset of the default
+//!   branch does not require blocks no merge, and `riff verify pass` does
+//!   not read it. So it holds no verify, and no session fixes it
+//!   ([`rollout::Pull::failed_optional`]). The lead gets one message for
+//!   each such check and head commit, with its name and its link
+//!   ([`rollout::Stuck::Optional`]). The pull request is not stuck: `riff
+//!   top` shows no reason for it.
 //! - **A failed check of another app** (#1427). The start text reads the
 //!   log with `gh run view` and runs the job again with `gh run rerun`.
 //!   That works for a run of GitHub Actions only
@@ -1032,15 +1046,17 @@ pub struct Notice {
     pub branch: String,
     /// Its head commit.
     pub commit: String,
-    /// Why it cannot merge.
+    /// Why it cannot merge, or the failed check that no rule requires
+    /// ([`rollout::Stuck::Optional`]).
     pub stuck: rollout::Stuck,
 }
 
 impl Notice {
     /// The key of the message: the pull request, its head and its
     /// reason. A message with the same key goes one time. A failed check
-    /// of another app than GitHub Actions has a message for each check, and a
-    /// run that waits for approval one for each run.
+    /// of another app than GitHub Actions, and a failed check that the
+    /// ruleset does not require, have a message for each check, and a run
+    /// that waits for approval one for each run.
     ///
     /// ```
     /// use riff::rollout::{OtherCheck, Review, Run, Stuck};
@@ -1052,6 +1068,9 @@ impl Notice {
     /// let other = |name: &str| Stuck::Other(OtherCheck { name: name.into(), app: None, link: None });
     /// assert_eq!(notice("1a2b", other("ci")).key(), "#40@1a2b:checks:ci");
     /// assert_ne!(notice("1a2b", other("ci")).key(), notice("1a2b", other("lint")).key());
+    /// let optional = |name: &str| Stuck::Optional(OtherCheck { name: name.into(), app: None, link: None });
+    /// assert_eq!(notice("1a2b", optional("knurl adapter")).key(), "#40@1a2b:optional check:knurl adapter");
+    /// assert_ne!(notice("1a2b", optional("a")).key(), notice("1a2b", optional("b")).key());
     /// let review = notice("1a2b", Stuck::Review(Review::Required));
     /// assert_eq!(review.key(), "#40@1a2b:review");
     /// let run = |id| Stuck::Approve(Run { id, name: "Hygiene".into(), link: None });
@@ -1061,7 +1080,9 @@ impl Notice {
     pub fn key(&self) -> String {
         let key = format!("#{}@{}:{}", self.pull, self.commit, self.stuck.word());
         match &self.stuck {
-            rollout::Stuck::Other(check) => format!("{key}:{}", check.name),
+            rollout::Stuck::Other(check) | rollout::Stuck::Optional(check) => {
+                format!("{key}:{}", check.name)
+            }
             rollout::Stuck::Approve(run) => format!("{key}:{}", run.id),
             _ => key,
         }
@@ -2508,12 +2529,19 @@ impl Fix<'_> {
     }
 }
 
-/// The names of the checks of pull request `number` that failed now and
-/// are runs of GitHub Actions, with `gh`: the session fixed no other.
-async fn still_failed(gh: pr::Gh, number: u64) -> Result<Vec<String>> {
+/// The names of the checks of pull request `number` of `repo` that failed
+/// now, that the ruleset of the default branch requires, and that are
+/// runs of GitHub Actions, with `gh`: the session fixed no other
+/// ([`rollout::Pull::failed_runs`]). The rules are read only when a run
+/// failed ([`repo_setup::full_check`]).
+async fn still_failed(gh: pr::Gh, repo: String, number: u64) -> Result<Vec<String>> {
     blocking(move || {
         let n = number.to_string();
-        let pull: rollout::Pull = gh.json(&["pr", "view", &n, "--json", rollout::PULL_FIELDS])?;
+        let mut pull: rollout::Pull =
+            gh.json(&["pr", "view", &n, "--json", rollout::PULL_FIELDS])?;
+        if !pull.failed_runs().is_empty() {
+            pull.required = Some(repo_setup::full_check(&gh, &repo)?);
+        }
         Ok(pull.failed_runs())
     })
     .await
@@ -2578,7 +2606,7 @@ async fn after_build(
     // checks that pushed nothing.
     let still = match (&pull, fix) {
         (Some(pull), Some(Fix::Checks(_, names))) if same(pull) => Some(
-            still_failed(gh.clone(), pull.number)
+            still_failed(gh.clone(), wave.repo.clone(), pull.number)
                 .await
                 .unwrap_or_else(|_| names.to_vec()),
         ),
@@ -3045,12 +3073,20 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 ///   for the next look: with `CONFLICTING` the pull request gets the
 ///   rebase, with `MERGEABLE` the verify.
 /// - A pull request with failed checks is one whose head has a failed
-///   check ([`rollout::Stuck::Checks`]), where only the newest run of a
-///   check counts, and whose verify passed or waits. It is a build, with
-///   the names of the checks that are runs of GitHub Actions
-///   ([`rollout::Pull::failed_runs`]). The free work has no verify of such
-///   a head (#1575): a failed check fails the verify, so the fix comes
-///   first, and the verify of the new head after it.
+///   check that the ruleset of the default branch requires
+///   ([`rollout::Stuck::Checks`], [`rollout::Pull::failed_checks`]), where
+///   only the newest run of a check counts, and whose verify passed or
+///   waits. It is a build, with the names of the checks that are runs of
+///   GitHub Actions ([`rollout::Pull::failed_runs`]). The free work has no
+///   verify of such a head (#1575): a failed required check fails the
+///   verify, so the fix comes first, and the verify of the new head after
+///   it.
+/// - A failed check that the ruleset does not require
+///   ([`rollout::Pull::failed_optional`]) holds no verify and no merge.
+///   The verify of the head goes on, no session starts, and the lead gets
+///   one notice for each such check ([`rollout::Stuck::Optional`]), for a
+///   pull request whose verify passed or waits, out of the merge queue,
+///   and with no conflict.
 /// - A pull request in the merge queue ([`rollout::Pull::queued`]) is none
 ///   of these: the wave moves nothing for it (01M5TKPNDET56VR8WZ74FSR71F).
 ///   One that the queue removed, with a conflict, is a pull request to
@@ -3164,6 +3200,31 @@ fn clone_at(main: &Path, clone: &Path, pull: u64, commit: &str) -> Result<()> {
 /// let (free, fixes) = riff::wave::fixes(&waits, vec!["verify-issue-16".to_owned()]);
 /// assert_eq!(free, ["verify-issue-16"]);
 /// assert!(fixes.failed.is_empty());
+///
+/// // The ruleset requires the Gate only: a failed `knurl adapter` holds no verify, and the lead hears of it.
+/// let knurl = |pull: Pull| Pull {
+///     checks: [pull.checks, vec![Check::run("knurl adapter", "FAILURE")]].concat(),
+///     required: Some(vec!["Gate".into()]),
+///     ..pull
+/// };
+/// let waits = Open { pulls: vec![knurl(pull(53, 16, None, "MERGEABLE"))], ..Open::default() };
+/// let (free, fixes) = riff::wave::fixes(&waits, vec!["verify-issue-16".to_owned()]);
+/// assert_eq!(free, ["verify-issue-16"]);
+/// assert!(fixes.failed.is_empty());
+/// let optional = Stuck::Optional(OtherCheck { name: "knurl adapter".into(), app: None, link: None });
+/// let notice = Notice { pull: 53, branch: "worktree-issue-16".into(), commit: "c16".into(), stuck: optional };
+/// assert_eq!(fixes.notices, [notice.clone()]);
+/// // A failed Gate too: the fix of the Gate, no verify, and the same notice.
+/// let both = Open { pulls: vec![gate(knurl(pull(53, 16, None, "MERGEABLE")))], ..Open::default() };
+/// let (free, fixes) = riff::wave::fixes(&both, vec!["verify-issue-16".to_owned()]);
+/// assert_eq!(free, ["issue-16"]);
+/// assert_eq!(fixes.failed[&16].checks, ["Gate"]);
+/// assert_eq!(fixes.notices, [notice]);
+/// // A conflict gets the rebase first, and a failed verify is a build: no notice.
+/// let conflict = Open { pulls: vec![knurl(pull(53, 16, None, "CONFLICTING"))], ..Open::default() };
+/// assert!(riff::wave::fixes(&conflict, vec![]).1.notices.is_empty());
+/// let failed = Open { pulls: vec![knurl(pull(53, 16, Some("FAILURE"), "MERGEABLE"))], ..Open::default() };
+/// assert!(riff::wave::fixes(&failed, vec![]).1.notices.is_empty());
 /// ```
 pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
     // No session builds a release or a tracker.
@@ -3233,6 +3294,26 @@ pub fn fixes(open: &rollout::Open, free: Vec<String>) -> (Vec<String>, Fixes) {
                 commit: p.head.clone(),
                 stuck,
             }),
+        }
+    }
+    // A failed check that the ruleset does not require holds no verify and
+    // no merge: the lead hears of each one. A conflict gets the rebase
+    // first, and a failed verify is a build already.
+    let on_way = |p: &&rollout::Pull| {
+        matches!(
+            p.verify(),
+            Some(rollout::Verify::Asked | rollout::Verify::Passed)
+        ) && !p.queued()
+            && !p.conflict()
+    };
+    for p in open.pulls.iter().filter(on_way) {
+        for check in p.failed_optional() {
+            found.notices.push(Notice {
+                pull: p.number,
+                branch: p.branch.clone(),
+                commit: p.head.clone(),
+                stuck: rollout::Stuck::Optional(check),
+            });
         }
     }
     let fix_items: HashSet<u64> = open
@@ -4126,6 +4207,14 @@ mod tests {
     /// the fake forge.
     const OTHER_LINK: &str = "https://app.circleci.com/workflow/9";
 
+    /// The checks that the ruleset of `main` requires in the fake forge:
+    /// the `Gate` and the check `ci` of another app. The run
+    /// `knurl adapter` is not one of them.
+    const REQUIRED: [&str; 2] = ["Gate", "ci"];
+
+    /// The link of the failed run `knurl adapter` in the fake forge.
+    const KNURL_LINK: &str = "https://github.com/o/r/actions/runs/9/job/1";
+
     /// A pull request of the fake forge.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Pr {
@@ -4216,6 +4305,9 @@ mod tests {
         /// The issues whose pull request has a failed check of another app
         /// than GitHub Actions ([`OTHER_LINK`]).
         failing_other: BTreeSet<u64>,
+        /// The issues whose pull request has a failed run of GitHub Actions
+        /// `knurl adapter` that the ruleset does not require.
+        failing_optional: BTreeSet<u64>,
         /// The issues whose pull request has an old failed run of the check
         /// `Gate` and a newer run of it that passed (#1540).
         rerun: BTreeSet<u64>,
@@ -4334,6 +4426,10 @@ mod tests {
                         .contains(n)
                         .then(|| rollout::Check::other("ci", "FAILURE", OTHER_LINK)),
                 )
+                .chain(self.failing_optional.contains(n).then(|| rollout::Check {
+                    details: Some(KNURL_LINK.into()),
+                    ..rollout::Check::run("knurl adapter", "FAILURE")
+                }))
                 .chain(
                     self.rerun
                         .contains(n)
@@ -4359,6 +4455,7 @@ mod tests {
                 waiting: self.approvals.get(n).cloned().unwrap_or_default(),
                 queue: self.queue.get(n).cloned().unwrap_or_default(),
                 reasked: *pr == Pr::Reasked,
+                required: Some(REQUIRED.map(String::from).to_vec()),
                 ..rollout::Pull::default()
             });
             rollout::Open {
@@ -6837,6 +6934,79 @@ mod tests {
         assert_eq!(forge.told, [other("c1")]);
     }
 
+    /// The message to the lead about the failed run `knurl adapter`, which
+    /// the ruleset of `main` does not require, at the head `commit` of the
+    /// pull request #41.
+    fn optional(commit: &str) -> String {
+        let check = rollout::OtherCheck {
+            name: "knurl adapter".into(),
+            app: Some("github.com".into()),
+            link: Some(KNURL_LINK.into()),
+        };
+        stuck(commit, rollout::Stuck::Optional(check))
+    }
+
+    /// 01M749P62T24VDPX20D40KRJEK: the run `knurl adapter` of GitHub
+    /// Actions failed on the head, and the ruleset of `main` does not
+    /// require it. Each required check passed. The wave starts the verify
+    /// of the head, and no fix session. The lead gets one message for the
+    /// run and the head.
+    #[tokio::test]
+    async fn a_failed_run_that_no_rule_requires_gets_its_verify_and_one_message_to_the_lead() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Asked);
+            forge.failing_optional.insert(1);
+        }
+        here.run();
+        here.until(3, |h| h.running("verify-issue-1").is_some())
+            .await;
+        here.until(3, |h| !h.forge().told.is_empty()).await;
+        let verify = Work::Verify {
+            issue: 1,
+            pull: 41,
+            commit: "c1".into(),
+        };
+        let message = optional("c1");
+        assert!(message.contains(KNURL_LINK), "{message}");
+        {
+            let forge = here.forge();
+            assert_eq!(forge.works, [verify], "the verify, and no fix");
+            assert_eq!(forge.told, std::slice::from_ref(&message));
+        }
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.told, [message], "once");
+        assert_eq!(forge.works.len(), 1, "{:?}", forge.works);
+    }
+
+    /// 01M749P62T24VDPX20D40KRJEK: a failed run that the ruleset requires
+    /// (`Gate`) still gets the fix session and no verify of the head, also
+    /// next to a failed run that no rule requires. The session gets the
+    /// name of the required run only, and the lead hears of the other one.
+    #[tokio::test]
+    async fn a_failed_required_run_still_gets_the_fix_and_no_verify() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[1], 3, free).await;
+        {
+            let mut forge = here.forge();
+            forge.pulls.insert(1, Pr::Asked);
+            forge.failing.insert(1);
+            forge.failing_optional.insert(1);
+            forge.no_push = true;
+        }
+        here.run();
+        here.until(3, |h| h.running("issue-1").is_some()).await;
+        here.end("issue-1").await;
+        here.until(3, |h| h.forge().finished == ["issue-1"]).await;
+        here.idle(3).await;
+        let forge = here.forge();
+        assert_eq!(forge.works, [checks("c1")], "no verify of c1");
+        assert_eq!(forge.told, [optional("c1")]);
+    }
+
     /// 01M57FJ3WWMQSDBFRRHXN3SMFQ: a pull request that waits for a verify
     /// and has a conflict gets the rebase, not the verify of the old head.
     /// After the push, a new session verifies the new head: it wrote
@@ -8273,7 +8443,7 @@ esac
 
     /// A fake `gh` for the fix of checks: the pull request #40 of the
     /// branch of issue 12 has the head `1a2b3c4d5e`, and the rollup of its
-    /// checks is `rollup`.
+    /// checks is `rollup`. The ruleset of `main` requires the `Gate`.
     fn gh_with_rollup(riff: &Built, rollup: &str) -> pr::Gh {
         let script = format!(
             r#"#!/bin/sh
@@ -8284,6 +8454,8 @@ case "$*" in
     echo '{{"number":40,"headRefName":"worktree-issue-12","headRefOid":"1a2b3c4d5e","isDraft":false,"statusCheckRollup":{rollup}}}' ;;
 "issue view 12 --json number,labels")
     echo '{{"number":12,"labels":[]}}' ;;
+"api repos/o/r") echo '{{"default_branch":"main"}}' ;;
+"api repos/o/r/rules/branches/main?per_page=100") echo '{GATE_RULES}' ;;
 *) echo "the fake gh has no reply for: $*" >&2; exit 1 ;;
 esac
 "#,
@@ -8434,6 +8606,42 @@ esac
             panic!("{got:?}");
         };
         assert_eq!(*kind, Kind::Note);
+    }
+
+    /// 01M749P62T24VDPX20D40KRJEK: the session fixed the required runs
+    /// only. A run of Actions that the ruleset does not require, and that
+    /// still fails, is not its fix: the lead heard of it at the look, so
+    /// the end of the session gives a note. A required run that still fails
+    /// gives the message.
+    #[tokio::test]
+    async fn a_fix_of_checks_does_not_count_a_failed_run_that_no_rule_requires() {
+        let riff = Built::new().await;
+        let knurl = r#"{"name":"knurl adapter","conclusion":"FAILURE","workflowName":"knurl"}"#;
+        let rollup = |gate: &str| {
+            format!(
+                r#"[{{"name":"Gate","conclusion":"{gate}","workflowName":"CI"}},{knurl},{{"context":"riff/verify","state":"SUCCESS"}}]"#
+            )
+        };
+        let checks = ["Gate".to_owned()];
+        let gh = gh_with_rollup(&riff, &rollup("SUCCESS"));
+        let (lines, got) = riff
+            .after(gh, Some(Fix::Checks("1a2b3c4d5e", &checks)))
+            .await;
+        assert_eq!(lines[1], text::run_lead_noted("issue-12"));
+        let [(Kind::Note, body)] = &got[..] else {
+            panic!("{got:?}");
+        };
+        assert!(!body.contains("knurl adapter"), "{body}");
+
+        let riff = Built::new().await;
+        let gh = gh_with_rollup(&riff, &rollup("FAILURE"));
+        let (_, got) = riff
+            .after(gh, Some(Fix::Checks("1a2b3c4d5e", &checks)))
+            .await;
+        let [(Kind::Message, body)] = &got[..] else {
+            panic!("{got:?}");
+        };
+        assert!(body.contains("the check Gate still fails"), "{body}");
     }
 
     /// #279: when `gh` cannot read the checks, the lead gets the message:

@@ -2242,15 +2242,21 @@ run, and each newest run ended. A check with no run is not done: the
 job `Gate` has no run until the other jobs end. A failed check next to
 a check with no run is not done either.
 
-A failed check gets its fix before the verify, because the verify of a
-head with a failed check can only fail. The wave starts no verify of
-that head. It starts a session that fixes the failed checks (see
+Only a failed check that the ruleset of `main` requires holds the
+verify. It gets its fix before the verify, because the verify of a head
+with a failed required check can only fail. The wave starts no verify
+of that head. It starts a session that fixes the failed checks (see
 [See a pull request that cannot merge](#see-a-pull-request-that-cannot-merge)).
 After its push, the new head gets a new full check, and then its verify.
 
+A failed check that the ruleset does not require holds no verify:
+`riff verify pass` needs only the required checks. The verify goes on,
+and your lead gets one message for the check (see
+[See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires)).
+
 ```mermaid
 flowchart TD
-    P["pull request: no verify yet"] --> F{"a check of the head failed?"}
+    P["pull request: no verify yet"] --> F{"a required check of the head failed?"}
     F -- yes --> X["a session fixes the checks:<br/>no verify of this head"]
     F -- no --> D{"each required check has a run<br/>and each newest run ended?"}
     D -- no --> W["the verify waits for the next look"]
@@ -2793,7 +2799,7 @@ flowchart TD
     Q -- yes --> W["the wave does nothing:<br/>the queue merges it"]
     Q -- no --> C{"a conflict with main,<br/>auto-merge on or<br/>removed from the queue?"}
     C -- yes --> R["a session rebases the branch"]
-    C -- no --> F{"verify passed or waits,<br/>a check failed?"}
+    C -- no --> F{"verify passed or waits,<br/>a required check failed?"}
     F -- yes --> G{"a run of<br/>GitHub Actions?"}
     G -- yes --> B["a session fixes the check"]
     G -- "no, another app" --> N["a message to your lead:<br/>the check, its app, its link"]
@@ -2811,8 +2817,9 @@ flowchart TD
 | The pull request | What the wave does | In `riff top` |
 |---|---|---|
 | A conflict, auto-merge on | A session rebases it at its turn (see [Run the wave](#run-the-wave)) | `stuck: #12 (conflict)` |
-| The verify passed or waits, a run of GitHub Actions failed | A session fixes the check. The wave starts no verify of this commit (see [See why a verify waits](#see-why-a-verify-waits)) | `stuck: #12 (checks)` |
-| The verify passed or waits, a check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
+| The verify passed or waits, a required run of GitHub Actions failed | A session fixes the check. The wave starts no verify of this commit (see [See why a verify waits](#see-why-a-verify-waits)) | `stuck: #12 (checks)` |
+| The verify passed or waits, a required check of another app failed | Your lead gets one message for the check. No session starts (see [Fix a failed check of another app](#fix-a-failed-check-of-another-app)) | `stuck: #12 (checks)` |
+| The verify passed or waits, a check that the ruleset does not require failed | Your lead gets one message for the check. The verify goes on, and no session starts (see [See a failed check that no rule requires](#see-a-failed-check-that-no-rule-requires)) | not stuck |
 | The verify passed, auto-merge off | Your lead gets one message. No session starts | `stuck: #12 (auto-merge off)` |
 | The verify passed, the merge queue removed it | A conflict: a session rebases it. Else your lead gets one message (see [Queue a pull request that the queue removed](#queue-a-pull-request-that-the-queue-removed)) | `stuck: #12 (removed from queue)` |
 | The verify passed, GitHub needs a review | Your lead gets one message. No session starts (see [Approve a pull request that needs a review](#approve-a-pull-request-that-needs-a-review)) | `stuck: #12 (review)` |
@@ -2822,8 +2829,9 @@ flowchart TD
 A check failed when its run ended with `failure`, `timed_out` or
 `startup_failure`, or when its status is `failure` or `error`. The
 status `riff/verify` is the verify, not a check. A cancelled or skipped
-check did not fail. GitHub does not tell riff which check a rule
-requires, so each failed check counts. Only the newest run of a check
+check did not fail. Only a check that the ruleset of `main` requires
+stops the pull request: the wave reads the ruleset when a head has a
+failed check. Only the newest run of a check
 counts: a check can run more than one time on one commit, for example
 after a rerun, and an old failed run does not count when a newer run of
 the same check passed. A pull request with a conflict
@@ -2980,6 +2988,32 @@ pull request:
 ```sh
 gh pr checks 40
 ```
+
+#### See a failed check that no rule requires
+
+A check that the ruleset of `main` does not require blocks no merge.
+An example is a new workflow whose secret is not there yet. Its failure
+holds no verify, and no session fixes it. The verify goes on, and the
+pull request merges when its required checks and its verify pass. Your
+lead gets one message for each such check and head commit, with the
+name of the check and its link:
+
+```text
+PR #40, branch worktree-issue-12, has the failed check knurl adapter at commit 1a2b3c4. The ruleset of main does not require it, so the verify and the merge go on, and no session fixes it. Fix the cause with a push to worktree-issue-12, or run the check again. Link: https://github.com/como-technologies/riff/actions/runs/9/job/1
+```
+
+`riff top` does not show the pull request in `stuck`. To see each check
+of the pull request, and then only the checks that the ruleset
+requires:
+
+```sh
+gh pr checks 40
+gh pr checks 40 --required
+```
+
+When the failure of the check must stop the merge, add the check to the
+required checks of the ruleset of `main`. Then a failed run of it gets
+a session that fixes it, and holds the verify.
 
 #### Queue a pull request that the queue removed
 

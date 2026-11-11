@@ -1730,9 +1730,9 @@ wave with its repository, one line for the `free` items, one for the
 session verifies it, and when no session holds it and its pull request
 waits for a verify or for the merge. An item is in `stuck` when no
 session holds it and its pull request cannot merge by itself: a
-conflict, a failed check, auto-merge off, a removal from the merge
-queue, a review that GitHub needs, or a run of a fork that waits for
-approval (see
+conflict, a failed required check, auto-merge off, a removal from the
+merge queue, a review that GitHub needs, or a run of a fork that waits
+for approval (see
 [See a pull request that cannot merge](development.md#see-a-pull-request-that-cannot-merge)).
 An item is in `held` when the lead holds it and no session
 claims it: the reason of the hold follows its items. No worker and no
@@ -3063,7 +3063,7 @@ release](development.md#leave-the-issue-open-for-a-check-after-the-release).
 
 The wave starts the verify of a pull request in the same way: it waits
 until each check of the full check has a run that ended on the head
-commit, and it fixes a failed check first (see
+commit, and it fixes a failed required check first (see
 [See why a verify waits](development.md#see-why-a-verify-waits)).
 To see the checks of another repository, see
 [Use the checks that you have](start-a-riff.md#use-the-checks-that-you-have).

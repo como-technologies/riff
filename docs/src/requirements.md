@@ -5935,10 +5935,8 @@ of this part when they merge.
   message for each such check and head commit, with the name of the
   check, its app and its link. The app is the host of the link. A pull
   request with both kinds gets the session for its runs of Actions, and
-  the message for each other check. When a session of a wave for failed
-  checks ends with the same head commit, only the runs of Actions count
-  as failed. Supersedes 01M5QW2KVAS05Q72630RNW47G0 and
-  01M5QW2KYFM4C287D9NMSPH8TA in part.
+  the message for each other check. Supersedes
+  01M5QW2KVAS05Q72630RNW47G0 and 01M5QW2KYFM4C287D9NMSPH8TA in part.
 - **01M5SMSB3H1E9NXMBDN8ZDJ6CD** When podman cannot pull the session
   image of a wave, the daemon starts no item of that wave for one
   minute, and no start counts. Then it tries the pull again. `riff
@@ -6073,12 +6071,9 @@ of this part when they merge.
   01M6H1N2XYKK6QRCJS02RZJHKZ in part.
 - **01M6JEQEQ45YMNR1WTX2RRTQ5B** A check with no run is not done. The
   full check of a head commit is done when each of its checks has a run,
-  and each newest run ended, also when another check failed. A pull
-  request whose head has a failed check gets the fix of the failed
-  checks (01M5QW2KVAS05Q72630RNW47G0) also when its verify waits: the
-  wave starts no verify of that head, and the verify comes after the
-  fix. Supersedes 01M5QYDHN27RC5SRHAB56PFKK0, 01M5QW2KVAS05Q72630RNW47G0
-  and 01M5SN0PY23JDWND8DGGAF9XMB in part.
+  and each newest run ended, also when another check failed. Supersedes
+  01M5QYDHN27RC5SRHAB56PFKK0, 01M5QW2KVAS05Q72630RNW47G0 and
+  01M5SN0PY23JDWND8DGGAF9XMB in part.
 - **01M6JFJQD4H4GG0H0TFSW5G1PD** The look of a wave asks GitHub first
   whether anything changed. It sends two conditional reads of REST, each
   with the ETag of its last answer in If-None-Match: the issue and the
@@ -6218,6 +6213,19 @@ of this part when they merge.
   the token of a session (01M6WPMNXN1BSBEH74TG5DDRTF), the check of the
   push right and the revoke, under the caller `token` of DAEMON
   (01M6QCDH3VXFFEFEWJT1H2HQT0).
+- **01M749P62T24VDPX20D40KRJEK** Only a failed check that the ruleset of
+  the default branch requires (01M5QYDE41FVFX26EC8K5QGYH4) starts the
+  fix of the failed checks and holds the verify. A pull request whose
+  head has such a check gets the fix also when its verify waits: the
+  wave starts no verify of that head, and the verify comes after the
+  fix. For a failed check that the ruleset does not require, of any app,
+  the verify goes on and no session starts. The lead gets one message
+  for each such check and head commit, with the name of the check and
+  its link, and riff top and riff wave list do not show the pull request
+  as stuck. The look reads the ruleset when a head has a failed check.
+  When a session of a wave for failed checks ends with the same head
+  commit, only the required runs of Actions count as failed. Supersedes
+  01M5SN0PY23JDWND8DGGAF9XMB and 01M6JEQEQ45YMNR1WTX2RRTQ5B in part.
 
 ### The lead, the view and the takeover
 

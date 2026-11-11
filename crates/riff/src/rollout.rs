@@ -888,6 +888,14 @@ pub struct Pull {
     /// GitHub blocks with no check open ([`Pull::settled`]).
     #[serde(skip)]
     pub waiting: Vec<Run>,
+    /// The checks that the ruleset of the default branch requires: the
+    /// full check ([`crate::repo_setup::full_check`],
+    /// 01M5QYDE41FVFX26EC8K5QGYH4). `gh pr list` does not tell them:
+    /// [`pulls`] reads them one time for all pull requests, when a head
+    /// has a failed check. With `None`, nobody read them, and each failed
+    /// check counts as required ([`Pull::failed_checks`]).
+    #[serde(skip)]
+    pub required: Option<Vec<String>>,
 }
 
 /// True when the first line of the commit message `message` starts with
@@ -1302,6 +1310,11 @@ pub enum Stuck {
     /// not a run of GitHub Actions ([`Check::actions`]), so no session fixes
     /// it.
     Other(OtherCheck),
+    /// This check of the head failed, but the ruleset of the default
+    /// branch does not require it ([`Pull::failed_optional`]). It holds no
+    /// verify and no merge, so [`Pull::stuck`] never gives it, and no
+    /// session fixes it: the lead hears of it.
+    Optional(OtherCheck),
     /// The verify passed, and auto-merge is off: nothing merges it.
     AutoMergeOff,
     /// The verify passed, and the merge queue removed the pull request,
@@ -1355,7 +1368,8 @@ impl Stuck {
     /// assert_eq!(Stuck::Conflict.word(), "conflict");
     /// assert_eq!(Stuck::Checks(vec!["Gate".into()]).word(), "checks");
     /// let other = OtherCheck { name: "ci".into(), app: None, link: None };
-    /// assert_eq!(Stuck::Other(other).word(), "checks");
+    /// assert_eq!(Stuck::Other(other.clone()).word(), "checks");
+    /// assert_eq!(Stuck::Optional(other).word(), "optional check");
     /// assert_eq!(Stuck::AutoMergeOff.word(), "auto-merge off");
     /// assert_eq!(Stuck::Dequeued("MERGE_CONFLICT".into()).word(), "removed from queue");
     /// assert_eq!(Stuck::Review(Review::Required).word(), "review");
@@ -1367,6 +1381,7 @@ impl Stuck {
         match self {
             Stuck::Conflict => riff_client::waves::CONFLICT,
             Stuck::Checks(_) | Stuck::Other(_) => "checks",
+            Stuck::Optional(_) => "optional check",
             Stuck::AutoMergeOff => "auto-merge off",
             Stuck::Dequeued(_) => "removed from queue",
             Stuck::Review(_) => "review",
@@ -1530,11 +1545,24 @@ impl Pull {
         })
     }
 
-    /// The names of the checks of the head that failed ([`Check::failed`]),
-    /// each one time, in order. The rollup of `gh` does not say which
-    /// check a rule requires, so each failed check counts. Only the newest
-    /// run of a check counts: an old failed run does not, when a newer run
-    /// of the same check passed (01M5RGM8HBVQMY25H5PYESK17J).
+    /// True when the ruleset of the default branch requires `check`
+    /// ([`Pull::required`]). With no read of the rules, each check counts.
+    fn requires(&self, check: &Check) -> bool {
+        self.required.as_ref().is_none_or(|names| {
+            check
+                .title()
+                .is_some_and(|title| names.iter().any(|n| n == title))
+        })
+    }
+
+    /// The names of the checks of the head that failed ([`Check::failed`])
+    /// and that the ruleset of the default branch requires
+    /// ([`Pull::required`]), each one time, in order. Only such a check
+    /// holds the verify and gets a fix. The rollup of `gh` does not say
+    /// which check a rule requires: with no read of the rules, each failed
+    /// check counts. Only the newest run of a check counts: an old failed
+    /// run does not, when a newer run of the same check passed
+    /// (01M5RGM8HBVQMY25H5PYESK17J).
     ///
     /// ```
     /// use riff::rollout::{Check, Pull};
@@ -1545,10 +1573,16 @@ impl Pull {
     ///         Check::run("Hygiene", "SUCCESS"),
     ///         Check::run("Gate", "FAILURE"),
     ///         Check::verify("FAILURE"),
+    ///         Check::run("knurl adapter", "FAILURE"),
     ///     ],
     ///     ..Pull::default()
     /// };
-    /// assert_eq!(pull.failed_checks(), ["Gate"]);
+    /// assert_eq!(pull.failed_checks(), ["Gate", "knurl adapter"]);
+    /// // The ruleset requires Gate and Hygiene only.
+    /// let ruled = Pull { required: Some(vec!["Gate".into(), "Hygiene".into()]), ..pull };
+    /// assert_eq!(ruled.failed_checks(), ["Gate"]);
+    /// let none = Pull { required: Some(vec![]), ..ruled };
+    /// assert!(none.failed_checks().is_empty());
     ///
     /// // #1540: Hygiene failed two times, and then passed on the same head.
     /// let run = |conclusion, time| Check::run("Hygiene", conclusion).started(time);
@@ -1572,9 +1606,9 @@ impl Pull {
         self.failed_names(|_| true)
     }
 
-    /// The names of the failed checks that are runs of GitHub Actions
-    /// ([`Check::actions`]), each one time, in order. A session can read
-    /// the log of such a run and run it again.
+    /// The names of the failed checks that the ruleset requires and that
+    /// are runs of GitHub Actions ([`Check::actions`]), each one time, in
+    /// order. A session can read the log of such a run and run it again.
     ///
     /// ```
     /// use riff::rollout::{Check, Pull};
@@ -1583,7 +1617,9 @@ impl Pull {
     ///     checks: vec![
     ///         Check::run("Gate", "FAILURE"),
     ///         Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9"),
+    ///         Check::run("knurl adapter", "FAILURE"),
     ///     ],
+    ///     required: Some(vec!["Gate".into(), "ci".into()]),
     ///     ..Pull::default()
     /// };
     /// assert_eq!(pull.failed_checks(), ["Gate", "ci"]);
@@ -1593,8 +1629,9 @@ impl Pull {
         self.failed_names(Check::actions)
     }
 
-    /// The failed checks that are no run of GitHub Actions, each name one
-    /// time, in order, with the app and the link of each.
+    /// The failed checks that the ruleset requires and that are no run of
+    /// GitHub Actions, each name one time, in order, with the app and the
+    /// link of each.
     ///
     /// ```
     /// use riff::rollout::{Check, OtherCheck, Pull};
@@ -1605,7 +1642,9 @@ impl Pull {
     ///         Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9"),
     ///         Check::other("ci", "FAILURE", "https://app.circleci.com/workflow/9"),
     ///         Check::other("lint", "SUCCESS", "https://app.circleci.com/workflow/9"),
+    ///         Check::other("docs", "FAILURE", "https://app.circleci.com/workflow/9"),
     ///     ],
+    ///     required: Some(vec!["Gate".into(), "ci".into(), "lint".into()]),
     ///     ..Pull::default()
     /// };
     /// let ci = OtherCheck {
@@ -1616,43 +1655,75 @@ impl Pull {
     /// assert_eq!(pull.failed_others(), [ci]);
     /// ```
     pub fn failed_others(&self) -> Vec<OtherCheck> {
-        let mut others: Vec<OtherCheck> = Vec::new();
-        for check in self.newest_checks().filter(|c| c.failed() && !c.actions()) {
+        self.failed_where(|c| self.requires(c) && !c.actions())
+    }
+
+    /// The failed checks that the ruleset of the default branch does not
+    /// require ([`Pull::required`]), of any app, each name one time, in
+    /// order, with the app and the link of each. Such a check holds no
+    /// verify and no merge, and no session fixes it: the lead hears of it
+    /// ([`Stuck::Optional`]). With no read of the rules, there is none.
+    ///
+    /// ```
+    /// use riff::rollout::{Check, OtherCheck, Pull};
+    ///
+    /// let link = "https://github.com/o/r/actions/runs/9/job/1";
+    /// let pull = Pull {
+    ///     checks: vec![
+    ///         Check::run("Gate", "SUCCESS"),
+    ///         Check { details: Some(link.into()), ..Check::run("knurl adapter", "FAILURE") },
+    ///     ],
+    ///     ..Pull::default()
+    /// };
+    /// assert!(pull.failed_optional().is_empty(), "no read of the rules");
+    /// assert_eq!(pull.failed_checks(), ["knurl adapter"]);
+    /// let ruled = Pull { required: Some(vec!["Gate".into()]), ..pull };
+    /// let knurl = OtherCheck {
+    ///     name: "knurl adapter".into(),
+    ///     app: Some("github.com".into()),
+    ///     link: Some(link.into()),
+    /// };
+    /// assert_eq!(ruled.failed_optional(), [knurl]);
+    /// assert!(ruled.failed_checks().is_empty());
+    /// ```
+    pub fn failed_optional(&self) -> Vec<OtherCheck> {
+        self.failed_where(|c| !self.requires(c))
+    }
+
+    /// The failed checks for which `keep` is true, each name one time, in
+    /// order, with the app and the link of each.
+    fn failed_where(&self, keep: impl Fn(&Check) -> bool) -> Vec<OtherCheck> {
+        let mut found: Vec<OtherCheck> = Vec::new();
+        for check in self.newest_checks().filter(|c| c.failed() && keep(c)) {
             let name = check.title().unwrap_or("a check");
-            if !others.iter().any(|o| o.name == name) {
-                others.push(OtherCheck {
+            if !found.iter().any(|o| o.name == name) {
+                found.push(OtherCheck {
                     name: name.to_owned(),
                     app: check.app(),
                     link: check.link().map(str::to_owned),
                 });
             }
         }
-        others
+        found
     }
 
-    /// The names of the failed checks for which `keep` is true, each one
-    /// time, in order.
+    /// The names of the failed checks that the ruleset requires and for
+    /// which `keep` is true, each one time, in order.
     fn failed_names(&self, keep: impl Fn(&Check) -> bool) -> Vec<String> {
-        let mut names: Vec<String> = Vec::new();
-        for name in self
-            .newest_checks()
-            .filter(|c| c.failed() && keep(c))
-            .map(|c| c.title().unwrap_or("a check"))
-        {
-            if !names.iter().any(|n| n == name) {
-                names.push(name.to_owned());
-            }
-        }
-        names
+        self.failed_where(|c| self.requires(c) && keep(c))
+            .into_iter()
+            .map(|c| c.name)
+            .collect()
     }
 
     /// True when the verify passed and GitHub blocks the merge, but
-    /// nothing in the rollup explains it: no check failed, none goes, and
-    /// no conflict or merge queue holds the pull request (#1433). A review
-    /// of a person, or the approval of a run of a fork, can be the
-    /// cause. The look reads the runs that wait only for such a pull
+    /// nothing in the rollup explains it: no required check failed, none
+    /// goes, and no conflict or merge queue holds the pull request (#1433).
+    /// A review of a person, or the approval of a run of a fork, can be
+    /// the cause. The look reads the runs that wait only for such a pull
     /// request ([`pulls`]). Only the newest run of a check counts, as for
-    /// [`Pull::failed_checks`] (01M6G0BFAJJV9YNQZT502P1KGJ).
+    /// [`Pull::failed_checks`] (01M6G0BFAJJV9YNQZT502P1KGJ). A failed
+    /// check that the ruleset does not require blocks no merge.
     ///
     /// ```
     /// use riff::rollout::{Check, Pull};
@@ -1679,19 +1750,29 @@ impl Pull {
     /// let held = |checks: Vec<Check>| pull([vec![Check::verify("SUCCESS")], checks].concat());
     /// assert!(held(vec![old.clone(), new.clone()]).settled());
     /// assert!(!held(vec![old, new, again]).settled(), "the newest run failed");
+    ///
+    /// // A failed check that no rule requires does not explain the block.
+    /// let knurl = held(vec![Check::run("Gate", "SUCCESS"), Check::run("knurl adapter", "FAILURE")]);
+    /// assert!(!knurl.settled(), "no read of the rules: each check counts");
+    /// assert!(Pull { required: Some(vec!["Gate".into()]), ..knurl }.settled());
     /// ```
     pub fn settled(&self) -> bool {
         self.verify() == Some(Verify::Passed)
             && self.queue == Queue::Out
             && self.merge_state.as_deref() == Some("BLOCKED")
             && self.mergeable.as_deref() != Some("CONFLICTING")
-            && self.newest_checks().all(|c| !c.failed() && !c.pending())
+            && !self
+                .newest_checks()
+                .any(|c| c.pending() || (c.failed() && self.requires(c)))
     }
 
     /// Why this pull request cannot merge by itself, when it cannot
     /// (#279). A draft, a WIP head, a failed verify, and a pull request in
     /// the merge queue ([`Pull::queued`]) are none: a failed verify is free
-    /// work as a build already. In this order:
+    /// work as a build already. Only a failed check that the ruleset of
+    /// the default branch requires counts ([`Pull::failed_checks`]): a
+    /// failed check that it does not require holds no merge
+    /// ([`Pull::failed_optional`]). In this order:
     ///
     /// 1. A release with a failed check: [`Stuck::Checks`], with its
     ///    verify in any state. `release` says that its issue has the label
@@ -1812,6 +1893,17 @@ impl Pull {
     /// let run = Run { id: 9, name: "Hygiene".into(), link: None };
     /// let fork = Pull { waiting: vec![run.clone()], ..blocked(vec![passed(), gate("SUCCESS")]) };
     /// assert_eq!(fork.stuck(false), Some(Stuck::Approve(run)));
+    ///
+    /// // The ruleset requires the Gate only: a failed `knurl adapter` holds nothing.
+    /// let knurl = || Check::run("knurl adapter", "FAILURE");
+    /// let ruled = |pull: Pull| Pull { required: Some(vec!["Gate".into()]), ..pull };
+    /// assert_eq!(ruled(pull(vec![passed(), knurl()], "MERGEABLE", true)).stuck(false), None);
+    /// assert_eq!(ruled(pull(vec![knurl()], "MERGEABLE", true)).stuck(false), None);
+    /// assert_eq!(ruled(pull(vec![knurl()], "MERGEABLE", true)).stuck(true), None, "a release");
+    /// assert_eq!(
+    ///     ruled(pull(vec![knurl(), gate("FAILURE")], "MERGEABLE", true)).stuck(false),
+    ///     Some(Stuck::Checks(vec!["Gate".into()]))
+    /// );
     /// ```
     pub fn stuck(&self, release: bool) -> Option<Stuck> {
         if self.draft || self.queued() {
@@ -2156,12 +2248,21 @@ pub fn open_in_kept(gh: &Gh, repo: &str, branch: &str, age: std::time::Duration)
 /// ([`queue_of`]). The runs of Actions that wait for approval are read
 /// for a verified pull request that GitHub blocks with no check open
 /// only ([`Pull::settled`], [`runs_waiting`], 01M6FZ144M0BTEDWNB9V4MGWDD).
-/// Each read is a [`Gh::read`]: a `gh` that accepts an older reply takes
-/// the reply of the look that just ran.
+/// The checks that the ruleset of the default branch requires are read
+/// one time, and only when a head has a failed check ([`Pull::required`],
+/// [`crate::repo_setup::full_check`]). It fails when they do not read: a
+/// look that does not know them fails, and says why
+/// (01M5QYDHN27RC5SRHAB56PFKK0). Each read is a [`Gh::read`]: a `gh` that
+/// accepts an older reply takes the reply of the look that just ran.
 pub fn pulls(gh: &Gh, repo: &str) -> Result<Vec<Pull>> {
     let mut pulls: Vec<Pull> = gh.read_json(&pull_args(repo))?;
     let queue = queue_of(gh, repo);
+    let required = match pulls.iter().any(|p| !p.failed_checks().is_empty()) {
+        true => Some(crate::repo_setup::full_check(gh, repo)?),
+        false => None,
+    };
     for pull in &mut pulls {
+        pull.required = required.clone();
         pull.wip = pull.verify() == Some(Verify::Asked) && head_wip(gh, repo, &pull.head);
         pull.queue = queue.get(&pull.number).cloned().unwrap_or_default();
         if pull.settled() {

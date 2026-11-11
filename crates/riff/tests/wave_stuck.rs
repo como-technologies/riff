@@ -17,17 +17,18 @@ use riff_client::waves::Board;
 
 const REPO: &str = "o/r";
 
-/// A fake `gh`: the milestones, the file `pulls` for `pr list`, the file
-/// `issues` for `issue list`, a passed Gate for each commit, the file `runs`
-/// for the runs of Actions of a commit, and the file `calls` with each read
-/// of them.
+/// A fake `gh`: the milestones, the ruleset of `main` that requires each
+/// check of these tests, the file `pulls` for `pr list`, the file `issues`
+/// for `issue list`, a passed Gate for each commit, the file `runs` for the
+/// runs of Actions of a commit, and the file `calls` with each read of
+/// them.
 const FAKE_GH: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 case "$1 $2" in
   api*)
     case "$2" in
       repos/o/r) echo '{"default_branch":"main"}' ;;
-      */rules/branches/main*) echo '[]' ;;
+      */rules/branches/main*) echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"Gate"},{"context":"Hygiene"},{"context":"Lint"},{"context":"ci"},{"context":"buildkite/riff"},{"context":"riff/verify"}]}}]' ;;
       */milestones*) echo '[{"title":"Backlog"},{"title":"Wave 1"}]' ;;
       */check-runs*) echo '{"check_runs":[{"status":"completed","conclusion":"success","head_sha":"x"}]}' ;;
       */actions/runs*) echo "$2" >> "$dir/calls"; cat "$dir/runs" ;;
