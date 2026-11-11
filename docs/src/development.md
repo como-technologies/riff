@@ -2557,24 +2557,34 @@ daemon makes no call of the resource that ran out.
 GitHub keeps more than one counter for one token. A read of your points
 can answer from a counter that still has points, while the call that
 failed used the counter that is out. So the daemon takes the reset from
-the call that failed:
+the call that failed, in this order:
 
 1. The header `x-ratelimit-reset` in the answer of the call.
-2. A counter that shows no points left. The daemon reads
+2. A secondary limit of GitHub has no reset. When it starts an outage,
+   the daemon waits one minute, and reads no counter. When it comes
+   again in the same outage, the daemon waits no new minute: steps 3
+   and 4 give the wait.
+3. A counter that shows no points left. The daemon reads
    `gh api rate_limit`, and for GraphQL it reads `rateLimit` some times,
    because each read can land on another counter.
-3. When no read shows a counter that is out, the daemon waits for the
+4. When no read shows a counter that is out, the daemon waits for the
    latest reset that it saw: the end of the hour of that counter. It
    says that this time is a guess.
 
-A secondary limit of GitHub has no reset. The daemon waits one minute
-for it.
+An outage lasts while the calls fail on the limit. A call that fails
+less than one minute after the end of the last wait is in the same
+outage. Its wait has a new reset, but your lead gets no new message.
+So your lead gets one message for the outage, also when GitHub gives a
+later reset at each try.
 
 ```mermaid
 flowchart TD
     C["a call of gh fails:<br/>the limit is out"] --> H{"the reset<br/>in its answer?"}
     H -- yes --> W["no call of that resource<br/>until the reset"]
-    H -- no --> R{"a counter with no points:<br/>gh api rate_limit, rateLimit reads?"}
+    H -- no --> S{"a secondary limit<br/>that starts an outage?"}
+    S -- yes --> O["one minute"]
+    O --> W
+    S -- no --> R{"a counter with no points:<br/>gh api rate_limit, rateLimit reads?"}
     R -- yes --> W
     R -- no --> G["the end of the hour of the counter<br/>that the daemon saw: a guess"]
     G --> W
@@ -2582,6 +2592,7 @@ flowchart TD
     W --> K["a verify that ends now<br/>keeps its result"]
     W --> A["the reset comes"]
     A --> L["the wave looks again<br/>and reports each kept result"]
+    L -- "a call fails again less than<br/>a minute later: the same outage" --> H
 ```
 
 To see the wait:

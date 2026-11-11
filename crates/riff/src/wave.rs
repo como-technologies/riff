@@ -111,8 +111,9 @@
 //! - The loop looks at the wait before it admits to the room (`limit_pause`).
 //!   While a limit waits, it makes no look, no sweep and no report of a kept
 //!   result. It tells the lead one time for each outage, with the key
-//!   [`ghcalls::Wait::key`], and sleeps until the reset. A look that ran into
-//!   the limit does the same at once.
+//!   [`ghcalls::Wait::key`]: each wait of one outage has the key of its first
+//!   wait, also when the reset moves at each try (#1872). It sleeps until the
+//!   reset. A look that ran into the limit does the same at once.
 //! - The look of the daemon (`watch`) sleeps until the reset.
 //! - The watches make no look ([`crate::watches::Lookout::limit`]).
 //! - The end step of a verify (`after_verify`) keeps its result when the
@@ -1807,8 +1808,8 @@ pub fn until(wait: &ghcalls::Wait) -> Duration {
 /// What a wave does while a limit of GitHub is out (#1557): how long it
 /// waits for the reset, and its word. The lead hears of an outage one
 /// time: `told` holds the key of the last message ([`ghcalls::Wait::key`]),
-/// and a new wait in the same outage has the same key (#1581). `None` when
-/// no limit is out.
+/// and a new wait in the same outage has the same key (#1581, #1872).
+/// `None` when no limit is out.
 async fn limit_pause(
     world: &dyn World,
     wave: &Wave,
@@ -9446,6 +9447,101 @@ esac
             .await;
         assert_eq!(here.forge().told.len(), 1, "no second message");
         assert_eq!(here.forge().told_keys, [Some(wait.key())]);
+    }
+
+    /// A fake `gh` for the tests of #1872: `gh api rate_limit` says that
+    /// the GraphQL counter is out, with a reset one second after each
+    /// read. Each other call fails on the limit until `fails_until`.
+    fn moving_gh(dir: &Path, fails_until: i64) -> pr::Gh {
+        let script = format!(
+            r#"#!/bin/sh
+dir=$(dirname "$0")
+printf '%s\n' "$*" >> "$dir/limit.log"
+if [ "$1 $2" = "api rate_limit" ]; then
+  echo "{{\"resources\":{{\"graphql\":{{\"limit\":5000,\"remaining\":0,\"reset\":$(( $(date +%s) + 1 ))}}}}}}"
+  exit 0
+fi
+if [ "$(date +%s)" -lt {fails_until} ]; then
+  echo 'GraphQL: API rate limit already exceeded for user ID 1.' >&2
+  exit 1
+fi
+case "$1 $2" in
+  "pr list") echo '[]' ;;
+  *) echo '{{}}' ;;
+esac
+"#
+        );
+        pr::Gh::at(isolated::write_program(dir.join("gh"), script))
+            .with_calls(Arc::new(crate::ghcalls::Calls::default()))
+    }
+
+    /// 01M74BJ5Y03F5DGT44N8EENFBG (#1872): the look fails at each try,
+    /// and the counter that is out gives a later reset at each try. Each
+    /// try starts a new wait of the same outage, and the lead hears one
+    /// time, with the key of the first wait.
+    #[tokio::test]
+    async fn a_look_with_a_later_reset_at_each_try_tells_the_lead_once() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 3, free).await;
+        let bin = here._root.path().join("bin");
+        here.forge().limit_gh = Some(Arc::new(moving_gh(&bin, now_secs() + 6)));
+        here.run();
+
+        here.until(0, |h| !h.forge().told.is_empty()).await;
+        let keys = here.forge().told_keys.clone();
+        // Each try reads the counter again: three tries, three resets.
+        let reads = |dir: &Path| {
+            let log = limit_log(dir);
+            log.iter().filter(|c| *c == "api rate_limit").count()
+        };
+        here.until(0, |_| reads(&bin) >= 3).await;
+        here.until(0, |h| h.daemon.waves_shown()[0].word == text::WAVE_NO_WORK)
+            .await;
+        assert_eq!(here.forge().told.len(), 1, "{:?}", here.forge().told);
+        assert_eq!(here.forge().told_keys, keys);
+    }
+
+    /// 01M74BJ5Y03F5DGT44N8EENFBG (#1872): the look fails again at each
+    /// try, a minute apart, and each try gives a reset one minute later.
+    /// The resets pass the half hour, where the hour of a key changes. The
+    /// lead hears one time.
+    #[tokio::test]
+    async fn a_reset_one_minute_later_at_each_try_gives_the_lead_one_message() {
+        let free = Arc::new(AtomicU64::new(64));
+        let here = Here::new(&[], 3, free).await;
+        // No try calls `gh`: each wait of the test is still to come.
+        let program = here._root.path().join("no-gh");
+        let calls = Arc::new(crate::ghcalls::Calls::default());
+        let gh = pr::Gh::at(isolated::write_program(program, "#!/bin/sh\nexit 1\n"))
+            .with_calls(calls.clone());
+        here.forge().limit_gh = Some(Arc::new(gh));
+        let wave = Wave {
+            repo: "o/r".into(),
+            main: "/src/r".into(),
+            server: "http://127.0.0.1:1".into(),
+            host: "thelio".into(),
+        };
+        // The tries start at minute 20 of the next hour, so the wave sees
+        // each wait.
+        let hour = 3_600_000;
+        let start = (crate::daemon::now_ms() / hour + 1) * hour + 20 * 60_000;
+        let mut told = None;
+        let mut keys = BTreeSet::new();
+        for n in 0..20 {
+            let at = start + n * 62_000;
+            let wait = crate::ghcalls::Wait::until(crate::ghcalls::Resource::Graphql, at + 60_000);
+            keys.insert(wait.key());
+            assert!(calls.start_wait(wait, at), "the wait of try {n} starts");
+            assert!(limit_pause(&*here.world, &wave, &mut told).await.is_some());
+        }
+        assert_eq!(keys.len(), 2, "the resets pass the half hour: {keys:?}");
+        let forge = here.forge();
+        let [body] = &forge.told[..] else {
+            panic!("one message: {:?}", forge.told);
+        };
+        let first = crate::ghcalls::Wait::until(crate::ghcalls::Resource::Graphql, start + 60_000);
+        assert_eq!(body, &text::wave_limit_waits("o/r", &first));
+        assert_eq!(forge.told_keys, [Some(first.key())]);
     }
 
     /// 01M6H1N332TZ17CQQ8A5CQKG7B (#1557): a verify whose report fails on the

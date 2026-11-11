@@ -1184,7 +1184,9 @@ impl Gh {
     /// comes from the call that failed, in this order:
     ///
     /// 1. The header `x-ratelimit-reset` in its answer.
-    /// 2. A secondary limit waits [`ghcalls::SECONDARY_WAIT_MS`].
+    /// 2. A secondary limit that starts an outage waits
+    ///    [`ghcalls::SECONDARY_WAIT_MS`]. In an outage that goes on
+    ///    ([`ghcalls::Calls::outage`]) it waits no new minute (#1872).
     /// 3. A counter that shows no points left: `gh api rate_limit`, and
     ///    for GraphQL some reads of `rateLimit` ([`ghcalls::PROBES`]).
     /// 4. Else the latest reset that it saw, the end of the hour of that
@@ -1229,7 +1231,11 @@ impl Gh {
         {
             return known(reset_ms);
         }
-        if ghcalls::is_secondary(stderr) {
+        let goes_on = self
+            .calls
+            .as_ref()
+            .is_some_and(|calls| calls.outage(resource, now).is_some());
+        if ghcalls::is_secondary(stderr) && !goes_on {
             return known(now + ghcalls::SECONDARY_WAIT_MS);
         }
         // The latest reset of a counter that has points left.
@@ -1249,11 +1255,10 @@ impl Gh {
                 }
             }
         }
-        ghcalls::Wait {
+        ghcalls::Wait::guess(
             resource,
-            reset_ms: seen.map_or(now + ghcalls::UNREAD_WAIT_MS, |reset_ms| reset_ms.max(now)),
-            guessed: true,
-        }
+            seen.map_or(now + ghcalls::UNREAD_WAIT_MS, |reset_ms| reset_ms.max(now)),
+        )
     }
 
     /// The counter of `resource` in `gh api rate_limit`, which no limit
@@ -3793,6 +3798,57 @@ mod tests {
             "{span}"
         );
         assert_eq!(logged(dir.path()), ["pr view 40"]);
+    }
+
+    /// 01M74BJ5Y03F5DGT44N8EENFBG (#1872): a secondary limit one second
+    /// after the end of a wait is in the same outage. It waits no new
+    /// minute: the wait is the reset of the counter that is out, or the end
+    /// of the hour of the counter that riff saw as a guess, with the key of
+    /// the first wait.
+    #[test]
+    fn a_secondary_limit_in_an_outage_that_goes_on_reads_the_counter() {
+        use crate::ghcalls::{Resource, Wait};
+        let secondary = "echo 'You have exceeded a secondary rate limit.' >&2; exit 1";
+        // The first wait of the outage ended one second ago.
+        let outage = |gh: &Gh| {
+            let now = crate::daemon::now_ms();
+            let first = Wait::until(Resource::Graphql, now - 2_000);
+            assert!(gh.calls.as_ref().unwrap().start_wait(first, now - 62_000));
+            first
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let gh = limited_gh(
+            dir.path(),
+            &format!(
+                "case \"$1 $2\" in \"api rate_limit\") \
+                 echo '{{\"resources\":{{\"graphql\":{{\"remaining\":0,\"reset\":4102444815}}}}}}'; exit 0 ;; esac\n\
+                 {secondary}"
+            ),
+        );
+        let first = outage(&gh);
+        assert!(gh.run(&["pr", "view", "40"], None).is_err());
+        let wait = gh.limit_wait().unwrap();
+        assert_eq!((wait.reset_ms, wait.guessed), (4_102_444_815_000, false));
+        assert_eq!(wait.key(), first.key());
+        assert_eq!(logged(dir.path()), ["pr view 40", "api rate_limit"]);
+
+        // No counter is out: the end of the hour of the counter, a guess.
+        let dir = tempfile::tempdir().unwrap();
+        let gh = limited_gh(
+            dir.path(),
+            &format!(
+                "case \"$1 $2\" in \"api rate_limit\") \
+                 echo '{{\"resources\":{{\"graphql\":{{\"remaining\":3204,\"reset\":4102444849}}}}}}'; exit 0 ;; esac\n\
+                 {secondary}"
+            ),
+        );
+        let first = outage(&gh);
+        assert!(gh.run(&["pr", "view", "40"], None).is_err());
+        let wait = gh.limit_wait().unwrap();
+        assert_eq!((wait.reset_ms, wait.guessed), (4_102_444_849_000, true));
+        assert_eq!(wait.key(), first.key());
+        assert_eq!(logged(dir.path()).len(), 2 + crate::ghcalls::PROBES);
     }
 
     /// 01M6JGF7265VX2SDXZ4EJAGXVB (#1582): a `gh` that counts its calls
