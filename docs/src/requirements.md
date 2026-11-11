@@ -7372,14 +7372,18 @@ of this part when they merge.
 - **01M6ZM68Y1QCTA2M8DHYRMKBPN** `riff release cut` refuses, before it
   makes the release issue, while an alert of the repository has no
   review. It reads the code scanning alerts, of security and of quality,
-  the secret scanning alerts and the Dependabot alerts. An alert has a
-  review when it is fixed, or dismissed with a comment that gives the
-  reason. The refusal lists each open alert and each dismissed alert
-  with no comment: its kind, its rule, its file and line, and its link.
-  The cut also refuses when it cannot read the alerts of a kind, and
-  names the read that failed. No flag skips the check. The session App
-  of a worker has no right on the alerts, so the lead or a person cuts
-  the release. Supersedes 01M58B0HZYMAK1B2AJMWKHCXG0 in part.
+  the secret scanning alerts and the Dependabot alerts. A fixed alert
+  has a review. The refusal lists each alert with no review: its kind,
+  its rule, its file and line, and its link. The cut also refuses when
+  it cannot read the alerts of a kind, and names the read that failed.
+  No flag skips the check. The session App of a worker has no right on
+  the alerts, so the lead or a person cuts the release. Supersedes
+  01M58B0HZYMAK1B2AJMWKHCXG0 in part.
+- **01M748V0HMV7D9T4F6NCB7HQHG** In the alert gate of `riff release
+  cut`, a dismissed alert has a review when it has a comment that gives
+  the reason. A secret scanning alert with the resolution `revoked`, and
+  a Dependabot alert with the state `auto_dismissed`, have a review with
+  no comment. Supersedes 01M6ZM68Y1QCTA2M8DHYRMKBPN in part.
 
 ### The release cycle
 

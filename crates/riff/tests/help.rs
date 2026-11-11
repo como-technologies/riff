@@ -508,4 +508,18 @@ fn the_help_of_wave_end_names_the_release_table_of_riff_toml() {
         "#### Cut the release pull request",
     ));
     assert!(how_to.contains(alerts), "{how_to}");
+    // 01M748V0HMV7D9T4F6NCB7HQHG: they name the two closed alerts that
+    // need no comment.
+    assert!(
+        cut.contains(
+            "A revoked secret and a Dependabot alert that a rule dismissed need no comment"
+        ),
+        "{cut}"
+    );
+    for case in [
+        "a secret scanning alert closed as revoked",
+        "a Dependabot alert that a rule of GitHub dismissed (auto-dismissed)",
+    ] {
+        assert!(how_to.contains(case), "{case} in {how_to}");
+    }
 }

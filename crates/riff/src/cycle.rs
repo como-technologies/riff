@@ -3797,6 +3797,35 @@ pub(crate) mod tests {
         assert_eq!(cut.number, 1140);
     }
 
+    /// 01M748V0HMV7D9T4F6NCB7HQHG: a revoked secret and a Dependabot
+    /// alert that a rule dismissed need no comment. A code scanning alert
+    /// dismissed with no comment still stops the cut.
+    #[test]
+    fn cut_goes_on_with_a_closed_alert_and_refuses_a_dismiss_with_no_comment() {
+        use alerts::{Kind, State};
+        let mut forge = Fake::new();
+        forge.alerts = vec![
+            alert(Kind::Secret, 1, State::Closed),
+            alert(Kind::Dependabot, 2, State::Closed),
+            alert(Kind::Security, 3, dismissed("")),
+        ];
+        let error = cut(&forge, v("3.3.0"), None, None).unwrap_err().to_string();
+        assert!(
+            error.starts_with("riff release cut: 1 alert of the repository has no review."),
+            "{error}"
+        );
+        assert!(
+            error.contains(
+                "\n- code scanning (security) #3 rule-3, src/a.rs:3, dismissed with no reason: "
+            ),
+            "{error}"
+        );
+        assert!(forge.log().is_empty(), "{:?}", forge.log());
+        forge.alerts.pop();
+        let cut = cut(&forge, v("3.3.0"), None, None).unwrap();
+        assert_eq!(cut.number, 1140);
+    }
+
     /// 01M6ZM68Y1QCTA2M8DHYRMKBPN: a read of the alerts that fails stops
     /// the cut with the read and the fix. A limit of GitHub stays the
     /// error of the limit.
