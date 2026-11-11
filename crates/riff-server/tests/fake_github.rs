@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -29,11 +29,18 @@ pub const KEY: &str = include_str!("../testdata/test-only-rsa-key.pem");
 /// The public key of the test key.
 const JWKS: &str = include_str!("../testdata/test-only-jwks.json");
 
-/// The webhook secret of the session App.
-pub const WEBHOOK_SECRET: &str = "whsec-of-the-session-app-of-the-test";
+/// The webhook secret of the session App: one fake secret for the test
+/// process (01M75NAP2HNM11ZH7RC5SP8KCJ).
+pub fn webhook_secret() -> &'static str {
+    static SECRET: LazyLock<String> = LazyLock::new(isolated::fake_secret);
+    &SECRET
+}
 
-/// The webhook secret of the lead App.
-pub const LEAD_WEBHOOK_SECRET: &str = "whsec-of-the-lead-app-of-the-test";
+/// The webhook secret of the lead App, as [`webhook_secret`].
+pub fn lead_webhook_secret() -> &'static str {
+    static SECRET: LazyLock<String> = LazyLock::new(isolated::fake_secret);
+    &SECRET
+}
 
 /// The code that GitHub gives for the session App, and the one for the
 /// lead App.
@@ -145,8 +152,8 @@ async fn convert(State(seen): State<Shared>, Path(code): Path<String>) -> Respon
         }
     }
     let webhook_secret = match code.as_str() {
-        SESSION_CODE => WEBHOOK_SECRET,
-        _ => LEAD_WEBHOOK_SECRET,
+        SESSION_CODE => webhook_secret(),
+        _ => lead_webhook_secret(),
     };
     Json(json!({
         "id": id,
@@ -155,7 +162,7 @@ async fn convert(State(seen): State<Shared>, Path(code): Path<String>) -> Respon
         "node_id": "A_1",
         "owner": { "login": OWNER, "id": 7 },
         "client_id": "Iv1.client",
-        "client_secret": "client-secret-of-the-test",
+        "client_secret": isolated::fake_secret(),
         "webhook_secret": webhook_secret,
         "pem": KEY,
     }))
@@ -356,7 +363,7 @@ pub fn both_apps() -> riff_server::keys::Apps {
         keys
     };
     riff_server::keys::Apps {
-        session: Some(keys(SESSION_CODE, Some(WEBHOOK_SECRET))),
-        lead: Some(keys(LEAD_CODE, Some(LEAD_WEBHOOK_SECRET))),
+        session: Some(keys(SESSION_CODE, Some(webhook_secret()))),
+        lead: Some(keys(LEAD_CODE, Some(lead_webhook_secret()))),
     }
 }

@@ -7,7 +7,7 @@ use crate::common;
 #[path = "../../riff-server/tests/fake_github.rs"]
 pub(crate) mod fake_github;
 
-use fake_github::{FakeGitHub, LEAD_CODE, OWNER, REPO, SESSION_CODE, WEBHOOK_SECRET, both_apps};
+use fake_github::{FakeGitHub, LEAD_CODE, OWNER, REPO, SESSION_CODE, both_apps, webhook_secret};
 
 use std::time::Duration;
 
@@ -210,7 +210,7 @@ async fn riff_github_events_prints_the_last_wakes_and_the_counts() {
             .header("x-github-event", "check_run")
             .header("x-github-delivery", id);
         if signed {
-            let signature = riff_server::hooks::signature(WEBHOOK_SECRET, &body);
+            let signature = riff_server::hooks::signature(webhook_secret(), &body);
             delivery = delivery.header("x-hub-signature-256", signature);
         }
         let reply = delivery.body(body.clone()).send().await.unwrap();

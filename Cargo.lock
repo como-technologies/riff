@@ -1893,6 +1893,7 @@ name = "isolated"
 version = "4.16.0"
 dependencies = [
  "assert_cmd",
+ "getrandom 0.4.3",
  "nix 0.31.3",
  "tempfile",
  "tokio",

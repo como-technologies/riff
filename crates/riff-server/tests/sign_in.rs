@@ -3,6 +3,7 @@
 
 use crate::common;
 
+use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use riff_core::dpop::Key;
@@ -37,6 +38,13 @@ async fn exchange(server: &str, token: &str) -> reqwest::Response {
     exchange_with(server, token, Some(&Key::generate())).await
 }
 
+/// The client secret of the riff of [`start`]: one fake secret for the
+/// test process (01M75NAP2HNM11ZH7RC5SP8KCJ).
+fn client_secret() -> &'static str {
+    static SECRET: LazyLock<String> = LazyLock::new(isolated::fake_secret);
+    &SECRET
+}
+
 async fn start() -> (Service, String, String) {
     let issuer = common::fake_provider().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -45,7 +53,7 @@ async fn start() -> (Service, String, String) {
         provider: Some(Provider {
             issuer: issuer.clone(),
             client_id: "riff-client".into(),
-            client_secret: Some("not-secret".into()),
+            client_secret: Some(client_secret().to_owned()),
             allowed_domains: vec![DEFAULT_DOMAIN.into()],
         }),
         ..Config::new(&server)
@@ -68,7 +76,7 @@ async fn sign_in_names_the_provider() {
         .unwrap();
     assert_eq!(config.issuer, issuer);
     assert_eq!(config.client_id, "riff-client");
-    assert_eq!(config.client_secret.as_deref(), Some("not-secret"));
+    assert_eq!(config.client_secret.as_deref(), Some(client_secret()));
 }
 
 #[tokio::test]

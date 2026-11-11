@@ -83,7 +83,7 @@ async fn start(command: &str, issuer: &str, owner: &str) -> (Server, String) {
             .args(args)
             .env_clear()
             .env("RIFF_OIDC_CLIENT_ID", "riff-client")
-            .env("RIFF_OIDC_CLIENT_SECRET", "not-secret")
+            .env("RIFF_OIDC_CLIENT_SECRET", isolated::fake_secret())
             .env("RIFF_OIDC_ISSUER", issuer)
             .env("RIFF_LISTEN", &listen)
             .stdout(terminal.reopen().unwrap())

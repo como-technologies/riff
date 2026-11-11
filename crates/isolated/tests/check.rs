@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use isolated::{Isolated, offenders, program_writers};
+use isolated::{Isolated, offenders, program_writers, secret_literals};
 
 fn repo() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
@@ -154,6 +154,86 @@ fn the_check_fails_a_new_text_of_a_program_and_a_script_with_no_mode() {
         [
             "crates/riff/tests/lifecycle.rs:2",
             "crates/riff/tests/usage.rs:9"
+        ]
+    );
+}
+
+/// 01M75NAP2HNM11ZH7RC5SP8KCJ: the integration tests, the unit tests
+/// and the doc tests.
+#[test]
+fn no_test_has_a_string_literal_for_a_webhook_secret_or_a_key() {
+    let found = secret_literals(repo());
+    assert!(
+        found.is_empty(),
+        "these lines have a string literal for a webhook secret or a key; use \
+         isolated::fake_secret: {found:#?}"
+    );
+}
+
+/// The check fails each fixed fake secret that CodeQL found in the tests:
+/// a `let` and a `const` of a webhook secret, the argument of a function
+/// of the test, the key and the secret of `AppKeys::new` over two lines,
+/// and a doc test of `signature`. It passes a secret of the helper, the
+/// test key of a file, a fake token, a key of a map, and a literal for a
+/// function of the program (01M75NAP2HNM11ZH7RC5SP8KCJ).
+#[test]
+fn the_check_fails_each_fixed_fake_secret_of_a_test() {
+    let root = tempfile::tempdir().unwrap();
+    let tests = root.path().join("crates/riff-server/tests");
+    std::fs::create_dir_all(&tests).unwrap();
+    std::fs::write(
+        tests.join("fake_github.rs"),
+        "pub const KEY: &str = include_str!(\"../testdata/test-only-rsa-key.pem\");\n\
+         pub const WEBHOOK_SECRET: &str = \"whsec-of-the-session-app-of-the-test\";\n\
+         pub static LEAD_WEBHOOK_SECRET: LazyLock<String> = LazyLock::new(isolated::fake_secret);\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tests.join("hooks.rs"),
+        "async fn deliver(url: &str, id: &str, secret: Option<&str>) -> u16 {}\n\
+         fn a() {\n\
+         \x20   deliver(&url, \"d-1\", None).await;\n\
+         \x20   deliver(&url, \"d-2\", Some(\"another secret\")).await;\n\
+         \x20   deliver(&url, \"d-3\", Some(&isolated::fake_secret())).await;\n\
+         }\n",
+    )
+    .unwrap();
+    let src = root.path().join("crates/riff-server/src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("keys.rs"),
+        "/// ```\n\
+         /// assert_eq!(signature(\"It's a Secret to Everybody\", b\"Hello, World!\"), \"sha256=7571\");\n\
+         /// ```\n\
+         pub fn signature(secret: &str, body: &[u8]) -> String {}\n\
+         pub fn hook(secret: &str) {}\n\
+         fn program() { hook(\"s\"); }\n\
+         \n\
+         #[cfg(test)]\n\
+         mod tests {\n\
+         \x20   fn a() {\n\
+         \x20       let app = AppKeys::new(\n\
+         \x20           7, \"riff-acme\", \"acme\",\n\
+         \x20           \"THE KEY\",\n\
+         \x20           Some(\"THE SECRET\"),\n\
+         \x20       );\n\
+         \x20       let secret = \"whsec-of-the-test\";\n\
+         \x20       let token = \"gho_Zx9secretValue\";\n\
+         \x20       let key = \"pull-40-1a2b3c4d-conflict\";\n\
+         \x20       super::hook(\"s\");\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+    assert_eq!(
+        secret_literals(root.path()),
+        [
+            "crates/riff-server/src/keys.rs:2",
+            "crates/riff-server/src/keys.rs:13",
+            "crates/riff-server/src/keys.rs:14",
+            "crates/riff-server/src/keys.rs:16",
+            "crates/riff-server/tests/fake_github.rs:2",
+            "crates/riff-server/tests/hooks.rs:4",
         ]
     );
 }

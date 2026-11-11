@@ -147,13 +147,11 @@ const WAKE_BUFFER: usize = 1024;
 /// `X-Hub-Signature-256`: `sha256=` and the HMAC-SHA256 in hex.
 ///
 /// ```
+/// use isolated::GITHUB_EXAMPLE as example;
 /// use riff_server::hooks::signature;
 ///
 /// // The example of the docs of GitHub.
-/// assert_eq!(
-///     signature("It's a Secret to Everybody", b"Hello, World!"),
-///     "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17"
-/// );
+/// assert_eq!(signature(example.secret, example.body), example.header);
 /// ```
 pub fn signature(secret: &str, body: &[u8]) -> String {
     let tag = mac(secret, body).finalize().into_bytes();
@@ -168,12 +166,13 @@ pub fn signature(secret: &str, body: &[u8]) -> String {
 /// ```
 /// use riff_server::hooks::{signature, signed};
 ///
-/// let good = signature("s", b"{}");
-/// assert!(signed("s", b"{}", &good));
-/// assert!(!signed("other", b"{}", &good));
-/// assert!(!signed("s", b"{ }", &good));
-/// assert!(!signed("s", b"{}", ""));
-/// assert!(!signed("s", b"{}", &good.replace("sha256=", "sha1=")));
+/// let secret = isolated::fake_secret();
+/// let good = signature(&secret, b"{}");
+/// assert!(signed(&secret, b"{}", &good));
+/// assert!(!signed(&isolated::fake_secret(), b"{}", &good));
+/// assert!(!signed(&secret, b"{ }", &good));
+/// assert!(!signed(&secret, b"{}", ""));
+/// assert!(!signed(&secret, b"{}", &good.replace("sha256=", "sha1=")));
 /// ```
 pub fn signed(secret: &str, body: &[u8], header: &str) -> bool {
     let Some(tag) = header.strip_prefix("sha256=").and_then(unhex) else {

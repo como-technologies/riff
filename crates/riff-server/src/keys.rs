@@ -38,8 +38,9 @@
 //!
 //! let dir = tempfile::tempdir().unwrap();
 //! let keys = Keys::new(At::Dir(dir.path().to_owned()), reqwest::Client::new());
-//! let app = AppKeys::new(7, "riff-acme", "acme", "PEM", Some("hook secret"));
-//! assert!(!format!("{app:?}").contains("PEM"));
+//! let (key, secret) = (isolated::fake_secret(), isolated::fake_secret());
+//! let app = AppKeys::new(7, "riff-acme", "acme", &key, Some(&secret));
+//! assert!(!format!("{app:?}").contains(&key));
 //! keys.put(GitHubApp::Session, app).await.unwrap();
 //!
 //! let again = Keys::new(At::Dir(dir.path().to_owned()), reqwest::Client::new());
@@ -149,7 +150,8 @@ impl AppKeys {
     /// ```
     /// use riff_server::keys::AppKeys;
     ///
-    /// assert_eq!(AppKeys::new(7, "riff-acme", "acme", "", None).bot(), "riff-acme[bot]");
+    /// let app = AppKeys::new(7, "riff-acme", "acme", &isolated::fake_secret(), None);
+    /// assert_eq!(app.bot(), "riff-acme[bot]");
     /// ```
     pub fn bot(&self) -> String {
         format!("{}[bot]", self.slug)
@@ -495,7 +497,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let keys = Keys::new(At::Dir(dir.path().to_owned()), reqwest::Client::new());
-        let app = AppKeys::new(7, "riff-acme", "acme", "THE KEY", Some("THE SECRET"));
+        let (key, secret) = (isolated::fake_secret(), isolated::fake_secret());
+        let app = AppKeys::new(7, "riff-acme", "acme", &key, Some(&secret));
         keys.put(GitHubApp::Lead, app.clone()).await.unwrap();
         let path = dir.path().join(FILE);
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
@@ -509,7 +512,7 @@ mod tests {
     async fn nowhere_refuses_a_write_and_reads_no_app() {
         let keys = Keys::new(At::Nowhere, reqwest::Client::new());
         assert_eq!(keys.load().await.unwrap(), Apps::default());
-        let app = AppKeys::new(7, "riff-acme", "acme", "THE KEY", None);
+        let app = AppKeys::new(7, "riff-acme", "acme", &isolated::fake_secret(), None);
         let error = keys.put(GitHubApp::Session, app).await.unwrap_err();
         assert!(error.text.contains("riff cloud create NAME"), "{error}");
         // A failed write keeps no App in memory either.
@@ -518,16 +521,14 @@ mod tests {
 
     #[test]
     fn the_debug_of_the_apps_names_no_key_and_no_secret() {
-        let app = AppKeys::new(7, "riff-acme", "acme", "THE KEY", Some("THE SECRET"));
+        let (key, secret) = (isolated::fake_secret(), isolated::fake_secret());
+        let app = AppKeys::new(7, "riff-acme", "acme", &key, Some(&secret));
         let apps = Apps {
             session: Some(app.clone()),
             lead: Some(app),
         };
         let text = format!("{apps:?}");
         assert!(text.contains("riff-acme"), "{text}");
-        assert!(
-            !text.contains("THE KEY") && !text.contains("THE SECRET"),
-            "{text}"
-        );
+        assert!(!text.contains(&key) && !text.contains(&secret), "{text}");
     }
 }

@@ -7,7 +7,7 @@
 //! delivery comes as from GitHub: with no riff token and no build.
 
 use crate::common;
-use crate::fake_github::{WEBHOOK_SECRET, both_apps};
+use crate::fake_github::{both_apps, webhook_secret};
 
 use std::time::{Duration, Instant};
 
@@ -83,7 +83,7 @@ async fn deliver(
 
 /// A signed delivery: it must get status 202.
 async fn signed(url: &str, kind: &str, id: &str, body: &Value) {
-    let (status, text) = deliver(url, kind, id, body, Some(WEBHOOK_SECRET)).await;
+    let (status, text) = deliver(url, kind, id, body, Some(webhook_secret())).await;
     assert_eq!(status, 202, "{text}");
 }
 
@@ -215,9 +215,16 @@ async fn a_bad_signature_gets_401_and_wakes_nobody() {
     let body = pull_request("acme/app", 41, "synchronize", false);
     let (status, text) = deliver(&url, "pull_request", "d-1", &body, None).await;
     assert_eq!(status, 401, "{text}");
-    let (status, _) = deliver(&url, "pull_request", "d-2", &body, Some("another secret")).await;
+    let (status, _) = deliver(
+        &url,
+        "pull_request",
+        "d-2",
+        &body,
+        Some(&isolated::fake_secret()),
+    )
+    .await;
     assert_eq!(status, 401);
-    let other = signature(WEBHOOK_SECRET, b"{}");
+    let other = signature(webhook_secret(), b"{}");
     let reply = reqwest::Client::new()
         .post(format!("{url}/hooks/github"))
         .header("x-github-event", "pull_request")
@@ -243,7 +250,7 @@ async fn a_repeated_delivery_wakes_nobody() {
         (wake.kinds, wake.number),
         (vec![GitHubEvent::IssueComment], Some(7))
     );
-    let (status, text) = deliver(&url, "issue_comment", "d-1", &body, Some(WEBHOOK_SECRET)).await;
+    let (status, text) = deliver(&url, "issue_comment", "d-1", &body, Some(webhook_secret())).await;
     assert_eq!(status, 202);
     assert!(text.contains("repeated"), "{text}");
     assert_eq!(

@@ -1470,6 +1470,15 @@
   of a program. The file of a program has no extension, or the extension
   `sh`. Supersedes 01M517P9J77TZX28QYBR9SH6WW and
   01M513N34NJ2G3TK3EH91M10FJ in part.
+- **01M75NAP2HNM11ZH7RC5SP8KCJ** Each webhook secret and each key of a
+  test comes from `isolated::fake_secret`: a new value of random bytes
+  of the OS at each call. A key that a test parses is the test key of a
+  file of `testdata`. The one fixed secret is the published example of
+  the docs of GitHub, `isolated::GITHUB_EXAMPLE`, and only a doc test
+  uses it. A test of the crate `isolated` fails on each line of a test
+  with a string literal for a webhook secret or a key: the value of a
+  name with the word `secret`, or the argument for a secret or a key of
+  `signature`, `signed`, `AppKeys::new` or a function of the same test.
 
 ## Saved state
 

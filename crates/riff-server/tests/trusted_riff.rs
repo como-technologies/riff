@@ -232,7 +232,7 @@ async fn oidc_settings_in_the_environment_require_sign_in() {
     let mut cmd = server(&["--listen", "127.0.0.1:0"]);
     cmd.env("RIFF_OIDC_ISSUER", "http://127.0.0.1:1")
         .env("RIFF_OIDC_CLIENT_ID", "my-app")
-        .env("RIFF_OIDC_CLIENT_SECRET", "my-secret");
+        .env("RIFF_OIDC_CLIENT_SECRET", isolated::fake_secret());
     let (_server, port, _) = serve_cmd(cmd);
     let url = format!("http://127.0.0.1:{port}/v1");
     let http = common::client();

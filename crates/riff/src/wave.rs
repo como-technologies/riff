@@ -5387,7 +5387,13 @@ mod tests {
         use riff_server::keys::{AppKeys, Apps, At, FILE};
         let keys = tempfile::tempdir().unwrap();
         let apps = Apps {
-            session: Some(AppKeys::new(101, "riff-o", "o", "PEM", Some(secret))),
+            session: Some(AppKeys::new(
+                101,
+                "riff-o",
+                "o",
+                &isolated::fake_secret(),
+                Some(secret),
+            )),
             lead: None,
         };
         std::fs::write(keys.path().join(FILE), serde_json::to_vec(&apps).unwrap()).unwrap();
@@ -5437,7 +5443,7 @@ mod tests {
     /// [`LOOK_EVERY`].
     #[tokio::test]
     async fn a_new_item_of_the_wave_on_github_wakes_an_idle_wave_at_once() {
-        let secret = "whsec-of-the-test";
+        let secret = &isolated::fake_secret();
         let (_service, server, _keys) = riff_with_a_webhook(secret).await;
         let api = Api::new(&server);
         let place = crate::identity::place_from_text("thelio/o/r").unwrap();
@@ -5507,7 +5513,7 @@ mod tests {
     #[tokio::test]
     async fn the_api_follows_the_wakes_of_the_github_app() {
         use futures::StreamExt;
-        let secret = "whsec-of-the-test";
+        let secret = &isolated::fake_secret();
         let (_service, server, _keys) = riff_with_a_webhook(secret).await;
         let api = Api::new(&server);
         let me: SessionUri = "riff://mike@thelio/o/r".parse().unwrap();
@@ -5596,7 +5602,7 @@ mod tests {
     /// away, and not the wakes before.
     #[tokio::test]
     async fn the_daemon_gets_the_wakes_of_its_repository_and_after_a_restart_the_missed_ones() {
-        let secret = "whsec-of-the-test";
+        let secret = &isolated::fake_secret();
         let (_service, server, _keys) = riff_with_a_webhook(secret).await;
         let api = Api::new(&server);
         let place = crate::identity::place_from_text("thelio/o/r").unwrap();

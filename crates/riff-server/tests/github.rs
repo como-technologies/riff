@@ -7,8 +7,8 @@
 
 use crate::common;
 use crate::fake_github::{
-    FakeGitHub, KEY, LEAD_CODE, LEAD_WEBHOOK_SECRET, OWNER, REPO, SESSION_CODE, WEBHOOK_SECRET,
-    both_apps, installation_of,
+    FakeGitHub, KEY, LEAD_CODE, OWNER, REPO, SESSION_CODE, both_apps, installation_of,
+    lead_webhook_secret, webhook_secret,
 };
 
 use std::collections::BTreeMap;
@@ -432,9 +432,9 @@ async fn no_reply_and_no_log_line_has_the_key() {
     for reply in replies.iter().chain([&log]) {
         assert!(!reply.contains(key_line), "the key in: {reply}");
         assert!(!reply.contains("PRIVATE KEY"), "the key in: {reply}");
-        assert!(!reply.contains(WEBHOOK_SECRET), "the secret in: {reply}");
+        assert!(!reply.contains(webhook_secret()), "the secret in: {reply}");
         assert!(
-            !reply.contains(LEAD_WEBHOOK_SECRET),
+            !reply.contains(lead_webhook_secret()),
             "the secret in: {reply}"
         );
         for token in &tokens {
@@ -1694,8 +1694,14 @@ async fn an_accept_of_new_rights_revokes_the_tokens_of_the_install_and_the_next_
 
     // An event of another action renews nothing.
     let created = installation_event(lead_install, "created");
-    let (status, text) =
-        deliver(&s.url, "installation", "d-1", &created, LEAD_WEBHOOK_SECRET).await;
+    let (status, text) = deliver(
+        &s.url,
+        "installation",
+        "d-1",
+        &created,
+        lead_webhook_secret(),
+    )
+    .await;
     assert_eq!(status, 202, "{text}");
     assert!(text.contains("does not use"), "{text}");
 
@@ -1707,7 +1713,7 @@ async fn an_accept_of_new_rights_revokes_the_tokens_of_the_install_and_the_next_
         "installation",
         "d-2",
         &accepted,
-        LEAD_WEBHOOK_SECRET,
+        lead_webhook_secret(),
     )
     .await;
     assert_eq!(status, 202, "{text}");
