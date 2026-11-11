@@ -2047,7 +2047,8 @@ async fn frames(
     };
     let mut good_at = chrono::Local::now();
     // A container has no sign-in of a person for the Chat tab, and no
-    // stream of a thread: each look goes through the socket (01M74A8D8AMEM1A64XWXPC65J5).
+    // stream of a thread: each look goes through the socket
+    // (01M74A8D8AMEM1A64XWXPC65J5).
     let container = matches!(reach, Reach::Daemon(_));
     let mut link = if container {
         chat::Link::off(text::TUI_CHAT_IN_CONTAINER)

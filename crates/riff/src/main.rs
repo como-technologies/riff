@@ -1905,7 +1905,8 @@ async fn cli() -> Result<()> {
     // (01M5GVPNAKAPA596K9361HSAAV).
     let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
     // In a container, a step of a person or a claim refuses before each
-    // call: the container has no riff-server of its own (01M74A8CXVRD352VRJ9FH54HJ1).
+    // call: the container has no riff-server of its own
+    // (01M74A8CXVRD352VRJ9FH54HJ1).
     if let (Reach::Daemon(_), Some(words)) = (&reach, needs_the_host(&command)) {
         anyhow::bail!(text::needs_the_host(words));
     }
@@ -2564,7 +2565,8 @@ async fn cli() -> Result<()> {
                     .post(&api, &me, &thread, &to, &body, Kind::Message)
                     .await
             };
-            // The part on GitHub is done: the error says so (01M74A8D523KA6TEJVXT46YW74).
+            // The part on GitHub is done: the error says so
+            // (01M74A8D523KA6TEJVXT46YW74).
             match posted.await {
                 Ok(line) => println!("{line}"),
                 Err(e) => {
@@ -2643,11 +2645,11 @@ async fn cli() -> Result<()> {
     Ok(())
 }
 
-/// The words of `command` when it needs the host ([`riff::reach::Way::Host`],
-/// 01M74A8CXVRD352VRJ9FH54HJ1): the sign-in of a person, a claim, or a program of the host. In
-/// a container session it refuses at once. `riff github`, `riff leave`
-/// and `riff lead stop` with no `--host` refuse there with words of their
-/// own.
+/// The words of `command` when it needs the host
+/// ([`riff::reach::Way::Host`], 01M74A8CXVRD352VRJ9FH54HJ1): the sign-in
+/// of a person, a claim, or a program of the host. In a container session
+/// it refuses at once. `riff github`, `riff leave` and `riff lead stop`
+/// with no `--host` refuse there with words of their own.
 fn needs_the_host(command: &Command) -> Option<&'static str> {
     Some(match command {
         Command::Login => "riff login",
@@ -3915,9 +3917,8 @@ fn total_after_merge(number: u64) -> Result<String> {
     )
 }
 
-/// The scope of `riff pause` and `riff resume` from the flags `--riff`
-/// and `--repo` (01M3XAHZBGSSJB3YX23K88W01K).
-/// The repository of `riff pause --repo` and `riff resume --repo`.
+/// The repository of `riff pause --repo` and `riff resume --repo`
+/// (01M3XAHZBGSSJB3YX23K88W01K).
 fn repo_of(repo: Option<String>) -> Result<Option<ThreadName>> {
     Ok(repo.map(|repo| repo.parse::<ThreadName>()).transpose()?)
 }
@@ -4374,8 +4375,8 @@ async fn draw_top(
     loop {
         let look = async {
             let (pauses, mut who, _) = reach.look(api, me).await?;
-            // `riff top` asks no riff daemon: the model has no container
-            // session (01M53NGW6F5HP1DZ9QRGP50MGT, 01M56Y8KD05JH2J7AMK636WGT7).
+            // `riff top` gives the model no container session of a daemon
+            // (01M53NGW6F5HP1DZ9QRGP50MGT, 01M56Y8KD05JH2J7AMK636WGT7).
             let sessions = Sessions::new(std::mem::take(&mut who.sessions), Vec::new());
             anyhow::Ok((pauses, who, sessions))
         };
@@ -4510,9 +4511,9 @@ mod tests {
         path
     }
 
-    /// 01M74A84SA5KCBVGVW7M9ETJ3A: each subcommand of the CLI has a row in the table of the
-    /// ways to riff-server in a container session, and each row names a
-    /// subcommand of the CLI with words that parse.
+    /// 01M74A84SA5KCBVGVW7M9ETJ3A: each subcommand of the CLI has a row in
+    /// the table of the ways to riff-server in a container session, and
+    /// each row names a subcommand of the CLI with words that parse.
     #[test]
     fn each_subcommand_has_a_way_in_a_container() {
         let mut all = Vec::new();
@@ -4529,9 +4530,10 @@ mod tests {
         }
     }
 
-    /// 01M74A8CXVRD352VRJ9FH54HJ1: in a container, a command of [`riff::reach::Way::Host`]
-    /// refuses at once with [`super::needs_the_host`], or with words of its
-    /// own. No other command refuses so.
+    /// 01M74A8CXVRD352VRJ9FH54HJ1: in a container, a command of
+    /// [`riff::reach::Way::Host`] refuses at once with
+    /// [`super::needs_the_host`], or with words of its own. No other
+    /// command refuses so.
     #[test]
     fn a_command_of_the_host_refuses_in_a_container() {
         use clap::Parser;

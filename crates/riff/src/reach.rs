@@ -623,7 +623,8 @@ impl Reach {
 
     /// One look of `riff top` and of the TUI: the state of the riff and
     /// the reply to `who`, with the state of each session that the server
-    /// sent none for, and the time of the call `who` (#1733). Straight, it
+    /// sent none for, and the time of the call `who`
+    /// (01M74A8D8AMEM1A64XWXPC65J5). Straight, it
     /// asks with `api` as `me` ([`crate::top::look`]). Through the socket,
     /// one call reads both.
     pub async fn look(
@@ -906,11 +907,12 @@ const fn local(args: &'static [&'static str]) -> InContainer {
 }
 
 /// Each riff command, with its way to riff-server in a container
-/// session (01M74A84SA5KCBVGVW7M9ETJ3A). No command there asks `http://127.0.0.1:7878`, the
-/// riff-server of the machine: the container has none. The tests of
-/// `riff` check that each subcommand of the CLI has a row, and run each
-/// row with [`Way::Socket`] and [`Way::Host`] in a container session.
-/// A subcommand with a flag `--host` has a row for each way.
+/// session (01M74A84SA5KCBVGVW7M9ETJ3A). No command there asks
+/// `http://127.0.0.1:7878`, the riff-server of the machine: the container
+/// has none. The tests of `riff` check that each subcommand of the CLI
+/// has a row, and run each row with [`Way::Socket`] and [`Way::Host`] in
+/// a container session. A subcommand with a flag `--host` has a row for
+/// each way.
 ///
 /// ```
 /// use riff::reach::{COMMANDS, Way};

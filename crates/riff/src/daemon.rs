@@ -1391,9 +1391,9 @@ pub enum ServerCall {
         all: bool,
     },
     /// The fact of the pull request `number` of the issue `issue`, as
-    /// `riff pr open`, `riff pr wait` and `riff verify` tell it (01M74A8D1GV6TCPXV2XEPVA53A,
-    /// 01M41FZP2C4Z4J6WKRXZ5B31EH). Only the lead may. The answer is
-    /// `null`.
+    /// `riff pr open`, `riff pr wait` and `riff verify` tell it
+    /// (01M74A8D1GV6TCPXV2XEPVA53A, 01M41FZP2C4Z4J6WKRXZ5B31EH). Only the
+    /// lead may. The answer is `null`.
     Fact {
         /// The issue of the item.
         issue: u64,
@@ -1404,8 +1404,9 @@ pub enum ServerCall {
     },
     /// Pause or resume the repository of the session, the repository
     /// `repo`, or with `riff` the whole riff, as `riff pause` and `riff
-    /// resume` do (01M74A8D1GV6TCPXV2XEPVA53A). Only the lead may, as with its riff tools
-    /// `pause` and `resume`. The answer is the line for the person.
+    /// resume` do (01M74A8D1GV6TCPXV2XEPVA53A). Only the lead may, as
+    /// with its riff tools `pause` and `resume`. The answer is the line
+    /// for the person.
     Pause {
         /// The whole riff.
         riff: bool,
@@ -1415,14 +1416,15 @@ pub enum ServerCall {
         state: riff_core::wire::RiffState,
     },
     /// The time and the body of each post of the thread `denials`, oldest
-    /// first, as `riff denials` reads them ([`crate::denied`], 01M74A8D1GV6TCPXV2XEPVA53A).
-    /// Only the lead may.
+    /// first, as `riff denials` reads them ([`crate::denied`],
+    /// 01M74A8D1GV6TCPXV2XEPVA53A). Only the lead may.
     Denials,
     /// The GitHub Apps of the riff, as the person reads them, for the
     /// checks of the guard and of the lead App of `riff init` in a
-    /// container (01M74A8DC74TT2YGZPBBAENMWH). Each session may: the answer holds no key and
-    /// no secret. The answer is a [`riff_core::wire::GitHubAppsReply`],
-    /// or `null` for a riff with no sign-in.
+    /// container (01M74A8DC74TT2YGZPBBAENMWH). Each session may: the
+    /// answer holds no key and no secret. The answer is a
+    /// [`riff_core::wire::GitHubAppsReply`], or `null` for a riff with no
+    /// sign-in.
     Apps,
 }
 
@@ -11856,6 +11858,112 @@ mod tests {
         // With no riff-server, the error names the server of the session.
         let dead = Reach::Direct("http://127.0.0.1:9".into());
         assert!(dead.build().await.is_err());
+    }
+
+    /// 01M74A8D1GV6TCPXV2XEPVA53A: through the socket of its session,
+    /// each session posts, reads, sets its status, starts a long step and
+    /// says that it is blocked. Only the lead pauses and resumes, tells the
+    /// state of a pull request and reads the thread denials. A riff with no
+    /// sign-in has no GitHub Apps (01M74A8DC74TT2YGZPBBAENMWH).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_session_talks_through_its_socket_and_only_the_lead_pauses() {
+        use crate::reach::Reach;
+        use riff_core::wire::{Kind, PullState, RiffState, StepChange};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, riff_server::router()).await.unwrap();
+        });
+        let server = format!("http://{addr}");
+        let api = riff_client::api::Api::new(&server);
+        let place = crate::identity::place_from_text(&format!("a/{REPO}")).unwrap();
+        let user = crate::identity::person(&place, &server).unwrap();
+        let here = Here::new(Fake::default().with_image(IMAGE)).await;
+        let mut sockets = Vec::new();
+        for (name, item, terminal) in [
+            ("riff-lead-o-r", "lead", true),
+            ("riff-issue-1-aaaaaaaa", "issue-1", false),
+        ] {
+            let mut start = here.start(name, item);
+            start.server = server.clone();
+            start.me = SessionUri::new(
+                riff_core::name::Who::new(user.who().user(), Some(&start.session)).unwrap(),
+                place.clone(),
+            );
+            start.terminal = terminal;
+            api.register(&start.me).await.unwrap();
+            if terminal {
+                api.lead(&user, &start.session).await.unwrap();
+            }
+            let (client, name) = here.started(start).await;
+            drop(client);
+            sockets.push(Reach::Daemon(session_dir(&here.dir, &name).join(SOCKET)));
+        }
+        let worker = sockets.pop().unwrap();
+        let lead = sockets.pop().unwrap();
+        let thread: riff_core::name::ThreadName = REPO.parse().unwrap();
+
+        for (reach, step) in [(&lead, "plans the wave"), (&worker, "writes the tests")] {
+            let line = reach.set_status(&api, &user, step).await.unwrap();
+            assert!(line.contains(step), "{line}");
+            let note = format!("a note: {step}");
+            let line = reach.post(&api, &user, &thread, &[], &note, Kind::Note);
+            assert!(line.await.unwrap().starts_with("Posted"));
+            let start = StepChange::Start {
+                name: "a live window".into(),
+            };
+            assert!(!reach.step(&api, &user, start).await.unwrap().is_empty());
+        }
+        let line = worker.blocked(&api, &user, "which design?").await.unwrap();
+        assert!(line.contains("which design?"), "{line}");
+        let read = lead.read(&api, &user, None, None, true).await.unwrap();
+        assert!(read.contains("a note: writes the tests"), "{read}");
+        assert!(read.contains("which design?"), "{read}");
+        let who = lead.who(false).await.unwrap();
+        let steps: Vec<_> = who
+            .iter()
+            .filter_map(|s| s.status.as_ref().map(|s| s.status.step.clone()))
+            .collect();
+        assert!(steps.contains(&"plans the wave".to_owned()), "{steps:?}");
+
+        // A work session cannot pause, tell a fact or read the denials.
+        let refused = worker.pause_as(&api, &user, &place, false, None, RiffState::Paused);
+        assert_eq!(
+            refused.await.unwrap_err().to_string(),
+            text::DAEMON_PAUSE_ONLY_LEAD
+        );
+        let refused = worker.denials(&api, &user, 0).await.unwrap_err();
+        assert_eq!(refused.to_string(), text::DAEMON_DENIALS_ONLY_LEAD);
+        let Reach::Daemon(socket) = &worker else {
+            unreachable!()
+        };
+        let fact = ServerCall::Fact {
+            issue: 1,
+            number: 40,
+            state: PullState::Asked,
+        };
+        let refused = crate::session_relay::ask_server(socket, &fact).await;
+        assert_eq!(
+            refused.unwrap_err().to_string(),
+            text::DAEMON_FACT_ONLY_LEAD
+        );
+
+        // The lead pauses and resumes the repository, and reads the
+        // denials.
+        for state in [RiffState::Paused, RiffState::Running] {
+            let line = lead.pause_as(&api, &user, &place, false, None, state);
+            assert!(line.await.unwrap().contains(REPO));
+        }
+        assert!(lead.denials(&api, &user, 0).await.unwrap().is_empty());
+        lead.fact(&api, &user, 1, 40, PullState::Asked).await;
+        let Reach::Daemon(socket) = &lead else {
+            unreachable!()
+        };
+        let told = crate::session_relay::ask_server(socket, &fact).await;
+        assert_eq!(told.unwrap(), Value::Null);
+        for reach in [&lead, &worker] {
+            assert_eq!(reach.apps().await.unwrap(), None);
+        }
     }
 
     /// #1619: `riff plan hold` and `riff plan free` in the container of the

@@ -939,8 +939,9 @@ impl Link {
     }
 
     /// A link with no call, for a TUI with no sign-in of a person, as in
-    /// a container session (01M74A8D8AMEM1A64XWXPC65J5): the tab shows `why` as its fault, and
-    /// each line that the person sends comes back unsent with `why`.
+    /// a container session (01M74A8D8AMEM1A64XWXPC65J5): the tab shows
+    /// `why` as its fault, and each line that the person sends comes back
+    /// unsent with `why`.
     pub fn off(why: &str) -> Link {
         let (tx, came) = mpsc::unbounded_channel();
         let _ = tx.send(Came::Fault(safe(why)));
@@ -1901,6 +1902,30 @@ mod tests {
 
     fn build(id: &str) -> Build {
         format!("0.1.0 {id} 2026-11-06T12:00:00Z").parse().unwrap()
+    }
+
+    /// 01M74A8D8AMEM1A64XWXPC65J5: the link of a container makes no call.
+    /// The tab shows why, and each line that the person sends comes back
+    /// unsent.
+    #[tokio::test]
+    async fn the_link_of_a_container_sends_no_line() {
+        let mut link = Link::off(crate::text::TUI_CHAT_IN_CONTAINER);
+        assert_eq!(
+            link.came(),
+            [Came::Fault(crate::text::TUI_CHAT_IN_CONTAINER.into())]
+        );
+        link.send("hello".into());
+        let unsent = loop {
+            if let Some(came) = link.came().pop() {
+                break came;
+            }
+            tokio::task::yield_now().await;
+        };
+        let Came::Unsent(why) = unsent else {
+            panic!("{unsent:?}")
+        };
+        assert!(why.starts_with("riff: cannot send the line: The chat is for a person"));
+        link.end().await;
     }
 
     /// A line of the thread at `time` on 2026-11-06, in UTC.
