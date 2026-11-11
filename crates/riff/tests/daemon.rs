@@ -499,10 +499,67 @@ async fn riff_daemon_status_with_no_daemon_shows_the_unit_and_exits_with_1() {
         stdout.contains("The unit riff.service is inactive."),
         "{stdout}"
     );
+    // #1856: a daemon that does not answer gives the step of today.
+    assert!(
+        stdout.contains("Start it: riff daemon install."),
+        "{stdout}"
+    );
     assert_eq!(
         here.read("systemctl.log"),
         "systemctl --user is-active riff.service\n"
     );
+}
+
+/// #1856, 01M74BPK605BKMRRBQAFJE6CZZ: a daemon runs and answers a status
+/// that this riff cannot read. `riff daemon status` says that the daemon
+/// runs, names the two builds and the step, and exits with 1. It does not
+/// say to install the daemon, and asks systemd for nothing.
+#[tokio::test]
+async fn riff_daemon_status_of_a_daemon_that_riff_cannot_read_says_that_it_runs() {
+    let here = Here::new();
+    let dir = here.daemon_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = tokio::net::UnixListener::bind(dir.join("riff.sock")).unwrap();
+    let old = "0.1.0 aaaa 2020-01-01T00:00:00Z";
+    tokio::spawn(async move {
+        while let Ok((conn, _)) = listener.accept().await {
+            let (read, mut write) = conn.into_split();
+            let mut lines = tokio::io::BufReader::new(read).lines();
+            let _hello = lines.next_line().await;
+            let say = serde_json::json!({"say": "status", "pid": "724", "build": old});
+            write
+                .write_all(format!("{say}\n").as_bytes())
+                .await
+                .unwrap();
+        }
+    });
+
+    let out = here.run(false, &["daemon", "status"]).await;
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}{}", text(&out.stderr));
+    assert!(
+        stdout.starts_with(
+            "The riff daemon runs, but this riff cannot read its answer: invalid type: string \
+             \"724\", expected u32."
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "The riff daemon runs the build {old}, and this riff"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Start it at once: riff daemon restart."),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("See its log: journalctl --user -u riff"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("riff daemon install"), "{stdout}");
+    assert_eq!(here.read("systemctl.log"), "");
 }
 
 #[tokio::test]

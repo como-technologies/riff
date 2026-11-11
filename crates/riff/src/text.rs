@@ -8481,6 +8481,76 @@ pub fn daemon_unit_state(unit: &str, state: &str, log: &str) -> String {
     format!("The unit {unit} is {state}. Start it: riff daemon install. See its log: {log}")
 }
 
+/// `riff daemon status` or `riff ps` on the host: the daemon runs, and
+/// this riff cannot read its answer, for the reason `fault` (#1856,
+/// 01M74BPK605BKMRRBQAFJE6CZZ). It names the build `theirs` of the daemon
+/// and `ours`, the build of this riff, once when they are the same, the
+/// step, and the command `log` that shows the log of the daemon. `theirs`
+/// is `None` when the daemon names no build. It does not say to install
+/// the daemon.
+///
+/// ```
+/// use riff_core::build::Build;
+///
+/// let ours: Build = "4.14.0 aaaa 2026-11-06T10:00:00Z".parse().unwrap();
+/// let fault = "invalid type: string \"724\", expected u64";
+/// let log = "journalctl --user -u riff";
+/// let unreadable = |theirs| riff::text::daemon_unreadable(fault, &ours, theirs, log);
+///
+/// let same = unreadable(Some("4.14.0 aaaa 2026-11-06T10:00:00Z"));
+/// assert_eq!(
+///     same,
+///     "The riff daemon runs, but this riff cannot read its answer: invalid type: string \
+///      \"724\", expected u64. The riff daemon and this riff are the build 4.14.0 aaaa \
+///      2026-11-06T10:00:00Z. This is a fault of riff: file an issue with this line. See \
+///      its log: journalctl --user -u riff"
+/// );
+///
+/// let newer = unreadable(Some("4.15.0 bbbb 2026-11-07T10:00:00Z"));
+/// assert!(newer.contains("The riff daemon runs the build 4.15.0 bbbb"), "{newer}");
+/// assert!(newer.contains("this riff is the build 4.14.0 aaaa"), "{newer}");
+/// assert!(newer.contains("riff update"), "{newer}");
+///
+/// let older = unreadable(Some("4.13.0 cccc 2026-11-01T10:00:00Z"));
+/// assert!(older.contains("The riff daemon runs the build 4.13.0 cccc"), "{older}");
+/// assert!(older.contains("riff daemon restart"), "{older}");
+///
+/// let none = unreadable(None);
+/// assert!(none.contains("The riff daemon names no build"), "{none}");
+/// assert!(none.contains("this riff is the build 4.14.0 aaaa"), "{none}");
+///
+/// for text in [same, newer, older, none] {
+///     assert!(!text.contains("riff daemon install"), "{text}");
+/// }
+/// ```
+pub fn daemon_unreadable(fault: &str, ours: &Build, theirs: Option<&str>, log: &str) -> String {
+    let head = format!("The riff daemon runs, but this riff cannot read its answer: {fault}.");
+    let fault_of_riff = "This is a fault of riff: file an issue with this line.";
+    let Some(theirs) = theirs else {
+        return format!(
+            "{head} The riff daemon names no build, and this riff is the build {ours}. Its log \
+             names its build at its start. See its log: {log}"
+        );
+    };
+    let builds =
+        format!("The riff daemon runs the build {theirs}, and this riff is the build {ours}.");
+    let rest = match theirs.parse::<Build>() {
+        Ok(build) if build.matches(ours) => {
+            format!("The riff daemon and this riff are the build {ours}. {fault_of_riff}")
+        }
+        Ok(build) if ours.older_than(&build) => format!(
+            "{builds} This riff is older than the daemon. Run the riff of the daemon, or update \
+             this riff: riff update."
+        ),
+        Ok(build) if build.older_than(ours) => format!(
+            "{builds} The daemon starts again on the new riff when it runs no session. Start it \
+             at once: riff daemon restart."
+        ),
+        _ => format!("{builds} {fault_of_riff}"),
+    };
+    format!("{head} {rest} See its log: {log}")
+}
+
 /// `riff daemon install` or `riff init` with `RIFF_HOME` or `RIFF_DATA`
 /// set.
 pub const DAEMON_INSTALL_RIFF_HOME: &str = "riff installs no daemon of this machine while \
