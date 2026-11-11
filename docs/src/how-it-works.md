@@ -2865,6 +2865,11 @@ request with a squash when the checks `Gate` and `Hygiene` pass and
 the head commit has a `riff/verify` success. A new commit has no
 status, so it needs a new verify.
 
+A head commit gets one verify that passes. Before the riff daemon
+starts a verify, it reads the status `riff/verify` of the head commit
+on GitHub. When the status is a success, it starts no verify: a verify
+passed already, for example on another host.
+
 ```mermaid
 sequenceDiagram
     participant A as author (issue-6)

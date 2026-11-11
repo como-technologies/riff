@@ -2689,6 +2689,9 @@ pub struct Daemon<R> {
     /// ([`crate::hooks::Told`], #1656): the loop of the wave and its look
     /// share them, and `riff daemon status` shows them.
     told: Mutex<BTreeMap<String, Arc<crate::hooks::Told>>>,
+    /// The verifies whose head passed, by repository, as
+    /// [`crate::wave::Work::key`] ([`Daemon::verified`], #1960).
+    passed: Mutex<BTreeMap<String, BTreeSet<String>>>,
 }
 
 /// A pull of the session image that failed. [`Daemon::have_image`] gives
@@ -2822,6 +2825,7 @@ impl<R: Runtime + 'static> Daemon<R> {
             no_tokens: Mutex::default(),
             renews: Mutex::default(),
             told: Mutex::default(),
+            passed: Mutex::default(),
         })
     }
 
@@ -3146,6 +3150,32 @@ impl<R: Runtime + 'static> Daemon<R> {
             .entry(repo.to_owned())
             .or_insert_with(|| Arc::new(crate::hooks::Told::load(&self.dir, repo)))
             .clone()
+    }
+
+    /// Keeps the verify `work` of the wave of `repo` as passed: its head
+    /// has the status `riff/verify` success (01M75R717PH1NCQJ338ASVYT63).
+    /// The daemon put the PASS on the pull request, or the read before a
+    /// claim found it. The loop of the wave starts no verify of that head
+    /// ([`Daemon::drop_passed`]).
+    pub(crate) fn verified(&self, repo: &str, work: &crate::wave::Work) {
+        self.passed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(repo.to_owned())
+            .or_default()
+            .insert(work.key());
+    }
+
+    /// Takes out of `look` each verify of `repo` whose head passed, and
+    /// forgets each that the look does not show as waiting
+    /// ([`crate::wave::drop_passed`]).
+    pub(crate) fn drop_passed(&self, repo: &str, look: &mut crate::wave::Look) {
+        let mut passed = self.passed.lock().unwrap_or_else(PoisonError::into_inner);
+        let keys = passed.entry(repo.to_owned()).or_default();
+        crate::wave::drop_passed(look, keys);
+        if keys.is_empty() {
+            passed.remove(repo);
+        }
     }
 
     /// Takes `told` for the events of its repository, for a test: short

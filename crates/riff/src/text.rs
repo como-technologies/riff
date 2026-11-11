@@ -11830,19 +11830,62 @@ pub fn wave_saved(item: &str, branch: &str, commit: &str, clone: &Path) -> Strin
     )
 }
 
-/// A verify of a wave ended with no verdict.
-pub fn wave_no_result(item: &str, pull: u64) -> String {
+/// A verify of a wave ended with no verdict. Only a pull request that is
+/// still `open` waits for a new verify (01M75R71BCDCP882W75GSE52VT).
+///
+/// ```
+/// let open = riff::text::wave_no_result("verify-issue-12", 40, true);
+/// assert!(open.ends_with("The pull request waits for a new verify."));
+/// let merged = riff::text::wave_no_result("verify-issue-12", 40, false);
+/// assert!(merged.ends_with("The pull request is not open, so no verify waits."));
+/// ```
+pub fn wave_no_result(item: &str, pull: u64, open: bool) -> String {
     format!(
         "{item}: the verify session of pull request #{pull} ended with no PASS or FAIL. riff \
-         reported nothing. The pull request waits for a new verify."
+         reported nothing. {}",
+        verify_waits(open)
     )
 }
 
-/// The report of a verify of a wave failed.
-pub fn wave_no_report(item: &str, pull: u64, error: &str) -> String {
+/// The report of a verify of a wave failed. Only a pull request that is
+/// still `open` waits for a new verify (01M75R71BCDCP882W75GSE52VT).
+///
+/// ```
+/// let text = riff::text::wave_no_report("verify-issue-12", 40, "HTTP 502", false);
+/// assert!(text.contains("pull request #40: HTTP 502."), "{text}");
+/// assert!(!text.contains("waits for a new verify"), "{text}");
+/// ```
+pub fn wave_no_report(item: &str, pull: u64, error: &str, open: bool) -> String {
     format!(
-        "{item}: riff could not report the verify of pull request #{pull}: {error}. The pull \
-         request waits for a new verify."
+        "{item}: riff could not report the verify of pull request #{pull}: {error}. {}",
+        verify_waits(open)
+    )
+}
+
+/// What waits after a verify that riff did not report: a new verify for an
+/// `open` pull request, and none for a merged or closed one.
+fn verify_waits(open: bool) -> &'static str {
+    match open {
+        true => "The pull request waits for a new verify.",
+        false => "The pull request is not open, so no verify waits.",
+    }
+}
+
+/// The head of a verify had the status `riff/verify` success at the read
+/// before the claim, and the look of the wave did not show it yet (#1960).
+///
+/// ```
+/// assert_eq!(
+///     riff::text::wave_verify_passed("o/r", "verify-issue-12", "1a2b3c4d5e"),
+///     "The wave of o/r: the head 1a2b3c4 of verify-issue-12 has a riff/verify success. riff \
+///      starts no verify of it, and the start does not count."
+/// );
+/// ```
+pub fn wave_verify_passed(repo: &str, item: &str, commit: &str) -> String {
+    let short: String = commit.chars().take(7).collect();
+    format!(
+        "The wave of {repo}: the head {short} of {item} has a riff/verify success. riff starts \
+         no verify of it, and the start does not count."
     )
 }
 
