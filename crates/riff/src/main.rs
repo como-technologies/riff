@@ -1065,8 +1065,10 @@ enum ReleaseCommand {
     /// deploy waits for the approval of production. It also refuses while
     /// an alert of the repository has no review: an open alert of code
     /// scanning, secret scanning or Dependabot, or a dismissed alert with
-    /// no comment. It lists each one. No flag skips this check. A worker
-    /// cannot read the alerts: the lead or a person cuts the release.
+    /// no comment. It lists each one. A revoked secret and a Dependabot
+    /// alert that a rule dismissed need no comment. No flag skips this
+    /// check. A worker cannot read the alerts: the lead or a person cuts
+    /// the release.
     Cut {
         /// The new version, for example 3.3.0.
         version: String,

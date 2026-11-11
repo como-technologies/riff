@@ -528,6 +528,8 @@ const DEPENDABOT_OPEN: &str = r#"{"number":7,"state":"open","dependency":{"packa
 const CODE_DISMISSED: &str = r#"{"number":6,"state":"dismissed","rule":{"id":"rust/hard-coded-cryptographic-value","tags":["security"]},"most_recent_instance":{"location":{"path":"crates/riff/src/home.rs","start_line":40}},"html_url":"https://github.com/como-technologies/riff/security/code-scanning/6","dismissed_reason":"false positive","dismissed_comment":"The value is a test key, not a secret."}"#;
 const SECRET_RESOLVED: &str = r#"{"number":3,"state":"resolved","resolution":"used_in_tests","resolution_comment":"A fake token of a test.","secret_type":"github_personal_access_token","secret_type_display_name":"GitHub Personal Access Token","html_url":"https://github.com/como-technologies/riff/security/secret-scanning/3"}"#;
 const DEPENDABOT_DISMISSED: &str = r#"{"number":8,"state":"dismissed","dependency":{"package":{"ecosystem":"rust","name":"time"},"manifest_path":"Cargo.lock"},"security_advisory":{"ghsa_id":"GHSA-wcg3-cvx6-7396"},"html_url":"https://github.com/como-technologies/riff/security/dependabot/8","dismissed_reason":"not_used","dismissed_comment":"riff does not call the function of the advisory."}"#;
+const SECRET_REVOKED: &str = r#"{"number":10,"state":"resolved","resolution":"revoked","resolution_comment":null,"secret_type":"github_personal_access_token","secret_type_display_name":"GitHub Personal Access Token","html_url":"https://github.com/como-technologies/riff/security/secret-scanning/10","first_location_detected":{"path":"docs/src/y.md","start_line":5}}"#;
+const DEPENDABOT_AUTO_DISMISSED: &str = r#"{"number":11,"state":"auto_dismissed","dependency":{"package":{"ecosystem":"rust","name":"ring"},"manifest_path":"Cargo.lock","scope":"development"},"security_advisory":{"ghsa_id":"GHSA-4p46-pwfr-66x6"},"html_url":"https://github.com/como-technologies/riff/security/dependabot/11","dismissed_reason":null,"dismissed_comment":null}"#;
 
 /// The cases of the fake `gh` for the reads of the alerts: the open and
 /// the dismissed code scanning alerts, the secret scanning alerts, and the
@@ -646,6 +648,50 @@ async fn cut_goes_on_with_a_reason_on_each_dismiss_and_refuses_a_dismiss_with_no
         &[CODE_DISMISSED],
         &[SECRET_RESOLVED],
         &[DEPENDABOT_DISMISSED],
+    ));
+    let out = machine.ok(&[], &["release", "cut", "3.3.0"]).await;
+    assert!(out.contains("The release pull request #1140"), "{out}");
+    assert!(machine.log().contains("gh pr create"), "{}", machine.log());
+}
+
+/// 01M748V0HMV7D9T4F6NCB7HQHG: a revoked secret with no comment and a
+/// Dependabot alert that a rule dismissed let the cut go on. A code
+/// scanning alert dismissed with no comment still stops it.
+#[tokio::test]
+async fn cut_needs_no_comment_on_a_revoked_secret_or_an_auto_dismiss() {
+    let machine = Machine::new().await;
+    let no_reason = CODE_DISMISSED.replace("\"The value is a test key, not a secret.\"", "null");
+    machine.fake_gh(&alert_cases(
+        &[],
+        &[&no_reason],
+        &[SECRET_REVOKED],
+        &[DEPENDABOT_AUTO_DISMISSED],
+    ));
+    let out = machine.run(&[], &["release", "cut", "3.3.0"], "").await;
+    assert!(!out.status.success());
+    let err = text(&out.stderr);
+    assert!(
+        err.contains("riff release cut: 1 alert of the repository has no review."),
+        "{err}"
+    );
+    assert!(
+        err.contains(
+            "\n- code scanning (security) #6 rust/hard-coded-cryptographic-value, \
+             crates/riff/src/home.rs:40, dismissed with no reason: \
+             https://github.com/como-technologies/riff/security/code-scanning/6\n"
+        ),
+        "{err}"
+    );
+    for reviewed in ["#10", "#11"] {
+        assert!(!err.contains(reviewed), "{reviewed} in {err}");
+    }
+    cut_nothing(&machine);
+
+    machine.fake_gh(&alert_cases(
+        &[],
+        &[],
+        &[SECRET_REVOKED],
+        &[DEPENDABOT_AUTO_DISMISSED],
     ));
     let out = machine.ok(&[], &["release", "cut", "3.3.0"]).await;
     assert!(out.contains("The release pull request #1140"), "{out}");

@@ -7121,10 +7121,13 @@ Before it makes the release issue, riff checks the alerts of the
 repository: code scanning, of security and of quality, secret
 scanning, and Dependabot. It refuses while an alert of the repository
 has no review: an alert that is open, or a dismissed alert with no
-comment that gives the reason. It lists each one: the kind, the rule,
-the file and line, and the link. No flag skips this check. riff also
-refuses when it cannot read the alerts of a kind, for example with the
-token of a worker, or when a scan is off.
+comment that gives the reason. Two closed alerts need no comment: a
+secret scanning alert closed as revoked, and a Dependabot alert that a
+rule of GitHub dismissed (auto-dismissed). riff lists each alert with
+no review: the kind, the rule, the file and line, and the link. No
+flag skips this check. riff also refuses when it cannot read the
+alerts of a kind, for example with the token of a worker, or when a
+scan is off.
 
 ```text
 riff release cut: 2 alerts of the repository have no review. An alert has a review when it is fixed, or dismissed with a comment that gives the reason:
@@ -7138,11 +7141,11 @@ To fix the refusal, review each alert of the list:
 1. Fix the alert in the code, in a pull request, as each other change.
    GitHub closes the alert when the scan of `main` no longer finds it.
 2. Or open the link of the alert, dismiss it, and write the reason in
-   the comment. For a secret scanning alert, close it. Revoke a real
-   secret first. A dismissed alert with no comment stops the cut. The
-   lead can dismiss a code scanning alert and a secret scanning alert.
-   Only a person dismisses a Dependabot alert: the lead can only read
-   it (see
+   the comment. For a secret scanning alert, close it. For a real
+   secret, revoke the secret first, then close the alert as revoked. A
+   dismissed alert with no comment stops the cut. The lead can dismiss
+   a code scanning alert and a secret scanning alert. Only a person
+   dismisses a Dependabot alert: the lead can only read it (see
    [Who acts on GitHub for each role](how-it-works.md#who-acts-on-github-for-each-role)).
 
 Then cut the release again:

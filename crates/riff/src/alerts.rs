@@ -8,9 +8,11 @@
 //! [`crate::cycle::Forge::alerts`]: the code scanning alerts, of security
 //! and of quality, the secret scanning alerts and the Dependabot alerts
 //! ([`read`]). An alert has a review when it is fixed, or dismissed with
-//! a comment that gives the reason ([`Alert::reviewed`]). The cut refuses
-//! while an alert is open, or dismissed with no comment, and lists each
-//! one ([`refusal`]). It also refuses when riff cannot read the alerts
+//! a comment that gives the reason ([`Alert::reviewed`]). A secret
+//! scanning alert closed as revoked, and a Dependabot alert that a rule
+//! of GitHub dismissed, have a review with no comment ([`State::Closed`]).
+//! The cut refuses while an alert is open, or dismissed by a person with
+//! no comment, and lists each one ([`refusal`]). It also refuses when riff cannot read the alerts
 //! of a kind ([`unreadable`]): a gate that cannot look lets nothing
 //! through. No flag skips the gate.
 //!
@@ -18,16 +20,16 @@
 //! flowchart LR
 //!     C["riff release cut X.Y.Z"] --> R["read the alerts:<br/>code scanning, secret scanning, Dependabot"]
 //!     R -- "a read fails" --> U["refuse: the error and the fix"]
-//!     R --> Q{"an open alert, or a dismissed<br/>alert with no comment?"}
+//!     R --> Q{"an open alert, or an alert dismissed<br/>by a person with no comment?"}
 //!     Q -- yes --> F["refuse: each alert with its kind,<br/>rule, file and line, and link"]
 //!     Q -- no --> P["the release issue<br/>and the release pull request"]
 //! ```
 //!
-//! | Kind | The read | Open | Dismissed |
-//! |---|---|---|---|
-//! | code scanning, security and quality | `code-scanning/alerts?state=open`, and `?state=dismissed` | `open` | `dismissed`, with `dismissed_comment` |
-//! | secret scanning | `secret-scanning/alerts`, with no secret | `open` | `resolved`, with `resolution_comment` |
-//! | Dependabot | `dependabot/alerts?state=open,dismissed,auto_dismissed` | `open` | `dismissed` and `auto_dismissed`, with `dismissed_comment` |
+//! | Kind | The read | Open | Dismissed | Closed |
+//! |---|---|---|---|---|
+//! | code scanning, security and quality | `code-scanning/alerts?state=open`, and `?state=dismissed` | `open` | `dismissed`, with `dismissed_comment` | none |
+//! | secret scanning | `secret-scanning/alerts`, with no secret | `open` | `resolved`, with `resolution_comment` | `resolved` with the `resolution` `revoked` |
+//! | Dependabot | `dependabot/alerts?state=open,dismissed,auto_dismissed` | `open` | `dismissed`, with `dismissed_comment` | `auto_dismissed` |
 //!
 //! A code scanning alert is of security when its rule has a security
 //! severity or the tag `security`. Else it is of quality.
@@ -50,10 +52,11 @@
 //! };
 //! let reason = State::Dismissed { comment: "Only the tests use it.".into() };
 //! let none = State::Dismissed { comment: " ".into() };
-//! let alerts = [alert(State::Open), alert(reason), alert(none)];
+//! let alerts = [alert(State::Open), alert(reason), alert(none), alert(State::Closed)];
 //! let left = unreviewed(&alerts);
 //! assert_eq!(left, [&alerts[0], &alerts[2]]);
 //! assert!(alerts[1].reviewed());
+//! assert!(alerts[3].reviewed());
 //! ```
 
 use anyhow::{Result, anyhow};
@@ -98,12 +101,16 @@ impl Kind {
 pub enum State {
     /// The alert is open.
     Open,
-    /// A person or a rule dismissed the alert. `comment` is the comment
-    /// of the dismiss: empty when it has none.
+    /// A person dismissed the alert. `comment` is the comment of the
+    /// dismiss: empty when it has none.
     Dismissed {
         /// The comment of the dismiss.
         comment: String,
     },
+    /// The alert is closed with a reason that needs no comment: a secret
+    /// scanning alert with the resolution `revoked`, or a Dependabot
+    /// alert that a rule of GitHub dismissed (`auto_dismissed`).
+    Closed,
 }
 
 /// An alert of the repository.
@@ -128,9 +135,14 @@ pub struct Alert {
 
 impl Alert {
     /// True when the alert has a review: dismissed with a comment that
-    /// gives the reason. An open alert has none.
+    /// gives the reason, or closed with a reason that needs no comment.
+    /// An open alert has none.
     pub fn reviewed(&self) -> bool {
-        matches!(&self.state, State::Dismissed { comment } if !comment.trim().is_empty())
+        match &self.state {
+            State::Open => false,
+            State::Dismissed { comment } => !comment.trim().is_empty(),
+            State::Closed => true,
+        }
     }
 
     /// The line of the alert in the refusal: the kind, the number, the
@@ -167,6 +179,7 @@ impl Alert {
         let state = match self.state {
             State::Open => "open",
             State::Dismissed { .. } => "dismissed with no reason",
+            State::Closed => "closed",
         };
         format!(
             "- {} #{} {}, {place}, {state}: {}",
@@ -290,6 +303,8 @@ struct SecretAlert {
     number: u64,
     #[serde(default)]
     state: String,
+    #[serde(default)]
+    resolution: Option<String>,
     #[serde(default, deserialize_with = "text::forge_de_opt")]
     secret_type_display_name: Option<String>,
     #[serde(default, deserialize_with = "text::forge_de_opt")]
@@ -339,16 +354,24 @@ struct DependabotAlert {
 }
 
 /// The state of an alert of the API in `open`, or in one of the states
-/// `dismissed`. `None` for another state, for example `fixed`.
-fn state_of(state: &str, dismissed: &[&str], comment: Option<String>) -> Option<State> {
+/// `dismissed`: [`State::Closed`] when `closed`, else dismissed with
+/// `comment`. `None` for another state, for example `fixed`.
+fn state_of(
+    state: &str,
+    dismissed: &[&str],
+    closed: bool,
+    comment: Option<String>,
+) -> Option<State> {
     if state == "open" {
         Some(State::Open)
-    } else if dismissed.contains(&state) {
+    } else if !dismissed.contains(&state) {
+        None
+    } else if closed {
+        Some(State::Closed)
+    } else {
         Some(State::Dismissed {
             comment: comment.unwrap_or_default(),
         })
-    } else {
-        None
     }
 }
 
@@ -386,7 +409,7 @@ pub fn code_scanning(out: &str) -> Result<Vec<Alert>> {
     Ok(list
         .into_iter()
         .filter_map(|a| {
-            let state = state_of(&a.state, &["dismissed"], a.dismissed_comment)?;
+            let state = state_of(&a.state, &["dismissed"], false, a.dismissed_comment)?;
             let security = a.rule.security_severity_level.is_some()
                 || a.rule.tags.iter().flatten().any(|t| t == "security");
             let location = a.most_recent_instance.and_then(|i| i.location);
@@ -408,17 +431,25 @@ pub fn code_scanning(out: &str) -> Result<Vec<Alert>> {
 }
 
 /// The secret scanning alerts in `out`, the output of `gh api --paginate
-/// PATH --jq .[]`. A resolved alert counts as dismissed.
+/// PATH --jq .[]`. A resolved alert counts as dismissed, and as closed
+/// with the resolution `revoked`.
 ///
 /// ```
 /// use riff::alerts::{Kind, State, secret_scanning};
 ///
-/// let out = r#"{"number":2,"state":"resolved","resolution":"false_positive","secret_type":"github_pat","secret_type_display_name":"GitHub Personal Access Token","html_url":"https://github.com/o/r/security/secret-scanning/2","first_location_detected":{"path":"docs/x.md","start_line":1}}"#;
+/// let out = concat!(
+///     r#"{"number":2,"state":"resolved","resolution":"false_positive","secret_type":"github_pat","secret_type_display_name":"GitHub Personal Access Token","html_url":"https://github.com/o/r/security/secret-scanning/2","first_location_detected":{"path":"docs/x.md","start_line":1}}"#,
+///     "\n",
+///     r#"{"number":3,"state":"resolved","resolution":"revoked","secret_type":"github_pat","html_url":"https://github.com/o/r/security/secret-scanning/3"}"#,
+///     "\n",
+/// );
 /// let alerts = secret_scanning(out)?;
 /// assert_eq!(alerts[0].kind, Kind::Secret);
 /// assert_eq!(alerts[0].rule, "GitHub Personal Access Token");
 /// assert_eq!((alerts[0].path.as_deref(), alerts[0].line), (Some("docs/x.md"), Some(1)));
 /// assert_eq!(alerts[0].state, State::Dismissed { comment: String::new() });
+/// assert_eq!((alerts[1].rule.as_str(), &alerts[1].state), ("github_pat", &State::Closed));
+/// assert!(alerts[1].reviewed());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn secret_scanning(out: &str) -> Result<Vec<Alert>> {
@@ -426,7 +457,8 @@ pub fn secret_scanning(out: &str) -> Result<Vec<Alert>> {
     Ok(list
         .into_iter()
         .filter_map(|a| {
-            let state = state_of(&a.state, &["resolved"], a.resolution_comment)?;
+            let revoked = a.resolution.as_deref() == Some("revoked");
+            let state = state_of(&a.state, &["resolved"], revoked, a.resolution_comment)?;
             let location = a.first_location_detected;
             Some(Alert {
                 kind: Kind::Secret,
@@ -445,17 +477,24 @@ pub fn secret_scanning(out: &str) -> Result<Vec<Alert>> {
 }
 
 /// The Dependabot alerts in `out`, the output of `gh api --paginate PATH
-/// --jq .[]`. An alert that a rule dismissed counts as dismissed.
+/// --jq .[]`. An alert that a rule dismissed counts as closed.
 ///
 /// ```
 /// use riff::alerts::{Kind, State, dependabot};
 ///
-/// let out = r#"{"number":7,"state":"auto_dismissed","dependency":{"package":{"ecosystem":"rust","name":"tokio"},"manifest_path":"Cargo.lock"},"security_advisory":{"ghsa_id":"GHSA-1234"},"html_url":"https://github.com/o/r/security/dependabot/7"}"#;
+/// let out = concat!(
+///     r#"{"number":7,"state":"auto_dismissed","dependency":{"package":{"ecosystem":"rust","name":"tokio"},"manifest_path":"Cargo.lock"},"security_advisory":{"ghsa_id":"GHSA-1234"},"html_url":"https://github.com/o/r/security/dependabot/7"}"#,
+///     "\n",
+///     r#"{"number":8,"state":"dismissed","security_advisory":{"ghsa_id":"GHSA-5678"},"html_url":"https://github.com/o/r/security/dependabot/8"}"#,
+///     "\n",
+/// );
 /// let alerts = dependabot(out)?;
 /// assert_eq!(alerts[0].kind, Kind::Dependabot);
 /// assert_eq!(alerts[0].rule, "GHSA-1234 in tokio");
 /// assert_eq!((alerts[0].path.as_deref(), alerts[0].line), (Some("Cargo.lock"), None));
-/// assert_eq!(alerts[0].state, State::Dismissed { comment: String::new() });
+/// assert_eq!(alerts[0].state, State::Closed);
+/// assert_eq!(alerts[1].state, State::Dismissed { comment: String::new() });
+/// assert!(alerts[0].reviewed() && !alerts[1].reviewed());
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn dependabot(out: &str) -> Result<Vec<Alert>> {
@@ -463,9 +502,11 @@ pub fn dependabot(out: &str) -> Result<Vec<Alert>> {
     Ok(list
         .into_iter()
         .filter_map(|a| {
+            let by_rule = a.state == "auto_dismissed";
             let state = state_of(
                 &a.state,
                 &["dismissed", "auto_dismissed"],
+                by_rule,
                 a.dismissed_comment,
             )?;
             let advisory = a
