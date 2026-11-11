@@ -3173,6 +3173,39 @@ fn closes_no_live_check(gh: &Gh, number: u64, body: &str) -> Result<()> {
     Ok(())
 }
 
+/// The state of the status `riff/verify` ([`VERIFY_CONTEXT`]) of `commit`
+/// in `repo` on GitHub now, for example `success`: the newest status of
+/// that context, from the combined status of the commit. `None` when the
+/// commit has none. The wave reads it before the claim of a verify
+/// (#1960), with REST: it costs no GraphQL point.
+///
+/// ```
+/// let dir = tempfile::tempdir()?;
+/// let gh = riff::pr::Gh::at(isolated::write_program(
+///     dir.path().join("gh"),
+///     "#!/bin/sh\n\
+///      case \"$2\" in\n\
+///        repos/o/r/commits/1a2b/status) echo success ;;\n\
+///        repos/o/r/commits/5e6f/status) echo ;;\n\
+///        *) echo 'HTTP 404' >&2; exit 1 ;;\n\
+///      esac\n",
+/// ));
+/// assert_eq!(riff::pr::verify_state(&gh, "o/r", "1a2b")?.as_deref(), Some("success"));
+/// assert_eq!(riff::pr::verify_state(&gh, "o/r", "5e6f")?, None);
+/// assert!(riff::pr::verify_state(&gh, "o/r", "9c0d").is_err());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn verify_state(gh: &Gh, repo: &str, commit: &str) -> Result<Option<String>> {
+    let path = format!("repos/{repo}/commits/{commit}/status");
+    let jq = format!(".statuses[] | select(.context == \"{VERIFY_CONTEXT}\") | .state");
+    let out = gh.run(&["api", &path, "--jq", &jq], None)?;
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .find(|state| !state.is_empty())
+        .map(str::to_owned))
+}
+
 /// Puts the result on pull request `number` as a comment, and sets the
 /// status `riff/verify` of its head commit in `repo`
 /// (01M3NB6FYXXKX80VHEVA5CV6RY). It reports nothing when the head is

@@ -3336,7 +3336,9 @@ ends with an open pull request leaves no record.
 
 A verify session can end with no PASS or FAIL. Your lead gets the
 message "ended with no PASS or FAIL", and the pull request waits for a
-new verify. The daemon leaves a record for it too, under the item
+new verify. When the pull request merged or closed before that end, your
+lead gets a note instead: the pull request is not open, so no verify
+waits. The daemon leaves a record for it too, under the item
 `verify-issue-N`. It shows the same facts as the record of a build, and
 the head commit that the session tested: see
 [See why a verify stopped for a head](#see-why-a-verify-stopped-for-a-head).
@@ -3349,7 +3351,7 @@ riff session why verify-issue-1203
 flowchart LR
     V["a verify session ends"] --> R{"a PASS or a FAIL<br/>in its result?"}
     R -- yes --> P["riff reports it on the pull request"]
-    R -- no --> N["a record in the thread ends,<br/>and a message to your lead"]
+    R -- no --> N["a record in the thread ends,<br/>and a message to your lead<br/>(a note when the pull request is not open)"]
     N --> W["riff session why verify-issue-N"]
 ```
 

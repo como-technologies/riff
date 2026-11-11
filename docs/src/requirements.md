@@ -6182,8 +6182,8 @@ of this part when they merge.
   the pull request, the status `riff/verify` of the commit, and the
   result to the holder of the item and to the lead. With no verdict, or
   when the report fails but for a limit of GitHub
-  (01M6H1N332TZ17CQQ8A5CQKG7B), the lead gets a message, and the pull
-  request waits for a new verify.
+  (01M6H1N332TZ17CQQ8A5CQKG7B), of an open pull request, the lead gets a
+  message, and the pull request waits for a new verify.
 - **01M4ZV3B6S1A64TYK8MTDNRCQ3** At each look, a wave removes the folder
   of each session of its repository that does not run, when the pull
   request of its branch merged. For a pull request with `Refs #N`, it
@@ -6641,6 +6641,18 @@ of this part when they merge.
   the repository name for it, and to build nothing. When CI kept no test
   build of the commit, the verifier says so in its result, and only then
   builds the test.
+- **01M75R717PH1NCQJ338ASVYT63** A head commit gets one verify that
+  passes. Before the claim of a verify, the wave reads the status
+  `riff/verify` of the head commit on GitHub. A success starts no
+  session, and the start does not count. The wave then starts no verify
+  of that head while its look still shows the head as waiting for a
+  verify, and neither does it for a head whose PASS the daemon put on
+  the pull request.
+- **01M75R71BCDCP882W75GSE52VT** A verify that ends with no PASS or
+  FAIL, or whose report fails but for a limit of GitHub, after its pull
+  request merged or closed, gives the lead a note, not a message. The
+  note says that the pull request is not open, so no verify waits.
+  Supersedes 01M4ZV3B6R4WSEJXYT7QPRWT6X in part.
 
 ### The lead, the view and the takeover
 
