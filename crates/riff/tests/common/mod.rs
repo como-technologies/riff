@@ -475,6 +475,43 @@ pub fn sign_in(url: &str, home: &std::path::Path, user: &str) {
         .unwrap();
 }
 
+/// The `PATH` of the tests with the folder `bin` first: a fake program
+/// in `bin` runs in the place of the real one.
+pub fn path_with(bin: &std::path::Path) -> String {
+    format!("{}:{}", bin.display(), std::env::var("PATH").unwrap())
+}
+
+/// A fake `gh` for a clone of como-technologies/riff: the open issues
+/// #1862, #1860 and #1700 in the REST list, with the time each opened.
+/// It logs each call to the file `calls` of its folder.
+pub const ISSUES_GH: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+echo "$*" >> "$dir/calls"
+case "$*" in
+  *'issues?state=open'*)
+    printf 'HTTP/2.0 200 OK\r\nEtag: "v1"\r\n\r\n'
+    printf '[{"number":1862,"title":"Projects A: riff-server keeps the projects of the riff","created_at":"2026-11-10T09:00:00Z"},'
+    printf '{"number":1860,"title":"Pick an issue with #","created_at":"2026-11-09T09:00:00Z"},'
+    printf '{"number":1700,"title":"Show the board","created_at":"2026-10-01T09:00:00Z"}]' ;;
+  *) echo '[]' ;;
+esac
+"#;
+
+/// A clone of `repo`, `OWNER/REPO`, on GitHub, with no commit: a git
+/// folder with the remote `origin`.
+pub fn clone_of(repo: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = format!("https://github.com/{repo}.git");
+    for args in [&["init", "-q"][..], &["remote", "add", "origin", &origin]] {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .status();
+        assert!(status.unwrap().success());
+    }
+    dir
+}
+
 /// A client of this process for the [`Signed`] server at `url`: it
 /// sends the token of `user`, or of the session `session` of `user`. It
 /// replaces the sign-in of this process at the server, so build the

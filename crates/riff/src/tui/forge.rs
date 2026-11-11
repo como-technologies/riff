@@ -34,7 +34,8 @@
 //! The Sessions tab reads the titles of the open issues with the same
 //! conditional read, and with no other call ([`titles`]). The two tabs
 //! share one [`Kept`], so a read of one tab after a read of the other
-//! gets a `304` too.
+//! gets a `304` too. The list of `#` of the Chat tab and of `riff chat`
+//! reads the open issues in the same way ([`open_issues`]).
 //!
 //! An open issue with the label [`crate::cycle::LABEL`] is a release
 //! whose checks after the deploy have not passed: the release issue
@@ -61,6 +62,7 @@ use serde::Deserialize;
 
 use crate::pr::{Gate, Gh, Reply};
 use crate::rollout::{Label, Pull, Verify};
+use crate::typeahead::OpenIssue;
 
 /// The time between two reads of the forge while the Waves tab shows.
 pub const READ_EVERY: Duration = Duration::from_secs(60);
@@ -119,6 +121,9 @@ pub struct Entry {
     /// The last update, for example `2026-11-07T10:00:00Z`.
     #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
     pub updated_at: Option<String>,
+    /// The time it opened, for example `2026-11-07T10:00:00Z`.
+    #[serde(default, deserialize_with = "crate::text::forge_de_opt")]
+    pub created_at: Option<String>,
 }
 
 impl Entry {
@@ -525,6 +530,69 @@ pub fn titles(gh: &Gh, repo: &str, kept: &Kept) -> Result<Issues> {
         .map(Entry::issue)
         .collect();
     Ok(Issues::of(issues))
+}
+
+/// The open issues of `repo` for the list of `#` in `riff chat` and in
+/// the Chat tab ([`crate::typeahead`]): the number, the title and the
+/// time of each. It makes the conditional read of the open issues of
+/// [`read`], and no other call, so a read that changed nothing costs no
+/// point. It fails with the error of `gh`.
+///
+/// ```
+/// use riff::pr::Gh;
+/// use riff::tui::forge::{Kept, open_issues};
+///
+/// let dir = tempfile::tempdir()?;
+/// let script = r#"#!/bin/sh
+/// echo "$*" >> "$(dirname "$0")/calls"
+/// case "$*" in
+///   *'If-None-Match: "v1"'*) echo 'gh: HTTP 304' >&2; exit 1 ;;
+///   *'issues?state=open'*)
+///     printf 'HTTP/2.0 200 OK\r\nEtag: "v1"\r\n\r\n[{"number":12,"title":"Show it","created_at":"2026-11-07T10:00:00Z"},
+///       {"number":40,"title":"Show it","pull_request":{}}]' ;;
+///   *) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
+/// esac
+/// "#;
+/// let gh = Gh::at(isolated::write_program(dir.path().join("gh"), script));
+/// let kept = Kept::default();
+/// let issues = open_issues(&gh, "o/r", &kept)?;
+/// // The pull request is no issue.
+/// assert_eq!(issues.len(), 1);
+/// let issue = &issues[0];
+/// assert_eq!((issue.repo.as_str(), issue.number, issue.title.as_str()), ("o/r", 12, "Show it"));
+/// assert_eq!(issue.opened, Some(1_794_045_600));
+/// // The second read is a `304`: the same issues.
+/// assert_eq!(open_issues(&gh, "o/r", &kept)?, issues);
+/// let calls = std::fs::read_to_string(dir.path().join("calls"))?;
+/// assert_eq!(calls.lines().count(), 2, "{calls}");
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn open_issues(gh: &Gh, repo: &str, kept: &Kept) -> Result<Vec<OpenIssue>> {
+    Ok(open(gh, repo, kept)?
+        .into_iter()
+        .filter(|e| e.pull_request.is_none())
+        .map(|e| OpenIssue {
+            opened: e.created_at.as_deref().and_then(secs_of),
+            repo: repo.to_owned(),
+            number: e.number,
+            title: e.title,
+        })
+        .collect())
+}
+
+/// [`open_issues`] of each repository of `repos`, in order.
+pub fn open_issues_each(
+    gh: &Gh,
+    repos: &[String],
+    kept: &Kept,
+) -> Vec<(String, Result<Vec<OpenIssue>, String>)> {
+    repos
+        .iter()
+        .map(|repo| {
+            let read = open_issues(gh, repo, kept).map_err(|e| format!("{e:#}"));
+            (repo.clone(), read)
+        })
+        .collect()
 }
 
 /// The facts of the forge of `repo` (`OWNER/REPO`) for its board, with

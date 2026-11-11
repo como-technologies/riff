@@ -1127,6 +1127,63 @@ async fn at_in_the_chat_tab_shows_the_names_and_tab_completes_one() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// `#` in the Chat tab shows the open issues from `gh`
+/// (01M74CX2V9YAF0KFPJDRM4DA83, 01M74CX9H7WT1T4EN70AVD2TGZ,
+/// 01M74CX9KVGQG4Y7ATT6268NMY, 01M74CXE1703NASW3BWWA6ESGY): in a clone
+/// of como-technologies/riff, `#186` shows #1862 and #1860 over the
+/// prompt, the newest first, and `Tab` puts `#1862 ` in the line. Then
+/// Enter sends the line. The read is the conditional read of the open
+/// issues.
+#[tokio::test]
+async fn hash_in_the_chat_tab_shows_the_open_issues_and_tab_puts_one() {
+    let server = crate::common::start_signed().await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), crate::common::ISSUES_GH);
+    let mut tty = Tty::start_in(
+        crate::common::clone_of("como-technologies/riff"),
+        &server,
+        "brett",
+        "thelio",
+        true,
+        &[("PATH", crate::common::path_with(bin.path()))],
+    );
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    tty.press("2").await;
+    tty.shows(|rows| rows[21] == ">").await;
+    tty.press("is #186").await;
+    let rows = tty
+        .shows(|rows| rows[22] == " Tab or Enter picks #1862. Esc closes the list.")
+        .await;
+    assert_eq!(
+        rows[19..22],
+        [
+            "  #1862  riff  Projects A: riff-server keeps the projects of the riff",
+            "  #1860  riff  Pick an issue with #",
+            "> is #186",
+        ],
+        "{rows:#?}"
+    );
+    assert_eq!(rows[23], " Tab pick  Esc close  Ctrl-C quit");
+    tty.press("\t").await;
+    let rows = tty.shows(|rows| rows[21] == "> is #1862").await;
+    assert_eq!(rows[20], "", "{rows:#?}");
+    let span = Span::start();
+    while tty.cursor() != (21, 11, true) {
+        assert!(span.within(WAIT), "the cursor in time: {:?}", tty.cursor());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tty.press("done?\r").await;
+    tty.shows(|rows| rows.iter().any(|r| r.ends_with("<brett> is #1862 done?")))
+        .await;
+    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    assert!(
+        calls.contains("api -i repos/como-technologies/riff/issues?state=open"),
+        "{calls}"
+    );
+    tty.press("\x03").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// The TUI turns on the bracketed paste of the terminal. A paste of
 /// three lines in the Chat tab goes into the prompt, and Enter sends
 /// the three lines as one message: the log shows one sender, and each
@@ -1399,11 +1456,6 @@ case "$*" in
 esac
 "#;
 
-/// The `PATH` of the tests with the folder `bin` first.
-fn path_with(bin: &std::path::Path) -> String {
-    format!("{}:{}", bin.display(), std::env::var("PATH").unwrap())
-}
-
 /// 01M6VFG882T794B1CTHK5AKPDG, 01M6VFGK9XXWCA8X7CE8EZNSJV,
 /// 01M6VFGK4P2FWMFQHBZKR3JXSZ, 01M6Y0ZQWDYVC23WA5CVN0QSH8: in a clone of
 /// acme/app, the Waves tab shows the board of its current wave from `gh`,
@@ -1413,27 +1465,15 @@ fn path_with(bin: &std::path::Path) -> String {
 #[tokio::test]
 async fn the_waves_tab_shows_the_board_and_holds_frees_and_pauses() {
     let server = crate::common::start_signed().await;
-    let clone = tempfile::tempdir().unwrap();
-    for args in [
-        &["init", "-q"][..],
-        &["remote", "add", "origin", "https://github.com/acme/app.git"],
-    ] {
-        let git = std::process::Command::new("git")
-            .args(args)
-            .current_dir(clone.path())
-            .status()
-            .unwrap();
-        assert!(git.success());
-    }
     let bin = tempfile::tempdir().unwrap();
     isolated::write_program(bin.path().join("gh"), FAKE_GH);
     let mut tty = Tty::start_in(
-        clone,
+        crate::common::clone_of("acme/app"),
         &server,
         "brett",
         "thelio",
         true,
-        &[("PATH", path_with(bin.path()))],
+        &[("PATH", crate::common::path_with(bin.path()))],
     );
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
 
@@ -1568,7 +1608,7 @@ async fn q_ends_the_tui_at_once_while_a_slow_read_of_gh_runs() {
         "brett",
         "thelio",
         true,
-        &[("PATH", path_with(bin.path()))],
+        &[("PATH", crate::common::path_with(bin.path()))],
     );
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     let span = Span::start();
@@ -1712,18 +1752,7 @@ async fn the_reports_tab_shows_the_usage_the_audit_and_the_log() {
     use riff::usage::{Kind, Report, Tokens};
 
     let server = crate::common::start_signed().await;
-    let clone = tempfile::tempdir().unwrap();
-    for args in [
-        &["init", "-q"][..],
-        &["remote", "add", "origin", "https://github.com/acme/app.git"],
-    ] {
-        let git = std::process::Command::new("git")
-            .args(args)
-            .current_dir(clone.path())
-            .status()
-            .unwrap();
-        assert!(git.success());
-    }
+    let clone = crate::common::clone_of("acme/app");
     let bin = tempfile::tempdir().unwrap();
     isolated::write_program(bin.path().join("gh"), REPORTS_GH);
     let claim = Report {
@@ -1838,18 +1867,7 @@ esac
 #[tokio::test]
 async fn q_ends_the_tui_at_once_while_the_reports_tab_reads_gh() {
     let server = crate::common::start_signed().await;
-    let clone = tempfile::tempdir().unwrap();
-    for args in [
-        &["init", "-q"][..],
-        &["remote", "add", "origin", "https://github.com/acme/app.git"],
-    ] {
-        let git = std::process::Command::new("git")
-            .args(args)
-            .current_dir(clone.path())
-            .status()
-            .unwrap();
-        assert!(git.success());
-    }
+    let clone = crate::common::clone_of("acme/app");
     let bin = tempfile::tempdir().unwrap();
     isolated::write_program(bin.path().join("gh"), SLOW_WAVES_GH);
     let mut tty = Tty::start_in(
@@ -1858,7 +1876,7 @@ async fn q_ends_the_tui_at_once_while_the_reports_tab_reads_gh() {
         "brett",
         "thelio",
         true,
-        &[("PATH", path_with(bin.path()))],
+        &[("PATH", crate::common::path_with(bin.path()))],
     );
     tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
     assert!(

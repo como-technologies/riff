@@ -2087,7 +2087,14 @@ async fn cli() -> Result<()> {
         }
         Command::Chat { after, draft } => {
             let me = person(&api)?;
-            return riff::chat::run(&api.signed_in(None)?, &me, *after, draft.as_deref()).await;
+            // The repository of the working folder: its issues pick as #N.
+            let here = identity::working_dir()
+                .and_then(|dir| identity::place(&dir))
+                .ok()
+                .and_then(|here| here.default_thread())
+                .map(|thread| thread.to_string());
+            let api = api.signed_in(None)?;
+            return riff::chat::run(&api, &me, here, *after, draft.as_deref()).await;
         }
         Command::Members => {
             anstream::print!("{}", view::members(&reach.members().await?));
