@@ -6578,9 +6578,10 @@ alert has no review (see
 Without the rights, GitHub answers 403 "Resource not accessible by
 integration". The lead dismisses an alert only after a review, and
 writes the reason on the alert. When a name misleads the scan, the
-lead renames it in place of a dismiss. To see each dismissed code
-scanning alert, who dismissed it and why, put the repository in place
-of `OWNER/NAME`:
+lead renames it in place of a dismiss (see
+[Review a CodeQL alert](development.md#review-a-codeql-alert)). To
+see each dismissed code scanning alert, who dismissed it and why, put
+the repository in place of `OWNER/NAME`:
 
 ```sh
 gh api 'repos/OWNER/NAME/code-scanning/alerts?state=dismissed' --jq '.[] | [.number, .dismissed_by.login, .dismissed_reason, .dismissed_comment] | @tsv'

@@ -486,6 +486,244 @@ fn a_failed_check_of_another_app_is_a_notice_with_its_link_and_no_build() {
     assert_eq!(issues.stuck[&2], "checks");
 }
 
+/// The words of the shell line `line`: a word in `"` or `'` keeps its
+/// spaces.
+fn shell_words(line: &str) -> Vec<String> {
+    let (mut words, mut word, mut quote, mut any) = (Vec::new(), String::new(), None, false);
+    for c in line.chars() {
+        match (quote, c) {
+            (None, '"' | '\'') => {
+                quote = Some(c);
+                any = true;
+            }
+            (Some(q), c) if c == q => quote = None,
+            (None, ' ') => {
+                if any {
+                    words.push(std::mem::take(&mut word));
+                }
+                any = false;
+            }
+            (_, c) => {
+                word.push(c);
+                any = true;
+            }
+        }
+    }
+    if any {
+        words.push(word);
+    }
+    words
+}
+
+/// 01M74HD9XRS2PM121JD2A6QRD6: "Review a CodeQL alert", under "Fix a
+/// failed check of another app" in the book, gives the three choices,
+/// lists the open alerts of a pull request, and dismisses one with a
+/// reason of GitHub and a comment. The alert of that dismiss has a review
+/// for the alert gate of `riff release cut`.
+#[test]
+fn the_book_shows_how_the_lead_reviews_a_codeql_alert() {
+    let book = crate::book::page("development.md");
+    let fix = book
+        .find("\n#### Fix a failed check of another app\n")
+        .expect("Fix a failed check of another app is in development.md");
+    let heading = "\n##### Review a CodeQL alert\n";
+    let start = book.find(heading).expect("the how-to is in development.md");
+    assert!(
+        fix < start && !book[fix + 1..start].contains("\n#### "),
+        "the how-to is under Fix a failed check of another app"
+    );
+    let rest = &book[start + heading.len()..];
+    let how_to = &rest[..rest.find("\n#### ").unwrap_or(rest.len())];
+    let text = how_to.split_whitespace().collect::<Vec<_>>().join(" ");
+    for words in [
+        "The check `CodeQL` of a pull request is no run of Actions.",
+        "When the ruleset of `main` requires the check `CodeQL`, your lead gets the message \
+         above, with the app `github.com`.",
+        "When the ruleset does not require it, your lead gets the message of [See a failed \
+         check that no rule requires](#see-a-failed-check-that-no-rule-requires), and the \
+         merge goes on.",
+        "1. Fix it.",
+        "2. Rename it.",
+        "3. Dismiss it.",
+        "Give the reason of GitHub: `false positive`, `used in tests` or `won't fix`.",
+        "in at most 280 characters",
+        "(how-it-works.md#who-acts-on-github-for-each-role)",
+        "(#cut-the-release-pull-request)",
+        "The next scan still finds the flow of a dismissed alert, but GitHub keeps the alert \
+         dismissed and opens no new alert for it.",
+    ] {
+        assert!(text.contains(words), "{words}: {how_to}");
+    }
+
+    // The list reads the fields that the gate reads of an alert.
+    let commands = crate::book::commands_in(how_to);
+    assert_eq!(commands.len(), 2, "{commands:?}");
+    assert!(
+        commands[0]
+            .starts_with("gh api 'repos/OWNER/REPO/code-scanning/alerts?pr=40&state=open' --jq "),
+        "{commands:?}"
+    );
+    for field in [
+        ".number",
+        ".rule.id",
+        ".most_recent_instance.location.path",
+        ".most_recent_instance.location.start_line",
+        ".html_url",
+    ] {
+        assert!(commands[0].contains(field), "{field}: {}", commands[0]);
+    }
+
+    // The dismiss gives the state, a reason of GitHub and a comment.
+    let words = shell_words(&commands[1]);
+    assert_eq!(
+        words[..5],
+        [
+            "gh",
+            "api",
+            "-X",
+            "PATCH",
+            "repos/OWNER/REPO/code-scanning/alerts/128"
+        ]
+    );
+    let fields: BTreeMap<&str, &str> = words[5..]
+        .chunks(2)
+        .map(|pair| {
+            assert_eq!(pair[0], "-f", "{words:?}");
+            pair[1].split_once('=').expect("a field is KEY=VALUE")
+        })
+        .collect();
+    assert_eq!(
+        fields.keys().copied().collect::<Vec<_>>(),
+        ["dismissed_comment", "dismissed_reason", "state"]
+    );
+    assert_eq!(fields["state"], "dismissed");
+    assert!(
+        ["false positive", "used in tests", "won't fix"].contains(&fields["dismissed_reason"]),
+        "{fields:?}"
+    );
+    let comment = fields["dismissed_comment"];
+    assert!(!comment.trim().is_empty(), "{fields:?}");
+    assert!(comment.chars().count() <= 280, "{comment}");
+
+    // GitHub keeps the reason and the comment on the alert: the gate of
+    // `riff release cut` counts it as reviewed.
+    let alert = serde_json::json!({
+        "number": 128,
+        "state": fields["state"],
+        "dismissed_reason": fields["dismissed_reason"],
+        "dismissed_comment": comment,
+        "rule": {"id": "rust/cleartext-logging", "security_severity_level": "high"},
+        "html_url": "https://github.com/OWNER/REPO/security/code-scanning/128",
+    });
+    let alerts = riff::alerts::code_scanning(&alert.to_string()).unwrap();
+    assert_eq!(
+        alerts[0].state,
+        riff::alerts::State::Dismissed {
+            comment: comment.into()
+        }
+    );
+    assert!(riff::alerts::unreviewed(&alerts).is_empty(), "{alerts:?}");
+
+    // "Who acts on GitHub for each role" points to the how-to.
+    let how = crate::book::page("how-it-works.md");
+    assert!(how.contains("(development.md#review-a-codeql-alert)"));
+}
+
+/// The check run `CodeQL` of the code scanning of GitHub, with
+/// `conclusion`, as `gh pr view` gives it: no workflow, and a link to
+/// `github.com`.
+fn codeql(conclusion: &str) -> String {
+    format!(
+        r#"{{"__typename":"CheckRun","name":"CodeQL","conclusion":"{conclusion}","workflowName":"","detailsUrl":"https://github.com/o/r/runs/130479646072"}}"#
+    )
+}
+
+/// 01M74HD9XRS2PM121JD2A6QRD6, as "Review a CodeQL alert" says: a failed
+/// `CodeQL` starts no session. When the ruleset of `main` does not require
+/// it, the lead gets the message of a failed check that no rule requires,
+/// with no app, and the verify goes on. When the ruleset requires it, the
+/// lead gets the message of a check of another app, with the app
+/// `github.com`.
+#[test]
+fn a_failed_codeql_is_a_notice_of_an_optional_check_or_of_another_app() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(
+        dir.path(),
+        &[pull(
+            1,
+            "aaaa111",
+            &[verify("SUCCESS"), run("Gate", "SUCCESS"), codeql("FAILURE")],
+        )],
+    );
+    let link = "https://github.com/o/r/runs/130479646072";
+    let check = OtherCheck {
+        name: "CodeQL".into(),
+        app: Some("github.com".into()),
+        link: Some(link.into()),
+    };
+
+    // The ruleset of the fake `gh` does not require `CodeQL`.
+    let look = looks(&gh);
+    assert!(look.fixes.failed.is_empty(), "{:?}", look.fixes.failed);
+    assert_eq!(
+        look.fixes.notices,
+        [Notice {
+            pull: 41,
+            branch: "worktree-issue-1".into(),
+            commit: "aaaa111".into(),
+            stuck: Stuck::Optional(check.clone()),
+        }]
+    );
+    let optional = riff::text::wave_stuck(
+        REPO,
+        41,
+        "worktree-issue-1",
+        "main",
+        "aaaa111",
+        &look.fixes.notices[0].stuck,
+    );
+    assert!(
+        optional.contains("has the failed check CodeQL at commit aaaa111"),
+        "{optional}"
+    );
+    assert!(
+        optional.contains("The ruleset of main does not require it"),
+        "{optional}"
+    );
+    assert!(!optional.contains("github.com failed"), "{optional}");
+
+    // A ruleset that requires `CodeQL`: the check of another app.
+    let mut pulls = riff::rollout::pulls(&gh, REPO).unwrap();
+    let pull = &mut pulls[0];
+    assert!(pull.failed_others().is_empty(), "{pull:?}");
+    pull.required = Some(vec!["Gate".into(), "CodeQL".into()]);
+    assert_eq!(pull.failed_others(), std::slice::from_ref(&check));
+    assert!(pull.failed_optional().is_empty(), "{pull:?}");
+    assert_eq!(pull.failed_checks(), ["CodeQL"], "it holds the merge");
+    assert!(pull.failed_runs().is_empty(), "no session: {pull:?}");
+    let other = riff::text::wave_stuck(
+        REPO,
+        41,
+        "worktree-issue-1",
+        "main",
+        "aaaa111",
+        &Stuck::Other(check),
+    );
+    assert!(
+        other.contains("the check CodeQL of the app github.com failed"),
+        "{other}"
+    );
+}
+
+#[test]
+fn shell_words_keep_the_spaces_of_a_quoted_word() {
+    assert_eq!(
+        shell_words(r#"gh api  -f a="b c" 'd e'"#),
+        ["gh", "api", "-f", "a=b c", "d e"]
+    );
+    assert_eq!(shell_words(r#"x """#), ["x", ""]);
+}
+
 /// No session builds a release (the label `release`, or a branch
 /// `release-…`): a failed check of its pull request is a notice, at any
 /// state of its verify, also when the pull request names no issue.

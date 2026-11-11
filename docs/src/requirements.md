@@ -3691,6 +3691,14 @@
   `OWNER/NAME` of GitHub only when OWNER is a login of GitHub, and NAME
   has only letters, digits, `-`, `_` and `.` and is neither `.` nor
   `..`. It refuses each other repository with the status 400.
+- **01M74HD9XRS2PM121JD2A6QRD6** The lead reviews each code scanning
+  alert, for example of a failed check `CodeQL` of a pull request. It
+  fixes the code, renames a value whose wrong name misleads the scan, or
+  dismisses the alert with a reason of GitHub and a comment that gives
+  the reason. The how-to "Review a CodeQL alert" under "Fix a failed
+  check of another app" of the development page has a copyable `sh`
+  block that lists the open alerts of a pull request, and one for the
+  dismissal with `gh api -X PATCH`.
 
 ## Sign-in and tokens
 
