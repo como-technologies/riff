@@ -127,10 +127,11 @@
 //! A lead that waits for the answer of a person adds the label `question`
 //! to an issue ([`riff_client::waves::QUESTION`],
 //! 01M6QBJA0J7PQ0J29HWM1KDVHJ). The look tells the person of the lead one
-//! time in riff chat, with the title and the link of the issue
-//! ([`AskWatch`], [`crate::text::wave_question`], 01M6QBJHV7PVV5893Q6RCPENJQ).
-//! The line names the person first (`@mike`, [`crate::wave::asked`]), so
-//! it wakes the terminals of the person, and no agent session.
+//! time in riff chat ([`AskWatch`], 01M6QBJHV7PVV5893Q6RCPENJQ): it tells
+//! riff-server the issue ([`BotFact::Question`]), and riff-server writes
+//! the line of riff-bot with the link of the issue. The line names the
+//! person first (`@mike`), so it wakes the terminals of the person, and no
+//! agent session.
 //! The daemon keeps the issues that it told in memory. An issue that loses
 //! the label goes out of that set, so the next time that the label goes on,
 //! the person gets a new line.
@@ -239,7 +240,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use riff_core::name::{SessionUri, Who};
 use riff_core::selector::Selector;
-use riff_core::wire::{ItemFact, Kind, PullFact, PullState, Unanswered};
+use riff_core::wire::{BotFact, ItemFact, Kind, PullFact, PullState, Unanswered};
 use serde::Deserialize;
 
 use crate::pr::{
@@ -1351,22 +1352,17 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
     }
     // The person hears once that the label `question` went on an issue
     // (#1605). A post that fails stays for the next look.
-    let asking: Vec<(u64, String)> = watch
-        .asks
-        .news(&issues)
-        .iter()
-        .map(|i| (i.number, i.title.clone()))
-        .collect();
-    for (at, (number, title)) in asking.iter().enumerate() {
+    let asking: Vec<u64> = watch.asks.news(&issues).iter().map(|i| i.number).collect();
+    for (at, number) in asking.iter().enumerate() {
         let (gh, repo, number) = (gh.clone(), wave.repo.clone(), *number);
         let labeled = tokio::task::spawn_blocking(move || question_at(&gh, &repo, number)).await?;
         let key = question_key(number, labeled.as_deref());
-        let body = text::wave_question(&wave.repo, number, title);
         told = true;
-        if let Err(e) = world.ask_person(wave, &body, &key).await {
+        let fact = BotFact::Question { issue: number };
+        if let Err(e) = world.ask_person(wave, fact, &key).await {
             asking[at..]
                 .iter()
-                .for_each(|(rest, _)| watch.asks.untell(*rest));
+                .for_each(|rest| watch.asks.untell(*rest));
             return Err(e);
         }
     }

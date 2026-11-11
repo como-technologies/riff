@@ -139,12 +139,13 @@
 //!     W->>L: the deploy passed, your container runs the release. next: riff release check
 //! ```
 //!
-//! At "Waits" the lead gets one message, and the owner gets the line
-//! "waits for your approval" in `riff chat`, with each hold of the
-//! version (01M5SNV7BC5J58WRZRJ5HS4NSJ). After `riff release retry`
-//! or `rollback`, the CI run still has its old state for a moment. So
-//! the command gives the state that it saw ([`Stale`]), and the watch
-//! ignores that state until it moves.
+//! At "Waits" the lead gets one message, and the owner gets the line of
+//! riff-bot "waits for your approval" in `riff chat`: the watch tells
+//! riff-server the run ([`BotFact::ReleaseWaits`]), and riff-server writes
+//! the line with each hold of the version (01M5SNV7BC5J58WRZRJ5HS4NSJ).
+//! After `riff release retry` or `rollback`, the CI run still has its old
+//! state for a moment. So the command gives the state that it saw
+//! ([`Stale`]), and the watch ignores that state until it moves.
 //!
 //! At "Waits", "Passed" and "Failed" the watch also posts one note to
 //! each other lead of the riff ([`Post::Leads`], [`crate::hold`],
@@ -202,12 +203,12 @@ use anyhow::{Context, Result, anyhow};
 use nix::fcntl::{Flock, FlockArg};
 use riff_client::daemons::{self, Host, ReleaseStep};
 use riff_core::build::Semver;
-use riff_core::wire::Kind;
+use riff_core::wire::{BotFact, Kind};
 use serde::{Deserialize, Serialize};
 
 use crate::cycle::{self, DeployState, Forge, TestState};
 use crate::daemon::remote;
-use crate::hold::{self, Hold, Step};
+use crate::hold::{self, Step};
 use crate::pr::Gate;
 use crate::wave::{BoxFuture, Wave};
 
@@ -672,13 +673,13 @@ pub enum Post {
     /// that the watch saw ([`crate::hold::tell_leads`],
     /// 01M5SNV75DRFHR26BT2M8243VV).
     Leads(String),
-    /// A line to the owner in `riff chat`: the deploy of `tag` waits for
-    /// the approval ([`cycle::waits_line`]).
+    /// A line of riff-bot to the owner in `riff chat`: the deploy of `tag`
+    /// waits for the approval ([`BotFact::ReleaseWaits`]).
     Owner {
         /// The tag of the release.
         tag: String,
-        /// The page of the CI run.
-        run: String,
+        /// The ID of the CI run.
+        run: u64,
         /// True for a reminder.
         reminder: bool,
     },
@@ -703,27 +704,18 @@ pub trait Lookout: Send + Sync {
         key: Option<&'a str>,
     ) -> BoxFuture<'a, Result<()>>;
 
-    /// Writes the line that `line` makes in `riff chat`, as the person.
-    /// `line` gets the USER of the owner of the riff, or an empty text
-    /// when it has none. The line names the owner with `@USER`, so it
-    /// wakes the terminals of the owner (01M6Y1A5PTCVZ6GRJ0FXMART2T). It
-    /// has the mark `[by riff]`: it is no word of the person
-    /// (01M6Y4ZCTSTVM971BDC1F7GJPK).
-    fn chat<'a>(
-        &'a self,
-        wave: &'a Wave,
-        line: &'a (dyn Fn(&str) -> String + Sync),
-    ) -> BoxFuture<'a, Result<()>>;
+    /// Tells riff-server the fact `fact`, as the person: riff-server
+    /// writes the line of riff-bot for it in `riff chat`
+    /// ([`riff_core::wire::BotPost`]). The line names the owner with
+    /// `@USER`, so it wakes the terminals of the owner
+    /// (01M6Y1A5PTCVZ6GRJ0FXMART2T), and shows each hold of the version.
+    fn bot<'a>(&'a self, wave: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>>;
 
     /// Posts `body` as a message to each lead of the riff, but the lead of
     /// the person in the repository of `wave`, as the person
     /// (01M5SNV75DRFHR26BT2M8243VV). That lead gets the message of the
     /// watch.
     fn leads<'a>(&'a self, wave: &'a Wave, body: &'a str) -> BoxFuture<'a, Result<()>>;
-
-    /// The holds on `tag` that stand now, as the person
-    /// (01M5SNV7BC5J58WRZRJ5HS4NSJ).
-    fn holds<'a>(&'a self, wave: &'a Wave, tag: &'a str) -> BoxFuture<'a, Result<Vec<Hold>>>;
 
     /// The riff of the daemon of each other host of the riff of `wave`
     /// with `update.auto` on, from `who` as the person ([`Riffs::hosts_of`],
@@ -766,21 +758,11 @@ impl Lookout for Here {
         ))
     }
 
-    fn chat<'a>(
-        &'a self,
-        wave: &'a Wave,
-        line: &'a (dyn Fn(&str) -> String + Sync),
-    ) -> BoxFuture<'a, Result<()>> {
+    fn bot<'a>(&'a self, wave: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let person = crate::identity::person(&wave.place(None)?, &wave.server)?;
             let api = riff_client::api::Api::new(&wave.server).signed_in(None)?;
-            let owner = match api.roster(&person, false).await?.owner {
-                riff_core::wire::RiffOwner::Owner { user, .. } => user,
-                _ => String::new(),
-            };
-            let body = line(&owner);
-            let to = riff_client::chat::to(&body);
-            crate::chat::post_by_riff(&api, &person, &to, &body).await
+            api.bot(&person, fact, None).await
         })
     }
 
@@ -790,13 +772,6 @@ impl Lookout for Here {
             let api = riff_client::api::Api::new(&wave.server).signed_in(None)?;
             crate::hold::tell_leads(&api, &person, true, body).await?;
             Ok(())
-        })
-    }
-
-    fn holds<'a>(&'a self, wave: &'a Wave, tag: &'a str) -> BoxFuture<'a, Result<Vec<Hold>>> {
-        Box::pin(async move {
-            let lines = crate::hold::read_as_person(&wave.server, &wave.place(None)?).await?;
-            Ok(crate::hold::holds(&lines, tag))
         })
     }
 
@@ -1234,10 +1209,12 @@ async fn post_one(lookout: &dyn Lookout, wave: &Wave, post: &Post) -> Result<()>
         Post::Once { body, key } => lookout.tell(wave, body, Some(key)).await,
         Post::Leads(body) => lookout.leads(wave, body).await,
         Post::Owner { tag, run, reminder } => {
-            // A hold that riff cannot read leaves the line as it was.
-            let holds = lookout.holds(wave, tag).await.unwrap_or_default();
-            let line = |owner: &str| cycle::waits_line(owner, tag, run, *reminder, &holds);
-            lookout.chat(wave, &line).await
+            let fact = BotFact::ReleaseWaits {
+                tag: tag.clone(),
+                run: *run,
+                reminder: *reminder,
+            };
+            lookout.bot(wave, fact).await
         }
     }
 }
@@ -1473,7 +1450,7 @@ fn look_deploy(
                     )),
                     Post::Owner {
                         tag: tag.to_owned(),
-                        run: run.to_owned(),
+                        run: deploy.run,
                         reminder: false,
                     },
                     Post::Leads(crate::text::release_note(Step::Waits, tag, &hold::by(repo))),
@@ -1493,7 +1470,7 @@ fn look_deploy(
             Ok(Outcome {
                 posts: vec![Post::Owner {
                     tag: tag.to_owned(),
-                    run: run.to_owned(),
+                    run: deploy.run,
                     reminder: true,
                 }],
                 end: false,
@@ -1663,13 +1640,11 @@ mod tests {
         /// True when riff-server does not take a message.
         down: AtomicBool,
         told: Mutex<Vec<String>>,
-        chats: Mutex<Vec<String>>,
+        chats: Mutex<Vec<BotFact>>,
         /// The key of each message to the lead.
         keys: Mutex<Vec<Option<String>>>,
         /// The notes to each other lead.
         leads: Mutex<Vec<String>>,
-        /// The holds that stand.
-        holds: Mutex<Vec<Hold>>,
         /// The `fetch` of each forge that the watches asked for.
         fetches: Mutex<Vec<bool>>,
         /// The limit of GitHub that waits, and whether it starts only after
@@ -1691,7 +1666,6 @@ mod tests {
                 keys: Mutex::default(),
                 chats: Mutex::default(),
                 leads: Mutex::default(),
-                holds: Mutex::default(),
                 fetches: Mutex::default(),
                 limit: Mutex::default(),
                 riffs: Mutex::default(),
@@ -1723,8 +1697,8 @@ mod tests {
             std::mem::take(&mut self.keys.lock().unwrap())
         }
 
-        /// The lines to the owner since the last call.
-        fn chats(&self) -> Vec<String> {
+        /// The facts of the lines of riff-bot since the last call.
+        fn chats(&self) -> Vec<BotFact> {
             std::mem::take(&mut self.chats.lock().unwrap())
         }
 
@@ -1764,13 +1738,9 @@ mod tests {
             })
         }
 
-        fn chat<'a>(
-            &'a self,
-            _: &'a Wave,
-            line: &'a (dyn Fn(&str) -> String + Sync),
-        ) -> BoxFuture<'a, Result<()>> {
+        fn bot<'a>(&'a self, _: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>> {
             Box::pin(async move {
-                self.chats.lock().unwrap().push(line("mike"));
+                self.chats.lock().unwrap().push(fact);
                 Ok(())
             })
         }
@@ -1783,10 +1753,6 @@ mod tests {
                 self.leads.lock().unwrap().push(body.to_owned());
                 Ok(())
             })
-        }
-
-        fn holds<'a>(&'a self, _: &'a Wave, _: &'a str) -> BoxFuture<'a, Result<Vec<Hold>>> {
-            Box::pin(async move { Ok(self.holds.lock().unwrap().clone()) })
         }
 
         fn hosts<'a>(&'a self, _: &'a Wave) -> BoxFuture<'a, Result<BTreeMap<String, Semver>>> {
@@ -2098,6 +2064,17 @@ mod tests {
         }
     }
 
+    /// The fact of the line of riff-bot to the owner while the run 9 of
+    /// v3.3.0 waits: riff-server writes the text, with each hold of the
+    /// version (01M5SNV7BC5J58WRZRJ5HS4NSJ).
+    fn waits(reminder: bool) -> BotFact {
+        BotFact::ReleaseWaits {
+            tag: "v3.3.0".into(),
+            run: 9,
+            reminder,
+        }
+    }
+
     #[tokio::test]
     async fn a_run_that_still_builds_says_nothing_of_the_approval() {
         let dir = daemon_dir();
@@ -2121,12 +2098,7 @@ mod tests {
                  https://github.com/o/r/actions/runs/9. riff told the owner in riff chat. \
                  next: a person runs riff release approve v3.3.0 in a terminal"]
         );
-        assert_eq!(
-            ground.chats(),
-            ["@mike riff release v3.3.0 waits for your approval: \
-                 https://github.com/o/r/actions/runs/9. In a terminal, run: riff release \
-                 approve v3.3.0"]
-        );
+        assert_eq!(ground.chats(), [waits(false)],);
         // 01M5SNV75DRFHR26BT2M8243VV: each other lead gets the wait too.
         assert_eq!(
             ground.leads(),
@@ -2140,32 +2112,6 @@ mod tests {
         assert!(ground.told().is_empty());
         assert!(ground.chats().is_empty());
         assert!(ground.leads().is_empty(), "one note for the wait");
-    }
-
-    /// 01M5SNV7BC5J58WRZRJ5HS4NSJ: the line to the owner shows each hold
-    /// that stands, also in a reminder.
-    #[tokio::test]
-    async fn the_line_to_the_owner_shows_each_hold() {
-        let dir = daemon_dir();
-        let ground = Ground::new(Fake::ready("3.3.0"));
-        ground.forge(|f| f.deploy = deploy(DeployState::Waiting, &[]));
-        ground.holds.lock().unwrap().push(Hold {
-            user: "nate".into(),
-            repo: "n8behavior/sens-o-matic".into(),
-            reason: "I migrate a database.".into(),
-        });
-        watch(dir.path(), deploy_op(None));
-        look(dir.path(), &ground, 0).await;
-        let hold = " A hold stands: the lead of n8behavior/sens-o-matic asks to wait: I migrate a \
-                    database.";
-        let chats = ground.chats();
-        assert!(chats[0].ends_with(hold), "{chats:?}");
-        look(dir.path(), &ground, 4 * 60 * MINUTE).await;
-        let chats = ground.chats();
-        assert!(
-            chats[0].starts_with("Reminder: ") && chats[0].ends_with(hold),
-            "{chats:?}"
-        );
     }
 
     #[tokio::test]
@@ -2182,11 +2128,7 @@ mod tests {
         assert!(ground.chats().is_empty(), "3 hours is too soon");
         look(dir.path(), &ground, hours(4)).await;
         let chats = ground.chats();
-        assert_eq!(chats.len(), 1);
-        assert!(
-            chats[0].starts_with("Reminder: @mike riff release v3.3.0 still waits"),
-            "{chats:?}"
-        );
+        assert_eq!(chats, [waits(true)]);
         assert!(
             ground.told().is_empty(),
             "a reminder is no message to the lead"

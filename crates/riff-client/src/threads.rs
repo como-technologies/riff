@@ -93,11 +93,6 @@ pub struct To {
     pub all: bool,
 }
 
-/// The mark at the start of a line that riff writes as the person of the
-/// riff, with the kind `message` (01M6Y4ZCTSTVM971BDC1F7GJPK). A person
-/// can type it too, so a line with it shows its real sender.
-pub const BY_RIFF: &str = "[by riff] ";
-
 /// The name of riff-server itself in a chat: the sender of each line of
 /// [`Line::by_server`].
 pub const RIFF_BOT: &str = "riff-bot";
@@ -215,8 +210,7 @@ impl Line {
     /// sender [`SessionUri::server`] (01M6Y4ZCTSTVM971BDC1F7GJPK).
     /// riff-server signs no line, so the sender proves it, not
     /// [`Line::verified`]: no person signs in as the user of riff-server,
-    /// and riff-server refuses the kind `riff` in a post of a client. A
-    /// line with the mark [`BY_RIFF`] is no line of riff-server.
+    /// and riff-server refuses the kind `riff` in a post of a client.
     ///
     /// ```
     /// use riff_client::api::Checked;
@@ -241,7 +235,7 @@ impl Line {
     /// assert!(line(SessionUri::server(), Kind::Riff, "members: ann passed the owner role").by_server());
     /// assert!(!line(SessionUri::server(), Kind::Message, "hi").by_server());
     /// assert!(!line(mike.clone(), Kind::Riff, "hi").by_server());
-    /// assert!(!line(mike, Kind::Message, "[by riff] the deploy waits").by_server());
+    /// assert!(!line(mike, Kind::Message, "riff release v3.3.0 waits for your approval").by_server());
     /// # Ok::<(), riff_core::name::NameError>(())
     /// ```
     pub fn by_server(&self) -> bool {
@@ -252,7 +246,7 @@ impl Line {
     /// names `names` of riff-server: a person as its user, a verified lead
     /// as the name of its project, and a line of riff-server itself
     /// ([`Line::by_server`]) as [`RIFF_BOT`]. Each other session has no
-    /// name. A line with the mark [`BY_RIFF`] shows its real sender.
+    /// name.
     ///
     /// ```
     /// use riff_client::api::Checked;
@@ -551,8 +545,8 @@ mod tests {
     }
 
     /// Only a line of riff-server itself shows as riff-bot
-    /// (01M6Y4ZCTSTVM971BDC1F7GJPK). A line with the mark shows its real
-    /// sender, of each kind.
+    /// (01M6Y4ZCTSTVM971BDC1F7GJPK). A line of a person or of a session with
+    /// the words of riff-bot shows its real sender, of each kind.
     #[test]
     fn only_a_line_of_riff_server_shows_as_riff_bot() {
         let line = |from: &str, kind, body: &str| {
@@ -573,13 +567,13 @@ mod tests {
             Line::of(&checked, &ThreadName::chat())
         };
         let names = Names::default();
-        let waits = format!("{BY_RIFF}@mike the deploy waits for your approval");
+        let waits = "@mike riff release v3.3.0 waits for your approval";
         for kind in [Kind::Message, Kind::Riff] {
-            let marked = line("riff://mike@thelio", kind, &waits);
-            assert_eq!(marked.sender(&names).name, "mike", "{kind:?}");
+            let typed = line("riff://mike@thelio", kind, waits);
+            assert_eq!(typed.sender(&names).name, "mike", "{kind:?}");
             let session = "riff://mike@thelio/o/r?session=0271342b-7454";
-            let marked = line(session, kind, &waits);
-            assert_eq!(marked.sender(&names).name, "mike 0271342b", "{kind:?}");
+            let typed = line(session, kind, waits);
+            assert_eq!(typed.sender(&names).name, "mike 0271342b", "{kind:?}");
         }
         let server = SessionUri::server().to_string();
         let passed = "members: ann passed the owner role to mike.";

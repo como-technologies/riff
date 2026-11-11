@@ -19,7 +19,7 @@ use riff_client::sessions::Sessions;
 
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::{Kind, PullState, RiffState, StepChange};
+use riff_core::wire::{BotFact, Kind, PullState, RiffState, StepChange};
 
 /// The local client that finds sessions and wakes yours.
 #[derive(Parser)]
@@ -3567,13 +3567,10 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 "The release pull request #{} for issue #{}, with auto-merge on: {}",
                 cut.number, cut.issue, cut.url
             );
-            let told = async {
-                let owner = release_owner(reach).await?;
-                let line = cycle::cut_line(&owner, &cycle::tag(version));
-                reach.chat_post(&line).await?;
-                anyhow::Ok(())
+            let fact = BotFact::ReleaseCut {
+                tag: cycle::tag(version),
             };
-            if let Err(e) = told.await {
+            if let Err(e) = reach.bot(fact).await {
                 eprintln!("riff: cannot post the chat line of the cut: {e:#}");
             }
             let step = riff::hold::Step::Cut { number: cut.number };
@@ -3617,10 +3614,14 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 Some(run) => println!("The CI run of the tag: {run}"),
                 None => println!("GitHub shows no CI run of the tag yet."),
             }
+            let published = cycle::tag(cycle::tag_version(tag)?);
             let told = async {
                 let owner = release_owner(reach).await?;
-                let line = cycle::publish_line(&owner, tag, done.run.as_deref());
-                reach.chat_post(&line).await?;
+                let fact = BotFact::ReleasePublished {
+                    tag: published.clone(),
+                    run: done.run.as_deref().and_then(cycle::run_id),
+                };
+                reach.bot(fact).await?;
                 anyhow::Ok(owner)
             };
             match told.await {
@@ -3630,7 +3631,6 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
                 Ok(_) => println!("riff told the riff in riff chat."),
                 Err(e) => eprintln!("riff: cannot post the chat line to the owner: {e:#}"),
             }
-            let published = cycle::tag(cycle::tag_version(tag)?);
             tell_other_leads(reach, &here, riff::hold::Step::Published, &published).await;
             let op = Op::Deploy {
                 tag: cycle::tag(cycle::tag_version(tag)?),

@@ -1061,6 +1061,7 @@ mod tests {
                     body: "hi".into(),
                     kind: Kind::Note,
                     at_ms: 0,
+                    key: None,
                 };
                 of.of(announce, kind)
             }

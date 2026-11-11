@@ -27,11 +27,11 @@
 //!   sender by the name to type to reach it (01M6Y1FB5MZNZ971CJRBWZ2F9X):
 //!   a person as `<USER>`, a lead as `<PROJECT>`, riff-server itself as
 //!   `<riff-bot>` (01M6Y4ZCTSTVM971BDC1F7GJPK), an action as `* NAME
-//!   TEXT`. A line that riff writes as the person shows as the person,
-//!   with the mark `[by riff]`. The names come from riff-server
-//!   ([`Came::Names`]). A rule names each new day. A long line wraps, and
-//!   each more row starts under the sender. The newest lines show: `PgUp`
-//!   shows older lines ([`Scroll`],
+//!   TEXT`. A line that riff writes for the person comes from riff-server
+//!   and shows as `<riff-bot>` (01M74BPHQZHXFYYNXAJ1WFASQQ). The names
+//!   come from riff-server ([`Came::Names`]). A rule names each new day. A
+//!   long line wraps, and each more row starts under the sender. The
+//!   newest lines show: `PgUp` shows older lines ([`Scroll`],
 //!   01M6VG1P7BH32E5YAP0GJSNJJP).
 //! - **The row of the new lines** ([`new_below`],
 //!   01M6Z8AHEHCPR1A3Z3CEAN59AR): a line that comes while the log is not
@@ -2172,19 +2172,23 @@ mod tests {
     }
 
     /// Only a line of riff-server itself shows as `<riff-bot>`
-    /// (01M6Y4ZCTSTVM971BDC1F7GJPK). A line of mike with the mark
-    /// `[by riff]` shows as `<mike>`, with the mark, and so does a line of
-    /// mike with the kind `riff` in an old log.
+    /// (01M6Y4ZCTSTVM971BDC1F7GJPK): the ask of a release that it writes
+    /// for mike (01M74BPHQZHXFYYNXAJ1WFASQQ) and the line of a pass of the
+    /// owner role. A line of mike with the words of riff-bot shows as
+    /// `<mike>`, and so does a line of mike with the kind `riff` in an old
+    /// log.
     #[test]
     fn only_a_line_of_riff_server_shows_as_riff_bot() {
         let mut state = mock_up();
         let mike = "riff://mike@thelio";
-        let waits = "[by riff] @mike the deploy waits for your approval";
+        let server = "riff://riff@server";
+        let waits = "@mike riff release v3.3.0 waits for your approval";
         let passed = "members: ann passed the owner role to brett.";
         for came in [
             said("13:15", mike, waits),
             said_as("13:16", mike, Kind::Riff, "a line of an old log"),
-            said_as("13:17", "riff://riff@server", Kind::Riff, passed),
+            said_as("13:17", server, Kind::Riff, passed),
+            said_as("13:18", server, Kind::Riff, waits),
         ] {
             state.chat_came(came);
         }
@@ -2193,6 +2197,7 @@ mod tests {
             format!(" 13:15 <mike> {waits}"),
             " 13:16 <mike> a line of an old log".to_owned(),
             format!(" 13:17 <riff-bot> {passed}"),
+            format!(" 13:18 <riff-bot> {waits}"),
         ] {
             assert!(rows.contains(&want), "{want}: {rows:#?}");
         }

@@ -10960,26 +10960,6 @@ pub fn wave_no_done_when(issue: u64) -> String {
     )
 }
 
-/// The line in riff chat for the person of the lead: the issue `issue` of
-/// `repo` got the label `question`, so a lead waits for an answer
-/// (#1605). It has the title of the issue and its link.
-///
-/// ```
-/// assert_eq!(
-///     riff::text::wave_question("o/r", 12, "Which design?"),
-///     "A lead waits for your answer in issue #12, Which design?: https://github.com/o/r/issues/12. \
-///      The wave starts no build of the issue until the label question goes."
-/// );
-/// ```
-pub fn wave_question(repo: &str, issue: u64, title: &str) -> String {
-    format!(
-        "A lead waits for your answer in issue #{issue}, {}: https://github.com/{}/issues/{issue}. \
-         The wave starts no build of the issue until the label question goes.",
-        safe(title),
-        safe(repo)
-    )
-}
-
 /// `riff session why` for an `item` with no record.
 ///
 /// ```

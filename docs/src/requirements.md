@@ -546,11 +546,11 @@
   over a hold. A pause hides no item of the group.
 - **01M6QBJHV7PVV5893Q6RCPENJQ** When the label `question` goes on an
   issue, the look of the daemon tells the person of the lead one time in
-  riff chat, with the title and the link of the issue. It posts one line
-  for each issue and each time that the label goes on. The post has a
-  key from the issue and the time of the label event, so the look of
-  each host and a new start of the daemon give the person the same line
-  one time. When the label goes off, the look forgets the issue.
+  riff chat. It posts one line for each issue and each time that the
+  label goes on. The post has a key from the issue and the time of the
+  label event, so the look of each host and a new start of the daemon
+  give the person the same line one time. When the label goes off, the
+  look forgets the issue.
 - **01M6QBJHZBDQ8BB1JPT003RXW7** `riff init` makes the label `question`
   with the first wave, when the repository has none. It never changes a
   label that is there.
@@ -3293,10 +3293,9 @@
 - **01M6XSHMGM82QSABRWCYH595VH** A direct line is a line of the other
   member of a direct thread of the person, or a line to the terminals of
   the person (`person=true`). An ask of riff is a line of the kind
-  `riff`, or with the mark `[by riff]`, that names the person or goes to
-  the terminals of the person. A name and a word match with no regard to
-  case. A word matches only as a whole word. A line that the person
-  typed is no highlight.
+  `riff` that names the person or goes to the terminals of the person. A
+  name and a word match with no regard to case. A word matches only as a
+  whole word. A line that the person typed is no highlight.
 - **01M6XSHMK5QPP73CV98F8BHRRT** The table `[chat]` of the settings of
   each machine says what a highlight does: `highlight` (a list of words,
   empty by default), `bold` (true by default), `bell` (true), `title`
@@ -3377,16 +3376,11 @@
 - **01M6Y4ZCTSTVM971BDC1F7GJPK** Only riff-server posts a line of the
   kind `riff`. riff-server refuses a post of the kind `riff` from each
   client, of a person and of a session, and keeps the kind of its own
-  lines. Each line of riff-server in the chat has the kind `riff`. A
-  line that riff writes as the person of the riff, for example the line
-  "waits for your approval" of the watch of a deploy, has the kind
-  `message` and the mark `[by riff] ` at the start of its body. `riff
+  lines. Each line of riff-server in the chat has the kind `riff`. `riff
   chat`, the Chat tab of the TUI and `riff tail` show as `<riff-bot>`
   only a line of the kind `riff` from riff-server itself, the sender
-  `riff://riff@server`. A line with the mark `[by riff]` shows its real
-  sender and its whole body, as each other line does. Supersedes
-  01M5TQ0DX4M2EJJGE7QA8DZVYS in full, and 01M6Y1FB5MZNZ971CJRBWZ2F9X and
-  01M5TKMVB7CF0QNAWXEVGEQETJ in part.
+  `riff://riff@server`. Supersedes 01M5TQ0DX4M2EJJGE7QA8DZVYS in full,
+  and 01M6Y1FB5MZNZ971CJRBWZ2F9X and 01M5TKMVB7CF0QNAWXEVGEQETJ in part.
 - **01M6Y1EKGKNW2MH970PDF6PJK1** In `riff chat` and in the Chat tab of
   the TUI, an `@` at the start of a word opens a list of the names of
   the chat (01M6XZ27XV8RAC8B72DCM937ST) while the cursor is at the end
@@ -3408,6 +3402,26 @@
 - **01M6YDSREH39WWV6QHB0M7Z6P5** In `riff chat`, the list of the names
   of 01M6Y1EKGKNW2MH970PDF6PJK1 is not text of the line: `→` at the
   end of the line puts none of it in the line, and the list stays.
+- **01M74BPHQZHXFYYNXAJ1WFASQQ** riff-server posts each line that riff
+  writes for a person in riff chat, with the kind `riff`: the lines of
+  `riff release cut` and `riff release publish`, the line "waits for
+  your approval" of the watch of a deploy and its reminder, the line of
+  the label `question`, and the lines of the daemon about a lead. The
+  riff of the person sends only the fact in the call `bot`: the version
+  and the run of a release, the issue, or the step of the daemon.
+  riff-server writes the text from the fact and from what it holds: the
+  owner, the place of the caller and the holds of the version. No text
+  of a client goes into the line: the line of the label `question` has
+  the link of the issue and no title, and a line of the daemon names the
+  cause of a fault only for a clone with no main clone. Only a person
+  and the lead of the person make the call. Supersedes
+  01M6Y4ZCTSTVM971BDC1F7GJPK, 01M5TKMVB7CF0QNAWXEVGEQETJ,
+  01M6XSHMGM82QSABRWCYH595VH and 01M6QBJHV7PVV5893Q6RCPENJQ in part.
+- **01M74VFTFRSSWA6VPQS8SB0TBZ** riff-server writes a line of riff-bot
+  about a release only for a tag `vX.Y.Z` with nothing after its
+  version, and the line holds the version that riff-server parsed. A tag
+  with a text after its version, for example `v3.3.0-TEXT` or
+  `v3.3.0+TEXT`, gets no line.
 
 ## Security
 
@@ -7499,12 +7513,9 @@ of this part when they merge.
   approval. The only ask is the line of riff while the job `Deploy`
   waits ("riff release vX.Y.Z waits for your approval", also "still
   waits" in a reminder).
-- **01M5TKMVB7CF0QNAWXEVGEQETJ** The lines that riff writes as the
-  person of the riff are the line "waits for your approval" of the watch
-  of the deploy and its reminder, the other lines of the daemon in riff
-  chat, and the lines of `riff release cut` and `riff release publish`.
-  A reader shows a line of the kind `riff` as a message, and it wakes as
-  a message. The kind `riff` has no name in `riff post`.
+- **01M5TKMVB7CF0QNAWXEVGEQETJ** A reader shows a line of the kind
+  `riff` as a message, and it wakes as a message. The kind `riff` has no
+  name in `riff post`.
 - **01M6WZ40SFVZ6CRQ1H4Z27CWP4** Only a person approves a deploy. `riff
   release approve` refuses the lead of each user, in a container and in
   a terminal, also when the owner or an admin said approve in riff chat.

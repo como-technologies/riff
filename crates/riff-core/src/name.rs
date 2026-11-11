@@ -509,6 +509,30 @@ fn allowed(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~')
 }
 
+/// The name of the container of the lead of the repository `repo`
+/// (`OWNER/REPO`). Each character that podman does not take in a name
+/// becomes `-`. The daemon names the container so, and riff-server names
+/// it in a line of riff-bot ([`crate::wire::BotFact`]).
+///
+/// ```
+/// use riff_core::name::lead_container;
+///
+/// assert_eq!(lead_container("como-technologies/riff"), "riff-lead-como-technologies-riff");
+/// assert_eq!(lead_container("o/a b"), "riff-lead-o-a-b");
+/// ```
+pub fn lead_container(repo: &str) -> String {
+    let plain: String = repo
+        .chars()
+        .map(
+            |c| match c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+                true => c,
+                false => '-',
+            },
+        )
+        .collect();
+    format!("riff-lead-{plain}")
+}
+
 /// Checks that one URI part is not empty and holds only allowed
 /// characters. `what` names the part in the error.
 pub fn check(what: &str, part: &str) -> Result<(), NameError> {

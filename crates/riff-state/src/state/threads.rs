@@ -723,6 +723,11 @@ pub struct PostNote {
 /// `who`. With no thread, the post is a direct message. The reply has
 /// each session that the message woke. It keeps each kind, also the kind
 /// `riff` that a [`Post`] cannot have (01M6Y4ZCTSTVM971BDC1F7GJPK).
+///
+/// An announce with a key that a kept message of the server has in the
+/// thread is dropped, as a [`Post`] with a key is
+/// (01M5TKG2K1AYK1KE7C2AA2W9DS): it makes no record, and wakes no
+/// session.
 #[derive(Clone, Debug)]
 pub struct Announce {
     pub thread: Option<ThreadName>,
@@ -731,6 +736,8 @@ pub struct Announce {
     pub kind: Kind,
     /// The time of the message.
     pub at_ms: u64,
+    /// The key of the post.
+    pub key: Option<String>,
 }
 
 impl Command for Announce {
@@ -750,9 +757,19 @@ impl Command for Announce {
             body,
             kind,
             at_ms,
+            key,
         } = self;
         let from = caller.who();
         let thread = view.thread_of(from, thread.as_ref(), to, now.at)?;
+        if let Some(key) = key
+            && view
+                .riff
+                .threads()
+                .keyed(&thread, from.user(), key)
+                .is_some()
+        {
+            return Ok((Vec::new(), ()));
+        }
         let message = Message {
             seq: 0,
             from: caller.me().clone(),
@@ -763,7 +780,7 @@ impl Command for Announce {
             sig: None,
             payload: None,
         };
-        let (changes, _) = view.put(from, thread, message, None, now.at);
+        let (changes, _) = view.put(from, thread, message, key.clone(), now.at);
         Ok((changes, ()))
     }
 

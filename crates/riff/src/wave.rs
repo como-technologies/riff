@@ -151,7 +151,7 @@
 //! | "Wave N is complete" ([`crate::watches::wave_complete_key`]) | `wave-complete-N` | one time |
 //! | The GitHub limit is out ([`text::wave_limit_waits`]) | [`ghcalls::Wait::key`] | one time for each outage |
 //! | The host waits for a fact, the pull of the image failed, a job failed, an item is spent | none | from each host |
-//! | The label `question` goes on an issue ([`text::wave_question`], to the person in riff chat) | [`look::question_key`] | one time for each time that the label goes on |
+//! | The label `question` goes on an issue ([`BotFact::Question`], a line of riff-bot to the person) | [`look::question_key`] | one time for each time that the label goes on |
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -591,7 +591,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::wire::{
-    HoldInfo, Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY, Wake,
+    BotFact, HoldInfo, Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY, Wake,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, mpsc};
@@ -1599,25 +1599,25 @@ pub trait World: Send + Sync {
         key: Option<&'a str>,
     ) -> BoxFuture<'a, Result<()>>;
 
-    /// Tells the person of the lead of `wave` `body` in riff chat, as a line
-    /// of riff with the mark `[by riff]` (01M6Y4ZCTSTVM971BDC1F7GJPK) that
-    /// names the person first ([`asked`]): it wakes the terminals of the
-    /// person, and no session (#1605, 01M6Y1A5PTCVZ6GRJ0FXMART2T). The post
-    /// has `key`: riff-server drops it when a kept message of the person
-    /// has the key, so the person hears it one time from the look of each
-    /// host. The error is a post that did not go out.
+    /// Tells riff-server the fact `fact` of the person of the lead of
+    /// `wave`: riff-server writes the line of riff-bot for it in riff chat,
+    /// and the line names the person first. It wakes the terminals of the
+    /// person, and no session (#1605, 01M6Y1A5PTCVZ6GRJ0FXMART2T). The call
+    /// has `key`: riff-server drops the line when a kept line of riff-bot
+    /// for the person has the key, so the person hears it one time from the
+    /// look of each host. The error is a call that did not go out.
     fn ask_person<'a>(
         &'a self,
         wave: &'a Wave,
-        body: &'a str,
+        fact: BotFact,
         key: &'a str,
     ) -> BoxFuture<'a, Result<()>>;
 
-    /// Writes `body` in riff chat as the person of the lead of `record`,
-    /// and wakes no session: the lead cannot act on it
-    /// (01M5NJ87YEHHGJBANM7CRYV56Z). The line has the mark `[by riff]`: it
-    /// is no word of the person (01M6Y4ZCTSTVM971BDC1F7GJPK).
-    fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()>;
+    /// Tells riff-server the fact `fact` of the daemon, as the person of the
+    /// lead of `record`: riff-server writes the line of riff-bot for it in
+    /// riff chat, and the line wakes no session: the lead cannot act on it
+    /// (01M5NJ87YEHHGJBANM7CRYV56Z).
+    fn bot<'a>(&'a self, record: &'a Record, fact: BotFact) -> BoxFuture<'a, ()>;
 
     /// Posts `body` as a message to the lead of `record`, as the person
     /// of the lead: the lead wakes and acts on it. The default posts
@@ -2446,22 +2446,6 @@ pub struct Live {
     /// The token of the writes of the daemon on each repository
     /// (01M6XZJFE2ZTR5RE3AWM30R704).
     writes: gh_token::Writes,
-}
-
-/// The ask `body` of riff to the person `user` in riff chat: it names the
-/// person first, so the line wakes the terminals of the person
-/// (01M6Y1A5PTCVZ6GRJ0FXMART2T).
-///
-/// ```
-/// use riff::wave::asked;
-/// use riff_core::selector::Selector;
-///
-/// let line = asked("mike", "A lead waits for your answer in issue #12.");
-/// assert_eq!(line, "@mike A lead waits for your answer in issue #12.");
-/// assert_eq!(riff_client::chat::to(&line), [Selector::name("mike")]);
-/// ```
-pub fn asked(user: &str, body: &str) -> String {
-    format!("@{user} {body}")
 }
 
 /// Posts `body` of `kind` as the person of `wave`: to the session that
@@ -4038,24 +4022,22 @@ impl World for Live {
     fn ask_person<'a>(
         &'a self,
         wave: &'a Wave,
-        body: &'a str,
+        fact: BotFact,
         key: &'a str,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let person = identity::person(&wave.place(None)?, &wave.server)?;
             let api = Api::new(&wave.server).signed_in(None)?;
-            let body = asked(person.who().user(), body);
-            let to = riff_client::chat::to(&body);
-            crate::chat::post_by_riff_keyed(&api, &person, &to, &body, Some(key)).await
+            api.bot(&person, fact, Some(key)).await
         })
     }
 
-    fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> BoxFuture<'a, ()> {
+    fn bot<'a>(&'a self, record: &'a Record, fact: BotFact) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let posted = async {
                 let person = identity::person(record.me.place(), &record.server)?;
                 let api = Api::new(&record.server).signed_in(None)?;
-                crate::chat::post_by_riff(&api, &person, &[], body).await
+                api.bot(&person, fact, None).await
             };
             if let Err(e) = posted.await {
                 eprintln!("riff daemon: {}: {e:#}", record.live.name);
@@ -4332,8 +4314,8 @@ mod tests {
         post_keys: Vec<Option<String>>,
         /// The number of the next posts of the look that fail.
         post_fails: usize,
-        /// Each line to the person in riff chat: the body, and the key.
-        asked: Vec<(String, String)>,
+        /// Each fact of a line of riff-bot to the person, and its key.
+        asked: Vec<(BotFact, String)>,
         /// Why riff-server gives a session no token of a GitHub App. With
         /// none, each session gets a token of an App.
         no_app: Option<String>,
@@ -4724,7 +4706,7 @@ mod tests {
         fn ask_person<'a>(
             &'a self,
             _: &'a Wave,
-            body: &'a str,
+            fact: BotFact,
             key: &'a str,
         ) -> BoxFuture<'a, Result<()>> {
             Box::pin(async move {
@@ -4733,7 +4715,7 @@ mod tests {
                     forge.post_fails -= 1;
                     bail!("riff-server does not answer");
                 }
-                forge.asked.push((body.to_owned(), key.to_owned()));
+                forge.asked.push((fact, key.to_owned()));
                 Ok(())
             })
         }
@@ -4785,7 +4767,7 @@ mod tests {
             })
         }
 
-        fn chat<'a>(&'a self, _: &'a Record, _: &'a str) -> BoxFuture<'a, ()> {
+        fn bot<'a>(&'a self, _: &'a Record, _: BotFact) -> BoxFuture<'a, ()> {
             Box::pin(async {})
         }
 
@@ -9055,17 +9037,17 @@ esac
             look::look_wave(&self.world, &self.wave, &mut self.watch).await
         }
 
-        /// Each line to the person in riff chat since the start.
-        fn asked(&self) -> Vec<(String, String)> {
+        /// Each fact of a line of riff-bot to the person since the start.
+        fn asked(&self) -> Vec<(BotFact, String)> {
             lock(&self.world.forge).asked.clone()
         }
     }
 
     /// #1605, 01M6QBJHV7PVV5893Q6RCPENJQ: the look tells the person of the
     /// lead one time in riff chat when the label `question` goes on an
-    /// issue, with the title and the link. It has no message for the lead,
-    /// and no more line at the next looks. When the label goes off and on
-    /// again, the person gets a new line.
+    /// issue: riff-server writes the line of riff-bot with the link. It has
+    /// no message for the lead, and no more line at the next looks. When the
+    /// label goes off and on again, the person gets a new line.
     #[tokio::test]
     async fn the_look_tells_the_person_one_time_when_the_label_question_goes_on() {
         let mut asking = Asking::new();
@@ -9075,11 +9057,10 @@ esac
         asking.labels(&["bug", "question"]);
         asking.events("2026-11-05T20:11:03Z\n");
         assert!(asking.look().await.unwrap());
-        let line = text::wave_question("o/r", 12, "Which design?");
-        assert!(line.contains("https://github.com/o/r/issues/12"), "{line}");
+        let question = BotFact::Question { issue: 12 };
         assert_eq!(
             asking.asked(),
-            [(line.clone(), "question-12-2026-11-05T20:11:03Z".to_owned())]
+            [(question, "question-12-2026-11-05T20:11:03Z".to_owned())]
         );
         assert!(
             lock(&asking.world.forge).posts.is_empty(),
@@ -9122,10 +9103,7 @@ esac
         assert!(asking.look().await.unwrap());
         assert_eq!(
             asking.asked(),
-            [(
-                text::wave_question("o/r", 12, "Which design?"),
-                "question-12".to_owned()
-            )],
+            [(BotFact::Question { issue: 12 }, "question-12".to_owned())],
             "no event: no time in the key"
         );
         assert!(!asking.look().await.unwrap());

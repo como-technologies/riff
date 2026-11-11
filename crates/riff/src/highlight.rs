@@ -39,9 +39,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, bail};
 use chrono::NaiveTime;
-use riff_client::threads::{BY_RIFF, Line, Names, action_text};
+use riff_client::threads::{Line, Names, action_text};
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::Kind;
 use tokio::io::AsyncWriteExt;
 
 use crate::chat::said;
@@ -58,9 +57,9 @@ pub enum Why {
     Direct,
     /// The line holds this word of the list `chat.highlight`.
     Word(String),
-    /// A line of riff, with the kind `riff` of riff-server or the mark
-    /// [`BY_RIFF`], that names the person or goes to the terminals of the
-    /// person: for example "riff release v4.8.0 waits for your approval".
+    /// A line of riff-bot ([`Line::by_server`]) that names the person or
+    /// goes to the terminals of the person: for example "riff release
+    /// v4.8.0 waits for your approval".
     Ask,
 }
 
@@ -101,20 +100,17 @@ pub enum Why {
 /// ```
 pub fn why(line: &Line, thread: &ThreadName, me: &SessionUri, words: &[String]) -> Option<Why> {
     let user = me.who().user();
-    let body = line.body.strip_prefix(BY_RIFF);
-    let by_riff = line.kind == Kind::Riff || body.is_some();
     let from = line.from.who();
-    if !by_riff && from.session().is_none() && from.user() == user {
+    if from.session().is_none() && from.user() == user {
         return None;
     }
-    let body = body.unwrap_or(&line.body);
-    let text = action_text(body).unwrap_or(body);
+    let text = action_text(&line.body).unwrap_or(&line.body);
     let to_me = line
         .to
         .iter()
         .any(|to| to.selector.person == Some(true) && to.selector.matches(me));
     let named = names(text, user);
-    if by_riff && (named || to_me) {
+    if line.by_server() && (named || to_me) {
         return Some(Why::Ask);
     }
     if to_me || thread.peer(me.who()).is_some_and(|peer| *from == peer) {
@@ -591,7 +587,7 @@ pub async fn run_hook(command: &str, text: &str, sender: &str, thread: &str) -> 
 mod tests {
     use riff_client::api::Checked;
     use riff_core::name::Who;
-    use riff_core::wire::Message;
+    use riff_core::wire::{Kind, Message};
 
     use super::*;
 
@@ -713,30 +709,34 @@ mod tests {
         assert_eq!(why(&brett("hi"), &chat(), &me(), &[" ".into()]), None);
     }
 
+    /// 01M6XSHMGM82QSABRWCYH595VH: an ask of riff is a line of riff-bot,
+    /// riff-server itself, that names the person or goes to the terminals
+    /// of the person.
     #[test]
     fn an_ask_of_riff_to_the_person_is_a_highlight() {
-        let person = "riff://mike@pangolin";
+        let server = riff_core::name::SessionUri::server().to_string();
         let waits = "@mike riff release v3.3.0 waits for your approval: https://x/runs/9.";
-        let ask = |to: &[&str], kind, body: &str| {
-            why(
-                &line_in(&chat(), person, to, kind, body),
-                &chat(),
-                &me(),
-                &[],
-            )
+        let ask = |from: &str, to: &[&str], kind, body: &str| {
+            why(&line_in(&chat(), from, to, kind, body), &chat(), &me(), &[])
         };
-        assert_eq!(ask(&[], Kind::Riff, waits), Some(Why::Ask));
-        // A line that riff writes as the person has the mark
-        // (01M6Y4ZCTSTVM971BDC1F7GJPK).
-        let marked = format!("{BY_RIFF}{waits}");
-        assert_eq!(ask(&[], Kind::Message, &marked), Some(Why::Ask));
-        // The question of a lead goes to the terminals of the person.
-        let question = "como-technologies/riff #12 asks you a question: Which design?";
+        assert_eq!(ask(&server, &[], Kind::Riff, waits), Some(Why::Ask));
+        // The ask of the label question names the person too.
+        let question = "@mike A lead waits for your answer in issue #12 of o/r";
+        assert_eq!(ask(&server, &[], Kind::Riff, question), Some(Why::Ask));
+        // A line of riff-bot to the terminals of the person.
         let to_me = ["user=mike,person=true"];
-        assert_eq!(ask(&to_me, Kind::Riff, question), Some(Why::Ask));
-        // A line of riff for another person is none.
+        assert_eq!(ask(&server, &to_me, Kind::Riff, "a fault"), Some(Why::Ask));
+        // A line of riff-bot for another person is none, and so is a line
+        // of riff-bot that names no one.
         let theirs = "@brett riff release v3.3.0 waits for your approval";
-        assert_eq!(ask(&[], Kind::Riff, theirs), None);
+        assert_eq!(ask(&server, &[], Kind::Riff, theirs), None);
+        let started = "riff started the lead of mike in o/r on thelio again";
+        assert_eq!(ask(&server, &[], Kind::Riff, started), None);
+        // The words of an ask from another sender are no ask: brett names
+        // mike, and a line of mike is none.
+        let brett = "riff://brett@heron";
+        assert_eq!(ask(brett, &[], Kind::Message, waits), Some(Why::Name));
+        assert_eq!(ask("riff://mike@pangolin", &[], Kind::Message, waits), None);
     }
 
     #[test]
@@ -912,14 +912,14 @@ mod tests {
         let shown = at_noon(&h, &brett("mike: look"));
         assert_eq!(shown.lit.marks, "\x1b]9;<brett> mike: look\x07");
         assert!(shown.hook);
-        // An ask of riff shows its real sender, the person, and the mark
-        // (01M6Y4ZCTSTVM971BDC1F7GJPK).
-        let waits = format!("{BY_RIFF}@mike the deploy waits for your approval");
-        let ask = line_in(&chat(), "riff://mike@pangolin", &[], Kind::Message, &waits);
+        // An ask of riff shows as riff-bot (01M6Y4ZCTSTVM971BDC1F7GJPK).
+        let waits = "@mike riff release v3.3.0 waits for your approval";
+        let server = riff_core::name::SessionUri::server().to_string();
+        let ask = line_in(&chat(), &server, &[], Kind::Riff, waits);
         let shown = at_noon(&h, &ask);
         assert_eq!(
             shown.lit.marks,
-            "\x1b]9;<mike> [by riff] @mike the deploy waits for your approval\x07"
+            "\x1b]9;<riff-bot> @mike riff release v3.3.0 waits for your approval\x07"
         );
     }
 

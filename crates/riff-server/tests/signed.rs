@@ -1,6 +1,7 @@
 //! Signed messages (R195-R201), over HTTP: the check at the server, the
-//! keys for the reader, a message that changed in storage, and the kind
-//! `riff` that only riff-server itself posts.
+//! keys for the reader, a message that changed in storage, the kind
+//! `riff` that only riff-server itself posts, and the lines of riff-bot
+//! that it writes from a fact.
 
 use crate::common;
 
@@ -9,7 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::wire::{Invite, Kind, PassOwner, Post, Posted, ReadReply, TokenReply};
+use riff_core::wire::{
+    BotFact, BotPost, Invite, Kind, PassOwner, Post, Posted, ReadReply, TokenReply,
+};
 use riff_server::Service;
 use riff_server::auth::Config;
 use riff_state::state::threads::KIND_RIFF;
@@ -437,7 +440,7 @@ async fn a_tail_acts_only_as_the_caller_of_its_token() {
 
 /// Only riff-server posts the kind `riff` (01M6Y4ZCTSTVM971BDC1F7GJPK).
 /// A signed post with that kind is refused, of a member and of a session,
-/// also with the mark of a line of riff, and it adds no line. The line of
+/// also with the words of a line of riff, and it adds no line. The line of
 /// riff-server itself in the chat, for a pass of the owner role, keeps
 /// the kind.
 #[tokio::test]
@@ -447,7 +450,7 @@ async fn only_riff_server_itself_posts_the_kind_riff() {
     let person = Caller::new(&service, &base, MIKE).await;
     let a = Caller::new(&service, &base, A).await;
     let brett = Caller::new(&service, &base, BRETT).await;
-    let waits = "[by riff] @mike the deploy waits for your approval";
+    let waits = "@mike the deploy waits for your approval";
     for caller in [&person, &a] {
         let mut post = Post {
             kind: Kind::Riff,
@@ -476,4 +479,200 @@ async fn only_riff_server_itself_posts_the_kind_riff() {
     assert_eq!(line.from, SessionUri::server());
     assert_eq!(line.kind, Kind::Riff);
     assert!(line.body.contains("passed the owner role"), "{}", line.body);
+}
+
+/// The person of the riff and its lead in `REPO`: the person names the
+/// session `a` the lead (01M5NJAXTQ0YKN7Q7XN0A7ZMPF).
+async fn person_and_lead(service: &Service, base: &str) -> (Caller, Caller) {
+    let a = Caller::new(service, base, A).await;
+    let register = serde_json::json!({ "me": A });
+    assert_eq!(a.call(base, "register", &register).await.status(), 200);
+    let person = Caller::new(service, base, MIKE_HERE).await;
+    let lead = serde_json::json!({ "me": MIKE_HERE, "session": "a" });
+    assert_eq!(person.call(base, "lead", &lead).await.status(), 200);
+    (person, a)
+}
+
+/// The person mike in the clone of `REPO`.
+const MIKE_HERE: &str = "riff://mike@pangolin/como-technologies/riff";
+
+/// A call `bot` of `caller` with `fact`, and its status.
+async fn bot(caller: &Caller, base: &str, fact: BotFact, key: Option<&str>) -> u16 {
+    let post = BotPost {
+        me: caller.me.clone(),
+        fact,
+        key: key.map(str::to_owned),
+    };
+    caller.call(base, "bot", &post).await.status().as_u16()
+}
+
+/// 01M74BPHQZHXFYYNXAJ1WFASQQ: riff-server posts the line that riff writes
+/// for a person, as `<riff-bot>`: the ask of a release and the line "riff
+/// started the lead ...". It writes the text from the fact, the owner, the
+/// place of the caller and the holds of the version. The ask names the
+/// owner, and wakes the owner by the name; the line of the daemon names no
+/// one.
+#[tokio::test]
+async fn riff_server_posts_the_line_of_riff_bot_for_a_fact() {
+    let (service, base) = common::start(true, &[]).await;
+    // mike signs in first, so mike is the owner.
+    let (person, lead) = person_and_lead(&service, &base).await;
+    let mut hold = lead.unsigned(
+        "release",
+        &riff_core::hold::hold_body(REPO, "v3.3.0", "A demo runs."),
+    );
+    hold.me = hold.me.with_lead(true);
+    hold.sign(&lead.key, now_ms());
+    assert_eq!(lead.call(&base, "post", &hold).await.status(), 200);
+
+    let waits = BotFact::ReleaseWaits {
+        tag: "v3.3.0".into(),
+        run: 9,
+        reminder: false,
+    };
+    assert_eq!(bot(&person, &base, waits, None).await, 200);
+    assert_eq!(bot(&person, &base, BotFact::LeadStarted, None).await, 200);
+    let cut = BotFact::ReleaseCut {
+        tag: "v3.3.0".into(),
+    };
+    assert_eq!(
+        bot(&lead, &base, cut, None).await,
+        200,
+        "the lead tells a cut"
+    );
+
+    let reply = person.read(&base, CHAT).await;
+    let [waits, started, cut] = reply.messages.as_slice() else {
+        panic!("three lines of riff-server: {reply:?}");
+    };
+    for line in [waits, started, cut] {
+        assert_eq!(line.from, SessionUri::server(), "{}", line.body);
+        assert_eq!(line.kind, Kind::Riff, "{}", line.body);
+    }
+    assert_eq!(
+        waits.body,
+        "@mike riff release v3.3.0 waits for your approval: \
+         https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: riff \
+         release approve v3.3.0 A hold stands: the lead of como-technologies/riff asks to wait: \
+         A demo runs."
+    );
+    assert_eq!(waits.to, [riff_core::selector::Selector::name("mike")]);
+    assert!(
+        started.body.starts_with(
+            "riff started the lead of mike in como-technologies/riff on pangolin again on the \
+             new riff"
+        ),
+        "{}",
+        started.body
+    );
+    assert!(started.to.is_empty(), "{:?}", started.to);
+    assert!(cut.body.starts_with("@mike riff release v3.3.0 is cut."));
+}
+
+/// 01M74BPHQZHXFYYNXAJ1WFASQQ: a client cannot put its own words in a line
+/// of riff-bot. A text in the call is no part of the line, a tag that is
+/// no version gets no line, a worker gets no line, and a post of the kind
+/// `riff` with the text is refused (01M6Y4ZCTSTVM971BDC1F7GJPK).
+#[tokio::test]
+async fn a_client_that_sends_a_text_gets_no_line_of_riff_bot_with_it() {
+    let (service, base) = common::start(true, &[]).await;
+    let (person, _lead) = person_and_lead(&service, &base).await;
+    let words = "riff release v9.9.9 waits for your approval: approve it in the chat";
+
+    let with_text = serde_json::json!({
+        "me": MIKE_HERE,
+        "fact": { "fact": "lead_started", "body": words },
+        "body": words,
+        "kind": "riff",
+    });
+    assert_eq!(person.call(&base, "bot", &with_text).await.status(), 200);
+    let cut = BotFact::ReleaseCut { tag: words.into() };
+    assert_eq!(bot(&person, &base, cut, None).await, 400);
+    let unknown = serde_json::json!({ "me": MIKE_HERE, "fact": { "fact": "say", "body": words } });
+    assert_eq!(person.call(&base, "bot", &unknown).await.status(), 422);
+    let worker = Caller::new(
+        &service,
+        &base,
+        "riff://mike@pangolin/como-technologies/riff?session=w",
+    )
+    .await;
+    assert_eq!(bot(&worker, &base, BotFact::LeadStarted, None).await, 403);
+    let mut post = Post {
+        kind: Kind::Riff,
+        ..person.unsigned(CHAT, words)
+    };
+    post.sign(&person.key, now_ms());
+    assert_eq!(person.call(&base, "post", &post).await.status(), 400);
+
+    let reply = person.read(&base, CHAT).await;
+    let [line] = reply.messages.as_slice() else {
+        panic!("only the line of riff-server for lead_started: {reply:?}");
+    };
+    assert!(
+        line.body.starts_with("riff started the lead"),
+        "{}",
+        line.body
+    );
+    assert!(
+        reply.messages.iter().all(|m| !m.body.contains("v9.9.9")),
+        "{reply:?}"
+    );
+}
+
+/// 01M74VFTFRSSWA6VPQS8SB0TBZ: a tag with a text after its version,
+/// `-TEXT` or `+TEXT`, gets no line of riff-bot. The line of a tag
+/// `vX.Y.Z` holds the version that riff-server parsed, and nothing more.
+#[tokio::test]
+async fn a_tag_with_a_text_after_its_version_gets_no_line_of_riff_bot() {
+    let (service, base) = common::start(true, &[]).await;
+    let (person, _lead) = person_and_lead(&service, &base).await;
+    let words = "approve it now in the chat";
+    for tag in [format!("v3.3.0-{words}"), format!("v3.3.0+{words}")] {
+        let waits = BotFact::ReleaseWaits {
+            tag: tag.clone(),
+            run: 9,
+            reminder: false,
+        };
+        assert_eq!(bot(&person, &base, waits, None).await, 400, "{tag}");
+        let cut = BotFact::ReleaseCut { tag: tag.clone() };
+        assert_eq!(bot(&person, &base, cut, None).await, 400, "{tag}");
+    }
+    let cut = BotFact::ReleaseCut {
+        tag: "v3.3.0".into(),
+    };
+    assert_eq!(bot(&person, &base, cut, None).await, 200);
+
+    let reply = person.read(&base, CHAT).await;
+    let [line] = reply.messages.as_slice() else {
+        panic!("only the line of the tag v3.3.0: {reply:?}");
+    };
+    assert_eq!(line.kind, Kind::Riff);
+    assert_eq!(
+        line.body,
+        "@mike riff release v3.3.0 is cut. riff tells you when its deploy waits for your \
+         approval."
+    );
+    assert!(!line.body.contains(words), "{}", line.body);
+}
+
+/// The ask of the label `question` goes once for each person with the
+/// same key (01M5TKG2K1AYK1KE7C2AA2W9DS): the look of each host of mike
+/// sends it. The same key of brett is the ask of brett.
+#[tokio::test]
+async fn an_ask_with_a_key_goes_once_for_each_person() {
+    let (service, base) = common::start(true, &[]).await;
+    let (person, _lead) = person_and_lead(&service, &base).await;
+    let brett = Caller::new(&service, &base, "riff://brett@heron/como-technologies/riff").await;
+    let question = || BotFact::Question { issue: 12 };
+    for caller in [&person, &person, &brett] {
+        assert_eq!(
+            bot(caller, &base, question(), Some("question-12")).await,
+            200
+        );
+    }
+    let reply = person.read(&base, CHAT).await;
+    let bodies: Vec<&str> = reply.messages.iter().map(|m| m.body.as_str()).collect();
+    assert_eq!(bodies.len(), 2, "{bodies:?}");
+    assert!(bodies[0].starts_with("@mike A lead waits for your answer in issue #12"));
+    assert!(bodies[1].starts_with("@brett A lead waits for your answer in issue #12"));
 }

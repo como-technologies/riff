@@ -194,6 +194,10 @@
 //!   [`lease::Timing::exit_after`] later.
 //! - A server refuses each proof issued before it started to serve
 //!   (R142).
+//! - `POST /v1/bot` takes a fact of the riff of a person, and riff-server
+//!   posts the line of riff-bot for it in riff chat, with the kind `riff`
+//!   (01M74BPHQZHXFYYNXAJ1WFASQQ). riff-server writes the text itself:
+//!   see [`bot`].
 //! - `GET /v1/server` gives the facts of the instance, for `riff server`
 //!   (01M3TJWJ12WEDCXW3W0529KRP2): if it serves, its last error, the
 //!   log, the checkpoint, its sizes and its start. The route is outside
@@ -228,6 +232,7 @@
 //! ```
 
 pub mod auth;
+pub mod bot;
 pub mod engine;
 pub mod gcs;
 pub mod github;
@@ -272,7 +277,7 @@ use riff_core::wire::{
     SetIdle, SetNotes, SetPlan, SetStatus, SetStep, SignInConfig, Start, TOKEN_EXCHANGE, TakeOwner,
     Threads, ThreadsReply, TokenError, TokenReply, TokenRequest, Unanswered, WhoReply, WhoRequest,
 };
-use riff_core::wire::{Names, NamesReply, SetMachine};
+use riff_core::wire::{BotPost, Names, NamesReply, SetMachine};
 use riff_state::owner::{Check, Checks};
 use riff_state::state::{
     Announce, Code, OwnerChange, Refused, Role, Settings, Signal, Snapshot, State, may_read,
@@ -1212,6 +1217,7 @@ impl Server {
             body: body.to_owned(),
             kind,
             at_ms: now_ms(),
+            key: None,
         }
     }
 
@@ -1984,6 +1990,7 @@ impl Service {
             .route(SetStep::PATH, post(step))
             .route(SetMachine::PATH, post(machine))
             .route(BlockedLook::PATH, post(look_blocks))
+            .route(BotPost::PATH, post(bot_post))
             .route(ItemFacts::PATH, post(item_facts))
             .route(Alive::PATH, post(alive))
             .route(WhoRequest::PATH, post(who))
@@ -2624,6 +2631,63 @@ pub fn still_blocked(session: &SessionUri, reason: &str, after_secs: u64) -> Str
         n => format!("{n} minutes"),
     };
     format!("blocked: {short}{claims} has no answer after {minutes}: {reason}")
+}
+
+/// Posts the line of riff-bot for the fact of the caller in the chat,
+/// with the kind `riff` ([`bot`], 01M74BPHQZHXFYYNXAJ1WFASQQ). riff-server
+/// writes the text from the fact and from what it holds: the owner, the
+/// place of the caller and the holds of the version. Only a person and
+/// the lead of the person may call it. A key that a kept line of
+/// riff-bot for the same user has drops the post
+/// (01M5TKG2K1AYK1KE7C2AA2W9DS).
+async fn bot_post(
+    AxumState(s): AxumState<Shared>,
+    proof: Proof,
+    Json(r): Json<BotPost>,
+) -> Reply<()> {
+    let caller = admit(&s, &proof, &r.me)?;
+    let now = Instant::now();
+    let (lead, owner, messages) = s
+        .engine
+        .query(&caller, |state| {
+            let owner = match state.people().riff_owner() {
+                RiffOwner::Owner { user, .. } => Some(user),
+                RiffOwner::NoSignIn | RiffOwner::Nobody => None,
+            };
+            let messages = state.messages(&riff_core::hold::thread());
+            (state.uri(caller.who(), now).lead(), owner, messages)
+        })
+        .await?;
+    if caller.who().session().is_some() && !lead {
+        let refused = Refused::new(Code::NotAllowed, bot::ONLY_PERSON_OR_LEAD);
+        return Err(Failed::Refused(refused).into());
+    }
+    let holds = match &r.fact {
+        riff_core::wire::BotFact::ReleaseWaits { tag, .. } => {
+            let lines: Vec<riff_core::hold::Line> = messages
+                .iter()
+                .map(|message| riff_core::hold::Line::of(message, true))
+                .collect();
+            riff_core::hold::holds(&lines, tag)
+        }
+        _ => Vec::new(),
+    };
+    let facts = bot::Facts {
+        me: &r.me,
+        owner: owner.as_deref(),
+        holds: &holds,
+    };
+    let line = bot::line(&r.fact, &facts).map_err(bad_request)?;
+    let announce = Announce {
+        thread: Some(ThreadName::chat()),
+        to: line.to,
+        body: line.body,
+        kind: Kind::Riff,
+        at_ms: now_ms(),
+        key: r.key.map(|key| bot::key_of(caller.who().user(), &key)),
+    };
+    s.engine.announce(announce).await?;
+    Ok(Json(()))
 }
 
 /// Keeps the facts of the items of the repository of the caller
