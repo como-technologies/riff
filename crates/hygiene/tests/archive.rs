@@ -348,3 +348,89 @@ fn the_archive_runs_with_the_tmpdir_that_cargo_forces() {
         "{config}"
     );
 }
+
+/// 01M75NDQY6BHZBV9PF735E3FGY: `hygiene test-name NAME --archive` runs
+/// the tests whose name has NAME, in each test binary that has one, with
+/// no cargo. A binary with no such test does not run.
+#[test]
+fn a_name_runs_the_tests_with_the_name_from_the_archive_with_no_cargo() {
+    let (_dir, top) = checkout();
+    assert_eq!(build(&top).status.code(), Some(0));
+    unpack(&top);
+    std::fs::remove_file(top.join("run.log")).unwrap();
+    let no_cargo = top.join("no-cargo-here");
+
+    let out = hygiene(
+        &top,
+        &["test-name", "one::", "--archive", "archive"],
+        &no_cargo,
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("just ci-test one:: runs 2 of 7 tests of the archive\n"),
+        "{}",
+        text(&out.stderr)
+    );
+    let ran = runs(&top);
+    assert_eq!(ran.len(), 1, "{ran:?}");
+    assert_eq!(ran[0][0], "all-1f");
+    assert_eq!(ran[0][1], top.join("crates/a").to_string_lossy());
+    assert_eq!(ran[0][2], "TMPDIR=/var/tmp");
+    assert_eq!(ran[0][4..], ["--exact", "one::a", "one::b"]);
+    std::fs::remove_file(top.join("run.log")).unwrap();
+
+    // A name that two binaries share runs in each of them.
+    let out = hygiene(
+        &top,
+        &["test-name", "shared::name", "--archive", "archive"],
+        &no_cargo,
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let ran: Vec<(String, Vec<String>)> = runs(&top)
+        .into_iter()
+        .map(|run| (run[0].clone(), run[5..].to_vec()))
+        .collect();
+    assert_eq!(
+        ran,
+        [
+            ("all-1f".to_owned(), vec!["shared::name".to_owned()]),
+            ("unit-2e".to_owned(), vec!["shared::name".to_owned()]),
+        ]
+    );
+}
+
+/// 01M75NDQY6BHZBV9PF735E3FGY: a name that no test of the archive has,
+/// and an empty name, fail with 2 and run no test binary. A failed test
+/// fails the run with 1.
+#[test]
+fn a_name_with_no_test_fails_and_a_failed_test_fails_the_run() {
+    let (_dir, top) = checkout();
+    assert_eq!(build(&top).status.code(), Some(0));
+    unpack(&top);
+    std::fs::remove_file(top.join("run.log")).unwrap();
+    let no_cargo = top.join("no-cargo-here");
+
+    let out = hygiene(
+        &top,
+        &["test-name", "three", "--archive", "archive"],
+        &no_cargo,
+    );
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        text(&out.stderr).contains(&hygiene::archive::none_named("three")),
+        "{}",
+        text(&out.stderr)
+    );
+    let out = hygiene(&top, &["test-name", "", "--archive", "archive"], &no_cargo);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(text(&out.stderr).contains("give the name of a test"));
+    assert!(runs(&top).is_empty(), "{:?}", runs(&top));
+
+    std::fs::write(top.join("exit-unit-2e"), "101").unwrap();
+    let out = hygiene(
+        &top,
+        &["test-name", "two::a", "--archive", "archive"],
+        &no_cargo,
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+}

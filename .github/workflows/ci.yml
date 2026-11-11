@@ -93,12 +93,14 @@ jobs:
         id: plan
         run: deploy/build-plan.sh
 
+      # session-test.sh names the path of the build, so it is in the key
+      # (01M75NDR415ES5GK69MX80PTBS).
       - name: Cache the test build
         if: steps.plan.outputs.build_tests == 'true'
         uses: actions/cache@v6
         with:
           path: target/session
-          key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock') }}
+          key: session-${{ hashFiles('riff.toml', 'rust-toolchain.toml', 'Cargo.lock', 'deploy/session-test.sh') }}
           restore-keys: session-
 
       - name: Check the code and build the tests

@@ -378,8 +378,10 @@ just test-archived 2/4
 
 A test binary reads files with the path of the build. So the archive
 runs only in a checkout at the path that built it. At another path the
-run fails and says so. This is also why you cannot run the artifact of
-a CI run in your clone: build the archive in your clone.
+run fails and says so. `just session-test` puts the checkout at
+`/var/tmp/riff-ci/riff` in the container, on each machine and in CI. To
+run a test of the artifact of a CI run, see [Run a test of the build of
+CI](how-it-works.md#run-a-test-of-the-build-of-ci).
 
 ### Run the tests of the job macOS on a Mac
 

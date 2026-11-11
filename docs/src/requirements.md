@@ -4660,6 +4660,19 @@
 - **01M752WCFNXA7PEWM6X4FVDVYH** `restart.rs` of `riff` is a test binary
   of its own, and no test of that binary starts a child process. So no
   child holds the listening socket of the server that the test stops.
+- **01M75NDQY6BHZBV9PF735E3FGY** `just ci-test NAME` runs the tests
+  whose name has NAME from the artifact `tests-TREE` of the tree of
+  `HEAD`, with `hygiene test-name NAME --archive`, and compiles nothing.
+  It puts a linked worktree of `HEAD` at the path that the archive
+  names, unpacks the archive there, and runs the tests there in the
+  environment of the jobs `Tests I/N`: a clean environment with a new
+  home, `CARGO_HOME` and `CARGO_TARGET_DIR` in `target/session`, and the
+  values of the tests. A second run for the same tree takes the download
+  and the worktree of the first. It removes a folder at that path only
+  when an earlier run made it. When CI kept no `tests-TREE` of the tree,
+  or its binaries cannot run on the machine, it says so, exits with 3,
+  and builds nothing. The `CLAUDE.md` of riff tells a verifier to run a
+  test with it.
 
 ## The phone app
 
@@ -5054,8 +5067,7 @@ of this part when they merge.
 - **01M515Z3Y7GSFNTJGXJD727MQK** The job `Build` of the Gate runs
   `deploy/session-test.sh --build` in the container of
   01M51117NDKF11FNZ915TTQED4, with docker and a cache of
-  `target/session`. The key of the cache is the hash of `riff.toml`,
-  `rust-toolchain.toml` and `Cargo.lock`. The jobs `Tests I/N` run
+  `target/session`. The jobs `Tests I/N` run
   `deploy/session-test.sh --archive I/N`: part I of N of the tests of
   the workspace, in the same container, with no cache
   (01M6QQ1P5YCT0JX90X5FCKM4W1). No other job runs the tests in the
@@ -5335,6 +5347,13 @@ of this part when they merge.
   names the key, the file, and the folder of `GH_CONFIG_DIR` where the
   session finds its token. This supersedes 01M5SMW2B4GMJ3V6BCX1KGC1ZY in
   part.
+- **01M75NDR15DNBFHDBNKA3CA1BE** `deploy/session-test.sh` binds the
+  checkout at `/var/tmp/riff-ci/riff` in the container, and runs there.
+  The archive of the test build of CI names that path.
+- **01M75NDR415ES5GK69MX80PTBS** The key of the cache of
+  `target/session` of the job `Build` is the hash of `riff.toml`,
+  `rust-toolchain.toml`, `Cargo.lock` and `deploy/session-test.sh`.
+  Supersedes 01M515Z3Y7GSFNTJGXJD727MQK in part: the key of the cache.
 
 ### Sessions
 
@@ -6526,6 +6545,12 @@ of this part when they merge.
   message only when the verify waits or passed. Supersedes
   01M5QW2KVAS05Q72630RNW47G0, 01M5QW2KYFM4C287D9NMSPH8TA,
   01M6FZ141Y0J8G2AYX0G5HY1CX and 01M5QW2M4WX53N29SHRV0S32WM in part.
+- **01M75NDGTPJGFSZMTJV04ZFR1D** When the repository has CI, the start
+  text of a verify tells the verifier to run each test from the test
+  build that CI made for the commit, with the command that the rules of
+  the repository name for it, and to build nothing. When CI kept no test
+  build of the commit, the verifier says so in its result, and only then
+  builds the test.
 
 ### The lead, the view and the takeover
 

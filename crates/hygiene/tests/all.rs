@@ -6,6 +6,7 @@ mod book;
 mod build_once;
 mod ci;
 mod ci_lock;
+mod ci_test;
 mod cli;
 mod dependabot;
 mod gate;

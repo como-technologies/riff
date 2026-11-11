@@ -2810,6 +2810,42 @@ Each step on GitHub is one `riff` command, a thin wrapper around the
 `gh` of your machine. A session runs one command for one step, with no
 shell loop.
 
+### Run a test of the build of CI
+
+A verifier builds no test. CI built the test binaries of the commit
+one time, in the job `Build`, and keeps them as the artifact
+`tests-TREE`, where TREE is the git tree of the commit. In a repository
+with CI, the start text of a verify tells the verifier to run each
+test from that build, with the command that the rules of the
+repository name. The `CLAUDE.md` of riff names this command. NAME is
+the name of a test, or a part of the name, as for `cargo test NAME`:
+
+```sh
+just ci-test NAME
+```
+
+A test binary reads the files of the path where CI built it,
+`/var/tmp/riff-ci/riff`. So the command puts a worktree of `HEAD` at
+that path, unpacks the binaries there, and runs the tests there, as a
+job `Tests I/N` runs them. A second run for the same tree takes the
+download and the worktree of the first.
+
+```mermaid
+flowchart LR
+    V["just ci-test NAME"] --> A{"CI kept<br/>tests-TREE?"}
+    A -- "yes" --> W["a worktree of HEAD at<br/>/var/tmp/riff-ci/riff"]
+    W --> R["the tests with NAME<br/>in their name, no build"]
+    A -- "no" --> S["exit 3: the verifier says so<br/>in its result, then builds"]
+```
+
+When CI kept no test build of the tree, for example because the run
+failed before `Build` kept it, the command says so and exits with 3.
+Then the verifier says so in its result, and builds the test:
+
+```sh
+just test NAME
+```
+
 ### The order of the verifies of a wave
 
 The wave orders the verifies of the pull requests whose heads conflict.

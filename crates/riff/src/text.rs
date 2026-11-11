@@ -6776,6 +6776,16 @@ pub const ISSUE_BY_COMMENT: &str = "Never change the body or the title of an iss
 pub const VERIFY_READS_ONLY: &str = "Do not commit, do not push, and do not change the pull \
      request or an issue: put each finding in your result.";
 
+/// The part of the step of the start text of a verifier that runs a test,
+/// for a repository with CI: the verifier runs each test from the test
+/// build that CI made for the commit, and builds nothing
+/// (01M75NDGTPJGFSZMTJV04ZFR1D). It names no command: the rules of the
+/// repository name it (01M5RN89WH3PHV3BHMJ25T3SX4).
+pub const VERIFY_CI_TESTS: &str = "When the rules of the repository name a command that runs a \
+     test from the test build that CI made for the commit, run each test with it, and build \
+     nothing. When CI kept no test build of the commit, say so in your result, and only then \
+     build the test.";
+
 /// The line of the start text of a worker about the body of the pull
 /// request: a line `Key: value` at its end is a trailer line, and the
 /// merge wraps a trailer line over [`hygiene::MERGE_WIDTH`] characters
@@ -12068,7 +12078,9 @@ pub fn wave_checks_rerun(
 /// (01M4ZV3B6R4WSEJXYT7QPRWT6X). It reads the diff against the default
 /// branch `base` (01M5QYBWPAJ219BE8QKVKG1TWW). It names the `checks` of
 /// the full check of the commit: the wave started the verify when they
-/// were done. It sends the verifier to the rules of the repository for
+/// were done. With CI, it tells the verifier to run each test from the
+/// test build of CI ([`VERIFY_CI_TESTS`], 01M75NDGTPJGFSZMTJV04ZFR1D).
+/// It sends the verifier to the rules of the repository for
 /// agents, when it has them (01M5R580VCRCHJM8FY7NT485R1,
 /// 01M5RN89WH3PHV3BHMJ25T3SX4). It has the part for a release pull
 /// request only when the repository has `release`, the table
@@ -12093,6 +12105,8 @@ pub fn wave_checks_rerun(
 /// // (01M6WWG3S60XYGTNBQH7S3F6D1).
 /// assert!(text.contains(riff::text::VERIFY_READS_ONLY));
 /// assert!(!text.contains("gh issue comment"));
+/// // A test runs from the test build of CI (01M75NDGTPJGFSZMTJV04ZFR1D).
+/// assert!(text.contains(riff::text::VERIFY_CI_TESTS));
 /// let two = ["Lint".to_owned(), "Test".to_owned()];
 /// let text = riff::text::wave_verify_start("o/r", "main", 12, 40, "1a2b3c4d5e6f", &two, true);
 /// assert!(text.contains("was done: the checks Lint, Test."));
@@ -12108,6 +12122,7 @@ pub fn wave_checks_rerun(
 /// assert!(none.contains("The repository has no CI: riff/verify is its only check"));
 /// assert!(none.contains("Run the tests that the criteria name."));
 /// assert!(!none.contains("the full check of the commit was done"));
+/// assert!(!none.contains(riff::text::VERIFY_CI_TESTS));
 /// ```
 pub fn wave_verify_start(
     repo: &str,
@@ -12136,6 +12151,12 @@ pub fn wave_verify_start(
             check_names(checks)
         )
     };
+    // With CI, a test runs from the test build of CI (01M75NDGTPJGFSZMTJV04ZFR1D).
+    let build = if checks.is_empty() {
+        String::new()
+    } else {
+        format!("\n   {VERIFY_CI_TESTS}")
+    };
     format!(
         "You are a verifier of riff. You run in a container, in your own clone of {repo}, at the \
          commit {commit} of pull request #{pull}, detached. Check the work of issue-{issue} \
@@ -12152,7 +12173,7 @@ pub fn wave_verify_start(
          4. See the checks of the commit: gh pr checks {pull}\n   \
          {ran}\n\
          5. Check each criterion: review the code and its fit with the design, read the test \
-         of each criterion, and run that test by its name when you must.\n\
+         of each criterion, and run that test by its name when you must.{build}\n\
          6. {VERIFY_READS_ONLY} Run each test in the foreground, and wait for its end. Never \
          end a turn while a background task runs: a session does not continue after its \
          result.\n\
@@ -13851,6 +13872,55 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// #1947 (01M75NDGTPJGFSZMTJV04ZFR1D): with CI, the step of a verify
+    /// that runs a test says to run each test from the test build that CI
+    /// made for the commit, with the command of the rules of the
+    /// repository, and to build nothing. When CI kept no test build, the
+    /// verifier says so in its result, and only then builds. With no CI,
+    /// the step has no such part.
+    #[test]
+    fn the_start_text_of_a_verify_runs_a_test_from_the_test_build_of_ci() {
+        let step = |text: &str| {
+            text.split("\n5. ")
+                .nth(1)
+                .and_then(|rest| rest.split("\n6. ").next())
+                .unwrap_or_else(|| panic!("no step 5 in\n{text}"))
+                .to_owned()
+        };
+        let checks = ["CI".to_owned()];
+        for release in [true, false] {
+            let text = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &checks, release);
+            let five = step(&text);
+            assert!(
+                five.starts_with("Check each criterion: review the code"),
+                "{five}"
+            );
+            assert!(
+                five.contains(
+                    "run that test by its name when you must.\n   When the rules of the \
+                     repository name a command that runs a test from the test build that CI \
+                     made for the commit, run each test with it, and build nothing."
+                ),
+                "{five}"
+            );
+            assert!(
+                five.ends_with(
+                    "When CI kept no test build of the commit, say so in your result, and only \
+                     then build the test."
+                ),
+                "{five}"
+            );
+            assert_eq!(text.matches(VERIFY_CI_TESTS).count(), 1, "{text}");
+        }
+        let none = wave_verify_start("o/r", "main", 12, 40, "1a2b3c4", &[], true);
+        let five = step(&none);
+        assert!(
+            five.ends_with("run that test by its name when you must."),
+            "{five}"
+        );
+        assert!(!none.contains("test build"), "{none}");
     }
 
     /// #1633 (01M6QFZ9JHR19Y8F1PWH2HVQ07): the start routine in the MCP

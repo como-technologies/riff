@@ -159,6 +159,23 @@ test-archived PART:
     tar -xf target/test-archive/tests.tar
     {{test_env}} "${CARGO_TARGET_DIR:-target}/debug/hygiene" test-part {{PART}} --archive target/test-archive
 
+# A verifier runs a test of the commit with this (01M75NDQY6BHZBV9PF735E3FGY).
+# deploy/ci-test.sh takes the artifact tests-TREE of the tree of HEAD from
+# CI, puts a worktree of HEAD at the path of the archive, unpacks the
+# archive there, and runs test-named there in the environment of the
+# jobs Tests I/N. It compiles nothing. Exit 3: CI kept no test build of
+# the tree that runs here.
+# Run the tests whose name has NAME from the test binaries that CI built for HEAD, with no build, for example: just ci-test the_archive_runs
+[positional-arguments]
+ci-test NAME:
+    deploy/ci-test.sh "$1"
+
+# deploy/ci-test.sh runs this in the checkout of the archive in ARCHIVE.
+[positional-arguments]
+[private]
+test-named NAME ARCHIVE:
+    {{test_env}} "${CARGO_TARGET_DIR:-target}/debug/hygiene" test-name "$1" --archive "$2"
+
 # The job macOS of the Gate runs this on a Mac with Apple silicon
 # (01M6YPB5DZ9M3VEJ7V7P7EF797). A test that needs Linux has
 # cfg(target_os = "linux") (01M6YPB5GTHFQG8HGM57DVBGBN).
