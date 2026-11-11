@@ -3882,10 +3882,12 @@ a line of `riff-bot` too. These are the lines of `riff-bot`:
 - the line that a person passed the owner role,
 - the lines of `riff release cut` and `riff release publish`,
 - the ask while a deploy waits for your approval, and its reminder,
-- the ask when a lead adds the label `question` to an issue,
 - the lines of the riff daemon about your lead, for example "riff
   started the lead of mike in como-technologies/riff on thelio again on
   the new riff".
+
+A question of a lead gets no line in the chat (see
+[See all your open questions](development.md#see-all-your-open-questions)).
 
 Your riff tells riff-server only the fact, for example the version and
 the CI run of a deploy that waits. riff-server writes the text of the
@@ -3931,7 +3933,7 @@ riff tail chat
 14:03  <riff>  brett@heron:riff (25456ff6) lead  → name=brett  verified  #44
        @brett not yet: #207 waits for CI.
 14:05  <riff-bot>  riff@server  → name=mike  #45
-       @mike A lead waits for your answer in issue #12 of como-technologies/riff: ...
+       @mike riff release v3.3.0 waits for your approval: ...
 ```
 
 A line of `riff-bot` has no mark `verified` or `not verified`. Only
@@ -3953,7 +3955,7 @@ riff read --thread chat
 ```text
 chat
 [44] brett@heron:riff (25456ff6) lead=true to name=brett (verified): @brett not yet: #207 waits for CI.
-[45] riff-bot (riff-server) to name=mike: @mike A lead waits for your answer in issue #12 of como-technologies/riff: ...
+[45] riff-bot (riff-server) to name=mike: @mike riff release v3.3.0 waits for your approval: ...
 ```
 
 ### Type while lines come in

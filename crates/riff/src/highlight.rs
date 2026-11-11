@@ -720,9 +720,6 @@ mod tests {
             why(&line_in(&chat(), from, to, kind, body), &chat(), &me(), &[])
         };
         assert_eq!(ask(&server, &[], Kind::Riff, waits), Some(Why::Ask));
-        // The ask of the label question names the person too.
-        let question = "@mike A lead waits for your answer in issue #12 of o/r";
-        assert_eq!(ask(&server, &[], Kind::Riff, question), Some(Why::Ask));
         // A line of riff-bot to the terminals of the person.
         let to_me = ["user=mike,person=true"];
         assert_eq!(ask(&server, &to_me, Kind::Riff, "a fault"), Some(Why::Ask));

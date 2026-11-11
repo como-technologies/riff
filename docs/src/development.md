@@ -2876,10 +2876,6 @@ each host:
 - a fault when riff cannot read the state of the forge (see
   [See the watches of the daemon](#see-the-watches-of-the-daemon)).
 
-The line in `riff chat` that tells you that the label `question` went on
-an issue comes one time too, and it goes to you, not to your lead (see
-[Ask the person a question](#ask-the-person-a-question)).
-
 A notice about one host comes from each host, because each host has its
 own fact:
 
@@ -3863,9 +3859,9 @@ From then on, riff waits for the answer:
   [See which wave runs, and where](#see-which-wave-runs-and-where)).
   The Waves tab of the TUI shows it in each wave (see
   [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)).
-- The look of the daemon tells the person one time in `riff chat`, with
-  the title and the link of the issue. It tells again only when the
-  label goes on again.
+- riff posts no line in `riff chat` for the question. The Waves tab and
+  `riff questions` show it (see
+  [See all your open questions](#see-all-your-open-questions)).
 
 The person answers in the body or in a comment, and can then mark the
 questions as answered (see
@@ -3884,7 +3880,7 @@ repository, when it is not there.
 ```mermaid
 flowchart LR
     L["the lead: the questions in the body,<br/>gh issue edit --add-label question"] --> G["the group question:<br/>no build"]
-    L --> C["one line in riff chat<br/>for the person"]
+    L --> C["the Waves tab and riff questions<br/>show the question"]
     P["the person answers<br/>in the body or in a comment"] --> R["the lead records the answer,<br/>gh issue edit --remove-label question"]
     G --> P
     R --> F["the wave takes the issue"]
@@ -3892,8 +3888,11 @@ flowchart LR
 
 ### See all your open questions
 
-To see each open question for you, in all your repositories, run this in
-any folder:
+riff posts no line in `riff chat` for a question. Two places show your
+open questions: the Waves tab of the TUI (see
+[See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)),
+and `riff questions`. To see each open question for you, in all your
+repositories, run this in any folder:
 
 ```sh
 riff questions

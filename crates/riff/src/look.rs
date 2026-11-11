@@ -126,33 +126,18 @@
 //!
 //! A lead that waits for the answer of a person adds the label `question`
 //! to an issue ([`riff_client::waves::QUESTION`],
-//! 01M6QBJA0J7PQ0J29HWM1KDVHJ). The look tells the person of the lead one
-//! time in riff chat ([`AskWatch`], 01M6QBJHV7PVV5893Q6RCPENJQ): it tells
-//! riff-server the issue ([`BotFact::Question`]), and riff-server writes
-//! the line of riff-bot with the link of the issue. The line names the
-//! person first (`@mike`), so it wakes the terminals of the person, and no
-//! agent session.
-//! The daemon keeps the issues that it told in memory. An issue that loses
-//! the label goes out of that set, so the next time that the label goes on,
-//! the person gets a new line.
-//!
-//! The post has a key ([`question_key`]): the issue, and the time of the
-//! last event "labeled" with the label, which the look reads one time
-//! for each new issue ([`question_at`]). The look of each host and a new
-//! start of the daemon make the same key for the same label, and
-//! `riff-server` drops the second post. A label that goes on again has a new
-//! time, so it has a new key.
+//! 01M6QBJA0J7PQ0J29HWM1KDVHJ). The look tells no one: it sends no fact,
+//! and riff chat gets no line (01M75QTMB42NME9Z2Y0XC0AN97). The Waves tab
+//! of the TUI ([`crate::tui::waves`]) and `riff questions`
+//! ([`crate::questions`]) read the label from the forge, and show each
+//! open question.
 //!
 //! ```mermaid
-//! sequenceDiagram
-//!     participant A as the daemon of pangolin
-//!     participant B as the daemon of thelio
-//!     participant S as riff-server
-//!     participant P as the person (riff chat)
-//!     A->>S: post "@mike A lead waits ..." to name=mike, key question-12-2026-11-05T20:11:03Z
-//!     S->>P: the line
-//!     B->>S: post, the same key
-//!     Note over S: it keeps this key: it drops the post
+//! flowchart LR
+//!     L["the lead: label question"] --> F["the forge"]
+//!     F --> D["the look of the daemon:<br/>no fact, no chat line"]
+//!     F --> W["the Waves tab: an asked row"]
+//!     F --> Q["riff questions: a line"]
 //! ```
 //!
 //! # When main breaks
@@ -231,7 +216,7 @@
 //! starts an async operation of the cycle registers a watch, and the
 //! daemon follows it ([`crate::watches`], 01M5RGCW5NCKQYA61RM63914TX).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -240,7 +225,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use riff_core::name::{SessionUri, Who};
 use riff_core::selector::Selector;
-use riff_core::wire::{BotFact, ItemFact, Kind, PullFact, PullState, Unanswered};
+use riff_core::wire::{ItemFact, Kind, PullFact, PullState, Unanswered};
 use serde::Deserialize;
 
 use crate::pr::{
@@ -1197,108 +1182,13 @@ pub async fn look_at_main(
     posted
 }
 
-/// The issues with the label `question` that the look told the person of
-/// the lead of (#1605). The daemon keeps them in memory. An issue that
-/// loses the label, or closes, goes out of the set: when the label goes on
-/// again, the person gets a new notice.
-#[derive(Debug, Default, Clone)]
-pub struct AskWatch {
-    told: BTreeSet<u64>,
-}
-
-impl AskWatch {
-    /// The open `issues` that have the label `question` and that this
-    /// watch did not tell yet, in the order of `issues`. The watch keeps
-    /// them as told: [`AskWatch::untell`] takes one back after a post that
-    /// failed.
-    ///
-    /// ```
-    /// use riff::look::AskWatch;
-    /// use riff::rollout::{Issue, Label};
-    ///
-    /// let issue = |number, label: &str| Issue {
-    ///     number,
-    ///     labels: vec![Label { name: label.into() }],
-    ///     ..Issue::default()
-    /// };
-    /// let mut watch = AskWatch::default();
-    /// let open = [issue(12, "question"), issue(13, "bug"), issue(14, "question")];
-    /// let numbers = |news: Vec<&Issue>| news.iter().map(|i| i.number).collect::<Vec<_>>();
-    /// assert_eq!(numbers(watch.news(&open)), [12, 14]);
-    /// // The same look again: nothing new.
-    /// assert!(watch.news(&open).is_empty());
-    /// // 12 got its answer, and 14 stays. The label goes on 12 again: a new notice.
-    /// let answered = [issue(12, "bug"), issue(14, "question")];
-    /// assert!(watch.news(&answered).is_empty());
-    /// assert_eq!(numbers(watch.news(&open)), [12]);
-    /// ```
-    pub fn news<'a>(&mut self, issues: &'a [Issue]) -> Vec<&'a Issue> {
-        let asking: BTreeSet<u64> = issues
-            .iter()
-            .filter(|i| i.question())
-            .map(|i| i.number)
-            .collect();
-        self.told.retain(|n| asking.contains(n));
-        issues
-            .iter()
-            .filter(|i| i.question())
-            .filter(|i| self.told.insert(i.number))
-            .collect()
-    }
-
-    /// Takes `issue` back as not told: the post of its notice failed, so
-    /// the next look tells it again.
-    pub fn untell(&mut self, issue: u64) {
-        self.told.remove(&issue);
-    }
-}
-
-/// The key of the post of the notice for the label `question` on `issue`
-/// (#1605). `at` is the time that the label went on, from the events of
-/// the issue ([`question_at`]). The look of each host makes the same key
-/// for the same label, and riff-server drops the second post. A new time
-/// is a new key, so the person hears each time that the label goes on.
-///
-/// ```
-/// use riff::look::question_key;
-///
-/// assert_eq!(question_key(12, Some("2026-11-05T20:11:03Z")), "question-12-2026-11-05T20:11:03Z");
-/// assert_eq!(question_key(12, None), "question-12");
-/// ```
-pub fn question_key(issue: u64, at: Option<&str>) -> String {
-    match at {
-        Some(at) => format!("question-{issue}-{at}"),
-        None => format!("question-{issue}"),
-    }
-}
-
-/// The time that the label `question` went on `issue` of `repo` the last
-/// time, from the events of the issue. `None` when the read fails or
-/// finds no event: the notice then has no time in its key.
-pub fn question_at(gh: &Gh, repo: &str, issue: u64) -> Option<String> {
-    let path = format!("repos/{repo}/issues/{issue}/events");
-    let filter = format!(
-        r#".[] | select(.event == "labeled" and .label.name == "{}") | .created_at"#,
-        riff_client::waves::QUESTION
-    );
-    let found = gh
-        .run(&["api", &path, "--paginate", "--jq", &filter], None)
-        .ok()?;
-    found
-        .lines()
-        .map(str::trim)
-        .rfind(|line| !line.is_empty())
-        .map(str::to_owned)
-}
-
 /// What the look of the daemon keeps between two looks of one wave:
-/// what it told of the pull requests and of `main`, and of the label
-/// `question` (01M5QVH3MAEPPJN9PPVDX6N2EY, #1605). It is in memory only.
+/// what it told of the pull requests and of `main`
+/// (01M5QVH3MAEPPJN9PPVDX6N2EY). It is in memory only.
 #[derive(Debug, Default)]
 pub struct Watch {
     pulls: PullWatch,
     main: MainWatch,
-    asks: AskWatch,
     /// How old a reply of an earlier read of the forge can be, for the
     /// next look ([`look_wave`]). The loop of the wave reads the same
     /// issues and pull requests, so the look takes its reply and calls no
@@ -1346,22 +1236,6 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
             .await
         {
             news[at..].iter().for_each(|rest| watch.pulls.untell(rest));
-            return Err(e);
-        }
-    }
-    // The person hears once that the label `question` went on an issue
-    // (#1605). A post that fails stays for the next look.
-    let asking: Vec<u64> = watch.asks.news(&issues).iter().map(|i| i.number).collect();
-    for (at, number) in asking.iter().enumerate() {
-        let (gh, repo, number) = (gh.clone(), wave.repo.clone(), *number);
-        let labeled = tokio::task::spawn_blocking(move || question_at(&gh, &repo, number)).await?;
-        let key = question_key(number, labeled.as_deref());
-        told = true;
-        let fact = BotFact::Question { issue: number };
-        if let Err(e) = world.ask_person(wave, fact, &key).await {
-            asking[at..]
-                .iter()
-                .for_each(|rest| watch.asks.untell(*rest));
             return Err(e);
         }
     }

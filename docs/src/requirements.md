@@ -556,13 +556,6 @@
   `question`, next to `held` and `tracker`. A claim, a verify and a
   stuck pull request win over it, a tracker wins over it, and it wins
   over a hold. A pause hides no item of the group.
-- **01M6QBJHV7PVV5893Q6RCPENJQ** When the label `question` goes on an
-  issue, the look of the daemon tells the person of the lead one time in
-  riff chat. It posts one line for each issue and each time that the
-  label goes on. The post has a key from the issue and the time of the
-  label event, so the look of each host and a new start of the daemon
-  give the person the same line one time. When the label goes off, the
-  look forgets the issue.
 - **01M6QBJHZBDQ8BB1JPT003RXW7** `riff init` makes the label `question`
   with the first wave, when the repository has none. It never changes a
   label that is there.
@@ -727,6 +720,13 @@
   in "How It Works", and shows the line of the dropped events of riff
   daemon status in "See how the daemon uses the GitHub limit" in
   development.md, with a copyable sh block (#1656).
+- **01M75QTMB42NME9Z2Y0XC0AN97** riff posts no chat line for a question.
+  When the label `question` goes on an issue, the look of the daemon
+  sends riff-server no fact, and riff-server posts no line of riff-bot
+  for it. The Waves tab of the TUI and `riff questions` show each open
+  question. The call `bot` has no key (#1917). Supersedes
+  01M6QBJHV7PVV5893Q6RCPENJQ in full, and 01M74BPHQZHXFYYNXAJ1WFASQQ in
+  part.
 
 ## Issue hygiene on GitHub
 
@@ -3496,18 +3496,16 @@
 - **01M74BPHQZHXFYYNXAJ1WFASQQ** riff-server posts each line that riff
   writes for a person in riff chat, with the kind `riff`: the lines of
   `riff release cut` and `riff release publish`, the line "waits for
-  your approval" of the watch of a deploy and its reminder, the line of
-  the label `question`, and the lines of the daemon about a lead. The
-  riff of the person sends only the fact in the call `bot`: the version
-  and the run of a release, the issue, or the step of the daemon.
-  riff-server writes the text from the fact and from what it holds: the
-  owner, the place of the caller and the holds of the version. No text
-  of a client goes into the line: the line of the label `question` has
-  the link of the issue and no title, and a line of the daemon names the
-  cause of a fault only for a clone with no main clone. Only a person
-  and the lead of the person make the call. Supersedes
-  01M6Y4ZCTSTVM971BDC1F7GJPK, 01M5TKMVB7CF0QNAWXEVGEQETJ,
-  01M6XSHMGM82QSABRWCYH595VH and 01M6QBJHV7PVV5893Q6RCPENJQ in part.
+  your approval" of the watch of a deploy and its reminder, and the
+  lines of the daemon about a lead. The riff of the person sends only
+  the fact in the call `bot`: the version and the run of a release, or
+  the step of the daemon. riff-server writes the text from the fact and
+  from what it holds: the owner, the place of the caller and the holds
+  of the version. No text of a client goes into the line: a line of the
+  daemon names the cause of a fault only for a clone with no main clone.
+  Only a person and the lead of the person make the call. Supersedes
+  01M6Y4ZCTSTVM971BDC1F7GJPK, 01M5TKMVB7CF0QNAWXEVGEQETJ and
+  01M6XSHMGM82QSABRWCYH595VH in part.
 - **01M74VFTFRSSWA6VPQS8SB0TBZ** riff-server writes a line of riff-bot
   about a release only for a tag `vX.Y.Z` with nothing after its
   version, and the line holds the version that riff-server parsed. A tag

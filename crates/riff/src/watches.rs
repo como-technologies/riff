@@ -879,7 +879,7 @@ impl Lookout for Here {
         Box::pin(async move {
             let person = crate::identity::person(&wave.place(None)?, &wave.server)?;
             let api = riff_client::api::Api::new(&wave.server).signed_in(None)?;
-            api.bot(&person, fact, None).await
+            api.bot(&person, fact).await
         })
     }
 

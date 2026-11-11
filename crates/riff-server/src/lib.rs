@@ -2667,9 +2667,7 @@ pub fn still_blocked(session: &SessionUri, reason: &str, after_secs: u64) -> Str
 /// with the kind `riff` ([`bot`], 01M74BPHQZHXFYYNXAJ1WFASQQ). riff-server
 /// writes the text from the fact and from what it holds: the owner, the
 /// place of the caller and the holds of the version. Only a person and
-/// the lead of the person may call it. A key that a kept line of
-/// riff-bot for the same user has drops the post
-/// (01M5TKG2K1AYK1KE7C2AA2W9DS).
+/// the lead of the person may call it.
 async fn bot_post(
     AxumState(s): AxumState<Shared>,
     proof: Proof,
@@ -2714,7 +2712,7 @@ async fn bot_post(
         body: line.body,
         kind: Kind::Riff,
         at_ms: now_ms(),
-        key: r.key.map(|key| bot::key_of(caller.who().user(), &key)),
+        key: None,
     };
     s.engine.announce(announce).await?;
     Ok(Json(()))

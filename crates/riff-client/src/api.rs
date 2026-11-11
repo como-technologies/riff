@@ -1211,14 +1211,11 @@ impl Api {
 
     /// Tells riff-server the fact `fact` of `me`, a person or the lead of
     /// the person: riff-server writes the line of riff-bot for it, and
-    /// posts it in riff chat ([`BotPost`]). With `key`, riff-server drops
-    /// the line when a kept line of riff-bot for the same user has the key
-    /// (01M5TKG2K1AYK1KE7C2AA2W9DS).
-    pub async fn bot(&self, me: &SessionUri, fact: BotFact, key: Option<&str>) -> Result<()> {
+    /// posts it in riff chat ([`BotPost`]).
+    pub async fn bot(&self, me: &SessionUri, fact: BotFact) -> Result<()> {
         let post = BotPost {
             me: me.clone(),
             fact,
-            key: key.map(str::to_owned),
         };
         self.call(&post).await
     }
