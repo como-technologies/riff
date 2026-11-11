@@ -35,11 +35,11 @@
 //!   ([`crate::github`]).
 //! - **A token with other rights** (01M74MB9786AE4YVEG10FNGDT5). A lead
 //!   App that riff made before the webhook of the lead App sends no event.
-//!   So riff-server compares each new token with the rights that GitHub
-//!   asked for, with each kept token of the same install and the same
-//!   role ([`Renews::changed`]): `riff github check`, `riff github
-//!   install`, and each token of a session or a daemon. A token with other
-//!   rights renews the install too.
+//!   So riff-server compares each new token that has the rights that it
+//!   asked for with each kept token of the same install and the same role
+//!   ([`Renews::changed`]): the tokens of `riff github check`, of `riff
+//!   github install`, and of each session and each daemon. A token with
+//!   other rights renews the install too.
 //! - **The renew** (01M74MB92717A21MG97BF7SDP3). riff-server takes each
 //!   kept token of the install out ([`Renews::take`]), and sends one
 //!   [`GitHubRenew`] to each stream `GET /v1/github/renew`

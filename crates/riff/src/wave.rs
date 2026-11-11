@@ -4153,36 +4153,39 @@ impl World for Live {
     ) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             use futures::StreamExt;
-            let follow = async {
-                let person = identity::person(place, server)?;
-                let api = Api::new(server).signed_in(None)?;
-                let renews = api::follow(|| api.github_renew(&person), STREAM_RETRY);
-                tokio::pin!(renews);
-                let mut fault = None;
-                while let Some(renew) = renews.next().await {
-                    match renew {
-                        Ok(renew) => {
-                            fault = None;
-                            if to.send(renew).is_err() {
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            let e = format!("{e:#}");
-                            if fault.as_ref() != Some(&e) {
-                                eprintln!("riff daemon: {server}: {}", text::daemon_no_renews(&e));
-                            }
-                            fault = Some(e);
+            // A fault prints one time until it changes. A sign-in that
+            // does not read yet is tried again.
+            let said = |fault: &mut Option<String>, e: &anyhow::Error| {
+                let e = format!("{e:#}");
+                if fault.as_ref() != Some(&e) {
+                    eprintln!("riff daemon: {server}: {}", text::daemon_no_renews(&e));
+                }
+                *fault = Some(e);
+            };
+            let mut fault = None;
+            let api = loop {
+                let signed_in = identity::person(place, server)
+                    .and_then(|person| Ok((person, Api::new(server).signed_in(None)?)));
+                match signed_in {
+                    Ok(api) => break api,
+                    Err(e) => said(&mut fault, &e),
+                }
+                tokio::time::sleep(STREAM_RETRY).await;
+            };
+            let (person, api) = &api;
+            let renews = api::follow(|| api.github_renew(person), STREAM_RETRY);
+            tokio::pin!(renews);
+            while let Some(renew) = renews.next().await {
+                match renew {
+                    Ok(renew) => {
+                        fault = None;
+                        if to.send(renew).is_err() {
+                            return;
                         }
                     }
+                    Err(e) => said(&mut fault, &e),
                 }
-                anyhow::Ok(())
-            };
-            if let Err(e) = follow.await {
-                let e = format!("{e:#}");
-                eprintln!("riff daemon: {server}: {}", text::daemon_no_renews(&e));
             }
-            std::future::pending().await
         })
     }
 }
