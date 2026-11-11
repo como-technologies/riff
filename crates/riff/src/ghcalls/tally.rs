@@ -82,6 +82,7 @@ pub const CALLERS: &[&str] = &[
     "init",
     "questions",
     "tui",
+    "chat",
     "github",
 ];
 

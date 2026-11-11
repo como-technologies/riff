@@ -92,8 +92,10 @@
 //! boards (01M6VFGK79JGRF919BM8SJ6E08), and the TUI reads the forge of
 //! its boards each [`forge::READ_EVERY`] ([`forge::read_each`],
 //! 01M6VFGK4P2FWMFQHBZKR3JXSZ). Each call of `gh` of the TUI counts as
-//! the caller `tui`. The two tabs share the `ETag` of each read
-//! ([`forge::Kept`]).
+//! the caller `tui`. While the Chat tab shows, the TUI reads the open
+//! issues for its list of `#` each [`forge::READ_EVERY`]
+//! ([`forge::open_issues_each`], 01M74CX9KVGQG4Y7ATT6268NMY). The three
+//! tabs share the `ETag` of each read ([`forge::Kept`]).
 //!
 //! | What | Source | When |
 //! |---|---|---|
@@ -103,6 +105,7 @@
 //! | The container sessions of this machine | the socket of the daemon: `status` | each second while the Sessions tab is open |
 //! | The titles of the issues | `gh api`: the conditional read of the open issues | each 60 s while the Sessions tab is open |
 //! | The items of the boards | `gh api`, and `gh pr list` with an open pull request | each 60 s while the Waves tab shows, and at once on `r` |
+//! | The open issues of the list of `#` | `gh api`: the conditional read of the open issues | each 60 s while the Chat tab shows |
 //! | The usage of a wave | `gh`: the milestones, the issues and their comments | when the Usage report shows with no read yet, and on `r` |
 //! | The audit of a wave | riff-server: the log; `gh`: the forge | on `Enter` and `r` in the Audit report |
 //! | The events of a session | the socket of the daemon, or riff-server for another host | while the Session log shows |
@@ -957,9 +960,11 @@ impl State {
 
     /// The state of a TUI in the clone of `here`, `OWNER/REPO`: its
     /// repository gets a board in the Waves tab
-    /// (01M6VFG882T794B1CTHK5AKPDG).
+    /// (01M6VFG882T794B1CTHK5AKPDG), and its issues are in the list of
+    /// `#` of the Chat tab (01M74CX9KVGQG4Y7ATT6268NMY).
     #[must_use]
     pub fn in_clone(mut self, here: Option<String>) -> State {
+        self.chat_in_clone(here.clone());
         self.waves = waves::Waves::new(here);
         self
     }
@@ -1904,6 +1909,10 @@ type Titles = Vec<(String, Result<Issues, String>)>;
 /// A read of the forge for the Waves tab: the read of each repository.
 type Boards = Vec<(String, Result<forge::Forge, String>)>;
 
+/// A read of the open issues of each repository for the list of `#` of
+/// the Chat tab: the issues, or the error of `gh`.
+type Opened = Vec<(String, Result<Vec<crate::typeahead::OpenIssue>, String>)>;
+
 /// A read of `gh` on a thread of its own: the end of the TUI waits for
 /// no read (#1707). A thread that nobody joins holds up no exit.
 struct Reading<T>(std::thread::JoinHandle<T>);
@@ -1948,8 +1957,12 @@ struct Tasks {
     read_at: Option<tokio::time::Instant>,
     /// The read of the forge for the Waves tab that runs.
     forge: Option<Reading<Boards>>,
+    /// The read of the open issues for the Chat tab that runs, and the
+    /// time of the last one.
+    opening: Option<Reading<Opened>>,
+    opened_at: Option<tokio::time::Instant>,
     /// The kept replies of the conditional reads of `gh`: the Sessions
-    /// tab and the Waves tab share them.
+    /// tab, the Waves tab and the Chat tab share them.
     kept: forge::Kept,
     /// `r` while the Waves tab shows: read the forge again.
     forge_again: bool,
@@ -2038,6 +2051,8 @@ async fn frames(
         reading: None,
         read_at: None,
         forge: None,
+        opening: None,
+        opened_at: None,
         kept: forge::Kept::default(),
         forge_again: false,
         acting: None,
@@ -2082,6 +2097,24 @@ async fn frames(
             && let Some(done) = tasks.forge.take()
         {
             state.read_forge(done.result()?, crate::run::now_ms());
+        }
+        // While the Chat tab shows, the open issues of the list of `#`
+        // (01M74CX9KVGQG4Y7ATT6268NMY).
+        if tasks.opening.as_ref().is_some_and(Reading::is_finished)
+            && let Some(done) = tasks.opening.take()
+        {
+            state.chat_issues(done.result()?);
+        }
+        let due = tasks
+            .opened_at
+            .is_none_or(|at| at.elapsed() >= forge::READ_EVERY);
+        if state.tab() == Tab::Chat && tasks.opening.is_none() && due {
+            let repos = state.chat_repos();
+            let (gh, kept) = (gh.clone(), tasks.kept.clone());
+            tasks.opened_at = Some(Instant::now());
+            tasks.opening = Some(Reading::start(move || {
+                forge::open_issues_each(&gh, &repos, &kept)
+            }));
         }
         if tasks
             .acting

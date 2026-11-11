@@ -94,12 +94,32 @@
 //!    Tab or Enter picks riff. Esc closes the list.
 //!    Tab pick  Esc close  Ctrl-C quit
 //!   ```
+//! - **The list of the issues** (01M74CX2V9YAF0KFPJDRM4DA83,
+//!   01M74CX9H7WT1T4EN70AVD2TGZ, 01M74CXE1703NASW3BWWA6ESGY): a `#` at
+//!   the start of a word shows the open issues that fit the letters or
+//!   digits after it, the newest first, in the place of the list of the
+//!   names, with the same keys. Each row is cut to the width of the tab.
+//!   The pick puts `#N` for an issue of the repository of the working
+//!   folder, and `OWNER/REPO#N` for an issue of another repository. While
+//!   the tab shows, the loop of the TUI reads the open issues each
+//!   [`super::forge::READ_EVERY`] ([`super::forge::open_issues`],
+//!   01M74CX9KVGQG4Y7ATT6268NMY), and gives them to
+//!   [`State::chat_issues`].
+//!
+//!   ```text
+//!    13:12 <riff> #1608 merged
+//!     #1862  riff  Projects A: riff-server keeps the projects of the riff
+//!     #1860  riff  Pick an issue with #: the type-ahead of the open issues
+//!   > is #186
+//!    Tab or Enter picks #1862. Esc closes the list.
+//!    Tab pick  Esc close  Ctrl-C quit
+//!   ```
 //! - **The note line** says what `Enter` does with a command, or why
 //!   the chat will not send it ([`prompt_note`]). It never says whom a
 //!   line wakes (01M6Y1A5PTCVZ6GRJ0FXMART2T). A post that fails, or a
 //!   paste or a key that makes the line too long, shows there at once,
-//!   until the next key (01M6VMACJGF4A0ZXC6YK13KNCH). While the list of
-//!   the names shows, the note names its keys.
+//!   until the next key (01M6VMACJGF4A0ZXC6YK13KNCH). While a list
+//!   shows, the note names its keys.
 //! - **News:** each new line of the thread while another tab shows
 //!   adds one to `Chat•N` in the strip (01M6VG1PFPMHRQ4F9XHJTYMSJY).
 //!
@@ -149,7 +169,7 @@ use super::{Action, Key as FrameKey, News, State, Tab};
 use crate::catch_up::{self, Seen, Shown, Start};
 use crate::chat::{INDENT, Sent, Typed, typed};
 use crate::text::safe;
-use crate::typeahead::{Ahead, List, READ_EVERY};
+use crate::typeahead::{Ahead, List, OpenIssue, OpenIssues, READ_EVERY};
 
 /// The most lines that the log keeps. An older line goes.
 pub const KEEP: usize = 1000;
@@ -219,10 +239,11 @@ pub enum Key {
     Down,
     /// Send the line: `Enter` in the prompt.
     Send,
-    /// Put the first name of the list of the names in the line: `Tab` or
-    /// `Enter` while the list shows.
+    /// Put the first entry of the list of the names or of the issues in
+    /// the line: `Tab` or `Enter` while the list shows.
     Pick,
-    /// Close the list of the names: `Esc` while it shows.
+    /// Close the list of the names or of the issues: `Esc` while it
+    /// shows.
     Close,
     /// Move the focus to the log: `Esc`.
     Log,
@@ -786,6 +807,8 @@ pub struct Chat {
     pub(super) warning: Option<String>,
     /// The names of the chat from the last read ([`Came::Names`]).
     names: Names,
+    /// The open issues from the last read ([`State::chat_issues`]).
+    issues: OpenIssues,
     /// The type-ahead of the prompt: the list that `Esc` closed.
     ahead: Ahead,
 }
@@ -832,7 +855,7 @@ impl Chat {
         self.warning.as_deref()
     }
 
-    /// The list of the names for the line in the prompt
+    /// The list of the names or of the issues for the line in the prompt
     /// ([`crate::typeahead`]), while the prompt has the focus.
     pub fn list(&self) -> Option<List> {
         if self.focus != Focus::Prompt {
@@ -840,7 +863,7 @@ impl Chat {
         }
         let prompt = &self.prompt;
         self.ahead
-            .list(self.names.list(), prompt.text(), prompt.at())
+            .list(self.names.list(), &self.issues, prompt.text(), prompt.at())
     }
 
     /// The person changed the line or moved the cursor: a closed list
@@ -1046,7 +1069,57 @@ impl State {
 
     /// A line of the Chat tab from before `since_ms` is no news.
     pub fn chat_since(&mut self, since_ms: u64) {
-        self.chat = Chat::new(since_ms);
+        self.chat.since_ms = since_ms;
+    }
+
+    /// The repositories of the list of `#` of the Chat tab
+    /// (01M74CX9KVGQG4Y7ATT6268NMY): the repository of each live session,
+    /// and the repository of the working folder.
+    pub fn chat_repos(&self) -> Vec<String> {
+        let here = self.chat.issues.here();
+        riff_client::waves::board_repos(self.model(), &riff_client::sessions::Show::default(), here)
+            .into_iter()
+            .collect()
+    }
+
+    /// Takes the read `read` of the open issues of each repository for
+    /// the list of `#` ([`super::forge::open_issues_each`],
+    /// 01M74CX9KVGQG4Y7ATT6268NMY). A read that failed keeps the issues
+    /// of the last read of its repository, and gives no note.
+    ///
+    /// ```
+    /// use riff::tui::chat::Key;
+    /// use riff::tui::{Key as Frame, State, Tab};
+    /// use riff::typeahead::OpenIssue;
+    /// use riff_core::build::Build;
+    ///
+    /// let mut state = State::new(Build::this(), "riff://mike@thelio".parse()?)
+    ///     .in_clone(Some("o/riff".into()));
+    /// state.chat_since(0);
+    /// assert_eq!(state.chat_repos(), ["o/riff"]);
+    /// let issue = OpenIssue { repo: "o/riff".into(), number: 1862, title: "Projects A".into(), opened: None };
+    /// state.chat_issues(vec![("o/riff".into(), Ok(vec![issue]))]);
+    /// state.on_key(Frame::Open(Tab::Chat));
+    /// for c in "is #18".chars() {
+    ///     state.on_key(Frame::Chat(Key::Type(c)));
+    /// }
+    /// assert_eq!(state.chat().list().unwrap().first().text, "#1862");
+    /// // A read that fails keeps the issues, and gives no note.
+    /// state.chat_issues(vec![("o/riff".into(), Err("gh: HTTP 502".into()))]);
+    /// assert!(state.chat().list().is_some());
+    /// assert_eq!(state.shown_note(), None);
+    /// state.on_key(Frame::Chat(Key::Pick));
+    /// assert_eq!(state.chat().prompt().text(), "is #1862 ");
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn chat_issues(&mut self, read: Vec<(String, Result<Vec<OpenIssue>, String>)>) {
+        self.chat.issues.read(read);
+    }
+
+    /// The Chat tab in the clone of `here`, `OWNER/REPO`: the list of `#`
+    /// has its issues, and a pick of one puts `#N`.
+    pub(super) fn chat_in_clone(&mut self, here: Option<String>) {
+        self.chat.issues = OpenIssues::new(here);
     }
 
     /// Takes what [`Link`] gave. A new line while another tab shows adds
@@ -1453,7 +1526,7 @@ pub(super) fn keys(
 
 /// The keys of the Chat tab in the help popup, before the keys of the
 /// frame (01M6VAZKDEQ6951KGPGAMF1SNJ).
-pub const HELP: [(&str, &str); 11] = [
+pub const HELP: [(&str, &str); 12] = [
     ("Enter", "send the line, or go back to the prompt"),
     ("Esc", "leave the prompt: the keys of the tab work"),
     ("i", "go back to the prompt"),
@@ -1467,6 +1540,10 @@ pub const HELP: [(&str, &str); 11] = [
     ("Alt-1 to 6", "open a tab, also from the prompt"),
     ("/me TEXT", "send an action"),
     ("@", "a list of the names: Tab or Enter picks, Esc closes"),
+    (
+        "#",
+        "a list of the open issues: Tab or Enter picks, Esc closes",
+    ),
     ("a paste", "goes into the line, with its new lines"),
 ];
 
@@ -1508,12 +1585,16 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
 
     let top = 3;
     let room = prompt - top;
-    // The list of the names takes the last rows of the log. It leaves
-    // the log the rows of its newest line, and one row at least: then it
-    // shows fewer names, and the pick at least
-    // (01M6Z8AHH9FW3A3132YF8XH7R9).
+    // The list of the names or of the issues takes the last rows of the
+    // log, under the text of the line. It leaves the log the rows of its
+    // newest line, and one row at least: then it shows fewer entries,
+    // and the pick at least (01M6Z8AHH9FW3A3132YF8XH7R9).
+    let indent = super::view::width(MARK).min(area.width);
     let list = chat.list();
-    let listed = list.as_ref().map(list_rows).unwrap_or_default();
+    let listed = list
+        .as_ref()
+        .map(|l| list_rows(l, usize::from(area.width - indent)))
+        .unwrap_or_default();
     let newest = chat
         .entries
         .len()
@@ -1556,8 +1637,6 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
         line,
         line_top: shown.top,
     });
-    // Under the text of the line, after the mark of the prompt.
-    let indent = super::view::width(MARK).min(area.width);
     for (y, line) in (prompt - over..prompt).zip(listed) {
         let place = Rect::new(area.x + indent, area.y + y, area.width - indent, 1);
         view.rows.push(Placed { area: place, line });
@@ -1577,11 +1656,11 @@ pub(super) fn place(state: &State, area: Rect, layout: Layout, view: &mut View) 
     });
 }
 
-/// The rows of the list of the names, of one width: the first name, the
-/// pick of `Tab` and `Enter`, in reverse video, and the count of the
-/// other names dim.
-fn list_rows(list: &List) -> Vec<Row<'static>> {
-    let rows = list.rows();
+/// The rows of the list of the names or of the issues, cut to `width`
+/// columns and of one width: the first entry, the pick of `Tab` and
+/// `Enter`, in reverse video, and the count of the other entries dim.
+fn list_rows(list: &List, width: usize) -> Vec<Row<'static>> {
+    let rows = list.rows(width);
     let width = rows
         .iter()
         .map(|row| textwrap::core::display_width(row))
@@ -1593,7 +1672,7 @@ fn list_rows(list: &List) -> Vec<Row<'static>> {
             let pad = " ".repeat(width - textwrap::core::display_width(&row));
             let style = match i {
                 0 => PICKED,
-                i if i >= list.names.len() => DIM,
+                i if i >= list.entries.len() => DIM,
                 _ => Style::new(),
             };
             Row::from(Span::styled(format!("{row}{pad}"), style))
@@ -3170,6 +3249,105 @@ mod tests {
         state.on_key(FrameKey::Chat(Key::Prompt));
         type_in(&mut state, " @b");
         assert_eq!(state.chat().list().unwrap().first().name, "brett");
+    }
+
+    /// A read of the open issues of riff, the repository of the working
+    /// folder, and of strata.
+    fn issues() -> Vec<(String, Result<Vec<OpenIssue>, String>)> {
+        let riff = "como-technologies/riff";
+        let strata = "como-technologies/strata";
+        let issue = |repo: &str, number, title: &str, opened| OpenIssue {
+            repo: repo.into(),
+            number,
+            title: title.into(),
+            opened: Some(opened),
+        };
+        vec![
+            (
+                riff.into(),
+                Ok(vec![
+                    issue(
+                        riff,
+                        1862,
+                        "Projects A: riff-server keeps the projects of the riff",
+                        200,
+                    ),
+                    issue(
+                        riff,
+                        1860,
+                        "Pick an issue with #: the type-ahead of the open issues in riff chat and the Chat tab",
+                        100,
+                    ),
+                    issue(riff, 1700, "Show the board", 50),
+                ]),
+            ),
+            (
+                strata.into(),
+                Ok(vec![issue(strata, 12, "Show the issues of strata", 300)]),
+            ),
+        ]
+    }
+
+    /// `#186` shows the open issues over the prompt, the newest first,
+    /// the first in reverse video and each row cut to the width of the
+    /// tab, and `Tab` puts `#1862 ` (01M74CX2V9YAF0KFPJDRM4DA83,
+    /// 01M74CX9H7WT1T4EN70AVD2TGZ, 01M74CXE1703NASW3BWWA6ESGY). An issue
+    /// of another repository puts `OWNER/REPO#N`. `Esc` closes the list,
+    /// and `Enter` then sends the line.
+    #[test]
+    fn hash_186_shows_the_open_issues_and_tab_puts_the_number() {
+        let mut state = mock_up();
+        state.chat_in_clone(Some("como-technologies/riff".into()));
+        state.chat_issues(issues());
+        type_in(&mut state, "is #186");
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(
+            rows[18..24],
+            [
+                " 13:12 <riff> #1608 merged",
+                "  #1862  riff  Projects A: riff-server keeps the projects of the riff",
+                "  #1860  riff  Pick an issue with #: the type-ahead of the open issues in riff …",
+                "> is #186",
+                " Tab or Enter picks #1862. Esc closes the list.",
+                " Tab pick  Esc close  Ctrl-C quit",
+            ]
+        );
+        let row = |view: &View, y: u16| view.rows.iter().find(|r| r.area.y == y).cloned();
+        assert_eq!(row(&view, 19).unwrap().line.spans[0].style, PICKED);
+        assert_eq!(row(&view, 20).unwrap().line.spans[0].style, Style::new());
+
+        send(&mut state, &view, &press(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(state.tab(), Tab::Chat);
+        assert_eq!(state.chat().prompt().text(), "is #1862 ");
+        let (rows, view) = drawn(&mut state, 80, 24);
+        assert_eq!(rows[19..22], ["", "", "> is #1862"]);
+        assert_eq!(view.cursor, Some(Position::new(11, 21)));
+
+        // An issue of strata: the repository and the number.
+        type_in(&mut state, "and #strata");
+        let list = state.chat().list().unwrap();
+        assert_eq!(list.rows(78), ["#12  strata  Show the issues of strata"]);
+        send(
+            &mut state,
+            &view,
+            &press(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert_eq!(
+            state.chat().prompt().text(),
+            "is #1862 and como-technologies/strata#12 "
+        );
+
+        // Esc closes the list, and Enter sends the line as it is.
+        type_in(&mut state, "#18");
+        send(&mut state, &view, &press(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(state.chat().focus(), Focus::Prompt);
+        assert_eq!(state.chat().list(), None);
+        assert_eq!(
+            state.on_key(FrameKey::Chat(Key::Send)),
+            Some(Action::Post(
+                "is #1862 and como-technologies/strata#12 #18".into()
+            ))
+        );
     }
 
     /// The help popup of the Chat tab has its keys, then the keys of the

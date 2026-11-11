@@ -3941,6 +3941,52 @@ stateDiagram-v2
     Closed --> Typing: the cursor leaves the word
 ```
 
+### Pick an issue with #
+
+In `riff chat`, type `#` and the first digits of the number of an
+issue, or the first letters of a word of its title. The rows under the
+prompt show the open issues that fit, the newest first. Digits fit the
+start of the number, and letters fit the start of a word of the title,
+with no regard to case. The list shows at most five issues. A row has
+the number, the repository after the slash, and the title, cut to the
+width of the terminal. Start the chat in a clone of the repository:
+
+```sh
+riff chat
+```
+
+Then type `is #186`:
+
+```text
+[riff] > is #186
+  #1862  riff  Projects A: riff-server keeps the projects of the riff
+  #1860  riff  Pick an issue with #: the type-ahead of the open issues in riff …
+  Tab or Enter picks #1862. Esc closes the list.
+```
+
+`Tab` or `Enter` puts `#1862` in the line, with a space after it. For an
+issue of another repository, it puts `OWNER/REPO#N`, for example
+`como-technologies/strata#12`. `Esc` and the other keys work as for a
+name (see "Pick a name with @"). When the digits are the whole number
+of the one issue that fits, no list shows.
+
+The issues come from `gh`: the open issues of the repository of each
+live session, and of the repository of the folder where you start the
+chat. The chat reads them when it starts, and again each minute. It
+asks GitHub whether the list of the open issues changed, as the Waves
+tab does: the answer "no change" costs no point. When `gh` cannot read
+them, the list keeps the issues of the last read, and the chat says
+nothing. The Chat tab of the TUI has the same list (see "Pick an issue
+in the Chat tab").
+
+```mermaid
+flowchart LR
+    G["gh: the open issues of each repository,<br/>each minute"] --> L["the list of #"]
+    T["you type is #186"] --> L
+    L -- "Tab or Enter" --> P["is #1862 "]
+    L -- "Esc" --> C["the list closes"]
+```
+
 ### Get a highlight in the chat
 
 A line for you is a highlight in `riff chat` and `riff tail`, as in
@@ -4110,18 +4156,19 @@ until you send the next line.
 
 | Key | Does |
 |---|---|
-| `Enter` | Send the line. While the list of the names shows: pick a name. |
-| `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `6`, `?` and `q`. While the list of the names shows: close the list. |
+| `Enter` | Send the line. While a list of names or issues shows: pick the first one. |
+| `Esc` | Leave the prompt. Then the keys of the TUI work: `1` to `6`, `?` and `q`. While a list of names or issues shows: close the list. |
 | `i`, `Enter` | Go back to the prompt. |
 | `↑`, `↓` | Move the cursor one row in a long line. On the first row, `↑` goes to the start of the line, and on the last row, `↓` goes to the end. `↑` brings back a line that you sent only on an empty line: see "Send a line again". Out of the prompt: scroll one row. |
 | `←`, `→` | Move the cursor one character, also over the end of a row. |
 | `Home`, `End` | Go to the start or the end of the line. At the end of the line, `End` shows the newest line. Out of the prompt: show the oldest or the newest line. |
 | `PgUp`, `PgDn` | Show older or newer lines. |
 | `g`, `G` | Out of the prompt: show the oldest or the newest line. |
-| `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. While the list of the names shows, `Tab` picks a name. |
+| `Alt-1` to `Alt-6`, `Tab` | Open another tab, also from the prompt. While a list of names or issues shows, `Tab` picks the first one. |
 | `Ctrl-C` | End the TUI. The sessions go on. |
 | a paste | Put the text in the line at the cursor, with its new lines. Also from the log. |
 | `@` | Show the list of the names: see "Pick a name in the Chat tab". |
+| `#` | Show the list of the open issues: see "Pick an issue in the Chat tab". |
 
 ```mermaid
 stateDiagram-v2
@@ -4233,6 +4280,33 @@ the first name at least. The first name is in reverse video: `Tab` or
 closes the list, and the prompt keeps the focus. A second `Esc` leaves
 the prompt. With no list, `Tab` opens the next tab, and `Enter` sends
 the line.
+
+#### Pick an issue in the Chat tab
+
+The Chat tab has the list of the open issues of `riff chat` (see "Pick
+an issue with #"). Start the TUI in a clone of the repository, press
+`2`, and type `is #186`:
+
+```sh
+riff
+```
+
+```text
+ 13:12 <riff> #1608 merged
+  #1862  riff  Projects A: riff-server keeps the projects of the riff
+  #1860  riff  Pick an issue with #: the type-ahead of the open issues in riff …
+> is #186
+ Tab or Enter picks #1862. Esc closes the list.
+ Tab pick  Esc close  Ctrl-C quit
+```
+
+The list shows over the prompt, as the list of the names does, and each
+row is cut to the width of the tab. The first issue is in reverse
+video: `Tab` or `Enter` puts `#1862` in the line, with a space after
+it. `Esc` closes the list. While the Chat tab shows, the TUI reads the
+open issues from `gh` each minute. The list has the issues of the
+repository of each live session, and of the repository of the folder
+where you start the TUI.
 
 #### Paste lines into the chat
 

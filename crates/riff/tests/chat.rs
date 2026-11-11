@@ -626,6 +626,52 @@ fn the_book_shows_how_to_chat() {
     assert!(help.contains("  chat "), "{help}");
 }
 
+/// How It Works has the how-tos of the list of `#`
+/// (01M74CX2V9YAF0KFPJDRM4DA83): "Pick an issue with #" next to "Pick a
+/// name with @", and "Pick an issue in the Chat tab" next to "Pick a
+/// name in the Chat tab", each with its own heading and a copyable `sh`
+/// block, and the row of `#` in the table of the keys of the Chat tab.
+#[test]
+fn the_book_shows_how_to_pick_an_issue() {
+    let page = crate::book::page("how-it-works.md");
+    // The text of the part under `heading`, up to the next heading of
+    // its level or a higher one.
+    let part = |heading: &str| {
+        let start = page
+            .find(&format!("\n{heading}\n"))
+            .unwrap_or_else(|| panic!("{heading} has its own heading"));
+        let level = heading.split(' ').next().unwrap().len();
+        let rest = &page[start + heading.len() + 2..];
+        let end = rest
+            .match_indices("\n#")
+            .find(|(at, _)| {
+                let hashes = rest[at + 1..].chars().take_while(|c| *c == '#').count();
+                hashes <= level && rest[at + 1 + hashes..].starts_with(' ')
+            })
+            .map_or(rest.len(), |(at, _)| at);
+        (start, rest[..end].to_owned())
+    };
+    let (name, _) = part("### Pick a name with @");
+    let (issue, text) = part("### Pick an issue with #");
+    assert!(name < issue, "next to Pick a name with @");
+    assert!(text.contains("```sh\nriff chat\n```"), "{text}");
+    assert!(text.contains("[riff] > is #186\n  #1862  riff  "), "{text}");
+    assert!(text.contains("Tab or Enter picks #1862."), "{text}");
+    assert!(text.contains("`OWNER/REPO#N`"), "{text}");
+    let (name, _) = part("#### Pick a name in the Chat tab");
+    let (issue, text) = part("#### Pick an issue in the Chat tab");
+    assert!(name < issue, "next to Pick a name in the Chat tab");
+    assert!(text.contains("```sh\nriff\n```"), "{text}");
+    assert!(text.contains("> is #186\n"), "{text}");
+    let (_, tui) = part("### Chat in the TUI");
+    assert!(
+        tui.contains(
+            "| `#` | Show the list of the open issues: see \"Pick an issue in the Chat tab\". |"
+        ),
+        "{tui}"
+    );
+}
+
 /// How It Works has the how-to of a highlight: its own heading, each key
 /// of `[chat]`, and a copyable `sh` block that riff reads. "Ask a lead in
 /// the chat" says that a name is a highlight.
@@ -910,6 +956,21 @@ impl Tty {
         url: &str,
         user: &str,
         host: &str,
+        riff: tokio::process::Command,
+        settings: &str,
+        env: &[(&str, &str)],
+    ) -> Tty {
+        let dir = tempfile::tempdir().unwrap();
+        Self::start_at(dir, url, user, host, riff, settings, env).await
+    }
+
+    /// [`Tty::start_in`] in the folder `dir`: the working folder and
+    /// `RIFF_HOME` of the chat.
+    async fn start_at(
+        dir: tempfile::TempDir,
+        url: &str,
+        user: &str,
+        host: &str,
         mut riff: tokio::process::Command,
         settings: &str,
         env: &[(&str, &str)],
@@ -921,7 +982,6 @@ impl Tty {
             ws_ypixel: 0,
         };
         let pty = nix::pty::openpty(Some(&size), None).unwrap();
-        let dir = tempfile::tempdir().unwrap();
         crate::common::sign_in(url, dir.path(), user);
         std::fs::write(dir.path().join("config.toml"), settings).unwrap();
         let slave = std::fs::File::from(pty.slave);
@@ -1480,6 +1540,68 @@ async fn in_a_terminal_the_right_arrow_puts_none_of_the_list_in_the_line() {
     mike.keys("\r").await;
     let line = brett.shows("hi @r").await;
     assert!(is_line(&line, "mike", "hi @riff"), "{line:?}");
+}
+
+/// `#` shows the open issues from `gh` on the rows under the prompt
+/// (01M74CX2V9YAF0KFPJDRM4DA83, 01M74CX9H7WT1T4EN70AVD2TGZ,
+/// 01M74CX9KVGQG4Y7ATT6268NMY): in a clone of como-technologies/riff,
+/// `#186` shows #1862 and #1860, the newest first, and `Tab` puts
+/// `#1862 ` in the line. Then Enter sends the line. The read is the
+/// conditional read of the open issues.
+#[tokio::test]
+async fn in_a_terminal_hash_shows_the_open_issues_and_tab_puts_one() {
+    let server = crate::common::start_signed().await;
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(bin.path().join("gh"), crate::common::ISSUES_GH);
+    let path = crate::common::path_with(bin.path());
+    let clone = crate::common::clone_of("como-technologies/riff");
+    let riff = Isolated::shared().tokio_riff();
+    let env = [("PATH", path.as_str())];
+    let mut mike = Tty::start_at(clone, &server, "mike", "thelio", riff, "", &env).await;
+    let mut brett = Client::start(&server, "brett", "heron", &[]).await;
+    let listed = |rows: &[String]| {
+        rows.len() >= 4
+            && rows[rows.len() - 4..]
+                == [
+                    format!("{PROMPT}is #186"),
+                    "  #1862  riff  Projects A: riff-server keeps the projects of the riff".into(),
+                    "  #1860  riff  Pick an issue with #".into(),
+                    "  Tab or Enter picks #1862. Esc closes the list.".into(),
+                ]
+    };
+
+    // The chat reads the issues after its start, and a key shows the
+    // list: type the word again until the list shows.
+    let span = Span::start();
+    loop {
+        mike.keys("is #186").await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if listed(&mike.rows()) {
+            break;
+        }
+        assert!(span.within(WAIT), "the list in time: {:#?}", mike.rows());
+        // Ctrl-U: the line goes.
+        mike.keys("\x15").await;
+    }
+    mike.keys("\t").await;
+    let want = format!("{PROMPT}is #1862");
+    mike.shows(|rows| rows.last().is_some_and(|row| *row == want))
+        .await;
+    // The cursor is after the space: the next key types there.
+    let after = u16::try_from(PROMPT.len() + "is #1862 ".len()).unwrap();
+    let span = Span::start();
+    while mike.cursor().1 != after {
+        assert!(span.within(WAIT), "the cursor in time: {:?}", mike.cursor());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    mike.keys("done?\r").await;
+    let line = brett.shows("done?").await;
+    assert!(is_line(&line, "mike", "is #1862 done?"), "{line:?}");
+    let calls = std::fs::read_to_string(bin.path().join("calls")).unwrap();
+    assert!(
+        calls.contains("api -i repos/como-technologies/riff/issues?state=open"),
+        "{calls}"
+    );
 }
 
 /// A server that names a build and holds each post for `wait`: the

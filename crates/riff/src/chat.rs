@@ -101,6 +101,24 @@
 //!   Tab or Enter picks riff. Esc closes the list.
 //! ```
 //!
+//! In the same way, `#` at the start of a word shows the open issues that
+//! fit the letters or digits after it, the newest first
+//! (01M74CX2V9YAF0KFPJDRM4DA83, 01M74CX9H7WT1T4EN70AVD2TGZ). `Tab` or
+//! `Enter` puts `#N` for an issue of the repository of the working
+//! folder, and `OWNER/REPO#N` for an issue of another repository. In a
+//! terminal, the chat reads the open issues at its start, and again each
+//! [`crate::tui::forge::READ_EVERY`] (`read_issues`,
+//! 01M74CX9KVGQG4Y7ATT6268NMY): of the repository of each live session,
+//! and of the repository of the working folder, with the conditional
+//! read of the Waves tab.
+//!
+//! ```text
+//! [riff] > is #186
+//!   #1862  riff  Projects A: riff-server keeps the projects of the riff
+//!   #1860  riff  Pick an issue with #: the type-ahead of the open issues
+//!   Tab or Enter picks #1862. Esc closes the list.
+//! ```
+//!
 //! A line for the person at the terminal is a highlight, as in IRC
 //! ([`crate::highlight`], 01M6XSHCZB0Y08XRJ3J16Q4RTF): a line that names
 //! them, a direct line, a word of their list, or an ask of riff. The chat
@@ -137,10 +155,13 @@ use crate::catch_up::{self, Seen, Start};
 use crate::highlight::{Highlights, Lit, Out, Title};
 use crate::style::{DIM, WARNING, styled};
 use crate::text::{lost_messages, safe};
-use crate::typeahead::{Ahead, List, READ_EVERY};
+use crate::tui::forge;
+use crate::typeahead::{Ahead, List, OpenIssues, READ_EVERY};
 use riff_client::api::Api;
 use riff_client::link::STREAM_RETRY;
+use riff_client::sessions::{Sessions, Show};
 use riff_client::threads::{ACTION, Line, Names, Sender, action_text};
+use riff_client::waves::board_repos;
 
 /// The name of the chat thread.
 pub const THREAD: &str = riff_core::name::CHAT;
@@ -534,9 +555,15 @@ pub fn said(m: &Line, names: &Names) -> Said {
 /// It reads the table `[chat]` of the settings at its start, and marks
 /// each highlight for `me` ([`crate::highlight`]). A line of the history
 /// of the first connect is not new: it is only bold.
+///
+/// In a terminal, it reads the open issues for the list of `#`
+/// (`read_issues`). `here` is the repository of the working folder,
+/// `OWNER/REPO`, if any: the list has its issues, and a pick of one puts
+/// `#N`.
 pub async fn run(
     api: &Api,
     me: &SessionUri,
+    here: Option<String>,
     after: Option<u64>,
     draft: Option<&str>,
 ) -> Result<()> {
@@ -546,7 +573,10 @@ pub async fn run(
     // The log and the type-ahead share the names of the last read. A
     // riff-server that gives no names: each project has the name after
     // the slash.
-    let known = Arc::new(Mutex::new(Known::default()));
+    let known = Arc::new(Mutex::new(Known {
+        issues: OpenIssues::new(here),
+        ..Known::default()
+    }));
     read_names(api, me, &known).await;
     if after.is_none() {
         anstream::eprintln!(
@@ -593,6 +623,9 @@ pub async fn run(
         })
     };
     let (screen, mut input) = Screen::start(draft, highlights.title(), Arc::clone(&known))?;
+    // Only a line editor has a list.
+    let issues = matches!(screen.lines, Lines::Editor { .. })
+        .then(|| tokio::spawn(read_issues(api.clone(), me.clone(), Arc::clone(&known))));
     let _ = LINES.set(screen.lines.clone());
     let lines = screen.lines.clone();
     let (send, posts) = posts(api, me, thread, move |text| lines.warn(text));
@@ -645,6 +678,9 @@ pub async fn run(
         }
     }
     reads.abort();
+    if let Some(issues) = issues {
+        issues.abort();
+    }
     drop(send);
     let _ = posts.await;
     Ok(())
@@ -657,6 +693,46 @@ async fn read_names(api: &Api, me: &SessionUri, known: &Mutex<Known>) {
         && let Ok(mut known) = known.lock()
     {
         known.names = Names::new(read);
+    }
+}
+
+/// Reads the open issues for the list of `#` into `known`, at once and
+/// each [`forge::READ_EVERY`] (01M74CX9KVGQG4Y7ATT6268NMY): of the
+/// repository of each live session that `who` gives `me`, and of the
+/// repository of the working folder. It makes the conditional read of
+/// the Waves tab ([`forge::open_issues`]), so a read that changed nothing
+/// costs no point. Its calls of `gh` count as the caller `chat`
+/// (01M74E4D97PSHPVE4GC0EW0RMJ). A read of `gh` runs on a thread of its
+/// own: the end of the chat waits for no read. A read that fails keeps
+/// the issues of the last read of its repository, and says nothing. A
+/// `who` that fails keeps the repositories of the last read.
+async fn read_issues(api: Api, me: SessionUri, known: Arc<Mutex<Known>>) {
+    let gh = crate::pr::Gh::here("chat").with_one_token();
+    let kept = forge::Kept::default();
+    let here = known
+        .lock()
+        .ok()
+        .and_then(|k| k.issues.here().map(str::to_owned));
+    let mut sessions = Vec::new();
+    loop {
+        if let Ok(read) = api.who(&me, false).await {
+            sessions = read;
+        }
+        let live = Sessions::new(sessions.clone(), Vec::new());
+        let repos: Vec<String> = board_repos(&live, &Show::default(), here.as_deref())
+            .into_iter()
+            .collect();
+        let (gh, kept) = (gh.clone(), kept.clone());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(forge::open_issues_each(&gh, &repos, &kept));
+        });
+        if let Ok(read) = rx.await
+            && let Ok(mut known) = known.lock()
+        {
+            known.issues.read(read);
+        }
+        tokio::time::sleep(forge::READ_EVERY).await;
     }
 }
 
@@ -761,21 +837,25 @@ impl Lines {
     }
 }
 
-/// The names of the chat from the last read, and the type-ahead of the
-/// prompt. The log, the hinter and the keys of the line editor share
-/// them.
+/// The names of the chat and the open issues from the last read, and
+/// the type-ahead of the prompt. The log, the hinter and the keys of the
+/// line editor share them.
 #[derive(Debug, Default)]
 struct Known {
     names: Names,
+    issues: OpenIssues,
     ahead: Ahead,
 }
 
 impl Known {
     /// The list for `line` with the cursor at the byte `pos`.
     fn list(&self, line: &str, pos: usize) -> Option<List> {
-        self.ahead.list(self.names.list(), line, pos)
+        self.ahead.list(self.names.list(), &self.issues, line, pos)
     }
 }
+
+/// The start of each row of a list under the prompt.
+const LISTED: &str = "  ";
 
 /// The hint of a list: its rows and its note, on the rows under the
 /// prompt. It is no text of the line: `→` at the end of the line puts
@@ -784,10 +864,12 @@ impl Known {
 struct Listed(String);
 
 impl Listed {
-    fn of(list: &List) -> Listed {
-        let mut rows = list.rows();
+    /// The hint of `list` in a terminal of `columns` columns: each row
+    /// is cut to the width ([`List::rows`]).
+    fn of(list: &List, columns: usize) -> Listed {
+        let mut rows = list.rows(columns.saturating_sub(LISTED.len()));
         rows.push(list.note());
-        Listed(rows.iter().map(|row| format!("\n  {row}")).collect())
+        Listed(rows.iter().map(|row| format!("\n{LISTED}{row}")).collect())
     }
 }
 
@@ -804,10 +886,10 @@ impl Hint for Listed {
 /// A copy of the text that the person is typing. The line editor lives
 /// on a thread of its own and has no call to read its line, but it asks
 /// a hinter for a hint after each edit, and at each new prompt. This
-/// hinter keeps the line, and gives the list of the names of the word at
-/// the cursor as the hint ([`crate::typeahead`]). It also clears the
-/// number of the highlights in the title of the terminal: a key or a new
-/// prompt clears it (01M6XSHMNNTRC66CMZ0DF2X5RA).
+/// hinter keeps the line, and gives the list of the word at the cursor
+/// as the hint ([`crate::typeahead`]). It also clears the number of the
+/// highlights in the title of the terminal: a key or a new prompt clears
+/// it (01M6XSHMNNTRC66CMZ0DF2X5RA).
 #[derive(Clone, Default)]
 struct Typing {
     text: Arc<Mutex<String>>,
@@ -846,15 +928,17 @@ impl Hinter for Typing {
         }
         let mut names = self.names.lock().ok()?;
         names.ahead.edited(line, pos);
-        names.list(line, pos).map(|list| Listed::of(&list))
+        let columns = textwrap::termwidth();
+        names.list(line, pos).map(|list| Listed::of(&list, columns))
     }
 }
 
 /// A key of the type-ahead in the line editor, while the list of the
-/// names shows (01M6Y1EKGKNW2MH970PDF6PJK1): `Enter` picks the first
-/// name, as `Tab` does ([`Typing`] is the completer), and `Esc` closes
-/// the list. With no list, the key does its work of the line editor:
-/// `Enter` sends the line.
+/// names or of the issues shows (01M6Y1EKGKNW2MH970PDF6PJK1,
+/// 01M74CX9H7WT1T4EN70AVD2TGZ): `Enter` picks the first entry, as `Tab`
+/// does ([`Typing`] is the completer), and `Esc` closes the list. With
+/// no list, the key does its work of the line editor: `Enter` sends the
+/// line.
 struct ListKey {
     names: Arc<Mutex<Known>>,
     /// True for `Enter`, false for `Esc`.
@@ -881,8 +965,8 @@ impl ConditionalEventHandler for ListKey {
 const ESC_WAIT_MS: u16 = 50;
 
 /// `Tab`, and `Enter` while the list shows: the one completion is the
-/// first name of the list, in the place of the `@` word. With no list,
-/// there is no completion.
+/// first entry of the list, in the place of the `@` or `#` word. With no
+/// list, there is no completion.
 impl Completer for Typing {
     type Candidate = String;
 
@@ -957,7 +1041,8 @@ impl Screen {
     /// after [`QUIT`], so the terminal is back in its normal mode. In a
     /// terminal, the prompt starts with `draft`, the text that the
     /// person typed in the chat before an update, a key clears the
-    /// number of `title`, and `@` shows a list of `names`.
+    /// number of `title`, and `@` or `#` shows a list of `names`: the
+    /// names or the open issues.
     fn start(
         draft: Option<&str>,
         title: Title,
@@ -1161,6 +1246,53 @@ mod tests {
         );
         assert_eq!(hint.completion(), None);
         assert_eq!(typing.hint("hi @zed", 7, &ctx), None);
+    }
+
+    /// The hint of `#186` shows the open issues that fit, the newest
+    /// first, each row cut to the width of the terminal, and the note
+    /// (01M74CX2V9YAF0KFPJDRM4DA83, 01M74CX9H7WT1T4EN70AVD2TGZ). `Tab`
+    /// puts `#1862 ` in the line.
+    #[test]
+    fn the_hint_of_hash_shows_the_open_issues_cut_to_the_width() {
+        use crate::typeahead::OpenIssue;
+
+        let issue = |number: u64, title: &str| OpenIssue {
+            repo: "o/riff".into(),
+            number,
+            title: title.into(),
+            opened: i64::try_from(number).ok(),
+        };
+        let mut known = Known {
+            issues: OpenIssues::new(Some("o/riff".into())),
+            ..Known::default()
+        };
+        known.issues.read(vec![(
+            "o/riff".into(),
+            Ok(vec![
+                issue(1860, "Pick an issue"),
+                issue(
+                    1862,
+                    "Projects A: riff-server keeps the projects of the riff",
+                ),
+            ]),
+        )]);
+        let list = known.list("is #186", 7).unwrap();
+        assert_eq!(
+            Listed::of(&list, 40).display(),
+            "\n  #1862  riff  Projects A: riff-server …\
+             \n  #1860  riff  Pick an issue\
+             \n  Tab or Enter picks #1862. Esc closes the list."
+        );
+        let typing = Typing {
+            names: Arc::new(Mutex::new(known)),
+            ..Typing::default()
+        };
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history as &dyn History);
+        assert_eq!(
+            typing.complete("is #186", 7, &ctx).unwrap(),
+            (3, vec!["#1862 ".to_owned()])
+        );
     }
 
     /// 01M6Y8N8W5RE5H6MW3TNDH5BSY: with a typed text, `↑` and `↓` keep

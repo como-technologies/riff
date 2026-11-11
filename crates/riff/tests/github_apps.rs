@@ -9,7 +9,6 @@ pub(crate) mod fake_github;
 
 use fake_github::{FakeGitHub, LEAD_CODE, OWNER, REPO, SESSION_CODE, WEBHOOK_SECRET, both_apps};
 
-use std::process::Command;
 use std::time::Duration;
 
 use isolated::Isolated;
@@ -48,21 +47,7 @@ pub(crate) fn keys_dir() -> tempfile::TempDir {
 
 /// A clone of [`REPO`] on GitHub, with no commit.
 fn clone() -> tempfile::TempDir {
-    clone_of(REPO)
-}
-
-/// A clone of `repo` on GitHub, with no commit.
-fn clone_of(repo: &str) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    let origin = format!("https://github.com/{repo}.git");
-    for args in [&["init", "-q"][..], &["remote", "add", "origin", &origin]] {
-        let status = Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .status();
-        assert!(status.unwrap().success());
-    }
-    dir
+    crate::common::clone_of(REPO)
 }
 
 /// The account of the fake.
@@ -196,7 +181,9 @@ async fn riff_github_events_prints_the_last_wakes_and_the_counts() {
         api: fake.url.clone(),
         web: fake.url.clone(),
         keys: At::Dir(keys.path().to_owned()),
-        debounce: Duration::from_millis(100),
+        // The real window: both deliveries go into one wake, also on a
+        // slow runner.
+        debounce: riff_server::hooks::DEBOUNCE,
         ..Settings::default()
     };
     let server = common::start_signed_config(
@@ -315,7 +302,7 @@ async fn riff_github_check_names_the_fix_for_a_repository_that_no_install_has() 
     let server = serve(&fake, At::Dir(keys.path().to_owned())).await;
     let env = Isolated::new();
     common::sign_in(&server, &env.riff_home(), "bob");
-    let repo = clone_of("acme/b");
+    let repo = crate::common::clone_of("acme/b");
     let out = env
         .tokio_riff()
         .args(["github", "check"])

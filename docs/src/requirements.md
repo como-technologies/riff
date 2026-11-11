@@ -3422,6 +3422,34 @@
   version, and the line holds the version that riff-server parsed. A tag
   with a text after its version, for example `v3.3.0-TEXT` or
   `v3.3.0+TEXT`, gets no line.
+- **01M74CX2V9YAF0KFPJDRM4DA83** In `riff chat` and in the Chat tab of
+  the TUI, a `#` at the start of the line or after a space opens a list
+  of the open issues while the cursor is at the end of its word. The
+  word is the `#` and the letters or digits after it up to the cursor.
+  Digits fit each issue whose number starts with them. Letters fit each
+  issue with a word of its title that starts with them, with no regard
+  to case. The newest issue comes first. The list shows at most five
+  issues, and the number of the others. With no issue that fits, or when
+  the digits are the number of the one issue that fits, no list shows.
+- **01M74CX9H7WT1T4EN70AVD2TGZ** A row of the list of the issues of
+  01M74CX2V9YAF0KFPJDRM4DA83 has the number of the issue, the part of
+  its repository after the slash, and its title, cut to the width with
+  `…`. `Tab` or `Enter` puts `#N` in the place of the word for an
+  issue of the repository of the working folder, and `OWNER/REPO#N` for
+  an issue of another repository, with a space after it at the end of
+  the line. The note says `Tab or Enter picks #N. Esc closes the list.`
+  `Esc` and the other keys work as for the list of the names
+  (01M6Y1EKGKNW2MH970PDF6PJK1, 01M6YDSREH39WWV6QHB0M7Z6P5).
+- **01M74CX9KVGQG4Y7ATT6268NMY** The open issues of the list of
+  01M74CX2V9YAF0KFPJDRM4DA83 are the open issues of each repository of a
+  live session and of the repository of the working folder. riff reads
+  them with the conditional read of the open issues of the Waves tab
+  (01M6VFGK4P2FWMFQHBZKR3JXSZ), so a `304` costs no point. `riff chat`
+  in a terminal reads them at its start, and the Chat tab when it shows.
+  Each one reads them again each 60 seconds. A read that fails keeps the
+  issues of the last read of its repository, and says nothing.
+- **01M74E4D97PSHPVE4GC0EW0RMJ** The calls of `gh` of `riff chat` count
+  as the caller `chat` in the tally of the riff daemon.
 
 ## Security
 
@@ -8612,6 +8640,11 @@ that builds it merges.
   then start riff again`, with the version and the build ID of the file.
   With the same build, or with a file that gives no build, the row does
   not show.
+- **01M74CXE1703NASW3BWWA6ESGY** The list of the issues of
+  01M74CX2V9YAF0KFPJDRM4DA83 shows in the Chat tab as the list of the
+  names does (01M6Y1ES82XHFGANKZS7AF3CP2, 01M6Z8AHH9FW3A3132YF8XH7R9):
+  over the prompt, the first issue in reverse video, and each row cut to
+  the width of the tab. The help popup of the Chat tab has the key `#`.
 
 ## The notes of the lead
 
