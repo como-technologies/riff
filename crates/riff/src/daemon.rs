@@ -494,7 +494,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::build::Build;
 use riff_core::name::SessionUri;
-use riff_core::wire::Wake;
+use riff_core::wire::{BotFact, Wake};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -1210,11 +1210,13 @@ pub enum ServerCall {
     /// The user of the session, the owner and the people of the riff, as
     /// [`crate::reach::Roster`], for `riff release cut` and `publish`.
     Roster,
-    /// Post `body` in the thread `chat`, with the names of the line
-    /// ([`riff_client::chat::to`]). The answer is `null`.
-    ChatPost {
-        /// The line.
-        body: String,
+    /// Tell riff-server the fact `fact` as the session, for `riff release
+    /// cut` and `publish`: riff-server posts the line of riff-bot for it
+    /// in the thread `chat` ([`riff_core::wire::BotPost`]). The answer is
+    /// `null`.
+    Bot {
+        /// The fact.
+        fact: riff_core::wire::BotFact,
     },
     /// The [`Status`] of this daemon, for `riff daemon status` in a
     /// container (#1239). A session that is not the lead may ask it.
@@ -1469,9 +1471,8 @@ async fn server_call(record: &Record, call: &ServerCall) -> Result<Value> {
                 people: reply.people,
             })?
         }
-        ServerCall::ChatPost { body } => {
-            let to = riff_client::chat::to(body);
-            crate::chat::post_by_riff(&signed()?, &record.me, &to, body).await?;
+        ServerCall::Bot { fact } => {
+            signed()?.bot(&record.me, fact.clone(), None).await?;
             Value::Null
         }
         ServerCall::Host { host, request } => {
@@ -3146,7 +3147,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .unwrap_or_else(PoisonError::into_inner)
                 .insert(session.clone());
             let body = text::lead_sign_in_stale(&record.live.name);
-            self.world.chat(&record, &body).await;
+            self.world.bot(&record, BotFact::LeadStale).await;
             lines.push(body);
         }
         lines
@@ -3269,7 +3270,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         let owned = self.lock().get(&name).cloned()?;
         let start = match self.lead_start(&record).await {
             Ok(start) => start,
-            Err(e) => return self.lead_waits(&record, &format!("{e:#}")).await,
+            Err(e) => return self.lead_waits(&record, &e).await,
         };
         println!("{}", text::daemon_stops_lead(&name));
         let mut again = crate::lead::Again {
@@ -3288,7 +3289,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .renewing
                 .store(false, std::sync::atomic::Ordering::SeqCst);
             crate::lead::Again::clear(&record.folder);
-            return self.lead_waits(&record, &format!("{e:#}")).await;
+            return self.lead_waits(&record, &e).await;
         }
         // A lead that this daemon took up has no end of its own: it looks.
         owned.look.notify_one();
@@ -3316,7 +3317,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                         .unwrap_or_else(PoisonError::into_inner)
                         .remove(&record.live.session);
                     let line = text::lead_started_again(&name);
-                    self.world.chat(&record, &line).await;
+                    self.world.bot(&record, BotFact::LeadStarted).await;
                     return Some(line);
                 }
                 Err(e) => why = e,
@@ -3325,7 +3326,7 @@ impl<R: Runtime + 'static> Daemon<R> {
         crate::lead::Again::clear(&record.folder);
         self.world.leave(&record).await;
         let line = text::lead_again_failed(&name, &why);
-        self.world.chat(&record, &line).await;
+        self.world.bot(&record, BotFact::LeadFailed).await;
         Some(line)
     }
 
@@ -3361,10 +3362,14 @@ impl<R: Runtime + 'static> Daemon<R> {
         }
     }
 
-    /// The lead of `record` cannot start again now: it runs the old riff
-    /// on. The person hears of it one time for each lead (riff chat); the
-    /// next look tries again. It gives the line the first time.
-    async fn lead_waits(&self, record: &Record, why: &str) -> Option<String> {
+    /// The lead of `record` cannot start again now, for `why`: it runs the
+    /// old riff on. The person hears of it one time for each lead, in a
+    /// line of riff-bot; the next look tries again. The line of the log of
+    /// the daemon has the cause, and the line of riff-bot names it only for
+    /// a clone with no main clone ([`crate::lead::NoMain`],
+    /// 01M6QB89JJEM9Z1V3RVZYHKYT0). It gives the line of the log the first
+    /// time.
+    async fn lead_waits(&self, record: &Record, why: &anyhow::Error) -> Option<String> {
         let first = self
             .again_told
             .lock()
@@ -3373,9 +3378,15 @@ impl<R: Runtime + 'static> Daemon<R> {
         if !first {
             return None;
         }
-        let line = text::lead_again_waits(&record.live.name, why);
-        self.world.chat(record, &line).await;
-        Some(line)
+        let fact = match why.downcast_ref::<crate::lead::NoMain>() {
+            Some(_) => BotFact::LeadNoMain,
+            None => BotFact::LeadWaits,
+        };
+        self.world.bot(record, fact).await;
+        Some(text::lead_again_waits(
+            &record.live.name,
+            &format!("{why:#}"),
+        ))
     }
 
     /// Looks at the watches each `every`, until the daemon
@@ -5810,7 +5821,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .insert(record.live.session.clone());
             let line = text::lead_lost_network(&record.me.place().repo_text(), name);
             println!("{line}");
-            self.world.chat(&record, &line).await;
+            self.world.bot(&record, BotFact::LeadNoNetwork).await;
             return;
         }
         println!("{}", text::daemon_no_network(name));
@@ -8178,7 +8189,7 @@ mod tests {
         until(|| here.fake.calls().contains(&format!("stop {worker}"))).await;
         // The lead: one line in riff chat, and one in the status.
         let line = text::lead_lost_network("como-technologies/riff", &lost);
-        until(|| chats(&server) == [format!("chat {lost}: {line}")]).await;
+        until(|| chats(&server) == [format!("chat {lost}: {:?}", BotFact::LeadNoNetwork)]).await;
         let shown = status(&here.dir).await.unwrap();
         assert_eq!(
             shown.lost,
@@ -8827,8 +8838,9 @@ mod tests {
         meter: Option<(PathBuf, crate::pr::Gh)>,
         /// The leave marks of [`World::marks`].
         marks: Option<PathBuf>,
-        /// Why [`World::lead_again`] fails, when it does.
-        again_fault: Mutex<Option<String>>,
+        /// Why [`World::lead_again`] fails, when it does: with `true`, as a
+        /// clone with no main clone ([`crate::lead::NoMain`]).
+        again_fault: Mutex<Option<(String, bool)>>,
         /// The answer of [`World::github_token`] to each ask, by its
         /// number from 0. With none, the token of the person.
         github: Option<Arc<GiveToken>>,
@@ -9192,7 +9204,7 @@ mod tests {
         fn ask_person<'a>(
             &'a self,
             _: &'a Wave,
-            _: &'a str,
+            _: BotFact,
             _: &'a str,
         ) -> crate::wave::BoxFuture<'a, Result<()>> {
             Box::pin(async { Ok(()) })
@@ -9223,8 +9235,8 @@ mod tests {
             Box::pin(async { Ok(()) })
         }
 
-        fn chat<'a>(&'a self, record: &'a Record, body: &'a str) -> crate::wave::BoxFuture<'a, ()> {
-            Box::pin(async move { self.note(format!("chat {}: {body}", record.live.name)) })
+        fn bot<'a>(&'a self, record: &'a Record, fact: BotFact) -> crate::wave::BoxFuture<'a, ()> {
+            Box::pin(async move { self.note(format!("chat {}: {fact:?}", record.live.name)) })
         }
 
         fn note_lead<'a>(
@@ -9248,13 +9260,15 @@ mod tests {
         ) -> crate::wave::BoxFuture<'a, Result<Start>> {
             Box::pin(async move {
                 self.note(format!("start again {}", record.live.name));
-                if let Some(why) = self
+                let fault = self
                     .again_fault
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .as_ref()
-                {
-                    bail!("{why}");
+                    .clone();
+                match fault {
+                    Some((why, true)) => return Err(crate::lead::NoMain(why).into()),
+                    Some((why, false)) => bail!("{why}"),
+                    None => {}
                 }
                 let facts = crate::run::Facts {
                     session: record.live.session.clone(),
@@ -9572,7 +9586,11 @@ mod tests {
             here.daemon.stale_leads(&home).await,
             std::slice::from_ref(&line)
         );
-        assert!(server.said().contains(&format!("chat {name}: {line}")));
+        assert!(
+            server
+                .said()
+                .contains(&format!("chat {name}: {:?}", BotFact::LeadStale))
+        );
 
         // The person heard of it once.
         assert!(here.daemon.stale_leads(&home).await.is_empty());
@@ -9685,7 +9703,9 @@ mod tests {
         crate::session_relay::idle(&socket).await.unwrap();
         let line = text::lead_started_again(LEAD);
         assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
-        assert!(said_of(&server, "chat").contains(&format!("chat {LEAD}: {line}")));
+        assert!(
+            said_of(&server, "chat").contains(&format!("chat {LEAD}: {:?}", BotFact::LeadStarted))
+        );
         // 01M6XTS7V47RFX1G37FRGRBWCY: the mark tells an attached terminal the
         // riff of the new container.
         let again = crate::lead::Again::read(&record.folder).unwrap();
@@ -9827,7 +9847,10 @@ mod tests {
 
         // The person heard once, in riff chat. The lead kept its session on
         // riff-server: no leave, and the keep-alive goes on.
-        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        assert_eq!(
+            said_of(&server, "chat"),
+            [format!("chat {LEAD}: {:?}", BotFact::LeadStarted)]
+        );
         assert!(said_of(&server, "leave").is_empty(), "{:?}", server.said());
         assert_eq!(said_of(&server, "resume").len(), 2);
         let status = status(&here.dir).await.unwrap();
@@ -9866,7 +9889,10 @@ mod tests {
                 format!("terminal {LEAD}")
             ]
         );
-        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        assert_eq!(
+            said_of(&server, "chat"),
+            [format!("chat {LEAD}: {:?}", BotFact::LeadStarted)]
+        );
         assert!(said_of(&server, "leave").is_empty(), "{:?}", server.said());
         let status = status(&here.dir).await.unwrap();
         assert!(status.sessions.iter().any(|s| s.name == LEAD && s.lead));
@@ -9903,7 +9929,10 @@ mod tests {
         );
         // The host keeps the part lead, and has no part workers.
         assert_eq!(parts::of(&here.dir, repo).word(), "lead");
-        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        assert_eq!(
+            said_of(&server, "chat"),
+            [format!("chat {LEAD}: {:?}", BotFact::LeadStarted)]
+        );
         assert!(said_of(&server, "leave").is_empty(), "{:?}", server.said());
         // The restart did not run the wave again.
         assert!(crate::wave::read_waves(&here.dir).unwrap().is_empty());
@@ -9928,14 +9957,17 @@ mod tests {
         // The daemon finds no main clone: the lead stays on the old riff.
         let clone = record.folder.join("clone");
         let no_main = text::lead_again_no_main("como-technologies/riff", &clone);
-        *server.again_fault.lock().unwrap() = Some(no_main.clone());
+        *server.again_fault.lock().unwrap() = Some((no_main.clone(), true));
         let line = text::lead_again_waits(LEAD, &no_main);
         assert_eq!(here.daemon.leads_again().await, std::slice::from_ref(&line));
         assert_eq!(here.fake.calls(), std::slice::from_ref(&terminal));
-        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        assert_eq!(
+            said_of(&server, "chat"),
+            [format!("chat {LEAD}: {:?}", BotFact::LeadNoMain)]
+        );
 
         // The host fails the next try: the person heard of it already.
-        *server.again_fault.lock().unwrap() = Some("gh is not signed in".into());
+        *server.again_fault.lock().unwrap() = Some(("gh is not signed in".into(), false));
         assert!(here.daemon.leads_again().await.is_empty());
         assert_eq!(here.fake.calls(), std::slice::from_ref(&terminal));
         assert_eq!(said_of(&server, "chat").len(), 1);
@@ -9949,8 +9981,30 @@ mod tests {
         );
         let chats = said_of(&server, "chat");
         assert_eq!(chats.len(), 2, "{chats:?}");
-        assert_eq!(chats[1], format!("chat {LEAD}: {started}"));
+        assert_eq!(chats[1], format!("chat {LEAD}: {:?}", BotFact::LeadStarted));
         assert!(said_of(&server, "leave").is_empty());
+    }
+
+    /// 01M5TC29A4Q94NJP7HFC75XCF3: another fault before the stop. The log
+    /// of the daemon has the cause, and the fact for riff-bot is
+    /// `lead_waits`: no text of the cause goes to riff chat.
+    #[tokio::test]
+    async fn a_lead_that_cannot_start_again_for_another_fault_tells_no_cause_in_the_chat() {
+        let server = Arc::new(Server::default());
+        let world: Arc<dyn World> = server.clone();
+        let here =
+            Here::with_world(Fake::default().with_image(IMAGE), QUIET_LIMIT, Some(world)).await;
+        let record = started_lead(&here).await;
+        transcript_of(&record, 600);
+        update_riff(&here);
+        let why = "gh is not signed in";
+        *server.again_fault.lock().unwrap() = Some((why.into(), false));
+        let line = text::lead_again_waits(LEAD, why);
+        assert_eq!(here.daemon.leads_again().await, [line]);
+        assert_eq!(
+            said_of(&server, "chat"),
+            [format!("chat {LEAD}: {:?}", BotFact::LeadWaits)]
+        );
     }
 
     /// 01M5TC29A4Q94NJP7HFC75XCF3
@@ -9980,7 +10034,10 @@ mod tests {
             vec![format!("terminal {LEAD}"); 3],
             "three tries, then the end"
         );
-        assert_eq!(said_of(&server, "chat"), [format!("chat {LEAD}: {line}")]);
+        assert_eq!(
+            said_of(&server, "chat"),
+            [format!("chat {LEAD}: {:?}", BotFact::LeadFailed)]
+        );
         // 01M6XTS7V47RFX1G37FRGRBWCY: an attached terminal waits no more for
         // a new container.
         assert_eq!(crate::lead::Again::read(&record.folder), None);

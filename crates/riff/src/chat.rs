@@ -20,13 +20,14 @@
 //! `OWNER/REPO`. The log and the type-ahead share them. A session with no
 //! name, for example a worker, shows as `[USER SESSION]`. The host shows
 //! only in the detail of a line: in `riff tail` and `riff read`. A line
-//! that riff writes as the person ([`post_by_riff`]) shows as the person,
-//! with the mark `[by riff]`.
+//! that riff writes for the person, for example the ask of a release,
+//! comes from riff-server: riff tells it the fact
+//! ([`riff_core::wire::BotPost`]), and the line shows as `<riff-bot>`.
 //!
 //! ```text
 //! 14:02 <mike> is the release out?
 //! 14:03 <riff> @mike not yet: #12 waits for CI.
-//! 14:09 <mike> [by riff] @mike riff release v1.2.3 waits for your approval
+//! 14:09 <riff-bot> @mike riff release v1.2.3 waits for your approval: ...
 //! 14:12 <riff-bot> members: ann passed the owner role to mike.
 //! ```
 //!
@@ -116,7 +117,6 @@ use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use futures::StreamExt;
 use riff_core::name::{SessionUri, ThreadName};
-use riff_core::selector::Selector;
 use riff_core::wire::Kind;
 use rustyline::completion::Completer;
 use rustyline::config::Config;
@@ -140,7 +140,7 @@ use crate::text::{lost_messages, safe};
 use crate::typeahead::{Ahead, List, READ_EVERY};
 use riff_client::api::Api;
 use riff_client::link::STREAM_RETRY;
-use riff_client::threads::{ACTION, BY_RIFF, Line, Names, Sender, action_text};
+use riff_client::threads::{ACTION, Line, Names, Sender, action_text};
 
 /// The name of the chat thread.
 pub const THREAD: &str = riff_core::name::CHAT;
@@ -166,43 +166,6 @@ pub const DRAFT: &str = "--draft";
 /// ```
 pub fn thread() -> ThreadName {
     ThreadName::chat()
-}
-
-/// Posts `body` in riff chat as `me`, as a line that riff writes as the
-/// person of the riff: the watch of a deploy, the daemon and `riff
-/// release` post so (01M5TKMVB7CF0QNAWXEVGEQETJ). The line has the kind
-/// `message` and the mark [`BY_RIFF`] at the start of its body
-/// (01M6Y4ZCTSTVM971BDC1F7GJPK): only riff-server itself posts the kind
-/// `riff`. `to` is what [`riff_client::chat::to`] gave for `body`. The
-/// chat shows the line with its real sender, the person, and the mark.
-///
-/// ```mermaid
-/// sequenceDiagram
-///     participant R as riff of mike
-///     participant S as riff-server
-///     participant C as riff chat
-///     R->>S: post as mike, kind message, body "[by riff] ..."
-///     S-->>C: the line
-///     Note over C: the sender mike, and the mark in the body
-/// ```
-pub async fn post_by_riff(api: &Api, me: &SessionUri, to: &[Selector], body: &str) -> Result<()> {
-    post_by_riff_keyed(api, me, to, body, None).await
-}
-
-/// [`post_by_riff`] with a key (01M5TKG2K1AYK1KE7C2AA2W9DS): riff-server
-/// drops the post when a kept message of the same user in the thread has
-/// the key.
-pub async fn post_by_riff_keyed(
-    api: &Api,
-    me: &SessionUri,
-    to: &[Selector],
-    body: &str,
-    key: Option<&str>,
-) -> Result<()> {
-    let marked = format!("{BY_RIFF}{body}");
-    api.post_keyed(me, Some(&thread()), to, &marked, Kind::Message, key)
-        .await?;
-    Ok(())
 }
 
 /// What a person typed in the chat.
@@ -468,7 +431,7 @@ pub struct Said {
     /// no name.
     pub after: &'static str,
     /// The body, or the text of an action, safe, with four spaces for a
-    /// tab. A line with the mark [`BY_RIFF`] keeps it.
+    /// tab.
     pub body: String,
 }
 
@@ -477,10 +440,9 @@ pub struct Said {
 /// (01M6Y1FB5MZNZ971CJRBWZ2F9X): a person as `<USER>`, a verified lead
 /// as `<PROJECT>`, and riff-server itself as `<riff-bot>`
 /// (01M6Y4ZCTSTVM971BDC1F7GJPK). Each other session has no name, and
-/// shows as `[USER ID]`. An action is `* NAME TEXT`. A line with the mark
-/// [`BY_RIFF`] shows its real sender and its whole body, as each other
-/// line does. It removes each escape sequence from the body and the
-/// sender.
+/// shows as `[USER ID]`. An action is `* NAME TEXT`. A line of a person
+/// with the words of riff-bot shows that person, as each other line does.
+/// It removes each escape sequence from the body and the sender.
 ///
 /// ```
 /// use riff_client::api::Checked;
@@ -506,11 +468,11 @@ pub struct Said {
 /// assert_eq!((waves.before, waves.name.as_str(), waves.after), ("* ", "mike", ""));
 /// assert_eq!(waves.body, "waves    bye");
 ///
-/// // A line with the mark shows its real sender, and the mark.
-/// let marked = Message { body: "[by riff] a release waits".into(), ..message.clone() };
-/// let mike = said(&marked);
+/// // A person who types the words of riff-bot shows as the person.
+/// let typed = Message { body: "riff release v3.3.0 waits".into(), ..message.clone() };
+/// let mike = said(&typed);
 /// assert_eq!((mike.before, mike.name.as_str(), mike.after), ("<", "mike", ">"));
-/// assert_eq!(mike.body, "[by riff] a release waits");
+/// assert_eq!(mike.body, "riff release v3.3.0 waits");
 ///
 /// // A line of riff-server itself shows as riff-bot.
 /// let server = riff_core::name::SessionUri::server();

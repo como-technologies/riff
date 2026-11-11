@@ -2125,15 +2125,13 @@ impl Machine {
             .seq
     }
 
-    /// Posts `body` to riff chat as `who`, as the daemon does for a line
-    /// of riff, such as the line of the watch of a deploy
-    /// (01M5TKMVB7CF0QNAWXEVGEQETJ).
-    async fn say_as_riff(&self, who: &str, body: &str) {
+    /// Tells riff-server the fact `fact` as `who`, as the daemon does for
+    /// a line of riff, such as the line of the watch of a deploy:
+    /// riff-server posts the line of riff-bot (01M74BPHQZHXFYYNXAJ1WFASQQ).
+    async fn tell_bot(&self, who: &str, fact: riff_core::wire::BotFact) {
         let me = Self::uri_of(who);
         let api = crate::common::api_of(&self.server, &me);
-        riff::chat::post_by_riff(&api, &me, &[], body)
-            .await
-            .unwrap();
+        api.bot(&me, fact, None).await.unwrap();
     }
 }
 
@@ -2159,9 +2157,7 @@ async fn lead_with_a_waiting_run_on(server: crate::common::Signed) -> Machine {
 async fn approve_refuses_each_agent_session_also_the_lead_with_the_word_of_the_owner() {
     let machine = lead_with_a_waiting_run().await;
     machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-    let run = "https://github.com/como-technologies/riff/actions/runs/9";
-    let waits = riff::cycle::waits_line("mike", "v3.3.0", run, false, &[]);
-    machine.say_as_riff("mike", &waits).await;
+    machine.tell_bot("mike", waits(false)).await;
     machine.say("mike", "Yes, approve v3.3.0 please.").await;
     machine.say("mike", "approved").await;
     let socket = machine.no_daemon();
@@ -2194,38 +2190,44 @@ async fn chat_of(server: &crate::common::Signed) -> Vec<riff_client::api::Checke
         .unwrap()
 }
 
-/// 01M6Y4ZCTSTVM971BDC1F7GJPK: `riff release publish` and the watch of
-/// the deploy write their lines in riff chat as the person, with the kind
-/// `message` and the mark `[by riff] ` (01M5TKMVB7CF0QNAWXEVGEQETJ). Only
-/// riff-server itself posts the kind `riff`.
+/// The fact of the line of riff-bot while the run 9 of v3.3.0 waits.
+fn waits(reminder: bool) -> riff_core::wire::BotFact {
+    riff_core::wire::BotFact::ReleaseWaits {
+        tag: "v3.3.0".into(),
+        run: 9,
+        reminder,
+    }
+}
+
+/// 01M74BPHQZHXFYYNXAJ1WFASQQ: riff-server posts the lines of `riff
+/// release publish` and of the watch of the deploy, as riff-bot: the kind
+/// `riff`, from riff-server itself. Each names the owner brett, and riff
+/// tells it the run of the tag.
 #[tokio::test]
-async fn the_chat_lines_of_riff_go_as_the_person_with_the_mark() {
+async fn the_chat_lines_of_riff_go_as_riff_bot() {
     let machine = lead_with_a_waiting_run().await;
     machine.ok(&LEAD, &["release", "publish", "v3.3.0"]).await;
-    let run = "https://github.com/como-technologies/riff/actions/runs/9";
-    let waits = riff::cycle::waits_line("mike", "v3.3.0", run, false, &[]);
-    machine.say_as_riff("mike", &waits).await;
-    let reminder = riff::cycle::waits_line("mike", "v3.3.0", run, true, &[]);
-    machine.say_as_riff("mike", &reminder).await;
+    machine.tell_bot("mike", waits(false)).await;
+    machine.tell_bot("mike", waits(true)).await;
 
     let read = chat_of(&machine.server).await;
+    let run = "https://github.com/como-technologies/riff/actions/runs/9";
     for body in [
-        "riff release v3.3.0 is published",
-        "riff release v3.3.0 waits for your approval",
-        "riff release v3.3.0 still waits for your approval",
+        format!("@brett riff release v3.3.0 is published. Its CI run builds: {run}."),
+        format!("@brett riff release v3.3.0 waits for your approval: {run}."),
+        format!("Reminder: @brett riff release v3.3.0 still waits for your approval: {run}."),
     ] {
         let line = read
             .iter()
-            .find(|c| c.message.body.contains(body))
-            .unwrap_or_else(|| panic!("no line with {body}"));
-        assert_eq!(line.message.kind, riff_core::wire::Kind::Message, "{body}");
-        assert!(
-            line.message.body.starts_with(riff_client::threads::BY_RIFF),
+            .find(|c| c.message.body.starts_with(&body))
+            .unwrap_or_else(|| panic!("no line with {body}: {read:?}"));
+        assert_eq!(line.message.kind, riff_core::wire::Kind::Riff, "{body}");
+        assert_eq!(
+            line.message.from,
+            riff_core::name::SessionUri::server(),
             "{body}"
         );
-        assert_eq!(line.message.from.who().user(), "mike", "{body}");
     }
-    assert!(read.iter().any(|c| c.message.body.ends_with(&waits)));
 }
 
 /// What a fake daemon of a lead container saw: the `call` of each
@@ -2302,23 +2304,16 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
         .await;
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stderr), "");
+    assert_eq!(names(&seen), ["bot", "release_news", "watch"]);
+    // 01M74BPHQZHXFYYNXAJ1WFASQQ: the cut tells riff-server the fact, and
+    // riff-server writes the line of riff-bot.
+    let fact = seen.lock().unwrap()[0]["fact"].clone();
     assert_eq!(
-        names(&seen),
-        ["roster", "chat_post", "release_news", "watch"]
-    );
-    let body = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
-    assert!(body.contains("riff release v3.3.0 is cut"), "{body}");
-    // 01M5TKDYAFA683KNAJTGYTQD5W: the line of the cut asks the owner for nothing.
-    let lower = body.to_lowercase();
-    for ask in ["say", "approve", "?"] {
-        assert!(!lower.contains(ask), "{body}: {ask}");
-    }
-    assert!(
-        body.contains("riff tells you when its deploy waits for your approval"),
-        "{body}"
+        fact,
+        serde_json::json!({"fact": "release_cut", "tag": "v3.3.0"})
     );
     // 01M5SNV75DRFHR26BT2M8243VV: the note to the other leads goes through the socket.
-    let note = seen.lock().unwrap()[2]["body"].as_str().unwrap().to_owned();
+    let note = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
     assert!(
         note.contains(
             "the lead of como-technologies/riff cut the release v3.3.0: pull request #1140"
@@ -2326,7 +2321,7 @@ async fn cut_in_the_lead_container_tells_the_chat_through_the_socket() {
         "{note}"
     );
     // The watch goes through the daemon of the host (01M5RGCW5NCKQYA61RM63914TX).
-    let op = seen.lock().unwrap()[3]["op"].clone();
+    let op = seen.lock().unwrap()[2]["op"].clone();
     assert_eq!(
         op,
         serde_json::json!({"kind": "pull", "tag": "v3.3.0", "number": 1140})
@@ -2356,13 +2351,14 @@ async fn publish_in_the_lead_container_tells_the_chat_through_the_socket() {
         "{}",
         text(&out.stdout)
     );
+    assert_eq!(names(&seen), ["roster", "bot", "release_news", "watch"]);
+    // 01M74BPHQZHXFYYNXAJ1WFASQQ: the fact has the ID of the CI run of the
+    // tag, and no text of the line.
+    let fact = seen.lock().unwrap()[1]["fact"].clone();
     assert_eq!(
-        names(&seen),
-        ["roster", "chat_post", "release_news", "watch"]
+        fact,
+        serde_json::json!({"fact": "release_published", "tag": "v3.3.0", "run": 9})
     );
-    let body = seen.lock().unwrap()[1]["body"].as_str().unwrap().to_owned();
-    assert!(body.contains("riff release v3.3.0 is published"), "{body}");
-    assert!(!body.contains("Its deploy waits"), "{body}");
     let op = seen.lock().unwrap()[3]["op"].clone();
     assert_eq!(op, serde_json::json!({"kind": "deploy", "tag": "v3.3.0"}));
 }

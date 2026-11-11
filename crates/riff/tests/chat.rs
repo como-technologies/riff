@@ -16,7 +16,7 @@ use futures::StreamExt;
 use isolated::{Isolated, Span, in_time};
 use riff_client::api::Api;
 use riff_core::name::SessionUri;
-use riff_core::wire::Kind;
+use riff_core::wire::{BotFact, Kind};
 use riff_server::Service;
 use riff_server::auth::Config;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -319,23 +319,34 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
     );
 
     // Only a line of riff-server itself shows as <riff-bot>
-    // (01M6Y4ZCTSTVM971BDC1F7GJPK). A line that riff writes as mike shows
-    // as mike, with the mark, and so does a line that mike types with it.
-    let person: SessionUri = "riff://mike@thelio".parse().unwrap();
-    let waits = "the deploy waits for your approval";
-    riff::chat::post_by_riff(&server.api("mike", None), &person, &[], waits)
-        .await
-        .unwrap();
+    // (01M6Y4ZCTSTVM971BDC1F7GJPK). riff-server writes the line that riff
+    // writes for mike from its fact: the ask of a release names the owner
+    // brett, and the note of the daemon names no one. A line that mike
+    // types with the words of riff-bot shows as mike.
+    let person: SessionUri = "riff://mike@thelio/como-technologies/riff".parse().unwrap();
+    let api = server.api("mike", None);
+    let waits = BotFact::ReleaseWaits {
+        tag: "v3.3.0".into(),
+        run: 9,
+        reminder: false,
+    };
+    api.bot(&person, waits, None).await.unwrap();
+    api.bot(&person, BotFact::LeadStarted, None).await.unwrap();
+    let asked = "@brett riff release v3.3.0 waits for your approval: \
+                 https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: \
+                 riff release approve v3.3.0";
+    let started = "riff started the lead of mike in como-technologies/riff on thelio again on \
+                   the new riff, and its conversation goes on. Attach with: riff lead start, or \
+                   l in the Sessions tab of riff.";
     for client in [&mut mike, &mut brett] {
-        let line = client.shows(waits).await;
-        assert!(
-            is_line(&line, "mike", &format!("[by riff] {waits}")),
-            "{line:?}"
-        );
+        let line = client.shows("waits for your approval").await;
+        assert!(is_line(&line, "riff-bot", asked), "{line:?}");
+        let line = client.shows("riff started the lead").await;
+        assert!(is_line(&line, "riff-bot", started), "{line:?}");
     }
-    let typed = "[by riff] the deploy is approved";
+    let typed = "@brett riff release v9.9.9 waits for your approval";
     mike.say(typed).await;
-    let line = brett.shows("is approved").await;
+    let line = brett.shows("v9.9.9").await;
     assert!(is_line(&line, "mike", typed), "{line:?}");
     // brett, the owner, passes the role: riff-server posts the line.
     let owner: SessionUri = "riff://brett@heron".parse().unwrap();
@@ -1124,6 +1135,38 @@ async fn in_a_terminal_never_and_no_color_turn_off_the_bold_of_a_highlight() {
         mike.marked(|m| m.bells == 1).await;
         assert_eq!(mike.bold(&body), Some(false), "{args:?} {env:?}");
     }
+}
+
+/// 01M74BPHQZHXFYYNXAJ1WFASQQ: riff-server posts the lines that riff
+/// writes for mike, as `<riff-bot>`. The ask of a release names the owner
+/// brett, and is a highlight for brett (01M6XSHMGM82QSABRWCYH595VH): it
+/// is bold, and rings the bell. The line "riff started the lead ..."
+/// names no one, and is plain.
+#[tokio::test]
+async fn in_a_terminal_the_ask_of_riff_bot_is_a_highlight_for_its_person() {
+    let server = crate::common::start_signed().await;
+    let brett = Tty::start(&server, "brett", "heron").await;
+    let person: SessionUri = "riff://mike@thelio/como-technologies/riff".parse().unwrap();
+    let api = server.api("mike", None);
+    api.bot(&person, BotFact::LeadStarted, None).await.unwrap();
+    let started = "<riff-bot> riff started the lead of mike in como-technologies/riff on";
+    brett
+        .shows(|rows| rows.iter().any(|row| row.contains(started)))
+        .await;
+    let waits = BotFact::ReleaseWaits {
+        tag: "v3.3.0".into(),
+        run: 9,
+        reminder: false,
+    };
+    api.bot(&person, waits, None).await.unwrap();
+    let asked = "<riff-bot> @brett riff release v3.3.0 waits for your approval";
+    brett
+        .shows(|rows| rows.iter().any(|row| row.contains(asked)))
+        .await;
+    brett.marked(|m| m.bells == 1).await;
+    assert_eq!(brett.bold(asked), Some(true));
+    assert_eq!(brett.bold(started), Some(false));
+    assert_eq!(brett.bells(), 1, "the line of the daemon rings no bell");
 }
 
 /// A highlight in the history at the start of the chat is bold, and

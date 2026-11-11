@@ -2522,6 +2522,7 @@ impl State {
             body: body.to_owned(),
             kind,
             at_ms,
+            key: None,
         };
         let caller = Caller::of(me).with_class(Class::Server);
         let (made, ()) = self.run(&caller, &announce, now).map_err(|r| r.reason)?;
@@ -2602,6 +2603,34 @@ impl State {
     /// of each known session, also a gone one (01M3MN14ZCTRVD3T455P6TFK1B).
     pub fn repositories(&self) -> Vec<ThreadName> {
         self.written_view().repositories()
+    }
+
+    /// The kept messages of `thread`, oldest first, in the written copy.
+    /// It marks no message as read: riff-server reads the holds of a
+    /// release from them ([`riff_core::hold`]).
+    ///
+    /// ```
+    /// use std::time::Instant;
+    /// use riff_core::name::SessionUri;
+    /// use riff_core::wire::Post;
+    /// use riff_state::state::State;
+    ///
+    /// let ann: SessionUri = "riff://ann@heron/acme/app?session=a1".parse()?;
+    /// let now = Instant::now();
+    /// let mut state = State::default();
+    /// let thread = ann.default_thread().unwrap();
+    /// state.post(Post::new(&ann, Some(thread.clone()), vec![], "one"), now, 0).unwrap();
+    /// assert_eq!(state.messages(&thread)[0].body, "one");
+    /// assert!(state.messages(&"release".parse()?).is_empty());
+    /// # Ok::<(), riff_core::name::NameError>(())
+    /// ```
+    pub fn messages(&self, thread: &ThreadName) -> Vec<Message> {
+        self.written
+            .threads()
+            .by_name
+            .get(thread)
+            .map(|t| t.messages.iter().map(|s| s.message.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// Returns unread messages (or all of them) and marks them as read,
@@ -3928,7 +3957,7 @@ mod tests {
         for me in [api(), person] {
             let post = Post {
                 kind: Kind::Riff,
-                ..Post::new(&me, Some(ThreadName::chat()), vec![], "[by riff] hi")
+                ..Post::new(&me, Some(ThreadName::chat()), vec![], "hi")
             };
             assert_eq!(state.post(post, now, 0).unwrap_err(), threads::KIND_RIFF);
         }

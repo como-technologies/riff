@@ -112,7 +112,6 @@ use riff_core::build::{self, Build};
 use riff_core::dpop::Key;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::selector::Selector;
-use riff_core::wire::SetMachine;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, ChatName, Claim,
     ClaimReply, DenyOwner, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
@@ -127,6 +126,7 @@ use riff_core::wire::{
     Tailed, TakeOwner, ThreadInfo, Threads, TokenError, TokenReply, TokenRequest, Unanswered, Wake,
     WhoReply, WhoRequest,
 };
+use riff_core::wire::{BotFact, BotPost, SetMachine};
 use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
@@ -1204,6 +1204,20 @@ impl Api {
             after_secs,
         };
         Ok(self.call(&look).await?.unanswered)
+    }
+
+    /// Tells riff-server the fact `fact` of `me`, a person or the lead of
+    /// the person: riff-server writes the line of riff-bot for it, and
+    /// posts it in riff chat ([`BotPost`]). With `key`, riff-server drops
+    /// the line when a kept line of riff-bot for the same user has the key
+    /// (01M5TKG2K1AYK1KE7C2AA2W9DS).
+    pub async fn bot(&self, me: &SessionUri, fact: BotFact, key: Option<&str>) -> Result<()> {
+        let post = BotPost {
+            me: me.clone(),
+            fact,
+            key: key.map(str::to_owned),
+        };
+        self.call(&post).await
     }
 
     /// Gives the server what `me` saw of the items of its repository on

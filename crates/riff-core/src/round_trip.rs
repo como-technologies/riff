@@ -522,6 +522,33 @@ mod tests {
                 reason: text("a question"),
             }],
         });
+        for fact in [
+            BotFact::ReleaseCut {
+                tag: text("v3.3.0"),
+            },
+            BotFact::ReleasePublished {
+                tag: text("v3.3.0"),
+                run: Some(9),
+            },
+            BotFact::ReleaseWaits {
+                tag: text("v3.3.0"),
+                run: 9,
+                reminder: true,
+            },
+            BotFact::Question { issue: 12 },
+            BotFact::LeadStarted,
+            BotFact::LeadWaits,
+            BotFact::LeadNoMain,
+            BotFact::LeadFailed,
+            BotFact::LeadStale,
+            BotFact::LeadNoNetwork,
+        ] {
+            c.trip(&BotPost {
+                me: me(),
+                fact,
+                key: Some(text("question-12")),
+            });
+        }
         c.trip(&ItemFacts {
             me: me(),
             items: [

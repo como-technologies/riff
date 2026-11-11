@@ -69,29 +69,13 @@ use riff_client::api::Api;
 pub const ITEM: &str = "lead";
 
 /// The name of the container of the lead of the repository `repo`
-/// (`OWNER/REPO`). Each character that podman does not take in a name
-/// becomes `-`.
+/// (`OWNER/REPO`): [`riff_core::name::lead_container`].
 ///
 /// ```
 /// assert_eq!(riff::lead::name_of("como-technologies/riff"), "riff-lead-como-technologies-riff");
-/// assert_eq!(riff::lead::name_of("o/a b"), "riff-lead-o-a-b");
 /// ```
 pub fn name_of(repo: &str) -> String {
-    format!("riff-lead-{}", plain(repo))
-}
-
-/// `repo` with `-` in place of `/` and of each character that is not a
-/// letter, a digit, `_` or `.`.
-fn plain(repo: &str) -> String {
-    repo.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect()
+    riff_core::name::lead_container(repo)
 }
 
 /// The folder of the lead of `repo` in the data folder `data` of riff
@@ -104,7 +88,7 @@ fn plain(repo: &str) -> String {
 /// assert_eq!(folder, Path::new("/d/riff/leads/o-r"));
 /// ```
 pub fn folder_of(data: &Path, repo: &str) -> PathBuf {
-    data.join("leads").join(plain(repo))
+    folder_of_name(data, &name_of(repo))
 }
 
 /// The folder of the lead in the container `name` ([`name_of`]), in the
@@ -929,6 +913,28 @@ pub fn linked_main(clone: &Path) -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("{} has no main clone", linked.display()))
 }
 
+/// The daemon runs no wave of the repository of the lead, and the clone of
+/// the lead links to no main clone: no step gives the main clone
+/// (01M6QB89JJEM9Z1V3RVZYHKYT0). The text names the clone and the step
+/// there is. The daemon tells riff-server the fact
+/// [`riff_core::wire::BotFact::LeadNoMain`] for it.
+///
+/// ```
+/// let error = anyhow::Error::new(riff::lead::NoMain("no main clone".into()));
+/// assert!(error.downcast_ref::<riff::lead::NoMain>().is_some());
+/// assert_eq!(error.to_string(), "no main clone");
+/// ```
+#[derive(Debug)]
+pub struct NoMain(pub String);
+
+impl std::fmt::Display for NoMain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NoMain {}
+
 /// The [`daemon::Start`] of the lead of `record` for a start again on the
 /// riff of this daemon (01M5TC2919TB9XPF42YFNJBP79): the same session, the
 /// same clone and the same Claude folder, and `claude --resume ID`
@@ -942,6 +948,7 @@ pub fn linked_main(clone: &Path) -> Result<PathBuf> {
 /// main clone is the one that the clone of the lead links to
 /// ([`linked_main`]). So a host that must not run the wave of a
 /// repository starts its lead again all the same (#1606, 01M6QB89JJEM9Z1V3RVZYHKYT0).
+/// With neither, the error is [`NoMain`].
 pub fn again(wave: Option<&crate::wave::Wave>, record: &daemon::Record) -> Result<daemon::Start> {
     let here = record.me.place();
     let repo = here.repo_text();
@@ -951,7 +958,7 @@ pub fn again(wave: Option<&crate::wave::Wave>, record: &daemon::Record) -> Resul
         None => {
             let clone = folder.join("clone");
             linked_main(&clone)
-                .map_err(|_| anyhow::anyhow!("{}", text::lead_again_no_main(&repo, &clone)))?
+                .map_err(|_| anyhow::Error::new(NoMain(text::lead_again_no_main(&repo, &clone))))?
         }
     };
     let (main, common) = run::main_clone(&main)?;

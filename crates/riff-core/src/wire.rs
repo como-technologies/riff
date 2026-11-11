@@ -31,6 +31,7 @@
 //! | `/v1/plan` | [`SetPlan`] | [`PlanReply`] | command |
 //! | `/v1/plan/off` | [`PlanOff`] | [`PlanOffReply`] | command |
 //! | `/v1/notes/set` | [`SetNotes`] | [`SetNotesReply`] | command |
+//! | `/v1/bot` | [`BotPost`] | `null` | command |
 //! | `/v1/status` | [`SetStatus`] | `null` | signal |
 //! | `/v1/blocked` | [`SetBlocked`] | `null` | signal |
 //! | `/v1/step` | [`SetStep`] | `null` | signal |
@@ -244,6 +245,7 @@ calls! {
     SetStep => "/v1/step", ();
     SetMachine => "/v1/machine", ();
     BlockedLook => "/v1/blocked/look", BlockedLookReply;
+    BotPost => "/v1/bot", ();
     ItemFacts => "/v1/items", ();
     Alive => "/v1/alive", AliveReply;
     WhoRequest => "/v1/who", WhoReply;
@@ -1192,6 +1194,81 @@ pub struct BlockedLookReply {
 pub struct Unanswered {
     pub session: SessionUri,
     pub reason: String,
+}
+
+/// `POST /v1/bot`: the riff of a person tells riff-server a fact, and
+/// riff-server posts the line of riff-bot for it in riff chat, with the
+/// kind `riff`. The call holds no text of the line: riff-server writes
+/// the text itself, from the fact, the place of `me` and what it holds
+/// (01M74BPHQZHXFYYNXAJ1WFASQQ).
+/// Only a person, and the lead of the person in its repository, may call
+/// it. A call with a `key` that a kept line of riff-bot for the same user
+/// has is dropped (01M5TKG2K1AYK1KE7C2AA2W9DS).
+///
+/// ```
+/// use riff_core::wire::{BotFact, BotPost};
+///
+/// let post: BotPost = serde_json::from_str(r#"{
+///     "me": "riff://mike@thelio/como-technologies/riff",
+///     "fact": {"fact": "release_waits", "tag": "v3.3.0", "run": 9, "reminder": false}
+/// }"#)?;
+/// let waits = BotFact::ReleaseWaits { tag: "v3.3.0".into(), run: 9, reminder: false };
+/// assert_eq!(post.fact, waits);
+/// assert_eq!(
+///     serde_json::to_string(&BotFact::LeadStarted)?,
+///     r#"{"fact":"lead_started"}"#
+/// );
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BotPost {
+    pub me: SessionUri,
+    pub fact: BotFact,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+/// A fact of [`BotPost`]: what riff saw for the person. The repository
+/// and the host of each fact are the place of the caller.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "fact", rename_all = "snake_case")]
+pub enum BotFact {
+    /// `riff release cut` made the release pull request of the version
+    /// `tag`, `vX.Y.Z`.
+    ReleaseCut { tag: String },
+    /// `riff release publish` tagged the version `tag`. `run` is the ID
+    /// of the CI run of the tag on GitHub, when GitHub shows it.
+    ReleasePublished {
+        tag: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run: Option<u64>,
+    },
+    /// The job `Deploy` of the CI run `run` of the version `tag` waits
+    /// for the approval of a person. A `reminder` comes while it still
+    /// waits.
+    ReleaseWaits {
+        tag: String,
+        run: u64,
+        reminder: bool,
+    },
+    /// The issue `issue` got the label `question`: a lead waits for the
+    /// answer of the person.
+    Question { issue: u64 },
+    /// The daemon started the lead again on the new riff.
+    LeadStarted,
+    /// The daemon cannot start the lead again on the new riff now. The
+    /// lead runs the old riff on.
+    LeadWaits,
+    /// As [`BotFact::LeadWaits`], because the daemon runs no wave of the
+    /// repository, and the clone of the lead links to no main clone.
+    LeadNoMain,
+    /// The daemon stopped the lead to start it again on the new riff, and
+    /// the start failed.
+    LeadFailed,
+    /// The sign-in of `claude` in the lead is stale.
+    LeadStale,
+    /// The lead lost its network at the restart of the daemon.
+    LeadNoNetwork,
 }
 
 /// `POST /v1/items`: what a client saw of the items of its repository

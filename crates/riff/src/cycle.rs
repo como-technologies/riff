@@ -1292,72 +1292,20 @@ pub struct Published {
     pub run: Option<String>,
 }
 
-/// The chat line of `riff release publish` to the owner `owner`
-/// (01M58KMM1BHX3YY81BPZG04JSX): the version, the CI run that builds, and
-/// that riff tells the owner when the deploy waits. It says nothing of a
-/// wait: the jobs before the job `Deploy` still run
-/// ([`waits_line`], 01M5RGD0XTR4X1MEV726HMCEGQ).
+/// The ID of the CI run at the page `url` on GitHub, for the fact of
+/// `riff release publish` ([`riff_core::wire::BotFact::ReleasePublished`]):
+/// riff-server writes the page of the run itself.
 ///
 /// ```
-/// let line = riff::cycle::publish_line("mike", "v3.3.0", Some("https://x/runs/9"));
-/// assert_eq!(
-///     line,
-///     "@mike riff release v3.3.0 is published. Its CI run builds: https://x/runs/9. \
-///      riff tells you when its deploy waits for your approval."
-/// );
-/// assert!(riff::cycle::publish_line("", "v3.3.0", None).starts_with("riff release v3.3.0"));
-/// ```
-pub fn publish_line(owner: &str, tag: &str, run: Option<&str>) -> String {
-    let run = run.unwrap_or("the CI run of the tag");
-    format!(
-        "{}riff release {tag} is published. Its CI run builds: {run}. riff tells you when its \
-         deploy waits for your approval.",
-        mention(owner)
-    )
-}
-
-/// The chat line to the owner `owner` while the job `Deploy` of `tag`
-/// waits for [`PRODUCTION`] (01M5RGD0XTR4X1MEV726HMCEGQ): the run, and the
-/// command of the person. A `reminder` starts with a word that says so.
-/// Each hold of `holds` follows in the same words as `riff release
-/// status` (01M5SNV7BC5J58WRZRJ5HS4NSJ).
+/// use riff::cycle::run_id;
 ///
+/// assert_eq!(run_id("https://github.com/o/r/actions/runs/9"), Some(9));
+/// assert_eq!(run_id("https://github.com/o/r/actions/runs/9/"), Some(9));
+/// assert_eq!(run_id("the CI run of the tag"), None);
 /// ```
-/// let line = riff::cycle::waits_line("mike", "v3.3.0", "https://x/runs/9", false, &[]);
-/// assert_eq!(
-///     line,
-///     "@mike riff release v3.3.0 waits for your approval: https://x/runs/9. \
-///      In a terminal, run: riff release approve v3.3.0"
-/// );
-/// let again = riff::cycle::waits_line("", "v3.3.0", "https://x/runs/9", true, &[]);
-/// assert!(again.starts_with("Reminder: riff release v3.3.0 still waits"));
-/// let held = riff::hold::Hold { user: "nate".into(), repo: "o/s".into(), reason: "A demo runs.".into() };
-/// let line = riff::cycle::waits_line("mike", "v3.3.0", "https://x/runs/9", false, &[held]);
-/// assert!(line.ends_with(" A hold stands: the lead of o/s asks to wait: A demo runs."));
-/// ```
-pub fn waits_line(owner: &str, tag: &str, run: &str, reminder: bool, holds: &[Hold]) -> String {
-    let (start, waits) = match reminder {
-        true => ("Reminder: ", "still waits"),
-        false => ("", "waits"),
-    };
-    let mut line = format!(
-        "{start}{}riff release {tag} {waits} for your approval: {run}. In a terminal, run: riff \
-         release approve {tag}",
-        mention(owner)
-    );
-    if !holds.is_empty() {
-        let each: Vec<String> = holds.iter().map(Hold::line).collect();
-        line.push_str(&format!(" A hold stands: {}", each.join(" ")));
-    }
-    line
-}
-
-/// `@owner ` for a chat line, or nothing when the riff has no owner.
-fn mention(owner: &str) -> String {
-    match owner.is_empty() {
-        true => String::new(),
-        false => format!("@{owner} "),
-    }
+pub fn run_id(url: &str) -> Option<u64> {
+    let (_, id) = url.trim_end_matches('/').rsplit_once("/runs/")?;
+    id.parse().ok()
 }
 
 /// Publishes the release `tag` (01M58B0JABCET719T3HFB19NDW,
@@ -1594,26 +1542,6 @@ pub fn approve(
 /// (01M58KMM3NFGJRW4CCV50KJQB2).
 pub fn approve_run(forge: &dyn Forge, run: &Waiting) -> Result<()> {
     forge.approve(run, &format!("Release {}", run.tag))
-}
-
-/// The line that `riff release cut` writes in riff chat to the owner
-/// `owner`: the version, and that riff tells the owner when the deploy
-/// waits for an approval. It asks for nothing: the only ask is
-/// [`waits_line`] (01M5TKDYAFA683KNAJTGYTQD5W).
-///
-/// ```
-/// let line = riff::cycle::cut_line("mike", "v3.3.0");
-/// assert_eq!(
-///     line,
-///     "@mike riff release v3.3.0 is cut. riff tells you when its deploy waits for your approval."
-/// );
-/// assert!(!line.contains("Say") && !line.contains("approve"));
-/// ```
-pub fn cut_line(owner: &str, tag: &str) -> String {
-    format!(
-        "{}riff release {tag} is cut. riff tells you when its deploy waits for your approval.",
-        mention(owner)
-    )
 }
 
 /// One line of the log of the Cloud Run service of the shared riff.
@@ -5246,19 +5174,5 @@ pub(crate) mod tests {
             };
             assert_eq!(person.person_step(), None, "{person:?}");
         }
-    }
-
-    #[test]
-    fn the_cut_line_asks_nothing_and_says_that_riff_tells_the_owner() {
-        let line = cut_line("mike", "v4.0.1");
-        assert_eq!(
-            line,
-            "@mike riff release v4.0.1 is cut. riff tells you when its deploy waits for your approval."
-        );
-        let lower = line.to_lowercase();
-        for ask in ["say", "approve", "deploy it", "?"] {
-            assert!(!lower.contains(ask), "{line}: {ask}");
-        }
-        assert!(cut_line("", "v4.0.1").starts_with("riff release v4.0.1 is cut."));
     }
 }

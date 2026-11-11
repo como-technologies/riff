@@ -84,8 +84,8 @@ use anyhow::{Result, anyhow};
 use riff_core::build::Build;
 use riff_core::name::{SessionUri, ThreadName};
 use riff_core::wire::{
-    HoldInfo, Kind, LogReply, MembersReply, Person, PullState, RiffOwner, RiffReply, RiffState,
-    SessionInfo, Status, StepChange, WhoReply,
+    BotFact, HoldInfo, Kind, LogReply, MembersReply, Person, PullState, RiffOwner, RiffReply,
+    RiffState, SessionInfo, Status, StepChange, WhoReply,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -378,18 +378,16 @@ impl Reach {
         }
     }
 
-    /// Posts `body` in riff chat. It wakes the names that it holds.
-    pub async fn chat_post(&self, body: &str) -> Result<()> {
+    /// Tells riff-server the fact `fact`: riff-server posts the line of
+    /// riff-bot for it in riff chat ([`riff_core::wire::BotPost`]).
+    pub async fn bot(&self, fact: BotFact) -> Result<()> {
         match self {
             Reach::Direct(server) => {
                 let (api, me) = signed(server)?;
-                let to = riff_client::chat::to(body);
-                crate::chat::post_by_riff(&api, &me, &to, body).await
+                api.bot(&me, fact, None).await
             }
             Reach::Daemon(socket) => {
-                let call = ServerCall::ChatPost {
-                    body: body.to_owned(),
-                };
+                let call = ServerCall::Bot { fact };
                 let _: serde_json::Value = ask(socket, &call).await?;
                 Ok(())
             }

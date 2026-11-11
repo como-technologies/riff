@@ -20,6 +20,7 @@
 //! - [`signed`]: the signature that each message carries.
 //! - [`record`]: the records of the log of `riff-server`.
 //! - [`notes`]: the checks of the notes of the lead.
+//! - [`hold`]: the holds of the leads on a release.
 //! - [`build`]: the build of each side, and the check that they match.
 //! - [`pipe`]: the quiet end of a command at a closed pipe.
 //! - [`number_keys`]: a map with number keys on the wire.
@@ -79,6 +80,7 @@
 
 pub mod build;
 pub mod dpop;
+pub mod hold;
 pub mod name;
 pub mod notes;
 pub mod number_keys;
