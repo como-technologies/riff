@@ -5143,7 +5143,7 @@ pub fn verify_post(verdict: Verdict, number: u64, done: &Reported, result: &str)
 }
 
 /// The line of `riff verify` when its part on GitHub is done and riff
-/// cannot post the result to the session of the issue (#1733).
+/// cannot post the result to the session of the issue (01M74A8D523KA6TEJVXT46YW74).
 ///
 /// ```
 /// use riff::pr::{Reported, Verdict};
@@ -5169,7 +5169,7 @@ pub fn verify_not_posted(verdict: Verdict, number: u64, done: &Reported, error: 
 }
 
 /// The refusal of a riff command that needs the host, in a container
-/// session (#1733): `words` is the command, for example `riff claim`.
+/// session (01M74A8CXVRD352VRJ9FH54HJ1): `words` is the command, for example `riff claim`.
 ///
 /// ```
 /// assert_eq!(
@@ -5189,7 +5189,7 @@ pub fn needs_the_host(words: &str) -> String {
     )
 }
 
-/// The Chat tab of the TUI in a container session (#1733): the chat is
+/// The Chat tab of the TUI in a container session (01M74A8D8AMEM1A64XWXPC65J5): the chat is
 /// for a person, and the container has no sign-in of a person.
 pub const TUI_CHAT_IN_CONTAINER: &str = "The chat is for a person, and this container has no \
      sign-in of a person. Run riff chat in a terminal on the host.";
@@ -7429,17 +7429,17 @@ pub const DAEMON_PS_ONLY_LEAD: &str =
 
 /// A session that is not the lead asks the daemon to tell the fact of a
 /// pull request, for `riff pr open`, `riff pr wait` and `riff verify`
-/// (#1733).
+/// (01M74A8D1GV6TCPXV2XEPVA53A).
 pub const DAEMON_FACT_ONLY_LEAD: &str =
     "Only the lead can tell the state of a pull request through the riff daemon.";
 
 /// A session that is not the lead asks the daemon to pause or resume,
-/// for `riff pause` and `riff resume` (#1733).
+/// for `riff pause` and `riff resume` (01M74A8D1GV6TCPXV2XEPVA53A).
 pub const DAEMON_PAUSE_ONLY_LEAD: &str =
     "Only the lead can pause or resume through the riff daemon.";
 
 /// A session that is not the lead asks the daemon for the records of the
-/// thread denials, for `riff denials` (#1733).
+/// thread denials, for `riff denials` (01M74A8D1GV6TCPXV2XEPVA53A).
 pub const DAEMON_DENIALS_ONLY_LEAD: &str =
     "Only the lead can read the thread denials through the riff daemon.";
 

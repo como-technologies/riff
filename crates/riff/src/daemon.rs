@@ -1391,7 +1391,7 @@ pub enum ServerCall {
         all: bool,
     },
     /// The fact of the pull request `number` of the issue `issue`, as
-    /// `riff pr open`, `riff pr wait` and `riff verify` tell it (#1733,
+    /// `riff pr open`, `riff pr wait` and `riff verify` tell it (01M74A8D1GV6TCPXV2XEPVA53A,
     /// 01M41FZP2C4Z4J6WKRXZ5B31EH). Only the lead may. The answer is
     /// `null`.
     Fact {
@@ -1404,7 +1404,7 @@ pub enum ServerCall {
     },
     /// Pause or resume the repository of the session, the repository
     /// `repo`, or with `riff` the whole riff, as `riff pause` and `riff
-    /// resume` do (#1733). Only the lead may, as with its riff tools
+    /// resume` do (01M74A8D1GV6TCPXV2XEPVA53A). Only the lead may, as with its riff tools
     /// `pause` and `resume`. The answer is the line for the person.
     Pause {
         /// The whole riff.
@@ -1415,12 +1415,12 @@ pub enum ServerCall {
         state: riff_core::wire::RiffState,
     },
     /// The time and the body of each post of the thread `denials`, oldest
-    /// first, as `riff denials` reads them ([`crate::denied`], #1733).
+    /// first, as `riff denials` reads them ([`crate::denied`], 01M74A8D1GV6TCPXV2XEPVA53A).
     /// Only the lead may.
     Denials,
     /// The GitHub Apps of the riff, as the person reads them, for the
     /// checks of the guard and of the lead App of `riff init` in a
-    /// container (#1733). Each session may: the answer holds no key and
+    /// container (01M74A8DC74TT2YGZPBBAENMWH). Each session may: the answer holds no key and
     /// no secret. The answer is a [`riff_core::wire::GitHubAppsReply`],
     /// or `null` for a riff with no sign-in.
     Apps,

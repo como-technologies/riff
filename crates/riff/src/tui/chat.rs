@@ -939,7 +939,7 @@ impl Link {
     }
 
     /// A link with no call, for a TUI with no sign-in of a person, as in
-    /// a container session (#1733): the tab shows `why` as its fault, and
+    /// a container session (01M74A8D8AMEM1A64XWXPC65J5): the tab shows `why` as its fault, and
     /// each line that the person sends comes back unsent with `why`.
     pub fn off(why: &str) -> Link {
         let (tx, came) = mpsc::unbounded_channel();

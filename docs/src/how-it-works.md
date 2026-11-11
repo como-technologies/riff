@@ -2171,7 +2171,9 @@ cat ~/.local/share/riff/leads/OWNER-REPO/started-again
 
 In a container, `riff who`, `riff wave list`, `riff release check` and
 the other commands that reach riff-server ask the riff daemon of the
-host. After an update, the daemon can run a newer riff than the
+host (see
+[The riff commands in the container of the lead](#the-riff-commands-in-the-container-of-the-lead)).
+After an update, the daemon can run a newer riff than the
 container for a short time: the daemon starts the lead again at the end
 of its turn. When a command cannot read an answer of the daemon, it
 asks the daemon for its build. The error names the two builds and the
@@ -3178,6 +3180,22 @@ head commit. It sets the status `riff/verify` of that commit:
 result to the session that holds the issue of the `Issue:` trailer,
 for example `claim=issue-12`. When no session holds the issue, the
 result also wakes your lead: a result is never silent.
+
+#### When the post of the result fails
+
+The comment and the status come first, on GitHub. When riff then
+cannot post the result to the session of the issue, it says which part
+is done, names the fault, and exits with 1:
+
+```text
+riff verify: the FAIL comment and riff/verify failure of commit 1a2b3c4 are on pull request #40. riff cannot post the result to the session of issue-12: cannot reach riff-server at https://riff.example.com. Tell that session the result with riff post.
+```
+
+Do not report the verify again. Post the result yourself:
+
+```sh
+riff post --to claim=issue-12 "verify result: FAIL for issue-12, PR #40, commit 1a2b3c4. See the comment on the pull request."
+```
 
 #### The squash message of a pass
 
@@ -6072,6 +6090,71 @@ riff lead start
 
 To watch the repository thread beside the lead, start `riff tail` in
 a second terminal.
+
+### The riff commands in the container of the lead
+
+The container of the lead has no riff-server and no sign-in of yours.
+Each riff command there that asks riff-server goes through the socket
+of the session: the riff daemon of the host makes the call for the
+session. The command needs no `RIFF_SERVER`. A worker in a container
+works the same way.
+
+```mermaid
+flowchart LR
+    C["riff top in the container"] -- "the socket of the session" --> D["the riff daemon of the host"]
+    D -- "the call, as the session" --> S["riff-server"]
+    C -. "never" .-> L["http://127.0.0.1:7878"]
+```
+
+These commands work in the container:
+
+| Commands | What they do there |
+|---|---|
+| `riff whoami`, `riff who`, `riff top`, `riff members` | Read the riff. |
+| `riff read`, `riff post`, `riff tell` | Read and send messages. |
+| `riff status`, `riff blocked`, `riff step` | Set the state of the session. |
+| `riff pr open`, `riff pr wait`, `riff verify` | The steps of a pull request. The steps on GitHub use the token of the session. |
+| `riff pause`, `riff resume`, `riff plan hold`, `riff plan free` | Only the lead: pause, resume, hold and free. |
+| `riff run`, `riff wave list`, `riff wave move`, `riff wave end --move-open-to-backlog`, `riff join` | Only the lead: the waves and their items. |
+| `riff audit`, `riff questions`, `riff session why`, `riff denials` | Only the lead: find out about a wave. |
+| `riff release cut`, `verify`, `publish`, `status`, `hold`, `check`, `retry`, `test` and `rollback` | Only the lead: the release cycle. |
+| `riff daemon status`, `riff daemon events`, `riff ps`, and each command with `--host`, for example `riff build --host` | Only the lead: the daemons of your hosts. |
+| `riff init --check` | The checks of the repository. |
+| `riff`, the TUI | The tabs of the riff. |
+
+For example, in the terminal of the lead:
+
+```sh
+riff top --once
+riff read
+riff verify fail 40 --file result.md --commit 1a2b3c4d
+```
+
+In the container, `riff top` and the TUI follow no thread: they look
+again on their timer. When a look through the socket fails after one
+good look, they keep the last table and show the fault in red, for
+example while the riff daemon starts again. The Chat tab of the TUI is
+for a person: run `riff chat` on the host.
+
+A step of a person, a claim, and a command that needs a program of the
+host refuse in the container before each call: `riff login`, `riff
+logout`, `riff invite`, `riff remove`, `riff admin`, `riff owner`,
+`riff chat`, `riff tail`, `riff claim`, `riff release ITEM`, `riff
+lead --session`, `riff lead start`, `riff lead move`, `riff lead
+notes`, `riff questions --answered`, `riff server`, `riff update` and
+`riff cloud`. Run them in a terminal on the host:
+
+```sh
+riff claim issue-12
+```
+
+```text
+riff: riff claim does not run in a container session. It needs the host: the sign-in of a person, the claims of the riff daemon, or a program of the host. Run it in a terminal on the host. The commands of a session work here, for example riff read and riff post: the riff daemon of the host makes their calls.
+```
+
+`riff github`, `riff leave` and `riff lead stop` with no `--host`
+refuse in the container with words of their own: each names the step
+on the host.
 
 ### Watch the riff on another machine
 

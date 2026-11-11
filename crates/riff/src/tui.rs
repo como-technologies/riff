@@ -222,7 +222,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use ratatui::style::Color;
-use riff_client::api::{self, Api};
+use riff_client::api::Api;
 use riff_client::sessions::{Phase, Sessions};
 use riff_client::waves::Issues;
 use riff_core::build::Build;
@@ -2047,7 +2047,7 @@ async fn frames(
     };
     let mut good_at = chrono::Local::now();
     // A container has no sign-in of a person for the Chat tab, and no
-    // stream of a thread: each look goes through the socket (#1733).
+    // stream of a thread: each look goes through the socket (01M74A8D8AMEM1A64XWXPC65J5).
     let container = matches!(reach, Reach::Daemon(_));
     let mut link = if container {
         chat::Link::off(text::TUI_CHAT_IN_CONTAINER)
@@ -2121,7 +2121,7 @@ async fn frames(
                 }
                 // A fault that a new try can repair keeps the last
                 // screen (01M6VAZKAH6B53YKR8W4YKNSH6).
-                Err(e) if api::passes(&e) => state.failed(text::top_fault(
+                Err(e) if reach.passes(&e) => state.failed(text::top_fault(
                     &e.to_string(),
                     api.base(),
                     &good_at,

@@ -6616,6 +6616,43 @@ of this part when they merge.
   screen. A person selects, copies and pastes in the terminal of an
   attach or of a takeover as in a plain terminal. riff adds the key to a
   `settings.json` with no `tui`, and keeps a `tui` that is there.
+- **01M74A84SA5KCBVGVW7M9ETJ3A** In a container, each riff command that
+  asks riff-server goes through the riff daemon on the socket of the
+  session (RIFF_SOCKET), as riff who does: also riff top, riff read,
+  riff post, riff status, riff blocked, riff step, riff tell, riff
+  denials, riff pause, riff resume, riff pr open, riff pr wait, riff
+  verify, riff init and the TUI. No command in a container asks the
+  riff-server of the machine. The table riff::reach::COMMANDS names the
+  way of each subcommand in a container: through the socket, only on the
+  host, or no riff-server. A test fails for a subcommand with no row,
+  and for a row whose command asks the riff-server of the machine
+  (#1733).
+- **01M74A8CXVRD352VRJ9FH54HJ1** In a container, riff login, riff
+  logout, riff invite, riff remove, riff admin, riff owner, riff chat,
+  riff tail, riff claim, riff release ITEM, riff lead --session, riff
+  lead start, riff lead move, riff lead notes, riff questions
+  --answered, riff server, riff update and riff cloud refuse before each
+  call. The refusal says that the command needs the host, and that the
+  commands of a session work in the container (#1733).
+- **01M74A8D1GV6TCPXV2XEPVA53A** Through the socket of a session, each
+  session can post, tell, read, set its status, say that it is blocked,
+  and start, end or fail a long step, as with its riff tools. Only the
+  lead can pause and resume, tell the state of a pull request, and read
+  the thread denials. riff-server still decides each call (#1733).
+- **01M74A8D523KA6TEJVXT46YW74** When riff verify did its part on GitHub
+  and then cannot post the result to the session of the issue, it says
+  that the comment and the status riff/verify are on the pull request,
+  names the fault, and exits with 1 (#1733).
+- **01M74A8D8AMEM1A64XWXPC65J5** In a container, riff top and the TUI
+  look through the socket of the session, and follow no stream of a
+  thread: they look again on their timer. After one good look, they stay
+  open at each fault of a look through the socket, and keep the last
+  table. The Chat tab of the TUI in a container says that the chat is
+  for a person on the host, and sends no line (#1733).
+- **01M74A8DC74TT2YGZPBBAENMWH** In a container, riff init reads the
+  GitHub Apps of the riff through the socket of the session for its
+  checks of the guard and of the lead App: the daemon reads them with
+  the sign-in of the person on the host (#1733).
 
 ### The first run
 

@@ -47,6 +47,35 @@
 //! the daemon on the socket, and `riff daemon events NAME --host HOST`
 //! asks the daemon of HOST through it ([`Reach::follow_events`],
 //! #1441).
+//!
+//! # Each command in a container
+//!
+//! Each riff command that asks riff-server takes the socket in a
+//! container (01M74A84SA5KCBVGVW7M9ETJ3A): also `riff top`, `riff read`,
+//! `riff post`, `riff status`, `riff blocked`, `riff step`, `riff tell`,
+//! `riff denials`, `riff pause`, `riff resume`, `riff pr open`, `riff pr
+//! wait`, `riff verify`, `riff init` and the TUI. Each such method of
+//! [`Reach`] takes the client and the URI of the session for the way
+//! straight, and gives the line for the person: [`Reach::post`],
+//! [`Reach::read`], [`Reach::look`] and the others. The table [`COMMANDS`]
+//! names the way of each subcommand ([`Way`]). A command of
+//! [`Way::Host`], for example `riff claim` or `riff login`, refuses in a
+//! container before each call (01M74A8CXVRD352VRJ9FH54HJ1).
+//!
+//! | Through the socket | Who may |
+//! |---|---|
+//! | post, tell, read, status, blocked, step | each session, as with its riff tools |
+//! | pause and resume, the fact of a pull request, the thread denials | the lead (01M74A8D1GV6TCPXV2XEPVA53A) |
+//! | the GitHub Apps of the riff, for `riff init` | each session: no key and no secret (01M74A8DC74TT2YGZPBBAENMWH) |
+//!
+//! ```mermaid
+//! flowchart LR
+//!     C["riff COMMAND in a container"] --> W{"its way"}
+//!     W -- Socket --> D["the riff daemon of the host:<br/>the call as the session"]
+//!     D --> S["riff-server"]
+//!     W -- Host --> R["refuses at once:<br/>run it on the host"]
+//!     W -- Local --> L["asks no riff-server"]
+//! ```
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -572,6 +601,26 @@ impl Reach {
         }
     }
 
+    /// True when `riff top` and the TUI go on after `error` of a look,
+    /// with the last good look (01M3Z8FXE2DY34ZP75WJE1S8HR). Straight, a
+    /// new try must be able to repair it ([`riff_client::api::passes`]).
+    /// Through the socket, each error passes: the riff daemon of the
+    /// host starts again after an update (01M74A8D8AMEM1A64XWXPC65J5).
+    ///
+    /// ```
+    /// use riff::reach::Reach;
+    ///
+    /// let refused = anyhow::anyhow!("the daemon went away");
+    /// assert!(Reach::Daemon("/run/riff/riff.sock".into()).passes(&refused));
+    /// assert!(!Reach::Direct("http://127.0.0.1:7878".into()).passes(&refused));
+    /// ```
+    pub fn passes(&self, error: &anyhow::Error) -> bool {
+        match self {
+            Reach::Direct(_) => riff_client::api::passes(error),
+            Reach::Daemon(_) => true,
+        }
+    }
+
     /// One look of `riff top` and of the TUI: the state of the riff and
     /// the reply to `who`, with the state of each session that the server
     /// sent none for, and the time of the call `who` (#1733). Straight, it
@@ -857,7 +906,7 @@ const fn local(args: &'static [&'static str]) -> InContainer {
 }
 
 /// Each riff command, with its way to riff-server in a container
-/// session (#1733). No command there asks `http://127.0.0.1:7878`, the
+/// session (01M74A84SA5KCBVGVW7M9ETJ3A). No command there asks `http://127.0.0.1:7878`, the
 /// riff-server of the machine: the container has none. The tests of
 /// `riff` check that each subcommand of the CLI has a row, and run each
 /// row with [`Way::Socket`] and [`Way::Host`] in a container session.
@@ -930,11 +979,23 @@ pub const COMMANDS: &[InContainer] = &[
     socket(&["daemon", "status"]),
     socket(&["daemon", "status", "--host", "thelio"]),
     socket(&["daemon", "events", "riff-issue-12-1a2b3c4d"]),
-    socket(&["daemon", "events", "riff-issue-12-1a2b3c4d", "--host", "thelio"]),
+    socket(&[
+        "daemon",
+        "events",
+        "riff-issue-12-1a2b3c4d",
+        "--host",
+        "thelio",
+    ]),
     socket(&["daemon", "limit", "--sessions", "4", "--host", "thelio"]),
     socket(&["daemon", "cache", "--host", "thelio"]),
     socket(&["daemon", "sweep", "--host", "thelio"]),
-    socket(&["daemon", "end", "riff-issue-12-1a2b3c4d", "--host", "thelio"]),
+    socket(&[
+        "daemon",
+        "end",
+        "riff-issue-12-1a2b3c4d",
+        "--host",
+        "thelio",
+    ]),
     socket(&["daemon", "restart", "--host", "thelio"]),
     // The relay of the session.
     socket(&["relay", "--", "true"]),

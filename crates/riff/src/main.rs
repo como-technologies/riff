@@ -1905,7 +1905,7 @@ async fn cli() -> Result<()> {
     // (01M5GVPNAKAPA596K9361HSAAV).
     let reach = Reach::of(&server, source, riff::session_relay::socket_here().ok());
     // In a container, a step of a person or a claim refuses before each
-    // call: the container has no riff-server of its own (#1733).
+    // call: the container has no riff-server of its own (01M74A8CXVRD352VRJ9FH54HJ1).
     if let (Reach::Daemon(_), Some(words)) = (&reach, needs_the_host(&command)) {
         anyhow::bail!(text::needs_the_host(words));
     }
@@ -2327,7 +2327,7 @@ async fn cli() -> Result<()> {
             );
         }
         // In a container, the daemon makes each call of a command of a
-        // session for it (#1733).
+        // session for it (01M74A84SA5KCBVGVW7M9ETJ3A).
         Command::Pause { riff, repo } => {
             let repo = repo_of(repo)?;
             let state = RiffState::Paused;
@@ -2564,7 +2564,7 @@ async fn cli() -> Result<()> {
                     .post(&api, &me, &thread, &to, &body, Kind::Message)
                     .await
             };
-            // The part on GitHub is done: the error says so (#1733).
+            // The part on GitHub is done: the error says so (01M74A8D523KA6TEJVXT46YW74).
             match posted.await {
                 Ok(line) => println!("{line}"),
                 Err(e) => {
@@ -2644,7 +2644,7 @@ async fn cli() -> Result<()> {
 }
 
 /// The words of `command` when it needs the host ([`riff::reach::Way::Host`],
-/// #1733): the sign-in of a person, a claim, or a program of the host. In
+/// 01M74A8CXVRD352VRJ9FH54HJ1): the sign-in of a person, a claim, or a program of the host. In
 /// a container session it refuses at once. `riff github`, `riff leave`
 /// and `riff lead stop` with no `--host` refuse there with words of their
 /// own.
@@ -4330,7 +4330,7 @@ async fn top(
 
 /// The loop of [`top`]. In a container, each look goes through the
 /// socket of the session, and no stream of the thread starts a look: the
-/// table draws again each [`riff::top::REFRESH`] (#1733).
+/// table draws again each [`riff::top::REFRESH`] (01M74A8D8AMEM1A64XWXPC65J5).
 async fn draw_top(
     api: &Api,
     me: &SessionUri,
@@ -4389,7 +4389,7 @@ async fn draw_top(
                 last = Some((look, chrono::Local::now()));
                 None
             }
-            Err(e) if last.is_some() && api::passes(&e) => Some(e),
+            Err(e) if last.is_some() && reach.passes(&e) => Some(e),
             Err(e) => return Err(e),
         };
         // A fault with no good look ended the loop above.
@@ -4510,7 +4510,7 @@ mod tests {
         path
     }
 
-    /// #1733: each subcommand of the CLI has a row in the table of the
+    /// 01M74A84SA5KCBVGVW7M9ETJ3A: each subcommand of the CLI has a row in the table of the
     /// ways to riff-server in a container session, and each row names a
     /// subcommand of the CLI with words that parse.
     #[test]
@@ -4529,7 +4529,7 @@ mod tests {
         }
     }
 
-    /// #1733: in a container, a command of [`riff::reach::Way::Host`]
+    /// 01M74A8CXVRD352VRJ9FH54HJ1: in a container, a command of [`riff::reach::Way::Host`]
     /// refuses at once with [`super::needs_the_host`], or with words of its
     /// own. No other command refuses so.
     #[test]

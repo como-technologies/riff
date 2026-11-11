@@ -1176,7 +1176,7 @@ pub async fn init(
                     }
                 }
             }
-            // In a container, the riff daemon reads the Apps (#1733).
+            // In a container, the riff daemon reads the Apps (01M74A8DC74TT2YGZPBBAENMWH).
             (Some(_), Reach::Daemon(_)) => match reach.apps().await {
                 Ok(Some(apps)) => (
                     crate::guard::session_bot_of(&apps),
