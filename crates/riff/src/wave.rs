@@ -246,12 +246,15 @@
 //!   default branch requires: the fix of the checks comes first (see "A
 //!   pull request that cannot merge", #1575). A failed check that it does
 //!   not require holds no verify (01M749P62T24VDPX20D40KRJEK);
-//! - a verify or a rebase of a pull request that shares a file with a
-//!   pull request before it: one whose verify runs or passed, or whose
-//!   item had its verify request first ([`order()`], [`crate::order`],
-//!   01M6WCGNCC3HWS47158WTWNQ8B, 01M6YPYTGR2JEBDHGX4K1RDCAW). A session
-//!   of its item does not put a pull request before the others
-//!   (01M74EP20TDQEXW42MK0XE73QF).
+//! - a verify or a rebase of a pull request whose head conflicts with the
+//!   head of a pull request before it: one whose verify runs or passed, or
+//!   whose item had its verify request first ([`order()`],
+//!   [`crate::order`], 01M6WCGNCC3HWS47158WTWNQ8B,
+//!   01M6YPYTGR2JEBDHGX4K1RDCAW, 01M750ED646BKBZSA9KHF0953Y). Two heads
+//!   that change a file in common conflict unless `git merge-tree` in the
+//!   main clone says that they merge with no conflict
+//!   ([`order::merges`]). A session of its item does not put a pull
+//!   request before the others (01M74EP20TDQEXW42MK0XE73QF).
 //!   It waits until that pull request merges or its verify fails. The loop
 //!   keeps these waits for the look and for `riff wave list`
 //!   ([`Daemon::order_waits`]);
@@ -353,10 +356,11 @@
 //! `CONFLICTING` (the rebase).
 //!
 //! The rebases go in the order of the verifies ([`order()`], #1801). A
-//! merge can give each open pull request that changes the same files a
-//! conflict. Of these, only the next of the order gets its rebase. The
-//! others keep their conflict until the pull request before them merges
-//! or its verify fails, and the look sends no message of their conflict.
+//! merge can give each open pull request whose head conflicts with its
+//! head a conflict. Of these, only the next of the order gets its
+//! rebase. The others keep their conflict until the pull request before
+//! them merges or its verify fails, and the look sends no message of
+//! their conflict.
 //! A pull request keeps its place while a session rebases it, and after
 //! its push, also while it reads `UNKNOWN`. The session does not make it
 //! go first (01M74EP20TDQEXW42MK0XE73QF).
@@ -1173,10 +1177,12 @@ pub struct Look {
     /// The pull requests that wait for a verify, by issue.
     pub pulls: BTreeMap<u64, Waiting>,
     /// The open pull requests of the items whose verify waits, runs or
-    /// passed, or that wait for a rebase, by issue, with the files of
-    /// each, for the order of the verifies and the rebases ([`order()`],
-    /// #1710, #1801). None while fewer than two are open or no verify and
-    /// no rebase of them is free work.
+    /// passed, or that wait for a rebase, by issue, with the head and the
+    /// files of each, for the order of the verifies and the rebases
+    /// ([`order()`], #1710, #1801). The live look adds the merge test of
+    /// each two heads with a file in common ([`order::merges`], #1895).
+    /// None while fewer than two are open or no verify and no rebase of
+    /// them is free work.
     pub lanes: BTreeMap<u64, order::Lane>,
     /// The pull requests that cannot merge by themselves.
     pub fixes: Fixes,
@@ -1254,8 +1260,8 @@ fn verify_issue(item: &str) -> Option<u64> {
 /// assert_eq!(pick(&look, &verifying, &BTreeMap::new()), None);
 /// ```
 ///
-/// A verify or a rebase that waits for another pull request with a file
-/// in common does not start ([`order()`]).
+/// A verify or a rebase that waits for another pull request in its group
+/// does not start ([`order()`]).
 pub fn pick(
     look: &Look,
     running: &BTreeSet<String>,
@@ -1313,11 +1319,12 @@ pub fn pick(
 }
 
 /// The verifies and the rebases of `look` that wait for another pull
-/// request with a file in common, by issue, with the number of that pull
-/// request ([`order::waits`], 01M6WCGNCC3HWS47158WTWNQ8B, #1801). A pull
-/// request goes first while a session claims its verify, or a job of the
-/// wave runs it (`running`), and while its verify passed and nothing
-/// stops its merge. A session of its item does not make it go first
+/// request in their group ([`order::Lane::clashes`]), by issue, with the
+/// number of that pull request ([`order::waits`],
+/// 01M6WCGNCC3HWS47158WTWNQ8B, #1801, #1895). A pull request goes first
+/// while a session claims its verify, or a job of the wave runs it
+/// (`running`), and while its verify passed and nothing stops its merge.
+/// A session of its item does not make it go first
 /// (01M74EP20TDQEXW42MK0XE73QF, #1894). Then come the pull requests whose
 /// next step the pick can start, in the order of the requests of their
 /// items: the rebase of a conflict, or a verify. Each is in the free
@@ -1357,6 +1364,11 @@ pub fn pick(
 /// // The lead holds the verify of 2: 1 waits for nobody.
 /// let held = Look { holds: ["verify-issue-2".to_owned()].into(), ..look.clone() };
 /// assert!(order(&held, &none, &BTreeMap::new()).is_empty());
+/// // #1895: the heads of 1 and 2 merge with no conflict. Both verifies go.
+/// let mut clean = look.clone();
+/// clean.lanes.get_mut(&1).unwrap().clean = [42].into();
+/// assert!(order(&clean, &running, &BTreeMap::new()).is_empty());
+/// assert_eq!(pick(&clean, &running, &BTreeMap::new()), Some(Work::Verify { issue: 1, pull: 41, commit: "c1".into() }));
 /// // #1894: a session holds issue-2, for example to fix its checks. 2 does
 /// // not go first, and its verify cannot start: the verify of 1 starts.
 /// let claimed = Look { claims: ["issue-2".to_owned()].into(), ..look.clone() };
@@ -3641,11 +3653,11 @@ fn look_from(
 /// #1710, #1801): each open pull request of an item whose verify waits or
 /// runs, each with a conflict ([`rollout::Pull::conflict`]), also after a
 /// pass, and each whose verify passed and that nothing stops
-/// ([`rollout::Pull::stuck`]), with the files that it changes (`files`)
-/// and the place of the first verify request of its item (`places`,
-/// [`requests`]). None when fewer than two are open, or no verify and no
-/// rebase of them is in the free work `free`: then nothing waits, and no
-/// file is read.
+/// ([`rollout::Pull::stuck`]), with its head, the files that it changes
+/// (`files`) and the place of the first verify request of its item
+/// (`places`, [`requests`]). None when fewer than two are open, or no
+/// verify and no rebase of them is in the free work `free`: then nothing
+/// waits, and no file is read.
 ///
 /// ```
 /// use std::collections::HashMap;
@@ -3722,7 +3734,9 @@ pub fn lanes(
             let lane = order::Lane {
                 issue,
                 pull: p.number,
+                head: p.head.clone(),
                 files: files(p),
+                clean: BTreeSet::new(),
                 passed,
                 conflict: p.conflict(),
                 unknown: p.unknown(),
@@ -3795,10 +3809,14 @@ impl World for Live {
                 .await
                 .map(|all| all.into_iter().map(|m| m.message.body).collect())
                 .unwrap_or_default();
-            let repo = wave.repo.clone();
+            let (repo, main) = (wave.repo.clone(), wave.main.clone());
             blocking(move || {
                 let bodies: Vec<&str> = bodies.iter().map(String::as_str).collect();
-                look_told(&forge(&repo), &repo, claims, holds, &bodies, &told)
+                let mut look = look_told(&forge(&repo), &repo, claims, holds, &bodies, &told)?;
+                // Two pull requests whose heads merge with no conflict are
+                // in two groups of the order (#1895).
+                order::merges(&main, &mut look.lanes);
+                Ok(look)
             })
             .await
         })

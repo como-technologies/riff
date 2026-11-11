@@ -110,8 +110,8 @@ pub struct Issues {
     #[serde(default)]
     pub questions: BTreeSet<u64>,
     /// The issues whose verify or rebase waits for another pull request
-    /// with a file in common, with the number of that pull request (#1710,
-    /// #1801). An issue in `stuck` with a conflict waits for its rebase.
+    /// whose head conflicts with theirs, with the number of that pull
+    /// request (#1710, #1801, #1895). An issue in `stuck` with a conflict waits for its rebase.
     /// The daemon of the wave tells them in its facts
     /// ([`crate::daemons::Wave::waits`]).
     #[serde(default)]
@@ -413,8 +413,8 @@ pub struct Board {
     #[serde(default)]
     pub question: Vec<u64>,
     /// The items of `verify` with no claim whose verify waits for the
-    /// merge of another pull request with a file in common, each with the
-    /// number of that pull request ([`Issues::waits`], #1710).
+    /// merge of another pull request whose head conflicts with theirs, each
+    /// with the number of that pull request ([`Issues::waits`], #1710).
     #[serde(default)]
     pub waits: Vec<(u64, u64)>,
     /// The items with no claim whose pull request has a conflict, and
