@@ -737,7 +737,7 @@ fn the_gate_runs_the_tests_in_the_session_image() {
     assert!(!job.contains("actions/cache"), "{job}");
     assert!(!job.contains("cargo"), "{job}");
     let workflow = read(".github/workflows/ci.yml");
-    assert_eq!(workflow.matches("deploy/session-test.sh").count(), 2);
+    assert_eq!(workflow.matches("run: deploy/session-test.sh").count(), 2);
     assert!(!workflow.contains("\n  session_tests:\n"), "{workflow}");
     let justfile = read("justfile");
     assert!(
