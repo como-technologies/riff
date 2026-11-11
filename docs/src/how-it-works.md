@@ -6678,6 +6678,50 @@ again 10 minutes after an answer with no token. So at the latest 10
 minutes after the fix, its writes show the bot, the wave starts its
 items again, and the lead gets its token.
 
+#### New rights of a GitHub App
+
+GitHub makes each token of an install with the rights that the install
+has at that time, and the token keeps them for its hour. So when the
+owner of an account accepts new rights of an App, riff gets a new token
+at once for each lead and each session of that install:
+
+```mermaid
+sequenceDiagram
+    participant G as GitHub
+    participant S as riff-server
+    participant D as riff daemon (host)
+    participant C as the container
+    G->>S: the webhook: installation, new_permissions_accepted
+    S-->>D: the install has new rights
+    D->>S: a new token for each lead and session of the install
+    S-->>D: the tokens with the new rights
+    D->>C: the new token in the same file
+    Note over S: 60 seconds later
+    S->>G: revoke the older tokens of the install
+```
+
+- Each App of the riff has the webhook `/hooks/github`, and GitHub
+  sends the event `installation` to each App with a webhook. A lead App
+  that riff made before it had a webhook sends no event. Then `riff
+  github check` finds the new rights: its token of the lead has other
+  rights than the token that the lead has. riff-server renews the
+  install in the same way.
+- A session with a token of another install keeps its token.
+- The next write of the daemon with a token of the install gets a new
+  token too.
+
+To see each renew of the daemon on a Linux host:
+
+```sh
+journalctl --user -u riff | grep 'has new rights'
+```
+
+```text
+riff daemon: The install 2020 of a GitHub App has new rights. A new token now for the containers riff-lead-acme-app, and for the writes of the daemon on acme/app.
+```
+
+On a Mac, the lines are in `~/Library/Logs/riff/daemon.log`.
+
 #### Repair riff with claude on the host
 
 When riff-server gives a session no token of a GitHub App, riff names

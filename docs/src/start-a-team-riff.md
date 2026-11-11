@@ -287,6 +287,9 @@ The session App also has the webhook `URL/hooks/github` of the riff.
 riff-server takes each event of GitHub there, and wakes the riff daemon
 of each host of the repository: see
 [How riff learns of a change on GitHub](how-it-works.md#how-riff-learns-of-a-change-on-github).
+The lead App has the same webhook with no event: GitHub sends it the
+event of new rights of an install. See
+[New rights of a GitHub App](how-it-works.md#new-rights-of-a-github-app).
 
 The lead App pushes the release tag of a repository with the release
 cycle. After you make the Apps, run `riff init` in that repository: it
@@ -366,6 +369,16 @@ flowchart LR
     C --> N
     N -- yes --> K["riff github check"]
 ```
+
+Each lead and each session gets the new rights at once after the
+accept. A token keeps the rights that it had when GitHub made it, so
+riff gets a new token for each of them: GitHub tells riff-server of the
+accept, and the daemon of each host gets a new token for each lead and
+each session of that install. A lead App that riff made before it had a
+webhook sends riff-server no event. Then the check at the end of
+`riff github install` finds the new rights, and riff gets the new
+tokens the same way. See
+[New rights of a GitHub App](how-it-works.md#new-rights-of-a-github-app).
 
 ## Invite a person
 

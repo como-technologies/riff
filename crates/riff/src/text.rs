@@ -7120,6 +7120,60 @@ pub fn daemon_gh_token(name: &str, bot: &str, role: GitHubRole, ends: &str) -> S
     )
 }
 
+/// The line of the daemon for a renew of the install `installation`
+/// (01M74MB99RT6B9MKSBMSVD4JRG): the containers whose token it renews now, and the
+/// repositories whose writes ask for a new token.
+///
+/// ```
+/// let containers = ["riff-lead-acme-app".to_owned()];
+/// let repos = ["acme/app".to_owned()];
+/// assert_eq!(
+///     riff::text::daemon_gh_renew(2020, &containers, &repos),
+///     "The install 2020 of a GitHub App has new rights. A new token now for the containers \
+///      riff-lead-acme-app, and for the writes of the daemon on acme/app."
+/// );
+/// assert_eq!(
+///     riff::text::daemon_gh_renew(1010, &[], &[]),
+///     "The install 1010 of a GitHub App has new rights. No container and no write of the \
+///      daemon has a token of it."
+/// );
+/// ```
+pub fn daemon_gh_renew(installation: u64, containers: &[String], repos: &[String]) -> String {
+    let head = format!("The install {installation} of a GitHub App has new rights.");
+    let mut parts = Vec::new();
+    if !containers.is_empty() {
+        parts.push(format!("for the containers {}", containers.join(", ")));
+    }
+    if !repos.is_empty() {
+        parts.push(format!(
+            "for the writes of the daemon on {}",
+            repos.join(", ")
+        ));
+    }
+    match parts.is_empty() {
+        true => format!("{head} No container and no write of the daemon has a token of it."),
+        false => format!("{head} A new token now {}.", parts.join(", and ")),
+    }
+}
+
+/// The riff daemon cannot follow the renews of the tokens on riff-server,
+/// for the reason `error` (01M74MB99RT6B9MKSBMSVD4JRG). Each token then renews 10 minutes
+/// before its end.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::daemon_no_renews("no route"),
+///     "cannot follow the new rights of the GitHub Apps on riff-server: no route. Each token \
+///      gets the new rights at its next renew, 10 minutes before its end."
+/// );
+/// ```
+pub fn daemon_no_renews(error: &str) -> String {
+    format!(
+        "cannot follow the new rights of the GitHub Apps on riff-server: {error}. Each token gets \
+         the new rights at its next renew, 10 minutes before its end."
+    )
+}
+
 /// Why the container `name` of a worker or a verify does not start: it
 /// got no token of an App, for the reason `why`
 /// (01M6Z87A04EXTT1FFJSJ1EM6TB).
@@ -7273,6 +7327,7 @@ pub fn gh_daemon_token_failed(error: &str) -> String {
 ///     role: GitHubRole::Lead,
 ///     rights: Default::default(),
 ///     ends: "2026-11-08T13:00:00Z".into(),
+///     installation: Some(2020),
 /// };
 /// assert_eq!(
 ///     riff::text::daemon_writes("acme/app", &bot),
@@ -8486,6 +8541,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///         role: riff_core::wire::GitHubRole::Lead,
 ///         rights: Default::default(),
 ///         ends: "2026-11-08T13:00:00Z".into(),
+///         installation: Some(2020),
 ///     },
 /// });
 /// let text = riff::text::daemon_status(&status, 300_000);

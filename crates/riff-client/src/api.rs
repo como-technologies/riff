@@ -115,10 +115,10 @@ use riff_core::selector::Selector;
 use riff_core::wire::{
     Activity, AdminSet, Alive, AliveReply, BlockedLook, CALL_HEADER, Call, ChatName, Claim,
     ClaimReply, DenyOwner, End, Free, FreeReply, Freed, GitHubApps, GitHubAppsReply, GitHubCheck,
-    GitHubChecked, GitHubCreate, GitHubDaemonToken, GitHubEvents, GitHubEventsReply, GitHubStarted,
-    GitHubToken, GitHubWake, Hold, HoldReply, Invite, Invited, ItemFact, ItemFacts, Join, Keys,
-    Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members, MembersReply, Message,
-    Names, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
+    GitHubChecked, GitHubCreate, GitHubDaemonToken, GitHubEvents, GitHubEventsReply, GitHubRenew,
+    GitHubStarted, GitHubToken, GitHubWake, Hold, HoldReply, Invite, Invited, ItemFact, ItemFacts,
+    Join, Keys, Kind, Lead, LeadReply, Leave, LogQuery, LogReply, MeReply, Members, MembersReply,
+    Message, Names, NotesReply, NotesShow, OwnerAsked, OwnerDenied, OwnerPassed, PassOwner, Pause,
     PlanChanged, PlanReply, PlanShow, Post, Posted, REFUSED_HEADER, Read, Register, Release,
     ReleaseFor, ReleaseReply, Remove, Removed, Resume, Revoke, Revoked, RiffBinary, RiffQuery,
     RiffReply, RiffState, ServerFacts, SessionInfo, SessionToken, SetAdmin, SetBlocked, SetNotes,
@@ -2014,6 +2014,18 @@ impl Api {
         let mut query = vec![("uri", me.to_string()), ("thread", thread.to_string())];
         query.extend(after.map(|id| ("after", id.to_string())));
         self.events("github/watch", &query).await
+    }
+
+    /// Each install of a GitHub App of the riff with new rights, on one
+    /// connection (#1906): the daemon asks at once for a new token of each
+    /// session and each write of the install. `me` is the caller. The open
+    /// stream is no sign of life. [`follow`] connects again.
+    pub async fn github_renew(
+        &self,
+        me: &SessionUri,
+    ) -> Result<impl Stream<Item = Result<GitHubRenew>>> {
+        self.events("github/renew", &[("uri", me.to_string())])
+            .await
     }
 
     /// Ends each sign-in of `user`, or of the caller when `user` is

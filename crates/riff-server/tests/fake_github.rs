@@ -32,6 +32,9 @@ const JWKS: &str = include_str!("../testdata/test-only-jwks.json");
 /// The webhook secret of the session App.
 pub const WEBHOOK_SECRET: &str = "whsec-of-the-session-app-of-the-test";
 
+/// The webhook secret of the lead App.
+pub const LEAD_WEBHOOK_SECRET: &str = "whsec-of-the-lead-app-of-the-test";
+
 /// The code that GitHub gives for the session App, and the one for the
 /// lead App.
 pub const SESSION_CODE: &str = "code-of-the-session-app";
@@ -141,7 +144,10 @@ async fn convert(State(seen): State<Shared>, Path(code): Path<String>) -> Respon
             seen.installed = true;
         }
     }
-    let webhook_secret = (code == SESSION_CODE).then_some(WEBHOOK_SECRET);
+    let webhook_secret = match code.as_str() {
+        SESSION_CODE => WEBHOOK_SECRET,
+        _ => LEAD_WEBHOOK_SECRET,
+    };
     Json(json!({
         "id": id,
         "slug": slug,
@@ -351,6 +357,6 @@ pub fn both_apps() -> riff_server::keys::Apps {
     };
     riff_server::keys::Apps {
         session: Some(keys(SESSION_CODE, Some(WEBHOOK_SECRET))),
-        lead: Some(keys(LEAD_CODE, None)),
+        lead: Some(keys(LEAD_CODE, Some(LEAD_WEBHOOK_SECRET))),
     }
 }

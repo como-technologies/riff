@@ -593,7 +593,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use riff_core::name::{Place, SessionUri, ThreadName};
 use riff_core::wire::{
-    BotFact, HoldInfo, Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY, Wake,
+    BotFact, GitHubRenew, HoldInfo, Kind, PullState, RiffState, StartReason, WORKER_ALIVE_EVERY,
+    Wake,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, mpsc};
@@ -1722,6 +1723,18 @@ pub trait World: Send + Sync {
     ) -> BoxFuture<'a, Result<gh_token::Grant>> {
         Box::pin(async { Ok(gh_token::Grant::none(text::GH_TOKEN_NONE)) })
     }
+
+    /// Sends to `to` each install of a GitHub App with new rights on the
+    /// riff-server `server` ([`Api::github_renew`], 01M74MB99RT6B9MKSBMSVD4JRG), as the
+    /// person at `place`. It never ends. The default sends none.
+    fn github_renews<'a>(
+        &'a self,
+        _server: &'a str,
+        _place: &'a Place,
+        _to: mpsc::UnboundedSender<GitHubRenew>,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(std::future::pending())
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -1913,6 +1926,11 @@ pub(crate) async fn run<R: Runtime + 'static>(
             world.plan_changes(&wave, &plan).await;
         }))
     };
+    // New rights of an install: the writes of the wave ask for a new
+    // token (01M74MB99RT6B9MKSBMSVD4JRG).
+    if let Ok(place) = wave.place(None) {
+        daemon.follow_renews(&wave.server, &place);
+    }
     loop {
         let world = daemon.world();
         // While a limit of GitHub is out, the wave makes no look, no sweep
@@ -4126,6 +4144,47 @@ impl World for Live {
         let token = zeroize::Zeroizing::new(token.to_owned());
         Box::pin(blocking(move || gh_token::revoke(&gh, &token)))
     }
+
+    fn github_renews<'a>(
+        &'a self,
+        server: &'a str,
+        place: &'a Place,
+        to: mpsc::UnboundedSender<GitHubRenew>,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            use futures::StreamExt;
+            let follow = async {
+                let person = identity::person(place, server)?;
+                let api = Api::new(server).signed_in(None)?;
+                let renews = api::follow(|| api.github_renew(&person), STREAM_RETRY);
+                tokio::pin!(renews);
+                let mut fault = None;
+                while let Some(renew) = renews.next().await {
+                    match renew {
+                        Ok(renew) => {
+                            fault = None;
+                            if to.send(renew).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let e = format!("{e:#}");
+                            if fault.as_ref() != Some(&e) {
+                                eprintln!("riff daemon: {server}: {}", text::daemon_no_renews(&e));
+                            }
+                            fault = Some(e);
+                        }
+                    }
+                }
+                anyhow::Ok(())
+            };
+            if let Err(e) = follow.await {
+                let e = format!("{e:#}");
+                eprintln!("riff daemon: {server}: {}", text::daemon_no_renews(&e));
+            }
+            std::future::pending().await
+        })
+    }
 }
 
 impl Live {
@@ -4840,6 +4899,7 @@ mod tests {
                 role: riff_core::wire::GitHubRole::Worker,
                 rights: [("contents".to_owned(), "write".to_owned())].into(),
                 ends,
+                installation: Some(1010),
             },
             bot_id: Some(1101),
         }

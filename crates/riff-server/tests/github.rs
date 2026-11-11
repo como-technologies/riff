@@ -7,7 +7,8 @@
 
 use crate::common;
 use crate::fake_github::{
-    FakeGitHub, KEY, LEAD_CODE, OWNER, REPO, SESSION_CODE, WEBHOOK_SECRET, both_apps,
+    FakeGitHub, KEY, LEAD_CODE, LEAD_WEBHOOK_SECRET, OWNER, REPO, SESSION_CODE, WEBHOOK_SECRET,
+    both_apps, installation_of,
 };
 
 use std::collections::BTreeMap;
@@ -27,6 +28,10 @@ use riff_server::github::{STATE_LIFE, Settings};
 use riff_server::keys::{Apps, At, FILE};
 use serde_json::{Value, json};
 
+/// The wait of the tests before the revoke of the older tokens of an
+/// install with new rights.
+const REVOKE_AFTER: Duration = Duration::from_secs(1);
+
 /// A riff with sign-in whose GitHub is `fake`, with the keys at `keys`
 /// and states good for `life`.
 async fn serve(fake: &FakeGitHub, keys: At, life: Duration) -> (Service, String) {
@@ -40,6 +45,7 @@ async fn serve(fake: &FakeGitHub, keys: At, life: Duration) -> (Service, String)
             web: fake.url.clone(),
             keys,
             state_life: life,
+            revoke_after: REVOKE_AFTER,
             ..Settings::default()
         },
         ..Config::new(&url)
@@ -223,9 +229,9 @@ const NEVER: [&str; 6] = [
 ];
 
 /// 01M6WG52MWZB1SVQMMH6BKJSJ5, 01M6WG52QHC8E24RJ33ZPVHZSJ,
-/// 01M6ZEJ4NEZGQFV3Q4BER5AW3S: the manifest of each App has only the
-/// rights of its roles, and the one of the session App has the webhook
-/// and the events of the riff.
+/// 01M6ZEJ4NEZGQFV3Q4BER5AW3S, 01M74MB1A1TV4WBZ07AFCEP5WG: the manifest of each App has
+/// only the rights of its roles and the webhook, and only the one of the
+/// session App has the events of the riff.
 #[tokio::test]
 async fn each_manifest_has_only_the_rights_of_its_roles() {
     let fake = FakeGitHub::start().await;
@@ -278,7 +284,12 @@ async fn each_manifest_has_only_the_rights_of_its_roles() {
         let asked = session["default_permissions"].get(name);
         assert!(asked.is_none(), "{name}: {session}");
     }
-    assert!(lead.get("hook_attributes").is_none(), "{lead}");
+    // 01M74MB1A1TV4WBZ07AFCEP5WG: the lead App has the same webhook, and asks for no
+    // event: GitHub sends it the event `installation`.
+    assert_eq!(
+        lead["hook_attributes"]["url"],
+        format!("{url}/hooks/github")
+    );
     assert!(lead.get("default_events").is_none(), "{lead}");
 
     for manifest in [&session, &lead] {
@@ -422,6 +433,10 @@ async fn no_reply_and_no_log_line_has_the_key() {
         assert!(!reply.contains(key_line), "the key in: {reply}");
         assert!(!reply.contains("PRIVATE KEY"), "the key in: {reply}");
         assert!(!reply.contains(WEBHOOK_SECRET), "the secret in: {reply}");
+        assert!(
+            !reply.contains(LEAD_WEBHOOK_SECRET),
+            "the secret in: {reply}"
+        );
         for token in &tokens {
             assert!(!reply.contains(token.as_str()), "a token in: {reply}");
         }
@@ -1552,6 +1567,206 @@ async fn the_check_names_each_right_on_the_alerts_that_the_lead_app_lacks() {
     let seen = s.fake.seen();
     assert_eq!(seen.asked.len(), 4);
     assert_eq!(seen.revoked, seen.tokens);
+}
+
+/// An open `GET /v1/github/renew` stream of a person, and the text that it
+/// gave and that no event took yet.
+struct RenewStream {
+    reply: reqwest::Response,
+    buffer: String,
+}
+
+impl RenewStream {
+    /// The stream of `person` as `uri`.
+    async fn open(url: &str, person: &Person, uri: &str) -> RenewStream {
+        let path = format!("{url}/v1/github/renew");
+        let proof = person
+            .key
+            .proof("GET", &path, Some(&person.token), common::now());
+        let reply = common::client()
+            .get(&path)
+            .query(&[("uri", uri)])
+            .header("dpop", proof)
+            .header("authorization", format!("DPoP {}", person.token))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), 200);
+        RenewStream {
+            reply,
+            buffer: String::new(),
+        }
+    }
+
+    /// The next renew, or `None` when none comes in `wait`.
+    async fn next(&mut self, wait: Duration) -> Option<riff_core::wire::GitHubRenew> {
+        loop {
+            if let Some(end) = self.buffer.find('\n') {
+                let line: String = self.buffer.drain(..=end).collect();
+                match line.trim().strip_prefix("data:") {
+                    Some(data) => return Some(serde_json::from_str(data.trim()).unwrap()),
+                    None => continue,
+                }
+            }
+            let chunk = tokio::time::timeout(wait, self.reply.chunk()).await.ok()?;
+            let chunk = chunk.unwrap().expect("the stream stays open");
+            self.buffer.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    }
+}
+
+/// A delivery of the kind `kind` as GitHub sends it, signed with
+/// `secret`: the status and the text.
+async fn deliver(url: &str, kind: &str, id: &str, body: &Value, secret: &str) -> (u16, String) {
+    let body = serde_json::to_vec(body).unwrap();
+    let reply = reqwest::Client::new()
+        .post(format!("{url}/hooks/github"))
+        .header("x-github-event", kind)
+        .header("x-github-delivery", id)
+        .header(
+            "x-hub-signature-256",
+            riff_server::hooks::signature(secret, &body),
+        )
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    (reply.status().as_u16(), reply.text().await.unwrap())
+}
+
+/// The event `installation` of the install `id` with `action`.
+fn installation_event(id: u64, action: &str) -> Value {
+    json!({
+        "action": action,
+        "installation": { "id": id, "account": { "login": OWNER } },
+    })
+}
+
+/// The token of the reply `text` of a token call, and its install.
+fn token_and_install(text: &str) -> (String, Option<u64>, BTreeMap<String, String>) {
+    let reply: SessionToken = serde_json::from_str(text).unwrap();
+    (reply.token.unwrap(), reply.installation, reply.rights)
+}
+
+/// Waits until the fake saw each token of `tokens` revoked.
+async fn until_revoked(s: &Sessions, tokens: &[&str]) {
+    for _ in 0..500 {
+        let revoked = s.fake.seen().revoked.clone();
+        if tokens
+            .iter()
+            .all(|token| revoked.iter().any(|r| r == token))
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("{tokens:?} not revoked: {:?}", s.fake.seen().revoked);
+}
+
+/// 01M74MB94Q4VPK724W7H0PZH9P, 01M74MB92717A21MG97BF7SDP3, 01M74MB1A1TV4WBZ07AFCEP5WG: the install of the lead App lacks
+/// the rights on the alerts, and the lead and the daemon got tokens with
+/// no right on the alerts. The owner accepts the new rights, and GitHub
+/// sends the event `installation` to the webhook of the lead App. The
+/// stream of the person gets the renew of the install, and the next token
+/// of the lead has the new rights. After the wait, riff-server revokes
+/// each older token of the install: the lead's and the daemon's, not the
+/// new one, and not the token of a worker of the session App.
+#[tokio::test]
+async fn an_accept_of_new_rights_revokes_the_tokens_of_the_install_and_the_next_token_has_them() {
+    let s = sessions().await;
+    let lead_install = installation_of(202);
+    let session_install = installation_of(101);
+    s.fake.seen().lacks = ALERTS.map(str::to_owned).to_vec();
+    let mut stream = RenewStream::open(&s.url, &s.ada, "riff://ada@heron/acme/app").await;
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "l1" })).await;
+    assert_eq!(status, 200, "{text}");
+    let (old_lead, install, rights) = token_and_install(&text);
+    assert_eq!((install, rights), (Some(lead_install), no_alerts()));
+    let (status, text) = daemon_token_of(&s, &s.ada, REPO).await;
+    assert_eq!(status, 200, "{text}");
+    let (old_daemon, install, _) = token_and_install(&text);
+    assert_eq!(install, Some(lead_install));
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "w1" })).await;
+    assert_eq!(status, 200, "{text}");
+    let (worker, install, _) = token_and_install(&text);
+    assert_eq!(install, Some(session_install));
+
+    // An event of another action renews nothing.
+    let created = installation_event(lead_install, "created");
+    let (status, text) =
+        deliver(&s.url, "installation", "d-1", &created, LEAD_WEBHOOK_SECRET).await;
+    assert_eq!(status, 202, "{text}");
+    assert!(text.contains("does not use"), "{text}");
+
+    // The owner accepts the new rights on GitHub.
+    s.fake.seen().lacks.clear();
+    let accepted = installation_event(lead_install, "new_permissions_accepted");
+    let (status, text) = deliver(
+        &s.url,
+        "installation",
+        "d-2",
+        &accepted,
+        LEAD_WEBHOOK_SECRET,
+    )
+    .await;
+    assert_eq!(status, 202, "{text}");
+    assert!(text.contains("renews each token of the install"), "{text}");
+    let renew = stream.next(Duration::from_secs(10)).await.expect("a renew");
+    assert_eq!(renew.installation, lead_install);
+    assert!(
+        s.fake.seen().revoked.is_empty(),
+        "no revoke before the daemons have the new tokens"
+    );
+
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "l1" })).await;
+    assert_eq!(status, 200, "{text}");
+    let (new_lead, install, rights) = token_and_install(&text);
+    assert_eq!(
+        (install, rights),
+        (Some(lead_install), table(GitHubRole::Lead))
+    );
+    until_revoked(&s, &[&old_lead, &old_daemon]).await;
+    tokio::time::sleep(REVOKE_AFTER).await;
+    let revoked = s.fake.seen().revoked.clone();
+    assert_eq!(revoked.len(), 2, "{revoked:?}");
+    assert!(
+        !revoked.contains(&new_lead) && !revoked.contains(&worker),
+        "{revoked:?}"
+    );
+    assert_eq!(
+        stream.next(Duration::from_millis(500)).await,
+        None,
+        "the new token renews nothing"
+    );
+}
+
+/// 01M74MB9786AE4YVEG10FNGDT5: a lead App with no webhook sends no event. After the
+/// accept, `riff github check` gets a token of the lead with the new
+/// rights, and riff-server finds that the install has new rights: the
+/// stream gets the renew, and the older token of the lead is revoked.
+#[tokio::test]
+async fn a_check_that_finds_new_rights_of_an_install_renews_it() {
+    let s = sessions().await;
+    let lead_install = installation_of(202);
+    s.fake.seen().lacks = ALERTS.map(str::to_owned).to_vec();
+    let mut stream = RenewStream::open(&s.url, &s.ada, "riff://ada@heron/acme/app").await;
+    let (status, text) = token_of(&s, &s.ada, json!({ "session": "l1" })).await;
+    assert_eq!(status, 200, "{text}");
+    let (old_lead, _, _) = token_and_install(&text);
+    // A check before the accept finds the same rights: no renew.
+    let (status, _) = call(&s.url, &s.ada, "/v1/github/check", json!({ "repo": REPO })).await;
+    assert_eq!(status, 200);
+    assert_eq!(stream.next(Duration::from_millis(500)).await, None);
+
+    s.fake.seen().lacks.clear();
+    let (status, text) = call(&s.url, &s.ada, "/v1/github/check", json!({ "repo": REPO })).await;
+    assert_eq!(status, 200, "{text}");
+    let checked: GitHubChecked = serde_json::from_str(&text).unwrap();
+    assert!(checked.roles.iter().all(|role| role.passed()), "{text}");
+    let renew = stream.next(Duration::from_secs(10)).await.expect("a renew");
+    assert_eq!(renew.installation, lead_install);
+    until_revoked(&s, &[&old_lead]).await;
 }
 
 /// 01M6YC3SYATQW7GZZV3APFG85B: a secret that riff-server cannot read pauses the whole

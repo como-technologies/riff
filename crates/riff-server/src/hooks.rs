@@ -25,9 +25,14 @@
 //!
 //! - **The signature** (01M74A2TT5N3BZPCT04XSHNDCV). [`signed`] checks
 //!   the header `X-Hub-Signature-256`: the HMAC-SHA256 of the body with
-//!   the webhook secret of the session App. A delivery with no signature,
-//!   a bad one, or to a riff with no secret gets status 401. riff-server
-//!   logs one warning, at most one each [`REFUSED_LOG_EVERY`].
+//!   the webhook secret of an App of the riff. Each App has its own
+//!   secret (01M74MB1A1TV4WBZ07AFCEP5WG). A delivery with no signature, a bad one, or
+//!   to a riff with no secret gets status 401. riff-server logs one
+//!   warning, at most one each [`REFUSED_LOG_EVERY`].
+//! - **New rights of an install** (01M74MB94Q4VPK724W7H0PZH9P). The event `installation`
+//!   with the action `new_permissions_accepted` ([`new_rights`]) renews
+//!   each token of the install ([`crate::renew`]). It wakes no
+//!   repository.
 //! - **A repeat** (01M74A2TWZBEJF4HCPXJSDQ2Y0). [`Deliveries`] keeps each
 //!   `X-GitHub-Delivery` for [`DELIVERY_LIFE`]. A delivery that came
 //!   before gets status 202, and wakes nobody.
@@ -320,6 +325,28 @@ pub fn named(kind: &str, payload: &Value) -> Option<Named> {
     })
 }
 
+/// The ID of the install whose owner accepted new rights of its App, for
+/// the delivery of the kind `kind` with the body `payload`: the event
+/// `installation` with the action `new_permissions_accepted`
+/// (01M74MB94Q4VPK724W7H0PZH9P). `None` for each other delivery.
+///
+/// ```
+/// use riff_server::hooks::new_rights;
+///
+/// let accepted = serde_json::json!({
+///     "action": "new_permissions_accepted",
+///     "installation": { "id": 2020, "account": { "login": "acme" } },
+/// });
+/// assert_eq!(new_rights("installation", &accepted), Some(2020));
+/// let created = serde_json::json!({ "action": "created", "installation": { "id": 2020 } });
+/// assert_eq!(new_rights("installation", &created), None);
+/// assert_eq!(new_rights("issues", &accepted), None);
+/// ```
+pub fn new_rights(kind: &str, payload: &Value) -> Option<u64> {
+    let accepted = kind == "installation" && payload["action"] == "new_permissions_accepted";
+    accepted.then(|| payload["installation"]["id"].as_u64())?
+}
+
 /// The number of the pull request of the branch `head` of a merge
 /// group: `refs/heads/gh-readonly-queue/BASE/pr-N-SHA`.
 ///
@@ -602,16 +629,23 @@ pub(crate) async fn hook(
             );
         }
     };
-    let secret = apps
-        .of(GitHubApp::Session)
-        .and_then(|keys| keys.webhook_secret.as_deref());
+    // Each App of the riff has the webhook, with a secret of its own
+    // (01M74MB1A1TV4WBZ07AFCEP5WG).
+    let secrets: Vec<&str> = GitHubApp::ALL
+        .into_iter()
+        .filter_map(|app| apps.of(app))
+        .filter_map(|keys| keys.webhook_secret.as_deref())
+        .collect();
     let signature = header(SIGNATURE_HEADER).unwrap_or_default();
-    if !secret.is_some_and(|secret| signed(secret, &body, signature)) {
+    if !secrets
+        .iter()
+        .any(|secret| signed(secret, &body, signature))
+    {
         if s.hooks.refused(Instant::now()) {
-            let why = match (secret, signature.is_empty()) {
-                (None, _) => "the riff has no webhook secret of the session App",
-                (Some(_), true) => "the delivery has no signature",
-                (Some(_), false) => "the signature does not check",
+            let why = match (secrets.is_empty(), signature.is_empty()) {
+                (true, _) => "the riff has no webhook secret of its Apps",
+                (false, true) => "the delivery has no signature",
+                (false, false) => "the signature does not check",
             };
             tracing::warn!(
                 kind = %kind,
@@ -635,6 +669,17 @@ pub(crate) async fn hook(
     let Ok(payload) = serde_json::from_slice::<Value>(&body) else {
         return (StatusCode::BAD_REQUEST, "the body is not JSON");
     };
+    if let Some(installation) = new_rights(&kind, &payload) {
+        let account = payload["installation"]["account"]["login"]
+            .as_str()
+            .unwrap_or("the account");
+        let why = format!("the owner of {account} accepted new rights of the App");
+        s.github.renew(installation, &why);
+        return (
+            StatusCode::ACCEPTED,
+            "riff-server renews each token of the install",
+        );
+    }
     let Some(named) = named(&kind, &payload) else {
         return (
             StatusCode::ACCEPTED,
