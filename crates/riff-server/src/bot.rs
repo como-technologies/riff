@@ -1,7 +1,8 @@
 //! The lines of riff-bot that riff writes for a person: the lines of
 //! `riff release cut` and `riff release publish`, the ask while a deploy
-//! waits, the ask of the label `question`, and the lines of the daemon
-//! about a lead (01M74BPHQZHXFYYNXAJ1WFASQQ).
+//! waits, and the lines of the daemon about a lead
+//! (01M74BPHQZHXFYYNXAJ1WFASQQ). A question for a person gets no line
+//! (01M75QTMB42NME9Z2Y0XC0AN97): the Waves tab and `riff questions` show it.
 //!
 //! # Design
 //!
@@ -30,7 +31,6 @@
 //! |---|---|---|
 //! | `release_cut`, `release_published` | `riff release cut`, `publish` | the owner |
 //! | `release_waits` | the watch of the deploy | the owner |
-//! | `question` | the look of the wave | the person |
 //! | `lead_started`, `lead_waits`, `lead_no_main`, `lead_failed`, `lead_stale`, `lead_no_network` | the daemon | no one |
 //!
 //! A line that names a person with `@USER` wakes the terminals of that
@@ -40,9 +40,7 @@
 //!
 //! Only a person, and the lead of the person in its repository, sends a
 //! fact: `riff release cut` and `publish` also run in the container of
-//! the lead, and the daemon sends each other fact as the person. A call
-//! with a key goes once for each person (01M5TKG2K1AYK1KE7C2AA2W9DS): the
-//! look of each host of the person sends the same ask.
+//! the lead, and the daemon sends each other fact as the person.
 
 use riff_core::hold::Hold;
 use riff_core::name::{SessionUri, lead_container};
@@ -71,17 +69,6 @@ pub struct Facts<'a> {
     pub owner: Option<&'a str>,
     /// The holds that stand on the version of the fact.
     pub holds: &'a [Hold],
-}
-
-/// The key of the line of `user` for the key `key` of a call: each
-/// person hears an ask once, and the ask of one person drops no ask of
-/// another.
-///
-/// ```
-/// assert_eq!(riff_server::bot::key_of("mike", "question-12"), "mike/question-12");
-/// ```
-pub fn key_of(user: &str, key: &str) -> String {
-    format!("{user}/{key}")
 }
 
 /// The line of riff-bot for `fact`. The error is a fact that riff-server
@@ -164,11 +151,6 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
             }
             body
         }
-        BotFact::Question { issue } => format!(
-            "@{user} A lead waits for your answer in issue #{issue} of {repo}: \
-             https://github.com/{repo}/issues/{issue}. The wave starts no build of the issue \
-             until the label question goes."
-        ),
         BotFact::LeadStarted => format!(
             "riff started {lead} again on the new riff, and its conversation goes on. Attach \
              with: riff lead start, or l in the Sessions tab of riff."
@@ -207,7 +189,6 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
         BotFact::ReleaseCut { .. }
         | BotFact::ReleasePublished { .. }
         | BotFact::ReleaseWaits { .. } => facts.owner,
-        BotFact::Question { .. } => Some(user),
         BotFact::LeadStarted
         | BotFact::LeadWaits
         | BotFact::LeadNoMain
@@ -391,20 +372,6 @@ mod tests {
                 assert!(refused.contains("is no version vX.Y.Z"), "{tag}: {refused}");
             }
         }
-    }
-
-    /// The ask of the label `question` names the caller, and its issue.
-    #[test]
-    fn the_ask_of_a_question_names_the_person() {
-        let me = me();
-        let line = line(&BotFact::Question { issue: 12 }, &facts(&me, Some("brett"))).unwrap();
-        assert_eq!(
-            line.body,
-            "@mike A lead waits for your answer in issue #12 of o/r: \
-             https://github.com/o/r/issues/12. The wave starts no build of the issue until the \
-             label question goes."
-        );
-        assert_eq!(line.to, [Selector::name("mike")]);
     }
 
     /// Each line of the daemon about a lead names the lead, its person

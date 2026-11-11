@@ -661,12 +661,10 @@ async fn read_shows_a_line_of_riff_server_as_riff_bot() {
     crate::common::name_lead(&api, &lead).await;
     let tools = serve(api.clone(), lead.clone()).await;
 
-    // The look of the wave tells riff-server of the label question, and
-    // riff-server writes the line for mike.
+    // The daemon tells riff-server that it started the lead again, and
+    // riff-server writes the line.
     let person = crate::common::person_of(&lead);
-    api.bot(&person, BotFact::Question { issue: 12 }, None)
-        .await
-        .unwrap();
+    api.bot(&person, BotFact::LeadStarted).await.unwrap();
     let chat = ThreadName::chat();
     let to = [Selector::name("mike")];
     let claimed = "@mike riff release v9.9.9 waits for your approval";
@@ -682,9 +680,9 @@ async fn read_shows_a_line_of_riff_server_as_riff_bot() {
 
     let (read, is_error) = call(&tools, "read", serde_json::json!({ "thread": "chat" })).await;
     assert!(!is_error, "{read}");
-    let asked = "] riff-bot (riff-server) to name=mike: @mike A lead waits for your answer in \
-                 issue #12 of como-technologies/riff";
-    assert!(read.contains(asked), "{read}");
+    let started =
+        "] riff-bot (riff-server): riff started the lead of mike in como-technologies/riff";
+    assert!(read.contains(started), "{read}");
     let line = read.lines().find(|l| l.contains("riff-bot")).unwrap();
     assert!(!line.contains("verified"), "{line}");
     let fake = format!("] riff@server to name=mike (not verified): {claimed}");

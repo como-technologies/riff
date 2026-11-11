@@ -330,8 +330,8 @@ async fn each_line_shows_its_sender_by_the_name_to_type() {
         run: 9,
         reminder: false,
     };
-    api.bot(&person, waits, None).await.unwrap();
-    api.bot(&person, BotFact::LeadStarted, None).await.unwrap();
+    api.bot(&person, waits).await.unwrap();
+    api.bot(&person, BotFact::LeadStarted).await.unwrap();
     let asked = "@brett riff release v3.3.0 waits for your approval: \
                  https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: \
                  riff release approve v3.3.0";
@@ -1208,7 +1208,7 @@ async fn in_a_terminal_the_ask_of_riff_bot_is_a_highlight_for_its_person() {
     let brett = Tty::start(&server, "brett", "heron").await;
     let person: SessionUri = "riff://mike@thelio/como-technologies/riff".parse().unwrap();
     let api = server.api("mike", None);
-    api.bot(&person, BotFact::LeadStarted, None).await.unwrap();
+    api.bot(&person, BotFact::LeadStarted).await.unwrap();
     let started = "<riff-bot> riff started the lead of mike in como-technologies/riff on";
     brett
         .shows(|rows| rows.iter().any(|row| row.contains(started)))
@@ -1218,7 +1218,7 @@ async fn in_a_terminal_the_ask_of_riff_bot_is_a_highlight_for_its_person() {
         run: 9,
         reminder: false,
     };
-    api.bot(&person, waits, None).await.unwrap();
+    api.bot(&person, waits).await.unwrap();
     let asked = "<riff-bot> @brett riff release v3.3.0 waits for your approval";
     brett
         .shows(|rows| rows.iter().any(|row| row.contains(asked)))

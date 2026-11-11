@@ -234,6 +234,14 @@ page [Requirements](requirements.md) holds the rules of today.
   the open waves, see the items of a wave, see the items with no wave,
   make a wave, put an item in a wave and end a wave.
   Superseded by 4.0 (#1173).
+- **01M6QBJHV7PVV5893Q6RCPENJQ** When the label `question` goes on an
+  issue, the look of the daemon tells the person of the lead one time in
+  riff chat. It posts one line for each issue and each time that the
+  label goes on. The post has a key from the issue and the time of the
+  label event, so the look of each host and a new start of the daemon
+  give the person the same line one time. When the label goes off, the
+  look forgets the issue.
+  Superseded by 01M75QTMB42NME9Z2Y0XC0AN97.
 
 ## Pull requests on GitHub
 

@@ -384,7 +384,7 @@ impl Reach {
         match self {
             Reach::Direct(server) => {
                 let (api, me) = signed(server)?;
-                api.bot(&me, fact, None).await
+                api.bot(&me, fact).await
             }
             Reach::Daemon(socket) => {
                 let call = ServerCall::Bot { fact };

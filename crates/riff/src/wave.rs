@@ -162,7 +162,6 @@
 //! | "Wave N is complete" ([`crate::watches::wave_complete_key`]) | `wave-complete-N` | one time |
 //! | The GitHub limit is out ([`text::wave_limit_waits`]) | [`ghcalls::Wait::key`] | one time for each outage |
 //! | The host waits for a fact, the pull of the image failed, a job failed, an item is spent | none | from each host |
-//! | The label `question` goes on an issue ([`BotFact::Question`], a line of riff-bot to the person) | [`look::question_key`] | one time for each time that the label goes on |
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -184,17 +183,17 @@
 //! then starts no build of the issue ([`rollout::Issue::question`],
 //! 01M6QBJHM5BQR59QX2K2BMZVYH), also no rebase and no fix of checks for it:
 //! the work waits for the answer. A verify of its open pull request goes on.
-//! The look of the daemon tells the person of the lead one time in riff chat
-//! when the label goes on ([`look::AskWatch`], [`World::ask_person`],
-//! 01M6QBJHV7PVV5893Q6RCPENJQ). When the person has answered, the lead
-//! removes the label, and the next look takes the issue as free work.
+//! riff posts no chat line for it (01M75QTMB42NME9Z2Y0XC0AN97): the Waves
+//! tab of the TUI and `riff questions` show each open question. When the
+//! person has answered, the lead removes the label, and the next look
+//! takes the issue as free work.
 //!
 //! ```mermaid
 //! flowchart LR
 //!     L["the lead: questions in the body,<br/>label question"] --> F["the forge"]
 //!     F --> W["the look of the wave:<br/>no build of the issue"]
-//!     F --> D["the look of the daemon:<br/>one line in riff chat, with the link"]
-//!     D --> P["the person answers<br/>in the body or in a comment"]
+//!     F --> T["the Waves tab and riff questions:<br/>the open questions"]
+//!     T --> P["the person answers<br/>in the body or in a comment"]
 //!     P --> R["the lead records the answer<br/>and removes the label"]
 //!     R --> W2["the wave takes the issue"]
 //! ```
@@ -1655,20 +1654,6 @@ pub trait World: Send + Sync {
         body: &'a str,
         kind: Kind,
         key: Option<&'a str>,
-    ) -> BoxFuture<'a, Result<()>>;
-
-    /// Tells riff-server the fact `fact` of the person of the lead of
-    /// `wave`: riff-server writes the line of riff-bot for it in riff chat,
-    /// and the line names the person first. It wakes the terminals of the
-    /// person, and no session (#1605, 01M6Y1A5PTCVZ6GRJ0FXMART2T). The call
-    /// has `key`: riff-server drops the line when a kept line of riff-bot
-    /// for the person has the key, so the person hears it one time from the
-    /// look of each host. The error is a call that did not go out.
-    fn ask_person<'a>(
-        &'a self,
-        wave: &'a Wave,
-        fact: BotFact,
-        key: &'a str,
     ) -> BoxFuture<'a, Result<()>>;
 
     /// Tells riff-server the fact `fact` of the daemon, as the person of the
@@ -4197,25 +4182,12 @@ impl World for Live {
         Box::pin(post_as_person(wave, item, body, kind, key))
     }
 
-    fn ask_person<'a>(
-        &'a self,
-        wave: &'a Wave,
-        fact: BotFact,
-        key: &'a str,
-    ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            let person = identity::person(&wave.place(None)?, &wave.server)?;
-            let api = Api::new(&wave.server).signed_in(None)?;
-            api.bot(&person, fact, Some(key)).await
-        })
-    }
-
     fn bot<'a>(&'a self, record: &'a Record, fact: BotFact) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let posted = async {
                 let person = identity::person(record.me.place(), &record.server)?;
                 let api = Api::new(&record.server).signed_in(None)?;
-                api.bot(&person, fact, None).await
+                api.bot(&person, fact).await
             };
             if let Err(e) = posted.await {
                 eprintln!("riff daemon: {}: {e:#}", record.live.name);
@@ -4536,8 +4508,8 @@ mod tests {
         post_keys: Vec<Option<String>>,
         /// The number of the next posts of the look that fail.
         post_fails: usize,
-        /// Each fact of a line of riff-bot to the person, and its key.
-        asked: Vec<(BotFact, String)>,
+        /// Each fact of a line of riff-bot of the daemon.
+        bots: Vec<BotFact>,
         /// Why riff-server gives a session no token of a GitHub App. With
         /// none, each session gets a token of an App.
         no_app: Option<String>,
@@ -4942,23 +4914,6 @@ mod tests {
             })
         }
 
-        fn ask_person<'a>(
-            &'a self,
-            _: &'a Wave,
-            fact: BotFact,
-            key: &'a str,
-        ) -> BoxFuture<'a, Result<()>> {
-            Box::pin(async move {
-                let mut forge = lock(&self.forge);
-                if forge.post_fails > 0 {
-                    forge.post_fails -= 1;
-                    bail!("riff-server does not answer");
-                }
-                forge.asked.push((fact, key.to_owned()));
-                Ok(())
-            })
-        }
-
         fn gh(&self, _: &str) -> Arc<pr::Gh> {
             let limit_gh = lock(&self.forge).limit_gh.clone();
             limit_gh.unwrap_or_else(|| self.gh.clone())
@@ -5016,8 +4971,8 @@ mod tests {
             })
         }
 
-        fn bot<'a>(&'a self, _: &'a Record, _: BotFact) -> BoxFuture<'a, ()> {
-            Box::pin(async {})
+        fn bot<'a>(&'a self, _: &'a Record, fact: BotFact) -> BoxFuture<'a, ()> {
+            Box::pin(async move { lock(&self.forge).bots.push(fact) })
         }
 
         fn leave<'a>(&'a self, _: &'a Record) -> BoxFuture<'a, ()> {
@@ -7993,7 +7948,6 @@ case "$1 $2" in
       *check_name=checks%20%2F%20docs) show docs ;;
       *check_name=checks%20%2F%20*) echo '{"check_runs":[{"status":"completed","conclusion":"success"}]}' ;;
       */actions/runs/*/jobs*) show jobs ;;
-      */issues/*/events*) if [ -e "$dir/events" ]; then cat "$dir/events"; else exit 1; fi ;;
       */milestones*) echo '[{"title":"Wave 1"}]' ;;
       *) exit 1 ;;
     esac ;;
@@ -9654,9 +9608,7 @@ esac
     }
 
     /// The fake world of the look at the issue 12 of `o/r`, in a new
-    /// folder: the file `issues` has its labels ([`Asking::labels`]), and the
-    /// file `events` has the time of each event that added the label
-    /// ([`Asking::events`], #1605).
+    /// folder: the file `issues` has its labels ([`Asking::labels`]).
     struct Asking {
         dir: tempfile::TempDir,
         world: Fakes,
@@ -9705,86 +9657,70 @@ esac
             std::fs::write(self.dir.path().join("issues"), issue).unwrap();
         }
 
-        /// The events of the issue 12, as the filter of `gh` gives them.
-        fn events(&self, events: &str) {
-            std::fs::write(self.dir.path().join("events"), events).unwrap();
-        }
-
         /// One look of the daemon: true when it posted something.
         async fn look(&mut self) -> Result<bool> {
             look::look_wave(&self.world, &self.wave, &mut self.watch).await
         }
 
-        /// Each fact of a line of riff-bot to the person since the start.
-        fn asked(&self) -> Vec<(BotFact, String)> {
-            lock(&self.world.forge).asked.clone()
+        /// The count of the lines of the look since the start: the posts,
+        /// the notices and the facts of riff-bot.
+        fn lines(&self) -> usize {
+            let forge = lock(&self.world.forge);
+            forge.posts.len() + forge.told.len() + forge.bots.len()
+        }
+
+        /// The issues of the asked rows of the Waves tab, from a read of
+        /// the same forge, with the board of `o/r` open.
+        fn asked_rows(&self) -> Vec<u64> {
+            use crate::tui::waves::{ItemState, Row, Waves, rows};
+            let issues = crate::top::titles_from_gh(&self.world.gh, "o/r").unwrap();
+            let forge = crate::tui::forge::Forge {
+                issues,
+                ..Default::default()
+            };
+            let mut tab = Waves::new(Some("o/r".into()));
+            tab.read(vec![("o/r".into(), Ok(forge))], 0);
+            let look = crate::tui::Look::default();
+            for key in [crate::tui::Key::First, crate::tui::Key::Right] {
+                let shown = rows(&tab, &look, 0);
+                tab.on_key(key, &shown, (&look, 0), 10);
+            }
+            rows(&tab, &look, 0)
+                .into_iter()
+                .filter_map(|row| match row {
+                    Row::Item { item, .. } if item.state == ItemState::Asked => Some(item.number),
+                    _ => None,
+                })
+                .collect()
         }
     }
 
-    /// #1605, 01M6QBJHV7PVV5893Q6RCPENJQ: the look tells the person of the
-    /// lead one time in riff chat when the label `question` goes on an
-    /// issue: riff-server writes the line of riff-bot with the link. It has
-    /// no message for the lead, and no more line at the next looks. When the
-    /// label goes off and on again, the person gets a new line.
+    /// 01M75QTMB42NME9Z2Y0XC0AN97 (#1917): the label `question` goes on an
+    /// issue, and no line reaches the chat: the look sends no post, no
+    /// notice and no fact of riff-bot, also at the next looks and when the
+    /// label goes on again. It reads no event of the issue. The Waves tab
+    /// still shows the issue in its questions.
     #[tokio::test]
-    async fn the_look_tells_the_person_one_time_when_the_label_question_goes_on() {
+    async fn the_label_question_gives_no_chat_line_and_the_waves_tab_shows_it() {
         let mut asking = Asking::new();
         assert!(!asking.look().await.unwrap(), "no label: a quiet look");
-        assert!(asking.asked().is_empty());
+        assert!(asking.asked_rows().is_empty());
 
         asking.labels(&["bug", "question"]);
-        asking.events("2026-11-05T20:11:03Z\n");
-        assert!(asking.look().await.unwrap());
-        let question = BotFact::Question { issue: 12 };
-        assert_eq!(
-            asking.asked(),
-            [(question, "question-12-2026-11-05T20:11:03Z".to_owned())]
-        );
-        assert!(
-            lock(&asking.world.forge).posts.is_empty(),
-            "no message to the lead"
-        );
-
-        // The same label at the next looks: no more line.
         for _ in 0..2 {
-            assert!(!asking.look().await.unwrap());
+            assert!(!asking.look().await.unwrap(), "the label: a quiet look");
         }
-        assert_eq!(asking.asked().len(), 1);
+        assert_eq!(asking.asked_rows(), [12]);
 
-        // The lead removed the label after the answer, and added it later: a
-        // new line, with the key of the new time. The last event counts.
+        // The lead removed the label after the answer, and added it later.
         asking.labels(&["bug"]);
         assert!(!asking.look().await.unwrap());
         asking.labels(&["question"]);
-        asking.events("2026-11-05T20:11:03Z\n2026-11-06T09:30:00Z\n");
-        assert!(asking.look().await.unwrap());
-        let keys: Vec<String> = asking.asked().into_iter().map(|(_, key)| key).collect();
-        assert_eq!(
-            keys,
-            [
-                "question-12-2026-11-05T20:11:03Z",
-                "question-12-2026-11-06T09:30:00Z"
-            ]
-        );
-    }
-
-    /// A read of the events that fails gives a key with no time. A post
-    /// that fails is the error of the look, and the next look posts the
-    /// line again.
-    #[tokio::test]
-    async fn a_line_to_the_person_that_failed_comes_at_the_next_look() {
-        let mut asking = Asking::new();
-        asking.labels(&["question"]);
-        lock(&asking.world.forge).post_fails = 1;
-        assert!(asking.look().await.is_err());
-        assert!(asking.asked().is_empty());
-        assert!(asking.look().await.unwrap());
-        assert_eq!(
-            asking.asked(),
-            [(BotFact::Question { issue: 12 }, "question-12".to_owned())],
-            "no event: no time in the key"
-        );
         assert!(!asking.look().await.unwrap());
+        assert_eq!(asking.lines(), 0, "no line reaches the chat");
+        let log = std::fs::read_to_string(asking.dir.path().join("gh.log")).unwrap();
+        assert!(!log.contains("/events"), "{log}");
+        assert_eq!(asking.asked_rows(), [12]);
     }
 
     /// 01M6GYN97HH70E4C1FGM6HA2B0, 01M6GYN92N3Z99GPXTYHDDWF4R (#1549): a wave

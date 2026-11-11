@@ -1203,8 +1203,8 @@ pub struct Unanswered {
 /// the text itself, from the fact, the place of `me` and what it holds
 /// (01M74BPHQZHXFYYNXAJ1WFASQQ).
 /// Only a person, and the lead of the person in its repository, may call
-/// it. A call with a `key` that a kept line of riff-bot for the same user
-/// has is dropped (01M5TKG2K1AYK1KE7C2AA2W9DS).
+/// it. A question for a person has no fact: riff posts no chat line for
+/// it (01M75QTMB42NME9Z2Y0XC0AN97).
 ///
 /// ```
 /// use riff_core::wire::{BotFact, BotPost};
@@ -1219,14 +1219,14 @@ pub struct Unanswered {
 ///     serde_json::to_string(&BotFact::LeadStarted)?,
 ///     r#"{"fact":"lead_started"}"#
 /// );
+/// let question = r#"{"fact": "question", "issue": 12}"#;
+/// assert!(serde_json::from_str::<BotFact>(question).is_err());
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BotPost {
     pub me: SessionUri,
     pub fact: BotFact,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
 }
 
 /// A fact of [`BotPost`]: what riff saw for the person. The repository
@@ -1252,9 +1252,6 @@ pub enum BotFact {
         run: u64,
         reminder: bool,
     },
-    /// The issue `issue` got the label `question`: a lead waits for the
-    /// answer of the person.
-    Question { issue: u64 },
     /// The daemon started the lead again on the new riff.
     LeadStarted,
     /// The daemon cannot start the lead again on the new riff now. The
