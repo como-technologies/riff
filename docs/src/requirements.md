@@ -655,6 +655,70 @@
   change on GitHub" in "How It Works", with a mermaid diagram, and the
   how-to "See the last events" with a copyable `sh` block for `riff
   github events`.
+- **01M74N2SDHCYTY4M6RD1BDAFWZ** The loop of each wave of the riff
+  daemon follows the stream GET /v1/github/watch of its repository
+  thread (01M74A37FPGKYMHP0W588A88RJ). The daemon keeps the ID of the
+  last wake of each repository in the file github-wakes.json in its
+  folder, and opens the stream with after=ID, also after its own
+  restart, so it gets the wakes of the queue that it missed. The first
+  stream of a repository has no after. A wake wakes the wave, at most
+  one look each 30 seconds: the look takes each wake since the last one
+  (#1656).
+- **01M74N34Q330SHBWWTQDPG0W0B** The events of GitHub of a repository
+  are on while its last wake is less than one day old: the ID of a wake
+  is the time of riff-server. While they are on, a look of its wave
+  makes no conditional read and reads no list. It reads only what the
+  wakes since its last look named: a pull request with gh pr view N, an
+  issue with gh issue view N, each with the fields of its list. The look
+  puts the item into the kept reply of its list, or takes it out when it
+  is closed, and makes the kept replies new: the look of the daemon and
+  the sweep take them for as long as the safety look waits. A merged
+  pull request goes into the kept list of the merged pull requests. A
+  number that is a pull request reads as a pull request. A read that
+  fails makes the look read in full. Supersedes
+  01M6JFJQD4H4GG0H0TFSW5G1PD and 01M6GYN97HH70E4C1FGM6HA2B0 in part
+  (#1656).
+- **01M74N34TD0ZKRNB5ASHQ90TP6** While the events of GitHub of a
+  repository are on, a wake with no number (a status, or a check of a
+  commit with no pull request), the wakes of two pull requests or more,
+  and a merge while another pull request is open make the look read the
+  list of the open pull requests: a merge changes the mergeable state of
+  the other pull requests, and GitHub sends no event for it. A wake of
+  pull_request or merge_group of an open pull request reads the merge
+  queue again (#1656).
+- **01M74N34XQRMKDFJ7KA8G80TDE** While the events of GitHub of a
+  repository are on, its wave reads the forge in full at the safety
+  look, each 30 minutes, and an idle wave waits 30 minutes for its next
+  look in place of 5. A wake of GitHub, a change of the plan and the end
+  of a session or of a job wake it at once. Supersedes
+  01M6GYN9526HAYVKJC4HS858TH in part (#1656).
+- **01M74N350YF6KSXGFNCZTDC8QY** The safety look compares the kept
+  replies of the open issues, the open pull requests and the merged pull
+  requests with its full read. Each change that an event of the session
+  App tells, and that no wake named, waits one minute for its wake: the
+  window of riff-server and the way of the wake. Then it is a dropped
+  event: the daemon logs the repository, the issue or the pull request,
+  and the kind of the event. A change of the mergeable state or of a
+  milestone is no dropped event: GitHub sends the App no event for it.
+  The first full read after the events came on finds no dropped event
+  (#1656).
+- **01M74N3544C338R6BV06DQ1DH0** riff daemon status shows one line for
+  each repository with a wake: the age of the last wake, the time of the
+  safety look, and the count of the dropped events of the last day with
+  the last one, so a person can tune the time of the safety look. A
+  repository with no wake for a day shows that its wave reads GitHub as
+  with no events (#1656).
+- **01M74N357CC7DN6B8QX8GDR0ZM** riff top and the TUI follow the stream
+  GET /v1/github/watch of the repository of the folder. A wake of
+  issues, issue_comment or pull_request makes their next read of GitHub
+  come at once, at most one read each 5 seconds, so a change shows
+  within seconds. A wake of a check waits for their next read: CI sends
+  many (#1656).
+- **01M74N35B4F6VZ80M7DJPQCFC6** The book says the time of the safety
+  look and the dropped events in "How riff learns of a change on GitHub"
+  in "How It Works", and shows the line of the dropped events of riff
+  daemon status in "See how the daemon uses the GitHub limit" in
+  development.md, with a copyable sh block (#1656).
 
 ## Issue hygiene on GitHub
 
@@ -6199,19 +6263,21 @@ of this part when they merge.
   wave with 8 sessions at most 1,500. One token has 5,000 points an hour
   for each session, look and lead of its person (#1549).
 - **01M6GYN9526HAYVKJC4HS858TH** A wave that has no work, no session and
-  no change since its last look looks each 5 minutes, not each minute. A
-  session that ends, a job that ends and a start of the wave look at
-  once. A paused wave looks each minute. The look of the daemon at the
-  pull requests and at main waits 5 minutes after a look that told
+  no change since its last look looks each 5 minutes, not each minute,
+  while the events of GitHub of its repository are off. A session that
+  ends, a job that ends and a start of the wave look at once. A paused
+  wave looks each minute. The look of the daemon at the pull requests
+  and at main waits 5 minutes after a look that told
   nothing while no session of the wave runs. The watch of a wave waits 5
   minutes after a look while it is the only watch, and a new watch ends
   the wait. Supersedes 01M5QVH3MAEPPJN9PPVDX6N2EY and
   01M5RGD0RTXYA7FF5K1TH72MGX in part.
 - **01M6GYN97HH70E4C1FGM6HA2B0** The loop of a wave, the look of the
   daemon and the sweep read the open issues and the open pull requests
-  with the same call of gh. The reply of one read serves the others
-  when it is not older than the wait of the loop that asks. The loop of
-  a wave takes no old reply of the other loops. The default
+  with the same call of gh. While the events of GitHub of the repository
+  are off, the reply of one read serves the others when it is not older
+  than the wait of the loop that asks. The loop of a wave takes no old
+  reply of the other loops. The default
   branch and its rules are read one time in 10 minutes, and the message
   of a commit one time. The sweep makes no call for a folder whose
   branch has an open pull request in such a reply, and asks the forge
@@ -6260,8 +6326,9 @@ of this part when they merge.
   and each newest run ended, also when another check failed. Supersedes
   01M5QYDHN27RC5SRHAB56PFKK0, 01M5QW2KVAS05Q72630RNW47G0 and
   01M5SN0PY23JDWND8DGGAF9XMB in part.
-- **01M6JFJQD4H4GG0H0TFSW5G1PD** The look of a wave asks GitHub first
-  whether anything changed. It sends two conditional reads of REST, each
+- **01M6JFJQD4H4GG0H0TFSW5G1PD** While the events of GitHub of its
+  repository are off, the look of a wave asks GitHub first whether
+  anything changed. It sends two conditional reads of REST, each
   with the ETag of its last answer in If-None-Match: the issue and the
   pull request of the repository that changed last, in any state. When
   both answer 304, no pull request was open at the last full read, and

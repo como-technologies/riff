@@ -6011,6 +6011,129 @@ pub fn github_events(repo: &str, reply: &riff_core::wire::GitHubEventsReply) -> 
     text
 }
 
+/// The name of the item of `change` in a line: `issue #12` or `pull
+/// request #41` (#1656).
+fn github_item(change: &crate::hooks::Change) -> String {
+    match change.pull {
+        true => format!("pull request #{}", change.number),
+        false => format!("issue #{}", change.number),
+    }
+}
+
+/// The log line of a dropped event (01M74N350YF6KSXGFNCZTDC8QY): a change
+/// that the safety look of the wave found, and that no wake of the GitHub
+/// App told.
+///
+/// ```
+/// use riff::hooks::{Change, Dropped};
+/// use riff_core::wire::GitHubEvent;
+///
+/// let change = Change { number: 41, pull: true, kind: GitHubEvent::CheckRun };
+/// let dropped = Dropped { repo: "o/r".into(), change, at_ms: 0 };
+/// assert_eq!(
+///     riff::text::github_dropped(&dropped),
+///     "a dropped event: the safety look found a change of pull request #41, of the kind \
+///      check_run, and no event of GitHub told it."
+/// );
+/// ```
+pub fn github_dropped(dropped: &crate::hooks::Dropped) -> String {
+    format!(
+        "a dropped event: the safety look found a change of {}, of the kind {}, and no event \
+         of GitHub told it.",
+        github_item(&dropped.change),
+        dropped.change.kind
+    )
+}
+
+/// The riff daemon cannot follow the wakes of the GitHub App on
+/// riff-server, for the reason `error` (#1656). The wave then reads the
+/// forge at its own looks.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::github_no_wakes("no route"),
+///     "cannot follow the wakes of GitHub on riff-server: no route. The wave reads GitHub at \
+///      its own looks."
+/// );
+/// ```
+pub fn github_no_wakes(error: &str) -> String {
+    format!(
+        "cannot follow the wakes of GitHub on riff-server: {error}. The wave reads GitHub at its \
+         own looks."
+    )
+}
+
+/// A read of an item that a wake of the GitHub App named failed, for the
+/// reason `error` (#1656): the look reads the forge in full.
+///
+/// ```
+/// assert_eq!(
+///     riff::text::github_no_patch("gh pr view 41: HTTP 502"),
+///     "a read of a wake of GitHub failed, so the look reads GitHub in full: gh pr view 41: \
+///      HTTP 502"
+/// );
+/// ```
+pub fn github_no_patch(error: &str) -> String {
+    format!("a read of a wake of GitHub failed, so the look reads GitHub in full: {error}")
+}
+
+/// The line of `riff daemon status` for the events of one repository at
+/// `now_ms` (01M74N3544C338R6BV06DQ1DH0): the age of the last wake, and the
+/// dropped events of the last day. A repository with no wake for a day
+/// reads GitHub as with no events.
+///
+/// ```
+/// use riff::hooks::{Change, Dropped, Shown};
+/// use riff_core::wire::GitHubEvent;
+///
+/// let now = 1_762_850_000_000;
+/// let shown = Shown { repo: "o/r".into(), last_ms: now - 120_000, on: true, dropped: 0, last_dropped: None };
+/// assert_eq!(
+///     riff::text::daemon_github_events(&shown, now),
+///     "GitHub events of o/r: the last wake 2m ago, the safety look each 30 minutes, no dropped \
+///      event in the last day."
+/// );
+/// let change = Change { number: 41, pull: true, kind: GitHubEvent::CheckRun };
+/// let last = Dropped { repo: "o/r".into(), change, at_ms: now - 840_000 };
+/// let shown = Shown { dropped: 3, last_dropped: Some(last), ..shown };
+/// assert_eq!(
+///     riff::text::daemon_github_events(&shown, now),
+///     "GitHub events of o/r: the last wake 2m ago, the safety look each 30 minutes, 3 dropped \
+///      events in the last day, the last of pull request #41, check_run, 14m ago."
+/// );
+/// let off = Shown { on: false, last_ms: now - 2 * 86_400_000, ..shown };
+/// assert_eq!(
+///     riff::text::daemon_github_events(&off, now),
+///     "GitHub events of o/r: no wake for 2d, so the wave reads GitHub as with no events."
+/// );
+/// ```
+pub fn daemon_github_events(shown: &crate::hooks::Shown, now_ms: i64) -> String {
+    let age = |at: i64| ago(u64::try_from((now_ms - at) / 1000).unwrap_or(0));
+    let repo = &shown.repo;
+    if !shown.on {
+        return format!(
+            "GitHub events of {repo}: no wake for {}, so the wave reads GitHub as with no events.",
+            age(shown.last_ms)
+        );
+    }
+    let minutes = crate::hooks::SAFETY_LOOK_EVERY.as_secs() / 60;
+    let dropped = match (shown.dropped, &shown.last_dropped) {
+        (0, _) | (_, None) => "no dropped event in the last day".to_owned(),
+        (n, Some(last)) => format!(
+            "{n} dropped {} in the last day, the last of {}, {}, {} ago",
+            if n == 1 { "event" } else { "events" },
+            github_item(&last.change),
+            last.change.kind,
+            age(last.at_ms)
+        ),
+    };
+    format!(
+        "GitHub events of {repo}: the last wake {} ago, the safety look each {minutes} minutes, \
+         {dropped}.",
+        age(shown.last_ms)
+    )
+}
+
 /// The refusal of `riff cloud deploy` with no `RIFF_OWNER`.
 pub const CLOUD_NO_OWNER: &str = "RIFF_OWNER is not set: the cloud riff needs an owner. Run: \
 export RIFF_OWNER=YOUR_EMAIL";
@@ -8450,6 +8573,7 @@ const LIMIT_GUESS: &str = " riff cannot read the reset: this time is the end of 
 ///     no_tokens: vec![],
 ///     writes: vec![],
 ///     sends: vec![],
+///     events: vec![],
 /// };
 /// let text = riff::text::daemon_status(&status, 300_000);
 /// assert!(text.starts_with("The riff daemon runs: pid 42, build 1.3.1 06a0ae03be98, for 5m.\n"));
@@ -8648,6 +8772,9 @@ pub fn daemon_status(status: &crate::daemon::Status, now_ms: i64) -> String {
                 age(watch.since_ms)
             );
         }
+    }
+    for events in &status.events {
+        let _ = writeln!(out, "{}", daemon_github_events(events, now_ms));
     }
     out.push_str(&github_use(&status.github, now_ms));
     out
@@ -10020,6 +10147,7 @@ pub const INIT_CONTAINER_DONE: &str = "Each check passed. riff changed nothing: 
 ///     no_tokens: vec![],
 ///     writes: vec![],
 ///     sends: vec![],
+///     events: vec![],
 /// };
 /// let same = riff::text::init_daemon_kept(&status, "1.3.1 aaa");
 /// assert_eq!(same, "The riff daemon of this riff runs already: pid 42. riff init keeps it.");

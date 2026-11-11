@@ -1032,6 +1032,28 @@ impl Gh {
         }
     }
 
+    /// Keeps `reply` as the reply of `gh ARGS`, as new as now, for the next
+    /// [`Gh::read`]. The caller made it from the kept reply and a read of
+    /// one item that changed ([`crate::hooks`], #1656). It calls no `gh`.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// let gh = riff::pr::Gh::at("/no/gh").with_shared_reads();
+    /// let args = ["pr", "list", "--repo", "o/r"];
+    /// gh.keep(&args, "[{\"number\":41}]");
+    /// assert_eq!(gh.peek(&args, Duration::from_secs(1)).as_deref(), Some("[{\"number\":41}]"));
+    /// // A `gh` that shares no reads keeps nothing.
+    /// let alone = riff::pr::Gh::at("/no/gh/alone");
+    /// alone.keep(&args, "[]");
+    /// assert_eq!(alone.with_shared_reads().peek(&args, Duration::from_secs(1)), None);
+    /// ```
+    pub fn keep(&self, args: &[&str], reply: &str) {
+        if self.shares {
+            replies::put(self.key(args), reply);
+        }
+    }
+
     /// Asks GitHub with `gh api -i PATH` whether the reply of `PATH`
     /// changed since the answer with the `ETag` `etag` (#1566). The `ETag`
     /// goes in `If-None-Match`. A `304` costs no point. `gh` exits with 1

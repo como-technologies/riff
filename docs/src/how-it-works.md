@@ -137,8 +137,8 @@ takes a free item first:
   riff daemon of each host. So do a new item in a wave and a merge on
   GitHub: see
   [How riff learns of a change on GitHub](#how-riff-learns-of-a-change-on-github).
-  Each wave looks at once, also a wave that waits 5 minutes with no
-  work. So each host sees the free item at the same time.
+  Each wave looks at once, also a wave that waits with no work. So each
+  host sees the free item at the same time.
 - Before the claim, the daemon of a host waits a short time that grows
   with its load: 10 s × its live sessions / its limit. An empty host
   waits 0 s. A host with 3 sessions of its limit of 4 waits 7.5 s.
@@ -209,6 +209,76 @@ sequenceDiagram
     S->>S: wait 5 s: one wake
     S->>D: a wake: check_run, #41
 ```
+
+The riff daemon keeps the ID of the last wake of each repository in its
+folder. After a restart, it asks riff-server for each wake after that
+ID, so it gets the wakes that it missed in the last hour.
+
+#### What the daemon reads for a wake
+
+A wake names the issue or the pull request that changed. So the wave
+reads only that item on GitHub: `gh pr view 41` or `gh issue view 12`,
+for one GraphQL point. It reads no list of the open issues or pull
+requests. The look of the daemon and the sweep use the same replies.
+
+The wave reads the list of the open pull requests in three cases:
+
+- A wake has no number: a status, or a check of a commit with no pull
+  request.
+- The wakes since the last look name two pull requests or more.
+- A pull request merged while another one is open. The merge changes the
+  mergeable state of the other pull requests, and GitHub sends no event
+  for that.
+
+The events of a repository are on while its last wake is less than one
+day old. A riff with no GitHub App, or with no webhook, sends no wake.
+Then its waves read GitHub as before: two cheap reads ask GitHub first
+whether anything changed (see
+[Know how an idle wave reads GitHub](development.md#know-how-an-idle-wave-reads-github)).
+
+#### The safety look and the dropped events
+
+GitHub can lose an event, and riff-server keeps the wakes for one hour
+only. So the wave reads GitHub in full each 30 minutes: the safety look.
+A wave with no work waits 30 minutes for its next look, in place of 5. A
+wake, a change of the plan and the end of a session wake it at once.
+
+The safety look compares the facts that the wakes gave with the full
+read. A change that no wake told is a dropped event. The daemon waits
+one minute for a late wake. Then it logs the repository, the item and
+the kind of the event:
+
+```text
+riff daemon: o/r: a dropped event: the safety look found a change of pull request #41, of the kind check_run, and no event of GitHub told it.
+```
+
+A change of the mergeable state or of a milestone is no dropped event:
+GitHub sends the App no event for it. Each look reads the open
+milestones, so the wave sees the end of a wave at its next look.
+
+```mermaid
+sequenceDiagram
+    participant S as riff-server
+    participant D as the riff daemon
+    participant G as GitHub
+    S->>D: a wake: pull_request, #41
+    D->>G: gh pr view 41
+    D->>D: the wave looks, with the new pull request
+    Note over D: 30 minutes after the last full read
+    D->>G: the safety look: the full read
+    D->>D: a change that no wake told: a dropped event
+```
+
+`riff daemon status` counts the dropped events of the last day: see
+[See how the daemon uses the GitHub limit](development.md#see-how-the-daemon-uses-the-github-limit).
+Many dropped events tell you that the events do not come. Then look at
+the last events of the repository with `riff github events`.
+
+`riff top` and the TUI follow the same stream for the repository of
+their folder. A wake of an issue or of a pull request makes them read
+GitHub again at once, at most one time each 5 seconds. So a change shows
+within seconds. A wake of a check waits for their next read: CI sends
+many of them.
 
 #### See the last events
 

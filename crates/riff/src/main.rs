@@ -4379,6 +4379,13 @@ async fn draw_top(
         .as_ref()
         .filter(|_| matches!(reach, Reach::Direct(_)))
         .map(|t| Box::pin(follow(|| api.tail(me, t), STREAM_RETRY)));
+    // A wake of the GitHub App of the repository reads `gh` again soon
+    // (#1656).
+    let mut wakes = thread
+        .as_ref()
+        .filter(|_| !once)
+        .map(|t| Box::pin(follow(|| api.github_watch(me, t, None), STREAM_RETRY)));
+    let mut shows = riff::hooks::Shows::default();
     let clear = !once && std::io::stdout().is_terminal();
     let repo = thread.as_ref().map(ToString::to_string);
     // The last good look, and its time.
@@ -4408,7 +4415,9 @@ async fn draw_top(
         let Some(((pauses, who, sessions), at)) = &last else {
             continue;
         };
-        if fetched.is_none_or(|t| t.elapsed() >= riff::top::ISSUES_TTL) {
+        let woken = shows.due(Instant::now());
+        if woken || fetched.is_none_or(|t| t.elapsed() >= riff::top::ISSUES_TTL) {
+            shows.read(Instant::now());
             // A `gh` that fails keeps the last issues of its repository
             // (01M3ZC09FA9DZPTHK31XECZ566).
             let repos = riff_client::waves::board_repos(sessions, show, repo.as_deref());
@@ -4476,9 +4485,23 @@ async fn draw_top(
                 None => std::future::pending().await,
             }
         };
+        // A wake of a check waits for the next read (`riff::hooks::shows`).
+        let wake = async {
+            loop {
+                match wakes.as_mut() {
+                    Some(stream) => match stream.next().await {
+                        Some(Ok(wake)) if riff::hooks::shows(&wake) => return wake,
+                        Some(_) => {}
+                        None => std::future::pending::<()>().await,
+                    },
+                    None => std::future::pending::<()>().await,
+                }
+            }
+        };
         tokio::select! {
             () = tokio::time::sleep(riff::top::REFRESH) => {}
             () = message => {}
+            wake = wake => shows.wake(&wake),
         }
     }
 }

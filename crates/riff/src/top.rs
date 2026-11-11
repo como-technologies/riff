@@ -25,7 +25,12 @@
 //! `gh issue list` of the open issues ([`Issues`]) of each repository
 //! with a live session, and of the working directory ([`board_repos`],
 //! 01M42KHN80V49HDDZF953HXDT0).
-//! riff keeps them for [`ISSUES_TTL`], then reads them again. A
+//! riff keeps them for [`ISSUES_TTL`], then reads them again. A wake of
+//! the GitHub App of an issue or a pull request of the repository of the
+//! folder reads them again soon, at most one read each
+//! [`crate::hooks::SHOW_GAP`] ([`crate::hooks::Shows`],
+//! 01M74N357CC7DN6B8QX8GDR0ZM): `riff top` follows `GET /v1/github/watch`
+//! of that repository. A wake of a check waits for the next read. A
 //! repository with no `gh` read has no titles and no board. When a read
 //! of `gh` fails, the first line of `riff top` names the error of `gh`
 //! ([`crate::text::top_gh_fault`],
@@ -83,7 +88,7 @@
 //!     participant T as riff top
 //!     participant G as gh
 //!     participant S as riff-server
-//!     T->>G: issue list, pr list of each repository (each ISSUES_TTL)
+//!     T->>G: issue list, pr list of each repository (each ISSUES_TTL,<br/>and soon after a wake of GitHub)
 //!     loop each REFRESH, and each message of the thread
 //!         T->>S: riff, who, plan show of each board
 //!         T->>T: draw the table in place

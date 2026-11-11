@@ -84,6 +84,7 @@ pub mod help;
 pub mod highlight;
 pub mod hold;
 pub mod home;
+pub mod hooks;
 pub mod hygiene_rules;
 
 pub mod identity;
