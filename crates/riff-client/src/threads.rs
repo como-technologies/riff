@@ -210,7 +210,9 @@ impl Line {
     /// sender [`SessionUri::server`] (01M6Y4ZCTSTVM971BDC1F7GJPK).
     /// riff-server signs no line, so the sender proves it, not
     /// [`Line::verified`]: no person signs in as the user of riff-server,
-    /// and riff-server refuses the kind `riff` in a post of a client.
+    /// and riff-server refuses the kind `riff` in a post of a client. A
+    /// view shows such a line with no mark `verified` or `not verified`
+    /// (01M75N2T0E0TV9ZF1ED90Y3PGC).
     ///
     /// ```
     /// use riff_client::api::Checked;

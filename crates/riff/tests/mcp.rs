@@ -2,7 +2,9 @@
 
 use riff::tools::Tools;
 use riff_client::api::Api;
-use riff_core::name::SessionUri;
+use riff_core::name::{SessionUri, ThreadName};
+use riff_core::selector::Selector;
+use riff_core::wire::{BotFact, Kind};
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
 use rmcp::{RoleClient, ServiceExt};
@@ -25,6 +27,11 @@ async fn connect(server: &crate::common::Signed, me: &str) -> RunningService<Rol
     if [MIKE, BRETT].contains(&me.to_string().as_str()) {
         crate::common::name_lead(&server.api(me.who().user(), None), &me).await;
     }
+    serve(api, me).await
+}
+
+/// Connects an MCP client to the tools of `me`, with the client `api`.
+async fn serve(api: Api, me: SessionUri) -> RunningService<RoleClient, ()> {
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let tools = Tools::new(api, me);
     tokio::spawn(async move {
@@ -625,6 +632,63 @@ async fn the_instructions_say_how_to_act_on_a_message() {
         "{instructions}"
     );
     assert!(instructions.contains("Talk to other sessions when it helps"));
+}
+
+/// 01M75N2T0E0TV9ZF1ED90Y3PGC: `read` shows a line of riff-server itself
+/// as `riff-bot (riff-server)`, with no mark. A client that posts as the
+/// address of riff-server gets no such line: its post shows as not
+/// verified. The riff has a sign-in provider and needs no sign-in, so a
+/// client can post with no signature, also as `riff://riff@server`.
+#[tokio::test]
+async fn read_shows_a_line_of_riff_server_as_riff_bot() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let provider = riff_server::oidc::Provider {
+        issuer: "https://accounts.google.com".into(),
+        client_id: "riff".into(),
+        client_secret: None,
+        allowed_domains: vec!["comotechnologies.io".into()],
+    };
+    let config = riff_server::auth::Config {
+        provider: Some(provider),
+        ..riff_server::auth::Config::new(&url)
+    };
+    let router = riff_server::Service::new(config).router();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let api = Api::new(&url);
+    let lead: SessionUri = MIKE.parse().unwrap();
+    api.register(&lead).await.unwrap();
+    crate::common::name_lead(&api, &lead).await;
+    let tools = serve(api.clone(), lead.clone()).await;
+
+    // The look of the wave tells riff-server of the label question, and
+    // riff-server writes the line for mike.
+    let person = crate::common::person_of(&lead);
+    api.bot(&person, BotFact::Question { issue: 12 }, None)
+        .await
+        .unwrap();
+    let chat = ThreadName::chat();
+    let to = [Selector::name("mike")];
+    let claimed = "@mike riff release v9.9.9 waits for your approval";
+    api.post(
+        &SessionUri::server(),
+        Some(&chat),
+        &to,
+        claimed,
+        Kind::Message,
+    )
+    .await
+    .unwrap();
+
+    let (read, is_error) = call(&tools, "read", serde_json::json!({ "thread": "chat" })).await;
+    assert!(!is_error, "{read}");
+    let asked = "] riff-bot (riff-server) to name=mike: @mike A lead waits for your answer in \
+                 issue #12 of como-technologies/riff";
+    assert!(read.contains(asked), "{read}");
+    let line = read.lines().find(|l| l.contains("riff-bot")).unwrap();
+    assert!(!line.contains("verified"), "{line}");
+    let fake = format!("] riff@server to name=mike (not verified): {claimed}");
+    assert!(read.contains(&fake), "{read}");
 }
 
 /// Two sessions of one user that are not the lead talk about shared

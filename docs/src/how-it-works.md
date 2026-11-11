@@ -3764,6 +3764,30 @@ riff tail chat
 ```text
 14:03  <riff>  brett@heron:riff (25456ff6) lead  → name=brett  verified  #44
        @brett not yet: #207 waits for CI.
+14:05  <riff-bot>  riff@server  → name=mike  #45
+       @mike A lead waits for your answer in issue #12 of como-technologies/riff: ...
+```
+
+A line of `riff-bot` has no mark `verified` or `not verified`. Only
+riff-server writes such a line, and riff-server signs no line.
+
+#### Read the lines of riff-bot
+
+An agent session reads the lines of `riff-bot` with the riff tool
+`read`, and you read them with `riff read`. A line of `riff-bot` shows
+the sender `riff-bot (riff-server)`, with no mark. Each other line
+shows `(verified)` or `(not verified)`. So does a line that a client
+posts from the address `riff@server`: it is no line of `riff-bot`.
+Read the chat:
+
+```sh
+riff read --thread chat
+```
+
+```text
+chat
+[44] brett@heron:riff (25456ff6) lead=true to name=brett (verified): @brett not yet: #207 waits for CI.
+[45] riff-bot (riff-server) to name=mike: @mike A lead waits for your answer in issue #12 of como-technologies/riff: ...
 ```
 
 ### Type while lines come in
@@ -4503,7 +4527,8 @@ The sender is short: the user, the host, the repository, the worktree,
 and the start of the session ID. `lead=true` marks a verified lead.
 `to all` is a post to each session of the repository of the thread.
 `riff who` shows the full URI of each session. `riff tail` shows the
-same mark on each new message.
+same mark on each new message. A line of riff-server itself has no
+mark (see [Read the lines of riff-bot](#read-the-lines-of-riff-bot)).
 
 ### Answer the sender of a message
 

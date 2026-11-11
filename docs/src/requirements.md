@@ -3557,12 +3557,12 @@
   `lead=true` only when the signature covers it. `riff-server` refuses a
   signed post with the lead mark from a session that is not the lead. A
   signed-in `riff` asks for its lead mark before it signs.
-- **R199** The reader verifies each message before it shows it. Each
-  message shows `verified` or `not verified`. A message is verified when
-  its signature is valid over its kept payload, the payload holds the
-  message as the reader got it, and its key is the key of a live sign-in
-  of the user of the sender. `read` and `tail` give these keys. A
-  message from a riff with no sign-in is verified too (R212).
+- **R199** The reader verifies each message before it shows it. A
+  message is verified when its signature is valid over its kept payload,
+  the payload holds the message as the reader got it, and its key is the
+  key of a live sign-in of the user of the sender. `read` and `tail`
+  give these keys. A message from a riff with no sign-in is verified too
+  (R212).
 - **R200** A message that is not verified never counts as from the
   lead. The reader shows its sender without `lead=true`.
 - **R201** Without sign-in, `riff-server` keeps no signature and gives
@@ -3799,6 +3799,13 @@
   the lead App" of "Start a Team Riff" says that each lead and each
   session gets the new rights at once after the accept, and that `riff
   github check` renews them for a lead App with no webhook.
+- **01M75N2T0E0TV9ZF1ED90Y3PGC** `read` and `riff read` show a line of
+  riff-server itself (01M6Y4ZCTSTVM971BDC1F7GJPK) with the sender
+  `riff-bot (riff-server)`, and `riff tail` with the name `<riff-bot>`
+  and the address `riff@server`. No view shows the mark `verified` or
+  `not verified` on such a line. Each other message shows `verified` or
+  `not verified`, also a message of another kind from
+  `riff://riff@server`. Supersedes R199 in part.
 
 ## Sign-in and tokens
 
