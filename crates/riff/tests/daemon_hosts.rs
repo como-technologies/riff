@@ -2106,9 +2106,9 @@ fn fake_wave(dir: &Path) -> Vec<(String, String)> {
 /// 01M75N6YNHQQHGS0VGKTKSNJTR: `riff who` says that the current wave is
 /// complete and that its release waits for its cut, and why, with a real
 /// riff-server and a fake `gh`. The watch of the wave of the daemon gives the
-/// wave to the facts of its host. 01M75R6FPVZA3JA5C48PQ26A85: when the cut
-/// makes the release issue of the wave, the line of the release at its step
-/// takes its place.
+/// wave to the facts of its host. 01M75R6FPVZA3JA5C48PQ26A85: when the wave
+/// has its release issue, the line of the release at its step takes its
+/// place.
 #[tokio::test(flavor = "multi_thread")]
 async fn riff_who_says_that_a_complete_wave_waits_for_its_cut() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2156,27 +2156,14 @@ async fn riff_who_says_that_a_complete_wave_waits_for_its_cut() {
         "Wave 41 is complete: the release waits for its cut; the full check of main runs".into(),
     ))
     .await;
-    // The cut makes the release issue of the wave and the release pull
-    // request #1140, whose full check runs.
-    set("head", &runs("in_progress", "null"));
-    set(
-        "pulls",
-        r#"[{"number":1140,"title":"Release v9.9.9","headRefOid":"abc"}]"#,
-    );
+    // 01M7642H27T4862WZENFAN4277: the cut tags the last commit of main, and
+    // the release issue of the wave is there: the line of the release at its
+    // step takes the place of the line of the wave.
+    git(&r.main, &["tag", "-a", "v9.9.9", "-m", "Release v9.9.9"]);
+    git(&r.main, &["push", "-q", "origin", "v9.9.9"]);
     set(
         "released",
         r#"[{"number":7,"title":"Release v9.9.9","state":"OPEN"}]"#,
     );
-    shows(Some(
-        "v9.9.9: the full check of the release pull request runs".into(),
-    ))
-    .await;
-    // The full check passes: the lead verifies the pull request next.
-    set("head", &runs("completed", r#""success""#));
-    shows(Some(format!(
-        "v9.9.9: the full check of the release pull request passed; it waits for the verify of \
-         the lead of {}",
-        r.lead.place().repo_text()
-    )))
-    .await;
+    shows(Some("v9.9.9: the CI run of the tag builds".into())).await;
 }

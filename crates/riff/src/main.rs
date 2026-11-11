@@ -248,7 +248,8 @@ enum Command {
     /// another session of its user with `--session`, for example a
     /// session that is gone or that does not answer. Then the next
     /// session can claim the item. The subcommands make a release of
-    /// riff: cut, publish, status, approve, hold, check, retry and rollback.
+    /// riff: test, cut, verify, status, approve, hold, check, retry and
+    /// rollback.
     /// They need the table [release] in riff.toml, but hold: the lead of
     /// another repository holds a release.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
@@ -1128,74 +1129,70 @@ impl From<VerdictArg> for riff::pr::Verdict {
 /// (01M58B0HZYMAK1B2AJMWKHCXG0).
 #[derive(Subcommand)]
 enum ReleaseCommand {
-    /// Make the release pull request from origin/main
+    /// Tag the last commit of origin/main and make the release
     ///
-    /// It sets the version in Cargo.toml and Cargo.lock,
-    /// runs deploy/release-check.sh, and pushes the branch
-    /// release-vX.Y.Z. The pull request has the label release, the
-    /// current wave, auto-merge on, and the items of each wave since the
-    /// last release. It says Part of #N for the release issue. It
-    /// refuses a version that is not newer than the last release, while
-    /// the version on origin/main has no published release, and while a
-    /// deploy waits for the approval of production. It also refuses while
-    /// an alert of the repository has no review: an open alert of code
-    /// scanning, secret scanning or Dependabot, or a dismissed alert with
-    /// no comment. It lists each one. A revoked secret and a Dependabot
-    /// alert that a rule dismissed need no comment. No flag skips this
-    /// check. A worker cannot read the alerts: the lead or a person cuts
-    /// the release.
+    /// X.Y.Z must be the version in Cargo.toml on origin/main, and newer
+    /// than the last release. The last commit of origin/main must have its
+    /// release build (the artifacts static-release, macos-riff and
+    /// mac-session-riff of its tree), a passed release test
+    /// (riff/release-test) and a pass of the real-session test
+    /// (riff/real-session): see riff release test. The cut makes no version
+    /// commit and builds nothing. It makes the release issue when there is
+    /// none, pushes only the annotated tag vX.Y.Z on that commit, and makes
+    /// the GitHub release with the commands of --run and the items of each
+    /// wave since the last release, marked as the latest. Then it opens the
+    /// pull request "Set the next version A.B.C", the next minor by
+    /// default: its branch sets A.B.C in Cargo.toml and Cargo.lock and runs
+    /// deploy/release-check.sh, and it has the label release and auto-merge
+    /// on. Verify it with riff release verify. The cut refuses while a
+    /// deploy waits for the approval of production, and while an alert of
+    /// the repository has no review: an open alert of code scanning, secret
+    /// scanning or Dependabot, or a dismissed alert with no comment. It
+    /// lists each one. A revoked secret and a Dependabot alert that a rule
+    /// dismissed need no comment. No flag skips a check. Only the owner or
+    /// an admin of the riff in a terminal, or the lead of one, may cut, also
+    /// the lead in its container. It refuses a worker and a work session in
+    /// a container. The ruleset releases of GitHub decides the push of the
+    /// tag: it lets an admin of the repository and the lead App push it, so
+    /// the lead pushes it from its container. Run the cut again after a cut
+    /// that stopped: it does the steps that are not done.
     Cut {
-        /// The new version, for example 3.3.0.
+        /// The version of the release, for example 3.3.0.
         version: String,
-        /// The version on origin/main that gets no release. Only with
-        /// --reason. Only the owner or an admin, in a plain terminal:
-        /// it refuses in each agent session.
-        #[arg(long, requires = "reason", value_name = "VERSION")]
-        skip: Option<String>,
-        /// Why the version of --skip gets no release. It goes into the
-        /// pull request and into the GitHub release.
-        #[arg(long, requires = "skip", value_name = "TEXT")]
-        reason: Option<String>,
+        /// The version of the pull request of the next version. The
+        /// default is the next minor, for example 3.4.0.
+        #[arg(long, value_name = "VERSION")]
+        next: Option<String>,
         /// The reason of the level, in one line for a person. It follows
         /// the level line.
         #[arg(long, value_name = "TEXT")]
         why: Option<String>,
+        /// A command that each person runs after the release, for example
+        /// riff update --tag v3.3.0. It goes into the notes of the release.
+        /// Give it one time for each command.
+        #[arg(long, value_name = "COMMAND")]
+        run: Vec<String>,
     },
-    /// Verify a release pull request with no model session
+    /// Verify the pull request of the next version
     ///
-    /// For a pull request with the label release. It checks that the
-    /// diff is only Cargo.toml and Cargo.lock, that the body has the
-    /// format of riff release cut, and that the full check of the head
-    /// commit passed (see riff verify). Then it sets the status
-    /// riff/verify. Else it refuses and sets nothing.
+    /// For a pull request with the label release: the pull request of the
+    /// next version, or a release pull request. It checks that the diff
+    /// is only Cargo.toml and Cargo.lock, that the body passes the issue
+    /// hygiene, and that the full check of the head commit passed (see
+    /// riff verify). Then it sets the status riff/verify. Else it refuses
+    /// and sets nothing. No model session runs.
     Verify {
-        /// The number of the release pull request.
+        /// The number of the pull request.
         number: u64,
-    },
-    /// Tag the release, make the GitHub release, and tell the owner
-    ///
-    /// Only the owner or an admin of the riff in a terminal, or the lead
-    /// of one. A riff with no sign-in has no roles. It refuses in a worker
-    /// and in a container session. The ruleset releases of GitHub decides
-    /// the push of the tag: it lets an admin of the repository and the
-    /// lead App push it, so the lead pushes it from its container.
-    /// It checks first: the pull request "Release vX.Y.Z" with the label
-    /// release merged with riff/verify passed, its merge commit is on
-    /// origin/main, a commit from it to origin/main passed the
-    /// real-session test (the status riff/real-session), Cargo.toml has
-    /// X.Y.Z, and the tag does not exist. Then it pushes only the
-    /// annotated tag on that commit, makes the release, marked as the
-    /// latest, and posts a chat line to the owner.
-    Publish {
-        /// The release tag, for example v3.3.0.
-        tag: String,
     },
     /// Show the release cycle
     ///
-    /// The version on origin/main, the last published release, a merged
-    /// release that is not published, each CI run that waits for the
-    /// environment production, the state of the current release, and
-    /// the next step.
+    /// The version on origin/main, the last published release, the open
+    /// pull request of the next version, each CI run that waits for the
+    /// environment production, the state of the current release, and the
+    /// next step. Before the tag, it also shows the last commit of
+    /// origin/main with its release build, its release test and its
+    /// real-session test.
     Status,
     /// Approve the deploy of a release to production
     ///
@@ -1257,13 +1254,17 @@ enum ReleaseCommand {
         /// The release tag, for example v3.3.0.
         tag: String,
     },
-    /// Run the real-session test of a merged release on a host
+    /// Run the real-session test of origin/main on a host
     ///
-    /// A container session cannot run just real-session: podman does not
-    /// run inside a container. The lead asks the riff daemon of HOST. It
-    /// clones the newest commit of origin/main, runs the test there, and
-    /// sets the commit status riff/real-session: pending, then success
-    /// or failure. riff release status shows the state. Only you in a
+    /// Before the cut. The version on origin/main must be the version of
+    /// TAG, and its last commit must have its release build and a passed
+    /// release test. A container session cannot run just real-session:
+    /// podman does not run inside a container. The lead asks the riff
+    /// daemon of HOST. It clones that commit, runs the test there on the
+    /// release binaries of the commit, and sets the commit status
+    /// riff/real-session: pending, then success or failure. riff makes
+    /// the release issue when there is none: the daemon writes the reason
+    /// of a fail there. riff release status shows the state. Only you in a
     /// terminal and your lead can use it. The daemon refuses a worker.
     Test {
         /// The release tag, for example v3.3.0.
@@ -3726,9 +3727,9 @@ async fn holds_on(reach: &Reach, tag: &str) -> Result<Vec<riff::hold::Hold>> {
     Ok(riff::hold::holds(&lines, tag))
 }
 
-/// `riff release cut`, `publish`, `status`, `approve`, `hold`, `check`, `retry`
-/// and `rollback` (01M58B0HZYMAK1B2AJMWKHCXG0 to
-/// 01M58B0JSQMWNCMSNX19536XT8, 01M58KMKR33P1FSCFDQRZ56A8P to
+/// `riff release test`, `cut`, `verify`, `status`, `approve`, `hold`,
+/// `check`, `retry` and `rollback` (01M7641BHHND5JJA8DGJPFNAN7 to
+/// 01M76428TRD7KWC4C8V5NNPNC7, 01M58KMKR33P1FSCFDQRZ56A8P to
 /// 01M58KMMP9FKRFYX58ESVRSZQX).
 async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) -> Result<()> {
     use riff::cycle::{self, Approved, Checked, Forge as _};
@@ -3766,44 +3767,77 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
     match command {
         ReleaseCommand::Cut {
             version,
-            skip,
-            reason,
+            next,
             why,
+            run,
         } => {
-            let version = cycle::version(version)?;
-            let skip = match (skip, reason) {
-                (Some(skip), Some(reason)) => {
-                    if let Some(why) = release_caller(server, true).await.person_step() {
-                        refuse("cut --skip", why);
-                    }
-                    Some(cycle::Skip {
-                        version: cycle::version(skip)?,
-                        reason: reason.clone(),
-                    })
-                }
-                _ => None,
-            };
-            let forge = forge()?;
-            let cut = cycle::cut(&forge, version, skip.as_ref(), why.as_deref())?;
-            println!(
-                "The release pull request #{} for issue #{}, with auto-merge on: {}",
-                cut.number, cut.issue, cut.url
-            );
-            let fact = BotFact::ReleaseCut {
-                tag: cycle::tag(version),
-            };
-            if let Err(e) = reach.bot(fact).await {
-                eprintln!("riff: cannot post the chat line of the cut: {e:#}");
+            // A step of the lead: it pushes the tag (01M7641T7FX9416CYY1XKHTJE6).
+            if let Some(why) = release_caller(server, true).await.lead_step() {
+                refuse("cut", why);
             }
-            let step = riff::hold::Step::Cut { number: cut.number };
-            tell_other_leads(reach, &here, step, &cycle::tag(version)).await;
+            let version = cycle::version(version)?;
+            let next = next.as_deref().map(cycle::version).transpose()?;
+            let forge = forge()?;
+            let words = cycle::Words {
+                why: why.clone(),
+                run: run.clone(),
+            };
+            let cut = cycle::cut(&forge, version, next, &words)?;
+            let tag = cycle::tag(version);
+            if let Some(release) = &cut.release {
+                match &release.commit {
+                    Some(commit) => {
+                        println!(
+                            "riff tagged {commit} as {tag}, and made the release: {}",
+                            release.url
+                        )
+                    }
+                    None => println!(
+                        "The tag {tag} was there. riff made the release: {}",
+                        release.url
+                    ),
+                }
+                match &release.run {
+                    Some(run) => println!("The CI run of the tag: {run}"),
+                    None => println!("GitHub shows no CI run of the tag yet."),
+                }
+                let told = async {
+                    let owner = release_owner(reach).await?;
+                    let fact = BotFact::ReleasePublished {
+                        tag: tag.clone(),
+                        run: release.run.as_deref().and_then(cycle::run_id),
+                    };
+                    reach.bot(fact).await?;
+                    anyhow::Ok(owner)
+                };
+                match told.await {
+                    Ok(owner) if !owner.is_empty() => {
+                        println!("riff told the owner {owner} in riff chat.")
+                    }
+                    Ok(_) => println!("riff told the riff in riff chat."),
+                    Err(e) => eprintln!("riff: cannot post the chat line to the owner: {e:#}"),
+                }
+                let step = riff::hold::Step::Cut { number: cut.number };
+                tell_other_leads(reach, &here, step, &tag).await;
+                let op = Op::Deploy {
+                    tag: tag.clone(),
+                    stale: None,
+                };
+                watch_started(reach, &here, op).await;
+            }
+            println!(
+                "The pull request #{} sets the next version {} on main, for issue #{}, with \
+                 auto-merge on: {}",
+                cut.number, cut.next, cut.issue, cut.url
+            );
             let op = Op::Pull {
-                tag: cycle::tag(version),
+                tag: tag.clone(),
                 number: cut.number,
             };
             watch_started(reach, &here, op).await;
             println!(
-                "next: wait for the verify and the merge of pull request #{}",
+                "next: riff release verify {} after its Gate passed; a person runs riff release \
+                 approve {tag} in a terminal when the deploy waits",
                 cut.number
             );
         }
@@ -3813,7 +3847,8 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             println!(
                 "Pull request #{number} passed: the status riff/verify of {head} is a success."
             );
-            let tag = cycle::tag_of_title(&forge.candidate(*number)?.title)?;
+            let title = forge.candidate(*number)?.title;
+            let tag = cycle::tag_of_pull(&title, &forge.releases()?)?;
             watch_started(
                 reach,
                 &here,
@@ -3824,45 +3859,6 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             )
             .await;
             println!("next: the auto-merge merges pull request #{number}");
-        }
-        ReleaseCommand::Publish { tag } => {
-            if let Some(why) = release_caller(server, true).await.lead_step() {
-                refuse("publish", why);
-            }
-            let forge = forge()?;
-            let done = cycle::publish(&forge, tag)?;
-            println!("Published {tag}: {}", done.release);
-            match &done.run {
-                Some(run) => println!("The CI run of the tag: {run}"),
-                None => println!("GitHub shows no CI run of the tag yet."),
-            }
-            let published = cycle::tag(cycle::tag_version(tag)?);
-            let told = async {
-                let owner = release_owner(reach).await?;
-                let fact = BotFact::ReleasePublished {
-                    tag: published.clone(),
-                    run: done.run.as_deref().and_then(cycle::run_id),
-                };
-                reach.bot(fact).await?;
-                anyhow::Ok(owner)
-            };
-            match told.await {
-                Ok(owner) if !owner.is_empty() => {
-                    println!("riff told the owner {owner} in riff chat.")
-                }
-                Ok(_) => println!("riff told the riff in riff chat."),
-                Err(e) => eprintln!("riff: cannot post the chat line to the owner: {e:#}"),
-            }
-            tell_other_leads(reach, &here, riff::hold::Step::Published, &published).await;
-            let op = Op::Deploy {
-                tag: cycle::tag(cycle::tag_version(tag)?),
-                stale: None,
-            };
-            watch_started(reach, &here, op).await;
-            println!(
-                "next: wait for the jobs of the CI run; then a person runs riff release approve \
-                 {tag} in a terminal"
-            );
         }
         ReleaseCommand::Status => {
             let forge = forge()?;
@@ -4017,6 +4013,10 @@ async fn release_cycle(command: &ReleaseCommand, server: &str, reach: &Reach) ->
             }
             let forge = forge()?;
             let commit = cycle::test_target(&forge, tag)?;
+            // The daemon writes the reason of a fail on the release issue
+            // (01M76428TRD7KWC4C8V5NNPNC7).
+            let issue = cycle::open_issue(&forge, cycle::tag_version(tag)?)?;
+            println!("The release issue: #{issue}");
             let request = riff::daemon::remote::Request::ReleaseTest {
                 commit,
                 tag: cycle::tag(cycle::tag_version(tag)?),

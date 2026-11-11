@@ -699,17 +699,47 @@ Latest release and prints this line:
 riff cannot read the build of the riff at https://riff.example.com, so riff installs the Latest release, v0.3.0.
 ```
 
+#### How a release is cut
+
+The version of a release is on `main` from the start of its wave. CI
+makes one release build of each commit of `main`, and runs the release
+test on it. So at the end of the wave, the release is the last commit
+of `main`: riff tags that commit, and builds nothing again.
+
+```mermaid
+flowchart TD
+    M["the last commit of main"] --> B["the CI run of the push to main:<br/>the release build and the release test"]
+    B --> T["riff release test vX.Y.Z --host HOST:<br/>the real-session test on the release binaries"]
+    T --> C["riff release cut X.Y.Z:<br/>the tag on that commit, and the GitHub release"]
+    C --> N["the pull request of the next version:<br/>the first commit of the next wave"]
+    C --> R["the CI run of the tag takes the release build,<br/>and compiles nothing"]
+    R --> D["the job Deploy waits for production"]
+    D --> P["a person runs riff release approve vX.Y.Z"]
+```
+
+The lead sees the state of the release, tests the last commit of
+`main`, and cuts the release:
+
+```sh
+riff release status
+riff release test v3.3.0 --host thelio
+riff release cut 3.3.0
+```
+
+For each step, each check and each refusal, see
+[Make a release](development.md#make-a-release).
+
 #### Who tags and who approves a release
 
-The lead publishes each release, and a person approves its deploy.
-GitHub decides each step, not the words of a session:
+The lead cuts each release, and a person approves its deploy. GitHub
+decides each step, not the words of a session:
 
 ```mermaid
 flowchart LR
-    L["the lead in its container<br/>riff-OWNER-lead[bot]"] -- "riff release publish:<br/>the tag vX.Y.Z" --> R{"the ruleset releases<br/>on the tags v*"}
-    A["an admin in a terminal"] -- "riff release publish" --> R
+    L["the lead in its container<br/>riff-OWNER-lead[bot]"] -- "riff release cut:<br/>the tag vX.Y.Z" --> R{"the ruleset releases<br/>on the tags v*"}
+    A["an admin in a terminal"] -- "riff release cut" --> R
     W["a worker<br/>riff-OWNER[bot]"] -. "refused" .-> R
-    R --> C["CI builds the release"]
+    R --> C["CI takes the release build<br/>of the commit"]
     C --> D["the job Deploy waits<br/>for production"]
     P["you in a terminal"] -- "riff release approve" --> D
     L -. "refused, also when you<br/>say approve in riff chat" .-> D
@@ -717,7 +747,7 @@ flowchart LR
 
 | Step | Who | What decides |
 |---|---|---|
-| Push the tag `vX.Y.Z` | the lead in its container, with the token of the lead App, or an admin of the repository in a terminal | The ruleset `releases` lets only the admin role of the repository and the lead App push a tag `v*`. `riff release publish` checks no role: when GitHub refuses the push, riff names the ruleset and deletes the tag on its machine. |
+| Push the tag `vX.Y.Z` | the lead in its container, with the token of the lead App, or an admin of the repository in a terminal | The ruleset `releases` lets only the admin role of the repository and the lead App push a tag `v*`. `riff release cut` checks no role: when GitHub refuses the push, riff names the ruleset and deletes the tag on its machine. |
 | Approve the deploy | you, the owner or an admin of the riff, in a plain terminal | `riff release approve` refuses each session, also the lead, also when you say approve in riff chat. Only a person is a reviewer of the environment `production`. |
 
 `just github` and `riff init` make the ruleset `releases`: see
@@ -735,10 +765,10 @@ The list has the admin role, `RepositoryRole` 5, and the lead App, an
 
 #### See the state of an open release
 
-From the cut to the check, `riff who` and the header of the TUI have
-one line of the release: its step in `riff release status`, what it
-waits for, and who acts next. For example, while the real-session test
-runs:
+From the release issue to the check, `riff who` and the header of the
+TUI have one line of the release: its step in `riff release status`,
+what it waits for, and who acts next. For example, while the
+real-session test runs:
 
 ```sh
 riff who
@@ -749,16 +779,13 @@ riff     running
 release  v3.3.0: the real-session test runs
 ```
 
-The row `release` shows these lines, one after the other, from the cut
-to the check:
+The row `release` shows these lines, one after the other, from the
+release issue to the check:
 
 ```text
-release  v3.3.0: the full check of the release pull request runs
-release  v3.3.0: the full check of the release pull request passed; it waits for the verify of the lead of como-technologies/riff
-release  v3.3.0: the verify of the release pull request passed; it merges
-release  v3.3.0: the release pull request merged; it waits for the real-session test of the lead of como-technologies/riff
+release  v3.3.0: the release build passed; it waits for the real-session test of the lead of como-technologies/riff
 release  v3.3.0: the real-session test runs
-release  v3.3.0: the real-session test passed; it waits for the publish of the lead of como-technologies/riff
+release  v3.3.0: the real-session test passed; it waits for the cut of the lead of como-technologies/riff
 release  v3.3.0: the CI run of the tag builds
 release  v3.3.0: the deploy waits for a person (riff release approve v3.3.0)
 release  v3.3.0: the deploy runs; the riff is paused
@@ -768,11 +795,11 @@ release  v3.3.0: the deploy passed; it waits for the check of the lead of como-t
 After a passed check, the line goes. A failed step has a line too, with
 who acts next.
 
-Before the cut, the same line tells you when the release is ready. When
-each item of the current wave is closed, the line says that the wave is
-complete and that the release waits for its cut. It also says why the
-cut waits, when riff knows it. For example, after the full check of
-`main` failed:
+Before the release issue, the same line tells you when the release is
+ready. When each item of the current wave is closed, the line says that
+the wave is complete and that the release waits for its cut. It also
+says why the cut waits, when riff knows it. For example, after the full
+check of `main` failed:
 
 ```text
 riff     running
@@ -780,8 +807,8 @@ release  Wave 41 is complete: the release waits for its cut; the full check of m
 ```
 
 When the full check of `main` passes, the line names the lead that cuts
-the release. When the cut opens the release, the line of the release
-takes its place.
+the release. When `riff release test` or the cut makes the release
+issue, the line of the release takes its place.
 
 The line comes from the watches of the riff daemons and from the pause
 of the riff. With no open release and no complete wave, there is no
@@ -801,10 +828,11 @@ riff update --tag v0.2.0
 ### See what changed in a release
 
 The GitHub releases are the changelog of riff. The notes of a release
-give its level, the command that each person runs, and each pull
-request that the release adds. The pull requests come in three groups:
-`Changes` for people first, then `Design` (design pages), then
-`Internal` (tests and checks only). List the releases, and read one:
+give its level, the commands that each person runs, the items of each
+wave of the release, and each pull request that the release adds. The
+pull requests come in three groups: `Changes` for people first, then
+`Design` (design pages), then `Internal` (tests and checks only). List
+the releases, and read one:
 
 ```sh
 gh release list --repo como-technologies/riff
@@ -4030,7 +4058,7 @@ from a person and from a session. Each line that riff writes for you is
 a line of `riff-bot` too. These are the lines of `riff-bot`:
 
 - the line that a person passed the owner role,
-- the lines of `riff release cut` and `riff release publish`,
+- the line of `riff release cut`,
 - the ask while a deploy waits for your approval, and its reminder,
 - the lines of the riff daemon about your lead, for example "riff
   started the lead of mike in como-technologies/riff on thelio again on
@@ -6654,7 +6682,7 @@ These commands work in the container:
 | `riff pause`, `riff resume`, `riff plan hold`, `riff plan free` | Only the lead: pause, resume, hold and free. |
 | `riff run`, `riff wave list`, `riff wave move`, `riff wave end --move-open-to-backlog`, `riff join` | Only the lead: the waves and their items. |
 | `riff audit`, `riff questions`, `riff session why`, `riff denials` | Only the lead: find out about a wave. |
-| `riff release cut`, `verify`, `publish`, `status`, `hold`, `check`, `retry`, `test` and `rollback` | Only the lead: the release cycle. |
+| `riff release test`, `cut`, `verify`, `status`, `hold`, `check`, `retry` and `rollback` | Only the lead: the release cycle. |
 | `riff daemon status`, `riff daemon events`, `riff ps`, and each command with `--host`, for example `riff build --host` | Only the lead: the daemons of your hosts. |
 | `riff init --check` | The checks of the repository. |
 | `riff`, the TUI | The tabs of the riff. |
@@ -6747,9 +6775,9 @@ flowchart TD
   A pull request counts for the issue that it names (see
   [See the item of a pull request](#see-the-item-of-a-pull-request)).
   An item counts one time: while its pull request waits for a verify
-  or for the merge, the item is no free item. This is also true for a
-  release pull request. After a failed verify the item is free again
-  (see
+  or for the merge, the item is no free item. This is also true for the
+  pull request of the next version of a release. After a failed verify
+  the item is free again (see
   [How a session works on an item](#how-a-session-works-on-an-item)).
   A held item is no free work (see
   [Keep an item from the rollout](#keep-an-item-from-the-rollout)).
@@ -6828,9 +6856,10 @@ riff plan free issue-12
 
 The trailer `Issue: #N` of a pull request names its item, as for
 `riff verify`. When the body has no trailer, the branch names the
-item, for example `worktree-issue-12`. So a release pull request on
-the branch `release-v1.5.0` counts for its release issue. Look at the
-last lines of the body:
+item, for example `worktree-issue-12`. The branch of the pull request
+of the next version of a release, for example `release-next-v1.6.0`,
+names no issue: its trailer names its release issue. Look at the last
+lines of the body:
 
 ```sh
 gh pr view 40 --json headRefName,body --jq '.headRefName, .body' | tail -n 3
@@ -6996,7 +7025,7 @@ a code scanning or a secret scanning alert that is a false positive.
 So a failed CodeQL check of a pull request does not wait for a person.
 `riff release cut` reads the alerts too, and cuts no release while an
 alert has no review (see
-[Cut the release pull request](development.md#cut-the-release-pull-request)).
+[Cut the release](development.md#cut-the-release)).
 Without the rights, GitHub answers 403 "Resource not accessible by
 integration". The lead dismisses an alert only after a review, and
 writes the reason on the alert. When a name misleads the scan, the

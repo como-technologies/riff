@@ -1594,8 +1594,8 @@ impl Riff {
 }
 
 /// The commit status of the result of the test
-/// (01M58KMKZ2EG8NZG4F085S6NQX). `riff release publish` refuses a release
-/// with no pass of it.
+/// (01M58KMKZ2EG8NZG4F085S6NQX). `riff release cut` tags no commit with no
+/// pass of it (01M7641BHHND5JJA8DGJPFNAN7).
 ///
 /// ```
 /// assert_eq!(real_session::STATUS_CONTEXT, riff::cycle::REAL_SESSION);

@@ -12,7 +12,7 @@
 //!
 //! | Step | Who posts the note |
 //! |---|---|
-//! | cut, publish, approve, check, rollback | the command, as its session ([`tell_leads`]) |
+//! | cut, approve, check, rollback | the command, as its session ([`tell_leads`]) |
 //! | the deploy waits, the deploy passed, the deploy failed | the watch of the daemon, as the person ([`crate::watches`]) |
 //! | the daemon starts again on a new riff | the daemon, to the leads on its host ([`crate::daemon::Daemon::tell_leads_restart`]) |
 //!
@@ -66,13 +66,12 @@ pub use riff_core::hold::{Hold, Line, THREAD, end_body, hold_body, holds, thread
 /// (01M5SNV75DRFHR26BT2M8243VV).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
-    /// `riff release cut`: the release pull request.
+    /// `riff release cut`: the tag, the GitHub release, and the pull request
+    /// of the next version.
     Cut {
-        /// The number of the pull request.
+        /// The number of the pull request of the next version.
         number: u64,
     },
-    /// `riff release publish`: the tag and the GitHub release.
-    Published,
     /// The job `Deploy` waits for the approval of a person.
     Waits,
     /// `riff release approve`: the riff is paused, the deploy runs.

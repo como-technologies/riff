@@ -446,21 +446,31 @@ fn release_approve_help_says_who_may_approve() {
     }
 }
 
-/// 01M6WZ40VYDBBTJBTQEBY2984P: the help of `riff release publish` says
-/// that the ruleset `releases` decides the push of the tag, and asks for
-/// no `gh` of an admin.
+/// 01M7641BHHND5JJA8DGJPFNAN7, 01M7641T7FX9416CYY1XKHTJE6: the help of
+/// `riff release cut` says that the ruleset `releases` decides the push of
+/// the tag, and asks for no `gh` of an admin. `riff release` has no
+/// `publish`.
 #[test]
-fn release_publish_help_says_that_the_ruleset_decides_the_tag() {
-    let help = riff(&["release", "publish", "--help"]);
+fn release_cut_help_says_that_the_ruleset_decides_the_tag() {
+    let help = riff(&["release", "cut", "--help"]);
     let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
-    assert!(
-        flat.contains(
-            "The ruleset releases of GitHub decides the push of the tag: it lets an admin of \
-             the repository and the lead App push it, so the lead pushes it from its container."
-        ),
-        "{help}"
-    );
+    for words in [
+        "The ruleset releases of GitHub decides the push of the tag: it lets an admin of the \
+         repository and the lead App push it, so the lead pushes it from its container.",
+        "The cut makes no version commit and builds nothing.",
+        "Then it opens the pull request \"Set the next version A.B.C\", the next minor by default",
+    ] {
+        assert!(flat.contains(words), "{words:?} missing in {help}");
+    }
     assert!(!flat.contains("with a gh of an admin"), "{help}");
+    assert!(!flat.contains("--skip"), "{help}");
+    let release = riff(&["release", "--help"]);
+    assert!(
+        !release
+            .lines()
+            .any(|l| l.trim_start().starts_with("publish ")),
+        "{release}"
+    );
 }
 
 /// 01M5SMPX8NM75P8E38DGQ17W7B: the release gate of `riff wave end`
@@ -503,10 +513,7 @@ fn the_help_of_wave_end_names_the_release_table_of_riff_toml() {
     // that it checks the alerts.
     let alerts = "while an alert of the repository has no review";
     assert!(cut.contains(alerts), "{cut}");
-    let how_to = words(&under(
-        "development.md",
-        "#### Cut the release pull request",
-    ));
+    let how_to = words(&under("development.md", "#### Cut the release"));
     assert!(how_to.contains(alerts), "{how_to}");
     // 01M748V0HMV7D9T4F6NCB7HQHG: they name the two closed alerts that
     // need no comment.

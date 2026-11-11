@@ -4,8 +4,8 @@
 //! # Design
 //!
 //! The release cycle is the rules of riff for its own releases: the
-//! release pull request, the real-session test, the deploy to Cloud Run
-//! and the checks after it. Another repository has its own release, or
+//! real-session test, the tag of the last commit of `main`, the deploy to
+//! Cloud Run and the checks after it. Another repository has its own release, or
 //! none. So a repository opts in. Its riff config, the file
 //! [`FILE`] at its root, has the table
 //! [`TABLE`]:

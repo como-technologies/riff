@@ -238,7 +238,7 @@
 //!
 //! ```mermaid
 //! sequenceDiagram
-//!     participant C as riff release publish
+//!     participant C as riff release cut
 //!     participant D as riff daemon
 //!     participant G as GitHub
 //!     participant L as the lead
@@ -1208,10 +1208,10 @@ pub enum ServerCall {
     /// for the person.
     ResumeRiff,
     /// The user of the session, the owner and the people of the riff, as
-    /// [`crate::reach::Roster`], for `riff release cut` and `publish`.
+    /// [`crate::reach::Roster`], for `riff release cut`.
     Roster,
     /// Tell riff-server the fact `fact` as the session, for `riff release
-    /// cut` and `publish`: riff-server posts the line of riff-bot for it
+    /// cut`: riff-server posts the line of riff-bot for it
     /// in the thread `chat` ([`riff_core::wire::BotPost`]). The answer is
     /// `null`.
     Bot {
