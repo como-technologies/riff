@@ -2783,6 +2783,23 @@ pub enum Gate {
     Ended(String),
 }
 
+impl Gate {
+    /// True when the full check failed: a check ended with `failure` or
+    /// `timed_out`. A cancelled check says nothing about the code.
+    ///
+    /// ```
+    /// use riff::pr::Gate;
+    ///
+    /// assert!(Gate::Ended("failure".into()).broken());
+    /// assert!(Gate::Ended("timed_out".into()).broken());
+    /// assert!(!Gate::Ended("cancelled".into()).broken());
+    /// assert!(!Gate::Running.broken());
+    /// ```
+    pub fn broken(&self) -> bool {
+        matches!(self, Gate::Ended(c) if c == "failure" || c == "timed_out")
+    }
+}
+
 /// True when a completed check run with this `conclusion` counts as a
 /// success. GitHub counts `skipped` and `neutral` as a pass for a required
 /// check, so riff does too (01M5R13DE5XRWB13E0BQ17C80F).

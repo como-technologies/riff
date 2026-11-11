@@ -38,6 +38,14 @@
 //! the thread, so the lead gets it one time. The other watches run on the
 //! host of their command: their messages have no key.
 //!
+//! While the current wave of a repository with the table `[release]` has
+//! no open item and no release issue, the watch of the wave keeps it, with
+//! why its cut waits ([`Seen::complete`], 01M75N6YNHQQHGS0VGKTKSNJTR): the
+//! full check of `main` runs, it failed, or it passed and the lead cuts
+//! next. The daemon gives it to the facts of its host, so `riff who` and
+//! the TUI say that the release waits for its cut ([`crate::view::release`]).
+//! The release issue that the cut makes in the wave ends it.
+//!
 //! # The file
 //!
 //! The daemon keeps the watches in [`FILE`] of its folder
@@ -575,6 +583,11 @@ pub struct Seen {
     pub state: Option<DeployState>,
     /// [`Op::Check`]: the last check on the release issue failed.
     pub check_failed: bool,
+    /// [`Op::Wave`]: the current wave when it has no open item and its
+    /// release waits for its cut, with why it waits: the full check of
+    /// `main` (01M75N6YNHQQHGS0VGKTKSNJTR). The daemon gives it to the
+    /// facts of its host.
+    pub complete: Option<daemons::Complete>,
 }
 
 /// A watch in [`FILE`].
@@ -1267,7 +1280,7 @@ pub fn look(forge: &dyn Forge, watch: &mut Watch, now_ms: i64, riffs: &Riffs) ->
             };
             look_deploy(forge, &mut watch.seen, &deploy, stale)
         }
-        Op::Wave => look_wave(forge, &mut watch.seen),
+        Op::Wave => look_wave(forge, &watch.repo, &mut watch.seen),
         Op::Check {
             tag,
             comments,
@@ -1580,9 +1593,26 @@ fn look_check(
     Ok(Outcome::default())
 }
 
-fn look_wave(forge: &dyn Forge, seen: &mut Seen) -> Result<Outcome> {
+/// One look of the watch of the current wave of `repo`. When the last open
+/// item of the wave closes, it tells the lead one time. While the wave of a
+/// repository with the table `[release]` has no open item and no release
+/// issue, the watch keeps it in [`Seen::complete`], with why the cut waits
+/// ([`cut_waits`], 01M75N6YNHQQHGS0VGKTKSNJTR). The release issue of the cut
+/// ends it.
+fn look_wave(forge: &dyn Forge, repo: &str, seen: &mut Seen) -> Result<Outcome> {
     let Some((title, open)) = forge.wave_open()? else {
+        seen.complete = None;
         return Ok(Outcome::default());
+    };
+    let number = hygiene::wave_number(&title).unwrap_or_default();
+    let release = forge.has_release();
+    seen.complete = match open == 0 && release && !forge.wave_released(&title)? {
+        true => Some(daemons::Complete {
+            repo: repo.to_owned(),
+            wave: number,
+            waits: cut_waits(forge),
+        }),
+        false => None,
     };
     if open > 0 {
         seen.wave = Some(title);
@@ -1592,8 +1622,7 @@ fn look_wave(forge: &dyn Forge, seen: &mut Seen) -> Result<Outcome> {
         return Ok(Outcome::default());
     }
     seen.wave = None;
-    let number = hygiene::wave_number(&title).unwrap_or_default();
-    let next = match forge.has_release() {
+    let next = match release {
         true => format!("riff release cut X.Y.Z, or riff wave end {number} --no-release TEXT"),
         false => format!("riff wave end {number}"),
     };
@@ -1605,6 +1634,21 @@ fn look_wave(forge: &dyn Forge, seen: &mut Seen) -> Result<Outcome> {
         end: false,
         then: None,
     })
+}
+
+/// Why the cut of the release of a complete wave waits, from the full check
+/// of the head of `main` (01M75N6YNHQQHGS0VGKTKSNJTR): it runs, it failed, or
+/// it passed and the lead cuts next. `None` when the forge does not answer,
+/// when the head has no run of a check, and for a check that ended with no
+/// failure, for example `cancelled`.
+fn cut_waits(forge: &dyn Forge) -> Option<daemons::CutWaits> {
+    let checks = forge.full_check().ok()?;
+    match forge.gate(&checks, "main").ok()? {
+        Gate::Passed => Some(daemons::CutWaits::Lead),
+        Gate::Running => Some(daemons::CutWaits::MainRuns),
+        gate if gate.broken() => Some(daemons::CutWaits::MainFailed),
+        Gate::Missing | Gate::Ended(_) => None,
+    }
 }
 
 /// The key of the post "Wave N is complete" (01M6FZY6NABXGXVRYF6W1509XE).
@@ -2741,6 +2785,66 @@ mod tests {
         ground.forge(|f| f.wave_open.as_mut().unwrap().1 = 0);
         look(dir.path(), &ground, 6 * MINUTE).await;
         assert_eq!(ground.told().len(), 1);
+    }
+
+    /// 01M75N6YNHQQHGS0VGKTKSNJTR: while the current wave has no open item
+    /// and no release issue, the watch of the wave keeps it, with why the cut
+    /// waits: the full check of `main` runs, failed, or passed. The release
+    /// issue of the cut ends it, and so does a new item.
+    #[tokio::test]
+    async fn the_watch_of_a_wave_keeps_the_complete_wave_until_the_cut() {
+        use riff_client::daemons::{Complete, CutWaits};
+        let dir = daemon_dir();
+        let ground = Ground::new(Fake::new());
+        let complete = || {
+            let watches = Watches::new(dir.path()).read().unwrap();
+            let wave = watches.iter().find(|w| w.op == Op::Wave).unwrap();
+            wave.seen.complete.clone()
+        };
+        let of = |waits| Complete {
+            repo: REPO.into(),
+            wave: 41,
+            waits,
+        };
+        ground.forge(|f| {
+            f.wave_open = Some(("Wave 41: only the current release".into(), 1));
+            f.has_release = true;
+            f.gate = Gate::Running;
+        });
+        look(dir.path(), &ground, MINUTE).await;
+        assert_eq!(complete(), None);
+
+        ground.forge(|f| f.wave_open.as_mut().unwrap().1 = 0);
+        look(dir.path(), &ground, 2 * MINUTE).await;
+        assert_eq!(complete(), Some(of(Some(CutWaits::MainRuns))));
+        ground.forge(|f| f.gate = Gate::Ended("failure".into()));
+        look(dir.path(), &ground, 3 * MINUTE).await;
+        assert_eq!(complete(), Some(of(Some(CutWaits::MainFailed))));
+        ground.forge(|f| f.gate = Gate::Ended("cancelled".into()));
+        look(dir.path(), &ground, 4 * MINUTE).await;
+        assert_eq!(complete(), Some(of(None)));
+        ground.forge(|f| f.gate = Gate::Passed);
+        look(dir.path(), &ground, 5 * MINUTE).await;
+        assert_eq!(complete(), Some(of(Some(CutWaits::Lead))));
+
+        // The cut makes the release issue of the wave.
+        ground.forge(|f| f.wave_released = true);
+        look(dir.path(), &ground, 6 * MINUTE).await;
+        assert_eq!(complete(), None);
+        // A new item of the wave.
+        ground.forge(|f| {
+            f.wave_released = false;
+            f.wave_open.as_mut().unwrap().1 = 1;
+        });
+        look(dir.path(), &ground, 7 * MINUTE).await;
+        assert_eq!(complete(), None);
+        // A repository with no table `[release]` has no release to cut.
+        ground.forge(|f| {
+            f.has_release = false;
+            f.wave_open.as_mut().unwrap().1 = 0;
+        });
+        look(dir.path(), &ground, 8 * MINUTE).await;
+        assert_eq!(complete(), None);
     }
 
     #[tokio::test]

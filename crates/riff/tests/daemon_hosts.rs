@@ -2066,3 +2066,88 @@ async fn riff_who_says_the_state_of_an_open_release_at_each_step() {
     })
     .await;
 }
+
+/// A fake `gh` on the PATH for the watch of a wave: the open wave `Wave 41`
+/// with no open item, the release issues of the wave from the file
+/// `released`, the required check `Gate` of `main`, and its check runs from
+/// the file `main`.
+fn fake_wave(dir: &Path) -> Vec<(String, String)> {
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let body = format!(
+        "#!/bin/sh\n\
+         case \"$*\" in\n\
+         'api repos/{{owner}}/{{repo}}/milestones'*)\n\
+           echo '[{{\"number\":41,\"title\":\"Wave 41\",\"open_issues\":0,\"closed_issues\":3}}]' ;;\n\
+         'issue list --state all'*) cat {released} 2>/dev/null || echo '[]' ;;\n\
+         'api repos/{{owner}}/{{repo}}/rules/'*)\n\
+           echo '[{{\"type\":\"required_status_checks\",\"parameters\":{{\"required_status_checks\":[{{\"context\":\"Gate\"}}]}}}}]' ;;\n\
+         'api repos/{{owner}}/{{repo}}/commits/main/check-runs'*) cat {main} ;;\n\
+         'api repos/{{owner}}/{{repo}}') echo '{{\"default_branch\":\"main\"}}' ;;\n\
+         *) echo '[]' ;;\n\
+         esac\n",
+        released = dir.join("released").display(),
+        main = dir.join("main").display(),
+    );
+    isolated::write_program(bin.join("gh"), body);
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    vec![("PATH".into(), path)]
+}
+
+/// 01M75N6YNHQQHGS0VGKTKSNJTR: `riff who` says that the current wave is
+/// complete and that its release waits for its cut, and why, with a real
+/// riff-server and a fake `gh`. The watch of the wave of the daemon gives the
+/// wave to the facts of its host. When the cut makes the release issue of
+/// the wave, the line goes.
+#[tokio::test(flavor = "multi_thread")]
+async fn riff_who_says_that_a_complete_wave_waits_for_its_cut() {
+    let tmp = tempfile::tempdir().unwrap();
+    let extra = fake_wave(tmp.path());
+    let set = |name: &str, text: &str| std::fs::write(tmp.path().join(name), text).unwrap();
+    let runs = |status: &str, conclusion: &str| {
+        format!(
+            r#"{{"check_runs":[{{"status":"{status}","conclusion":{conclusion},"head_sha":"abc"}}]}}"#
+        )
+    };
+    set("main", &runs("completed", r#""failure""#));
+    let r = riff_env(300, 300, &extra).await;
+    let repo = r.lead.place().repo_text();
+    // The host a runs the wave of the repository: its daemon keeps the
+    // watch of the wave.
+    let wave = riff::wave::Wave {
+        repo: repo.clone(),
+        main: r.main.clone(),
+        server: r.a.server.clone(),
+        host: "a".into(),
+    };
+    let waves = std::collections::BTreeMap::from([(repo, wave)]);
+    riff::wave::write_waves(&r.host("a").dir(), &waves).unwrap();
+    let release = || async {
+        let out = r.a.run(&r.main, &["who"], None).await;
+        assert!(out.status.success(), "{out:?}");
+        text(&out.stdout)
+            .lines()
+            .find_map(|line| line.strip_prefix("release  "))
+            .map(str::to_owned)
+    };
+    let shows = |want: Option<&'static str>| async move {
+        let what = format!("riff who: {want:?}");
+        until(&what, || async {
+            (release().await.as_deref() == want).then_some(())
+        })
+        .await;
+    };
+
+    shows(Some(
+        "Wave 41 is complete: the release waits for its cut; the full check of main failed",
+    ))
+    .await;
+    set("main", &runs("in_progress", "null"));
+    shows(Some(
+        "Wave 41 is complete: the release waits for its cut; the full check of main runs",
+    ))
+    .await;
+    // The cut makes the release issue of the wave.
+    set("released", r#"[{"title":"Release v9.9.9"}]"#);
+    shows(None).await;
+}

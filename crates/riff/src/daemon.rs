@@ -1668,6 +1668,12 @@ pub struct Status {
     /// the watch of a wave ([`crate::watches`]). An old daemon gives none.
     #[serde(default)]
     pub watches: Vec<WatchShown>,
+    /// The current wave of each repository whose watch of the wave saw it
+    /// with no open item and no release issue: its release waits for its
+    /// cut ([`crate::watches::Seen::complete`], 01M75N6YNHQQHGS0VGKTKSNJTR).
+    /// An old daemon gives none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub complete: Vec<riff_client::daemons::Complete>,
     /// The leads that lost their network at the restart of the daemon,
     /// while they run (01M5SMQBTA3HQXPKKK01ZGFB4H). An old daemon gives
     /// none.
@@ -3949,6 +3955,7 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .iter()
                 .map(|(repo, name)| (repo.as_str(), name.as_str())),
         );
+        let (watches, complete) = self.watches_shown();
         Status {
             pid: std::process::id(),
             build: Build::this().to_string(),
@@ -3980,7 +3987,8 @@ impl<R: Runtime + 'static> Daemon<R> {
                 .map(|servers| crate::session_mcp::names(&servers))
                 .unwrap_or_default(),
             claude_token,
-            watches: self.watches_shown(),
+            watches,
+            complete,
             lost,
             github: {
                 let now = now_ms();
@@ -4098,19 +4106,25 @@ impl<R: Runtime + 'static> Daemon<R> {
     }
 
     /// The watches in the file, but the watch of a wave: a wave shows in
-    /// [`Status::waves`].
-    fn watches_shown(&self) -> Vec<WatchShown> {
+    /// [`Status::waves`]. With them, the complete wave that each watch of a
+    /// wave saw ([`Status::complete`]).
+    fn watches_shown(&self) -> (Vec<WatchShown>, Vec<riff_client::daemons::Complete>) {
         let all = crate::watches::Watches::new(&self.dir).read();
-        all.unwrap_or_default()
+        let (waves, others): (Vec<_>, Vec<_>) = all
+            .unwrap_or_default()
             .into_iter()
-            .filter(|w| w.op != crate::watches::Op::Wave)
+            .partition(|w| w.op == crate::watches::Op::Wave);
+        let shown = others
+            .into_iter()
             .map(|w| WatchShown {
                 what: w.op.what(),
                 release: w.release(),
                 repo: w.repo,
                 since_ms: w.since_ms,
             })
-            .collect()
+            .collect();
+        let complete = waves.into_iter().filter_map(|w| w.seen.complete).collect();
+        (shown, complete)
     }
 
     /// Tells each lead on this host that the daemon starts again on a new
@@ -13313,6 +13327,28 @@ mod tests {
             text.contains("Watches:\n  o/r  the deploy of v1.2.3, for 1m\n"),
             "{text}"
         );
+        assert!(here.daemon.status().await.complete.is_empty());
+
+        // 01M75N6YNHQQHGS0VGKTKSNJTR: the complete wave that the watch of
+        // the wave saw goes into the status, and from there into the facts
+        // of the host.
+        let complete = riff_client::daemons::Complete {
+            repo: "o/r".into(),
+            wave: 41,
+            waits: Some(riff_client::daemons::CutWaits::MainRuns),
+        };
+        let mut all = watches.read().unwrap();
+        all.iter_mut()
+            .find(|w| w.op == Op::Wave)
+            .unwrap()
+            .seen
+            .complete = Some(complete.clone());
+        let file = here.dir.join(crate::watches::FILE);
+        std::fs::write(&file, serde_json::to_vec(&all).unwrap()).unwrap();
+        let status = here.daemon.status().await;
+        assert_eq!(status.complete, std::slice::from_ref(&complete));
+        assert_eq!(status.watches.len(), 1, "{:?}", status.watches);
+        assert_eq!(facts::of_status(&status).complete, [complete]);
     }
 
     /// 01M6GYN0CSFRBSHGE5CEBHDVZH (#1549): the status of the daemon has the
@@ -14539,6 +14575,11 @@ mod tests {
                     tag: "v1.0.0".into(),
                     step: riff_client::daemons::ReleaseStep::Waits,
                 }),
+            }],
+            complete: vec![riff_client::daemons::Complete {
+                repo: "o/q".into(),
+                wave: 41,
+                waits: Some(riff_client::daemons::CutWaits::MainFailed),
             }],
             lost: vec![LostShown {
                 repo: "o/r".into(),

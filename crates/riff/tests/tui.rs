@@ -564,6 +564,84 @@ async fn the_header_says_the_state_of_an_open_release_at_each_step() {
     assert_eq!(tty.exits().await, Some(0));
 }
 
+/// 01M75N6YNHQQHGS0VGKTKSNJTR: the header of the TUI at 80 x 24 says that
+/// the current wave is complete and that its release waits for its cut, and
+/// why, from the facts that the daemon of thelio sent to riff-server. When
+/// the cut opens the release, the watch of the wave gives no complete wave to
+/// the facts, and the rows go.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_header_says_that_a_complete_wave_waits_for_its_cut() {
+    use riff_client::daemons::{Complete, CutWaits, Facts};
+
+    let server = crate::common::start_signed().await;
+    let daemon: riff_core::name::SessionUri =
+        "riff://brett@thelio/como-technologies/riff?session=d1"
+            .parse()
+            .unwrap();
+    let api = server.api("brett", Some("d1"));
+    api.register(&daemon).await.unwrap();
+    let _watch = api.watch(&daemon).await.unwrap();
+    let brett: riff_core::name::SessionUri = "riff://brett@thelio".parse().unwrap();
+    crate::common::api_of(&server, &brett)
+        .set_pause(
+            &brett,
+            &riff_client::api::PauseScope::Riff,
+            riff_core::wire::RiffState::Running,
+        )
+        .await
+        .unwrap();
+
+    let mut tty = Tty::start(&server, "brett", "thelio", true);
+    tty.shows(|rows| rows[0].starts_with("[1 Sessions]")).await;
+    let build: String = riff_core::build::Build::this().id.chars().take(7).collect();
+    let header = format!(" riff running · owner brett · build {build} · link ok ");
+    let steps: [(Option<CutWaits>, &[&str]); 3] = [
+        (
+            Some(CutWaits::MainFailed),
+            &[
+                " Wave 41 is complete: the release waits for its cut; the full check of main",
+                " failed",
+            ],
+        ),
+        (
+            Some(CutWaits::Lead),
+            &[
+                " Wave 41 is complete: the release waits for its cut by the lead of",
+                " como-technologies/riff",
+            ],
+        ),
+        // The cut made the release issue of the wave.
+        (None, &[]),
+    ];
+    for (waits, lines) in steps {
+        let facts = Facts {
+            build: riff_core::build::Build::this().to_string(),
+            limit: 3,
+            complete: waits
+                .map(|waits| Complete {
+                    repo: "como-technologies/riff".into(),
+                    wave: 41,
+                    waits: Some(waits),
+                })
+                .into_iter()
+                .collect(),
+            ..Facts::default()
+        };
+        api.machine(&daemon, &facts.line()).await.unwrap();
+        tty.press("r").await;
+        let rows = tty
+            .shows(|rows| {
+                rows[1].starts_with(&header)
+                    && rows[2..2 + lines.len()] == *lines
+                    && rows[2 + lines.len()].starts_with(" 1 session")
+            })
+            .await;
+        assert!(rows[23].starts_with(" ↑↓ select"), "{waits:?}: {rows:#?}");
+    }
+    tty.press("q").await;
+    assert_eq!(tty.exits().await, Some(0));
+}
+
 /// A session `uri` on the riff-server `server`, with the claim `item`
 /// in the thread of its repository. It is live until the test ends.
 async fn session(server: &str, uri: &str, item: &str) {

@@ -6969,9 +6969,9 @@ riff release status
 
 #### See who acts next on the release
 
-From the deploy to the check, `riff who` and the TUI say in one line
-what runs, what the release waits for, and who acts next. Each person
-in the riff sees the line:
+From the end of the wave to the check, `riff who` and the TUI say in one
+line what runs, what the release waits for, and who acts next. Each
+person in the riff sees the line:
 
 ```sh
 riff who
@@ -6993,7 +6993,18 @@ release  v3.3.0: the deploy runs; the riff is paused
 | The deploy failed | `v3.3.0: the deploy failed; it waits for the check of the lead of como-technologies/riff` | the lead: `riff release check v3.3.0` files the issue |
 | A check failed | `v3.3.0: the check failed: the owner resumes or rolls back` | the owner: `riff resume --riff`, or a rollback |
 | A check failed, and the riff runs | `v3.3.0: the check failed: the lead of como-technologies/riff fixes forward or rolls back` | the lead |
-| No open release | no line | |
+| The wave is complete, and the full check of `main` runs | `Wave 41 is complete: the release waits for its cut; the full check of main runs` | nobody: the check runs |
+| The wave is complete, and the full check of `main` failed | `Wave 41 is complete: the release waits for its cut; the full check of main failed` | the session that fixes `main` |
+| The wave is complete, and the full check of `main` passed | `Wave 41 is complete: the release waits for its cut by the lead of como-technologies/riff` | the lead: `riff release cut X.Y.Z` |
+| No open release, and no complete wave | no line | |
+
+A wave is complete when the current wave of a repository with the table
+`[release]` has no open item and no release issue. An open release with
+a line comes first. The watch of the wave on each host that runs the
+wave reads the wave and the full check of `main` at each look. When riff
+cannot read the full check, the line is `Wave 41 is complete: the
+release waits for its cut`. The cut makes the release issue of the wave,
+and the line goes.
 
 The line comes from the watches of the daemon of each host (see
 [See the watches of the daemon](#see-the-watches-of-the-daemon)) and
