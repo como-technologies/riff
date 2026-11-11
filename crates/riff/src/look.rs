@@ -128,22 +128,20 @@
 //! to an issue ([`riff_client::waves::QUESTION`],
 //! 01M6QBJA0J7PQ0J29HWM1KDVHJ). The look tells the person of the lead one
 //! time in riff chat ([`AskWatch`], 01M6QBJHV7PVV5893Q6RCPENJQ): it tells
-//! riff-server each new issue of the look in one call
-//! ([`BotFact::Questions`]), and riff-server writes one line of riff-bot
-//! for them (01M75N6RE4XP0JZN61H4Q2CHZJ): the link of one issue, or the
-//! count and the numbers of more issues with the command `riff
-//! questions`. The line names the person first (`@mike`), so it wakes the
-//! terminals of the person, and no agent session.
+//! riff-server the issue ([`BotFact::Question`]), and riff-server writes
+//! the line of riff-bot with the link of the issue. The line names the
+//! person first (`@mike`), so it wakes the terminals of the person, and no
+//! agent session.
 //! The daemon keeps the issues that it told in memory. An issue that loses
 //! the label goes out of that set, so the next time that the label goes on,
 //! the person gets a new line.
 //!
-//! Each issue of the call has a key ([`question_key`]): the issue, and the
-//! time of the last event "labeled" with the label, which the look reads
-//! one time for each new issue ([`question_at`]). The look of each host and
-//! a new start of the daemon make the same key for the same label, and
-//! `riff-server` leaves out each issue whose key a kept line has. A label
-//! that goes on again has a new time, so it has a new key.
+//! The post has a key ([`question_key`]): the issue, and the time of the
+//! last event "labeled" with the label, which the look reads one time
+//! for each new issue ([`question_at`]). The look of each host and a new
+//! start of the daemon make the same key for the same label, and
+//! `riff-server` drops the second post. A label that goes on again has a new
+//! time, so it has a new key.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -151,10 +149,10 @@
 //!     participant B as the daemon of thelio
 //!     participant S as riff-server
 //!     participant P as the person (riff chat)
-//!     A->>S: bot: questions #12, #13, #14, with the key of each
-//!     S->>P: @mike A lead waits for your answer in 3 issues of o/r: #12, #13 and #14 ...
-//!     B->>S: bot: questions #12, #13, #14, the same keys
-//!     Note over S: it keeps each key: it posts nothing
+//!     A->>S: post "@mike A lead waits ..." to name=mike, key question-12-2026-11-05T20:11:03Z
+//!     S->>P: the line
+//!     B->>S: post, the same key
+//!     Note over S: it keeps this key: it drops the post
 //! ```
 //!
 //! # When main breaks
@@ -242,7 +240,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use riff_core::name::{SessionUri, Who};
 use riff_core::selector::Selector;
-use riff_core::wire::{Asked, BotFact, ItemFact, Kind, PullFact, PullState, Unanswered};
+use riff_core::wire::{BotFact, ItemFact, Kind, PullFact, PullState, Unanswered};
 use serde::Deserialize;
 
 use crate::pr::{
@@ -1275,18 +1273,6 @@ pub fn question_key(issue: u64, at: Option<&str>) -> String {
     }
 }
 
-/// Each of `issues` of `repo` with the key of its label `question`
-/// ([`question_key`]): one read of the events of each issue.
-fn asked(gh: &Gh, repo: &str, issues: &[u64]) -> Vec<Asked> {
-    issues
-        .iter()
-        .map(|&issue| Asked {
-            issue,
-            key: question_key(issue, question_at(gh, repo, issue).as_deref()),
-        })
-        .collect()
-}
-
 /// The time that the label `question` went on `issue` of `repo` the last
 /// time, from the events of the issue. `None` when the read fails or
 /// finds no event: the notice then has no time in its key.
@@ -1365,19 +1351,18 @@ pub async fn look_wave(world: &dyn World, wave: &Wave, watch: &mut Watch) -> Res
         }
     }
     // The person hears once that the label `question` went on an issue
-    // (#1605), in one call for each new issue of the look (#1917). A call
-    // that fails leaves each of them for the next look.
+    // (#1605). A post that fails stays for the next look.
     let asking: Vec<u64> = watch.asks.news(&issues).iter().map(|i| i.number).collect();
-    if !asking.is_empty() {
-        let (gh, repo, numbers) = (gh.clone(), wave.repo.clone(), asking.clone());
-        let asked = tokio::task::spawn_blocking(move || asked(&gh, &repo, &numbers)).await;
+    for (at, number) in asking.iter().enumerate() {
+        let (gh, repo, number) = (gh.clone(), wave.repo.clone(), *number);
+        let labeled = tokio::task::spawn_blocking(move || question_at(&gh, &repo, number)).await?;
+        let key = question_key(number, labeled.as_deref());
         told = true;
-        let called = match asked {
-            Ok(asked) => world.ask_person(wave, BotFact::Questions { asked }).await,
-            Err(e) => Err(e.into()),
-        };
-        if let Err(e) = called {
-            asking.iter().for_each(|issue| watch.asks.untell(*issue));
+        let fact = BotFact::Question { issue: number };
+        if let Err(e) = world.ask_person(wave, fact, &key).await {
+            asking[at..]
+                .iter()
+                .for_each(|rest| watch.asks.untell(*rest));
             return Err(e);
         }
     }

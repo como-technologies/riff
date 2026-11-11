@@ -3811,9 +3811,8 @@ From then on, riff waits for the answer:
   The Waves tab of the TUI shows it in each wave (see
   [See the questions of each wave in the TUI](how-it-works.md#see-the-questions-of-each-wave-in-the-tui)).
 - The look of the daemon tells the person one time in `riff chat`, with
-  the number and the link of the issue. It tells again only when the
-  label goes on again. More new questions in one look give one line (see
-  [One chat line for many new questions](#one-chat-line-for-many-new-questions)).
+  the title and the link of the issue. It tells again only when the
+  label goes on again.
 
 The person answers in the body or in a comment, and can then mark the
 questions as answered (see
@@ -3887,41 +3886,6 @@ flowchart LR
     F["your folder"] --> R
     R -- "gh issue list --label question" --> L["the lines"]
     R -- "--web" --> B["one search in the browser"]
-```
-
-#### One chat line for many new questions
-
-When one look of the daemon finds the label `question` on more than one
-new issue, riff tells you one line in `riff chat` for all of them, not
-one line for each issue. The line has the count, the numbers and the
-command `riff questions`:
-
-```text
-<riff-bot> @mike A lead waits for your answer in 3 issues of como-technologies/riff: #1596, #1597 and #1598. The wave starts no build of an issue until its label question goes. To see all your open questions, run: riff questions
-```
-
-Then see each question, with its title and its link:
-
-```sh
-riff questions
-```
-
-One new question in a look gets a line of its own, with its link:
-
-```text
-<riff-bot> @mike A lead waits for your answer in issue #1596 of como-technologies/riff: https://github.com/como-technologies/riff/issues/1596. The wave starts no build of the issue until the label question goes.
-```
-
-You hear of each issue one time. The look of each host and a new start
-of the daemon give no second line: riff-server leaves out each issue
-that a kept line named.
-
-```mermaid
-flowchart LR
-    L["one look of the daemon"] --> N{"new questions"}
-    N -- "one" --> O["one line with the link"]
-    N -- "more" --> M["one line: the count,<br/>the numbers, riff questions"]
-    N -- "none, or each one told" --> X["no line"]
 ```
 
 #### Mark the questions of an issue as answered

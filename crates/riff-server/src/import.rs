@@ -436,7 +436,6 @@ impl Old {
                     message: with_payload(&thread.name, stored.message.clone()),
                     woken: stored.woken.clone(),
                     key: None,
-                    more_keys: Vec::new(),
                 })));
             }
         }

@@ -535,12 +535,7 @@ mod tests {
                 run: 9,
                 reminder: true,
             },
-            BotFact::Questions {
-                asked: vec![Asked {
-                    issue: 12,
-                    key: text("question-12"),
-                }],
-            },
+            BotFact::Question { issue: 12 },
             BotFact::LeadStarted,
             BotFact::LeadWaits,
             BotFact::LeadNoMain,
@@ -548,7 +543,11 @@ mod tests {
             BotFact::LeadStale,
             BotFact::LeadNoNetwork,
         ] {
-            c.trip(&BotPost { me: me(), fact });
+            c.trip(&BotPost {
+                me: me(),
+                fact,
+                key: Some(text("question-12")),
+            });
         }
         c.trip(&ItemFacts {
             me: me(),

@@ -162,7 +162,7 @@
 //! | "Wave N is complete" ([`crate::watches::wave_complete_key`]) | `wave-complete-N` | one time |
 //! | The GitHub limit is out ([`text::wave_limit_waits`]) | [`ghcalls::Wait::key`] | one time for each outage |
 //! | The host waits for a fact, the pull of the image failed, a job failed, an item is spent | none | from each host |
-//! | The label `question` goes on issues ([`BotFact::Questions`], one line of riff-bot to the person for each look) | [`look::question_key`] for each issue | one time for each time that the label goes on |
+//! | The label `question` goes on an issue ([`BotFact::Question`], a line of riff-bot to the person) | [`look::question_key`] | one time for each time that the label goes on |
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -1660,13 +1660,16 @@ pub trait World: Send + Sync {
     /// Tells riff-server the fact `fact` of the person of the lead of
     /// `wave`: riff-server writes the line of riff-bot for it in riff chat,
     /// and the line names the person first. It wakes the terminals of the
-    /// person, and no session (#1605, 01M6Y1A5PTCVZ6GRJ0FXMART2T). Each
-    /// issue of the fact has a key: riff-server leaves out each issue whose
-    /// key a kept line of riff-bot for the person has, so the person hears
-    /// of it one time from the look of each host
-    /// (01M75N6RE4XP0JZN61H4Q2CHZJ). The error is a call that did not go
-    /// out.
-    fn ask_person<'a>(&'a self, wave: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>>;
+    /// person, and no session (#1605, 01M6Y1A5PTCVZ6GRJ0FXMART2T). The call
+    /// has `key`: riff-server drops the line when a kept line of riff-bot
+    /// for the person has the key, so the person hears it one time from the
+    /// look of each host. The error is a call that did not go out.
+    fn ask_person<'a>(
+        &'a self,
+        wave: &'a Wave,
+        fact: BotFact,
+        key: &'a str,
+    ) -> BoxFuture<'a, Result<()>>;
 
     /// Tells riff-server the fact `fact` of the daemon, as the person of the
     /// lead of `record`: riff-server writes the line of riff-bot for it in
@@ -4194,11 +4197,16 @@ impl World for Live {
         Box::pin(post_as_person(wave, item, body, kind, key))
     }
 
-    fn ask_person<'a>(&'a self, wave: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>> {
+    fn ask_person<'a>(
+        &'a self,
+        wave: &'a Wave,
+        fact: BotFact,
+        key: &'a str,
+    ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let person = identity::person(&wave.place(None)?, &wave.server)?;
             let api = Api::new(&wave.server).signed_in(None)?;
-            api.bot(&person, fact).await
+            api.bot(&person, fact, Some(key)).await
         })
     }
 
@@ -4207,7 +4215,7 @@ impl World for Live {
             let posted = async {
                 let person = identity::person(record.me.place(), &record.server)?;
                 let api = Api::new(&record.server).signed_in(None)?;
-                api.bot(&person, fact).await
+                api.bot(&person, fact, None).await
             };
             if let Err(e) = posted.await {
                 eprintln!("riff daemon: {}: {e:#}", record.live.name);
@@ -4528,8 +4536,8 @@ mod tests {
         post_keys: Vec<Option<String>>,
         /// The number of the next posts of the look that fail.
         post_fails: usize,
-        /// Each fact of a line of riff-bot to the person.
-        asked: Vec<BotFact>,
+        /// Each fact of a line of riff-bot to the person, and its key.
+        asked: Vec<(BotFact, String)>,
         /// Why riff-server gives a session no token of a GitHub App. With
         /// none, each session gets a token of an App.
         no_app: Option<String>,
@@ -4934,14 +4942,19 @@ mod tests {
             })
         }
 
-        fn ask_person<'a>(&'a self, _: &'a Wave, fact: BotFact) -> BoxFuture<'a, Result<()>> {
+        fn ask_person<'a>(
+            &'a self,
+            _: &'a Wave,
+            fact: BotFact,
+            key: &'a str,
+        ) -> BoxFuture<'a, Result<()>> {
             Box::pin(async move {
                 let mut forge = lock(&self.forge);
                 if forge.post_fails > 0 {
                     forge.post_fails -= 1;
                     bail!("riff-server does not answer");
                 }
-                forge.asked.push(fact);
+                forge.asked.push((fact, key.to_owned()));
                 Ok(())
             })
         }
@@ -9681,29 +9694,18 @@ esac
 
         /// The issue 12 has these `labels` from now.
         fn labels(&self, labels: &[&str]) {
-            self.issues(&[12], labels);
-        }
-
-        /// The open issues are `numbers` from now, each with these `labels`.
-        fn issues(&self, numbers: &[u64], labels: &[&str]) {
             let labels: Vec<String> = labels
                 .iter()
                 .map(|l| format!(r#"{{"name":"{l}"}}"#))
                 .collect();
-            let issues: Vec<String> = numbers
-                .iter()
-                .map(|n| {
-                    format!(
-                        r#"{{"number":{n},"title":"Which design?","body":"Done when: x.","comments":[],"milestone":{{"title":"Wave 1"}},"labels":[{}]}}"#,
-                        labels.join(",")
-                    )
-                })
-                .collect();
-            let issues = format!("[{}]", issues.join(","));
-            std::fs::write(self.dir.path().join("issues"), issues).unwrap();
+            let issue = format!(
+                r#"[{{"number":12,"title":"Which design?","body":"Done when: x.","comments":[],"milestone":{{"title":"Wave 1"}},"labels":[{}]}}]"#,
+                labels.join(",")
+            );
+            std::fs::write(self.dir.path().join("issues"), issue).unwrap();
         }
 
-        /// The events of each issue, as the filter of `gh` gives them.
+        /// The events of the issue 12, as the filter of `gh` gives them.
         fn events(&self, events: &str) {
             std::fs::write(self.dir.path().join("events"), events).unwrap();
         }
@@ -9714,31 +9716,9 @@ esac
         }
 
         /// Each fact of a line of riff-bot to the person since the start.
-        fn asked(&self) -> Vec<BotFact> {
+        fn asked(&self) -> Vec<(BotFact, String)> {
             lock(&self.world.forge).asked.clone()
         }
-
-        /// The key of each issue of each fact since the start.
-        fn keys(&self) -> Vec<String> {
-            let keys = |fact| match fact {
-                BotFact::Questions { asked } => asked.into_iter().map(|a| a.key).collect(),
-                _ => Vec::new(),
-            };
-            self.asked().into_iter().flat_map(keys).collect()
-        }
-    }
-
-    /// The fact of the label `question` on each issue of `asked`, with its
-    /// key.
-    fn questions(asked: &[(u64, &str)]) -> BotFact {
-        let asked = asked
-            .iter()
-            .map(|&(issue, key)| riff_core::wire::Asked {
-                issue,
-                key: key.to_owned(),
-            })
-            .collect();
-        BotFact::Questions { asked }
     }
 
     /// #1605, 01M6QBJHV7PVV5893Q6RCPENJQ: the look tells the person of the
@@ -9755,8 +9735,11 @@ esac
         asking.labels(&["bug", "question"]);
         asking.events("2026-11-05T20:11:03Z\n");
         assert!(asking.look().await.unwrap());
-        let question = questions(&[(12, "question-12-2026-11-05T20:11:03Z")]);
-        assert_eq!(asking.asked(), [question]);
+        let question = BotFact::Question { issue: 12 };
+        assert_eq!(
+            asking.asked(),
+            [(question, "question-12-2026-11-05T20:11:03Z".to_owned())]
+        );
         assert!(
             lock(&asking.world.forge).posts.is_empty(),
             "no message to the lead"
@@ -9775,8 +9758,9 @@ esac
         asking.labels(&["question"]);
         asking.events("2026-11-05T20:11:03Z\n2026-11-06T09:30:00Z\n");
         assert!(asking.look().await.unwrap());
+        let keys: Vec<String> = asking.asked().into_iter().map(|(_, key)| key).collect();
         assert_eq!(
-            asking.keys(),
+            keys,
             [
                 "question-12-2026-11-05T20:11:03Z",
                 "question-12-2026-11-06T09:30:00Z"
@@ -9797,55 +9781,10 @@ esac
         assert!(asking.look().await.unwrap());
         assert_eq!(
             asking.asked(),
-            [questions(&[(12, "question-12")])],
+            [(BotFact::Question { issue: 12 }, "question-12".to_owned())],
             "no event: no time in the key"
         );
         assert!(!asking.look().await.unwrap());
-    }
-
-    /// 01M75N6RE4XP0JZN61H4Q2CHZJ (#1917): three issues get the label
-    /// `question` in one look. The look tells riff-server all three in one
-    /// call, each with its key, and the person gets one line that names all
-    /// three. A call that fails leaves all three for the next look. A new
-    /// issue at a later look gets a line of its own.
-    #[tokio::test]
-    async fn three_new_questions_in_one_look_give_the_person_one_line() {
-        let mut asking = Asking::new();
-        asking.issues(&[12, 13, 14], &["question"]);
-        asking.events("2026-11-11T05:50:00Z\n");
-        lock(&asking.world.forge).post_fails = 1;
-        assert!(asking.look().await.is_err());
-        assert!(asking.look().await.unwrap());
-        let three = questions(&[
-            (12, "question-12-2026-11-11T05:50:00Z"),
-            (13, "question-13-2026-11-11T05:50:00Z"),
-            (14, "question-14-2026-11-11T05:50:00Z"),
-        ]);
-        assert_eq!(
-            asking.asked(),
-            std::slice::from_ref(&three),
-            "one call for all three"
-        );
-
-        let me = "riff://mike@thelio/o/r".parse().unwrap();
-        let facts = riff_server::bot::Facts {
-            me: &me,
-            owner: None,
-            holds: &[],
-        };
-        let line = riff_server::bot::line(&three, &facts).unwrap();
-        assert_eq!(
-            line.body,
-            "@mike A lead waits for your answer in 3 issues of o/r: #12, #13 and #14. The wave \
-             starts no build of an issue until its label question goes. To see all your open \
-             questions, run: riff questions"
-        );
-
-        assert!(!asking.look().await.unwrap(), "no more line");
-        asking.issues(&[12, 13, 14, 15], &["question"]);
-        assert!(asking.look().await.unwrap());
-        let one = questions(&[(15, "question-15-2026-11-11T05:50:00Z")]);
-        assert_eq!(asking.asked(), [three, one]);
     }
 
     /// 01M6GYN97HH70E4C1FGM6HA2B0, 01M6GYN92N3Z99GPXTYHDDWF4R (#1549): a wave

@@ -30,7 +30,7 @@
 //! |---|---|---|
 //! | `release_cut`, `release_published` | `riff release cut`, `publish` | the owner |
 //! | `release_waits` | the watch of the deploy | the owner |
-//! | `questions` | the look of the wave | the person |
+//! | `question` | the look of the wave | the person |
 //! | `lead_started`, `lead_waits`, `lead_no_main`, `lead_failed`, `lead_stale`, `lead_no_network` | the daemon | no one |
 //!
 //! A line that names a person with `@USER` wakes the terminals of that
@@ -40,39 +40,14 @@
 //!
 //! Only a person, and the lead of the person in its repository, sends a
 //! fact: `riff release cut` and `publish` also run in the container of
-//! the lead, and the daemon sends each other fact as the person.
-//!
-//! # The questions of a look
-//!
-//! The look of the wave sends each issue with a new label `question` in
-//! one fact, and each issue has a key ([`Asked`]). The look of each host
-//! of the person sends the same key for the same label. riff-server
-//! leaves out each issue whose key a kept line of riff-bot for the person
-//! has ([`untold`], 01M5TKG2K1AYK1KE7C2AA2W9DS, 01M75N6RE4XP0JZN61H4Q2CHZJ),
-//! and posts no line when none is left. One issue left gets the line with
-//! its link. More issues get one line with the count, the numbers and
-//! the command `riff questions`. The line keeps the key of each issue
-//! that it names ([`keys_of`], 01M75N6S3ZG301WMHNTS808QY4).
-//!
-//! ```mermaid
-//! sequenceDiagram
-//!     participant A as the look on pangolin
-//!     participant B as the look on thelio
-//!     participant S as riff-server
-//!     participant P as the person (riff chat)
-//!     A->>S: bot: questions #12, #13
-//!     S-->>P: @mike Leads wait for your answer in 2 issues of o/r: #12 and #13 ...
-//!     B->>S: bot: questions #12, #13, #14
-//!     Note over S: it keeps the keys of #12 and #13
-//!     S-->>P: @mike A lead waits for your answer in issue #14 of o/r: LINK ...
-//! ```
-
-use std::collections::BTreeSet;
+//! the lead, and the daemon sends each other fact as the person. A call
+//! with a key goes once for each person (01M5TKG2K1AYK1KE7C2AA2W9DS): the
+//! look of each host of the person sends the same ask.
 
 use riff_core::hold::Hold;
 use riff_core::name::{SessionUri, lead_container};
 use riff_core::selector::Selector;
-use riff_core::wire::{Asked, BotFact};
+use riff_core::wire::BotFact;
 
 /// The refusal of a fact from a session that is not the lead.
 pub const ONLY_PERSON_OR_LEAD: &str =
@@ -98,7 +73,7 @@ pub struct Facts<'a> {
     pub holds: &'a [Hold],
 }
 
-/// The key of the line of `user` for the key `key` of an issue: each
+/// The key of the line of `user` for the key `key` of a call: each
 /// person hears an ask once, and the ask of one person drops no ask of
 /// another.
 ///
@@ -109,61 +84,9 @@ pub fn key_of(user: &str, key: &str) -> String {
     format!("{user}/{key}")
 }
 
-/// The keys of the line of `user` for `fact`: the key of each issue of
-/// [`BotFact::Questions`] (01M75N6S3ZG301WMHNTS808QY4). Each other fact
-/// has none.
-///
-/// ```
-/// use riff_core::wire::{Asked, BotFact};
-/// use riff_server::bot::keys_of;
-///
-/// let asked = |issue, key: &str| Asked { issue, key: key.into() };
-/// let questions = BotFact::Questions { asked: vec![asked(12, "q-12"), asked(13, "q-13")] };
-/// assert_eq!(keys_of("mike", &questions), ["mike/q-12", "mike/q-13"]);
-/// assert!(keys_of("mike", &BotFact::LeadStarted).is_empty());
-/// ```
-pub fn keys_of(user: &str, fact: &BotFact) -> Vec<String> {
-    match fact {
-        BotFact::Questions { asked } => asked.iter().map(|a| key_of(user, &a.key)).collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// `fact` with no issue whose key `told` holds: the person `user` heard
-/// of it (01M75N6RE4XP0JZN61H4Q2CHZJ). `None` when no issue is left, also
-/// for a fact with no issue. Each other fact stays as it is.
-///
-/// ```
-/// use riff_core::wire::{Asked, BotFact};
-/// use riff_server::bot::untold;
-///
-/// let asked = |issue, key: &str| Asked { issue, key: key.into() };
-/// let questions = BotFact::Questions { asked: vec![asked(12, "q-12"), asked(13, "q-13")] };
-/// let told = |key: &str| key == "mike/q-12";
-/// let left = BotFact::Questions { asked: vec![asked(13, "q-13")] };
-/// assert_eq!(untold(questions.clone(), "mike", told), Some(left));
-/// assert_eq!(untold(questions.clone(), "brett", told), Some(questions), "another person");
-/// let one = BotFact::Questions { asked: vec![asked(12, "q-12")] };
-/// assert_eq!(untold(one, "mike", told), None);
-/// assert_eq!(untold(BotFact::LeadStarted, "mike", told), Some(BotFact::LeadStarted));
-/// ```
-pub fn untold(fact: BotFact, user: &str, told: impl Fn(&str) -> bool) -> Option<BotFact> {
-    match fact {
-        BotFact::Questions { asked } => {
-            let asked: Vec<Asked> = asked
-                .into_iter()
-                .filter(|a| !told(&key_of(user, &a.key)))
-                .collect();
-            (!asked.is_empty()).then_some(BotFact::Questions { asked })
-        }
-        fact => Some(fact),
-    }
-}
-
 /// The line of riff-bot for `fact`. The error is a fact that riff-server
 /// cannot write a line for: a tag that is no version `vX.Y.Z`, also with
-/// a text after its version, a fact of questions with no issue, or a caller
-/// in no repository.
+/// a text after its version, or a caller in no repository.
 ///
 /// ```
 /// use riff_core::hold::Hold;
@@ -241,7 +164,11 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
             }
             body
         }
-        BotFact::Questions { asked } => questions(user, &repo, asked)?,
+        BotFact::Question { issue } => format!(
+            "@{user} A lead waits for your answer in issue #{issue} of {repo}: \
+             https://github.com/{repo}/issues/{issue}. The wave starts no build of the issue \
+             until the label question goes."
+        ),
         BotFact::LeadStarted => format!(
             "riff started {lead} again on the new riff, and its conversation goes on. Attach \
              with: riff lead start, or l in the Sessions tab of riff."
@@ -280,7 +207,7 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
         BotFact::ReleaseCut { .. }
         | BotFact::ReleasePublished { .. }
         | BotFact::ReleaseWaits { .. } => facts.owner,
-        BotFact::Questions { .. } => Some(user),
+        BotFact::Question { .. } => Some(user),
         BotFact::LeadStarted
         | BotFact::LeadWaits
         | BotFact::LeadNoMain
@@ -307,30 +234,6 @@ fn version(tag: &str) -> Result<String, String> {
     match parsed {
         Some(version) if version == tag => Ok(version),
         _ => Err(format!("the tag {tag:?} is no version vX.Y.Z")),
-    }
-}
-
-/// The ask of the label `question` to `user` for the issues of `asked`
-/// in `repo`: one issue with its link, or the count and the numbers of
-/// more issues, with the command `riff questions`
-/// (01M75N6RE4XP0JZN61H4Q2CHZJ). The error is a fact with no issue.
-fn questions(user: &str, repo: &str, asked: &[Asked]) -> Result<String, String> {
-    let issues: BTreeSet<u64> = asked.iter().map(|a| a.issue).collect();
-    let numbers: Vec<String> = issues.iter().map(|issue| format!("#{issue}")).collect();
-    match (issues.first(), numbers.as_slice()) {
-        (Some(issue), [_]) => Ok(format!(
-            "@{user} A lead waits for your answer in issue #{issue} of {repo}: \
-             https://github.com/{repo}/issues/{issue}. The wave starts no build of the issue \
-             until the label question goes."
-        )),
-        (Some(_), [first @ .., last]) => Ok(format!(
-            "@{user} A lead waits for your answer in {} issues of {repo}: {} and {last}. The \
-             wave starts no build of an issue until its label question goes. To see all your \
-             open questions, run: riff questions",
-            numbers.len(),
-            first.join(", ")
-        )),
-        _ => Err("the fact names no issue with the label question".into()),
     }
 }
 
@@ -490,25 +393,11 @@ mod tests {
         }
     }
 
-    /// The fact of the label `question` on the issues `issues`, each with
-    /// the key `question-N`.
-    fn questions(issues: &[u64]) -> BotFact {
-        let asked = issues
-            .iter()
-            .map(|&issue| Asked {
-                issue,
-                key: format!("question-{issue}"),
-            })
-            .collect();
-        BotFact::Questions { asked }
-    }
-
-    /// The ask of the label `question` on one issue names the caller, and
-    /// the link of its issue.
+    /// The ask of the label `question` names the caller, and its issue.
     #[test]
     fn the_ask_of_a_question_names_the_person() {
         let me = me();
-        let line = line(&questions(&[12]), &facts(&me, Some("brett"))).unwrap();
+        let line = line(&BotFact::Question { issue: 12 }, &facts(&me, Some("brett"))).unwrap();
         assert_eq!(
             line.body,
             "@mike A lead waits for your answer in issue #12 of o/r: \
@@ -516,30 +405,6 @@ mod tests {
              label question goes."
         );
         assert_eq!(line.to, [Selector::name("mike")]);
-    }
-
-    /// 01M75N6RE4XP0JZN61H4Q2CHZJ: the ask of more issues is one line with
-    /// the count, the numbers in order, and the command `riff questions`.
-    /// It has no link, and it wakes the person.
-    #[test]
-    fn the_ask_of_more_questions_is_one_line_with_the_count_and_the_numbers() {
-        let me = me();
-        let at = facts(&me, Some("brett"));
-        let three = line(&questions(&[14, 12, 13]), &at).unwrap();
-        assert_eq!(
-            three.body,
-            "@mike A lead waits for your answer in 3 issues of o/r: #12, #13 and #14. The wave \
-             starts no build of an issue until its label question goes. To see all your open \
-             questions, run: riff questions"
-        );
-        assert!(!three.body.contains("https://"), "{}", three.body);
-        assert_eq!(three.to, [Selector::name("mike")]);
-        let two = line(&questions(&[12, 13]), &at).unwrap();
-        assert!(two.body.contains(" in 2 issues of o/r: #12 and #13. "));
-        let twice = line(&questions(&[12, 12]), &at).unwrap();
-        assert!(twice.body.contains(" in issue #12 of o/r: "), "one issue");
-        let none = line(&questions(&[]), &at).unwrap_err();
-        assert!(none.contains("no issue"), "{none}");
     }
 
     /// Each line of the daemon about a lead names the lead, its person

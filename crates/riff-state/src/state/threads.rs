@@ -60,20 +60,14 @@ pub(super) struct Stored {
     /// The key of the post.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) key: Option<String>,
-    /// The other keys of an announce (01M75N6S3ZG301WMHNTS808QY4).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(super) more_keys: Vec<String>,
 }
 
 impl Stored {
-    /// The place of each key of the message in [`Threads::keys`].
-    fn keys_in(&self, thread: &ThreadName) -> Vec<(ThreadName, String, String)> {
+    /// The place of the key of the message in [`Threads::keys`].
+    fn key_in(&self, thread: &ThreadName) -> Option<(ThreadName, String, String)> {
+        let key = self.key.as_ref()?;
         let user = self.message.from.who().user();
-        self.key
-            .iter()
-            .chain(&self.more_keys)
-            .map(|key| (thread.clone(), user.to_owned(), key.clone()))
-            .collect()
+        Some((thread.clone(), user.to_owned(), key.clone()))
     }
 }
 
@@ -86,7 +80,6 @@ impl Threads {
             message,
             woken,
             key,
-            more_keys,
         } = posted;
         if let Some(payload) = &message.payload {
             self.copies
@@ -96,9 +89,8 @@ impl Threads {
             message: message.clone(),
             woken: woken.clone(),
             key: key.clone(),
-            more_keys: more_keys.clone(),
         };
-        for place in stored.keys_in(thread) {
+        if let Some(place) = stored.key_in(thread) {
             self.keys.insert(place, message.seq);
         }
         let messages = &mut self.by_name.entry(thread.clone()).or_default().messages;
@@ -110,10 +102,10 @@ impl Threads {
             if let Some(payload) = &old.message.payload {
                 self.copies.remove(&(thread.clone(), payload_hash(payload)));
             }
-            for place in old.keys_in(thread) {
-                if self.keys.get(&place) == Some(&old.message.seq) {
-                    self.keys.remove(&place);
-                }
+            if let Some(place) = old.key_in(thread)
+                && self.keys.get(&place) == Some(&old.message.seq)
+            {
+                self.keys.remove(&place);
             }
         }
         Ok(())
@@ -241,7 +233,7 @@ impl Saved {
                         .copies
                         .insert((name.clone(), payload_hash(payload)), m.message.seq);
                 }
-                for place in m.keys_in(&name) {
+                if let Some(place) = m.key_in(&name) {
                     threads.keys.insert(place, m.message.seq);
                 }
             }
@@ -426,14 +418,14 @@ impl View<'_> {
     /// The changes that put `message` in `thread` with the next sequence
     /// number, and wake each live session that its selectors match,
     /// except `from`. Each selected session joins the thread. The record
-    /// keeps `keys`, the keys of the post. It also gives each selector that
+    /// keeps `key`, the key of the post. It also gives each selector that
     /// matched no session.
     pub(super) fn put(
         &self,
         from: &Who,
         thread: ThreadName,
         message: Message,
-        keys: Vec<String>,
+        key: Option<String>,
         now: Instant,
     ) -> (Vec<Change>, Vec<Selector>) {
         let (mut woken, unmatched) = self.selected(from, &message.to, thread.is_direct(), now);
@@ -475,13 +467,11 @@ impl View<'_> {
             sig,
             payload,
         };
-        let mut keys = keys.into_iter();
         changes.push(Change::Posted(Box::new(Posted {
             thread,
             message,
             woken,
-            key: keys.next(),
-            more_keys: keys.collect(),
+            key,
         })));
         (changes, unmatched)
     }
@@ -676,8 +666,7 @@ impl Command for Post {
             sig: sig.clone(),
             payload: payload.clone(),
         };
-        let keys = key.iter().cloned().collect();
-        let (mut put, unmatched) = view.put(from, thread, message, keys, now);
+        let (mut put, unmatched) = view.put(from, thread, message, key.clone(), now);
         changes.append(&mut put);
         let note = PostNote {
             unmatched,
@@ -708,7 +697,6 @@ impl Command for Post {
             message,
             woken,
             key: _,
-            more_keys: _,
         } = message_of(&done.made).expect("the records of a post end with the message");
         wire::Posted {
             thread: thread.clone(),
@@ -739,9 +727,7 @@ pub struct PostNote {
 /// An announce with a key that a kept message of the server has in the
 /// thread is dropped, as a [`Post`] with a key is
 /// (01M5TKG2K1AYK1KE7C2AA2W9DS): it makes no record, and wakes no
-/// session. An announce can have more than one key: the line of riff-bot
-/// for many issues has the key of each, and one kept key drops it
-/// (01M75N6S3ZG301WMHNTS808QY4).
+/// session.
 #[derive(Clone, Debug)]
 pub struct Announce {
     pub thread: Option<ThreadName>,
@@ -750,8 +736,8 @@ pub struct Announce {
     pub kind: Kind,
     /// The time of the message.
     pub at_ms: u64,
-    /// The keys of the post.
-    pub keys: Vec<String>,
+    /// The key of the post.
+    pub key: Option<String>,
 }
 
 impl Command for Announce {
@@ -771,14 +757,16 @@ impl Command for Announce {
             body,
             kind,
             at_ms,
-            keys,
+            key,
         } = self;
         let from = caller.who();
         let thread = view.thread_of(from, thread.as_ref(), to, now.at)?;
-        let threads = view.riff.threads();
-        if keys
-            .iter()
-            .any(|key| threads.keyed(&thread, from.user(), key).is_some())
+        if let Some(key) = key
+            && view
+                .riff
+                .threads()
+                .keyed(&thread, from.user(), key)
+                .is_some()
         {
             return Ok((Vec::new(), ()));
         }
@@ -792,7 +780,7 @@ impl Command for Announce {
             sig: None,
             payload: None,
         };
-        let (changes, _) = view.put(from, thread, message, keys.clone(), now.at);
+        let (changes, _) = view.put(from, thread, message, key.clone(), now.at);
         Ok((changes, ()))
     }
 

@@ -669,10 +669,6 @@ pub struct Posted {
     /// key from the same user is dropped (01M5TKG2K1AYK1KE7C2AA2W9DS).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    /// The other keys of an announce of riff-server: the line of riff-bot
-    /// for many issues has the key of each (01M75N6S3ZG301WMHNTS808QY4).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub more_keys: Vec<String>,
 }
 
 /// The marks of a post for an audit, longest first: the start of a
@@ -724,7 +720,6 @@ impl Posted {
     ///     },
     ///     woken: Default::default(),
     ///     key: None,
-    ///     more_keys: Vec::new(),
     /// };
     /// let audit = posted.clone().for_audit();
     /// assert_eq!(audit.message.body, "request");
@@ -1266,7 +1261,6 @@ pub fn one_of_each() -> Vec<Change> {
             },
             woken: BTreeSet::from([uri().who().clone()]),
             key: Some("pull-40".into()),
-            more_keys: vec!["question-12".into()],
         })),
         Change::JoinedThread(member.clone()),
         Change::LeftThread(member.clone()),

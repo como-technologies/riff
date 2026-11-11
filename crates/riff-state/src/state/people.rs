@@ -525,7 +525,7 @@ impl View<'_> {
                 ..Selector::default()
             }];
             let note = server_message(to, body.to_owned(), Kind::Note, now);
-            changes.append(&mut self.put(server.who(), thread, note, Vec::new(), now.at).0);
+            changes.append(&mut self.put(server.who(), thread, note, None, now.at).0);
         }
         let direct = owner::to_lead(body);
         for lead in tell.iter().flat_map(|user| self.live_leads(user, now.at)) {
@@ -535,7 +535,7 @@ impl View<'_> {
             let to = vec![Selector::session(id)];
             let thread = ThreadName::direct(server.who(), &lead);
             let told = server_message(to, direct.clone(), Kind::Message, now);
-            changes.append(&mut self.put(server.who(), thread, told, Vec::new(), now.at).0);
+            changes.append(&mut self.put(server.who(), thread, told, None, now.at).0);
         }
         if chat {
             changes.append(&mut self.chat(body, now));
@@ -551,7 +551,7 @@ impl View<'_> {
     fn chat(&self, body: &str, now: Now) -> Vec<Change> {
         let server = SessionUri::server();
         let line = server_message(Vec::new(), body.to_owned(), Kind::Riff, now);
-        self.put(server.who(), ThreadName::chat(), line, Vec::new(), now.at)
+        self.put(server.who(), ThreadName::chat(), line, None, now.at)
             .0
     }
 

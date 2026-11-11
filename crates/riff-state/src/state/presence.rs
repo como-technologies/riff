@@ -1151,7 +1151,6 @@ mod tests {
                 message,
                 woken: Default::default(),
                 key: None,
-                more_keys: Vec::new(),
             };
             apply(riff, &record(Change::Posted(Box::new(posted))));
         }

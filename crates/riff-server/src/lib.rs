@@ -1222,7 +1222,7 @@ impl Server {
             body: body.to_owned(),
             kind,
             at_ms: now_ms(),
-            keys: Vec::new(),
+            key: None,
         }
     }
 
@@ -2643,20 +2643,17 @@ pub fn still_blocked(session: &SessionUri, reason: &str, after_secs: u64) -> Str
 /// with the kind `riff` ([`bot`], 01M74BPHQZHXFYYNXAJ1WFASQQ). riff-server
 /// writes the text from the fact and from what it holds: the owner, the
 /// place of the caller and the holds of the version. Only a person and
-/// the lead of the person may call it. The line leaves out each issue
-/// whose key a kept line of riff-bot for the same user has, and keeps
-/// the key of each issue that it names ([`bot::untold`],
-/// 01M5TKG2K1AYK1KE7C2AA2W9DS, 01M75N6RE4XP0JZN61H4Q2CHZJ). With no issue
-/// left, it posts nothing.
+/// the lead of the person may call it. A key that a kept line of
+/// riff-bot for the same user has drops the post
+/// (01M5TKG2K1AYK1KE7C2AA2W9DS).
 async fn bot_post(
     AxumState(s): AxumState<Shared>,
     proof: Proof,
     Json(r): Json<BotPost>,
 ) -> Reply<()> {
     let caller = admit(&s, &proof, &r.me)?;
-    let user = caller.who().user().to_owned();
     let now = Instant::now();
-    let (lead, owner, messages, fact) = s
+    let (lead, owner, messages) = s
         .engine
         .query(&caller, |state| {
             let owner = match state.people().riff_owner() {
@@ -2664,20 +2661,14 @@ async fn bot_post(
                 RiffOwner::NoSignIn | RiffOwner::Nobody => None,
             };
             let messages = state.messages(&riff_core::hold::thread());
-            let (chat, server) = (ThreadName::chat(), SessionUri::server());
-            let told = |key: &str| state.keyed(&chat, server.who().user(), key);
-            let fact = bot::untold(r.fact, &user, told);
-            (state.uri(caller.who(), now).lead(), owner, messages, fact)
+            (state.uri(caller.who(), now).lead(), owner, messages)
         })
         .await?;
     if caller.who().session().is_some() && !lead {
         let refused = Refused::new(Code::NotAllowed, bot::ONLY_PERSON_OR_LEAD);
         return Err(Failed::Refused(refused).into());
     }
-    let Some(fact) = fact else {
-        return Ok(Json(()));
-    };
-    let holds = match &fact {
+    let holds = match &r.fact {
         riff_core::wire::BotFact::ReleaseWaits { tag, .. } => {
             let lines: Vec<riff_core::hold::Line> = messages
                 .iter()
@@ -2692,14 +2683,14 @@ async fn bot_post(
         owner: owner.as_deref(),
         holds: &holds,
     };
-    let line = bot::line(&fact, &facts).map_err(bad_request)?;
+    let line = bot::line(&r.fact, &facts).map_err(bad_request)?;
     let announce = Announce {
         thread: Some(ThreadName::chat()),
         to: line.to,
         body: line.body,
         kind: Kind::Riff,
         at_ms: now_ms(),
-        keys: bot::keys_of(&user, &fact),
+        key: r.key.map(|key| bot::key_of(caller.who().user(), &key)),
     };
     s.engine.announce(announce).await?;
     Ok(Json(()))

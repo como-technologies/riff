@@ -2131,7 +2131,7 @@ impl Machine {
     async fn tell_bot(&self, who: &str, fact: riff_core::wire::BotFact) {
         let me = Self::uri_of(who);
         let api = crate::common::api_of(&self.server, &me);
-        api.bot(&me, fact).await.unwrap();
+        api.bot(&me, fact, None).await.unwrap();
     }
 }
 
