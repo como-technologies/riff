@@ -3642,8 +3642,11 @@ a line of `riff-bot` too. These are the lines of `riff-bot`:
 
 Your riff tells riff-server only the fact, for example the version and
 the CI run of a deploy that waits. riff-server writes the text of the
-line itself: no client puts its own words in a line of `riff-bot`. An
-ask names you with `@USER`, so it is a highlight on your terminal (see
+line itself: no client puts its own words in a line of `riff-bot`. The
+line of a release holds the version that riff-server parsed, and
+nothing more: a tag with a text after its version, for example
+`v3.3.0-rc1` or `v3.3.0+build9`, gets no line. An ask names you with
+`@USER`, so it is a highlight on your terminal (see
 "Get a highlight in the chat"). A line of the daemon names no one. The
 log of the riff daemon on the host has the cause of a fault. A line
 that a person types with the words of `riff-bot` shows as that person.
@@ -3664,7 +3667,7 @@ riff chat
 ```text
 14:02 <brett> @riff is the release out?
 14:03 <riff> @brett not yet: #207 waits for CI.
-14:05 <riff-bot> @mike riff release waits for your approval: https://github.com/como-technologies/riff/actions/runs/9.
+14:05 <riff-bot> @mike riff release v3.3.0 waits for your approval: https://github.com/como-technologies/riff/actions/runs/9. In a terminal, run: riff release approve v3.3.0
 14:05 <riff-bot> riff started the lead of brett in como-technologies/riff on heron again on the new riff.
 14:06 [mike a6cf2205] the checks of #207 passed
 14:07 <riff-bot> members: mike passed the owner role to brett@acme.io.

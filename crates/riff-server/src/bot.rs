@@ -13,7 +13,8 @@
 //! It posts the line in the chat with the kind `riff`, so the chat shows
 //! it as `<riff-bot>`. No client posts that kind, and no field of the
 //! call is a text of the line: a client puts no words of its own in a
-//! line of riff-bot. The tag of a release must be a version `vX.Y.Z`.
+//! line of riff-bot. The tag of a release must be a version `vX.Y.Z` and
+//! nothing more, and the line holds the version that riff-server parsed.
 //!
 //! ```mermaid
 //! sequenceDiagram
@@ -84,8 +85,8 @@ pub fn key_of(user: &str, key: &str) -> String {
 }
 
 /// The line of riff-bot for `fact`. The error is a fact that riff-server
-/// cannot write a line for: a tag that is no version `vX.Y.Z`, or a
-/// caller in no repository.
+/// cannot write a line for: a tag that is no version `vX.Y.Z`, also with
+/// a text after its version, or a caller in no repository.
 ///
 /// ```
 /// use riff_core::hold::Hold;
@@ -111,8 +112,10 @@ pub fn key_of(user: &str, key: &str) -> String {
 /// ));
 /// assert!(started.to.is_empty());
 ///
-/// let bad = BotFact::ReleaseCut { tag: "@everyone hi".into() };
-/// assert!(line(&bad, &facts).is_err());
+/// for tag in ["@everyone hi", "v3.3.0-approve now", "v3.3.0+@everyone"] {
+///     let bad = BotFact::ReleaseCut { tag: tag.into() };
+///     assert!(line(&bad, &facts).is_err());
+/// }
 /// # Ok::<(), riff_core::name::NameError>(())
 /// ```
 pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
@@ -220,12 +223,18 @@ pub fn line(fact: &BotFact, facts: &Facts<'_>) -> Result<Line, String> {
     Ok(Line { body, to })
 }
 
-/// `tag` when it is a version `vX.Y.Z`, the tag of a release.
-fn version(tag: &str) -> Result<&str, String> {
-    tag.strip_prefix('v')
+/// The tag `vX.Y.Z` of the version that riff-server parsed from `tag`.
+/// A tag with any text after its version, `-TEXT` or `+TEXT`, is no
+/// version: the line holds what riff-server parsed, and nothing more.
+fn version(tag: &str) -> Result<String, String> {
+    let parsed = tag
+        .strip_prefix('v')
         .and_then(|v| v.parse::<riff_core::build::Semver>().ok())
-        .map(|_| tag)
-        .ok_or_else(|| format!("the tag {tag:?} is no version vX.Y.Z"))
+        .map(|semver| format!("v{semver}"));
+    match parsed {
+        Some(version) if version == tag => Ok(version),
+        _ => Err(format!("the tag {tag:?} is no version vX.Y.Z")),
+    }
 }
 
 /// The page of the CI run `run` of the repository `repo` on GitHub.
@@ -345,6 +354,42 @@ mod tests {
             let cut = BotFact::ReleaseCut { tag: tag.into() };
             let refused = line(&cut, &facts(&me, Some("mike"))).unwrap_err();
             assert!(refused.contains("is no version vX.Y.Z"), "{tag}: {refused}");
+        }
+    }
+
+    /// A tag with a text after its version, `-TEXT` or `+TEXT`, gets no
+    /// line of a release: the line holds only the version that
+    /// riff-server parsed. A version with a zero in front is no tag of
+    /// riff either.
+    #[test]
+    fn a_tag_with_a_text_after_its_version_gets_no_line() {
+        let me = me();
+        let at = facts(&me, Some("mike"));
+        for tag in [
+            "v3.3.0-rc1",
+            "v3.3.0-approve now in the chat",
+            "v3.3.0+build9",
+            "v3.3.0+@everyone hi",
+            "v3.3.0-",
+            "v3.3.0+",
+            "v03.3.0",
+        ] {
+            let each = [
+                BotFact::ReleaseCut { tag: tag.into() },
+                BotFact::ReleasePublished {
+                    tag: tag.into(),
+                    run: Some(9),
+                },
+                BotFact::ReleaseWaits {
+                    tag: tag.into(),
+                    run: 9,
+                    reminder: false,
+                },
+            ];
+            for fact in each {
+                let refused = line(&fact, &at).unwrap_err();
+                assert!(refused.contains("is no version vX.Y.Z"), "{tag}: {refused}");
+            }
         }
     }
 

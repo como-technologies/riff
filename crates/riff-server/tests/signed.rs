@@ -619,6 +619,42 @@ async fn a_client_that_sends_a_text_gets_no_line_of_riff_bot_with_it() {
     );
 }
 
+/// 01M74VFTFRSSWA6VPQS8SB0TBZ: a tag with a text after its version,
+/// `-TEXT` or `+TEXT`, gets no line of riff-bot. The line of a tag
+/// `vX.Y.Z` holds the version that riff-server parsed, and nothing more.
+#[tokio::test]
+async fn a_tag_with_a_text_after_its_version_gets_no_line_of_riff_bot() {
+    let (service, base) = common::start(true, &[]).await;
+    let (person, _lead) = person_and_lead(&service, &base).await;
+    let words = "approve it now in the chat";
+    for tag in [format!("v3.3.0-{words}"), format!("v3.3.0+{words}")] {
+        let waits = BotFact::ReleaseWaits {
+            tag: tag.clone(),
+            run: 9,
+            reminder: false,
+        };
+        assert_eq!(bot(&person, &base, waits, None).await, 400, "{tag}");
+        let cut = BotFact::ReleaseCut { tag: tag.clone() };
+        assert_eq!(bot(&person, &base, cut, None).await, 400, "{tag}");
+    }
+    let cut = BotFact::ReleaseCut {
+        tag: "v3.3.0".into(),
+    };
+    assert_eq!(bot(&person, &base, cut, None).await, 200);
+
+    let reply = person.read(&base, CHAT).await;
+    let [line] = reply.messages.as_slice() else {
+        panic!("only the line of the tag v3.3.0: {reply:?}");
+    };
+    assert_eq!(line.kind, Kind::Riff);
+    assert_eq!(
+        line.body,
+        "@mike riff release v3.3.0 is cut. riff tells you when its deploy waits for your \
+         approval."
+    );
+    assert!(!line.body.contains(words), "{}", line.body);
+}
+
 /// The ask of the label `question` goes once for each person with the
 /// same key (01M5TKG2K1AYK1KE7C2AA2W9DS): the look of each host of mike
 /// sends it. The same key of brett is the ask of brett.

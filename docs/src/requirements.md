@@ -3417,6 +3417,11 @@
   and the lead of the person make the call. Supersedes
   01M6Y4ZCTSTVM971BDC1F7GJPK, 01M5TKMVB7CF0QNAWXEVGEQETJ,
   01M6XSHMGM82QSABRWCYH595VH and 01M6QBJHV7PVV5893Q6RCPENJQ in part.
+- **01M74VFTFRSSWA6VPQS8SB0TBZ** riff-server writes a line of riff-bot
+  about a release only for a tag `vX.Y.Z` with nothing after its
+  version, and the line holds the version that riff-server parsed. A tag
+  with a text after its version, for example `v3.3.0-TEXT` or
+  `v3.3.0+TEXT`, gets no line.
 
 ## Security
 
