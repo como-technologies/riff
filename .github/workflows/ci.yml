@@ -41,18 +41,20 @@ permissions:
   actions: read
 
 jobs:
-  # For Linux, CI compiles the code of a tree two times, both in the job
-  # Build: the test build and the release build
-  # (01M6QQ1NXY0CXMZEEEP413W4PK). Each other job but macOS and the jobs
-  # of the release of a Mac takes the binaries of Build from its
-  # artifacts. The artifacts have the git tree
+  # For Linux, CI compiles the code of a tree only in the job Build: the
+  # test build and the static build (01M6QQ1NXY0CXMZEEEP413W4PK). Each
+  # other job but macOS and the jobs of the build of a Mac takes the
+  # binaries of Build from its artifacts. The artifacts have the git tree
   # of the commit in their name, so a push to main, a merge group and a
   # tag take the binaries that the pull request with the same tree made
   # (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM). The Gate
   # keeps its pass as the artifact gate-TREE, so a merge group or a push
   # to main with a tree that passed tests it no more
   # (01M75NAF4JQWQG3ZVGJM74XRBG, 01M75NAF7VV5S7343P9Q7H7F60,
-  # 01M75NAFBH6M49GMSV8VG857EP).
+  # 01M75NAFBH6M49GMSV8VG857EP). A pull request and a merge group build
+  # the profile dev. The first push of a tree to main builds its release
+  # binaries, of Linux and of a Mac, once, and a tag takes them
+  # (01M75TMWKT8E0YYEENWVX4B67A, 01M75TN3EC2T25FH0D09JESHZF).
   #
   # The Gate runs its checks as jobs (01M513W2K3HNRWPQTQNBQPT8MZ): Plan,
   # Build, and the tests in parts. Together they run each check of just
@@ -65,10 +67,11 @@ jobs:
   plan:
     # The plan of the run, before each other job
     # (01M75NAF4JQWQG3ZVGJM74XRBG): the artifacts of the tree that a run
-    # made already, the ones that Build makes, and if the tests and macOS
-    # run. It compiles nothing. A pull request with the label release and
-    # a tag want the profile release (01M6QQ1P8H32E2TQ0CYA87R02V). A tag
-    # needs no test.
+    # made already, the ones that Build and the jobs of a Mac make, and if
+    # the tests and macOS run. It compiles nothing. A push, to main or of
+    # a tag, wants the profile release: the release binaries of Linux and
+    # of a Mac (01M75TMWKT8E0YYEENWVX4B67A). Each other event wants the
+    # profile dev. A tag needs no test.
     name: Plan
     if: github.event_name != 'schedule'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
@@ -81,10 +84,14 @@ jobs:
       build_static: ${{ steps.plan.outputs.build_static }}
       static_profile: ${{ steps.plan.outputs.static_profile }}
       static_run: ${{ steps.plan.outputs.static_run }}
+      build_macos_riff: ${{ steps.plan.outputs.build_macos_riff }}
+      macos_riff_run: ${{ steps.plan.outputs.macos_riff_run }}
+      build_mac_session_riff: ${{ steps.plan.outputs.build_mac_session_riff }}
+      mac_session_riff_run: ${{ steps.plan.outputs.mac_session_riff_run }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      PROFILE: ${{ (github.ref_type == 'tag' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release'))) && 'release' || 'dev' }}
+      PROFILE: ${{ github.event_name == 'push' && 'release' || 'dev' }}
       TESTS: ${{ github.ref_type != 'tag' }}
     steps:
       - uses: actions/checkout@v7
@@ -98,9 +105,10 @@ jobs:
     # test build run in the session image, as the tests run
     # (01M515Z3Y7GSFNTJGXJD727MQK), and the static build runs in
     # rust:CHANNEL-alpine (01M4ZPJ04D9MJHNPAV0WN1KCES). The profile
-    # release builds with no cache, so each release binary comes from a
-    # clean build (01M6QQ1P8H32E2TQ0CYA87R02V). The job keeps each
-    # artifact only after each step passed.
+    # release of a push builds with no cache, so each release binary
+    # comes from a clean build (01M6QQ1P8H32E2TQ0CYA87R02V,
+    # 01M75TMWKT8E0YYEENWVX4B67A). The job keeps each artifact only after
+    # each step passed.
     name: Build
     needs: [plan]
     if: github.event_name != 'schedule'
@@ -317,12 +325,20 @@ jobs:
     # and each push (01M4ZPJ06QYVA23N9SQ45T8WQC). The job Build made them,
     # or took them from the run that made them for the same tree: no ELF
     # has an interpreter, and riff --version runs in the session image of
-    # riff.toml. A tag takes the profile release of its tree, and keeps
-    # the binaries for the job Static riff release.
+    # riff.toml. Then the release test runs them: a smoke test, and no
+    # test binary (01M75TN3HCK6VBB2GRCJG1Y5B2). For a push, the job sets
+    # the status riff/release-test of the commit from the release
+    # binaries (01M75TN3M9JEVZQXEA2E8FTBKS). A tag takes the profile
+    # release of its tree, and keeps the binaries for the job Static riff
+    # release.
     name: Static riff
     needs: [plan, build]
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
     env:
       RIFF_ENGINE: docker
       PROFILE: ${{ needs.plan.outputs.static_profile }}
@@ -342,6 +358,20 @@ jobs:
 
       - name: Check
         run: deploy/static/check.sh "$PROFILE"
+
+      - name: Smoke test
+        id: smoke
+        run: deploy/static/smoke.sh "$PROFILE"
+
+      # A failed check skips the smoke test: then the status is failure.
+      - name: Set the status of the release test
+        if: ${{ !cancelled() && github.event_name == 'push' && needs.plan.outputs.static_profile == 'release' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          OUTCOME: ${{ steps.smoke.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: deploy/release-test-status.sh "$OUTCOME" "$GITHUB_SHA" "$RUN_URL"
 
       - name: Name the files of the release
         if: github.ref_type == 'tag'
@@ -398,15 +428,18 @@ jobs:
         run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
 
   macos_riff:
-    # The riff and riff-server of a release tag for a Mac with Apple
-    # silicon, aarch64-apple-darwin (01M6Z8F7B3HVVNGQMX8GP1Z7Q1): a build
-    # of the profile release with no cache, on a macOS runner of GitHub
-    # (01M6Z8FKZRJZ4NY60PQAH9SMHV). The jobs of the Mac have
+    # The riff and riff-server of a tree for a Mac with Apple silicon,
+    # aarch64-apple-darwin (01M6Z8F7B3HVVNGQMX8GP1Z7Q1): a build of the
+    # profile release with no cache, on a macOS runner of GitHub
+    # (01M6Z8FKZRJZ4NY60PQAH9SMHV). It runs when the plan finds no
+    # macos-riff-TREE, so the first push of the tree builds it, and a
+    # tag takes it (01M75TMWKT8E0YYEENWVX4B67A). The jobs of the Mac have
     # continue-on-error, and no job of Linux needs them. So a failed build
     # for the Mac stops neither the files, nor the run, nor the deploy of
     # Linux.
     name: macOS riff
-    if: github.ref_type == 'tag'
+    needs: [plan]
+    if: needs.plan.outputs.build_macos_riff == 'true'
     runs-on: macos-latest
     continue-on-error: true
     timeout-minutes: 60
@@ -441,20 +474,22 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-riff
+          name: macos-riff-${{ needs.plan.outputs.tree }}
           path: dist/
           if-no-files-found: error
 
   mac_session_riff:
     # The Linux riff that the daemon on a Mac binds into each session
-    # (01M6Z8FM5F0Y7BQYNF8XS1B0T2): the static riff of a release tag for
+    # (01M6Z8FM5F0Y7BQYNF8XS1B0T2): the static riff of a tree for
     # aarch64-unknown-linux-musl, the Linux of a VM on Apple silicon.
     # deploy/static/build.sh builds for the CPU of the runner, so the job
-    # runs on an arm64 runner of GitHub (01M6Z8FKZRJZ4NY60PQAH9SMHV). The
-    # session image is for amd64 only, so riff --version runs on the
-    # runner.
+    # runs on an arm64 runner of GitHub (01M6Z8FKZRJZ4NY60PQAH9SMHV). It
+    # runs when the plan finds no mac-session-riff-TREE, as macOS riff
+    # does (01M75TMWKT8E0YYEENWVX4B67A). The session image is for amd64
+    # only, so riff --version runs on the runner.
     name: Linux riff of a Mac
-    if: github.ref_type == 'tag'
+    needs: [plan]
+    if: needs.plan.outputs.build_mac_session_riff == 'true'
     runs-on: ubuntu-24.04-arm
     continue-on-error: true
     timeout-minutes: 60
@@ -489,7 +524,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: mac-session-riff
+          name: mac-session-riff-${{ needs.plan.outputs.tree }}
           path: dist/
           if-no-files-found: error
 
@@ -497,27 +532,36 @@ jobs:
     # For a release tag, the files of a Mac go to the GitHub release of
     # the tag, with SHA256SUMS-aarch64-apple-darwin
     # (01M6Z8F7B3HVVNGQMX8GP1Z7Q1, 01M6Z8FKZRJZ4NY60PQAH9SMHV). The job
-    # waits up to 60 minutes for the release, as Static riff release does.
-    # The sums go last, so a Mac finds them only when each file is there.
+    # takes them from the runs that the plan names: often the run of the
+    # push to main of the commit, and then the tag builds nothing
+    # (01M75TN3EC2T25FH0D09JESHZF). A job of a Mac that the plan skipped
+    # does not skip this job. It waits up to 60 minutes for the release,
+    # as Static riff release does. The sums go last, so a Mac finds them
+    # only when each file is there.
     name: macOS riff release
-    needs: [macos_riff, mac_session_riff]
-    if: github.ref_type == 'tag'
+    needs: [plan, macos_riff, mac_session_riff]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && github.ref_type == 'tag' }}
     runs-on: ${{ vars.RIFF_RUNNER || 'ubuntu-latest' }}
     continue-on-error: true
     permissions:
       contents: write
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: macos-riff
+          name: macos-riff-${{ needs.plan.outputs.tree }}
+          run-id: ${{ needs.plan.outputs.macos_riff_run }}
+          github-token: ${{ github.token }}
           path: dist
 
       - uses: actions/download-artifact@v8
         with:
-          name: mac-session-riff
+          name: mac-session-riff-${{ needs.plan.outputs.tree }}
+          run-id: ${{ needs.plan.outputs.mac_session_riff_run }}
+          github-token: ${{ github.token }}
           path: dist
 
       - name: Write the sums of a Mac

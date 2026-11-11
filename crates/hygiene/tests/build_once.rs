@@ -3,11 +3,14 @@
 //! once (01M75NAF4JQWQG3ZVGJM74XRBG, 01M75NAF7VV5S7343P9Q7H7F60,
 //! 01M75NAFBH6M49GMSV8VG857EP): the job Plan finds the artifacts and the
 //! pass of the Gate that a run made for the same tree, and the jobs after
-//! it take them. The tests run `deploy/build-plan.sh` with a fake `gh`,
-//! and read the workflow. The plan is the same for each event: a merge
-//! group and a push to `main` differ only in the artifacts that the forge
-//! holds. The fake prints what the `--jq` filter of the real `gh` prints:
-//! the filter is checked by a read of the live API, not here.
+//! it take them. A commit of `main` gets one release build, of Linux and
+//! of a Mac, and its tag takes it (01M75TMWKT8E0YYEENWVX4B67A,
+//! 01M75TN3EC2T25FH0D09JESHZF). The tests run `deploy/build-plan.sh`
+//! with a fake `gh`, and read the workflow. The plan is the same for each
+//! event of a profile: a merge group and a push to `main` differ in the
+//! profile that they want and in the artifacts that the forge holds. The
+//! fake prints what the `--jq` filter of the real `gh` prints: the filter
+//! is checked by a read of the live API, not here.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -92,8 +95,8 @@ fn expect(plan: &BTreeMap<String, String>, want: &[(&str, &str)]) {
 }
 
 /// The plan of a tree that no run built: this run, 900, builds and
-/// tests it.
-const BUILD_AND_TEST: [(&str, &str); 8] = [
+/// tests it. The profile dev wants no binary of a Mac.
+const BUILD_AND_TEST: [(&str, &str); 12] = [
     ("tree", "T1"),
     ("run_tests", "true"),
     ("passed_run", ""),
@@ -102,11 +105,15 @@ const BUILD_AND_TEST: [(&str, &str); 8] = [
     ("build_static", "true"),
     ("static_profile", "dev"),
     ("static_run", "900"),
+    ("build_macos_riff", "false"),
+    ("macos_riff_run", ""),
+    ("build_mac_session_riff", "false"),
+    ("mac_session_riff_run", ""),
 ];
 
 /// The plan of a tree whose Gate passed in the run `run`: no build and
 /// no test.
-fn nothing_from(run: &str) -> [(&'static str, String); 8] {
+fn nothing_from(run: &str) -> [(&'static str, String); 12] {
     [
         ("tree", "T1".into()),
         ("run_tests", "false".into()),
@@ -116,6 +123,10 @@ fn nothing_from(run: &str) -> [(&'static str, String); 8] {
         ("build_static", "false".into()),
         ("static_profile", "dev".into()),
         ("static_run", run.into()),
+        ("build_macos_riff", "false".into()),
+        ("macos_riff_run", String::new()),
+        ("build_mac_session_riff", "false".into()),
+        ("mac_session_riff_run", String::new()),
     ]
 }
 
@@ -223,6 +234,10 @@ fn a_tree_whose_gate_did_not_pass_runs_its_tests_again_and_builds_nothing() {
             ("build_static", "false"),
             ("static_profile", "dev"),
             ("static_run", "77"),
+            ("build_macos_riff", "false"),
+            ("macos_riff_run", ""),
+            ("build_mac_session_riff", "false"),
+            ("mac_session_riff_run", ""),
         ],
     );
     assert!(stderr(&out).contains("no test build"), "{}", stderr(&out));
@@ -260,11 +275,38 @@ fn a_release_run_takes_no_dev_binaries() {
     assert_eq!(plan["static_run"], "900");
 }
 
-/// A tag needs the release binaries and no test binary. It takes those
-/// of the pull request with the same tree, else it builds them.
+/// The release binaries of the tree `T1` that the run `run` made: of
+/// Linux, and of a Mac.
+fn released(run: &'static str) -> [(&'static str, &'static str); 3] {
+    [
+        ("static-release-T1", run),
+        ("macos-riff-T1", run),
+        ("mac-session-riff-T1", run),
+    ]
+}
+
+/// The plan of the profile release for a tree whose release binaries
+/// the run `run` made: it builds nothing, and takes them.
+fn released_plan(plan: &BTreeMap<String, String>, run: &str) {
+    for (name, value) in [
+        ("build_static", "false"),
+        ("static_profile", "release"),
+        ("static_run", run),
+        ("build_macos_riff", "false"),
+        ("macos_riff_run", run),
+        ("build_mac_session_riff", "false"),
+        ("mac_session_riff_run", run),
+    ] {
+        assert_eq!(plan[name], value, "{name}: {plan:?}");
+    }
+}
+
+/// 01M75TN3EC2T25FH0D09JESHZF: a tag needs the release binaries and no
+/// test binary. It takes those of Linux and of a Mac that a run made for
+/// its tree, and builds nothing. With no such artifact, it builds them.
 #[test]
 fn a_tag_takes_the_release_binaries_of_its_tree_or_builds_them() {
-    let dir = forge(&[("static-release-T1", "78")]);
+    let dir = forge(&released("78"));
     let (plan, _) = run_plan(dir.path(), "release", "false");
     expect(
         &plan,
@@ -277,16 +319,126 @@ fn a_tag_takes_the_release_binaries_of_its_tree_or_builds_them() {
             ("build_static", "false"),
             ("static_profile", "release"),
             ("static_run", "78"),
+            ("build_macos_riff", "false"),
+            ("macos_riff_run", "78"),
+            ("build_mac_session_riff", "false"),
+            ("mac_session_riff_run", "78"),
         ],
     );
 
     let dir = forge(&[("static-dev-T1", "77")]);
-    let (plan, _) = run_plan(dir.path(), "release", "false");
+    let (plan, out) = run_plan(dir.path(), "release", "false");
     assert_eq!(plan["build_static"], "true");
     assert_eq!(plan["static_run"], "900");
+    assert_eq!(plan["build_macos_riff"], "true");
+    assert_eq!(plan["macos_riff_run"], "900");
+    assert_eq!(plan["build_mac_session_riff"], "true");
+    assert_eq!(plan["mac_session_riff_run"], "900");
+    for line in [
+        "no macos-riff-T1: the job macos_riff builds it.",
+        "no mac-session-riff-T1: the job mac_session_riff builds it.",
+    ] {
+        assert!(stderr(&out).contains(line), "{}", stderr(&out));
+    }
     let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
     assert!(!calls.contains("name=tests-"), "{calls}");
     assert!(!calls.contains("name=gate-"), "{calls}");
+}
+
+/// 01M75TMWKT8E0YYEENWVX4B67A, 01M75TN3EC2T25FH0D09JESHZF: the first push
+/// to `main` of a tree that its merge group built and tested builds the
+/// release binaries of Linux and of a Mac once, and runs no test. A
+/// second run of the same tree builds nothing, and a tag of that commit
+/// builds nothing.
+#[test]
+fn a_commit_of_main_builds_its_release_once_and_its_tag_builds_nothing() {
+    // The merge group, run 77, built the profile dev and passed its Gate.
+    let dir = forge(&passed("77"));
+    let (plan, out) = run_plan(dir.path(), "release", "true");
+    assert!(out.status.success(), "{}", stderr(&out));
+    expect(
+        &plan,
+        &[
+            ("tree", "T1"),
+            ("run_tests", "false"),
+            ("passed_run", "77"),
+            ("build_tests", "false"),
+            ("tests_run", ""),
+            ("build_static", "true"),
+            ("static_profile", "release"),
+            ("static_run", "900"),
+            ("build_macos_riff", "true"),
+            ("macos_riff_run", "900"),
+            ("build_mac_session_riff", "true"),
+            ("mac_session_riff_run", "900"),
+        ],
+    );
+    assert!(
+        stderr(&out).contains(
+            "no static-release-T1: the job builds the static binaries of the profile release."
+        ),
+        "{}",
+        stderr(&out)
+    );
+
+    // The push, run 900, kept the release binaries of the tree.
+    for (name, run) in released("900") {
+        std::fs::write(dir.path().join(name), format!("{run}\n")).unwrap();
+    }
+    let (plan, out) = run_plan(dir.path(), "release", "true");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(plan["run_tests"], "false");
+    assert_eq!(plan["build_tests"], "false");
+    released_plan(&plan, "900");
+    for line in [
+        "static-release-T1 is in run 900: no static build.",
+        "macos-riff-T1 is in run 900: no build of macos_riff.",
+        "mac-session-riff-T1 is in run 900: no build of mac_session_riff.",
+    ] {
+        assert!(stderr(&out).contains(line), "{}", stderr(&out));
+    }
+
+    // The tag of the commit.
+    let (plan, out) = run_plan(dir.path(), "release", "false");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(plan["build_tests"], "false");
+    released_plan(&plan, "900");
+}
+
+/// 01M75TMWKT8E0YYEENWVX4B67A: a run of the profile dev, a pull request
+/// or a merge group, asks for no binary of a Mac and builds none. When
+/// the tree has the release binaries of Linux, it takes them.
+#[test]
+fn a_pull_request_builds_no_binary_of_a_mac() {
+    let dir = forge(&released("78"));
+    let (plan, out) = run_plan(dir.path(), "dev", "true");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(plan["static_profile"], "release");
+    assert_eq!(plan["build_static"], "false");
+    for (name, value) in [
+        ("build_macos_riff", "false"),
+        ("macos_riff_run", ""),
+        ("build_mac_session_riff", "false"),
+        ("mac_session_riff_run", ""),
+    ] {
+        assert_eq!(plan[name], value, "{name}");
+    }
+    let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+    assert!(!calls.contains("name=macos-riff-"), "{calls}");
+    assert!(!calls.contains("name=mac-session-riff-"), "{calls}");
+}
+
+/// 01M75TMWKT8E0YYEENWVX4B67A: a job of a Mac that failed kept no
+/// artifact. The next run of the profile release builds only that one.
+#[test]
+fn a_failed_build_of_a_mac_is_the_only_build_of_the_next_run() {
+    let dir = forge(&[("static-release-T1", "78"), ("macos-riff-T1", "78")]);
+    let (plan, _) = run_plan(dir.path(), "release", "false");
+    assert_eq!(plan["build_static"], "false");
+    assert_eq!(plan["build_macos_riff"], "false");
+    assert_eq!(plan["macos_riff_run"], "78");
+    assert_eq!(plan["build_mac_session_riff"], "true");
+    assert_eq!(plan["mac_session_riff_run"], "900");
 }
 
 /// A `gh` that fails gives no artifact: the run makes each of them, and
@@ -309,12 +461,11 @@ fn a_failed_gh_builds_and_tests_and_says_so() {
     }
 }
 
-#[test]
-fn the_plan_asks_only_for_a_live_artifact_of_this_repository() {
-    let dir = forge(&[]);
-    run_plan(dir.path(), "dev", "true");
-    let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
-    let names: Vec<&str> = calls
+/// The names of the artifacts that the calls of the fake `gh` in `dir`
+/// asked for, in order.
+fn asked(dir: &Path) -> Vec<String> {
+    let calls = std::fs::read_to_string(dir.join("calls")).unwrap();
+    calls
         .lines()
         .map(|call| {
             call.split("name=")
@@ -323,12 +474,32 @@ fn the_plan_asks_only_for_a_live_artifact_of_this_repository() {
                 .split('&')
                 .next()
                 .unwrap()
+                .to_owned()
         })
-        .collect();
+        .collect()
+}
+
+#[test]
+fn the_plan_asks_only_for_a_live_artifact_of_this_repository() {
+    let dir = forge(&[]);
+    run_plan(dir.path(), "release", "true");
     assert_eq!(
-        names,
+        asked(dir.path()),
+        [
+            "gate-T1",
+            "tests-T1",
+            "static-release-T1",
+            "macos-riff-T1",
+            "mac-session-riff-T1"
+        ]
+    );
+    let dir = forge(&[]);
+    run_plan(dir.path(), "dev", "true");
+    assert_eq!(
+        asked(dir.path()),
         ["gate-T1", "tests-T1", "static-release-T1", "static-dev-T1"]
     );
+    let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
     for call in calls.lines() {
         assert!(
             call.starts_with("api repos/o/r/actions/artifacts?name="),
@@ -758,7 +929,7 @@ fn the_job_plan_runs_the_plan_and_gives_each_line_as_an_output() {
     // Each name that the plan writes is an output of the job.
     let dir = forge(&[]);
     let (lines, _) = run_plan(dir.path(), "dev", "true");
-    assert_eq!(lines.len(), 8, "{lines:?}");
+    assert_eq!(lines.len(), 12, "{lines:?}");
     for name in lines.keys() {
         assert!(
             plan.contains(&format!(
@@ -768,9 +939,19 @@ fn the_job_plan_runs_the_plan_and_gives_each_line_as_an_output() {
         );
     }
     assert!(plan.contains("GH_TOKEN: ${{ github.token }}\n"), "{plan}");
-    // Build, the tests, macOS, the Gate, the check of the static riff and
-    // the stage take the plan.
-    for name in ["build", "test", "macos", "gate", "static", "stage"] {
+    // Build, the tests, macOS, the Gate, the check of the static riff, the
+    // stage and the jobs of the build of a Mac take the plan.
+    for name in [
+        "build",
+        "test",
+        "macos",
+        "gate",
+        "static",
+        "stage",
+        "macos_riff",
+        "mac_session_riff",
+        "macos_release",
+    ] {
         let needs = field(&job(name), "needs");
         assert!(needs.contains("plan"), "{name}: {needs}");
     }
@@ -903,23 +1084,21 @@ fn the_artifacts_have_the_tree_in_their_name_and_come_after_the_builds() {
     );
 }
 
-/// 01M6QQ1P8H32E2TQ0CYA87R02V: a tag and a pull request with the label
-/// release want the profile release, and a tag wants no test binary. A
-/// tag job names the files from the profile release, and the job Static
-/// riff release adds them to the release.
+/// 01M6QQ1P8H32E2TQ0CYA87R02V, 01M75TMWKT8E0YYEENWVX4B67A: a push, to
+/// `main` or of a tag, wants the profile release, and each other event,
+/// also a pull request with the label release, the profile dev. A tag
+/// wants no test binary. A tag job names the files from the profile
+/// release, and the job Static riff release adds them to the release.
 #[test]
-fn a_tag_and_a_release_pull_request_build_the_release_profile() {
+fn a_push_builds_the_release_profile_and_a_pull_request_the_profile_dev() {
     let plan_job = job("plan");
-    let profile = plan_job
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("PROFILE: "))
-        .unwrap();
-    assert!(profile.contains("github.ref_type == 'tag'"), "{profile}");
     assert!(
-        profile.contains("contains(github.event.pull_request.labels.*.name, 'release')"),
-        "{profile}"
+        plan_job.contains(
+            "\n      PROFILE: ${{ github.event_name == 'push' && 'release' || 'dev' }}\n"
+        ),
+        "{plan_job}"
     );
-    assert!(profile.ends_with("&& 'release' || 'dev' }}"), "{profile}");
+    assert!(!plan_job.contains("labels"), "{plan_job}");
     assert!(plan_job.contains("TESTS: ${{ github.ref_type != 'tag' }}\n"));
     let static_job = job("static");
     assert!(
@@ -929,4 +1108,62 @@ fn a_tag_and_a_release_pull_request_build_the_release_profile() {
         "{static_job}"
     );
     assert!(job("static_release").contains("needs: [static]\n"));
+}
+
+/// 01M75TMWKT8E0YYEENWVX4B67A, 01M75TN3EC2T25FH0D09JESHZF: each job of
+/// the build of a Mac runs only when the plan finds its artifact
+/// missing, and keeps the artifact by the tree. The job of the release
+/// of a Mac takes both from the runs of the plan, also when the plan
+/// skipped a job of a Mac.
+#[test]
+fn the_jobs_of_a_mac_build_once_for_each_tree_and_the_tag_takes_their_files() {
+    for (name, artifact) in [
+        ("macos_riff", "macos-riff"),
+        ("mac_session_riff", "mac-session-riff"),
+    ] {
+        let mac = job(name);
+        assert_eq!(field(&mac, "needs"), "[plan]", "{name}");
+        assert_eq!(
+            field(&mac, "if"),
+            format!("needs.plan.outputs.build_{name} == 'true'"),
+            "{name}"
+        );
+        let upload = steps(&mac)
+            .into_iter()
+            .find(|step| step.starts_with("uses: actions/upload-artifact@"))
+            .unwrap_or_else(|| panic!("{name} keeps no artifact:\n{mac}"));
+        assert!(
+            upload.contains(&format!(
+                "name: {artifact}-${{{{ needs.plan.outputs.tree }}}}\n"
+            )),
+            "{upload}"
+        );
+        assert!(upload.contains("if-no-files-found: error"), "{upload}");
+    }
+
+    let release = job("macos_release");
+    assert_eq!(
+        field(&release, "needs"),
+        "[plan, macos_riff, mac_session_riff]"
+    );
+    assert_eq!(
+        field(&release, "if"),
+        "${{ !cancelled() && needs.plan.result == 'success' && github.ref_type == 'tag' }}"
+    );
+    assert!(release.contains("\n      actions: read\n"), "{release}");
+    for (artifact, run) in [
+        ("macos-riff", "macos_riff_run"),
+        ("mac-session-riff", "mac_session_riff_run"),
+    ] {
+        let download = format!(
+            "name: {artifact}-${{{{ needs.plan.outputs.tree }}}}\n          \
+             run-id: ${{{{ needs.plan.outputs.{run} }}}}\n          \
+             github-token: ${{{{ github.token }}}}\n"
+        );
+        assert!(release.contains(&download), "{download}\n{release}");
+    }
+    // The release of a Mac compiles nothing.
+    for compile in ["cargo", "rustup", "static/build.sh"] {
+        assert!(!release.contains(compile), "{compile}:\n{release}");
+    }
 }

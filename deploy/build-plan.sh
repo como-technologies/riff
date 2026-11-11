@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Plans the run of CI for the tree of HEAD. The job Plan runs it before
 # each other job (01M6QQ1P0GH9AGCDA5N8EMEFGF, 01M6QQ1P37XW7N465MQGPHCXZM,
-# 01M75NAF4JQWQG3ZVGJM74XRBG): which artifacts of the tree exist already,
-# which ones the job Build makes, and if the tests run.
+# 01M75NAF4JQWQG3ZVGJM74XRBG, 01M75TMWKT8E0YYEENWVX4B67A): which
+# artifacts of the tree exist already, which ones the jobs of the build
+# make, and if the tests run.
 #
 #   deploy/build-plan.sh [TREE]
 #
@@ -11,9 +12,11 @@
 # merge group or a tag finds what the run of a pull request or of a merge
 # group with the same tree made:
 #
-#   gate-TREE             the pass of the Gate of a run that ran the tests
-#   tests-TREE            the test binaries and their manifest
-#   static-PROFILE-TREE   the static riff and riff-server, PROFILE dev or release
+#   gate-TREE              the pass of the Gate of a run that ran the tests
+#   tests-TREE             the test binaries and their manifest
+#   static-PROFILE-TREE    the static riff and riff-server, PROFILE dev or release
+#   macos-riff-TREE        riff and riff-server of the profile release for macOS
+#   mac-session-riff-TREE  the static Linux riff of the sessions of a Mac
 #
 # The input is in the environment: PROFILE, dev or release, the profile
 # of the static build that the run wants (dev); TESTS, true or false, for
@@ -24,22 +27,32 @@
 # The plan is lines `name=value`, in the file GITHUB_OUTPUT when it is
 # set, else on stdout:
 #
-#   tree           the tree
-#   run_tests      true when the tests and the job macOS run
-#   passed_run     the run that holds gate-TREE (empty when none does)
-#   build_tests    true when the job makes tests-TREE
-#   tests_run      the run that holds tests-TREE (empty when no test runs)
-#   build_static   true when the job makes the static binaries
-#   static_profile the profile of the static binaries that the run takes
-#   static_run     the run that holds static-PROFILE-TREE
+#   tree                    the tree
+#   run_tests               true when the tests and the job macOS run
+#   passed_run              the run that holds gate-TREE (empty when none does)
+#   build_tests             true when the job Build makes tests-TREE
+#   tests_run               the run that holds tests-TREE (empty when no test runs)
+#   build_static            true when the job Build makes the static binaries
+#   static_profile          the profile of the static binaries that the run takes
+#   static_run              the run that holds static-PROFILE-TREE
+#   build_macos_riff        true when the job macOS riff makes macos-riff-TREE
+#   macos_riff_run          the run that holds macos-riff-TREE (empty for dev)
+#   build_mac_session_riff  true when the job Linux riff of a Mac makes
+#                           mac-session-riff-TREE
+#   mac_session_riff_run    the run that holds mac-session-riff-TREE (empty
+#                           for dev)
 #
 # A tree with gate-TREE passed its Gate in that run, so the run builds no
-# test binary and runs no test again. A run of the profile release wants
-# the release binaries of the tree. A run of the profile dev takes the
-# release binaries when they are there: the release of a tree is the
-# better build. The plan takes only an artifact that counts: see
-# deploy/artifact-run.sh (01M75TT13241HC22M0KBJ6HW96). When gh fails,
-# the plan takes the artifact as missing.
+# test binary and runs no test again. A run of the profile release, a
+# push to main or of a tag, wants the release binaries of the tree: the
+# static ones of Linux and the ones of a Mac. So the first push of a tree
+# builds them, and a later run and the tag take them
+# (01M75TN3EC2T25FH0D09JESHZF). A run of the profile dev wants no binary
+# of a Mac, and takes the release binaries of Linux when they are there:
+# the release of a tree is the better build. The plan takes only an
+# artifact that counts: see deploy/artifact-run.sh
+# (01M75TT13241HC22M0KBJ6HW96). When gh fails, the plan takes the
+# artifact as missing.
 set -euo pipefail
 HERE="$(dirname "$(readlink -f "$0")")"
 
@@ -138,3 +151,23 @@ fi
 emit build_static "$build_static"
 emit static_profile "$static_profile"
 emit static_run "$static_run"
+
+# The binaries of a Mac, each the artifact of its job: only the profile
+# release wants them.
+for job in macos_riff mac_session_riff; do
+    name="${job//_/-}-$TREE"
+    run=""
+    build=false
+    if [ "$PROFILE" = release ]; then
+        run=$(find_run "$name")
+        if [ -z "$run" ]; then
+            build=true
+            run="$RUN"
+            echo "build-plan: no $name: the job $job builds it." >&2
+        else
+            echo "build-plan: $name is in run $run: no build of $job." >&2
+        fi
+    fi
+    emit "build_$job" "$build"
+    emit "${job}_run" "$run"
+done

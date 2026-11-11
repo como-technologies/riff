@@ -180,17 +180,16 @@ fn the_static_check_refuses_a_binary_with_an_interpreter() {
 }
 
 /// 01M4ZPJ06QYVA23N9SQ45T8WQC, 01M513W2V4G94R7F4D4Q3M2RA1,
-/// 01M6QQ1P8H32E2TQ0CYA87R02V: the job Build builds the static riff of
+/// 01M75TMWKT8E0YYEENWVX4B67A: the job Build builds the static riff of
 /// each pull request and each push, and the job Static riff checks it. A
-/// tag and a pull request with the label release build the profile
-/// release, each other run the profile dev. The check compiles nothing.
+/// push, to main or of a tag, builds the profile release, each other run
+/// the profile dev. The check compiles nothing.
 #[test]
 fn ci_builds_and_checks_the_static_riff_of_each_pull_request() {
     let plan = ci_job("plan");
     for part in [
         "name: Plan\n",
-        "PROFILE: ${{ (github.ref_type == 'tag' || (github.event_name == 'pull_request' && \
-         contains(github.event.pull_request.labels.*.name, 'release'))) && 'release' || 'dev' }}\n",
+        "PROFILE: ${{ github.event_name == 'push' && 'release' || 'dev' }}\n",
         "TESTS: ${{ github.ref_type != 'tag' }}\n",
         "run: deploy/build-plan.sh\n",
     ] {
@@ -345,19 +344,21 @@ fn a_release_tag_gets_the_files_that_riff_update_downloads() {
     }
 }
 
-/// 01M6Z8F7B3HVVNGQMX8GP1Z7Q1, 01M6Z8FKZRJZ4NY60PQAH9SMHV: for a tag, the
-/// job macOS riff builds `riff` and `riff-server` on a Mac with Apple
-/// silicon, the job Linux riff of a Mac builds the static Linux riff on
-/// arm64, and the job macOS riff release adds the files that `riff
-/// update` on a Mac downloads to the release, with their own file of
-/// sums, the sums last. A build of a release uses no cache.
+/// 01M6Z8F7B3HVVNGQMX8GP1Z7Q1, 01M6Z8FKZRJZ4NY60PQAH9SMHV,
+/// 01M75TMWKT8E0YYEENWVX4B67A: when the plan finds no files of a Mac for
+/// the tree, the job macOS riff builds `riff` and `riff-server` on a Mac
+/// with Apple silicon, and the job Linux riff of a Mac builds the static
+/// Linux riff on arm64. For a tag, the job macOS riff release adds the
+/// files that `riff update` on a Mac downloads to the release, with their
+/// own file of sums, the sums last. A build of a release uses no cache.
 #[test]
 fn a_release_tag_gets_the_files_that_riff_update_on_a_mac_downloads() {
     let mac = ci_job("macos_riff");
     let copy = format!("cp \"target/release/$name\" \"dist/$name-{MAC}\"");
     for part in [
         "name: macOS riff\n",
-        "if: github.ref_type == 'tag'\n",
+        "needs: [plan]\n",
+        "if: needs.plan.outputs.build_macos_riff == 'true'\n",
         "runs-on: macos-latest\n",
         "continue-on-error: true\n",
         "run: test \"$(uname -sm)\" = \"Darwin arm64\"\n",
@@ -365,7 +366,7 @@ fn a_release_tag_gets_the_files_that_riff_update_on_a_mac_downloads() {
         "target/release/riff --version\n",
         "for name in riff riff-server; do",
         &copy,
-        "name: macos-riff\n",
+        "name: macos-riff-${{ needs.plan.outputs.tree }}\n",
     ] {
         assert!(
             mac.contains(part),
@@ -383,7 +384,8 @@ fn a_release_tag_gets_the_files_that_riff_update_on_a_mac_downloads() {
     );
     for part in [
         "name: Linux riff of a Mac\n",
-        "if: github.ref_type == 'tag'\n",
+        "needs: [plan]\n",
+        "if: needs.plan.outputs.build_mac_session_riff == 'true'\n",
         "runs-on: ubuntu-24.04-arm\n",
         "continue-on-error: true\n",
         "run: test \"$(uname -sm)\" = \"Linux aarch64\"\n",
@@ -391,7 +393,7 @@ fn a_release_tag_gets_the_files_that_riff_update_on_a_mac_downloads() {
         "if readelf -lW \"$file\" | grep -q 'Requesting program interpreter'; then",
         "\"$file\" --version\n",
         &copy,
-        "name: mac-session-riff\n",
+        "name: mac-session-riff-${{ needs.plan.outputs.tree }}\n",
     ] {
         assert!(
             linux.contains(part),
@@ -411,12 +413,14 @@ fn a_release_tag_gets_the_files_that_riff_update_on_a_mac_downloads() {
     let line = format!("sha256sum -- {} > {}\n", assets.join(" "), sums(MAC));
     for part in [
         "name: macOS riff release\n",
-        "needs: [macos_riff, mac_session_riff]\n",
-        "if: github.ref_type == 'tag'\n",
+        "needs: [plan, macos_riff, mac_session_riff]\n",
+        "if: ${{ !cancelled() && needs.plan.result == 'success' && github.ref_type == 'tag' }}\n",
         "continue-on-error: true\n",
         "contents: write\n",
-        "name: macos-riff\n",
-        "name: mac-session-riff\n",
+        "name: macos-riff-${{ needs.plan.outputs.tree }}\n",
+        "run-id: ${{ needs.plan.outputs.macos_riff_run }}\n",
+        "name: mac-session-riff-${{ needs.plan.outputs.tree }}\n",
+        "run-id: ${{ needs.plan.outputs.mac_session_riff_run }}\n",
         &line,
         "gh release view \"$TAG\"",
         "for _ in $(seq 120); do",
@@ -490,9 +494,335 @@ fn the_release_of_a_mac_changes_no_job_of_linux() {
         .filter(|line| line.starts_with("needs:"))
         .filter(|line| mac_jobs.iter().any(|mac| line.contains(mac)))
         .collect();
-    assert_eq!(needs, ["needs: [macos_riff, mac_session_riff]"]);
+    assert_eq!(needs, ["needs: [plan, macos_riff, mac_session_riff]"]);
     for name in mac_jobs {
         let job = ci_job(name);
         assert!(job.contains("\n    continue-on-error: true\n"), "{job}");
     }
+}
+
+// ── deploy/static/smoke.sh: the release test of a tree
+// (01M75TN3HCK6VBB2GRCJG1Y5B2, 01M75YTFGK1SK5EP89V28FJH02).
+
+/// Runs the release test on the binaries in `dir`, with `wait` seconds
+/// for each wait. A `timeout` that fails is first in `PATH`, as a Mac
+/// has no `timeout`: so the test runs on a Mac too.
+fn smoke(dir: &Path, wait: &str) -> Output {
+    let env = Isolated::new();
+    let bin = tempfile::tempdir().unwrap();
+    isolated::write_program(
+        bin.path().join("timeout"),
+        "#!/bin/sh\necho 'timeout: a Mac has no timeout' >&2\nexit 127\n",
+    );
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    env.command(top().join("deploy/static/smoke.sh"))
+        .arg("dev")
+        .env("PATH", path)
+        .env("RIFF_STATIC_DIR", dir)
+        .env("RIFF_SMOKE_WAIT", wait)
+        .output()
+        .unwrap()
+}
+
+/// A folder with the `riff` under test, and the program `server` as
+/// `riff-server`.
+fn riff_and(server: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(Isolated::shared().riff_path(), dir.path().join("riff")).unwrap();
+    isolated::write_program(dir.path().join("riff-server"), server);
+    dir
+}
+
+/// The build that `riff --version` of the `riff` under test names.
+fn build_of_riff() -> String {
+    let out = Isolated::new().riff().arg("--version").output().unwrap();
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    text(&out.stdout)
+        .trim()
+        .strip_prefix("riff ")
+        .unwrap()
+        .to_owned()
+}
+
+/// The smoke test runs the binaries of the build, with no cargo test:
+/// each step passes, in order.
+#[test]
+fn the_release_test_runs_riff_and_riff_server_and_passes() {
+    let env = Isolated::shared();
+    let dir = env.riff_path().parent().unwrap().to_owned();
+    assert_eq!(env.riff_server_path().parent(), Some(dir.as_path()));
+    let out = smoke(&dir, "30");
+    assert!(
+        out.status.success(),
+        "{}{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    let stdout = text(&out.stdout);
+    let steps = [
+        format!(
+            "riff and riff-server start, and have the build {}.",
+            build_of_riff()
+        ),
+        "riff-server serves at http://127.0.0.1:".into(),
+        "riff server finds the same build at http://127.0.0.1:".into(),
+        "riff post put a message in the thread smoke, and riff read shows it.".into(),
+        "riff-server stops on SIGTERM with the exit code 0.".into(),
+        format!("The release test of {} passed.", dir.display()),
+    ];
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), steps.len(), "{stdout}");
+    for (line, step) in lines.iter().zip(&steps) {
+        assert!(line.starts_with(step.as_str()), "{step} is not {line}");
+    }
+}
+
+/// The smoke test fails, and names the binary, when a binary does not
+/// start: here a riff with an interpreter that is not there, as a riff
+/// that is not static has on a machine with another libc.
+#[test]
+fn the_release_test_fails_on_a_release_binary_that_does_not_start() {
+    let dir = tempfile::tempdir().unwrap();
+    isolated::write_program(dir.path().join("riff"), "#!/nonexistent/ld-linux\n");
+    std::os::unix::fs::symlink(
+        Isolated::shared().riff_server_path(),
+        dir.path().join("riff-server"),
+    )
+    .unwrap();
+    let out = smoke(dir.path(), "30");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stdout));
+    assert!(
+        text(&out.stderr).contains("smoke.sh: riff does not start: riff --version failed:"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(text(&out.stdout).is_empty(), "{}", text(&out.stdout));
+
+    // A riff-server that ends at its start: the error has its log.
+    let build = build_of_riff();
+    let dir = riff_and(&format!(
+        "#!/bin/sh\n[ \"$1\" = --version ] && echo 'riff-server {build}' && exit 0\n\
+         echo 'riff-server: the store is broken' >&2\nexit 101\n"
+    ));
+    let out = smoke(dir.path(), "30");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("smoke.sh: riff-server does not start: it ended with the exit code 101."),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("riff-server: the store is broken"),
+        "{stderr}"
+    );
+}
+
+/// A riff that does not answer stops after the wait, with no `timeout`
+/// of GNU: the test fails then, and does not hang.
+#[test]
+fn the_release_test_stops_a_riff_that_does_not_answer_after_the_wait() {
+    let dir = riff_and("#!/bin/sh\necho 'riff-server of no build'\n");
+    std::fs::remove_file(dir.path().join("riff")).unwrap();
+    isolated::write_program(dir.path().join("riff"), "#!/bin/sh\nexec sleep 60\n");
+    let span = isolated::Span::start();
+    let out = smoke(dir.path(), "1");
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("smoke.sh: riff does not start: riff --version failed:"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(
+        span.within(std::time::Duration::from_secs(20)),
+        "the test took {:?}",
+        span.wall()
+    );
+}
+
+/// A riff-server that never serves fails after the wait, and a riff and
+/// a riff-server of two builds fail at once.
+#[test]
+fn the_release_test_fails_on_a_server_that_does_not_serve_and_on_two_builds() {
+    let build = build_of_riff();
+    let dir = riff_and(&format!(
+        "#!/bin/sh\n[ \"$1\" = --version ] && echo 'riff-server {build}' && exit 0\n\
+         exec sleep 30\n"
+    ));
+    let out = smoke(dir.path(), "1");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains("smoke.sh: riff-server does not serve after 1 seconds."),
+        "{}",
+        text(&out.stderr)
+    );
+
+    let dir = riff_and("#!/bin/sh\necho 'riff-server of another build'\n");
+    let out = smoke(dir.path(), "30");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains(&format!(
+            "smoke.sh: riff --version printed \"riff {build}\", and riff-server --version \
+             \"riff-server of another build\": not one build."
+        )),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
+#[test]
+fn the_release_test_refuses_another_profile_and_a_missing_binary() {
+    let env = Isolated::new();
+    let out = env
+        .command(top().join("deploy/static/smoke.sh"))
+        .arg("fast")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        text(&out.stderr).contains("\"fast\" is not a profile. Give release or dev."),
+        "{}",
+        text(&out.stderr)
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = smoke(dir.path(), "30");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        text(&out.stderr).contains(&format!(
+            "smoke.sh: {}/riff is missing, or it cannot run. Build it: deploy/static/build.sh dev",
+            dir.path().canonicalize().unwrap().display()
+        )),
+        "{}",
+        text(&out.stderr)
+    );
+}
+
+/// 01M75TN3HCK6VBB2GRCJG1Y5B2, 01M75TN3M9JEVZQXEA2E8FTBKS: the job Static
+/// riff runs the smoke test after the check, on the binaries of the
+/// profile of the run. For a push, it sets the status of the release
+/// test from the outcome of the smoke test, also when a step before it
+/// failed, but only for the binaries of the profile release.
+#[test]
+fn ci_runs_the_release_test_and_sets_its_status_for_a_push() {
+    let job = ci_job("static");
+    let check = job
+        .find("run: deploy/static/check.sh \"$PROFILE\"\n")
+        .unwrap_or_else(|| panic!("no check:\n{job}"));
+    let smoke = job
+        .find("      - name: Smoke test\n        id: smoke\n        run: deploy/static/smoke.sh \"$PROFILE\"\n")
+        .unwrap_or_else(|| panic!("no smoke test:\n{job}"));
+    let status = job
+        .find("      - name: Set the status of the release test\n")
+        .unwrap_or_else(|| panic!("no status:\n{job}"));
+    assert!(check < smoke && smoke < status, "{job}");
+    let step = job[status..].split_once("\n\n").unwrap().0;
+    for part in [
+        "if: ${{ !cancelled() && github.event_name == 'push' && \
+         needs.plan.outputs.static_profile == 'release' }}\n",
+        "GH_TOKEN: ${{ github.token }}\n",
+        "GH_REPO: ${{ github.repository }}\n",
+        "OUTCOME: ${{ steps.smoke.outcome }}\n",
+        "RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n",
+        "run: deploy/release-test-status.sh \"$OUTCOME\" \"$GITHUB_SHA\" \"$RUN_URL\"",
+    ] {
+        assert!(step.contains(part), "{part} is not in:\n{step}");
+    }
+    assert!(
+        job.contains(
+            "\n    permissions:\n      contents: read\n      actions: read\n      statuses: write\n"
+        ),
+        "{job}"
+    );
+    // The release test runs the binaries: no cargo test, no build.
+    for build in ["cargo", "build.sh"] {
+        assert!(!job.contains(build), "{build} is in:\n{job}");
+    }
+}
+
+/// Runs `deploy/release-test-status.sh` with `args` and a fake `gh` that
+/// logs its arguments, one on a line, to `gh.log` in `bin`.
+fn status(bin: &Path, args: &[&str]) -> Output {
+    isolated::write_program(
+        bin.join("gh"),
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done >> {}\n",
+            bin.join("gh.log").display()
+        ),
+    );
+    let env = Isolated::new();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    env.command(top().join("deploy/release-test-status.sh"))
+        .args(args)
+        .env("PATH", path)
+        .env("GH_REPO", "o/r")
+        .output()
+        .unwrap()
+}
+
+/// 01M75TN3M9JEVZQXEA2E8FTBKS: the status `riff/release-test` of the
+/// commit is success when the smoke test passed, and failure for each
+/// other outcome. Its target is the run.
+#[test]
+fn the_status_of_the_release_test_follows_the_outcome_of_the_smoke_test() {
+    let run = "https://github.com/o/r/actions/runs/9";
+    for (outcome, state, description) in [
+        (
+            "success",
+            "success",
+            "The check and the smoke test of the release binaries passed.",
+        ),
+        (
+            "failure",
+            "failure",
+            "The check or the smoke test of the release binaries did not pass: failure.",
+        ),
+        (
+            "skipped",
+            "failure",
+            "The check or the smoke test of the release binaries did not pass: skipped.",
+        ),
+    ] {
+        let bin = tempfile::tempdir().unwrap();
+        let out = status(bin.path(), &[outcome, "c0ffee", run]);
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        assert_eq!(
+            text(&out.stdout),
+            format!("The status riff/release-test of c0ffee is {state}: {description}\n")
+        );
+        let log = fs::read_to_string(bin.path().join("gh.log")).unwrap();
+        let state = format!("state={state}");
+        let description = format!("description={description}");
+        let target = format!("target_url={run}");
+        let want = [
+            "api",
+            "-X",
+            "POST",
+            "repos/o/r/statuses/c0ffee",
+            "-f",
+            &state,
+            "-f",
+            "context=riff/release-test",
+            "-f",
+            &description,
+            "-f",
+            &target,
+        ];
+        assert_eq!(log.lines().collect::<Vec<_>>(), want, "{outcome}");
+    }
+
+    let bin = tempfile::tempdir().unwrap();
+    let out = status(bin.path(), &["maybe", "c0ffee", run]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        text(&out.stderr).contains("\"maybe\" is not an outcome of a step."),
+        "{}",
+        text(&out.stderr)
+    );
+    let out = status(bin.path(), &["success", "c0ffee"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!bin.path().join("gh.log").exists());
 }
